@@ -1,0 +1,88 @@
+# CI: go build → goose translation → rocq compile (proof check)
+#
+# Supply-chain policy:
+#   - Official GitHub actions (actions/*) only; no third-party actions.
+#   - Everything is pinned by commit SHA (tags can be moved, SHAs cannot).
+#     The vX.Y.Z comments are notes for humans. To update, resolve the new
+#     tag to its commit SHA:
+#       git ls-remote https://github.com/actions/checkout 'refs/tags/vX.Y.Z^{}'
+#   - opam dependencies are all pinned to git SHAs via pin-depends in
+#     cert-yjs.opam.
+#   - The perennial checkout is fetched at the same SHA as the opam pin.
+#
+# The first run (no cache) builds Perennial and takes a few hours. Later runs
+# hit the _opam cache and only do goose + proof checking.
+
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in sync with the perennial pin in cert-yjs.opam
+  PERENNIAL_COMMIT: f884a505d89d3f6740f4baec515602494a9bd4cc
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.26.0'
+
+      - name: Install opam
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends opam
+
+      - name: Restore opam cache
+        id: opam-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.opam
+            _opam
+          key: opam-${{ runner.os }}-ocaml-5.2.0-${{ hashFiles('cert-yjs.opam') }}
+
+      - name: Set up opam switch (slow on cache miss)
+        run: |
+          if [ ! -d "$HOME/.opam" ]; then
+            opam init --bare --disable-sandboxing -y
+          fi
+          if [ ! -d _opam ]; then
+            opam switch create . ocaml-base-compiler.5.2.0 --no-install -y
+          fi
+          opam install ./cert-yjs.opam --deps-only -y
+
+      # Save even on failure so the multi-hour first build can resume next run
+      - name: Save opam cache
+        if: always() && steps.opam-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.opam
+            _opam
+          key: opam-${{ runner.os }}-ocaml-5.2.0-${{ hashFiles('cert-yjs.opam') }}
+
+      - name: Fetch perennial (goose source, same commit as the opam pin)
+        run: |
+          git init "$HOME/perennial"
+          git -C "$HOME/perennial" remote add origin https://github.com/mit-pdos/perennial
+          git -C "$HOME/perennial" fetch --depth 1 origin "$PERENNIAL_COMMIT"
+          git -C "$HOME/perennial" checkout FETCH_HEAD
+
+      - name: Build (go build → goose → proof check)
+        run: opam exec -- env PERENNIAL="$HOME/perennial" ./build.sh
