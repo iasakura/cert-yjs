@@ -5,9 +5,9 @@
     [arr : list (YjsItem A)] of iris-yjs.
 
     Two layers, kept separate on purpose:
-    - [is_text parent arr]  — the pure representation predicate (heap <-> model).
+    - [is_ytext parent arr]  — the pure representation predicate (heap <-> model).
       This is all the refinement of [Integrate] needs.
-    - [is_valid_text parent arr] — [is_text] plus the model invariant
+    - [is_valid_ytext parent arr] — [is_ytext] plus the model invariant
       [YjsArrInvariant arr]. Validity is carried alongside, not baked into the
       representation.
 
@@ -100,31 +100,31 @@ Definition cell_repr (m : list (YjsItem A)) (c : item_cell) (yi : YjsItem A) : P
   origin yi = resolve_left m (ic_oleft c) /\
   rightOrigin yi = resolve_right m (ic_oright c).
 
-(** [items_repr m cells items]: the heap cell list [cells] represents the model
+(** [cells_repr m cells items]: the heap cell list [cells] represents the model
     item list [items], cellwise via [cell_repr], with all origins resolved
     against the *full* model [m] (a right origin may point past the current
     cell, so [m] is a fixed context rather than a growing prefix). *)
-Inductive items_repr (m : list (YjsItem A)) : list item_cell -> list (YjsItem A) -> Prop :=
-  | items_repr_nil : items_repr m [] []
-  | items_repr_cons c yi cs ys :
+Inductive cells_repr (m : list (YjsItem A)) : list item_cell -> list (YjsItem A) -> Prop :=
+  | cells_repr_nil : cells_repr m [] []
+  | cells_repr_cons c yi cs ys :
       cell_repr m c yi ->
-      items_repr m cs ys ->
-      items_repr m (c :: cs) (yi :: ys).
+      cells_repr m cs ys ->
+      cells_repr m (c :: cs) (yi :: ys).
 
 (* ----- the representation predicate and its validity layer ---------------- *)
 
-(** [is_text parent arr]: [parent] is a heap [YText] whose item list represents
+(** [is_ytext parent arr]: [parent] is a heap [YText] whose item list represents
     the model document [arr]. Pure representation — no invariant. *)
-Definition is_text (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
+Definition is_ytext (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
   ∃ (yt : yjs.YText.t) (cells : list item_cell),
     "Hparent" ∷ parent ↦ yt ∗
     "Hlist" ∷ is_item_list yt.(yjs.YText.start') cells ∗
-    "%Hrepr" ∷ ⌜items_repr arr cells arr⌝.
+    "%Hrepr" ∷ ⌜cells_repr arr cells arr⌝.
 
-(** [is_valid_text parent arr]: a heap [YText] representing a *valid* model
+(** [is_valid_ytext parent arr]: a heap [YText] representing a *valid* model
     [arr] (i.e. also [YjsArrInvariant arr]). *)
-Definition is_valid_text (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
-  "Htext" ∷ is_text parent arr ∗
+Definition is_valid_ytext (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
+  "Htext" ∷ is_ytext parent arr ∗
   "%Hinv" ∷ ⌜YjsArrInvariant arr⌝.
 
 End invariant.
