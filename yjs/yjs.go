@@ -1,6 +1,10 @@
-// Package yjs will hold a Yjs-style CRDT implementation to be verified
-// with Perennial. Counter is a placeholder that exercises the full
-// goose/proof pipeline; replace it with the real data structures.
+// Package yjs is a Yjs-style CRDT implementation in Go, intended to be
+// translated to Rocq with goose and verified with Perennial.
+//
+// The data structures and the integrate algorithm are a port of y-octo
+// (https://github.com/y-crdt/y-octo), the Rust Yjs implementation by the
+// Toeverything / AFFiNE team, used here under the MIT License. See the NOTICE
+// file at the repository root for the full y-octo copyright and license.
 package yjs
 
 type Client = uint64
