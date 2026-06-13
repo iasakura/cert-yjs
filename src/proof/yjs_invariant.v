@@ -1,10 +1,15 @@
-(** The cert-yjs document invariant.
+(** The cert-yjs heap representation of a [YText].
 
     Links the heap data structure produced by the goose translation (a [YText]
     whose [start] heads a linked list of [Item] cells) to the pure model
-    [arr : list (YjsItem A)] of iris-yjs, and asserts that the model is valid
-    ([YjsArrInvariant], via [yjs_core]). [Integrate]'s spec will be stated as
-    preserving [is_valid_doc].
+    [arr : list (YjsItem A)] of iris-yjs.
+
+    Two layers, kept separate on purpose:
+    - [is_text parent arr]  — the pure representation predicate (heap <-> model).
+      This is all the refinement of [Integrate] needs.
+    - [is_valid_text parent arr] — [is_text] plus the model invariant
+      [YjsArrInvariant arr]. Validity is carried alongside, not baked into the
+      representation.
 
     Phase-2 simplification: content is a 1-char string, so the content type is
     [go_string]. *)
@@ -28,85 +33,98 @@ Definition toYjsId (i : yjs.Id.t) : YjsId :=
 
 Definition toContent (c : yjs.Content.t) : A := c.(yjs.Content.content').
 
-(* ----- physical layer: the heap chain ------------------------------------ *)
+(* ----- physical layer: the heap item list -------------------------------- *)
 
-(** One cell of the document: its heap location, struct value, and the optional
-    origin ids it points at (resolved out of the [originLeftId]/[originRightId]
-    pointers). *)
-Record CellRep := MkCellRep {
-  cr_loc : loc;
-  cr_item : yjs.Item.t;
-  cr_oleft : option yjs.Id.t;
-  cr_oright : option yjs.Id.t;
+(** One node of the heap item list: its location, struct value, and the
+    optional origin ids it points at (resolved out of the
+    [originLeftId]/[originRightId] pointers). *)
+Record item_cell := MkItemCell {
+  ic_loc : loc;
+  ic_val : yjs.Item.t;
+  ic_oleft : option yjs.Id.t;
+  ic_oright : option yjs.Id.t;
 }.
 
 (** An origin pointer is either null (no origin) or a read-only [Id] cell.
     Origins are immutable once integrated, hence persistent ([↦□]). *)
-Definition origin_id_rep (p : loc) (oid : option yjs.Id.t) : iProp Σ :=
+Definition is_origin_id (p : loc) (oid : option yjs.Id.t) : iProp Σ :=
   match oid with
   | None => ⌜p = null⌝
   | Some idv => ⌜p ≠ null⌝ ∗ p ↦□ idv
   end.
 
-(** The forward spine of the document, following [right], collecting one
-    [CellRep] per item. *)
-Fixpoint doc_chain (head : loc) (cells : list CellRep) : iProp Σ :=
+(** [is_item_list head cells]: [head] is the start of the heap linked list that,
+    following [Item.right], visits exactly [cells]. *)
+Fixpoint is_item_list (head : loc) (cells : list item_cell) : iProp Σ :=
   match cells with
   | [] => ⌜head = null⌝
   | c :: rest =>
-      "%Hhd" ∷ ⌜head = cr_loc c⌝ ∗
-      "Hitem" ∷ cr_loc c ↦ cr_item c ∗
-      "Holeft" ∷ origin_id_rep (cr_item c).(yjs.Item.originLeftId') (cr_oleft c) ∗
-      "Horight" ∷ origin_id_rep (cr_item c).(yjs.Item.originRightId') (cr_oright c) ∗
-      "Hrest" ∷ doc_chain (cr_item c).(yjs.Item.right') rest
+      "%Hhd" ∷ ⌜head = ic_loc c⌝ ∗
+      "Hval" ∷ ic_loc c ↦ ic_val c ∗
+      "Holeft" ∷ is_origin_id (ic_val c).(yjs.Item.originLeftId') (ic_oleft c) ∗
+      "Horight" ∷ is_origin_id (ic_val c).(yjs.Item.originRightId') (ic_oright c) ∗
+      "Hrest" ∷ is_item_list (ic_val c).(yjs.Item.right') rest
   end.
 
-(* ----- abstraction layer: cells to model --------------------------------- *)
+(* ----- abstraction layer: heap cells <-> model items --------------------- *)
 
-(** Resolve a left origin id to a model pointer: [None] is the [First] sentinel,
-    otherwise the model item carrying that id. *)
-Definition resolve_left (arr : list (YjsItem A)) (oid : option yjs.Id.t) : YjsPtr A :=
+(** Resolve a left origin id against the model [m]: [None] is the [First]
+    sentinel, otherwise the model item carrying that id. *)
+Definition resolve_left (m : list (YjsItem A)) (oid : option yjs.Id.t) : YjsPtr A :=
   match oid with
   | None => First
   | Some idv =>
-      match list_find (λ it, item_id it = toYjsId idv) arr with
+      match list_find (λ it, item_id it = toYjsId idv) m with
       | Some (_, it) => itemPtr it
       | None => First
       end
   end.
 
 (** Resolve a right origin id: [None] is the [Last] sentinel. *)
-Definition resolve_right (arr : list (YjsItem A)) (oid : option yjs.Id.t) : YjsPtr A :=
+Definition resolve_right (m : list (YjsItem A)) (oid : option yjs.Id.t) : YjsPtr A :=
   match oid with
   | None => Last
   | Some idv =>
-      match list_find (λ it, item_id it = toYjsId idv) arr with
+      match list_find (λ it, item_id it = toYjsId idv) m with
       | Some (_, it) => itemPtr it
       | None => Last
       end
   end.
 
-(** A cell abstracts to a model item when their id/content agree and the model
-    item's origins are the resolved heap origins. *)
-Definition cell_abstracts (arr : list (YjsItem A)) (c : CellRep) (yi : YjsItem A) : Prop :=
-  item_id yi = toYjsId (cr_item c).(yjs.Item.id') /\
-  content yi = toContent (cr_item c).(yjs.Item.content') /\
-  origin yi = resolve_left arr (cr_oleft c) /\
-  rightOrigin yi = resolve_right arr (cr_oright c).
+(** [cell_repr m c yi]: the model item [yi] is the one the heap cell [c]
+    represents — same id and content, with [yi]'s origins being [c]'s origin
+    ids resolved against the model [m]. *)
+Definition cell_repr (m : list (YjsItem A)) (c : item_cell) (yi : YjsItem A) : Prop :=
+  item_id yi = toYjsId (ic_val c).(yjs.Item.id') /\
+  content yi = toContent (ic_val c).(yjs.Item.content') /\
+  origin yi = resolve_left m (ic_oleft c) /\
+  rightOrigin yi = resolve_right m (ic_oright c).
 
-(** The heap chain abstracts to the model list positionwise. *)
-Definition cells_abstract (cells : list CellRep) (arr : list (YjsItem A)) : Prop :=
-  length cells = length arr /\
-  (forall i c yi, cells !! i = Some c -> arr !! i = Some yi -> cell_abstracts arr c yi).
+(** [items_repr m cells items]: the heap cell list [cells] represents the model
+    item list [items], cellwise via [cell_repr], with all origins resolved
+    against the *full* model [m] (a right origin may point past the current
+    cell, so [m] is a fixed context rather than a growing prefix). *)
+Inductive items_repr (m : list (YjsItem A)) : list item_cell -> list (YjsItem A) -> Prop :=
+  | items_repr_nil : items_repr m [] []
+  | items_repr_cons c yi cs ys :
+      cell_repr m c yi ->
+      items_repr m cs ys ->
+      items_repr m (c :: cs) (yi :: ys).
 
-(* ----- the document invariant -------------------------------------------- *)
+(* ----- the representation predicate and its validity layer ---------------- *)
 
-(** [parent] is a heap document representing the valid model [arr]. *)
-Definition is_valid_doc (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
-  ∃ (yt : yjs.YText.t) (cells : list CellRep),
+(** [is_text parent arr]: [parent] is a heap [YText] whose item list represents
+    the model document [arr]. Pure representation — no invariant. *)
+Definition is_text (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
+  ∃ (yt : yjs.YText.t) (cells : list item_cell),
     "Hparent" ∷ parent ↦ yt ∗
-    "Hchain" ∷ doc_chain yt.(yjs.YText.start') cells ∗
-    "%Habs" ∷ ⌜cells_abstract cells arr⌝ ∗
-    "%Hinv" ∷ ⌜YjsArrInvariant arr⌝.
+    "Hlist" ∷ is_item_list yt.(yjs.YText.start') cells ∗
+    "%Hrepr" ∷ ⌜items_repr arr cells arr⌝.
+
+(** [is_valid_text parent arr]: a heap [YText] representing a *valid* model
+    [arr] (i.e. also [YjsArrInvariant arr]). *)
+Definition is_valid_text (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
+  "Htext" ∷ is_text parent arr ∗
+  "%Hinv" ∷ ⌜YjsArrInvariant arr⌝.
 
 End invariant.
