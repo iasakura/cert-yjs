@@ -1,18 +1,28 @@
-(** The cert-yjs heap representation of a [YText].
+(** The cert-yjs heap representation of a [YText] and the invariants for
+    verifying [Store.Integrate].
 
-    Links the heap data structure produced by the goose translation (a [YText]
-    whose [start] heads a linked list of [Item] cells) to the pure model
-    [arr : list (YjsItem A)] of iris-yjs.
+    Design (two combined invariants, per the plan):
 
-    Two layers, kept separate on purpose:
-    - [is_ytext parent arr]  — the pure representation predicate (heap <-> model).
-      This is all the refinement of [Integrate] needs.
-    - [is_valid_ytext parent arr] — [is_ytext] plus the model invariant
-      [YjsArrInvariant arr]. Validity is carried alongside, not baked into the
-      representation.
+    1. DATA-STRUCTURE invariant.
+       - [is_dll]: the doubly-linked-list structure invariant, adapted from the
+         reference sorted-DLL proof (iasakura/perennial-sandbox, dll/list.go,
+         [is_dlist_node]). Each node is an [Item] with [left]=prev / [right]=next
+         pointers; a segment is described by its head [l], last node [last], the
+         prev-pointer of the head [prev] and the next-pointer of the last [next].
+       - [is_ytext] / [is_valid_ytext]: a heap [YText] whose [start] heads such a
+         DLL, where the node list is ISOMORPHIC to a [list (YjsItem A)] that
+         satisfies [YjsArrInvariant] (origins resolved by id via [cell_repr]).
+         This combines the DLL structure invariant with the order/origin
+         well-formedness of the pure model, as requested.
 
-    Phase-2 simplification: content is a 1-char string, so the content type is
-    [go_string]. *)
+    2. LOOP invariant ([integrate_loop_inv]) for [Integrate]'s conflict scan:
+       it couples the heap loop state (the [conflict]/[left] pointers and the
+       [itemsBeforeOrigin]/[conflictingItems] slices) to the pure set-based loop
+       [setfii_loop] of iris-yjs (via [Couple]), so the scan refines
+       [setfindIntegratedIndex].
+
+    Phase-2 simplification: content is a 1-char string ([go_string]); every item
+    is countable and non-deleted, so [YText.len] = number of nodes. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -22,10 +32,16 @@ Section invariant.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
+#[global] Instance : IsPkgInit (iProp Σ) yjs := define_is_pkg_init True%I.
+#[global] Instance : GetIsPkgInitWf (iProp Σ) yjs := build_get_is_pkg_init_wf.
+
+Collection W := sem + package_sem.
+Set Default Proof Using "W".
+
 (** Document content type. *)
 Notation A := go_string.
 
-(* ----- abstraction of scalar fields -------------------------------------- *)
+(* ===== abstraction of scalar fields ====================================== *)
 
 (** Heap id (two [w64]s) to model id (two [nat]s). *)
 Definition toYjsId (i : yjs.Id.t) : YjsId :=
@@ -33,11 +49,9 @@ Definition toYjsId (i : yjs.Id.t) : YjsId :=
 
 Definition toContent (c : yjs.Content.t) : A := c.(yjs.Content.content').
 
-(* ----- physical layer: the heap item list -------------------------------- *)
-
-(** One node of the heap item list: its location, struct value, and the
-    optional origin ids it points at (resolved out of the
-    [originLeftId]/[originRightId] pointers). *)
+(** One node of the heap DLL: its location, struct value, and the optional
+    origin ids it points at (resolved out of the [originLeftId]/[originRightId]
+    pointers). *)
 Record item_cell := MkItemCell {
   ic_loc : loc;
   ic_val : yjs.Item.t;
@@ -53,20 +67,56 @@ Definition is_origin_id (p : loc) (oid : option yjs.Id.t) : iProp Σ :=
   | Some idv => ⌜p ≠ null⌝ ∗ p ↦□ idv
   end.
 
-(** [is_item_list head cells]: [head] is the start of the heap linked list that,
-    following [Item.right], visits exactly [cells]. *)
-Fixpoint is_item_list (head : loc) (cells : list item_cell) : iProp Σ :=
+(* ===== (1) DATA-STRUCTURE invariant ====================================== *)
+
+(* ----- the doubly-linked spine (adapted from the reference DLL) ----------- *)
+
+(** [is_dll l last prev next cells]: the DLL segment whose head node is [l] and
+    whose last node is [last]; [prev] is the [left]-pointer of [l] and [next] is
+    the [right]-pointer of [last]. Mirrors the reference [is_dlist_node], with
+    each node carrying its [Item] struct and the two origin-id cells. *)
+Fixpoint is_dll (l last prev next : loc) (cells : list item_cell) : iProp Σ :=
   match cells with
-  | [] => ⌜head = null⌝
+  | [] => ⌜l = next ∧ last = prev⌝
   | c :: rest =>
-      "%Hhd" ∷ ⌜head = ic_loc c⌝ ∗
+      "%Hloc" ∷ ⌜l = ic_loc c ∧ l ≠ null⌝ ∗
+      "%Hprev" ∷ ⌜(ic_val c).(yjs.Item.left') = prev⌝ ∗
       "Hval" ∷ ic_loc c ↦ ic_val c ∗
       "Holeft" ∷ is_origin_id (ic_val c).(yjs.Item.originLeftId') (ic_oleft c) ∗
       "Horight" ∷ is_origin_id (ic_val c).(yjs.Item.originRightId') (ic_oright c) ∗
-      "Hrest" ∷ is_item_list (ic_val c).(yjs.Item.right') rest
+      "Hrest" ∷ is_dll (ic_val c).(yjs.Item.right') last l next rest
   end.
 
-(* ----- abstraction layer: heap cells <-> model items --------------------- *)
+(* ----- structural lemmas for the DLL spine ------------------------------- *)
+
+(** Split / join a DLL segment at a list append (cf. reference [is_dlist_node_app]). *)
+Lemma is_dll_app (cs1 cs2 : list item_cell) (l last prev next : loc) :
+  is_dll l last prev next (cs1 ++ cs2)
+  ⊣⊢ ∃ mid_last mid_fst,
+       is_dll l mid_last prev mid_fst cs1 ∗ is_dll mid_fst last mid_last next cs2.
+Proof.
+  revert l prev. induction cs1 as [|c cs1 IH] => l prev /=.
+  - iSplit.
+    + iIntros "H". iExists prev, l. by iFrame.
+    + iIntros "(%ml & %mf & [%H1 %H2] & H)". subst. by iFrame.
+  - iSplit.
+    + iIntros "H". iNamed "H". rewrite IH.
+      iDestruct "Hrest" as "(%ml & %mf & H1 & H2)".
+      iExists ml, mf. iFrame "H2 Hval Holeft Horight H1". done.
+    + iIntros "(%ml & %mf & H1 & H2)". iNamed "H1".
+      rewrite IH. iFrame "Hval Holeft Horight". iSplitR; [done|].
+      iSplitR; [done|]. iExists ml, mf. iFrame.
+Qed.
+
+(** A DLL headed by [null] is empty. *)
+Lemma is_dll_null_nil last prev next cells :
+  is_dll null last prev next cells -∗ ⌜cells = []⌝.
+Proof.
+  destruct cells as [|c cs]; [by auto|].
+  iIntros "H". iNamed "H". iPureIntro. exfalso. by apply (proj2 Hloc).
+Qed.
+
+(* ----- isomorphism to a YjsArrInvariant model ---------------------------- *)
 
 (** Resolve a left origin id against the model [m]: [None] is the [First]
     sentinel, otherwise the model item carrying that id. *)
@@ -92,18 +142,20 @@ Definition resolve_right (m : list (YjsItem A)) (oid : option yjs.Id.t) : YjsPtr
   end.
 
 (** [cell_repr m c yi]: the model item [yi] is the one the heap cell [c]
-    represents — same id and content, with [yi]'s origins being [c]'s origin
-    ids resolved against the model [m]. *)
+    represents — same id and content, and [yi]'s origins carry exactly [c]'s
+    heap origin ids (as model ids). Stating origins by id (rather than by
+    resolution against [m]) is what the conflict scan needs to match
+    [setfii_loop]'s id tests, and rules out a heap origin id that fails to
+    resolve. ([m] is kept for uniformity with [cells_repr] / [resolve_*].) *)
 Definition cell_repr (m : list (YjsItem A)) (c : item_cell) (yi : YjsItem A) : Prop :=
   item_id yi = toYjsId (ic_val c).(yjs.Item.id') /\
   content yi = toContent (ic_val c).(yjs.Item.content') /\
-  origin yi = resolve_left m (ic_oleft c) /\
-  rightOrigin yi = resolve_right m (ic_oright c).
+  origin_id (origin yi) = toYjsId <$> ic_oleft c /\
+  origin_id (rightOrigin yi) = toYjsId <$> ic_oright c.
 
-(** [cells_repr m cells items]: the heap cell list [cells] represents the model
-    item list [items], cellwise via [cell_repr], with all origins resolved
-    against the *full* model [m] (a right origin may point past the current
-    cell, so [m] is a fixed context rather than a growing prefix). *)
+(** [cells_repr m cells items]: the heap cell list represents the model item
+    list cellwise (origins resolved against the full model [m]). This is the
+    "isomorphism" between the heap node sequence and a [list (YjsItem A)]. *)
 Inductive cells_repr (m : list (YjsItem A)) : list item_cell -> list (YjsItem A) -> Prop :=
   | cells_repr_nil : cells_repr m [] []
   | cells_repr_cons c yi cs ys :
@@ -111,20 +163,348 @@ Inductive cells_repr (m : list (YjsItem A)) : list item_cell -> list (YjsItem A)
       cells_repr m cs ys ->
       cells_repr m (c :: cs) (yi :: ys).
 
-(* ----- the representation predicate and its validity layer ---------------- *)
-
-(** [is_ytext parent arr]: [parent] is a heap [YText] whose item list represents
-    the model document [arr]. Pure representation — no invariant. *)
-Definition is_ytext (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
-  ∃ (yt : yjs.YText.t) (cells : list item_cell),
+(** [is_ytext parent cells arr]: [parent] is a heap [YText] whose [start] heads
+    the DLL [cells], which is isomorphic to the model [arr]. (Phase-2: every item
+    is countable / non-deleted, so [len] = number of nodes.) *)
+Definition is_ytext (parent : loc) (cells : list item_cell) (arr : list (YjsItem A)) : iProp Σ :=
+  ∃ (yt : yjs.YText.t) (tl : loc),
     "Hparent" ∷ parent ↦ yt ∗
-    "Hlist" ∷ is_item_list yt.(yjs.YText.start') cells ∗
+    "Hdll" ∷ is_dll yt.(yjs.YText.start') tl null null cells ∗
+    "%Hlen" ∷ ⌜yt.(yjs.YText.len') = W64 (length cells)⌝ ∗
     "%Hrepr" ∷ ⌜cells_repr arr cells arr⌝.
 
-(** [is_valid_ytext parent arr]: a heap [YText] representing a *valid* model
-    [arr] (i.e. also [YjsArrInvariant arr]). *)
+(** The full data-structure invariant: a heap [YText] representing a *valid*
+    model [arr] — DLL structure + isomorphism to a [YjsArrInvariant] list. *)
 Definition is_valid_ytext (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
-  "Htext" ∷ is_ytext parent arr ∗
-  "%Hinv" ∷ ⌜YjsArrInvariant arr⌝.
+  ∃ cells,
+    "Htext" ∷ is_ytext parent cells arr ∗
+    "%Hinv" ∷ ⌜YjsArrInvariant arr⌝.
+
+(* ===== (2) LOOP invariant for Integrate ================================== *)
+
+(** The loc of the node at index [k] of [cells] ([null] outside [0, len)).
+    Used to place the heap [conflict] / [left] pointers within the DLL. *)
+Definition node_loc (cells : list item_cell) (k : Z) : loc :=
+  if decide (0 <= k)%Z then default null (ic_loc <$> cells !! Z.to_nat k) else null.
+
+(** A heap id-slice abstracts to a [gset YjsId]: its elements, mapped to model
+    ids, are exactly [gs]. The Go set ops are [containsId] / [append] / reset to
+    [[]]; [list_to_set] makes membership (not order/duplicates) the observable,
+    matching the pure [gset] with [∪] / [∈]. *)
+Definition is_id_set (s : slice.t) (gs : gset YjsId) : iProp Σ :=
+  ∃ (vs : list yjs.Id.t),
+    "Hsl" ∷ s ↦* vs ∗
+    "%Hset" ∷ ⌜list_to_set (toYjsId <$> vs) = gs⌝.
+
+(** [toYjsId] is injective (it is [uint.nat] on both [w64] fields), so heap id
+    equality matches model id equality — the bridge between the Go id ops and
+    the pure [gset] tests. *)
+Lemma toYjsId_inj (a b : yjs.Id.t) : toYjsId a = toYjsId b -> a = b.
+Proof.
+  destruct a as [ca ka], b as [cb kb]. rewrite /toYjsId /=.
+  injection 1 as Hc Hk. f_equal; word.
+Qed.
+
+(** [Id.Equal] computes the conjunction of the two field equalities; this is
+    exactly [bool_decide] of the model id equality. *)
+Lemma Id_eqb_toYjsId (a b : yjs.Id.t) :
+  (bool_decide (a.(yjs.Id.clientId') = b.(yjs.Id.clientId'))
+   && bool_decide (a.(yjs.Id.clock') = b.(yjs.Id.clock')))%bool
+  = bool_decide (toYjsId a = toYjsId b).
+Proof.
+  rewrite -bool_decide_and. apply bool_decide_ext. rewrite /toYjsId. split.
+  - move=> [Hc Hk]. by rewrite Hc Hk.
+  - move=> H. injection H => Hk Hc. split; word.
+Qed.
+
+(* ----- WP specs for the id / set helper functions ------------------------ *)
+
+Lemma wp_Id__Equal (a b : yjs.Id.t) :
+  {{{ is_pkg_init yjs }}}
+    a @! yjs.Id @! "Equal" #b
+  {{{ RET #(bool_decide (toYjsId a = toYjsId b)); True }}}.
+Proof.
+  wp_start as "_". wp_auto. wp_if_destruct.
+  - have -> : bool_decide (a.(yjs.Id.clock') = b.(yjs.Id.clock'))
+             = bool_decide (toYjsId a = toYjsId b).
+    { rewrite -Id_eqb_toYjsId. by rewrite (bool_decide_eq_true_2 _ e). }
+    iApply "HΦ". done.
+  - have Hf : bool_decide (toYjsId a = toYjsId b) = false.
+    { apply bool_decide_eq_false_2 => H. apply n. by rewrite (toYjsId_inj _ _ H). }
+    iEval (rewrite Hf) in "HΦ". iApply "HΦ". done.
+Qed.
+
+(** [idOptEqual] on two optional-id pointers ([is_origin_id]) decides equality of
+    the abstract model ids. (Both origin facts are persistent, so kept.) *)
+Lemma wp_idOptEqual (pa pb : loc) (oa ob : option yjs.Id.t) :
+  {{{ is_pkg_init yjs ∗ is_origin_id pa oa ∗ is_origin_id pb ob }}}
+    @! yjs.idOptEqual #pa #pb
+  {{{ RET #(bool_decide ((toYjsId <$> oa) = (toYjsId <$> ob))); True }}}.
+Proof.
+  wp_start as "[Ha Hb]". wp_auto.
+  destruct oa as [ida|]; destruct ob as [idb|].
+  - iDestruct "Ha" as "[%Hpa Hpa]". iDestruct "Hb" as "[%Hpb Hpb]".
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    rewrite (bool_decide_eq_false_2 (pb = null) Hpb). wp_auto.
+    wp_method_call; wp_call; wp_auto. wp_apply (wp_Id__Equal ida idb).
+    have Heq : bool_decide (toYjsId <$> Some ida = toYjsId <$> Some idb)
+             = bool_decide (toYjsId ida = toYjsId idb).
+    { apply bool_decide_ext. simpl. by split; congruence. }
+    iEval (rewrite Heq) in "HΦ". iApply "HΦ". done.
+  - iDestruct "Ha" as "[%Hpa Hpa]". iDestruct "Hb" as "%Hpb". subst pb.
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    iApply "HΦ". done.
+  - iDestruct "Ha" as "%Hpa". iDestruct "Hb" as "[%Hpb Hpb]". subst pa.
+    wp_auto. rewrite (bool_decide_eq_false_2 (pb = null) Hpb). wp_auto.
+    iApply "HΦ". done.
+  - iDestruct "Ha" as "%Hpa". iDestruct "Hb" as "%Hpb". subst pa pb.
+    wp_auto. iApply "HΦ". done.
+Qed.
+
+(** A heap item pointer is null or owns a node; [oid_of] is its model id. *)
+Definition oid_of (ov : option yjs.Item.t) : option YjsId :=
+  (λ v, toYjsId v.(yjs.Item.id')) <$> ov.
+
+Definition item_or_null (p : loc) (ov : option yjs.Item.t) (dq : dfrac) : iProp Σ :=
+  match ov with
+  | None => ⌜p = null⌝
+  | Some v => ⌜p ≠ null⌝ ∗ p ↦{dq} v
+  end.
+
+(** [itemPtrEqual] compares two item pointers by identity (= model id, ids being
+    unique), with the null cases of y-octo's [Somr] comparison. *)
+Lemma wp_itemPtrEqual (pa pb : loc) (ova ovb : option yjs.Item.t) (dqa dqb : dfrac) :
+  {{{ is_pkg_init yjs ∗ item_or_null pa ova dqa ∗ item_or_null pb ovb dqb }}}
+    @! yjs.itemPtrEqual #pa #pb
+  {{{ RET #(bool_decide (oid_of ova = oid_of ovb));
+      item_or_null pa ova dqa ∗ item_or_null pb ovb dqb }}}.
+Proof.
+  wp_start as "[Ha Hb]". wp_auto.
+  destruct ova as [va|]; destruct ovb as [vb|].
+  - iDestruct "Ha" as "[%Hpa Hpa]". iDestruct "Hb" as "[%Hpb Hpb]".
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    rewrite (bool_decide_eq_false_2 (pb = null) Hpb). wp_auto.
+    wp_method_call; wp_call; wp_auto.
+    wp_apply (wp_Id__Equal va.(yjs.Item.id') vb.(yjs.Item.id')).
+    have Heq : bool_decide (oid_of (Some va) = oid_of (Some vb))
+             = bool_decide (toYjsId va.(yjs.Item.id') = toYjsId vb.(yjs.Item.id')).
+    { apply bool_decide_ext. rewrite /oid_of /=. by split; congruence. }
+    iEval (rewrite Heq) in "HΦ". iApply "HΦ". rewrite /item_or_null. iFrame.
+    iSplit; iPureIntro; assumption.
+  - iDestruct "Ha" as "[%Hpa Hpa]". iDestruct "Hb" as "%Hpb". subst pb.
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    iApply "HΦ". rewrite /item_or_null. iFrame.
+    iSplit; iPureIntro; [assumption | reflexivity].
+  - iDestruct "Ha" as "%Hpa". iDestruct "Hb" as "[%Hpb Hpb]". subst pa.
+    wp_auto. rewrite (bool_decide_eq_false_2 (pb = null) Hpb). wp_auto.
+    iApply "HΦ". rewrite /item_or_null. iFrame.
+    iSplit; iPureIntro; [reflexivity | assumption].
+  - iDestruct "Ha" as "%Hpa". iDestruct "Hb" as "%Hpb". subst pa pb.
+    wp_auto. iApply "HΦ". rewrite /item_or_null. iSplit; iPureIntro; reflexivity.
+Qed.
+
+(** [containsId] decides membership of the id slice as a [gset] (via [toYjsId]). *)
+Lemma wp_containsId (s : slice.t) (vs : list yjs.Id.t) (id : yjs.Id.t) (dq : dfrac) :
+  {{{ is_pkg_init yjs ∗ s ↦*{dq} vs }}}
+    @! yjs.containsId #s #id
+  {{{ RET #(bool_decide (toYjsId id ∈ (list_to_set (toYjsId <$> vs) : gset YjsId)));
+      s ↦*{dq} vs }}}.
+Proof.
+  wp_start as "Hs". wp_auto.
+  iAssert (∃ (i : w64) (xv : yjs.Id.t),
+    "Hi" ∷ i_ptr ↦ i ∗ "Hx" ∷ x_ptr ↦ xv ∗ "Hs" ∷ s ↦*{dq} vs ∗
+    "%Hib" ∷ ⌜(0 ≤ uint.Z i ≤ Z.of_nat (length vs))%Z⌝ ∗
+    "%Hnf" ∷ ⌜toYjsId id ∉ (list_to_set (toYjsId <$> take (uint.nat i) vs) : gset YjsId)⌝)%I
+    with "[i x Hs]" as "IH".
+  { iExists (W64 0), _. iFrame. iPureIntro.
+    replace (uint.nat (W64 0)) with 0%nat by word.
+    rewrite take_0 /=. split_and!; [word | word | set_solver]. }
+  wp_for "IH".
+  iDestruct (own_slice_len with "Hs") as %[Hslen Hslen0].
+  destruct (bool_decide (sint.Z i < sint.Z s.(slice.len))) eqn:Hlt.
+  - apply bool_decide_eq_true_1 in Hlt.
+    have Hilt : (uint.nat i < length vs)%nat by word.
+    wp_auto. rewrite decide_True; last by word.
+    destruct (vs !! uint.nat i) as [v|] eqn:Hv;
+      last by (apply lookup_lt_is_Some_2 in Hilt; rewrite Hv in Hilt; by destruct Hilt).
+    iDestruct (own_slice_elem_acc (sint.Z i) v s dq vs with "Hs") as "[Hel Hrest]".
+    { word. }
+    { replace (Z.to_nat (sint.Z i)) with (uint.nat i) by word. exact Hv. }
+    wp_auto. wp_method_call; wp_call; wp_auto. wp_apply (wp_Id__Equal v id).
+    have Hv' : vs !! sint.nat i = Some v.
+    { replace (sint.nat i) with (uint.nat i) by word. exact Hv. }
+    iDestruct ("Hrest" $! v with "Hel") as "Hs".
+    iEval (rewrite (list_insert_id _ _ _ Hv')) in "Hs".
+    wp_if_destruct.
+    + wp_for_post.
+      have Hin : toYjsId id ∈ (list_to_set (toYjsId <$> vs) : gset YjsId).
+      { rewrite elem_of_list_to_set.
+        apply (list_elem_of_fmap_2' toYjsId vs v);
+          [ by eapply list_elem_of_lookup_2 | by rewrite e ]. }
+      iEval (rewrite (bool_decide_eq_true_2 _ Hin)) in "HΦ". iApply "HΦ". iFrame.
+    + wp_for_post.
+      iFrame "HΦ id". iExists (word.add i (W64 1)), v. iFrame.
+      iPureIntro. split.
+      * word.
+      * replace (uint.nat (word.add i (W64 1))) with (S (uint.nat i)) by word.
+        rewrite (take_S_r _ _ v); [| exact Hv].
+        rewrite fmap_app list_to_set_app.
+        apply not_elem_of_union. split; [exact Hnf | set_solver].
+  - apply bool_decide_eq_false in Hlt. wp_auto.
+    have Hge : (length vs <= uint.nat i)%nat by word.
+    rewrite (take_ge _ _ Hge) in Hnf.
+    iEval (rewrite (bool_decide_eq_false_2 _ Hnf)) in "HΦ".
+    iApply "HΦ". iFrame.
+Qed.
+
+(* ----- findById: locate a node by id in the DLL ------------------------- *)
+
+(** The cell predicate [findById] decides: a cell whose model id is [toYjsId idv].
+    [findById] returns the first matching node's location, or [null]. *)
+Definition cell_has_id (idv : yjs.Id.t) (c : item_cell) : Prop :=
+  toYjsId (ic_val c).(yjs.Item.id') = toYjsId idv.
+
+#[local] Instance cell_has_id_dec idv c : Decision (cell_has_id idv c).
+Proof. rewrite /cell_has_id. apply _. Defined.
+
+(** Result location of [findById] over a cell list: first match, else [null]. *)
+Definition findById_res (cells : list item_cell) (idv : yjs.Id.t) : loc :=
+  match list_find (cell_has_id idv) cells with
+  | Some (_, c) => ic_loc c
+  | None => null
+  end.
+
+Lemma wp_findById (parent : loc) (cells : list item_cell) (arr : list (YjsItem A))
+    (idv : yjs.Id.t) :
+  {{{ is_pkg_init yjs ∗ is_ytext parent cells arr }}}
+    @! yjs.findById #parent #idv
+  {{{ RET #(findById_res cells idv); is_ytext parent cells arr }}}.
+Proof.
+  wp_start as "Ht". iNamed "Ht". wp_auto.
+  iAssert (∃ (cur ml : loc) (scanned remaining : list item_cell),
+    "Hcur" ∷ cur_ptr ↦ cur ∗
+    "Hpre" ∷ is_dll yt.(yjs.YText.start') ml null cur scanned ∗
+    "Hrem" ∷ is_dll cur tl ml null remaining ∗
+    "%Hsplit" ∷ ⌜cells = scanned ++ remaining⌝ ∗
+    "%Hnone" ∷ ⌜list_find (cell_has_id idv) scanned = None⌝)%I
+    with "[cur Hdll]" as "IH".
+  { iExists yt.(yjs.YText.start'), null, [], cells. iFrame "cur Hdll". simpl. iPureIntro.
+    split_and!; done. }
+  wp_for "IH".
+  case_bool_decide as Hcn; simpl.
+  - rewrite decide_False //. rewrite decide_True //. wp_auto.
+    subst cur. iDestruct (is_dll_null_nil with "Hrem") as %->.
+    rewrite app_nil_r in Hsplit. subst cells.
+    have Hres : findById_res scanned idv = null by (rewrite /findById_res Hnone //).
+    iEval (rewrite Hres) in "HΦ". iApply "HΦ". iExists yt, ml. iFrame "Hparent Hpre". done.
+  - rewrite decide_True //.
+    destruct remaining as [|c rest];
+      first by (iDestruct "Hrem" as %[Hc _]; rewrite Hc in Hcn; done).
+    iNamed "Hrem". destruct Hloc as [Hcureq Hcurnn]. subst cur.
+    wp_auto. wp_method_call; wp_call; wp_auto.
+    wp_apply (wp_Id__Equal (ic_val c).(yjs.Item.id') idv).
+    destruct (bool_decide (toYjsId c.(ic_val).(yjs.Item.id') = toYjsId idv)) eqn:Heq.
+    + apply bool_decide_eq_true_1 in Heq. wp_auto. wp_for_post.
+      have Hres : findById_res cells idv = c.(ic_loc).
+      { rewrite /findById_res Hsplit (list_find_app_r _ _ _ Hnone) /=.
+        destruct (decide (cell_has_id idv c)) as [Hd|Hd]; [done | exfalso; apply Hd; exact Heq]. }
+      iEval (rewrite Hres) in "HΦ". iApply "HΦ".
+      iExists yt, tl. iFrame "Hparent".
+      iSplitL "Hpre Hval Holeft Horight Hrest".
+      * rewrite Hsplit. iApply is_dll_app. iExists ml, (c.(ic_loc)). iFrame "Hpre".
+        simpl. iFrame "Hval Holeft Horight Hrest".
+        iPureIntro; split_and!; [done | exact Hcurnn | exact Hprev].
+      * iPureIntro; split; [exact Hlen | exact Hrepr].
+    + apply bool_decide_eq_false in Heq. wp_auto. wp_for_post.
+      iFrame "HΦ id Hparent".
+      iExists (c.(ic_val).(yjs.Item.right')), (c.(ic_loc)), (scanned ++ [c]), rest.
+      iFrame "Hcur".
+      iSplitL "Hpre Hval Holeft Horight".
+      * iApply is_dll_app. iExists ml, (c.(ic_loc)). iFrame "Hpre".
+        simpl. iFrame "Hval Holeft Horight".
+        iPureIntro; split_and!; [done | exact Hcurnn | exact Hprev | done | done].
+      * iFrame "Hrest". iPureIntro. split.
+        { by rewrite Hsplit -app_assoc. }
+        apply list_find_app_None. split; [exact Hnone|].
+        simpl. destruct (decide (cell_has_id idv c)) as [Hc|Hc];
+          [exfalso; exact (Heq Hc) | done].
+Qed.
+
+(** Loop invariant for the conflict scan in [Integrate]. The heap loop refines
+    the pure set-based loop [setfii_loop] *directly*: the heap slices
+    [itemsBeforeOrigin] / [conflictingItems] literally carry the [setfii_loop]
+    accumulators [ibo] / [ci] (as [gset]s), and the loop's progress is tracked by
+    a fuel equation — the remaining run from the current state equals the fixed
+    overall result [D]. (The [setfii_loop ↔ fii_loop] equivalence is a separate,
+    already-proved fact used only to inherit [YjsArrInvariant].)
+
+    - [conflict_l] (Go [conflict]) sits at the cursor node, index [leftIdx+offset]
+      — the next item to scan ([other = arr !! (leftIdx + offset)]);
+    - [left_l] (Go [left]) is the anchor: the node just left of the insert point,
+      index [destIdx - 1] (so [item] is spliced after it);
+    - [right_l] (Go [right]) is loop-constant at index [rightIdx] (the right
+      origin / [Last]); the [conflict == right] break is [leftIdx+offset = rightIdx];
+    - [Hloop]: from the current accumulators, the remaining
+      [Z.to_nat (rightIdx - leftIdx) - offset] steps of [setfii_loop] still
+      compute [D]. With [Hbound] / [Hdest] this makes the Go [for conflict ≠ nil]
+      test (with the [== right] break) consume exactly the loop's fuel.
+    [is_fresh_item] and the [parent.len] field are loop-constant, framed outside. *)
+Definition integrate_loop_inv
+    (parent : loc) (cells : list item_cell) (arr : list (YjsItem A))
+    (leftIdx rightIdx : Z) (oLeftId oRightId : option YjsId) (newId : YjsId)
+    (D : option Z) (conflict_l left_l right_l ibo_l ci_l : loc)
+    (offset : nat) (ibo ci : gset YjsId) (destIdx : Z) : iProp Σ :=
+  "Htext" ∷ is_ytext parent cells arr ∗
+  "Hconflict" ∷ conflict_l ↦ node_loc cells (leftIdx + Z.of_nat offset) ∗
+  "Hleft" ∷ left_l ↦ node_loc cells (destIdx - 1) ∗
+  "Hright" ∷ right_l ↦ node_loc cells rightIdx ∗
+  "Hibo" ∷ (∃ ibo_sl : slice.t, "Hiboref" ∷ ibo_l ↦ ibo_sl ∗ "Hiboset" ∷ is_id_set ibo_sl ibo) ∗
+  "Hci" ∷ (∃ ci_sl : slice.t, "Hciref" ∷ ci_l ↦ ci_sl ∗ "Hciset" ∷ is_id_set ci_sl ci) ∗
+  "%Hoff" ∷ ⌜(1 <= offset)%nat⌝ ∗
+  "%Hdest" ∷ ⌜(leftIdx + 1 <= destIdx <= leftIdx + Z.of_nat offset)%Z⌝ ∗
+  "%Hbound" ∷ ⌜(leftIdx + Z.of_nat offset <= rightIdx)%Z⌝ ∗
+  "%Hloop" ∷ ⌜setfii_loop (Z.to_nat (rightIdx - leftIdx) - offset) offset leftIdx rightIdx
+                 oLeftId oRightId newId arr ibo ci destIdx = D⌝.
+
+(* ===== the Integrate WP specification ==================================== *)
+
+(** [is_fresh_item item_l input iv oleft oright]: [item_l] is a freshly-built
+    heap [Item] (not yet linked) whose id / content and origin-id cells carry the
+    integration [input]. Its abstract model item is [newItem = toItem input arr]
+    — that link is a side condition of the spec (a fresh item's resolved origins
+    depend on the current document [arr]), so it is *not* restated here. The
+    integrate algorithm resolves [left]/[right] from the origin ids and splices
+    [item_l] into the document. *)
+Definition is_fresh_item (item_l : loc) (input : IntegrateInput (A := A))
+    (iv : yjs.Item.t) (oleft oright : option yjs.Id.t) : iProp Σ :=
+  "Hitem" ∷ item_l ↦ iv ∗
+  "Holeft" ∷ is_origin_id iv.(yjs.Item.originLeftId') oleft ∗
+  "Horight" ∷ is_origin_id iv.(yjs.Item.originRightId') oright ∗
+  "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId input⌝ ∗   (* heap ids = input ids *)
+  "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId input⌝ ∗
+  "%Hid" ∷ ⌜toYjsId iv.(yjs.Item.id') = in_id input⌝ ∗
+  "%Hcontent" ∷ ⌜toContent iv.(yjs.Item.content') = in_content input⌝.
+
+(** Top-level spec: integrating a valid item into a valid document yields the
+    document updated per the pure [setintegrate]; validity (hence order /
+    convergence, via [setintegrate_eq_integrate]) is preserved. *)
+Lemma wp_Store__Integrate (s parent item_l : loc) (arr arr' : list (YjsItem A))
+    (input : IntegrateInput (A := A)) (newItem : YjsItem A)
+    (iv : yjs.Item.t) (oleft oright : option yjs.Id.t) :
+  YjsArrInvariant arr ->
+  toItem input arr = Some newItem ->
+  IsItemValid newItem ->
+  maximalId newItem arr ->
+  setintegrate input arr = Some arr' ->
+  {{{ is_pkg_init yjs ∗ is_valid_ytext parent arr ∗
+      is_fresh_item item_l input iv oleft oright }}}
+    s @! (go.PointerType yjs.Store) @! "Integrate" #parent #item_l
+  {{{ RET #(); is_valid_ytext parent arr' }}}.
+Proof using All.
+Admitted.
 
 End invariant.
