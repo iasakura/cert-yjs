@@ -163,6 +163,21 @@ Inductive cells_repr (m : list (YjsItem A)) : list item_cell -> list (YjsItem A)
       cells_repr m cs ys ->
       cells_repr m (c :: cs) (yi :: ys).
 
+(** The isomorphism is length-preserving and cellwise. *)
+Lemma cells_repr_length m cells items :
+  cells_repr m cells items -> length cells = length items.
+Proof. by elim=> [|c yi cs ys _ _ IH] //=; rewrite IH. Qed.
+
+Lemma cells_repr_lookup m cells items k c :
+  cells_repr m cells items -> cells !! k = Some c ->
+  ∃ yi, items !! k = Some yi ∧ cell_repr m c yi.
+Proof.
+  move=> H; elim: H k c => [|c0 yi cs ys Hc _ IH] k c.
+  - by case: k.
+  - case: k => [|k'] /=; first by move=> [<-]; exists yi.
+    exact: IH.
+Qed.
+
 (** [is_ytext parent cells arr]: [parent] is a heap [YText] whose [start] heads
     the DLL [cells], which is isomorphic to the model [arr]. (Phase-2: every item
     is countable / non-deleted, so [len] = number of nodes.) *)
@@ -377,6 +392,58 @@ Definition findById_res (cells : list item_cell) (idv : yjs.Id.t) : loc :=
   | Some (_, c) => ic_loc c
   | None => null
   end.
+
+(** Under the isomorphism, the heap [cell_has_id] search and the model id search
+    agree (same index, corresponding cell/item). *)
+Lemma list_find_cells_repr m cells items (idv : yjs.Id.t) :
+  cells_repr m cells items ->
+  match list_find (cell_has_id idv) cells,
+        list_find (fun it => item_id it = toYjsId idv) items with
+  | Some (k1, c), Some (k2, yi) => k1 = k2 /\ cell_repr m c yi
+  | None, None => True
+  | _, _ => False
+  end.
+Proof.
+  elim=> [|c0 yi0 cs ys Hc Hcs IH] //=.
+  have [Hid _] := Hc.
+  have Hiff : cell_has_id idv c0 <-> item_id yi0 = toYjsId idv by rewrite /cell_has_id Hid.
+  case: (decide (cell_has_id idv c0)) => Hd1; case: (decide (item_id yi0 = toYjsId idv)) => Hd2 /=.
+  - split; [done | exact Hc].
+  - exfalso; apply Hd2; apply/Hiff; exact: Hd1.
+  - exfalso; apply Hd1; apply/Hiff; exact: Hd2.
+  - move: IH; case: (list_find (cell_has_id idv) cs) => [[k1 c]|];
+      case: (list_find (fun it => item_id it = toYjsId idv) ys) => [[k2 yi']|] //=.
+    by move=> [-> ?].
+Qed.
+
+(** Repair correspondence: [findById] returns the node at the model index of the
+    item with the given id (or [null] when absent). *)
+Lemma findById_res_correspond cells arr (idv : yjs.Id.t) (k : nat) (yi : YjsItem A) :
+  cells_repr arr cells arr ->
+  list_find (fun it => item_id it = toYjsId idv) arr = Some (k, yi) ->
+  findById_res cells idv = node_loc cells (Z.of_nat k).
+Proof.
+  move=> Hrepr Hfind.
+  have Hmatch := list_find_cells_repr arr cells arr idv Hrepr.
+  rewrite Hfind in Hmatch.
+  move: Hmatch. case Hcf: (list_find (cell_has_id idv) cells) => [[k1 c]|]; last done.
+  move=> [<- Hcr].
+  rewrite /findById_res Hcf.
+  have /list_find_Some [Hck _] := Hcf.
+  rewrite /node_loc decide_True; last lia.
+  by rewrite Nat2Z.id Hck.
+Qed.
+
+Lemma findById_res_none cells arr (idv : yjs.Id.t) :
+  cells_repr arr cells arr ->
+  list_find (fun it => item_id it = toYjsId idv) arr = None ->
+  findById_res cells idv = null.
+Proof.
+  move=> Hrepr Hfind. rewrite /findById_res.
+  have Hmatch := list_find_cells_repr arr cells arr idv Hrepr.
+  rewrite Hfind in Hmatch.
+  by case: (list_find (cell_has_id idv) cells) Hmatch => [[k c]|].
+Qed.
 
 Lemma wp_findById (parent : loc) (cells : list item_cell) (arr : list (YjsItem A))
     (idv : yjs.Id.t) :
