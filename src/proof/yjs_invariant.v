@@ -358,6 +358,79 @@ Proof.
     iApply "HΦ". iFrame.
 Qed.
 
+(* ----- findById: locate a node by id in the DLL ------------------------- *)
+
+(** The cell predicate [findById] decides: a cell whose model id is [toYjsId idv].
+    [findById] returns the first matching node's location, or [null]. *)
+Definition cell_has_id (idv : yjs.Id.t) (c : item_cell) : Prop :=
+  toYjsId (ic_val c).(yjs.Item.id') = toYjsId idv.
+
+#[local] Instance cell_has_id_dec idv c : Decision (cell_has_id idv c).
+Proof. rewrite /cell_has_id. apply _. Defined.
+
+(** Result location of [findById] over a cell list: first match, else [null]. *)
+Definition findById_res (cells : list item_cell) (idv : yjs.Id.t) : loc :=
+  match list_find (cell_has_id idv) cells with
+  | Some (_, c) => ic_loc c
+  | None => null
+  end.
+
+Lemma wp_findById (parent : loc) (cells : list item_cell) (arr : list (YjsItem A))
+    (idv : yjs.Id.t) :
+  {{{ is_pkg_init yjs ∗ is_ytext parent cells arr }}}
+    @! yjs.findById #parent #idv
+  {{{ RET #(findById_res cells idv); is_ytext parent cells arr }}}.
+Proof.
+  wp_start as "Ht". iNamed "Ht". wp_auto.
+  iAssert (∃ (cur ml : loc) (scanned remaining : list item_cell),
+    "Hcur" ∷ cur_ptr ↦ cur ∗
+    "Hpre" ∷ is_dll yt.(yjs.YText.start') ml null cur scanned ∗
+    "Hrem" ∷ is_dll cur tl ml null remaining ∗
+    "%Hsplit" ∷ ⌜cells = scanned ++ remaining⌝ ∗
+    "%Hnone" ∷ ⌜list_find (cell_has_id idv) scanned = None⌝)%I
+    with "[cur Hdll]" as "IH".
+  { iExists yt.(yjs.YText.start'), null, [], cells. iFrame "cur Hdll". simpl. iPureIntro.
+    split_and!; done. }
+  wp_for "IH".
+  case_bool_decide as Hcn; simpl.
+  - rewrite decide_False //. rewrite decide_True //. wp_auto.
+    subst cur. iDestruct (is_dll_null_nil with "Hrem") as %->.
+    rewrite app_nil_r in Hsplit. subst cells.
+    have Hres : findById_res scanned idv = null by (rewrite /findById_res Hnone //).
+    iEval (rewrite Hres) in "HΦ". iApply "HΦ". iExists yt, ml. iFrame "Hparent Hpre". done.
+  - rewrite decide_True //.
+    destruct remaining as [|c rest];
+      first by (iDestruct "Hrem" as %[Hc _]; rewrite Hc in Hcn; done).
+    iNamed "Hrem". destruct Hloc as [Hcureq Hcurnn]. subst cur.
+    wp_auto. wp_method_call; wp_call; wp_auto.
+    wp_apply (wp_Id__Equal (ic_val c).(yjs.Item.id') idv).
+    destruct (bool_decide (toYjsId c.(ic_val).(yjs.Item.id') = toYjsId idv)) eqn:Heq.
+    + apply bool_decide_eq_true_1 in Heq. wp_auto. wp_for_post.
+      have Hres : findById_res cells idv = c.(ic_loc).
+      { rewrite /findById_res Hsplit (list_find_app_r _ _ _ Hnone) /=.
+        destruct (decide (cell_has_id idv c)) as [Hd|Hd]; [done | exfalso; apply Hd; exact Heq]. }
+      iEval (rewrite Hres) in "HΦ". iApply "HΦ".
+      iExists yt, tl. iFrame "Hparent".
+      iSplitL "Hpre Hval Holeft Horight Hrest".
+      * rewrite Hsplit. iApply is_dll_app. iExists ml, (c.(ic_loc)). iFrame "Hpre".
+        simpl. iFrame "Hval Holeft Horight Hrest".
+        iPureIntro; split_and!; [done | exact Hcurnn | exact Hprev].
+      * iPureIntro; split; [exact Hlen | exact Hrepr].
+    + apply bool_decide_eq_false in Heq. wp_auto. wp_for_post.
+      iFrame "HΦ id Hparent".
+      iExists (c.(ic_val).(yjs.Item.right')), (c.(ic_loc)), (scanned ++ [c]), rest.
+      iFrame "Hcur".
+      iSplitL "Hpre Hval Holeft Horight".
+      * iApply is_dll_app. iExists ml, (c.(ic_loc)). iFrame "Hpre".
+        simpl. iFrame "Hval Holeft Horight".
+        iPureIntro; split_and!; [done | exact Hcurnn | exact Hprev | done | done].
+      * iFrame "Hrest". iPureIntro. split.
+        { by rewrite Hsplit -app_assoc. }
+        apply list_find_app_None. split; [exact Hnone|].
+        simpl. destruct (decide (cell_has_id idv c)) as [Hc|Hc];
+          [exfalso; exact (Heq Hc) | done].
+Qed.
+
 (** Loop invariant for the conflict scan in [Integrate]. The heap loop refines
     the pure set-based loop [setfii_loop] *directly*: the heap slices
     [itemsBeforeOrigin] / [conflictingItems] literally carry the [setfii_loop]
