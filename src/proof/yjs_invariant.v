@@ -1,4 +1,4 @@
-(** The cert-yjs heap representation of a [YText] and the invariants for
+  (** The cert-yjs heap representation of a [YText] and the invariants for
     verifying [Store.Integrate].
 
     Design (two combined invariants, per the plan):
@@ -626,6 +626,24 @@ Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc : loc)
   {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
       is_ytext parent cells arr ∗ is_fresh_item item_l input iv oleft oright }}}.
 Proof using All.
+  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hll Hrl.
+  wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh". wp_auto.
+  (* Index bounds via the pure model (mirrors setintegrate_eq_integrate). *)
+  have Huniq := yai_unique _ Harr.
+  have HfLp : findPtrIdx (origin newItem) arr = Some leftIdx.
+  { rewrite -(toitem_lemmas.findLeftIdx_findPtrIdx_eq input newItem arr Huniq Htoitem). exact HfindL. }
+  have HfRp : findPtrIdx (rightOrigin newItem) arr = Some rightIdx.
+  { rewrite -(toitem_lemmas.findRightIdx_findPtrIdx_eq input newItem arr Huniq Htoitem). exact HfindR. }
+  have Horig := findptridx_getelem.findPtrIdx_ArrSet arr (origin newItem) leftIdx HfLp.
+  have Hror := findptridx_getelem.findPtrIdx_ArrSet arr (rightOrigin newItem) rightIdx HfRp.
+  have HlB := insert_lemmas.findPtrIdx_ge_minus_1 arr (origin newItem) leftIdx HfLp.
+  have Hlr := findptridx_order2.YjsLt'_findPtrIdx_lt arr (origin newItem) (rightOrigin newItem)
+                leftIdx rightIdx Harr Horig Hror (iiv_origin_lt _ Hvalid) HfLp HfRp.
+  (* Remaining: entry condition (read left/right neighbour fields) -> conflict
+     scan via wp_for + integrate_loop_inv (each Go branch matched to a setfii_loop
+     unfold using wp_idOptEqual / wp_itemPtrEqual / wp_containsId and the
+     cell_repr origin_id facts) -> exit pinned by HfindD. *)
+  admit.
 Admitted.
 
 (** Top-level spec: integrating a valid item into a valid document yields the
