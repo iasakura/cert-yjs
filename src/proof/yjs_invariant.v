@@ -565,6 +565,8 @@ Definition is_fresh_item (item_l : loc) (input : IntegrateInput (A := A))
   "Hitem" ∷ item_l ↦ iv ∗
   "Holeft" ∷ is_origin_id iv.(yjs.Item.originLeftId') oleft ∗
   "Horight" ∷ is_origin_id iv.(yjs.Item.originRightId') oright ∗
+  "%Hfl" ∷ ⌜iv.(yjs.Item.left') = null⌝ ∗   (* unlinked: NewItem sets left/right nil *)
+  "%Hfr" ∷ ⌜iv.(yjs.Item.right') = null⌝ ∗
   "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId input⌝ ∗   (* heap ids = input ids *)
   "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId input⌝ ∗
   "%Hid" ∷ ⌜toYjsId iv.(yjs.Item.id') = in_id input⌝ ∗
@@ -586,6 +588,27 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr arr' : list (YjsItem A))
     s @! (go.PointerType yjs.Store) @! "Integrate" #parent #item_l
   {{{ RET #(); is_valid_ytext parent arr' }}}.
 Proof using All.
+  move=> Harr Htoitem Hvalid Hmax.
+  (* Decompose the pure result: leftIdx / rightIdx / destIdx / itemM and
+     arr' = insertIdxIfInBounds destIdx itemM arr. *)
+  rewrite /setintegrate.
+  case HfindL: (findLeftIdx (in_originId input) arr) => [leftIdx|] //=.
+  case HfindR: (findRightIdx (in_rightOriginId input) arr) => [rightIdx|] //=.
+  case HfindD: (setfindIntegratedIndex leftIdx rightIdx input arr) => [destIdx|] //=.
+  case HmkI: (mkItemByIndex leftIdx rightIdx input arr) => [itemM|] //=.
+  move=> [<-].
+  (* Operational refinement (remaining work):
+     1. repair: item.left/right := findById (origin ids); by
+        findById_res_correspond (+ HfindL/HfindR, is_fresh_item's left'/right' =
+        null) they equal node_loc cells leftIdx / rightIdx.
+     2. entry condition + conflict scan: wp_for with integrate_loop_inv, each Go
+        branch matched to a setfii_loop unfold; HfindD pins the exit destIdx.
+     3. splice: is_dll_app to split at destIdx, wp_store to relink
+        left.right / right.left / item, is_dll_app to rejoin; cells_repr_insert
+        for the model side; parent.len += 1.
+     4. conclude is_valid_ytext parent (insertIdxIfInBounds destIdx itemM arr),
+        YjsArrInvariant via YjsArrInvariant_setintegrate. *)
+  admit.
 Admitted.
 
 End invariant.
