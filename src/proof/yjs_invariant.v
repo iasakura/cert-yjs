@@ -142,13 +142,16 @@ Definition resolve_right (m : list (YjsItem A)) (oid : option yjs.Id.t) : YjsPtr
   end.
 
 (** [cell_repr m c yi]: the model item [yi] is the one the heap cell [c]
-    represents — same id and content, with [yi]'s origins being [c]'s origin ids
-    resolved against the model [m]. *)
+    represents — same id and content, and [yi]'s origins carry exactly [c]'s
+    heap origin ids (as model ids). Stating origins by id (rather than by
+    resolution against [m]) is what the conflict scan needs to match
+    [setfii_loop]'s id tests, and rules out a heap origin id that fails to
+    resolve. ([m] is kept for uniformity with [cells_repr] / [resolve_*].) *)
 Definition cell_repr (m : list (YjsItem A)) (c : item_cell) (yi : YjsItem A) : Prop :=
   item_id yi = toYjsId (ic_val c).(yjs.Item.id') /\
   content yi = toContent (ic_val c).(yjs.Item.content') /\
-  origin yi = resolve_left m (ic_oleft c) /\
-  rightOrigin yi = resolve_right m (ic_oright c).
+  origin_id (origin yi) = toYjsId <$> ic_oleft c /\
+  origin_id (rightOrigin yi) = toYjsId <$> ic_oright c.
 
 (** [cells_repr m cells items]: the heap cell list represents the model item
     list cellwise (origins resolved against the full model [m]). This is the
