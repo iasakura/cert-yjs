@@ -409,13 +409,16 @@ func (s *Store) Integrate(parent *YText, item *Item) {
 					// Same integration points; item is to the left of conflict.
 					break
 				}
-			} else if conflict.originLeftId != nil {
+			} else if conflict.originLeftId != nil && containsId(itemsBeforeOrigin, *conflict.originLeftId) {
+				// case 2: conflict's left origin was already scanned.
 				col := *conflict.originLeftId
-				if containsId(itemsBeforeOrigin, col) && !containsId(conflictingItems, col) {
+				if !containsId(conflictingItems, col) {
 					left = conflict
 					conflictingItems = []Id{}
 				}
 			} else {
+				// conflict's left origin is before this run (or absent): the
+				// origin connections would cross, so stop (matches yrs).
 				break
 			}
 
