@@ -178,6 +178,20 @@ Proof.
     exact: IH.
 Qed.
 
+(** Inserting a corresponding cell/item at the same position preserves the
+    isomorphism (the splice's model side). *)
+Lemma cells_repr_insert m cells items (k : nat) c yi :
+  cells_repr m cells items -> cell_repr m c yi ->
+  cells_repr m (take k cells ++ c :: drop k cells) (take k items ++ yi :: drop k items).
+Proof.
+  move=> H Hc; elim: H k => [|c0 yi0 cs ys Hc0 Hrec IH] k.
+  - rewrite !take_nil !drop_nil /=. apply: cells_repr_cons; [exact Hc | exact: cells_repr_nil].
+  - case: k => [|k'] /=.
+    + apply: cells_repr_cons; first exact Hc.
+      apply: cells_repr_cons; [exact Hc0 | exact Hrec].
+    + apply: cells_repr_cons; [exact Hc0 | exact: IH].
+Qed.
+
 (** [is_ytext parent cells arr]: [parent] is a heap [YText] whose [start] heads
     the DLL [cells], which is isomorphic to the model [arr]. (Phase-2: every item
     is countable / non-deleted, so [len] = number of nodes.) *)
