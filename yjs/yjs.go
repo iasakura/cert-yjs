@@ -364,19 +364,11 @@ func findById(parent *YText, id Id) *Item {
 // way as y-octo's Store::integrate (the Yjs integrate algorithm). On return
 // item is spliced into the doubly linked list at its conflict-resolved position
 // and parent.len is updated.
-func (s *Store) Integrate(parent *YText, item *Item) {
-	// Resolve left/right from the origin ids (y-octo: Store::repair). With
-	// 1-char contents there is no split, so this is a direct lookup.
-	if item.originLeftId != nil {
-		item.left = findById(parent, *item.originLeftId)
-	}
-	if item.originRightId != nil {
-		item.right = findById(parent, *item.originRightId)
-	}
-
-	left := item.left
-	right := item.right
-
+// findIntegrationLeft scans the run of concurrent items between left and right
+// and returns the conflict-resolved left anchor: the item after which `item`
+// integrates (the Yjs integrate conflict resolution). It is the algorithmic
+// core; it reads the document but mutates nothing, only choosing the anchor.
+func findIntegrationLeft(parent *YText, item *Item, left *Item, right *Item) *Item {
 	rightIsNullOrHasLeft := right == nil || right.left != nil
 	leftHasOtherRightThanSelf := left != nil && !itemPtrEqual(left.right, right)
 
@@ -425,6 +417,24 @@ func (s *Store) Integrate(parent *YText, item *Item) {
 			conflict = conflict.right
 		}
 	}
+	return left
+}
+
+func (s *Store) Integrate(parent *YText, item *Item) {
+	// Resolve left/right from the origin ids (y-octo: Store::repair). With
+	// 1-char contents there is no split, so this is a direct lookup.
+	if item.originLeftId != nil {
+		item.left = findById(parent, *item.originLeftId)
+	}
+	if item.originRightId != nil {
+		item.right = findById(parent, *item.originRightId)
+	}
+
+	left := item.left
+	right := item.right
+
+	// Conflict resolution (the algorithmic core, extracted for verification).
+	left = findIntegrationLeft(parent, item, left, right)
 
 	// Reconnect: left <-> item <-> right.
 	if left != nil {
