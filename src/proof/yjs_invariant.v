@@ -602,6 +602,32 @@ Definition is_fresh_item (item_l : loc) (input : IntegrateInput (A := A))
   "%Hid" ∷ ⌜toYjsId iv.(yjs.Item.id') = in_id input⌝ ∗
   "%Hcontent" ∷ ⌜toContent iv.(yjs.Item.content') = in_content input⌝.
 
+(** The algorithmic core (extracted Go function): the conflict scan returns the
+    resolved left anchor — the node at index [destIdx - 1], where [destIdx] is
+    the pure [setfindIntegratedIndex]. This is the WP refinement of the loop onto
+    [setfii_loop]; [Store.Integrate] is then repair -> this -> splice. *)
+Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc : loc)
+    (cells : list item_cell) (arr : list (YjsItem A))
+    (input : IntegrateInput (A := A)) (newItem : YjsItem A)
+    (iv : yjs.Item.t) (oleft oright : option yjs.Id.t)
+    (leftIdx rightIdx : Z) (destIdx : nat) :
+  YjsArrInvariant arr ->
+  toItem input arr = Some newItem ->
+  IsItemValid newItem ->
+  maximalId newItem arr ->
+  findLeftIdx (in_originId input) arr = Some leftIdx ->
+  findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
+  setfindIntegratedIndex leftIdx rightIdx input arr = Some destIdx ->
+  left_loc = node_loc cells leftIdx ->
+  right_loc = node_loc cells rightIdx ->
+  {{{ is_pkg_init yjs ∗ is_ytext parent cells arr ∗
+      is_fresh_item item_l input iv oleft oright }}}
+    @! yjs.findIntegrationLeft #parent #item_l #left_loc #right_loc
+  {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
+      is_ytext parent cells arr ∗ is_fresh_item item_l input iv oleft oright }}}.
+Proof using All.
+Admitted.
+
 (** Top-level spec: integrating a valid item into a valid document yields the
     document updated per the pure [setintegrate]; validity (hence order /
     convergence, via [setintegrate_eq_integrate]) is preserved. *)
