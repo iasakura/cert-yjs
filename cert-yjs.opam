@@ -15,8 +15,8 @@ depends: [
 
 pin-depends: [
   ["perennial.dev"             "git+https://github.com/mit-pdos/perennial#f884a505d89d3f6740f4baec515602494a9bd4cc"]
-  ["rocq-yjs.dev"              "git+https://github.com/iasakura/iris-yjs#245ada52c55f96d157fe4cb585bbb7fff0049061"]
-  ["rocq-yjs-core.dev"         "git+https://github.com/iasakura/iris-yjs#245ada52c55f96d157fe4cb585bbb7fff0049061"]
+  ["rocq-yjs.dev"              "git+https://github.com/iasakura/iris-yjs#2947b30f0ab6e74cf1f3e2d98ed2b227c17f79ee"]
+  ["rocq-yjs-core.dev"         "git+https://github.com/iasakura/iris-yjs#2947b30f0ab6e74cf1f3e2d98ed2b227c17f79ee"]
 
   ## begin indirect
   ["coq-coqutil.dev"           "git+https://github.com/mit-plv/coqutil#cfd88cef005cda5ec400108606d27a0d40578a8f"]
