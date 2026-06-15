@@ -765,6 +765,25 @@ Proof.
       iDestruct ("Hback" with "Hval") as "Hdll". iFrame "Hdll". done.
 Qed.
 
+(** Small-context set rewrites for the scan accumulators. After a Go [append] of
+    the conflict id, an id slice abstracts to [X ∪ ({[a]} ∪ ∅)] (the trailing [∅]
+    is [list_to_set []] from the singleton tail); these relate that to the
+    [setfii_loop] accumulator form [{[a]} ∪ X]. Proving them as standalone lemmas
+    keeps [set_solver] on a tiny context — calling [set_solver] inside
+    [wp_scanConflicts] instead does [set_unfold in *] over the whole proof state
+    (including the [list_to_set] slice hypotheses) and is prohibitively slow. *)
+Lemma gset_union_singleton_swap (X : gset YjsId) (a : YjsId) :
+  (X ∪ ({[a]} ∪ ∅) : gset YjsId) = {[a]} ∪ X.
+Proof. set_solver. Qed.
+
+Lemma gset_elem_union_singleton_swap (X : gset YjsId) (a b : YjsId) :
+  b ∈ ({[a]} ∪ X) -> b ∈ (X ∪ ({[a]} ∪ ∅) : gset YjsId).
+Proof. set_solver. Qed.
+
+Lemma gset_not_elem_union_singleton_swap (X : gset YjsId) (a b : YjsId) :
+  b ∉ ({[a]} ∪ X) -> b ∉ (X ∪ ({[a]} ∪ ∅) : gset YjsId).
+Proof. set_solver. Qed.
+
 (** Loop invariant for the conflict scan in [Integrate]. The heap loop refines
     the pure set-based loop [setfii_loop] *directly*: the heap slices
     [itemsBeforeOrigin] / [conflictingItems] literally carry the [setfii_loop]
@@ -1014,7 +1033,7 @@ Proof using All.
            iSplitL "Hibo_ref Hibo_sl Hibo_cap".
            { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
              have H0 : sint.nat (W64 0) = 0%nat by word.
-             rewrite H0; simpl; rewrite fmap_app list_to_set_app_L Hibo_set /=; rewrite -HcId; set_solver. }
+             rewrite H0 fmap_app list_to_set_app_L Hibo_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
            iSplitL "Hci_ref Hci_empty Hci_empty_cap".
            { iExists _. iFrame "Hci_ref". iExists ([] : list yjs.Id.t). iFrame "Hci_empty Hci_empty_cap". done. }
            iPureIntro; split_and!;
@@ -1022,11 +1041,167 @@ Proof using All.
              | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia;
                replace (leftIdx + Z.of_nat offset + 1)%Z with (Z.of_nat (Z.to_nat (leftIdx + offset) + 1)) by lia;
                exact Hloop].
-        -- (* larger-or-equal client id: same integration points -> break, else continue *)
-           admit.
-      * (* different left origin: case 2 (already-scanned) or origins cross -> break *)
-        admit.
-Admitted.
+        -- (* larger-or-equal client id: same right origin -> break, else keep scanning *)
+           have HcltGe : ¬ ((item_id yi).(clientId) < input.(in_id).(clientId))%nat
+             by (rewrite HcId -Hid /toYjsId /=; word).
+           rewrite (decide_False _ _ HcltGe) in Hloop.
+           wp_auto.
+           wp_apply (wp_idOptEqual iv.(yjs.Item.originRightId') ci.(ic_val).(yjs.Item.originRightId')
+                       oright ci.(ic_oright) with "[$Horight $Hcor]").
+           case_bool_decide as HoeqR.
+           ++ (* same right origin: integration points coincide -> break *)
+              have HoeqRR : origin_id (rightOrigin yi) = input.(in_rightOriginId)
+                by rewrite HoR -HoeqR Hin_r.
+              rewrite (decide_True _ _ HoeqRR) in Hloop.
+              injection Hloop as HdestL.
+              wp_auto. subst destL.
+              iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+              wp_for_post.
+              have Hdpos : (0 <= d)%Z by lia.
+              replace (node_loc cells (d - 1)) with (node_loc cells (Z.of_nat destIdx - 1))
+                by (f_equal; rewrite -Hd_eq Z2Nat.id //).
+              iApply "HΦ". iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
+              rewrite /is_fresh_item. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done.
+           ++ (* different right origin: keep scanning, anchor unchanged *)
+              have HneqRR : origin_id (rightOrigin yi) ≠ input.(in_rightOriginId).
+              { rewrite HoR -Hin_r; move=> Heq; apply HoeqR; by rewrite Heq. }
+              rewrite (decide_False _ _ HneqRR) in Hloop.
+              wp_auto.
+              wp_for_post.
+              iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+              iFrame "HΦ item".
+              iExists (S offset), ({[item_id yi]} ∪ idsB), ({[item_id yi]} ∪ conflictI), destL.
+              rewrite /integrate_loop_inv /is_fresh_item.
+              iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_sl Hci_cap"; last first.
+              { iFrame "Hitem Holeft Horight".
+                iPureIntro; split_and!; [exact Hfl0|exact Hfr0|exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
+              iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
+              iSplitL "Hconflict".
+              { rewrite Hcr0. replace (leftIdx + Z.of_nat (S offset))%Z with (Z.to_nat (leftIdx + offset) + 1)%Z by lia. iFrame "Hconflict". }
+              iSplitL "Hleft". { iFrame "Hleft". }
+              iSplitL "Hright". { iFrame "Hright". }
+              iSplitL "Hibo_ref Hibo_sl Hibo_cap".
+              { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
+                have H0 : sint.nat (W64 0) = 0%nat by word.
+                rewrite H0 fmap_app list_to_set_app_L Hibo_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
+              iSplitL "Hci_ref Hci_sl Hci_cap".
+              { iExists ci_s2. iFrame "Hci_ref". iExists _. iFrame "Hci_sl Hci_cap". iPureIntro.
+                have H0 : sint.nat (W64 0) = 0%nat by word.
+                rewrite H0 fmap_app list_to_set_app_L Hci_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
+              iPureIntro; split_and!;
+                [lia | lia | lia | lia
+                | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia; exact Hloop].
+      * (* different left origin from the new item *)
+        have HoLne : origin_id (origin yi) ≠ input.(in_originId)
+          by (rewrite HoL -Hin_l; move=> Heq; apply Hoeq; by rewrite Heq).
+        rewrite (decide_False _ _ HoLne) in Hloop.
+        rewrite HoL in Hloop.
+        destruct (ci.(ic_oleft)) as [idv|] eqn:Hcoleft; last first.
+        -- (* conflict has no left origin: origins would cross -> break *)
+           iDestruct "Hcol" as "%Hcol_null".
+           simpl in Hloop. injection Hloop as HdestL.
+           wp_auto. rewrite Hcol_null. wp_auto. subst destL.
+           iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+           wp_for_post.
+           have Hdpos : (0 <= d)%Z by lia.
+           replace (node_loc cells (d - 1)) with (node_loc cells (Z.of_nat destIdx - 1))
+             by (f_equal; rewrite -Hd_eq Z2Nat.id //).
+           iApply "HΦ". iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
+           rewrite /is_fresh_item. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done.
+        -- (* conflict has a left origin [idv] (different from the new item's) *)
+           iDestruct "Hcol" as "[%Hcol_nn #Hcol_pt]".
+           simpl in Hloop.
+           wp_auto. rewrite bool_decide_eq_false_2; last exact Hcol_nn. wp_auto.
+           wp_apply (wp_containsId with "[$Hibo_sl]"). iIntros "Hibo_sl".
+           have H0 : sint.nat (W64 0) = 0%nat by word.
+           rewrite H0 fmap_app list_to_set_app_L Hibo_set.
+           cbn [insert list_insert fmap list_fmap list_to_set]. rewrite -HcId.
+           destruct (decide (toYjsId idv ∈ ({[item_id yi]} ∪ idsB : gset YjsId))) as [Hin_ibo | Hnin_ibo].
+           ++ (* conflict's left origin was already scanned (case 2) *)
+              have Hmem_ibo := gset_elem_union_singleton_swap idsB (item_id yi) (toYjsId idv) Hin_ibo.
+              rewrite (bool_decide_eq_true_2 _ Hmem_ibo).
+              (* the [destruct (decide ... ∈ idsB)] above already reduced Hloop's
+                 outer guard (it shares the Decision instance), so Hloop is now the
+                 inner [if decide (... ∉ conflictI)]. *)
+              wp_auto.
+              wp_apply (wp_containsId with "[$Hci_sl]"). iIntros "Hci_sl".
+              rewrite fmap_app list_to_set_app_L Hci_set.
+              cbn [insert list_insert fmap list_fmap list_to_set]. rewrite -HcId.
+              destruct (decide (toYjsId idv ∈ ({[item_id yi]} ∪ conflictI : gset YjsId))) as [Hin_ci | Hnin_ci].
+              ** (* already in conflictingItems: no anchor move, keep scanning (continue) *)
+                 have Hmem_ci := gset_elem_union_singleton_swap conflictI (item_id yi) (toYjsId idv) Hin_ci.
+                 rewrite (bool_decide_eq_true_2 _ Hmem_ci).
+                 have Hnn : ¬ (toYjsId idv ∉ ({[item_id yi]} ∪ conflictI : gset YjsId))
+                   by (move=> Hcontra; exact (Hcontra Hin_ci)).
+                 rewrite (decide_False _ _ Hnn) in Hloop.
+                 wp_auto.
+                 wp_for_post.
+                 iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+                 iFrame "HΦ item".
+                 iExists (S offset), ({[item_id yi]} ∪ idsB), ({[item_id yi]} ∪ conflictI), destL.
+                 rewrite /integrate_loop_inv /is_fresh_item.
+                 iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_sl Hci_cap"; last first.
+                 { iFrame "Hitem Holeft Horight".
+                   iPureIntro; split_and!; [exact Hfl0|exact Hfr0|exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
+                 iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
+                 iSplitL "Hconflict".
+                 { rewrite Hcr0. replace (leftIdx + Z.of_nat (S offset))%Z with (Z.to_nat (leftIdx + offset) + 1)%Z by lia. iFrame "Hconflict". }
+                 iSplitL "Hleft". { iFrame "Hleft". }
+                 iSplitL "Hright". { iFrame "Hright". }
+                 iSplitL "Hibo_ref Hibo_sl Hibo_cap".
+                 { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
+                   rewrite fmap_app list_to_set_app_L Hibo_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
+                 iSplitL "Hci_ref Hci_sl Hci_cap".
+                 { iExists ci_s2. iFrame "Hci_ref". iExists _. iFrame "Hci_sl Hci_cap". iPureIntro.
+                   rewrite fmap_app list_to_set_app_L Hci_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
+                 iPureIntro; split_and!;
+                   [lia | lia | lia | lia
+                   | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia; exact Hloop].
+              ** (* not yet in conflictingItems: advance the anchor (left := conflict) *)
+                 have Hmem_ci_neg := gset_not_elem_union_singleton_swap conflictI (item_id yi) (toYjsId idv) Hnin_ci.
+                 rewrite (bool_decide_eq_false_2 _ Hmem_ci_neg).
+                 rewrite (decide_True _ _ Hnin_ci) in Hloop.
+                 wp_auto.
+                 wp_apply wp_slice_literal. iSplitR; first done.
+                 iIntros "%ci_empty [Hci_empty Hci_empty_cap]". wp_auto.
+                 wp_for_post.
+                 iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+                 iFrame "HΦ item".
+                 iExists (S offset), ({[item_id yi]} ∪ idsB), ∅, (leftIdx + Z.of_nat offset + 1)%Z.
+                 rewrite /integrate_loop_inv /is_fresh_item.
+                 iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_empty Hci_empty_cap"; last first.
+                 { iFrame "Hitem Holeft Horight".
+                   iPureIntro; split_and!; [exact Hfl0|exact Hfr0|exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
+                 iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
+                 iSplitL "Hconflict".
+                 { rewrite Hcr0. replace (leftIdx + Z.of_nat (S offset))%Z with (Z.to_nat (leftIdx + offset) + 1)%Z by lia. iFrame "Hconflict". }
+                 iSplitL "Hleft".
+                 { replace (leftIdx + Z.of_nat offset + 1 - 1)%Z with (leftIdx + offset)%Z by lia. iFrame "Hleft". }
+                 iSplitL "Hright". { iFrame "Hright". }
+                 iSplitL "Hibo_ref Hibo_sl Hibo_cap".
+                 { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
+                   rewrite fmap_app list_to_set_app_L Hibo_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
+                 iSplitL "Hci_ref Hci_empty Hci_empty_cap".
+                 { iExists _. iFrame "Hci_ref". iExists ([] : list yjs.Id.t). iFrame "Hci_empty Hci_empty_cap". done. }
+                 iPureIntro; split_and!;
+                   [lia | lia | lia | lia
+                   | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia;
+                     replace (leftIdx + Z.of_nat offset + 1)%Z with (Z.of_nat (Z.to_nat (leftIdx + offset) + 1)) by lia;
+                     exact Hloop].
+           ++ (* conflict's left origin is before this run: origins cross -> break *)
+              have Hmem_ibo_neg := gset_not_elem_union_singleton_swap idsB (item_id yi) (toYjsId idv) Hnin_ibo.
+              rewrite (bool_decide_eq_false_2 _ Hmem_ibo_neg).
+              (* the [destruct] already reduced Hloop's guard to its else branch. *)
+              injection Hloop as HdestL.
+              wp_auto. subst destL.
+              iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+              wp_for_post.
+              have Hdpos : (0 <= d)%Z by lia.
+              replace (node_loc cells (d - 1)) with (node_loc cells (Z.of_nat destIdx - 1))
+                by (f_equal; rewrite -Hd_eq Z2Nat.id //).
+              iApply "HΦ". iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
+              rewrite /is_fresh_item. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done.
+Qed.
 
 (** The conflict scan with its entry guard: resolves whether to scan at all
     (y-octo's left/right-connection check), sets the initial cursor, and delegates
