@@ -459,6 +459,36 @@ Proof.
   by case: (list_find (cell_has_id idv) cells) Hmatch => [[k c]|].
 Qed.
 
+(** What [findById] yields in the repair step (left origin): the resolved
+    left-origin pointer equals the node at the model index [findLeftIdx]. The
+    [None] origin maps to [null = node_loc cells (-1)]. *)
+Lemma findById_left_node_loc cells arr (oid : option yjs.Id.t) (idx : Z) :
+  cells_repr arr cells arr ->
+  findLeftIdx (toYjsId <$> oid) arr = Some idx ->
+  match oid with Some idv => findById_res cells idv | None => null end = node_loc cells idx.
+Proof.
+  move=> Hrepr. case: oid => [idv|] /=.
+  - rewrite /findLeftIdx.
+    case Hlf: (list_find (fun item => item_id item = toYjsId idv) arr) => [[k yi]|] //=.
+    move=> [<-]. exact: (findById_res_correspond cells arr idv k yi Hrepr Hlf).
+  - move=> [<-]. rewrite /node_loc. by case: (decide (0 <= -1)%Z) => H; [exfalso; lia|].
+Qed.
+
+(** Same for the right origin: [None] maps to [null = node_loc cells (length)]. *)
+Lemma findById_right_node_loc cells arr (oid : option yjs.Id.t) (idx : Z) :
+  cells_repr arr cells arr ->
+  findRightIdx (toYjsId <$> oid) arr = Some idx ->
+  match oid with Some idv => findById_res cells idv | None => null end = node_loc cells idx.
+Proof.
+  move=> Hrepr. case: oid => [idv|] /=.
+  - rewrite /findRightIdx.
+    case Hlf: (list_find (fun item => item_id item = toYjsId idv) arr) => [[k yi]|] //=.
+    move=> [<-]. exact: (findById_res_correspond cells arr idv k yi Hrepr Hlf).
+  - move=> [<-]. rewrite /node_loc decide_True; last lia.
+    have Hlen := cells_repr_length _ _ _ Hrepr.
+    rewrite Nat2Z.id (lookup_ge_None_2 cells (length arr)) //. lia.
+Qed.
+
 Lemma wp_findById (parent : loc) (cells : list item_cell) (arr : list (YjsItem A))
     (idv : yjs.Id.t) :
   {{{ is_pkg_init yjs ∗ is_ytext parent cells arr }}}
