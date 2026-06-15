@@ -904,6 +904,7 @@ Proof using All.
     - iPureIntro; split_and!; [exact Hfl | exact Hfr | exact Hin_l | exact Hin_r | exact Hid | exact Hcontent]. }
   wp_for "IH".
   iDestruct "IH" as "[Hinv Hfresh]". iNamed "Hinv". iNamed "Hfresh".
+  iDestruct "Holeft" as "#Holeft". iDestruct "Horight" as "#Horight".
   wp_auto.
   destruct (decide (leftIdx + offset = Z.of_nat (length cells))%Z) as [Heq_len | Hne_len].
   - (* cursor reached the end: [conflict = nil], loop exits; fuel 0 pins [destL = d] *)
@@ -953,9 +954,78 @@ Proof using All.
       wp_for_post.
       iApply "HΦ". iFrame "Htext". rewrite /is_fresh_item. iFrame "Hitem Holeft Horight".
       iPureIntro; split_and!; done.
-    + (* conflict ≠ right: scan one item; match the 6 [setfii_loop] branches *)
+    + (* conflict ≠ right: scan one item; match the [setfii_loop] branches *)
       rewrite (bool_decide_eq_false_2 _ Hner).
-      admit.
+      have Hir : (leftIdx + offset < rightIdx)%Z by lia.
+      wp_auto.
+      have [yi [Hyi Hcr_repr]] := cells_repr_lookup _ _ _ _ _ Hrepr Hci.
+      iNamed "Htext".
+      iDestruct (is_dll_acc cells _ _ (Z.to_nat (leftIdx + offset)) ci Hci with "Hdll")
+        as "(%Hcloc0 & %Hcl0 & %Hcr0 & Hcival & #Hcol & #Hcor & Hback)".
+      iEval (rewrite -Hci_loc) in "Hcival".
+      wp_auto.
+      iDestruct "Hids_before" as (ibo_s) "[Hibo_ref Hibo_setf]".
+      iDestruct "Hibo_setf" as (vs_ibo) "(Hibo_sl & Hibo_cap & %Hibo_set)".
+      iDestruct "Hconflict_ids" as (ci_s) "[Hci_ref Hci_setf]".
+      iDestruct "Hci_setf" as (vs_ci) "(Hci_sl & Hci_cap & %Hci_set)".
+      wp_auto.
+      wp_apply wp_slice_literal. iSplitR; first done. iIntros "%sing1 [Hsing1 _]". wp_auto.
+      wp_apply (wp_slice_append with "[$Hibo_sl $Hibo_cap $Hsing1]").
+      iIntros "%ibo_s2 (Hibo_sl & Hibo_cap & _)". wp_auto.
+      wp_apply wp_slice_literal. iSplitR; first done. iIntros "%sing2 [Hsing2 _]". wp_auto.
+      wp_apply (wp_slice_append with "[$Hci_sl $Hci_cap $Hsing2]").
+      iIntros "%ci_s2 (Hci_sl & Hci_cap & _)". wp_auto.
+      wp_apply (wp_idOptEqual iv.(yjs.Item.originLeftId') ci.(ic_val).(yjs.Item.originLeftId')
+                  oleft ci.(ic_oleft) with "[$Holeft $Hcol]").
+      remember ((Z.to_nat (rightIdx - leftIdx) - offset)%nat) as fuel eqn:Hfuel_eq.
+      destruct fuel as [|count']; first (exfalso; lia).
+      cbn [setfii_loop] in Hloop. rewrite Hyi /= in Hloop.
+      have HcId := proj1 Hcr_repr.
+      have HoL := proj1 (proj2 (proj2 Hcr_repr)).
+      have HoR := proj2 (proj2 (proj2 Hcr_repr)).
+      case_bool_decide as Hoeq.
+      * (* same left origin as the new item *)
+        have HoeqL : origin_id (origin yi) = input.(in_originId) by rewrite HoL -Hoeq Hin_l.
+        rewrite (decide_True _ _ HoeqL) in Hloop.
+        wp_auto.
+        case_bool_decide as Hclt.
+        -- (* smaller client id: advance the anchor (left := conflict) *)
+           have HcltL : ((item_id yi).(clientId) < input.(in_id).(clientId))%nat
+             by (rewrite HcId -Hid /toYjsId /=; word).
+           rewrite (decide_True _ _ HcltL) in Hloop.
+           wp_auto.
+           wp_apply wp_slice_literal. iSplitR; first done.
+           iIntros "%ci_empty [Hci_empty Hci_empty_cap]". wp_auto.
+           wp_for_post.
+           iEval (rewrite Hci_loc) in "Hcival".
+           iDestruct ("Hback" with "Hcival") as "Hdll".
+           iFrame "HΦ item".
+           iExists (S offset), ({[item_id yi]} ∪ idsB), ∅, (leftIdx + Z.of_nat offset + 1)%Z.
+           rewrite /integrate_loop_inv /is_fresh_item.
+           iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_empty Hci_empty_cap"; last first.
+           { iFrame "Hitem Holeft Horight".
+             iPureIntro; split_and!; [exact Hfl0|exact Hfr0|exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
+           iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
+           iSplitL "Hconflict".
+           { rewrite Hcr0. replace (leftIdx + Z.of_nat (S offset))%Z with (Z.to_nat (leftIdx + offset) + 1)%Z by lia. iFrame "Hconflict". }
+           iSplitL "Hleft".
+           { replace (leftIdx + Z.of_nat offset + 1 - 1)%Z with (leftIdx + offset)%Z by lia. iFrame "Hleft". }
+           iSplitL "Hright". { iFrame "Hright". }
+           iSplitL "Hibo_ref Hibo_sl Hibo_cap".
+           { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
+             have H0 : sint.nat (W64 0) = 0%nat by word.
+             rewrite H0; simpl; rewrite fmap_app list_to_set_app_L Hibo_set /=; rewrite -HcId; set_solver. }
+           iSplitL "Hci_ref Hci_empty Hci_empty_cap".
+           { iExists _. iFrame "Hci_ref". iExists ([] : list yjs.Id.t). iFrame "Hci_empty Hci_empty_cap". done. }
+           iPureIntro; split_and!;
+             [lia | lia | lia | lia
+             | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia;
+               replace (leftIdx + Z.of_nat offset + 1)%Z with (Z.of_nat (Z.to_nat (leftIdx + offset) + 1)) by lia;
+               exact Hloop].
+        -- (* larger-or-equal client id: same integration points -> break, else continue *)
+           admit.
+      * (* different left origin: case 2 (already-scanned) or origins cross -> break *)
+        admit.
 Admitted.
 
 (** The conflict scan with its entry guard: resolves whether to scan at all
