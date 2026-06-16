@@ -117,6 +117,29 @@ Proof.
       iSplitR; [done|]. iExists ml, mf. iFrame.
 Qed.
 
+(** Splice a fresh node [newc] between two DLL segments whose boundary fields are
+    already relinked to it ([cs1]'s last [right'] and [cs2]'s first [left'] point
+    at [ic_loc newc], and [newc]'s [left']/[right'] at the two boundaries). Used to
+    rejoin the document DLL after [Store.Integrate] inserts an item. *)
+Lemma is_dll_insert_middle (cs1 cs2 : list item_cell) (newc : item_cell)
+    (hd tl ml mr : loc) :
+  ic_loc newc ≠ null ->
+  (ic_val newc).(yjs.Item.left') = ml ->
+  (ic_val newc).(yjs.Item.right') = mr ->
+  is_dll hd ml null (ic_loc newc) cs1 ∗
+  ic_loc newc ↦ ic_val newc ∗
+  is_origin_id (ic_val newc).(yjs.Item.originLeftId') (ic_oleft newc) ∗
+  is_origin_id (ic_val newc).(yjs.Item.originRightId') (ic_oright newc) ∗
+  is_dll mr tl (ic_loc newc) null cs2
+  ⊢ is_dll hd tl null null (cs1 ++ newc :: cs2).
+Proof.
+  move=> Hnn Hl Hr.
+  iIntros "(Hdll1 & Hnode & Hol & Hor & Hdll2)".
+  rewrite is_dll_app. iExists ml, (ic_loc newc). iFrame "Hdll1".
+  simpl. rewrite Hr. iFrame "Hnode Hol Hor Hdll2".
+  iPureIntro; split_and!; [reflexivity | exact Hnn | exact Hl].
+Qed.
+
 (** A DLL headed by [null] is empty. *)
 Lemma is_dll_null_nil last prev next cells :
   is_dll null last prev next cells -∗ ⌜cells = []⌝.
