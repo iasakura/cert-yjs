@@ -364,6 +364,71 @@ func findById(parent *YText, id Id) *Item {
 // way as y-octo's Store::integrate (the Yjs integrate algorithm). On return
 // item is spliced into the doubly linked list at its conflict-resolved position
 // and parent.len is updated.
+// findIntegrationLeft scans the run of concurrent items between left and right
+// and returns the conflict-resolved left anchor: the item after which `item`
+// integrates (the Yjs integrate conflict resolution). It is the algorithmic
+// core; it reads the document but mutates nothing, only choosing the anchor.
+// scanConflicts walks the run of concurrent items starting at conflict and
+// updates the left anchor, stopping at right or when the origin connections
+// would cross (y-octo's conflict-resolution loop). It is the operational
+// counterpart of setfindIntegratedIndex; extracted from findIntegrationLeft so
+// the scan can be verified against the pure set-based loop in isolation.
+func scanConflicts(item *Item, left *Item, conflict *Item, right *Item) *Item {
+	conflictingItems := []Id{}
+	itemsBeforeOrigin := []Id{}
+
+	for conflict != nil {
+		if itemPtrEqual(conflict, right) {
+			break
+		}
+		conflictId := conflict.id
+		itemsBeforeOrigin = append(itemsBeforeOrigin, conflictId)
+		conflictingItems = append(conflictingItems, conflictId)
+
+		if idOptEqual(item.originLeftId, conflict.originLeftId) {
+			// Same left origin: the smaller client id goes first.
+			if conflict.id.clientId < item.id.clientId {
+				left = conflict
+				conflictingItems = []Id{}
+			} else if idOptEqual(item.originRightId, conflict.originRightId) {
+				// Same integration points; item is to the left of conflict.
+				break
+			}
+		} else if conflict.originLeftId != nil && containsId(itemsBeforeOrigin, *conflict.originLeftId) {
+			// case 2: conflict's left origin was already scanned.
+			col := *conflict.originLeftId
+			if !containsId(conflictingItems, col) {
+				left = conflict
+				conflictingItems = []Id{}
+			}
+		} else {
+			// conflict's left origin is before this run (or absent): the
+			// origin connections would cross, so stop (matches yrs).
+			break
+		}
+
+		conflict = conflict.right
+	}
+	return left
+}
+
+func findIntegrationLeft(parent *YText, item *Item, left *Item, right *Item) *Item {
+	rightIsNullOrHasLeft := right == nil || right.left != nil
+	leftHasOtherRightThanSelf := left != nil && !itemPtrEqual(left.right, right)
+
+	// Walk the run of concurrent items and decide where item belongs.
+	if (left == nil && rightIsNullOrHasLeft) || leftHasOtherRightThanSelf {
+		var conflict *Item
+		if left != nil {
+			conflict = left.right
+		} else {
+			conflict = parent.start
+		}
+		left = scanConflicts(item, left, conflict, right)
+	}
+	return left
+}
+
 func (s *Store) Integrate(parent *YText, item *Item) {
 	// Resolve left/right from the origin ids (y-octo: Store::repair). With
 	// 1-char contents there is no split, so this is a direct lookup.
@@ -377,54 +442,8 @@ func (s *Store) Integrate(parent *YText, item *Item) {
 	left := item.left
 	right := item.right
 
-	rightIsNullOrHasLeft := right == nil || right.left != nil
-	leftHasOtherRightThanSelf := left != nil && !itemPtrEqual(left.right, right)
-
-	// Walk the run of concurrent items and decide where item belongs.
-	if (left == nil && rightIsNullOrHasLeft) || leftHasOtherRightThanSelf {
-		var conflict *Item
-		if left != nil {
-			conflict = left.right
-		} else {
-			conflict = parent.start
-		}
-
-		conflictingItems := []Id{}
-		itemsBeforeOrigin := []Id{}
-
-		for conflict != nil {
-			if itemPtrEqual(conflict, right) {
-				break
-			}
-			conflictId := conflict.id
-			itemsBeforeOrigin = append(itemsBeforeOrigin, conflictId)
-			conflictingItems = append(conflictingItems, conflictId)
-
-			if idOptEqual(item.originLeftId, conflict.originLeftId) {
-				// Same left origin: the smaller client id goes first.
-				if conflict.id.clientId < item.id.clientId {
-					left = conflict
-					conflictingItems = []Id{}
-				} else if idOptEqual(item.originRightId, conflict.originRightId) {
-					// Same integration points; item is to the left of conflict.
-					break
-				}
-			} else if conflict.originLeftId != nil && containsId(itemsBeforeOrigin, *conflict.originLeftId) {
-				// case 2: conflict's left origin was already scanned.
-				col := *conflict.originLeftId
-				if !containsId(conflictingItems, col) {
-					left = conflict
-					conflictingItems = []Id{}
-				}
-			} else {
-				// conflict's left origin is before this run (or absent): the
-				// origin connections would cross, so stop (matches yrs).
-				break
-			}
-
-			conflict = conflict.right
-		}
-	}
+	// Conflict resolution (the algorithmic core, extracted for verification).
+	left = findIntegrationLeft(parent, item, left, right)
 
 	// Reconnect: left <-> item <-> right.
 	if left != nil {
