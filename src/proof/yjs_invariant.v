@@ -1585,10 +1585,28 @@ Proof using All.
               Harr Htoitem Hvalid Hmax HfindL HfindR HfindD eq_refl eq_refl with "[$Htext $Hfresh]").
   iIntros "[Htext Hfresh]".
   wp_auto.
+  (* [destIdx] is in bounds ([≤ rightIdx ≤ length]), so the splice index is valid
+     and [insertIdxIfInBounds] actually inserts (mirrors setintegrate_eq_integrate
+     to reach findIntegratedIndex_bounds). *)
+  have Hsameid : forall x, ArrSet arr (itemPtr x) -> item_id x = item_id newItem -> x = newItem.
+  { move=> x Hx Hxid. exfalso.
+    have Hcc : clientId (item_id x) = clientId (item_id newItem) by rewrite Hxid.
+    have Hcl := Hmax x Hx Hcc. rewrite Hxid in Hcl. lia. }
+  have Hclosed : IsClosedItemSet (ArrSet (newItem :: arr)) :=
+    arr_set_closed_push arr newItem (yai_closed _ Harr) Horig Hror.
+  have Hinv2 : ItemSetInvariant (ArrSet (newItem :: arr)) :=
+    item_set_invariant_push arr newItem (yai_item_set_inv _ Harr) (yai_closed _ Harr)
+      (iiv_origin_lt _ Hvalid) (iiv_reachable _ Hvalid) Hsameid.
+  have Hsfeq := setfindIntegratedIndex_eq arr newItem input leftIdx rightIdx
+    Harr Hclosed Hinv2 Hmax Htoitem HfLp HfRp HlB Hlr HrUB.
+  have Hfii : findIntegratedIndex leftIdx rightIdx input arr = Some destIdx by (rewrite -Hsfeq; exact HfindD).
+  have Hdle_r := findIntegratedIndex_bounds leftIdx rightIdx input arr destIdx HlB Hlr Hfii.
+  have Hdle : (destIdx <= length cells)%nat by (rewrite Hcells_len; lia).
   (* Splice [item] in at index [destIdx]: relink left.right / right.left / item /
-     parent.start (is_dll_app to split at destIdx, wp_store to relink, rejoin),
-     bump parent.len, then conclude is_valid_ytext parent (insertIdxIfInBounds
-     destIdx itemM arr) via cells_repr_insert and YjsArrInvariant_setintegrate. *)
+     parent.start (is_dll_app to split at destIdx, wp_store to relink, rejoin via
+     is_dll_insert_middle), bump parent.len, then conclude is_valid_ytext parent
+     (insertIdxIfInBounds destIdx itemM arr) via cells_repr_insert and
+     YjsArrInvariant_setintegrate. *)
   admit.
 Admitted.
 
