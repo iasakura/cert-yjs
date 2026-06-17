@@ -18,8 +18,9 @@
       YjsArrInvariant_integrateSafe       yjs.algorithm.insert_loop
       setfii_loop, setintegrate, Couple,  yjs.algorithm.insert_set
         setintegrate_eq_integrate, ...
+      integrate_some (integrate totality) yjs.algorithm.commutativity
 *)
 From yjs.crdt Require Export client_id.
 From yjs Require Export item item_set util.
 From yjs.order Require Export item_order item_set_invariant.
-From yjs.algorithm Require Export basic insert_basic invariant_basic invariant_yjsarray insert_loop insert_set.
+From yjs.algorithm Require Export basic insert_basic invariant_basic invariant_yjsarray insert_loop insert_set commutativity.

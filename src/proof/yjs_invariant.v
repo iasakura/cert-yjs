@@ -900,7 +900,7 @@ Proof. set_solver. Qed.
       compute [loopResult]. With [Hbound] / [Hdest] this makes the Go
       [for conflict ≠ nil] test (with the [== right] break) consume exactly the
       loop's fuel.
-    [is_fresh_item] and the [parent.len] field are loop-constant, framed outside. *)
+    [is_fresh_item_raw] and the [parent.len] field are loop-constant, framed outside. *)
 Definition integrate_loop_inv
     (parent : loc) (cells : list item_cell) (arr : list (YjsItem A))
     (leftIdx rightIdx : Z) (originLeftId originRightId : option YjsId) (newItemId : YjsId)
@@ -924,14 +924,14 @@ Definition integrate_loop_inv
 
 (* ===== the Integrate WP specification ==================================== *)
 
-(** [is_fresh_item item_l input iv oleft oright]: [item_l] is a heap [Item] whose
+(** [is_fresh_item_raw item_l input iv oleft oright]: [item_l] is a heap [Item] whose
     id / content and origin-id cells carry the integration [input]. Its abstract
     model item is [newItem = toItem input arr] — that link is a side condition of
     the spec (a fresh item's resolved origins depend on the current document
     [arr]), so it is *not* restated here. The [left']/[right'] fields are *not*
     constrained: the scan / entry-guard never read them, and [Store.Integrate]
     has already repaired (set) them by the time it calls the scan. *)
-Definition is_fresh_item (item_l : loc) (input : IntegrateInput (A := A))
+Definition is_fresh_item_raw (item_l : loc) (input : IntegrateInput (A := A))
     (iv : yjs.Item.t) (oleft oright : option yjs.Id.t) : iProp Σ :=
   "Hitem" ∷ item_l ↦ iv ∗
   "Holeft" ∷ is_origin_id iv.(yjs.Item.originLeftId') oleft ∗
@@ -940,6 +940,22 @@ Definition is_fresh_item (item_l : loc) (input : IntegrateInput (A := A))
   "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId input⌝ ∗
   "%Hid" ∷ ⌜toYjsId iv.(yjs.Item.id') = in_id input⌝ ∗
   "%Hcontent" ∷ ⌜toContent iv.(yjs.Item.content') = in_content input⌝.
+
+(** [is_fresh_item item_l input]: the freshly-built, not-yet-integrated heap
+    [Item] that [Store.Integrate] is about to splice in — everything about the
+    caller's item is encapsulated here (its model value [iv] and origin pointers
+    are existentially hidden). On top of [is_fresh_item_raw] it records that the
+    item is unlinked ([left']/[right'] = null) and is a countable, single-char
+    insert ([flags'] = ItemCountable, content length 1) — exactly what [NewItem]
+    produces. This is the item-side half of the top-level Integrate spec; the
+    document-side half is [is_valid_ytext]. *)
+Definition is_fresh_item (item_l : loc) (input : IntegrateInput (A := A)) : iProp Σ :=
+  ∃ (iv : yjs.Item.t) (oleft oright : option yjs.Id.t),
+    is_fresh_item_raw item_l input iv oleft oright ∗
+    ⌜iv.(yjs.Item.left') = null⌝ ∗
+    ⌜iv.(yjs.Item.right') = null⌝ ∗
+    ⌜iv.(yjs.Item.flags') = W8 2⌝ ∗
+    ⌜length (iv.(yjs.Item.content').(yjs.Content.content')) = 1%nat⌝.
 
 (** The algorithmic core (extracted Go function [scanConflicts]): starting at the
     cursor [node_loc cells (leftIdx + 1)] with the anchor at [node_loc cells leftIdx],
@@ -962,11 +978,11 @@ Lemma wp_scanConflicts (parent item_l : loc)
   findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
   setfindIntegratedIndex leftIdx rightIdx input arr = Some destIdx ->
   {{{ is_pkg_init yjs ∗ is_ytext parent cells arr ∗
-      is_fresh_item item_l input iv oleft oright }}}
+      is_fresh_item_raw item_l input iv oleft oright }}}
     @! yjs.scanConflicts #item_l #(node_loc cells leftIdx)
         #(node_loc cells (leftIdx + 1)) #(node_loc cells rightIdx)
   {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
-      is_ytext parent cells arr ∗ is_fresh_item item_l input iv oleft oright }}}.
+      is_ytext parent cells arr ∗ is_fresh_item_raw item_l input iv oleft oright }}}.
 Proof using All.
   move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD.
   wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh".
@@ -999,10 +1015,10 @@ Proof using All.
     integrate_loop_inv parent cells arr leftIdx rightIdx input.(in_originId)
       input.(in_rightOriginId) input.(in_id) (Some d) conflict_ptr left_ptr right_ptr
       itemsBeforeOrigin_ptr conflictingItems_ptr offset idsB conflictI destL
-    ∗ is_fresh_item item_l input iv oleft oright)%I
+    ∗ is_fresh_item_raw item_l input iv oleft oright)%I
     with "[Hparent Hdll conflict left right conflictingItems Hci_sl Hci_cap itemsBeforeOrigin Hibo_sl Hibo_cap Hitem Holeft Horight]" as "IH".
   { iExists 1%nat, ∅, ∅, (leftIdx + 1)%Z.
-    rewrite /integrate_loop_inv /is_fresh_item.
+    rewrite /integrate_loop_inv /is_fresh_item_raw.
     replace (leftIdx + 1 - 1)%Z with leftIdx by lia.
     replace (leftIdx + Z.of_nat 1)%Z with (leftIdx + 1)%Z by lia.
     iFrame "conflict left right Hitem Holeft Horight".
@@ -1034,7 +1050,7 @@ Proof using All.
     replace (node_loc cells (d - 1)) with (node_loc cells (Z.of_nat destIdx - 1))
       by (f_equal; rewrite -Hd_eq Z2Nat.id //).
     rewrite decide_True; last reflexivity. wp_auto.
-    iApply "HΦ". iFrame "Htext". rewrite /is_fresh_item. iFrame "Hitem Holeft Horight".
+    iApply "HΦ". iFrame "Htext". rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight".
     iPureIntro; split_and!; done.
   - (* cursor in range: run one scan step, matched to a [setfii_loop] unfold. *)
     have Hlt : (leftIdx + offset < Z.of_nat (length cells))%Z by lia.
@@ -1065,7 +1081,7 @@ Proof using All.
       replace (node_loc cells (d - 1)) with (node_loc cells (Z.of_nat destIdx - 1))
         by (f_equal; rewrite -Hd_eq Z2Nat.id //).
       wp_for_post.
-      iApply "HΦ". iFrame "Htext". rewrite /is_fresh_item. iFrame "Hitem Holeft Horight".
+      iApply "HΦ". iFrame "Htext". rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight".
       iPureIntro; split_and!; done.
     + (* conflict ≠ right: scan one item; match the [setfii_loop] branches *)
       rewrite (bool_decide_eq_false_2 _ Hner).
@@ -1114,7 +1130,7 @@ Proof using All.
            iDestruct ("Hback" with "Hcival") as "Hdll".
            iFrame "HΦ item".
            iExists (S offset), ({[item_id yi]} ∪ idsB), ∅, (leftIdx + Z.of_nat offset + 1)%Z.
-           rewrite /integrate_loop_inv /is_fresh_item.
+           rewrite /integrate_loop_inv /is_fresh_item_raw.
            iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_empty Hci_empty_cap"; last first.
            { iFrame "Hitem Holeft Horight".
              iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
@@ -1155,7 +1171,7 @@ Proof using All.
               replace (node_loc cells (d - 1)) with (node_loc cells (Z.of_nat destIdx - 1))
                 by (f_equal; rewrite -Hd_eq Z2Nat.id //).
               iApply "HΦ". iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
-              rewrite /is_fresh_item. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done.
+              rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done.
            ++ (* different right origin: keep scanning, anchor unchanged *)
               have HneqRR : origin_id (rightOrigin yi) ≠ input.(in_rightOriginId).
               { rewrite HoR -Hin_r; move=> Heq; apply HoeqR; by rewrite Heq. }
@@ -1165,7 +1181,7 @@ Proof using All.
               iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
               iFrame "HΦ item".
               iExists (S offset), ({[item_id yi]} ∪ idsB), ({[item_id yi]} ∪ conflictI), destL.
-              rewrite /integrate_loop_inv /is_fresh_item.
+              rewrite /integrate_loop_inv /is_fresh_item_raw.
               iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_sl Hci_cap"; last first.
               { iFrame "Hitem Holeft Horight".
                 iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
@@ -1201,7 +1217,7 @@ Proof using All.
            replace (node_loc cells (d - 1)) with (node_loc cells (Z.of_nat destIdx - 1))
              by (f_equal; rewrite -Hd_eq Z2Nat.id //).
            iApply "HΦ". iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
-           rewrite /is_fresh_item. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done.
+           rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done.
         -- (* conflict has a left origin [idv] (different from the new item's) *)
            iDestruct "Hcol" as "[%Hcol_nn #Hcol_pt]".
            simpl in Hloop.
@@ -1233,7 +1249,7 @@ Proof using All.
                  iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
                  iFrame "HΦ item".
                  iExists (S offset), ({[item_id yi]} ∪ idsB), ({[item_id yi]} ∪ conflictI), destL.
-                 rewrite /integrate_loop_inv /is_fresh_item.
+                 rewrite /integrate_loop_inv /is_fresh_item_raw.
                  iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_sl Hci_cap"; last first.
                  { iFrame "Hitem Holeft Horight".
                    iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
@@ -1262,7 +1278,7 @@ Proof using All.
                  iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
                  iFrame "HΦ item".
                  iExists (S offset), ({[item_id yi]} ∪ idsB), ∅, (leftIdx + Z.of_nat offset + 1)%Z.
-                 rewrite /integrate_loop_inv /is_fresh_item.
+                 rewrite /integrate_loop_inv /is_fresh_item_raw.
                  iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_empty Hci_empty_cap"; last first.
                  { iFrame "Hitem Holeft Horight".
                    iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
@@ -1294,7 +1310,7 @@ Proof using All.
               replace (node_loc cells (d - 1)) with (node_loc cells (Z.of_nat destIdx - 1))
                 by (f_equal; rewrite -Hd_eq Z2Nat.id //).
               iApply "HΦ". iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
-              rewrite /is_fresh_item. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done.
+              rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done.
 Qed.
 
 (** The conflict scan with its entry guard: resolves whether to scan at all
@@ -1317,10 +1333,10 @@ Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc : loc)
   left_loc = node_loc cells leftIdx ->
   right_loc = node_loc cells rightIdx ->
   {{{ is_pkg_init yjs ∗ is_ytext parent cells arr ∗
-      is_fresh_item item_l input iv oleft oright }}}
+      is_fresh_item_raw item_l input iv oleft oright }}}
     @! yjs.findIntegrationLeft #parent #item_l #left_loc #right_loc
   {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
-      is_ytext parent cells arr ∗ is_fresh_item item_l input iv oleft oright }}}.
+      is_ytext parent cells arr ∗ is_fresh_item_raw item_l input iv oleft oright }}}.
 Proof using All.
   move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hll Hrl.
   wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh". wp_auto.
@@ -1367,7 +1383,7 @@ Proof using All.
         { iExists yt, tl. iFrame "Hparent".
           replace (yt.(yjs.YText.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
           iFrame "Hdll". done. }
-        rewrite /is_fresh_item. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+        rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
       iIntros "[Htext Hfresh]". wp_auto. iApply "HΦ". iFrame "Htext Hfresh". }
     { (* combo 3: left non-null, right null -> compare left.right with right *)
       have HlP' : (0 <= leftIdx)%Z by lia.
@@ -1401,7 +1417,7 @@ Proof using All.
           replace (Z.to_nat (rightIdx - leftIdx) - 1)%nat with 0%nat in HfindD by lia.
           simpl in HfindD. injection HfindD as HfindD'. rewrite -HfindD' Z2Nat.id; lia. }
         replace (node_loc cells (Z.of_nat destIdx - 1)) with (node_loc cells leftIdx) by (f_equal; lia).
-        iApply "HΦ". iFrame "Htext". rewrite /is_fresh_item. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+        iApply "HΦ". iFrame "Htext". rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
       { (* scan: leftIdx+1 < rightIdx, conflict = left.right *)
         rewrite (bool_decide_eq_false_2 _ Hnadj). wp_auto.
         have Hlnn' : node_loc cells leftIdx ≠ null by (rewrite -Hll; exact Hlnn).
@@ -1415,7 +1431,7 @@ Proof using All.
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split; [exact Hlen' | exact Hrepr']. }
         wp_apply (wp_scanConflicts parent item_l cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD with "[Htext Hitem Holeft Horight]").
-        { iSplitL "Htext"; [iFrame "Htext" | rewrite /is_fresh_item; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
+        { iSplitL "Htext"; [iFrame "Htext" | rewrite /is_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
         iIntros "[Htext Hfresh]". wp_auto. iApply "HΦ". iFrame "Htext Hfresh". } } }
   { (* right non-null (rightIdx < length cells): read right.left *)
     have Hr_lt : (Z.to_nat rightIdx < length cells)%nat by lia.
@@ -1446,7 +1462,7 @@ Proof using All.
         replace (# null) with (# (node_loc cells (Z.of_nat destIdx - 1))).
         { iApply "HΦ". iSplitR "Hitem Holeft Horight".
           { iExists yt, tl. iFrame "Hparent Hdll". done. }
-          rewrite /is_fresh_item. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+          rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
         f_equal. rewrite Hdest0 /node_loc /=. done. }
       { (* rightIdx >= 1: scan from parent.start *)
         have Hcrl_eq : cr.(ic_val).(yjs.Item.left') = node_loc cells (rightIdx - 1) by (rewrite Hcl_r; f_equal; rewrite Z2Nat.id; lia).
@@ -1473,7 +1489,7 @@ Proof using All.
           { iExists yt, tl. iFrame "Hparent".
             replace (yt.(yjs.YText.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
             iFrame "Hdll". done. }
-          rewrite /is_fresh_item. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+          rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
         iIntros "[Htext Hfresh]". wp_auto. iApply "HΦ". iFrame "Htext Hfresh". } }
     { (* combo 4: left non-null, right non-null -> compare left.right with right *)
       have HlP' : (0 <= leftIdx)%Z by lia.
@@ -1507,7 +1523,7 @@ Proof using All.
           replace (Z.to_nat (rightIdx - leftIdx) - 1)%nat with 0%nat in HfindD by lia.
           simpl in HfindD. injection HfindD as HfindD'. rewrite -HfindD' Z2Nat.id; lia. }
         replace (node_loc cells (Z.of_nat destIdx - 1)) with (node_loc cells leftIdx) by (f_equal; lia).
-        iApply "HΦ". iFrame "Htext". rewrite /is_fresh_item. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+        iApply "HΦ". iFrame "Htext". rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
       { (* scan *)
         rewrite (bool_decide_eq_false_2 _ Hnadj). wp_auto.
         have Hlnn' : node_loc cells leftIdx ≠ null by (rewrite -Hll; exact Hlnn).
@@ -1521,14 +1537,15 @@ Proof using All.
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split; [exact Hlen' | exact Hrepr']. }
         wp_apply (wp_scanConflicts parent item_l cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD with "[Htext Hitem Holeft Horight]").
-        { iSplitL "Htext"; [iFrame "Htext" | rewrite /is_fresh_item; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
+        { iSplitL "Htext"; [iFrame "Htext" | rewrite /is_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
         iIntros "[Htext Hfresh]". wp_auto. iApply "HΦ". iFrame "Htext Hfresh". } } }
 Qed.
 
-(** Top-level spec: integrating a valid item into a valid document yields the
-    document updated per the pure [setintegrate]; validity (hence order /
-    convergence, via [setintegrate_eq_integrate]) is preserved. *)
-Lemma wp_Store__Integrate (s parent item_l : loc) (arr arr' : list (YjsItem A))
+(** Auxiliary spec (the raw refinement): integrating a valid item into a valid
+    document yields the document updated per the pure [setintegrate]. Kept as the
+    detailed functional characterisation (exposes [setintegrate]/[iv]); the
+    public [wp_Store__Integrate] below repackages it as invariant preservation. *)
+Lemma wp_Store__Integrate_aux (s parent item_l : loc) (arr arr' : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A)
     (iv : yjs.Item.t) (oleft oright : option yjs.Id.t) :
   YjsArrInvariant arr ->
@@ -1541,7 +1558,7 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr arr' : list (YjsItem A))
   length (iv.(yjs.Item.content').(yjs.Content.content')) = 1%nat ->   (* single-char content => Len() = 1 *)
   setintegrate input arr = Some arr' ->
   {{{ is_pkg_init yjs ∗ is_valid_ytext parent arr ∗
-      is_fresh_item item_l input iv oleft oright }}}
+      is_fresh_item_raw item_l input iv oleft oright }}}
     s @! (go.PointerType yjs.Store) @! "Integrate" #parent #item_l
   {{{ RET #(); is_valid_ytext parent arr' }}}.
 Proof using All.
@@ -1656,8 +1673,8 @@ Proof using All.
   rewrite Hiv2L Hiv2R.
   iAssert (is_ytext parent cells arr) with "[Hparent Hdll]" as "Htext".
   { iExists yt3, tl3. iFrame "Hparent Hdll". done. }
-  iAssert (is_fresh_item item_l input iv2 oleft oright) with "[Hitem]" as "Hfresh".
-  { rewrite /is_fresh_item. iFrame "Hitem". rewrite Hiv2oL Hiv2oR. iFrame "Holeft Horight".
+  iAssert (is_fresh_item_raw item_l input iv2 oleft oright) with "[Hitem]" as "Hfresh".
+  { rewrite /is_fresh_item_raw. iFrame "Hitem". rewrite Hiv2oL Hiv2oR. iFrame "Holeft Horight".
     iPureIntro; split_and!; [exact Hin_l | exact Hin_r | rewrite Hiv2id; exact Hid | rewrite Hiv2con; exact Hcontent]. }
   wp_apply (wp_findIntegrationLeft parent item_l (node_loc cells leftIdx) (node_loc cells rightIdx)
               cells arr input newItem iv2 oleft oright leftIdx rightIdx destIdx
@@ -1908,6 +1925,45 @@ Proof using All.
   - rewrite Harr''. apply cells_repr_app.
     + apply (cells_repr_m_irrel arr). exact Hcs1m.
     + apply cells_repr_cons; [exact Hcellrepr | apply (cells_repr_m_irrel arr); exact Hcs2m].
+Qed.
+
+(** Public top-level spec — [Store.Integrate] inserts the item and preserves the
+    document invariant. The result [arr'] is the model document with [newItem]
+    spliced in at *some* in-bounds position [i] (the position is existential, so
+    the conflict-resolution algorithm is not exposed — only the abstract effect
+    "the item was inserted somewhere, and the document stays valid"). The
+    document invariant [is_valid_ytext] already carries [YjsArrInvariant], so it
+    pins [arr'] uniquely given the item set; the caller's item is encapsulated in
+    [is_fresh_item]; the document/input side conditions are the only premises.
+    Proven from [wp_Store__Integrate_aux]: integration succeeds ([integrate_some]),
+    bridges to [setintegrate] ([setintegrate_eq_integrate]); the insertion
+    position and the post-state's validity come from the rocq-yjs preservation
+    theorem [YjsArrInvariant_integrate]. *)
+Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
+    (input : IntegrateInput (A := A)) (newItem : YjsItem A) :
+  toItem input arr = Some newItem ->
+  IsItemValid newItem ->
+  maximalId newItem arr ->
+  {{{ is_pkg_init yjs ∗ is_valid_ytext parent arr ∗ is_fresh_item item_l input }}}
+    s @! (go.PointerType yjs.Store) @! "Integrate" #parent #item_l
+  {{{ (arr' : list (YjsItem A)) (i : nat), RET #();
+      ⌜(i <= length arr)%nat⌝ ∗ ⌜arr' = insertIdxIfInBounds i newItem arr⌝ ∗
+      is_valid_ytext parent arr' }}}.
+Proof using All.
+  move=> Htoitem Hvalid Hmax.
+  iIntros (Φ) "(Hpkg & Hvalid & Hfresh) HΦ".
+  iDestruct "Hfresh" as (iv oleft oright) "(Hraw & %Hfl & %Hfr & %Hflags & %Hcontlen)".
+  iDestruct "Hvalid" as (cells) "[Htext %Hinv]".
+  destruct (integrate_some input arr newItem Hinv Htoitem) as [arr' Hintegrate].
+  destruct (YjsArrInvariant_integrate input arr arr' newItem Hinv Htoitem Hvalid Hmax Hintegrate)
+    as [i [Hile [Harr'eq _]]].
+  have Hsi : setintegrate input arr = Some arr'.
+  { rewrite (setintegrate_eq_integrate input arr newItem Hinv Htoitem Hvalid Hmax). exact Hintegrate. }
+  wp_apply (wp_Store__Integrate_aux s parent item_l arr arr' input newItem iv oleft oright
+              Hinv Htoitem Hvalid Hmax Hfl Hfr Hflags Hcontlen Hsi with "[$Hpkg $Hraw Htext]").
+  { iExists cells. iFrame "Htext". iPureIntro. exact Hinv. }
+  iIntros "Hvalid'". iApply ("HΦ" $! arr' i). iFrame "Hvalid'".
+  iPureIntro. split; [exact Hile | exact Harr'eq].
 Qed.
 
 End invariant.
