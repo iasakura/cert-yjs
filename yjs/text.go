@@ -1,13 +1,11 @@
-//go:build !goose
-
 package yjs
 
-// Document-level API: the user-facing Doc and Text handle.
+// Document- and text-level API (y-octo: doc/document.rs + doc/types/text.rs).
 //
-// This mirrors y-octo's doc/document.rs (Doc, get_or_create_text) and
-// doc/types/text.rs + doc/types/list (insert_at / remove_at). It is the runtime
-// API layer and is excluded from goose translation (`//go:build !goose`); only
-// the integrate core in store.go is the proof surface.
+// These ops are goose-translated (part of the verified model): Insert is a loop
+// over the proven store.Integrate, so it preserves the document invariant
+// is_valid_ytext (see wp_Text__Insert in src/proof/yjs_invariant.v). Delete and
+// the byte-level v1 codec stay behind //go:build !goose (delete.go, codec.go).
 //
 // Simplifications vs y-octo:
 //   - a Doc owns root Text types by name (no nested types, no maps/arrays);
@@ -88,30 +86,12 @@ func (t *Text) Insert(index uint64, content string) {
 			originRightId = &rid
 		}
 
-		item := newItem(newId(client, clock), content[i:i+1], originLeftId, originRightId)
-		t.doc.store.Integrate(t.inner, item)
-		t.doc.store.AddNode(itemNode{item: *item})
+		newit := newItem(newId(client, clock), content[i:i+1], originLeftId, originRightId)
+		t.doc.store.Integrate(t.inner, newit)
+		t.doc.store.AddNode(itemNode{item: *newit})
 
 		// the next character integrates immediately to the right of this one.
-		left = item
-	}
-}
-
-// Delete tombstones length visible characters starting at index, recording the
-// deletion in the store's delete set (y-octo: ListType::remove_after via
-// store::delete_item).
-func (t *Text) Delete(index uint64, length uint64) {
-	_, right := t.inner.findPos(index)
-	remaining := length
-	cur := right
-	for remaining > 0 && cur != nil {
-		if cur.Indexable() {
-			cur.flags = cur.flags | itemDeleted
-			t.inner.len = t.inner.len - cur.Len()
-			t.doc.store.deletedSet.addRange(cur.id, cur.Len())
-			remaining = remaining - cur.Len()
-		}
-		cur = cur.right
+		left = newit
 	}
 }
 
@@ -151,23 +131,4 @@ func (y *yText) findPos(index uint64) (*item, *item) {
 		right = right.right
 	}
 	return left, right
-}
-
-// addRange records [id.clock, id.clock+length) as deleted for id's client
-// (y-octo: DeleteSet::add_range, without the adjacency merging).
-func (d *deletedSet) addRange(id id, length uint64) {
-	r := span[uint64]{start: id.clock, end: id.clock + length}
-	existing, ok := d.deletedSet[id.clientId]
-	if !ok {
-		d.deletedSet[id.clientId] = fragmentOrderRange{fragment: []span[uint64]{r}}
-		return
-	}
-	if frag, isFrag := existing.(fragmentOrderRange); isFrag {
-		frag.fragment = append(frag.fragment, r)
-		d.deletedSet[id.clientId] = frag
-		return
-	}
-	if rr, isRange := existing.(rangeOrderRange); isRange {
-		d.deletedSet[id.clientId] = fragmentOrderRange{fragment: []span[uint64]{rr.range_, r}}
-	}
 }
