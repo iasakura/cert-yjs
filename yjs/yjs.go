@@ -8,13 +8,13 @@
 //
 // The package is split into files that mirror y-octo's module layout:
 //
-//	id.go        Id / Client / Clock        (y-octo: codec/id.rs)
-//	content.go   Content                    (y-octo: codec/content.rs)
-//	item.go      Item + flag bits           (y-octo: codec/item.rs, item_flag.rs)
-//	refs.go      Node / GC / Skip / Item    (y-octo: codec/refs.rs)
-//	range.go     OrderRange / DeletedSet    (y-octo: common/range.rs, codec/delete_set.rs)
-//	store.go     Store + Integrate          (y-octo: doc/store.rs)
-//	ytext.go     YText (internal sequence)  (y-octo: doc/types/text.rs)
+//	id.go        id / Client / Clock        (y-octo: codec/id.rs)
+//	content.go   content                    (y-octo: codec/content.rs)
+//	item.go      item + flag bits           (y-octo: codec/item.rs, item_flag.rs)
+//	refs.go      node / GC / Skip / item    (y-octo: codec/refs.rs)
+//	range.go     orderRange / deletedSet    (y-octo: common/range.rs, codec/delete_set.rs)
+//	store.go     store + Integrate          (y-octo: doc/store.rs)
+//	ytext.go     yText (internal sequence)  (y-octo: doc/types/text.rs)
 //	document.go  Doc + Text handle + API    (y-octo: doc/document.rs)   [not translated]
 //	codec.go     v1 update encode/decode    (y-octo: codec/{update,...}) [not translated]
 //

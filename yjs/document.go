@@ -11,32 +11,32 @@ package yjs
 //
 // Simplifications vs y-octo:
 //   - a Doc owns root Text types by name (no nested types, no maps/arrays);
-//   - every user-visible character becomes its own 1-char internal Item, so
+//   - every user-visible character becomes its own 1-char internal item, so
 //     positions never fall inside an item and no splitting is needed;
 //   - content is assumed single-byte (ASCII): a clock unit is one byte, which
-//     keeps id arithmetic consistent with Content.Len (byte length).
+//     keeps id arithmetic consistent with content.Len (byte length).
 
 // Doc is a document: a struct store plus the root text types it owns.
 type Doc struct {
-	store *Store
+	store *store
 	// types is the root-type registry by name (y-octo: DocStore types).
-	types map[string]*YText
+	types map[string]*yText
 }
 
 // NewDoc creates a document with a fresh store owned by client.
 func NewDoc(client Client) *Doc {
 	return &Doc{
-		store: NewStore(client),
-		types: make(map[string]*YText),
+		store: newStore(client),
+		types: make(map[string]*yText),
 	}
 }
 
 // getOrCreateYText returns the internal sequence for name, creating it on first
 // use (y-octo: DocStore::get_or_create_type).
-func (d *Doc) getOrCreateYText(name string) *YText {
+func (d *Doc) getOrCreateYText(name string) *yText {
 	y, ok := d.types[name]
 	if !ok {
-		y = NewYText()
+		y = newYText()
 		d.types[name] = y
 	}
 	return y
@@ -54,7 +54,7 @@ func (d *Doc) GetText(name string) *Text {
 type Text struct {
 	doc   *Doc
 	name  string
-	inner *YText
+	inner *yText
 }
 
 // String returns the current visible text.
@@ -66,7 +66,7 @@ func (t *Text) Len() uint64 { return t.inner.len }
 // Insert inserts content at the visible character index, generating one
 // 1-char item per byte. Each item's left origin chains to the previous one and
 // every item shares the same right origin, matching how Yjs splits a run
-// (y-octo: ListType::insert_after via Store::create_item + integrate).
+// (y-octo: ListType::insert_after via store::create_item + integrate).
 func (t *Text) Insert(index uint64, content string) {
 	if index > t.inner.len {
 		return
@@ -77,8 +77,8 @@ func (t *Text) Insert(index uint64, content string) {
 	for i := 0; i < len(content); i++ {
 		clock := t.doc.store.getState(client)
 
-		var originLeftId *Id
-		var originRightId *Id
+		var originLeftId *id
+		var originRightId *id
 		if left != nil {
 			lid := left.LastId()
 			originLeftId = &lid
@@ -88,9 +88,9 @@ func (t *Text) Insert(index uint64, content string) {
 			originRightId = &rid
 		}
 
-		item := NewItem(NewId(client, clock), content[i:i+1], originLeftId, originRightId)
+		item := newItem(newId(client, clock), content[i:i+1], originLeftId, originRightId)
 		t.doc.store.Integrate(t.inner, item)
-		t.doc.store.AddNode(ItemNode{item: *item})
+		t.doc.store.AddNode(itemNode{item: *item})
 
 		// the next character integrates immediately to the right of this one.
 		left = item
@@ -99,14 +99,14 @@ func (t *Text) Insert(index uint64, content string) {
 
 // Delete tombstones length visible characters starting at index, recording the
 // deletion in the store's delete set (y-octo: ListType::remove_after via
-// Store::delete_item).
+// store::delete_item).
 func (t *Text) Delete(index uint64, length uint64) {
 	_, right := t.inner.findPos(index)
 	remaining := length
 	cur := right
 	for remaining > 0 && cur != nil {
 		if cur.Indexable() {
-			cur.flags = cur.flags | ItemDeleted
+			cur.flags = cur.flags | itemDeleted
 			t.inner.len = t.inner.len - cur.Len()
 			t.doc.store.deletedSet.addRange(cur.id, cur.Len())
 			remaining = remaining - cur.Len()
@@ -117,7 +117,7 @@ func (t *Text) Delete(index uint64, length uint64) {
 
 // getState returns the next clock for client: the end clock of its last
 // recorded struct, or 0 (y-octo: DocStore::get_state).
-func (s *Store) getState(client Client) Clock {
+func (s *store) getState(client Client) Clock {
 	nodes, ok := s.items[client]
 	if !ok {
 		return 0
@@ -133,8 +133,8 @@ func (s *Store) getState(client Client) Clock {
 // findPos walks to the visible character index and returns the doubly-linked
 // neighbours (left, right) straddling that position (y-octo: ListType::find_pos
 // specialised to 1-char items, so the offset/normalize/split path is gone).
-func (y *YText) findPos(index uint64) (*Item, *Item) {
-	var left *Item
+func (y *yText) findPos(index uint64) (*item, *item) {
+	var left *item
 	right := y.start
 
 	// avoid the first item being a deleted one
@@ -155,19 +155,19 @@ func (y *YText) findPos(index uint64) (*Item, *Item) {
 
 // addRange records [id.clock, id.clock+length) as deleted for id's client
 // (y-octo: DeleteSet::add_range, without the adjacency merging).
-func (d *DeletedSet) addRange(id Id, length uint64) {
-	r := Range[uint64]{start: id.clock, end: id.clock + length}
+func (d *deletedSet) addRange(id id, length uint64) {
+	r := span[uint64]{start: id.clock, end: id.clock + length}
 	existing, ok := d.deletedSet[id.clientId]
 	if !ok {
-		d.deletedSet[id.clientId] = FragmentOrderRange{fragment: []Range[uint64]{r}}
+		d.deletedSet[id.clientId] = fragmentOrderRange{fragment: []span[uint64]{r}}
 		return
 	}
-	if frag, isFrag := existing.(FragmentOrderRange); isFrag {
+	if frag, isFrag := existing.(fragmentOrderRange); isFrag {
 		frag.fragment = append(frag.fragment, r)
 		d.deletedSet[id.clientId] = frag
 		return
 	}
-	if rr, isRange := existing.(RangeOrderRange); isRange {
-		d.deletedSet[id.clientId] = FragmentOrderRange{fragment: []Range[uint64]{rr.range_, r}}
+	if rr, isRange := existing.(rangeOrderRange); isRange {
+		d.deletedSet[id.clientId] = fragmentOrderRange{fragment: []span[uint64]{rr.range_, r}}
 	}
 }

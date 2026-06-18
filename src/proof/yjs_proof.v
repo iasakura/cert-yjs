@@ -24,26 +24,26 @@ Set Default Proof Using "W".
 (* NewId builds the expected struct value. *)
 Lemma wp_NewId (client clock : w64) :
   {{{ is_pkg_init yjs }}}
-    @! yjs.NewId #client #clock
-  {{{ RET #(yjs.Id.mk client clock); True }}}.
+    @! yjs.newId #client #clock
+  {{{ RET #(yjs.id.mk client clock); True }}}.
 Proof.
   wp_start. wp_auto. iApply "HΦ". done.
 Qed.
 
 (* Add advances the clock; the client is untouched. *)
-Lemma wp_Id__Add (id : yjs.Id.t) (n : w64) :
+Lemma wp_Id__Add (id : yjs.id.t) (n : w64) :
   {{{ is_pkg_init yjs }}}
-    id @! yjs.Id @! "Add" #n
-  {{{ RET #(yjs.Id.mk id.(yjs.Id.clientId') (word.add id.(yjs.Id.clock') n)); True }}}.
+    id @! yjs.id @! "Add" #n
+  {{{ RET #(yjs.id.mk id.(yjs.id.clientId') (word.add id.(yjs.id.clock') n)); True }}}.
 Proof.
   wp_start. wp_auto. iApply "HΦ". done.
 Qed.
 
 (* Sub rewinds the clock; the client is untouched. *)
-Lemma wp_Id__Sub (id : yjs.Id.t) (n : w64) :
+Lemma wp_Id__Sub (id : yjs.id.t) (n : w64) :
   {{{ is_pkg_init yjs }}}
-    id @! yjs.Id @! "Sub" #n
-  {{{ RET #(yjs.Id.mk id.(yjs.Id.clientId') (word.sub id.(yjs.Id.clock') n)); True }}}.
+    id @! yjs.id @! "Sub" #n
+  {{{ RET #(yjs.id.mk id.(yjs.id.clientId') (word.sub id.(yjs.id.clock') n)); True }}}.
 Proof.
   wp_start. wp_auto. iApply "HΦ". done.
 Qed.
@@ -51,10 +51,10 @@ Qed.
 (* Functional-correctness round-trip: Sub undoes Add (machine-word level,
    holds unconditionally because subtraction is the inverse of addition mod
    2^64). This is the kind of property the foundation lets us state. *)
-Lemma id_add_sub_roundtrip (id : yjs.Id.t) (n : w64) :
-  yjs.Id.mk
-    (yjs.Id.mk id.(yjs.Id.clientId') (word.add id.(yjs.Id.clock') n)).(yjs.Id.clientId')
-    (word.sub (yjs.Id.mk id.(yjs.Id.clientId') (word.add id.(yjs.Id.clock') n)).(yjs.Id.clock') n)
+Lemma id_add_sub_roundtrip (id : yjs.id.t) (n : w64) :
+  yjs.id.mk
+    (yjs.id.mk id.(yjs.id.clientId') (word.add id.(yjs.id.clock') n)).(yjs.id.clientId')
+    (word.sub (yjs.id.mk id.(yjs.id.clientId') (word.add id.(yjs.id.clock') n)).(yjs.id.clock') n)
   = id.
 Proof.
   destruct id as [c k]. simpl. f_equal. word.
@@ -64,18 +64,18 @@ Qed.
 
 (* The Node accessors read out of the embedded NodeLen / Item; here we pin down
    the GC-node projections, which the store's binary search relies on. *)
-Lemma wp_GCNode__clock (n : yjs.GCNode.t) :
+Lemma wp_GCNode__clock (n : yjs.gcNode.t) :
   {{{ is_pkg_init yjs }}}
-    n @! yjs.GCNode @! "clock" #()
-  {{{ RET #(n.(yjs.GCNode.nodeLen').(yjs.NodeLen.id').(yjs.Id.clock')); True }}}.
+    n @! yjs.gcNode @! "clock" #()
+  {{{ RET #(n.(yjs.gcNode.nodeLen').(yjs.nodeLen.id').(yjs.id.clock')); True }}}.
 Proof.
   wp_start. wp_auto. iApply "HΦ". done.
 Qed.
 
-Lemma wp_GCNode__length (n : yjs.GCNode.t) :
+Lemma wp_GCNode__length (n : yjs.gcNode.t) :
   {{{ is_pkg_init yjs }}}
-    n @! yjs.GCNode @! "length" #()
-  {{{ RET #(n.(yjs.GCNode.nodeLen').(yjs.NodeLen.len')); True }}}.
+    n @! yjs.gcNode @! "length" #()
+  {{{ RET #(n.(yjs.gcNode.nodeLen').(yjs.nodeLen.len')); True }}}.
 Proof.
   wp_start. wp_auto. iApply "HΦ". done.
 Qed.

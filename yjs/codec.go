@@ -9,13 +9,13 @@ import "sort"
 // Layout mirrors y-octo:
 //   - encoder / decoder            <- codec/io/{writer,reader}.rs (lib0 varint)
 //   - encodeItem / item read       <- codec/item.rs (info byte, origins, parent)
-//   - encodeNode / node read       <- codec/refs.rs (GC=0, Skip=10, else Item)
+//   - encodeNode / node read       <- codec/refs.rs (GC=0, Skip=10, else item)
 //   - EncodeUpdate / ApplyUpdate   <- codec/update.rs (clients -> structs, then
 //                                     the delete set)
 //   - delete set                   <- codec/delete_set.rs
 //
 // Subset assumptions: the only content type is String (tag 4); parents are
-// always root types referenced by name (never Parent::Id, never parent_sub);
+// always root types referenced by name (never Parent::id, never parent_sub);
 // content is single-byte (ASCII). Multi-char runs in an incoming update are
 // split into 1-char items on decode (chained left origins, shared right
 // origin), then integrated in dependency order.
@@ -55,7 +55,7 @@ func (e *encoder) writeVarString(s string) {
 	e.buf = append(e.buf, s...)
 }
 
-func (e *encoder) writeItemID(id Id) {
+func (e *encoder) writeItemID(id id) {
 	e.writeVarUint(id.clientId)
 	e.writeVarUint(id.clock)
 }
@@ -94,10 +94,10 @@ func (d *decoder) readVarString() string {
 	return s
 }
 
-func (d *decoder) readItemID() Id {
+func (d *decoder) readItemID() id {
 	client := d.readVarUint()
 	clock := d.readVarUint()
-	return NewId(client, clock)
+	return newId(client, clock)
 }
 
 // ----- encode ----------------------------------------------------------------
@@ -107,7 +107,7 @@ func (doc *Doc) EncodeUpdate() []byte {
 	e := &encoder{}
 
 	// item id -> owning root-type name, for head items' parent field.
-	name := map[Id]string{}
+	name := map[id]string{}
 	for nm, y := range doc.types {
 		for cur := y.start; cur != nil; cur = cur.right {
 			name[cur.id] = nm
@@ -138,20 +138,20 @@ func (doc *Doc) EncodeUpdate() []byte {
 	return e.buf
 }
 
-func encodeNode(e *encoder, node Node, name map[Id]string) {
+func encodeNode(e *encoder, node node, name map[id]string) {
 	switch n := node.(type) {
-	case ItemNode:
+	case itemNode:
 		encodeItem(e, n.item, name)
-	case GCNode:
+	case gcNode:
 		e.writeU8(nodeTagGC)
 		e.writeVarUint(n.nodeLen.len)
-	case SkipNode:
+	case skipNode:
 		e.writeU8(nodeTagSkip)
 		e.writeVarUint(n.nodeLen.len)
 	}
 }
 
-func encodeItem(e *encoder, item Item, name map[Id]string) {
+func encodeItem(e *encoder, item item, name map[id]string) {
 	info := byte(contentTypeString)
 	if item.originLeftId != nil {
 		info |= infoHasLeftID
@@ -177,7 +177,7 @@ func encodeItem(e *encoder, item Item, name map[Id]string) {
 	e.writeVarString(item.content.content)
 }
 
-func encodeOrderRange(e *encoder, r OrderRange) {
+func encodeOrderRange(e *encoder, r orderRange) {
 	ranges := rangesOf(r)
 	e.writeVarUint(uint64(len(ranges)))
 	for _, rg := range ranges {
@@ -186,11 +186,11 @@ func encodeOrderRange(e *encoder, r OrderRange) {
 	}
 }
 
-func rangesOf(r OrderRange) []Range[uint64] {
+func rangesOf(r orderRange) []span[uint64] {
 	switch rr := r.(type) {
-	case RangeOrderRange:
-		return []Range[uint64]{rr.range_}
-	case FragmentOrderRange:
+	case rangeOrderRange:
+		return []span[uint64]{rr.range_}
+	case fragmentOrderRange:
 		return rr.fragment
 	}
 	return nil
@@ -209,9 +209,9 @@ func sortedClientsDesc[V any](m map[Client]V) []Client {
 
 // decodedStruct is one struct read from an update, before run-splitting.
 type decodedStruct struct {
-	id            Id
-	originLeftId  *Id
-	originRightId *Id
+	id            id
+	originLeftId  *id
+	originRightId *id
 	parentName    string // set only for head structs (no origins)
 	content       string
 	isItem        bool // false => GC / Skip (no content, not integrated)
@@ -267,7 +267,7 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 
 	if first5 == nodeTagGC || first5 == nodeTagSkip {
 		length := d.readVarUint()
-		return decodedStruct{id: NewId(client, clock), isItem: false, length: length}
+		return decodedStruct{id: newId(client, clock), isItem: false, length: length}
 	}
 
 	hasLeft := info&infoHasLeftID != 0
@@ -275,8 +275,8 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 	hasParentSub := info&infoHasParentSub != 0
 	hasNotSibling := info&infoHasSibling == 0
 
-	var originLeftId *Id
-	var originRightId *Id
+	var originLeftId *id
+	var originRightId *id
 	if hasLeft {
 		v := d.readItemID()
 		originLeftId = &v
@@ -291,7 +291,7 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 		if d.readVarUint() == 1 {
 			name = d.readVarString()
 		} else {
-			// Parent::Id: this subset routes by origin instead, so ignore it.
+			// Parent::id: this subset routes by origin instead, so ignore it.
 			d.readItemID()
 		}
 	}
@@ -301,7 +301,7 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 
 	content := d.readVarString()
 	return decodedStruct{
-		id:            NewId(client, clock),
+		id:            newId(client, clock),
 		originLeftId:  originLeftId,
 		originRightId: originRightId,
 		parentName:    name,
@@ -313,9 +313,9 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 
 // pendingItem is a single 1-char item awaiting integration.
 type pendingItem struct {
-	id            Id
-	originLeftId  *Id
-	originRightId *Id
+	id            id
+	originLeftId  *id
+	originRightId *id
 	parentName    string // meaningful only when both origins are nil
 	content       string
 }
@@ -329,17 +329,17 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 	for _, ds := range structs {
 		if !ds.isItem {
 			// GC / Skip: register for the state vector, do not integrate.
-			doc.store.AddNode(GCNode{nodeLen: NodeLen{id: ds.id, len: ds.length}})
+			doc.store.AddNode(gcNode{nodeLen: nodeLen{id: ds.id, len: ds.length}})
 			continue
 		}
 		runLen := len(ds.content)
 		for j := 0; j < runLen; j++ {
-			subID := NewId(ds.id.clientId, ds.id.clock+uint64(j))
-			var originLeftId *Id
+			subID := newId(ds.id.clientId, ds.id.clock+uint64(j))
+			var originLeftId *id
 			if j == 0 {
 				originLeftId = ds.originLeftId
 			} else {
-				prev := NewId(ds.id.clientId, ds.id.clock+uint64(j-1))
+				prev := newId(ds.id.clientId, ds.id.clock+uint64(j-1))
 				originLeftId = &prev
 			}
 			pending = append(pending, pendingItem{
@@ -352,7 +352,7 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 		}
 	}
 
-	idToText := map[Id]*YText{}
+	idToText := map[id]*yText{}
 	for len(pending) > 0 {
 		progressed := false
 		var next []pendingItem
@@ -364,7 +364,7 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 				continue
 			}
 
-			var txt *YText
+			var txt *yText
 			if pi.originLeftId != nil {
 				txt = idToText[*pi.originLeftId]
 			} else if pi.originRightId != nil {
@@ -373,9 +373,9 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 				txt = doc.getOrCreateYText(pi.parentName)
 			}
 
-			item := NewItem(pi.id, pi.content, pi.originLeftId, pi.originRightId)
+			item := newItem(pi.id, pi.content, pi.originLeftId, pi.originRightId)
 			doc.store.Integrate(txt, item)
-			doc.store.AddNode(ItemNode{item: *item})
+			doc.store.AddNode(itemNode{item: *item})
 			idToText[pi.id] = txt
 			progressed = true
 		}
@@ -397,13 +397,13 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 // items across all root types.
 func (doc *Doc) applyDeletes(deletes []pendingDelete) {
 	for _, del := range deletes {
-		doc.store.deletedSet.addRange(NewId(del.client, del.clock), del.length)
+		doc.store.deletedSet.addRange(newId(del.client, del.clock), del.length)
 		end := del.clock + del.length
 		for clock := del.clock; clock < end; clock++ {
-			target := NewId(del.client, clock)
+			target := newId(del.client, clock)
 			item, y := doc.findItem(target)
 			if item != nil && !item.Deleted() {
-				item.flags = item.flags | ItemDeleted
+				item.flags = item.flags | itemDeleted
 				if item.Countable() {
 					y.len = y.len - item.Len()
 				}
@@ -413,7 +413,7 @@ func (doc *Doc) applyDeletes(deletes []pendingDelete) {
 }
 
 // findItem locates the item with id across the document's root types.
-func (doc *Doc) findItem(id Id) (*Item, *YText) {
+func (doc *Doc) findItem(id id) (*item, *yText) {
 	for _, y := range doc.types {
 		if it := findById(y, id); it != nil {
 			return it, y
@@ -422,7 +422,7 @@ func (doc *Doc) findItem(id Id) (*Item, *YText) {
 	return nil, nil
 }
 
-func hasIDKey[V any](m map[Id]V, k Id) bool {
+func hasIDKey[V any](m map[id]V, k id) bool {
 	_, ok := m[k]
 	return ok
 }
