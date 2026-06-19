@@ -2001,6 +2001,83 @@ Proof.
            exact (transitivity.yjs_leq'_p_trans Hisi (Item ob rb idb cb) rb x HbIn (closedRight _ Hclosed ob rb idb cb HbIn) HxIn Hclosed (YjsLeq'_leqLt _ _ (item_lt_rightOrigin (Item ob rb idb cb))) Hrbx).
 Qed.
 
+(** Boundary variants of [item_valid_adjacent] for the ends of the document:
+    inserting before the head ([First] origin), after the tail ([Last]
+    right-origin), or into an empty document ([First]/[Last]). *)
+Lemma item_valid_empty (newid : YjsId) (c : A) : IsItemValid (Item First Last newid c).
+Proof.
+  apply Build_IsItemValid.
+  - exact (YjsLt'_ltOriginOrder _ _ lt_first_last).
+  - intros x Hreach.
+    inversion Hreach as [p1 q1 Hstep | p1 q1 r1 Hstep Hrest]; subst.
+    + inversion Hstep; subst; [left|right]; apply YjsLeq'_leqSame.
+    + exfalso. inversion Hstep; subst; inversion Hrest as [u v Hs | u v w Hs Hr]; inversion Hs.
+Qed.
+
+Lemma item_valid_head (arr : list (YjsItem A)) (b : YjsItem A) (newid : YjsId) (c : A) :
+  YjsArrInvariant arr -> base.lookup 0%nat arr = Some b ->
+  IsItemValid (Item First (itemPtr b) newid c).
+Proof.
+  intros Hinv Hb. destruct b as [ob rb idb cb].
+  pose proof (yai_item_set_inv _ Hinv) as Hisi.
+  pose proof (yai_closed _ Hinv) as Hclosed.
+  assert (HbIn : ArrSet arr (Item ob rb idb cb)) by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hb).
+  assert (Hob : ob = First).
+  { pose proof (closedLeft _ Hclosed ob rb idb cb HbIn) as Hobin.
+    pose proof (item_origin_lt (Item ob rb idb cb)) as Hoblt.
+    destruct ob as [q | | ].
+    - exfalso. destruct (list_basics.list.list_elem_of_lookup_1 _ _ Hobin) as [iq Hiq].
+      assert (iq < 0)%nat by exact (findptridx_order2.getElem_YjsLt'_index_lt arr iq 0 q (Item (itemPtr q) rb idb cb) Hinv Hiq Hb Hoblt). lia.
+    - reflexivity.
+    - exfalso. destruct Hoblt as [h Hh]. exact (not_last_lt_ptr Hclosed Hisi h _ HbIn Hh). }
+  subst ob.
+  apply Build_IsItemValid.
+  - exact (YjsLt'_ltOriginOrder _ _ (lt_first (Item First rb idb cb))).
+  - intros x Hreach.
+    inversion Hreach as [p1 q1 Hstep | p1 q1 r1 Hstep Hrest]; subst.
+    + inversion Hstep; subst; [left|right]; apply YjsLeq'_leqSame.
+    + inversion Hstep; subst.
+      * exfalso. inversion Hrest as [u v Hs | u v w Hs Hr]; inversion Hs.
+      * pose proof (origin_nearest_reachable (ArrSet arr) Hisi First rb cb idb x HbIn Hrest) as [Hxob | Hrbx].
+        -- left. exact Hxob.
+        -- right.
+           pose proof (reachable_in arr (Item First rb idb cb) Hclosed x Hrest HbIn) as HxIn.
+           exact (transitivity.yjs_leq'_p_trans Hisi (Item First rb idb cb) rb x HbIn (closedRight _ Hclosed First rb idb cb HbIn) HxIn Hclosed (YjsLeq'_leqLt _ _ (item_lt_rightOrigin (Item First rb idb cb))) Hrbx).
+Qed.
+
+Lemma item_valid_tail (arr : list (YjsItem A)) (a : YjsItem A) (newid : YjsId) (c : A) :
+  YjsArrInvariant arr -> base.lookup (length arr - 1)%nat arr = Some a ->
+  IsItemValid (Item (itemPtr a) Last newid c).
+Proof.
+  intros Hinv Ha. destruct a as [oa ra ida ca].
+  pose proof (yai_item_set_inv _ Hinv) as Hisi.
+  pose proof (yai_closed _ Hinv) as Hclosed.
+  assert (HaIn : ArrSet arr (Item oa ra ida ca)) by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Ha).
+  assert (Hra : ra = Last).
+  { pose proof (closedRight _ Hclosed oa ra ida ca HaIn) as Hrain.
+    pose proof (item_lt_rightOrigin (Item oa ra ida ca)) as Hralt.
+    destruct ra as [q | | ].
+    - exfalso. destruct (list_basics.list.list_elem_of_lookup_1 _ _ Hrain) as [iq Hiq].
+      assert (length arr - 1 < iq)%nat by exact (findptridx_order2.getElem_YjsLt'_index_lt arr (length arr - 1) iq (Item oa (itemPtr q) ida ca) q Hinv Ha Hiq Hralt).
+      pose proof (list_basics.list.lookup_lt_Some _ _ _ Hiq) as Hbound. lia.
+    - exfalso. exact (not_ptr_lt'_first Hclosed Hisi _ HaIn Hralt).
+    - reflexivity. }
+  subst ra.
+  apply Build_IsItemValid.
+  - exact (YjsLt'_ltOriginOrder _ _ (lt_last (Item oa Last ida ca))).
+  - intros x Hreach.
+    inversion Hreach as [p1 q1 Hstep | p1 q1 r1 Hstep Hrest]; subst.
+    + inversion Hstep; subst; [left|right]; apply YjsLeq'_leqSame.
+    + inversion Hstep; subst.
+      * pose proof (origin_nearest_reachable (ArrSet arr) Hisi oa Last ca ida x HaIn Hrest) as [Hxoa | Hrax].
+        -- left.
+           pose proof (reachable_in arr (Item oa Last ida ca) Hclosed x Hrest HaIn) as HxIn.
+           apply YjsLeq'_leqLt.
+           exact (transitivity.yjs_leq'_p_trans1 Hisi x oa (Item oa Last ida ca) HxIn (closedLeft _ Hclosed oa Last ida ca HaIn) HaIn Hclosed Hxoa (item_origin_lt (Item oa Last ida ca))).
+        -- right. exact Hrax.
+      * exfalso. inversion Hrest as [u v Hs | u v w Hs Hr]; inversion Hs.
+Qed.
+
 Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A) :
   toItem input arr = Some newItem ->
