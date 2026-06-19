@@ -1939,6 +1939,68 @@ Qed.
     bridges to [setintegrate] ([setintegrate_eq_integrate]); the insertion
     position and the post-state's validity come from the rocq-yjs preservation
     theorem [YjsArrInvariant_integrate]. *)
+
+(** [item_valid_adjacent]: the pure (model-level) heart of the Text.Insert proof.
+    An item whose origin / right-origin are two *adjacent* elements of a valid
+    document array is [IsItemValid]. [iiv_origin_lt] is immediate from the array
+    being sorted ([yai_sorted]); [iiv_reachable] follows from
+    [origin_nearest_reachable] plus the fact that nothing in a sorted array lies
+    strictly between adjacent elements (the index lemmas). This isolates the only
+    hard obligation of an insert into the order theory, so the WP side only has
+    to maintain that the chosen left/right neighbours are adjacent. *)
+Lemma item_valid_adjacent (arr : list (YjsItem A)) (i : nat) (a b : YjsItem A)
+    (newid : YjsId) (c : A) :
+  YjsArrInvariant arr ->
+  base.lookup i arr = Some a ->
+  base.lookup (S i) arr = Some b ->
+  IsItemValid (Item (itemPtr a) (itemPtr b) newid c).
+Proof.
+  intros Hinv Ha Hb.
+  destruct a as [oa ra ida ca]. destruct b as [ob rb idb cb].
+  pose proof (yai_item_set_inv _ Hinv) as Hisi.
+  pose proof (yai_closed _ Hinv) as Hclosed.
+  assert (HaIn : ArrSet arr (Item oa ra ida ca)) by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Ha).
+  assert (HbIn : ArrSet arr (Item ob rb idb cb)) by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hb).
+  assert (Hab : YjsLt' (Item oa ra ida ca) (Item ob rb idb cb))
+    by exact (invariant_yjsarray_idx.getElem_lt_YjsLt' arr i (S i) _ _ Hinv Ha Hb ltac:(lia)).
+  assert (Hlo : forall p, ArrSet arr p -> YjsLt' p (Item ob rb idb cb) -> YjsLeq' p (Item oa ra ida ca)).
+  { intros p Hp Hpb. destruct p as [q | | ].
+    - destruct (list_basics.list.list_elem_of_lookup_1 _ _ Hp) as [iq Hiq].
+      assert (iq < S i)%nat by exact (findptridx_order2.getElem_YjsLt'_index_lt arr iq (S i) q (Item ob rb idb cb) Hinv Hiq Hb Hpb).
+      apply (invariant_yjsarray_idx.getElem_leq_YjsLeq' arr iq i q (Item oa ra ida ca) Hinv Hiq Ha). lia.
+    - exact (YjsLeq'_leqLt _ _ (YjsLt'_ltOriginOrder _ _ (lt_first (Item oa ra ida ca)))).
+    - exfalso. destruct Hpb as [h Hh]. exact (not_last_lt_ptr Hclosed Hisi h _ HbIn Hh). }
+  assert (Hhi : forall p, ArrSet arr p -> YjsLt' (Item oa ra ida ca) p -> YjsLeq' (Item ob rb idb cb) p).
+  { intros p Hp Hap. destruct p as [q | | ].
+    - destruct (list_basics.list.list_elem_of_lookup_1 _ _ Hp) as [iq Hiq].
+      assert (i < iq)%nat by exact (findptridx_order2.getElem_YjsLt'_index_lt arr i iq (Item oa ra ida ca) q Hinv Ha Hiq Hap).
+      apply (invariant_yjsarray_idx.getElem_leq_YjsLeq' arr (S i) iq (Item ob rb idb cb) q Hinv Hb Hiq). lia.
+    - exfalso. exact (not_ptr_lt'_first Hclosed Hisi _ HaIn Hap).
+    - exact (YjsLeq'_leqLt _ _ (YjsLt'_ltOriginOrder _ _ (lt_last (Item ob rb idb cb)))). }
+  assert (HF1 : YjsLeq' (Item ob rb idb cb) ra)
+    by exact (Hhi ra (closedRight _ Hclosed oa ra ida ca HaIn) (item_lt_rightOrigin (Item oa ra ida ca))).
+  assert (HF2 : YjsLeq' ob (Item oa ra ida ca))
+    by exact (Hlo ob (closedLeft _ Hclosed ob rb idb cb HbIn) (item_origin_lt (Item ob rb idb cb))).
+  apply Build_IsItemValid.
+  - exact Hab.
+  - intros x Hreach.
+    inversion Hreach as [p1 q1 Hstep | p1 q1 r1 Hstep Hrest]; subst.
+    + inversion Hstep; subst; [ left | right ]; apply YjsLeq'_leqSame.
+    + inversion Hstep; subst.
+      * pose proof (reachable_in arr (Item oa ra ida ca) Hclosed x Hrest HaIn) as HxIn.
+        pose proof (origin_nearest_reachable (ArrSet arr) Hisi oa ra ca ida x HaIn Hrest) as [Hxoa | Hrax].
+        -- left. apply YjsLeq'_leqLt.
+           exact (transitivity.yjs_leq'_p_trans1 Hisi x oa (Item oa ra ida ca) HxIn (closedLeft _ Hclosed oa ra ida ca HaIn) HaIn Hclosed Hxoa (item_origin_lt (Item oa ra ida ca))).
+        -- right.
+           exact (transitivity.yjs_leq'_p_trans Hisi (Item ob rb idb cb) ra x HbIn (closedRight _ Hclosed oa ra ida ca HaIn) HxIn Hclosed HF1 Hrax).
+      * pose proof (reachable_in arr (Item ob rb idb cb) Hclosed x Hrest HbIn) as HxIn.
+        pose proof (origin_nearest_reachable (ArrSet arr) Hisi ob rb cb idb x HbIn Hrest) as [Hxob | Hrbx].
+        -- left.
+           exact (transitivity.yjs_leq'_p_trans Hisi x ob (Item oa ra ida ca) HxIn (closedLeft _ Hclosed ob rb idb cb HbIn) HaIn Hclosed Hxob HF2).
+        -- right.
+           exact (transitivity.yjs_leq'_p_trans Hisi (Item ob rb idb cb) rb x HbIn (closedRight _ Hclosed ob rb idb cb HbIn) HxIn Hclosed (YjsLeq'_leqLt _ _ (item_lt_rightOrigin (Item ob rb idb cb))) Hrbx).
+Qed.
+
 Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A) :
   toItem input arr = Some newItem ->
