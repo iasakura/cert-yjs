@@ -9,6 +9,10 @@ package yjs
 //
 // Simplifications vs y-octo:
 //   - a Doc owns root Text types by name (no nested types, no maps/arrays);
+//   - the next clock for the local client is a plain Doc counter (clock) rather
+//     than derived from the struct store's state vector -- this keeps Insert
+//     decoupled from store.items, so verifying it needs only is_valid_ytext and
+//     the counter, not ownership of the interface-typed node-slice map;
 //   - every user-visible character becomes its own 1-char internal item, so
 //     positions never fall inside an item and no splitting is needed;
 //   - content is assumed single-byte (ASCII): a clock unit is one byte, which
@@ -19,6 +23,9 @@ type Doc struct {
 	store *store
 	// types is the root-type registry by name (y-octo: DocStore types).
 	types map[string]*yText
+	// clock is the next clock for the local client (store.client). Each local
+	// insert consumes one and bumps it; this makes generated ids maximal.
+	clock Clock
 }
 
 // NewDoc creates a document with a fresh store owned by client.
@@ -26,6 +33,7 @@ func NewDoc(client Client) *Doc {
 	return &Doc{
 		store: newStore(client),
 		types: make(map[string]*yText),
+		clock: 0,
 	}
 }
 
@@ -48,7 +56,7 @@ func (d *Doc) GetText(name string) *Text {
 
 // Text is the public handle for a root text type (y-octo: the Text wrapper
 // around a YTypeRef). It carries the owning Doc so edits can allocate ids from
-// the store and register the resulting items.
+// the doc's clock counter and integrate the resulting items.
 type Text struct {
 	doc   *Doc
 	name  string
@@ -64,7 +72,8 @@ func (t *Text) Len() uint64 { return t.inner.len }
 // Insert inserts content at the visible character index, generating one
 // 1-char item per byte. Each item's left origin chains to the previous one and
 // every item shares the same right origin, matching how Yjs splits a run
-// (y-octo: ListType::insert_after via store::create_item + integrate).
+// (y-octo: ListType::insert_after via store::create_item + integrate). The id of
+// each character comes from the doc's local clock counter.
 func (t *Text) Insert(index uint64, content string) {
 	if index > t.inner.len {
 		return
@@ -73,7 +82,8 @@ func (t *Text) Insert(index uint64, content string) {
 	client := t.doc.store.client
 
 	for i := 0; i < len(content); i++ {
-		clock := t.doc.store.getState(client)
+		clk := t.doc.clock
+		t.doc.clock = clk + 1
 
 		var originLeftId *id
 		var originRightId *id
@@ -86,28 +96,12 @@ func (t *Text) Insert(index uint64, content string) {
 			originRightId = &rid
 		}
 
-		newit := newItem(newId(client, clock), content[i:i+1], originLeftId, originRightId)
+		newit := newItem(newId(client, clk), content[i:i+1], originLeftId, originRightId)
 		t.doc.store.Integrate(t.inner, newit)
-		t.doc.store.AddNode(itemNode{item: *newit})
 
 		// the next character integrates immediately to the right of this one.
 		left = newit
 	}
-}
-
-// getState returns the next clock for client: the end clock of its last
-// recorded struct, or 0 (y-octo: DocStore::get_state).
-func (s *store) getState(client Client) Clock {
-	nodes, ok := s.items[client]
-	if !ok {
-		return 0
-	}
-	n := len(nodes)
-	if n == 0 {
-		return 0
-	}
-	last := nodes[n-1]
-	return last.clock() + last.length()
 }
 
 // findPos walks to the visible character index and returns the doubly-linked

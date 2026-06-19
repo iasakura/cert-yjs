@@ -106,24 +106,32 @@ func (d *decoder) readItemID() id {
 func (doc *Doc) EncodeUpdate() []byte {
 	e := &encoder{}
 
-	// item id -> owning root-type name, for head items' parent field.
+	// Gather the live items from the document's sequences -- the DLLs are the
+	// source of truth (Insert no longer mirrors into the struct store). Record
+	// each item's owning root-type name (for head items' parent field) and group
+	// by client, then sort each client's run by clock.
 	name := map[id]string{}
+	byClient := map[Client][]*item{}
 	for nm, y := range doc.types {
 		for cur := y.start; cur != nil; cur = cur.right {
 			name[cur.id] = nm
+			byClient[cur.id.clientId] = append(byClient[cur.id.clientId], cur)
 		}
 	}
+	for c := range byClient {
+		runItems := byClient[c]
+		sort.Slice(runItems, func(i, j int) bool { return runItems[i].id.clock < runItems[j].id.clock })
+	}
 
-	// structs, grouped by client (store.items is per-client clock-sorted).
-	clients := sortedClientsDesc(doc.store.items)
+	clients := sortedClientsDesc(byClient)
 	e.writeVarUint(uint64(len(clients)))
 	for _, client := range clients {
-		nodes := doc.store.items[client]
-		e.writeVarUint(uint64(len(nodes)))
+		runItems := byClient[client]
+		e.writeVarUint(uint64(len(runItems)))
 		e.writeVarUint(client)
-		e.writeVarUint(nodes[0].clock())
-		for _, node := range nodes {
-			encodeNode(e, node, name)
+		e.writeVarUint(runItems[0].id.clock)
+		for _, it := range runItems {
+			encodeItem(e, *it, name)
 		}
 	}
 
@@ -328,8 +336,7 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 	var pending []pendingItem
 	for _, ds := range structs {
 		if !ds.isItem {
-			// GC / Skip: register for the state vector, do not integrate.
-			doc.store.AddNode(gcNode{nodeLen: nodeLen{id: ds.id, len: ds.length}})
+			// GC / Skip: nothing to integrate (the DLLs hold only items).
 			continue
 		}
 		runLen := len(ds.content)
@@ -375,7 +382,6 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 
 			item := newItem(pi.id, pi.content, pi.originLeftId, pi.originRightId)
 			doc.store.Integrate(txt, item)
-			doc.store.AddNode(itemNode{item: *item})
 			idToText[pi.id] = txt
 			progressed = true
 		}
@@ -383,13 +389,6 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 		if !progressed {
 			break // missing dependencies: drop the remainder (minimal codec)
 		}
-	}
-
-	// integration order may differ from clock order; keep store.items sorted so
-	// get_node_index (binary search) and re-encoding stay correct.
-	for client := range doc.store.items {
-		nodes := doc.store.items[client]
-		sort.Slice(nodes, func(i, j int) bool { return nodes[i].clock() < nodes[j].clock() })
 	}
 }
 
