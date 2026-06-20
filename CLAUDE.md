@@ -95,6 +95,15 @@ proof}`, then `item → store → text`:
   `insert_item_valid` / `insert_maximalId`, and top-level `wp_Text__Insert`
   (with `own_insert_doc`).
 
+**Verified so far**: `Store.Integrate` preserves the document invariant
+(`wp_Store__Integrate`); `Text.Insert(index, content)` preserves it for any valid
+document and any visible index (`wp_Text__Insert`, axiom-clean — `Print
+Assumptions` shows only the goose/Perennial framework axioms). `Delete` and the
+v1 byte codec stay behind `//go:build !goose` and are not yet in the verified
+model. `cell_repr` currently pins two model simplifications (every cell Countable
+/ non-Deleted with `Len() = 1`); see its `TODO` for what must relax to add
+deletions / multi-clock items.
+
 **Core principle: reuse the rocq-yjs model — do not invent independent proofs.**
 State cert-yjs WP specs as *refinements* of the pure model and compose with
 rocq-yjs's lemmas (`YjsArrInvariant_integrate`, `setintegrate_eq_integrate`,

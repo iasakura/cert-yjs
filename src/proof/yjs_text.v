@@ -244,49 +244,48 @@ Proof.
   wp_apply (wp_yText__findPos (tv.(yjs.Text.inner')) cells0 arr0 idx Hposle with "[$Htext]").
   iIntros (lft rgt) "(Htext & %Hlftloc & %Hrgtloc)".
   wp_auto.
-  wp_bind (if: _ then _ else _)%E.
-  iApply (wp_wand _ _ _ (λ v : val, ⌜v = execute_val⌝ ∗ ∃ (oRptr : loc) (in_rO : option yjs.id.t),
+  wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗ ∃ (oRptr : loc) (in_rO : option yjs.id.t),
       "HoR" ∷ originRightId_ptr ↦ oRptr ∗ "HisR" ∷ is_origin_id oRptr in_rO ∗
       "Htext" ∷ is_ytext tv.(yjs.Text.inner') cells0 arr0 ∗ "Hright" ∷ right_ptr ↦ rgt ∗
       "%Hrightinit" ∷ ⌜(in_rO = None ∧ (uint.nat idx = length cells0)%nat) ∨
         (∃ (ri : YjsItem A) (rid : yjs.id.t), arr0 !! (uint.nat idx) = Some ri ∧ in_rO = Some rid ∧ item_id ri = toYjsId rid)⌝)%I
-      with "[right Htext originRightId]").
-  1:{ iDestruct "Htext" as (yt1 tl1) "(Hpar1 & Hdll1 & %Hlen1 & %Hrepr1)".
-      wp_if_destruct.
-      1:{ iSplitR; [done|].
-          destruct (decide (uint.nat idx = length cells0)%nat) as [Hpeq|Hne];
-          [ iExists null, None; iFrame "originRightId right";
-            (iSplitR "Hpar1 Hdll1"; [by rewrite /is_origin_id |]);
-            (iSplitL "Hpar1 Hdll1"; [ iExists yt1, tl1; iFrame "Hpar1 Hdll1"; iPureIntro; split; [exact Hlen1 | exact Hrepr1] |]);
-            iPureIntro; left; split; [reflexivity | exact Hpeq]
-          | have Hlt : (uint.nat idx < length cells0)%nat by lia;
-            iDestruct (node_loc_lt_not_null cells0 yt1.(yjs.yText.start') tl1 (uint.nat idx) Hlt with "Hdll1") as "[%Hnn _]";
-            exfalso; exact (Hnn e) ].
-          iDestruct (node_loc_lt_not_null cells0 yt1.(yjs.yText.start') tl1 (uint.nat idx) Hlt with "Hdll1") as "[%Hnn _]".
-          exfalso; exact (Hnn e). }
-      have Hposlt : (uint.nat idx < length cells0)%nat.
-      { destruct (decide (uint.nat idx < length cells0)%nat) as [Hlt|Hge]; [exact Hlt|exfalso].
-        apply n. rewrite /node_loc decide_True; [|lia].
-        have Hpe : (uint.nat idx = length cells0)%nat by lia.
-        rewrite Hpe Nat2Z.id lookup_ge_None_2; [done|lia]. }
-      destruct (cells0 !! uint.nat idx) as [c0|] eqn:Hc0; [| apply lookup_ge_None in Hc0; lia].
-      have [yi0 [Hyi0 Hcr0]] := cells_repr_lookup arr0 cells0 arr0 (uint.nat idx) c0 Hrepr1 Hc0.
-      iDestruct (is_dll_acc cells0 yt1.(yjs.yText.start') tl1 (uint.nat idx) c0 Hc0 with "Hdll1") as "Hacc". iNamed "Hacc".
-      iEval (rewrite Hcloc) in "Hcval".
-      wp_load. wp_pures. wp_store.
-      iDestruct (typed_pointsto_not_null with "rid") as %Hridnn.
-      iPersist "rid".
-      wp_auto.
-      iEval (rewrite -Hcloc) in "Hcval".
-      iDestruct ("Hback" with "Hcval") as "Hdll1".
-      iSplitR; [done|].
-      iExists rid_ptr, (Some c0.(ic_val).(yjs.item.id')).
-      iFrame "originRightId right".
-      iSplitR "Hpar1 Hdll1".
-      { rewrite /is_origin_id. iSplit; [iPureIntro; exact Hridnn | iFrame "rid"]. }
-      iSplitL "Hpar1 Hdll1".
-      { iExists yt1, tl1. iFrame "Hpar1 Hdll1". iPureIntro. split; [exact Hlen1 | exact Hrepr1]. }
-      iPureIntro. right. exists yi0, c0.(ic_val).(yjs.item.id'). split_and!; [exact Hyi0 | reflexivity | exact (proj1 Hcr0)]. }
+      with "[right Htext originRightId]".
+  { iDestruct "Htext" as (yt1 tl1) "(Hpar1 & Hdll1 & %Hlen1 & %Hrepr1)".
+    iSplitR; [done|].
+    destruct (decide (uint.nat idx = length cells0)%nat) as [Hpeq|Hne];
+    [ iExists null, None; iFrame "originRightId right";
+      (iSplitR "Hpar1 Hdll1"; [by rewrite /is_origin_id |]);
+      (iSplitL "Hpar1 Hdll1"; [ iExists yt1, tl1; iFrame "Hpar1 Hdll1"; iPureIntro; split; [exact Hlen1 | exact Hrepr1] |]);
+      iPureIntro; left; split; [reflexivity | exact Hpeq]
+    | have Hlt : (uint.nat idx < length cells0)%nat by lia;
+      iDestruct (node_loc_lt_not_null cells0 yt1.(yjs.yText.start') tl1 (uint.nat idx) Hlt with "Hdll1") as "[%Hnn _]";
+      exfalso; exact (Hnn e) ].
+    iDestruct (node_loc_lt_not_null cells0 yt1.(yjs.yText.start') tl1 (uint.nat idx) Hlt with "Hdll1") as "[%Hnn _]".
+    exfalso; exact (Hnn e). }
+  { iDestruct "Htext" as (yt1 tl1) "(Hpar1 & Hdll1 & %Hlen1 & %Hrepr1)".
+    have Hposlt : (uint.nat idx < length cells0)%nat.
+    { destruct (decide (uint.nat idx < length cells0)%nat) as [Hlt|Hge]; [exact Hlt|exfalso].
+      apply n. rewrite /node_loc decide_True; [|lia].
+      have Hpe : (uint.nat idx = length cells0)%nat by lia.
+      rewrite Hpe Nat2Z.id lookup_ge_None_2; [done|lia]. }
+    destruct (cells0 !! uint.nat idx) as [c0|] eqn:Hc0; [| apply lookup_ge_None in Hc0; lia].
+    have [yi0 [Hyi0 Hcr0]] := cells_repr_lookup arr0 cells0 arr0 (uint.nat idx) c0 Hrepr1 Hc0.
+    iDestruct (is_dll_acc cells0 yt1.(yjs.yText.start') tl1 (uint.nat idx) c0 Hc0 with "Hdll1") as "Hacc". iNamed "Hacc".
+    iEval (rewrite Hcloc) in "Hcval".
+    wp_load. wp_pures. wp_store.
+    iDestruct (typed_pointsto_not_null with "rid") as %Hridnn.
+    iPersist "rid".
+    wp_auto.
+    iEval (rewrite -Hcloc) in "Hcval".
+    iDestruct ("Hback" with "Hcval") as "Hdll1".
+    iSplitR; [done|].
+    iExists rid_ptr, (Some c0.(ic_val).(yjs.item.id')).
+    iFrame "originRightId right".
+    iSplitR "Hpar1 Hdll1".
+    { rewrite /is_origin_id. iSplit; [iPureIntro; exact Hridnn | iFrame "rid"]. }
+    iSplitL "Hpar1 Hdll1".
+    { iExists yt1, tl1. iFrame "Hpar1 Hdll1". iPureIntro. split; [exact Hlen1 | exact Hrepr1]. }
+    iPureIntro. right. exists yi0, c0.(ic_val).(yjs.item.id'). split_and!; [exact Hyi0 | reflexivity | exact (proj1 Hcr0)]. }
   iIntros (v) "[%Hv HQ]". subst v. iNamed "HQ". wp_auto.
   iEval (rewrite Hcl) in "client".
   iAssert (∃ (j : nat) (arr : list (YjsItem A)) (cells : list item_cell) (leftloc : loc) (dvj : yjs.Doc.t),
@@ -354,8 +353,7 @@ Proof.
       iSplitL "Htextj"; [ iExists cells; iFrame "Htextj"; iPureIntro; exact Hinvj |].
       iPureIntro. intros x Hx Hc. have Hkj : uint.nat (W64 (uint.Z k + j)) = (uint.nat k + j)%nat by word. rewrite Hkj. exact (Hctr x Hx Hc). }
   rewrite decide_True; [|done]. wp_auto.
-  wp_bind (if: _ then _ else _)%E.
-  iApply (wp_wand _ _ _ (λ v : val, ⌜v = execute_val⌝ ∗
+  wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗
     ∃ (oLptr : loc) (oL : option yjs.id.t),
       "HoL" ∷ originLeftId_ptr ↦ oLptr ∗
       "HisL" ∷ is_origin_id oLptr oL ∗
@@ -363,41 +361,40 @@ Proof.
       "Hleftp" ∷ left_ptr ↦ leftloc ∗
       "%Hleftspec" ∷ ⌜(oL = None ∧ (uint.nat idx + j = 0)%nat) ∨
          (∃ (li : YjsItem A), (1 <= uint.nat idx + j)%nat ∧ arr !! (uint.nat idx + j - 1)%nat = Some li ∧ (toYjsId <$> oL) = Some (item_id li))⌝)%I
-    with "[Hleftp Htextj originLeftId]").
-  1:{ wp_if_destruct.
-      1:{ destruct Hleftj as [[_ Hpe0] | (lc & li & Hlccells & Hlcloc & Hliarr & Hliid & Hlclen & Hge1)].
-          - iSplitR; [done|]. iExists null, None. iFrame "originLeftId Htextj Hleftp".
-            iSplit; [by rewrite /is_origin_id|]. iPureIntro. left. split; [reflexivity | exact Hpe0].
-          - iDestruct "Htextj" as (yth tlh) "(Hpar & Hdll & %Hlenh & %Hreprh)".
-            iDestruct (is_dll_acc cells yth.(yjs.yText.start') tlh (uint.nat idx + j - 1)%nat lc Hlccells with "Hdll") as "Hacc". iNamed "Hacc".
-            iDestruct (typed_pointsto_not_null with "Hcval") as %Hlcnn.
-            exfalso. exact (Hlcnn Hlcloc). }
-      destruct Hleftj as [[Hln _] | (lc & li & Hlccells & Hlcloc & Hliarr & Hliid & Hlclen & Hge1)].
-      { exfalso; exact (n Hln). }
-      iDestruct "Htextj" as (yth tlh) "(Hpar & Hdll & %Hlenh & %Hreprh)".
+    with "[Hleftp Htextj originLeftId]".
+  { destruct Hleftj as [[_ Hpe0] | (lc & li & Hlccells & Hlcloc & Hliarr & Hliid & Hlclen & Hge1)].
+    - iSplitR; [done|]. iExists null, None. iFrame "originLeftId Htextj Hleftp".
+      iSplit; [by rewrite /is_origin_id|]. iPureIntro. left. split; [reflexivity | exact Hpe0].
+    - iDestruct "Htextj" as (yth tlh) "(Hpar & Hdll & %Hlenh & %Hreprh)".
       iDestruct (is_dll_acc cells yth.(yjs.yText.start') tlh (uint.nat idx + j - 1)%nat lc Hlccells with "Hdll") as "Hacc". iNamed "Hacc".
-      iEval (rewrite Hlcloc) in "Hcval".
-      wp_method_call. wp_call. wp_auto.
-      wp_method_call. wp_call. rewrite /yjs.item__LastIdⁱᵐᵖˡ. wp_auto.
-      wp_alloc icopy as "Hic". wp_auto.
-      wp_bind (icopy @! (go.PointerType yjs.item) @! "Len" (# ()))%E.
-      wp_apply (wp_item__Len icopy lc.(ic_val) with "[$Hic]"). iIntros "Hic".
-      rewrite Hlclen. wp_pures. wp_store.
-      iDestruct (typed_pointsto_not_null with "lid") as %Hlidnn.
-      iPersist "lid". wp_auto.
-      iEval (rewrite -Hlcloc) in "Hcval".
-      iDestruct ("Hback" with "Hcval") as "Hdll".
-      iSplitR; [done|].
-      iExists lid_ptr, (Some {| yjs.id.clientId' := lc.(ic_val).(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := w64_word_instance.(word.sub) (w64_word_instance.(word.add) lc.(ic_val).(yjs.item.id').(yjs.id.clock') (W64 1%nat)) (W64 1) |}).
-      iFrame "originLeftId Hleftp".
-      iSplitR "Hpar Hdll".
-      { rewrite /is_origin_id. iSplit; [iPureIntro; exact Hlidnn | iFrame "lid"]. }
-      iSplitL "Hpar Hdll".
-      { iExists yth, tlh. iFrame "Hpar Hdll". iPureIntro. split; [exact Hlenh | exact Hreprh]. }
-      iPureIntro. right. exists li. split_and!.
-      - exact Hge1.
-      - exact Hliarr.
-      - rewrite Hliid /toYjsId /=. f_equal. f_equal. word. }
+      iDestruct (typed_pointsto_not_null with "Hcval") as %Hlcnn.
+      exfalso. exact (Hlcnn Hlcloc). }
+  { destruct Hleftj as [[Hln _] | (lc & li & Hlccells & Hlcloc & Hliarr & Hliid & Hlclen & Hge1)].
+    { exfalso; exact (n Hln). }
+    iDestruct "Htextj" as (yth tlh) "(Hpar & Hdll & %Hlenh & %Hreprh)".
+    iDestruct (is_dll_acc cells yth.(yjs.yText.start') tlh (uint.nat idx + j - 1)%nat lc Hlccells with "Hdll") as "Hacc". iNamed "Hacc".
+    iEval (rewrite Hlcloc) in "Hcval".
+    wp_method_call. wp_call. wp_auto.
+    wp_method_call. wp_call. rewrite /yjs.item__LastIdⁱᵐᵖˡ. wp_auto.
+    wp_alloc icopy as "Hic". wp_auto.
+    wp_bind (icopy @! (go.PointerType yjs.item) @! "Len" (# ()))%E.
+    wp_apply (wp_item__Len icopy lc.(ic_val) with "[$Hic]"). iIntros "Hic".
+    rewrite Hlclen. wp_pures. wp_store.
+    iDestruct (typed_pointsto_not_null with "lid") as %Hlidnn.
+    iPersist "lid". wp_auto.
+    iEval (rewrite -Hlcloc) in "Hcval".
+    iDestruct ("Hback" with "Hcval") as "Hdll".
+    iSplitR; [done|].
+    iExists lid_ptr, (Some {| yjs.id.clientId' := lc.(ic_val).(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := w64_word_instance.(word.sub) (w64_word_instance.(word.add) lc.(ic_val).(yjs.item.id').(yjs.id.clock') (W64 1%nat)) (W64 1) |}).
+    iFrame "originLeftId Hleftp".
+    iSplitR "Hpar Hdll".
+    { rewrite /is_origin_id. iSplit; [iPureIntro; exact Hlidnn | iFrame "lid"]. }
+    iSplitL "Hpar Hdll".
+    { iExists yth, tlh. iFrame "Hpar Hdll". iPureIntro. split; [exact Hlenh | exact Hreprh]. }
+    iPureIntro. right. exists li. split_and!.
+    - exact Hge1.
+    - exact Hliarr.
+    - rewrite Hliid /toYjsId /=. f_equal. f_equal. word. }
   iIntros (v) "[%Hv HQL]". subst v. iNamed "HQL". wp_auto.
   wp_func_call. wp_call. wp_auto.
   wp_alloc client_l as "Hcl2". wp_auto.
