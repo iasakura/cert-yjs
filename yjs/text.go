@@ -81,19 +81,23 @@ func (t *Text) Insert(index uint64, content string) {
 	left, right := t.inner.findPos(index)
 	client := t.doc.store.client
 
+	// Every character in this run shares the same right origin: the node that
+	// was to the right of the insertion point (y-octo chains a run between one
+	// fixed left/right pair). [right] never moves in the loop, so read it once.
+	var originRightId *id
+	if right != nil {
+		rid := right.id
+		originRightId = &rid
+	}
+
 	for i := 0; i < len(content); i++ {
 		clk := t.doc.clock
 		t.doc.clock = clk + 1
 
 		var originLeftId *id
-		var originRightId *id
 		if left != nil {
 			lid := left.LastId()
 			originLeftId = &lid
-		}
-		if right != nil {
-			rid := right.id
-			originRightId = &rid
 		}
 
 		newit := newItem(newId(client, clk), string(content[i]), originLeftId, originRightId)
