@@ -12,7 +12,31 @@ From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
-From New.proof Require Import yjs_common yjs_item yjs_proof.
+From New.proof Require Import yjs_common yjs_id yjs_item.
+
+(** Small-context set rewrites for the conflict-scan accumulators. After a Go
+    [append] of the conflict id, an id slice abstracts to [X ∪ ({[a]} ∪ ∅)] (the
+    trailing [∅] is [list_to_set []] from the singleton tail); these relate that
+    to the [setfii_loop] accumulator form [{[a]} ∪ X]. Proving them as standalone
+    lemmas keeps [set_solver] on a tiny context — calling [set_solver] inside
+    [wp_scanConflicts] instead does [set_unfold in *] over the whole proof state
+    (including the [list_to_set] slice hypotheses) and is prohibitively slow.
+
+    They live at top level (outside [Section store]): [set_solver] runs
+    [set_unfold in *], which would otherwise pull the heap section variables into
+    the proof term and force them into the lemma's [Proof using] footprint. Only
+    this module uses them, so they sit here rather than in [yjs_common]. *)
+Lemma gset_union_singleton_swap (X : gset YjsId) (a : YjsId) :
+  (X ∪ ({[a]} ∪ ∅) : gset YjsId) = {[a]} ∪ X.
+Proof. set_solver. Qed.
+
+Lemma gset_elem_union_singleton_swap (X : gset YjsId) (a b : YjsId) :
+  b ∈ ({[a]} ∪ X) -> b ∈ (X ∪ ({[a]} ∪ ∅) : gset YjsId).
+Proof. set_solver. Qed.
+
+Lemma gset_not_elem_union_singleton_swap (X : gset YjsId) (a b : YjsId) :
+  b ∉ ({[a]} ∪ X) -> b ∉ (X ∪ ({[a]} ∪ ∅) : gset YjsId).
+Proof. set_solver. Qed.
 
 Section store.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.

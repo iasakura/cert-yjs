@@ -9,8 +9,7 @@
     - the heap-node record [item_cell] and the cursor helper [node_loc];
     - the persistent origin-pointer predicate [is_origin_id];
     - the item-pointer helpers [oid_of] / [item_or_null];
-    - the id-slice abstraction [is_id_set] (a heap [[]Id] as a [gset YjsId]);
-    - small [gset YjsId] rewrite lemmas used by the conflict scan.
+    - the id-slice abstraction [is_id_set] (a heap [[]Id] as a [gset YjsId]).
 
     None of these depend on the item DLL spine or the heap<->model isomorphism,
     so every other module imports this one. The goose package-init instances
@@ -19,29 +18,6 @@ From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
-
-(** Small-context set rewrites for the scan accumulators. After a Go [append] of
-    the conflict id, an id slice abstracts to [X ∪ ({[a]} ∪ ∅)] (the trailing [∅]
-    is [list_to_set []] from the singleton tail); these relate that to the
-    [setfii_loop] accumulator form [{[a]} ∪ X]. Proving them as standalone lemmas
-    keeps [set_solver] on a tiny context — calling [set_solver] inside
-    [wp_scanConflicts] instead does [set_unfold in *] over the whole proof state
-    (including the [list_to_set] slice hypotheses) and is prohibitively slow.
-
-    These live at top level (outside [Section common]): [set_solver] runs
-    [set_unfold in *], which would otherwise pull the heap section variables into
-    the proof term and force them into the lemma's [Proof using] footprint. *)
-Lemma gset_union_singleton_swap (X : gset YjsId) (a : YjsId) :
-  (X ∪ ({[a]} ∪ ∅) : gset YjsId) = {[a]} ∪ X.
-Proof. set_solver. Qed.
-
-Lemma gset_elem_union_singleton_swap (X : gset YjsId) (a b : YjsId) :
-  b ∈ ({[a]} ∪ X) -> b ∈ (X ∪ ({[a]} ∪ ∅) : gset YjsId).
-Proof. set_solver. Qed.
-
-Lemma gset_not_elem_union_singleton_swap (X : gset YjsId) (a b : YjsId) :
-  b ∉ ({[a]} ∪ X) -> b ∉ (X ∪ ({[a]} ∪ ∅) : gset YjsId).
-Proof. set_solver. Qed.
 
 Section common.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.

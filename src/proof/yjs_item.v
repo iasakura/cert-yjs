@@ -1,6 +1,10 @@
-(** The heap representation of the [item] sequence and its model correspondence.
+(** The [item] type: its per-method WP specs and the heap representation of an
+    item sequence with its model correspondence.
 
     Bottom to top:
+    - per-method WP specs for an individual node: [item.Indexable] / [item.Len] /
+      [item.Deleted], [itemPtrEqual] (pointer identity = model id), and the
+      [gcNode] projections.
     - [is_dll l last prev next cells]: the doubly-linked-list spine of [item]
       nodes (each carrying its [Item] struct and the two origin-id cells), with
       its split / join / accessor / insert lemmas. Adapted from the reference
@@ -17,7 +21,7 @@ From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
-From New.proof Require Import yjs_common.
+From New.proof Require Import yjs_common yjs_id.
 
 Section item.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
@@ -27,6 +31,116 @@ Set Default Proof Using "Type*".
 
 Notation A := go_string.
 
+(* ===== per-method WP specs for individual items / gc-nodes ============= *)
+
+(* ----- Node interface impls ----------------------------------------------- *)
+
+(* The Node accessors read out of the embedded NodeLen / Item; here we pin down
+   the GC-node projections, which the store's binary search relies on. *)
+Lemma wp_GCNode__clock (n : yjs.gcNode.t) :
+  {{{ is_pkg_init yjs }}}
+    n @! yjs.gcNode @! "clock" #()
+  {{{ RET #(n.(yjs.gcNode.nodeLen').(yjs.nodeLen.id').(yjs.id.clock')); True }}}.
+Proof.
+  wp_start. wp_auto. iApply "HΦ". done.
+Qed.
+
+Lemma wp_GCNode__length (n : yjs.gcNode.t) :
+  {{{ is_pkg_init yjs }}}
+    n @! yjs.gcNode @! "length" #()
+  {{{ RET #(n.(yjs.gcNode.nodeLen').(yjs.nodeLen.len')); True }}}.
+Proof.
+  wp_start. wp_auto. iApply "HΦ". done.
+Qed.
+
+(** [itemPtrEqual] compares two item pointers by identity (= model id, ids being
+    unique), with the null cases of y-octo's [Somr] comparison. *)
+Lemma wp_itemPtrEqual (pa pb : loc) (ova ovb : option yjs.item.t) (dqa dqb : dfrac) :
+  {{{ is_pkg_init yjs ∗ item_or_null pa ova dqa ∗ item_or_null pb ovb dqb }}}
+    @! yjs.itemPtrEqual #pa #pb
+  {{{ RET #(bool_decide (oid_of ova = oid_of ovb));
+      item_or_null pa ova dqa ∗ item_or_null pb ovb dqb }}}.
+Proof.
+  wp_start as "[Ha Hb]". wp_auto.
+  destruct ova as [va|]; destruct ovb as [vb|].
+  - iDestruct "Ha" as "[%Hpa Hpa]". iDestruct "Hb" as "[%Hpb Hpb]".
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    rewrite (bool_decide_eq_false_2 (pb = null) Hpb). wp_auto.
+    wp_method_call; wp_call; wp_auto.
+    wp_apply (wp_Id__Equal va.(yjs.item.id') vb.(yjs.item.id')).
+    have Heq : bool_decide (oid_of (Some va) = oid_of (Some vb))
+             = bool_decide (toYjsId va.(yjs.item.id') = toYjsId vb.(yjs.item.id')).
+    { apply bool_decide_ext. rewrite /oid_of /=. by split; congruence. }
+    iEval (rewrite Heq) in "HΦ". iApply "HΦ". rewrite /item_or_null. iFrame.
+    iSplit; iPureIntro; assumption.
+  - iDestruct "Ha" as "[%Hpa Hpa]". iDestruct "Hb" as "%Hpb". subst pb.
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    rewrite (bool_decide_eq_false_2 (pa = null) Hpa). wp_auto.
+    iApply "HΦ". rewrite /item_or_null. iFrame.
+    iSplit; iPureIntro; [assumption | reflexivity].
+  - iDestruct "Ha" as "%Hpa". iDestruct "Hb" as "[%Hpb Hpb]". subst pa.
+    wp_auto. rewrite (bool_decide_eq_false_2 (pb = null) Hpb). wp_auto.
+    iApply "HΦ". rewrite /item_or_null. iFrame.
+    iSplit; iPureIntro; [reflexivity | assumption].
+  - iDestruct "Ha" as "%Hpa". iDestruct "Hb" as "%Hpb". subst pa pb.
+    wp_auto. iApply "HΦ". rewrite /item_or_null. iSplit; iPureIntro; reflexivity.
+Qed.
+
+(* ----- per-node accessors read by yText.findPos -------------------------- *)
+
+(** Per-node method specs [findPos] reads off each cursor node. Every cell is
+    [flags' = W8 2] (Countable, not Deleted) with single-byte content, so
+    [Indexable] is [true] and [Len] is the content byte length (1 for our
+    cells). Proving these once keeps the [findPos] loop free of nested
+    method-call stepping. *)
+Lemma wp_item__Indexable (l : loc) (v : yjs.item.t) :
+  v.(yjs.item.flags') = W8 2 ->
+  {{{ is_pkg_init yjs ∗ l ↦ v }}}
+    l @! (go.PointerType yjs.item) @! "Indexable" #()
+  {{{ RET #true; l ↦ v }}}.
+Proof.
+  intros Hflags.
+  wp_start as "Hl".
+  wp_auto.
+  wp_method_call. wp_call. rewrite /yjs.item__Indexableⁱᵐᵖˡ. wp_auto.
+  wp_method_call. wp_call. wp_auto.
+  wp_method_call. wp_call. rewrite /yjs.item__Countableⁱᵐᵖˡ. wp_auto.
+  wp_alloc i2 as "Hi2". wp_auto. rewrite Hflags.
+  have Hand2 : w8_word_instance.(word.and) (W8 2) (W8 2) = W8 2 by reflexivity.
+  rewrite Hand2. rewrite bool_decide_eq_false_2; [| done]. simpl negb. wp_auto.
+  have Hand : w8_word_instance.(word.and) (W8 2) (W8 4) = W8 0 by reflexivity.
+  wp_method_call. wp_call. wp_auto.
+  wp_method_call. wp_call. rewrite /yjs.item__Deletedⁱᵐᵖˡ. wp_auto.
+  rewrite Hflags Hand (bool_decide_eq_true_2 (W8 0 = W8 0) eq_refl) /=.
+  iApply "HΦ". iFrame "Hl".
+Qed.
+
+Lemma wp_item__Len (l : loc) (v : yjs.item.t) :
+  {{{ is_pkg_init yjs ∗ l ↦ v }}}
+    l @! (go.PointerType yjs.item) @! "Len" #()
+  {{{ RET #(W64 (length (v.(yjs.item.content').(yjs.content.content')))); l ↦ v }}}.
+Proof.
+  wp_start as "Hl". wp_auto.
+  wp_method_call. wp_call. rewrite /yjs.item__Lenⁱᵐᵖˡ. wp_auto.
+  wp_method_call. wp_call. rewrite /yjs.content__Lenⁱᵐᵖˡ. wp_auto.
+  wp_method_call. wp_call. rewrite /yjs.content__Lenⁱᵐᵖˡ. wp_auto.
+  wp_apply strings.wp_string_len. iIntros "_". wp_auto.
+  iApply "HΦ". iFrame "Hl".
+Qed.
+
+Lemma wp_item__Deleted (l : loc) (v : yjs.item.t) :
+  v.(yjs.item.flags') = W8 2 ->
+  {{{ is_pkg_init yjs ∗ l ↦ v }}}
+    l @! (go.PointerType yjs.item) @! "Deleted" #()
+  {{{ RET #false; l ↦ v }}}.
+Proof.
+  intros Hflags. wp_start as "Hl". wp_auto.
+  wp_method_call. wp_call. rewrite /yjs.item__Deletedⁱᵐᵖˡ. wp_auto. rewrite Hflags.
+  have Hand : w8_word_instance.(word.and) (W8 2) (W8 4) = W8 0 by reflexivity.
+  rewrite Hand (bool_decide_eq_true_2 (W8 0 = W8 0) eq_refl) /=.
+  iApply "HΦ". iFrame "Hl".
+Qed.
 (* ----- the doubly-linked spine (adapted from the reference DLL) ----------- *)
 
 (** [is_dll l last prev next cells]: the DLL segment whose head node is [l] and
