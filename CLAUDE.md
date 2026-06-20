@@ -72,9 +72,24 @@ Phase 2 `integrate`):
 - **`src/proof/yjs_invariant.v`** — the heap ↔ model isomorphism: `is_dll` (the
   doubly-linked spine), `is_ytext` / `is_valid_ytext` relating a heap `YText` to
   a `YjsArrInvariant` model list cellwise; `is_id_set` abstracting heap `[]Id`
-  slices to `gset YjsId`; and the WP specs for the integrate path.
+  slices to `gset YjsId`; the WP spec for `Store.Integrate`
+  (`wp_Store__Integrate`, stated as invariant preservation); and the full
+  `Text.Insert` proof `wp_Text__Insert` for an **arbitrary index into an
+  arbitrary valid document** (the per-character loop over `wp_Store__Integrate`),
+  together with the pure placement / validity theory it rests on
+  (`insert_at_pos`, `item_valid_at`, `insert_straddle`, `find_by_id_self`,
+  `toItem_at`) and the general `wp_yText__findPos`.
 - **`src/proof/yjs_proof.v`** — basic per-method WP lemmas (Id arithmetic, node
   accessors).
+
+**Verified so far**: `Store.Integrate` preserves the document invariant
+(`wp_Store__Integrate`); `Text.Insert(index, content)` preserves it for any valid
+document and any visible index (`wp_Text__Insert`, axiom-clean — `Print
+Assumptions` shows only the goose/Perennial framework axioms). `Delete` and the
+v1 byte codec stay behind `//go:build !goose` and are not yet in the verified
+model. `cell_repr` currently pins two model simplifications (every cell Countable
+/ non-Deleted with `Len() = 1`); see its `TODO` for what must relax to add
+deletions / multi-clock items.
 
 **Core principle: reuse the rocq-yjs model — do not invent independent proofs.**
 State cert-yjs WP specs as *refinements* of the pure model and compose with
