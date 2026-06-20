@@ -179,6 +179,37 @@ Proof.
       iPureIntro. split; [ rewrite Hlloc Hjeq // | rewrite Hrloc Hjeq // ].
 Qed.
 
+(** The item [Text.Insert] builds at the straddle point is valid. Repackages
+    [item_valid_at] over the exact origin facts [findPos] yields (a left/right
+    neighbour by id, or the [First]/[Last] boundary), so the WP proof discharges
+    [IsItemValid] in one application. *)
+Lemma insert_item_valid (arr : list (YjsItem A)) (p : nat) (newid : YjsId) (c : A)
+    (o r : YjsPtr A) (oidL oidR : option YjsId) :
+  YjsArrInvariant arr ->
+  (oidL = None /\ o = First /\ p = 0%nat
+     \/ ∃ li, (1 <= p)%nat /\ arr !! (p - 1)%nat = Some li /\ oidL = Some (item_id li) /\ o = itemPtr li) ->
+  (oidR = None /\ r = Last /\ p = length arr
+     \/ ∃ ri, arr !! p = Some ri /\ oidR = Some (item_id ri) /\ r = itemPtr ri) ->
+  IsItemValid (Item o r newid c).
+Proof.
+  intros Hinv Hleft Hright.
+  apply (item_valid_at arr p newid c o r Hinv).
+  - destruct Hleft as [(_ & Ho & Hp0) | (li & Hge & Hla & _ & Ho)];
+      [left; split; [exact Hp0 | exact Ho]
+      | right; split; [exact Hge | exists li; split; [exact Hla | exact Ho]]].
+  - destruct Hright as [(_ & Hr & Hpl) | (ri & Hria & _ & Hr)];
+      [left; split; [exact Hpl | exact Hr]
+      | right; exists ri; split; [exact Hria | exact Hr]].
+Qed.
+
+(** The fresh item is maximal among same-client items of [arr]: its clock [clk]
+    exceeds every same-client clock already present. This is the [maximalId] side
+    condition of [wp_Store__Integrate], read off the Doc clock-counter invariant. *)
+Lemma insert_maximalId (arr : list (YjsItem A)) (o r : YjsPtr A) (client clk : nat) (c : A) :
+  (∀ x, ArrSet arr (itemPtr x) -> clientId (item_id x) = client -> (clock (item_id x) < clk)%nat) ->
+  maximalId (Item o r (MkYjsId client clk) c) arr.
+Proof. intros Hctr x Hx Hc. exact (Hctr x Hx Hc). Qed.
+
 (** Text.Insert at an arbitrary visible index preserves the document invariant.
     [findPos] locates the straddling neighbours; the per-character loop integrates
     one 1-char item per byte, chaining each new item's left origin to the previous
@@ -397,12 +428,12 @@ Proof.
   { apply (toItem_at arr in_id1 [b] morigin mrightorigin (toYjsId <$> oL) (toYjsId <$> in_rO) Hinvj).
     - destruct Horig as [(Hon & Ho & _) | (li & _ & Hla & Hom & Ho)]; [left; split; [exact Hon | exact Ho] | right; exists li; split_and!; [exact Hom | exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hla) | exact Ho]].
     - destruct Hrorig as [(Hrn & Hr & _) | (ri & Hria & Hri & Hr)]; [left; split; [exact Hrn | exact Hr] | right; exists ri; split_and!; [exact Hri | exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hria) | exact Hr]]. }
-  have Hvalid : IsItemValid nit.
-  { apply (item_valid_at arr (uint.nat idx + j) in_id1 [b] morigin mrightorigin Hinvj).
-    - destruct Horig as [(_ & Ho & Hp0) | (li & Hge & Hla & _ & Ho)]; [left; split; [exact Hp0 | exact Ho] | right; split; [exact Hge | exists li; split; [exact Hla | exact Ho]]].
-    - destruct Hrorig as [(_ & Hr & Hpl) | (ri & Hria & _ & Hr)]; [left; split; [exact Hpl | exact Hr] | right; exists ri; split; [exact Hria | exact Hr]]. }
+  have Hvalid : IsItemValid nit :=
+    insert_item_valid arr (uint.nat idx + j) in_id1 [b] morigin mrightorigin
+      (toYjsId <$> oL) (toYjsId <$> in_rO) Hinvj Horig Hrorig.
   have Hmax' : maximalId nit arr.
-  { intros x Hx Hc. change (clock (item_id x) < uint.nat dvj.(yjs.Doc.clock'))%nat. rewrite Hclocknit. exact (Hctr x Hx Hc). }
+  { rewrite /nit /in_id1. apply insert_maximalId.
+    intros x Hx Hc. rewrite Hclocknit. exact (Hctr x Hx Hc). }
   iDestruct "HisR" as "#HisRp".
   iAssert (is_fresh_item newit_l input) with "[Hnewit HisL]" as "Hfresh".
   { iExists _, oL, in_rO. rewrite /is_fresh_item_raw /=. iFrame "Hnewit HisL HisRp". iPureIntro. split_and!; reflexivity. }
@@ -426,10 +457,11 @@ Proof.
   iDestruct "Htext'" as (yt3 tl3) "(Hp3 & Hdll3 & %Hlen3 & %Hrepr3)".
   destruct Hnode as [x (Hcx & Hcloc & Hcid & Hcclen)].
   destruct (cells_repr_lookup arr' cells' arr' x c Hrepr3 Hcx) as [yi [Hyi Hcr3]].
-  have Hyiid : item_id yi = item_id nit by (destruct Hcr3 as (Hidr & _); rewrite Hidr Hcid; reflexivity).
   have HnitIn : nit ∈ arr' by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hnitpos).
-  have HyiIn : yi ∈ arr' by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hyi).
-  have Hyinit : yi = nit by exact (id_unique (ArrSet arr') (yai_item_set_inv _ Hinv') yi nit Hyiid HyiIn HnitIn).
+  have Hyinit : yi = nit.
+  { have Hyiid : item_id yi = item_id nit by (destruct Hcr3 as (Hidr & _); rewrite Hidr Hcid; reflexivity).
+    have HyiIn : yi ∈ arr' by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hyi).
+    exact (id_unique (ArrSet arr') (yai_item_set_inv _ Hinv') yi nit Hyiid HyiIn HnitIn). }
   subst yi.
   have Hxpos : x = (uint.nat idx + j)%nat.
   { destruct (Nat.lt_trichotomy x (uint.nat idx + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
