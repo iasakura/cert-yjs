@@ -65,22 +65,37 @@ Only `yjs/` and `src/proof/` are committed. Never hand-edit `src/code` or
 ## Proof architecture
 
 The project is organized in phases (the Go has Phase 1 data structures and a
-Phase 2 `integrate`):
+Phase 2 `integrate`). The proof is split into files that mirror the Go package
+layout; each `Require`s its predecessors and reopens the same `Section`
+boilerplate (`Context`, `Set Default Proof Using "Type*"`,
+`Notation A := go_string`). The dependency order is
+`core → common → id → item → store → text`:
 
 - **`src/proof/yjs_core.v`** — re-exports the installed `rocq-yjs` / `iris-yjs`
   library (the pure `integrate` / `setintegrate` model and its order theory).
-- **`src/proof/yjs_invariant.v`** — the heap ↔ model isomorphism: `is_dll` (the
-  doubly-linked spine), `is_ytext` / `is_valid_ytext` relating a heap `YText` to
-  a `YjsArrInvariant` model list cellwise; `is_id_set` abstracting heap `[]Id`
-  slices to `gset YjsId`; the WP spec for `Store.Integrate`
-  (`wp_Store__Integrate`, stated as invariant preservation); and the full
-  `Text.Insert` proof `wp_Text__Insert` for an **arbitrary index into an
-  arbitrary valid document** (the per-character loop over `wp_Store__Integrate`),
-  together with the pure placement / validity theory it rests on
-  (`insert_at_pos`, `item_valid_at`, `insert_straddle`, `find_by_id_self`,
-  `toItem_at`) and the general `wp_yText__findPos`.
-- **`src/proof/yjs_proof.v`** — basic per-method WP lemmas (Id arithmetic, node
-  accessors).
+- **`src/proof/yjs_common.v`** — shared base imported by every other module:
+  scalar abstractions `toYjsId` / `toContent`, the heap-node record `item_cell`
+  and cursor `node_loc`, the persistent `is_origin_id`, item-pointer helpers
+  `oid_of` / `item_or_null`, and the id-slice abstraction `is_id_set`. The goose
+  package-init instances (`IsPkgInit` / `GetIsPkgInitWf`) are declared here
+  **once** and inherited via `Require`.
+- **`src/proof/yjs_id.v`** — the `id` type: `newId` / `Id.Add` / `Id.Sub` and
+  their round-trip, the `toYjsId` injectivity / `bool_decide` bridge, and the
+  equality specs `Id.Equal` / `idOptEqual`.
+- **`src/proof/yjs_item.v`** — the `item` type: per-node method specs
+  (`Indexable` / `Len` / `Deleted`, `itemPtrEqual`, `gcNode` projections), the
+  doubly-linked spine `is_dll` and its structural lemmas (split / join /
+  accessor / insert), the cellwise isomorphism `resolve_*` / `cell_repr` /
+  `cells_repr`, and the `yText` container `is_ytext` / `is_valid_ytext` relating
+  a heap sequence to a `YjsArrInvariant` model list. (`is_ytext` lives here, not
+  in `yjs_text`, because `yjs_store` depends on it.)
+- **`src/proof/yjs_store.v`** — the `store` WP proofs: `findById`, `containsId`,
+  the conflict scan (`scanConflicts` / `findIntegrationLeft`) refining
+  `setfii_loop` (with its top-level `gset` rewrite lemmas), the item-validity /
+  insertion helper lemmas, and top-level `wp_Store__Integrate`.
+- **`src/proof/yjs_text.v`** — the `Text` / `yText` WP proofs: `findPos`,
+  `insert_item_valid` / `insert_maximalId`, and top-level `wp_Text__Insert`
+  (with `own_insert_doc`).
 
 **Verified so far**: `Store.Integrate` preserves the document invariant
 (`wp_Store__Integrate`); `Text.Insert(index, content)` preserves it for any valid
