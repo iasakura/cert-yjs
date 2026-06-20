@@ -41,6 +41,11 @@ them, since the APIs drift.
 - Core: `iIntros`, `iDestruct … as "[..]"/"(..)"/%H/#H`, `iFrame "H1 H2"`,
   `iExists`, `iApply`, `iPureIntro`, `iAssert P as %H` (pure — keeps the spatial
   context) / `as "#H"` (persistent).
+- A **persistent** hyp named in an `iAssert … with "[… H]"` clause is *moved*
+  into the asserted proof, not copied — the outer context loses it (the clause
+  treats it spatially). If you still need it (a loop-constant `is_origin_id` for
+  the next iteration, say), first `iDestruct "H" as "#H"` to land it in the `□`
+  context, then frame the `□` copy.
 - **Splitting**: `iSplitL "H1 H2"` gives those hyps to the **left** goal;
   `iSplitR "H1 H2"` gives them to the **right**; a bare `iSplitL` / `iSplitR`
   sends *all* spatial hyps to one side (the other proves a resource-free / pure
@@ -80,6 +85,35 @@ them, since the APIs drift.
   (`#(negb (bool_decide (… = W8 0)))`) is resolved by `rewrite`-ing the known
   field facts to make the operands literal, then
   `rewrite (bool_decide_eq_false_2 …); last by vm_compute` (or `vm_compute`).
+- **Joining an `if`'s branches** so a large continuation (a whole loop) is proved
+  *once*, not per branch: `wp_if_join (λ v, asn) with "[hyps]"` (the join's arg is
+  a `val → iProp` postcondition, not a bare `iProp`). It yields three goals —
+  branch₁ ⊢ `asn`, branch₂ ⊢ `asn` (each a *pending WP* if the body still needs an
+  `↦` you pass in), and the continuation `∀ v, asn -∗ WP (v ;;; rest)`.
+  **Non-obvious gotcha when the `if` is followed by `;;;`** (verified — affects
+  this tactic too, not just a manual approach): that `v ;;; rest` is **stuck for
+  an abstract `v`** — a goose `if`/`do:` returns `execute_val` (the
+  exception-monad "continue" wrapper), *not* `#()`, and `wp_auto` cannot reduce
+  `exception_seq (#cont) v`. Pin `v` by making the join postcondition
+  `λ v, ⌜v = execute_val⌝ ∗ asn`, then `iIntros (v) "[%Hv HQ]"; subst v` in the
+  continuation. (A manual `wp_bind (if …)%E` + `iApply (wp_wand _ _ _
+  (λ v, ⌜v = execute_val⌝ ∗ asn))` produces the same three obligations if you want
+  finer control.)
+- **Persisting a freshly-stored pointer (`↦ → ↦□`) must happen inside the WP.**
+  `iPersist` / `pointsto_persist` needs a WP / bupd context; on a bare wand or
+  postcondition it fails ("could not eliminate update modality"). So don't let
+  `wp_auto` run all the way to the post — step the store explicitly
+  (`wp_load. wp_pures. wp_store.`), then
+  `iDestruct (typed_pointsto_not_null …) as %Hnn; iPersist "p"`, then `wp_auto`.
+  (`wp_store` alone errors "could not find store_ty" until the let-bound value is
+  reduced, hence the `wp_pures` first.)
+- **A struct-literal constructor** (e.g. goose `newItem`) collapses badly under a
+  bare `wp_auto` ("Failed to progress" / pathologically slow). Do one explicit
+  `wp_alloc x as "Hx"` for the leading `GoAlloc`, then let `wp_auto` finish.
+- **A value-receiver method nested inside an expression** (e.g. `i.Len()` inside
+  `id.clock + i.Len() - 1`): `wp_bind` the call to focus it as the whole goal,
+  then step / `wp_apply` the helper (after `wp_alloc`-ing the receiver-value copy
+  goose introduces).
 - **Heap**: `l ↦ v`, `↦□` (persistent / read-only), `StructFieldRef T "f" e`
   for field access; field stores step under `wp_auto` once the `↦` is in scope.
 - **Maps** (full support, `perennial/new/golang/theory/map.v`):
@@ -113,6 +147,15 @@ them, since the APIs drift.
   `case_decide`, and a helper placed before the `is_dll_acc` it used.)
 - `rocq_check`'s default timeout is low; raise it (e.g. 300s) for heavy tactics
   such as a cold `wp_if_join` or a big `wp_auto`.
+- A few tactics flaky-**timeout** in the interactive checker on inputs that are
+  trivial for `coqc` — `word` on `word.add (W64 j) (W64 1) = W64 (S j)`, the
+  loop-body-entry `wp_auto`. Just retry with a larger `timeout`; they are not
+  stuck.
+- `Print Assumptions` over a big dependency closure floods thousands of
+  "Fetching opaque proofs from disk" lines before the axiom list, overrunning the
+  query output buffer. Capture the result via `coqc` on a one-line `.v`
+  (`From New.proof Require Import yjs_invariant. Print Assumptions <thm>.`) piped
+  through `grep -v "Fetching opaque" | tail`, not the interactive query.
 
 ## E. cert-yjs specifics
 
@@ -132,6 +175,24 @@ them, since the APIs drift.
   `is_valid_ytext` relate a heap `YText` to a `YjsArrInvariant` model list
   cellwise (by id / content / origin-ids). Heap id-slices (`[]Id`) are
   abstracted to `gset YjsId` via `is_id_set` / `list_to_set`.
+- **The `Text.Insert` loop proof** (`wp_Text__Insert`) is a per-character loop
+  over the modular `wp_Store__Integrate`. Its invariant tracks `j, arr, cells,
+  leftloc, dvj` plus, as pure facts, the **left/right neighbour positions**:
+  `Hleftj` (the node at `idx+j-1`, carrying `1 ≤ idx+j` so an origin is never
+  wrongly `First`) and `Hrightj` (the right neighbour at `idx+j`, which *shifts*
+  to `idx+j+1` after each insert). The loop-constant right origin is threaded as
+  a persistent `is_origin_id`, kept *out* of the existential. Each iteration
+  places the new item at `p = idx+j` via `insert_straddle`, locates the
+  just-inserted cell by id-uniqueness (a trichotomy on its index via
+  `getElem_lt_YjsLt'` + `yjs_lt_asymm`), and re-establishes the invariant for
+  `j+1`. `item_valid_at` / `toItem_at` dispatch the corner cases (head / middle /
+  tail / empty) from which neighbours actually exist; `find_by_id_self` resolves
+  an origin id back to its model item.
+- **`cell_repr` pins two model simplifications** — `flags' = W8 2` (every cell is
+  Countable and non-Deleted, since `Delete` is `//go:build !goose`) and
+  `Len() = 1` (every visible char is its own 1-char item, no splitting). Both
+  must relax when the verified model gains deletions / multi-clock items (see the
+  `TODO` on `cell_repr`); `findPos`/`Indexable`/`LastId` reasoning leans on them.
 - **Faithfulness to the source**: match the porting source's data structures —
   a Rust `HashSet`/`HashMap` should become a Go `map` (`map[K]struct{}` for a
   set), a `Vec` a slice. Do not downgrade a set to a `[]slice` for proof
