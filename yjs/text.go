@@ -96,7 +96,7 @@ func (t *Text) Insert(index uint64, content string) {
 			originRightId = &rid
 		}
 
-		newit := newItem(newId(client, clk), content[i:i+1], originLeftId, originRightId)
+		newit := newItem(newId(client, clk), string(content[i]), originLeftId, originRightId)
 		t.doc.store.Integrate(t.inner, newit)
 
 		// the next character integrates immediately to the right of this one.
