@@ -4,7 +4,7 @@ package yjs
 //
 // These ops are goose-translated (part of the verified model): Insert is a loop
 // over the proven store.Integrate, so it preserves the document invariant
-// is_valid_ytext (see wp_Text__Insert in src/proof/yjs_invariant.v). Delete and
+// is_valid_ytext (see wp_Text__Insert in src/proof/yjs_text.v). Delete and
 // the byte-level v1 codec stay behind //go:build !goose (delete.go, codec.go).
 //
 // Simplifications vs y-octo:
@@ -17,6 +17,22 @@ package yjs
 //     positions never fall inside an item and no splitting is needed;
 //   - content is assumed single-byte (ASCII): a clock unit is one byte, which
 //     keeps id arithmetic consistent with content.Len (byte length).
+
+// yText is the root sequence type the items are integrated into. In y-octo this
+// is a YType with start/map/item/len; the Phase-1 simplification fixes the
+// content to a single string type with no parent_sub, so we only need the head
+// of the item linked list and the visible length.
+type yText struct {
+	// start is the head of the doubly linked list of items (parent.start).
+	start *item
+	// len is the visible (countable, non-deleted) length.
+	len uint64
+}
+
+// newYText creates an empty root sequence.
+func newYText() *yText {
+	return &yText{start: nil, len: 0}
+}
 
 // Doc is a document: a struct store plus the root text types it owns.
 type Doc struct {
@@ -129,4 +145,18 @@ func (y *yText) findPos(index uint64) (*item, *item) {
 		right = right.right
 	}
 	return left, right
+}
+
+// Text reads the current visible string by walking the item list left to right
+// (skipping deleted items). Useful for stating/verifying convergence.
+func (parent *yText) Text() string {
+	result := ""
+	cur := parent.start
+	for cur != nil {
+		if !cur.Deleted() {
+			result = result + cur.content.content
+		}
+		cur = cur.right
+	}
+	return result
 }

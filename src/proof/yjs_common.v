@@ -1,19 +1,20 @@
 (** Common definitions shared across the cert-yjs proof modules.
 
     Split out of the original single-file invariant development so the
-    per-module proof files ([yjs_dll], [yjs_invariant], [yjs_proof],
-    [yjs_store], [yjs_text]) can share one base layer:
+    per-module proof files ([yjs_item], [yjs_proof], [yjs_store], [yjs_text])
+    can share one base layer:
 
     - scalar abstractions [toYjsId] / [toContent] (heap [w64] ids/content to
       the model);
     - the heap-node record [item_cell] and the cursor helper [node_loc];
     - the persistent origin-pointer predicate [is_origin_id];
     - the item-pointer helpers [oid_of] / [item_or_null];
+    - the id-slice abstraction [is_id_set] (a heap [[]Id] as a [gset YjsId]);
     - small [gset YjsId] rewrite lemmas used by the conflict scan.
 
-    None of these depend on the DLL spine or the heap<->model isomorphism, so
-    every other module imports this one. The goose package-init instances live
-    here too (declared once and inherited via [Require]). *)
+    None of these depend on the item DLL spine or the heap<->model isomorphism,
+    so every other module imports this one. The goose package-init instances
+    live here too (declared once and inherited via [Require]). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -100,5 +101,17 @@ Definition item_or_null (p : loc) (ov : option yjs.item.t) (dq : dfrac) : iProp 
   | None => ⌜p = null⌝
   | Some v => ⌜p ≠ null⌝ ∗ p ↦{dq} v
   end.
+
+(* ----- id-slice abstraction to a gset ----------------------------------- *)
+
+(** A heap id-slice abstracts to a [gset YjsId]: its elements, mapped to model
+    ids, are exactly [gs]. The Go set ops are [containsId] / [append] / reset to
+    [[]]; [list_to_set] makes membership (not order/duplicates) the observable,
+    matching the pure [gset] with [∪] / [∈]. *)
+Definition is_id_set (s : slice.t) (gs : gset YjsId) : iProp Σ :=
+  ∃ (vs : list yjs.id.t),
+    "Hsl" ∷ s ↦* vs ∗
+    "Hcap" ∷ own_slice_cap yjs.id.t s (DfracOwn 1) ∗
+    "%Hset" ∷ ⌜list_to_set (toYjsId <$> vs) = gs⌝.
 
 End common.

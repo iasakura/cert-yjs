@@ -65,34 +65,35 @@ Only `yjs/` and `src/proof/` are committed. Never hand-edit `src/code` or
 ## Proof architecture
 
 The project is organized in phases (the Go has Phase 1 data structures and a
-Phase 2 `integrate`). The proof is split into module-aligned files that mirror
-the Go package layout; each `Require`s its predecessors and reopens the same
-`Section` boilerplate (`Context`, `Collection W`, `Notation A := go_string`).
-The dependency order is `core → common → {dll, proof}`, then `dll → invariant`,
-then `{invariant, proof} → store → text`:
+Phase 2 `integrate`). The proof is split into files that mirror the Go package
+layout; each `Require`s its predecessors and reopens the same `Section`
+boilerplate (`Context`, `Set Default Proof Using "Type*"`,
+`Notation A := go_string`). The dependency order is `core → common → {item,
+proof}`, then `item → store → text`:
 
 - **`src/proof/yjs_core.v`** — re-exports the installed `rocq-yjs` / `iris-yjs`
   library (the pure `integrate` / `setintegrate` model and its order theory).
 - **`src/proof/yjs_common.v`** — shared base imported by every other module:
   scalar abstractions `toYjsId` / `toContent`, the heap-node record `item_cell`
   and cursor `node_loc`, the persistent `is_origin_id`, item-pointer helpers
-  `oid_of` / `item_or_null`, and the `gset YjsId` rewrite lemmas. The goose
-  package-init instances (`IsPkgInit` / `GetIsPkgInitWf`) are declared here
-  **once** and inherited downstream via `Require`.
-- **`src/proof/yjs_dll.v`** — the doubly-linked spine `is_dll` and its purely
-  structural lemmas (split / join / accessor / insert).
-- **`src/proof/yjs_invariant.v`** — the heap ↔ model isomorphism on top of the
-  spine: `resolve_*`, `cell_repr` / `cells_repr`, `is_ytext` / `is_valid_ytext`
-  relating a heap `YText` to a `YjsArrInvariant` model list cellwise, and
-  `is_id_set` abstracting heap `[]Id` slices to `gset YjsId`.
+  `oid_of` / `item_or_null`, the id-slice abstraction `is_id_set`, and the
+  `gset YjsId` rewrite lemmas. The goose package-init instances (`IsPkgInit` /
+  `GetIsPkgInitWf`) are declared here **once** and inherited via `Require`.
+- **`src/proof/yjs_item.v`** — the heap representation of the `item` sequence:
+  the doubly-linked spine `is_dll` and its structural lemmas (split / join /
+  accessor / insert), the cellwise isomorphism `resolve_*` / `cell_repr` /
+  `cells_repr`, and the `yText` container `is_ytext` / `is_valid_ytext` relating
+  a heap sequence to a `YjsArrInvariant` model list. (`is_ytext` lives here, not
+  in `yjs_text`, because `yjs_store` depends on it.)
 - **`src/proof/yjs_proof.v`** — basic per-method WP lemmas for the leaf `id` /
   `item` ops: Id arithmetic / equality, `itemPtrEqual`, node accessors
   (`gcNode` projections, item `Indexable` / `Len` / `Deleted`).
 - **`src/proof/yjs_store.v`** — the `store` WP proofs: `findById`, the conflict
   scan (`scanConflicts` / `findIntegrationLeft`) refining `setfii_loop`, the
   item-validity / insertion helper lemmas, and top-level `wp_Store__Integrate`.
-- **`src/proof/yjs_text.v`** — the `Text` / `yText` WP proofs: `findPos` and
-  top-level `wp_Text__Insert` (with `own_insert_doc`).
+- **`src/proof/yjs_text.v`** — the `Text` / `yText` WP proofs: `findPos`,
+  `insert_item_valid` / `insert_maximalId`, and top-level `wp_Text__Insert`
+  (with `own_insert_doc`).
 
 **Core principle: reuse the rocq-yjs model — do not invent independent proofs.**
 State cert-yjs WP specs as *refinements* of the pure model and compose with

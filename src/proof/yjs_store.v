@@ -12,7 +12,7 @@ From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
-From New.proof Require Import yjs_common yjs_dll yjs_invariant yjs_proof.
+From New.proof Require Import yjs_common yjs_item yjs_proof.
 
 Section store.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
