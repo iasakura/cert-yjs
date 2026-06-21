@@ -13,6 +13,8 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item.
+From New.proof.sync_proof Require Import mutex.        (* is_Mutex (store lock) *)
+From iris.base_logic.lib Require Import ghost_map.     (* type-registration witness *)
 
 (** Small-context set rewrites for the conflict-scan accumulators. After a Go
     [append] of the conflict id, an id slice abstracts to [X ∪ ({[a]} ∪ ∅)] (the
@@ -1810,5 +1812,115 @@ Proof using All.
   iPureIntro. split_and!; [exact Hile | exact Harr'eq | exact Hinv' |].
   exists idx. split_and!; [exact Hlook | exact Hloc | exact Hcid | exact Hclen1].
 Qed.
+
+(* ======================================================================== *)
+(* Store invariant predicates — DESIGN (definitions only, see PR).           *)
+(*                                                                           *)
+(* The store lock and the document-global item set belong to the STORE type, *)
+(* so they live here. The extra [Context] below is placed at the END of the  *)
+(* section so it does NOT retroactively affect the verified proofs above     *)
+(* ([Context] only applies to declarations that follow it). On implementation*)
+(* [is_item_map] moves above [wp_Store__Integrate], which will maintain it,   *)
+(* and [ghost_mapG] should be folded into the global Σ class rather than a    *)
+(* local [Context]. *)
+(* ======================================================================== *)
+
+(** Store lock = a [sync.Mutex]; type registration = a [ghost_map] name↦parent. *)
+Context {sync_pkg : sync.Assumptions}.
+Context `{ghost_mapG Σ go_string loc}.
+
+(* ----- the store's item set: map[Client][]*item ------------------------- *)
+
+(** Client / clock a heap cell's id carries — read off the pure cell value, so
+    [is_item_map] can speak about clocks while owning only the map, not the
+    item cells. *)
+Definition cell_client (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clientId').
+Definition cell_clock  (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clock').
+
+(** The sublist of [cells] integrated by [client], in document (DLL) order. *)
+Definition client_run (client : w64) (cells : list item_cell) : list item_cell :=
+  filter (λ c, cell_client c = client) cells.
+
+(** [is_item_map mref cells]: the heap map at [mref] (Go [store.items]) owns the
+    map header and, per client, the backing slice of [*item] *locations* (+ cap)
+    — but NOT the item cells (those live in the DLL, [is_ytext]).
+
+    Order subtlety: the slice is in CLOCK order (Go [AddNode] appends in
+    integration order; each fresh local id takes the next clock), which is NOT
+    the DLL order — even one text's client items need not be clock-sorted along
+    the list (type "AB" = clocks 0,1; cursor home; type "C" = clock 2 ⇒ DLL is
+    C,A,B but [items[client]] is A,B,C). So the run is a clock-sorted
+    *permutation* of [client_run client cells] (unique, since ids are unique).
+    Preserved per insert by [maximalId] (a fresh max-clock item appends at the
+    sorted tail). *)
+Definition is_item_map (mref : loc) (cells : list item_cell) : iProp Σ :=
+  ∃ (gm : gmap w64 slice.t),
+    "Hmap" ∷ own_map mref (DfracOwn 1) gm ∗
+    "Hruns" ∷ ([∗ map] client ↦ s ∈ gm,
+        ∃ (run : list item_cell),
+          "%Hperm"   ∷ ⌜run ≡ₚ client_run client cells⌝ ∗
+          "%Hsorted" ∷ ⌜StronglySorted
+              (λ a b, (uint.Z (cell_clock a) < uint.Z (cell_clock b))%Z) run⌝ ∗
+          "Hslice"   ∷ s ↦* (ic_loc <$> run) ∗
+          "Hcap"     ∷ own_slice_cap (go.PointerType yjs.item) s (DfracOwn 1)) ∗
+    "%Hcomplete" ∷ ⌜∀ c, c ∈ (cell_client <$> cells) → is_Some (gm !! c)⌝.
+
+(* ----- one registered text's state, and the lock invariant -------------- *)
+
+(** What [store_inv] tracks per registered YText: its loc, the DLL cells, and the
+    model item list. *)
+Record text_state := MkTextState {
+  ts_parent : loc;
+  ts_cells  : list item_cell;
+  ts_arr    : list (YjsItem A);
+}.
+
+(** All cells across all texts — argument to [is_item_map] (the items map is
+    document-global). Concat order is irrelevant: [is_item_map] reads a
+    per-client clock-sorted permutation. *)
+Definition all_cells (texts : gmap go_string text_state) : list item_cell :=
+  concat (ts_cells <$> (map_to_list texts).*2).
+
+(** [store_inv s_loc γ]: everything the store lock protects.
+    - store struct NON-mu fields (client/clock/items/deletedSet); [mu] is owned
+      by [is_Mutex] in [is_Store], not here;
+    - registration authority [ghost_map_auth γ] (name↦parent), whose persistent
+      fragments are the [is_registered] witnesses [Text] holds;
+    - the document-global items map over [all_cells texts];
+    - each registered text's DLL + [YjsArrInvariant];
+    - the global per-client counter (source of [maximalId]).
+    [client]/[k]/[texts] etc. are existential — the fixed lock invariant hides
+    the per-operation state. *)
+Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
+  ∃ (client k : w64) (items_mref : loc) (dset : yjs.deletedSet.t)
+    (texts : gmap go_string text_state),
+    "Hclient" ∷ (s_loc .[ yjs.store.t , "client" ]) ↦ client ∗
+    "Hclock"  ∷ (s_loc .[ yjs.store.t , "clock"  ]) ↦ k ∗
+    "Hitemsf" ∷ (s_loc .[ yjs.store.t , "items"  ]) ↦ items_mref ∗
+    "Hdset"   ∷ (s_loc .[ yjs.store.t , "deletedSet" ]) ↦ dset ∗
+    "Hreg"    ∷ ghost_map_auth γ 1 (ts_parent <$> texts) ∗
+    "Hitems"  ∷ is_item_map items_mref (all_cells texts) ∗
+    "Htexts"  ∷ ([∗ map] name ↦ ts ∈ texts,
+                  is_ytext (ts_parent ts) (ts_cells ts) (ts_arr ts) ∗
+                  ⌜YjsArrInvariant (ts_arr ts)⌝) ∗
+    "%Hctr"   ∷ ⌜∀ name ts x, texts !! name = Some ts → x ∈ ts_arr ts →
+                   clientId (item_id x) = uint.nat client →
+                   (clock (item_id x) < uint.nat k)%nat⌝.
+
+(** Store handle (persistent): the lock at [&store.mu] guards [store_inv]. ALL
+    store-field / item-set / DLL references are sealed here or in [store_inv]. *)
+Definition is_Store (s_loc : loc) (γ : gname) : iProp Σ :=
+  is_Mutex (s_loc .[ yjs.store.t , "mu" ]) (store_inv s_loc γ).
+
+(** Persistent per-text witness: "[name] is registered to YText [parent]". A
+    persistent [ghost_map] element; [Insert] does [ghost_map_lookup] against
+    [Hreg] under the lock to locate its own text in [store_inv]. *)
+Definition is_registered (γ : gname) (name : go_string) (parent : loc) : iProp Σ :=
+  name ↪[γ]□ parent.
+
+#[global] Instance is_Store_persistent s_loc γ : Persistent (is_Store s_loc γ).
+Proof. apply _. Qed.
+#[global] Instance is_registered_persistent γ name parent : Persistent (is_registered γ name parent).
+Proof. apply _. Qed.
 
 End store.

@@ -11,6 +11,8 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_store.
+From New.proof.sync_proof Require Import mutex.        (* is_Mutex / Lock / Unlock *)
+From iris.base_logic.lib Require Import ghost_map.     (* is_registered witness *)
 
 Section text.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
@@ -502,5 +504,63 @@ Proof.
       * exact Hros.
       * exact Hrii.
 Qed.
+
+(* ======================================================================== *)
+(* Doc / Text invariant predicates — DESIGN (definitions only, see PR).       *)
+(*                                                                           *)
+(* The per-type invariants for [Doc] and [Text] live here (alongside their    *)
+(* WP proofs). [Context] is at the end of the section so it does NOT affect   *)
+(* the verified proofs above. These delegate to the STORE invariants          *)
+(* ([is_Store] / [is_registered] / [store_inv]) defined in [yjs_store]; this  *)
+(* is what makes [is_Text] reference only Text's own fields. The target       *)
+(* [wp_Text__Insert] (replacing the [own_insert_doc] version above) is shown  *)
+(* as a comment to avoid a name clash during this definitions-only review. *)
+(* ======================================================================== *)
+
+Context {sync_pkg : sync.Assumptions}.
+Context `{ghost_mapG Σ go_string loc}.
+
+(** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
+    delegates to [is_Store]. The [types] registry map-object is out of scope
+    here (touched by [GetText], not [Insert]) — it would live in a fuller
+    [is_Doc]. *)
+Definition is_Doc (dv s_loc : loc) (γ : gname) : iProp Σ :=
+  ∃ (dvv : yjs.Doc.t),
+    "Hdoc" ∷ dv ↦□ dvv ∗
+    "%Hstore" ∷ ⌜dvv.(yjs.Doc.store') = s_loc⌝ ∗
+    "His_store" ∷ is_Store s_loc γ.
+
+(** Text handle (persistent): reads ONLY its OWN fields ([doc]/[inner]/[name],
+    all immutable ⇒ [↦□]) plus the registration witness for its inner YText.
+    Says NOTHING about store fields. Persistent ⇒ the public [Insert] spec
+    reuses it pre = post. *)
+Definition is_Text (t : loc) : iProp Σ :=
+  ∃ (tv : yjs.Text.t) (dv s_loc parent : loc) (name : go_string) (γ : gname),
+    "Ht" ∷ t ↦□ tv ∗
+    "%Hdoc" ∷ ⌜tv.(yjs.Text.doc') = dv⌝ ∗
+    "%Hinner" ∷ ⌜tv.(yjs.Text.inner') = parent⌝ ∗
+    "%Hname" ∷ ⌜tv.(yjs.Text.name') = name⌝ ∗
+    "His_doc" ∷ is_Doc dv s_loc γ ∗
+    "His_reg" ∷ is_registered γ name parent.
+
+#[global] Instance is_Doc_persistent dv s_loc γ : Persistent (is_Doc dv s_loc γ).
+Proof. apply _. Qed.
+#[global] Instance is_Text_persistent t : Persistent (is_Text t).
+Proof. apply _. Qed.
+
+(** Target public spec (replaces the [own_insert_doc] [wp_Text__Insert] above):
+
+      {{{ is_pkg_init yjs ∗ is_Text t }}}
+        t @! (go.PointerType yjs.Text) @! "Insert" #idx #content
+      {{{ RET #(); is_Text t }}}
+
+    Sketch: peel [is_Text → is_Doc → is_Store] to reach [is_Mutex]; [Lock] yields
+    [store_inv]; [ghost_map_lookup] with [is_registered] extracts THIS text's
+    [text_state] from [texts] and its DLL from [Htexts]; run the existing
+    findPos/Integrate loop (Integrate now also [AddNode]s into the global items
+    map, re-establishing [is_item_map] via [maximalId]); reinsert the updated
+    [text_state], rebuild [store_inv]; [Unlock]; return the persistent [is_Text].
+    The old [uint.Z k + len < 2^63] overflow side condition is gone — [k] is
+    hidden in the lock, so it moves to a Go-side overflow guard in [Text.Insert]. *)
 
 End text.
