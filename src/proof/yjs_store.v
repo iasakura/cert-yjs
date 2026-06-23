@@ -14,16 +14,7 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item.
 From New.proof.sync_proof Require Import mutex.        (* is_Mutex (store lock) *)
-From iris.algebra Require Import auth gmap.
-(* The subsequence-monotone item RA below uses [mra] (the generic monotone RA,
-   iris.algebra.lib.mra). NOTE: [mra] is ABSENT from this iris pin — only
-   [max_prefix_list] / [mono_list] (PREFIX order) are present. Subsequences do
-   NOT form a meet-semilattice, so the [max_prefix_list] construction behind
-   [mono_list] cannot be reused; the generic [mra] downward-closure construction
-   (op = union of R-predecessors) is what handles an arbitrary preorder like
-   [sublist]. Implementation must VENDOR mra.v (small, self-contained). The line
-   below is the intended import. *)
-(* From iris.algebra.lib Require Import mra. *)
+From iris.algebra Require Import auth gmap gset.       (* grow-only item-set RA *)
 
 (** Small-context set rewrites for the conflict-scan accumulators. After a Go
     [append] of the conflict id, an id slice abstracts to [X ∪ ({[a]} ∪ ∅)] (the
@@ -1840,22 +1831,30 @@ Qed.
 (* stands for its yType-renamed successor. *)
 (* ======================================================================== *)
 
-(** Store lock = a [sync.Mutex]. The per-text item sequence lives in a monotone
-    ghost (below), keyed by the text's [parent] loc. *)
+(** Store lock = a [sync.Mutex]. The per-text item SET lives in a grow-only ghost
+    (below), keyed by the text's [parent] loc. *)
 Context {sync_pkg : sync.Assumptions}.
 
-(** Item-sequence RA: a map [loc ↦ auth (mra sublist)] — per text-loc, an
-    authoritative monotone item list ordered by the subsequence relation
-    [sublist]. The auth [●] (current content) sits in [store_inv]; a persistent
-    fragment [◯] is a subsequence LOWER BOUND held by [is_Text]. Insert-only (and
-    delete, which flips a flag without removing) grows the list under [sublist],
-    so a recorded lower bound stays valid forever, and the user can read off a
-    lower bound on the current string. The fragment doubles as the registration
-    witness: holding [◯] at key [parent] proves [parent ∈ dom texts]. *)
-Notation seqUR := (gmapUR loc (authR (mraUR (A := list (YjsItem A)) sublist))).
-Context {seq_inG : inG Σ seqUR}.
+(** Item-SET RA: a map [loc ↦ auth (gset (YjsItem A))] — per text-loc, the
+    authoritative set of items in that text. The auth [●] (current item set) sits
+    in [store_inv]; a persistent fragment [◯ S] is a SUBSET (membership) lower
+    bound held by [is_Text]. Insert only adds items, and delete only flips a flag
+    without removing, so the item set grows monotonically under [⊆]; a recorded
+    lower bound stays valid forever.
 
-Definition to_seq (arr : list (YjsItem A)) : mra sublist := principal sublist arr.
+    We do NOT track list order in the ghost: the CRDT order of any present items
+    is recoverable from their origin-left/right ids, so a membership lower bound
+    already yields a subsequence — hence a string — lower bound (this is why a
+    plain grow-only [gset] suffices and the subsequence-monotone [mra] is not
+    needed). The fragment also doubles as the registration witness (holding [◯] at
+    key [parent] proves [parent ∈ dom texts]).
+
+    Requires [Countable (YjsItem A)] for [gset]; rocq-yjs provides
+    [EqDecision (YjsItem A)] (algorithm/basic.v) but the Countable instance is
+    still to be derived (mechanical, via the mutually-recursive YjsItem/YjsPtr
+    encoding). *)
+Notation seqUR := (gmapUR loc (authR (gsetUR (YjsItem A)))).
+Context {seq_inG : inG Σ seqUR}.
 
 (* ----- the store's item set: map[Client][]*item ------------------------- *)
 
@@ -1930,7 +1929,7 @@ Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
     "Htypes"  ∷ own_map types_mref (DfracOwn 1) tmap ∗
     "%Hdom"   ∷ ⌜map_img tmap = dom texts⌝ ∗
-    "Hseq"    ∷ own γ ((λ ts, ● to_seq (ts_arr ts)) <$> texts) ∗
+    "Hseq"    ∷ own γ ((λ ts, ● (list_to_set (ts_arr ts) : gset (YjsItem A))) <$> texts) ∗
     "Hitems"  ∷ is_item_map items_mref (all_cells texts) ∗
     "Htexts"  ∷ ([∗ map] parent ↦ ts ∈ texts,
                   is_ytext parent (ts_cells ts) (ts_arr ts) ∗
@@ -1944,18 +1943,18 @@ Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
 Definition is_Store (s_loc : loc) (γ : gname) : iProp Σ :=
   is_Mutex (s_loc .[(yjs.store.t), "mu"]) (store_inv s_loc γ).
 
-(** [is_text_lb γ parent arr]: a persistent subsequence LOWER BOUND on the text
-    at [parent] — [arr] is a [sublist] of its current content — AND the
-    registration witness (the key [parent] exists in the store's auth). [Insert]
-    combines it with [store_inv]'s [Hseq] (auth) under the lock to (a) learn
-    [parent ∈ dom texts] and extract its DLL, and (b) grow the lower bound. The
-    holder reads off a known sub-sequence (hence a lower bound on the string). *)
-Definition is_text_lb (γ : gname) (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
-  own γ ({[ parent := ◯ to_seq arr ]} : seqUR).
+(** [is_text_lb γ parent S]: a persistent SUBSET (membership) lower bound on the
+    text at [parent] — [S ⊆] its current item set — AND the registration witness
+    (the key [parent] exists in the store's auth). [Insert] combines it with
+    [store_inv]'s [Hseq] (auth) under the lock to (a) learn [parent ∈ dom texts]
+    and extract its DLL, and (b) grow the lower bound. Since item order is
+    recoverable from origins, [S] yields a lower bound on the string. *)
+Definition is_text_lb (γ : gname) (parent : loc) (S : gset (YjsItem A)) : iProp Σ :=
+  own γ ({[ parent := ◯ S ]} : seqUR).
 
 #[global] Instance is_Store_persistent s_loc γ : Persistent (is_Store s_loc γ).
 Proof. apply _. Qed.
-#[global] Instance is_text_lb_persistent γ parent arr : Persistent (is_text_lb γ parent arr).
+#[global] Instance is_text_lb_persistent γ parent S : Persistent (is_text_lb γ parent S).
 Proof. apply _. Qed.
 
 End store.

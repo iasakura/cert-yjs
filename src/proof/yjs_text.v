@@ -12,10 +12,7 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_store.
 From New.proof.sync_proof Require Import mutex.        (* is_Mutex / Lock / Unlock *)
-From iris.algebra Require Import auth gmap.
-(* [is_text_lb]'s subsequence RA needs [mra], absent from this iris pin — must be
-   vendored (see the note in yjs_store.v). *)
-(* From iris.algebra.lib Require Import mra. *)
+From iris.algebra Require Import auth gmap gset.       (* is_text_lb grow-only item-set RA *)
 
 Section text.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
@@ -523,7 +520,7 @@ Qed.
 (* ======================================================================== *)
 
 Context {sync_pkg : sync.Assumptions}.
-Context {seq_inG : inG Σ (gmapUR loc (authR (mraUR (A := list (YjsItem A)) sublist)))}.
+Context {seq_inG : inG Σ (gmapUR loc (authR (gsetUR (YjsItem A))))}.
 
 (** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
     delegates to [is_Store]. The store now owns the [types] registry, so there
@@ -534,44 +531,44 @@ Definition is_Doc (dv s_loc : loc) (γ : gname) : iProp Σ :=
     "%Hstore" ∷ ⌜dvv.(yjs.Doc.store') = s_loc⌝ ∗
     "His_store" ∷ is_Store s_loc γ.
 
-(** Text handle (persistent), now parameterized by a known item sub-sequence
-    [arr]: reads ONLY its OWN fields ([doc]/[inner]/[name], all immutable ⇒ [↦□])
-    plus [is_text_lb], which both (a) witnesses the inner YType is registered and
-    (b) records that [arr] is a [sublist] LOWER BOUND of the text's current
-    content. Says NOTHING about store fields. Persistent ⇒ the [Insert] spec is
-    pre/post in the same predicate (with [arr] growing). The user can read off
-    [text_of arr] as a lower bound on the current string. *)
-Definition is_Text (t : loc) (arr : list (YjsItem A)) : iProp Σ :=
+(** Text handle (persistent), parameterized by a known item SET [S]: reads ONLY
+    its OWN fields ([doc]/[inner]/[name], all immutable ⇒ [↦□]) plus [is_text_lb],
+    which both (a) witnesses the inner YType is registered and (b) records that
+    [S] is a SUBSET (membership) LOWER BOUND of the text's current item set. Says
+    NOTHING about store fields. Persistent ⇒ the [Insert] spec is pre/post in the
+    same predicate (with [S] growing). The user can recover the CRDT order of
+    [S]'s items from their origins, hence a lower bound on the string. *)
+Definition is_Text (t : loc) (S : gset (YjsItem A)) : iProp Σ :=
   ∃ (tv : yjs.Text.t) (dv s_loc parent : loc) (name : go_string) (γ : gname),
     "Ht" ∷ t ↦□ tv ∗
     "%Hdoc" ∷ ⌜tv.(yjs.Text.doc') = dv⌝ ∗
     "%Hinner" ∷ ⌜tv.(yjs.Text.inner') = parent⌝ ∗
     "%Hname" ∷ ⌜tv.(yjs.Text.name') = name⌝ ∗
     "His_doc" ∷ is_Doc dv s_loc γ ∗
-    "His_lb" ∷ is_text_lb γ parent arr.
+    "His_lb" ∷ is_text_lb γ parent S.
 
 #[global] Instance is_Doc_persistent dv s_loc γ : Persistent (is_Doc dv s_loc γ).
 Proof. apply _. Qed.
-#[global] Instance is_Text_persistent t arr : Persistent (is_Text t arr).
+#[global] Instance is_Text_persistent t S : Persistent (is_Text t S).
 Proof. apply _. Qed.
 
 (** Target public spec (replaces the [own_insert_doc] [wp_Text__Insert] above).
-    [is_Text] is persistent, so the precondition lower bound [arr] is kept; the
-    postcondition exposes the new content [arr'] (a [sublist] super-sequence):
+    [is_Text] is persistent, so the precondition lower bound [S] is kept; the
+    postcondition exposes the grown item set [S'] (a superset):
 
-      {{{ is_pkg_init yjs ∗ is_Text t arr }}}
+      {{{ is_pkg_init yjs ∗ is_Text t S }}}
         t @! (go.PointerType yjs.Text) @! "Insert" #idx #content
-      {{{ (arr' : list (YjsItem A)), RET #();
-          is_Text t arr' ∗ ⌜sublist arr arr'⌝ }}}
+      {{{ (S' : gset (YjsItem A)), RET #();
+          is_Text t S' ∗ ⌜S ⊆ S'⌝ }}}
 
     Sketch: peel [is_Text → is_Doc → is_Store] to reach [is_Mutex]; [Lock] yields
     [store_inv]; combine [is_text_lb] with [Hseq] (auth) to learn [parent ∈ dom
     texts] and extract THIS text's [text_state] / DLL from [Htexts]; run the
     existing findPos/Integrate loop (Integrate now also [AddNode]s into the global
-    items map, re-establishing [is_item_map] via [maximalId]); update the auth to
-    the grown sequence (mra update, [sublist] old new) and mint the new
-    [is_text_lb] fragment; reinsert the [text_state], rebuild [store_inv];
-    [Unlock]; return [is_Text t arr']. The old [uint.Z k + len < 2^63] overflow
+    items map, re-establishing [is_item_map] via [maximalId]); grow the auth set
+    by the inserted items ([gset] local update, monotone under [⊆]) and mint the
+    new [is_text_lb] fragment; reinsert the [text_state], rebuild [store_inv];
+    [Unlock]; return [is_Text t S']. The old [uint.Z k + len < 2^63] overflow
     side condition is gone — [k] is hidden in the lock, so it moves to a Go-side
     overflow guard in [Text.Insert]. *)
 
