@@ -2,10 +2,10 @@ package yjs
 
 import "testing"
 
-// helper: integrate a sequence of items into a fresh yText and return the text.
+// helper: integrate a sequence of items into a fresh yType and return the text.
 func runIntegrate(items []*item) string {
 	s := newStore(0)
-	parent := newYText()
+	parent := newYType()
 	for _, it := range items {
 		s.Integrate(parent, it)
 	}

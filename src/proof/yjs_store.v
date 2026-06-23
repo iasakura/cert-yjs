@@ -14,7 +14,16 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item.
 From New.proof.sync_proof Require Import mutex.        (* is_Mutex (store lock) *)
-From iris.base_logic.lib Require Import ghost_map.     (* type-registration witness *)
+From iris.algebra Require Import auth gmap.
+(* The subsequence-monotone item RA below uses [mra] (the generic monotone RA,
+   iris.algebra.lib.mra). NOTE: [mra] is ABSENT from this iris pin — only
+   [max_prefix_list] / [mono_list] (PREFIX order) are present. Subsequences do
+   NOT form a meet-semilattice, so the [max_prefix_list] construction behind
+   [mono_list] cannot be reused; the generic [mra] downward-closure construction
+   (op = union of R-predecessors) is what handles an arbitrary preorder like
+   [sublist]. Implementation must VENDOR mra.v (small, self-contained). The line
+   below is the intended import. *)
+(* From iris.algebra.lib Require Import mra. *)
 
 (** Small-context set rewrites for the conflict-scan accumulators. After a Go
     [append] of the conflict id, an id slice abstracts to [X ∪ ({[a]} ∪ ∅)] (the
@@ -1820,14 +1829,33 @@ Qed.
 (* so they live here. The extra [Context] below is placed at the END of the  *)
 (* section so it does NOT retroactively affect the verified proofs above     *)
 (* ([Context] only applies to declarations that follow it). On implementation*)
-(* [is_item_map] moves above [wp_Store__Integrate], which will maintain it,   *)
-(* and [ghost_mapG] should be folded into the global Σ class rather than a    *)
-(* local [Context]. *)
+(* [is_item_map] moves above [wp_Store__Integrate] (which will maintain it),  *)
+(* and [seq_inG] should be folded into the global Σ class.                    *)
+(*                                                                           *)
+(* MIGRATION NOTE: the Go rename yText→yType (now done + goose-translated)    *)
+(* means [is_ytext] / [is_dll] / [cell_repr] in yjs_item.v must be renamed to *)
+(* the yType model (mechanical: yjs.yText→yjs.yType), and the verified WP     *)
+(* proofs adapted to the new Doc/store layout (clock moved into store, Insert *)
+(* locks). These definitions already use the target shape; [is_ytext] below   *)
+(* stands for its yType-renamed successor. *)
 (* ======================================================================== *)
 
-(** Store lock = a [sync.Mutex]; type registration = a [ghost_map] name↦parent. *)
+(** Store lock = a [sync.Mutex]. The per-text item sequence lives in a monotone
+    ghost (below), keyed by the text's [parent] loc. *)
 Context {sync_pkg : sync.Assumptions}.
-Context `{ghost_mapG Σ go_string loc}.
+
+(** Item-sequence RA: a map [loc ↦ auth (mra sublist)] — per text-loc, an
+    authoritative monotone item list ordered by the subsequence relation
+    [sublist]. The auth [●] (current content) sits in [store_inv]; a persistent
+    fragment [◯] is a subsequence LOWER BOUND held by [is_Text]. Insert-only (and
+    delete, which flips a flag without removing) grows the list under [sublist],
+    so a recorded lower bound stays valid forever, and the user can read off a
+    lower bound on the current string. The fragment doubles as the registration
+    witness: holding [◯] at key [parent] proves [parent ∈ dom texts]. *)
+Notation seqUR := (gmapUR loc (authR (mraUR (A := list (YjsItem A)) sublist))).
+Context {seq_inG : inG Σ seqUR}.
+
+Definition to_seq (arr : list (YjsItem A)) : mra sublist := principal sublist arr.
 
 (* ----- the store's item set: map[Client][]*item ------------------------- *)
 
@@ -1867,60 +1895,67 @@ Definition is_item_map (mref : loc) (cells : list item_cell) : iProp Σ :=
 
 (* ----- one registered text's state, and the lock invariant -------------- *)
 
-(** What [store_inv] tracks per registered YText: its loc, the DLL cells, and the
-    model item list. *)
+(** What [store_inv] tracks per registered YType (keyed by its [parent] loc): the
+    DLL cells and the model item list. *)
 Record text_state := MkTextState {
-  ts_parent : loc;
-  ts_cells  : list item_cell;
-  ts_arr    : list (YjsItem A);
+  ts_cells : list item_cell;
+  ts_arr   : list (YjsItem A);
 }.
 
 (** All cells across all texts — argument to [is_item_map] (the items map is
     document-global). Concat order is irrelevant: [is_item_map] reads a
     per-client clock-sorted permutation. *)
-Definition all_cells (texts : gmap go_string text_state) : list item_cell :=
+Definition all_cells (texts : gmap loc text_state) : list item_cell :=
   concat (ts_cells <$> (map_to_list texts).*2).
 
 (** [store_inv s_loc γ]: everything the store lock protects.
-    - store struct NON-mu fields (client/clock/items/deletedSet); [mu] is owned
-      by [is_Mutex] in [is_Store], not here;
-    - registration authority [ghost_map_auth γ] (name↦parent), whose persistent
-      fragments are the [is_registered] witnesses [Text] holds;
+    - store struct NON-mu fields (client/clock/items/types/deletedSet); [mu] is
+      owned by [is_Mutex] in [is_Store], not here;
+    - the Go types map (name↦parent loc) whose image is exactly the registered
+      [parent] locs ([dom texts]);
+    - the item-sequence authority [own γ (●…)] per text loc — its fragments are
+      the [is_text_lb] lower bounds / registration witnesses [Text] holds;
     - the document-global items map over [all_cells texts];
-    - each registered text's DLL + [YjsArrInvariant];
+    - each registered text's DLL (keyed by [parent]) + [YjsArrInvariant];
     - the global per-client counter (source of [maximalId]).
     [client]/[k]/[texts] etc. are existential — the fixed lock invariant hides
     the per-operation state. *)
 Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
-  ∃ (client k : w64) (items_mref : loc) (dset : yjs.deletedSet.t)
-    (texts : gmap go_string text_state),
-    "Hclient" ∷ (s_loc .[ yjs.store.t , "client" ]) ↦ client ∗
-    "Hclock"  ∷ (s_loc .[ yjs.store.t , "clock"  ]) ↦ k ∗
-    "Hitemsf" ∷ (s_loc .[ yjs.store.t , "items"  ]) ↦ items_mref ∗
-    "Hdset"   ∷ (s_loc .[ yjs.store.t , "deletedSet" ]) ↦ dset ∗
-    "Hreg"    ∷ ghost_map_auth γ 1 (ts_parent <$> texts) ∗
+  ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
+    (texts : gmap loc text_state) (tmap : gmap go_string loc),
+    "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
+    "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
+    "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
+    "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
+    "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
+    "Htypes"  ∷ own_map types_mref (DfracOwn 1) tmap ∗
+    "%Hdom"   ∷ ⌜map_img tmap = dom texts⌝ ∗
+    "Hseq"    ∷ own γ ((λ ts, ● to_seq (ts_arr ts)) <$> texts) ∗
     "Hitems"  ∷ is_item_map items_mref (all_cells texts) ∗
-    "Htexts"  ∷ ([∗ map] name ↦ ts ∈ texts,
-                  is_ytext (ts_parent ts) (ts_cells ts) (ts_arr ts) ∗
+    "Htexts"  ∷ ([∗ map] parent ↦ ts ∈ texts,
+                  is_ytext parent (ts_cells ts) (ts_arr ts) ∗
                   ⌜YjsArrInvariant (ts_arr ts)⌝) ∗
-    "%Hctr"   ∷ ⌜∀ name ts x, texts !! name = Some ts → x ∈ ts_arr ts →
+    "%Hctr"   ∷ ⌜∀ parent ts x, texts !! parent = Some ts → x ∈ ts_arr ts →
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝.
 
 (** Store handle (persistent): the lock at [&store.mu] guards [store_inv]. ALL
     store-field / item-set / DLL references are sealed here or in [store_inv]. *)
 Definition is_Store (s_loc : loc) (γ : gname) : iProp Σ :=
-  is_Mutex (s_loc .[ yjs.store.t , "mu" ]) (store_inv s_loc γ).
+  is_Mutex (s_loc .[(yjs.store.t), "mu"]) (store_inv s_loc γ).
 
-(** Persistent per-text witness: "[name] is registered to YText [parent]". A
-    persistent [ghost_map] element; [Insert] does [ghost_map_lookup] against
-    [Hreg] under the lock to locate its own text in [store_inv]. *)
-Definition is_registered (γ : gname) (name : go_string) (parent : loc) : iProp Σ :=
-  name ↪[γ]□ parent.
+(** [is_text_lb γ parent arr]: a persistent subsequence LOWER BOUND on the text
+    at [parent] — [arr] is a [sublist] of its current content — AND the
+    registration witness (the key [parent] exists in the store's auth). [Insert]
+    combines it with [store_inv]'s [Hseq] (auth) under the lock to (a) learn
+    [parent ∈ dom texts] and extract its DLL, and (b) grow the lower bound. The
+    holder reads off a known sub-sequence (hence a lower bound on the string). *)
+Definition is_text_lb (γ : gname) (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
+  own γ ({[ parent := ◯ to_seq arr ]} : seqUR).
 
 #[global] Instance is_Store_persistent s_loc γ : Persistent (is_Store s_loc γ).
 Proof. apply _. Qed.
-#[global] Instance is_registered_persistent γ name parent : Persistent (is_registered γ name parent).
+#[global] Instance is_text_lb_persistent γ parent arr : Persistent (is_text_lb γ parent arr).
 Proof. apply _. Qed.
 
 End store.

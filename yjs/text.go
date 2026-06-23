@@ -8,94 +8,95 @@ package yjs
 // the byte-level v1 codec stay behind //go:build !goose (delete.go, codec.go).
 //
 // Simplifications vs y-octo:
-//   - a Doc owns root Text types by name (no nested types, no maps/arrays);
-//   - the next clock for the local client is a plain Doc counter (clock) rather
-//     than derived from the struct store's state vector -- this keeps Insert
-//     decoupled from store.items, so verifying it needs only is_valid_ytext and
-//     the counter, not ownership of the interface-typed node-slice map;
+//   - the store owns the root types by name (no nested types, no maps/arrays);
+//   - the local client's next clock lives in the store (state-vector head); an
+//     edit takes the store lock, integrates, and registers the new item into the
+//     store's item set -- faithful to y-octo's Arc<RwLock<DocStore>>;
 //   - every user-visible character becomes its own 1-char internal item, so
 //     positions never fall inside an item and no splitting is needed;
 //   - content is assumed single-byte (ASCII): a clock unit is one byte, which
 //     keeps id arithmetic consistent with content.Len (byte length).
 
-// yText is the root sequence type the items are integrated into. In y-octo this
-// is a YType with start/map/item/len; the Phase-1 simplification fixes the
-// content to a single string type with no parent_sub, so we only need the head
-// of the item linked list and the visible length.
-type yText struct {
+// yType is the root sequence type the items are integrated into (y-octo: YType
+// in doc/types). The Phase-1 simplification fixes the content to a single string
+// type with no parent_sub, so we only need the head of the item linked list and
+// the visible length.
+type yType struct {
 	// start is the head of the doubly linked list of items (parent.start).
 	start *item
 	// len is the visible (countable, non-deleted) length.
 	len uint64
 }
 
-// newYText creates an empty root sequence.
-func newYText() *yText {
-	return &yText{start: nil, len: 0}
+// newYType creates an empty root sequence.
+func newYType() *yType {
+	return &yType{start: nil, len: 0}
 }
 
-// Doc is a document: a struct store plus the root text types it owns.
+// Doc is a document: a handle around the struct store (y-octo: Doc wraps an
+// Arc<RwLock<DocStore>>). The store owns the types, clock, items and lock.
 type Doc struct {
 	store *store
-	// types is the root-type registry by name (y-octo: DocStore types).
-	types map[string]*yText
-	// clock is the next clock for the local client (store.client). Each local
-	// insert consumes one and bumps it; this makes generated ids maximal.
-	clock Clock
 }
 
 // NewDoc creates a document with a fresh store owned by client.
 func NewDoc(client Client) *Doc {
-	return &Doc{
-		store: newStore(client),
-		types: make(map[string]*yText),
-		clock: 0,
-	}
-}
-
-// getOrCreateYText returns the internal sequence for name, creating it on first
-// use (y-octo: DocStore::get_or_create_type).
-func (d *Doc) getOrCreateYText(name string) *yText {
-	y, ok := d.types[name]
-	if !ok {
-		y = newYText()
-		d.types[name] = y
-	}
-	return y
+	return &Doc{store: newStore(client)}
 }
 
 // GetText returns the root text type named name, creating it on first use
-// (y-octo: Doc::get_or_create_text).
+// (y-octo: Doc::get_or_create_text). Registering the type mutates the store, so
+// it is done under the store lock.
 func (d *Doc) GetText(name string) *Text {
-	return &Text{doc: d, name: name, inner: d.getOrCreateYText(name)}
+	s := d.store
+	s.mu.Lock()
+	inner := s.getOrCreateYType(name)
+	s.mu.Unlock()
+	return &Text{doc: d, name: name, inner: inner}
 }
 
 // Text is the public handle for a root text type (y-octo: the Text wrapper
-// around a YTypeRef). It carries the owning Doc so edits can allocate ids from
-// the doc's clock counter and integrate the resulting items.
+// around a YTypeRef). It carries the owning Doc so edits reach the store (for
+// the lock, the local client, and the clock) and integrate the resulting items.
 type Text struct {
 	doc   *Doc
 	name  string
-	inner *yText
+	inner *yType
 }
 
-// String returns the current visible text.
-func (t *Text) String() string { return t.inner.Text() }
+// String returns the current visible text. Reads the shared DLL under the lock.
+func (t *Text) String() string {
+	s := t.doc.store
+	s.mu.Lock()
+	r := t.inner.Text()
+	s.mu.Unlock()
+	return r
+}
 
-// Len returns the visible (countable, non-deleted) length.
-func (t *Text) Len() uint64 { return t.inner.len }
+// Len returns the visible (countable, non-deleted) length, read under the lock.
+func (t *Text) Len() uint64 {
+	s := t.doc.store
+	s.mu.Lock()
+	n := t.inner.len
+	s.mu.Unlock()
+	return n
+}
 
 // Insert inserts content at the visible character index, generating one
 // 1-char item per byte. Each item's left origin chains to the previous one and
 // every item shares the same right origin, matching how Yjs splits a run
-// (y-octo: ListType::insert_after via store::create_item + integrate). The id of
-// each character comes from the doc's local clock counter.
+// (y-octo: ListType::insert_after via store::create_item + integrate). The whole
+// edit runs under the store lock; each character's id comes from the store's
+// local clock counter.
 func (t *Text) Insert(index uint64, content string) {
+	s := t.doc.store
+	s.mu.Lock()
 	if index > t.inner.len {
+		s.mu.Unlock()
 		return
 	}
 	left, right := t.inner.findPos(index)
-	client := t.doc.store.client
+	client := s.client
 
 	// Every character in this run shares the same right origin: the node that
 	// was to the right of the insertion point (y-octo chains a run between one
@@ -107,8 +108,8 @@ func (t *Text) Insert(index uint64, content string) {
 	}
 
 	for i := 0; i < len(content); i++ {
-		clk := t.doc.clock
-		t.doc.clock = clk + 1
+		clk := s.clock
+		s.clock = clk + 1
 
 		var originLeftId *id
 		if left != nil {
@@ -117,17 +118,18 @@ func (t *Text) Insert(index uint64, content string) {
 		}
 
 		newit := newItem(newId(client, clk), string(content[i]), originLeftId, originRightId)
-		t.doc.store.Integrate(t.inner, newit)
+		s.Integrate(t.inner, newit)
 
 		// the next character integrates immediately to the right of this one.
 		left = newit
 	}
+	s.mu.Unlock()
 }
 
 // findPos walks to the visible character index and returns the doubly-linked
 // neighbours (left, right) straddling that position (y-octo: ListType::find_pos
 // specialised to 1-char items, so the offset/normalize/split path is gone).
-func (y *yText) findPos(index uint64) (*item, *item) {
+func (y *yType) findPos(index uint64) (*item, *item) {
 	var left *item
 	right := y.start
 
@@ -149,7 +151,7 @@ func (y *yText) findPos(index uint64) (*item, *item) {
 
 // Text reads the current visible string by walking the item list left to right
 // (skipping deleted items). Useful for stating/verifying convergence.
-func (parent *yText) Text() string {
+func (parent *yType) Text() string {
 	result := ""
 	cur := parent.start
 	for cur != nil {

@@ -12,7 +12,10 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_store.
 From New.proof.sync_proof Require Import mutex.        (* is_Mutex / Lock / Unlock *)
-From iris.base_logic.lib Require Import ghost_map.     (* is_registered witness *)
+From iris.algebra Require Import auth gmap.
+(* [is_text_lb]'s subsequence RA needs [mra], absent from this iris pin — must be
+   vendored (see the note in yjs_store.v). *)
+(* From iris.algebra.lib Require Import mra. *)
 
 Section text.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
@@ -511,56 +514,65 @@ Qed.
 (* The per-type invariants for [Doc] and [Text] live here (alongside their    *)
 (* WP proofs). [Context] is at the end of the section so it does NOT affect   *)
 (* the verified proofs above. These delegate to the STORE invariants          *)
-(* ([is_Store] / [is_registered] / [store_inv]) defined in [yjs_store]; this  *)
-(* is what makes [is_Text] reference only Text's own fields. The target       *)
+(* ([is_Store] / [is_text_lb] / [store_inv]) defined in [yjs_store]; this is  *)
+(* what makes [is_Text] reference only Text's own fields. The target          *)
 (* [wp_Text__Insert] (replacing the [own_insert_doc] version above) is shown  *)
-(* as a comment to avoid a name clash during this definitions-only review. *)
+(* as a comment to avoid a name clash during this definitions-only review.    *)
+(* [seq_inG] duplicates yjs_store's Context here (a section-local assumption); *)
+(* on implementation it folds into the global Σ class. *)
 (* ======================================================================== *)
 
 Context {sync_pkg : sync.Assumptions}.
-Context `{ghost_mapG Σ go_string loc}.
+Context {seq_inG : inG Σ (gmapUR loc (authR (mraUR (A := list (YjsItem A)) sublist)))}.
 
 (** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
-    delegates to [is_Store]. The [types] registry map-object is out of scope
-    here (touched by [GetText], not [Insert]) — it would live in a fuller
-    [is_Doc]. *)
+    delegates to [is_Store]. The store now owns the [types] registry, so there
+    is nothing else of the Doc to own. *)
 Definition is_Doc (dv s_loc : loc) (γ : gname) : iProp Σ :=
   ∃ (dvv : yjs.Doc.t),
     "Hdoc" ∷ dv ↦□ dvv ∗
     "%Hstore" ∷ ⌜dvv.(yjs.Doc.store') = s_loc⌝ ∗
     "His_store" ∷ is_Store s_loc γ.
 
-(** Text handle (persistent): reads ONLY its OWN fields ([doc]/[inner]/[name],
-    all immutable ⇒ [↦□]) plus the registration witness for its inner YText.
-    Says NOTHING about store fields. Persistent ⇒ the public [Insert] spec
-    reuses it pre = post. *)
-Definition is_Text (t : loc) : iProp Σ :=
+(** Text handle (persistent), now parameterized by a known item sub-sequence
+    [arr]: reads ONLY its OWN fields ([doc]/[inner]/[name], all immutable ⇒ [↦□])
+    plus [is_text_lb], which both (a) witnesses the inner YType is registered and
+    (b) records that [arr] is a [sublist] LOWER BOUND of the text's current
+    content. Says NOTHING about store fields. Persistent ⇒ the [Insert] spec is
+    pre/post in the same predicate (with [arr] growing). The user can read off
+    [text_of arr] as a lower bound on the current string. *)
+Definition is_Text (t : loc) (arr : list (YjsItem A)) : iProp Σ :=
   ∃ (tv : yjs.Text.t) (dv s_loc parent : loc) (name : go_string) (γ : gname),
     "Ht" ∷ t ↦□ tv ∗
     "%Hdoc" ∷ ⌜tv.(yjs.Text.doc') = dv⌝ ∗
     "%Hinner" ∷ ⌜tv.(yjs.Text.inner') = parent⌝ ∗
     "%Hname" ∷ ⌜tv.(yjs.Text.name') = name⌝ ∗
     "His_doc" ∷ is_Doc dv s_loc γ ∗
-    "His_reg" ∷ is_registered γ name parent.
+    "His_lb" ∷ is_text_lb γ parent arr.
 
 #[global] Instance is_Doc_persistent dv s_loc γ : Persistent (is_Doc dv s_loc γ).
 Proof. apply _. Qed.
-#[global] Instance is_Text_persistent t : Persistent (is_Text t).
+#[global] Instance is_Text_persistent t arr : Persistent (is_Text t arr).
 Proof. apply _. Qed.
 
-(** Target public spec (replaces the [own_insert_doc] [wp_Text__Insert] above):
+(** Target public spec (replaces the [own_insert_doc] [wp_Text__Insert] above).
+    [is_Text] is persistent, so the precondition lower bound [arr] is kept; the
+    postcondition exposes the new content [arr'] (a [sublist] super-sequence):
 
-      {{{ is_pkg_init yjs ∗ is_Text t }}}
+      {{{ is_pkg_init yjs ∗ is_Text t arr }}}
         t @! (go.PointerType yjs.Text) @! "Insert" #idx #content
-      {{{ RET #(); is_Text t }}}
+      {{{ (arr' : list (YjsItem A)), RET #();
+          is_Text t arr' ∗ ⌜sublist arr arr'⌝ }}}
 
     Sketch: peel [is_Text → is_Doc → is_Store] to reach [is_Mutex]; [Lock] yields
-    [store_inv]; [ghost_map_lookup] with [is_registered] extracts THIS text's
-    [text_state] from [texts] and its DLL from [Htexts]; run the existing
-    findPos/Integrate loop (Integrate now also [AddNode]s into the global items
-    map, re-establishing [is_item_map] via [maximalId]); reinsert the updated
-    [text_state], rebuild [store_inv]; [Unlock]; return the persistent [is_Text].
-    The old [uint.Z k + len < 2^63] overflow side condition is gone — [k] is
-    hidden in the lock, so it moves to a Go-side overflow guard in [Text.Insert]. *)
+    [store_inv]; combine [is_text_lb] with [Hseq] (auth) to learn [parent ∈ dom
+    texts] and extract THIS text's [text_state] / DLL from [Htexts]; run the
+    existing findPos/Integrate loop (Integrate now also [AddNode]s into the global
+    items map, re-establishing [is_item_map] via [maximalId]); update the auth to
+    the grown sequence (mra update, [sublist] old new) and mint the new
+    [is_text_lb] fragment; reinsert the [text_state], rebuild [store_inv];
+    [Unlock]; return [is_Text t arr']. The old [uint.Z k + len < 2^63] overflow
+    side condition is gone — [k] is hidden in the lock, so it moves to a Go-side
+    overflow guard in [Text.Insert]. *)
 
 End text.
