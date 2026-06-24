@@ -1,6 +1,6 @@
 package yjs
 
-// Document- and text-level API (y-octo: doc/document.rs + doc/types/text.rs).
+// Text-type API (y-octo: doc/types/text.rs); the Doc handle lives in doc.go.
 //
 // These ops are goose-translated (part of the verified model): Insert is a loop
 // over the proven store.Integrate, so it preserves the document invariant
@@ -31,28 +31,6 @@ type yType struct {
 // newYType creates an empty root sequence.
 func newYType() *yType {
 	return &yType{start: nil, len: 0}
-}
-
-// Doc is a document: a handle around the struct store (y-octo: Doc wraps an
-// Arc<RwLock<DocStore>>). The store owns the types, clock, items and lock.
-type Doc struct {
-	store *store
-}
-
-// NewDoc creates a document with a fresh store owned by client.
-func NewDoc(client Client) *Doc {
-	return &Doc{store: newStore(client)}
-}
-
-// GetText returns the root text type named name, creating it on first use
-// (y-octo: Doc::get_or_create_text). Registering the type mutates the store, so
-// it is done under the store lock.
-func (d *Doc) GetText(name string) *Text {
-	s := d.store
-	s.mu.Lock()
-	inner := s.getOrCreateYType(name)
-	s.mu.Unlock()
-	return &Text{store: s, name: name, inner: inner}
 }
 
 // Text is the public handle for a root text type (y-octo: the Text wrapper
