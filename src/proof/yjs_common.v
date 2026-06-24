@@ -18,6 +18,12 @@ From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
+(* The Go package now imports sync (store.mu : sync.Mutex), so the generated yjs
+   package imports sync; building [IsPkgInit yjs] below needs [IsPkgInit sync]
+   (and [GetIsPkgInitWf sync]) in scope, provided by the sync proof base. The
+   required [sync.Assumptions] comes from [yjs.Assumptions] (its
+   [import_sync_Assumption ::] field). *)
+From New.proof.sync_proof Require Import base.
 
 Section common.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
