@@ -1912,29 +1912,31 @@ Definition is_item_map (mref : loc) (texts : gmap loc text_state) : iProp Σ :=
 (* ----- the lock invariant ----------------------------------------------- *)
 
 (** [store_inv s_loc γ]: everything the store lock protects.
-    - store struct NON-mu fields (client/clock/items/types/deletedSet); [mu] is
-      owned by [is_Mutex] in [is_Store], not here;
-    - the Go types map (name↦parent loc) whose image is exactly the registered
-      [parent] locs ([dom texts]);
-    - the item-sequence authority [own γ (●…)] per text loc — its fragments are
-      the [is_text_lb] lower bounds / registration witnesses [Text] holds;
-    - the document-global items map ([is_item_map] over the [texts] map directly);
+    - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
+      [mu] is owned by [is_Mutex] in [is_Store], not here);
+    - the item-set authority [own γ (●…)] per text loc (id-set), whose fragments
+      are the [is_text_lb] lower bounds / registration witnesses [Text] holds;
     - each registered text's DLL (keyed by [parent]) + [YjsArrInvariant];
     - the global per-client counter (source of [maximalId]).
     [client]/[k]/[texts] etc. are existential — the fixed lock invariant hides
-    the per-operation state. *)
+    the per-operation state.
+
+    NOTE: [is_item_map] (the store-holds-item-set invariant over the items map) is
+    intentionally NOT yet part of [store_inv]: Integrate's [AddNode] is deferred,
+    so the items map does not grow with the cells, and including [is_item_map]
+    would make [store_inv] unrecoverable after [Insert]. Re-add [is_item_map] here
+    together with Integrate's [AddNode] + items-map threading (final phase). The
+    items field ptr ([Hitemsf]) is still owned (raw), only its [own_map] contents
+    are dropped for now. *)
 Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
-    (texts : gmap loc text_state) (tmap : gmap go_string loc),
+    (texts : gmap loc text_state),
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
     "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
     "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
     "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
-    "Htypes"  ∷ own_map types_mref (DfracOwn 1) tmap ∗
-    "%Hdom"   ∷ ⌜map_img tmap = dom texts⌝ ∗
     "Hseq"    ∷ own γ (((λ ts, ● (list_to_set (item_id <$> ts_arr ts) : gset YjsId)) <$> texts) : seqUR) ∗
-    "Hitems"  ∷ is_item_map items_mref texts ∗
     "Htexts"  ∷ ([∗ map] parent ↦ ts ∈ texts,
                   is_ytext parent (ts_cells ts) (ts_arr ts) ∗
                   ⌜YjsArrInvariant (ts_arr ts)⌝) ∗
