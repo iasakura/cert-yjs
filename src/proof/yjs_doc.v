@@ -23,7 +23,7 @@ Notation A := go_string.
 (* [is_Store] (from yjs_store) is generalized over these, so reuse the same
    Context to apply it here. On implementation they fold into the global Σ class. *)
 Context {sync_pkg : sync.Assumptions}.
-Context {seq_inG : inG Σ (gmapUR loc (authR (gsetUR (YjsItem A))))}.
+Context {seq_inG : inG Σ (gmapUR loc (authR (gsetUR YjsId)))}.
 
 (** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
     delegates to [is_Store]. Since [Text] holds the store directly (y-octo: the
