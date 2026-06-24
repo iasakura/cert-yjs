@@ -33,13 +33,12 @@ func newYType() *yType {
 	return &yType{start: nil, len: 0}
 }
 
-// Text is the public handle for a root text type (y-octo: the Text wrapper
-// around a YTypeRef, which holds the store ref). It carries the store directly so
-// edits reach the lock / client / clock and integrate the resulting items, with
-// no Doc indirection.
+// Text is the public handle for a root text type (y-octo: Text is a YTypeRef
+// newtype). It carries the store (for the lock / client / clock) and the inner
+// YType it edits; the type name is only needed at GetText time, so it is not
+// stored in the handle.
 type Text struct {
 	store *store
-	name  string
 	inner *yType
 }
 

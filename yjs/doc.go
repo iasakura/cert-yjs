@@ -25,5 +25,5 @@ func (d *Doc) GetText(name string) *Text {
 	s.mu.Lock()
 	inner := s.getOrCreateYType(name)
 	s.mu.Unlock()
-	return &Text{store: s, name: name, inner: inner}
+	return &Text{store: s, inner: inner}
 }

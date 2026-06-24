@@ -544,11 +544,10 @@ Definition is_Doc (dv s_loc : loc) (γ : gname) : iProp Σ :=
     set-only ghost. Says NOTHING about store fields. Persistent ⇒ the [Insert]
     spec is pre/post in the same predicate (with [L] growing). *)
 Definition is_Text (t : loc) (L : list (YjsItem A)) : iProp Σ :=
-  ∃ (tv : yjs.Text.t) (s_loc parent : loc) (name : go_string) (γ : gname),
+  ∃ (tv : yjs.Text.t) (s_loc parent : loc) (γ : gname),
     "Ht" ∷ t ↦□ tv ∗
     "%Hstore" ∷ ⌜tv.(yjs.Text.store') = s_loc⌝ ∗
     "%Hinner" ∷ ⌜tv.(yjs.Text.inner') = parent⌝ ∗
-    "%Hname" ∷ ⌜tv.(yjs.Text.name') = name⌝ ∗
     "His_store" ∷ is_Store s_loc γ ∗
     "His_lb" ∷ is_text_lb γ parent (list_to_set L) ∗
     "%Hsorted" ∷ ⌜StronglySorted (λ x y : YjsItem A, YjsLt' (itemPtr x) (itemPtr y)) L⌝.
