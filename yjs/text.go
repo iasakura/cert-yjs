@@ -52,21 +52,22 @@ func (d *Doc) GetText(name string) *Text {
 	s.mu.Lock()
 	inner := s.getOrCreateYType(name)
 	s.mu.Unlock()
-	return &Text{doc: d, name: name, inner: inner}
+	return &Text{store: s, name: name, inner: inner}
 }
 
 // Text is the public handle for a root text type (y-octo: the Text wrapper
-// around a YTypeRef). It carries the owning Doc so edits reach the store (for
-// the lock, the local client, and the clock) and integrate the resulting items.
+// around a YTypeRef, which holds the store ref). It carries the store directly so
+// edits reach the lock / client / clock and integrate the resulting items, with
+// no Doc indirection.
 type Text struct {
-	doc   *Doc
+	store *store
 	name  string
 	inner *yType
 }
 
 // String returns the current visible text. Reads the shared DLL under the lock.
 func (t *Text) String() string {
-	s := t.doc.store
+	s := t.store
 	s.mu.Lock()
 	r := t.inner.Text()
 	s.mu.Unlock()
@@ -75,7 +76,7 @@ func (t *Text) String() string {
 
 // Len returns the visible (countable, non-deleted) length, read under the lock.
 func (t *Text) Len() uint64 {
-	s := t.doc.store
+	s := t.store
 	s.mu.Lock()
 	n := t.inner.len
 	s.mu.Unlock()
@@ -89,7 +90,7 @@ func (t *Text) Len() uint64 {
 // edit runs under the store lock; each character's id comes from the store's
 // local clock counter.
 func (t *Text) Insert(index uint64, content string) {
-	s := t.doc.store
+	s := t.store
 	s.mu.Lock()
 	if index > t.inner.len {
 		s.mu.Unlock()
