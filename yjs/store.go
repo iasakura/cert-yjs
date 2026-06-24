@@ -264,7 +264,9 @@ func (s *store) Integrate(parent *yType, item *item) {
 		parent.len = parent.len + item.Len()
 	}
 
-	// Register the item in the struct store so the store holds the full item
-	// set (y-octo: integrate pushes the node into DocStore.items).
-	s.AddNode(item)
+	// TODO(store-holds-item-set): register the item in the struct store via
+	// s.AddNode(item) so the store holds the full item set (y-octo: integrate
+	// pushes the node into DocStore.items). Deferred until the item-map is
+	// threaded through this method's WP spec (wp_Store__Integrate); re-adding the
+	// call requires owning s.items here and re-establishing is_item_map.
 }
