@@ -506,32 +506,21 @@ Proof.
 Qed.
 
 (* ======================================================================== *)
-(* Doc / Text invariant predicates — DESIGN (definitions only, see PR).       *)
+(* Text invariant predicate — DESIGN (definitions only, see PR).              *)
 (*                                                                           *)
-(* The per-type invariants for [Doc] and [Text] live here (alongside their    *)
-(* WP proofs). [Context] is at the end of the section so it does NOT affect   *)
-(* the verified proofs above. These delegate to the STORE invariants          *)
-(* ([is_Store] / [is_text_lb] / [store_inv]) defined in [yjs_store]; this is  *)
-(* what makes [is_Text] reference only Text's own fields. The target          *)
-(* [wp_Text__Insert] (replacing the [own_insert_doc] version above) is shown  *)
-(* as a comment to avoid a name clash during this definitions-only review.    *)
-(* [seq_inG] duplicates yjs_store's Context here (a section-local assumption); *)
-(* on implementation it folds into the global Σ class. *)
+(* [is_Text] lives here (alongside the Text WP proofs); the Doc-layer         *)
+(* predicate [is_Doc] lives in yjs_doc.v (mirrors doc.go). [is_Text]          *)
+(* delegates straight to the STORE invariants ([is_Store] / [is_text_lb] /    *)
+(* [store_inv]) in yjs_store, so it references only Text's own fields. The     *)
+(* [Context] is at the end of the section so it does NOT affect the verified   *)
+(* proofs above. The target [wp_Text__Insert] (replacing the [own_insert_doc]  *)
+(* version above) is shown as a comment to avoid a name clash during this      *)
+(* definitions-only review. [seq_inG] duplicates yjs_store's Context here; on   *)
+(* implementation it folds into the global Σ class. *)
 (* ======================================================================== *)
 
 Context {sync_pkg : sync.Assumptions}.
 Context {seq_inG : inG Σ (gmapUR loc (authR (gsetUR (YjsItem A))))}.
-
-(** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
-    delegates to [is_Store]. Now that [Text] holds the store directly (y-octo:
-    the YTypeRef carries the store ref), [is_Text] does NOT go through [is_Doc];
-    this predicate is kept for Doc-level reasoning (e.g. a [GetText] spec that
-    consumes [is_Doc] and returns [is_Text t []]). *)
-Definition is_Doc (dv s_loc : loc) (γ : gname) : iProp Σ :=
-  ∃ (dvv : yjs.Doc.t),
-    "Hdoc" ∷ dv ↦□ dvv ∗
-    "%Hstore" ∷ ⌜dvv.(yjs.Doc.store') = s_loc⌝ ∗
-    "His_store" ∷ is_Store s_loc γ.
 
 (** Text handle (persistent), parameterized by a SORTED list [L] of known items:
     reads ONLY its OWN fields ([store]/[inner]/[name], all immutable ⇒ [↦□]) and
@@ -552,8 +541,6 @@ Definition is_Text (t : loc) (L : list (YjsItem A)) : iProp Σ :=
     "His_lb" ∷ is_text_lb γ parent (list_to_set L) ∗
     "%Hsorted" ∷ ⌜StronglySorted (λ x y : YjsItem A, YjsLt' (itemPtr x) (itemPtr y)) L⌝.
 
-#[global] Instance is_Doc_persistent dv s_loc γ : Persistent (is_Doc dv s_loc γ).
-Proof. apply _. Qed.
 #[global] Instance is_Text_persistent t L : Persistent (is_Text t L).
 Proof. apply _. Qed.
 
