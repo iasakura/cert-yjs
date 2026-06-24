@@ -1856,43 +1856,7 @@ Context {sync_pkg : sync.Assumptions}.
 Notation seqUR := (gmapUR loc (authR (gsetUR (YjsItem A)))).
 Context {seq_inG : inG Σ seqUR}.
 
-(* ----- the store's item set: map[Client][]*item ------------------------- *)
-
-(** Client / clock a heap cell's id carries — read off the pure cell value, so
-    [is_item_map] can speak about clocks while owning only the map, not the
-    item cells. *)
-Definition cell_client (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clientId').
-Definition cell_clock  (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clock').
-
-(** The sublist of [cells] integrated by [client], in document (DLL) order. *)
-Definition client_run (client : w64) (cells : list item_cell) : list item_cell :=
-  filter (λ c, cell_client c = client) cells.
-
-(** [is_item_map mref cells]: the heap map at [mref] (Go [store.items]) owns the
-    map header and, per client, the backing slice of [*item] *locations* (+ cap)
-    — but NOT the item cells (those live in the DLL, [is_ytext]).
-
-    Order subtlety: the slice is in CLOCK order (Go [AddNode] appends in
-    integration order; each fresh local id takes the next clock), which is NOT
-    the DLL order — even one text's client items need not be clock-sorted along
-    the list (type "AB" = clocks 0,1; cursor home; type "C" = clock 2 ⇒ DLL is
-    C,A,B but [items[client]] is A,B,C). So the run is a clock-sorted
-    *permutation* of [client_run client cells] (unique, since ids are unique).
-    Preserved per insert by [maximalId] (a fresh max-clock item appends at the
-    sorted tail). *)
-Definition is_item_map (mref : loc) (cells : list item_cell) : iProp Σ :=
-  ∃ (gm : gmap w64 slice.t),
-    "Hmap" ∷ own_map mref (DfracOwn 1) gm ∗
-    "Hruns" ∷ ([∗ map] client ↦ s ∈ gm,
-        ∃ (run : list item_cell),
-          "%Hperm"   ∷ ⌜run ≡ₚ client_run client cells⌝ ∗
-          "%Hsorted" ∷ ⌜StronglySorted
-              (λ a b, (uint.Z (cell_clock a) < uint.Z (cell_clock b))%Z) run⌝ ∗
-          "Hslice"   ∷ s ↦* (ic_loc <$> run) ∗
-          "Hcap"     ∷ own_slice_cap (go.PointerType yjs.item) s (DfracOwn 1)) ∗
-    "%Hcomplete" ∷ ⌜∀ c, c ∈ (cell_client <$> cells) → is_Some (gm !! c)⌝.
-
-(* ----- one registered text's state, and the lock invariant -------------- *)
+(* ----- one registered text's state -------------------------------------- *)
 
 (** What [store_inv] tracks per registered YType (keyed by its [parent] loc): the
     DLL cells and the model item list. *)
@@ -1901,11 +1865,46 @@ Record text_state := MkTextState {
   ts_arr   : list (YjsItem A);
 }.
 
-(** All cells across all texts — argument to [is_item_map] (the items map is
-    document-global). Concat order is irrelevant: [is_item_map] reads a
-    per-client clock-sorted permutation. *)
+(** All cells across all texts (the document-global item pool). *)
 Definition all_cells (texts : gmap loc text_state) : list item_cell :=
   concat (ts_cells <$> (map_to_list texts).*2).
+
+(* ----- the store's item set: map[Client][]*item ------------------------- *)
+
+(** Client / clock a heap cell's id carries — read off the pure cell value, so
+    [is_item_map] can speak about clocks while owning only the map, not the
+    item cells. *)
+Definition cell_client (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clientId').
+Definition cell_clock  (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clock').
+
+Definition cell_le (a b : item_cell) : Prop := (uint.Z (cell_clock a) ≤ uint.Z (cell_clock b))%Z.
+#[local] Instance cell_le_dec : RelDecision cell_le.
+Proof. rewrite /cell_le. solve_decision. Defined.
+
+(** [client_run texts client]: [client]'s items across every text, CLOCK-sorted
+    — exactly the Go run list [store.items[client]] (AddNode appends in
+    integration = clock order). Defining it by [merge_sort] makes sortedness
+    DEFINITIONAL: [is_item_map] needs no existential / permutation clause, and
+    (clocks being unique per client) the result is the unique clock ordering.
+    Preserved per insert by [maximalId] (a fresh max-clock item lands at the
+    sorted tail). *)
+Definition client_run (texts : gmap loc text_state) (client : w64) : list item_cell :=
+  merge_sort cell_le (filter (λ c, cell_client c = client) (all_cells texts)).
+
+(** [is_item_map mref texts]: the heap map at [mref] (Go [store.items]) owns the
+    map header and, per client, the backing slice of [*item] *locations* (+ cap)
+    — but NOT the item cells (those live in the DLL, [is_ytext]). The slice for
+    [client] is exactly [client_run texts client]. Takes the [texts] map directly
+    (not a pre-flattened list); sortedness is baked into [client_run]. *)
+Definition is_item_map (mref : loc) (texts : gmap loc text_state) : iProp Σ :=
+  ∃ (gm : gmap w64 slice.t),
+    "Hmap" ∷ own_map mref (DfracOwn 1) gm ∗
+    "Hruns" ∷ ([∗ map] client ↦ s ∈ gm,
+        "Hslice" ∷ s ↦* (ic_loc <$> client_run texts client) ∗
+        "Hcap"   ∷ own_slice_cap (go.PointerType yjs.item) s (DfracOwn 1)) ∗
+    "%Hcomplete" ∷ ⌜∀ c, c ∈ (cell_client <$> all_cells texts) → is_Some (gm !! c)⌝.
+
+(* ----- the lock invariant ----------------------------------------------- *)
 
 (** [store_inv s_loc γ]: everything the store lock protects.
     - store struct NON-mu fields (client/clock/items/types/deletedSet); [mu] is
@@ -1914,7 +1913,7 @@ Definition all_cells (texts : gmap loc text_state) : list item_cell :=
       [parent] locs ([dom texts]);
     - the item-sequence authority [own γ (●…)] per text loc — its fragments are
       the [is_text_lb] lower bounds / registration witnesses [Text] holds;
-    - the document-global items map over [all_cells texts];
+    - the document-global items map ([is_item_map] over the [texts] map directly);
     - each registered text's DLL (keyed by [parent]) + [YjsArrInvariant];
     - the global per-client counter (source of [maximalId]).
     [client]/[k]/[texts] etc. are existential — the fixed lock invariant hides
@@ -1930,7 +1929,7 @@ Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
     "Htypes"  ∷ own_map types_mref (DfracOwn 1) tmap ∗
     "%Hdom"   ∷ ⌜map_img tmap = dom texts⌝ ∗
     "Hseq"    ∷ own γ ((λ ts, ● (list_to_set (ts_arr ts) : gset (YjsItem A))) <$> texts) ∗
-    "Hitems"  ∷ is_item_map items_mref (all_cells texts) ∗
+    "Hitems"  ∷ is_item_map items_mref texts ∗
     "Htexts"  ∷ ([∗ map] parent ↦ ts ∈ texts,
                   is_ytext parent (ts_cells ts) (ts_arr ts) ∗
                   ⌜YjsArrInvariant (ts_arr ts)⌝) ∗
