@@ -265,7 +265,7 @@ Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (L : list (YjsItem 
     t @! (go.PointerType yjs.Text) @! "Insert" #idx #cs
   {{{ (L' ins : list (YjsItem A)) (client k0 : nat) (oL oR : YjsPtr A), RET #();
       is_Text t L' ∗ ⌜sublist L L'⌝ ∗
-      ⌜length ins = length cs⌝ ∗
+      ⌜ins = [] ∨ length ins = length cs⌝ ∗
       ⌜∀ (i : nat) (it : YjsItem A) (b : w8),
          ins !! i = Some it → cs !! i = Some b →
            it ∈ L' ∧ it ∉ L ∧
@@ -278,29 +278,36 @@ Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (L : list (YjsItem 
 Proof.
   (* ---- Prologue (verified): take the store lock, extract THIS text. ---- *)
   wp_start as "Hpre". iNamed "Hpre".
+  iDestruct "His_store" as "#His_store".   (* keep is_Store (persistent) for the later Unlock *)
   wp_auto.
   subst s_loc.
   wp_apply (wp_Mutex__Lock with "[$His_store]"). iIntros "[Hlk Hinv]". iNamed "Hinv".
-  (* is_text_lb + the auth witness this text is registered and bound below. *)
   iDestruct (auth_gmap_gset_lookup with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS.
   apply fmap_Some in HmS as (ts & Htsp & ->).
-  (* pull THIS text's DLL + YjsArrInvariant out of the big_sepM. *)
   iDestruct (big_sepM_lookup_acc _ _ _ _ Htsp with "Htexts") as "[Hbody Hclose]".
   iDestruct "Hbody" as "[Htext %Hinvarr]".
-  (* Now under the lock we hold the own_insert_doc-equivalent for this text:
-       Htext   : is_ytext parent (ts_cells ts) (ts_arr ts)   (the DLL)
-       Hinvarr : YjsArrInvariant (ts_arr ts)
-       Hclient : ...client field ↦ client    Hclock : ...clock field ↦ k
-       Hctr    : per-client counter (clock < k)   Hlk : own_Mutex
-       Hseq    : the auth     Hclose : put the text's DLL back into big_sepM
-       His_lb / HLsub : the prior lower bound and that ids(L) ⊆ ids(ts_arr ts).
-     ---- Remaining (TODO): bound check + findPos + per-char Integrate loop
-     (clock read/written via Hclock), then grow the auth (auth_gmap_gset_grow),
-     reinsert via Hclose, rebuild store_inv, Unlock, and discharge the
-     inserted-run postcondition. This is the old (own_insert_doc) loop adapted to
-     the store-field clock. ---- *)
-  admit.
+  iDestruct "Htext" as (yt0 tl0) "(Hparent & Hdll & %Hlen & %Hrepr)".
+  subst parent. wp_auto.
+  case_bool_decide as Hbound.
+  - (* ---- out-of-range: index past the visible length, nothing inserted. ---- *)
+    wp_auto.
+    iAssert (is_ytext tv.(yjs.Text.inner') ts.(ts_cells) ts.(ts_arr)) with "[Hparent Hdll]" as "Htext".
+    { iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Hrepr]. }
+    iDestruct ("Hclose" with "[Htext]") as "Htexts".
+    { iFrame "Htext". iPureIntro. exact Hinvarr. }
+    wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Htypesf Hdset Hseq Htexts]").
+    { iNext. iExists client, k, items_mref, types_mref, dset, texts. iFrame. iPureIntro. exact Hctr. }
+    iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
+    iSplit.
+    { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γ.
+      iFrame "Ht His_store His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
+    iPureIntro. split_and!.
+    + reflexivity.
+    + left; reflexivity.
+    + intros i it b Hii. rewrite lookup_nil in Hii. inversion Hii.
+  - (* ---- in-range: insert one item per byte (TODO: loop + auth grow + Unlock). ---- *)
+    admit.
 Admitted.
 
 End text.
