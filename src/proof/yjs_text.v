@@ -275,6 +275,32 @@ Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (L : list (YjsItem 
            (i = 0%nat → origin it = oL) ∧
            (∀ (j : nat) (itj : YjsItem A),
               i = S j → ins !! j = Some itj → origin it = itemPtr itj)⌝ }}}.
-Proof. Admitted.
+Proof.
+  (* ---- Prologue (verified): take the store lock, extract THIS text. ---- *)
+  wp_start as "Hpre". iNamed "Hpre".
+  wp_auto.
+  subst s_loc.
+  wp_apply (wp_Mutex__Lock with "[$His_store]"). iIntros "[Hlk Hinv]". iNamed "Hinv".
+  (* is_text_lb + the auth witness this text is registered and bound below. *)
+  iDestruct (auth_gmap_gset_lookup with "Hseq His_lb") as %(S' & HmS & HLsub).
+  rewrite lookup_fmap in HmS.
+  apply fmap_Some in HmS as (ts & Htsp & ->).
+  (* pull THIS text's DLL + YjsArrInvariant out of the big_sepM. *)
+  iDestruct (big_sepM_lookup_acc _ _ _ _ Htsp with "Htexts") as "[Hbody Hclose]".
+  iDestruct "Hbody" as "[Htext %Hinvarr]".
+  (* Now under the lock we hold the own_insert_doc-equivalent for this text:
+       Htext   : is_ytext parent (ts_cells ts) (ts_arr ts)   (the DLL)
+       Hinvarr : YjsArrInvariant (ts_arr ts)
+       Hclient : ...client field ↦ client    Hclock : ...clock field ↦ k
+       Hctr    : per-client counter (clock < k)   Hlk : own_Mutex
+       Hseq    : the auth     Hclose : put the text's DLL back into big_sepM
+       His_lb / HLsub : the prior lower bound and that ids(L) ⊆ ids(ts_arr ts).
+     ---- Remaining (TODO): bound check + findPos + per-char Integrate loop
+     (clock read/written via Hclock), then grow the auth (auth_gmap_gset_grow),
+     reinsert via Hclose, rebuild store_inv, Unlock, and discharge the
+     inserted-run postcondition. This is the old (own_insert_doc) loop adapted to
+     the store-field clock. ---- *)
+  admit.
+Admitted.
 
 End text.
