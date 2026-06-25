@@ -1823,6 +1823,49 @@ Import New.proof.sync_proof.mutex.
 Import iris.algebra.auth iris.algebra.gmap iris.algebra.gset.
 Import stdpp.sorting.
 
+(* ----- ghost lemmas for the [auth (gmap K (gset V))] item-set RA --------- *)
+
+(** A fragment [◯ {[k := S]}] combined with the authority [● m] both WITNESSES
+    the key ([m !! k = Some S']) AND bounds it ([S ⊆ S']). This is what makes
+    [is_text_lb] prove the text is registered and give a lower bound. *)
+Lemma auth_gmap_gset_lookup {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (m : gmap K (gset V)) (k : K) (S : gset V) :
+  own γ (● m) -∗ own γ (◯ {[k := S]}) -∗ ⌜∃ S', m !! k = Some S' ∧ S ⊆ S'⌝.
+Proof.
+  iIntros "Ha Hf".
+  iDestruct (own_valid_2 with "Ha Hf") as %Hv.
+  iPureIntro.
+  apply auth_both_valid_discrete in Hv as [Hincl _].
+  apply singleton_included_l in Hincl as [S' [Hlk Hsub]].
+  exists S'.
+  apply leibniz_equiv in Hlk.
+  rewrite Some_included_total in Hsub.
+  rewrite gset_included in Hsub.
+  split; assumption.
+Qed.
+
+(** Grow the set at [k] (from [Sold] to [Snew ⊇ Sold]) in the authority and mint
+    the matching fragment [◯ {[k := Snew]}] (= the new [is_text_lb]). *)
+Lemma auth_gmap_gset_grow {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (m : gmap K (gset V)) (k : K) (Sold Snew : gset V) :
+  m !! k = Some Sold -> Sold ⊆ Snew ->
+  own γ (● m) ==∗ own γ (● (<[k:=Snew]> m)) ∗ own γ (◯ {[k := Snew]}).
+Proof.
+  iIntros (Hk Hsub) "Ha".
+  iMod (own_update _ _ (● (<[k:=Snew]> m) ⋅ ◯ {[k := Snew]}) with "Ha") as "H".
+  { apply auth_update_alloc.
+    apply local_update_unital_discrete. intros z Hvm Hz.
+    rewrite left_id in Hz. rewrite -Hz. split.
+    - by apply insert_valid.
+    - intros i. rewrite lookup_op.
+      destruct (decide (i = k)) as [->|Hne].
+      + rewrite lookup_insert lookup_singleton Hk.
+        destruct (decide (k = k)); last done.
+        rewrite -Some_op. f_equiv. rewrite gset_op. set_solver.
+      + rewrite lookup_insert_ne // lookup_singleton_ne // left_id //. }
+  iModIntro. iDestruct "H" as "[$ $]".
+Qed.
+
 (* ======================================================================== *)
 (* Store invariant predicates — DESIGN (definitions only, see PR).           *)
 (*                                                                           *)
