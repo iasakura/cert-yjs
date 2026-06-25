@@ -242,24 +242,39 @@ Definition is_Text (t : loc) (L : list (YjsItem A)) : iProp Σ :=
 #[global] Instance is_Text_persistent t L : Persistent (is_Text t L).
 Proof. apply _. Qed.
 
-(** [Text.Insert] preserves the (persistent) document handle and grows the known
-    content: [is_Text t L] in, [is_Text t L'] out with [L] a [sublist] of [L']
-    (the item set grows, and both are [YjsLt']-sorted, so [L ⊑ L']).
+(** [Text.Insert] preserves the (persistent) document handle, grows the known
+    content ([L ⊑ L']), AND exposes the inserted run [ins]: one fresh item per
+    byte of [content], each now known ([∈ L'], and [∉ L] since its id is fresh),
+    carrying that byte as content, with a fresh id [(client, k0+i)] (one local
+    [client], consecutive clocks from some [k0]), the run's shared right origin
+    [oR], and its left origin chained (item 0 from [oL], item i+1 from item i).
+    This says exactly "the characters you inserted are in [L'−L], with these
+    content / id / left / right".
 
-    PROOF DEFERRED ([Admitted]) — this is the core remaining work. Sketch: peel
+    PROOF DEFERRED ([Admitted]) — the core remaining work. Sketch: peel
     [is_Text → is_Store] to reach [is_Mutex]; [Lock] yields [store_inv]; combine
-    [is_text_lb] with [Hseq] (auth) to learn [parent ∈ dom texts] and extract THIS
-    text's [text_state] / DLL from [Htexts]; run the findPos/Integrate loop (and,
-    once re-added, Integrate's [AddNode], re-establishing [is_item_map] via
-    [maximalId]); grow the auth id-set ([gset] local update, monotone under [⊆])
-    and mint the new [is_text_lb]; read [L'] back from the updated DLL / [arr];
-    reinsert the [text_state], rebuild [store_inv]; [Unlock]; return [is_Text t L'].
-    The old [uint.Z k + len < 2^63] overflow side condition is gone ([k] hidden in
-    the lock) — a Go-side overflow guard in [Text.Insert] replaces it. *)
-Lemma wp_Text__Insert (t : loc) (idx : w64) (content : go_string) (L : list (YjsItem A)) :
+    [is_text_lb] with [Hseq] (auth) via [auth_gmap_gset_lookup] to learn
+    [parent ∈ dom texts] and extract THIS text's [text_state] / DLL from [Htexts];
+    run the findPos/Integrate loop (each step builds [ins !! i] and integrates it,
+    recording its content/id/origins); grow the auth id-set with
+    [auth_gmap_gset_grow] and mint the new [is_text_lb]; read [L'] back from the
+    updated DLL / [arr]; rebuild [store_inv]; [Unlock]; return. Overflow is handled
+    by a Go-side guard in [Text.Insert] ([k] is hidden in the lock). *)
+Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (L : list (YjsItem A)) :
   {{{ is_pkg_init yjs ∗ is_Text t L }}}
-    t @! (go.PointerType yjs.Text) @! "Insert" #idx #content
-  {{{ (L' : list (YjsItem A)), RET #(); is_Text t L' ∗ ⌜sublist L L'⌝ }}}.
+    t @! (go.PointerType yjs.Text) @! "Insert" #idx #cs
+  {{{ (L' ins : list (YjsItem A)) (client k0 : nat) (oL oR : YjsPtr A), RET #();
+      is_Text t L' ∗ ⌜sublist L L'⌝ ∗
+      ⌜length ins = length cs⌝ ∗
+      ⌜∀ (i : nat) (it : YjsItem A) (b : w8),
+         ins !! i = Some it → cs !! i = Some b →
+           it ∈ L' ∧ it ∉ L ∧
+           content it = [b] ∧
+           item_id it = MkYjsId client (k0 + i)%nat ∧
+           rightOrigin it = oR ∧
+           (i = 0%nat → origin it = oL) ∧
+           (∀ (j : nat) (itj : YjsItem A),
+              i = S j → ins !! j = Some itj → origin it = itemPtr itj)⌝ }}}.
 Proof. Admitted.
 
 End text.
