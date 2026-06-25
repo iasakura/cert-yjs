@@ -1844,21 +1844,23 @@ Import stdpp.sorting.
     (below), keyed by the text's [parent] loc. *)
 Context {sync_pkg : sync.Assumptions}.
 
-(** Item-SET RA: a map [loc ↦ auth (gset YjsId)] — per text-loc, the
-    authoritative set of item IDS in that text. The auth [●] (current id set) sits
-    in [store_inv]; a persistent fragment [◯ S] is a SUBSET (membership) lower
-    bound held by [is_Text]. Insert only adds items, and delete only flips a flag
-    without removing, so the id set grows monotonically under [⊆]; a recorded
-    lower bound stays valid forever.
+(** Item-SET RA: [auth (gmap loc (gset YjsId))] — the AUTH wraps the whole map
+    (NOT [gmap (auth gset)], where a per-key frag would be valid even for an
+    absent key and so would NOT witness registration). The authority [● m] (per
+    text-loc id set) sits in [store_inv]; a persistent fragment
+    [◯ {[parent := S]}] held by [is_Text] gives, when combined with [● m],
+    gmap-inclusion [{[parent := S]} ≼ m] = [∃ S', m !! parent = Some S' ∧ S ⊆ S']
+    — i.e. it BOTH witnesses [parent ∈ dom m] (= the text is registered) AND
+    bounds [S ⊆ S'] (the lower bound). Insert only adds items (delete just flips a
+    flag), so each id set grows monotonically under [⊆]; a recorded lower bound
+    stays valid forever.
 
     We track IDS, not full items: [YjsId] is [Countable] (rocq-yjs basic.v) so
     [gset YjsId] needs no extra instance, and since items are immutable and ids
     unique, "this id is present" already pins the item (content/origins) — so an
     id lower bound is a faithful content lower bound. Order is not tracked in the
-    ghost (recoverable from origins), so a plain grow-only [gset] suffices (no
-    [mra]). The fragment also doubles as the registration witness (holding [◯] at
-    key [parent] proves [parent ∈ dom texts]). *)
-Notation seqUR := (gmapUR loc (authR (gsetUR YjsId))).
+    ghost (recoverable from origins). *)
+Notation seqUR := (authR (gmapUR loc (gsetUR YjsId))).
 Context {seq_inG : inG Σ seqUR}.
 
 (* ----- one registered text's state -------------------------------------- *)
@@ -1936,7 +1938,7 @@ Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
     "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
     "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
-    "Hseq"    ∷ own γ (((λ ts, ● (list_to_set (item_id <$> ts_arr ts) : gset YjsId)) <$> texts) : seqUR) ∗
+    "Hseq"    ∷ own γ (● ((λ ts, (list_to_set (item_id <$> ts_arr ts) : gset YjsId)) <$> texts) : seqUR) ∗
     "Htexts"  ∷ ([∗ map] parent ↦ ts ∈ texts,
                   is_ytext parent (ts_cells ts) (ts_arr ts) ∗
                   ⌜YjsArrInvariant (ts_arr ts)⌝) ∗
@@ -1956,7 +1958,7 @@ Definition is_Store (s_loc : loc) (γ : gname) : iProp Σ :=
     and extract its DLL, and (b) grow the lower bound. Since item order is
     recoverable from origins, [S] yields a lower bound on the string. *)
 Definition is_text_lb (γ : gname) (parent : loc) (S : gset YjsId) : iProp Σ :=
-  own γ ({[ parent := ◯ S ]} : seqUR).
+  own γ (◯ {[ parent := S ]} : seqUR).
 
 #[global] Instance is_Store_persistent s_loc γ : Persistent (is_Store s_loc γ).
 Proof. apply _. Qed.

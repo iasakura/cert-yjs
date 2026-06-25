@@ -218,7 +218,7 @@ Import stdpp.sorting.
 (* ======================================================================== *)
 
 Context {sync_pkg : sync.Assumptions}.
-Context {seq_inG : inG Σ (gmapUR loc (authR (gsetUR YjsId)))}.
+Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR YjsId)))}.
 
 (** Text handle (persistent), parameterized by a SORTED list [L] of known items:
     reads ONLY its OWN fields ([store]/[inner], immutable ⇒ [↦□]) and delegates
