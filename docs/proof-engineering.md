@@ -130,6 +130,33 @@ them, since the APIs drift.
   `eq_refl` *term* — pass a proof obtained by the `reflexivity` / `done` /
   `simpl` *tactic* instead (e.g.
   `have Hf : (r <| f := v |>).f = v by reflexivity` then hand `Hf` to the lemma).
+- **Locks (`sync.Mutex`, `New.proof.sync_proof.mutex`)**: `is_Mutex m R`
+  (persistent, `R` a fixed invariant), `wp_Mutex__Lock` → `own_Mutex m ∗ R`,
+  `wp_Mutex__Unlock` consumes `own_Mutex m ∗ ▷ R` (build the `▷ R` with `iNext`
+  then `iExists …; iFrame; iPureIntro`), `init_Mutex` to allocate. `R` must NOT
+  mention per-operation state — existentially quantify the mutable bits (model
+  list, counter, …) inside `R`. `sync.RWMutex` is far heavier (the guard wrapper
+  needs `Fractional P`, which would force fractionalising your whole heap-predicate
+  stack; the base RWMutex is logically-atomic) — use `Mutex` unless you genuinely
+  need concurrent readers.
+- **Calling a method of an *imported* package** (e.g. `sync.Mutex.Lock`) needs
+  `is_pkg_init sync`, separate from `is_pkg_init yourpkg`. Supply it by FRAMING the
+  spatial premise with `$`: `wp_apply (wp_Mutex__Lock with "[$Hmu]")` — the
+  `is_pkg_init sync` then auto-resolves. `with "Hmu"` (no brackets) fails: it tries
+  to match the whole `is_pkg_init ∗ is_Mutex` premise against the one hyp. Also,
+  embedding `sync.Mutex` in a struct makes *your* package import `sync`, so the
+  `IsPkgInit yourpkg := define_is_pkg_init …` instance now needs `IsPkgInit sync` /
+  `GetIsPkgInitWf sync` in scope — add `From New.proof.sync_proof Require Import
+  base.` in the file that declares it (the required `sync.Assumptions` comes free
+  from `yourpkg.Assumptions`'s `import_sync_Assumption ::` field).
+- **A Persistent-typed hyp sitting in the SPATIAL context is consumed by `$H`
+  framing.** If you Lock then later Unlock with the same `is_Mutex`, move it to the
+  `□` context first: `iDestruct "Hmu" as "#Hmu"`. (The type being `Persistent` does
+  not save a spatial occurrence from `$`.) Same for any reused `is_Store` / witness.
+- **Align goose field reads with your invariant before `wp_apply`**: the body reads
+  `(tv.store').[store.t, "mu"]` while your `is_Mutex` is stated at `s_loc.[…]`;
+  `subst` the field equality (`s_loc = tv.store'`) so they are syntactically equal.
+  Field-ref notation is `l.[(T.t), "field"]` = `struct_field_ref T.t field l`.
 
 ## D. Interactive workflow (rocq-mcp / coq-lsp)
 
@@ -156,6 +183,34 @@ them, since the APIs drift.
   query output buffer. Capture the result via `coqc` on a one-line `.v`
   (`From New.proof Require Import yjs_invariant. Print Assumptions <thm>.`) piped
   through `grep -v "Fetching opaque" | tail`, not the interactive query.
+- **`Require` vs `Import` and notation scopes**: `Import`ing `iris.algebra.{auth,
+  gmap,gset}` (or `iris.algebra.lib.mra`) at a file's top retunes the `<` scope so
+  *already-verified* `word`-arithmetic proofs break (`sint.Z i` re-parsed at
+  `nat`). Fix: `Require` (no `Import`) those at the top — loading a module does not
+  change scopes — and `Import` them INSIDE the section, AFTER the verified proofs
+  and just before the code that needs them (`Import` only affects what follows).
+  Pairs with the `Context`-at-end-of-section trick (§A/E): both keep new
+  assumptions/notations from disturbing the proofs above.
+- **Stale generated `.vo` after goose**: `./build.sh goose` rewrites
+  `src/code/*.v` but not its `.vo`; a bare `rocq compile X.v` then links the OLD
+  `yjs.vo`. Tell-tale: a proof goal shows a Go call you already deleted, or a field
+  that no longer exists. Rebuild the model in dep order with `make
+  src/proof/X.vo` (or `./build.sh make`), not `rocq compile` alone.
+- **Developing one big proof inside a big file** with rocq-mcp: position-start does
+  NOT land *inside* an `Admitted` proof (returns empty goals / `proof_finished`).
+  Instead open a scratch context: `rocq_start(preamble=<all the file's imports>,
+  force_restart=true)`, then `rocq_check` a `Section dev. Context … (re-list the
+  section's Context vars) … Lemma … Proof. <tactics>` threading the returned
+  `state_id`s. `force_restart=true` is essential — a cached preamble silently keeps
+  the OLD import set (a new `From … Require Import …` is ignored); verify with
+  `Locate` that your names resolve. Batch cheap tactics in one `rocq_check`
+  (it returns only the final goal), but run `wp_auto` ALONE with `timeout=90`
+  (a batch ending in `wp_auto` overruns the 30s default → "Timeout!"). When the
+  branch closes, transplant the tactics into the file replacing the `admit`; final
+  gate is still strict `coqc`/`make`.
+- `destruct (m !! k) eqn:H` **fails** ("LHS of H does not match any subterm of the
+  goal") when `m !! k` occurs only in a *hypothesis*, not the goal. For
+  `f <$> (m !! k) = Some y`, use `apply fmap_Some in H as (x & Hk & ->)` instead.
 
 ## E. cert-yjs specifics
 
@@ -198,3 +253,52 @@ them, since the APIs drift.
   set), a `Vec` a slice. Do not downgrade a set to a `[]slice` for proof
   convenience (map support exists, see §C). Known deviation to revisit:
   `scanConflicts` uses `[]Id` where y-octo's `store.rs` uses `HashSet`.
+
+## F. Monotone ghost state for a lock invariant (`auth (gmap K (gset V))`)
+
+To put a *growable* per-key resource under a lock invariant so a holder keeps a
+**persistent lower bound that also witnesses the key exists** (e.g. "text `parent`
+is registered, and at least item-set `S` is present"), use the RA
+**`auth (gmap K (gset V))`** — the `auth` wraps the WHOLE map:
+
+- The lock invariant holds `own γ (● m)` (`m : gmap K (gset V)`); a holder keeps a
+  persistent fragment `own γ (◯ {[k := S]})`. Combined,
+  `own γ (● m) ∗ own γ (◯ {[k := S]}) ⊢ ⌜∃ S', m !! k = Some S' ∧ S ⊆ S'⌝` — i.e.
+  **key membership** (registration witness) AND the **subset** lower bound, in one
+  ghost. Proof: `own_valid_2` → `auth_both_valid_discrete` (gives `≼` + `✓`) →
+  `singleton_included_l` (gives `m !! k ≡ Some S' ∧ Some S ≼ Some S'`) →
+  `rewrite Some_included_total in H. rewrite gset_included in H.` (forward), then
+  `apply leibniz_equiv in H` for the `≡`→`=`.
+- **Nesting matters.** `gmap K (auth (gset V))` (a per-key `auth`) does NOT work: a
+  per-key fragment `◯ S` is valid even when the key is *absent*, so it does NOT
+  witness membership. Put the `auth` on the outside.
+- **`apply lemma in H` picks the wrong direction** of an iff like
+  `Some_included_total`/`gset_included` (it re-wraps in `Some`); use
+  `rewrite lemma in H` instead.
+- **Grow**: `m !! k = Some Sold → Sold ⊆ Snew → own γ (● m) ==∗ own γ (●
+  <[k:=Snew]> m) ∗ own γ (◯ {[k:=Snew]})`. Via `own_update` +
+  `auth_update_alloc` + `local_update_unital_discrete`; **keep** the validity hyp it
+  hands you (`intros z Hvm Hz`, not `_`) — `apply insert_valid` needs it. The frame
+  equality is `intros i; rewrite lookup_op; destruct (decide (i=k))` then
+  `lookup_insert`/`lookup_singleton` + `-Some_op` + `gset_op` + `set_solver` on the
+  `k` case, `lookup_insert_ne`/`lookup_singleton_ne` + `left_id` off-`k`.
+- `✓ (m : gmap K A)` does not `intros i`; use `apply insert_valid` (gset values are
+  always valid, so the leaf goals are trivial).
+- **`iris.algebra.lib.mra`** (the generic monotone RA over an arbitrary preorder —
+  what a *subsequence*-ordered monotone list would need) is **absent** from this
+  iris pin (only `max_prefix_list` / `mono_list`, i.e. prefix order; subsequences
+  aren't a meet-semilattice, so the `max_prefix_list` construction can't be
+  reused). You usually don't need it: a grow-only **`gset` of ids** is enough as a
+  membership lower bound, and CRDT order is recoverable from the items' origin
+  pointers.
+- **`gset X` needs `Countable X`.** rocq-yjs gives `Countable YjsId` (basic.v) but
+  NOT `Countable (YjsItem A)` (mutually recursive with `YjsPtr`) — track a
+  `gset YjsId`, not a `gset (YjsItem A)`.
+- **Three-layer handle, lock owns the mutable state**: model y-octo's
+  `Arc<RwLock<DocStore>>` as `is_Text → is_Doc → is_Store` where
+  `is_Store s γ := is_Mutex (&s.mu) (store_inv s γ)` and `store_inv` (the lock
+  invariant) owns the mutable store fields + DLLs + the `● …` ghost (existentially
+  hiding the per-op state). Each layer dereferences only its own struct's fields
+  and delegates downward (so `is_Text` never mentions store fields); a method like
+  `Insert` `Lock`s, pulls its slice out of `store_inv` (a `big_sepM_lookup_acc`
+  keyed by the registration witness), works, rebuilds, `Unlock`s.
