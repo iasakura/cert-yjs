@@ -1887,23 +1887,24 @@ Qed.
     (below), keyed by the text's [parent] loc. *)
 Context {sync_pkg : sync.Assumptions}.
 
-(** Item-SET RA: [auth (gmap loc (gset YjsId))] — the AUTH wraps the whole map
-    (NOT [gmap (auth gset)], where a per-key frag would be valid even for an
+(** Item-SET RA: [auth (gmap loc (gset (YjsItem A)))] — the AUTH wraps the whole
+    map (NOT [gmap (auth gset)], where a per-key frag would be valid even for an
     absent key and so would NOT witness registration). The authority [● m] (per
-    text-loc id set) sits in [store_inv]; a persistent fragment
+    text-loc item set) sits in [store_inv]; a persistent fragment
     [◯ {[parent := S]}] held by [is_Text] gives, when combined with [● m],
     gmap-inclusion [{[parent := S]} ≼ m] = [∃ S', m !! parent = Some S' ∧ S ⊆ S']
     — i.e. it BOTH witnesses [parent ∈ dom m] (= the text is registered) AND
     bounds [S ⊆ S'] (the lower bound). Insert only adds items (delete just flips a
-    flag), so each id set grows monotonically under [⊆]; a recorded lower bound
+    flag), so each item set grows monotonically under [⊆]; a recorded lower bound
     stays valid forever.
 
-    We track IDS, not full items: [YjsId] is [Countable] (rocq-yjs basic.v) so
-    [gset YjsId] needs no extra instance, and since items are immutable and ids
-    unique, "this id is present" already pins the item (content/origins) — so an
-    id lower bound is a faithful content lower bound. Order is not tracked in the
-    ghost (recoverable from origins). *)
-Notation seqUR := (authR (gmapUR loc (gsetUR YjsId))).
+    We track full ITEMS, not just ids: a membership bound [x ∈ S ⊆ ts_arr ts]
+    then pins [x] to a *genuine* document item (same structure, not merely the
+    same id), which is what lets [Text.Insert] expose the post as a real
+    [sublist L L'] rather than only an id-set inclusion. [gset (YjsItem A)] needs
+    [Countable (YjsItem A)] (derived in [yjs_common] via [gen_tree]). Order is not
+    tracked in the ghost (recoverable from origins / from [YjsArrInvariant]). *)
+Notation seqUR := (authR (gmapUR loc (gsetUR (YjsItem A)))).
 Context {seq_inG : inG Σ seqUR}.
 
 (* ----- one registered text's state -------------------------------------- *)
@@ -1981,7 +1982,7 @@ Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
     "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
     "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
-    "Hseq"    ∷ own γ (● ((λ ts, (list_to_set (item_id <$> ts_arr ts) : gset YjsId)) <$> texts) : seqUR) ∗
+    "Hseq"    ∷ own γ (● ((λ ts, (list_to_set (ts_arr ts) : gset (YjsItem A))) <$> texts) : seqUR) ∗
     "Htexts"  ∷ ([∗ map] parent ↦ ts ∈ texts,
                   is_ytext parent (ts_cells ts) (ts_arr ts) ∗
                   ⌜YjsArrInvariant (ts_arr ts)⌝) ∗
@@ -1995,12 +1996,13 @@ Definition is_Store (s_loc : loc) (γ : gname) : iProp Σ :=
   is_Mutex (s_loc .[(yjs.store.t), "mu"]) (store_inv s_loc γ).
 
 (** [is_text_lb γ parent S]: a persistent SUBSET (membership) lower bound on the
-    text at [parent] — [S ⊆] its current item set — AND the registration witness
-    (the key [parent] exists in the store's auth). [Insert] combines it with
-    [store_inv]'s [Hseq] (auth) under the lock to (a) learn [parent ∈ dom texts]
-    and extract its DLL, and (b) grow the lower bound. Since item order is
-    recoverable from origins, [S] yields a lower bound on the string. *)
-Definition is_text_lb (γ : gname) (parent : loc) (S : gset YjsId) : iProp Σ :=
+    text at [parent] — [S ⊆] its current item set (of full [YjsItem]s) — AND the
+    registration witness (the key [parent] exists in the store's auth). [Insert]
+    combines it with [store_inv]'s [Hseq] (auth) under the lock to (a) learn
+    [parent ∈ dom texts] and extract its DLL, and (b) grow the lower bound. Each
+    [x ∈ S] is thereby pinned to a genuine document item, so the sorted [S]
+    yields a [sublist] (hence string) lower bound. *)
+Definition is_text_lb (γ : gname) (parent : loc) (S : gset (YjsItem A)) : iProp Σ :=
   own γ (◯ {[ parent := S ]} : seqUR).
 
 #[global] Instance is_Store_persistent s_loc γ : Persistent (is_Store s_loc γ).

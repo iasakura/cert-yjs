@@ -73,6 +73,15 @@ func (t *Text) Insert(index uint64, content string) {
 		s.mu.Unlock()
 		return
 	}
+	// Guard against clock overflow: if integrating this run would wrap the
+	// per-client clock counter (s.clock + len(content) overflowing uint64),
+	// refuse the edit and leave the document unchanged. Unreachable in
+	// practice (2^64 edits); needed so the store's monotone clock invariant
+	// survives the insert without an externally supplied bound on s.clock.
+	if s.clock+uint64(len(content)) < s.clock {
+		s.mu.Unlock()
+		return
+	}
 	left, right := t.inner.findPos(index)
 	client := s.client
 
