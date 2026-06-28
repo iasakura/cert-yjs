@@ -13,6 +13,12 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item.
+(* Require (not Import) at top: Importing these brings notations (e.g. iris
+   algebra's, which retune the [<] scope) that break the verified proofs below.
+   They are Imported inside the section, just before the design block. *)
+From New.proof.sync_proof Require mutex.               (* is_Mutex (store lock) *)
+From iris.algebra Require auth gmap gset.              (* grow-only item-set RA *)
+From stdpp Require sorting.                            (* merge_sort for client_run *)
 
 (** Small-context set rewrites for the conflict-scan accumulators. After a Go
     [append] of the conflict id, an id slice abstracts to [X ∪ ({[a]} ∪ ∅)] (the
@@ -208,12 +214,12 @@ Proof.
   wp_start as "Ht". iNamed "Ht". wp_auto.
   iAssert (∃ (cur ml : loc) (scanned remaining : list item_cell),
     "Hcur" ∷ cur_ptr ↦ cur ∗
-    "Hpre" ∷ is_dll yt.(yjs.yText.start') ml null cur scanned ∗
+    "Hpre" ∷ is_dll yt.(yjs.yType.start') ml null cur scanned ∗
     "Hrem" ∷ is_dll cur tl ml null remaining ∗
     "%Hsplit" ∷ ⌜cells = scanned ++ remaining⌝ ∗
     "%Hnone" ∷ ⌜list_find (cell_has_id idv) scanned = None⌝)%I
     with "[cur Hdll]" as "IH".
-  { iExists yt.(yjs.yText.start'), null, [], cells. iFrame "cur Hdll". simpl. iPureIntro.
+  { iExists yt.(yjs.yType.start'), null, [], cells. iFrame "cur Hdll". simpl. iPureIntro.
     split_and!; done. }
   wp_for "IH".
   case_bool_decide as Hcn; simpl.
@@ -851,20 +857,20 @@ Proof using All.
       have Hlnull : left_loc = null.
       { rewrite Hll Hl0 /node_loc. case_decide; [lia | done]. }
       rewrite Hlnull. wp_auto.
-      iAssert (⌜yt.(yjs.yText.start') = node_loc cells 0⌝ ∗ is_dll yt.(yjs.yText.start') tl null null cells)%I with "[Hdll]" as "[%Hstart Hdll]".
+      iAssert (⌜yt.(yjs.yType.start') = node_loc cells 0⌝ ∗ is_dll yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hstart Hdll]".
       { destruct cells as [|c rest].
         { iDestruct "Hdll" as %[Hl Hlst]. iSplit; iPureIntro; [rewrite Hl /node_loc // | split; [exact Hl | exact Hlst]]. }
         iNamed "Hdll". iSplitR.
         { iPureIntro. rewrite /node_loc /=. by destruct Hloc as [-> _]. }
         iFrame "Hval Holeft Horight Hrest". iPureIntro; split_and!; [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev]. }
       replace (# null) with (# (node_loc cells leftIdx)) by (rewrite -Hll Hlnull //).
-      replace (yt.(yjs.yText.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
+      replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
       rewrite Hrl.
       wp_apply (wp_scanConflicts parent item_l cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
                   Harr Htoitem Hvalid Hmax HfindL HfindR HfindD with "[Hparent Hdll Hitem Holeft Horight]").
       { iSplitL "Hparent Hdll".
         { iExists yt, tl. iFrame "Hparent".
-          replace (yt.(yjs.yText.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
+          replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
           iFrame "Hdll". done. }
         rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
       iIntros "[Htext Hfresh]". wp_auto. iApply "HΦ". iFrame "Htext Hfresh". }
@@ -874,7 +880,7 @@ Proof using All.
       destruct (cells !! Z.to_nat leftIdx) as [cl|] eqn:Hcl_lookup; last by (apply lookup_ge_None in Hcl_lookup; lia).
       have Hcl_loc : node_loc cells leftIdx = ic_loc cl.
       { rewrite /node_loc decide_True; last lia. rewrite Hcl_lookup //. }
-      iAssert (⌜ic_loc cl ≠ null⌝ ∗ is_dll yt.(yjs.yText.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
+      iAssert (⌜ic_loc cl ≠ null⌝ ∗ is_dll yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
       { iDestruct (is_dll_lookup_acc _ _ _ _ _ _ _ Hcl_lookup with "Hdll") as "[Hclval Hbk]".
         iDestruct (typed_pointsto_not_null with "Hclval") as %Hnn.
         iDestruct ("Hbk" with "Hclval") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
@@ -921,7 +927,7 @@ Proof using All.
     destruct (cells !! Z.to_nat rightIdx) as [cr|] eqn:Hcr_lookup; last by (apply lookup_ge_None in Hcr_lookup; lia).
     have Hcr_loc : node_loc cells rightIdx = ic_loc cr.
     { rewrite /node_loc decide_True; last lia. rewrite Hcr_lookup //. }
-    iAssert (⌜ic_loc cr ≠ null⌝ ∗ is_dll yt.(yjs.yText.start') tl null null cells)%I with "[Hdll]" as "[%Hcrnn Hdll]".
+    iAssert (⌜ic_loc cr ≠ null⌝ ∗ is_dll yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hcrnn Hdll]".
     { iDestruct (is_dll_lookup_acc _ _ _ _ _ _ _ Hcr_lookup with "Hdll") as "[Hcrval Hbk]".
       iDestruct (typed_pointsto_not_null with "Hcrval") as %Hnn.
       iDestruct ("Hbk" with "Hcrval") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
@@ -952,25 +958,25 @@ Proof using All.
         have Hr1_lt : (Z.to_nat (rightIdx - 1) < length cells)%nat by lia.
         destruct (cells !! Z.to_nat (rightIdx - 1)) as [crl|] eqn:Hcrl_lookup; last by (apply lookup_ge_None in Hcrl_lookup; lia).
         have Hcrl_loc : node_loc cells (rightIdx - 1) = ic_loc crl by (rewrite /node_loc decide_True; [rewrite Hcrl_lookup // | lia]).
-        iAssert (⌜ic_loc crl ≠ null⌝ ∗ is_dll yt.(yjs.yText.start') tl null null cells)%I with "[Hdll]" as "[%Hcrlnn Hdll]".
+        iAssert (⌜ic_loc crl ≠ null⌝ ∗ is_dll yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hcrlnn Hdll]".
         { iDestruct (is_dll_lookup_acc _ _ _ _ _ _ _ Hcrl_lookup with "Hdll") as "[Hv Hb]".
           iDestruct (typed_pointsto_not_null with "Hv") as %Hnn2.
           iDestruct ("Hb" with "Hv") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
         have Hcrl_nn : cr.(ic_val).(yjs.item.left') ≠ null by rewrite Hcrl_eq Hcrl_loc; exact Hcrlnn.
         rewrite (bool_decide_eq_false_2 (cr.(ic_val).(yjs.item.left') = null) Hcrl_nn). wp_auto.
-        iAssert (⌜yt.(yjs.yText.start') = node_loc cells 0⌝ ∗ is_dll yt.(yjs.yText.start') tl null null cells)%I with "[Hdll]" as "[%Hstart Hdll]".
+        iAssert (⌜yt.(yjs.yType.start') = node_loc cells 0⌝ ∗ is_dll yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hstart Hdll]".
         { destruct cells as [|c rest].
           { iDestruct "Hdll" as %[Hl Hlst]. iSplit; iPureIntro; [rewrite Hl /node_loc // | split; [exact Hl | exact Hlst]]. }
           iNamed "Hdll". iSplitR.
           { iPureIntro. rewrite /node_loc /=. by destruct Hloc as [-> _]. }
           iFrame "Hval Holeft Horight Hrest". iPureIntro; split_and!; [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev]. }
         replace (# null) with (# (node_loc cells leftIdx)) by (rewrite -Hll Hlnull //).
-        replace (yt.(yjs.yText.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
+        replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
         wp_apply (wp_scanConflicts parent item_l cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD with "[Hparent Hdll Hitem Holeft Horight]").
         { iSplitL "Hparent Hdll".
           { iExists yt, tl. iFrame "Hparent".
-            replace (yt.(yjs.yText.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
+            replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
             iFrame "Hdll". done. }
           rewrite /is_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
         iIntros "[Htext Hfresh]". wp_auto. iApply "HΦ". iFrame "Htext Hfresh". } }
@@ -980,7 +986,7 @@ Proof using All.
       destruct (cells !! Z.to_nat leftIdx) as [cl|] eqn:Hcl_lookup; last by (apply lookup_ge_None in Hcl_lookup; lia).
       have Hcl_loc : node_loc cells leftIdx = ic_loc cl.
       { rewrite /node_loc decide_True; last lia. rewrite Hcl_lookup //. }
-      iAssert (⌜ic_loc cl ≠ null⌝ ∗ is_dll yt.(yjs.yText.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
+      iAssert (⌜ic_loc cl ≠ null⌝ ∗ is_dll yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
       { iDestruct (is_dll_lookup_acc _ _ _ _ _ _ _ Hcl_lookup with "Hdll") as "[Hclval Hbk]".
         iDestruct (typed_pointsto_not_null with "Hclval") as %Hnn3.
         iDestruct ("Hbk" with "Hclval") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
@@ -1197,10 +1203,10 @@ Proof using All.
      cases ([destIdx=0] head insertion vs [destIdx>=1]) converge to a uniform
      left fragment [cs1m] + an untouched right fragment [drop destIdx cells]. *)
   wp_if_join (λ v, ⌜v = execute_val⌝ ∗
-    ∃ (cs1m : list item_cell) (hd' : loc) (ytv : yjs.yText.t) (ivL : yjs.item.t),
+    ∃ (cs1m : list item_cell) (hd' : loc) (ytv : yjs.yType.t) (ivL : yjs.item.t),
       "Hparent" ∷ parent ↦ ytv ∗
-      "%Hyts" ∷ ⌜ytv.(yjs.yText.start') = hd'⌝ ∗
-      "%Hytl" ∷ ⌜ytv.(yjs.yText.len') = W64 (length cells)⌝ ∗
+      "%Hyts" ∷ ⌜ytv.(yjs.yType.start') = hd'⌝ ∗
+      "%Hytl" ∷ ⌜ytv.(yjs.yType.len') = W64 (length cells)⌝ ∗
       "Hleftdll" ∷ is_dll hd' (node_loc cells (Z.of_nat destIdx - 1)) null item_l cs1m ∗
       "%Hcs1m" ∷ ⌜cells_repr arr cs1m (take destIdx arr)⌝ ∗
       "Hitem" ∷ item_l ↦ ivL ∗
@@ -1216,21 +1222,21 @@ Proof using All.
       "parent" ∷ parent_ptr ↦ parent)%I
     with "[Hparent Hdll Hitem left right item parent]".
   { (* destIdx = 0 : head insertion (else branch already executed) *)
-    iAssert (⌜destIdx = 0%nat⌝ ∗ is_dll yt'.(yjs.yText.start') tl' null null cells)%I
+    iAssert (⌜destIdx = 0%nat⌝ ∗ is_dll yt'.(yjs.yType.start') tl' null null cells)%I
       with "[Hdll]" as "(%Hd0 & Hdll)".
     { destruct (decide (destIdx = 0%nat)) as [->|Hne].
       - iFrame "Hdll". done.
-      - iDestruct (node_loc_lt_not_null cells yt'.(yjs.yText.start') tl' (destIdx - 1) with "Hdll") as "(%Hnn & Hdll)".
+      - iDestruct (node_loc_lt_not_null cells yt'.(yjs.yType.start') tl' (destIdx - 1) with "Hdll") as "(%Hnn & Hdll)".
         { lia. }
         iFrame "Hdll". iPureIntro. exfalso. apply Hnn.
         have -> : Z.of_nat (destIdx - 1) = (Z.of_nat destIdx - 1)%Z by lia.
         exact e. }
     iDestruct (is_dll_head_node with "Hdll") as %Hhd.
-    have Hhd2 : node_loc cells (Z.of_nat destIdx) = yt'.(yjs.yText.start').
+    have Hhd2 : node_loc cells (Z.of_nat destIdx) = yt'.(yjs.yType.start').
     { rewrite Hhd. f_equal. lia. }
     have Hdrop : drop destIdx cells = cells by rewrite Hd0 //.
     iSplitR; first done.
-    iExists [], item_l, (yt' <| yjs.yText.start' := item_l |>), (iv2 <| yjs.item.left' := null |>).
+    iExists [], item_l, (yt' <| yjs.yType.start' := item_l |>), (iv2 <| yjs.item.left' := null |>).
     iFrame "Hparent Hitem".
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. exact Hlen'. }
@@ -1256,7 +1262,7 @@ Proof using All.
     { rewrite /node_loc decide_True; last lia.
       have -> : Z.to_nat (Z.of_nat destIdx - 1) = (destIdx - 1)%nat by lia.
       rewrite Hlc //. }
-    iDestruct (is_dll_acc cells yt'.(yjs.yText.start') tl' (destIdx - 1)%nat lc Hlc with "Hdll") as "Hacc". iNamed "Hacc".
+    iDestruct (is_dll_acc cells yt'.(yjs.yType.start') tl' (destIdx - 1)%nat lc Hlc with "Hdll") as "Hacc". iNamed "Hacc".
     have Hcr' : (ic_val lc).(yjs.item.right') = node_loc cells (Z.of_nat destIdx).
     { rewrite Hcr. f_equal. lia. }
     iDestruct ("Hback" with "Hcval") as "Hdll".
@@ -1273,7 +1279,7 @@ Proof using All.
     rewrite Hlcloc.
     wp_auto.
     iSplitR; first done.
-    iExists (take (destIdx - 1)%nat cells ++ [MkItemCell lc.(ic_loc) (lc.(ic_val) <| yjs.item.right' := item_l |>) lc.(ic_oleft) lc.(ic_oright)]), yt'.(yjs.yText.start'), yt', (iv2 <| yjs.item.left' := lc.(ic_loc) |>).
+    iExists (take (destIdx - 1)%nat cells ++ [MkItemCell lc.(ic_loc) (lc.(ic_val) <| yjs.item.right' := item_l |>) lc.(ic_oleft) lc.(ic_oright)]), yt'.(yjs.yType.start'), yt', (iv2 <| yjs.item.left' := lc.(ic_loc) |>).
     iFrame "Hparent Hitem".
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. exact Hlen'. }
@@ -1395,14 +1401,14 @@ Proof using All.
     - exact Hclv. }
   have Hlen0 : length (cs1m ++ MkItemCell item_l (ivL <| yjs.item.right' := node_loc cells destIdx |>) oleft oright :: cs2m) = (length cells + 1)%nat.
   { rewrite length_app /= (cells_repr_length _ _ _ Hcs1m) (cells_repr_length _ _ _ Hcs2m) length_take length_drop. lia. }
-  have Hstart : (ytv <| yjs.yText.len' := w64_word_instance.(word.add) ytv.(yjs.yText.len') (W64 1%nat) |>).(yjs.yText.start') = hd'.
+  have Hstart : (ytv <| yjs.yType.len' := w64_word_instance.(word.add) ytv.(yjs.yType.len') (W64 1%nat) |>).(yjs.yType.start') = hd'.
   { simpl. exact Hyts. }
   have Hcs1len : length cs1m = destIdx.
   { rewrite (cells_repr_length _ _ _ Hcs1m) length_take_le; [done | rewrite -Hcells_len; exact Hdle]. }
   iApply ("HΦ" $! (cs1m ++ MkItemCell item_l (ivL <| yjs.item.right' := node_loc cells destIdx |>) oleft oright :: cs2m)
             destIdx (MkItemCell item_l (ivL <| yjs.item.right' := node_loc cells destIdx |>) oleft oright)).
   iSplitL "Hparent Hleftdll Hitem Hrightdll2".
-  { iExists (ytv <| yjs.yText.len' := w64_word_instance.(word.add) ytv.(yjs.yText.len') (W64 1%nat) |>), tlN.
+  { iExists (ytv <| yjs.yType.len' := w64_word_instance.(word.add) ytv.(yjs.yType.len') (W64 1%nat) |>), tlN.
     iFrame "Hparent".
     iSplitL.
     { rewrite Hstart.
@@ -1810,5 +1816,198 @@ Proof using All.
   iPureIntro. split_and!; [exact Hile | exact Harr'eq | exact Hinv' |].
   exists idx. split_and!; [exact Hlook | exact Hloc | exact Hcid | exact Hclen1].
 Qed.
+
+(* Bring the deferred imports into scope here (after the verified proofs) so the
+   design block can use [is_Mutex] / [auth] (●/◯) / [gmapUR] / [gsetUR]. *)
+Import New.proof.sync_proof.mutex.
+Import iris.algebra.auth iris.algebra.gmap iris.algebra.gset.
+Import stdpp.sorting.
+
+(* ----- ghost lemmas for the [auth (gmap K (gset V))] item-set RA --------- *)
+
+(** A fragment [◯ {[k := S]}] combined with the authority [● m] both WITNESSES
+    the key ([m !! k = Some S']) AND bounds it ([S ⊆ S']). This is what makes
+    [is_text_lb] prove the text is registered and give a lower bound. *)
+Lemma auth_gmap_gset_lookup {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (m : gmap K (gset V)) (k : K) (S : gset V) :
+  own γ (● m) -∗ own γ (◯ {[k := S]}) -∗ ⌜∃ S', m !! k = Some S' ∧ S ⊆ S'⌝.
+Proof.
+  iIntros "Ha Hf".
+  iDestruct (own_valid_2 with "Ha Hf") as %Hv.
+  iPureIntro.
+  apply auth_both_valid_discrete in Hv as [Hincl _].
+  apply singleton_included_l in Hincl as [S' [Hlk Hsub]].
+  exists S'.
+  apply leibniz_equiv in Hlk.
+  rewrite Some_included_total in Hsub.
+  rewrite gset_included in Hsub.
+  split; assumption.
+Qed.
+
+(** Grow the set at [k] (from [Sold] to [Snew ⊇ Sold]) in the authority and mint
+    the matching fragment [◯ {[k := Snew]}] (= the new [is_text_lb]). *)
+Lemma auth_gmap_gset_grow {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (m : gmap K (gset V)) (k : K) (Sold Snew : gset V) :
+  m !! k = Some Sold -> Sold ⊆ Snew ->
+  own γ (● m) ==∗ own γ (● (<[k:=Snew]> m)) ∗ own γ (◯ {[k := Snew]}).
+Proof.
+  iIntros (Hk Hsub) "Ha".
+  iMod (own_update _ _ (● (<[k:=Snew]> m) ⋅ ◯ {[k := Snew]}) with "Ha") as "H".
+  { apply auth_update_alloc.
+    apply local_update_unital_discrete. intros z Hvm Hz.
+    rewrite left_id in Hz. rewrite -Hz. split.
+    - by apply insert_valid.
+    - intros i. rewrite lookup_op.
+      destruct (decide (i = k)) as [->|Hne].
+      + rewrite lookup_insert lookup_singleton Hk.
+        destruct (decide (k = k)); last done.
+        rewrite -Some_op. f_equiv. rewrite gset_op. set_solver.
+      + rewrite lookup_insert_ne // lookup_singleton_ne // left_id //. }
+  iModIntro. iDestruct "H" as "[$ $]".
+Qed.
+
+(* ======================================================================== *)
+(* Store invariant predicates — DESIGN (definitions only, see PR).           *)
+(*                                                                           *)
+(* The store lock and the document-global item set belong to the STORE type, *)
+(* so they live here. The extra [Context] below is placed at the END of the  *)
+(* section so it does NOT retroactively affect the verified proofs above     *)
+(* ([Context] only applies to declarations that follow it). On implementation*)
+(* [is_item_map] moves above [wp_Store__Integrate] (which will maintain it),  *)
+(* and [seq_inG] should be folded into the global Σ class.                    *)
+(*                                                                           *)
+(* MIGRATION NOTE: the Go rename yText→yType is done + goose-translated, and   *)
+(* yjs_item.v's [is_ytext] / [is_dll] / [cell_repr] now reference yjs.yType.    *)
+(* Still pending: re-add Integrate's s.AddNode call and thread the items map    *)
+(* through [wp_Store__Integrate] (so the store provably holds the item set),    *)
+(* and the Text/Doc WP proofs for the new lock layout. *)
+(* ======================================================================== *)
+
+(** Store lock = a [sync.Mutex]. The per-text item SET lives in a grow-only ghost
+    (below), keyed by the text's [parent] loc. *)
+Context {sync_pkg : sync.Assumptions}.
+
+(** Item-SET RA: [auth (gmap loc (gset (YjsItem A)))] — the AUTH wraps the whole
+    map (NOT [gmap (auth gset)], where a per-key frag would be valid even for an
+    absent key and so would NOT witness registration). The authority [● m] (per
+    text-loc item set) sits in [store_inv]; a persistent fragment
+    [◯ {[parent := S]}] held by [is_Text] gives, when combined with [● m],
+    gmap-inclusion [{[parent := S]} ≼ m] = [∃ S', m !! parent = Some S' ∧ S ⊆ S']
+    — i.e. it BOTH witnesses [parent ∈ dom m] (= the text is registered) AND
+    bounds [S ⊆ S'] (the lower bound). Insert only adds items (delete just flips a
+    flag), so each item set grows monotonically under [⊆]; a recorded lower bound
+    stays valid forever.
+
+    We track full ITEMS, not just ids: a membership bound [x ∈ S ⊆ ts_arr ts]
+    then pins [x] to a *genuine* document item (same structure, not merely the
+    same id), which is what lets [Text.Insert] expose the post as a real
+    [sublist L L'] rather than only an id-set inclusion. [gset (YjsItem A)] needs
+    [Countable (YjsItem A)] (derived in [yjs_common] via [gen_tree]). Order is not
+    tracked in the ghost (recoverable from origins / from [YjsArrInvariant]). *)
+Notation seqUR := (authR (gmapUR loc (gsetUR (YjsItem A)))).
+Context {seq_inG : inG Σ seqUR}.
+
+(* ----- one registered text's state -------------------------------------- *)
+
+(** What [store_inv] tracks per registered YType (keyed by its [parent] loc): the
+    DLL cells and the model item list. *)
+Record text_state := MkTextState {
+  ts_cells : list item_cell;
+  ts_arr   : list (YjsItem A);
+}.
+
+(** All cells across all texts (the document-global item pool). *)
+Definition all_cells (texts : gmap loc text_state) : list item_cell :=
+  concat (ts_cells <$> (map_to_list texts).*2).
+
+(* ----- the store's item set: map[Client][]*item ------------------------- *)
+
+(** Client / clock a heap cell's id carries — read off the pure cell value, so
+    [is_item_map] can speak about clocks while owning only the map, not the
+    item cells. *)
+Definition cell_client (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clientId').
+Definition cell_clock  (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clock').
+
+Definition cell_le (a b : item_cell) : Prop := (uint.Z (cell_clock a) ≤ uint.Z (cell_clock b))%Z.
+#[local] Instance cell_le_dec : RelDecision cell_le.
+Proof. rewrite /cell_le. solve_decision. Defined.
+
+(** [client_run texts client]: [client]'s items across every text, CLOCK-sorted
+    — exactly the Go run list [store.items[client]] (AddNode appends in
+    integration = clock order). Defining it by [merge_sort] makes sortedness
+    DEFINITIONAL: [is_item_map] needs no existential / permutation clause, and
+    (clocks being unique per client) the result is the unique clock ordering.
+    Preserved per insert by [maximalId] (a fresh max-clock item lands at the
+    sorted tail). *)
+Definition client_run (texts : gmap loc text_state) (client : w64) : list item_cell :=
+  merge_sort cell_le (filter (λ c, cell_client c = client) (all_cells texts)).
+
+(** [is_item_map mref texts]: the heap map at [mref] (Go [store.items]) owns the
+    map header and, per client, the backing slice of [*item] *locations* (+ cap)
+    — but NOT the item cells (those live in the DLL, [is_ytext]). The slice for
+    [client] is exactly [client_run texts client]. Takes the [texts] map directly
+    (not a pre-flattened list); sortedness is baked into [client_run]. *)
+Definition is_item_map (mref : loc) (texts : gmap loc text_state) : iProp Σ :=
+  ∃ (gm : gmap w64 slice.t),
+    "Hmap" ∷ own_map mref (DfracOwn 1) gm ∗
+    "Hruns" ∷ ([∗ map] client ↦ s ∈ gm,
+        "Hslice" ∷ s ↦* (ic_loc <$> client_run texts client) ∗
+        "Hcap"   ∷ own_slice_cap loc s (DfracOwn 1)) ∗
+    "%Hcomplete" ∷ ⌜∀ c, c ∈ (cell_client <$> all_cells texts) → is_Some (gm !! c)⌝.
+
+(* ----- the lock invariant ----------------------------------------------- *)
+
+(** [store_inv s_loc γ]: everything the store lock protects.
+    - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
+      [mu] is owned by [is_Mutex] in [is_Store], not here);
+    - the item-set authority [own γ (●…)] per text loc (id-set), whose fragments
+      are the [is_text_lb] lower bounds / registration witnesses [Text] holds;
+    - each registered text's DLL (keyed by [parent]) + [YjsArrInvariant];
+    - the global per-client counter (source of [maximalId]).
+    [client]/[k]/[texts] etc. are existential — the fixed lock invariant hides
+    the per-operation state.
+
+    NOTE: [is_item_map] (the store-holds-item-set invariant over the items map) is
+    intentionally NOT yet part of [store_inv]: Integrate's [AddNode] is deferred,
+    so the items map does not grow with the cells, and including [is_item_map]
+    would make [store_inv] unrecoverable after [Insert]. Re-add [is_item_map] here
+    together with Integrate's [AddNode] + items-map threading (final phase). The
+    items field ptr ([Hitemsf]) is still owned (raw), only its [own_map] contents
+    are dropped for now. *)
+Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
+  ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
+    (texts : gmap loc text_state),
+    "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
+    "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
+    "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
+    "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
+    "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
+    "Hseq"    ∷ own γ (● ((λ ts, (list_to_set (ts_arr ts) : gset (YjsItem A))) <$> texts) : seqUR) ∗
+    "Htexts"  ∷ ([∗ map] parent ↦ ts ∈ texts,
+                  is_ytext parent (ts_cells ts) (ts_arr ts) ∗
+                  ⌜YjsArrInvariant (ts_arr ts)⌝) ∗
+    "%Hctr"   ∷ ⌜∀ parent ts x, texts !! parent = Some ts → x ∈ ts_arr ts →
+                   clientId (item_id x) = uint.nat client →
+                   (clock (item_id x) < uint.nat k)%nat⌝.
+
+(** Store handle (persistent): the lock at [&store.mu] guards [store_inv]. ALL
+    store-field / item-set / DLL references are sealed here or in [store_inv]. *)
+Definition is_Store (s_loc : loc) (γ : gname) : iProp Σ :=
+  is_Mutex (s_loc .[(yjs.store.t), "mu"]) (store_inv s_loc γ).
+
+(** [is_text_lb γ parent S]: a persistent SUBSET (membership) lower bound on the
+    text at [parent] — [S ⊆] its current item set (of full [YjsItem]s) — AND the
+    registration witness (the key [parent] exists in the store's auth). [Insert]
+    combines it with [store_inv]'s [Hseq] (auth) under the lock to (a) learn
+    [parent ∈ dom texts] and extract its DLL, and (b) grow the lower bound. Each
+    [x ∈ S] is thereby pinned to a genuine document item, so the sorted [S]
+    yields a [sublist] (hence string) lower bound. *)
+Definition is_text_lb (γ : gname) (parent : loc) (S : gset (YjsItem A)) : iProp Σ :=
+  own γ (◯ {[ parent := S ]} : seqUR).
+
+#[global] Instance is_Store_persistent s_loc γ : Persistent (is_Store s_loc γ).
+Proof. apply _. Qed.
+#[global] Instance is_text_lb_persistent γ parent S : Persistent (is_text_lb γ parent S).
+Proof. apply _. Qed.
 
 End store.

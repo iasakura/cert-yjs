@@ -17,7 +17,7 @@ func (t *Text) Delete(index uint64, length uint64) {
 		if cur.Indexable() {
 			cur.flags = cur.flags | itemDeleted
 			t.inner.len = t.inner.len - cur.Len()
-			t.doc.store.deletedSet.addRange(cur.id, cur.Len())
+			t.store.deletedSet.addRange(cur.id, cur.Len())
 			remaining = remaining - cur.Len()
 		}
 		cur = cur.right

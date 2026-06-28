@@ -3,15 +3,14 @@
 
     Bottom to top:
     - per-method WP specs for an individual node: [item.Indexable] / [item.Len] /
-      [item.Deleted], [itemPtrEqual] (pointer identity = model id), and the
-      [gcNode] projections.
+      [item.Deleted] and [itemPtrEqual] (pointer identity = model id).
     - [is_dll l last prev next cells]: the doubly-linked-list spine of [item]
       nodes (each carrying its [Item] struct and the two origin-id cells), with
       its split / join / accessor / insert lemmas. Adapted from the reference
       sorted-DLL proof (iasakura/perennial-sandbox, dll/list.go, [is_dlist_node]).
     - [resolve_*] / [cell_repr] / [cells_repr]: the cellwise isomorphism between
       the heap node list and a model [list (YjsItem A)] (origins resolved by id).
-    - [is_ytext] / [is_valid_ytext]: a heap [yText] whose [start] heads such a
+    - [is_ytext] / [is_valid_ytext]: a heap [yType] whose [start] heads such a
       DLL, isomorphic to a model list that — for [is_valid_ytext] — satisfies
       [YjsArrInvariant].
 
@@ -31,27 +30,10 @@ Set Default Proof Using "Type*".
 
 Notation A := go_string.
 
-(* ===== per-method WP specs for individual items / gc-nodes ============= *)
+(* ===== per-method WP specs for individual items ======================== *)
 
-(* ----- Node interface impls ----------------------------------------------- *)
-
-(* The Node accessors read out of the embedded NodeLen / Item; here we pin down
-   the GC-node projections, which the store's binary search relies on. *)
-Lemma wp_GCNode__clock (n : yjs.gcNode.t) :
-  {{{ is_pkg_init yjs }}}
-    n @! yjs.gcNode @! "clock" #()
-  {{{ RET #(n.(yjs.gcNode.nodeLen').(yjs.nodeLen.id').(yjs.id.clock')); True }}}.
-Proof.
-  wp_start. wp_auto. iApply "HΦ". done.
-Qed.
-
-Lemma wp_GCNode__length (n : yjs.gcNode.t) :
-  {{{ is_pkg_init yjs }}}
-    n @! yjs.gcNode @! "length" #()
-  {{{ RET #(n.(yjs.gcNode.nodeLen').(yjs.nodeLen.len')); True }}}.
-Proof.
-  wp_start. wp_auto. iApply "HΦ". done.
-Qed.
+(* The node / GC / Skip enum is codec-only now (refs.go is //go:build !goose), so
+   its projections are no longer part of the verified model. *)
 
 (** [itemPtrEqual] compares two item pointers by identity (= model id, ids being
     unique), with the null cases of y-octo's [Somr] comparison. *)
@@ -87,7 +69,7 @@ Proof.
     wp_auto. iApply "HΦ". rewrite /item_or_null. iSplit; iPureIntro; reflexivity.
 Qed.
 
-(* ----- per-node accessors read by yText.findPos -------------------------- *)
+(* ----- per-node accessors read by yType.findPos -------------------------- *)
 
 (** Per-node method specs [findPos] reads off each cursor node. Every cell is
     [flags' = W8 2] (Countable, not Deleted) with single-byte content, so
@@ -384,7 +366,7 @@ Definition resolve_right (m : list (YjsItem A)) (oid : option yjs.id.t) : YjsPtr
     ITEM_COUNTABLE) and one clock wide ([Len() = 1]). The Go model has no
     [Delete] in the goose build (it is [//go:build !goose]) and [newItem]
     always sets exactly [ITEM_COUNTABLE] over single-byte content, so this
-    holds of every node ever integrated. [yText.findPos] reads [Deleted] /
+    holds of every node ever integrated. [yType.findPos] reads [Deleted] /
     [Indexable] / [Len] off each node, so it needs these facts to walk by
     visible index.
 
@@ -493,10 +475,10 @@ Qed.
     the DLL [cells], which is isomorphic to the model [arr]. (Phase-2: every item
     is countable / non-deleted, so [len] = number of nodes.) *)
 Definition is_ytext (parent : loc) (cells : list item_cell) (arr : list (YjsItem A)) : iProp Σ :=
-  ∃ (yt : yjs.yText.t) (tl : loc),
+  ∃ (yt : yjs.yType.t) (tl : loc),
     "Hparent" ∷ parent ↦ yt ∗
-    "Hdll" ∷ is_dll yt.(yjs.yText.start') tl null null cells ∗
-    "%Hlen" ∷ ⌜yt.(yjs.yText.len') = W64 (length cells)⌝ ∗
+    "Hdll" ∷ is_dll yt.(yjs.yType.start') tl null null cells ∗
+    "%Hlen" ∷ ⌜yt.(yjs.yType.len') = W64 (length cells)⌝ ∗
     "%Hrepr" ∷ ⌜cells_repr arr cells arr⌝.
 
 (** The full data-structure invariant: a heap [YText] representing a *valid*

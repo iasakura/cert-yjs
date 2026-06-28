@@ -11,15 +11,17 @@
 //	id.go        id / Client / Clock        (y-octo: codec/id.rs)
 //	content.go   content                    (y-octo: codec/content.rs)
 //	item.go      item + flag bits           (y-octo: codec/item.rs, item_flag.rs)
-//	refs.go      node / GC / Skip / item    (y-octo: codec/refs.rs)
 //	range.go     orderRange / deletedSet    (y-octo: common/range.rs, codec/delete_set.rs)
-//	store.go     store + Integrate          (y-octo: doc/store.rs)
-//	ytext.go     yText (internal sequence)  (y-octo: doc/types/text.rs)
-//	document.go  Doc + Text handle + API    (y-octo: doc/document.rs)   [not translated]
+//	store.go     store + Integrate          (y-octo: doc/store.rs DocStore)
+//	text.go      yType + Text API           (y-octo: doc/types/text.rs)
+//	doc.go       Doc handle + GetText       (y-octo: doc/document.rs)
+//	refs.go      node / GC / Skip tombstones (y-octo: codec/refs.rs)     [not translated]
+//	delete.go    Delete                     (y-octo: doc/types/text.rs)  [not translated]
 //	codec.go     v1 update encode/decode    (y-octo: codec/{update,...}) [not translated]
 //
-// document.go and codec.go carry the `//go:build !goose` constraint: they are
-// the runtime API / interop layer (byte-level codec, string manipulation),
-// excluded from goose translation so the verified core (store.go's Integrate)
-// stays the proof surface. Normal `go build` / `go test` compile every file.
+// refs.go, delete.go and codec.go carry the `//go:build !goose` constraint: the
+// node enum is used only by the byte-level v1 codec, and Delete / the codec are
+// the runtime interop layer -- all excluded from goose translation so the
+// verified core (store.go's Integrate, text.go's Insert) stays the proof
+// surface. Normal `go build` / `go test` compile every file.
 package yjs

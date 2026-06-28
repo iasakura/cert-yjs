@@ -112,7 +112,7 @@ func (doc *Doc) EncodeUpdate() []byte {
 	// by client, then sort each client's run by clock.
 	name := map[id]string{}
 	byClient := map[Client][]*item{}
-	for nm, y := range doc.types {
+	for nm, y := range doc.store.types {
 		for cur := y.start; cur != nil; cur = cur.right {
 			name[cur.id] = nm
 			byClient[cur.id.clientId] = append(byClient[cur.id.clientId], cur)
@@ -359,7 +359,7 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 		}
 	}
 
-	idToText := map[id]*yText{}
+	idToText := map[id]*yType{}
 	for len(pending) > 0 {
 		progressed := false
 		var next []pendingItem
@@ -371,13 +371,13 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 				continue
 			}
 
-			var txt *yText
+			var txt *yType
 			if pi.originLeftId != nil {
 				txt = idToText[*pi.originLeftId]
 			} else if pi.originRightId != nil {
 				txt = idToText[*pi.originRightId]
 			} else {
-				txt = doc.getOrCreateYText(pi.parentName)
+				txt = doc.store.getOrCreateYType(pi.parentName)
 			}
 
 			item := newItem(pi.id, pi.content, pi.originLeftId, pi.originRightId)
@@ -412,8 +412,8 @@ func (doc *Doc) applyDeletes(deletes []pendingDelete) {
 }
 
 // findItem locates the item with id across the document's root types.
-func (doc *Doc) findItem(id id) (*item, *yText) {
-	for _, y := range doc.types {
+func (doc *Doc) findItem(id id) (*item, *yType) {
+	for _, y := range doc.store.types {
 		if it := findById(y, id); it != nil {
 			return it, y
 		}

@@ -1,5 +1,7 @@
 package yjs
 
+import "sync"
+
 // ---------------------------------------------------------------------------
 // store: the document's struct store (per-client run lists + delete set) and
 // the integrate algorithm.
@@ -11,10 +13,26 @@ package yjs
 // the proofs in src/proof can reason about them.
 // ---------------------------------------------------------------------------
 
-// store is the document's struct store (y-octo: doc/store.rs DocStore).
+// store is the document's struct store (y-octo: doc/store.rs DocStore). Like
+// y-octo's Arc<RwLock<DocStore>>, the store carries everything mutable and
+// shared: the lock, the local client's next clock, the per-client run lists, the
+// root-type registry, and the delete set. The Doc is just a handle around it.
 type store struct {
-	client     Client
-	items      map[Client][]node
+	// mu guards every other field (and the YTypes' DLLs reached via types):
+	// y-octo's RwLock<DocStore>. Modelled with a Mutex for now (write path);
+	// a read API can switch to sync.RWMutex later.
+	mu sync.Mutex
+	// client is the local replica id.
+	client Client
+	// clock is the next clock for the local client (state-vector head). Each
+	// local insert consumes one and bumps it, making generated ids maximal.
+	clock Clock
+	// items is the per-client run list of every integrated item (y-octo:
+	// DocStore.items HashMap<Client, Vec<Node>>); the verified path only ever
+	// stores items, so the element type is *item shared with the DLL.
+	items map[Client][]*item
+	// types is the root-type registry by name (y-octo: DocStore.types).
+	types      map[string]*yType
 	deletedSet deletedSet
 }
 
@@ -22,21 +40,34 @@ type store struct {
 func newStore(client Client) *store {
 	return &store{
 		client:     client,
-		items:      make(map[Client][]node),
+		clock:      0,
+		items:      make(map[Client][]*item),
+		types:      make(map[string]*yType),
 		deletedSet: deletedSet{deletedSet: make(map[Client]orderRange)},
 	}
 }
 
+// getOrCreateYType returns the internal sequence for name, creating it on first
+// use (y-octo: DocStore::get_or_create_type). Callers hold s.mu.
+func (s *store) getOrCreateYType(name string) *yType {
+	y, ok := s.types[name]
+	if !ok {
+		y = newYType()
+		s.types[name] = y
+	}
+	return y
+}
+
 // getNodeIndex finds the index of the node whose run covers clock, by binary
 // search over the per-client node list (y-octo: store::get_node_index).
-func getNodeIndex(nodes []node, clock uint64) (uint64, bool) {
+func getNodeIndex(nodes []*item, clock uint64) (uint64, bool) {
 	left := uint64(0)
 	right := uint64(len(nodes))
 	for left < right {
 		middleIndex := left + (right-left)/2
 		middle := nodes[middleIndex]
-		middleClock := middle.clock()
-		middleEnd := middleClock + middle.length()
+		middleClock := middle.id.clock
+		middleEnd := middleClock + middle.Len()
 		if clock < middleClock {
 			right = middleIndex
 		} else if clock >= middleEnd {
@@ -48,8 +79,9 @@ func getNodeIndex(nodes []node, clock uint64) (uint64, bool) {
 	return 0, false
 }
 
-// GetNode returns the node containing id, if any (y-octo: store::get_node).
-func (s *store) GetNode(id id) (node, bool) {
+// GetNode returns the item containing id, if any (y-octo: store::get_node). The
+// verified store only holds items, so this returns *item directly.
+func (s *store) GetNode(id id) (*item, bool) {
 	nodes, ok := s.items[id.clientId]
 	if !ok {
 		return nil, false
@@ -61,10 +93,11 @@ func (s *store) GetNode(id id) (node, bool) {
 	return nodes[index], true
 }
 
-// AddNode appends a node to the run list of the node's owning client.
-func (s *store) AddNode(node node) {
-	client := node.nodeId().clientId
-	s.items[client] = append(s.items[client], node)
+// AddNode appends an item to the run list of its owning client (y-octo:
+// store::add_item), so the store holds the full item set.
+func (s *store) AddNode(it *item) {
+	client := it.id.clientId
+	s.items[client] = append(s.items[client], it)
 }
 
 // idOptEqual compares two optional ids (Option<id> in y-octo).
@@ -104,7 +137,7 @@ func containsId(s []id, id id) bool {
 // findById walks the parent's item list and returns the item with the given id,
 // or nil. Because contents are 1 char, an item's last_id equals its id, so the
 // origin ids resolve by exact match without splitting.
-func findById(parent *yText, id id) *item {
+func findById(parent *yType, id id) *item {
 	cur := parent.start
 	for cur != nil {
 		if cur.id.Equal(id) {
@@ -163,7 +196,7 @@ func scanConflicts(item *item, left *item, conflict *item, right *item) *item {
 // and returns the conflict-resolved left anchor: the item after which `item`
 // integrates (the Yjs integrate conflict resolution). It is the algorithmic
 // core; it reads the document but mutates nothing, only choosing the anchor.
-func findIntegrationLeft(parent *yText, it *item, left *item, right *item) *item {
+func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item {
 	rightIsNullOrHasLeft := right == nil || right.left != nil
 	leftHasOtherRightThanSelf := left != nil && !itemPtrEqual(left.right, right)
 
@@ -193,7 +226,7 @@ func findIntegrationLeft(parent *yText, it *item, left *item, right *item) *item
 //   - no concurrency control (single-threaded model), so the unsafe shared-ref
 //     dance becomes plain pointer mutation;
 //   - the parent type is never deleted.
-func (s *store) Integrate(parent *yText, item *item) {
+func (s *store) Integrate(parent *yType, item *item) {
 	// Resolve left/right from the origin ids (y-octo: store::repair). With
 	// 1-char contents there is no split, so this is a direct lookup.
 	if item.originLeftId != nil {
@@ -230,4 +263,10 @@ func (s *store) Integrate(parent *yText, item *item) {
 	if item.Countable() {
 		parent.len = parent.len + item.Len()
 	}
+
+	// TODO(store-holds-item-set): register the item in the struct store via
+	// s.AddNode(item) so the store holds the full item set (y-octo: integrate
+	// pushes the node into DocStore.items). Deferred until the item-map is
+	// threaded through this method's WP spec (wp_Store__Integrate); re-adding the
+	// call requires owning s.items here and re-establishing is_item_map.
 }

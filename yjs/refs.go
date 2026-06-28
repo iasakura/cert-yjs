@@ -1,4 +1,10 @@
+//go:build !goose
+
 package yjs
+
+// node / GC / Skip tombstones are only used by the v1 codec (codec.go, also
+// //go:build !goose); the verified struct store holds []*item directly, so this
+// file is excluded from goose translation.
 
 // nodeLen is the (id, len) summary carried by GC and Skip nodes
 // (y-octo: codec/refs.rs nodeLen).
