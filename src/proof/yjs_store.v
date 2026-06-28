@@ -13,12 +13,14 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item.
-(* Require (not Import) at top: Importing these brings notations (e.g. iris
-   algebra's, which retune the [<] scope) that break the verified proofs below.
-   They are Imported inside the section, just before the design block. *)
-From New.proof.sync_proof Require mutex.               (* is_Mutex (store lock) *)
-From iris.algebra Require auth gmap gset.              (* grow-only item-set RA *)
-From stdpp Require sorting.                            (* merge_sort for client_run *)
+From New.proof.sync_proof Require Import mutex.        (* is_Mutex (store lock) *)
+From iris.algebra Require Import auth gmap gset.       (* grow-only item-set RA *)
+From stdpp Require Import sorting.                     (* merge_sort for client_run *)
+
+(* iris.algebra / stdpp.sorting push [nat_scope], retuning the default [<] / [≤].
+   The verified WP proofs write [Z] comparisons (e.g. [sint.Z i < …]) unannotated
+   and annotate [nat] ones with [%nat], so restore [Z_scope] as the default. *)
+Local Open Scope Z_scope.
 
 (** Small-context set rewrites for the conflict-scan accumulators. After a Go
     [append] of the conflict id, an id slice abstracts to [X ∪ ({[a]} ∪ ∅)] (the
@@ -51,6 +53,177 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 Set Default Proof Using "Type*".
 
 Notation A := go_string.
+
+(* ----- ghost lemmas for the [auth (gmap K (gset V))] item-set RA --------- *)
+
+(** A fragment [◯ {[k := S]}] combined with the authority [● m] both WITNESSES
+    the key ([m !! k = Some S']) AND bounds it ([S ⊆ S']). This is what makes
+    [is_text_lb] prove the text is registered and give a lower bound. *)
+Lemma auth_gmap_gset_lookup {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (m : gmap K (gset V)) (k : K) (S : gset V) :
+  own γ (● m) -∗ own γ (◯ {[k := S]}) -∗ ⌜∃ S', m !! k = Some S' ∧ S ⊆ S'⌝.
+Proof.
+  iIntros "Ha Hf".
+  iDestruct (own_valid_2 with "Ha Hf") as %Hv.
+  iPureIntro.
+  apply auth_both_valid_discrete in Hv as [Hincl _].
+  apply singleton_included_l in Hincl as [S' [Hlk Hsub]].
+  exists S'.
+  apply leibniz_equiv in Hlk.
+  rewrite Some_included_total in Hsub.
+  rewrite gset_included in Hsub.
+  split; assumption.
+Qed.
+
+(** Grow the set at [k] (from [Sold] to [Snew ⊇ Sold]) in the authority and mint
+    the matching fragment [◯ {[k := Snew]}] (= the new [is_text_lb]). *)
+Lemma auth_gmap_gset_grow {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (m : gmap K (gset V)) (k : K) (Sold Snew : gset V) :
+  m !! k = Some Sold -> Sold ⊆ Snew ->
+  own γ (● m) ==∗ own γ (● (<[k:=Snew]> m)) ∗ own γ (◯ {[k := Snew]}).
+Proof.
+  iIntros (Hk Hsub) "Ha".
+  iMod (own_update _ _ (● (<[k:=Snew]> m) ⋅ ◯ {[k := Snew]}) with "Ha") as "H".
+  { apply auth_update_alloc.
+    apply local_update_unital_discrete. intros z Hvm Hz.
+    rewrite left_id in Hz. rewrite -Hz. split.
+    - by apply insert_valid.
+    - intros i. rewrite lookup_op.
+      destruct (decide (i = k)) as [->|Hne].
+      + rewrite lookup_insert lookup_singleton Hk.
+        destruct (decide (k = k)); last done.
+        rewrite -Some_op. f_equiv. rewrite gset_op. set_solver.
+      + rewrite lookup_insert_ne // lookup_singleton_ne // left_id //. }
+  iModIntro. iDestruct "H" as "[$ $]".
+Qed.
+
+(** Store lock = a [sync.Mutex]. The per-text item SET lives in a grow-only ghost
+    (below), keyed by the text's [parent] loc. *)
+Context {sync_pkg : sync.Assumptions}.
+
+(** Item-SET RA: [auth (gmap loc (gset (YjsItem A)))] — the AUTH wraps the whole
+    map (NOT [gmap (auth gset)], where a per-key frag would be valid even for an
+    absent key and so would NOT witness registration). The authority [● m] (per
+    text-loc item set) sits in [store_inv]; a persistent fragment
+    [◯ {[parent := S]}] held by [is_Text] gives, when combined with [● m],
+    gmap-inclusion [{[parent := S]} ≼ m] = [∃ S', m !! parent = Some S' ∧ S ⊆ S']
+    — i.e. it BOTH witnesses [parent ∈ dom m] (= the text is registered) AND
+    bounds [S ⊆ S'] (the lower bound). Insert only adds items (delete just flips a
+    flag), so each item set grows monotonically under [⊆]; a recorded lower bound
+    stays valid forever.
+
+    We track full ITEMS, not just ids: a membership bound [x ∈ S ⊆ ts_arr ts]
+    then pins [x] to a *genuine* document item (same structure, not merely the
+    same id), which is what lets [Text.Insert] expose the post as a real
+    [sublist L L'] rather than only an id-set inclusion. [gset (YjsItem A)] needs
+    [Countable (YjsItem A)] (derived in [yjs_common] via [gen_tree]). Order is not
+    tracked in the ghost (recoverable from origins / from [YjsArrInvariant]). *)
+Notation seqUR := (authR (gmapUR loc (gsetUR (YjsItem A)))).
+Context {seq_inG : inG Σ seqUR}.
+
+(* ----- one registered text's state -------------------------------------- *)
+
+(** What [store_inv] tracks per registered YType (keyed by its [parent] loc): the
+    DLL cells and the model item list. *)
+Record text_state := MkTextState {
+  ts_cells : list item_cell;
+  ts_arr   : list (YjsItem A);
+}.
+
+(** All cells across all texts (the document-global item pool). *)
+Definition all_cells (texts : gmap loc text_state) : list item_cell :=
+  concat (ts_cells <$> (map_to_list texts).*2).
+
+(* ----- the store's item set: map[Client][]*item ------------------------- *)
+
+(** Client / clock a heap cell's id carries — read off the pure cell value, so
+    [is_item_map] can speak about clocks while owning only the map, not the
+    item cells. *)
+Definition cell_client (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clientId').
+Definition cell_clock  (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clock').
+
+Definition cell_le (a b : item_cell) : Prop := (uint.Z (cell_clock a) ≤ uint.Z (cell_clock b))%Z.
+#[local] Instance cell_le_dec : RelDecision cell_le.
+Proof. rewrite /cell_le. solve_decision. Defined.
+
+(** [client_run texts client]: [client]'s items across every text, CLOCK-sorted
+    — exactly the Go run list [store.items[client]] (AddNode appends in
+    integration = clock order). Defining it by [merge_sort] makes sortedness
+    DEFINITIONAL: [is_item_map] needs no existential / permutation clause, and
+    (clocks being unique per client) the result is the unique clock ordering.
+    Preserved per insert by [maximalId] (a fresh max-clock item lands at the
+    sorted tail). *)
+Definition client_run (texts : gmap loc text_state) (client : w64) : list item_cell :=
+  merge_sort cell_le (filter (λ c, cell_client c = client) (all_cells texts)).
+
+(** [is_item_map mref texts]: the heap map at [mref] (Go [store.items]) owns the
+    map header and, per client, the backing slice of [*item] *locations* (+ cap)
+    — but NOT the item cells (those live in the DLL, [is_ytext]). The slice for
+    [client] is exactly [client_run texts client]. Takes the [texts] map directly
+    (not a pre-flattened list); sortedness is baked into [client_run]. *)
+Definition is_item_map (mref : loc) (texts : gmap loc text_state) : iProp Σ :=
+  ∃ (gm : gmap w64 slice.t),
+    "Hmap" ∷ own_map mref (DfracOwn 1) gm ∗
+    "Hruns" ∷ ([∗ map] client ↦ s ∈ gm,
+        "Hslice" ∷ s ↦* (ic_loc <$> client_run texts client) ∗
+        "Hcap"   ∷ own_slice_cap loc s (DfracOwn 1)) ∗
+    "%Hcomplete" ∷ ⌜∀ c, c ∈ (cell_client <$> all_cells texts) → is_Some (gm !! c)⌝.
+
+(* ----- the lock invariant ----------------------------------------------- *)
+
+(** [store_inv s_loc γ]: everything the store lock protects.
+    - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
+      [mu] is owned by [is_Mutex] in [is_Store], not here);
+    - the item-set authority [own γ (●…)] per text loc (id-set), whose fragments
+      are the [is_text_lb] lower bounds / registration witnesses [Text] holds;
+    - each registered text's DLL (keyed by [parent]) + [YjsArrInvariant];
+    - the global per-client counter (source of [maximalId]).
+    [client]/[k]/[texts] etc. are existential — the fixed lock invariant hides
+    the per-operation state.
+
+    NOTE: [is_item_map] (the store-holds-item-set invariant over the items map) is
+    intentionally NOT yet part of [store_inv]: Integrate's [AddNode] is deferred,
+    so the items map does not grow with the cells, and including [is_item_map]
+    would make [store_inv] unrecoverable after [Insert]. Re-add [is_item_map] here
+    together with Integrate's [AddNode] + items-map threading (final phase). The
+    items field ptr ([Hitemsf]) is still owned (raw), only its [own_map] contents
+    are dropped for now. *)
+Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
+  ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
+    (texts : gmap loc text_state),
+    "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
+    "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
+    "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
+    "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
+    "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
+    "Hseq"    ∷ own γ (● ((λ ts, (list_to_set (ts_arr ts) : gset (YjsItem A))) <$> texts) : seqUR) ∗
+    "Htexts"  ∷ ([∗ map] parent ↦ ts ∈ texts,
+                  is_ytext parent (ts_cells ts) (ts_arr ts) ∗
+                  ⌜YjsArrInvariant (ts_arr ts)⌝) ∗
+    "%Hctr"   ∷ ⌜∀ parent ts x, texts !! parent = Some ts → x ∈ ts_arr ts →
+                   clientId (item_id x) = uint.nat client →
+                   (clock (item_id x) < uint.nat k)%nat⌝.
+
+(** Store handle (persistent): the lock at [&store.mu] guards [store_inv]. ALL
+    store-field / item-set / DLL references are sealed here or in [store_inv]. *)
+Definition is_Store (s_loc : loc) (γ : gname) : iProp Σ :=
+  is_Mutex (s_loc .[(yjs.store.t), "mu"]) (store_inv s_loc γ).
+
+(** [is_text_lb γ parent S]: a persistent SUBSET (membership) lower bound on the
+    text at [parent] — [S ⊆] its current item set (of full [YjsItem]s) — AND the
+    registration witness (the key [parent] exists in the store's auth). [Insert]
+    combines it with [store_inv]'s [Hseq] (auth) under the lock to (a) learn
+    [parent ∈ dom texts] and extract its DLL, and (b) grow the lower bound. Each
+    [x ∈ S] is thereby pinned to a genuine document item, so the sorted [S]
+    yields a [sublist] (hence string) lower bound. *)
+Definition is_text_lb (γ : gname) (parent : loc) (S : gset (YjsItem A)) : iProp Σ :=
+  own γ (◯ {[ parent := S ]} : seqUR).
+
+#[global] Instance is_Store_persistent s_loc γ : Persistent (is_Store s_loc γ).
+Proof. apply _. Qed.
+#[global] Instance is_text_lb_persistent γ parent S : Persistent (is_text_lb γ parent S).
+Proof. apply _. Qed.
+
 
 (** [containsId] decides membership of the id slice as a [gset] (via [toYjsId]). *)
 Lemma wp_containsId (s : slice.t) (vs : list yjs.id.t) (id : yjs.id.t) (dq : dfrac) :
@@ -472,7 +645,7 @@ Lemma wp_scanConflicts (parent item_l : loc)
         #(node_loc cells (leftIdx + 1)) #(node_loc cells rightIdx)
   {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
       is_ytext parent cells arr ∗ is_fresh_item_raw item_l input iv oleft oright }}}.
-Proof using All.
+Proof using Type*.
   move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD.
   wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh".
   (* Index bounds via the pure model. *)
@@ -826,7 +999,7 @@ Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc : loc)
     @! yjs.findIntegrationLeft #parent #item_l #left_loc #right_loc
   {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
       is_ytext parent cells arr ∗ is_fresh_item_raw item_l input iv oleft oright }}}.
-Proof using All.
+Proof using Type*.
   move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hll Hrl.
   wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh". wp_auto.
   (* Index bounds via the pure model (mirrors setintegrate_eq_integrate). *)
@@ -1054,7 +1227,7 @@ Lemma wp_Store__Integrate_aux (s parent item_l : loc) (arr arr' : list (YjsItem 
       ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
       ⌜toYjsId (ic_val c).(yjs.item.id') = in_id input⌝ ∗
       ⌜length ((ic_val c).(yjs.item.content').(yjs.content.content')) = 1%nat⌝ }}}.
-Proof using All.
+Proof using Type*.
   move=> Harr Htoitem Hvalid Hmax Hfl Hfr Hflags Hcontlen.
   (* Decompose the pure result: leftIdx / rightIdx / destIdx / itemM and
      arr' = insertIdxIfInBounds destIdx itemM arr. *)
@@ -1798,7 +1971,7 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
       ∃ idx, ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
              ⌜toYjsId (ic_val c).(yjs.item.id') = in_id input⌝ ∗
              ⌜length ((ic_val c).(yjs.item.content').(yjs.content.content')) = 1%nat⌝ }}}.
-Proof using All.
+Proof using Type*.
   move=> Htoitem Hvalid Hmax.
   iIntros (Φ) "(Hpkg & Hvalid & Hfresh) HΦ".
   iDestruct "Hfresh" as (iv oleft oright) "(Hraw & %Hfl & %Hfr & %Hflags & %Hcontlen)".
@@ -1816,198 +1989,5 @@ Proof using All.
   iPureIntro. split_and!; [exact Hile | exact Harr'eq | exact Hinv' |].
   exists idx. split_and!; [exact Hlook | exact Hloc | exact Hcid | exact Hclen1].
 Qed.
-
-(* Bring the deferred imports into scope here (after the verified proofs) so the
-   design block can use [is_Mutex] / [auth] (●/◯) / [gmapUR] / [gsetUR]. *)
-Import New.proof.sync_proof.mutex.
-Import iris.algebra.auth iris.algebra.gmap iris.algebra.gset.
-Import stdpp.sorting.
-
-(* ----- ghost lemmas for the [auth (gmap K (gset V))] item-set RA --------- *)
-
-(** A fragment [◯ {[k := S]}] combined with the authority [● m] both WITNESSES
-    the key ([m !! k = Some S']) AND bounds it ([S ⊆ S']). This is what makes
-    [is_text_lb] prove the text is registered and give a lower bound. *)
-Lemma auth_gmap_gset_lookup {K V : Type} `{Countable K} `{Countable V}
-    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (m : gmap K (gset V)) (k : K) (S : gset V) :
-  own γ (● m) -∗ own γ (◯ {[k := S]}) -∗ ⌜∃ S', m !! k = Some S' ∧ S ⊆ S'⌝.
-Proof.
-  iIntros "Ha Hf".
-  iDestruct (own_valid_2 with "Ha Hf") as %Hv.
-  iPureIntro.
-  apply auth_both_valid_discrete in Hv as [Hincl _].
-  apply singleton_included_l in Hincl as [S' [Hlk Hsub]].
-  exists S'.
-  apply leibniz_equiv in Hlk.
-  rewrite Some_included_total in Hsub.
-  rewrite gset_included in Hsub.
-  split; assumption.
-Qed.
-
-(** Grow the set at [k] (from [Sold] to [Snew ⊇ Sold]) in the authority and mint
-    the matching fragment [◯ {[k := Snew]}] (= the new [is_text_lb]). *)
-Lemma auth_gmap_gset_grow {K V : Type} `{Countable K} `{Countable V}
-    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (m : gmap K (gset V)) (k : K) (Sold Snew : gset V) :
-  m !! k = Some Sold -> Sold ⊆ Snew ->
-  own γ (● m) ==∗ own γ (● (<[k:=Snew]> m)) ∗ own γ (◯ {[k := Snew]}).
-Proof.
-  iIntros (Hk Hsub) "Ha".
-  iMod (own_update _ _ (● (<[k:=Snew]> m) ⋅ ◯ {[k := Snew]}) with "Ha") as "H".
-  { apply auth_update_alloc.
-    apply local_update_unital_discrete. intros z Hvm Hz.
-    rewrite left_id in Hz. rewrite -Hz. split.
-    - by apply insert_valid.
-    - intros i. rewrite lookup_op.
-      destruct (decide (i = k)) as [->|Hne].
-      + rewrite lookup_insert lookup_singleton Hk.
-        destruct (decide (k = k)); last done.
-        rewrite -Some_op. f_equiv. rewrite gset_op. set_solver.
-      + rewrite lookup_insert_ne // lookup_singleton_ne // left_id //. }
-  iModIntro. iDestruct "H" as "[$ $]".
-Qed.
-
-(* ======================================================================== *)
-(* Store invariant predicates — DESIGN (definitions only, see PR).           *)
-(*                                                                           *)
-(* The store lock and the document-global item set belong to the STORE type, *)
-(* so they live here. The extra [Context] below is placed at the END of the  *)
-(* section so it does NOT retroactively affect the verified proofs above     *)
-(* ([Context] only applies to declarations that follow it). On implementation*)
-(* [is_item_map] moves above [wp_Store__Integrate] (which will maintain it),  *)
-(* and [seq_inG] should be folded into the global Σ class.                    *)
-(*                                                                           *)
-(* MIGRATION NOTE: the Go rename yText→yType is done + goose-translated, and   *)
-(* yjs_item.v's [is_ytext] / [is_dll] / [cell_repr] now reference yjs.yType.    *)
-(* Still pending: re-add Integrate's s.AddNode call and thread the items map    *)
-(* through [wp_Store__Integrate] (so the store provably holds the item set),    *)
-(* and the Text/Doc WP proofs for the new lock layout. *)
-(* ======================================================================== *)
-
-(** Store lock = a [sync.Mutex]. The per-text item SET lives in a grow-only ghost
-    (below), keyed by the text's [parent] loc. *)
-Context {sync_pkg : sync.Assumptions}.
-
-(** Item-SET RA: [auth (gmap loc (gset (YjsItem A)))] — the AUTH wraps the whole
-    map (NOT [gmap (auth gset)], where a per-key frag would be valid even for an
-    absent key and so would NOT witness registration). The authority [● m] (per
-    text-loc item set) sits in [store_inv]; a persistent fragment
-    [◯ {[parent := S]}] held by [is_Text] gives, when combined with [● m],
-    gmap-inclusion [{[parent := S]} ≼ m] = [∃ S', m !! parent = Some S' ∧ S ⊆ S']
-    — i.e. it BOTH witnesses [parent ∈ dom m] (= the text is registered) AND
-    bounds [S ⊆ S'] (the lower bound). Insert only adds items (delete just flips a
-    flag), so each item set grows monotonically under [⊆]; a recorded lower bound
-    stays valid forever.
-
-    We track full ITEMS, not just ids: a membership bound [x ∈ S ⊆ ts_arr ts]
-    then pins [x] to a *genuine* document item (same structure, not merely the
-    same id), which is what lets [Text.Insert] expose the post as a real
-    [sublist L L'] rather than only an id-set inclusion. [gset (YjsItem A)] needs
-    [Countable (YjsItem A)] (derived in [yjs_common] via [gen_tree]). Order is not
-    tracked in the ghost (recoverable from origins / from [YjsArrInvariant]). *)
-Notation seqUR := (authR (gmapUR loc (gsetUR (YjsItem A)))).
-Context {seq_inG : inG Σ seqUR}.
-
-(* ----- one registered text's state -------------------------------------- *)
-
-(** What [store_inv] tracks per registered YType (keyed by its [parent] loc): the
-    DLL cells and the model item list. *)
-Record text_state := MkTextState {
-  ts_cells : list item_cell;
-  ts_arr   : list (YjsItem A);
-}.
-
-(** All cells across all texts (the document-global item pool). *)
-Definition all_cells (texts : gmap loc text_state) : list item_cell :=
-  concat (ts_cells <$> (map_to_list texts).*2).
-
-(* ----- the store's item set: map[Client][]*item ------------------------- *)
-
-(** Client / clock a heap cell's id carries — read off the pure cell value, so
-    [is_item_map] can speak about clocks while owning only the map, not the
-    item cells. *)
-Definition cell_client (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clientId').
-Definition cell_clock  (c : item_cell) : w64 := (ic_val c).(yjs.item.id').(yjs.id.clock').
-
-Definition cell_le (a b : item_cell) : Prop := (uint.Z (cell_clock a) ≤ uint.Z (cell_clock b))%Z.
-#[local] Instance cell_le_dec : RelDecision cell_le.
-Proof. rewrite /cell_le. solve_decision. Defined.
-
-(** [client_run texts client]: [client]'s items across every text, CLOCK-sorted
-    — exactly the Go run list [store.items[client]] (AddNode appends in
-    integration = clock order). Defining it by [merge_sort] makes sortedness
-    DEFINITIONAL: [is_item_map] needs no existential / permutation clause, and
-    (clocks being unique per client) the result is the unique clock ordering.
-    Preserved per insert by [maximalId] (a fresh max-clock item lands at the
-    sorted tail). *)
-Definition client_run (texts : gmap loc text_state) (client : w64) : list item_cell :=
-  merge_sort cell_le (filter (λ c, cell_client c = client) (all_cells texts)).
-
-(** [is_item_map mref texts]: the heap map at [mref] (Go [store.items]) owns the
-    map header and, per client, the backing slice of [*item] *locations* (+ cap)
-    — but NOT the item cells (those live in the DLL, [is_ytext]). The slice for
-    [client] is exactly [client_run texts client]. Takes the [texts] map directly
-    (not a pre-flattened list); sortedness is baked into [client_run]. *)
-Definition is_item_map (mref : loc) (texts : gmap loc text_state) : iProp Σ :=
-  ∃ (gm : gmap w64 slice.t),
-    "Hmap" ∷ own_map mref (DfracOwn 1) gm ∗
-    "Hruns" ∷ ([∗ map] client ↦ s ∈ gm,
-        "Hslice" ∷ s ↦* (ic_loc <$> client_run texts client) ∗
-        "Hcap"   ∷ own_slice_cap loc s (DfracOwn 1)) ∗
-    "%Hcomplete" ∷ ⌜∀ c, c ∈ (cell_client <$> all_cells texts) → is_Some (gm !! c)⌝.
-
-(* ----- the lock invariant ----------------------------------------------- *)
-
-(** [store_inv s_loc γ]: everything the store lock protects.
-    - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
-      [mu] is owned by [is_Mutex] in [is_Store], not here);
-    - the item-set authority [own γ (●…)] per text loc (id-set), whose fragments
-      are the [is_text_lb] lower bounds / registration witnesses [Text] holds;
-    - each registered text's DLL (keyed by [parent]) + [YjsArrInvariant];
-    - the global per-client counter (source of [maximalId]).
-    [client]/[k]/[texts] etc. are existential — the fixed lock invariant hides
-    the per-operation state.
-
-    NOTE: [is_item_map] (the store-holds-item-set invariant over the items map) is
-    intentionally NOT yet part of [store_inv]: Integrate's [AddNode] is deferred,
-    so the items map does not grow with the cells, and including [is_item_map]
-    would make [store_inv] unrecoverable after [Insert]. Re-add [is_item_map] here
-    together with Integrate's [AddNode] + items-map threading (final phase). The
-    items field ptr ([Hitemsf]) is still owned (raw), only its [own_map] contents
-    are dropped for now. *)
-Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
-  ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
-    (texts : gmap loc text_state),
-    "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
-    "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
-    "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
-    "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
-    "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
-    "Hseq"    ∷ own γ (● ((λ ts, (list_to_set (ts_arr ts) : gset (YjsItem A))) <$> texts) : seqUR) ∗
-    "Htexts"  ∷ ([∗ map] parent ↦ ts ∈ texts,
-                  is_ytext parent (ts_cells ts) (ts_arr ts) ∗
-                  ⌜YjsArrInvariant (ts_arr ts)⌝) ∗
-    "%Hctr"   ∷ ⌜∀ parent ts x, texts !! parent = Some ts → x ∈ ts_arr ts →
-                   clientId (item_id x) = uint.nat client →
-                   (clock (item_id x) < uint.nat k)%nat⌝.
-
-(** Store handle (persistent): the lock at [&store.mu] guards [store_inv]. ALL
-    store-field / item-set / DLL references are sealed here or in [store_inv]. *)
-Definition is_Store (s_loc : loc) (γ : gname) : iProp Σ :=
-  is_Mutex (s_loc .[(yjs.store.t), "mu"]) (store_inv s_loc γ).
-
-(** [is_text_lb γ parent S]: a persistent SUBSET (membership) lower bound on the
-    text at [parent] — [S ⊆] its current item set (of full [YjsItem]s) — AND the
-    registration witness (the key [parent] exists in the store's auth). [Insert]
-    combines it with [store_inv]'s [Hseq] (auth) under the lock to (a) learn
-    [parent ∈ dom texts] and extract its DLL, and (b) grow the lower bound. Each
-    [x ∈ S] is thereby pinned to a genuine document item, so the sorted [S]
-    yields a [sublist] (hence string) lower bound. *)
-Definition is_text_lb (γ : gname) (parent : loc) (S : gset (YjsItem A)) : iProp Σ :=
-  own γ (◯ {[ parent := S ]} : seqUR).
-
-#[global] Instance is_Store_persistent s_loc γ : Persistent (is_Store s_loc γ).
-Proof. apply _. Qed.
-#[global] Instance is_text_lb_persistent γ parent S : Persistent (is_text_lb γ parent S).
-Proof. apply _. Qed.
 
 End store.

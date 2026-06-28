@@ -10,21 +10,26 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_store.
-(* Require (not Import) at top: Importing iris.algebra retunes the [<] scope and
-   breaks the verified findPos word-arithmetic proofs. Imported inside the section
-   just before the design block. *)
-From New.proof.sync_proof Require mutex.               (* is_Mutex / Lock / Unlock *)
-From iris.algebra Require auth gmap gset.              (* is_text_lb grow-only item-set RA *)
-From stdpp Require sorting.                            (* StronglySorted / sublist *)
+From New.proof.sync_proof Require Import mutex.        (* is_Mutex / Lock / Unlock *)
+From iris.algebra Require Import auth gmap gset.        (* is_text_lb grow-only item-set RA *)
+From stdpp Require Import sorting.                      (* StronglySorted / sublist *)
+
+(* iris.algebra / stdpp.sorting push [nat_scope], retuning the default [<] / [≤];
+   the verified findPos word-arithmetic proofs write [Z] comparisons unannotated,
+   so restore [Z_scope] as the default. *)
+Local Open Scope Z_scope.
 
 Section text.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
+(** Store lock = a [sync.Mutex]; the per-text item set lives in a grow-only auth
+    (the same RA as [yjs_store], used by [is_text_lb]). *)
+Context {sync_pkg : sync.Assumptions}.
 
 Set Default Proof Using "Type*".
 
 Notation A := go_string.
-
+Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
 (** General [findPos]: walk to the visible character index [idx] (≤ number of
     nodes) and return the straddling neighbours. Since the goose model has no
@@ -168,11 +173,6 @@ Lemma insert_maximalId (arr : list (YjsItem A)) (o r : YjsPtr A) (client clk : n
 Proof. intros Hctr x Hx Hc. exact (Hctr x Hx Hc). Qed.
 
 
-(* Bring the deferred imports into scope here (after the verified proofs). *)
-Import New.proof.sync_proof.mutex.
-Import iris.algebra.auth iris.algebra.gmap iris.algebra.gset.
-Import stdpp.sorting.
-
 (** Two lists [StronglySorted] by the document order [YjsLt'], with [l1]'s
     elements ⊆ [l2]'s (as actual items) and [l2] a valid [YjsArrInvariant] list,
     force [l1] to be a [sublist] of [l2]. The order is a strict order on [l2]'s
@@ -239,20 +239,12 @@ Proof.
   exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv) (yai_item_set_inv _ Hinv) (itemPtr x) (itemPtr y) Hx Hy Rxy Ryx).
 Qed.
 
-(* ======================================================================== *)
-(* Text invariant predicate + Text.Insert spec.                               *)
-(*                                                                           *)
-(* [is_Text] lives here; the Doc-layer predicate [is_Doc] lives in yjs_doc.v   *)
-(* (mirrors doc.go). [is_Text] delegates straight to the STORE invariants      *)
-(* ([is_Store] / [is_text_lb]) in yjs_store, so it references only Text's own   *)
-(* fields. The [Context] is after the verified findPos proofs so the deferred   *)
-(* Imports / assumptions do not perturb them. [wp_Text__Insert] below is proved *)
-(* (Lock → store_inv → findPos/Integrate loop → grow the item-set auth →        *)
-(* Unlock). [seq_inG] duplicates yjs_store's Context; it folds into global Σ. *)
-(* ======================================================================== *)
-
-Context {sync_pkg : sync.Assumptions}.
-Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+(* ----- Text invariant predicate + Text.Insert spec ----------------------
+   [is_Text] lives here; the Doc-layer predicate [is_Doc] lives in yjs_doc.v
+   (mirrors doc.go). [is_Text] delegates straight to the store invariants
+   ([is_Store] / [is_text_lb]) in yjs_store, referencing only Text's own fields.
+   [wp_Text__Insert] is proved (Lock → store_inv → findPos/Integrate loop → grow
+   the item-set auth → Unlock). *)
 
 (** Text handle (persistent), parameterized by a SORTED list [L] of known items:
     reads ONLY its OWN fields ([store]/[inner], immutable ⇒ [↦□]) and delegates
