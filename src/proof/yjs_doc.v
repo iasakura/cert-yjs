@@ -1,9 +1,8 @@
-(** Doc-layer invariant / WP proofs — mirrors yjs/doc.go. DESIGN (definitions
-    only). Currently just the [Doc] representation predicate [is_Doc]; it is the
-    home for the eventual [wp_NewDoc] / [wp_Doc__GetText] proofs (GetText consumes
-    [is_Doc] and returns [is_Text t []], which is why this module sits after
-    [yjs_text] in the dependency order: core → common → id → item → store → text
-    → doc). *)
+(** Doc-layer invariant / WP proofs — mirrors yjs/doc.go. Currently just the
+    [Doc] representation predicate [is_Doc]; it is the home for the eventual
+    [wp_NewDoc] / [wp_Doc__GetText] proofs (GetText consumes [is_Doc] and returns
+    [is_Text t []], which is why this module sits after [yjs_text] in the
+    dependency order: core → common → id → item → store → text → doc). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -15,14 +14,13 @@ From iris.algebra Require Import auth gmap gset.
 Section doc.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
+(* [is_Store] (from yjs_store) is generalized over the store lock + item-set RA,
+   so mirror its Context here to apply it. *)
+Context {sync_pkg : sync.Assumptions}.
 
 Set Default Proof Using "Type*".
 
 Notation A := go_string.
-
-(* [is_Store] (from yjs_store) is generalized over these, so reuse the same
-   Context to apply it here. On implementation they fold into the global Σ class. *)
-Context {sync_pkg : sync.Assumptions}.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
 (** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
