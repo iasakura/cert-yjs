@@ -11,6 +11,22 @@ correct with [Perennial](https://github.com/mit-pdos/perennial) (Iris/Rocq) in
 port of [y-octo](https://github.com/y-crdt/y-octo) (Rust Yjs); each Go method
 cites its y-octo source in a comment.
 
+## Stop and ask before changing implementation or public contracts
+
+Pause and confirm with the maintainer **before**:
+
+- changing the implementation (any `yjs/*.go` behavior, not just refactoring);
+- changing the spec, signature, or documented behavior of a public function or
+  type;
+- changing a WP spec, a representation predicate, or an invariant in
+  `src/proof/*.v` (e.g. `store_inv`, `is_Text`, `cell_repr`, the loop invariants).
+
+These ripple through the Go→goose→proof chain and the y-octo faithfulness
+contract, so they are decisions to make together, not unilaterally. Proving an
+existing spec, fixing a broken proof without weakening its statement, or other
+work that leaves the implementation and all public contracts unchanged does not
+need a check first.
+
 ## Build / proof loop
 
 The cycle is **write Go → translate to Rocq with goose → prove**. Driven by `build.sh`:
