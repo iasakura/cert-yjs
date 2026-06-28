@@ -26,37 +26,6 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 
 
-(** findPos on an empty sequence returns (null, null) without reading any flags
-    (both loops have an empty list to walk). *)
-Lemma wp_yText__findPos_empty (parent : loc) (idx : w64) :
-  {{{ is_pkg_init yjs ∗ is_ytext parent [] [] }}}
-    parent @! (go.PointerType yjs.yType) @! "findPos" #idx
-  {{{ RET (#null, #null); is_ytext parent [] [] }}}.
-Proof.
-  wp_start as "Hyt". iNamed "Hyt".
-  iDestruct "Hdll" as %[Hstart Htl].
-  wp_auto. rewrite Hstart.
-  (* skip-deleted loop: right = null, so the condition is false on entry *)
-  iAssert (
-    "Hp" ∷ parent ↦ yt ∗ "Hl" ∷ left_ptr ↦ null ∗
-    "Hr" ∷ right_ptr ↦ null ∗ "Hidx" ∷ index_ptr ↦ idx
-  )%I with "[Hparent left right index]" as "IH".
-  { iFrame. }
-  wp_for "IH".
-  (* count loop: right = null, so the condition is false on entry *)
-  iAssert (
-    "Hp" ∷ parent ↦ yt ∗ "Hl" ∷ left_ptr ↦ null ∗
-    "Hr" ∷ right_ptr ↦ null ∗ "Hrem" ∷ remaining_ptr ↦ idx
-  )%I with "[Hp Hl Hr remaining]" as "IH".
-  { iFrame. }
-  wp_for "IH".
-  wp_if_destruct.
-  - wp_auto. iApply "HΦ". iExists yt, null. iFrame "Hp". simpl. iPureIntro.
-    split_and!; [exact Hstart | reflexivity | exact Hlen | exact Hrepr].
-  - iApply "HΦ". iExists yt, null. iFrame "Hp". simpl. iPureIntro.
-    split_and!; [exact Hstart | reflexivity | exact Hlen | exact Hrepr].
-Qed.
-
 (** General [findPos]: walk to the visible character index [idx] (≤ number of
     nodes) and return the straddling neighbours. Since the goose model has no
     deletions (every cell is Countable / non-Deleted / [Len = 1], pinned by
