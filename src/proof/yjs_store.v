@@ -1983,7 +1983,7 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
       ⌜(i <= length arr)%nat⌝ ∗ ⌜arr' = insertIdxIfInBounds i newItem arr⌝ ∗
       ⌜YjsArrInvariant arr'⌝ ∗ is_ytext parent cells' arr' ∗
       ∃ idx, ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
-             ⌜item_id (ic_item c) = in_id input⌝ }}}.
+             ⌜ic_item c = newItem⌝ }}}.
 Proof using Type*.
   move=> Htoitem Hvalid Hmax.
   iIntros (Φ) "(Hpkg & Hvalid & Hfresh) HΦ".
@@ -1998,9 +1998,26 @@ Proof using Type*.
               Hinv Htoitem Hvalid Hmax Hfl Hfr Hflags Hcontlen Hsi with "[$Hpkg $Hraw Htext]").
   { iExists cells. iFrame "Htext". iPureIntro. exact Hinv. }
   iIntros (cells' idx c) "(Htext' & %Hinv' & %Hlook & %Hloc & %Hcid)".
-  iApply ("HΦ" $! arr' i cells' c). iFrame "Htext'".
-  iPureIntro. split_and!; [exact Hile | exact Harr'eq | exact Hinv' |].
-  exists idx. split_and!; [exact Hlook | exact Hloc | exact Hcid].
+  (* identify the inserted cell with the argument: it is the unique [arr']-item of
+     id [in_id input], and so equals [newItem] (= toItem input arr). *)
+  iDestruct "Htext'" as (ytX tlX) "(HpX & HdllX & %HlenX & %HreprX)".
+  have Hcin : ic_item c ∈ arr'.
+  { rewrite /cells_repr in HreprX. rewrite HreprX.
+    apply (list_basics.list.list_elem_of_lookup_2 _ idx).
+    rewrite list_lookup_fmap Hlook //. }
+  have HnewIn : newItem ∈ arr'.
+  { rewrite Harr'eq. apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile)). left. reflexivity. }
+  have Hidnew : item_id newItem = in_id input := commutativity.toItem_id input arr newItem Htoitem.
+  have Hcnew : ic_item c = newItem.
+  { apply (id_unique (ArrSet arr') (yai_item_set_inv _ Hinv') (ic_item c) newItem);
+      [rewrite Hcid Hidnew // | exact Hcin | exact HnewIn]. }
+  iApply ("HΦ" $! arr' i cells' c).
+  iSplit; [iPureIntro; exact Hile|].
+  iSplit; [iPureIntro; exact Harr'eq|].
+  iSplit; [iPureIntro; exact Hinv'|].
+  iSplitL "HpX HdllX".
+  { iExists ytX, tlX. iFrame "HpX HdllX". iPureIntro; split; [exact HlenX | exact HreprX]. }
+  iPureIntro. exists idx. split_and!; [exact Hlook | exact Hloc | exact Hcnew].
 Qed.
 
 End store.

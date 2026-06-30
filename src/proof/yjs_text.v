@@ -611,11 +611,9 @@ Proof.
     destruct Hnode as [x (Hcx & Hcloc & Hcid)].
     destruct (cells_repr_lookup arr' cells' arr' x c Hrepr3 Hcx) as [yi [Hyi Hcr3]].
     have HnitIn : nit ∈ arr' by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hnitpos).
+    (* Integrate's post now pins the inserted cell directly: ic_item c = nit. *)
     have Hyinit : yi = nit.
-    { have Hcr3eq : yi = ic_item c := Hcr3.
-      have Hyiid : item_id yi = item_id nit by (rewrite Hcr3eq Hcid; reflexivity).
-      have HyiIn : yi ∈ arr' by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hyi).
-      exact (id_unique (ArrSet arr') (yai_item_set_inv _ Hinv') yi nit Hyiid HyiIn HnitIn). }
+    { have Hcr3eq : yi = ic_item c := Hcr3. rewrite Hcr3eq. exact Hcid. }
     subst yi.
     have Hxpos : x = (uint.nat idx + j)%nat.
     { destruct (Nat.lt_trichotomy x (uint.nat idx + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
