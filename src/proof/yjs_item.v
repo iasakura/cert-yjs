@@ -127,18 +127,34 @@ Qed.
 
 (** [is_dll l last prev next cells]: the DLL segment whose head node is [l] and
     whose last node is [last]; [prev] is the [left]-pointer of [l] and [next] is
-    the [right]-pointer of [last]. Mirrors the reference [is_dlist_node], with
-    each node carrying its [Item] struct and the two origin-id cells. *)
+    the [right]-pointer of [last]. Mirrors the reference [is_dlist_node].
+
+    Each node existentially quantifies its full heap struct [iv : yjs.item.t] and
+    the two resolved origin ids [olid]/[orid], constrained to *translate* to the
+    cell's model item [ic_item c]: the heap id [toYjsId]-maps to [item_id], the
+    content matches, and the origin pointers carry ids whose [toYjsId] images are
+    [ic_item c]'s origin ids. The volatile spine links ([left'] = [prev],
+    [right'] heads the rest) are also constraints on [iv], NOT data of the cell —
+    so [Store.Integrate]'s neighbour relinking changes only [iv] and leaves the
+    abstract [cells] (hence [ic_item <$> cells]) unchanged. The Phase-2 flag /
+    length pins ([flags' = W8 2], content length 1) live here too. *)
 Fixpoint is_dll (l last prev next : loc) (cells : list item_cell) : iProp Σ :=
   match cells with
   | [] => ⌜l = next ∧ last = prev⌝
   | c :: rest =>
+      ∃ (iv : yjs.item.t) (olid orid : option yjs.id.t),
       "%Hloc" ∷ ⌜l = ic_loc c ∧ l ≠ null⌝ ∗
-      "%Hprev" ∷ ⌜(ic_val c).(yjs.item.left') = prev⌝ ∗
-      "Hval" ∷ ic_loc c ↦ ic_val c ∗
-      "Holeft" ∷ is_origin_id (ic_val c).(yjs.item.originLeftId') (ic_oleft c) ∗
-      "Horight" ∷ is_origin_id (ic_val c).(yjs.item.originRightId') (ic_oright c) ∗
-      "Hrest" ∷ is_dll (ic_val c).(yjs.item.right') last l next rest
+      "%Hprev" ∷ ⌜iv.(yjs.item.left') = prev⌝ ∗
+      "%Hid" ∷ ⌜item_id (ic_item c) = toYjsId iv.(yjs.item.id')⌝ ∗
+      "%Hcontent" ∷ ⌜content (ic_item c) = toContent iv.(yjs.item.content')⌝ ∗
+      "%Holid" ∷ ⌜origin_id (origin (ic_item c)) = toYjsId <$> olid⌝ ∗
+      "%Horid" ∷ ⌜origin_id (rightOrigin (ic_item c)) = toYjsId <$> orid⌝ ∗
+      "%Hflags" ∷ ⌜iv.(yjs.item.flags') = W8 2⌝ ∗
+      "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
+      "Hval" ∷ ic_loc c ↦ iv ∗
+      "Holeft" ∷ is_origin_id iv.(yjs.item.originLeftId') olid ∗
+      "Horight" ∷ is_origin_id iv.(yjs.item.originRightId') orid ∗
+      "Hrest" ∷ is_dll iv.(yjs.item.right') last l next rest
   end.
 
 (* ----- structural lemmas for the DLL spine ------------------------------- *)
@@ -156,10 +172,13 @@ Proof.
   - iSplit.
     + iIntros "H". iNamed "H". rewrite IH.
       iDestruct "Hrest" as "(%ml & %mf & H1 & H2)".
-      iExists ml, mf. iFrame "H2 Hval Holeft Horight H1". done.
+      iExists ml, mf. iFrame "H2". iExists iv, olid, orid.
+      iFrame "Hval Holeft Horight H1". by iPureIntro.
     + iIntros "(%ml & %mf & H1 & H2)". iNamed "H1".
-      rewrite IH. iFrame "Hval Holeft Horight". iSplitR; [done|].
-      iSplitR; [done|]. iExists ml, mf. iFrame.
+      iExists iv, olid, orid. iFrame "Hval Holeft Horight".
+      iAssert (is_dll iv.(yjs.item.right') last l next (cs1 ++ cs2)) with "[Hrest H2]" as "HR".
+      { rewrite IH. iExists ml, mf. iFrame "Hrest H2". }
+      iFrame "HR". by iPureIntro.
 Qed.
 
 (** Splice a fresh node [newc] between two DLL segments whose boundary fields are
@@ -167,22 +186,30 @@ Qed.
     at [ic_loc newc], and [newc]'s [left']/[right'] at the two boundaries). Used to
     rejoin the document DLL after [Store.Integrate] inserts an item. *)
 Lemma is_dll_insert_middle (cs1 cs2 : list item_cell) (newc : item_cell)
-    (hd tl ml mr : loc) :
+    (iv : yjs.item.t) (olid orid : option yjs.id.t) (hd tl ml mr : loc) :
   ic_loc newc ≠ null ->
-  (ic_val newc).(yjs.item.left') = ml ->
-  (ic_val newc).(yjs.item.right') = mr ->
+  iv.(yjs.item.left') = ml ->
+  iv.(yjs.item.right') = mr ->
+  item_id (ic_item newc) = toYjsId iv.(yjs.item.id') ->
+  content (ic_item newc) = toContent iv.(yjs.item.content') ->
+  origin_id (origin (ic_item newc)) = toYjsId <$> olid ->
+  origin_id (rightOrigin (ic_item newc)) = toYjsId <$> orid ->
+  iv.(yjs.item.flags') = W8 2 ->
+  length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat ->
   is_dll hd ml null (ic_loc newc) cs1 ∗
-  ic_loc newc ↦ ic_val newc ∗
-  is_origin_id (ic_val newc).(yjs.item.originLeftId') (ic_oleft newc) ∗
-  is_origin_id (ic_val newc).(yjs.item.originRightId') (ic_oright newc) ∗
+  ic_loc newc ↦ iv ∗
+  is_origin_id iv.(yjs.item.originLeftId') olid ∗
+  is_origin_id iv.(yjs.item.originRightId') orid ∗
   is_dll mr tl (ic_loc newc) null cs2
   ⊢ is_dll hd tl null null (cs1 ++ newc :: cs2).
 Proof.
-  move=> Hnn Hl Hr.
+  move=> Hnn Hl Hr Hidt Hcont Holidt Horidt Hflags Hcontlen.
   iIntros "(Hdll1 & Hnode & Hol & Hor & Hdll2)".
   rewrite is_dll_app. iExists ml, (ic_loc newc). iFrame "Hdll1".
-  simpl. rewrite Hr. iFrame "Hnode Hol Hor Hdll2".
-  iPureIntro; split_and!; [reflexivity | exact Hnn | exact Hl].
+  simpl. iExists iv, olid, orid. rewrite Hr. iFrame "Hnode Hol Hor Hdll2".
+  iPureIntro; split_and!;
+    [reflexivity | exact Hnn | exact Hl | exact Hidt | exact Hcont
+    | exact Holidt | exact Horidt | exact Hflags | exact Hcontlen].
 Qed.
 
 (** A DLL headed by [null] is empty. *)
@@ -208,8 +235,29 @@ Proof.
     + iPureIntro. rewrite last_cons. destruct (list.last cs) as [y|] eqn:Hl.
       * by rewrite Hlst /=.
       * rewrite /= in Hlst. rewrite Hlst. by destruct Hloc as [-> _].
-    + iFrame "Hval Holeft Horight Hrest".
-      iPureIntro; split_and!; [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev].
+    + iExists iv, olid, orid. iFrame "Hval Holeft Horight Hrest".
+      iPureIntro; split_and!;
+        [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev | exact Hid
+        | exact Hcontent | exact Holid | exact Horid | exact Hflags | exact Hcontlen].
+Qed.
+
+(** The head pointer of a DLL segment is the location of its first node (or the
+    [nxt] sentinel when empty); the resource is returned. The head-side analogue
+    of [is_dll_lastptr], used to read a node's [right'] neighbour. *)
+Lemma is_dll_headptr (l lst prev nxt : loc) (cs : list item_cell) :
+  is_dll l lst prev nxt cs -∗
+    ⌜l = default nxt (ic_loc <$> head cs)⌝ ∗ is_dll l lst prev nxt cs.
+Proof.
+  destruct cs as [|c cs'].
+  - iIntros "H". iDestruct "H" as %[Hl Hlst].
+    iSplit; iPureIntro; [rewrite /= Hl // | split; [exact Hl | exact Hlst]].
+  - iIntros "H". iNamed "H".
+    iSplit.
+    + iPureIntro. rewrite /=. exact (proj1 Hloc).
+    + iExists iv, olid, orid. iFrame "Hval Holeft Horight Hrest".
+      iPureIntro; split_and!;
+        [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev | exact Hid
+        | exact Hcontent | exact Holid | exact Horid | exact Hflags | exact Hcontlen].
 Qed.
 
 (** The head of a full DLL is [node_loc cells 0] (the first node, or [null] when
@@ -234,13 +282,20 @@ Qed.
 Lemma is_dll_acc (cells : list item_cell) (hd tl : loc) (k : nat) (c : item_cell) :
   cells !! k = Some c ->
   is_dll hd tl null null cells -∗
+    ∃ (iv : yjs.item.t) (olid orid : option yjs.id.t),
     "%Hcloc" ∷ ⌜ic_loc c = node_loc cells (Z.of_nat k)⌝ ∗
-    "%Hcl" ∷ ⌜(ic_val c).(yjs.item.left') = node_loc cells (Z.of_nat k - 1)⌝ ∗
-    "%Hcr" ∷ ⌜(ic_val c).(yjs.item.right') = node_loc cells (Z.of_nat k + 1)⌝ ∗
-    "Hcval" ∷ ic_loc c ↦ ic_val c ∗
-    "Hcol" ∷ is_origin_id (ic_val c).(yjs.item.originLeftId') (ic_oleft c) ∗
-    "Hcor" ∷ is_origin_id (ic_val c).(yjs.item.originRightId') (ic_oright c) ∗
-    "Hback" ∷ (ic_loc c ↦ ic_val c -∗ is_dll hd tl null null cells).
+    "%Hcl" ∷ ⌜iv.(yjs.item.left') = node_loc cells (Z.of_nat k - 1)⌝ ∗
+    "%Hcr" ∷ ⌜iv.(yjs.item.right') = node_loc cells (Z.of_nat k + 1)⌝ ∗
+    "%Hid" ∷ ⌜item_id (ic_item c) = toYjsId iv.(yjs.item.id')⌝ ∗
+    "%Hcontent" ∷ ⌜content (ic_item c) = toContent iv.(yjs.item.content')⌝ ∗
+    "%Holid" ∷ ⌜origin_id (origin (ic_item c)) = toYjsId <$> olid⌝ ∗
+    "%Horid" ∷ ⌜origin_id (rightOrigin (ic_item c)) = toYjsId <$> orid⌝ ∗
+    "%Hflags" ∷ ⌜iv.(yjs.item.flags') = W8 2⌝ ∗
+    "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
+    "Hcval" ∷ ic_loc c ↦ iv ∗
+    "Hcol" ∷ is_origin_id iv.(yjs.item.originLeftId') olid ∗
+    "Hcor" ∷ is_origin_id iv.(yjs.item.originRightId') orid ∗
+    "Hback" ∷ (ic_loc c ↦ iv -∗ is_dll hd tl null null cells).
 Proof.
   move=> Hk. iIntros "Hdll".
   (* the [left'] neighbour as a pure fact: [last (take k cells) = cells !! (k-1)] *)
@@ -258,38 +313,27 @@ Proof.
   iEval (rewrite -Hsplit) in "Hdll".
   iEval (rewrite is_dll_app) in "Hdll".
   iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
-  iDestruct "Hrest" as "(%Hloc & %Hprev & Hval & #Hol & #Hor & Hrest2)".
+  iDestruct "Hrest" as (iv olid orid)
+    "(%Hloc & %Hprev & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest2)".
   iDestruct (is_dll_lastptr with "Hpre") as "[%Hml Hpre]".
-  have Hcl : c.(ic_val).(yjs.item.left') = node_loc cells (Z.of_nat k - 1).
+  iDestruct (is_dll_headptr with "Hrest2") as "[%Hhd Hrest2]".
+  have Hcl : iv.(yjs.item.left') = node_loc cells (Z.of_nat k - 1).
   { rewrite Hprev Hml. exact Hpe. }
   have Hcloc : c.(ic_loc) = node_loc cells k by rewrite /node_loc decide_True; [rewrite Nat2Z.id Hk | lia].
-  have Hd : suf !! 0%nat = cells !! (S k) by rewrite /suf lookup_drop Nat.add_0_r.
-  have Hnl1 : node_loc cells (k+1) = default null (ic_loc <$> suf !! 0%nat).
-  { rewrite /node_loc decide_True; last lia.
+  have Hnn : c.(ic_loc) ≠ null by rewrite -(proj1 Hloc); exact (proj2 Hloc).
+  have Hcr : iv.(yjs.item.right') = node_loc cells (Z.of_nat k + 1).
+  { rewrite Hhd /node_loc decide_True; last lia.
     have HZ : Z.to_nat (Z.of_nat k + 1) = S k by lia.
-    by rewrite HZ Hd. }
-  clearbody suf pre.
-  destruct suf as [|c' rest].
-  - iDestruct "Hrest2" as %[Hrn Htm].
-    have Hcr : c.(ic_val).(yjs.item.right') = node_loc cells (k+1) by rewrite Hrn Hnl1.
-    iSplitR; [iPureIntro; exact Hcloc|].
-    iSplitR; [iPureIntro; exact Hcl|].
-    iSplitR; [iPureIntro; exact Hcr|].
-    iFrame "Hval Hol Hor".
-    iIntros "Hval2". rewrite -Hsplit is_dll_app.
-    iExists ml, mf. iFrame "Hpre". simpl. iFrame "Hval2 Hol Hor".
-    iPureIntro; split_and!; [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev | exact Hrn | exact Htm].
-  - iDestruct "Hrest2" as "(%Hloc' & %Hprev' & Hval' & #Hol' & #Hor' & Hrest2')".
-    have Hcr : c.(ic_val).(yjs.item.right') = node_loc cells (k+1).
-    { rewrite Hnl1 /=. exact (proj1 Hloc'). }
-    iSplitR; [iPureIntro; exact Hcloc|].
-    iSplitR; [iPureIntro; exact Hcl|].
-    iSplitR; [iPureIntro; exact Hcr|].
-    iFrame "Hval Hol Hor".
-    iIntros "Hval2". rewrite -Hsplit is_dll_app.
-    iExists ml, mf. iFrame "Hpre". simpl.
-    iFrame "Hval2 Hol Hor Hval' Hol' Hor' Hrest2'".
-    iPureIntro; split_and!; [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev | exact (proj1 Hloc') | exact (proj2 Hloc') | exact Hprev'].
+    rewrite HZ. f_equal. f_equal. rewrite /suf head_lookup lookup_drop Nat.add_0_r //. }
+  iExists iv, olid, orid. iFrame "Hval Hol Hor".
+  (* the wand: re-splice [c] between [pre] and [suf] (relinking is invisible to
+     the abstract cells, so the same [iv] goes back in) *)
+  iAssert (ic_loc c ↦ iv -∗ is_dll hd tl null null cells)%I with "[Hpre Hrest2]" as "Hback".
+  { iIntros "Hval2". iEval (rewrite -Hsplit).
+    iApply (is_dll_insert_middle pre suf c iv olid orid hd tl ml iv.(yjs.item.right')
+              Hnn Hprev eq_refl Hidc Hcontentc Holidc Horidc Hflagsc Hcontlenc).
+    iFrame "Hval2 Hol Hor". rewrite -(proj1 Hloc). iFrame "Hpre Hrest2". }
+  iFrame "Hback". by iPureIntro.
 Qed.
 
 (** Every node at an in-bounds index is a non-null location (DLL nodes are
@@ -308,14 +352,25 @@ Proof.
   - iApply "Hback". iFrame "Hcval".
 Qed.
 
-(** A plain value accessor: borrow the node struct at index [k] from *any* DLL
-    segment (arbitrary [prev]/[nxt]), with a wand to restore it. Unlike
-    [is_dll_acc] it carries no [node_loc] facts, so it composes on sub-segments
-    (used to read the loop-constant [right] node out of the suffix). *)
+(** A plain value accessor: borrow the node's (existential) heap struct at index
+    [k] from *any* DLL segment (arbitrary [prev]/[nxt]), with its local
+    translation facts and a wand to restore it. Unlike [is_dll_acc] it carries no
+    [node_loc] facts, so it composes on sub-segments (used to read the
+    loop-constant [right] node out of the suffix). *)
 Lemma is_dll_lookup_acc (l lst prev nxt : loc) (cs : list item_cell) (k : nat) (c : item_cell) :
   cs !! k = Some c ->
   is_dll l lst prev nxt cs -∗
-    c.(ic_loc) ↦ c.(ic_val) ∗ (c.(ic_loc) ↦ c.(ic_val) -∗ is_dll l lst prev nxt cs).
+    ∃ (iv : yjs.item.t) (olid orid : option yjs.id.t),
+      "%Hid" ∷ ⌜item_id (ic_item c) = toYjsId iv.(yjs.item.id')⌝ ∗
+      "%Hcontent" ∷ ⌜content (ic_item c) = toContent iv.(yjs.item.content')⌝ ∗
+      "%Holid" ∷ ⌜origin_id (origin (ic_item c)) = toYjsId <$> olid⌝ ∗
+      "%Horid" ∷ ⌜origin_id (rightOrigin (ic_item c)) = toYjsId <$> orid⌝ ∗
+      "%Hflags" ∷ ⌜iv.(yjs.item.flags') = W8 2⌝ ∗
+      "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
+      "Hval" ∷ c.(ic_loc) ↦ iv ∗
+      "Hcol" ∷ is_origin_id iv.(yjs.item.originLeftId') olid ∗
+      "Hcor" ∷ is_origin_id iv.(yjs.item.originRightId') orid ∗
+      "Hback" ∷ (c.(ic_loc) ↦ iv -∗ is_dll l lst prev nxt cs).
 Proof.
   move=> Hk. iIntros "Hdll".
   pose proof (take_drop_middle cs k c Hk) as Hsplit.
@@ -323,93 +378,51 @@ Proof.
   set (suf := drop (S k) cs) in Hsplit.
   iEval (rewrite -Hsplit is_dll_app) in "Hdll".
   iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
-  iDestruct "Hrest" as "(%Hloc & %Hprev & Hval & Hol & Hor & Hrest)".
-  iFrame "Hval". iIntros "Hval2". rewrite -Hsplit is_dll_app.
-  iExists ml, mf. iFrame "Hpre". simpl. iFrame "Hval2 Hol Hor Hrest".
-  iPureIntro; split_and!; [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev].
+  iDestruct "Hrest" as (iv olid orid)
+    "(%Hloc & %Hprev & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest)".
+  iExists iv, olid, orid. iFrame "Hval Hol Hor".
+  iAssert (c.(ic_loc) ↦ iv -∗ is_dll l lst prev nxt cs)%I with "[Hpre Hrest]" as "Hback".
+  { iIntros "Hval2". rewrite -Hsplit is_dll_app. iExists ml, mf. iFrame "Hpre".
+    iExists iv, olid, orid. iFrame "Hval2 Hol Hor Hrest". by iPureIntro. }
+  iFrame "Hback". by iPureIntro.
 Qed.
 
 (* ----- isomorphism to a YjsArrInvariant model ---------------------------- *)
 
-(** Resolve a left origin id against the model [m]: [None] is the [First]
-    sentinel, otherwise the model item carrying that id. *)
-Definition resolve_left (m : list (YjsItem A)) (oid : option yjs.id.t) : YjsPtr A :=
-  match oid with
-  | None => First
-  | Some idv =>
-      match list_find (λ it, item_id it = toYjsId idv) m with
-      | Some (_, it) => itemPtr it
-      | None => First
-      end
-  end.
-
-(** Resolve a right origin id: [None] is the [Last] sentinel. *)
-Definition resolve_right (m : list (YjsItem A)) (oid : option yjs.id.t) : YjsPtr A :=
-  match oid with
-  | None => Last
-  | Some idv =>
-      match list_find (λ it, item_id it = toYjsId idv) m with
-      | Some (_, it) => itemPtr it
-      | None => Last
-      end
-  end.
-
-(** [cell_repr m c yi]: the model item [yi] is the one the heap cell [c]
-    represents — same id and content, and [yi]'s origins carry exactly [c]'s
-    heap origin ids (as model ids). Stating origins by id (rather than by
-    resolution against [m]) is what the conflict scan needs to match
-    [setfii_loop]'s id tests, and rules out a heap origin id that fails to
-    resolve. ([m] is kept for uniformity with [cells_repr] / [resolve_*].)
-
-    The last two conjuncts pin the heap flags / content length uniformly:
-    every cell is Countable and non-Deleted ([flags' = W8 2], y-octo's
-    ITEM_COUNTABLE) and one clock wide ([Len() = 1]). The Go model has no
-    [Delete] in the goose build (it is [//go:build !goose]) and [newItem]
-    always sets exactly [ITEM_COUNTABLE] over single-byte content, so this
-    holds of every node ever integrated. [yType.findPos] reads [Deleted] /
-    [Indexable] / [Len] off each node, so it needs these facts to walk by
-    visible index.
-
-    TODO: both pins are current-model simplifications and must relax as the
-    verified model grows. Once deletions enter the goose build ([Delete] is
-    presently [//go:build !goose]), [flags' = W8 2] weakens to "the Countable
-    bit is set" (the Deleted bit may also be set, and [Indexable] / [findPos]
-    must then skip deleted nodes); once items can span several clocks or split,
-    [Len() = 1] goes ([content yi] becomes the whole run and [LastId]/[Len]
-    reasoning generalises). [cell_repr] and its readers would then need these
-    general forms. *)
+(** [cell_repr m c yi]: the model item [yi] the heap cell [c] represents is
+    exactly [ic_item c]. Since the cell now carries its model item directly, the
+    "isomorphism" collapses to near-identity: the id / content / origin / flag /
+    length facts that the old [cell_repr] spelled out are now carried by [is_dll]
+    (constraining the existential heap struct), and order-defining origins live in
+    [ic_item]. ([m] is kept for signature uniformity with the call sites.) *)
 Definition cell_repr (m : list (YjsItem A)) (c : item_cell) (yi : YjsItem A) : Prop :=
-  item_id yi = toYjsId (ic_val c).(yjs.item.id') /\
-  content yi = toContent (ic_val c).(yjs.item.content') /\
-  origin_id (origin yi) = toYjsId <$> ic_oleft c /\
-  origin_id (rightOrigin yi) = toYjsId <$> ic_oright c /\
-  (ic_val c).(yjs.item.flags') = W8 2 /\
-  length ((ic_val c).(yjs.item.content').(yjs.content.content')) = 1%nat.
+  yi = ic_item c.
 
-(** [cells_repr m cells items]: the heap cell list represents the model item
-    list cellwise (origins resolved against the full model [m]). This is the
+(** [cells_repr m cells items]: the heap cell list represents the model item list
+    cellwise, i.e. [items = ic_item <$> cells]. This is the (now trivial)
     "isomorphism" between the heap node sequence and a [list (YjsItem A)]. *)
-Inductive cells_repr (m : list (YjsItem A)) : list item_cell -> list (YjsItem A) -> Prop :=
-  | cells_repr_nil : cells_repr m [] []
-  | cells_repr_cons c yi cs ys :
-      cell_repr m c yi ->
-      cells_repr m cs ys ->
-      cells_repr m (c :: cs) (yi :: ys).
+Definition cells_repr (m : list (YjsItem A)) (cells : list item_cell) (items : list (YjsItem A)) : Prop :=
+  items = ic_item <$> cells.
 
 (** The isomorphism is length-preserving and cellwise. *)
 Lemma cells_repr_length m cells items :
   cells_repr m cells items -> length cells = length items.
-Proof. by elim=> [|c yi cs ys _ _ IH] //=; rewrite IH. Qed.
+Proof. rewrite /cells_repr => ->. by rewrite length_fmap. Qed.
 
 Lemma cells_repr_lookup m cells items k c :
   cells_repr m cells items -> cells !! k = Some c ->
   ∃ yi, items !! k = Some yi ∧ cell_repr m c yi.
 Proof.
-  move=> H; elim: H k c => [|c0 yi cs ys Hc _ IH] k c.
-  - by case: k.
-  - case: k => [|k'] /=; first by move=> [<-]; exists yi.
-    exact: IH.
+  rewrite /cells_repr /cell_repr => -> Hk. exists (ic_item c).
+  by rewrite list_lookup_fmap Hk /=.
 Qed.
+
+Lemma cells_repr_nil m : cells_repr m [] [].
+Proof. reflexivity. Qed.
+
+Lemma cells_repr_cons m c yi cs ys :
+  cell_repr m c yi -> cells_repr m cs ys -> cells_repr m (c :: cs) (yi :: ys).
+Proof. rewrite /cells_repr /cell_repr => -> ->. reflexivity. Qed.
 
 (** Inserting a corresponding cell/item at the same position preserves the
     isomorphism (the splice's model side). *)
@@ -417,59 +430,27 @@ Lemma cells_repr_insert m cells items (k : nat) c yi :
   cells_repr m cells items -> cell_repr m c yi ->
   cells_repr m (take k cells ++ c :: drop k cells) (take k items ++ yi :: drop k items).
 Proof.
-  move=> H Hc; elim: H k => [|c0 yi0 cs ys Hc0 Hrec IH] k.
-  - rewrite !take_nil !drop_nil /=. apply: cells_repr_cons; [exact Hc | exact: cells_repr_nil].
-  - case: k => [|k'] /=.
-    + apply: cells_repr_cons; first exact Hc.
-      apply: cells_repr_cons; [exact Hc0 | exact Hrec].
-    + apply: cells_repr_cons; [exact Hc0 | exact: IH].
+  rewrite /cells_repr /cell_repr => -> ->.
+  by rewrite fmap_app fmap_cons fmap_take fmap_drop.
 Qed.
 
-(** [cell_repr] constrains only id / content / origin-ids — it ignores both the
-    resolution context [m] and the cell's [left']/[right'] heap fields. The splice
-    relinks boundary nodes' [left']/[right'] and threads a fresh resolution model,
-    so these congruences keep the isomorphism intact across the surgery. *)
+(** [cells_repr] does not depend on the resolution context [m] (it is a plain
+    fmap equality), so threading a fresh model is a no-op. *)
 Lemma cells_repr_m_irrel (m m' : list (YjsItem A)) cells items :
   cells_repr m cells items -> cells_repr m' cells items.
-Proof.
-  elim=> [|c yi cs ys Hc _ IH]; [apply: cells_repr_nil | apply: cells_repr_cons; [exact Hc | exact IH]].
-Qed.
+Proof. by rewrite /cells_repr. Qed.
 
 Lemma cells_repr_app (m : list (YjsItem A)) cs1 cs2 ys1 ys2 :
   cells_repr m cs1 ys1 -> cells_repr m cs2 ys2 -> cells_repr m (cs1 ++ cs2) (ys1 ++ ys2).
-Proof.
-  move=> H1 H2. elim: H1 => [|c yi cs ys Hc _ IH] //=.
-  apply: cells_repr_cons; [exact Hc | exact IH].
-Qed.
+Proof. rewrite /cells_repr => -> ->. by rewrite fmap_app. Qed.
 
 Lemma cells_repr_take (m : list (YjsItem A)) cells items k :
   cells_repr m cells items -> cells_repr m (take k cells) (take k items).
-Proof.
-  move=> H. elim: H k => [|c yi cs ys Hc _ IH] k.
-  - rewrite !take_nil. apply: cells_repr_nil.
-  - case: k => [|k'] /=; [apply: cells_repr_nil | apply: cells_repr_cons; [exact Hc | exact: IH]].
-Qed.
+Proof. rewrite /cells_repr => ->. by rewrite fmap_take. Qed.
 
 Lemma cells_repr_drop (m : list (YjsItem A)) cells items k :
   cells_repr m cells items -> cells_repr m (drop k cells) (drop k items).
-Proof.
-  move=> H. elim: H k => [|c yi cs ys Hc Htl IH] k.
-  - rewrite !drop_nil. apply: cells_repr_nil.
-  - case: k => [|k'] /=; [apply: cells_repr_cons; [exact Hc | exact Htl] | exact: IH].
-Qed.
-
-Lemma cell_repr_val_irrel (m : list (YjsItem A)) (c : item_cell) (v' : yjs.item.t) yi :
-  cell_repr m c yi ->
-  (ic_val c).(yjs.item.id') = v'.(yjs.item.id') ->
-  (ic_val c).(yjs.item.content') = v'.(yjs.item.content') ->
-  (ic_val c).(yjs.item.flags') = v'.(yjs.item.flags') ->
-  cell_repr m (MkItemCell (ic_loc c) v' (ic_oleft c) (ic_oright c)) yi.
-Proof.
-  rewrite /cell_repr /=. move=> [Hid [Hcon [Hol [Hor [Hfl Hcl]]]]] Hid' Hcon' Hfl'.
-  split_and!;
-    [rewrite Hid Hid' // | rewrite Hcon Hcon' // | exact Hol | exact Hor
-    | rewrite -Hfl' // | rewrite -Hcon' // ].
-Qed.
+Proof. rewrite /cells_repr => ->. by rewrite fmap_drop. Qed.
 
 (** [is_ytext parent cells arr]: [parent] is a heap [YText] whose [start] heads
     the DLL [cells], which is isomorphic to the model [arr]. (Phase-2: every item

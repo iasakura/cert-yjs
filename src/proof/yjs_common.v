@@ -103,14 +103,21 @@ Definition toYjsId (i : yjs.id.t) : YjsId :=
 
 Definition toContent (c : yjs.content.t) : A := c.(yjs.content.content').
 
-(** One node of the heap DLL: its location, struct value, and the optional
-    origin ids it points at (resolved out of the [originLeftId]/[originRightId]
-    pointers). *)
+(** One node of the heap DLL: its location and the *model* item it carries.
+
+    The cell holds only stable, model-relevant data — the heap struct
+    ([yjs.item.t]) with its volatile [left']/[right'] links, its [w64] id /
+    content / origin-id pointers, and its flags is *not* stored here; it is
+    existentially quantified inside [is_dll] (see [yjs_item]) and constrained to
+    *translate* to [ic_item] (heap id [toYjsId]-maps to [item_id (ic_item c)],
+    etc.). This keeps the abstract cell list invariant under [Store.Integrate]'s
+    neighbour relinking — relinking changes only the existential heap struct, not
+    [ic_item], so the abstract [cells] is unchanged across the splice. Origins
+    live in [ic_item] (they are order-defining model data), so order recovery
+    ([YjsLt'] / [YjsArrInvariant.yai_sorted]) is intact. *)
 Record item_cell := MkItemCell {
   ic_loc : loc;
-  ic_val : yjs.item.t;
-  ic_oleft : option yjs.id.t;
-  ic_oright : option yjs.id.t;
+  ic_item : YjsItem A;
 }.
 
 (** The loc of the node at index [k] of [cells] ([null] outside [0, len)).
