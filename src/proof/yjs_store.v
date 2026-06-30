@@ -2030,4 +2030,147 @@ Proof using Type*.
   iPureIntro. exists idx. split_and!; [exact Hlook | exact Hloc | exact Hcnew].
 Qed.
 
+(* ===== apply_update: store.applyUpdate (insert-only, decoded, causal-order ==
+   subset). The integrate loop of y-octo's Doc::apply_update, refining a valid
+   causal replay of the pure model. See issue #40 for the order-independent /
+   ghost-global-history end state (which will also add the public entry). *)
+
+(** [is_update_item uiv input]: the decoded heap struct [uiv] (a [updateItem])
+    translates to the model [IntegrateInput input] -- its id / content / both
+    origin pointers map across (origins via [is_origin_id], persistent), and its
+    content is a single char. This is the per-struct half of [is_update]; it is
+    persistent (only [is_origin_id] + pure facts). *)
+Definition is_update_item (uiv : yjs.updateItem.t) (input : IntegrateInput (A := A)) : iProp Σ :=
+  ∃ (oleft oright : option yjs.id.t),
+    "HisL" ∷ is_origin_id uiv.(yjs.updateItem.originLeftId') oleft ∗
+    "HisR" ∷ is_origin_id uiv.(yjs.updateItem.originRightId') oright ∗
+    "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId input⌝ ∗
+    "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId input⌝ ∗
+    "%Hin_id" ∷ ⌜toYjsId uiv.(yjs.updateItem.id') = in_id input⌝ ∗
+    "%Hin_c" ∷ ⌜uiv.(yjs.updateItem.content') = in_content input⌝ ∗
+    "%Hclen" ∷ ⌜length uiv.(yjs.updateItem.content') = 1%nat⌝.
+
+#[global] Instance is_update_item_persistent uiv input : Persistent (is_update_item uiv input).
+Proof. rewrite /is_update_item. apply _. Qed.
+
+(** [is_update sl inputs]: the heap slice of decoded structs at [sl] (Go
+    [Update.structs]) abstracts to the model list [inputs]. Owns the backing array
+    (+ cap) and, per element, [is_update_item]. *)
+Definition is_update (sl : slice.t) (inputs : list (IntegrateInput (A := A))) : iProp Σ :=
+  ∃ (uivs : list yjs.updateItem.t),
+    "Hsl" ∷ sl ↦* uivs ∗
+    "Hcap" ∷ own_slice_cap yjs.updateItem.t sl (DfracOwn 1) ∗
+    "Hitems" ∷ ([∗ list] uiv;input ∈ uivs;inputs, is_update_item uiv input).
+
+(** [ValidReplay inputs arr arr']: applying the decoded [inputs] to [arr] in list
+    order is a *valid causal replay* yielding [arr'] -- at each step the input
+    resolves to a model item ([toItem]), that item is valid ([IsItemValid]) and
+    per-client clock-maximal ([maximalId], the causal-delivery condition that
+    [Store.Integrate] consumes), and the pure [integrate] advances the state. This
+    is exactly the chain of preconditions [wp_Store__Integrate]/[_aux] needs at
+    each loop step; it coincides with a valid replay of [OpInsert]s in the network
+    model ([yjs_network.v]: [IsValidMessage] = [toItem] + [IsItemValid];
+    [YjsState_insert] success = [integrateSafe], i.e. [maximalId] + [integrate]),
+    so a proof against it inherits the model's invariant preservation and strong
+    convergence. *)
+Inductive ValidReplay : list (IntegrateInput (A := A)) → list (YjsItem A) → list (YjsItem A) → Prop :=
+  | VR_nil arr : ValidReplay [] arr arr
+  | VR_cons input rest arr arr2 arr' nit :
+      toItem input arr = Some nit →
+      IsItemValid nit →
+      maximalId nit arr →
+      integrate input arr = Some arr2 →
+      ValidReplay rest arr2 arr' →
+      ValidReplay (input :: rest) arr arr'.
+
+(** [Store.applyUpdate] integrates a decoded, causally-ordered batch of insert
+    structs into [parent], one [Store.Integrate] per struct. Stated as a
+    refinement of [ValidReplay] (the per-step model preconditions), at the
+    [is_valid_ytext] level (no store lock / [store_inv] -- exactly like
+    [wp_Store__Integrate]). The result document is the replay's [arr'], still
+    [YjsArrInvariant], and grows the item set ([arr ⊆ arr']). The locked
+    [Text.ApplyUpdate] wrapper builds on this. *)
+Lemma wp_store__applyUpdate (s parent : loc) (sl : slice.t)
+    (arr arr' : list (YjsItem A)) (inputs : list (IntegrateInput (A := A))) :
+  ValidReplay inputs arr arr' →
+  {{{ is_pkg_init yjs ∗ is_valid_ytext parent arr ∗ is_update sl inputs }}}
+    s @! (go.PointerType yjs.store) @! "applyUpdate" #parent #sl
+  {{{ (cells' : list item_cell), RET #();
+      is_ytext parent cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ }}}.
+Proof using Type*.
+  move=> Hreplay. wp_start as "Hpre". iDestruct "Hpre" as "(Hvalid & Hupd)".
+  iDestruct "Hvalid" as (cells0) "[Htext0 %Hinv0]".
+  iDestruct "Hupd" as (uivs) "(Hsl & Hcap & Hitems)".
+  iDestruct (big_sepL2_length with "Hitems") as %Hlen_ui.
+  wp_auto.
+  iDestruct "Hitems" as "#Hitems".
+  (* loop invariant: [j] structs integrated; [arrj] is the [j]-prefix replay of
+     [arr], [ValidReplay] of the remainder still reaches [arr']. *)
+  iAssert (∃ (j : nat) (cells : list item_cell) (arrj : list (YjsItem A)),
+    "Hi" ∷ i_ptr ↦ W64 j ∗ "Hs" ∷ s_ptr ↦ s ∗ "Hstructs" ∷ structs_ptr ↦ sl ∗
+    "Hparent" ∷ parent_ptr ↦ parent ∗ "Hsl" ∷ sl ↦* uivs ∗
+    "Hcap" ∷ own_slice_cap yjs.updateItem.t sl (DfracOwn 1) ∗
+    "Htextj" ∷ is_ytext parent cells arrj ∗ "%Hinvj" ∷ ⌜YjsArrInvariant arrj⌝ ∗
+    "%Hreplayj" ∷ ⌜ValidReplay (drop j inputs) arrj arr'⌝ ∗
+    "%Hjle" ∷ ⌜(j <= length uivs)%nat⌝)%I
+    with "[i s structs parent Hsl Hcap Htext0]" as "IH";
+    first (iExists 0%nat, cells0, arr; iFrame "i s structs parent Hsl Hcap Htext0"; iPureIntro; split_and!;
+      [ exact Hinv0 | rewrite drop_0; exact Hreplay | lia ]).
+  wp_for "IH".
+  iDestruct (own_slice_len with "Hsl") as %[Hsllen Hsllen0].
+  case_bool_decide as Hcond.
+  - (* loop body: integrate the [j]-th struct via Store.Integrate *)
+    have Hjlt : (j < length uivs)%nat by word.
+    destruct (uivs !! j) as [uiv|] eqn:Huiv; [| apply lookup_ge_None in Huiv; lia].
+    destruct (inputs !! j) as [input|] eqn:Hinput; [| apply lookup_ge_None in Hinput; lia].
+    iDestruct (big_sepL2_lookup _ _ _ j with "Hitems") as "Hui"; [exact Huiv | exact Hinput |].
+    iNamed "Hui".
+    (* peel the head [VR_cons] off the remaining replay *)
+    erewrite (drop_S inputs input j Hinput) in Hreplayj.
+    inversion Hreplayj as [| input0 rest0 arr0 arr2 arrf nit Htoit Hvld Hmax Hintg Hrest Heqin [Heqi Heqa Heqf]]; subst.
+    have Hsi : setintegrate input arrj = Some arr2.
+    { rewrite (setintegrate_eq_integrate input arrj nit Hinvj Htoit Hvld Hmax). exact Hintg. }
+    wp_auto.
+    rewrite decide_True; last by word.
+    iDestruct (own_slice_elem_acc (sint.Z (W64 j)) uiv sl (DfracOwn 1) uivs with "Hsl") as "[Hel Hgive]".
+    { word. }
+    { replace (Z.to_nat (sint.Z (W64 j))) with j by word. exact Huiv. }
+    wp_auto.
+    wp_func_call. wp_call. wp_auto.
+    wp_alloc itv as "Hitv". wp_auto.
+    set (iv := {| yjs.item.id' := uiv.(yjs.updateItem.id');
+                  yjs.item.originLeftId' := uiv.(yjs.updateItem.originLeftId');
+                  yjs.item.originRightId' := uiv.(yjs.updateItem.originRightId');
+                  yjs.item.left' := null; yjs.item.right' := null;
+                  yjs.item.content' := {| yjs.content.content' := uiv.(yjs.updateItem.content') |};
+                  yjs.item.flags' := W8 2 |}).
+    have Hfl : iv.(yjs.item.left') = null by reflexivity.
+    have Hfr : iv.(yjs.item.right') = null by reflexivity.
+    have Hflags : iv.(yjs.item.flags') = W8 2 by reflexivity.
+    have Hcontlen : length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat by exact Hclen.
+    have Hivid : toYjsId iv.(yjs.item.id') = input.(in_id) by exact Hin_id.
+    have Hivc : toContent iv.(yjs.item.content') = input.(in_content) by exact Hin_c.
+    iAssert (is_fresh_item_raw itv input iv oleft oright) with "[Hitv]" as "Hfresh".
+    { rewrite /is_fresh_item_raw. iFrame "Hitv". iFrame "HisL HisR". iPureIntro. split_and!; [exact Hin_l | exact Hin_r | exact Hivid | exact Hivc]. }
+    wp_apply (wp_Store__Integrate_aux s parent itv arrj arr2 input nit iv oleft oright
+                Hinvj Htoit Hvld Hmax Hfl Hfr Hflags Hcontlen Hsi with "[$Hfresh Htextj]").
+    { iExists cells. iFrame "Htextj". iPureIntro. exact Hinvj. }
+    iIntros (cells'' idx2 c2) "(Htext2 & %Hinv2 & %Hc2look & %Hc2loc & %Hc2id)".
+    have Huiv2 : uivs !! sint.nat (W64 j) = Some uiv by (replace (sint.nat (W64 j)) with j by word; exact Huiv).
+    iDestruct ("Hgive" $! uiv with "Hel") as "Hsl2".
+    iEval (rewrite (list_insert_id _ _ _ Huiv2)) in "Hsl2".
+    wp_auto. wp_for_post.
+    iFrame "HΦ".
+    iExists (S j), cells'', arr2.
+    replace (W64 (S j)) with (word.add (W64 j) (W64 1)) by word.
+    iFrame "Hi Hs Hstructs Hparent Hsl2 Hcap Htext2".
+    iPureIntro. split_and!; [exact Hinv2 | exact Hrest | lia].
+  - (* loop exit: [j = length uivs], the replay of [[]] gives [arrj = arr'] *)
+    have Hjeq : (j = length uivs)%nat by word.
+    rewrite Hjeq Hlen_ui drop_all in Hreplayj.
+    inversion Hreplayj; subst.
+    wp_auto.
+    iApply ("HΦ" $! cells). iFrame "Htextj". iPureIntro. exact Hinvj.
+Qed.
+
 End store.
