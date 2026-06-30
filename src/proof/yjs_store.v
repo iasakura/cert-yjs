@@ -146,6 +146,160 @@ Definition cell_clock  (c : item_cell) : w64 := W64 (clock (item_id (ic_item c))
 Definition cell_le (a b : item_cell) : Prop := (uint.Z (cell_clock a) ≤ uint.Z (cell_clock b))%Z.
 #[local] Instance cell_le_dec : RelDecision cell_le.
 Proof. rewrite /cell_le. solve_decision. Defined.
+#[local] Instance cell_le_trans : Transitive cell_le.
+Proof. rewrite /cell_le. move=> x y z. lia. Qed.
+#[local] Instance cell_le_total : Total cell_le.
+Proof. rewrite /cell_le. move=> x y. lia. Qed.
+
+(** [is_item_map]'s backing slice is [ic_loc <$> ...] of a [merge_sort cell_le]
+    run, so its content depends only on each cell's (clock, loc) pair. These two
+    lemmas express that the loc-sequence of a clock-sorted run is preserved (a)
+    under any reshuffle with the same (clock, loc) multiset and (b) when a
+    strictly-clock-maximal cell is appended at the tail. *)
+Definition cell_pr (c : item_cell) : Z * loc := (uint.Z (cell_clock c), ic_loc c).
+Definition pr_le (p q : Z * loc) : Prop := (p.1 <= q.1)%Z.
+
+Lemma ic_loc_fmap_pr (l : list item_cell) : ic_loc <$> l = snd <$> (cell_pr <$> l).
+Proof. rewrite -list_fmap_compose. reflexivity. Qed.
+
+Lemma SS_cell_pr_merge (l : list item_cell) :
+  StronglySorted pr_le (cell_pr <$> merge_sort cell_le l).
+Proof.
+  apply (StronglySorted_fmap cell_pr cell_le pr_le).
+  - move=> x y Hxy. rewrite /pr_le /cell_pr /cell_le in Hxy |- *. exact Hxy.
+  - apply (StronglySorted_merge_sort cell_le).
+Qed.
+
+Lemma merge_sort_loc_perm (l1 l2 : list item_cell) :
+  (∀ x1 x2, x1 ∈ l1 → x2 ∈ l2 → (cell_pr x1).1 = (cell_pr x2).1 → ic_loc x1 = ic_loc x2) ->
+  cell_pr <$> l1 ≡ₚ cell_pr <$> l2 ->
+  ic_loc <$> merge_sort cell_le l1 = ic_loc <$> merge_sort cell_le l2.
+Proof.
+  move=> Hkd Hperm.
+  rewrite (ic_loc_fmap_pr (merge_sort cell_le l1)) (ic_loc_fmap_pr (merge_sort cell_le l2)).
+  f_equal.
+  apply (StronglySorted_unique_strong pr_le).
+  - move=> p1 p2 Hp1 Hp2 H12 H21.
+    apply list_elem_of_fmap in Hp1 as (x1 & -> & Hx1).
+    apply list_elem_of_fmap in Hp2 as (x2 & -> & Hx2).
+    rewrite (merge_sort_Permutation cell_le l1) in Hx1.
+    rewrite (merge_sort_Permutation cell_le l2) in Hx2.
+    rewrite /pr_le in H12 H21.
+    have Hkeq : (cell_pr x1).1 = (cell_pr x2).1 by lia.
+    rewrite /cell_pr /=. f_equal; [exact Hkeq | exact (Hkd x1 x2 Hx1 Hx2 Hkeq)].
+  - apply SS_cell_pr_merge.
+  - apply SS_cell_pr_merge.
+  - rewrite (merge_sort_Permutation cell_le l1) (merge_sort_Permutation cell_le l2). exact Hperm.
+Qed.
+
+Lemma merge_sort_loc_snoc (L : list item_cell) (x : item_cell) :
+  (∀ y1 y2, y1 ∈ L → y2 ∈ L → (cell_pr y1).1 = (cell_pr y2).1 → ic_loc y1 = ic_loc y2) ->
+  (∀ y, y ∈ L → ((cell_pr y).1 < (cell_pr x).1)%Z) ->
+  ic_loc <$> merge_sort cell_le (L ++ [x]) = (ic_loc <$> merge_sort cell_le L) ++ [ic_loc x].
+Proof.
+  move=> Hkd Hmax.
+  rewrite (ic_loc_fmap_pr (merge_sort cell_le (L ++ [x]))) (ic_loc_fmap_pr (merge_sort cell_le L)).
+  replace ((snd <$> (cell_pr <$> merge_sort cell_le L)) ++ [ic_loc x])
+    with (snd <$> ((cell_pr <$> merge_sort cell_le L) ++ [cell_pr x]))
+    by (rewrite fmap_app /=; reflexivity).
+  f_equal.
+  apply (StronglySorted_unique_strong pr_le).
+  - move=> p1 p2 Hp1 Hp2 H12 H21.
+    apply list_elem_of_fmap in Hp1 as (x1 & -> & Hx1).
+    rewrite (merge_sort_Permutation cell_le (L ++ [x])) in Hx1.
+    apply elem_of_app in Hp2 as [Hp2 | Hp2].
+    + apply list_elem_of_fmap in Hp2 as (x2 & -> & Hx2).
+      rewrite (merge_sort_Permutation cell_le L) in Hx2.
+      rewrite /pr_le in H12 H21.
+      have Hkeq : (cell_pr x1).1 = (cell_pr x2).1 by lia.
+      apply elem_of_app in Hx1 as [Hx1L | Hx1x].
+      * rewrite /cell_pr /=. f_equal; [exact Hkeq | exact (Hkd x1 x2 Hx1L Hx2 Hkeq)].
+      * apply list_elem_of_singleton in Hx1x as ->. exfalso. have := Hmax x2 Hx2. rewrite /pr_le in H12 H21. lia.
+    + apply list_elem_of_singleton in Hp2 as ->.
+      rewrite /pr_le in H12 H21.
+      apply elem_of_app in Hx1 as [Hx1L | Hx1x].
+      * exfalso. have := Hmax x1 Hx1L. lia.
+      * apply list_elem_of_singleton in Hx1x as ->. reflexivity.
+  - apply SS_cell_pr_merge.
+  - apply StronglySorted_app_2.
+    + move=> p z Hp Hz. apply list_elem_of_singleton in Hz as ->.
+      apply list_elem_of_fmap in Hp as (y & -> & Hy). rewrite (merge_sort_Permutation cell_le L) in Hy.
+      rewrite /pr_le. have := Hmax y Hy. lia.
+    + apply SS_cell_pr_merge.
+    + repeat constructor.
+  - rewrite (merge_sort_Permutation cell_le (L ++ [x])) fmap_app /=.
+    apply Permutation_app; [| reflexivity].
+    apply Permutation_map. symmetry. apply (merge_sort_Permutation cell_le L).
+Qed.
+
+(** [concat] respects permutation of the outer list. *)
+Lemma concat_perm {D : Type} (ll1 ll2 : list (list D)) :
+  ll1 ≡ₚ ll2 -> concat ll1 ≡ₚ concat ll2.
+Proof.
+  induction 1; simpl.
+  - reflexivity.
+  - apply Permutation_app_head. exact IHPermutation.
+  - rewrite !app_assoc. apply Permutation_app_tail. apply Permutation_app_comm.
+  - etrans; eassumption.
+Qed.
+
+(** Updating an existing key's value reshuffles [map_to_list] only at that key. *)
+Lemma map_to_list_insert_existing {V : Type} (m : gmap loc V) (k : loc) (v v' : V) :
+  m !! k = Some v ->
+  map_to_list (<[k:=v']> m) ≡ₚ (k, v') :: map_to_list (delete k m).
+Proof.
+  move=> Hk.
+  pose proof (map_to_list_delete (<[k:=v']> m) k v' (lookup_insert_eq m k v')) as Hp.
+  rewrite delete_insert_eq in Hp. symmetry. exact Hp.
+Qed.
+
+(** Updating one registered text's cell list reshuffles the document-global cell
+    pool [all_cells] only at that text. *)
+Lemma all_cells_insert (texts : gmap loc text_state) (parent : loc) (ts ts' : text_state) :
+  texts !! parent = Some ts ->
+  all_cells (<[parent:=ts']> texts) ≡ₚ ts_cells ts' ++ all_cells (delete parent texts).
+Proof.
+  move=> Hp. rewrite /all_cells.
+  apply (concat_perm (ts_cells <$> (map_to_list (<[parent:=ts']> texts)).*2)
+                     (ts_cells ts' :: (ts_cells <$> (map_to_list (delete parent texts)).*2))).
+  rewrite (map_to_list_insert_existing texts parent ts ts' Hp). simpl. reflexivity.
+Qed.
+
+Lemma all_cells_lookup (texts : gmap loc text_state) (parent : loc) (ts : text_state) :
+  texts !! parent = Some ts ->
+  all_cells texts ≡ₚ ts_cells ts ++ all_cells (delete parent texts).
+Proof.
+  move=> Hp.
+  pose proof (all_cells_insert texts parent ts ts Hp) as H.
+  rewrite (insert_id texts parent ts Hp) in H. exact H.
+Qed.
+
+(** [cell_kp] bundles a cell's (client, clock, loc). The slice/run preservation
+    consumes a [cell_kp] multiset permutation; on this base the integrate splice
+    gives an EXACT [item_cell] permutation [cells' ≡ₚ cells ++ [new]] (the cell
+    carries only the model item + loc, both invariant under the neighbour relink
+    that lives existentially in [is_dll]), so the [cell_kp] permutation follows by
+    [fmap]. *)
+Definition cell_kp (c : item_cell) : w64 * (Z * loc) := (cell_client c, cell_pr c).
+
+Lemma cell_pr_filter_kp (client : w64) (l : list item_cell) :
+  cell_pr <$> filter (λ c, cell_client c = client) l
+  = snd <$> filter (λ kp : w64 * (Z * loc), kp.1 = client) (cell_kp <$> l).
+Proof.
+  induction l as [|c l IH]; [reflexivity|].
+  rewrite fmap_cons filter_cons filter_cons /cell_kp /=.
+  case_decide as Hc.
+  - rewrite fmap_cons IH /=. reflexivity.
+  - exact IH.
+Qed.
+
+Lemma cell_pr_filter_perm (client : w64) (l1 l2 : list item_cell) :
+  cell_kp <$> l1 ≡ₚ cell_kp <$> l2 ->
+  cell_pr <$> filter (λ c, cell_client c = client) l1
+  ≡ₚ cell_pr <$> filter (λ c, cell_client c = client) l2.
+Proof.
+  move=> H. rewrite !cell_pr_filter_kp. apply Permutation_map. rewrite H. reflexivity.
+Qed.
 
 (** [client_run texts client]: [client]'s items across every text, CLOCK-sorted
     — exactly the Go run list [store.items[client]] (AddNode appends in
@@ -157,18 +311,114 @@ Proof. rewrite /cell_le. solve_decision. Defined.
 Definition client_run (texts : gmap loc text_state) (client : w64) : list item_cell :=
   merge_sort cell_le (filter (λ c, cell_client c = client) (all_cells texts)).
 
+(** Re-establishing the run after [Store.Integrate]'s [AddNode]: the new cell's
+    loc lands at the TAIL of its client's clock-sorted run, and other clients'
+    runs are untouched — at the loc-sequence level (what the slice stores), given
+    the document-global [cell_kp] multiset grows by exactly the new cell ([Hkp])
+    and clock determines loc per client ([Hclkloc], the [is_item_map] side cond).
+    [Hmax] (the new cell is strictly clock-maximal for its client) puts it last. *)
+Lemma client_run_loc_tail (texts texts2 : gmap loc text_state) (newcell : item_cell) :
+  cell_kp <$> all_cells texts2 ≡ₚ (cell_kp <$> all_cells texts) ++ [cell_kp newcell] ->
+  (∀ c1 c2, c1 ∈ all_cells texts → c2 ∈ all_cells texts → cell_client c1 = cell_client c2 →
+            (cell_pr c1).1 = (cell_pr c2).1 → ic_loc c1 = ic_loc c2) ->
+  (∀ c, c ∈ all_cells texts → cell_client c = cell_client newcell → ((cell_pr c).1 < (cell_pr newcell).1)%Z) ->
+  ic_loc <$> client_run texts2 (cell_client newcell)
+  = (ic_loc <$> client_run texts (cell_client newcell)) ++ [ic_loc newcell].
+Proof.
+  move=> Hkp Hclkloc Hmax.
+  set client := cell_client newcell.
+  set Lpre := filter (λ c, cell_client c = client) (all_cells texts).
+  set Lpost := filter (λ c, cell_client c = client) (all_cells texts2).
+  have Hkp2 : cell_kp <$> all_cells texts2 ≡ₚ cell_kp <$> (all_cells texts ++ [newcell]).
+  { rewrite fmap_app /=. exact Hkp. }
+  have Hfilt : filter (λ c, cell_client c = client) (all_cells texts ++ [newcell])
+             = Lpre ++ [newcell].
+  { rewrite filter_app /Lpre. f_equal. rewrite filter_cons.
+    rewrite decide_True; [reflexivity | rewrite /client; reflexivity]. }
+  have Hpermf : cell_pr <$> Lpost ≡ₚ (cell_pr <$> Lpre) ++ [cell_pr newcell].
+  { rewrite /Lpost (cell_pr_filter_perm client (all_cells texts2) (all_cells texts ++ [newcell]) Hkp2).
+    rewrite Hfilt fmap_app /=. reflexivity. }
+  have Hkdl2 : ∀ x y, x ∈ Lpre ++ [newcell] → y ∈ Lpre ++ [newcell] →
+                (cell_pr x).1 = (cell_pr y).1 → ic_loc x = ic_loc y.
+  { move=> x y Hx Hy Hxy.
+    have Hin : ∀ z, z ∈ Lpre ++ [newcell] → (z ∈ all_cells texts ∧ cell_client z = client) ∨ z = newcell.
+    { move=> z Hz. apply elem_of_app in Hz as [Hz | Hz].
+      - left. rewrite /Lpre list_elem_of_filter in Hz. tauto.
+      - right. by apply list_elem_of_singleton in Hz. }
+    destruct (Hin x Hx) as [[Hxa Hxc] | ->]; destruct (Hin y Hy) as [[Hya Hyc] | ->].
+    - apply (Hclkloc x y Hxa Hya); [rewrite Hxc Hyc // | exact Hxy].
+    - exfalso. have := Hmax x Hxa Hxc. lia.
+    - exfalso. have := Hmax y Hya Hyc. lia.
+    - reflexivity. }
+  have Hcross : ∀ x1 x2, x1 ∈ Lpost → x2 ∈ Lpre ++ [newcell] →
+                  (cell_pr x1).1 = (cell_pr x2).1 → ic_loc x1 = ic_loc x2.
+  { move=> x1 x2 Hx1 Hx2 H12.
+    have Hp1 : cell_pr x1 ∈ cell_pr <$> Lpost by apply list_elem_of_fmap_2.
+    rewrite Hpermf in Hp1.
+    have Hp1' : cell_pr x1 ∈ cell_pr <$> (Lpre ++ [newcell]) by (rewrite fmap_app /=; exact Hp1).
+    apply list_elem_of_fmap in Hp1' as (x2' & Hx1eq & Hx2').
+    have Hloc1 : ic_loc x1 = ic_loc x2' by (rewrite /cell_pr /= in Hx1eq; injection Hx1eq; auto).
+    rewrite Hloc1. apply (Hkdl2 x2' x2 Hx2' Hx2). rewrite -Hx1eq. exact H12. }
+  rewrite /client_run -/client.
+  rewrite (merge_sort_loc_perm Lpost (Lpre ++ [newcell]) Hcross).
+  { rewrite (merge_sort_loc_snoc Lpre newcell).
+    - reflexivity.
+    - move=> y1 y2 Hy1 Hy2 Hk. rewrite /Lpre list_elem_of_filter in Hy1.
+      rewrite /Lpre list_elem_of_filter in Hy2.
+      apply (Hclkloc y1 y2 (proj2 Hy1) (proj2 Hy2)); [rewrite (proj1 Hy1) (proj1 Hy2) // | exact Hk].
+    - move=> y Hy. rewrite /Lpre list_elem_of_filter in Hy. apply (Hmax y (proj2 Hy) (proj1 Hy)). }
+  rewrite fmap_app /=. exact Hpermf.
+Qed.
+
+Lemma client_run_loc_other (texts texts2 : gmap loc text_state) (newcell : item_cell) (c' : w64) :
+  cell_kp <$> all_cells texts2 ≡ₚ (cell_kp <$> all_cells texts) ++ [cell_kp newcell] ->
+  (∀ c1 c2, c1 ∈ all_cells texts → c2 ∈ all_cells texts → cell_client c1 = cell_client c2 →
+            (cell_pr c1).1 = (cell_pr c2).1 → ic_loc c1 = ic_loc c2) ->
+  c' ≠ cell_client newcell ->
+  ic_loc <$> client_run texts2 c' = ic_loc <$> client_run texts c'.
+Proof.
+  move=> Hkp Hclkloc Hne.
+  set Lpre := filter (λ c, cell_client c = c') (all_cells texts).
+  set Lpost := filter (λ c, cell_client c = c') (all_cells texts2).
+  have Hkp2 : cell_kp <$> all_cells texts2 ≡ₚ cell_kp <$> (all_cells texts ++ [newcell]).
+  { rewrite fmap_app /=. exact Hkp. }
+  have Hfilt : filter (λ c, cell_client c = c') (all_cells texts ++ [newcell]) = Lpre.
+  { rewrite filter_app /Lpre. rewrite filter_cons.
+    rewrite decide_False; [rewrite app_nil_r // | move=> H; apply Hne; by rewrite H]. }
+  have Hpermf : cell_pr <$> Lpost ≡ₚ cell_pr <$> Lpre.
+  { rewrite /Lpost (cell_pr_filter_perm c' (all_cells texts2) (all_cells texts ++ [newcell]) Hkp2).
+    rewrite Hfilt. reflexivity. }
+  have Hcross : ∀ x1 x2, x1 ∈ Lpost → x2 ∈ Lpre → (cell_pr x1).1 = (cell_pr x2).1 → ic_loc x1 = ic_loc x2.
+  { move=> x1 x2 Hx1 Hx2 H12.
+    have Hp1 : cell_pr x1 ∈ cell_pr <$> Lpost by apply list_elem_of_fmap_2.
+    rewrite Hpermf in Hp1.
+    apply list_elem_of_fmap in Hp1 as (x2' & Hx1eq & Hx2').
+    have Hloc1 : ic_loc x1 = ic_loc x2' by (rewrite /cell_pr /= in Hx1eq; injection Hx1eq; auto).
+    rewrite Hloc1.
+    rewrite /Lpre list_elem_of_filter in Hx2'. rewrite /Lpre list_elem_of_filter in Hx2.
+    apply (Hclkloc x2' x2 (proj2 Hx2') (proj2 Hx2)); [rewrite (proj1 Hx2') (proj1 Hx2) // |].
+    rewrite -Hx1eq. exact H12. }
+  rewrite /client_run.
+  apply (merge_sort_loc_perm Lpost Lpre Hcross Hpermf).
+Qed.
+
 (** [is_item_map mref texts]: the heap map at [mref] (Go [store.items]) owns the
     map header and, per client, the backing slice of [*item] *locations* (+ cap)
     — but NOT the item cells (those live in the DLL, [is_ytext]). The slice for
-    [client] is exactly [client_run texts client]. Takes the [texts] map directly
-    (not a pre-flattened list); sortedness is baked into [client_run]. *)
+    [client] is exactly [client_run texts client]. [Hcomplete]: every client with
+    a cell has a map entry. [Hclkloc]: per client, a clock determines its cell's
+    loc (clocks unique per client) — needed to re-establish the run after
+    [AddNode] (see [client_run_loc_tail]). *)
 Definition is_item_map (mref : loc) (texts : gmap loc text_state) : iProp Σ :=
   ∃ (gm : gmap w64 slice.t),
     "Hmap" ∷ own_map mref (DfracOwn 1) gm ∗
     "Hruns" ∷ ([∗ map] client ↦ s ∈ gm,
         "Hslice" ∷ s ↦* (ic_loc <$> client_run texts client) ∗
         "Hcap"   ∷ own_slice_cap loc s (DfracOwn 1)) ∗
-    "%Hcomplete" ∷ ⌜∀ c, c ∈ (cell_client <$> all_cells texts) → is_Some (gm !! c)⌝.
+    "%Hcomplete" ∷ ⌜∀ c, c ∈ (cell_client <$> all_cells texts) → is_Some (gm !! c)⌝ ∗
+    "%Hclkloc" ∷ ⌜∀ c1 c2, c1 ∈ all_cells texts → c2 ∈ all_cells texts →
+                    cell_client c1 = cell_client c2 → (cell_pr c1).1 = (cell_pr c2).1 →
+                    ic_loc c1 = ic_loc c2⌝.
 
 (* ----- the lock invariant ----------------------------------------------- *)
 
@@ -178,23 +428,19 @@ Definition is_item_map (mref : loc) (texts : gmap loc text_state) : iProp Σ :=
     - the item-set authority [own γ (●…)] per text loc (id-set), whose fragments
       are the [is_text_lb] lower bounds / registration witnesses [Text] holds;
     - each registered text's DLL (keyed by [parent]) + [YjsArrInvariant];
+    - the store's per-client item set ([is_item_map]: [store.items] holds every
+      integrated item's loc, clock-sorted — maintained by Integrate's [AddNode]);
     - the global per-client counter (source of [maximalId]).
     [client]/[k]/[texts] etc. are existential — the fixed lock invariant hides
-    the per-operation state.
-
-    NOTE: [is_item_map] (the store-holds-item-set invariant over the items map) is
-    intentionally NOT yet part of [store_inv]: Integrate's [AddNode] is deferred,
-    so the items map does not grow with the cells, and including [is_item_map]
-    would make [store_inv] unrecoverable after [Insert]. Re-add [is_item_map] here
-    together with Integrate's [AddNode] + items-map threading (final phase). The
-    items field ptr ([Hitemsf]) is still owned (raw), only its [own_map] contents
-    are dropped for now. *)
+    the per-operation state. [is_item_map] and [Htexts] share the SAME [texts], so
+    Insert grows both consistently (DLL splice + [AddNode] tail-append). *)
 Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
     (texts : gmap loc text_state),
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
     "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
     "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
+    "Hitemmap" ∷ is_item_map items_mref texts ∗
     "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
     "Hseq"    ∷ own γ (● ((λ ts, (list_to_set (ts_arr ts) : gset (YjsItem A))) <$> texts) : seqUR) ∗
@@ -1225,8 +1471,8 @@ Qed.
     document yields the document updated per the pure [setintegrate]. Kept as the
     detailed functional characterisation (exposes [setintegrate]/[iv]); the
     public [wp_Store__Integrate] below repackages it as invariant preservation. *)
-Lemma wp_Store__Integrate_aux (s parent item_l : loc) (arr arr' : list (YjsItem A))
-    (input : IntegrateInput (A := A)) (newItem : YjsItem A)
+Lemma wp_Store__integrateCore_aux (s parent item_l : loc) (arr arr' : list (YjsItem A))
+    (input : IntegrateInput (A := A)) (newItem : YjsItem A) (cells : list item_cell)
     (iv : yjs.item.t) (oleft oright : option yjs.id.t) :
   YjsArrInvariant arr ->
   toItem input arr = Some newItem ->
@@ -1237,13 +1483,17 @@ Lemma wp_Store__Integrate_aux (s parent item_l : loc) (arr arr' : list (YjsItem 
   iv.(yjs.item.flags') = W8 2 ->   (* freshly built item is Countable (NewItem sets ItemCountable) *)
   length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat ->   (* single-char content => Len() = 1 *)
   setintegrate input arr = Some arr' ->
-  {{{ is_pkg_init yjs ∗ is_valid_ytext parent arr ∗
+  {{{ is_pkg_init yjs ∗ is_ytext parent cells arr ∗
       is_fresh_item_raw item_l input iv oleft oright }}}
-    s @! (go.PointerType yjs.store) @! "Integrate" #parent #item_l
+    s @! (go.PointerType yjs.store) @! "integrateCore" #parent #item_l
   {{{ (cells' : list item_cell) (idx : nat) (c : item_cell), RET #();
       is_ytext parent cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ ∗
       ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
-      ⌜item_id (ic_item c) = in_id input⌝ }}}.
+      ⌜item_id (ic_item c) = in_id input⌝ ∗
+      (* the splice grows the cell list by exactly the new cell (the cell carries
+         only the model item + loc, both invariant under the neighbour relink that
+         is existential in is_dll) *)
+      ⌜cells' ≡ₚ cells ++ [c]⌝ }}}.
 Proof using Type*.
   move=> Harr Htoitem Hvalid Hmax Hfl Hfr Hflags Hcontlen.
   (* Decompose the pure result: leftIdx / rightIdx / destIdx / itemM and
@@ -1254,8 +1504,8 @@ Proof using Type*.
   case HfindD: (setfindIntegratedIndex leftIdx rightIdx input arr) => [destIdx|] //=.
   case HmkI: (mkItemByIndex leftIdx rightIdx input arr) => [itemM|] //=.
   move=> [<-].
-  wp_start as "(Hvtext & Hfresh)".
-  iDestruct "Hvtext" as (cells) "[Htext %Hinv]".
+  wp_start as "(Htext & Hfresh)".
+  have Hinv := Harr.
   iNamed "Hfresh".
   have Huniq := yai_unique _ Harr.
   have HfLp : findPtrIdx (origin newItem) arr = Some leftIdx.
@@ -1399,6 +1649,7 @@ Proof using Type*.
       "%Hytl" ∷ ⌜ytv.(yjs.yType.len') = W64 (length cells)⌝ ∗
       "Hleftdll" ∷ is_dll hd' (node_loc cells (Z.of_nat destIdx - 1)) null item_l cs1m ∗
       "%Hcs1m" ∷ ⌜cells_repr arr cs1m (take destIdx arr)⌝ ∗
+      "%Hkp1" ∷ ⌜cs1m = take destIdx cells⌝ ∗
       "Hitem" ∷ item_l ↦ ivL ∗
       "%HivLl" ∷ ⌜ivL.(yjs.item.left') = node_loc cells (Z.of_nat destIdx - 1)⌝ ∗
       "%HivLf" ∷ ⌜ivL.(yjs.item.flags') = iv2.(yjs.item.flags')⌝ ∗
@@ -1432,6 +1683,7 @@ Proof using Type*.
     iSplitR. { iPureIntro. exact Hlen'. }
     iSplitR. { simpl. iPureIntro. split; [done | exact e]. }
     iSplitR. { iPureIntro. rewrite Hd0 /=. apply cells_repr_nil. }
+    iSplitR. { iPureIntro. rewrite Hd0 //. }
     iSplitR. { iPureIntro. rewrite e //. }
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
@@ -1485,6 +1737,7 @@ Proof using Type*.
         | reflexivity | reflexivity]. }
     iSplitR.
     { iPureIntro. rewrite -Htake. exact (cells_repr_take arr cells arr destIdx Hrepr'). }
+    iSplitR. { iPureIntro. symmetry. exact Htake. }
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
@@ -1502,6 +1755,7 @@ Proof using Type*.
     ∃ (cs2m : list item_cell) (tlN : loc),
       "Hrightdll2" ∷ is_dll (node_loc cells destIdx) tlN item_l null cs2m ∗
       "%Hcs2m" ∷ ⌜cells_repr arr cs2m (drop destIdx arr)⌝ ∗
+      "%Hkp2" ∷ ⌜cs2m = drop destIdx cells⌝ ∗
       "Hrightptr" ∷ right_ptr ↦ node_loc cells (Z.of_nat destIdx) ∗
       "item" ∷ item_ptr ↦ item_l)%I
     with "[Hrightdll Hrightptr item]".
@@ -1509,11 +1763,13 @@ Proof using Type*.
     destruct (drop destIdx cells) as [|rc rest] eqn:Hdrop.
     - iSplitR; first done. iExists [], item_l. iFrame "Hrightptr item".
       iSplitR. { simpl. iPureIntro. split; [exact e | reflexivity]. }
-      iPureIntro.
-      have Hge : (length cells <= destIdx)%nat.
-      { have Hlen0 : length (drop destIdx cells) = 0%nat by rewrite Hdrop //.
-        rewrite length_drop in Hlen0. lia. }
-      rewrite drop_ge; [apply cells_repr_nil | lia].
+      iSplitR.
+      { iPureIntro.
+        have Hge : (length cells <= destIdx)%nat.
+        { have Hlen0 : length (drop destIdx cells) = 0%nat by rewrite Hdrop //.
+          rewrite length_drop in Hlen0. lia. }
+        rewrite drop_ge; [apply cells_repr_nil | lia]. }
+      iPureIntro. done.
     - iDestruct "Hrightdll" as (ivx olidx oridx) "(%Hl & _)". destruct Hl as [_ Hnn]. exfalso. exact (Hnn e). }
   { (* destIdx < length cells: relink right neighbour's left to item *)
     have Hltlen : (destIdx < length cells)%nat.
@@ -1535,12 +1791,14 @@ Proof using Type*.
     { iExists (ivr <| yjs.item.left' := item_l |>), olidr, oridr. iFrame "Hvalr Holr Horr Hrestr".
       iPureIntro; split_and!;
         [reflexivity | exact Hrcnn2 | reflexivity | exact Hidr | exact Hcontr | exact Holidr | exact Horidr | exact Hflagsr | exact Hcontlenr]. }
-    iPureIntro.
-    have Hlenarr : (destIdx < length arr)%nat by (rewrite -Hcells_len; exact Hltlen).
-    destruct (drop destIdx arr) as [|ra rest_a] eqn:Hdropa.
-    { exfalso. have Hl0 : length (drop destIdx arr) = 0%nat by rewrite Hdropa //.
-      rewrite length_drop in Hl0. lia. }
-    rewrite -Hdrop -Hdropa. apply cells_repr_drop. exact Hrepr'. }
+    iSplitR.
+    { iPureIntro.
+      have Hlenarr : (destIdx < length arr)%nat by (rewrite -Hcells_len; exact Hltlen).
+      destruct (drop destIdx arr) as [|ra rest_a] eqn:Hdropa.
+      { exfalso. have Hl0 : length (drop destIdx arr) = 0%nat by rewrite Hdropa //.
+        rewrite length_drop in Hl0. lia. }
+      rewrite -Hdrop -Hdropa. apply cells_repr_drop. exact Hrepr'. }
+    iPureIntro. done. }
   iIntros (v) "[%Hv HQ2]". iNamed "HQ2". subst v. wp_auto.
   (* item.right := right (node_loc cells destIdx) already done; now [Countable()]
      is true (flags = ItemCountable) and [Len()] is 1 (single-char content), so
@@ -1613,7 +1871,12 @@ Proof using Type*.
   iSplit; [iPureIntro; exact Hinv''|].
   iSplit; [iPureIntro; apply list_lookup_middle; by rewrite Hcs1len|].
   iSplit; [iPureIntro; reflexivity|].
-  iPureIntro. rewrite /= HitemM //.
+  iSplit; [iPureIntro; rewrite /= HitemM //|].
+  (* cells' = take destIdx cells ++ c :: drop destIdx cells (Hkp1/Hkp2), a
+     permutation of cells ++ [c]. *)
+  iPureIntro. rewrite Hkp1 Hkp2.
+  rewrite -(Permutation_middle (take destIdx cells) (drop destIdx cells) (MkItemCell item_l itemM)).
+  rewrite take_drop. apply Permutation_cons_append.
 Qed.
 
 (** Public top-level spec — [Store.Integrate] inserts the item and preserves the
@@ -1624,7 +1887,7 @@ Qed.
     document invariant [is_valid_ytext] already carries [YjsArrInvariant], so it
     pins [arr'] uniquely given the item set; the caller's item is encapsulated in
     [is_fresh_item]; the document/input side conditions are the only premises.
-    Proven from [wp_Store__Integrate_aux]: integration succeeds ([integrate_some]),
+    Proven from [wp_Store__integrateCore_aux]: integration succeeds ([integrate_some]),
     bridges to [setintegrate] ([setintegrate_eq_integrate]); the insertion
     position and the post-state's validity come from the rocq-yjs preservation
     theorem [YjsArrInvariant_integrate]. *)
@@ -1972,32 +2235,32 @@ Proof.
     + rewrite (find_by_id_self arr b Hinv Hb) /=. reflexivity.
 Qed.
 
-Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
-    (input : IntegrateInput (A := A)) (newItem : YjsItem A) :
+Lemma wp_Store__integrateCore (s parent item_l : loc) (arr : list (YjsItem A))
+    (input : IntegrateInput (A := A)) (newItem : YjsItem A) (cells : list item_cell) :
+  YjsArrInvariant arr ->
   toItem input arr = Some newItem ->
   IsItemValid newItem ->
   maximalId newItem arr ->
-  {{{ is_pkg_init yjs ∗ is_valid_ytext parent arr ∗ is_fresh_item item_l input }}}
-    s @! (go.PointerType yjs.store) @! "Integrate" #parent #item_l
+  {{{ is_pkg_init yjs ∗ is_ytext parent cells arr ∗ is_fresh_item item_l input }}}
+    s @! (go.PointerType yjs.store) @! "integrateCore" #parent #item_l
   {{{ (arr' : list (YjsItem A)) (i : nat) (cells' : list item_cell) (c : item_cell), RET #();
       ⌜(i <= length arr)%nat⌝ ∗ ⌜arr' = insertIdxIfInBounds i newItem arr⌝ ∗
       ⌜YjsArrInvariant arr'⌝ ∗ is_ytext parent cells' arr' ∗
+      ⌜cells' ≡ₚ cells ++ [c]⌝ ∗
       ∃ idx, ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
              ⌜ic_item c = newItem⌝ }}}.
 Proof using Type*.
-  move=> Htoitem Hvalid Hmax.
-  iIntros (Φ) "(Hpkg & Hvalid & Hfresh) HΦ".
+  move=> Hinv Htoitem Hvalid Hmax.
+  iIntros (Φ) "(Hpkg & Htext & Hfresh) HΦ".
   iDestruct "Hfresh" as (iv oleft oright) "(Hraw & %Hfl & %Hfr & %Hflags & %Hcontlen)".
-  iDestruct "Hvalid" as (cells) "[Htext %Hinv]".
   destruct (integrate_some input arr newItem Hinv Htoitem) as [arr' Hintegrate].
   destruct (YjsArrInvariant_integrate input arr arr' newItem Hinv Htoitem Hvalid Hmax Hintegrate)
     as [i [Hile [Harr'eq _]]].
   have Hsi : setintegrate input arr = Some arr'.
   { rewrite (setintegrate_eq_integrate input arr newItem Hinv Htoitem Hvalid Hmax). exact Hintegrate. }
-  wp_apply (wp_Store__Integrate_aux s parent item_l arr arr' input newItem iv oleft oright
-              Hinv Htoitem Hvalid Hmax Hfl Hfr Hflags Hcontlen Hsi with "[$Hpkg $Hraw Htext]").
-  { iExists cells. iFrame "Htext". iPureIntro. exact Hinv. }
-  iIntros (cells' idx c) "(Htext' & %Hinv' & %Hlook & %Hloc & %Hcid)".
+  wp_apply (wp_Store__integrateCore_aux s parent item_l arr arr' input newItem cells iv oleft oright
+              Hinv Htoitem Hvalid Hmax Hfl Hfr Hflags Hcontlen Hsi with "[$Hpkg $Hraw $Htext]").
+  iIntros (cells' idx c) "(Htext' & %Hinv' & %Hlook & %Hloc & %Hcid & %Hperm)".
   (* identify the inserted cell with the argument: it is the unique [arr']-item of
      id [in_id input], and so equals [newItem] (= toItem input arr). *)
   iDestruct "Htext'" as (ytX tlX) "(HpX & HdllX & %HlenX & %HreprX)".
@@ -2017,7 +2280,42 @@ Proof using Type*.
   iSplit; [iPureIntro; exact Hinv'|].
   iSplitL "HpX HdllX".
   { iExists ytX, tlX. iFrame "HpX HdllX". iPureIntro; split; [exact HlenX | exact HreprX]. }
+  iSplit; [iPureIntro; exact Hperm|].
   iPureIntro. exists idx. split_and!; [exact Hlook | exact Hloc | exact Hcnew].
 Qed.
+
+(** Top-level [Store.Integrate] = [integrateCore] (DLL splice) then [AddNode]
+    (record the item in [store.items]). Threads [is_item_map]: [AddNode] appends
+    the new item's loc, which [client_run_loc_tail] shows lands at the tail of its
+    client's clock-sorted run (other clients untouched, [client_run_loc_other]).
+    [Hgmax] (the new item's clock strictly exceeds every same-client heap clock
+    across all texts, sourced from the store counter at the [Text.Insert] layer)
+    puts the new loc at the tail. *)
+Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
+    (input : IntegrateInput (A := A)) (newItem : YjsItem A)
+    (cells : list item_cell) (texts : gmap loc text_state) (mref : loc) :
+  YjsArrInvariant arr ->
+  toItem input arr = Some newItem ->
+  IsItemValid newItem ->
+  maximalId newItem arr ->
+  texts !! parent = Some (MkTextState cells arr) ->
+  (∀ c0, c0 ∈ all_cells texts -> cell_client c0 = W64 (clientId (item_id newItem)) ->
+     (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z) ->
+  {{{ is_pkg_init yjs ∗ is_ytext parent cells arr ∗ is_fresh_item item_l input ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ is_item_map mref texts }}}
+    s @! (go.PointerType yjs.store) @! "Integrate" #parent #item_l
+  {{{ (arr' : list (YjsItem A)) (i : nat) (cells' : list item_cell) (c : item_cell), RET #();
+      ⌜(i <= length arr)%nat⌝ ∗ ⌜arr' = insertIdxIfInBounds i newItem arr⌝ ∗
+      ⌜YjsArrInvariant arr'⌝ ∗ is_ytext parent cells' arr' ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗
+      is_item_map mref (<[parent := MkTextState cells' arr']> texts) ∗
+      ∃ idx, ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗ ⌜ic_item c = newItem⌝ }}}.
+Proof using Type*.
+(* TODO(issue#29): operational AddNode step — wp_map_lookup1 / wp_slice_append /
+   wp_map_insert on store.items, then rebuild is_item_map's big_sepM via
+   client_run_loc_tail (new client) / client_run_loc_other (others), maintaining
+   Hcomplete + Hclkloc. The cells' ≡ₚ cells ++ [c] from wp_Store__integrateCore
+   gives the cell_kp multiset growth (all_cells_insert/lookup + fmap). *)
+Admitted.
 
 End store.
