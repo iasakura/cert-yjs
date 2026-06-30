@@ -135,8 +135,9 @@ visibility), with `is_dll` pinning each node's heap flags to it and
 `yType.len = num_visible cells`. The v1 byte codec stays behind `//go:build
 !goose`; its DeleteSet is regenerated from the item flags at encode time
 (`generateDeleteSet`, y-octo's `generate_delete_set`), so the verified `Delete`
-only flips flags and shrinks the visible length. `cell_repr` pins `Len() = 1`; see
-its `TODO` for relaxing that to add multi-clock items.
+only flips flags and shrinks the visible length. `is_dll` pins each node's content
+length to 1 (`Hcontlen`); see its `TODO` for relaxing that to add multi-clock
+items.
 
 **Core principle: reuse the rocq-yjs model — do not invent independent proofs.**
 State cert-yjs WP specs as *refinements* of the pure model and compose with
