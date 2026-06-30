@@ -1396,9 +1396,10 @@ Proof using Type*.
     ∃ (cs1m : list item_cell) (hd' : loc) (ytv : yjs.yType.t) (ivL : yjs.item.t),
       "Hparent" ∷ parent ↦ ytv ∗
       "%Hyts" ∷ ⌜ytv.(yjs.yType.start') = hd'⌝ ∗
-      "%Hytl" ∷ ⌜ytv.(yjs.yType.len') = W64 (length cells)⌝ ∗
+      "%Hytl" ∷ ⌜ytv.(yjs.yType.len') = W64 (num_visible cells)⌝ ∗
       "Hleftdll" ∷ is_dll hd' (node_loc cells (Z.of_nat destIdx - 1)) null item_l cs1m ∗
       "%Hcs1m" ∷ ⌜cells_repr arr cs1m (take destIdx arr)⌝ ∗
+      "%Hcs1eq" ∷ ⌜cs1m = take destIdx cells⌝ ∗
       "Hitem" ∷ item_l ↦ ivL ∗
       "%HivLl" ∷ ⌜ivL.(yjs.item.left') = node_loc cells (Z.of_nat destIdx - 1)⌝ ∗
       "%HivLf" ∷ ⌜ivL.(yjs.item.flags') = iv2.(yjs.item.flags')⌝ ∗
@@ -1432,6 +1433,7 @@ Proof using Type*.
     iSplitR. { iPureIntro. exact Hlen'. }
     iSplitR. { simpl. iPureIntro. split; [done | exact e]. }
     iSplitR. { iPureIntro. rewrite Hd0 /=. apply cells_repr_nil. }
+    iSplitR. { iPureIntro. rewrite Hd0 take_0 //. }
     iSplitR. { iPureIntro. rewrite e //. }
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
@@ -1485,6 +1487,7 @@ Proof using Type*.
         | reflexivity | reflexivity]. }
     iSplitR.
     { iPureIntro. rewrite -Htake. exact (cells_repr_take arr cells arr destIdx Hrepr'). }
+    iSplitR. { iPureIntro. symmetry. exact Htake. }
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
@@ -1502,6 +1505,7 @@ Proof using Type*.
     ∃ (cs2m : list item_cell) (tlN : loc),
       "Hrightdll2" ∷ is_dll (node_loc cells destIdx) tlN item_l null cs2m ∗
       "%Hcs2m" ∷ ⌜cells_repr arr cs2m (drop destIdx arr)⌝ ∗
+      "%Hcs2eq" ∷ ⌜cs2m = drop destIdx cells⌝ ∗
       "Hrightptr" ∷ right_ptr ↦ node_loc cells (Z.of_nat destIdx) ∗
       "item" ∷ item_ptr ↦ item_l)%I
     with "[Hrightdll Hrightptr item]".
@@ -1509,11 +1513,13 @@ Proof using Type*.
     destruct (drop destIdx cells) as [|rc rest] eqn:Hdrop.
     - iSplitR; first done. iExists [], item_l. iFrame "Hrightptr item".
       iSplitR. { simpl. iPureIntro. split; [exact e | reflexivity]. }
-      iPureIntro.
-      have Hge : (length cells <= destIdx)%nat.
-      { have Hlen0 : length (drop destIdx cells) = 0%nat by rewrite Hdrop //.
-        rewrite length_drop in Hlen0. lia. }
-      rewrite drop_ge; [apply cells_repr_nil | lia].
+      iSplitR.
+      { iPureIntro.
+        have Hge : (length cells <= destIdx)%nat.
+        { have Hlen0 : length (drop destIdx cells) = 0%nat by rewrite Hdrop //.
+          rewrite length_drop in Hlen0. lia. }
+        rewrite drop_ge; [apply cells_repr_nil | lia]. }
+      iPureIntro. done.
     - iDestruct "Hrightdll" as (ivx olidx oridx) "(%Hl & _)". destruct Hl as [_ Hnn]. exfalso. exact (Hnn e). }
   { (* destIdx < length cells: relink right neighbour's left to item *)
     have Hltlen : (destIdx < length cells)%nat.
@@ -1535,12 +1541,14 @@ Proof using Type*.
     { iExists (ivr <| yjs.item.left' := item_l |>), olidr, oridr. iFrame "Hvalr Holr Horr Hrestr".
       iPureIntro; split_and!;
         [reflexivity | exact Hrcnn2 | reflexivity | exact Hidr | exact Hcontr | exact Holidr | exact Horidr | exact Hflagsr | exact Hcontlenr]. }
-    iPureIntro.
-    have Hlenarr : (destIdx < length arr)%nat by (rewrite -Hcells_len; exact Hltlen).
-    destruct (drop destIdx arr) as [|ra rest_a] eqn:Hdropa.
-    { exfalso. have Hl0 : length (drop destIdx arr) = 0%nat by rewrite Hdropa //.
-      rewrite length_drop in Hl0. lia. }
-    rewrite -Hdrop -Hdropa. apply cells_repr_drop. exact Hrepr'. }
+    iSplitR.
+    { iPureIntro.
+      have Hlenarr : (destIdx < length arr)%nat by (rewrite -Hcells_len; exact Hltlen).
+      destruct (drop destIdx arr) as [|ra rest_a] eqn:Hdropa.
+      { exfalso. have Hl0 : length (drop destIdx arr) = 0%nat by rewrite Hdropa //.
+        rewrite length_drop in Hl0. lia. }
+      rewrite -Hdrop -Hdropa. apply cells_repr_drop. exact Hrepr'. }
+    iPureIntro. done. }
   iIntros (v) "[%Hv HQ2]". iNamed "HQ2". subst v. wp_auto.
   (* item.right := right (node_loc cells destIdx) already done; now [Countable()]
      is true (flags = ItemCountable) and [Len()] is 1 (single-char content), so
@@ -1576,14 +1584,16 @@ Proof using Type*.
   { eapply YjsArrInvariant_setintegrate; (try eassumption); (try exact _). }
   have Harr'' : insertIdxIfInBounds destIdx itemM arr = take destIdx arr ++ itemM :: drop destIdx arr.
   { rewrite /insertIdxIfInBounds decide_True; [done | rewrite -Hcells_len; exact Hdle]. }
-  have Hcellrepr : cell_repr arr (MkItemCell item_l itemM) itemM by rewrite /cell_repr //.
-  have Hlen0 : length (cs1m ++ MkItemCell item_l itemM :: cs2m) = (length cells + 1)%nat.
+  have Hcellrepr : cell_repr arr (MkItemCell item_l itemM false) itemM by rewrite /cell_repr //.
+  have Hlen0 : length (cs1m ++ MkItemCell item_l itemM false :: cs2m) = (length cells + 1)%nat.
   { rewrite length_app /= (cells_repr_length _ _ _ Hcs1m) (cells_repr_length _ _ _ Hcs2m) length_take length_drop. lia. }
+  have Hnv0 : num_visible (cs1m ++ MkItemCell item_l itemM false :: cs2m) = S (num_visible cells).
+  { rewrite Hcs1eq Hcs2eq. apply num_visible_insert_visible. reflexivity. }
   have Hstart : (ytv <| yjs.yType.len' := w64_word_instance.(word.add) ytv.(yjs.yType.len') (W64 1%nat) |>).(yjs.yType.start') = hd'.
   { simpl. exact Hyts. }
   have Hcs1len : length cs1m = destIdx.
   { rewrite (cells_repr_length _ _ _ Hcs1m) length_take_le; [done | rewrite -Hcells_len; exact Hdle]. }
-  iApply ("HΦ" $! (cs1m ++ MkItemCell item_l itemM :: cs2m) destIdx (MkItemCell item_l itemM)).
+  iApply ("HΦ" $! (cs1m ++ MkItemCell item_l itemM false :: cs2m) destIdx (MkItemCell item_l itemM false)).
   iSplitL "Hparent Hleftdll Hitem Hrightdll2".
   { iExists (ytv <| yjs.yType.len' := w64_word_instance.(word.add) ytv.(yjs.yType.len') (W64 1%nat) |>), tlN.
     iFrame "Hparent".
@@ -1592,21 +1602,21 @@ Proof using Type*.
       have HrightEq : (ivL <| yjs.item.right' := node_loc cells destIdx |>).(yjs.item.right') = node_loc cells destIdx by reflexivity.
       have HleftEq : (ivL <| yjs.item.right' := node_loc cells destIdx |>).(yjs.item.left') = node_loc cells (destIdx - 1).
       { simpl. exact HivLl. }
-      have Hidtr : item_id (ic_item (MkItemCell item_l itemM)) = toYjsId (ivL <| yjs.item.right' := node_loc cells destIdx |>).(yjs.item.id').
+      have Hidtr : item_id (ic_item (MkItemCell item_l itemM false)) = toYjsId (ivL <| yjs.item.right' := node_loc cells destIdx |>).(yjs.item.id').
       { rewrite /= HitemM /= HivLid Hiv2id Hid //. }
-      have Hconttr : content (ic_item (MkItemCell item_l itemM)) = toContent (ivL <| yjs.item.right' := node_loc cells destIdx |>).(yjs.item.content').
+      have Hconttr : content (ic_item (MkItemCell item_l itemM false)) = toContent (ivL <| yjs.item.right' := node_loc cells destIdx |>).(yjs.item.content').
       { rewrite /= HitemM /= HivLc Hiv2con Hcontent //. }
-      have Holtr : origin_id (origin (ic_item (MkItemCell item_l itemM))) = toYjsId <$> oleft.
+      have Holtr : origin_id (origin (ic_item (MkItemCell item_l itemM false))) = toYjsId <$> oleft.
       { rewrite /= HitemM /= Hlpo -Hin_l2 //. }
-      have Hortr : origin_id (rightOrigin (ic_item (MkItemCell item_l itemM))) = toYjsId <$> oright.
+      have Hortr : origin_id (rightOrigin (ic_item (MkItemCell item_l itemM false))) = toYjsId <$> oright.
       { rewrite /= HitemM /= Hrpo -Hin_r2 //. }
-      iApply (is_dll_insert_middle cs1m cs2m (MkItemCell item_l itemM)
+      iApply (is_dll_insert_middle cs1m cs2m (MkItemCell item_l itemM false)
                 (ivL <| yjs.item.right' := node_loc cells destIdx |>) oleft oright
                 hd' tlN (node_loc cells (destIdx - 1)) (node_loc cells destIdx)
                 Hitem_nn HleftEq HrightEq Hidtr Hconttr Holtr Hortr Hflv Hclv).
       simpl. rewrite HivLoL HivLoR. iFrame "Hleftdll Hitem Holeft2 Horight2 Hrightdll2". }
     iPureIntro. split.
-    - rewrite /= Hytl Hlen0. word.
+    - rewrite /= Hytl Hnv0. word.
     - rewrite Harr''. apply cells_repr_app.
       + apply (cells_repr_m_irrel arr). exact Hcs1m.
       + apply cells_repr_cons; [exact Hcellrepr | apply (cells_repr_m_irrel arr); exact Hcs2m]. }

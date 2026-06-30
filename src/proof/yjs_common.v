@@ -114,10 +114,19 @@ Definition toContent (c : yjs.content.t) : A := c.(yjs.content.content').
     neighbour relinking — relinking changes only the existential heap struct, not
     [ic_item], so the abstract [cells] is unchanged across the splice. Origins
     live in [ic_item] (they are order-defining model data), so order recovery
-    ([YjsLt'] / [YjsArrInvariant.yai_sorted]) is intact. *)
+    ([YjsLt'] / [YjsArrInvariant.yai_sorted]) is intact.
+
+    One non-link flag is promoted out of the existential heap struct: [ic_deleted]
+    mirrors the heap node's Deleted bit (y-octo ITEM_DELETED). [is_dll] pins the
+    existential struct's flags to [ic_deleted] (Countable, Deleted = [ic_deleted]),
+    so the visible-character count is a pure function of the abstract cells
+    ([num_visible], the source of truth for [yType.len]). [Text.Delete] tombstones
+    a cell by flipping [ic_deleted]; [ic_item] (hence the abstract document list)
+    is untouched, so deletion never reorders or removes a document item. *)
 Record item_cell := MkItemCell {
   ic_loc : loc;
   ic_item : YjsItem A;
+  ic_deleted : bool;
 }.
 
 (** The loc of the node at index [k] of [cells] ([null] outside [0, len)).
