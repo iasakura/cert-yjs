@@ -102,6 +102,23 @@ func (d *decoder) readItemID() id {
 
 // ----- encode ----------------------------------------------------------------
 
+// generateDeleteSet derives the document's delete set from the items' Deleted
+// flags, walking each root sequence's item list (y-octo:
+// DocStore::generate_delete_set). The verified Delete keeps only the flags and
+// the visible length up to date; the codec regenerates this serialization cache
+// on demand, so the store's DeleteSet need not be mirrored by Delete.
+func generateDeleteSet(doc *Doc) map[Client]orderRange {
+	ds := deletedSet{deletedSet: make(map[Client]orderRange)}
+	for _, y := range doc.store.types {
+		for cur := y.start; cur != nil; cur = cur.right {
+			if cur.Deleted() {
+				ds.addRange(cur.id, cur.Len())
+			}
+		}
+	}
+	return ds.deletedSet
+}
+
 // EncodeUpdate serializes the whole document state as a Yjs v1 update.
 func (doc *Doc) EncodeUpdate() []byte {
 	e := &encoder{}
@@ -135,12 +152,16 @@ func (doc *Doc) EncodeUpdate() []byte {
 		}
 	}
 
-	// delete set.
-	delClients := sortedClientsDesc(doc.store.deletedSet.deletedSet)
+	// delete set, derived from the items' Deleted flags (y-octo:
+	// DocStore::generate_delete_set). The flag is the source of truth for
+	// visibility, so the verified Delete only sets flags + visible length and the
+	// serialization cache is regenerated here at encode time.
+	deletedSet := generateDeleteSet(doc)
+	delClients := sortedClientsDesc(deletedSet)
 	e.writeVarUint(uint64(len(delClients)))
 	for _, client := range delClients {
 		e.writeVarUint(client)
-		encodeOrderRange(e, doc.store.deletedSet.deletedSet[client])
+		encodeOrderRange(e, deletedSet[client])
 	}
 
 	return e.buf

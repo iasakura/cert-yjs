@@ -3,9 +3,10 @@ package yjs
 // Text-type API (y-octo: doc/types/text.rs); the Doc handle lives in doc.go.
 //
 // These ops are goose-translated (part of the verified model): Insert is a loop
-// over the proven store.Integrate, so it preserves the document invariant
-// is_valid_ytext (see wp_Text__Insert in src/proof/yjs_text.v). Delete and
-// the byte-level v1 codec stay behind //go:build !goose (delete.go, codec.go).
+// over the proven store.Integrate and Delete tombstones a visible run, so both
+// preserve the document invariant is_ytext (see wp_Text__Insert / wp_Text__Delete
+// in src/proof/yjs_text.v). The byte-level v1 codec and the delete-set cache stay
+// behind //go:build !goose (codec.go, delete.go).
 //
 // Simplifications vs y-octo:
 //   - the store owns the root types by name (no nested types, no maps/arrays);
@@ -113,15 +114,54 @@ func (t *Text) Insert(index uint64, content string) {
 	s.mu.Unlock()
 }
 
+// Delete tombstones length visible characters starting at the visible index,
+// marking each item deleted and shrinking the visible length (y-octo:
+// ListType::remove_after via store::delete_item, here specialised to 1-char
+// items so no split is needed). Tombstoning keeps the items in the list and the
+// document order, so it preserves the integrate invariant -- only visibility
+// changes. The whole edit runs under the store lock.
+//
+// The Deleted flag is the source of truth for visibility; the store's DeleteSet
+// (a serialization cache, y-octo derives it from the flags in generate_delete_set)
+// is regenerated at encode time (codec.go: generateDeleteSet), so Delete only
+// flips flags and shrinks the visible length.
+func (t *Text) Delete(index uint64, length uint64) {
+	s := t.store
+	s.mu.Lock()
+	_, right := t.inner.findPos(index)
+	remaining := length
+	cur := right
+	for remaining > 0 && cur != nil {
+		if cur.Indexable() {
+			cur.flags = cur.flags | itemDeleted
+			t.inner.len = t.inner.len - cur.Len()
+			remaining = remaining - cur.Len()
+		}
+		cur = cur.right
+	}
+	s.mu.Unlock()
+}
+
 // findPos walks to the visible character index and returns the doubly-linked
 // neighbours (left, right) straddling that position (y-octo: ListType::find_pos
 // specialised to 1-char items, so the offset/normalize/split path is gone).
+//
+// The walk advances through tombstones as well as visible items, moving [left]
+// in lockstep with [right] (so [right == left.right] on return) and decrementing
+// the budget only on visible (Indexable) items. This mirrors y-octo's
+// TextPosition::forward (doc/types/text.rs): a deleted item still becomes the new
+// [left], so the returned neighbours are always adjacent in the list and supply a
+// consistent origin pair for the inserted item.
 func (y *yType) findPos(index uint64) (*item, *item) {
 	var left *item
 	right := y.start
 
-	// avoid the first item being a deleted one
+	// Skip leading tombstones so the cursor starts at the first visible item
+	// (y-octo: "avoid the first item being a deleted one"). [left] advances in
+	// lockstep with [right], so the returned neighbours stay adjacent in the
+	// list (right == left.right) and supply a consistent origin pair.
 	for right != nil && right.Deleted() {
+		left = right
 		right = right.right
 	}
 

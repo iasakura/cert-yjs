@@ -2,27 +2,14 @@
 
 package yjs
 
-// Delete and delete-set recording. Kept out of the goose-translated model for
-// now (Delete is not yet part of the proof surface; the v1 codec in codec.go is
-// likewise //go:build !goose). When Delete is verified, move it into text.go.
-
-// Delete tombstones length visible characters starting at index, recording the
-// deletion in the store's delete set (y-octo: ListType::remove_after via
-// store::delete_item).
-func (t *Text) Delete(index uint64, length uint64) {
-	_, right := t.inner.findPos(index)
-	remaining := length
-	cur := right
-	for remaining > 0 && cur != nil {
-		if cur.Indexable() {
-			cur.flags = cur.flags | itemDeleted
-			t.inner.len = t.inner.len - cur.Len()
-			t.store.deletedSet.addRange(cur.id, cur.Len())
-			remaining = remaining - cur.Len()
-		}
-		cur = cur.right
-	}
-}
+// Delete-set recording for the v1 codec. The Deleted flag on each item is the
+// source of truth for visibility (Text.Delete in text.go sets it and shrinks the
+// visible length); the codec regenerates the store's DeleteSet from those flags
+// at encode time via generateDeleteSet (codec.go), mirroring y-octo's
+// store::generate_delete_set. This file holds the per-client range merge addRange
+// that both the decoder and generateDeleteSet build on; it is excluded from the
+// goose-translated model (//go:build !goose), keeping the verified Delete down to
+// flag + visible-length updates.
 
 // addRange records [id.clock, id.clock+length) as deleted for id's client
 // (y-octo: DeleteSet::add_range, without the adjacency merging).
