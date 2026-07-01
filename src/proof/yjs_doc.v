@@ -2,12 +2,12 @@
     [Doc] representation predicate [is_Doc]; it is the home for the eventual
     [wp_NewDoc] / [wp_Doc__GetText] proofs (GetText consumes [is_Doc] and returns
     [is_Text t []], which is why this module sits after [yjs_text] in the
-    dependency order: core → common → id → item → store → text → doc). *)
+    dependency order: core → common → id → item → ytype → store → text → doc). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
-From New.proof Require Import yjs_common yjs_id yjs_item yjs_store yjs_text.
+From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype yjs_store yjs_text.
 From New.proof.sync_proof Require Import mutex.
 From iris.algebra Require Import auth gmap gset.
 

@@ -1,10 +1,11 @@
 package yjs
 
-// Text-type API (y-octo: doc/types/text.rs); the Doc handle lives in doc.go.
+// Text-type API (y-octo: doc/types/text.rs); the Doc handle lives in doc.go and
+// the inner lock-guarded sequence type [yType] in ytype.go.
 //
 // These ops are goose-translated (part of the verified model): Insert is a loop
 // over the proven store.Integrate and Delete tombstones a visible run, so both
-// preserve the document invariant is_ytext (see wp_Text__Insert / wp_Text__Delete
+// preserve the document invariant is_ytype (see wp_Text__Insert / wp_Text__Delete
 // in src/proof/yjs_text.v). The byte-level v1 codec and the delete-set cache stay
 // behind //go:build !goose (codec.go, delete.go).
 //
@@ -13,26 +14,8 @@ package yjs
 //   - the local client's next clock lives in the store (state-vector head); an
 //     edit takes the store lock, integrates, and registers the new item into the
 //     store's item set -- faithful to y-octo's Arc<RwLock<DocStore>>;
-//   - every user-visible character becomes its own 1-char internal item, so
-//     positions never fall inside an item and no splitting is needed;
 //   - content is assumed single-byte (ASCII): a clock unit is one byte, which
 //     keeps id arithmetic consistent with content.Len (byte length).
-
-// yType is the root sequence type the items are integrated into (y-octo: YType
-// in doc/types). The Phase-1 simplification fixes the content to a single string
-// type with no parent_sub, so we only need the head of the item linked list and
-// the visible length.
-type yType struct {
-	// start is the head of the doubly linked list of items (parent.start).
-	start *item
-	// len is the visible (countable, non-deleted) length.
-	len uint64
-}
-
-// newYType creates an empty root sequence.
-func newYType() *yType {
-	return &yType{start: nil, len: 0}
-}
 
 // Text is the public handle for a root text type (y-octo: Text is a YTypeRef
 // newtype). It carries the store (for the lock / client / clock) and the inner
@@ -140,52 +123,4 @@ func (t *Text) Delete(index uint64, length uint64) {
 		cur = cur.right
 	}
 	s.mu.Unlock()
-}
-
-// findPos walks to the visible character index and returns the doubly-linked
-// neighbours (left, right) straddling that position (y-octo: ListType::find_pos
-// specialised to 1-char items, so the offset/normalize/split path is gone).
-//
-// The walk advances through tombstones as well as visible items, moving [left]
-// in lockstep with [right] (so [right == left.right] on return) and decrementing
-// the budget only on visible (Indexable) items. This mirrors y-octo's
-// TextPosition::forward (doc/types/text.rs): a deleted item still becomes the new
-// [left], so the returned neighbours are always adjacent in the list and supply a
-// consistent origin pair for the inserted item.
-func (y *yType) findPos(index uint64) (*item, *item) {
-	var left *item
-	right := y.start
-
-	// Skip leading tombstones so the cursor starts at the first visible item
-	// (y-octo: "avoid the first item being a deleted one"). [left] advances in
-	// lockstep with [right], so the returned neighbours stay adjacent in the
-	// list (right == left.right) and supply a consistent origin pair.
-	for right != nil && right.Deleted() {
-		left = right
-		right = right.right
-	}
-
-	remaining := index
-	for remaining > 0 && right != nil {
-		if right.Indexable() {
-			remaining = remaining - right.Len()
-		}
-		left = right
-		right = right.right
-	}
-	return left, right
-}
-
-// Text reads the current visible string by walking the item list left to right
-// (skipping deleted items). Useful for stating/verifying convergence.
-func (parent *yType) Text() string {
-	result := ""
-	cur := parent.start
-	for cur != nil {
-		if !cur.Deleted() {
-			result = result + cur.content.content
-		}
-		cur = cur.right
-	}
-	return result
 }

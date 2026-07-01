@@ -12,7 +12,7 @@ From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
-From New.proof Require Import yjs_common yjs_id yjs_item.
+From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype.
 From New.proof.sync_proof Require Import mutex.        (* is_Mutex (store lock) *)
 From iris.algebra Require Import auth gmap gset.       (* grow-only item-set RA *)
 From stdpp Require Import sorting.                     (* merge_sort for client_run *)
@@ -159,7 +159,7 @@ Definition client_run (texts : gmap loc text_state) (client : w64) : list item_c
 
 (** [is_item_map mref texts]: the heap map at [mref] (Go [store.items]) owns the
     map header and, per client, the backing slice of [*item] *locations* (+ cap)
-    — but NOT the item cells (those live in the DLL, [is_ytext]). The slice for
+    — but NOT the item cells (those live in the DLL, [is_ytype]). The slice for
     [client] is exactly [client_run texts client]. Takes the [texts] map directly
     (not a pre-flattened list); sortedness is baked into [client_run]. *)
 Definition is_item_map (mref : loc) (texts : gmap loc text_state) : iProp Σ :=
@@ -199,7 +199,7 @@ Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
     "Hseq"    ∷ own γ (● ((λ ts, (list_to_set (ts_arr ts) : gset (YjsItem A))) <$> texts) : seqUR) ∗
     "Htexts"  ∷ ([∗ map] parent ↦ ts ∈ texts,
-                  is_ytext parent (ts_cells ts) (ts_arr ts) ∗
+                  is_ytype parent (ts_cells ts) (ts_arr ts) ∗
                   ⌜YjsArrInvariant (ts_arr ts)⌝) ∗
     "%Hctr"   ∷ ⌜∀ parent ts x, texts !! parent = Some ts → x ∈ ts_arr ts →
                    clientId (item_id x) = uint.nat client →
@@ -382,9 +382,9 @@ Qed.
 
 Lemma wp_findById (parent : loc) (cells : list item_cell) (arr : list (YjsItem A))
     (idv : yjs.id.t) :
-  {{{ is_pkg_init yjs ∗ is_ytext parent cells arr }}}
+  {{{ is_pkg_init yjs ∗ is_ytype parent cells arr }}}
     @! yjs.findById #parent #idv
-  {{{ RET #(findById_res cells idv); is_ytext parent cells arr }}}.
+  {{{ RET #(findById_res cells idv); is_ytype parent cells arr }}}.
 Proof.
   wp_start as "Ht". iNamed "Ht". wp_auto.
   iAssert (∃ (cur ml : loc) (scanned remaining : list item_cell),
@@ -462,9 +462,9 @@ Lemma wp_itemPtrEqual_node (parent : loc) (cells : list item_cell) (arr : list (
     (a b : Z) :
   YjsArrInvariant arr ->
   (0 <= a)%Z -> (a <= b)%Z -> (b <= Z.of_nat (length cells))%Z ->
-  {{{ is_pkg_init yjs ∗ is_ytext parent cells arr }}}
+  {{{ is_pkg_init yjs ∗ is_ytype parent cells arr }}}
     @! yjs.itemPtrEqual #(node_loc cells a) #(node_loc cells b)
-  {{{ RET #(bool_decide (a = b)); is_ytext parent cells arr }}}.
+  {{{ RET #(bool_decide (a = b)); is_ytype parent cells arr }}}.
 Proof.
   move=> Harr Ha0 Hab Hblen.
   iIntros (Φ) "[#Hpkg Ht] HΦ". iNamed "Ht".
@@ -575,7 +575,7 @@ Definition integrate_loop_inv
     (loopResult : option Z)
     (conflict_l left_l right_l idsBeforeOrigin_l conflictIds_l : loc)
     (offset : nat) (idsBeforeOrigin conflictIds : gset YjsId) (destIdx : Z) : iProp Σ :=
-  "Htext" ∷ is_ytext parent cells arr ∗
+  "Htext" ∷ is_ytype parent cells arr ∗
   "Hconflict" ∷ conflict_l ↦ node_loc cells (leftIdx + Z.of_nat offset) ∗
   "Hleft" ∷ left_l ↦ node_loc cells (destIdx - 1) ∗
   "Hright" ∷ right_l ↦ node_loc cells rightIdx ∗
@@ -616,7 +616,7 @@ Definition is_fresh_item_raw (item_l : loc) (input : IntegrateInput (A := A))
     item is unlinked ([left']/[right'] = null) and is a countable, single-char
     insert ([flags'] = ItemCountable, content length 1) — exactly what [NewItem]
     produces. This is the item-side half of the top-level Integrate spec; the
-    document-side half is [is_valid_ytext]. *)
+    document-side half is [is_valid_ytype]. *)
 Definition is_fresh_item (item_l : loc) (input : IntegrateInput (A := A)) : iProp Σ :=
   ∃ (iv : yjs.item.t) (oleft oright : option yjs.id.t),
     is_fresh_item_raw item_l input iv oleft oright ∗
@@ -645,12 +645,12 @@ Lemma wp_scanConflicts (parent item_l : loc)
   findLeftIdx (in_originId input) arr = Some leftIdx ->
   findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
   setfindIntegratedIndex leftIdx rightIdx input arr = Some destIdx ->
-  {{{ is_pkg_init yjs ∗ is_ytext parent cells arr ∗
+  {{{ is_pkg_init yjs ∗ is_ytype parent cells arr ∗
       is_fresh_item_raw item_l input iv oleft oright }}}
     @! yjs.scanConflicts #item_l #(node_loc cells leftIdx)
         #(node_loc cells (leftIdx + 1)) #(node_loc cells rightIdx)
   {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
-      is_ytext parent cells arr ∗ is_fresh_item_raw item_l input iv oleft oright }}}.
+      is_ytype parent cells arr ∗ is_fresh_item_raw item_l input iv oleft oright }}}.
 Proof using Type*.
   move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD.
   wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh".
@@ -727,7 +727,7 @@ Proof using Type*.
       last by (apply lookup_ge_None in Hci; lia).
     have Hci_loc : node_loc cells (leftIdx + offset) = ic_loc ci
       by rewrite /node_loc decide_True; [rewrite Hci | lia].
-    iAssert (⌜ic_loc ci ≠ null⌝ ∗ is_ytext parent cells arr)%I with "[Htext]" as "[%Hci_nn Htext]".
+    iAssert (⌜ic_loc ci ≠ null⌝ ∗ is_ytype parent cells arr)%I with "[Htext]" as "[%Hci_nn Htext]".
     { iNamed "Htext". iDestruct (is_dll_lookup_acc _ _ _ _ _ _ _ Hci with "Hdll") as (ivx olidx oridx) "Hacc".
       iDestruct "Hacc" as "(_ & _ & _ & _ & _ & _ & Hcival & _ & _ & Hback)".
       iDestruct (typed_pointsto_not_null with "Hcival") as %Hnn.
@@ -1002,11 +1002,11 @@ Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc : loc)
   setfindIntegratedIndex leftIdx rightIdx input arr = Some destIdx ->
   left_loc = node_loc cells leftIdx ->
   right_loc = node_loc cells rightIdx ->
-  {{{ is_pkg_init yjs ∗ is_ytext parent cells arr ∗
+  {{{ is_pkg_init yjs ∗ is_ytype parent cells arr ∗
       is_fresh_item_raw item_l input iv oleft oright }}}
     @! yjs.findIntegrationLeft #parent #item_l #left_loc #right_loc
   {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
-      is_ytext parent cells arr ∗ is_fresh_item_raw item_l input iv oleft oright }}}.
+      is_ytype parent cells arr ∗ is_fresh_item_raw item_l input iv oleft oright }}}.
 Proof using Type*.
   move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hll Hrl.
   wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh". wp_auto.
@@ -1077,7 +1077,7 @@ Proof using Type*.
       { rewrite Hcr_l. f_equal. rewrite Z2Nat.id; lia. }
       rewrite Hcr_l' Hrl.
       iEval (rewrite Hcl_loc) in "Hcval". iDestruct ("Hback" with "Hcval") as "Hdll".
-      iAssert (is_ytext parent cells arr) with "[Hparent Hdll]" as "Htext".
+      iAssert (is_ytype parent cells arr) with "[Hparent Hdll]" as "Htext".
       { iExists yt, tl. iFrame "Hparent Hdll". done. }
       wp_apply (wp_itemPtrEqual_node parent cells arr (leftIdx + 1) rightIdx Harr ltac:(lia) ltac:(lia) Hrlen with "[$Htext]").
       iIntros "Htext".
@@ -1101,7 +1101,7 @@ Proof using Type*.
         have Hcr_l2' : ivl2.(yjs.item.right') = node_loc cells (leftIdx + 1) by (rewrite Hcr_l2; f_equal; rewrite Z2Nat.id; lia).
         iEval (rewrite -Hcl_loc) in "Hcval". wp_auto. rewrite Hcr_l2'.
         iEval (rewrite Hcl_loc) in "Hcval". iDestruct ("Hback" with "Hcval") as "Hdll".
-        iAssert (is_ytext parent cells arr) with "[Hparent Hdll]" as "Htext".
+        iAssert (is_ytype parent cells arr) with "[Hparent Hdll]" as "Htext".
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split; [exact Hlen' | exact Hrepr']. }
         wp_apply (wp_scanConflicts parent item_l cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD with "[Htext Hitem Holeft Horight]").
@@ -1189,7 +1189,7 @@ Proof using Type*.
       { rewrite Hcr_l2. f_equal. rewrite Z2Nat.id; lia. }
       rewrite Hcr_l'.
       iEval (rewrite Hcl_loc) in "Hcval". iDestruct ("Hback" with "Hcval") as "Hdll".
-      iAssert (is_ytext parent cells arr) with "[Hparent Hdll]" as "Htext".
+      iAssert (is_ytype parent cells arr) with "[Hparent Hdll]" as "Htext".
       { iExists yt, tl. iFrame "Hparent Hdll". done. }
       wp_apply (wp_itemPtrEqual_node parent cells arr (leftIdx + 1) rightIdx Harr ltac:(lia) ltac:(lia) Hrlen with "[$Htext]").
       iIntros "Htext".
@@ -1213,7 +1213,7 @@ Proof using Type*.
         have Hcr_l2' : ivl2.(yjs.item.right') = node_loc cells (leftIdx + 1) by (rewrite Hcr_l2b; f_equal; rewrite Z2Nat.id; lia).
         iEval (rewrite -Hcl_loc) in "Hcval". wp_auto. rewrite Hcr_l2'.
         iEval (rewrite Hcl_loc) in "Hcval". iDestruct ("Hback" with "Hcval") as "Hdll".
-        iAssert (is_ytext parent cells arr) with "[Hparent Hdll]" as "Htext".
+        iAssert (is_ytype parent cells arr) with "[Hparent Hdll]" as "Htext".
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split; [exact Hlen' | exact Hrepr']. }
         wp_apply (wp_scanConflicts parent item_l cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD with "[Htext Hitem Holeft Horight]").
@@ -1237,11 +1237,11 @@ Lemma wp_Store__Integrate_aux (s parent item_l : loc) (arr arr' : list (YjsItem 
   iv.(yjs.item.flags') = W8 2 ->   (* freshly built item is Countable (NewItem sets ItemCountable) *)
   length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat ->   (* single-char content => Len() = 1 *)
   setintegrate input arr = Some arr' ->
-  {{{ is_pkg_init yjs ∗ is_valid_ytext parent arr ∗
+  {{{ is_pkg_init yjs ∗ is_valid_ytype parent arr ∗
       is_fresh_item_raw item_l input iv oleft oright }}}
     s @! (go.PointerType yjs.store) @! "Integrate" #parent #item_l
   {{{ (cells' : list item_cell) (idx : nat) (c : item_cell), RET #();
-      is_ytext parent cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ ∗
+      is_ytype parent cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ ∗
       ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
       ⌜item_id (ic_item c) = in_id input⌝ }}}.
 Proof using Type*.
@@ -1289,7 +1289,7 @@ Proof using Type*.
       "%Hiv1con" ∷ ⌜iv1.(yjs.item.content') = iv.(yjs.item.content')⌝ ∗
       "%Hiv1R" ∷ ⌜iv1.(yjs.item.right') = null⌝ ∗
       "%Hiv1flags" ∷ ⌜iv1.(yjs.item.flags') = iv.(yjs.item.flags')⌝ ∗
-      "Htext" ∷ is_ytext parent cells arr ∗
+      "Htext" ∷ is_ytype parent cells arr ∗
       "item" ∷ item_ptr ↦ item_l ∗ "parent" ∷ parent_ptr ↦ parent)%I
     with "[Hparent Hdll Hitem item parent]".
   { destruct oleft as [idv|].
@@ -1304,7 +1304,7 @@ Proof using Type*.
     { iDestruct "Holeft" as "%He". rewrite He in n. done. }
     iDestruct "Holeft" as "[%Hne #Holpt]".
     wp_auto.
-    iAssert (is_ytext parent cells arr) with "[Hparent Hdll]" as "Htext".
+    iAssert (is_ytype parent cells arr) with "[Hparent Hdll]" as "Htext".
     { iExists yt, tl. iFrame "Hparent Hdll". done. }
     wp_apply (wp_findById parent cells arr idv with "[$Htext]"). iIntros "Htext".
     wp_auto.
@@ -1323,7 +1323,7 @@ Proof using Type*.
       "%Hiv2id" ∷ ⌜iv2.(yjs.item.id') = iv.(yjs.item.id')⌝ ∗
       "%Hiv2con" ∷ ⌜iv2.(yjs.item.content') = iv.(yjs.item.content')⌝ ∗
       "%Hiv2flags" ∷ ⌜iv2.(yjs.item.flags') = iv.(yjs.item.flags')⌝ ∗
-      "Htext" ∷ is_ytext parent cells arr ∗
+      "Htext" ∷ is_ytype parent cells arr ∗
       "item" ∷ item_ptr ↦ item_l ∗ "parent" ∷ parent_ptr ↦ parent)%I
     with "[Hparent Hdll Hitem item parent]".
   { destruct oright as [idv|].
@@ -1343,7 +1343,7 @@ Proof using Type*.
     try wp_auto.
     replace (iv1.(yjs.item.originRightId')) with (iv.(yjs.item.originRightId')) by (symmetry; exact Hiv1oR).
     wp_auto.
-    iAssert (is_ytext parent cells arr) with "[Hparent Hdll]" as "Htext".
+    iAssert (is_ytype parent cells arr) with "[Hparent Hdll]" as "Htext".
     { iExists yt2, tl2. iFrame "Hparent Hdll". done. }
     wp_apply (wp_findById parent cells arr idv with "[$Htext]"). iIntros "Htext".
     wp_auto.
@@ -1354,7 +1354,7 @@ Proof using Type*.
   wp_auto.
   (* Conflict scan (the extracted algorithmic core), via the proved spec. *)
   rewrite Hiv2L Hiv2R.
-  iAssert (is_ytext parent cells arr) with "[Hparent Hdll]" as "Htext".
+  iAssert (is_ytype parent cells arr) with "[Hparent Hdll]" as "Htext".
   { iExists yt3, tl3. iFrame "Hparent Hdll". done. }
   iAssert (is_fresh_item_raw item_l input iv2 oleft oright) with "[Hitem]" as "Hfresh".
   { rewrite /is_fresh_item_raw. iFrame "Hitem". rewrite Hiv2oL Hiv2oR. iFrame "Holeft Horight".
@@ -1383,7 +1383,7 @@ Proof using Type*.
   have Hdle : (destIdx <= length cells)%nat by (rewrite Hcells_len; lia).
   (* Splice [item] in at index [destIdx]: relink left.right / right.left / item /
      parent.start (is_dll_app to split at destIdx, wp_store to relink, rejoin via
-     is_dll_insert_middle), bump parent.len, then conclude is_valid_ytext parent
+     is_dll_insert_middle), bump parent.len, then conclude is_valid_ytype parent
      (insertIdxIfInBounds destIdx itemM arr) via cells_repr_insert and
      YjsArrInvariant_setintegrate. *)
   iDestruct "Htext" as (yt' tl') "(Hparent & Hdll & %Hlen' & %Hrepr')".
@@ -1563,7 +1563,7 @@ Proof using Type*.
   wp_method_call. wp_call. wp_auto. wp_method_call. wp_call. wp_call. wp_auto.
   wp_method_call. wp_call. wp_auto. wp_method_call. wp_call. wp_call. wp_auto.
   wp_func_call. wp_auto. rewrite Hclv. wp_auto.
-  (* Conclude [is_valid_ytext parent (insertIdxIfInBounds destIdx itemM arr)]:
+  (* Conclude [is_valid_ytype parent (insertIdxIfInBounds destIdx itemM arr)]:
      spell out [itemM]'s resolved origins, the validity of the result, and
      reassemble the DLL with the new node spliced in. *)
   destruct (findptridx_insert.findLeftIdx_getElemExcept arr input leftIdx HfindL) as [lptr [HgetL HisL]].
@@ -1631,7 +1631,7 @@ Qed.
     spliced in at *some* in-bounds position [i] (the position is existential, so
     the conflict-resolution algorithm is not exposed — only the abstract effect
     "the item was inserted somewhere, and the document stays valid"). The
-    document invariant [is_valid_ytext] already carries [YjsArrInvariant], so it
+    document invariant [is_valid_ytype] already carries [YjsArrInvariant], so it
     pins [arr'] uniquely given the item set; the caller's item is encapsulated in
     [is_fresh_item]; the document/input side conditions are the only premises.
     Proven from [wp_Store__Integrate_aux]: integration succeeds ([integrate_some]),
@@ -1987,11 +1987,11 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
   toItem input arr = Some newItem ->
   IsItemValid newItem ->
   maximalId newItem arr ->
-  {{{ is_pkg_init yjs ∗ is_valid_ytext parent arr ∗ is_fresh_item item_l input }}}
+  {{{ is_pkg_init yjs ∗ is_valid_ytype parent arr ∗ is_fresh_item item_l input }}}
     s @! (go.PointerType yjs.store) @! "Integrate" #parent #item_l
   {{{ (arr' : list (YjsItem A)) (i : nat) (cells' : list item_cell) (c : item_cell), RET #();
       ⌜(i <= length arr)%nat⌝ ∗ ⌜arr' = insertIdxIfInBounds i newItem arr⌝ ∗
-      ⌜YjsArrInvariant arr'⌝ ∗ is_ytext parent cells' arr' ∗
+      ⌜YjsArrInvariant arr'⌝ ∗ is_ytype parent cells' arr' ∗
       ∃ idx, ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
              ⌜ic_item c = newItem⌝ }}}.
 Proof using Type*.
@@ -2086,17 +2086,17 @@ Inductive ValidReplay : list (IntegrateInput (A := A)) → list (YjsItem A) → 
 (** [Store.applyUpdate] integrates a decoded, causally-ordered batch of insert
     structs into [parent], one [Store.Integrate] per struct. Stated as a
     refinement of [ValidReplay] (the per-step model preconditions), at the
-    [is_valid_ytext] level (no store lock / [store_inv] -- exactly like
+    [is_valid_ytype] level (no store lock / [store_inv] -- exactly like
     [wp_Store__Integrate]). The result document is the replay's [arr'], still
     [YjsArrInvariant], and grows the item set ([arr ⊆ arr']). The locked
     [Text.ApplyUpdate] wrapper builds on this. *)
 Lemma wp_store__applyUpdate (s parent : loc) (sl : slice.t)
     (arr arr' : list (YjsItem A)) (inputs : list (IntegrateInput (A := A))) :
   ValidReplay inputs arr arr' →
-  {{{ is_pkg_init yjs ∗ is_valid_ytext parent arr ∗ is_update sl inputs }}}
+  {{{ is_pkg_init yjs ∗ is_valid_ytype parent arr ∗ is_update sl inputs }}}
     s @! (go.PointerType yjs.store) @! "applyUpdate" #parent #sl
   {{{ (cells' : list item_cell), RET #();
-      is_ytext parent cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ }}}.
+      is_ytype parent cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ }}}.
 Proof using Type*.
   move=> Hreplay. wp_start as "Hpre". iDestruct "Hpre" as "(Hvalid & Hupd)".
   iDestruct "Hvalid" as (cells0) "[Htext0 %Hinv0]".
@@ -2110,7 +2110,7 @@ Proof using Type*.
     "Hi" ∷ i_ptr ↦ W64 j ∗ "Hs" ∷ s_ptr ↦ s ∗ "Hstructs" ∷ structs_ptr ↦ sl ∗
     "Hparent" ∷ parent_ptr ↦ parent ∗ "Hsl" ∷ sl ↦* uivs ∗
     "Hcap" ∷ own_slice_cap yjs.updateItem.t sl (DfracOwn 1) ∗
-    "Htextj" ∷ is_ytext parent cells arrj ∗ "%Hinvj" ∷ ⌜YjsArrInvariant arrj⌝ ∗
+    "Htextj" ∷ is_ytype parent cells arrj ∗ "%Hinvj" ∷ ⌜YjsArrInvariant arrj⌝ ∗
     "%Hreplayj" ∷ ⌜ValidReplay (drop j inputs) arrj arr'⌝ ∗
     "%Hjle" ∷ ⌜(j <= length uivs)%nat⌝)%I
     with "[i s structs parent Hsl Hcap Htext0]" as "IH";
