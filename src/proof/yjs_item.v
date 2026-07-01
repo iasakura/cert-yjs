@@ -10,12 +10,11 @@
       sorted-DLL proof (iasakura/perennial-sandbox, dll/list.go, [is_dlist_node]).
     - [resolve_*] / [cell_repr] / [cells_repr]: the cellwise isomorphism between
       the heap node list and a model [list (YjsItem A)] (origins resolved by id).
-    - [is_ytext] / [is_valid_ytext]: a heap [yType] whose [start] heads such a
-      DLL, isomorphic to a model list that — for [is_valid_ytext] — satisfies
-      [YjsArrInvariant].
 
-    This is the data-structure invariant the [Store.Integrate] / [Text.Insert]
-    proofs ([yjs_store] / [yjs_text]) are stated against. *)
+    The [yType]-level invariant built on top of this DLL ([is_ytype] /
+    [is_valid_ytype], and the deletion layer's [num_visible]) lives in
+    [yjs_ytype]; the [Store.Integrate] / [Text.Insert] proofs ([yjs_store] /
+    [yjs_text]) are stated against it. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -612,24 +611,5 @@ Proof.
   rewrite -{3}(take_drop_middle cells k c Hk).
   rewrite List.filter_app /=. rewrite Hd /=. rewrite length_app /=. lia.
 Qed.
-
-(** [is_ytext parent cells arr]: [parent] is a heap [YText] whose [start] heads
-    the DLL [cells], which is isomorphic to the model [arr]. [len] counts the
-    visible (non-deleted) cells ([num_visible]); a deletion tombstones a cell (set
-    its [ic_deleted] bit) without removing it, so [cells] / [arr] keep every
-    item. *)
-Definition is_ytext (parent : loc) (cells : list item_cell) (arr : list (YjsItem A)) : iProp Σ :=
-  ∃ (yt : yjs.yType.t) (tl : loc),
-    "Hparent" ∷ parent ↦ yt ∗
-    "Hdll" ∷ is_dll yt.(yjs.yType.start') tl null null cells ∗
-    "%Hlen" ∷ ⌜yt.(yjs.yType.len') = W64 (num_visible cells)⌝ ∗
-    "%Hrepr" ∷ ⌜cells_repr arr cells arr⌝.
-
-(** The full data-structure invariant: a heap [YText] representing a *valid*
-    model [arr] — DLL structure + isomorphism to a [YjsArrInvariant] list. *)
-Definition is_valid_ytext (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
-  ∃ cells,
-    "Htext" ∷ is_ytext parent cells arr ∗
-    "%Hinv" ∷ ⌜YjsArrInvariant arr⌝.
 
 End item.
