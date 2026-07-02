@@ -108,7 +108,8 @@ Consequences that shape everything below:
   **unexercised**. Milestone N0 validates the pipeline end-to-end and writes
   the wrapper WPs (New-style, `own_slice` bytes, delegating to the `wp_*Op`
   lifting lemmas). Upstream candidate; mechanical (~150 lines by analogy with
-  other manualproof files).
+  other manualproof files). Tracked as issue #45 (also covers recovering the
+  removed urpc/memkv mailbox-invariant precedents from perennial history).
 - Deployment: `gokv/grove_ffi` is a real Go package (TCP underneath), so
   verified binaries run unmodified. cert-yjs proofs are FFI-parametric
   (`Context {hG: heapGS Σ, !ffi_semantics _ _}`), so existing results transfer
@@ -357,7 +358,7 @@ demo) and precede N1.
 
 | M | contents | acceptance | risk |
 |---|---|---|---|
-| **N0** | feasibility spike: a hello-world Go file importing `gokv/grove_ffi` through cert-yjs's goose pipeline; New WP wrappers (`wp_Send`/`wp_Receive`/`wp_Connect`/`wp_Listen`/`wp_Accept`); PR upstream (`new/manualproof/...`) | wrappers Qed; 20-line ping-pong verified end-to-end | new-goose trusted-package wiring unexercised upstream — may surface translator gaps; timebox and report |
+| **N0** (issue #45) | feasibility spike: a hello-world Go file importing `gokv/grove_ffi` through cert-yjs's goose pipeline; New WP wrappers (`wp_Send`/`wp_Receive`/`wp_Connect`/`wp_Listen`/`wp_Accept`); PR upstream (`new/manualproof/...`) | wrappers Qed; 20-line ping-pong verified end-to-end | new-goose trusted-package wiring unexercised upstream — may surface translator gaps; timebox and report |
 | **N1** | protocol core, decoded, in-process hub: `sync.go` + NL2 + NL3's in-process analog + per-connection stream ghosts against the heap mailbox; end-to-end theorem: server + 2 clients in one process, quiescent exchange ⇒ both client docs equal the server's (via #40) | theorem Qed, axiom-clean; `go test` convergence through the real handler code | NL3 is where surprises live; relay-obligation bookkeeping |
 | **N2** | Grove transport: framing + `is_inbox` + escrowed connection setup (§5.3) + NL3 proper; byte payloads via the #31 codec relation; stretch: closed-system statement via grove adequacy | end-to-end theorem restated over grove; stretch: adequacy-style closed theorem | #31 is a hard dependency for bytes; escrow bookkeeping fiddly but standard |
 | **N3** | recorded non-goals: liveness/retransmission & fairness; reconnection spec; multi-room; awareness protocol (ephemeral, never touches the doc) | — | — |
