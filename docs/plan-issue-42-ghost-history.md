@@ -433,6 +433,12 @@ Definition history_inv (γh : history_names) : iProp Σ :=
   ∃ (N : RawHistories) (ops : gmap YjsId (Op * gset YjsId)),
     "HhistAuth" ∷ ghost_map_auth γh.(hn_hist) 1 N ∗
     "HopsAuth"  ∷ ghost_map_auth γh.(hn_ops) 1 ops ∗
+    (* Certificate recovery (needed by the network layer's relay server,
+       docs/plan-network-sync-protocol.md §3): keep a copy of every persisted
+       fragment inside the invariant, so any party that can open [is_history]
+       and name a registered id can duplicate its certificate.  G2 mints the
+       [↪□] fragment anyway, so re-establishing this big-op is free. *)
+    "#Hcerts"   ∷ ([∗ map] id ↦ p ∈ ops, id ↪[γh.(hn_ops)]□ p) ∗
     "%Hwf"      ∷ ⌜history_wf N⌝ ∗
     "%Hopscoh"  ∷ ⌜ops_coh N ops⌝.
 
@@ -765,3 +771,9 @@ After M4, #40 gets:
 - one known gap to fill there: a persistent *delivered-set lower bound* per
   replica (e.g. a mono-set ghost beside `hn_hist`) so two replicas can be
   compared without holding both locks — deliberately left out of #42.
+
+The physical network layer (Grove send/recv, the Yjs sync protocol
+SyncStep1/SyncStep2/Update, the star-topology server) is specified separately
+in `docs/plan-network-sync-protocol.md`; it consumes this design unchanged
+(plus the `Hcerts` amendment in §5.2 and a `hwf_dense_clocks` field on
+`history_wf` established by G2).
