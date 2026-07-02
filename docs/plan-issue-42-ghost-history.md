@@ -510,6 +510,36 @@ to re-establish `history_wf`/`ops_coh`, and close. Usable inside any WP proof
 via `iApply fupd_wp` / around a step (no atomic step is *required* since the
 invariant is not held open across one).
 
+**Why no atomicity, given `Text.Insert` is a multi-step operation** (the
+natural objection): Iris demands atomicity only to keep an invariant open
+*across a physical step* — so that no other thread interleaves while you hold
+`▷P`. These lemmas never do that. Each opens `inv histN`, performs the ghost
+update, re-establishes the invariant, and closes — **all inside one
+mask-preserving fancy update `|={⊤}=>`, with zero program steps in between**.
+The concrete mechanics:
+
+1. The history update is a **resource update** (`ghost_map_update` /
+   `ghost_map_insert`, an `==∗`), not a program step: it moves
+   `auth ⋅ frag ⤳ auth' ⋅ frag'` at the logical level.
+2. A mask-preserving fupd can be eliminated **anywhere** in a WP goal
+   (`(|={⊤}=> WP e {{Φ}}) ⊢ WP e {{Φ}}`), so the `iMod (history_broadcast …)`
+   need not coincide with any instruction — it slots into the middle of
+   `Insert`'s multi-step body (specifically, under the store lock, after the
+   heap integrate, while reassembling `store_inv` for `Unlock`).
+3. Soundness (no lost updates) rests on the textbook *auth-in-invariant,
+   fragment-held-by-the-updater* pattern, doubled: the store `sync.Mutex`
+   serialises all of `Insert`/`applyUpdate` on one replica — and the exclusive
+   `own_client_history γh c h` lives *inside* `store_inv` (the lock invariant),
+   so the history is only ever touched while holding the lock — while each
+   replica mutates only its own key `c`, so replicas never contend on the same
+   cell. `histN` is disjoint from the lock's namespace, so opening it while
+   holding the lock's resources is mask-legal.
+
+Contrast — the one place atomicity *does* bite is the **physical
+`Send`/`Receive`** (`docs/plan-network-yjs-protocol.md` §2): the Grove op is a
+single atomic `ExternalOp`, and there the mailbox `c↦ ms` invariant *is* opened
+across that atomic step. The ghost history never needs this.
+
 ```rocq
 (* G1: allocation, client set fixed up front (§8.2). *)
 Lemma history_alloc (C : gset ClientId) E :
