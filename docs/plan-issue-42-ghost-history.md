@@ -210,6 +210,47 @@ over `cc_subseteq`: causal closure lives inside `history_wf` (the
 recovered by a pure lemma (§4.4 L6: happens-before between existing ops is
 unchanged by appends), which makes the persistent certificate sound.
 
+### 3.1 Which operations mutate the ghost state (the lifecycle)
+
+The single most important thing to hold in your head: **the global ghost
+history is mutated by exactly two operations, plus a one-time allocation.**
+Everything else — including the entire physical network — only *reads* it or
+*carries certificates minted by it*. If you are looking for "where does the
+history change", it is here and nowhere else:
+
+| # | Go operation | ghost step | effect on the ghost state |
+|---|---|---|---|
+| A | **`Text.Insert`** (a local edit) | G2 `history_broadcast` | appends `EvBroadcast op; EvDeliver op` to **this replica's own** history `N !! c` (author = `c`), and **mints** the persistent certificate `id ↪[hn_ops]□ (op, D)`. This is the *only* operation that adds a broadcast, i.e. the only place a new op is ever born. |
+| B | **`applyUpdate`** (processing a delivered remote batch) | G3 `history_deliver_batch` | appends `EvDeliver op` (one per batch op) to **this replica's** history `N !! c`. Consumes the ops' certificates; **mints nothing new**. This is the only operation that records a *foreign* op as delivered here. |
+| — | **`history_alloc`** (system init, once) | G1 | creates the invariant and hands each replica its empty `own_client_history γh c []`. |
+
+Concretely, "update the ghost state" = advance `own_client_history γh c h` to a
+longer `h` (and, for A, grow the `ops` registry) — a `ghost_map_update` /
+`ghost_map_insert` done under the store lock while `history_inv` is briefly
+opened. In the proof these appear as the `iMod (history_broadcast …)` /
+`iMod (history_deliver_batch …)` steps inside `wp_Text__Insert` (§6.3) and
+`wp_store__applyUpdate_certs` (§6.5).
+
+**What does NOT touch the ghost state** (the common confusion):
+
+- **`Text.Delete`** — insert-only history, so tombstoning mints nothing and
+  appends nothing (§8.1). The document changes; the op history does not.
+- **The entire network transport** — `grovenet.Send` / `Receive`, and the whole
+  Yjs sync protocol at the byte level. Sending an op is just moving *already
+  certified* bytes across the wire (certificates are persistent and freely
+  copied); it neither creates nor delivers a logical op. The history for op `x`
+  was already advanced when `x` was *minted* (case A, at its author) and is
+  advanced again only when a replica *applies* it (case B). See
+  `docs/plan-network-p2p-layer.md` §3 (T1/T2 = these same two operations) and
+  the note there that transport is ghost-invisible.
+- **`SyncStep1` / `diffSince` / `stateVector`** — these *read* the history (to
+  compute a state vector or a diff, recovering certificates via the `Hcerts`
+  amendment) but never mutate it.
+
+So the mental model is: **mint on local Insert, extend-on-deliver when you apply
+a batch; sending and receiving bytes in between are invisible to the ghost
+state.** A local edit and a remote apply are the only two writers.
+
 ---
 
 ## 4. The pure bridge: `src/proof/yjs_network_model.v` (new)

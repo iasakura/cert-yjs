@@ -86,6 +86,15 @@ specified in the #42 plan:
   `delivered_ids h ∪ (earlier ops in the batch)`. G3 advances the ghost
   history; the existing `applyUpdate` proof does the heap.
 
+T1 and T2 are the **only two writers of the ghost history** (plus one-time
+allocation) — see the lifecycle table in #42 §3.1. Everything the transport
+does between them (`Send`/`Receive`, framing, the sync handshake) is
+**invisible to the ghost state**: it moves already-minted certificates and
+already-integrated bytes around, never creating or delivering a logical op.
+That is why this layer can be specified without a wire: a transport is correct
+iff, whenever it calls T2, it can meet `batch_ok` (§5) — nothing it does to the
+bytes in transit can affect soundness.
+
 **Composition claim (the layer's payoff, stated once #42/#40 land):** any
 program whose interactions with `γh` are exclusively T1 and T2 maintains
 `is_history γh` and every replica's `store_inv`; hence for any two replicas
