@@ -71,11 +71,16 @@ The `-o` output name must match the source basename or Rocq errors with
 | path | contents | edit? |
 |---|---|---|
 | `yjs/*.go` | hand-written Go (port of y-octo) | yes |
+| `grovenet/*.go` | hand-written Go: the Grove network FFI realization (TCP; adapted from gokv/grove_ffi) | yes |
+| `pingpong/*.go` | hand-written Go: the network-FFI feasibility demo (issue #45 / N0) | yes |
 | `src/proof/*.v` | hand-written proofs | yes |
+| `src/trusted_code/.../*.v` | hand-written trusted FFI models (grovenet ⇒ grove FFI semantics) | yes |
+| `src/manualproof/.../*.v` | hand-written WP layer for trusted packages (grove Send/Receive wrappers) | yes |
+| `src/code/.../*.v.toml` | hand-written goose declfilter configs (per-package translate/trusted/imports) | yes |
 | `src/code/.../*.v` | goose output (GooseLang model) | **no — generated, gitignored** |
 | `src/generatedproof/.../*.v` | proofgen output (struct points-to lemmas) | **no — generated, gitignored** |
 
-Only `yjs/` and `src/proof/` are committed. Never hand-edit `src/code` or
+Only the hand-written rows are committed. Never hand-edit `src/code/**/*.v` or
 `src/generatedproof`; change the Go and re-run goose instead.
 
 ## Proof architecture
@@ -176,7 +181,11 @@ RecordSet field-update reduction).
   as a go.mod tool, so make's automatic goose does not run). `build.sh` defaults
   to `/home/ia/ghq/github.com/mit-pdos/perennial`; override with
   `env PERENNIAL=/path/to/perennial ./build.sh`. It must be at the commit pinned
-  in `cert-yjs.opam`.
+  in `cert-yjs.opam` — **plus, for the network packages (`grovenet`/`pingpong`),
+  a goose patch** mapping `github.com/iasakura/cert-yjs/grovenet` to the grove
+  FFI (one `ffiMapping` entry in `goose/util/util.go`; branch `grove-new-wp`,
+  pushed to the fork `iasakura/perennial`, not proposed upstream to
+  `mit-pdos/perennial` — see issue #45 for the upstreaming discussion).
 - An **opam switch with Perennial installed** (`New`/`Perennial` in user-contrib).
   All dependency versions are pinned by git SHA in `cert-yjs.opam`'s `pin-depends`
   (including `rocq-yjs` from iris-yjs). Either `opam switch link <existing>` or
