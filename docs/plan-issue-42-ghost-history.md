@@ -434,7 +434,7 @@ Definition history_inv (γh : history_names) : iProp Σ :=
     "HhistAuth" ∷ ghost_map_auth γh.(hn_hist) 1 N ∗
     "HopsAuth"  ∷ ghost_map_auth γh.(hn_ops) 1 ops ∗
     (* Certificate recovery (needed by the network layer's relay server,
-       docs/plan-network-sync-protocol.md §3): keep a copy of every persisted
+       docs/plan-network-p2p-layer.md §3): keep a copy of every persisted
        fragment inside the invariant, so any party that can open [is_history]
        and name a registered id can duplicate its certificate.  G2 mints the
        [↪□] fragment anyway, so re-establishing this big-op is free. *)
@@ -772,8 +772,11 @@ After M4, #40 gets:
   replica (e.g. a mono-set ghost beside `hn_hist`) so two replicas can be
   compared without holding both locks — deliberately left out of #42.
 
-The physical network layer (Grove send/recv, the Yjs sync protocol
-SyncStep1/SyncStep2/Update, the star-topology server) is specified separately
-in `docs/plan-network-sync-protocol.md`; it consumes this design unchanged
+The network story is specified separately, split along the model/protocol
+seam: `docs/plan-network-p2p-layer.md` (the transport-agnostic causal-delivery
+layer faithful to the P2P model — the T1/T2 interface, the sv guard toolkit,
+milestones P1–P2) and `docs/plan-network-yjs-protocol.md` (the Yjs sync
+protocol SyncStep1/SyncStep2/Update as one implementation: star topology +
+FIFO streams over Grove, milestones N0–N3). Both consume this design unchanged
 (plus the `Hcerts` amendment in §5.2 and a `hwf_dense_clocks` field on
 `history_wf` established by G2).
