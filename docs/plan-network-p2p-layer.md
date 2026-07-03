@@ -86,6 +86,22 @@ specified in the #42 plan:
   `delivered_ids h ∪ (earlier ops in the batch)`. G3 advances the ghost
   history; the existing `applyUpdate` proof does the heap.
 
+> **Definition — *floor* (used throughout both network documents).** The
+> *floor* of a batch is the baseline set of op-ids that the batch's certified
+> causal pasts are measured against: the ops the batch *assumes are already
+> delivered* at the receiver. Formally it is the `F : gset YjsId` of `batch_coh`
+> (yjs-protocol doc §5.2); a batch is *self-contained relative to floor `F`*
+> when every op's certified causal past `D` satisfies
+> `D ⊆ F ∪ {earlier ops in the same batch}`. **Floor coverage** at delivery is
+> then `F ⊆ delivered_ids h` — the receiver has actually delivered everything
+> the batch stands on — which is exactly the half of `batch_ok` that no local
+> computation can supply (§5). Intuition: the floor is the causal "ground
+> level" a batch is built on; the term for it elsewhere is *causal context* /
+> *dependency set*. A vector-clock protocol ships the floor **on the wire** (so
+> the receiver checks coverage directly); the Yjs protocol does **not** carry a
+> floor, which is the entire reason the star topology has to pin it structurally
+> instead (yjs-protocol doc §4).
+
 T1 and T2 are the **only two writers of the ghost history** (plus one-time
 allocation) — see the lifecycle table in #42 §3.1. Everything the transport
 does between them (`Send`/`Receive`, framing, the sync handshake) is

@@ -38,9 +38,11 @@ milestone here builds on it.)
   In Perennial **New** the GooseLang code model of `gokv/grove_ffi` exists but
   the WP wrapper layer is a stub with no upstream consumer — building it is
   milestone **N0** (upstream candidate).
-- **The star + FIFO argument**: Yjs `Update`s carry no causal floor, so a
-  receiver cannot *decide* coverage over an arbitrary topology (p2p-layer doc
-  §5). A **hub with FIFO links** yields coverage by construction: the server
+- **The star + FIFO argument**: Yjs `Update`s carry no causal *floor* (the
+  set of ops a batch assumes already delivered — its dependency baseline;
+  defined in the p2p-layer doc §3), so a receiver cannot *decide* coverage over
+  an arbitrary topology (p2p-layer doc §5). A **hub with FIFO links** yields
+  coverage by construction: the server
   relays every batch it applies, in apply order, to every other connection
   (lemma NL3). FIFO over Grove's unordered mailboxes is restored by a small
   sequence-numbering layer whose ghost is one `mono_list` per direction per
