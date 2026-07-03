@@ -516,7 +516,16 @@ natural objection): Iris demands atomicity only to keep an invariant open
 `▷P`. These lemmas never do that. Each opens `inv histN`, performs the ghost
 update, re-establishes the invariant, and closes — **all inside one
 mask-preserving fancy update `|={⊤}=>`, with zero program steps in between**.
-The concrete mechanics:
+
+To be clear, this is *not* avoiding the network-global invariant: `inv histN`
+holds `⌜history_wf N⌝` over the **whole** map `N` — that predicate *is* the
+network-model invariant — and every ghost update **opens it and must re-prove
+`history_wf N'` to close it**. Re-establishing `history_wf` on each append is
+exactly the synchronization with the model (the refinement obligation), and it
+is where L6/L7 (§4.4) are discharged. "No atomicity" refers only to not
+spanning a *program step*; the invariant is opened on every single update. The
+per-key point in (3) below concerns lost-update freedom (which entry changes),
+not skipping the invariant. The concrete mechanics:
 
 1. The history update is a **resource update** (`ghost_map_update` /
    `ghost_map_insert`, an `==∗`), not a program step: it moves
