@@ -193,10 +193,27 @@ model weakening.
 |---|---|---|---|
 | **P1** | the toolkit: `hwf_dense_clocks` field (G2 carries it), `Hcerts` amendment, `state_vector`/`sv_ids`/`filterBySV` (Rocq + Go), NL1, NL4 | lemmas Qed; `stateVector()` verified | #42 M1–M3; #29 re-land for `is_item_map` |
 | **P2** | model-faithful P2P demo: two replicas in one process, direct exchange of own-op batches over an in-process FIFO mailbox (a mutex-guarded queue; no server, no sync protocol), NL5; end-to-end theorem: after a quiescent exchange the two docs are equal | theorem Qed, axiom-clean; `go test` exercising the real exchange code | P1, #40 (convergence consumption), #42 M4 |
+| **P3** *(optional, off the critical path)* | a fully model-faithful **generic** P2P transport over Grove: mesh topology, N replicas, every message carrying an **explicit causal floor** (an sv, on a custom wire format — deliberately *not* the Yjs protocol, which cannot express floors); the receiver checks `sv_ids F ⊆ delivered` and buffers/stalls until covered | multi-replica convergence theorem with no hub and no protocol-specific argument — the direct implementation of the model's causal-broadcast discipline | P1, P2; **nothing later consumes it** (the Yjs server does not build on it) |
 
 P2 is the smallest closed system that exercises T1, T2, certificates, and the
 guard toolkit end-to-end — before any protocol or FFI complexity. The Yjs
-protocol document's milestones (N0–N3) build on P1/P2.
+protocol document's milestones (N0–N3) build on P1/P2 — **not** on P3.
+
+**On P3 — "build a model-faithful network implementation first", made
+precise.** The natural instinct is to implement a network faithful to the
+causal-broadcast model before committing to the Yjs protocol. P3 is that
+project: an RCB-shaped layer (cf. Aneris's RcbLib, ~5.6k LOC of Coq there;
+ours would be smaller — safety only, floors instead of full vector-clock
+machinery, no retransmission). Two reasons it is optional rather than the
+first step: (a) its wire format must carry floors, which the Yjs protocol
+cannot, so **none of it is reusable for the actual deployment target** (the
+Yjs server) — it would be built and then set aside; (b) the de-risking value
+of "faithful implementation first" is captured by P2 at a fraction of the
+cost, because for two replicas pairwise FIFO already *is* causal delivery
+(NL5) — P2 is a genuine model-faithful exchange with real code, just minimal.
+What P3 uniquely adds is validation of the §5 mesh row and of the interface's
+generality; do it if and when that matters (e.g. for a paper's "the layer is
+transport-generic" claim), not as a prerequisite.
 
 ## 7. Research follow-up: the weakened-model route (not now)
 

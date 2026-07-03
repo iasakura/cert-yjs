@@ -10,6 +10,25 @@ NL1/NL4); everything Yjs-protocol-specific below exists to that end.
 No network code exists yet; this fixes the target. Perennial citations are
 into `mit-pdos/perennial` (local checkout).
 
+**Sequencing — why this document exists before any of its work can start.**
+Everything here is the *last* stage of the network story; the working order is
+
+```
+#42 (ghost history) → #40 (convergence) → p2p-layer P1–P2
+    (guard toolkit + the model-faithful two-replica exchange) → N1 → N2
+```
+
+with only **N0** (the Grove feasibility spike, issue #45) runnable early — and
+already executed. The design was written first because its wire-level
+constraints fed *backwards* into #42: the discovery that Yjs `Update`s carry
+no causal floor forced the star + FIFO decision and the `Hcerts` /
+`hwf_dense_clocks` amendments, which had to be in #42's plan before #42 is
+implemented. Read this document as the recorded target and the source of those
+requirements, not as current work. (If a *generic* model-faithful P2P
+implementation — floors on the wire, no hub — is ever wanted as an
+intermediate stage, that is the p2p-layer document's optional milestone P3; no
+milestone here builds on it.)
+
 ## 0. TL;DR
 
 - **Grove**: one global `gmap endpoint (gset message)`; `Send` atomically adds
