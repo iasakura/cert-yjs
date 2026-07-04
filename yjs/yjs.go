@@ -13,7 +13,8 @@
 //	item.go      item + flag bits           (y-octo: codec/item.rs, item_flag.rs)
 //	range.go     orderRange / deletedSet    (y-octo: common/range.rs, codec/delete_set.rs)
 //	store.go     store + Integrate          (y-octo: doc/store.rs DocStore)
-//	text.go      yType + Text API           (y-octo: doc/types/text.rs)
+//	ytype.go     yType (lock-guarded inner) (y-octo: doc/types YType)
+//	text.go      Text API (unlocked handle) (y-octo: doc/types/text.rs)
 //	doc.go       Doc handle + GetText       (y-octo: doc/document.rs)
 //	refs.go      node / GC / Skip tombstones (y-octo: codec/refs.rs)     [not translated]
 //	delete.go    Delete                     (y-octo: doc/types/text.rs)  [not translated]

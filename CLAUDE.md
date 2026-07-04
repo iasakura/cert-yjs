@@ -85,7 +85,7 @@ Phase 2 `integrate`). The proof is split into files that mirror the Go package
 layout; each `Require`s its predecessors and reopens the same `Section`
 boilerplate (`Context`, `Set Default Proof Using "Type*"`,
 `Notation A := go_string`). The dependency order is
-`core → common → id → item → store → text`:
+`core → common → id → item → ytype → store → text`:
 
 - **`src/proof/yjs_core.v`** — re-exports the installed `rocq-yjs` / `iris-yjs`
   library (the pure `integrate` / `setintegrate` model and its order theory).
@@ -99,28 +99,48 @@ boilerplate (`Context`, `Set Default Proof Using "Type*"`,
   their round-trip, the `toYjsId` injectivity / `bool_decide` bridge, and the
   equality specs `Id.Equal` / `idOptEqual`.
 - **`src/proof/yjs_item.v`** — the `item` type: per-node method specs
-  (`Indexable` / `Len` / `Deleted`, `itemPtrEqual`, `gcNode` projections), the
-  doubly-linked spine `is_dll` and its structural lemmas (split / join /
-  accessor / insert), the cellwise isomorphism `resolve_*` / `cell_repr` /
-  `cells_repr`, and the `yText` container `is_ytext` / `is_valid_ytext` relating
-  a heap sequence to a `YjsArrInvariant` model list. (`is_ytext` lives here, not
-  in `yjs_text`, because `yjs_store` depends on it.)
+  (`Indexable` / `Len` / `Deleted`, `itemPtrEqual`), the doubly-linked spine
+  `is_dll` and its structural lemmas (split / join / accessor / insert /
+  `is_dll_update_gen` — the in-place node update used by `Delete`), the cellwise
+  isomorphism `cell_repr` / `cells_repr` (`arr = ic_item <$> cells`, plus
+  `cells_repr_update`), and the deletion layer (`is_deleted_flag` /
+  `is_countable_flag` / `num_visible`; `set_deleted` / `flip_cell` /
+  `cell_repr_flip` / `num_visible_*` and the flag readers `flags_if_deleted` /
+  `flags_if_countable`).
+- **`src/proof/yjs_ytype.v`** — the `yType` container (y-octo's lock-guarded inner
+  sequence type; the `Text` handle is its unlocked wrapper): the heap predicate
+  `is_ytype` / `is_valid_ytype` relating a heap `yType`'s DLL to a
+  `YjsArrInvariant` model list (`len = num_visible cells`), and the tombstone-aware
+  visible-index navigation `wp_yType__findPos` (returns an existential list
+  position `p`). (This sits below `yjs_store` because `yjs_store` states
+  `Store.Integrate` against `is_ytype`.)
 - **`src/proof/yjs_store.v`** — the `store` WP proofs: `findById`, `containsId`,
   the conflict scan (`scanConflicts` / `findIntegrationLeft`) refining
   `setfii_loop` (with its top-level `gset` rewrite lemmas), the item-validity /
-  insertion helper lemmas, and top-level `wp_Store__Integrate`.
-- **`src/proof/yjs_text.v`** — the `Text` / `yText` WP proofs: `findPos`,
-  `insert_item_valid` / `insert_maximalId`, and top-level `wp_Text__Insert`
-  (with `own_insert_doc`).
+  insertion helper lemmas, the lock layer (`text_state` / `store_inv` /
+  `is_Store` / `is_text_lb`), and top-level `wp_Store__Integrate`.
+- **`src/proof/yjs_text.v`** — the `Text`-handle WP proofs: `insert_item_valid` /
+  `insert_maximalId`, the lock-based handle `is_Text t L`, and the top-level
+  `wp_Text__Insert` and `wp_Text__Delete`.
 
 **Verified so far**: `Store.Integrate` preserves the document invariant
-(`wp_Store__Integrate`); `Text.Insert(index, content)` preserves it for any valid
-document and any visible index (`wp_Text__Insert`, axiom-clean — `Print
-Assumptions` shows only the goose/Perennial framework axioms). `Delete` and the
-v1 byte codec stay behind `//go:build !goose` and are not yet in the verified
-model. `cell_repr` currently pins two model simplifications (every cell Countable
-/ non-Deleted with `Len() = 1`); see its `TODO` for what must relax to add
-deletions / multi-clock items.
+(`wp_Store__Integrate`); `Text.Insert(index, content)` grows the persistent handle
+`is_Text t L` and exposes the inserted run (`wp_Text__Insert`); and
+`Text.Delete(index, length)` preserves `is_Text t L` UNCHANGED (`wp_Text__Delete`):
+tombstoning a run keeps every item in the list and never reorders the document, so
+the model item list `ts_arr` — hence `YjsArrInvariant` and the known-content lower
+bound `L` — is untouched; only the cells' `ic_deleted` bits and `yType.len` (the
+visible count) change. All three are axiom-clean (`Print Assumptions` shows only
+the goose/Perennial framework axioms). The document invariant tracks just the item
+list: `is_ytype parent cells arr` ties the heap DLL to a `YjsArrInvariant` `arr`
+with `cells_repr arr cells arr` = `arr = ic_item <$> cells`; the Deleted bit is
+promoted onto the abstract cell as `ic_deleted` (the source of truth for
+visibility), with `is_dll` pinning each node's heap flags to it and
+`yType.len = num_visible cells`. The v1 byte codec stays behind `//go:build
+!goose`; its DeleteSet is regenerated from the item flags at encode time
+(`generateDeleteSet`, y-octo's `generate_delete_set`), so the verified `Delete`
+only flips flags and shrinks the visible length. `cell_repr` pins `Len() = 1`; see
+its `TODO` for relaxing that to add multi-clock items.
 
 **Core principle: reuse the rocq-yjs model — do not invent independent proofs.**
 State cert-yjs WP specs as *refinements* of the pure model and compose with

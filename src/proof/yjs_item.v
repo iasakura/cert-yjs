@@ -10,12 +10,11 @@
       sorted-DLL proof (iasakura/perennial-sandbox, dll/list.go, [is_dlist_node]).
     - [resolve_*] / [cell_repr] / [cells_repr]: the cellwise isomorphism between
       the heap node list and a model [list (YjsItem A)] (origins resolved by id).
-    - [is_ytext] / [is_valid_ytext]: a heap [yType] whose [start] heads such a
-      DLL, isomorphic to a model list that — for [is_valid_ytext] — satisfies
-      [YjsArrInvariant].
 
-    This is the data-structure invariant the [Store.Integrate] / [Text.Insert]
-    proofs ([yjs_store] / [yjs_text]) are stated against. *)
+    The [yType]-level invariant built on top of this DLL ([is_ytype] /
+    [is_valid_ytype], and the deletion layer's [num_visible]) lives in
+    [yjs_ytype]; the [Store.Integrate] / [Text.Insert] proofs ([yjs_store] /
+    [yjs_text]) are stated against it. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -71,31 +70,58 @@ Qed.
 
 (* ----- per-node accessors read by yType.findPos -------------------------- *)
 
+(** The Deleted bit (y-octo ITEM_DELETED = 0x04) of a heap item's [flags], read
+    exactly as [item.Deleted] computes it ([flags & 0x04 ≠ 0]). This boolean is
+    the heap source of truth for visibility (a tombstoned node has it set). *)
+Definition is_deleted_flag (v : yjs.item.t) : bool :=
+  negb (bool_decide (w8_word_instance.(word.and) v.(yjs.item.flags') (W8 4) = W8 0)).
+
+(** The Countable bit (ITEM_COUNTABLE = 0x02), read as [item.Countable] does.
+    Every string item NewItem builds is countable, so this is [true] of every
+    integrated node; it is what [item.Indexable] gates visibility on. *)
+Definition is_countable_flag (v : yjs.item.t) : bool :=
+  negb (bool_decide (w8_word_instance.(word.and) v.(yjs.item.flags') (W8 2) = W8 0)).
+
+(** Number of visible (non-deleted) cells: the value carried in the heap
+    [yType.len] field. Every cell is Countable, so visible ⇔ not Deleted; the
+    flag is promoted onto the abstract cell as [ic_deleted]. *)
+Definition num_visible (cells : list item_cell) : nat :=
+  length (List.filter (λ c, negb (ic_deleted c)) cells).
+
+(** Read the promoted Deleted / Countable bits back off the [is_dll] flag pin
+    ([flags'] = [if d then W8 6 else W8 2]): the struct is always Countable, and
+    its Deleted bit is exactly [d]. Used by [findPos] / [Delete] after opening a
+    node, to learn its visibility from the cell's [ic_deleted]. *)
+Lemma flags_if_deleted (v : yjs.item.t) (d : bool) :
+  v.(yjs.item.flags') = (if d then W8 6 else W8 2) -> is_deleted_flag v = d.
+Proof. rewrite /is_deleted_flag => ->. by destruct d. Qed.
+
+Lemma flags_if_countable (v : yjs.item.t) (d : bool) :
+  v.(yjs.item.flags') = (if d then W8 6 else W8 2) -> is_countable_flag v = true.
+Proof. rewrite /is_countable_flag => ->. by destruct d. Qed.
+
 (** Per-node method specs [findPos] reads off each cursor node. Every cell is
-    [flags' = W8 2] (Countable, not Deleted) with single-byte content, so
-    [Indexable] is [true] and [Len] is the content byte length (1 for our
-    cells). Proving these once keeps the [findPos] loop free of nested
-    method-call stepping. *)
+    Countable ([is_countable_flag]) with single-byte content, so [Indexable] is
+    "not Deleted" and [Len] is the content byte length (1 for our cells). Proving
+    these once keeps the [findPos] loop free of nested method-call stepping. *)
 Lemma wp_item__Indexable (l : loc) (v : yjs.item.t) :
-  v.(yjs.item.flags') = W8 2 ->
+  is_countable_flag v = true ->
   {{{ is_pkg_init yjs ∗ l ↦ v }}}
     l @! (go.PointerType yjs.item) @! "Indexable" #()
-  {{{ RET #true; l ↦ v }}}.
+  {{{ RET #(negb (is_deleted_flag v)); l ↦ v }}}.
 Proof.
-  intros Hflags.
+  intros Hcount.
+  rewrite /is_countable_flag in Hcount. apply negb_true_iff in Hcount.
   wp_start as "Hl".
   wp_auto.
   wp_method_call. wp_call. rewrite /yjs.item__Indexableⁱᵐᵖˡ. wp_auto.
   wp_method_call. wp_call. wp_auto.
   wp_method_call. wp_call. rewrite /yjs.item__Countableⁱᵐᵖˡ. wp_auto.
-  wp_alloc i2 as "Hi2". wp_auto. rewrite Hflags.
-  have Hand2 : w8_word_instance.(word.and) (W8 2) (W8 2) = W8 2 by reflexivity.
-  rewrite Hand2. rewrite bool_decide_eq_false_2; [| done]. simpl negb. wp_auto.
-  have Hand : w8_word_instance.(word.and) (W8 2) (W8 4) = W8 0 by reflexivity.
-  wp_method_call. wp_call. wp_auto.
+  wp_alloc i2 as "Hi2". wp_auto.
+  rewrite Hcount. simpl negb. wp_auto.
   wp_method_call. wp_call. rewrite /yjs.item__Deletedⁱᵐᵖˡ. wp_auto.
-  rewrite Hflags Hand (bool_decide_eq_true_2 (W8 0 = W8 0) eq_refl) /=.
-  iApply "HΦ". iFrame "Hl".
+  wp_method_call. wp_call. rewrite /yjs.item__Deletedⁱᵐᵖˡ. wp_auto.
+  rewrite -/(is_deleted_flag v). iApply "HΦ". iFrame "Hl".
 Qed.
 
 Lemma wp_item__Len (l : loc) (v : yjs.item.t) :
@@ -112,15 +138,12 @@ Proof.
 Qed.
 
 Lemma wp_item__Deleted (l : loc) (v : yjs.item.t) :
-  v.(yjs.item.flags') = W8 2 ->
   {{{ is_pkg_init yjs ∗ l ↦ v }}}
     l @! (go.PointerType yjs.item) @! "Deleted" #()
-  {{{ RET #false; l ↦ v }}}.
+  {{{ RET #(is_deleted_flag v); l ↦ v }}}.
 Proof.
-  intros Hflags. wp_start as "Hl". wp_auto.
-  wp_method_call. wp_call. rewrite /yjs.item__Deletedⁱᵐᵖˡ. wp_auto. rewrite Hflags.
-  have Hand : w8_word_instance.(word.and) (W8 2) (W8 4) = W8 0 by reflexivity.
-  rewrite Hand (bool_decide_eq_true_2 (W8 0 = W8 0) eq_refl) /=.
+  wp_start as "Hl". wp_auto.
+  wp_method_call. wp_call. rewrite /yjs.item__Deletedⁱᵐᵖˡ. wp_auto.
   iApply "HΦ". iFrame "Hl".
 Qed.
 (* ----- the doubly-linked spine (adapted from the reference DLL) ----------- *)
@@ -136,8 +159,10 @@ Qed.
     [ic_item c]'s origin ids. The volatile spine links ([left'] = [prev],
     [right'] heads the rest) are also constraints on [iv], NOT data of the cell —
     so [Store.Integrate]'s neighbour relinking changes only [iv] and leaves the
-    abstract [cells] (hence [ic_item <$> cells]) unchanged. The Phase-2 flag /
-    length pins ([flags' = W8 2], content length 1) live here too. *)
+    abstract [cells] (hence [ic_item <$> cells]) unchanged. The flag / length pins
+    live here too: the struct is Countable and its Deleted bit equals the cell's
+    [ic_deleted] ([flags'] = [W8 6] when deleted, [W8 2] when visible), and its
+    content is one byte. *)
 Fixpoint is_dll (l last prev next : loc) (cells : list item_cell) : iProp Σ :=
   match cells with
   | [] => ⌜l = next ∧ last = prev⌝
@@ -149,7 +174,7 @@ Fixpoint is_dll (l last prev next : loc) (cells : list item_cell) : iProp Σ :=
       "%Hcontent" ∷ ⌜content (ic_item c) = toContent iv.(yjs.item.content')⌝ ∗
       "%Holid" ∷ ⌜origin_id (origin (ic_item c)) = toYjsId <$> olid⌝ ∗
       "%Horid" ∷ ⌜origin_id (rightOrigin (ic_item c)) = toYjsId <$> orid⌝ ∗
-      "%Hflags" ∷ ⌜iv.(yjs.item.flags') = W8 2⌝ ∗
+      "%Hflags" ∷ ⌜iv.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
       "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
       "Hval" ∷ ic_loc c ↦ iv ∗
       "Holeft" ∷ is_origin_id iv.(yjs.item.originLeftId') olid ∗
@@ -194,7 +219,7 @@ Lemma is_dll_insert_middle (cs1 cs2 : list item_cell) (newc : item_cell)
   content (ic_item newc) = toContent iv.(yjs.item.content') ->
   origin_id (origin (ic_item newc)) = toYjsId <$> olid ->
   origin_id (rightOrigin (ic_item newc)) = toYjsId <$> orid ->
-  iv.(yjs.item.flags') = W8 2 ->
+  iv.(yjs.item.flags') = (if ic_deleted newc then W8 6 else W8 2) ->
   length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat ->
   is_dll hd ml null (ic_loc newc) cs1 ∗
   ic_loc newc ↦ iv ∗
@@ -290,7 +315,7 @@ Lemma is_dll_acc (cells : list item_cell) (hd tl : loc) (k : nat) (c : item_cell
     "%Hcontent" ∷ ⌜content (ic_item c) = toContent iv.(yjs.item.content')⌝ ∗
     "%Holid" ∷ ⌜origin_id (origin (ic_item c)) = toYjsId <$> olid⌝ ∗
     "%Horid" ∷ ⌜origin_id (rightOrigin (ic_item c)) = toYjsId <$> orid⌝ ∗
-    "%Hflags" ∷ ⌜iv.(yjs.item.flags') = W8 2⌝ ∗
+    "%Hflags" ∷ ⌜iv.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
     "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
     "Hcval" ∷ ic_loc c ↦ iv ∗
     "Hcol" ∷ is_origin_id iv.(yjs.item.originLeftId') olid ∗
@@ -365,7 +390,7 @@ Lemma is_dll_lookup_acc (l lst prev nxt : loc) (cs : list item_cell) (k : nat) (
       "%Hcontent" ∷ ⌜content (ic_item c) = toContent iv.(yjs.item.content')⌝ ∗
       "%Holid" ∷ ⌜origin_id (origin (ic_item c)) = toYjsId <$> olid⌝ ∗
       "%Horid" ∷ ⌜origin_id (rightOrigin (ic_item c)) = toYjsId <$> orid⌝ ∗
-      "%Hflags" ∷ ⌜iv.(yjs.item.flags') = W8 2⌝ ∗
+      "%Hflags" ∷ ⌜iv.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
       "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
       "Hval" ∷ c.(ic_loc) ↦ iv ∗
       "Hcol" ∷ is_origin_id iv.(yjs.item.originLeftId') olid ∗
@@ -385,6 +410,77 @@ Proof.
   { iIntros "Hval2". rewrite -Hsplit is_dll_app. iExists ml, mf. iFrame "Hpre".
     iExists iv, olid, orid. iFrame "Hval2 Hol Hor Hrest". by iPureIntro. }
   iFrame "Hback". by iPureIntro.
+Qed.
+
+(** In-place node update: borrow the node at index [k] (its existential heap
+    struct [iv] with the location / right-neighbour facts), and a wand that takes
+    *any* replacement struct [v'] agreeing with [iv] on every translated field
+    (links / id / content / origins) and carrying flags [if d' then W8 6 else
+    W8 2], and gives back the DLL with the cell's [ic_deleted] set to [d'].
+
+    This is the heap counterpart of [Text.Delete]'s [cur.flags |= itemDeleted]:
+    storing [set_deleted iv] (which keeps every field but the flags, and is
+    [W8 6] = Countable+Deleted) flips the cell to [ic_deleted = true]. Passing
+    [v' := iv], [d' := ic_deleted c] re-establishes the unchanged DLL (the
+    already-tombstoned, no-op branch). *)
+Lemma is_dll_update_gen (cells : list item_cell) (hd tl : loc) (k : nat) (c : item_cell) :
+  cells !! k = Some c ->
+  is_dll hd tl null null cells -∗
+    ∃ (iv : yjs.item.t),
+      "%Hcloc" ∷ ⌜ic_loc c = node_loc cells (Z.of_nat k)⌝ ∗
+      "%Hcr" ∷ ⌜iv.(yjs.item.right') = node_loc cells (Z.of_nat k + 1)⌝ ∗
+      "%Hflags" ∷ ⌜iv.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
+      "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
+      "Hval" ∷ ic_loc c ↦ iv ∗
+      "Hback" ∷ (∀ (v' : yjs.item.t) (d' : bool),
+        ⌜v'.(yjs.item.left') = iv.(yjs.item.left')⌝ -∗
+        ⌜v'.(yjs.item.right') = iv.(yjs.item.right')⌝ -∗
+        ⌜v'.(yjs.item.id') = iv.(yjs.item.id')⌝ -∗
+        ⌜v'.(yjs.item.content') = iv.(yjs.item.content')⌝ -∗
+        ⌜v'.(yjs.item.originLeftId') = iv.(yjs.item.originLeftId')⌝ -∗
+        ⌜v'.(yjs.item.originRightId') = iv.(yjs.item.originRightId')⌝ -∗
+        ⌜v'.(yjs.item.flags') = (if d' then W8 6 else W8 2)⌝ -∗
+        ic_loc c ↦ v' -∗
+        is_dll hd tl null null (<[k := MkItemCell (ic_loc c) (ic_item c) d']> cells)).
+Proof.
+  move=> Hk. iIntros "Hdll".
+  pose proof (take_drop_middle cells k c Hk) as Hsplit.
+  set (pre := take k cells) in Hsplit.
+  set (suf := drop (S k) cells) in Hsplit.
+  iEval (rewrite -Hsplit is_dll_app) in "Hdll".
+  iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
+  iDestruct "Hrest" as (iv olid orid)
+    "(%Hloc & %Hprev & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest2)".
+  iDestruct (is_dll_headptr with "Hrest2") as "[%Hhd Hrest2]".
+  have Hcloc : ic_loc c = node_loc cells (Z.of_nat k)
+    by rewrite /node_loc decide_True; [rewrite Nat2Z.id Hk | lia].
+  have Hnn : ic_loc c ≠ null by rewrite -(proj1 Hloc); exact (proj2 Hloc).
+  have Hcr : iv.(yjs.item.right') = node_loc cells (Z.of_nat k + 1).
+  { rewrite Hhd /node_loc decide_True; last lia.
+    have HZ : Z.to_nat (Z.of_nat k + 1) = S k by lia.
+    rewrite HZ. f_equal. f_equal. rewrite /suf head_lookup lookup_drop Nat.add_0_r //. }
+  iExists iv. iFrame "Hval".
+  iSplit; [iPureIntro; exact Hcloc|].
+  iSplit; [iPureIntro; exact Hcr|].
+  iSplit; [iPureIntro; exact Hflagsc|].
+  iSplit; [iPureIntro; exact Hcontlenc|].
+  iIntros (v' d' Hl' Hr' Hid' Hcont' HoL' HoR' Hfl') "Hval2".
+  have Hpv : v'.(yjs.item.left') = ml by rewrite Hl'; exact Hprev.
+  have Hidt : item_id (ic_item c) = toYjsId v'.(yjs.item.id') by rewrite Hid'; exact Hidc.
+  have Hcontt : content (ic_item c) = toContent v'.(yjs.item.content') by rewrite Hcont'; exact Hcontentc.
+  have Hcontlent : length (v'.(yjs.item.content').(yjs.content.content')) = 1%nat
+    by rewrite Hcont'; exact Hcontlenc.
+  have Hins : <[k := MkItemCell (ic_loc c) (ic_item c) d']> cells
+            = pre ++ MkItemCell (ic_loc c) (ic_item c) d' :: suf.
+  { rewrite /pre /suf. apply insert_take_drop. apply lookup_lt_Some in Hk; exact Hk. }
+  rewrite Hins.
+  iApply (is_dll_insert_middle pre suf (MkItemCell (ic_loc c) (ic_item c) d') v' olid orid
+            hd tl ml v'.(yjs.item.right')
+            Hnn Hpv eq_refl Hidt Hcontt Holidc Horidc Hfl' Hcontlent).
+  rewrite Hr' HoL' HoR'.
+  iEval (rewrite (proj1 Hloc)) in "Hpre".
+  iEval (rewrite (proj1 Hloc)) in "Hrest2".
+  iFrame "Hpre Hval2 Hol Hor Hrest2".
 Qed.
 
 (* ----- isomorphism to a YjsArrInvariant model ---------------------------- *)
@@ -452,21 +548,68 @@ Lemma cells_repr_drop (m : list (YjsItem A)) cells items k :
   cells_repr m cells items -> cells_repr m (drop k cells) (drop k items).
 Proof. rewrite /cells_repr => ->. by rewrite fmap_drop. Qed.
 
-(** [is_ytext parent cells arr]: [parent] is a heap [YText] whose [start] heads
-    the DLL [cells], which is isomorphic to the model [arr]. (Phase-2: every item
-    is countable / non-deleted, so [len] = number of nodes.) *)
-Definition is_ytext (parent : loc) (cells : list item_cell) (arr : list (YjsItem A)) : iProp Σ :=
-  ∃ (yt : yjs.yType.t) (tl : loc),
-    "Hparent" ∷ parent ↦ yt ∗
-    "Hdll" ∷ is_dll yt.(yjs.yType.start') tl null null cells ∗
-    "%Hlen" ∷ ⌜yt.(yjs.yType.len') = W64 (length cells)⌝ ∗
-    "%Hrepr" ∷ ⌜cells_repr arr cells arr⌝.
+(** Replacing a cell with another carrying the *same* model item ([cell_repr] to
+    the same [yi]) preserves the isomorphism. [Text.Delete] flips a cell's
+    [ic_deleted] without touching its [ic_item], so this keeps [cells_repr]. *)
+Lemma cells_repr_update m cells items (k : nat) c yi c' :
+  cells_repr m cells items -> cells !! k = Some c -> items !! k = Some yi -> cell_repr m c' yi ->
+  cells_repr m (<[k := c']> cells) items.
+Proof.
+  rewrite /cells_repr /cell_repr => Hrepr Hck Hik Hc'.
+  rewrite Hrepr list_fmap_insert -Hc'. symmetry. apply list_insert_id.
+  rewrite -Hrepr. exact Hik.
+Qed.
 
-(** The full data-structure invariant: a heap [YText] representing a *valid*
-    model [arr] — DLL structure + isomorphism to a [YjsArrInvariant] list. *)
-Definition is_valid_ytext (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
-  ∃ cells,
-    "Htext" ∷ is_ytext parent cells arr ∗
-    "%Hinv" ∷ ⌜YjsArrInvariant arr⌝.
+(* ----- the deletion layer: tombstoning a cell ---------------------------- *)
+
+(** Visible count is additive over append. *)
+Lemma num_visible_app (l1 l2 : list item_cell) :
+  num_visible (l1 ++ l2) = (num_visible l1 + num_visible l2)%nat.
+Proof. rewrite /num_visible List.filter_app length_app //. Qed.
+
+(** Inserting a *visible* cell increments the visible count. Read by
+    [Store.Integrate] / [Text.Insert], whose new items are always visible. *)
+Lemma num_visible_insert_visible (cells : list item_cell) (k : nat) (c : item_cell) :
+  ic_deleted c = false ->
+  num_visible (take k cells ++ c :: drop k cells) = S (num_visible cells).
+Proof.
+  move=> Hc. rewrite /num_visible.
+  rewrite List.filter_app /=. rewrite Hc /=. rewrite length_app /=.
+  rewrite -{3}(take_drop k cells) List.filter_app length_app. lia.
+Qed.
+
+(** The heap effect of [item.flags |= itemDeleted]: set the Deleted bit. *)
+Definition set_deleted (v : yjs.item.t) : yjs.item.t :=
+  v <| yjs.item.flags' := w8_word_instance.(word.or) v.(yjs.item.flags') (W8 4) |>.
+
+(** [set_deleted] forces flags to [W8 6] (Countable + Deleted) regardless of the
+    prior Deleted bit ([W8 2] or [W8 6] both [or] to [W8 6]). *)
+Lemma set_deleted_flags (v : yjs.item.t) (d : bool) :
+  v.(yjs.item.flags') = (if d then W8 6 else W8 2) ->
+  (set_deleted v).(yjs.item.flags') = W8 6.
+Proof. rewrite /set_deleted /= => ->. by destruct d. Qed.
+
+(** The cell with its [ic_deleted] bit set (its model item [ic_item] unchanged). *)
+Definition flip_cell (c : item_cell) : item_cell :=
+  MkItemCell (ic_loc c) (ic_item c) true.
+
+(** Flipping a cell's Deleted bit preserves [cell_repr]: [ic_item] is untouched. *)
+Lemma cell_repr_flip (m : list (YjsItem A)) (c : item_cell) (yi : YjsItem A) :
+  cell_repr m c yi -> cell_repr m (flip_cell c) yi.
+Proof. rewrite /cell_repr /flip_cell /=. tauto. Qed.
+
+(** Tombstoning a visible cell drops the visible count by one. *)
+Lemma num_visible_flip (cells : list item_cell) (k : nat) (c : item_cell) :
+  cells !! k = Some c -> ic_deleted c = false ->
+  num_visible (<[k := flip_cell c]> cells) = pred (num_visible cells).
+Proof.
+  move=> Hk Hd.
+  have Hins : <[k := flip_cell c]> cells = take k cells ++ flip_cell c :: drop (S k) cells
+    by (apply insert_take_drop; apply lookup_lt_Some in Hk; exact Hk).
+  rewrite Hins /num_visible List.filter_app /flip_cell /=.
+  rewrite length_app.
+  rewrite -{3}(take_drop_middle cells k c Hk).
+  rewrite List.filter_app /=. rewrite Hd /=. rewrite length_app /=. lia.
+Qed.
 
 End item.
