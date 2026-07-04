@@ -209,7 +209,7 @@ is only the closure bookkeeping, not the per-op theory.
 history `h` plus pending set `P`, both under the store lock):
 
 ```rocq
-{{{ own_replica γh c (h, P) ∗ is_update sl inputs ∗ certs(inputs) }}}
+{{{ own_replica γh c (h, P) ∗ own_update sl dq inputs ∗ certs(inputs) }}}
   s @! … @! "applyUpdate" #parent #sl
 {{{ RET #(); ∃ Δ P',
     own_replica γh c (h ++ (EvDeliver <$> Δ), P') ∗
@@ -301,7 +301,7 @@ sv-filter → sv-filter guard → deliver. The toolkit reduces the transport's
 whole correctness problem to **floor coverage**.
 
 Go-side counterpart: `stateVector()` reads the store's per-client run lists
-(`store.items`); its verification needs `is_item_map` back in `store_inv`
+(`store.items`); its verification needs `own_item_map` back in `store_inv`
 (issue #29 re-land) — on the critical path for any transport milestone.
 
 **After the pending-buffer port** (§3.1/§6): freshness stops being a caller
@@ -354,7 +354,7 @@ The Yjs protocol document's milestones are cross-referenced by their names
 
 | milestone | contents | acceptance | depends on |
 |---|---|---|---|
-| **Guard toolkit** | `hwf_dense_clocks` field (`history_broadcast` carries it), `Hcerts` amendment, `state_vector`/`sv_ids`/`filterBySV` (Rocq + Go), the state-vector characterization + sv-filter guard | lemmas Qed; `stateVector()` verified | #42's pure bridge / ghost layer / WP rethreading; #29 re-land for `is_item_map` |
+| **Guard toolkit** | `hwf_dense_clocks` field (`history_broadcast` carries it), `Hcerts` amendment, `state_vector`/`sv_ids`/`filterBySV` (Rocq + Go), the state-vector characterization + sv-filter guard | lemmas Qed; `stateVector()` verified | #42's pure bridge / ghost layer / WP rethreading; #29 re-land for `own_item_map` |
 | **Two-replica demo** | model-faithful P2P demo: two replicas in one process, direct exchange of own-op batches over an in-process FIFO mailbox (a mutex-guarded queue; no server, no sync protocol), the two-replica-FIFO lemma; end-to-end theorem: after a quiescent exchange the two docs are equal | theorem Qed, axiom-clean; `go test` exercising the real exchange code | guard toolkit, #40 (convergence consumption), #42's applyUpdate-certs spec |
 | **Generic mesh transport** *(optional, off the critical path)* | a fully model-faithful **generic** P2P transport over Grove: mesh topology, N replicas, every message carrying an **explicit causal floor** (an sv, on a custom wire format — deliberately *not* the Yjs protocol, which cannot express floors); the receiver checks `sv_ids F ⊆ delivered` and buffers/stalls until covered | multi-replica convergence theorem with no hub and no protocol-specific argument — the direct implementation of the model's causal-broadcast discipline | guard toolkit, two-replica demo; **nothing later consumes it** (the Yjs server does not build on it) |
 | **Pending-buffer port — the realistic receiver** (§3.1) | port y-octo's pending machinery to Go, insert-only subset (`store.pending` = pending inputs + missing sv; the iterate-or-pend loop; sv/offset dedup — `document.rs:242`/`update.rs:328` as the source), keeping today's integrate loop as the inner kernel on each released run; prove the **total heap spec** (`(Δ, P') = ready_closure …`) and restate #42's certs spec as the **covered-batch spec** on top (covered ⇒ `Δ = inputs`, `P' = ∅`) | total heap + covered-batch specs Qed, axiom-clean; `go test` includes an out-of-order delivery case (pend then drain); receive path drops `filterBySV` (§4) | **changes `yjs/*.go` behavior — maintainer sign-off per CLAUDE.md before implementation**; depends on #29 (sv), #42's bridge through applyUpdate-certs spec; independent of the Grove spike / in-process hub / Grove transport (the star line runs on the covered-batch spec either way); **the arbitrary-arrival spec additionally needs §7** |
