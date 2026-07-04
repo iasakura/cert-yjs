@@ -27,6 +27,23 @@ existing spec, fixing a broken proof without weakening its statement, or other
 work that leaves the implementation and all public contracts unchanged does not
 need a check first.
 
+## Upstream bugs are contribution opportunities; never expose externally without permission
+
+The stack sits on upstream projects — Rocq, Iris, Perennial (incl. goose / New
+WP), stdpp, and Yjs / y-octo, plus tooling such as rocq-mcp. When work surfaces a
+genuine defect in one of them, that is a contribution opportunity: **report it
+clearly to the maintainer** — what is wrong, where, and a minimal repro — rather
+than silently papering over it with a local workaround. First decide whether the
+bug is ours (fix it) or upstream's (report it), and be honest when a session
+found none.
+
+**Never expose anything outside an `iasakura`-owned repository without explicit
+permission.** No PRs, issues, review comments, or other posts to upstream /
+third-party repositories (`mit-pdos/perennial`, `y-crdt/y-octo`,
+`LLM4Rocq/rocq-mcp`, …). Surface the finding to the maintainer and wait for an
+explicit go-ahead before filing anything externally; this covers any
+outward-facing action, not just git.
+
 ## Build / proof loop
 
 The cycle is **write Go → translate to Rocq with goose → prove**. Driven by `build.sh`:
