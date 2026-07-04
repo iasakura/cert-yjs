@@ -4,8 +4,9 @@ One implementation of the transport interface in
 `docs/plan-network-p2p-layer.md`: a **Yjs server (hub) and N clients** speaking
 **y-protocols/sync** (SyncStep1 / SyncStep2 / Update) over **Perennial's Grove
 FFI**. Its entire correctness job, per that interface, is to discharge
-**floor coverage** at every delivery (T2's `batch_ok`, via the guard toolkit
-NL1/NL4); everything Yjs-protocol-specific below exists to that end.
+**floor coverage** at every delivery (the deliver entry point's `batch_ok`,
+via the guard toolkit's state-vector characterization + sv-filter guard);
+everything Yjs-protocol-specific below exists to that end.
 
 No network code exists yet; this fixes the target. Perennial citations are
 into `mit-pdos/perennial` (local checkout).
@@ -14,20 +15,20 @@ into `mit-pdos/perennial` (local checkout).
 Everything here is the *last* stage of the network story; the working order is
 
 ```
-#42 (ghost history) → #40 (convergence) → p2p-layer P1–P2
-    (guard toolkit + the model-faithful two-replica exchange) → N1 → N2
+#42 (ghost history) → #40 (convergence) → guard toolkit + two-replica demo
+    (p2p-layer: model-faithful exchange) → in-process hub → Grove transport
 ```
 
-with only **N0** (the Grove feasibility spike, issue #45) runnable early — and
-already executed. The design was written first because its wire-level
-constraints fed *backwards* into #42: the discovery that Yjs `Update`s carry
-no causal floor forced the star + FIFO decision and the `Hcerts` /
-`hwf_dense_clocks` amendments, which had to be in #42's plan before #42 is
-implemented. Read this document as the recorded target and the source of those
-requirements, not as current work. (If a *generic* model-faithful P2P
+with only the **Grove spike** (the feasibility spike, issue #45) runnable
+early — and already executed. The design was written first because its
+wire-level constraints fed *backwards* into #42: the discovery that Yjs
+`Update`s carry no causal floor forced the star + FIFO decision and the
+`Hcerts` / `hwf_dense_clocks` amendments, which had to be in #42's plan before
+#42 is implemented. Read this document as the recorded target and the source
+of those requirements, not as current work. (If a *generic* model-faithful P2P
 implementation — floors on the wire, no hub — is ever wanted as an
-intermediate stage, that is the p2p-layer document's optional milestone P3; no
-milestone here builds on it.)
+intermediate stage, that is the p2p-layer document's optional generic mesh
+transport; no milestone here builds on it.)
 
 ## 0. TL;DR
 
@@ -36,21 +37,30 @@ milestone here builds on it.)
   duplication, reordering, loss; **no FIFO**. Specs are Hoare triples over a
   per-endpoint points-to `e c↦ ms` you place in a shared invariant yourself.
   In Perennial **New** the GooseLang code model of `gokv/grove_ffi` exists but
-  the WP wrapper layer is a stub with no upstream consumer — building it is
-  milestone **N0** (upstream candidate).
+  the WP wrapper layer is a stub with no upstream consumer — building it is the
+  **Grove spike** milestone (upstream candidate).
 - **The star + FIFO argument**: Yjs `Update`s carry no causal *floor* (the
   set of ops a batch assumes already delivered — its dependency baseline;
   defined in the p2p-layer doc §3), so a receiver cannot *decide* coverage over
   an arbitrary topology (p2p-layer doc §5). A **hub with FIFO links** yields
   coverage by construction: the server
   relays every batch it applies, in apply order, to every other connection
-  (lemma NL3). FIFO over Grove's unordered mailboxes is restored by a small
-  sequence-numbering layer whose ghost is one `mono_list` per direction per
-  connection. This matches the y-websocket deployment exactly and is *why* the
-  wire protocol can omit floors.
+  (the **stream-induction lemma**). FIFO over Grove's unordered mailboxes is
+  restored by a small sequence-numbering layer whose ghost is one `mono_list`
+  per direction per connection. This matches the y-websocket deployment (§4's
+  reality note for the one divergence) and is *why* the wire protocol can omit
+  floors. Role update (p2p-layer doc §3.1): real Yjs `apply_update` is
+  *total* — it buffers non-applicable input rather than requiring covered
+  batches — so once the **pending-buffer port** lands, this discipline is no
+  longer what makes `applyUpdate` safe to call; it is what keeps every
+  delivery in the **covered-batch spec**, i.e. it makes "the pending buffer
+  stays empty" a provable invariant of the verified deployment. The
+  unconditional **arbitrary-arrival spec** is the weakened-model route,
+  p2p-layer doc §7.
 - **Protocol mapping**: SyncStep1 (state vector) is advisory — no safety
   payload; SyncStep2/Update carry certified batches; the receive path is
-  process-in-stream-order → sv-filter (NL1/NL4) → `wp_store__applyUpdate_certs`.
+  process-in-stream-order → sv-filter (state-vector characterization +
+  sv-filter guard) → `wp_store__applyUpdate_certs`.
 
 ## 1. Scope
 
@@ -78,7 +88,7 @@ re-handshake is *safe* by design (dedup), but its spec is future work (§9).
   Receive is already filtered to the connection's peer `c_r`, so
   per-connection message streams are natural.
 
-### 2.2 The spec layer (old goose — to be lifted to New in N0)
+### 2.2 The spec layer (old goose — to be lifted to New in the Grove spike)
 
 `src/goose_lang/ffi/grove_ffi/grove_ffi.v`:
 
@@ -114,7 +124,8 @@ Consequences that shape everything below:
 - Initialization: `ffi_global_start` hands out `e c↦ ms` for every endpoint
   in the initial net map, and a grove adequacy theorem exists
   (`goose_lang/ffi/grove_ffi/adequacy.v`) — a **closed-system theorem**
-  (server + clients from initial state) is expressible (N2 stretch).
+  (server + clients from initial state) is expressible (a Grove-transport
+  stretch goal).
 
 ### 2.3 Status in Perennial New, and the Go side
 
@@ -126,7 +137,7 @@ Consequences that shape everything below:
 - `new/manualproof/github_com/mit_pdos/gokv/grove_ffi.v` — the New WP layer —
   is a **stub** (8 lines). No file in perennial@HEAD imports the trusted code,
   so the goose-translation wiring for a Go import of `gokv/grove_ffi` is
-  **unexercised**. Milestone N0 validates the pipeline end-to-end and writes
+  **unexercised**. The Grove spike validates the pipeline end-to-end and writes
   the wrapper WPs (New-style, `own_slice` bytes, delegating to the `wp_*Op`
   lifting lemmas). Upstream candidate; mechanical (~150 lines by analogy with
   other manualproof files). Tracked as issue #45 (also covers recovering the
@@ -175,6 +186,20 @@ every payload as `(seq n, payload)` and processing `n` only after `n−1`
 (buffering ahead-of-order arrivals, dropping duplicates by counter). Loss ⇒
 the stream stalls; safety unaffected; no retransmission needed for safety.
 
+**Reality note — the Step2-first stream discipline is a deliberate
+strengthening of y-websocket.** The server→client argument above needs the
+outbound stream to *start* with `SyncStep2` (the §5.4 relay obligation).
+y-websocket itself does not guarantee this: `setupWSConnection` registers the
+connection in the relay fan-out (`bin/utils.cjs:261`) before the handshake
+even starts (`:296`), and `updateHandler` broadcasts to **all** registered
+connections (`:80–85`) — so a relayed `Update` can reach a fresh client
+before its `SyncStep2`, and the real client absorbs it with the pending
+buffer (p2p-layer doc §3.1). Our verified server queues relays behind the
+connection's Step2 instead, which is what makes the covered-batch spec — and
+"pending stays empty" — provable; the race-tolerant behavior is recovered,
+without any wire change, by the arbitrary-arrival spec when the weakened-model
+route lands (p2p-layer doc §7).
+
 ## 5. Ghost architecture of the wire
 
 Per connection, gnames bundled in `conn_names := { cn_c2s : gname; cn_s2c : gname }`.
@@ -197,7 +222,7 @@ needs):
 ### 5.2 Per-message wire predicates
 
 ```rocq
-(* Decoded-level payloads; bytes enter only at N2 via the codec relation. *)
+(* Decoded-level payloads; bytes enter only at the Grove transport via the codec relation. *)
 Inductive syncPayload :=
   | SyncStep1 (sv : gmap ClientId nat)
   | SyncStep2 (inputs : list (IntegrateInput (A := A)))
@@ -259,17 +284,18 @@ The lock invariants tie streams to histories:
   into that client's inbound stream; plus the server's own
   `own_client_history γh c_srv h_srv`.
 
-**NL3 (stream induction ⇒ floor coverage).** With these ties, when a receiver
+**Stream induction ⇒ floor coverage.** With these ties, when a receiver
 processes stream entry `n` in order, the entry's ghost floor `F` satisfies
 `F ⊆ delivered_ids (its current history)` — §4's two bullets made precise per
-direction. Combined with the guard toolkit (NL1/NL4, p2p-layer doc §4) this
-discharges T2's `batch_ok` with **no wire-level floor and no undecidable
-receiver check**. *Difficulty: H — the transport's central lemma; where the
-star topology and the relay obligation are consumed. Home: new `yjs_wire.v`.*
+direction. Combined with the guard toolkit (the state-vector characterization
++ sv-filter guard, p2p-layer doc §4) this discharges the deliver entry point's
+`batch_ok` with **no wire-level floor and no undecidable receiver check**.
+*Difficulty: H — the transport's central lemma; where the star topology and
+the relay obligation are consumed. Home: new `yjs_wire.v`.*
 
 ## 6. Specs
 
-### 6.1 Transport wrappers (N0/N2)
+### 6.1 Transport wrappers (Grove spike / Grove transport)
 
 ```rocq
 Lemma wp_Send γh (c : Connection.t) (s : slice.t) (data : list w8) dir n payload :
@@ -289,9 +315,9 @@ Lemma wp_Receive γh (c : Connection.t) :
                     mono_list_idx_own (dir_of …) n payload ∗ payload_coh γh payload) }}}.
 ```
 
-At N1 the same two shapes are stated against an in-process mailbox module (a
-mutex-guarded queue of `syncMsg` structs) — deliberately identical, so N2 is a
-transport swap.
+At the in-process hub the same two shapes are stated against an in-process
+mailbox module (a mutex-guarded queue of `syncMsg` structs) — deliberately
+identical, so the Grove transport is a transport swap.
 
 ### 6.2 The receive/processing loop (per connection)
 
@@ -304,15 +330,15 @@ loop:
   match payload:
     SyncStep1(sv)   => reply SyncStep2(diffSince(sv))                          // §6.3
     SyncStep2(b) | SyncUpdate(b) =>
-      fresh := filterBySV(b)                       // NL1: exact dedup
-      applyUpdate(parent, fresh) via wp_store__applyUpdate_certs (T2)
-        -- batch_ok from NL3 (floor) + NL4 (filter)
+      fresh := filterBySV(b)                       // state-vector char.: exact dedup
+      applyUpdate(parent, fresh) via wp_store__applyUpdate_certs (deliver)
+        -- batch_ok from stream-induction (floor) + sv-filter guard (filter)
       (server only) append b to every other connection's outbound stream; Send
   processed_count++
   unlock; continue
 ```
 
-Handler spec sketch (decoded level, N1):
+Handler spec sketch (decoded level, in-process hub):
 
 ```rocq
 Lemma wp_handleSyncMsg … :
@@ -323,8 +349,15 @@ Lemma wp_handleSyncMsg … :
 ```
 
 where `own_conn_state` packages §5.4's lock-protected per-connection ghost.
-The apply branch composes NL3 → NL4 → `wp_store__applyUpdate_certs` (G3
-inside) → re-close `store_inv` with the grown history.
+The apply branch composes the stream-induction lemma → sv-filter guard →
+`wp_store__applyUpdate_certs` (`history_deliver_batch` inside) → re-close
+`store_inv` with the grown history.
+
+Staging note: the explicit `filterBySV` stage is how the covered-batch spec
+is met while `applyUpdate` is still the no-pending core. Once the
+pending-buffer port lands (p2p-layer doc), dedup is internal to `applyUpdate`
+and this stage collapses into it; the loop shape and the ghost bookkeeping
+above are unchanged either way.
 
 ### 6.3 Serving SyncStep1: the diff
 
@@ -336,7 +369,7 @@ returns, **in the server's delivery order**, every op with
 `clock ≥ sv[author]`, re-attaching certificates recovered from `is_history`
 (the `Hcerts` amendment, p2p-layer doc §3).
 
-**NL2 (diff correctness).** Under `history_wf` and the server's
+**Diff correctness.** Under `history_wf` and the server's
 `history_state_coh h_srv arr`: the filtered list (i) satisfies `batch_coh`
 with floor `F := sv_ids sv` — a causal-past member `x` of any kept op is
 either kept earlier (delivery order is causally consistent) or filtered (then
@@ -348,41 +381,43 @@ Implementation note: per-author clock order comes from the store's run lists;
 the cross-author interleaving needs a causal linearization — either a pure
 topological re-sort by origins + clocks (provably a causal linearization of a
 delivered set; small extra lemma, no new mutable state — **recommended**) or a
-Go-side apply-log slice. Decide at N1.
+Go-side apply-log slice. Decide at the in-process hub.
 
 ### 6.4 Local edits (client send path)
 
-T1 already mints with `D ⊆ delivered_ids h` (G2), i.e. floor = the client's
-frontier = (server-prefix ∪ own-earlier) — exactly what NL3's client→server
-case needs. The send path appends `SyncUpdate(new ops)` to the outbound
-stream and `Send`s; no new proof content beyond framing.
+mint already produces `D ⊆ delivered_ids h` (via `history_broadcast`), i.e.
+floor = the client's frontier = (server-prefix ∪ own-earlier) — exactly what
+the stream-induction lemma's client→server case needs. The send path appends
+`SyncUpdate(new ops)` to the outbound stream and `Send`s; no new proof content
+beyond framing.
 
 ## 7. Go-side sketch (all new files)
 
 | file | contents | goose? |
 |---|---|---|
-| `yjs/sync.go` | `syncMsg` union (decoded), `stateVector()`, `diffSince(sv)`, `filterBySV`, `handleSyncMsg` | yes (N1) |
-| `yjs/transport.go` | seq framing; N1: in-process mailbox; N2: `gokv/grove_ffi` Send/Receive loops | yes |
-| `yjs/server.go` | Listen/Accept loop, per-conn handler, relay fan-out table | yes (N2; N1 in-process analog) |
+| `yjs/sync.go` | `syncMsg` union (decoded), `stateVector()`, `diffSince(sv)`, `filterBySV`, `handleSyncMsg` | yes (in-process hub) |
+| `yjs/transport.go` | seq framing; in-process hub: in-process mailbox; Grove transport: `gokv/grove_ffi` Send/Receive loops | yes |
+| `yjs/server.go` | Listen/Accept loop, per-conn handler, relay fan-out table | yes (Grove transport; in-process analog earlier) |
 | `yjs/client.go` | Connect, handshake, local-edit → `SyncUpdate` hook | yes |
 | `yjs/codec.go` (extend) | v1 update codec (#31) + lib0 sync-message framing | `!goose` until #31 |
 
 Decoded-core / byte-edge split mirrors `applyUpdate` (#39): verified handlers
 consume structs; bytes only in `transport.go`/`codec.go`. `go.mod` gains
-`github.com/mit-pdos/gokv` at N2.
+`github.com/mit-pdos/gokv` at the Grove transport.
 
 ## 8. Milestones
 
-Ordering: **N0 ∥ (#42, P1) → N1 (needs P1, P2, #40, #29) → N2 (needs #31)**.
-P1/P2 are the p2p-layer document's milestones (guard toolkit + two-replica
-demo) and precede N1.
+Named, not numbered. Ordering: **Grove spike ∥ (#42, guard toolkit) →
+in-process hub (needs the guard toolkit + two-replica demo, #40, #29) → Grove
+transport (needs #31)**. The guard toolkit and two-replica demo are the
+p2p-layer document's milestones and precede the in-process hub.
 
-| M | contents | acceptance | risk |
+| milestone | contents | acceptance | risk |
 |---|---|---|---|
-| **N0** (issue #45) | feasibility spike: a hello-world Go file importing `gokv/grove_ffi` through cert-yjs's goose pipeline; New WP wrappers (`wp_Send`/`wp_Receive`/`wp_Connect`/`wp_Listen`/`wp_Accept`); PR upstream (`new/manualproof/...`) | wrappers Qed; 20-line ping-pong verified end-to-end | new-goose trusted-package wiring unexercised upstream — may surface translator gaps; timebox and report |
-| **N1** | protocol core, decoded, in-process hub: `sync.go` + NL2 + NL3's in-process analog + per-connection stream ghosts against the heap mailbox; end-to-end theorem: server + 2 clients in one process, quiescent exchange ⇒ both client docs equal the server's (via #40) | theorem Qed, axiom-clean; `go test` convergence through the real handler code | NL3 is where surprises live; relay-obligation bookkeeping |
-| **N2** | Grove transport: framing + `is_inbox` + escrowed connection setup (§5.3) + NL3 proper; byte payloads via the #31 codec relation; stretch: closed-system statement via grove adequacy | end-to-end theorem restated over grove; stretch: adequacy-style closed theorem | #31 is a hard dependency for bytes; escrow bookkeeping fiddly but standard |
-| **N3** | recorded non-goals: liveness/retransmission & fairness; reconnection spec; multi-room; awareness protocol (ephemeral, never touches the doc) | — | — |
+| **Grove spike** (issue #45) | feasibility spike: a hello-world Go file importing `gokv/grove_ffi` through cert-yjs's goose pipeline; New WP wrappers (`wp_Send`/`wp_Receive`/`wp_Connect`/`wp_Listen`/`wp_Accept`); PR upstream (`new/manualproof/...`) | wrappers Qed; 20-line ping-pong verified end-to-end | new-goose trusted-package wiring unexercised upstream — may surface translator gaps; timebox and report |
+| **In-process hub** | protocol core, decoded, in-process hub: `sync.go` + diff correctness + the stream-induction lemma's in-process analog + per-connection stream ghosts against the heap mailbox; end-to-end theorem: server + 2 clients in one process, quiescent exchange ⇒ both client docs equal the server's (via #40) | theorem Qed, axiom-clean; `go test` convergence through the real handler code | the stream-induction lemma is where surprises live; relay-obligation bookkeeping |
+| **Grove transport** | framing + `is_inbox` + escrowed connection setup (§5.3) + the stream-induction lemma proper; byte payloads via the #31 codec relation; stretch: closed-system statement via grove adequacy | end-to-end theorem restated over grove; stretch: adequacy-style closed theorem | #31 is a hard dependency for bytes; escrow bookkeeping fiddly but standard |
+| **Non-goals** | recorded non-goals: liveness/retransmission & fairness; reconnection spec; multi-room; awareness protocol (ephemeral, never touches the doc) | — | — |
 
 ## 9. Open questions for the maintainer
 
@@ -394,6 +429,6 @@ demo) and precede N1.
    (pure lemma) vs Go-side apply-log. Recommendation: re-sort.
 3. **Trust boundary**: accept trusted peers for the verified theorems
    (byzantine handling = future receiver-side validation)?
-4. **N0 upstream**: contribute the New grove wrapper file to Perennial, or
-   vendor it in cert-yjs first? Recommendation: try upstream — it is exactly
-   the `manualproof` file they stubbed.
+4. **Grove-spike upstream**: contribute the New grove wrapper file to
+   Perennial, or vendor it in cert-yjs first? Recommendation: try upstream —
+   it is exactly the `manualproof` file they stubbed.
