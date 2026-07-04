@@ -219,8 +219,8 @@ Proof.
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Hrepr].
       - iPureIntro. exact Hinvarr. }
     iEval (rewrite (insert_id texts (tv.(yjs.Text.inner')) ts Htsp)) in "Htexts".
-    wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Htypesf Hdset Hseq Htexts]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, texts. iFrame. iPureIntro. exact Hctr. }
+    wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hseq Htexts]").
+    { iNext. iExists client, k, items_mref, types_mref, dset, texts. iFrame. iPureIntro. split; [exact Hctr | exact Hcellctr]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γ.
@@ -242,8 +242,8 @@ Proof.
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Hrepr].
       - iPureIntro. exact Hinvarr. }
     iEval (rewrite (insert_id texts (tv.(yjs.Text.inner')) ts Htsp)) in "Htexts".
-    wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Htypesf Hdset Hseq Htexts]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, texts. iFrame. iPureIntro. exact Hctr. }
+    wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hseq Htexts]").
+    { iNext. iExists client, k, items_mref, types_mref, dset, texts. iFrame. iPureIntro. split; [exact Hctr | exact Hcellctr]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γ.
@@ -332,6 +332,7 @@ Proof.
     "Hclient" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "client"] ↦ client ∗
     "Hclock" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "clock"] ↦ W64 (uint.Z k + Z.of_nat j) ∗
     "Hitemsf" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "items"] ↦ items_mref ∗
+    "Hitemmap" ∷ is_item_map items_mref (<[tv.(yjs.Text.inner') := MkTextState cells arr]> texts) ∗
     "Htypesf" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "types"] ↦ types_mref ∗
     "Hdset" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "deletedSet"] ↦ dset ∗
     "Hlk" ∷ own_Mutex ((tv.(yjs.Text.store')).[yjs.store.t, "mu"]) ∗
@@ -359,11 +360,15 @@ Proof.
        rightOrigin it = oR ∧
        (i = 0%nat → origin it = oL) ∧
        (∀ (j' : nat) (itj : YjsItem A), i = S j' → ins !! j' = Some itj → origin it = itemPtr itj)⌝ ∗
-    "%Hsubold" ∷ ⌜∀ x : YjsItem A, x ∈ ts.(ts_arr) → x ∈ arr⌝
-    )%I with "[i t content client HoR left s Hclient Hclock Hitemsf Htypesf Hdset Hlk Hseq Hclose Htext]" as "IH".
+    "%Hsubold" ∷ ⌜∀ x : YjsItem A, x ∈ ts.(ts_arr) → x ∈ arr⌝ ∗
+    "%Hcellbnd" ∷ ⌜∀ c0 : item_cell, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTextState cells arr]> texts) →
+       cell_client c0 = client → (uint.Z (cell_clock c0) < uint.Z k + Z.of_nat j)%Z⌝
+    )%I with "[i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq Hclose Htext]" as "IH".
   { iExists 0%nat, ts.(ts_arr), ts.(ts_cells), lft, [].
     replace (W64 (uint.Z k + Z.of_nat 0)) with k by word.
-    iFrame "i t content client HoR left s Hclient Hclock Hitemsf Htypesf Hdset Hlk Hseq Hclose Htext".
+    have Hts_eta : MkTextState ts.(ts_cells) ts.(ts_arr) = ts by (destruct ts; reflexivity).
+    rewrite Hts_eta (insert_id texts (tv.(yjs.Text.inner')) ts Htsp).
+    iFrame "i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq Hclose Htext".
     iPureIntro. split_and!.
     - exact Hinvarr.
     - lia.
@@ -392,7 +397,8 @@ Proof.
       + right. exists ri, rid. split_and!; [rewrite Nat.add_0_r; exact Hria | exact Hrs | exact Hrid | exact HoRi].
     - reflexivity.
     - intros i it Hii. rewrite lookup_nil in Hii. inversion Hii.
-    - intros x Hx. exact Hx. }
+    - intros x Hx. exact Hx.
+    - intros c0 Hc0 Hcc0. have := Hcellctr c0 Hc0 Hcc0. lia. }
   wp_for "IH".
   wp_apply strings.wp_string_len. iIntros "%Hlcb2". wp_auto. case_bool_decide as Hjlt.
   { (* loop body: integrate the [j]-th character *)
@@ -483,9 +489,25 @@ Proof.
     iDestruct "HisR" as "#HisRp".
     iAssert (is_fresh_item oL2 input) with "[HoL2 HisL]" as "Hfresh".
     { iExists _, olo, in_rO. rewrite /is_fresh_item_raw /=. iFrame "HoL2 HisL HisRp". iPureIntro. split_and!; reflexivity. }
-    wp_apply (wp_Store__Integrate (tv.(yjs.Text.store')) (tv.(yjs.Text.inner')) oL2 arr input nit Htoitem Hvalid Hmax' with "[$Hfresh Htextj]").
-    { iExists cells. iFrame "Htextj". iPureIntro. exact Hinvj. }
-    iIntros (arr' iidx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & %Hnode)".
+    have Hlookj : (<[tv.(yjs.Text.inner') := MkTextState cells arr]> texts) !! tv.(yjs.Text.inner')
+                  = Some (MkTextState cells arr) by apply lookup_insert_eq.
+    have Hgmaxj : ∀ c0, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTextState cells arr]> texts) →
+                    cell_client c0 = W64 (clientId (item_id nit)) →
+                    (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id nit))))%Z.
+    { intros c0 Hc0 Hcc0.
+      have Hcl0 : cell_client c0 = client by (rewrite Hcc0 /nit /in_id1 /=; word).
+      have Hrhs : uint.Z (W64 (clock (item_id nit))) = uint.Z k + Z.of_nat j
+        by (rewrite /nit /in_id1 /= Hclocknit; word).
+      rewrite Hrhs. exact (Hcellbnd c0 Hc0 Hcl0). }
+    wp_apply (wp_Store__Integrate (tv.(yjs.Text.store')) (tv.(yjs.Text.inner')) oL2 arr input nit cells
+                (<[tv.(yjs.Text.inner') := MkTextState cells arr]> texts) items_mref
+                Hinvj Htoitem Hvalid Hmax' Hlookj Hgmaxj with "[$Hfresh $Htextj $Hitemsf $Hitemmap]").
+    iIntros (arr' iidx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & Hitemsf & Hitemmap & %Hpermc & %Hsi & %Hnode)".
+    have Hinsins : <[tv.(yjs.Text.inner') := MkTextState cells' arr']>
+                 (<[tv.(yjs.Text.inner') := MkTextState cells arr]> texts)
+             = <[tv.(yjs.Text.inner') := MkTextState cells' arr']> texts.
+    { rewrite insert_insert. case_decide as Hd; [reflexivity | congruence]. }
+    iEval (rewrite Hinsins) in "Hitemmap".
     wp_auto.
     (* place the new item, identify its index *)
     have Hcllen0 := cells_repr_length ts.(ts_arr) ts.(ts_cells) ts.(ts_arr) Hrepr.
@@ -522,7 +544,7 @@ Proof.
     iExists (S j), arr', cells', oL2, (ins ++ [nit]).
     replace (W64 (uint.Z k + Z.of_nat (S j))) with (w64_word_instance.(word.add) (W64 (uint.Z k + j)) (W64 1)) by word.
     replace (W64 (S j)) with (w64_word_instance.(word.add) (W64 j) (W64 1)) by word.
-    iFrame "Hi Htptr Hcontentp Hclientp HoRp Hleftp Hsp Hclient Hclock Hitemsf Htypesf Hdset Hlk Hseq Hclose".
+    iFrame "Hi Htptr Hcontentp Hclientp HoRp Hleftp Hsp Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq Hclose".
     iSplitL "Hp3 Hdll3".
     { iExists yt3, tl3. iFrame "Hp3 Hdll3". iPureIntro. split; [exact Hlen3 | exact Hrepr3]. }
     have HmroR : mrightorigin = oR.
@@ -588,7 +610,16 @@ Proof.
         * intros j' itj Hisj Hlookj'. rewrite /nit /=. rewrite Hieq Hinslen in Hisj. rewrite lookup_app_l in Hlookj'; [| rewrite Hinslen; lia].
           destruct Horig as [(_ & _ & Hp0) | (li & Hge & Hla & _ & Hmo)]; [lia |].
           rewrite Hmo. destruct Hleftj as [[_ Hp0] | (lc2 & li2 & _ & _ & Hla2 & _ & _ & _ & Hlk)]; [lia |]. have -> : li = li2 by (rewrite Hla in Hla2; injection Hla2 as ->; reflexivity). have Hli2 := Hlk j' Hisj. rewrite Hli2 in Hlookj'. injection Hlookj' as <-. reflexivity.
-    - intros x Hx. have Hxa := Hsubold x Hx. rewrite Hplace. rewrite -(take_drop (p + j)%nat arr) in Hxa. apply elem_of_app in Hxa as [H1 | H2]; [apply elem_of_app; left; exact H1 | apply elem_of_app; right; apply elem_of_cons; right; exact H2]. }
+    - intros x Hx. have Hxa := Hsubold x Hx. rewrite Hplace. rewrite -(take_drop (p + j)%nat arr) in Hxa. apply elem_of_app in Hxa as [H1 | H2]; [apply elem_of_app; left; exact H1 | apply elem_of_app; right; apply elem_of_cons; right; exact H2].
+    - intros c0 Hc0 Hcc0.
+      have Hac_step : all_cells (<[tv.(yjs.Text.inner') := MkTextState cells' arr']> texts)
+                    ≡ₚ all_cells (<[tv.(yjs.Text.inner') := MkTextState cells arr]> texts) ++ [c]
+        by (rewrite -Hinsins; apply (all_cells_insert_snoc (<[tv.(yjs.Text.inner') := MkTextState cells arr]> texts)
+               (tv.(yjs.Text.inner')) cells arr cells' arr' c Hlookj Hpermc)).
+      rewrite Hac_step in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew].
+      + have := Hcellbnd c0 Hold Hcc0. lia.
+      + apply list_elem_of_singleton in Hnew as ->.
+        rewrite /cell_clock Hcid /nit /in_id1 /=. rewrite Hclocknit. word. }
   (* loop exit: the whole run is integrated; rebuild [store_inv] and return. *)
   have Hjend : (j = length cs)%nat by word.
   rewrite decide_False; [| done]. wp_auto.
@@ -601,15 +632,19 @@ Proof.
   iMod (auth_gmap_gset_grow γ _ (tv.(yjs.Text.inner')) (list_to_set ts.(ts_arr)) (list_to_set arr) Hmk Hsubarr with "Hseq") as "[Hseq Hfrag]".
   iDestruct ("Hclose" $! (MkTextState cells arr) with "[Htextj]") as "Htexts".
   { iFrame "Htextj". iPureIntro. exact Hinvj. }
-  wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Htypesf Hdset Hseq Htexts]").
+  wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hseq Htexts]").
   { iNext. iExists client, (W64 (uint.Z k + j)), items_mref, types_mref, dset, (<[tv.(yjs.Text.inner') := MkTextState cells arr]> texts).
-    iFrame "Hclient Hclock Hitemsf Htypesf Hdset".
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Hdset".
     rewrite fmap_insert /=. iFrame "Hseq Htexts".
-    iPureIntro. intros parent' ts' x Hlook Hxin Hxc. rewrite Hk'val.
-    destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
-    - rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctrj x Hxin Hxc).
-    - rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
-      have := Hctr parent' ts' x Hlook Hxin Hxc. lia. }
+    iPureIntro. split_and!.
+    - intros parent' ts' x Hlook Hxin Hxc. rewrite Hk'val.
+      destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
+      + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctrj x Hxin Hxc).
+      + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
+        have := Hctr parent' ts' x Hlook Hxin Hxc. lia.
+    - intros c0 Hc0 Hcc0.
+      have Hkw : uint.Z (W64 (uint.Z k + Z.of_nat j)) = uint.Z k + Z.of_nat j by word.
+      rewrite Hkw. exact (Hcellbnd c0 Hc0 Hcc0). }
   iApply ("HΦ" $! arr ins (uint.nat client) (uint.nat k) oL oR).
   iSplitL "Hfrag Ht".
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γ. iFrame "Ht His_store Hfrag". iPureIntro. split_and!; [reflexivity | reflexivity | exact (yai_sorted _ Hinvj)]. }
@@ -691,6 +726,7 @@ Proof.
     "Hclient" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "client"] ↦ client ∗
     "Hclock" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "clock"] ↦ k ∗
     "Hitemsf" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "items"] ↦ items_mref ∗
+    "Hitemmap" ∷ is_item_map items_mref texts ∗
     "Htypesf" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "types"] ↦ types_mref ∗
     "Hdset" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "deletedSet"] ↦ dset ∗
     "Hseq" ∷ own γ (● ((λ ts0 : text_state, (list_to_set ts0.(ts_arr) : gset (YjsItem A))) <$> texts) : authR (gmapUR loc (gsetUR (YjsItem A)))) ∗
@@ -698,12 +734,13 @@ Proof.
     "%Hqlen" ∷ ⌜(q <= length cells')%nat⌝ ∗
     "%Hlencells" ∷ ⌜length cells' = length ts.(ts_cells)⌝ ∗
     "%Hytlen" ∷ ⌜yt'.(yjs.yType.len') = W64 (num_visible cells')⌝ ∗
-    "%Hrepr'" ∷ ⌜cells_repr ts.(ts_arr) cells' ts.(ts_arr)⌝)%I
-    with "[t s cur remaining Hparent Hdll Hlk Hclient Hclock Hitemsf Htypesf Hdset Hseq Hclose]" as "IH".
+    "%Hrepr'" ∷ ⌜cells_repr ts.(ts_arr) cells' ts.(ts_arr)⌝ ∗
+    "%Hkpeq" ∷ ⌜cell_kp <$> cells' = cell_kp <$> ts.(ts_cells)⌝)%I
+    with "[t s cur remaining Hparent Hdll Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hseq Hclose]" as "IH".
   { iExists p, len, ts.(ts_cells), yt0'.
-    iFrame "t s Hparent Hdll remaining Hlk Hclient Hclock Hitemsf Htypesf Hdset Hseq Hclose".
+    iFrame "t s Hparent Hdll remaining Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hseq Hclose".
     iEval (rewrite Hrgtloc) in "cur". iFrame "cur".
-    iPureIntro. split_and!; [exact Hpbound | reflexivity | exact Hlen0 | exact Hrepr0]. }
+    iPureIntro. split_and!; [exact Hpbound | reflexivity | exact Hlen0 | exact Hrepr0 | reflexivity]. }
   wp_for "IH".
   case_bool_decide as Hrem.
   2:{ (* budget exhausted: rebuild store_inv (same ts_arr), Unlock, return. *)
@@ -714,16 +751,24 @@ Proof.
         - iPureIntro. exact Hinvarr. }
       have Hmk : ((λ ts0 : text_state, (list_to_set (ts_arr ts0) : gset (YjsItem A))) <$> texts) !! (tv.(yjs.Text.inner')) = Some (list_to_set ts.(ts_arr)).
       { rewrite lookup_fmap Htsp //. }
-      wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Htypesf Hdset Hseq Htexts]").
+      have Hkpperm : cell_kp <$> all_cells (<[tv.(yjs.Text.inner') := MkTextState cells' ts.(ts_arr)]> texts)
+                   ≡ₚ cell_kp <$> all_cells texts.
+      { rewrite (all_cells_insert texts (tv.(yjs.Text.inner')) ts (MkTextState cells' ts.(ts_arr)) Htsp).
+        rewrite (all_cells_lookup texts (tv.(yjs.Text.inner')) ts Htsp).
+        rewrite !fmap_app /= Hkpeq. reflexivity. }
+      iDestruct (is_item_map_kp_perm items_mref texts (<[tv.(yjs.Text.inner') := MkTextState cells' ts.(ts_arr)]> texts) Hkpperm with "Hitemmap") as "Hitemmap".
+      wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hseq Htexts]").
       { iNext. iExists client, k, items_mref, types_mref, dset, (<[tv.(yjs.Text.inner') := MkTextState cells' ts.(ts_arr)]> texts).
-        iFrame "Hclient Hclock Hitemsf Htypesf Hdset".
+        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Hdset".
         rewrite fmap_insert /=. rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ts_arr)) Hmk).
         iFrame "Hseq Htexts".
-        iPureIntro. intros parent' ts' x Hlook Hxin Hxc.
-        destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
-        - rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
-        - rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
-          exact (Hctr parent' ts' x Hlook Hxin Hxc). }
+        iPureIntro. split_and!.
+        - intros parent' ts' x Hlook Hxin Hxc.
+          destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
+          + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
+          + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
+            exact (Hctr parent' ts' x Hlook Hxin Hxc).
+        - exact (cellctr_kp_perm texts (<[tv.(yjs.Text.inner') := MkTextState cells' ts.(ts_arr)]> texts) client k Hkpperm Hcellctr). }
       iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γ.
       iFrame "Ht His_store His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
   wp_auto.
@@ -739,16 +784,24 @@ Proof.
         - iPureIntro. exact Hinvarr. }
       have Hmk : ((λ ts0 : text_state, (list_to_set (ts_arr ts0) : gset (YjsItem A))) <$> texts) !! (tv.(yjs.Text.inner')) = Some (list_to_set ts.(ts_arr)).
       { rewrite lookup_fmap Htsp //. }
-      wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Htypesf Hdset Hseq Htexts]").
+      have Hkpperm : cell_kp <$> all_cells (<[tv.(yjs.Text.inner') := MkTextState cells' ts.(ts_arr)]> texts)
+                   ≡ₚ cell_kp <$> all_cells texts.
+      { rewrite (all_cells_insert texts (tv.(yjs.Text.inner')) ts (MkTextState cells' ts.(ts_arr)) Htsp).
+        rewrite (all_cells_lookup texts (tv.(yjs.Text.inner')) ts Htsp).
+        rewrite !fmap_app /= Hkpeq. reflexivity. }
+      iDestruct (is_item_map_kp_perm items_mref texts (<[tv.(yjs.Text.inner') := MkTextState cells' ts.(ts_arr)]> texts) Hkpperm with "Hitemmap") as "Hitemmap".
+      wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hseq Htexts]").
       { iNext. iExists client, k, items_mref, types_mref, dset, (<[tv.(yjs.Text.inner') := MkTextState cells' ts.(ts_arr)]> texts).
-        iFrame "Hclient Hclock Hitemsf Htypesf Hdset".
+        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Hdset".
         rewrite fmap_insert /=. rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ts_arr)) Hmk).
         iFrame "Hseq Htexts".
-        iPureIntro. intros parent' ts' x Hlook Hxin Hxc.
-        destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
-        - rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
-        - rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
-          exact (Hctr parent' ts' x Hlook Hxin Hxc). }
+        iPureIntro. split_and!.
+        - intros parent' ts' x Hlook Hxin Hxc.
+          destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
+          + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
+          + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
+            exact (Hctr parent' ts' x Hlook Hxin Hxc).
+        - exact (cellctr_kp_perm texts (<[tv.(yjs.Text.inner') := MkTextState cells' ts.(ts_arr)]> texts) client k Hkpperm Hcellctr). }
       iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γ.
       iFrame "Ht His_store His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
   (* cursor in range: read node [q] (single borrow exposing [iv] + the update
@@ -777,9 +830,9 @@ Proof.
     rewrite Hins0.
     wp_for_post.
     iFrame "Ht His_lb HΦ". iExists (S q), rem, cells', yt'.
-    iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Htypesf Hdset Hseq Hclose".
+    iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hseq Hclose".
     rewrite Hcr. replace (Z.of_nat (S q)) with (Z.of_nat q + 1)%Z by lia. iFrame "Hcur".
-    iPureIntro. split_and!; [lia | exact Hlencells | exact Hytlen | exact Hrepr'].
+    iPureIntro. split_and!; [lia | exact Hlencells | exact Hytlen | exact Hrepr' | exact Hkpeq].
   - (* visible node: set the Deleted flag, shrink the visible length *)
     simpl negb. wp_auto.
     wp_apply (wp_item__Len cq.(ic_loc) (set_deleted iv) with "[$Hcval]"). iIntros "Hcval".
@@ -795,7 +848,7 @@ Proof.
     { rewrite /num_visible -(take_drop_middle cells' q cq Hcq) List.filter_app /=. rewrite Hdq /=. rewrite length_app /=. lia. }
     iFrame "Ht His_lb HΦ".
     iExists (S q), (w64_word_instance.(word.sub) rem (W64 1%nat)), (<[q := flip_cell cq]> cells'), (yt' <| yjs.yType.len' := w64_word_instance.(word.sub) yt'.(yjs.yType.len') (W64 1%nat) |>).
-    iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Htypesf Hdset Hseq Hclose".
+    iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hseq Hclose".
     have Hcurloc : node_loc (<[q := flip_cell cq]> cells') (Z.of_nat (S q)) = iv.(yjs.item.right').
     { rewrite Hcr /node_loc. replace (Z.of_nat (S q)) with (Z.of_nat q + 1)%Z by lia.
       rewrite !decide_True; [| lia | lia]. f_equal. f_equal.
@@ -806,6 +859,9 @@ Proof.
     + rewrite length_insert. exact Hlencells.
     + simpl. rewrite (num_visible_flip cells' q cq Hcq Hdq) Hytlen. word.
     + exact (cells_repr_update ts.(ts_arr) cells' ts.(ts_arr) q cq yiq (flip_cell cq) Hrepr' Hcq Hyiq (cell_repr_flip ts.(ts_arr) cq yiq Hcrq)).
+    + rewrite list_fmap_insert cell_kp_flip.
+      have Hlk : (cell_kp <$> cells') !! q = Some (cell_kp cq) by rewrite list_lookup_fmap Hcq //.
+      rewrite (list_insert_id (cell_kp <$> cells') q (cell_kp cq) Hlk). exact Hkpeq.
 Qed.
 
 End text.

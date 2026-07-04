@@ -213,10 +213,13 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 	return left
 }
 
-// Integrate inserts item into parent, resolving origin-based conflicts the same
-// way as y-octo's store::integrate (the Yjs integrate algorithm). On return
-// item is spliced into the doubly linked list at its conflict-resolved position
-// and parent.len is updated.
+// integrateCore is y-octo store::integrate up to (but not including) the final
+// self.add_node: it resolves origin-based conflicts the same way as the Yjs
+// integrate algorithm, splices item into the doubly linked list at its
+// conflict-resolved position, and bumps parent.len. It is extracted from
+// Integrate so the hard conflict-scan WP proof (wp_Store__integrateCore) stays
+// isolated from the item-set bookkeeping added by AddNode (mirrors the
+// findIntegrationLeft extraction).
 //
 // Faithful port of y-octo store::integrate (src/doc/store.rs) under the
 // Phase-2 simplifications:
@@ -226,7 +229,7 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 //   - no concurrency control (single-threaded model), so the unsafe shared-ref
 //     dance becomes plain pointer mutation;
 //   - the parent type is never deleted.
-func (s *store) Integrate(parent *yType, item *item) {
+func (s *store) integrateCore(parent *yType, item *item) {
 	// Resolve left/right from the origin ids (y-octo: store::repair). With
 	// 1-char contents there is no split, so this is a direct lookup.
 	if item.originLeftId != nil {
@@ -263,10 +266,14 @@ func (s *store) Integrate(parent *yType, item *item) {
 	if item.Countable() {
 		parent.len = parent.len + item.Len()
 	}
+}
 
-	// TODO(store-holds-item-set): register the item in the struct store via
-	// s.AddNode(item) so the store holds the full item set (y-octo: integrate
-	// pushes the node into DocStore.items). Deferred until the item-map is
-	// threaded through this method's WP spec (wp_Store__Integrate); re-adding the
-	// call requires owning s.items here and re-establishing is_item_map.
+// Integrate inserts item into parent's sequence and records it in the store's
+// per-client item set (y-octo: store::integrate, ending in self.add_node(node)).
+// On return item is spliced into the doubly linked list at its conflict-resolved
+// position, parent.len is updated, and s.items[item.id.clientId] holds item at
+// its tail.
+func (s *store) Integrate(parent *yType, item *item) {
+	s.integrateCore(parent, item)
+	s.AddNode(item)
 }
