@@ -193,7 +193,7 @@ build and expect no fallout (the insert_set API did not change shape).
                         │ is_Text / wp_Text__Insert / wp_Text__Delete
                         │ wp_store__applyUpdate_certs (caller holds lock)
              ┌──────────┴───────────┐
-             │ heap: DLL, is_ytype, │
+             │ heap: DLL, own_ytype, │
              │ store fields, slices │
              └──────────────────────┘
 ```
@@ -731,10 +731,11 @@ Lemma wp_store__applyUpdate_certs (s parent : loc) (sl : slice.t)
   {{{ is_pkg_init yjs ∗ is_history γh ∗
       own_client_history γh c h ∗ ⌜history_state_coh h arr⌝ ∗
       ([∗ list] input;D ∈ inputs;Ds, is_op_cert γh (OpInsert input) D) ∗
-      is_valid_ytype parent arr ∗ is_update sl inputs }}}
+      own_ytype_cells parent (DfracOwn 1) cells arr ∗ ⌜YjsArrInvariant arr⌝ ∗
+      own_update sl dq inputs }}}
     s @! (go.PointerType yjs.store) @! "applyUpdate" #parent #sl
   {{{ (cells' : list item_cell) (arr' : list (YjsItem A)), RET #();
-      is_ytype parent cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ ∗
+      own_ytype_cells parent (DfracOwn 1) cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ ∗
       own_client_history γh c (h ++ (EvDeliver ∘ OpInsert <$> inputs)) ∗
       ⌜history_state_coh (h ++ (EvDeliver ∘ OpInsert <$> inputs)) arr'⌝ }}}.
 ```

@@ -5,17 +5,26 @@
     handle lives outside the lock; this module owns the [YType] side and is closed
     over implementation ([yjs/ytype.go]), spec, and proof:
 
-    - [is_ytype] / [is_valid_ytype]: a heap [yType] whose [start] heads an item
-      DLL ([is_dll], from [yjs_item]), isomorphic to a model list that — for
-      [is_valid_ytype] — satisfies [YjsArrInvariant]. [len] counts the visible
+    - [own_ytype parent dq m]: the PUBLIC representation predicate — [parent] is
+      a heap [yType] representing the abstract model [m : list (YjsItem A * bool)]
+      (each document item with its tombstone bit; [m.*1] is the document list).
+      The heap cells (node locations, spine links) are existentially hidden, so
+      public specs speak only about [m]. [dfrac]-parameterized (idiom: plain
+      owned heap data).
+    - [own_ytype_cells parent dq cells arr]: the cells-level predicate under it —
+      a heap [yType] whose [start] heads an item DLL ([own_dll], from
+      [yjs_item]), isomorphic to a model list. [len] counts the visible
       (non-deleted) cells ([num_visible]); deletions tombstone cells without
-      removing them, so [cells] / [arr] keep every item.
+      removing them, so [cells] / [arr] keep every item. Internal proofs
+      ([findPos], the Integrate scan / splice, the Insert / Delete loops) work at
+      this level because they track node locations.
     - [wp_yType__findPos]: the tombstone-aware walk to a visible character index,
       returning the straddling neighbours (an existential list position [p]);
       feeds the [Store.Integrate] loop in [Text.Insert] and [Text.Delete].
+      Read-only, so stated at a generic [dq].
 
     Sits between [yjs_item] (the per-node / DLL / deletion layer it builds on) and
-    [yjs_store] (which states [Store.Integrate] against [is_ytype]). *)
+    [yjs_store] (which states [Store.Integrate] against these predicates). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -34,24 +43,52 @@ Set Default Proof Using "Type*".
 
 Notation A := go_string.
 
-(** [is_ytype parent cells arr]: [parent] is a heap [yType] whose [start] heads
-    the DLL [cells], which is isomorphic to the model [arr]. [len] counts the
-    visible (non-deleted) cells ([num_visible]); a deletion tombstones a cell (set
-    its [ic_deleted] bit) without removing it, so [cells] / [arr] keep every
-    item. *)
-Definition is_ytype (parent : loc) (cells : list item_cell) (arr : list (YjsItem A)) : iProp Σ :=
+(** [own_ytype_cells parent dq cells arr]: [parent] is a heap [yType] whose
+    [start] heads the DLL [cells], which is isomorphic to the model [arr]. [len]
+    counts the visible (non-deleted) cells ([num_visible]); a deletion tombstones
+    a cell (set its [ic_deleted] bit) without removing it, so [cells] / [arr]
+    keep every item. *)
+Definition own_ytype_cells (parent : loc) (dq : dfrac)
+    (cells : list item_cell) (arr : list (YjsItem A)) : iProp Σ :=
   ∃ (yt : yjs.yType.t) (tl : loc),
-    "Hparent" ∷ parent ↦ yt ∗
-    "Hdll" ∷ is_dll yt.(yjs.yType.start') tl null null cells ∗
+    "Hparent" ∷ parent ↦{dq} yt ∗
+    "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null cells ∗
     "%Hlen" ∷ ⌜yt.(yjs.yType.len') = W64 (num_visible cells)⌝ ∗
     "%Hrepr" ∷ ⌜cells_repr arr cells arr⌝.
 
-(** The full data-structure invariant: a heap [yType] representing a *valid*
-    model [arr] — DLL structure + isomorphism to a [YjsArrInvariant] list. *)
-Definition is_valid_ytype (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
-  ∃ cells,
-    "Htext" ∷ is_ytype parent cells arr ∗
-    "%Hinv" ∷ ⌜YjsArrInvariant arr⌝.
+(* ----- the abstract model and the public predicate ----------------------- *)
+
+(** The abstract cell a heap cell denotes: its model item and tombstone bit.
+    The heap location is dropped — this is the abstraction wall. *)
+Definition cell_model (c : item_cell) : YjsItem A * bool := (ic_item c, ic_deleted c).
+
+Lemma cell_model_fst (cells : list item_cell) :
+  (cell_model <$> cells).*1 = ic_item <$> cells.
+Proof. induction cells as [|c cs IH]; [done | by rewrite !fmap_cons IH]. Qed.
+
+(** [own_ytype parent dq m]: the public [yType] predicate. [m] pairs each
+    document item with its tombstone bit, in document order; [m.*1] is the
+    document list ([YjsArrInvariant] etc. are stated about it as pure side
+    conditions of the specs, not baked in here). *)
+Definition own_ytype (parent : loc) (dq : dfrac) (m : list (YjsItem A * bool)) : iProp Σ :=
+  ∃ (cells : list item_cell),
+    "Hcells" ∷ own_ytype_cells parent dq cells m.*1 ∗
+    "%Hm" ∷ ⌜m = cell_model <$> cells⌝.
+
+(** Introduction: any cells-level view is the public view at its cell model
+    (whose item list is the cells-level [arr]). *)
+Lemma own_ytype_intro (parent : loc) (dq : dfrac)
+    (cells : list item_cell) (arr : list (YjsItem A)) :
+  own_ytype_cells parent dq cells arr ⊢
+    own_ytype parent dq (cell_model <$> cells) ∗ ⌜(cell_model <$> cells).*1 = arr⌝.
+Proof.
+  iIntros "H". iDestruct "H" as (yt tl) "(Hp & Hdll & %Hlen & %Hrepr)".
+  have Harr : (cell_model <$> cells).*1 = arr.
+  { rewrite cell_model_fst. rewrite /cells_repr in Hrepr. rewrite Hrepr //. }
+  iSplitL; last (iPureIntro; exact Harr).
+  iExists cells. rewrite Harr. iSplitL; last done.
+  iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split; [exact Hlen | exact Hrepr].
+Qed.
 
 (** General tombstone-aware [findPos]: walk to the visible character index [idx]
     (≤ number of *visible* nodes) and return the straddling neighbours. The Go
@@ -62,26 +99,26 @@ Definition is_valid_ytype (parent : loc) (arr : list (YjsItem A)) : iProp Σ :=
     length cells] with the two straddle locations [node_loc cells (p-1)] /
     [node_loc cells p] (which are [null] out of range). That an adjacent
     ([left]/[right]) pair is all the [Insert] / [Delete] callers need. *)
-Lemma wp_yType__findPos (parent : loc) (cells : list item_cell)
+Lemma wp_yType__findPos (parent : loc) (dq : dfrac) (cells : list item_cell)
     (arr : list (YjsItem A)) (idx : w64) :
-  {{{ is_pkg_init yjs ∗ is_ytype parent cells arr }}}
+  {{{ is_pkg_init yjs ∗ own_ytype_cells parent dq cells arr }}}
     parent @! (go.PointerType yjs.yType) @! "findPos" #idx
   {{{ (lft rgt : loc) (p : nat), RET (#lft, #rgt);
-      is_ytype parent cells arr ∗
+      own_ytype_cells parent dq cells arr ∗
       ⌜(p <= length cells)%nat⌝ ∗
       ⌜lft = node_loc cells (Z.of_nat p - 1)⌝ ∗
       ⌜rgt = node_loc cells (Z.of_nat p)⌝ }}}.
 Proof.
   wp_start as "Hyt". iNamed "Hyt".
-  iDestruct (is_dll_head_node cells _ tl with "Hdll") as %Hhead.
+  iDestruct (own_dll_head_node dq cells _ tl with "Hdll") as %Hhead.
   destruct cells as [|c0 cs].
   - (* empty document: both loops are no-ops, return (null, null) at p = 0 *)
     iDestruct "Hdll" as %[Hs Ht]. wp_auto. rewrite Hs.
-    iAssert ("Hp" ∷ parent ↦ yt ∗ "Hl" ∷ left_ptr ↦ null ∗ "Hr" ∷ right_ptr ↦ null ∗ "Hidx" ∷ index_ptr ↦ idx)%I
+    iAssert ("Hp" ∷ parent ↦{dq} yt ∗ "Hl" ∷ left_ptr ↦ null ∗ "Hr" ∷ right_ptr ↦ null ∗ "Hidx" ∷ index_ptr ↦ idx)%I
       with "[Hparent left right index]" as "IH".
     { iFrame. }
     wp_for "IH".
-    iAssert ("Hp" ∷ parent ↦ yt ∗ "Hl" ∷ left_ptr ↦ null ∗ "Hr" ∷ right_ptr ↦ null ∗ "Hrem" ∷ remaining_ptr ↦ idx)%I
+    iAssert ("Hp" ∷ parent ↦{dq} yt ∗ "Hl" ∷ left_ptr ↦ null ∗ "Hr" ∷ right_ptr ↦ null ∗ "Hrem" ∷ remaining_ptr ↦ idx)%I
       with "[Hp Hl Hr remaining]" as "IH".
     { iFrame. }
     wp_for "IH".
@@ -96,8 +133,8 @@ Proof.
     wp_auto.
     (* ----- skip loop invariant (runs before [remaining := index]) ----- *)
     iAssert (∃ (q : nat),
-      "Hp" ∷ parent ↦ yt ∗
-      "Hdll" ∷ is_dll yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
+      "Hp" ∷ parent ↦{dq} yt ∗
+      "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
       "Hindex" ∷ index_ptr ↦ idx ∗
       "Hleftp" ∷ left_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q - 1) ∗
       "Hrightp" ∷ right_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q) ∗
@@ -112,13 +149,13 @@ Proof.
     wp_for "IH".
     destruct (decide (q < length (c0 :: cs))%nat) as [Hqlt | Hqge].
     + (* right ≠ null: evaluate Deleted; tombstone ⇒ advance, else exit to count *)
-      iDestruct (node_loc_lt_not_null (c0 :: cs) yt.(yjs.yType.start') tl q Hqlt with "Hdll") as "[%Hnn Hdll]".
+      iDestruct (node_loc_lt_not_null dq (c0 :: cs) yt.(yjs.yType.start') tl q Hqlt with "Hdll") as "[%Hnn Hdll]".
       rewrite (bool_decide_eq_false_2 (node_loc (c0 :: cs) q = null) Hnn). simpl negb.
       destruct ((c0 :: cs) !! q) as [cq|] eqn:Hcq; [| apply lookup_ge_None in Hcq; lia].
-      iDestruct (is_dll_acc (c0 :: cs) yt.(yjs.yType.start') tl q cq Hcq with "Hdll") as "H". iNamed "H".
+      iDestruct (own_dll_acc dq (c0 :: cs) yt.(yjs.yType.start') tl q cq Hcq with "Hdll") as "H". iNamed "H".
       iEval (rewrite -Hcloc) in "Hrightp".
       wp_auto.
-      wp_apply (wp_item__Deleted cq.(ic_loc) iv with "[$Hcval]"). iIntros "Hcval".
+      wp_apply (wp_item__Deleted cq.(ic_loc) dq iv with "[$Hcval]"). iIntros "Hcval".
       rewrite (flags_if_deleted iv (ic_deleted cq) Hflags).
       destruct (ic_deleted cq) eqn:Hdq.
       * (* tombstone: advance the cursor, re-establish the skip invariant *)
@@ -137,8 +174,8 @@ Proof.
         iClear "Hcol Hcor".
         wp_auto.
         iAssert (∃ (q2 : nat) (rem : w64),
-          "Hp" ∷ parent ↦ yt ∗
-          "Hdll" ∷ is_dll yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
+          "Hp" ∷ parent ↦{dq} yt ∗
+          "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
           "Hleftp" ∷ left_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2 - 1) ∗
           "Hrightp" ∷ right_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2) ∗
           "Hrem" ∷ remaining_ptr ↦ rem ∗
@@ -162,20 +199,20 @@ Proof.
             iSplitR "".
             { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr]. }
             iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity]. }
-        iDestruct (node_loc_lt_not_null (c0 :: cs) yt.(yjs.yType.start') tl q2 Hq2lt with "Hdll") as "[%Hnn2 Hdll]".
+        iDestruct (node_loc_lt_not_null dq (c0 :: cs) yt.(yjs.yType.start') tl q2 Hq2lt with "Hdll") as "[%Hnn2 Hdll]".
         rewrite (bool_decide_eq_false_2 (node_loc (c0 :: cs) q2 = null) Hnn2). simpl negb.
         rewrite decide_True; [| done].
         destruct ((c0 :: cs) !! q2) as [c2|] eqn:Hc2; [| apply lookup_ge_None in Hc2; lia].
-        iDestruct (is_dll_acc (c0 :: cs) yt.(yjs.yType.start') tl q2 c2 Hc2 with "Hdll") as (iv2 olid2 orid2)
+        iDestruct (own_dll_acc dq (c0 :: cs) yt.(yjs.yType.start') tl q2 c2 Hc2 with "Hdll") as (iv2 olid2 orid2)
           "(%Hc2loc & %Hc2l & %Hc2r & %Hc2id & %Hc2cont & %Hc2olid & %Hc2orid & %Hc2flags & %Hc2contlen & Hc2val & #Hc2ol & #Hc2or & Hback2)".
         have Hcount2 : is_countable_flag iv2 = true := flags_if_countable iv2 (ic_deleted c2) Hc2flags.
         have Hdel2 : is_deleted_flag iv2 = ic_deleted c2 := flags_if_deleted iv2 (ic_deleted c2) Hc2flags.
         iEval (rewrite -Hc2loc) in "Hrightp".
         wp_auto.
-        wp_apply (wp_item__Indexable c2.(ic_loc) iv2 Hcount2 with "[$Hc2val]"). iIntros "Hc2val".
+        wp_apply (wp_item__Indexable c2.(ic_loc) dq iv2 Hcount2 with "[$Hc2val]"). iIntros "Hc2val".
         rewrite Hdel2.
         destruct (ic_deleted c2) eqn:Hd2; simpl negb; wp_auto.
-        2:{ wp_apply (wp_item__Len c2.(ic_loc) iv2 with "[$Hc2val]"). iIntros "Hc2val".
+        2:{ wp_apply (wp_item__Len c2.(ic_loc) dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
             rewrite Hc2contlen. wp_auto.
             iDestruct ("Hback2" with "Hc2val") as "Hdll".
             wp_for_post.
@@ -199,8 +236,8 @@ Proof.
       rewrite decide_False; [| done]. rewrite decide_True; [| done].
       wp_auto.
         iAssert (∃ (q2 : nat) (rem : w64),
-          "Hp" ∷ parent ↦ yt ∗
-          "Hdll" ∷ is_dll yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
+          "Hp" ∷ parent ↦{dq} yt ∗
+          "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
           "Hleftp" ∷ left_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2 - 1) ∗
           "Hrightp" ∷ right_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2) ∗
           "Hrem" ∷ remaining_ptr ↦ rem ∗
@@ -224,20 +261,20 @@ Proof.
             iSplitR "".
             { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr]. }
             iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity]. }
-        iDestruct (node_loc_lt_not_null (c0 :: cs) yt.(yjs.yType.start') tl q2 Hq2lt with "Hdll") as "[%Hnn2 Hdll]".
+        iDestruct (node_loc_lt_not_null dq (c0 :: cs) yt.(yjs.yType.start') tl q2 Hq2lt with "Hdll") as "[%Hnn2 Hdll]".
         rewrite (bool_decide_eq_false_2 (node_loc (c0 :: cs) q2 = null) Hnn2). simpl negb.
         rewrite decide_True; [| done].
         destruct ((c0 :: cs) !! q2) as [c2|] eqn:Hc2; [| apply lookup_ge_None in Hc2; lia].
-        iDestruct (is_dll_acc (c0 :: cs) yt.(yjs.yType.start') tl q2 c2 Hc2 with "Hdll") as (iv2 olid2 orid2)
+        iDestruct (own_dll_acc dq (c0 :: cs) yt.(yjs.yType.start') tl q2 c2 Hc2 with "Hdll") as (iv2 olid2 orid2)
           "(%Hc2loc & %Hc2l & %Hc2r & %Hc2id & %Hc2cont & %Hc2olid & %Hc2orid & %Hc2flags & %Hc2contlen & Hc2val & #Hc2ol & #Hc2or & Hback2)".
         have Hcount2 : is_countable_flag iv2 = true := flags_if_countable iv2 (ic_deleted c2) Hc2flags.
         have Hdel2 : is_deleted_flag iv2 = ic_deleted c2 := flags_if_deleted iv2 (ic_deleted c2) Hc2flags.
         iEval (rewrite -Hc2loc) in "Hrightp".
         wp_auto.
-        wp_apply (wp_item__Indexable c2.(ic_loc) iv2 Hcount2 with "[$Hc2val]"). iIntros "Hc2val".
+        wp_apply (wp_item__Indexable c2.(ic_loc) dq iv2 Hcount2 with "[$Hc2val]"). iIntros "Hc2val".
         rewrite Hdel2.
         destruct (ic_deleted c2) eqn:Hd2; simpl negb; wp_auto.
-        2:{ wp_apply (wp_item__Len c2.(ic_loc) iv2 with "[$Hc2val]"). iIntros "Hc2val".
+        2:{ wp_apply (wp_item__Len c2.(ic_loc) dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
             rewrite Hc2contlen. wp_auto.
             iDestruct ("Hback2" with "Hc2val") as "Hdll".
             wp_for_post.

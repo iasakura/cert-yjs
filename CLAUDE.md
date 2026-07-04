@@ -92,7 +92,7 @@ boilerplate (`Context`, `Set Default Proof Using "Type*"`,
 - **`src/proof/yjs_common.v`** — shared base imported by every other module:
   scalar abstractions `toYjsId` / `toContent`, the heap-node record `item_cell`
   and cursor `node_loc`, the persistent `is_origin_id`, item-pointer helpers
-  `oid_of` / `item_or_null`, and the id-slice abstraction `is_id_set`. The goose
+  `oid_of` / `item_or_null`, and the id-slice abstraction `own_id_set`. The goose
   package-init instances (`IsPkgInit` / `GetIsPkgInitWf`) are declared here
   **once** and inherited via `Require`.
 - **`src/proof/yjs_id.v`** — the `id` type: `newId` / `Id.Add` / `Id.Sub` and
@@ -100,28 +100,48 @@ boilerplate (`Context`, `Set Default Proof Using "Type*"`,
   equality specs `Id.Equal` / `idOptEqual`.
 - **`src/proof/yjs_item.v`** — the `item` type: per-node method specs
   (`Indexable` / `Len` / `Deleted`, `itemPtrEqual`), the doubly-linked spine
-  `is_dll` and its structural lemmas (split / join / accessor / insert /
-  `is_dll_update_gen` — the in-place node update used by `Delete`), the cellwise
+  `own_dll` and its structural lemmas (split / join / accessor / insert /
+  `own_dll_update_gen` — the in-place node update used by `Delete`), the cellwise
   isomorphism `cell_repr` / `cells_repr` (`arr = ic_item <$> cells`, plus
   `cells_repr_update`), and the deletion layer (`is_deleted_flag` /
   `is_countable_flag` / `num_visible`; `set_deleted` / `flip_cell` /
   `cell_repr_flip` / `num_visible_*` and the flag readers `flags_if_deleted` /
   `flags_if_countable`).
 - **`src/proof/yjs_ytype.v`** — the `yType` container (y-octo's lock-guarded inner
-  sequence type; the `Text` handle is its unlocked wrapper): the heap predicate
-  `is_ytype` / `is_valid_ytype` relating a heap `yType`'s DLL to a
-  `YjsArrInvariant` model list (`len = num_visible cells`), and the tombstone-aware
-  visible-index navigation `wp_yType__findPos` (returns an existential list
-  position `p`). (This sits below `yjs_store` because `yjs_store` states
-  `Store.Integrate` against `is_ytype`.)
+  sequence type; the `Text` handle is its unlocked wrapper): the public
+  representation predicate `own_ytype parent dq m` (model
+  `m : list (YjsItem A * bool)` = each item with its tombstone bit; the heap
+  cells are hidden) over the cells-level `own_ytype_cells parent dq cells arr`
+  (`len = num_visible cells`; internal proofs work here because they track node
+  locations), plus `cell_model` / `own_ytype_intro` bridging the two, and the
+  tombstone-aware visible-index navigation `wp_yType__findPos` (returns an
+  existential list position `p`). (This sits below `yjs_store` because
+  `yjs_store` states `Store.Integrate` against these predicates.)
 - **`src/proof/yjs_store.v`** — the `store` WP proofs: `findById`, `containsId`,
   the conflict scan (`scanConflicts` / `findIntegrationLeft`) refining
   `setfii_loop` (with its top-level `gset` rewrite lemmas), the item-validity /
-  insertion helper lemmas, the lock layer (`text_state` / `store_inv` /
-  `is_Store` / `is_text_lb`), and top-level `wp_Store__Integrate`.
+  insertion helper lemmas, the store item-set layer (`own_item_map` /
+  `client_run` and its permutation lemmas), the lock layer (`text_state` /
+  `store_inv` / `is_Store` / `is_text_lb`), and the Integrate stack:
+  `wp_Store__integrateCore_aux` → cells-level `wp_Store__integrateCore_cells` →
+  public model-level `wp_Store__integrateCore` (stated over `own_ytype`; the
+  DLL splice does not touch `store.items`, so the pure-document footprint is
+  honest there) → `wp_Store__Integrate` (= core + `AddNode`, threading
+  `own_item_map`) → `wp_store__applyUpdate` (the causally-ordered batch loop,
+  also threading `own_item_map`).
 - **`src/proof/yjs_text.v`** — the `Text`-handle WP proofs: `insert_item_valid` /
   `insert_maximalId`, the lock-based handle `is_Text t L`, and the top-level
   `wp_Text__Insert` and `wp_Text__Delete`.
+
+**Predicate naming (issue #47)**: `is_X` predicates are Persistent handles /
+read-only facts (`is_Store`, `is_Text`, `is_text_lb`, `is_Doc`, `is_origin_id`,
+`is_update_item`); `own_X` predicates are ownership, `dfrac`-parameterized when
+the data is plain heap state (`own_ytype` / `own_ytype_cells` / `own_dll` /
+`own_id_set` / `own_item_map` / `own_update`; `own_fresh_item` is exclusive and
+consumed by Integrate). Public method specs follow
+`{{{ own_X o dq m ∗ ⌜Pre m⌝ }}} … {{{ own_X o dq m' ∗ ⌜Post m m' ret⌝ }}}`;
+persistent `is_X` handles appear as duplicable hypotheses carrying monotone
+knowledge (e.g. `is_Text`'s grow-only `L`).
 
 **Verified so far**: `Store.Integrate` preserves the document invariant
 (`wp_Store__Integrate`); `Text.Insert(index, content)` grows the persistent handle
@@ -132,11 +152,12 @@ the model item list `ts_arr` — hence `YjsArrInvariant` and the known-content l
 bound `L` — is untouched; only the cells' `ic_deleted` bits and `yType.len` (the
 visible count) change. All three are axiom-clean (`Print Assumptions` shows only
 the goose/Perennial framework axioms). The document invariant tracks just the item
-list: `is_ytype parent cells arr` ties the heap DLL to a `YjsArrInvariant` `arr`
-with `cells_repr arr cells arr` = `arr = ic_item <$> cells`; the Deleted bit is
-promoted onto the abstract cell as `ic_deleted` (the source of truth for
-visibility), with `is_dll` pinning each node's heap flags to it and
-`yType.len = num_visible cells`. The v1 byte codec stays behind `//go:build
+list: `own_ytype_cells parent dq cells arr` ties the heap DLL to a
+`YjsArrInvariant` `arr` with `cells_repr arr cells arr` = `arr = ic_item <$>
+cells`; the Deleted bit is promoted onto the abstract cell as `ic_deleted` (the
+source of truth for visibility), with `own_dll` pinning each node's heap flags to
+it and `yType.len = num_visible cells`; the public `own_ytype parent dq m` hides
+the cells behind the model `m = cell_model <$> cells`. The v1 byte codec stays behind `//go:build
 !goose`; its DeleteSet is regenerated from the item flags at encode time
 (`generateDeleteSet`, y-octo's `generate_delete_set`), so the verified `Delete`
 only flips flags and shrinks the visible length. `cell_repr` pins `Len() = 1`; see
