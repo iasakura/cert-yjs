@@ -62,7 +62,7 @@ Qed.
 
 Section doc_model.
 Context {A : Type} `{EqDA : EqDecision A}.
-Context {P : Type} `{EqDP : EqDecision P} `{CntP : Countable P}.
+Context {P : Type} `{EqDP : !EqDecision P} `{CntP : !Countable P}.
 
 Local Notation Op := (@YjsOperation A).
 Local Notation opid := (@YjsOperation_id A).
