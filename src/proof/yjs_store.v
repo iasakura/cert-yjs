@@ -13,6 +13,7 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype.
+From New.proof Require Import yjs_history.             (* ghost op history (issue #42) *)
 From New.proof.sync_proof Require Import mutex.        (* is_Mutex (store lock) *)
 From iris.algebra Require Import auth gmap gset.       (* grow-only item-set RA *)
 From stdpp Require Import sorting.                     (* merge_sort for client_run *)
@@ -53,6 +54,11 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 Set Default Proof Using "Type*".
 
 Notation A := go_string.
+
+(* The ghost op-history types ([yjs_history] / [yjs_network_model]) at the
+   document content type. *)
+Local Notation Op := (@YjsOperation A).
+Local Notation Ev := (@Event Op).
 
 (* ----- ghost lemmas for the [auth (gmap K (gset V))] item-set RA --------- *)
 
@@ -513,9 +519,39 @@ Proof.
   apply (Hbnd c' Hc'). rewrite -(cell_kp_client c c' Hkp). exact Hcc.
 Qed.
 
+(* ----- per-store ghost names and the governed-text agreement ------------- *)
+
+(** Per-store ghost names: the item-set authority ([is_text_lb]'s auth) and
+    the governed-text agreement (which text the ghost op history speaks about
+    — single-root-text scope, plan §8.3). *)
+Record store_names := StoreNames {
+  sn_seq : gname;   (* authR (gmapUR loc (gsetUR (YjsItem A)))  *)
+  sn_gov : gname;   (* agreeR (leibnizO loc)                    *)
+}.
+
+(** The governed-text binding: an agreement on one [loc]. Persistent ([agree]
+    is CoreId), so both [store_inv] and every [is_Text] handle carry a copy;
+    combining them under the lock identifies the handle's text with the
+    governed one. *)
+Definition is_gov_text (γ : gname) (parent : loc) : iProp Σ :=
+  own γ (to_agree (parent : leibnizO loc)).
+
+#[global] Instance is_gov_text_persistent γ parent : Persistent (is_gov_text γ parent).
+Proof. apply _. Qed.
+
+Lemma is_gov_text_agree (γ : gname) (p q : loc) :
+  is_gov_text γ p -∗ is_gov_text γ q -∗ ⌜p = q⌝.
+Proof.
+  iIntros "H1 H2". iCombine "H1 H2" gives %Hv.
+  iPureIntro. apply to_agree_op_valid_L in Hv. exact Hv.
+Qed.
+
+Lemma is_gov_text_alloc (p : loc) : ⊢ |==> ∃ γ, is_gov_text γ p.
+Proof. iApply own_alloc. done. Qed.
+
 (* ----- the lock invariant ----------------------------------------------- *)
 
-(** [store_inv s_loc γ]: everything the store lock protects.
+(** [store_inv s_loc γs γh]: everything the store lock protects.
     - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
       [mu] is owned by [is_Mutex] in [is_Store], not here);
     - the item-set authority [own γ (●…)] per text loc (id-set), whose fragments
@@ -531,17 +567,23 @@ Qed.
       each [Unlock] from the loop's carried bound (no [W64] round-trip).
     [client]/[k]/[texts] etc. are existential — the fixed lock invariant hides
     the per-operation state. [own_item_map] and [Htexts] share the SAME [texts], so
-    Insert grows both consistently (DLL splice + [AddNode] tail-append). *)
-Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
+    Insert grows both consistently (DLL splice + [AddNode] tail-append).
+
+    Network layer (issue #42): the lock also holds this replica's exclusive
+    ghost-history element [own_client_history] for the store's client, tied to
+    the governed text [gparent] (the [is_gov_text] agreement): the history's
+    replayed item list is exactly the governed text's [ts_arr]
+    ([history_state_coh]). *)
+Definition store_inv (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
-    (texts : gmap loc text_state),
+    (texts : gmap loc text_state) (gparent : loc) (ts_gov : text_state) (h : list Ev),
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
     "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
     "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
     "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) texts ∗
     "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
-    "Hseq"    ∷ own γ (● ((λ ts, (list_to_set (ts_arr ts) : gset (YjsItem A))) <$> texts) : seqUR) ∗
+    "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ts_arr ts) : gset (YjsItem A))) <$> texts) : seqUR) ∗
     "Htexts"  ∷ ([∗ map] parent ↦ ts ∈ texts,
                   own_ytype_cells parent (DfracOwn 1) (ts_cells ts) (ts_arr ts) ∗
                   ⌜YjsArrInvariant (ts_arr ts)⌝) ∗
@@ -549,12 +591,19 @@ Definition store_inv (s_loc : loc) (γ : gname) : iProp Σ :=
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
     "%Hcellctr" ∷ ⌜∀ c, c ∈ all_cells texts → cell_client c = client →
-                   (uint.Z (cell_clock c) < uint.Z k)%Z⌝.
+                   (uint.Z (cell_clock c) < uint.Z k)%Z⌝ ∗
+    (* --- network layer (issue #42) --- *)
+    "#Hgov"   ∷ is_gov_text γs.(sn_gov) gparent ∗
+    "%Hgovts" ∷ ⌜texts !! gparent = Some ts_gov⌝ ∗
+    "Hhist"   ∷ own_client_history γh (uint.nat client) h ∗
+    "%Hhcoh"  ∷ ⌜history_state_coh h (ts_arr ts_gov)⌝.
 
 (** Store handle (persistent): the lock at [&store.mu] guards [store_inv]. ALL
-    store-field / item-set / DLL references are sealed here or in [store_inv]. *)
-Definition is_Store (s_loc : loc) (γ : gname) : iProp Σ :=
-  is_Mutex (s_loc .[(yjs.store.t), "mu"]) (store_inv s_loc γ).
+    store-field / item-set / DLL references are sealed here or in [store_inv].
+    (The persistent [is_history γh] handle rides in [is_Text], not here, to
+    keep [store_inv] first-order.) *)
+Definition is_Store (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
+  is_Mutex (s_loc .[(yjs.store.t), "mu"]) (store_inv s_loc γs γh).
 
 (** [is_text_lb γ parent S]: a persistent SUBSET (membership) lower bound on the
     text at [parent] — [S ⊆] its current item set (of full [YjsItem]s) — AND the
@@ -566,10 +615,70 @@ Definition is_Store (s_loc : loc) (γ : gname) : iProp Σ :=
 Definition is_text_lb (γ : gname) (parent : loc) (S : gset (YjsItem A)) : iProp Σ :=
   own γ (◯ {[ parent := S ]} : seqUR).
 
-#[global] Instance is_Store_persistent s_loc γ : Persistent (is_Store s_loc γ).
+#[global] Instance is_Store_persistent s_loc γs γh : Persistent (is_Store s_loc γs γh).
 Proof. apply _. Qed.
 #[global] Instance is_text_lb_persistent γ parent S : Persistent (is_text_lb γ parent S).
 Proof. apply _. Qed.
+
+(** Non-vacuity witness / the [wp_NewDoc] seam: a fresh store's heap fields, a
+    fresh empty registered text, and this client's (empty) history element
+    assemble into [store_inv] — allocating the store's ghost names and handing
+    back the governed-text binding and the empty item-set lower bound. *)
+Lemma store_inv_init (s_loc : loc) (γh : history_names) (client k : w64)
+    (items_mref types_mref gparent : loc) (dset : yjs.deletedSet.t) (yt : yjs.yType.t) :
+  yt.(yjs.yType.start') = null →
+  yt.(yjs.yType.len') = W64 0 →
+  "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client -∗
+  "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k -∗
+  "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref -∗
+  "Hmap"    ∷ own_map items_mref (DfracOwn 1) (∅ : gmap w64 slice.t) -∗
+  "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref -∗
+  "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset -∗
+  "Hparent" ∷ gparent ↦ yt -∗
+  "Hhist"   ∷ own_client_history γh (uint.nat client) ([] : list Ev) ==∗
+  ∃ γs : store_names,
+    store_inv s_loc γs γh ∗
+    is_gov_text γs.(sn_gov) gparent ∗
+    is_text_lb γs.(sn_seq) gparent (∅ : gset (YjsItem A)).
+Proof.
+  iIntros (Hstart Hlen0) "Hclient Hclock Hitemsf Hmap Htypesf Hdset Hparent Hhist".
+  set (texts := {[gparent := MkTextState [] []]} : gmap loc text_state).
+  iMod (own_alloc (● ((λ ts, (list_to_set (ts_arr ts) : gset (YjsItem A))) <$> texts)
+                   ⋅ ◯ {[gparent := (∅ : gset (YjsItem A))]} : seqUR)) as (γseq) "[Hseq Hfrag]".
+  { apply auth_both_valid_discrete. split.
+    - rewrite /texts map_fmap_singleton /=. reflexivity.
+    - rewrite /texts map_fmap_singleton /=. by apply singleton_valid. }
+  iMod (is_gov_text_alloc gparent) as (γgov) "#Hgov".
+  set (γs := {| sn_seq := γseq; sn_gov := γgov |}).
+  iModIntro. iExists γs.
+  iSplitL "Hclient Hclock Hitemsf Hmap Htypesf Hdset Hparent Hhist Hseq";
+    last by iFrame "Hgov Hfrag".
+  iExists client, k, items_mref, types_mref, dset, texts, gparent,
+    (MkTextState [] []), ([] : list Ev).
+  iFrame "Hclient Hclock Hitemsf Htypesf Hdset Hhist Hgov".
+  iSplitL "Hmap".
+  { (* own_item_map over the empty run map *)
+    iExists (∅ : gmap w64 slice.t). iFrame "Hmap".
+    rewrite big_sepM_empty. iSplit; [done |].
+    iPureIntro. split.
+    - move=> c Hc. exfalso. move: Hc.
+      rewrite /texts /all_cells map_to_list_singleton /= elem_of_nil //.
+    - move=> c1 c2 Hc1. exfalso. move: Hc1.
+      rewrite /texts /all_cells map_to_list_singleton /= elem_of_nil //. }
+  iSplitL "Hseq"; [iFrame "Hseq" |].
+  iSplitL "Hparent".
+  { rewrite /texts big_sepM_singleton /=. iSplitL; [| iPureIntro; exact YjsArrInvariant_empty].
+    iExists yt, null. rewrite Hstart. iFrame "Hparent".
+    iPureIntro. split_and!; [done | | exact Hlen0 | exact (cells_repr_nil [])]. done. }
+  iPureIntro. split_and!.
+  - move=> parent' ts' x Hlk Hx.
+    move: Hlk. rewrite /texts lookup_singleton_Some. move=> [_ Hts]. subst ts'.
+    move: Hx. rewrite /= elem_of_nil //.
+  - move=> c Hc. exfalso. move: Hc.
+    rewrite /texts /all_cells map_to_list_singleton /= elem_of_nil //.
+  - rewrite /texts lookup_singleton_eq //.
+  - exact history_state_coh_nil.
+Qed.
 
 
 (** [containsId] decides membership of the id slice as a [gset] (via [toYjsId]). *)
@@ -2625,34 +2734,23 @@ Definition own_update (sl : slice.t) (dq : dfrac) (inputs : list (IntegrateInput
     "Hcap" ∷ own_slice_cap yjs.updateItem.t sl dq ∗
     "Hitems" ∷ ([∗ list] uiv;input ∈ uivs;inputs, is_update_item uiv input).
 
-(** [ValidReplay inputs arr arr']: applying the decoded [inputs] to [arr] in list
-    order is a *valid causal replay* yielding [arr'] -- at each step the input
-    resolves to a model item ([toItem]), that item is valid ([IsItemValid]) and
-    per-client clock-maximal ([maximalId], the causal-delivery condition that
-    [Store.Integrate] consumes), and the pure [integrate] advances the state. This
-    is exactly the chain of preconditions [wp_Store__Integrate]/[_aux] needs at
-    each loop step; it coincides with a valid replay of [OpInsert]s in the network
-    model ([yjs_network.v]: [IsValidMessage] = [toItem] + [IsItemValid];
-    [YjsState_insert] success = [integrateSafe], i.e. [maximalId] + [integrate]),
-    so a proof against it inherits the model's invariant preservation and strong
-    convergence. *)
-Inductive ValidReplay : list (IntegrateInput (A := A)) → list (YjsItem A) → list (YjsItem A) → Prop :=
-  | VR_nil arr : ValidReplay [] arr arr
-  | VR_cons input rest arr arr2 arr' nit :
-      toItem input arr = Some nit →
-      IsItemValid nit →
-      maximalId nit arr →
-      integrate input arr = Some arr2 →
-      ValidReplay rest arr2 arr' →
-      ValidReplay (input :: rest) arr arr'.
+(** [ValidReplay] (the valid-causal-replay chain of per-step [toItem] /
+    [IsItemValid] / [maximalId] / [integrate] preconditions) lives in
+    [yjs_network_model] now: it is pure, and the certificate lemma
+    [certs_ValidReplay] there produces it from the ghost op history. *)
 
 (** [Store.applyUpdate] integrates a decoded, causally-ordered batch of insert
     structs into [parent], one [Store.Integrate] per struct. Stated as a
     refinement of [ValidReplay] (the per-step model preconditions), at the
-    [is_valid_ytype] level (no store lock / [store_inv] -- exactly like
+    [own_ytype_cells] level (no store lock / [store_inv] -- exactly like
     [wp_Store__Integrate]). The result document is the replay's [arr'], still
-    [YjsArrInvariant], and grows the item set ([arr ⊆ arr']). The locked
-    [Text.ApplyUpdate] wrapper builds on this. *)
+    [YjsArrInvariant], and grows the item set ([arr ⊆ arr']).
+
+    This receiver-side [ValidReplay] spec is the INTERNAL composition lemma:
+    the public-facing certificate spec [wp_store__applyUpdate_certs] below
+    obtains the [ValidReplay] from the ghost op history (sender-side
+    certificates + [batch_ok] coverage) and invokes this proof verbatim; the
+    locked [Text.ApplyUpdate] wrapper (issue #40) builds on that. *)
 Lemma wp_store__applyUpdate (s parent : loc) (sl : slice.t) (dq : dfrac)
     (arr arr' : list (YjsItem A)) (inputs : list (IntegrateInput (A := A)))
     (cells0 : list item_cell) (texts : gmap loc text_state) (mref : loc) :
@@ -2797,6 +2895,136 @@ Proof using Type*.
     iApply ("HΦ" $! cells). iFrame "Htextj Hitemsf Hitemmap".
     iSplitR; [iPureIntro; exact Hinvj|].
     iExists uivs. iFrame "Hsl Hcap Hitems".
+Qed.
+
+(** The decoded batch's ids round-trip through the heap's [w64] id fields
+    ([is_update_item]), so both components are bounded by [2^64] — the glue
+    that turns the model-level (nat) clock facts of a [ValidReplay] into the
+    W64-level side conditions of [wp_store__applyUpdate]. *)
+Lemma own_update_id_bounds (sl : slice.t) (dq : dfrac)
+    (inputs : list (IntegrateInput (A := A))) :
+  own_update sl dq inputs -∗
+  ⌜∀ (i : nat) (input : IntegrateInput (A := A)), inputs !! i = Some input →
+     (Z.of_nat (clientId (in_id input)) < 2^64)%Z ∧
+     (Z.of_nat (clock (in_id input)) < 2^64)%Z⌝.
+Proof.
+  iIntros "Hupd". iDestruct "Hupd" as (uivs) "(Hsl & Hcap & #Hitems)".
+  iDestruct (big_sepL2_impl _ (λ _ uiv input,
+      ⌜(Z.of_nat (clientId (in_id input)) < 2^64)%Z ∧
+       (Z.of_nat (clock (in_id input)) < 2^64)%Z⌝)%I
+    with "Hitems []") as "Hpure".
+  { iIntros "!>" (i uiv input Hu Hi) "Hui". iNamed "Hui". iPureIntro.
+    rewrite -Hin_id /toYjsId /=. split; word. }
+  iDestruct (big_sepL2_length with "Hitems") as %Hlen2.
+  iDestruct (big_sepL2_pure_1 with "Hpure") as %Hb.
+  iPureIntro. move=> i input Hi.
+  have [uiv Huiv] : is_Some (uivs !! i).
+  { apply lookup_lt_is_Some_2. rewrite Hlen2. exact (lookup_lt_Some _ _ _ Hi). }
+  exact (Hb i uiv input Huiv Hi).
+Qed.
+
+(** [applyUpdate], certificate-based (issue #42; plan §6.5): the receiver-side
+    [ValidReplay] precondition of [wp_store__applyUpdate] is replaced by the
+    sender-side op certificates plus the id-level coverage [batch_ok] (what
+    y-octo's UpdateIterator establishes with the state vector — the
+    covered-batch stepping stone of §6.5.1, later absorbed by the total
+    pending-buffer spec). The proof advances the ghost history up front
+    ([history_deliver_batch] — which yields the [ValidReplay] before any code
+    runs) and then invokes the heap-level loop proof verbatim; the heap
+    catches up during the loop, and the coherence tie is re-asserted in the
+    postcondition (the locked wrapper of #40 restores [store_inv] from it).
+
+    The batch's W64-level freshness/order side conditions are derived from the
+    replay itself ([ValidReplay_arr_fresh] / [ValidReplay_batch_causal], id
+    components bounded via [own_update_id_bounds] / [own_dll_id_bounds]); only
+    the freshness against OTHER texts' cells remains a hypothesis — those are
+    outside the governed text's history (single-root-text scope, plan §8.3). *)
+Lemma wp_store__applyUpdate_certs (s parent : loc) (sl : slice.t) (dq : dfrac)
+    (γh : history_names) (c : ClientId) (h : list Ev)
+    (arr : list (YjsItem A)) (inputs : list (IntegrateInput (A := A)))
+    (Ds : list (gset YjsId))
+    (cells0 : list item_cell) (texts : gmap loc text_state) (mref : loc) :
+  batch_ok h inputs Ds →
+  YjsArrInvariant arr →
+  texts !! parent = Some (MkTextState cells0 arr) →
+  (* leftover heap-level freshness for the OTHER texts' cells only *)
+  (∀ (i : nat) (input : IntegrateInput (A := A)), inputs !! i = Some input →
+     ∀ c0, c0 ∈ all_cells (delete parent texts) →
+        cell_client c0 = W64 (clientId (in_id input)) →
+        (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id input))))%Z) →
+  {{{ is_pkg_init yjs ∗ is_history (A := A) γh ∗
+      own_client_history γh c h ∗ ⌜history_state_coh h arr⌝ ∗
+      ([∗ list] input;D ∈ inputs;Ds, is_op_cert γh (OpInsert input) D) ∗
+      own_ytype_cells parent (DfracOwn 1) cells0 arr ∗ own_update sl dq inputs ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) texts }}}
+    s @! (go.PointerType yjs.store) @! "applyUpdate" #parent #sl
+  {{{ (cells' : list item_cell) (arr' : list (YjsItem A)), RET #();
+      own_ytype_cells parent (DfracOwn 1) cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ ∗
+      own_update sl dq inputs ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗
+      own_item_map mref (DfracOwn 1) (<[parent := MkTextState cells' arr']> texts) ∗
+      own_client_history γh c (h ++ ((EvDeliver ∘ OpInsert) <$> inputs)) ∗
+      ⌜history_state_coh (h ++ ((EvDeliver ∘ OpInsert) <$> inputs)) arr'⌝ }}}.
+Proof using Type*.
+  move=> Hbatch Hinv0 Htexts Hfresh_other.
+  iIntros (Φ) "(#Hpkg & #Hhist & Hown & %Hcoh & #Hcerts & Htext & Hupd & Hitemsf & Hitemmap) HΦ".
+  (* ghost first: the history advances (and yields the ValidReplay) before any
+     code runs *)
+  iApply fupd_wp.
+  have HmaskN : ↑histN ⊆ (⊤ : coPset) by solve_ndisj.
+  iMod (history_deliver_batch γh c h arr inputs Ds ⊤ HmaskN Hbatch Hcoh Hinv0
+          with "Hhist Hown Hcerts") as (arr') "(Hown & %Hvr & %Hcoh')".
+  iModIntro.
+  (* id-component bounds: batch ids from the decoded structs, existing cell
+     ids from the governed text's DLL *)
+  iDestruct (own_update_id_bounds with "Hupd") as %Hidbnd.
+  iDestruct "Htext" as (yt tl) "(Hpar & Hdll & %Hlen & %Hrepr)".
+  iDestruct (own_dll_id_bounds with "Hdll") as %Hcellbnd.
+  iAssert (own_ytype_cells parent (DfracOwn 1) cells0 arr) with "[Hpar Hdll]" as "Htext".
+  { iExists yt, tl. iFrame "Hpar Hdll". iPureIntro. split; [exact Hlen | exact Hrepr]. }
+  (* the W64-level freshness of the batch against ALL cells *)
+  have Hfresh : ∀ (i : nat) (input : IntegrateInput (A := A)), inputs !! i = Some input →
+     ∀ c0, c0 ∈ all_cells texts → cell_client c0 = W64 (clientId (in_id input)) →
+        (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id input))))%Z.
+  { move=> i input Hi c0 Hc0 Hcc.
+    have Hsplit := all_cells_lookup texts parent (MkTextState cells0 arr) Htexts.
+    rewrite Hsplit in Hc0. apply elem_of_app in Hc0 as [Hgov | Hother];
+      last exact (Hfresh_other i input Hi c0 Hother Hcc).
+    simpl in Hgov.
+    have Hx : ic_item c0 ∈ arr.
+    { rewrite /cells_repr in Hrepr. rewrite Hrepr. apply list_elem_of_fmap_2. exact Hgov. }
+    have [Hcb Hkb] := Hcellbnd c0 Hgov.
+    have [Hicb Hikb] := Hidbnd i input Hi.
+    have Hceq : clientId (item_id (ic_item c0)) = clientId (in_id input).
+    { move: Hcc. rewrite /cell_client. move=> Hcc.
+      have Hz : uint.Z (W64 (clientId (item_id (ic_item c0))))
+              = uint.Z (W64 (clientId (in_id input))) by rewrite Hcc.
+      word. }
+    have Hlt := ValidReplay_arr_fresh inputs arr arr' Hvr i input Hi
+                  (ic_item c0) Hx Hceq.
+    rewrite /cell_clock. word. }
+  (* the W64-level intra-batch causal order *)
+  have Hcausal : ∀ (i j : nat) (inputi inputj : IntegrateInput (A := A)),
+     inputs !! i = Some inputi → inputs !! j = Some inputj →
+     (j < i)%nat → W64 (clientId (in_id inputj)) = W64 (clientId (in_id inputi)) →
+        (uint.Z (W64 (clock (in_id inputj))) < uint.Z (W64 (clock (in_id inputi))))%Z.
+  { move=> i j inputi inputj Hi Hj Hji Hcc.
+    have [Hicbi Hikbi] := Hidbnd i inputi Hi.
+    have [Hicbj Hikbj] := Hidbnd j inputj Hj.
+    have Hceq : clientId (in_id inputj) = clientId (in_id inputi).
+    { have Hz : uint.Z (W64 (clientId (in_id inputj)))
+              = uint.Z (W64 (clientId (in_id inputi))) by rewrite Hcc.
+      word. }
+    have Hlt := ValidReplay_batch_causal inputs arr arr' Hvr i j inputi inputj
+                  Hi Hj Hji Hceq.
+    word. }
+  wp_apply (wp_store__applyUpdate s parent sl dq arr arr' inputs cells0 texts mref
+              Hvr Hinv0 Htexts Hfresh Hcausal
+              with "[$Htext $Hupd $Hitemsf $Hitemmap]").
+  iIntros (cells') "(Htext & %Hinv' & Hupd & Hitemsf & Hitemmap)".
+  iApply ("HΦ" $! cells' arr').
+  iFrame "Htext Hupd Hitemsf Hitemmap Hown".
+  iPureIntro. split; [exact Hinv' | exact Hcoh'].
 Qed.
 
 End store.
