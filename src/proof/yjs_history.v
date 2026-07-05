@@ -25,13 +25,16 @@ From New.proof Require Export yjs_core yjs_network_model.
 Section history.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {A : Type} `{EqDA : EqDecision A}.
+Context {P : Type} `{EqDP : !EqDecision P} `{CntP : !Countable P}.
 
 Set Default Proof Using "Type*".
 
-Local Notation Op := (@YjsOperation A).
-Local Notation opid := (@YjsOperation_id A).
+Local Notation TId := (TypeId P).
+Local Notation Op := (TId * @YjsOperation A)%type.
+Local Notation opid := (DocOp_id (A := A) (P := P)).
 Local Notation Ev := (@Event Op).
 Local Notation RawHistories := (gmap ClientId (list Ev)).
+Local Notation DocM := (gmap TId (list (YjsItem A))).
 
 (** One record instead of loose gnames (Perennial house style). *)
 Record history_names := HistoryNames {
@@ -96,39 +99,42 @@ Qed.
 (** Broadcast (mint): append [EvBroadcast op; EvDeliver op] to the caller's
     own history and register the op with its causal-past cover
     [delivered_ids h]. Preconditions = the broadcast step's hypotheses, all
-    available inside [wp_Text__Insert]'s loop at the call site. *)
-Lemma history_broadcast γh (c k : nat) h (arr arr' : list (YjsItem A))
-    (input : IntegrateInput (A := A)) (item : YjsItem A) E :
+    available inside [wp_Text__Insert]'s loop at the call site; the clock
+    bound is doc-global (all types, issue #49). *)
+Lemma history_broadcast γh (c k : nat) h (m : DocM) (t0 : TId)
+    (arr' : list (YjsItem A)) (input : IntegrateInput (A := A)) (item : YjsItem A) E :
   ↑histN ⊆ E ->
-  toItem input arr = Some item ->
+  toItem input (docm_get m t0) = Some item ->
   IsItemValid item ->
-  maximalId item arr ->
+  maximalId item (docm_get m t0) ->
   in_id input = MkYjsId c k ->
-  (∀ x, x ∈ arr -> clientId (item_id x) = c -> (clock (item_id x) < k)%nat) ->
-  integrate input arr = Some arr' ->
-  history_state_coh h arr ->
+  (∀ (t : TId) x, x ∈ docm_get m t -> clientId (item_id x) = c ->
+     (clock (item_id x) < k)%nat) ->
+  integrate input (docm_get m t0) = Some arr' ->
+  history_state_coh h m ->
   is_history γh -∗ own_client_history γh c h ={E}=∗
   ∃ D : gset YjsId,
     own_client_history γh c
-      (h ++ [EvBroadcast (OpInsert input); EvDeliver (OpInsert input)]) ∗
-    is_op_cert γh (OpInsert input) D ∗
+      (h ++ [EvBroadcast (t0, OpInsert input); EvDeliver (t0, OpInsert input)]) ∗
+    is_op_cert γh (t0, OpInsert input) D ∗
     ⌜D ⊆ delivered_ids h⌝ ∗
     ⌜history_state_coh
-       (h ++ [EvBroadcast (OpInsert input); EvDeliver (OpInsert input)]) arr'⌝.
+       (h ++ [EvBroadcast (t0, OpInsert input); EvDeliver (t0, OpInsert input)])
+       (<[t0 := arr']> m)⌝.
 Proof.
   iIntros (HE Htoitem Hvalid Hmax Hinid Hbound Hint Hcoh) "#Hinv Hown".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".
   iDestruct (ghost_map_lookup with "HhistAuth Hown") as %HNc.
   have Hfresh : ¬ id_broadcast N (in_id input).
-  { rewrite Hinid. exact (history_fresh_id N c h arr k Hwf HNc Hcoh Hbound). }
-  pose proof (history_wf_broadcast N c h arr arr' input item k
+  { rewrite Hinid. exact (history_fresh_id N c h m k Hwf HNc Hcoh Hbound). }
+  pose proof (history_wf_broadcast N c h m t0 arr' input item k
                 Hwf HNc Hcoh Htoitem Hvalid Hmax Hinid Hbound Hint)
     as (Hwf' & Hcoh' & Hreg').
   iMod (ghost_map_update
-          (h ++ [EvBroadcast (OpInsert input); EvDeliver (OpInsert input)])
+          (h ++ [EvBroadcast (t0, OpInsert input); EvDeliver (t0, OpInsert input)])
           with "HhistAuth Hown") as "[HhistAuth Hown]".
   pose proof (ops_coh_lookup_fresh N ops (in_id input) Hopscoh Hfresh) as Hnone.
-  iMod (ghost_map_insert (in_id input) (OpInsert input, delivered_ids h) Hnone
+  iMod (ghost_map_insert (in_id input) ((t0, OpInsert input) : Op, delivered_ids h) Hnone
           with "HopsAuth") as "[HopsAuth Hcert]".
   iMod (ghost_map_elem_persist with "Hcert") as "#Hcert".
   iMod ("Hclose" with "[HhistAuth HopsAuth]") as "_".
@@ -136,7 +142,8 @@ Proof.
     iSplit.
     { rewrite big_sepM_insert; [| exact Hnone]. iFrame "Hcert Hcerts". }
     iPureIntro. split; [exact Hwf' |].
-    exact (ops_coh_broadcast N c h ops input (delivered_ids h) Hwf HNc Hfresh Hopscoh Hreg'). }
+    exact (ops_coh_broadcast N c h ops (t0, OpInsert input) (delivered_ids h)
+             Hwf HNc Hfresh Hopscoh Hreg'). }
   iModIntro. iExists (delivered_ids h). iFrame "Hown Hcert".
   iPureIntro. split; [done | exact Hcoh'].
 Qed.
@@ -145,64 +152,66 @@ Qed.
     append one [EvDeliver] per batch op to the caller's history. Produces the
     [ValidReplay] the heap-level [applyUpdate] proof consumes, before any code
     runs. *)
-Lemma history_deliver_batch γh (c : ClientId) h (arr : list (YjsItem A))
-    (inputs : list (IntegrateInput (A := A))) (Ds : list (gset YjsId)) E :
+Lemma history_deliver_batch γh (c : ClientId) h (m : DocM)
+    (inputs : list (TId * IntegrateInput (A := A))) (Ds : list (gset YjsId)) E :
   ↑histN ⊆ E ->
   batch_ok h inputs Ds ->
-  history_state_coh h arr ->
-  YjsArrInvariant arr ->
+  history_state_coh h m ->
+  (∀ t : TId, YjsArrInvariant (docm_get m t)) ->
   is_history γh -∗ own_client_history γh c h -∗
-  ([∗ list] input;D ∈ inputs;Ds, is_op_cert γh (OpInsert input) D) ={E}=∗
-  ∃ arr' : list (YjsItem A),
-    own_client_history γh c (h ++ ((EvDeliver ∘ OpInsert) <$> inputs)) ∗
-    ⌜ValidReplay inputs arr arr'⌝ ∗
-    ⌜history_state_coh (h ++ ((EvDeliver ∘ OpInsert) <$> inputs)) arr'⌝.
+  ([∗ list] ti;D ∈ inputs;Ds, is_op_cert γh (ti.1, OpInsert ti.2) D) ={E}=∗
+  ∃ m' : DocM,
+    own_client_history γh c (h ++ (deliver_ev <$> inputs)) ∗
+    ⌜ValidReplay inputs m m'⌝ ∗
+    ⌜history_state_coh (h ++ (deliver_ev <$> inputs)) m'⌝.
 Proof.
   iIntros (HE Hbatch Hcoh Harrinv) "#Hinv Hown #Hcertsin".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".
   iDestruct (ghost_map_lookup with "HhistAuth Hown") as %HNc.
   iDestruct (big_sepL2_length with "Hcertsin") as %Hlen.
-  iAssert (⌜∀ (i : nat) (input : IntegrateInput (A := A)) (D : gset YjsId),
-             inputs !! i = Some input -> Ds !! i = Some D ->
-             ops !! (in_id input) = Some (OpInsert input, D)⌝)%I as %Hlk.
-  { iIntros (i input D Hi HD).
+  iAssert (⌜∀ (i : nat) (ti : TId * IntegrateInput (A := A)) (D : gset YjsId),
+             inputs !! i = Some ti -> Ds !! i = Some D ->
+             ops !! (in_id ti.2) = Some ((ti.1, OpInsert ti.2), D)⌝)%I as %Hlk.
+  { iIntros (i ti D Hi HD).
     iDestruct (big_sepL2_lookup _ _ _ i with "Hcertsin") as "Hc"; [exact Hi | exact HD |].
     iApply (ghost_map_lookup with "HopsAuth Hc"). }
-  have Hreg : ∀ (i : nat) (input : IntegrateInput (A := A)) (D : gset YjsId),
-      inputs !! i = Some input -> Ds !! i = Some D -> op_registered N (OpInsert input) D.
-  { move=> i input D Hi HD. destruct Hopscoh as [Hc1 _].
-    exact (proj2 (Hc1 _ _ _ (Hlk i input D Hi HD))). }
-  pose proof (certs_ValidReplay N c h arr inputs Ds Hwf HNc Hcoh Harrinv Hreg
-                (eq_sym Hlen) Hbatch) as (arr' & Hvr & Hcoh' & Hwf').
-  iMod (ghost_map_update (h ++ ((EvDeliver ∘ OpInsert) <$> inputs))
+  have Hreg : ∀ (i : nat) (ti : TId * IntegrateInput (A := A)) (D : gset YjsId),
+      inputs !! i = Some ti -> Ds !! i = Some D ->
+      op_registered N (ti.1, OpInsert ti.2) D.
+  { move=> i ti D Hi HD. destruct Hopscoh as [Hc1 _].
+    exact (proj2 (Hc1 _ _ _ (Hlk i ti D Hi HD))). }
+  pose proof (certs_ValidReplay N c h m inputs Ds Hwf HNc Hcoh Harrinv Hreg
+                (eq_sym Hlen) Hbatch) as (m' & Hvr & Hcoh' & Hwf').
+  iMod (ghost_map_update (h ++ (deliver_ev <$> inputs))
           with "HhistAuth Hown") as "[HhistAuth Hown]".
   iMod ("Hclose" with "[HhistAuth HopsAuth]") as "_".
   { iNext. iExists _, _. iFrame "HhistAuth HopsAuth Hcerts".
     iPureIntro. split; [exact Hwf' |].
     apply (ops_coh_deliver_tail N c h ops _ Hwf HNc); [| exact Hopscoh].
-    move=> e He. exfalso. move: He. rewrite list_elem_of_fmap.
-    by move=> [? [? ?]].
+    move=> e He. move: He. rewrite list_elem_of_fmap.
+    move=> [ti [Heq _]]. rewrite /deliver_ev in Heq. discriminate.
   }
-  iModIntro. iExists arr'. iFrame "Hown".
+  iModIntro. iExists m'. iFrame "Hown".
   iPureIntro. split; [exact Hvr | exact Hcoh'].
 Qed.
 
 (* ===== a two-client smoke test (ghost only, no WP) ======================= *)
 
 (** Non-vacuity of the ghost story: allocate a two-client history, let client
-    1 mint the trivial first insert (into the empty document), and let client
-    2 deliver it — all inside one fancy update. This is the end-to-end
-    composition of the three API lemmas over concrete data; an accidentally
-    unsatisfiable invariant or step lemma would fail here. *)
-Lemma history_smoke (a : A) (c1 c2 : ClientId) E :
+    1 mint the trivial first insert (into the empty document, at an arbitrary
+    root type [t]), and let client 2 deliver it — all inside one fancy update.
+    This is the end-to-end composition of the three API lemmas over concrete
+    data; an accidentally unsatisfiable invariant or step lemma would fail
+    here. *)
+Lemma history_smoke (a : A) (t : TId) (c1 c2 : ClientId) E :
   ↑histN ⊆ E ->
   c1 ≠ c2 ->
   ⊢ |={E}=> ∃ γh (input : IntegrateInput (A := A)) (D : gset YjsId),
       is_history γh ∗
       own_client_history γh c1
-        [EvBroadcast (OpInsert input); EvDeliver (OpInsert input)] ∗
-      own_client_history γh c2 [EvDeliver (OpInsert input)] ∗
-      is_op_cert γh (OpInsert input) D.
+        [EvBroadcast (t, OpInsert input); EvDeliver (t, OpInsert input)] ∗
+      own_client_history γh c2 [EvDeliver (t, OpInsert input)] ∗
+      is_op_cert γh (t, OpInsert input) D.
 Proof.
   iIntros (HE Hne).
   iMod (history_alloc {[c1; c2]} E) as (γh) "[#Hinv Helems]".
@@ -211,7 +220,10 @@ Proof.
   iDestruct "Helems" as "[H1 H2]".
   set (input := MkIntegrateInput (A := A) None None a (MkYjsId c1 0)).
   set (item := Item (A := A) First Last (MkYjsId c1 0) a).
-  have Htoitem : toItem input ([] : list (YjsItem A)) = Some item by reflexivity.
+  have Hnilget : ∀ t' : TId, docm_get (∅ : DocM) t' = []
+    by move=> t'; rewrite /docm_get lookup_empty.
+  have Htoitem : toItem input (docm_get (∅ : DocM) t) = Some item
+    by rewrite Hnilget.
   have Hvalid : IsItemValid item.
   { split.
     - apply YjsLt'_ltOriginOrder. exact lt_first_last.
@@ -221,27 +233,29 @@ Proof.
       + inversion Hstep; subst;
           inversion Hreach as [x1 y1 Hstep2 | x1 y1 z1 Hstep2 ?]; subst;
           inversion Hstep2. }
-  have Hmax : maximalId item ([] : list (YjsItem A)).
-  { move=> x Hx. exfalso. move: Hx. rewrite /ArrSet /= elem_of_nil //. }
-  have Hint : integrate input ([] : list (YjsItem A)) = Some [item]
-    by vm_compute.
-  have Hbound : ∀ x : YjsItem A, x ∈ ([] : list (YjsItem A)) ->
+  have Hmax : maximalId item (docm_get (∅ : DocM) t).
+  { rewrite Hnilget. move=> x Hx. exfalso. move: Hx. rewrite /ArrSet /= elem_of_nil //. }
+  have Hint : integrate input (docm_get (∅ : DocM) t) = Some [item]
+    by rewrite Hnilget; vm_compute.
+  have Hbound : ∀ (t' : TId) (x : YjsItem A), x ∈ docm_get (∅ : DocM) t' ->
       clientId (item_id x) = c1 -> (clock (item_id x) < 0)%nat.
-  { move=> x Hx. exfalso. move: Hx. rewrite elem_of_nil //. }
-  iMod (history_broadcast γh c1 0%nat [] [] [item] input item E HE
+  { move=> t' x Hx. exfalso. move: Hx. rewrite Hnilget elem_of_nil //. }
+  iMod (history_broadcast γh c1 0%nat [] ∅ t [item] input item E HE
           Htoitem Hvalid Hmax eq_refl Hbound Hint history_state_coh_nil
           with "Hinv H1") as (D) "(H1 & #Hcert & %HDsub & %Hcoh1)".
   have HDempty : D = ∅.
   { move: HDsub. rewrite /delivered_ids /=. set_solver. }
   subst D.
-  have Hbatch : batch_ok [] [input] [∅ : gset YjsId].
-  { move=> i input' D' Hi HD'.
+  have Hbatch : batch_ok [] [(t, input)] [∅ : gset YjsId].
+  { move=> i ti' D' Hi HD'.
     destruct i as [| i]; last by (destruct i; discriminate).
     injection Hi as <-. injection HD' as <-.
     rewrite /delivered_ids take_0 /=. split; set_solver. }
-  iMod (history_deliver_batch γh c2 [] [] [input] [∅] E HE Hbatch
-          history_state_coh_nil YjsArrInvariant_empty
-          with "Hinv H2 []") as (arr2) "(H2 & %Hvr & %Hcoh2)".
+  have Hinvempty : ∀ t' : TId, YjsArrInvariant (docm_get (∅ : DocM) t').
+  { move=> t'. rewrite Hnilget. exact YjsArrInvariant_empty. }
+  iMod (history_deliver_batch γh c2 [] ∅ [(t, input)] [∅] E HE Hbatch
+          history_state_coh_nil Hinvempty
+          with "Hinv H2 []") as (m2) "(H2 & %Hvr & %Hcoh2)".
   { rewrite big_sepL2_singleton. iApply "Hcert". }
   iModIntro. iExists γh, input, ∅.
   iFrame "Hinv Hcert H1 H2".
