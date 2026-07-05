@@ -134,18 +134,40 @@ func containsId(s []id, id id) bool {
 	return false
 }
 
-// findById walks the parent's item list and returns the item with the given id,
-// or nil. Because contents are 1 char, an item's last_id equals its id, so the
-// origin ids resolve by exact match without splitting.
-func findById(parent *yType, id id) *item {
-	cur := parent.start
-	for cur != nil {
-		if cur.id.Equal(id) {
-			return cur
+// repair resolves a decoded item's references before integration (y-octo:
+// DocStore::repair). The origin ids resolve to live items through the store's
+// per-client run lists (with 1-char contents, split_at_and_get_left/right
+// degenerate to the plain get_node lookup and the origin ids never move), and
+// the parent is recovered:
+//   - parentName != nil is Parent::String: look up / create the root type by
+//     name (y-octo: get_or_create_type);
+//   - parentName == nil is Parent::None: borrow the parent from the resolved
+//     left (or right) neighbour.
+//
+// Parent::Id (type-as-item) is out of the verified subset (#43). parentName is
+// passed alongside the item because the decoded wire form lives on updateItem,
+// not on item (see item.parent). Callers hold s.mu.
+func (s *store) repair(it *item, parentName *string) {
+	if it.originLeftId != nil {
+		left, ok := s.GetNode(*it.originLeftId)
+		if ok {
+			it.left = left
 		}
-		cur = cur.right
 	}
-	return nil
+	if it.originRightId != nil {
+		right, ok := s.GetNode(*it.originRightId)
+		if ok {
+			it.right = right
+		}
+	}
+
+	if parentName != nil {
+		it.parent = s.getOrCreateYType(*parentName)
+	} else if it.left != nil {
+		it.parent = it.left.parent
+	} else if it.right != nil {
+		it.parent = it.right.parent
+	}
 }
 
 // scanConflicts walks the run of concurrent items starting at conflict and
@@ -229,16 +251,11 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 //   - no concurrency control (single-threaded model), so the unsafe shared-ref
 //     dance becomes plain pointer mutation;
 //   - the parent type is never deleted.
+//
+// item.left / item.right are taken as given (y-octo reads this.left/this.right
+// directly): the update path resolves them with store.repair beforehand, the
+// local-edit path creates the item already linked to its neighbours.
 func (s *store) integrateCore(parent *yType, item *item) {
-	// Resolve left/right from the origin ids (y-octo: store::repair). With
-	// 1-char contents there is no split, so this is a direct lookup.
-	if item.originLeftId != nil {
-		item.left = findById(parent, *item.originLeftId)
-	}
-	if item.originRightId != nil {
-		item.right = findById(parent, *item.originRightId)
-	}
-
 	left := item.left
 	right := item.right
 
@@ -268,12 +285,22 @@ func (s *store) integrateCore(parent *yType, item *item) {
 	}
 }
 
-// Integrate inserts item into parent's sequence and records it in the store's
-// per-client item set (y-octo: store::integrate, ending in self.add_node(node)).
-// On return item is spliced into the doubly linked list at its conflict-resolved
-// position, parent.len is updated, and s.items[item.id.clientId] holds item at
-// its tail.
+// Integrate inserts item into its parent's sequence and records it in the
+// store's per-client item set (y-octo: store::integrate, ending in
+// self.add_node(node)). The parent argument mirrors y-octo's
+// Option<&mut YType> fast path: local edits pass the type they are already
+// working on, while the update path passes nil and the item's own parent
+// (resolved by store.repair) is used; an item whose parent did not resolve is
+// dropped, as in y-octo. On return item is spliced into the doubly linked
+// list at its conflict-resolved position, parent.len is updated, and
+// s.items[item.id.clientId] holds item at its tail.
 func (s *store) Integrate(parent *yType, item *item) {
+	if parent == nil {
+		if item.parent == nil {
+			return
+		}
+		parent = item.parent
+	}
 	s.integrateCore(parent, item)
 	s.AddNode(item)
 }

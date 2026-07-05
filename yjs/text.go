@@ -88,7 +88,14 @@ func (t *Text) Insert(index uint64, content string) {
 			originLeftId = &lid
 		}
 
+		// The local item is created already linked to its neighbours and
+		// carrying its parent (y-octo: store::create_item receives pos.left /
+		// pos.right / Some(Parent::Type)); the update path resolves the same
+		// fields with store.repair instead.
 		newit := newItem(newId(client, clk), string(content[i]), originLeftId, originRightId)
+		newit.left = left
+		newit.right = right
+		newit.parent = t.inner
 		s.Integrate(t.inner, newit)
 
 		// the next character integrates immediately to the right of this one.

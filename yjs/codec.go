@@ -340,21 +340,15 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 	}
 }
 
-// pendingItem is a single 1-char item awaiting integration.
-type pendingItem struct {
-	id            id
-	originLeftId  *id
-	originRightId *id
-	parentName    string // meaningful only when both origins are nil
-	content       string
-}
-
-// integrateStructs splits each item struct into 1-char items and integrates
-// them in dependency order: an item is integrated once both of its origins are
-// already integrated (so findById can resolve them). Repeated passes process
-// the remainder until no progress is made.
+// integrateStructs splits each item struct into 1-char updateItems and
+// integrates them in dependency order with the verified update path
+// (store.repair + store.Integrate): an item is integrated once both of its
+// origins are already in the store, so repair can resolve them (and the
+// parent borrows from them). Repeated passes process the remainder until no
+// progress is made — a minimal stand-in for y-octo's UpdateIterator pending
+// machinery, which is out of the verified subset.
 func (doc *Doc) integrateStructs(structs []decodedStruct) {
-	var pending []pendingItem
+	var pending []updateItem
 	for _, ds := range structs {
 		if !ds.isItem {
 			// GC / Skip: nothing to integrate (the DLLs hold only items).
@@ -364,85 +358,71 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 		for j := 0; j < runLen; j++ {
 			subID := newId(ds.id.clientId, ds.id.clock+uint64(j))
 			var originLeftId *id
+			var parentName *string
 			if j == 0 {
 				originLeftId = ds.originLeftId
+				if ds.originLeftId == nil && ds.originRightId == nil {
+					nm := ds.parentName
+					parentName = &nm
+				}
 			} else {
 				prev := newId(ds.id.clientId, ds.id.clock+uint64(j-1))
 				originLeftId = &prev
 			}
-			pending = append(pending, pendingItem{
+			pending = append(pending, updateItem{
 				id:            subID,
 				originLeftId:  originLeftId,
 				originRightId: ds.originRightId,
-				parentName:    ds.parentName,
+				parentName:    parentName,
 				content:       ds.content[j : j+1],
 			})
 		}
 	}
 
-	idToText := map[id]*yType{}
+	s := doc.store
 	for len(pending) > 0 {
-		progressed := false
-		var next []pendingItem
-		for _, pi := range pending {
-			leftOK := pi.originLeftId == nil || hasIDKey(idToText, *pi.originLeftId)
-			rightOK := pi.originRightId == nil || hasIDKey(idToText, *pi.originRightId)
-			if !(leftOK && rightOK) {
-				next = append(next, pi)
-				continue
+		var ready []updateItem
+		readyIds := map[id]bool{}
+		var next []updateItem
+		for _, ui := range pending {
+			resolved := func(dep *id) bool {
+				return dep == nil || readyIds[*dep] || hasNode(s, *dep)
 			}
-
-			var txt *yType
-			if pi.originLeftId != nil {
-				txt = idToText[*pi.originLeftId]
-			} else if pi.originRightId != nil {
-				txt = idToText[*pi.originRightId]
+			if resolved(ui.originLeftId) && resolved(ui.originRightId) {
+				ready = append(ready, ui)
+				readyIds[ui.id] = true
 			} else {
-				txt = doc.store.getOrCreateYType(pi.parentName)
+				next = append(next, ui)
 			}
-
-			item := newItem(pi.id, pi.content, pi.originLeftId, pi.originRightId)
-			doc.store.Integrate(txt, item)
-			idToText[pi.id] = txt
-			progressed = true
 		}
-		pending = next
-		if !progressed {
+		if len(ready) == 0 {
 			break // missing dependencies: drop the remainder (minimal codec)
 		}
+		s.applyUpdate(ready)
+		pending = next
 	}
 }
 
 // applyDeletes records each range in the delete set and tombstones the matching
-// items across all root types.
+// items; the owning type comes from the item's own parent.
 func (doc *Doc) applyDeletes(deletes []pendingDelete) {
 	for _, del := range deletes {
 		doc.store.deletedSet.addRange(newId(del.client, del.clock), del.length)
 		end := del.clock + del.length
 		for clock := del.clock; clock < end; clock++ {
 			target := newId(del.client, clock)
-			item, y := doc.findItem(target)
-			if item != nil && !item.Deleted() {
+			item, ok := doc.store.GetNode(target)
+			if ok && !item.Deleted() {
 				item.flags = item.flags | itemDeleted
 				if item.Countable() {
-					y.len = y.len - item.Len()
+					item.parent.len = item.parent.len - item.Len()
 				}
 			}
 		}
 	}
 }
 
-// findItem locates the item with id across the document's root types.
-func (doc *Doc) findItem(id id) (*item, *yType) {
-	for _, y := range doc.store.types {
-		if it := findById(y, id); it != nil {
-			return it, y
-		}
-	}
-	return nil, nil
-}
-
-func hasIDKey[V any](m map[id]V, k id) bool {
-	_, ok := m[k]
+func hasNode(s *store, id id) bool {
+	_, ok := s.GetNode(id)
 	return ok
 }

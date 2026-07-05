@@ -19,21 +19,28 @@ package yjs
 // in the order-independent / ghost-global-history restatement tracked in issue #40.
 
 // updateItem is one decoded insert struct in the verified subset: an item carrying
-// its id, both sibling origins, and its single-char string content (y-octo:
-// codec/item.rs Item, as stored in codec/update.rs Update.structs). The Phase-2
-// simplification fixes the content to a 1-char string and drops Parent::Id /
-// parent_sub (the struct's parent is the root text it is applied to).
+// its id, both sibling origins, its parent info and its single-char string content
+// (y-octo: codec/item.rs Item, as stored in codec/update.rs Update.structs). The
+// Phase-2 simplification fixes the content to a 1-char string and drops
+// Parent::Id / parent_sub (root types only, #43).
 type updateItem struct {
 	id            id
 	originLeftId  *id
 	originRightId *id
-	content       string
+	// parentName is the decoded parent (y-octo: Item.parent): non-nil is
+	// Parent::String, the name of the root type the item targets; nil is
+	// Parent::None, meaning store.repair borrows the parent from the item's
+	// resolved left/right neighbour (the wire format only carries a parent for
+	// structs with no sibling origins).
+	parentName *string
+	content    string
 }
 
 // Update is the decoded, in-memory update of the verified subset: a batch of
 // insert structs in causal order -- every struct's origins occur earlier in the
-// list, and each client's structs are clock-ascending -- all targeting one root
-// text (y-octo: codec/update.rs Update, restricted to its structs field). The
+// list, and each client's structs are clock-ascending (y-octo: codec/update.rs
+// Update, restricted to its structs field). Each struct carries its own parent
+// info, so one update may touch several root types (issue #49). The
 // pending_structs / missing_state / pending_delete_set fields that drive
 // UpdateIterator's retry machinery, and delete_set which drives delete_range, are
 // out of the verified subset.
@@ -41,15 +48,19 @@ type Update struct {
 	structs []updateItem
 }
 
-// applyUpdate integrates the decoded structs into parent in list order, reusing
-// store.Integrate for each. This is the integrate loop of y-octo's
+// applyUpdate integrates the decoded structs in list order: each struct is
+// repaired (origins and parent resolved against the store) and then integrated
+// with the proven store.Integrate. This is the integrate loop of y-octo's
 // Doc::apply_update (document.rs): there the UpdateIterator yields structs in
-// causal order and store.integrate splices each one in; here the caller supplies
-// that causal order directly. Callers hold s.mu.
-func (s *store) applyUpdate(parent *yType, structs []updateItem) {
+// causal order and store.repair + store.integrate(s, offset, None) splice each
+// one in; here the caller supplies that causal order directly. The update is a
+// doc-level batch: the target type of each struct is per-item data, not a
+// parameter (issue #49). Callers hold s.mu.
+func (s *store) applyUpdate(structs []updateItem) {
 	for i := 0; i < len(structs); i++ {
 		ui := structs[i]
 		it := newItem(ui.id, ui.content, ui.originLeftId, ui.originRightId)
-		s.Integrate(parent, it)
+		s.repair(it, ui.parentName)
+		s.Integrate(nil, it)
 	}
 }
