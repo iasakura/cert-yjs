@@ -127,11 +127,19 @@ Definition toContent (c : yjs.content.t) : A := c.(yjs.content.content').
     so the visible-character count is a pure function of the abstract cells
     ([num_visible], the source of truth for [yType.len]). [Text.Delete] tombstones
     a cell by flipping [ic_deleted]; [ic_item] (hence the abstract document list)
-    is untouched, so deletion never reorders or removes a document item. *)
+    is untouched, so deletion never reorders or removes a document item.
+
+    [ic_parent] mirrors the heap node's [parent] pointer (issue #49: items carry
+    their resolved parent type, y-octo [Some (Parent::Type)]). Like [ic_deleted]
+    it is promoted out of the existential struct — [own_dll] pins the struct's
+    [parent'] field to it — so [store.repair]'s borrow-from-neighbour reads it
+    through the abstract cells; [own_ytype_cells] pins every cell of a type's
+    DLL to that type's own loc. *)
 Record item_cell := MkItemCell {
   ic_loc : loc;
   ic_item : YjsItem A;
   ic_deleted : bool;
+  ic_parent : loc;
 }.
 
 (** The loc of the node at index [k] of [cells] ([null] outside [0, len)).

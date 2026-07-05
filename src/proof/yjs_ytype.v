@@ -47,14 +47,16 @@ Notation A := go_string.
     [start] heads the DLL [cells], which is isomorphic to the model [arr]. [len]
     counts the visible (non-deleted) cells ([num_visible]); a deletion tombstones
     a cell (set its [ic_deleted] bit) without removing it, so [cells] / [arr]
-    keep every item. *)
+    keep every item. Every cell's [ic_parent] is this type's own loc (issue #49:
+    items carry their parent; [store.repair]'s borrow-from-neighbour reads it). *)
 Definition own_ytype_cells (parent : loc) (dq : dfrac)
     (cells : list item_cell) (arr : list (YjsItem A)) : iProp Σ :=
   ∃ (yt : yjs.yType.t) (tl : loc),
     "Hparent" ∷ parent ↦{dq} yt ∗
     "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null cells ∗
     "%Hlen" ∷ ⌜yt.(yjs.yType.len') = W64 (num_visible cells)⌝ ∗
-    "%Hrepr" ∷ ⌜cells_repr arr cells arr⌝.
+    "%Hrepr" ∷ ⌜cells_repr arr cells arr⌝ ∗
+    "%Hcpar" ∷ ⌜∀ c, c ∈ cells -> ic_parent c = parent⌝.
 
 (* ----- the abstract model and the public predicate ----------------------- *)
 
@@ -82,12 +84,12 @@ Lemma own_ytype_intro (parent : loc) (dq : dfrac)
   own_ytype_cells parent dq cells arr ⊢
     own_ytype parent dq (cell_model <$> cells) ∗ ⌜(cell_model <$> cells).*1 = arr⌝.
 Proof.
-  iIntros "H". iDestruct "H" as (yt tl) "(Hp & Hdll & %Hlen & %Hrepr)".
+  iIntros "H". iDestruct "H" as (yt tl) "(Hp & Hdll & %Hlen & %Hrepr & %Hcpar)".
   have Harr : (cell_model <$> cells).*1 = arr.
   { rewrite cell_model_fst. rewrite /cells_repr in Hrepr. rewrite Hrepr //. }
   iSplitL; last (iPureIntro; exact Harr).
   iExists cells. rewrite Harr. iSplitL; last done.
-  iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split; [exact Hlen | exact Hrepr].
+  iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
 Qed.
 
 (** General tombstone-aware [findPos]: walk to the visible character index [idx]
@@ -124,10 +126,10 @@ Proof.
     wp_for "IH".
     wp_if_destruct.
     + wp_auto. iApply ("HΦ" $! null null 0%nat). iSplitL "Hp".
-      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen | exact Hrepr]. }
+      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen | exact Hrepr | exact Hcpar]. }
       iPureIntro. split_and!; [lia | rewrite /node_loc; case_decide; reflexivity | rewrite /node_loc; case_decide; reflexivity].
     + iApply ("HΦ" $! null null 0%nat). iSplitL "Hp".
-      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen | exact Hrepr]. }
+      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen | exact Hrepr | exact Hcpar]. }
       iPureIntro. split_and!; [lia | rewrite /node_loc; case_decide; reflexivity | rewrite /node_loc; case_decide; reflexivity].
   - (* non-empty: skip leading tombstones, then count visible nodes to [idx] *)
     wp_auto.
@@ -187,7 +189,7 @@ Proof.
         2:{ wp_auto. rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
             iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2).
             iSplitR "".
-            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr]. }
+            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
             iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity]. }
         wp_auto.
         destruct (decide (q2 < length (c0 :: cs))%nat) as [Hq2lt | Hq2ge].
@@ -197,14 +199,14 @@ Proof.
             rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
             iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2).
             iSplitR "".
-            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr]. }
+            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
             iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity]. }
         iDestruct (node_loc_lt_not_null dq (c0 :: cs) yt.(yjs.yType.start') tl q2 Hq2lt with "Hdll") as "[%Hnn2 Hdll]".
         rewrite (bool_decide_eq_false_2 (node_loc (c0 :: cs) q2 = null) Hnn2). simpl negb.
         rewrite decide_True; [| done].
         destruct ((c0 :: cs) !! q2) as [c2|] eqn:Hc2; [| apply lookup_ge_None in Hc2; lia].
         iDestruct (own_dll_acc dq (c0 :: cs) yt.(yjs.yType.start') tl q2 c2 Hc2 with "Hdll") as (iv2 olid2 orid2)
-          "(%Hc2loc & %Hc2l & %Hc2r & %Hc2id & %Hc2cont & %Hc2olid & %Hc2orid & %Hc2flags & %Hc2contlen & Hc2val & #Hc2ol & #Hc2or & Hback2)".
+          "(%Hc2loc & %Hc2l & %Hc2r & %Hc2id & %Hc2cont & %Hc2olid & %Hc2orid & %Hc2flags & %Hc2contlen & %Hc2par & Hc2val & #Hc2ol & #Hc2or & Hback2)".
         have Hcount2 : is_countable_flag iv2 = true := flags_if_countable iv2 (ic_deleted c2) Hc2flags.
         have Hdel2 : is_deleted_flag iv2 = ic_deleted c2 := flags_if_deleted iv2 (ic_deleted c2) Hc2flags.
         iEval (rewrite -Hc2loc) in "Hrightp".
@@ -249,7 +251,7 @@ Proof.
         2:{ wp_auto. rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
             iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2).
             iSplitR "".
-            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr]. }
+            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
             iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity]. }
         wp_auto.
         destruct (decide (q2 < length (c0 :: cs))%nat) as [Hq2lt | Hq2ge].
@@ -259,14 +261,14 @@ Proof.
             rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
             iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2).
             iSplitR "".
-            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr]. }
+            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
             iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity]. }
         iDestruct (node_loc_lt_not_null dq (c0 :: cs) yt.(yjs.yType.start') tl q2 Hq2lt with "Hdll") as "[%Hnn2 Hdll]".
         rewrite (bool_decide_eq_false_2 (node_loc (c0 :: cs) q2 = null) Hnn2). simpl negb.
         rewrite decide_True; [| done].
         destruct ((c0 :: cs) !! q2) as [c2|] eqn:Hc2; [| apply lookup_ge_None in Hc2; lia].
         iDestruct (own_dll_acc dq (c0 :: cs) yt.(yjs.yType.start') tl q2 c2 Hc2 with "Hdll") as (iv2 olid2 orid2)
-          "(%Hc2loc & %Hc2l & %Hc2r & %Hc2id & %Hc2cont & %Hc2olid & %Hc2orid & %Hc2flags & %Hc2contlen & Hc2val & #Hc2ol & #Hc2or & Hback2)".
+          "(%Hc2loc & %Hc2l & %Hc2r & %Hc2id & %Hc2cont & %Hc2olid & %Hc2orid & %Hc2flags & %Hc2contlen & %Hc2par & Hc2val & #Hc2ol & #Hc2or & Hback2)".
         have Hcount2 : is_countable_flag iv2 = true := flags_if_countable iv2 (ic_deleted c2) Hc2flags.
         have Hdel2 : is_deleted_flag iv2 = ic_deleted c2 := flags_if_deleted iv2 (ic_deleted c2) Hc2flags.
         iEval (rewrite -Hc2loc) in "Hrightp".

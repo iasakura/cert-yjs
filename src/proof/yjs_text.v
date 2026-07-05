@@ -891,10 +891,10 @@ Proof.
   destruct (ic_deleted cq) eqn:Hdq.
   - (* already a tombstone: [Indexable] is false, walk past it unchanged *)
     simpl negb. wp_auto.
-    iDestruct ("Hback" $! iv true eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl Hflags with "Hcval") as "Hdll".
-    have Hins0 : <[q := MkItemCell cq.(ic_loc) cq.(ic_item) true]> cells' = cells'.
+    iDestruct ("Hback" $! iv true eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl Hflags with "Hcval") as "Hdll".
+    have Hins0 : <[q := MkItemCell cq.(ic_loc) cq.(ic_item) true cq.(ic_parent)]> cells' = cells'.
     { rewrite -Hdq.
-      have -> : MkItemCell cq.(ic_loc) cq.(ic_item) cq.(ic_deleted) = cq by destruct cq.
+      have -> : MkItemCell cq.(ic_loc) cq.(ic_item) cq.(ic_deleted) cq.(ic_parent) = cq by destruct cq.
       apply list_insert_id; exact Hcq. }
     rewrite Hins0.
     wp_for_post.
@@ -909,8 +909,8 @@ Proof.
     wp_apply (wp_item__Len cq.(ic_loc) (DfracOwn 1) (set_deleted iv) with "[$Hcval]"). iIntros "Hcval".
     rewrite Hcontlen. wp_auto.
     iDestruct ("Hback" $! (set_deleted iv) true eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl
-                 (set_deleted_flags iv false Hflags) with "Hcval") as "Hdll".
-    have Hflip : MkItemCell cq.(ic_loc) cq.(ic_item) true = flip_cell cq by reflexivity.
+                 eq_refl (set_deleted_flags iv false Hflags) with "Hcval") as "Hdll".
+    have Hflip : MkItemCell cq.(ic_loc) cq.(ic_item) true cq.(ic_parent) = flip_cell cq by reflexivity.
     rewrite Hflip.
     wp_for_post.
     have Hnv1 : (1 <= num_visible cells')%nat.
