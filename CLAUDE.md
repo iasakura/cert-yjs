@@ -85,14 +85,20 @@ the commit pinned in `cert-yjs.opam`); an opam switch with Perennial installed
 | `src/code/`, `src/generatedproof/` | goose / proofgen output | **no — generated, gitignored** |
 
 Never hand-edit generated files; change the Go and re-run goose. Proof files
-`Require` each other in order `core → common → id → item → ytype → store →
-text` and reopen the same `Section` boilerplate:
+`Require` each other in order `core → common (∥ network_model) → id → item →
+ytype → history → store → text` and reopen the same `Section` boilerplate:
 
 - `yjs_core.v` — re-exports the `rocq-yjs` / `iris-yjs` library (pure
   `integrate` / `setintegrate` model and its order theory).
 - `yjs_common.v` — shared base: scalar abstractions (`toYjsId` / `toContent`),
   `item_cell` / `node_loc`, `own_id_set`, the package-init instances
   (declared once here, inherited via `Require`).
+- `yjs_network_model.v` — the Iris-free bridge to the rocq-yjs *network*
+  model (issue #42): `history_wf` over a raw `gmap ClientId (list Event)`,
+  the packaging `to_network : … → YjsOperationNetwork`, `history_state_coh`,
+  happens-before append-stability, freshness, receiver clock safety, the
+  broadcast/deliver steps, `ValidReplay`, and `certs_ValidReplay`. No goose —
+  iterate on it standalone.
 - `yjs_id.v` — the `id` type: arithmetic round-trip, injectivity, equality
   specs.
 - `yjs_item.v` — the `item` type: method specs, the DLL spine `own_dll` and
@@ -101,12 +107,20 @@ text` and reopen the same `Section` boilerplate:
 - `yjs_ytype.v` — the `yType` container: public `own_ytype parent dq m`
   (model = items with tombstone bits) over cells-level `own_ytype_cells`,
   and `wp_yType__findPos`.
+- `yjs_history.v` — the ghost op history (issue #42): the global invariant
+  `is_history γh` (two `ghost_map`s + `history_wf`/`ops_coh`), the exclusive
+  per-replica `own_client_history`, the persistent op certificate
+  `is_op_cert`, and the fupd API `history_alloc` / `history_broadcast` /
+  `history_deliver_batch` (+ a two-client smoke test).
 - `yjs_store.v` — the `store` proofs: conflict scan refining `setfii_loop`,
   the item-set layer `own_item_map`, the lock layer (`store_inv` /
-  `is_Store`), and the Integrate stack up to `wp_Store__Integrate` /
-  `wp_store__applyUpdate`.
-- `yjs_text.v` — the `Text` handle `is_Text t L` and the top-level
-  `wp_Text__Insert` / `wp_Text__Delete`.
+  `is_Store`, now carrying the client's ghost history tied to the governed
+  text), and the Integrate stack up to `wp_Store__Integrate` /
+  `wp_store__applyUpdate` / the certificate-based
+  `wp_store__applyUpdate_certs`.
+- `yjs_text.v` — the `Text` handle `is_Text t γh L` and the top-level
+  `wp_Text__Insert` (which mints one op certificate per inserted item) /
+  `wp_Text__Delete`.
 
 ## Notes
 

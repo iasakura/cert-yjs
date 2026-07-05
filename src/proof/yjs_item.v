@@ -382,6 +382,25 @@ Proof.
   - iApply "Hback". iFrame "Hcval".
 Qed.
 
+(** Every cell's model id round-trips through the heap's [w64] id fields
+    ([own_dll] pins [item_id (ic_item c) = toYjsId iv.(id')]), so both id
+    components are bounded by [2^64]. This is what lets W64-level clock
+    comparisons ([cell_clock] / [cell_client]) be recovered from nat-level
+    model facts (used by the certificate-based [applyUpdate] spec). *)
+Lemma own_dll_id_bounds (dq : dfrac) (l last prev next : loc) (cells : list item_cell) :
+  own_dll dq l last prev next cells -∗
+  ⌜∀ c, c ∈ cells → (Z.of_nat (clientId (item_id (ic_item c))) < 2^64)%Z ∧
+                    (Z.of_nat (clock (item_id (ic_item c))) < 2^64)%Z⌝.
+Proof.
+  iInduction cells as [|c0 cells] "IH" forall (l prev).
+  - iIntros "_". iPureIntro. move=> c Hc. rewrite elem_of_nil in Hc. done.
+  - iIntros "H". iNamed "H".
+    iDestruct ("IH" with "Hrest") as %Hrest.
+    iPureIntro. move=> c Hc.
+    apply elem_of_cons in Hc as [-> | Hc]; last exact (Hrest c Hc).
+    rewrite Hid /toYjsId /=. split; word.
+Qed.
+
 (** A plain value accessor: borrow the node's (existential) heap struct at index
     [k] from *any* DLL segment (arbitrary [prev]/[nxt]), with its local
     translation facts and a wand to restore it. Unlike [own_dll_acc] it carries no

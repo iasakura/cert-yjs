@@ -7,7 +7,7 @@ From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
-From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype yjs_store yjs_text.
+From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype yjs_history yjs_store yjs_text.
 From New.proof.sync_proof Require Import mutex.
 From iris.algebra Require Import auth gmap gset.
 
@@ -29,13 +29,13 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
     predicate is the Doc-level handle used by the eventual [wp_NewDoc] /
     [wp_Doc__GetText] specs (GetText: consume [is_Doc dv s_loc γ], create a YType
     under the lock, return [is_Text t []]). *)
-Definition is_Doc (dv s_loc : loc) (γ : gname) : iProp Σ :=
+Definition is_Doc (dv s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
   ∃ (dvv : yjs.Doc.t),
     "Hdoc" ∷ dv ↦□ dvv ∗
     "%Hstore" ∷ ⌜dvv.(yjs.Doc.store') = s_loc⌝ ∗
-    "His_store" ∷ is_Store s_loc γ.
+    "His_store" ∷ is_Store s_loc γs γh.
 
-#[global] Instance is_Doc_persistent dv s_loc γ : Persistent (is_Doc dv s_loc γ).
+#[global] Instance is_Doc_persistent dv s_loc γs γh : Persistent (is_Doc dv s_loc γs γh).
 Proof. apply _. Qed.
 
 End doc.
