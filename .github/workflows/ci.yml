@@ -8,7 +8,13 @@
 #       git ls-remote https://github.com/actions/checkout 'refs/tags/vX.Y.Z^{}'
 #   - opam dependencies are all pinned to git SHAs via pin-depends in
 #     cert-yjs.opam.
-#   - The perennial checkout is fetched at the same SHA as the opam pin.
+#   - The perennial checkout supplies goose's source (built by --local). It is
+#     fetched from the fork iasakura/perennial at grove-new-wp, which is the
+#     opam-pinned perennial commit plus one goose-only patch: an ffiMapping
+#     entry routing the grovenet package to the grove FFI (issue #45). The
+#     patch touches only goose/util/util.go — no .v file — so the Perennial
+#     Rocq library the opam pin builds is unchanged; hence the opam pin stays
+#     on upstream mit-pdos and only this goose checkout carries the patch.
 #
 # The first run (no cache) builds Perennial and takes a few hours. Later runs
 # hit the _opam cache and only do goose + proof checking.
@@ -27,8 +33,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Keep in sync with the perennial pin in cert-yjs.opam
-  PERENNIAL_COMMIT: f884a505d89d3f6740f4baec515602494a9bd4cc
+  # goose source for --local: the opam-pinned perennial commit
+  # (f884a505d..., cert-yjs.opam) plus the grovenet ffiMapping patch (#45),
+  # i.e. the tip of iasakura/perennial's grove-new-wp branch.
+  PERENNIAL_REPO: https://github.com/iasakura/perennial
+  PERENNIAL_COMMIT: e8af799716f3b8963a61975b9e6652f1192f49cb
 
 jobs:
   build:
@@ -77,10 +86,10 @@ jobs:
             _opam
           key: opam-${{ runner.os }}-ocaml-5.2.0-${{ hashFiles('cert-yjs.opam') }}
 
-      - name: Fetch perennial (goose source, same commit as the opam pin)
+      - name: Fetch perennial (goose source; opam-pin commit + grovenet ffiMapping patch)
         run: |
           git init "$HOME/perennial"
-          git -C "$HOME/perennial" remote add origin https://github.com/mit-pdos/perennial
+          git -C "$HOME/perennial" remote add origin "$PERENNIAL_REPO"
           git -C "$HOME/perennial" fetch --depth 1 origin "$PERENNIAL_COMMIT"
           git -C "$HOME/perennial" checkout FETCH_HEAD
 
