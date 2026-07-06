@@ -243,12 +243,15 @@ Proof.
     wp_auto.
     iDestruct ("Hclose" $! ts with "[Hparent Hdll]") as "Htexts".
     { iSplitL "Hparent Hdll".
-      - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Hrepr].
+      - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. exact Hinvarr. }
     iEval (rewrite (insert_id texts (tv.(yjs.Text.inner')) ts Htsp)) in "Htexts".
-    wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hseq Htexts Hhist]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, texts, tv.(yjs.Text.inner'), ts, h.
-      iFrame "∗#". iPureIntro. split_and!; [exact Hctr | exact Hcellctr | exact Htsp | exact Hhcoh]. }
+    wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htexts Hhist]").
+    { iNext. iExists client, k, items_mref, types_mref, dset, texts, bind, h, m.
+      iFrame "∗#". iPureIntro.
+      split_and!;
+        [exact Hctr | exact Hcellctr | exact Hbindtexts | exact Hbindinj
+        | exact Htextsbound | exact Hhcoh | exact Hmtexts | exact Hmdom]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γs.
@@ -267,12 +270,15 @@ Proof.
     wp_auto.
     iDestruct ("Hclose" $! ts with "[Hparent Hdll]") as "Htexts".
     { iSplitL "Hparent Hdll".
-      - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Hrepr].
+      - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. exact Hinvarr. }
     iEval (rewrite (insert_id texts (tv.(yjs.Text.inner')) ts Htsp)) in "Htexts".
-    wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hseq Htexts Hhist]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, texts, tv.(yjs.Text.inner'), ts, h.
-      iFrame "∗#". iPureIntro. split_and!; [exact Hctr | exact Hcellctr | exact Htsp | exact Hhcoh]. }
+    wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htexts Hhist]").
+    { iNext. iExists client, k, items_mref, types_mref, dset, texts, bind, h, m.
+      iFrame "∗#". iPureIntro.
+      split_and!;
+        [exact Hctr | exact Hcellctr | exact Hbindtexts | exact Hbindinj
+        | exact Htextsbound | exact Hhcoh | exact Hmtexts | exact Hmdom]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γs.
@@ -444,7 +450,7 @@ Proof.
     - destruct Hhcoh as (sdoc & Hsd & Hmd). exists sdoc. split; [exact Hsd|].
       move=> t'. destruct (decide (t' = RootId name)) as [-> | Hne'].
       + rewrite docm_get_insert_eq (Hmd (RootId name)). exact Hmt.
-      + rewrite docm_get_insert_ne //. exact (Hmd t'). }
+      + rewrite docm_get_insert_ne //. }
   wp_for "IH".
   wp_apply strings.wp_string_len. iIntros "%Hlcb2". wp_auto. case_bool_decide as Hjlt.
   { (* loop body: integrate the [j]-th character *)
@@ -546,8 +552,7 @@ Proof.
       - rewrite /input /= Hri
           (findRightIdx_at arr (p + j) ri (yai_unique _ Hinvj) Hria) //. }
     have Hleftloc_eq : leftloc = node_loc cells (Z.of_nat (p + j) - 1).
-    { rewrite Hinslen in Hleftj.
-      destruct Hleftj as [[-> Hp0] | (lc & li & Hlccells & Hlcloc & _ & _ & Hge1 & _)].
+    { destruct Hleftj as [[-> Hp0] | (lc & li & Hlccells & Hlcloc & _ & _ & Hge1 & _)].
       - rewrite /node_loc. case_decide as Hd; [exfalso; lia | done].
       - rewrite /node_loc decide_True; last lia.
         have -> : Z.to_nat (Z.of_nat (p + j) - 1) = (p + j - 1)%nat by lia.
@@ -559,7 +564,7 @@ Proof.
     { iExists _, olo, in_rO. rewrite /own_fresh_item_raw /=. iFrame "HoL2 HisL HisRp".
       iPureIntro. split_and!;
         [reflexivity | reflexivity | reflexivity | reflexivity
-        | rewrite -Hleftloc_eq // | rewrite -Hrgtj // | reflexivity | reflexivity | exact Hclen]. }
+        | rewrite -Hleftloc_eq // | rewrite -Hrgtj // | reflexivity | reflexivity | reflexivity]. }
     have Hlookj : (<[tv.(yjs.Text.inner') := MkTextState cells arr]> texts) !! tv.(yjs.Text.inner')
                   = Some (MkTextState cells arr) by apply lookup_insert_eq.
     have Hgmaxj : ∀ c0, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTextState cells arr]> texts) →
@@ -657,10 +662,11 @@ Proof.
     (* re-establish the loop invariant for [S j] with [ins ++ [nit]] *)
     iFrame "Ht His_lb HΦ HisRp".
     iExists (S j), arr', cells', oL2, (ins ++ [nit]),
-      (hj ++ [EvBroadcast (OpInsert input); EvDeliver (OpInsert input)]), (Ds ++ [Dj]).
+      (hj ++ [EvBroadcast (RootId name, OpInsert input);
+              EvDeliver (RootId name, OpInsert input)]), (Ds ++ [Dj]).
     replace (W64 (uint.Z k + Z.of_nat (S j))) with (w64_word_instance.(word.add) (W64 (uint.Z k + j)) (W64 1)) by word.
     replace (W64 (S j)) with (w64_word_instance.(word.add) (W64 j) (W64 1)) by word.
-    iFrame "Hi Htptr Hcontentp Hclientp HoRp Hleftp Hsp Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq Hclose Hhistj Hcertsj".
+    iFrame "Hi Htptr Hcontentp Hclientp HoRp Hleftp Hsp Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq HtypesAuth Htypesmap Hrightp Hclose Hhistj Hcertsj".
     iSplitL "Hp3 Hdll3".
     { iExists yt3, tl3. iFrame "Hp3 Hdll3". iPureIntro. split_and!; [exact Hlen3 | exact Hrepr3 | exact Hcpar3]. }
     have HmroR : mrightorigin = oR.
@@ -728,18 +734,14 @@ Proof.
           rewrite Hmo. destruct Hleftj as [[_ Hp0] | (lc2 & li2 & _ & _ & Hla2 & _ & _ & _ & Hlk)]; [lia |]. have -> : li = li2 by (rewrite Hla in Hla2; injection Hla2 as ->; reflexivity). have Hli2 := Hlk j' Hisj. rewrite Hli2 in Hlookj'. injection Hlookj' as <-. reflexivity.
     - intros x Hx. have Hxa := Hsubold x Hx. rewrite Hplace. rewrite -(take_drop (p + j)%nat arr) in Hxa. apply elem_of_app in Hxa as [H1 | H2]; [apply elem_of_app; left; exact H1 | apply elem_of_app; right; apply elem_of_cons; right; exact H2].
     - (* the loop-constant [right] pointer's index shifts across the splice *)
+      have Hlcells' : (length cells' = length arr + 1)%nat.
+      { rewrite (cells_repr_length _ _ _ Hrepr3).
+        rewrite Hplace length_app length_take_le /=; [rewrite length_drop; lia | exact Hple]. }
       have Hnxpos : nx = (p + j)%nat.
-      { have Hnitnx : arr' !! nx = Some nit.
-        { rewrite Harrsp2. destruct Hnode as (Hcxx & _ & Hcidx).
-          have Hnxle : (nx <= length arr)%nat.
-          { apply lookup_lt_Some in Hcxx. rewrite Hcellsp length_app /= length_drop in Hcxx.
-            have Hcl := lookup_lt_Some _ _ _ Hcxx.
-            move: Hcxx. rewrite length_take. lia. }
-          rewrite -Hcidx. apply list_lookup_middle. rewrite length_take_le //.
-          rewrite -(length_fmap ic_item cells).
-          have Hcells_arr : ic_item <$> cells = arr.
-          { move: Hrepr'0. done. }
-          rewrite Hcells_arr //. }
+      { have Hnxle : (nx <= length arr)%nat.
+        { destruct Hnode as (Hcxx & _ & _). apply lookup_lt_Some in Hcxx. lia. }
+        have Hnitnx : arr' !! nx = Some nit.
+        { rewrite Harrsp2. apply list_lookup_middle. rewrite length_take_le //. }
         destruct (Nat.lt_trichotomy nx (p + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
         - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' nx (p + j)%nat nit nit Hinv' Hnitnx Hnitpos Hlt.
           exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH).
@@ -810,7 +812,7 @@ Proof.
         rewrite docm_get_insert_ne.
         * exact (Hmtexts name' p' ts' Hb' Hts').
         * move=> Heqr. injection Heqr as Heqn. subst name'.
-          rewrite Hbindlk in Hb'. injection Hb' as He'. exact (Hne He').
+          rewrite Hbindlk in Hb'. injection Hb' as He'. exact (Hne (eq_sym He')).
     - move=> t' Hne'.
       destruct (decide (t' = RootId name)) as [-> | Hnr].
       + exists name, (tv.(yjs.Text.inner')). split; [reflexivity | exact Hbindlk].
