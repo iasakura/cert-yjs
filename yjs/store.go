@@ -304,3 +304,27 @@ func (s *store) Integrate(parent *yType, item *item) {
 	s.integrateCore(parent, item)
 	s.AddNode(item)
 }
+
+// applyUpdate integrates a decoded, causal-order batch of insert structs: each
+// struct is repaired (origins and parent resolved against the store) and then
+// integrated with the proven store.Integrate. This is the integrate loop of
+// y-octo's Doc::apply_update (document.rs): there the UpdateIterator yields the
+// structs in causal order and store.repair + store.integrate(s, offset, None)
+// splice each one in; here the caller supplies that causal order directly, and
+// each struct carries its own target type (doc-level batch, issue #49).
+//
+// Structural deviation from y-octo (deliberate, reported): y-octo keeps this
+// orchestration in Doc::apply_update and exposes only the per-struct primitives
+// (integrate/repair) on DocStore. cert-yjs encapsulates the whole loop as a
+// store method instead, so the store owns its own update logic and the public
+// Doc.ApplyUpdate (codec.go) is a thin decode+lock+call wrapper over it; this
+// keeps the verified core (wp_store__applyUpdate in src/proof/yjs_store.v) self
+// contained. Callers hold s.mu.
+func (s *store) applyUpdate(structs []updateItem) {
+	for i := 0; i < len(structs); i++ {
+		ui := structs[i]
+		it := newItem(ui.id, ui.content, ui.originLeftId, ui.originRightId)
+		s.repair(it, ui.parentName)
+		s.Integrate(nil, it)
+	}
+}
