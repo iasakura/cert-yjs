@@ -57,6 +57,23 @@ func TestUpdateRoundTrip(t *testing.T) {
 	}
 }
 
+// Two root types in one document survive a round trip through a single update:
+// each struct resolves its own parent on apply (issue #49).
+func TestUpdateRoundTripMultipleRoots(t *testing.T) {
+	doc := NewDoc(7)
+	doc.GetText("title").Insert(0, "hi")
+	doc.GetText("body").Insert(0, "yo")
+
+	clone := NewDoc(9)
+	clone.ApplyUpdate(doc.EncodeUpdate())
+	if got := clone.GetText("title").String(); got != "hi" {
+		t.Fatalf("title: got %q, want %q", got, "hi")
+	}
+	if got := clone.GetText("body").String(); got != "yo" {
+		t.Fatalf("body: got %q, want %q", got, "yo")
+	}
+}
+
 // Two clients edit the same named text concurrently, then exchange updates.
 // Applying the two updates in either order must converge to the same string.
 func TestConcurrentMergeConverges(t *testing.T) {

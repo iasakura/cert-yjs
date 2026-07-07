@@ -175,6 +175,7 @@ Fixpoint own_dll (dq : dfrac) (l last prev next : loc) (cells : list item_cell) 
       ∃ (iv : yjs.item.t) (olid orid : option yjs.id.t),
       "%Hloc" ∷ ⌜l = ic_loc c ∧ l ≠ null⌝ ∗
       "%Hprev" ∷ ⌜iv.(yjs.item.left') = prev⌝ ∗
+      "%Hpar" ∷ ⌜iv.(yjs.item.parent') = ic_parent c⌝ ∗
       "%Hid" ∷ ⌜item_id (ic_item c) = toYjsId iv.(yjs.item.id')⌝ ∗
       "%Hcontent" ∷ ⌜content (ic_item c) = toContent iv.(yjs.item.content')⌝ ∗
       "%Holid" ∷ ⌜origin_id (origin (ic_item c)) = toYjsId <$> olid⌝ ∗
@@ -220,6 +221,7 @@ Lemma own_dll_insert_middle (dq : dfrac) (cs1 cs2 : list item_cell) (newc : item
   ic_loc newc ≠ null ->
   iv.(yjs.item.left') = ml ->
   iv.(yjs.item.right') = mr ->
+  iv.(yjs.item.parent') = ic_parent newc ->
   item_id (ic_item newc) = toYjsId iv.(yjs.item.id') ->
   content (ic_item newc) = toContent iv.(yjs.item.content') ->
   origin_id (origin (ic_item newc)) = toYjsId <$> olid ->
@@ -233,12 +235,12 @@ Lemma own_dll_insert_middle (dq : dfrac) (cs1 cs2 : list item_cell) (newc : item
   own_dll dq mr tl (ic_loc newc) null cs2
   ⊢ own_dll dq hd tl null null (cs1 ++ newc :: cs2).
 Proof.
-  move=> Hnn Hl Hr Hidt Hcont Holidt Horidt Hflags Hcontlen.
+  move=> Hnn Hl Hr Hpart Hidt Hcont Holidt Horidt Hflags Hcontlen.
   iIntros "(Hdll1 & Hnode & Hol & Hor & Hdll2)".
   rewrite own_dll_app. iExists ml, (ic_loc newc). iFrame "Hdll1".
   simpl. iExists iv, olid, orid. rewrite Hr. iFrame "Hnode Hol Hor Hdll2".
   iPureIntro; split_and!;
-    [reflexivity | exact Hnn | exact Hl | exact Hidt | exact Hcont
+    [reflexivity | exact Hnn | exact Hl | exact Hpart | exact Hidt | exact Hcont
     | exact Holidt | exact Horidt | exact Hflags | exact Hcontlen].
 Qed.
 
@@ -267,7 +269,7 @@ Proof.
       * rewrite /= in Hlst. rewrite Hlst. by destruct Hloc as [-> _].
     + iExists iv, olid, orid. iFrame "Hval Holeft Horight Hrest".
       iPureIntro; split_and!;
-        [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev | exact Hid
+        [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev | exact Hpar | exact Hid
         | exact Hcontent | exact Holid | exact Horid | exact Hflags | exact Hcontlen].
 Qed.
 
@@ -286,7 +288,7 @@ Proof.
     + iPureIntro. rewrite /=. exact (proj1 Hloc).
     + iExists iv, olid, orid. iFrame "Hval Holeft Horight Hrest".
       iPureIntro; split_and!;
-        [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev | exact Hid
+        [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev | exact Hpar | exact Hid
         | exact Hcontent | exact Holid | exact Horid | exact Hflags | exact Hcontlen].
 Qed.
 
@@ -322,6 +324,7 @@ Lemma own_dll_acc (dq : dfrac) (cells : list item_cell) (hd tl : loc) (k : nat) 
     "%Horid" ∷ ⌜origin_id (rightOrigin (ic_item c)) = toYjsId <$> orid⌝ ∗
     "%Hflags" ∷ ⌜iv.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
     "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
+    "%Hpar" ∷ ⌜iv.(yjs.item.parent') = ic_parent c⌝ ∗
     "Hcval" ∷ ic_loc c ↦{dq} iv ∗
     "Hcol" ∷ is_origin_id iv.(yjs.item.originLeftId') olid ∗
     "Hcor" ∷ is_origin_id iv.(yjs.item.originRightId') orid ∗
@@ -344,7 +347,7 @@ Proof.
   iEval (rewrite own_dll_app) in "Hdll".
   iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
   iDestruct "Hrest" as (iv olid orid)
-    "(%Hloc & %Hprev & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest2)".
+    "(%Hloc & %Hprev & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest2)".
   iDestruct (own_dll_lastptr with "Hpre") as "[%Hml Hpre]".
   iDestruct (own_dll_headptr with "Hrest2") as "[%Hhd Hrest2]".
   have Hcl : iv.(yjs.item.left') = node_loc cells (Z.of_nat k - 1).
@@ -361,7 +364,7 @@ Proof.
   iAssert (ic_loc c ↦{dq} iv -∗ own_dll dq hd tl null null cells)%I with "[Hpre Hrest2]" as "Hback".
   { iIntros "Hval2". iEval (rewrite -Hsplit).
     iApply (own_dll_insert_middle dq pre suf c iv olid orid hd tl ml iv.(yjs.item.right')
-              Hnn Hprev eq_refl Hidc Hcontentc Holidc Horidc Hflagsc Hcontlenc).
+              Hnn Hprev eq_refl Hparc Hidc Hcontentc Holidc Horidc Hflagsc Hcontlenc).
     iFrame "Hval2 Hol Hor". rewrite -(proj1 Hloc). iFrame "Hpre Hrest2". }
   iFrame "Hback". by iPureIntro.
 Qed.
@@ -428,7 +431,7 @@ Proof.
   iEval (rewrite -Hsplit own_dll_app) in "Hdll".
   iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
   iDestruct "Hrest" as (iv olid orid)
-    "(%Hloc & %Hprev & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest)".
+    "(%Hloc & %Hprev & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest)".
   iExists iv, olid, orid. iFrame "Hval Hol Hor".
   iAssert (c.(ic_loc) ↦{dq} iv -∗ own_dll dq l lst prev nxt cs)%I with "[Hpre Hrest]" as "Hback".
   { iIntros "Hval2". rewrite -Hsplit own_dll_app. iExists ml, mf. iFrame "Hpre".
@@ -465,9 +468,11 @@ Lemma own_dll_update_gen (cells : list item_cell) (hd tl : loc) (k : nat) (c : i
         ⌜v'.(yjs.item.content') = iv.(yjs.item.content')⌝ -∗
         ⌜v'.(yjs.item.originLeftId') = iv.(yjs.item.originLeftId')⌝ -∗
         ⌜v'.(yjs.item.originRightId') = iv.(yjs.item.originRightId')⌝ -∗
+        ⌜v'.(yjs.item.parent') = iv.(yjs.item.parent')⌝ -∗
         ⌜v'.(yjs.item.flags') = (if d' then W8 6 else W8 2)⌝ -∗
         ic_loc c ↦ v' -∗
-        own_dll (DfracOwn 1) hd tl null null (<[k := MkItemCell (ic_loc c) (ic_item c) d']> cells)).
+        own_dll (DfracOwn 1) hd tl null null
+          (<[k := MkItemCell (ic_loc c) (ic_item c) d' (ic_parent c)]> cells)).
 Proof.
   move=> Hk. iIntros "Hdll".
   pose proof (take_drop_middle cells k c Hk) as Hsplit.
@@ -476,7 +481,7 @@ Proof.
   iEval (rewrite -Hsplit own_dll_app) in "Hdll".
   iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
   iDestruct "Hrest" as (iv olid orid)
-    "(%Hloc & %Hprev & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest2)".
+    "(%Hloc & %Hprev & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest2)".
   iDestruct (own_dll_headptr with "Hrest2") as "[%Hhd Hrest2]".
   have Hcloc : ic_loc c = node_loc cells (Z.of_nat k)
     by rewrite /node_loc decide_True; [rewrite Nat2Z.id Hk | lia].
@@ -490,19 +495,21 @@ Proof.
   iSplit; [iPureIntro; exact Hcr|].
   iSplit; [iPureIntro; exact Hflagsc|].
   iSplit; [iPureIntro; exact Hcontlenc|].
-  iIntros (v' d' Hl' Hr' Hid' Hcont' HoL' HoR' Hfl') "Hval2".
+  iIntros (v' d' Hl' Hr' Hid' Hcont' HoL' HoR' Hpar' Hfl') "Hval2".
   have Hpv : v'.(yjs.item.left') = ml by rewrite Hl'; exact Hprev.
+  have Hparv : v'.(yjs.item.parent') = ic_parent c by rewrite Hpar'; exact Hparc.
   have Hidt : item_id (ic_item c) = toYjsId v'.(yjs.item.id') by rewrite Hid'; exact Hidc.
   have Hcontt : content (ic_item c) = toContent v'.(yjs.item.content') by rewrite Hcont'; exact Hcontentc.
   have Hcontlent : length (v'.(yjs.item.content').(yjs.content.content')) = 1%nat
     by rewrite Hcont'; exact Hcontlenc.
-  have Hins : <[k := MkItemCell (ic_loc c) (ic_item c) d']> cells
-            = pre ++ MkItemCell (ic_loc c) (ic_item c) d' :: suf.
+  have Hins : <[k := MkItemCell (ic_loc c) (ic_item c) d' (ic_parent c)]> cells
+            = pre ++ MkItemCell (ic_loc c) (ic_item c) d' (ic_parent c) :: suf.
   { rewrite /pre /suf. apply insert_take_drop. apply lookup_lt_Some in Hk; exact Hk. }
   rewrite Hins.
-  iApply (own_dll_insert_middle (DfracOwn 1) pre suf (MkItemCell (ic_loc c) (ic_item c) d') v' olid orid
+  iApply (own_dll_insert_middle (DfracOwn 1) pre suf
+            (MkItemCell (ic_loc c) (ic_item c) d' (ic_parent c)) v' olid orid
             hd tl ml v'.(yjs.item.right')
-            Hnn Hpv eq_refl Hidt Hcontt Holidc Horidc Hfl' Hcontlent).
+            Hnn Hpv eq_refl Hparv Hidt Hcontt Holidc Horidc Hfl' Hcontlent).
   rewrite Hr' HoL' HoR'.
   iEval (rewrite (proj1 Hloc)) in "Hpre".
   iEval (rewrite (proj1 Hloc)) in "Hrest2".
@@ -617,7 +624,7 @@ Proof. rewrite /set_deleted /= => ->. by destruct d. Qed.
 
 (** The cell with its [ic_deleted] bit set (its model item [ic_item] unchanged). *)
 Definition flip_cell (c : item_cell) : item_cell :=
-  MkItemCell (ic_loc c) (ic_item c) true.
+  MkItemCell (ic_loc c) (ic_item c) true (ic_parent c).
 
 (** Flipping a cell's Deleted bit preserves [cell_repr]: [ic_item] is untouched. *)
 Lemma cell_repr_flip (m : list (YjsItem A)) (c : item_cell) (yi : YjsItem A) :

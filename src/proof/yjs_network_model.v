@@ -1,20 +1,28 @@
-(** The pure bridge to the rocq-yjs network model (issue #42).
+(** The pure bridge to the rocq-yjs network model (issues #42, #49).
 
     Everything here is Iris-free: it re-states the network-model records
     ([NodeHistories] / [NetworkBase] / [CausalNetwork] / [OperationNetwork] /
-    [YjsOperationNetwork]) over a raw [gmap ClientId (list Event)] — the shape a
+    [DocOperationNetwork]) over a raw [gmap ClientId (list Event)] — the shape a
     Perennial [ghost_map] carries — and proves the append-preservation and
-    certificate lemmas the ghost layer ([yjs_history]) consumes:
+    certificate lemmas the ghost layer ([yjs_history]) consumes.
+
+    Since #49 the operations are *doc-level*: [TypeId * YjsOperation]
+    ([yjs_doc_model]), one network/history per document with doc-global
+    clocks/causality, integration per type. Per-type facts (validity of a
+    delivered insert, item membership) are obtained by projecting the packaged
+    doc network to a [YjsOperationNetwork] ([to_proj_network] =
+    [proj_network ∘ to_doc_network]) and applying the upstream theorems.
 
     - [history_wf N]: the conjunction of the model's network axioms over the raw
       map, plus the two disciplines of our instantiation (immediate
       self-delivery, insert-only history). Re-establishing it at each ghost
       append IS the proof that the WP state refines the network model.
-    - [to_network N wf : YjsOperationNetwork]: packaging, so the model's endgame
-      theorems ([yjs_strong_convergence], [YjsOperationNetwork_converge_final])
-      apply to the ghost state directly (consumed at the ghost boundary by #40).
-    - [history_state_coh h arr]: the lock-side tie — the events of [h] replay to
-      a document whose item list is [arr].
+    - [to_doc_network N wf : DocOperationNetwork]: packaging, so the model's
+      endgame theorems ([doc_strong_convergence],
+      [DocOperationNetwork_converge_final]) apply to the ghost state directly
+      (consumed at the ghost boundary by #40).
+    - [history_state_coh h m]: the lock-side tie — the events of [h] replay to
+      a document whose per-type item lists are [m : gmap TypeId (list item)].
     - the lemma stack: happens-before append-stability, freshness, receiver
       clock safety, the broadcast / deliver steps, and [certs_ValidReplay] (the
       certificate-based justification of [applyUpdate]'s [ValidReplay]).
@@ -28,6 +36,7 @@ From stdpp Require Import base list gmap sorting.
 From stdpp Require Import ssreflect.
 From iris.prelude Require Import options.
 From New.proof Require Import yjs_core.
+From New.proof Require Export yjs_doc_model.
 From yjs.algorithm Require Export toitem_lemmas.
 From yjs.algorithm Require Import findptridx_insert.
 From yjs.crdt.operation Require Export causal_order hb_closed strong_causal_order.
@@ -36,12 +45,20 @@ From yjs.network Require Export yjs_network yjs_operation_network yjs_replay_val
 
 Section network_model.
 Context {A : Type} `{EqDA : EqDecision A}.
+Context {P : Type} `{EqDP : !EqDecision P} `{CntP : !Countable P}.
 
-Local Notation Op := (@YjsOperation A).
-Local Notation opid := (@YjsOperation_id A).
-Local Notation O := (@YjsOp A EqDA).
+Local Notation TId := (TypeId P).
+(** The per-type (upstream) operation instance and its id. *)
+Local Notation Oy := (@YjsOp A EqDA).
+Local Notation yopid := (@YjsOperation_id A).
+(** The doc-level operations of the raw histories (issue #49). *)
+Local Notation Op := (TId * @YjsOperation A)%type.
+Local Notation opid := (DocOp_id (A := A) (P := P)).
+Local Notation O := (DocO (A := A) (P := P)).
 Local Notation Ev := (@Event Op).
 Local Notation RawHistories := (gmap ClientId (list Ev)).
+(** The per-type item-list view of a doc state. *)
+Local Notation DocM := (gmap TId (list (YjsItem A))).
 
 Implicit Types (N : RawHistories) (h : list Ev) (op : Op) (c i j : ClientId).
 
@@ -178,17 +195,17 @@ Record history_wf N : Prop := {
   hwf_causal_delivery : ∀ i e1 e2,
     EvDeliver e2 ∈ to_histories N i -> raw_hb (to_histories N) e1 e2 ->
     raw_lo (to_histories N) i (EvDeliver e1) (EvDeliver e2);
-  (* OperationNetwork, isValidMessage := YjsIsValidMessage *)
+  (* OperationNetwork, isValidMessage := DocIsValidMessage *)
   hwf_broadcast_valid : ∀ i e pre post,
     to_histories N i = pre ++ [EvBroadcast e] ++ post ->
-    ∃ s, interpHistory O pre (op_init O) s ∧ YjsIsValidMessage s e;
-  (* YjsOperationNetwork *)
+    ∃ s, interpHistory O pre (op_init O) s ∧ DocIsValidMessage s e;
+  (* DocOperationNetwork: doc-global clock discipline *)
   hwf_client_id : ∀ e i,
     EvBroadcast e ∈ to_histories N i -> clientId (opid e) = i;
   hwf_unique_id : ∀ e i hist1 hist2 array,
     to_histories N i = hist1 ++ [EvBroadcast e] ++ hist2 ->
     interpHistory O hist1 (op_init O) array ->
-    YjsOperation_UniqueId e array;
+    DocOperation_UniqueId e array;
   (* ours: a broadcast is immediately followed by its own delivery. *)
   hwf_self_deliver : ∀ i e pre post,
     to_histories N i = pre ++ [EvBroadcast e] ++ post ->
@@ -196,7 +213,7 @@ Record history_wf N : Prop := {
   (* ours: insert-only history (plan §8.1). *)
   hwf_insert_only : ∀ i e,
     (EvBroadcast e ∈ to_histories N i ∨ EvDeliver e ∈ to_histories N i) ->
-    ∃ input, e = OpInsert input;
+    ∃ input, e.2 = OpInsert input;
 }.
 
 (** Gomes-form [deliver_locally], derived from [hwf_self_deliver]. *)
@@ -255,51 +272,101 @@ Next Obligation.
 Qed.
 
 Program Definition to_operation_network N (wf : history_wf N) :
-    @OperationNetwork Op YjsId opid O YjsIsValidMessage :=
+    @OperationNetwork Op YjsId opid O (DocIsValidMessage (A := A) (P := P)) :=
   {| on_net := to_causal_network N wf;
      broadcast_only_valid_messages := hwf_broadcast_valid N wf |}.
 
-Program Definition to_network N (wf : history_wf N) : YjsOperationNetwork (A := A) :=
-  {| yon_net := to_operation_network N wf;
-     histories_client_id := hwf_client_id N wf;
-     histories_UniqueId := hwf_unique_id N wf |}.
+Program Definition to_doc_network N (wf : history_wf N) :
+    DocOperationNetwork (A := A) (P := P) :=
+  {| don_net := to_operation_network N wf;
+     don_client_id := hwf_client_id N wf;
+     don_UniqueId := hwf_unique_id N wf |}.
 
 (** The packaged network's histories are the raw ones, definitionally. *)
-Lemma to_network_histories N (wf : history_wf N) :
-  histories (to_network N wf) = to_histories N.
+Lemma to_doc_network_histories N (wf : history_wf N) :
+  histories (to_doc_network N wf) = to_histories N.
 Proof. reflexivity. Qed.
+
+(** The per-type view: project the packaged doc network down to a
+    [YjsOperationNetwork], through which the upstream replay-validity
+    theorems apply. *)
+Definition to_proj_network (t : TId) N (wf : history_wf N) : YjsOperationNetwork (A := A) :=
+  proj_network t (to_doc_network N wf).
+
+Lemma to_proj_network_histories (t : TId) N (wf : history_wf N) (i : ClientId) :
+  histories (to_proj_network t N wf) i = proj_hist t (to_histories N i).
+Proof. reflexivity. Qed.
+
+(** Membership of a per-type op list in the doc list. *)
+Lemma elem_of_proj_ops (t : TId) (l : list Op) (x : @YjsOperation A) :
+  x ∈ proj_ops t l <-> (t, x) ∈ l.
+Proof.
+  rewrite /proj_ops list_elem_of_omap. split.
+  - move=> [dop [Hdop Hp]]. apply proj_op_Some in Hp. by subst dop.
+  - move=> Hin. exists (t, x). split; [done | exact (proj_op_pair t x)].
+Qed.
+
+(** Projection of the delivered ops. *)
+Lemma delivered_ops_proj (t : TId) h :
+  proj_ops t (delivered_ops h) = omap deliverP (proj_hist t h).
+Proof. rewrite /delivered_ops proj_deliver_comm //. Qed.
 
 (* ===== local coherence (lock-side tie) ==================================== *)
 
-(** The events of [h] replay (delivers only) to a state whose item list is
-    [arr]. Tombstone flags are NOT tracked by the history (plan §8.4). *)
-Definition history_state_coh h (arr : list (YjsItem A)) : Prop :=
-  ∃ s, interpHistory O h (op_init O) s ∧ st_items s = arr.
+(** The per-type item list a [DocM] denotes (absent = empty; a [DocM] with an
+    explicit empty entry and one without are the same document). *)
+Definition docm_get (m : DocM) (t : TId) : list (YjsItem A) := default [] (m !! t).
 
-Lemma history_state_coh_nil : history_state_coh [] [].
+Lemma docm_get_insert_eq (m : DocM) t arr : docm_get (<[t := arr]> m) t = arr.
+Proof. rewrite /docm_get lookup_insert_eq //. Qed.
+
+Lemma docm_get_insert_ne (m : DocM) t t' arr :
+  t' ≠ t -> docm_get (<[t := arr]> m) t' = docm_get m t'.
+Proof. move=> Hne. rewrite /docm_get lookup_insert_ne //. Qed.
+
+(** The events of [h] replay (delivers only) to a doc state whose per-type item
+    lists are [m]. Tombstone flags are NOT tracked by the history (plan §8.4),
+    so the per-type deleted sets stay existential inside the doc state. *)
+Definition history_state_coh h (m : DocM) : Prop :=
+  ∃ s, interpHistory O h (op_init O) s ∧ ∀ t, st_items (doc_get s t) = docm_get m t.
+
+Lemma history_state_coh_nil : history_state_coh [] ∅.
 Proof.
-  exists (op_init O). split; [| reflexivity].
-  rewrite /interpHistory /=. by apply (effect_list_nil O).
+  exists (op_init O). split.
+  - rewrite /interpHistory /=. by apply (effect_list_nil O).
+  - move=> t. rewrite doc_get_empty /docm_get lookup_empty //.
 Qed.
 
-(** Replay determinism, at the coherence level. *)
-Lemma history_state_coh_det h arr arr' :
-  history_state_coh h arr -> history_state_coh h arr' -> arr = arr'.
+(** Replay determinism, at the coherence level (as documents: pointwise). *)
+Lemma history_state_coh_det h m m' :
+  history_state_coh h m -> history_state_coh h m' ->
+  ∀ t, docm_get m t = docm_get m' t.
 Proof.
-  move=> [s [Hs <-]] [s' [Hs' <-]].
-  by rewrite (effect_list_det (omap deliverP h) (op_init O) s s' Hs Hs').
+  move=> [s [Hs Hm]] [s' [Hs' Hm']] t.
+  have Heq : s = s' := doc_effect_list_det (omap deliverP h) (op_init O) s s' Hs Hs'.
+  rewrite -(Hm t) -(Hm' t) Heq //.
+Qed.
+
+(** Coherence projects to a per-type replay of the projected history. *)
+Lemma history_state_coh_proj h (m : DocM) (t : TId) :
+  history_state_coh h m ->
+  ∃ st, interpHistory Oy (proj_hist t h) (op_init Oy) st ∧ st_items st = docm_get m t.
+Proof.
+  move=> [s [Hs Hm]]. exists (doc_get s t).
+  split; [| exact (Hm t)].
+  exact (doc_interp_proj h s t Hs).
 Qed.
 
 (** Appending a broadcast event does not change the replayed state. *)
-Lemma interpHistory_snoc_broadcast h op (init s : YjsState A) :
+Lemma interpHistory_snoc_broadcast h op (init s : op_State O) :
   interpHistory O h init s -> interpHistory O (h ++ [EvBroadcast op]) init s.
 Proof.
   rewrite /interpHistory omap_app /= app_nil_r //.
 Qed.
 
 (** Appending a delivery steps the replayed state by the op's effect. *)
-Lemma interpHistory_snoc_deliver h op (init s s' : YjsState A) :
-  interpHistory O h init s -> yjs_op_effect op s s' ->
+Lemma interpHistory_snoc_deliver h op (init s s' : op_State O) :
+  interpHistory O h init s -> op_effect O op s s' ->
   interpHistory O (h ++ [EvDeliver op]) init s'.
 Proof.
   rewrite /interpHistory omap_app /= => Hh Heff.
@@ -697,11 +764,13 @@ Qed.
 
 (** A local clock bound makes the id globally fresh: any broadcast with client
     [c] happened at [c] (client-id discipline), was self-delivered into [h],
-    so its item is in the replayed [arr] with a smaller clock. *)
-Lemma history_fresh_id N c h (arr : list (YjsItem A)) (k : nat) :
+    so its item is in the replayed document (at its own type) with a smaller
+    clock. The bound is doc-global — over every type's items. *)
+Lemma history_fresh_id N c h (m : DocM) (k : nat) :
   history_wf N -> N !! c = Some h ->
-  history_state_coh h arr ->
-  (∀ x, x ∈ arr -> clientId (item_id x) = c -> (clock (item_id x) < k)%nat) ->
+  history_state_coh h m ->
+  (∀ (t : TId) x, x ∈ docm_get m t -> clientId (item_id x) = c ->
+     (clock (item_id x) < k)%nat) ->
   ¬ id_broadcast N (MkYjsId c k).
 Proof.
   move=> Hwf Hc Hcoh Hbound [op [[i Hbc] Hopid]].
@@ -713,19 +782,23 @@ Proof.
   pose proof (hwf_deliver_locally N Hwf c op Hbc) as (l1 & l2 & l3 & Hsplit).
   have Hdel : EvDeliver op ∈ h.
   { rewrite -(to_histories_lookup N c h Hc) Hsplit. set_solver. }
-  pose proof (hwf_insert_only N Hwf c op (or_introl Hbc)) as (input & ->).
-  (* so its item is in the replayed document, with clock [k] — contradiction *)
-  destruct Hcoh as (s & Hinterp & Hitems).
-  have Hmem : OpInsert input ∈ delivered_ops h.
-  { rewrite /delivered_ops list_elem_of_omap. by exists (EvDeliver (OpInsert input)). }
-  pose proof (effect_list_uniqueId_init (delivered_ops h) s Hinterp) as Huniq.
-  pose proof (effect_list_insert_mem (delivered_ops h) (op_init O) s input Hinterp Huniq Hmem)
-    as (it & Hitid & Hfind).
-  pose proof (find_by_id_mem (in_id input) (st_items s) it Hfind) as Hitmem.
+  pose proof (hwf_insert_only N Hwf c op (or_introl Hbc)) as (input & Hop2).
+  destruct op as [tid inner]. simpl in Hop2. subst inner.
+  (* so its item is in the replayed document at its type, with clock [k] *)
+  pose proof (history_state_coh_proj h m tid Hcoh) as (st & Hinterp & Hitems).
+  have Hmemev : EvDeliver (OpInsert input) ∈ proj_hist tid h.
+  { rewrite /proj_hist list_elem_of_omap. exists (EvDeliver (tid, OpInsert input)).
+    split; [exact Hdel | exact (proj_ev_deliver tid (OpInsert input))]. }
+  have Hmem : OpInsert input ∈ omap deliverP (proj_hist tid h).
+  { rewrite list_elem_of_omap. by exists (EvDeliver (OpInsert input)). }
+  pose proof (effect_list_uniqueId_init (omap deliverP (proj_hist tid h)) st Hinterp) as Huniq.
+  pose proof (effect_list_insert_mem (omap deliverP (proj_hist tid h)) (op_init Oy) st input
+                Hinterp Huniq Hmem) as (it & Hitid & Hfind).
+  pose proof (find_by_id_mem (in_id input) (st_items st) it Hfind) as Hitmem.
   rewrite Hitems in Hitmem.
   have Hopid' : in_id input = MkYjsId c k := Hopid.
   have Hcx : clientId (item_id it) = c by rewrite Hitid Hopid' //.
-  have := Hbound it Hitmem Hcx.
+  have := Hbound tid it Hitmem Hcx.
   rewrite Hitid Hopid' /=. lia.
 Qed.
 
@@ -773,23 +846,22 @@ Qed.
 
 (** Registry coherence survives a fresh broadcast (+ its registration). *)
 Lemma ops_coh_broadcast N c h (ops : gmap YjsId (Op * gset YjsId))
-    (input : IntegrateInput (A := A)) (D : gset YjsId) :
+    (op0 : Op) (D : gset YjsId) :
   history_wf N -> N !! c = Some h ->
-  ¬ id_broadcast N (in_id input) ->
+  ¬ id_broadcast N (opid op0) ->
   ops_coh N ops ->
-  op_registered (<[c := h ++ [EvBroadcast (OpInsert input); EvDeliver (OpInsert input)]]> N)
-    (OpInsert input) D ->
-  ops_coh (<[c := h ++ [EvBroadcast (OpInsert input); EvDeliver (OpInsert input)]]> N)
-    (<[in_id input := (OpInsert input, D)]> ops).
+  op_registered (<[c := h ++ [EvBroadcast op0; EvDeliver op0]]> N) op0 D ->
+  ops_coh (<[c := h ++ [EvBroadcast op0; EvDeliver op0]]> N)
+    (<[opid op0 := (op0, D)]> ops).
 Proof.
   move=> Hwf Hc Hfresh [Hc1 Hc2] Hreg.
-  have Htail : ∀ e : Op, EvBroadcast e ∈ [EvBroadcast (OpInsert input); EvDeliver (OpInsert input)]
+  have Htail : ∀ e : Op, EvBroadcast e ∈ [EvBroadcast op0; EvDeliver op0]
                -> ¬ op_broadcast N e.
   { move=> e He. move: He. rewrite !elem_of_cons elem_of_nil.
-    move=> [[= ->] | [He | He]] // Hbc. apply Hfresh. by exists (OpInsert input). }
+    move=> [[= ->] | [He | He]] // Hbc. apply Hfresh. by exists op0. }
   split.
   - move=> id op D' Hlk.
-    destruct (decide (id = in_id input)) as [-> | Hne].
+    destruct (decide (id = opid op0)) as [-> | Hne].
     + rewrite lookup_insert_eq in Hlk. injection Hlk as <- <-.
       split; [reflexivity | exact Hreg].
     + rewrite lookup_insert_ne in Hlk; [| congruence].
@@ -798,12 +870,12 @@ Proof.
   - move=> op Hbc.
     apply (op_broadcast_append N c h _ op Hc) in Hbc.
     destruct Hbc as [Hold | Hnew].
-    + destruct (decide (opid op = in_id input)) as [Heq | Hne].
+    + destruct (decide (opid op = opid op0)) as [Heq | Hne].
       * rewrite Heq lookup_insert_eq. by eexists.
       * rewrite lookup_insert_ne; [exact (Hc2 op Hold) | congruence].
-    + have -> : op = OpInsert input.
+    + have -> : op = op0.
       { move: Hnew. rewrite !elem_of_cons elem_of_nil. by move=> [[= ->] | [He | He]]. }
-      rewrite /= lookup_insert_eq. by eexists.
+      rewrite lookup_insert_eq. by eexists.
 Qed.
 
 (** Registry coherence survives a deliver-only append. *)
@@ -835,30 +907,36 @@ Qed.
     author's replayed state contains it with a smaller clock
     ([hwf_unique_id]); a later one would place [op] in its causal past, hence
     (causal delivery) already delivered in [l] — contradiction. *)
-Lemma receiver_clock_safety N (input : IntegrateInput (A := A)) (l : list Op)
-    (s : YjsState A) :
+Lemma receiver_clock_safety N (t0 : TId) (input : IntegrateInput (A := A))
+    (l : list Op) (s : op_State O) :
   history_wf N ->
-  op_broadcast N (OpInsert input) ->
-  (∀ x, raw_hb (to_histories N) x (OpInsert input) -> x ∈ l) ->
+  op_broadcast N (t0, OpInsert input) ->
+  (∀ x, raw_hb (to_histories N) x (t0, OpInsert input) -> x ∈ l) ->
   (∀ x, x ∈ l -> op_broadcast N x) ->
   (∀ y, y ∈ l -> opid y ≠ in_id input) ->
   (* [l] is a causally-delivered set: the new op precedes nothing in it (at a
      real receiver this is causal delivery + the op's freshness) *)
-  (∀ y, y ∈ l -> ¬ raw_hb (to_histories N) (OpInsert input) y) ->
+  (∀ y, y ∈ l -> ¬ raw_hb (to_histories N) (t0, OpInsert input) y) ->
   effect_list O l (op_init O) s ->
-  ∀ x, x ∈ st_items s -> clientId (item_id x) = clientId (in_id input) ->
+  ∀ (t : TId) x, x ∈ st_items (doc_get s t) ->
+       clientId (item_id x) = clientId (in_id input) ->
        (clock (item_id x) < clock (in_id input))%nat.
 Proof.
-  move=> Hwf Hbc Hcov Hsrc Hnid Hnosucc Heff x Hx Hcx.
-  set op0 := OpInsert input.
+  move=> Hwf Hbc Hcov Hsrc Hnid Hnosucc Heff t x Hx Hcx.
+  set op0 : Op := (t0, OpInsert input).
   set c' := clientId (in_id input).
-  (* trace [x] to the op that inserted it *)
-  pose proof (effect_list_mem_src l (op_init O) s x Heff Hx) as [Hnil | (xin & Hxin & Hxid)].
+  (* trace [x] to the op that inserted it, within its own type [t] *)
+  have Hefft : effect_list Oy (proj_ops t l) (op_init Oy) (doc_get s t).
+  { have -> : op_init Oy = doc_get (op_init O) t by rewrite /= doc_get_empty.
+    exact (doc_effect_list_proj l _ s t Heff). }
+  pose proof (effect_list_mem_src (proj_ops t l) (op_init Oy) (doc_get s t) x Hefft Hx)
+    as [Hnil | (xin & Hxin & Hxid)].
   { move: Hnil. rewrite /= elem_of_nil //. }
+  apply elem_of_proj_ops in Hxin.
   (* both its op and the new op are authored at [c'] *)
-  pose proof (Hsrc (OpInsert xin) Hxin) as (jx & Hjx).
+  pose proof (Hsrc (t, OpInsert xin) Hxin) as (jx & Hjx).
   have Hjx' : jx = c'
-    by rewrite -(hwf_client_id N Hwf (OpInsert xin) jx Hjx) /= Hxid Hcx.
+    by rewrite -(hwf_client_id N Hwf (t, OpInsert xin) jx Hjx) /DocOp_id /= Hxid Hcx.
   subst jx.
   destruct Hbc as (j0 & Hj0).
   have Hj0' : j0 = c' by rewrite -(hwf_client_id N Hwf op0 j0 Hj0).
@@ -866,70 +944,78 @@ Proof.
   (* the two broadcasts are locally ordered at their common author *)
   pose proof (elem_of_two_split (to_histories N c') _ _ Hjx Hj0) as
     [(l1 & l2 & l3 & Hsplit) | [(l1 & l2 & l3 & Hsplit) | Heq]].
-  - (* [xin] earlier: the author's clock discipline bounds its clock *)
+  - (* [xin] earlier: the author's doc-global clock discipline bounds it *)
     have Hsplit' : to_histories N c'
-        = l1 ++ [EvBroadcast (OpInsert xin)] ++ (l2 ++ [EvBroadcast op0] ++ l3)
+        = l1 ++ [EvBroadcast (t, OpInsert xin)] ++ (l2 ++ [EvBroadcast op0] ++ l3)
       by rewrite Hsplit.
-    pose proof (hwf_self_deliver N Hwf c' (OpInsert xin) l1 _ Hsplit') as (post' & Hpost).
+    pose proof (hwf_self_deliver N Hwf c' (t, OpInsert xin) l1 _ Hsplit') as (post' & Hpost).
     destruct l2 as [| e2 l2'].
     { simpl in Hpost. injection Hpost as Hpost _. discriminate. }
-    have He2 : e2 = EvDeliver (OpInsert xin).
+    have He2 : e2 = EvDeliver (t, OpInsert xin).
     { move: Hpost. simpl. move=> Hpost. by injection Hpost. }
     subst e2.
     have Hsplit0 : to_histories N c'
-        = (l1 ++ [EvBroadcast (OpInsert xin)] ++ (EvDeliver (OpInsert xin) :: l2'))
+        = (l1 ++ [EvBroadcast (t, OpInsert xin)] ++ (EvDeliver (t, OpInsert xin) :: l2'))
           ++ [EvBroadcast op0] ++ l3.
     { rewrite Hsplit -!app_assoc //. }
-    set hist1 := l1 ++ [EvBroadcast (OpInsert xin)] ++ (EvDeliver (OpInsert xin) :: l2').
+    set hist1 := l1 ++ [EvBroadcast (t, OpInsert xin)] ++ (EvDeliver (t, OpInsert xin) :: l2').
     pose proof (hwf_broadcast_valid N Hwf c' op0 hist1 l3 Hsplit0) as (s0 & Hinterp0 & _).
     pose proof (hwf_unique_id N Hwf op0 c' hist1 l3 s0 Hsplit0 Hinterp0) as Huid.
-    (* the earlier op's item is in the author's replayed state *)
-    have Hmem0 : OpInsert xin ∈ delivered_ops hist1.
-    { rewrite /delivered_ops list_elem_of_omap. exists (EvDeliver (OpInsert xin)).
-      split; [| done]. rewrite /hist1. set_solver. }
-    pose proof (effect_list_uniqueId_init (delivered_ops hist1) s0 Hinterp0) as Huniq0.
-    pose proof (effect_list_insert_mem (delivered_ops hist1) (op_init O) s0 xin
-                  Hinterp0 Huniq0 Hmem0) as (it & Hitid & Hfind).
-    pose proof (find_by_id_mem (in_id xin) (st_items s0) it Hfind) as Hitmem.
+    (* the earlier op's item is in the author's replayed state, at type [t] *)
+    have Hinterp0t : interpHistory Oy (proj_hist t hist1) (op_init Oy) (doc_get s0 t)
+      := doc_interp_proj hist1 s0 t Hinterp0.
+    have Hmemev : EvDeliver (OpInsert xin) ∈ proj_hist t hist1.
+    { rewrite /proj_hist list_elem_of_omap. exists (EvDeliver (t, OpInsert xin)).
+      split; [| exact (proj_ev_deliver t (OpInsert xin))].
+      rewrite /hist1. set_solver. }
+    have Hmem0 : OpInsert xin ∈ omap deliverP (proj_hist t hist1).
+    { rewrite list_elem_of_omap. by exists (EvDeliver (OpInsert xin)). }
+    pose proof (effect_list_uniqueId_init (omap deliverP (proj_hist t hist1))
+                  (doc_get s0 t) Hinterp0t) as Huniq0.
+    pose proof (effect_list_insert_mem (omap deliverP (proj_hist t hist1)) (op_init Oy)
+                  (doc_get s0 t) xin Hinterp0t Huniq0 Hmem0) as (it & Hitid & Hfind).
+    pose proof (find_by_id_mem (in_id xin) (st_items (doc_get s0 t)) it Hfind) as Hitmem.
     have Hccit : clientId (item_id it) = clientId (opid op0) by rewrite Hitid Hxid Hcx.
-    pose proof (Huid it Hitmem Hccit) as Hclk.
+    pose proof (Huid t it Hitmem Hccit) as Hclk.
     rewrite Hitid Hxid in Hclk. exact Hclk.
   - (* the new op earlier: it would causally precede a delivered op *)
     exfalso.
-    have Hhb : raw_hb (to_histories N) op0 (OpInsert xin).
+    have Hhb : raw_hb (to_histories N) op0 (t, OpInsert xin).
     { apply (raw_hb_bb _ c'). exists l1, l2, l3. exact Hsplit. }
-    exact (Hnosucc (OpInsert xin) Hxin Hhb).
+    exact (Hnosucc (t, OpInsert xin) Hxin Hhb).
   - (* the same op: a re-delivery, excluded *)
     exfalso.
-    injection Heq as Heq. subst xin.
-    exact (Hnid (OpInsert input) Hxin eq_refl).
+    injection Heq as Heq1 Heq2. subst xin.
+    exact (Hnid (t, OpInsert input) Hxin eq_refl).
 Qed.
 
 (* ===== the broadcast step ================================================= *)
 
 (** Appending [EvBroadcast op; EvDeliver op] for a valid, clock-maximal, fresh
-    insert preserves [history_wf], advances the coherent state by the insert's
-    splice, and confines the new op's causal past to [delivered_ids h]. *)
-Lemma history_wf_broadcast N c h (arr arr' : list (YjsItem A))
+    insert into type [t0] preserves [history_wf], advances the coherent state
+    by the insert's splice at [t0], and confines the new op's causal past to
+    [delivered_ids h]. The clock bound is doc-global (all types). *)
+Lemma history_wf_broadcast N c h (m : DocM) (t0 : TId) (arr' : list (YjsItem A))
     (input : IntegrateInput (A := A)) (item : YjsItem A) (k : nat) :
   history_wf N -> N !! c = Some h ->
-  history_state_coh h arr ->
-  toItem input arr = Some item ->
+  history_state_coh h m ->
+  toItem input (docm_get m t0) = Some item ->
   IsItemValid item ->
-  maximalId item arr ->
+  maximalId item (docm_get m t0) ->
   in_id input = MkYjsId c k ->
-  (∀ x, x ∈ arr -> clientId (item_id x) = c -> (clock (item_id x) < k)%nat) ->
-  integrate input arr = Some arr' ->
-  let tail := [EvBroadcast (OpInsert input); EvDeliver (OpInsert input)] in
+  (∀ (t : TId) x, x ∈ docm_get m t -> clientId (item_id x) = c ->
+     (clock (item_id x) < k)%nat) ->
+  integrate input (docm_get m t0) = Some arr' ->
+  let tail := [EvBroadcast (t0, OpInsert input); EvDeliver (t0, OpInsert input)] in
   history_wf (<[c := h ++ tail]> N) ∧
-  history_state_coh (h ++ tail) arr' ∧
-  op_registered (<[c := h ++ tail]> N) (OpInsert input) (delivered_ids h).
+  history_state_coh (h ++ tail) (<[t0 := arr']> m) ∧
+  op_registered (<[c := h ++ tail]> N) (t0, OpInsert input) (delivered_ids h).
 Proof.
   move=> Hwf Hc Hcoh Htoitem Hvalid Hmax Hinid Hbound Hint tail.
-  set op' := OpInsert input.
+  set op' : Op := (t0, OpInsert input).
   have Hopid' : opid op' = in_id input by done.
   have Hfresh : ¬ id_broadcast N (opid op').
-  { rewrite Hopid' Hinid. exact (history_fresh_id N c h arr k Hwf Hc Hcoh Hbound). }
+  { rewrite Hopid' Hinid. exact (history_fresh_id N c h m k Hwf Hc Hcoh Hbound). }
   pose proof (fresh_tail_nodup N c h op' Hwf Hc Hfresh) as (Hnd & Hbh & Hdh).
   have Htail_nobc : ∀ e : Op, EvBroadcast e ∈ tail -> ¬ op_broadcast N e.
   { move=> e He. rewrite /tail !elem_of_cons elem_of_nil in He.
@@ -953,8 +1039,8 @@ Proof.
       := eq_sym Heq.
     exact (nodup_app_mid_uniq (EvBroadcast op') pre post h _ Hx1 Hbh Heq2). }
   destruct Hcoh as (s & Hinterp & Hitems).
-  have Hcs : isClockSafe (in_id input) arr = true
-    := maximalId_isClockSafe input arr item Htoitem Hmax.
+  have Hcs : isClockSafe (in_id input) (docm_get m t0) = true
+    := maximalId_isClockSafe input (docm_get m t0) item Htoitem Hmax.
   split_and!.
   - (* ---- history_wf ---- *)
     constructor.
@@ -1006,7 +1092,7 @@ Proof.
       destruct (decide (e = op')) as [-> | Hne2].
       * pose proof (Hsplit_new pre post Hsplit) as [-> _].
         exists s. split; [exact Hinterp |].
-        rewrite /YjsIsValidMessage /= Hitems. by exists item.
+        rewrite /DocIsValidMessage /= (Hitems t0). by exists item.
       * have Hnotin : EvBroadcast e ∉ tail.
         { rewrite /tail !elem_of_cons elem_of_nil.
           move=> [Heq | [Heq | []]]; [| discriminate].
@@ -1028,11 +1114,11 @@ Proof.
       destruct (decide (e = op')) as [-> | Hne2].
       * pose proof (Hsplit_new hist1 hist2 Hsplit) as [-> _].
         have Heqs : s = array
-          := effect_list_det (omap deliverP h) (op_init O) s array Hinterp Hinterp2.
-        move=> x Hx Hcx.
-        rewrite -Heqs Hitems in Hx.
+          := doc_effect_list_det (omap deliverP h) (op_init O) s array Hinterp Hinterp2.
+        move=> t x Hx Hcx.
+        rewrite -Heqs (Hitems t) in Hx.
         rewrite Hopid' Hinid /= in Hcx *.
-        exact (Hbound x Hx Hcx).
+        exact (Hbound t x Hx Hcx).
       * have Hnotin : EvBroadcast e ∉ tail.
         { rewrite /tail !elem_of_cons elem_of_nil.
           move=> [Heq | [Heq | []]]; [| discriminate].
@@ -1069,16 +1155,22 @@ Proof.
         -- rewrite /tail !elem_of_cons elem_of_nil in Hnew.
            destruct Hnew as [Heq | [Heq | []]]; [discriminate |].
            injection Heq as ->. by exists input.
-  - (* ---- coherence with the spliced document ---- *)
-    exists (MkYjsState arr' (st_deleted s)). split; [| done].
-    have Hstep : yjs_op_effect op' s (MkYjsState arr' (st_deleted s)).
-    { rewrite /op' /= /YjsState_insert /integrateSafe Hitems Hcs Hint //=. }
-    have H1 : interpHistory O (h ++ [EvBroadcast op']) (op_init O) s
-      := interpHistory_snoc_broadcast h op' _ s Hinterp.
-    have H2 := interpHistory_snoc_deliver (h ++ [EvBroadcast op']) op' _ s _ H1 Hstep.
-    have -> : h ++ tail = (h ++ [EvBroadcast op']) ++ [EvDeliver op']
-      by rewrite /tail -app_assoc //.
-    exact H2.
+  - (* ---- coherence with the document spliced at [t0] ---- *)
+    set st0 := doc_get s t0.
+    set s' := <[t0 := MkYjsState arr' (st_deleted st0)]> s.
+    exists s'. split.
+    + have Hstep : op_effect O op' s s'.
+      { exists (MkYjsState arr' (st_deleted st0)). split; [| done].
+        rewrite /op' /= /YjsState_insert /integrateSafe -/st0 (Hitems t0) Hcs Hint //=. }
+      have H1 : interpHistory O (h ++ [EvBroadcast op']) (op_init O) s
+        := interpHistory_snoc_broadcast h op' _ s Hinterp.
+      have H2 := interpHistory_snoc_deliver (h ++ [EvBroadcast op']) op' _ s _ H1 Hstep.
+      have -> : h ++ tail = (h ++ [EvBroadcast op']) ++ [EvDeliver op']
+        by rewrite /tail -app_assoc //.
+      exact H2.
+    + move=> t. destruct (decide (t = t0)) as [-> | Hne].
+      * rewrite /s' doc_get_insert_eq docm_get_insert_eq //.
+      * rewrite /s' doc_get_insert_ne // docm_get_insert_ne //.
   - (* ---- the new op's registration ---- *)
     split.
     + rewrite Hcid' to_histories_insert elem_of_app /tail !elem_of_cons.
@@ -1209,29 +1301,35 @@ Qed.
 
 (* ===== ValidReplay ======================================================== *)
 
-(** [ValidReplay inputs arr arr']: applying the decoded [inputs] to [arr] in
-    list order is a *valid causal replay* yielding [arr'] — at each step the
-    input resolves to a model item ([toItem]), that item is valid
-    ([IsItemValid]) and per-client clock-maximal ([maximalId], the
-    causal-delivery condition [Store.Integrate] consumes), and the pure
-    [integrate] advances the state. This is exactly the chain of preconditions
-    [wp_Store__Integrate] needs at each loop step; it coincides with a valid
-    replay of [OpInsert]s in the network model ([IsValidMessage] = [toItem] +
-    [IsItemValid]; [YjsState_insert] success = [integrateSafe], i.e.
-    [maximalId] + [integrate]), so a proof against it inherits the model's
-    invariant preservation and strong convergence.
+(** [ValidReplay inputs m m']: applying the decoded, type-tagged [inputs] to
+    the per-type documents [m] in list order is a *valid causal replay*
+    yielding [m'] — at each step the input resolves to a model item in its own
+    type's list ([toItem]), that item is valid ([IsItemValid]) and per-client
+    clock-maximal — both within its type ([maximalId], the causal-delivery
+    condition [Store.Integrate] consumes) and doc-globally over every type's
+    items (the receiver-side freshness that used to be a leftover hypothesis
+    of [applyUpdate]'s certificate spec; with doc-global clocks it is a fact
+    of the replay) — and the pure [integrate] advances that type's list. This
+    is exactly the chain of preconditions [wp_Store__Integrate] needs at each
+    loop step; it coincides with a valid replay of doc-level [OpInsert]s in
+    the network model, so a proof against it inherits the model's invariant
+    preservation and strong convergence.
 
     (Moved here from [yjs_store]: it is pure, and [certs_ValidReplay] below
     produces it from op certificates.) *)
-Inductive ValidReplay : list (IntegrateInput (A := A)) -> list (YjsItem A) -> list (YjsItem A) -> Prop :=
-  | VR_nil arr : ValidReplay [] arr arr
-  | VR_cons input rest arr arr2 arr' nit :
-      toItem input arr = Some nit ->
+Inductive ValidReplay :
+    list (TId * IntegrateInput (A := A)) -> DocM -> DocM -> Prop :=
+  | VR_nil m : ValidReplay [] m m
+  | VR_cons t input rest m arr2 m' nit :
+      toItem input (docm_get m t) = Some nit ->
       IsItemValid nit ->
-      maximalId nit arr ->
-      integrate input arr = Some arr2 ->
-      ValidReplay rest arr2 arr' ->
-      ValidReplay (input :: rest) arr arr'.
+      maximalId nit (docm_get m t) ->
+      (∀ (t' : TId) x, x ∈ docm_get m t' ->
+         clientId (item_id x) = clientId (in_id input) ->
+         (clock (item_id x) < clock (in_id input))%nat) ->
+      integrate input (docm_get m t) = Some arr2 ->
+      ValidReplay rest (<[t := arr2]> m) m' ->
+      ValidReplay ((t, input) :: rest) m m'.
 
 (** A splice only adds: [integrate] preserves membership. *)
 Lemma integrate_preserves_mem (input : IntegrateInput (A := A))
@@ -1272,57 +1370,63 @@ Proof.
   apply (proj2 (mem_insertIdxIfInBounds arr item item destIdx Hbound)). by left.
 Qed.
 
-(** A valid replay only splices items in: membership is preserved. *)
-Lemma ValidReplay_mem (inputs : list (IntegrateInput (A := A)))
-    (arr arr' : list (YjsItem A)) :
-  ValidReplay inputs arr arr' -> ∀ x, x ∈ arr -> x ∈ arr'.
+(** A valid replay only splices items in: membership is preserved, per type. *)
+Lemma ValidReplay_mem (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocM) :
+  ValidReplay inputs m m' -> ∀ (t : TId) x, x ∈ docm_get m t -> x ∈ docm_get m' t.
 Proof.
-  elim => [arr0 | input rest arr0 arr2 arr3 nit Htoit _ _ Hint _ IH] x Hx; first exact Hx.
-  apply IH. exact (integrate_preserves_mem input arr0 arr2 Hint x Hx).
+  elim => [m0 | t0 input rest m0 arr2 m1 nit Htoit _ _ _ Hint _ IH] t x Hx; first exact Hx.
+  apply IH.
+  destruct (decide (t = t0)) as [-> | Hne].
+  - rewrite docm_get_insert_eq.
+    exact (integrate_preserves_mem input (docm_get m0 t0) arr2 Hint x Hx).
+  - rewrite docm_get_insert_ne //.
 Qed.
 
 (** Every batch item's clock strictly exceeds all same-client items already in
-    the initial document (the heap-level freshness side condition of
-    [wp_store__applyUpdate], at the model level). *)
-Lemma ValidReplay_arr_fresh (inputs : list (IntegrateInput (A := A)))
-    (arr arr' : list (YjsItem A)) :
-  ValidReplay inputs arr arr' ->
-  ∀ (i : nat) (input : IntegrateInput (A := A)), inputs !! i = Some input ->
-  ∀ x, x ∈ arr -> clientId (item_id x) = clientId (in_id input) ->
-       (clock (item_id x) < clock (in_id input))%nat.
+    the initial documents — any type (the heap-level freshness side condition
+    of [wp_store__applyUpdate], at the model level). *)
+Lemma ValidReplay_arr_fresh (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocM) :
+  ValidReplay inputs m m' ->
+  ∀ (i : nat) (ti : TId * IntegrateInput (A := A)), inputs !! i = Some ti ->
+  ∀ (t : TId) x, x ∈ docm_get m t -> clientId (item_id x) = clientId (in_id ti.2) ->
+       (clock (item_id x) < clock (in_id ti.2))%nat.
 Proof.
-  elim => [arr0 | input0 rest arr0 arr2 arr3 nit Htoit _ Hmax Hint Hvr IH] i input Hi x Hx Hcc.
+  elim => [m0 | t0 input0 rest m0 arr2 m1 nit Htoit _ _ Hglob Hint Hvr IH] i ti Hi t x Hx Hcc.
   - rewrite lookup_nil in Hi. done.
   - destruct i as [| i'].
-    + injection Hi as <-.
-      pose proof (toItem_id input0 arr0 nit Htoit) as Hid.
-      rewrite -Hid in Hcc *. exact (Hmax x Hx Hcc).
+    + injection Hi as <-. exact (Hglob t x Hx Hcc).
     + simpl in Hi.
-      exact (IH i' input Hi x (integrate_preserves_mem input0 arr0 arr2 Hint x Hx) Hcc).
+      have Hx2 : x ∈ docm_get (<[t0 := arr2]> m0) t.
+      { destruct (decide (t = t0)) as [-> | Hne].
+        - rewrite docm_get_insert_eq.
+          exact (integrate_preserves_mem input0 (docm_get m0 t0) arr2 Hint x Hx).
+        - rewrite docm_get_insert_ne //. }
+      exact (IH i' ti Hi t x Hx2 Hcc).
 Qed.
 
 (** Earlier same-client batch items have strictly smaller clocks (the
     intra-batch causal-order side condition of [wp_store__applyUpdate]). *)
-Lemma ValidReplay_batch_causal (inputs : list (IntegrateInput (A := A)))
-    (arr arr' : list (YjsItem A)) :
-  ValidReplay inputs arr arr' ->
-  ∀ (i j : nat) (inputi inputj : IntegrateInput (A := A)),
-    inputs !! i = Some inputi -> inputs !! j = Some inputj ->
-    (j < i)%nat -> clientId (in_id inputj) = clientId (in_id inputi) ->
-    (clock (in_id inputj) < clock (in_id inputi))%nat.
+Lemma ValidReplay_batch_causal (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocM) :
+  ValidReplay inputs m m' ->
+  ∀ (i j : nat) (ti tj : TId * IntegrateInput (A := A)),
+    inputs !! i = Some ti -> inputs !! j = Some tj ->
+    (j < i)%nat -> clientId (in_id tj.2) = clientId (in_id ti.2) ->
+    (clock (in_id tj.2) < clock (in_id ti.2))%nat.
 Proof.
-  elim => [arr0 | input0 rest arr0 arr2 arr3 nit Htoit _ Hmax Hint Hvr IH]
-    i j inputi inputj Hi Hj Hji Hcc.
+  elim => [m0 | t0 input0 rest m0 arr2 m1 nit Htoit _ _ Hglob Hint Hvr IH]
+    i j ti tj Hi Hj Hji Hcc.
   - rewrite lookup_nil in Hi. done.
   - destruct j as [| j'].
-    + (* the head op's item is in [arr2]; the tail's freshness bounds it *)
+    + (* the head op's item is in its type's new list; the tail's freshness
+         bounds it *)
       injection Hj as <-. destruct i as [| i']; [lia |]. simpl in Hi.
-      pose proof (integrate_new_mem input0 arr0 arr2 Hint) as (it & Hitid & Hitmem).
-      have Hccit : clientId (item_id it) = clientId (in_id inputi) by rewrite Hitid.
-      have := ValidReplay_arr_fresh rest arr2 arr3 Hvr i' inputi Hi it Hitmem Hccit.
+      pose proof (integrate_new_mem input0 (docm_get m0 t0) arr2 Hint) as (it & Hitid & Hitmem).
+      have Hitmem2 : it ∈ docm_get (<[t0 := arr2]> m0) t0 by rewrite docm_get_insert_eq.
+      have Hccit : clientId (item_id it) = clientId (in_id ti.2) by rewrite Hitid /=.
+      have := ValidReplay_arr_fresh rest (<[t0 := arr2]> m0) m1 Hvr i' ti Hi t0 it Hitmem2 Hccit.
       rewrite Hitid //.
     + destruct i as [| i']; [lia |]. simpl in Hi, Hj.
-      exact (IH i' j' inputi inputj Hi Hj ltac:(lia) Hcc).
+      exact (IH i' j' ti tj Hi Hj ltac:(lia) Hcc).
 Qed.
 
 (* ===== certificates ⇒ ValidReplay ========================================= *)
@@ -1333,49 +1437,56 @@ Qed.
     re-delivery. This is what y-octo's UpdateIterator establishes with the
     state vector; the verified subset takes it as a hypothesis (see plan
     §6.5.1 / §8.5 for the staged path to the total pending-buffer spec). *)
-Definition batch_ok h (inputs : list (IntegrateInput (A := A)))
+Definition batch_ok h (inputs : list (TId * IntegrateInput (A := A)))
     (Ds : list (gset YjsId)) : Prop :=
-  ∀ (i : nat) (input : IntegrateInput (A := A)) (D : gset YjsId),
-    inputs !! i = Some input -> Ds !! i = Some D ->
-    D ⊆ delivered_ids h ∪ list_to_set (in_id <$> take i inputs) ∧
-    in_id input ∉ delivered_ids h ∪ (list_to_set (in_id <$> take i inputs) : gset YjsId).
+  ∀ (i : nat) (ti : TId * IntegrateInput (A := A)) (D : gset YjsId),
+    inputs !! i = Some ti -> Ds !! i = Some D ->
+    D ⊆ delivered_ids h ∪ list_to_set ((λ tj, in_id tj.2) <$> take i inputs) ∧
+    in_id ti.2 ∉ delivered_ids h
+                 ∪ (list_to_set ((λ tj, in_id tj.2) <$> take i inputs) : gset YjsId).
+
+(** The deliver event a decoded, type-tagged input denotes. *)
+Definition deliver_ev (ti : TId * IntegrateInput (A := A)) : Ev :=
+  EvDeliver (ti.1, OpInsert ti.2).
 
 (** The applyUpdate bridge: certificates + coverage turn into a [ValidReplay]
     of the batch, the coherent state advances by the batch's delivers, and the
-    extended history is well-formed. Produces the existential [arr'], so the
+    extended history is well-formed. Produces the existential [m'], so the
     WP spec need not ask the caller for it. *)
-Lemma certs_ValidReplay N c h (arr : list (YjsItem A))
-    (inputs : list (IntegrateInput (A := A))) (Ds : list (gset YjsId)) :
+Lemma certs_ValidReplay N c h (m : DocM)
+    (inputs : list (TId * IntegrateInput (A := A))) (Ds : list (gset YjsId)) :
   history_wf N -> N !! c = Some h ->
-  history_state_coh h arr ->
-  YjsArrInvariant arr ->
-  (∀ (i : nat) (input : IntegrateInput (A := A)) (D : gset YjsId),
-     inputs !! i = Some input -> Ds !! i = Some D ->
-     op_registered N (OpInsert input) D) ->
+  history_state_coh h m ->
+  (∀ t : TId, YjsArrInvariant (docm_get m t)) ->
+  (∀ (i : nat) (ti : TId * IntegrateInput (A := A)) (D : gset YjsId),
+     inputs !! i = Some ti -> Ds !! i = Some D ->
+     op_registered N (ti.1, OpInsert ti.2) D) ->
   length Ds = length inputs ->
   batch_ok h inputs Ds ->
-  ∃ arr',
-    ValidReplay inputs arr arr' ∧
-    history_state_coh (h ++ ((EvDeliver ∘ OpInsert) <$> inputs)) arr' ∧
-    history_wf (<[c := h ++ ((EvDeliver ∘ OpInsert) <$> inputs)]> N).
+  ∃ m',
+    ValidReplay inputs m m' ∧
+    history_state_coh (h ++ (deliver_ev <$> inputs)) m' ∧
+    history_wf (<[c := h ++ (deliver_ev <$> inputs)]> N).
 Proof.
-  move: N h arr Ds.
-  elim: inputs => [| input inputs' IH] N h arr Ds Hwf Hc Hcoh Hinv Hreg Hlen Hbatch.
+  move: N h m Ds.
+  elim: inputs => [| ti0 inputs' IH] N h m Ds Hwf Hc Hcoh Hinv Hreg Hlen Hbatch.
   - (* empty batch *)
-    exists arr. split_and!.
-    + exact (VR_nil arr).
+    exists m. split_and!.
+    + exact (VR_nil m).
     + rewrite /= app_nil_r //.
     + rewrite /= app_nil_r (insert_id N c h Hc) //.
   - (* one delivery, then recurse on the extended network *)
     destruct Ds as [| D Ds']; [simpl in Hlen; lia |].
-    set op0 := OpInsert input.
-    have Hreg0 : op_registered N op0 D := Hreg 0%nat input D eq_refl eq_refl.
+    destruct ti0 as [t0 input].
+    set op0 : Op := (t0, OpInsert input).
+    have Hreg0 : op_registered N op0 D := Hreg 0%nat (t0, input) D eq_refl eq_refl.
     pose proof Hreg0 as [Hbc0 Hcov0].
-    pose proof (Hbatch 0%nat input D eq_refl eq_refl) as [HD0 Hfresh0].
+    pose proof (Hbatch 0%nat (t0, input) D eq_refl eq_refl) as [HD0 Hfresh0].
     rewrite take_0 /= in HD0 Hfresh0.
+    have Hop0id : opid op0 = in_id input by done.
     have HDsub : D ⊆ delivered_ids h by set_solver.
     have Hnotdel : opid op0 ∉ delivered_ids h.
-    { rewrite /op0 /=. set_solver. }
+    { rewrite Hop0id. set_solver. }
     destruct Hcoh as (s & Hinterp & Hitems).
     (* every op delivered in [h] was broadcast somewhere *)
     have HsrcL : ∀ x : Op, x ∈ delivered_ops h -> op_broadcast N x.
@@ -1395,98 +1506,128 @@ Proof.
         pose proof (hwf_deliver_has_a_cause N Hwf c y Hyc) as (j2 & Hj2).
         exact (proj2 (hwf_msg_id_unique N Hwf x y j1 j2 Hj1 Hj2 (eq_sym Hyid))). }
       subst y. rewrite /delivered_ops list_elem_of_omap. by exists (EvDeliver x). }
-    (* validity at the replayed state (the model's replay-validity theorem) *)
-    have Hval : ∃ item0, toItem input arr = Some item0 ∧ IsItemValid item0.
-    { rewrite -Hitems.
-      apply (isValidState_insert_from_source (to_network N Hwf) input s (delivered_ops h)).
-      - exists (clientId (opid op0)). exact Hbc0.
+    (* validity at the replayed state, via the type-[t0] projection of the
+       packaged doc network (the upstream replay-validity theorem) *)
+    have Hval : ∃ item0, toItem input (docm_get m t0) = Some item0 ∧ IsItemValid item0.
+    { have Hit : st_items (doc_get s t0) = docm_get m t0 := Hitems t0.
+      rewrite -Hit.
+      apply (isValidState_insert_from_source (to_proj_network t0 N Hwf) input
+               (doc_get s t0) (omap deliverP (proj_hist t0 h))).
+      - exists (clientId (opid op0)).
+        rewrite to_proj_network_histories /proj_hist list_elem_of_omap.
+        exists (EvBroadcast op0).
+        split; [exact Hbc0 | exact (proj_ev_broadcast t0 (OpInsert input))].
       - move=> x Hlt.
-        apply Hpast.
         destruct Hlt as [Hle Hne].
         destruct Hle as [Heq | Hhb]; [by destruct Hne |].
-        apply (raw_hb_HappensBefore (to_network_base N Hwf)). exact Hhb.
-      - move=> x Hx. destruct (HsrcL x Hx) as (j & Hj). by exists j.
-      - exact Hinterp. }
+        have Hhbdoc : HappensBefore opid (to_doc_network N Hwf) (t0, x) (t0, OpInsert input).
+        { apply (proj_hb_lift t0 (to_doc_network N Hwf)
+                   (proj_network_base t0 (to_doc_network N Hwf))); [done | exact Hhb]. }
+        have Hraw : raw_hb (to_histories N) (t0, x) op0.
+        { apply (raw_hb_HappensBefore (to_network_base N Hwf)). exact Hhbdoc. }
+        have Hin : (t0, x) ∈ delivered_ops h := Hpast (t0, x) Hraw.
+        rewrite -delivered_ops_proj elem_of_proj_ops //.
+      - move=> x Hx.
+        rewrite -delivered_ops_proj elem_of_proj_ops in Hx.
+        destruct (HsrcL (t0, x) Hx) as (j & Hj).
+        exists j.
+        rewrite to_proj_network_histories /proj_hist list_elem_of_omap.
+        exists (EvBroadcast (t0, x)).
+        split; [exact Hj | exact (proj_ev_broadcast t0 x)].
+      - exact (doc_interp_proj h s t0 Hinterp). }
     destruct Hval as (item0 & Htoit0 & Hvalid0).
-    (* clock-maximality at the replayed state (receiver clock safety) *)
-    have Hbnd : ∀ x, x ∈ arr -> clientId (item_id x) = clientId (in_id input) ->
+    (* doc-global clock-maximality at the replayed state (receiver clock
+       safety) *)
+    have Hbcast : op_broadcast N op0 by exists (clientId (opid op0)).
+    have Hnid' : ∀ y, y ∈ delivered_ops h -> opid y ≠ in_id input.
+    { move=> y Hy Heq. apply Hnotdel.
+      have HDy : EvDeliver y ∈ h.
+      { move: Hy. rewrite /delivered_ops list_elem_of_omap => -[ev [Hev Hdev]].
+        destruct ev as [a | a]; simpl in Hdev; [done | by injection Hdev as ->]. }
+      rewrite Hop0id -Heq. apply elem_of_delivered_ids. by exists y. }
+    have Hnosucc' : ∀ y, y ∈ delivered_ops h -> ¬ raw_hb (to_histories N) op0 y.
+    { (* causal delivery: were the new op below a delivered one, it would
+         already be delivered here — contradicting its freshness *)
+      move=> y Hy Hhb. apply Hnotdel.
+      have HDy : EvDeliver y ∈ to_histories N c.
+      { rewrite (to_histories_lookup N c h Hc).
+        move: Hy. rewrite /delivered_ops list_elem_of_omap => -[ev [Hev Hdev]].
+        destruct ev as [a | a]; simpl in Hdev; [done | by injection Hdev as ->]. }
+      pose proof (hwf_causal_delivery N Hwf c op0 y HDy Hhb)
+        as (l1 & l2 & l3 & Hsplit).
+      rewrite (to_histories_lookup N c h Hc) in Hsplit.
+      have Hd0 : EvDeliver op0 ∈ h by (rewrite Hsplit; set_solver).
+      apply elem_of_delivered_ids. by exists op0. }
+    have Hbnd : ∀ (t : TId) x, x ∈ docm_get m t ->
+                clientId (item_id x) = clientId (in_id input) ->
                 (clock (item_id x) < clock (in_id input))%nat.
-    { rewrite -Hitems.
-      apply (receiver_clock_safety N input (delivered_ops h) s Hwf).
-      - exists (clientId (opid op0)). exact Hbc0.
-      - exact Hpast.
-      - exact HsrcL.
-      - move=> y Hy Heq. apply Hnotdel.
-        have HDy : EvDeliver y ∈ h.
-        { move: Hy. rewrite /delivered_ops list_elem_of_omap => -[ev [Hev Hdev]].
-          destruct ev as [a | a]; simpl in Hdev; [done | by injection Hdev as ->]. }
-        rewrite /op0 /= -Heq. apply elem_of_delivered_ids. by exists y.
-      - (* causal delivery: were the new op below a delivered one, it would
-           already be delivered here — contradicting its freshness *)
-        move=> y Hy Hhb. apply Hnotdel.
-        have HDy : EvDeliver y ∈ to_histories N c.
-        { rewrite (to_histories_lookup N c h Hc).
-          move: Hy. rewrite /delivered_ops list_elem_of_omap => -[ev [Hev Hdev]].
-          destruct ev as [a | a]; simpl in Hdev; [done | by injection Hdev as ->]. }
-        pose proof (hwf_causal_delivery N Hwf c (OpInsert input) y HDy Hhb)
-          as (l1 & l2 & l3 & Hsplit).
-        rewrite (to_histories_lookup N c h Hc) in Hsplit.
-        have Hd0 : EvDeliver (OpInsert input) ∈ h by (rewrite Hsplit; set_solver).
-        apply elem_of_delivered_ids. by exists (OpInsert input).
-      - exact Hinterp. }
-    have Hmax0 : maximalId item0 arr.
+    { move=> t x Hx Hcx.
+      have Hx' : x ∈ st_items (doc_get s t) by rewrite (Hitems t).
+      exact (receiver_clock_safety N t0 input (delivered_ops h) s Hwf Hbcast Hpast
+               HsrcL Hnid' Hnosucc' Hinterp t x Hx' Hcx). }
+    have Hmax0 : maximalId item0 (docm_get m t0).
     { move=> x Hx Hcx.
-      pose proof (toItem_id input arr item0 Htoit0) as Hid0.
-      rewrite Hid0 in Hcx *. exact (Hbnd x Hx Hcx). }
+      pose proof (toItem_id input (docm_get m t0) item0 Htoit0) as Hid0.
+      rewrite Hid0 in Hcx *. exact (Hbnd t0 x Hx Hcx). }
     (* progress + invariant *)
-    pose proof (integrate_some input arr item0 Hinv Htoit0) as (arr2 & Hint2).
-    pose proof (YjsArrInvariant_integrate input arr arr2 item0 Hinv Htoit0 Hvalid0 Hmax0 Hint2)
-      as (didx & _ & _ & Hinv2).
+    pose proof (integrate_some input (docm_get m t0) item0 (Hinv t0) Htoit0) as (arr2 & Hint2).
+    pose proof (YjsArrInvariant_integrate input (docm_get m t0) arr2 item0 (Hinv t0)
+                  Htoit0 Hvalid0 Hmax0 Hint2) as (didx & _ & _ & Hinv2).
     (* the network deliver step *)
     have Hwf1 : history_wf (<[c := h ++ [EvDeliver op0]]> N)
       := history_wf_deliver N c h op0 D Hwf Hc Hreg0 HDsub Hnotdel.
-    have Hcs0 : isClockSafe (in_id input) arr = true
-      := maximalId_isClockSafe input arr item0 Htoit0 Hmax0.
-    have Hstep : yjs_op_effect op0 s (MkYjsState arr2 (st_deleted s)).
-    { rewrite /op0 /= /YjsState_insert /integrateSafe Hitems Hcs0 Hint2 //=. }
-    have Hcoh1 : history_state_coh (h ++ [EvDeliver op0]) arr2.
-    { exists (MkYjsState arr2 (st_deleted s)). split; [| done].
-      exact (interpHistory_snoc_deliver h op0 _ _ _ Hinterp Hstep). }
+    have Hcs0 : isClockSafe (in_id input) (docm_get m t0) = true
+      := maximalId_isClockSafe input (docm_get m t0) item0 Htoit0 Hmax0.
+    set st0 := doc_get s t0.
+    have Hstep : op_effect O op0 s (<[t0 := MkYjsState arr2 (st_deleted st0)]> s).
+    { exists (MkYjsState arr2 (st_deleted st0)). split; [| done].
+      rewrite /op0 /= /YjsState_insert /integrateSafe -/st0 (Hitems t0) Hcs0 Hint2 //=. }
+    have Hcoh1 : history_state_coh (h ++ [EvDeliver op0]) (<[t0 := arr2]> m).
+    { exists (<[t0 := MkYjsState arr2 (st_deleted st0)]> s). split.
+      - exact (interpHistory_snoc_deliver h op0 _ _ _ Hinterp Hstep).
+      - move=> t. destruct (decide (t = t0)) as [-> | Hne].
+        + rewrite doc_get_insert_eq docm_get_insert_eq //.
+        + rewrite doc_get_insert_ne // docm_get_insert_ne //. }
     (* recurse *)
     have Hc1 : (<[c := h ++ [EvDeliver op0]]> N) !! c = Some (h ++ [EvDeliver op0])
       by rewrite lookup_insert_eq.
-    have Hreg1 : ∀ (i : nat) (input' : IntegrateInput (A := A)) (D' : gset YjsId),
-        inputs' !! i = Some input' -> Ds' !! i = Some D' ->
-        op_registered (<[c := h ++ [EvDeliver op0]]> N) (OpInsert input') D'.
-    { move=> i input' D' Hi HD'.
+    have Hinv1 : ∀ t : TId, YjsArrInvariant (docm_get (<[t0 := arr2]> m) t).
+    { move=> t. destruct (decide (t = t0)) as [-> | Hne].
+      - rewrite docm_get_insert_eq. exact Hinv2.
+      - rewrite docm_get_insert_ne //. }
+    have Hreg1 : ∀ (i : nat) (ti' : TId * IntegrateInput (A := A)) (D' : gset YjsId),
+        inputs' !! i = Some ti' -> Ds' !! i = Some D' ->
+        op_registered (<[c := h ++ [EvDeliver op0]]> N) (ti'.1, OpInsert ti'.2) D'.
+    { move=> i ti' D' Hi HD'.
       apply (op_registered_append N c h _ _ _ Hwf Hc).
       - move=> e He. rewrite elem_of_cons elem_of_nil in He.
         destruct He as [He | []]. discriminate.
-      - exact (Hreg (S i) input' D' Hi HD'). }
+      - exact (Hreg (S i) ti' D' Hi HD'). }
     have Hlen1 : length Ds' = length inputs' by (simpl in Hlen; lia).
     have Hbatch1 : batch_ok (h ++ [EvDeliver op0]) inputs' Ds'.
-    { move=> i input' D' Hi HD'.
-      pose proof (Hbatch (S i) input' D' Hi HD') as [Hsub' Hnin'].
+    { move=> i ti' D' Hi HD'.
+      pose proof (Hbatch (S i) ti' D' Hi HD') as [Hsub' Hnin'].
       rewrite delivered_ids_app.
       have Hdel1 : delivered_ids [EvDeliver op0] = ({[in_id input]} : gset YjsId).
       { rewrite /delivered_ids /=. set_solver. }
       rewrite Hdel1.
       simpl in Hsub', Hnin'.
       split; set_solver. }
-    pose proof (IH (<[c := h ++ [EvDeliver op0]]> N) (h ++ [EvDeliver op0]) arr2 Ds'
-                  Hwf1 Hc1 Hcoh1 Hinv2 Hreg1 Hlen1 Hbatch1) as (arr' & Hvr' & Hcoh' & Hwf').
-    exists arr'.
-    have Heqh : h ++ ((EvDeliver ∘ OpInsert) <$> (input :: inputs'))
-              = (h ++ [EvDeliver op0]) ++ ((EvDeliver ∘ OpInsert) <$> inputs')
+    pose proof (IH (<[c := h ++ [EvDeliver op0]]> N) (h ++ [EvDeliver op0])
+                  (<[t0 := arr2]> m) Ds'
+                  Hwf1 Hc1 Hcoh1 Hinv1 Hreg1 Hlen1 Hbatch1) as (m' & Hvr' & Hcoh' & Hwf').
+    exists m'.
+    have Heqh : h ++ (deliver_ev <$> ((t0, input) :: inputs'))
+              = (h ++ [EvDeliver op0]) ++ (deliver_ev <$> inputs')
       by rewrite fmap_cons -app_assoc //.
     split_and!.
-    + exact (VR_cons input inputs' arr arr2 arr' item0 Htoit0 Hvalid0 Hmax0 Hint2 Hvr').
+    + exact (VR_cons t0 input inputs' m arr2 m' item0 Htoit0 Hvalid0 Hmax0 Hbnd Hint2 Hvr').
     + rewrite Heqh. exact Hcoh'.
     + rewrite Heqh.
       have Hcollapse :
-        <[c := (h ++ [EvDeliver op0]) ++ ((EvDeliver ∘ OpInsert) <$> inputs')]>
+        <[c := (h ++ [EvDeliver op0]) ++ (deliver_ev <$> inputs')]>
           (<[c := h ++ [EvDeliver op0]]> N)
-        = <[c := (h ++ [EvDeliver op0]) ++ ((EvDeliver ∘ OpInsert) <$> inputs')]> N.
+        = <[c := (h ++ [EvDeliver op0]) ++ (deliver_ev <$> inputs')]> N.
       { rewrite insert_insert. case_decide; [reflexivity | congruence]. }
       rewrite Hcollapse in Hwf'. exact Hwf'.
 Qed.
