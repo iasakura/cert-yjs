@@ -8,13 +8,13 @@
 #       git ls-remote https://github.com/actions/checkout 'refs/tags/vX.Y.Z^{}'
 #   - opam dependencies are all pinned to git SHAs via pin-depends in
 #     cert-yjs.opam.
-#   - The perennial checkout supplies goose's source (built by --local). It is
-#     fetched from the fork iasakura/perennial at grove-new-wp, which is the
-#     opam-pinned perennial commit plus one goose-only patch: an ffiMapping
-#     entry routing the grovenet package to the grove FFI (issue #45). The
-#     patch touches only goose/util/util.go — no .v file — so the Perennial
-#     Rocq library the opam pin builds is unchanged; hence the opam pin stays
-#     on upstream mit-pdos and only this goose checkout carries the patch.
+#   - The perennial checkout supplies goose's source (built by --local); it is
+#     fetched at the SAME commit as the opam perennial pin. That pin is the fork
+#     iasakura/perennial at e8af7997 = upstream mit-pdos f884a505d plus one
+#     goose-only patch (an ffiMapping entry routing the grovenet package to the
+#     grove FFI, issue #45). Single source of truth: bump PERENNIAL_COMMIT and
+#     the cert-yjs.opam pin together. Drop the fork once the mapping is
+#     upstreamed.
 #
 # The first run (no cache) builds Perennial and takes a few hours. Later runs
 # hit the _opam cache and only do goose + proof checking.
@@ -33,9 +33,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # goose source for --local: the opam-pinned perennial commit
-  # (f884a505d..., cert-yjs.opam) plus the grovenet ffiMapping patch (#45),
-  # i.e. the tip of iasakura/perennial's grove-new-wp branch.
+  # Keep in sync with the perennial pin in cert-yjs.opam (same fork + commit).
+  # Fork = upstream mit-pdos f884a505d + the grovenet ffiMapping patch (#45).
   PERENNIAL_REPO: https://github.com/iasakura/perennial
   PERENNIAL_COMMIT: e8af799716f3b8963a61975b9e6652f1192f49cb
 

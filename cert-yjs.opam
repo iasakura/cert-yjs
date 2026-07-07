@@ -14,7 +14,13 @@ depends: [
 ]
 
 pin-depends: [
-  ["perennial.dev"             "git+https://github.com/mit-pdos/perennial#f884a505d89d3f6740f4baec515602494a9bd4cc"]
+  # Fork of mit-pdos/perennial: upstream f884a505d plus one goose-only patch
+  # (an ffiMapping entry routing the grovenet package to the grove FFI, #45).
+  # The patch touches no .v file, so the Perennial Rocq library this builds is
+  # identical to upstream's; goose's --local build picks up the mapping from the
+  # same commit (see .github/workflows/ci.yml). Drop the fork once the mapping
+  # is upstreamed.
+  ["perennial.dev"             "git+https://github.com/iasakura/perennial#e8af799716f3b8963a61975b9e6652f1192f49cb"]
   ["rocq-yjs.dev"              "git+https://github.com/iasakura/iris-yjs#2947b30f0ab6e74cf1f3e2d98ed2b227c17f79ee"]
   ["rocq-yjs-core.dev"         "git+https://github.com/iasakura/iris-yjs#2947b30f0ab6e74cf1f3e2d98ed2b227c17f79ee"]
 
