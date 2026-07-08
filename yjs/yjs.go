@@ -16,13 +16,16 @@
 //	ytype.go     yType (lock-guarded inner) (y-octo: doc/types YType)
 //	text.go      Text API (unlocked handle) (y-octo: doc/types/text.rs)
 //	doc.go       Doc handle + GetText       (y-octo: doc/document.rs)
+//	sync.go      sync-protocol exec core    (y-octo: doc/store.rs diff_state_vector)
 //	refs.go      node / GC / Skip tombstones (y-octo: codec/refs.rs)     [not translated]
 //	delete.go    Delete                     (y-octo: doc/types/text.rs)  [not translated]
 //	codec.go     v1 update encode/decode    (y-octo: codec/{update,...}) [not translated]
+//	protocol.go  sync message codec+dispatch (y-octo: protocol/{sync,doc}.rs) [not translated]
 //
-// refs.go, delete.go and codec.go carry the `//go:build !goose` constraint: the
-// node enum is used only by the byte-level v1 codec, and Delete / the codec are
-// the runtime interop layer -- all excluded from goose translation so the
-// verified core (store.go's Integrate, text.go's Insert) stays the proof
+// refs.go, delete.go, codec.go and protocol.go carry the `//go:build !goose`
+// constraint: the node enum is used only by the byte-level v1 codec, and Delete /
+// the codec / the sync-message framing are the runtime interop layer -- all
+// excluded from goose translation so the verified core (store.go's Integrate,
+// text.go's Insert, sync.go's computeStateVector / computeDiff) stays the proof
 // surface. Normal `go build` / `go test` compile every file.
 package yjs

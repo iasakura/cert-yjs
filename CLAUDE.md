@@ -97,7 +97,8 @@ same `build.sh`.
 
 Never hand-edit generated files; change the Go and re-run goose. Proof files
 `Require` each other in order `core → common (∥ network_model) → id → item →
-ytype → history → store → text` and reopen the same `Section` boilerplate:
+ytype → history → store → text` (with `sync` a leaf needing only `common`) and
+reopen the same `Section` boilerplate:
 
 - `yjs_core.v` — re-exports the `rocq-yjs` / `iris-yjs` library (pure
   `integrate` / `setintegrate` model and its order theory).
@@ -132,6 +133,13 @@ ytype → history → store → text` and reopen the same `Section` boilerplate:
 - `yjs_text.v` — the `Text` handle `is_Text t γh L` and the top-level
   `wp_Text__Insert` (which mints one op certificate per inserted item) /
   `wp_Text__Delete`.
+- `yjs_sync.v` — the sync-protocol execution core (issue #51): the pure models
+  `state_vector_model` / `diff_model` of y-octo's `get_state_vector` /
+  `diff_state_vector`, the WP specs `wp_computeStateVector` / `wp_computeDiff`
+  (over `own_map` / `own_slice`, no codec), and the capstone
+  `diff_of_own_state_vector_empty` (a replica's own state vector covers its own
+  document). The byte-level message codec + dispatch is the unverified rind in
+  `yjs/protocol.go`.
 
 ## Notes
 
