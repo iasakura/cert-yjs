@@ -18,6 +18,7 @@ From New.proof.sync_proof Require Import base mutex rwmutex.
                                                       (* store lock: is_RWMutex + LP Lock/Unlock
                                                          (y-octo Arc<RwLock<DocStore>>) *)
 From iris.algebra Require Import auth gmap gset.       (* grow-only item-set RA *)
+From iris.bi.lib Require Import fractional.            (* Fractional (read-share of store_inv) *)
 From stdpp Require Import sorting.                     (* merge_sort for client_run *)
 
 (* iris.algebra / stdpp.sorting push [nat_scope], retuning the default [<] / [≤].
@@ -505,6 +506,70 @@ Qed.
   Timeless (own_ytype_cells parent dq cells arr).
 Proof. rewrite /own_ytype_cells. apply _. Qed.
 
+(* ----- fractional DLL stack (for the concurrent-read share of [store_inv]) ---
+   The read lock hands each reader a fractional share of the read-only part of
+   [store_inv] (its DLLs + the item-set auth). These make that share splittable:
+   [own_dll] / [own_ytype_cells] are [Fractional] in their [DfracOwn q]. The
+   [⊣⊢]-backward direction needs the existential heap struct ([iv] / [yt]) and
+   the DLL tail loc ([tl]) to AGREE across the two shares; [own_dll_last_agree]
+   supplies the [tl] agreement (both DLLs over the same cells end at the same
+   node); [iv]/[yt] agree by [pointsto] agreement. *)
+#[global] Instance own_dll_fractional l last prev next cells :
+  Fractional (λ q, own_dll (DfracOwn q) l last prev next cells).
+Proof.
+  intros q1 q2. revert l last prev next.
+  induction cells as [|c rest IH]; intros l last prev next; simpl.
+  - iSplit; [ iIntros "#H"; iSplit; iFrame "H" | iIntros "[H _]"; iFrame "H" ].
+  - iSplit.
+    + iIntros "H". iNamed "H".
+      iDestruct "Holeft" as "#Holeft". iDestruct "Horight" as "#Horight".
+      iDestruct "Hval" as "[Hv1 Hv2]".
+      iDestruct (IH with "Hrest") as "[Hr1 Hr2]".
+      iSplitL "Hv1 Hr1".
+      * iExists iv, olid, orid. iFrame "Hv1 Holeft Horight Hr1". done.
+      * iExists iv, olid, orid. iFrame "Hv2 Holeft Horight Hr2". done.
+    + iIntros "[H1 H2]".
+      iDestruct "H1" as (iv1 olid1 orid1) "H1". iNamedSuffix "H1" "1".
+      iDestruct "H2" as (iv2 olid2 orid2) "H2". iNamedSuffix "H2" "2".
+      iCombine "Hval1 Hval2" gives %Hiv. subst iv2.
+      iCombine "Hval1 Hval2" as "Hval".
+      iDestruct (IH with "[$Hrest1 $Hrest2]") as "Hrest".
+      iExists iv1, olid1, orid1. iFrame "Hval Hrest Holeft1 Horight1". done.
+Qed.
+
+Lemma own_dll_last_agree dq1 dq2 (l la1 la2 prev next : loc) (cells : list item_cell) :
+  own_dll dq1 l la1 prev next cells -∗ own_dll dq2 l la2 prev next cells -∗ ⌜la1 = la2⌝.
+Proof.
+  revert l la1 la2 prev next.
+  induction cells as [|c rest IH]; intros l la1 la2 prev next; simpl.
+  - iIntros "[%H1a %H1b] [%H2a %H2b]". subst. done.
+  - iIntros "H1 H2".
+    iDestruct "H1" as (iv1 ol1 or1) "H1". iNamedSuffix "H1" "1".
+    iDestruct "H2" as (iv2 ol2 or2) "H2". iNamedSuffix "H2" "2".
+    iCombine "Hval1 Hval2" gives %->.
+    iApply (IH with "Hrest1 Hrest2").
+Qed.
+
+#[global] Instance own_ytype_cells_fractional parent cells arr :
+  Fractional (λ q, own_ytype_cells parent (DfracOwn q) cells arr).
+Proof.
+  intros q1 q2. rewrite /own_ytype_cells. iSplit.
+  - iIntros "H". iNamed "H".
+    iDestruct "Hparent" as "[Hp1 Hp2]".
+    iDestruct (own_dll_fractional _ _ _ _ _ q1 q2 with "Hdll") as "[Hd1 Hd2]".
+    iSplitL "Hp1 Hd1".
+    + iExists yt, tl. iFrame "Hp1 Hd1". auto.
+    + iExists yt, tl. iFrame "Hp2 Hd2". auto.
+  - iIntros "[H1 H2]".
+    iDestruct "H1" as (yt1 tl1) "H1". iNamedSuffix "H1" "1".
+    iDestruct "H2" as (yt2 tl2) "H2". iNamedSuffix "H2" "2".
+    iCombine "Hparent1 Hparent2" gives %Hyt. subst yt2.
+    iDestruct (own_dll_last_agree with "Hdll1 Hdll2") as %Htl. subst tl2.
+    iCombine "Hparent1 Hparent2" as "Hparent".
+    iDestruct (own_dll_fractional _ _ _ _ _ q1 q2 with "[$Hdll1 $Hdll2]") as "Hdll".
+    iExists yt1, tl1. iFrame "Hparent Hdll". auto.
+Qed.
+
 (** [own_item_map] is a function of the document-global (client, clock, loc)
     projection [cell_kp <$> all_cells] alone: two [types] with the same [cell_kp]
     multiset carry the same run-map. [Text.Delete] flips [ic_deleted] bits, which
@@ -656,6 +721,29 @@ Definition store_inv (s_loc : loc) (γs : store_names) (γh : history_names) : i
     it immediately (no intervening program step to strip a later). *)
 #[global] Instance store_inv_timeless s_loc γs γh : Timeless (store_inv s_loc γs γh).
 Proof. rewrite /store_inv. apply _. Qed.
+
+(** [store_inv_ro γs types q]: the read-only-shareable slice of [store_inv] that a
+    concurrent reader needs: the per-type DLLs (from which [Text.String]/[Len]
+    read visible content / length) and the item-set authority (combined with a
+    reader's [is_type_lb] to locate its type). Fractional in [q]: the read lock
+    hands each of up to [rwmutexMaxReaders] readers a share, and the write lock
+    reassembles the whole ([q = 1]). The store's mutable-exclusive parts (the
+    struct fields, [own_item_map], the registry [ghost_map_auth], the ghost
+    history) are NOT here; they stay whole in the lock invariant while readers
+    hold shares, since no writer runs concurrently with readers. *)
+Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
+  "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
+  "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
+                own_ytype_cells parent (DfracOwn q) (ty_cells ts) (ty_arr ts) ∗
+                ⌜YjsArrInvariant (ty_arr ts)⌝).
+
+#[global] Instance store_inv_ro_fractional γs types : Fractional (store_inv_ro γs types).
+Proof.
+  rewrite /store_inv_ro /named. apply fractional_sep.
+  - intros q1 q2. rewrite -own_op -auth_auth_dfrac_op dfrac_op_own //.
+  - apply fractional_big_sepM. intros parent ts.
+    apply fractional_sep; [ apply own_ytype_cells_fractional | apply _ ].
+Qed.
 
 (** ---------------------------------------------------------------------------
     Store lock = a [sync.RWMutex] (y-octo's [Arc<RwLock<DocStore>>]).
