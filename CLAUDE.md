@@ -79,14 +79,20 @@ Perennial checkout for goose (default
 `/home/ia/ghq/github.com/mit-pdos/perennial`, override with `PERENNIAL=…`, at
 the commit pinned in `cert-yjs.opam`); an opam switch with Perennial installed
 — all deps pinned by SHA in `cert-yjs.opam`'s `pin-depends` (including
-`rocq-yjs`). One-time setup: see `WORKFLOW.md`. CI runs the same `build.sh`.
+`rocq-yjs`). The pinned Perennial is a fork of `mit-pdos/perennial` carrying one
+goose-only patch that maps the `grovenet` package to the grove FFI, required for
+the network packages (issue #45). One-time setup: see `WORKFLOW.md`. CI runs the
+same `build.sh`.
 
 ## Architecture
 
 | path | contents | edit? |
 |---|---|---|
 | `yjs/*.go` | hand-written Go (port of y-octo) | yes |
+| `grovenet/*.go`, `pingpong/*.go` | hand-written Go: the Grove network FFI realization (TCP) + its N0 feasibility demo (issue #45) | yes |
 | `src/proof/*.v` | hand-written proofs, one per Go file | yes |
+| `src/trusted_code/.../*.v`, `src/manualproof/.../*.v` | hand-written trusted FFI models + their WP wrappers (grovenet ⇒ grove FFI) | yes |
+| `src/code/.../*.v.toml` | hand-written goose declfilter configs (per-package translate/trusted/imports) | yes |
 | `src/code/`, `src/generatedproof/` | goose / proofgen output | **no — generated, gitignored** |
 
 Never hand-edit generated files; change the Go and re-run goose. Proof files

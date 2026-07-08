@@ -1,0 +1,20 @@
+# declfilter config for the grovenet package (the Grove FFI realization).
+# The API surface is trusted (modeled by
+# src/trusted_code/github_com/iasakura/cert_yjs/grovenet.v against the grove
+# FFI semantics); Address is a plain uint64 alias so it is translated; the
+# runtime helpers (MakeAddress/AddressToStr/makeConnection and the TCP bodies)
+# are axiomatized name-only; no imports are modeled (net/fmt/... are runtime
+# only).
+translate = ["!*", "Address"]
+imports = ["!*"]
+trusted = [
+  "Listener",
+  "listener",
+  "Connection",
+  "connection",
+  "Listen",
+  "Accept",
+  "Connect",
+  "Send",
+  "Receive",
+]
