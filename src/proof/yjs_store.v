@@ -745,6 +745,60 @@ Proof.
     apply fractional_sep; [ apply own_ytype_cells_fractional | apply _ ].
 Qed.
 
+(** [store_inv_excl]: the complement of [store_inv_ro] within [store_inv], the
+    mutable-exclusive state the read lock does NOT share (struct fields, the
+    per-client item map, the registry [ghost_map_auth], the ghost history, and
+    the counter / registry side conditions). It stays whole in the lock
+    invariant while readers hold fractional shares of [store_inv_ro]. *)
+Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names)
+    (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
+    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocM) : iProp Σ :=
+    "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
+    "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
+    "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
+    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types ∗
+    "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
+    "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
+    "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
+    "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
+                   clientId (item_id x) = uint.nat client →
+                   (clock (item_id x) < uint.nat k)%nat⌝ ∗
+    "%Hcellctr" ∷ ⌜∀ c, c ∈ all_cells types → cell_client c = client →
+                   (uint.Z (cell_clock c) < uint.Z k)%Z⌝ ∗
+    "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
+    "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
+    "%Hbindtypes" ∷ ⌜∀ name p, bind !! name = Some p → is_Some (types !! p)⌝ ∗
+    "%Hbindinj" ∷ ⌜∀ n1 n2 p, bind !! n1 = Some p → bind !! n2 = Some p → n1 = n2⌝ ∗
+    "%Htypesbound" ∷ ⌜∀ p, is_Some (types !! p) → ∃ name, bind !! name = Some p⌝ ∗
+    "Hhist"   ∷ own_client_history γh (uint.nat client) h ∗
+    "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
+    "%Hmtypes" ∷ ⌜∀ name p ts, bind !! name = Some p → types !! p = Some ts →
+                    docm_get m (RootId name) = ty_arr ts⌝ ∗
+    "%Hmdom" ∷ ⌜∀ t, docm_get m t ≠ [] →
+                  ∃ name p, t = RootId name ∧ bind !! name = Some p⌝.
+
+(** [store_inv] partitions into its exclusive part and the read-shareable part at
+    full fraction. The write lock reassembles the whole via this bridge; the read
+    lock keeps [store_inv_excl] whole and shares [store_inv_ro]. *)
+Lemma store_inv_bridge (s_loc : loc) (γs : store_names) (γh : history_names) :
+  store_inv s_loc γs γh ⊣⊢
+  ∃ client k items_mref types_mref dset types bind h m,
+    store_inv_excl s_loc γs γh client k items_mref types_mref dset types bind h m ∗
+    store_inv_ro γs types 1.
+Proof.
+  rewrite /store_inv /store_inv_excl /store_inv_ro. iSplit.
+  - iIntros "H". iNamed "H". iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+    iSplitR "Hseq Htypes".
+    + iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset HtypesAuth Hhist Hbinds".
+      iPureIntro. split_and!; assumption.
+    + iFrame "Hseq Htypes".
+  - iIntros "H". iDestruct "H" as (client k items_mref types_mref dset types bind h m) "[He Hro]".
+    iNamed "He". iNamed "Hro".
+    iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset HtypesAuth Hhist Hbinds Hseq Htypes".
+    iPureIntro. split_and!; assumption.
+Qed.
+
 (** ---------------------------------------------------------------------------
     Store lock = a [sync.RWMutex] (y-octo's [Arc<RwLock<DocStore>>]).
 
