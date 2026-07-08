@@ -10,6 +10,7 @@ From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype yjs_history yjs_store yjs_text.
 From New.proof.sync_proof Require Import mutex.
 From iris.algebra Require Import auth gmap gset.
+From iris.algebra.lib Require Import dfrac_agree.       (* [is_Store]'s reader-count [types] agreement *)
 
 Section doc.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
@@ -22,6 +23,9 @@ Set Default Proof Using "Type*".
 
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+(* [is_Store]'s reader-count accounting ties the readers' share to the store's
+   [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Store]. *)
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 
 (** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
     delegates to [is_Store]. Since [Text] holds the store directly (y-octo: the

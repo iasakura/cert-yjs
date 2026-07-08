@@ -15,6 +15,7 @@ From New.proof.sync_proof Require Import mutex.        (* transitive; the store'
                                                           via [wp_Store__wlock] /
                                                           [wp_Store__wunlock] (yjs_store) *)
 From iris.algebra Require Import auth gmap gset.        (* is_type_lb grow-only item-set RA *)
+From iris.algebra.lib Require Import dfrac_agree.       (* [is_Store]'s reader-count [types] agreement *)
 From stdpp Require Import sorting.                      (* StronglySorted / sublist *)
 
 (* iris.algebra / stdpp.sorting push [nat_scope], retuning the default [<] / [≤];
@@ -34,6 +35,10 @@ Set Default Proof Using "Type*".
 
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+(* [is_Store]'s reader-count accounting ties the readers' share to the store's
+   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
+   in this file (Insert/Delete/Len) can discharge the instance. *)
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 
 (* The ghost op-history types at the document content type; type names are Go
    strings (issue #49). *)
@@ -165,8 +170,8 @@ Qed.
     [is_type_binding] — the handle's text is the one the store's registry
     binds to [name], which is what ties the store's per-type history view to
     THIS text under the lock. *)
-Definition is_Text (t : loc) (γh : history_names) (name : P) (L : list (YjsItem A)) : iProp Σ :=
-  ∃ (tv : yjs.Text.t) (s_loc parent : loc) (γs : store_names),
+Definition is_Text (t : loc) (γs : store_names) (γh : history_names) (name : P) (L : list (YjsItem A)) : iProp Σ :=
+  ∃ (tv : yjs.Text.t) (s_loc parent : loc),
     "Ht" ∷ t ↦□ tv ∗
     "%Hstore" ∷ ⌜tv.(yjs.Text.store') = s_loc⌝ ∗
     "%Hinner" ∷ ⌜tv.(yjs.Text.inner') = parent⌝ ∗
@@ -176,7 +181,7 @@ Definition is_Text (t : loc) (γh : history_names) (name : P) (L : list (YjsItem
     "His_lb" ∷ is_type_lb γs.(sn_seq) parent (list_to_set L) ∗
     "%Hsorted" ∷ ⌜StronglySorted (λ x y : YjsItem A, YjsLt' (itemPtr x) (itemPtr y)) L⌝.
 
-#[global] Instance is_Text_persistent t γh name L : Persistent (is_Text t γh name L).
+#[global] Instance is_Text_persistent t γs γh name L : Persistent (is_Text t γs γh name L).
 Proof. apply _. Qed.
 
 (** [Text.Insert] preserves the (persistent) document handle, grows the known
@@ -203,12 +208,12 @@ Proof. apply _. Qed.
     initial [Hctr]. Overflow is ruled out by a Go-side guard in [Text.Insert]
     (its early return takes the [ins = []] disjunct); [k] stays hidden in the
     lock. Axiom-clean ([Print Assumptions] shows only goose/Perennial axioms). *)
-Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (γh : history_names)
+Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (γs : store_names) (γh : history_names)
     (name : P) (L : list (YjsItem A)) :
-  {{{ is_pkg_init yjs ∗ is_Text t γh name L }}}
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L }}}
     t @! (go.PointerType yjs.Text) @! "Insert" #idx #cs
   {{{ (L' ins : list (YjsItem A)) (client k0 : nat) (oL oR : YjsPtr A), RET #();
-      is_Text t γh name L' ∗ ⌜sublist L L'⌝ ∗
+      is_Text t γs γh name L' ∗ ⌜sublist L L'⌝ ∗
       ⌜ins = [] ∨ length ins = length cs⌝ ∗
       ⌜∀ (i : nat) (it : YjsItem A) (b : w8),
          ins !! i = Some it → cs !! i = Some b →
@@ -259,7 +264,7 @@ Proof.
         | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
-    { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γs.
+    { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
       iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
     iSplit; [iPureIntro; reflexivity |].
     iSplit; [iPureIntro; left; reflexivity |].
@@ -286,7 +291,7 @@ Proof.
         | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
-    { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γs.
+    { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
       iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
     iSplit; [iPureIntro; reflexivity |].
     iSplit; [iPureIntro; left; reflexivity |].
@@ -824,7 +829,7 @@ Proof.
       + rewrite docm_get_insert_ne // in Hne'. exact (Hmdom t' Hne'). }
   iApply ("HΦ" $! arr ins (uint.nat client) (uint.nat k) oL oR).
   iSplitL "Hfrag Ht".
-  { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γs. iFrame "Ht His_store His_hist Hbind Hfrag". iPureIntro. split_and!; [reflexivity | reflexivity | exact (yai_sorted _ Hinvj)]. }
+  { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'). iFrame "Ht His_store His_hist Hbind Hfrag". iPureIntro. split_and!; [reflexivity | reflexivity | exact (yai_sorted _ Hinvj)]. }
   iSplit.
   { iPureIntro. apply (sorted_subseteq_sublist L arr Hinvj Hsorted (yai_sorted _ Hinvj)).
     intros x Hx. have Hxg : x ∈ (list_to_set arr : gset (YjsItem A)).
@@ -864,11 +869,11 @@ Qed.
     until the budget is spent or the list ends; rebuild [store_inv] with the same
     [ty_arr] (so the auth [Hseq] / counter [Hctr] are preserved), Unlock, and
     return [is_Text t L]. *)
-Lemma wp_Text__Delete (t : loc) (index len : w64) (γh : history_names)
+Lemma wp_Text__Delete (t : loc) (index len : w64) (γs : store_names) (γh : history_names)
     (name : P) (L : list (YjsItem A)) :
-  {{{ is_pkg_init yjs ∗ is_Text t γh name L }}}
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L }}}
     t @! (go.PointerType yjs.Text) @! "Delete" #index #len
-  {{{ RET #(); is_Text t γh name L }}}.
+  {{{ RET #(); is_Text t γs γh name L }}}.
 Proof.
   (* ---- Prologue: take the store lock, extract THIS text. ---- *)
   wp_start as "Hpre". iNamed "Hpre".
@@ -977,7 +982,7 @@ Proof.
           + rewrite lookup_insert_ne in Hts'; [| congruence].
             exact (Hmtypes name' p' ts' Hb' Hts').
         - exact Hmdom. }
-      iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γs.
+      iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
       iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
   wp_auto.
   destruct (decide (q < length cells')%nat) as [Hqlt | Hqge].
@@ -1031,7 +1036,7 @@ Proof.
           + rewrite lookup_insert_ne in Hts'; [| congruence].
             exact (Hmtypes name' p' ts' Hb' Hts').
         - exact Hmdom. }
-      iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), γs.
+      iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
       iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
   (* cursor in range: read node [q] (single borrow exposing [iv] + the update
      wand), decide visible/deleted via [Indexable], advance to [q+1]. *)
@@ -1099,6 +1104,39 @@ Proof.
         exact (Hcparj cq (list_elem_of_lookup_2 _ _ _ Hcq)).
       * rewrite list_lookup_insert_ne in Hi0; last congruence.
         exact (Hcparj c0 (list_elem_of_lookup_2 _ _ _ Hi0)).
+Qed.
+
+(** [Text.Len]: a CONCURRENT read (issue #22). Takes the RWMutex read lock, reads
+    the type's visible length off its DLL through a fractional [store_inv_ro]
+    share (so it runs alongside other readers), then releases. The read
+    capability [own_read_cap] (one reader slot) is threaded and returned;
+    [is_Text] is preserved. This exercises the verified RLock read path. *)
+Lemma wp_Text__Len (t : loc) (γs : store_names) (γh : history_names) (name : P) (L : list (YjsItem A)) :
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗ own_read_cap γs }}}
+    t @! (go.PointerType yjs.Text) @! "Len" #()
+  {{{ (n : w64), RET #n; is_Text t γs γh name L ∗ own_read_cap γs }}}.
+Proof.
+  wp_start as "[Hpre Hcap]". iNamed "Hpre".
+  iDestruct "His_store" as "#His_store".
+  wp_auto. subst s_loc.
+  wp_apply (wp_Store__rlock with "[$His_store $Hcap]"). iIntros (types) "[Hrlo Hro]".
+  iNamed "Hro".
+  iDestruct (auth_gmap_gset_lookup_dq with "Hseq His_lb") as %(S' & HmS & HLsub).
+  rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (ts & Htsp & ->).
+  iDestruct (big_sepM_lookup_acc _ _ _ _ Htsp with "Htypes") as "[Hbody Hclose]".
+  iDestruct "Hbody" as "[Htext %Hinvarr]".
+  iDestruct "Htext" as (yt0 tl0) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
+  subst parent.
+  wp_auto.
+  iDestruct ("Hclose" with "[Hparent Hdll]") as "Htypes".
+  { iSplitL "Hparent Hdll"; [ iExists yt0, tl0; iFrame "Hparent Hdll"; iPureIntro; done | iPureIntro; exact Hinvarr ]. }
+  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Htypes]").
+  { iFrame "Hseq Htypes". }
+  iIntros "Hcap".
+  wp_auto.
+  iApply "HΦ". iFrame "Hcap".
+  iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'). iFrame "Ht His_store His_hist Hbind His_lb".
+  iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted].
 Qed.
 
 End text.
