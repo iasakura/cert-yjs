@@ -1,195 +1,136 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) when working in this repository.
 
-## What this is
+## Purpose
 
-A Yjs-style CRDT written in Go (`yjs/`), translated to a Rocq model with
-[goose](https://github.com/mit-pdos/perennial/tree/master/goose), and proved
-correct with [Perennial](https://github.com/mit-pdos/perennial) (Iris/Rocq) in
-`src/proof/`. The Go data structures and the `integrate` algorithm are a faithful
-port of [y-octo](https://github.com/y-crdt/y-octo) (Rust Yjs); each Go method
-cites its y-octo source in a comment.
+A formally verified Yjs. A Yjs-style CRDT is hand-written in Go (`yjs/`),
+translated to a Rocq model with
+[goose](https://github.com/mit-pdos/perennial/tree/master/goose), and verified
+in Iris concurrent separation logic with
+[Perennial](https://github.com/mit-pdos/perennial) (`src/proof/`). The Go is a
+faithful port of [y-octo](https://github.com/y-crdt/y-octo) (Rust Yjs) — each
+method cites its y-octo source in a comment — so the goal is formal
+verification of a *realistic* Yjs implementation, not a toy.
 
-## Stop and ask before changing implementation or public contracts
+## Rules
 
-Pause and confirm with the maintainer **before**:
+- **Predicate naming**: `is_X` = persistent handles / read-only facts
+  (`is_Store`, `is_Text`, `is_text_lb`, `is_origin_id`, …); `own_X` =
+  ownership, `dfrac`-parameterized when it is plain heap state (`own_ytype`,
+  `own_dll`, `own_id_set`, `own_item_map`, …; `own_fresh_item` is exclusive and
+  consumed by Integrate).
+- **Public specs**: one `.v` proof file per Go file. Specs of public functions
+  must not mention internal data (heap cells, node locations, flags) — state
+  them over the public `is_X` / `own_X` predicates and their model parameters:
+  `{{{ own_X o dq m ∗ ⌜Pre m⌝ }}} … {{{ own_X o dq m' ∗ ⌜Post m m' ret⌝ }}}`,
+  with persistent `is_X` handles as duplicable hypotheses carrying monotone
+  knowledge (e.g. `is_Text`'s grow-only `L`).
+- **Report unrequested changes**: any change to the implementation
+  (`yjs/*.go` behavior), a public function's spec/signature, or a proof-layer
+  contract (rep predicates, invariants, WP specs) that was not explicitly
+  asked for must be reported. In particular, any simplification that diverges
+  from y-octo must carry a clear code comment **and** be reported. Mirror
+  y-octo's containers faithfully (HashSet/HashMap → Go map, Vec → slice);
+  don't downgrade a set to a slice for proof convenience.
+- **Library bugs**: apparent bugs in the toolchain (Rocq, Iris, Perennial,
+  goose, …) may be worked around to keep moving, but report them afterwards.
+- **No unsolicited upstream activity**: never open pull requests, issues, or
+  comments on repositories not owned by `iasakura` without explicit approval.
+- **Reuse the rocq-yjs model — don't invent independent proofs**: state WP
+  specs as refinements of the pure model and compose with its lemmas
+  (`YjsArrInvariant_integrate`, `setintegrate_eq_integrate`,
+  `integrate_commutative`, `yjs_strong_convergence`, …). Extract algorithmic
+  cores into their own Go functions (e.g. `scanConflicts` /
+  `findIntegrationLeft`) so hard loops are provable in isolation.
 
-- changing the implementation (any `yjs/*.go` behavior, not just refactoring);
-- changing the spec, signature, or documented behavior of a public function or
-  type;
-- changing a WP spec, a representation predicate, or an invariant in
-  `src/proof/*.v` (e.g. `store_inv`, `is_Text`, `cell_repr`, the loop invariants).
+## Workflow
 
-These ripple through the Go→goose→proof chain and the y-octo faithfulness
-contract, so they are decisions to make together, not unilaterally. Proving an
-existing spec, fixing a broken proof without weakening its statement, or other
-work that leaves the implementation and all public contracts unchanged does not
-need a check first.
-
-## Build / proof loop
-
-The cycle is **write Go → translate to Rocq with goose → prove**. Driven by `build.sh`:
+Write Go → translate with goose → prove, driven by `build.sh`:
 
 ```sh
 ./build.sh          # everything: go build → goose → make (proof check)
 ./build.sh go       # Go type check only (run first after editing Go)
-./build.sh goose    # translate Go → Rocq (also runs go build)
+./build.sh goose    # Go → Rocq translation (also runs go build)
 ./build.sh make     # proof check only (compile .v → .vo)
 ```
 
-**After editing any `yjs/*.go`, you must re-run goose** (`./build.sh goose` or
-plain `./build.sh`). Running `make` alone keeps the stale translation and your Go
-change silently has no effect.
+- **After editing any `yjs/*.go`, re-run goose** — `make` alone checks the
+  stale translation and the Go change silently has no effect.
+- Go tests (CRDT convergence tables): `GOTOOLCHAIN=go1.26.0 go test ./yjs/`
+- Iterate on proofs with the rocq-mcp session (`rocq_start` once, then
+  `rocq_check` / `rocq_step_multi`). coq-lsp tolerates errors and forward
+  references, so **always finish with a strict `./build.sh make`**.
+- Compile a single proof file (bypasses make's dep graph; `-o` must match the
+  source basename):
 
-Go tests (the integrate algorithm has table tests that check CRDT convergence):
+  ```sh
+  ARGS=$(sed -E -e '/^#/d' -e "s/'([^']*)'/\1/g" -e 's/-arg //g' _RocqProject)
+  rocq compile $ARGS src/proof/yjs_store.v -o src/proof/yjs_store.vo
+  ```
 
-```sh
-GOTOOLCHAIN=go1.26.0 go test ./yjs/
-GOTOOLCHAIN=go1.26.0 go test ./yjs/ -run TestConcurrentMiddleInsertConverges
-```
+Environment: Go 1.26 (`build.sh` exports `GOTOOLCHAIN=go1.26.0`); a local
+Perennial checkout for goose (default
+`/home/ia/ghq/github.com/mit-pdos/perennial`, override with `PERENNIAL=…`, at
+the commit pinned in `cert-yjs.opam`); an opam switch with Perennial installed
+— all deps pinned by SHA in `cert-yjs.opam`'s `pin-depends` (including
+`rocq-yjs`). The pinned Perennial is a fork of `mit-pdos/perennial` carrying one
+goose-only patch that maps the `grovenet` package to the grove FFI, required for
+the network packages (issue #45). One-time setup: see `WORKFLOW.md`. CI runs the
+same `build.sh`.
 
-### Iterating on proofs
-
-For day-to-day proof work, prefer the rocq-mcp interactive session
-(`rocq_start` once, then `rocq_check` / `rocq_step_multi`) over recompiling.
-coq-lsp/Fleche tolerates errors and forward references, so **always finish with a
-strict `./build.sh make`** — some errors only surface under `coqc`.
-
-To compile a single proof file (fast, bypasses make's dep graph):
-
-```sh
-ARGS=$(sed -E -e '/^#/d' -e "s/'([^']*)'/\1/g" -e 's/-arg //g' _RocqProject)
-rocq compile $ARGS src/proof/yjs_proof.v -o src/proof/yjs_proof.vo
-```
-
-The `-o` output name must match the source basename or Rocq errors with
-"Source and target file names must coincide".
-
-## Directory layout
+## Architecture
 
 | path | contents | edit? |
 |---|---|---|
 | `yjs/*.go` | hand-written Go (port of y-octo) | yes |
-| `grovenet/*.go` | hand-written Go: the Grove network FFI realization (TCP; adapted from gokv/grove_ffi) | yes |
-| `pingpong/*.go` | hand-written Go: the network-FFI feasibility demo (issue #45 / N0) | yes |
-| `src/proof/*.v` | hand-written proofs | yes |
-| `src/trusted_code/.../*.v` | hand-written trusted FFI models (grovenet ⇒ grove FFI semantics) | yes |
-| `src/manualproof/.../*.v` | hand-written WP layer for trusted packages (grove Send/Receive wrappers) | yes |
+| `grovenet/*.go`, `pingpong/*.go` | hand-written Go: the Grove network FFI realization (TCP) + its N0 feasibility demo (issue #45) | yes |
+| `src/proof/*.v` | hand-written proofs, one per Go file | yes |
+| `src/trusted_code/.../*.v`, `src/manualproof/.../*.v` | hand-written trusted FFI models + their WP wrappers (grovenet ⇒ grove FFI) | yes |
 | `src/code/.../*.v.toml` | hand-written goose declfilter configs (per-package translate/trusted/imports) | yes |
-| `src/code/.../*.v` | goose output (GooseLang model) | **no — generated, gitignored** |
-| `src/generatedproof/.../*.v` | proofgen output (struct points-to lemmas) | **no — generated, gitignored** |
+| `src/code/`, `src/generatedproof/` | goose / proofgen output | **no — generated, gitignored** |
 
-Only the hand-written rows are committed. Never hand-edit `src/code/**/*.v` or
-`src/generatedproof`; change the Go and re-run goose instead.
+Never hand-edit generated files; change the Go and re-run goose. Proof files
+`Require` each other in order `core → common (∥ network_model) → id → item →
+ytype → history → store → text` and reopen the same `Section` boilerplate:
 
-## Proof architecture
+- `yjs_core.v` — re-exports the `rocq-yjs` / `iris-yjs` library (pure
+  `integrate` / `setintegrate` model and its order theory).
+- `yjs_common.v` — shared base: scalar abstractions (`toYjsId` / `toContent`),
+  `item_cell` / `node_loc`, `own_id_set`, the package-init instances
+  (declared once here, inherited via `Require`).
+- `yjs_network_model.v` — the Iris-free bridge to the rocq-yjs *network*
+  model (issue #42): `history_wf` over a raw `gmap ClientId (list Event)`,
+  the packaging `to_network : … → YjsOperationNetwork`, `history_state_coh`,
+  happens-before append-stability, freshness, receiver clock safety, the
+  broadcast/deliver steps, `ValidReplay`, and `certs_ValidReplay`. No goose —
+  iterate on it standalone.
+- `yjs_id.v` — the `id` type: arithmetic round-trip, injectivity, equality
+  specs.
+- `yjs_item.v` — the `item` type: method specs, the DLL spine `own_dll` and
+  its structural lemmas, `cell_repr` / `cells_repr`, the deletion-flag layer
+  (`num_visible`, `flip_cell`, …).
+- `yjs_ytype.v` — the `yType` container: public `own_ytype parent dq m`
+  (model = items with tombstone bits) over cells-level `own_ytype_cells`,
+  and `wp_yType__findPos`.
+- `yjs_history.v` — the ghost op history (issue #42): the global invariant
+  `is_history γh` (two `ghost_map`s + `history_wf`/`ops_coh`), the exclusive
+  per-replica `own_client_history`, the persistent op certificate
+  `is_op_cert`, and the fupd API `history_alloc` / `history_broadcast` /
+  `history_deliver_batch` (+ a two-client smoke test).
+- `yjs_store.v` — the `store` proofs: conflict scan refining `setfii_loop`,
+  the item-set layer `own_item_map`, the lock layer (`store_inv` /
+  `is_Store`, now carrying the client's ghost history tied to the governed
+  text), and the Integrate stack up to `wp_Store__Integrate` /
+  `wp_store__applyUpdate` / the certificate-based
+  `wp_store__applyUpdate_certs`.
+- `yjs_text.v` — the `Text` handle `is_Text t γh L` and the top-level
+  `wp_Text__Insert` (which mints one op certificate per inserted item) /
+  `wp_Text__Delete`.
 
-The project is organized in phases (the Go has Phase 1 data structures and a
-Phase 2 `integrate`). The proof is split into files that mirror the Go package
-layout; each `Require`s its predecessors and reopens the same `Section`
-boilerplate (`Context`, `Set Default Proof Using "Type*"`,
-`Notation A := go_string`). The dependency order is
-`core → common → id → item → ytype → store → text`:
+## Notes
 
-- **`src/proof/yjs_core.v`** — re-exports the installed `rocq-yjs` / `iris-yjs`
-  library (the pure `integrate` / `setintegrate` model and its order theory).
-- **`src/proof/yjs_common.v`** — shared base imported by every other module:
-  scalar abstractions `toYjsId` / `toContent`, the heap-node record `item_cell`
-  and cursor `node_loc`, the persistent `is_origin_id`, item-pointer helpers
-  `oid_of` / `item_or_null`, and the id-slice abstraction `is_id_set`. The goose
-  package-init instances (`IsPkgInit` / `GetIsPkgInitWf`) are declared here
-  **once** and inherited via `Require`.
-- **`src/proof/yjs_id.v`** — the `id` type: `newId` / `Id.Add` / `Id.Sub` and
-  their round-trip, the `toYjsId` injectivity / `bool_decide` bridge, and the
-  equality specs `Id.Equal` / `idOptEqual`.
-- **`src/proof/yjs_item.v`** — the `item` type: per-node method specs
-  (`Indexable` / `Len` / `Deleted`, `itemPtrEqual`), the doubly-linked spine
-  `is_dll` and its structural lemmas (split / join / accessor / insert /
-  `is_dll_update_gen` — the in-place node update used by `Delete`), the cellwise
-  isomorphism `cell_repr` / `cells_repr` (`arr = ic_item <$> cells`, plus
-  `cells_repr_update`), and the deletion layer (`is_deleted_flag` /
-  `is_countable_flag` / `num_visible`; `set_deleted` / `flip_cell` /
-  `cell_repr_flip` / `num_visible_*` and the flag readers `flags_if_deleted` /
-  `flags_if_countable`).
-- **`src/proof/yjs_ytype.v`** — the `yType` container (y-octo's lock-guarded inner
-  sequence type; the `Text` handle is its unlocked wrapper): the heap predicate
-  `is_ytype` / `is_valid_ytype` relating a heap `yType`'s DLL to a
-  `YjsArrInvariant` model list (`len = num_visible cells`), and the tombstone-aware
-  visible-index navigation `wp_yType__findPos` (returns an existential list
-  position `p`). (This sits below `yjs_store` because `yjs_store` states
-  `Store.Integrate` against `is_ytype`.)
-- **`src/proof/yjs_store.v`** — the `store` WP proofs: `findById`, `containsId`,
-  the conflict scan (`scanConflicts` / `findIntegrationLeft`) refining
-  `setfii_loop` (with its top-level `gset` rewrite lemmas), the item-validity /
-  insertion helper lemmas, the lock layer (`text_state` / `store_inv` /
-  `is_Store` / `is_text_lb`), and top-level `wp_Store__Integrate`.
-- **`src/proof/yjs_text.v`** — the `Text`-handle WP proofs: `insert_item_valid` /
-  `insert_maximalId`, the lock-based handle `is_Text t L`, and the top-level
-  `wp_Text__Insert` and `wp_Text__Delete`.
-
-**Verified so far**: `Store.Integrate` preserves the document invariant
-(`wp_Store__Integrate`); `Text.Insert(index, content)` grows the persistent handle
-`is_Text t L` and exposes the inserted run (`wp_Text__Insert`); and
-`Text.Delete(index, length)` preserves `is_Text t L` UNCHANGED (`wp_Text__Delete`):
-tombstoning a run keeps every item in the list and never reorders the document, so
-the model item list `ts_arr` — hence `YjsArrInvariant` and the known-content lower
-bound `L` — is untouched; only the cells' `ic_deleted` bits and `yType.len` (the
-visible count) change. All three are axiom-clean (`Print Assumptions` shows only
-the goose/Perennial framework axioms). The document invariant tracks just the item
-list: `is_ytype parent cells arr` ties the heap DLL to a `YjsArrInvariant` `arr`
-with `cells_repr arr cells arr` = `arr = ic_item <$> cells`; the Deleted bit is
-promoted onto the abstract cell as `ic_deleted` (the source of truth for
-visibility), with `is_dll` pinning each node's heap flags to it and
-`yType.len = num_visible cells`. The v1 byte codec stays behind `//go:build
-!goose`; its DeleteSet is regenerated from the item flags at encode time
-(`generateDeleteSet`, y-octo's `generate_delete_set`), so the verified `Delete`
-only flips flags and shrinks the visible length. `cell_repr` pins `Len() = 1`; see
-its `TODO` for relaxing that to add multi-clock items.
-
-**Core principle: reuse the rocq-yjs model — do not invent independent proofs.**
-State cert-yjs WP specs as *refinements* of the pure model and compose with
-rocq-yjs's lemmas (`YjsArrInvariant_integrate`, `setintegrate_eq_integrate`,
-`integrate_commutative`, `yjs_strong_convergence`, …). The Go is set-based
-(y-octo, HashSet) while the verified loop in iris-yjs is scanning-based, so the
-refinement needs a bridge between the two formulations.
-
-**Extract algorithmic cores to their own Go functions** so the hard WP loop is
-provable in isolation, separate from pointer surgery. The integrate conflict
-scan lives in `scanConflicts` / `findIntegrationLeft` for exactly this reason.
-
-**Faithfulness to the source**: mirror y-octo's containers — a Rust `HashSet`/
-`HashMap` becomes a Go `map`, a `Vec` a slice. Perennial New has full `map`
-support, so do not downgrade a set to a `[]slice` for proof convenience.
-
-## Detailed technique reference
-
-`docs/proof-engineering.md` is the working reference for this stack (Rocq +
-ssreflect, Iris proof mode, Perennial New / goose WP, the rocq-mcp workflow, and
-cert-yjs specifics). Read it before doing nontrivial proof work — it records the
-non-obvious gotchas (e.g. `set_solver` hangs inside large WP proofs; goose
-method-call stepping with `wp_method_call` / `wp_call` / `wp_func_call`;
-RecordSet field-update reduction).
-
-`WORKFLOW.md` covers the same build loop plus one-time environment setup.
-
-## Environment
-
-- **Go 1.26** is required (Perennial pins it); `build.sh` exports
-  `GOTOOLCHAIN=go1.26.0`. Run Go commands with that toolchain set.
-- A **local Perennial checkout** is needed for its bundled goose (not registered
-  as a go.mod tool, so make's automatic goose does not run). `build.sh` defaults
-  to `/home/ia/ghq/github.com/mit-pdos/perennial`; override with
-  `env PERENNIAL=/path/to/perennial ./build.sh`. It must be at the commit pinned
-  in `cert-yjs.opam` — **plus, for the network packages (`grovenet`/`pingpong`),
-  a goose patch** mapping `github.com/iasakura/cert-yjs/grovenet` to the grove
-  FFI (one `ffiMapping` entry in `goose/util/util.go`; branch `grove-new-wp`,
-  pushed to the fork `iasakura/perennial`, not proposed upstream to
-  `mit-pdos/perennial` — see issue #45 for the upstreaming discussion).
-- An **opam switch with Perennial installed** (`New`/`Perennial` in user-contrib).
-  All dependency versions are pinned by git SHA in `cert-yjs.opam`'s `pin-depends`
-  (including `rocq-yjs` from iris-yjs). Either `opam switch link <existing>` or
-  `opam switch create . ocaml-base-compiler.5.2.0 --no-install` then
-  `opam install ./cert-yjs.opam --deps-only` (multi-hour first build).
-- CI (`.github/workflows/ci.yml`) runs the same `build.sh` pipeline; all actions
-  and dependencies are pinned by SHA.
+- `docs/proof-engineering.md` — the working technique reference (Rocq +
+  ssreflect, Iris proof mode, Perennial/goose WP, rocq-mcp, cert-yjs
+  gotchas). Read it before nontrivial proof work.
+- `WORKFLOW.md` — build loop plus one-time environment setup.

@@ -9,7 +9,12 @@
     - the heap-node record [item_cell] and the cursor helper [node_loc];
     - the persistent origin-pointer predicate [is_origin_id];
     - the item-pointer helpers [oid_of] / [item_or_null];
-    - the id-slice abstraction [is_id_set] (a heap [[]Id] as a [gset YjsId]).
+    - the id-slice abstraction [own_id_set] (a heap [[]Id] as a [gset YjsId]).
+
+    Naming convention (issue #47): [is_X] predicates are Persistent (duplicable
+    handles / read-only facts); [own_X] predicates are ownership, parameterized
+    by a [dfrac] where the data is plain heap state ([DfracOwn 1] = exclusive /
+    writable, [DfracDiscarded] = frozen read-only, fractions = shared reads).
 
     None of these depend on the item DLL spine or the heap<->model isomorphism,
     so every other module imports this one. The goose package-init instances
@@ -108,7 +113,7 @@ Definition toContent (c : yjs.content.t) : A := c.(yjs.content.content').
     The cell holds only stable, model-relevant data — the heap struct
     ([yjs.item.t]) with its volatile [left']/[right'] links, its [w64] id /
     content / origin-id pointers, and its flags is *not* stored here; it is
-    existentially quantified inside [is_dll] (see [yjs_item]) and constrained to
+    existentially quantified inside [own_dll] (see [yjs_item]) and constrained to
     *translate* to [ic_item] (heap id [toYjsId]-maps to [item_id (ic_item c)],
     etc.). This keeps the abstract cell list invariant under [Store.Integrate]'s
     neighbour relinking — relinking changes only the existential heap struct, not
@@ -117,16 +122,24 @@ Definition toContent (c : yjs.content.t) : A := c.(yjs.content.content').
     ([YjsLt'] / [YjsArrInvariant.yai_sorted]) is intact.
 
     One non-link flag is promoted out of the existential heap struct: [ic_deleted]
-    mirrors the heap node's Deleted bit (y-octo ITEM_DELETED). [is_dll] pins the
+    mirrors the heap node's Deleted bit (y-octo ITEM_DELETED). [own_dll] pins the
     existential struct's flags to [ic_deleted] (Countable, Deleted = [ic_deleted]),
     so the visible-character count is a pure function of the abstract cells
     ([num_visible], the source of truth for [yType.len]). [Text.Delete] tombstones
     a cell by flipping [ic_deleted]; [ic_item] (hence the abstract document list)
-    is untouched, so deletion never reorders or removes a document item. *)
+    is untouched, so deletion never reorders or removes a document item.
+
+    [ic_parent] mirrors the heap node's [parent] pointer (issue #49: items carry
+    their resolved parent type, y-octo [Some (Parent::Type)]). Like [ic_deleted]
+    it is promoted out of the existential struct — [own_dll] pins the struct's
+    [parent'] field to it — so [store.repair]'s borrow-from-neighbour reads it
+    through the abstract cells; [own_ytype_cells] pins every cell of a type's
+    DLL to that type's own loc. *)
 Record item_cell := MkItemCell {
   ic_loc : loc;
   ic_item : YjsItem A;
   ic_deleted : bool;
+  ic_parent : loc;
 }.
 
 (** The loc of the node at index [k] of [cells] ([null] outside [0, len)).
@@ -163,11 +176,12 @@ Definition item_or_null (p : loc) (ov : option yjs.item.t) (dq : dfrac) : iProp 
 (** A heap id-slice abstracts to a [gset YjsId]: its elements, mapped to model
     ids, are exactly [gs]. The Go set ops are [containsId] / [append] / reset to
     [[]]; [list_to_set] makes membership (not order/duplicates) the observable,
-    matching the pure [gset] with [∪] / [∈]. *)
-Definition is_id_set (s : slice.t) (gs : gset YjsId) : iProp Σ :=
+    matching the pure [gset] with [∪] / [∈]. Owning heap data, it takes a
+    [dfrac] (appending needs [DfracOwn 1]). *)
+Definition own_id_set (s : slice.t) (dq : dfrac) (gs : gset YjsId) : iProp Σ :=
   ∃ (vs : list yjs.id.t),
-    "Hsl" ∷ s ↦* vs ∗
-    "Hcap" ∷ own_slice_cap yjs.id.t s (DfracOwn 1) ∗
+    "Hsl" ∷ s ↦*{dq} vs ∗
+    "Hcap" ∷ own_slice_cap yjs.id.t s dq ∗
     "%Hset" ∷ ⌜list_to_set (toYjsId <$> vs) = gs⌝.
 
 End common.

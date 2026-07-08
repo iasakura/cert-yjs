@@ -226,10 +226,13 @@ them, since the APIs drift.
 - **Extract algorithmic cores to their own Go functions** (e.g.
   `scanConflicts`, `findIntegrationLeft`) so the hard WP loop is provable in
   isolation, separate from the surrounding pointer surgery.
-- **Heap ↔ model isomorphism**: `is_dll` (the doubly-linked spine), `is_ytext` /
-  `is_valid_ytext` relate a heap `YText` to a `YjsArrInvariant` model list
-  cellwise (by id / content / origin-ids). Heap id-slices (`[]Id`) are
-  abstracted to `gset YjsId` via `is_id_set` / `list_to_set`.
+- **Heap ↔ model isomorphism**: `own_dll` (the doubly-linked spine) and
+  `own_ytype_cells` relate a heap `yType` to a `YjsArrInvariant` model list
+  cellwise (by id / content / origin-ids); the public `own_ytype` hides the
+  cells behind the model `list (YjsItem A * bool)` (item + tombstone bit). Heap
+  id-slices (`[]Id`) are abstracted to `gset YjsId` via `own_id_set` /
+  `list_to_set`. Naming: `is_X` = Persistent handle, `own_X` = (dfrac'd)
+  ownership (issue #47).
 - **The `Text.Insert` loop proof** (`wp_Text__Insert`) is a per-character loop
   over the modular `wp_Store__Integrate`. Its invariant tracks `j, arr, cells,
   leftloc, dvj` plus, as pure facts, the **left/right neighbour positions**:

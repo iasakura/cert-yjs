@@ -2,14 +2,21 @@ package yjs
 
 import "testing"
 
-// helper: integrate a sequence of items into a fresh yType and return the text.
+// helper: integrate a causally ordered sequence of items into a fresh store's
+// root type "text" via the update path (store.repair resolves each item's
+// neighbours and parent, then store.Integrate splices it in).
 func runIntegrate(items []*item) string {
 	s := newStore(0)
-	parent := newYType()
+	name := "text"
 	for _, it := range items {
-		s.Integrate(parent, it)
+		var parentName *string
+		if it.originLeftId == nil && it.originRightId == nil {
+			parentName = &name
+		}
+		s.repair(it, parentName)
+		s.Integrate(nil, it)
 	}
-	return parent.Text()
+	return s.getOrCreateYType(name).Text()
 }
 
 func mkId(client, clock uint64) id { return newId(client, clock) }
@@ -39,18 +46,15 @@ func TestConcurrentHeadInsertConverges(t *testing.T) {
 	}
 }
 
-// Sequential typing "HI": H at head, then I with originLeft = H.
+// Sequential typing "HI": H at head, then I with originLeft = H. (Delivery
+// out of causal order is the pending machinery's job — integrateStructs in
+// codec.go retries until dependencies resolve — so at the raw repair +
+// Integrate level the input is always causally ordered.)
 func TestSequentialInsert(t *testing.T) {
 	h := newItem(mkId(1, 0), "H", nil, nil)
 	i := newItem(mkId(1, 1), "I", mkIdp(1, 0), nil)
 	if got := runIntegrate([]*item{h, i}); got != "HI" {
 		t.Fatalf("expected HI, got %q", got)
-	}
-	// reverse application order must still converge
-	h2 := newItem(mkId(1, 0), "H", nil, nil)
-	i2 := newItem(mkId(1, 1), "I", mkIdp(1, 0), nil)
-	if got := runIntegrate([]*item{i2, h2}); got != "HI" {
-		t.Fatalf("expected HI (reversed), got %q", got)
 	}
 }
 

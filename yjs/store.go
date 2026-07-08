@@ -134,18 +134,40 @@ func containsId(s []id, id id) bool {
 	return false
 }
 
-// findById walks the parent's item list and returns the item with the given id,
-// or nil. Because contents are 1 char, an item's last_id equals its id, so the
-// origin ids resolve by exact match without splitting.
-func findById(parent *yType, id id) *item {
-	cur := parent.start
-	for cur != nil {
-		if cur.id.Equal(id) {
-			return cur
+// repair resolves a decoded item's references before integration (y-octo:
+// DocStore::repair). The origin ids resolve to live items through the store's
+// per-client run lists (with 1-char contents, split_at_and_get_left/right
+// degenerate to the plain get_node lookup and the origin ids never move), and
+// the parent is recovered:
+//   - parentName != nil is Parent::String: look up / create the root type by
+//     name (y-octo: get_or_create_type);
+//   - parentName == nil is Parent::None: borrow the parent from the resolved
+//     left (or right) neighbour.
+//
+// Parent::Id (type-as-item) is out of the verified subset (#43). parentName is
+// passed alongside the item because the decoded wire form lives on updateItem,
+// not on item (see item.parent). Callers hold s.mu.
+func (s *store) repair(it *item, parentName *string) {
+	if it.originLeftId != nil {
+		left, ok := s.GetNode(*it.originLeftId)
+		if ok {
+			it.left = left
 		}
-		cur = cur.right
 	}
-	return nil
+	if it.originRightId != nil {
+		right, ok := s.GetNode(*it.originRightId)
+		if ok {
+			it.right = right
+		}
+	}
+
+	if parentName != nil {
+		it.parent = s.getOrCreateYType(*parentName)
+	} else if it.left != nil {
+		it.parent = it.left.parent
+	} else if it.right != nil {
+		it.parent = it.right.parent
+	}
 }
 
 // scanConflicts walks the run of concurrent items starting at conflict and
@@ -213,10 +235,13 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 	return left
 }
 
-// Integrate inserts item into parent, resolving origin-based conflicts the same
-// way as y-octo's store::integrate (the Yjs integrate algorithm). On return
-// item is spliced into the doubly linked list at its conflict-resolved position
-// and parent.len is updated.
+// integrateCore is y-octo store::integrate up to (but not including) the final
+// self.add_node: it resolves origin-based conflicts the same way as the Yjs
+// integrate algorithm, splices item into the doubly linked list at its
+// conflict-resolved position, and bumps parent.len. It is extracted from
+// Integrate so the hard conflict-scan WP proof (wp_Store__integrateCore) stays
+// isolated from the item-set bookkeeping added by AddNode (mirrors the
+// findIntegrationLeft extraction).
 //
 // Faithful port of y-octo store::integrate (src/doc/store.rs) under the
 // Phase-2 simplifications:
@@ -226,16 +251,11 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 //   - no concurrency control (single-threaded model), so the unsafe shared-ref
 //     dance becomes plain pointer mutation;
 //   - the parent type is never deleted.
-func (s *store) Integrate(parent *yType, item *item) {
-	// Resolve left/right from the origin ids (y-octo: store::repair). With
-	// 1-char contents there is no split, so this is a direct lookup.
-	if item.originLeftId != nil {
-		item.left = findById(parent, *item.originLeftId)
-	}
-	if item.originRightId != nil {
-		item.right = findById(parent, *item.originRightId)
-	}
-
+//
+// item.left / item.right are taken as given (y-octo reads this.left/this.right
+// directly): the update path resolves them with store.repair beforehand, the
+// local-edit path creates the item already linked to its neighbours.
+func (s *store) integrateCore(parent *yType, item *item) {
 	left := item.left
 	right := item.right
 
@@ -263,10 +283,48 @@ func (s *store) Integrate(parent *yType, item *item) {
 	if item.Countable() {
 		parent.len = parent.len + item.Len()
 	}
+}
 
-	// TODO(store-holds-item-set): register the item in the struct store via
-	// s.AddNode(item) so the store holds the full item set (y-octo: integrate
-	// pushes the node into DocStore.items). Deferred until the item-map is
-	// threaded through this method's WP spec (wp_Store__Integrate); re-adding the
-	// call requires owning s.items here and re-establishing is_item_map.
+// Integrate inserts item into its parent's sequence and records it in the
+// store's per-client item set (y-octo: store::integrate, ending in
+// self.add_node(node)). The parent argument mirrors y-octo's
+// Option<&mut YType> fast path: local edits pass the type they are already
+// working on, while the update path passes nil and the item's own parent
+// (resolved by store.repair) is used; an item whose parent did not resolve is
+// dropped, as in y-octo. On return item is spliced into the doubly linked
+// list at its conflict-resolved position, parent.len is updated, and
+// s.items[item.id.clientId] holds item at its tail.
+func (s *store) Integrate(parent *yType, item *item) {
+	if parent == nil {
+		if item.parent == nil {
+			return
+		}
+		parent = item.parent
+	}
+	s.integrateCore(parent, item)
+	s.AddNode(item)
+}
+
+// applyUpdate integrates a decoded, causal-order batch of insert structs: each
+// struct is repaired (origins and parent resolved against the store) and then
+// integrated with the proven store.Integrate. This is the integrate loop of
+// y-octo's Doc::apply_update (document.rs): there the UpdateIterator yields the
+// structs in causal order and store.repair + store.integrate(s, offset, None)
+// splice each one in; here the caller supplies that causal order directly, and
+// each struct carries its own target type (doc-level batch, issue #49).
+//
+// Structural deviation from y-octo (deliberate, reported): y-octo keeps this
+// orchestration in Doc::apply_update and exposes only the per-struct primitives
+// (integrate/repair) on DocStore. cert-yjs encapsulates the whole loop as a
+// store method instead, so the store owns its own update logic and the public
+// Doc.ApplyUpdate (codec.go) is a thin decode+lock+call wrapper over it; this
+// keeps the verified core (wp_store__applyUpdate in src/proof/yjs_store.v) self
+// contained. Callers hold s.mu.
+func (s *store) applyUpdate(structs []updateItem) {
+	for i := 0; i < len(structs); i++ {
+		ui := structs[i]
+		it := newItem(ui.id, ui.content, ui.originLeftId, ui.originRightId)
+		s.repair(it, ui.parentName)
+		s.Integrate(nil, it)
+	}
 }

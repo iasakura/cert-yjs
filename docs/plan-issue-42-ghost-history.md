@@ -40,13 +40,24 @@ comparison that motivated several choices here).
   `history_wf` ⇒ `ValidReplay inputs arr arr'`. The existing
   `wp_store__applyUpdate` proof is then invoked **unchanged**; the new spec is a
   thin fupd-wrapper around it.
+- **Scope note — the certs spec is the covered-batch stepping stone, not the
+  final public contract.** Real Yjs-family `apply_update` is *total*: a batch
+  with missing dependencies is not rejected but parked in a pending buffer and
+  retried when later updates fill the gap (y-octo `DocStore.pending`; §8.5).
+  The staged path to that realistic spec — a total heap spec, then a
+  covered-batch spec (`batch_ok` demoted to its hypothesis), then an
+  arbitrary-arrival spec — is recorded in §6.5 and
+  `docs/plan-network-p2p-layer.md` §3.1. Everything below — the ghost maps,
+  `history_wf`, certificates, the ghost API — is unaffected: buffered ops are
+  ghost-invisible until integrated (arrival is not delivery), so the global
+  invariant design stands as-is.
 - **Prerequisite upstream fix**: iris-yjs's `deliver_locally` axiom had its
   hypothesis flipped relative to Gomes et al.; as stated it (together with
   `histories_client_id`) made remote delivery **unsatisfiable**, so no
   multi-replica instantiation existed. **Fixed and merged**
   (iasakura/iris-yjs#24, merge `b95e6da`; ported back to lean-yjs as
-  iasakura/lean-yjs#31). Remaining M0 step: bump the `pin-depends` SHAs. §2
-  has the details.
+  iasakura/lean-yjs#31). The one remaining step of the upstream-fix milestone:
+  bump the `pin-depends` SHAs. §2 has the details.
 - **Scope cuts** (each flagged with rationale + extension path, §8): `Delete`
   does *not* mint ops (insert-only history); client set fixed at allocation;
   one governed root text per store; the history tracks `st_items` only (not
@@ -83,7 +94,7 @@ CLAUDE.md; this document is the sign-off artifact):
 
 Status: **fixed and merged** — iasakura/iris-yjs#24 (merge commit `b95e6da`)
 and, for the port source, iasakura/lean-yjs#31 (merge commit `ac08745`). What
-remains of M0 is the `pin-depends` bump (§2.3 item 3). §§2.1–2.2 record the
+remains of the upstream-fix milestone is the `pin-depends` bump (§2.3 item 3). §§2.1–2.2 record the
 bug and the fix for reference.
 
 ### 2.1 The bug
@@ -136,7 +147,7 @@ two lines above. So the adaptation is:
 downstream (`network_causal_order`, the replay-validity file, the convergence
 theorems) only depends on `HappensBefore_asymm`, not on the axiom directly.
 
-### 2.3 Deliverable M0
+### 2.3 Deliverable: the upstream-fix milestone
 
 1. PR to `iasakura/iris-yjs`: flip the hypothesis, adapt `HappensBefore_asymm`,
    `dune build` green. **Done and merged: iasakura/iris-yjs#24** (merge
@@ -144,7 +155,8 @@ theorems) only depends on `HappensBefore_asymm`, not on the axiom directly.
    (`LeanYjs/Network/CausalNetwork.lean:33`): **iasakura/lean-yjs#31, merged**
    (`ac08745`) — independent of cert-yjs.
 2. Add the upstream lemmas of §4.4 that belong in iris-yjs (they mention only
-   model types) in a follow-up iris-yjs PR (can proceed in parallel with M1).
+   model types) in a follow-up iris-yjs PR (can proceed in parallel with the
+   pure-bridge milestone).
 3. **Remaining**: bump both `pin-depends` SHAs in `cert-yjs.opam` (`rocq-yjs`,
    `rocq-yjs-core`) to `b95e6da` (or the then-current iris-yjs main),
    `opam install ./cert-yjs.opam --deps-only` (reinstalls the pins),
@@ -181,7 +193,7 @@ build and expect no fallout (the insert_set API did not change shape).
                         │ is_Text / wp_Text__Insert / wp_Text__Delete
                         │ wp_store__applyUpdate_certs (caller holds lock)
              ┌──────────┴───────────┐
-             │ heap: DLL, is_ytype, │
+             │ heap: DLL, own_ytype, │
              │ store fields, slices │
              └──────────────────────┘
 ```
@@ -207,8 +219,56 @@ local view, so a single exclusive `ghost_map` element per client replaces
 `γ_own/γ_for/γ_sub/γ_cc/γ_inv`. Likewise we do not need Aneris's monotone RA
 over `cc_subseteq`: causal closure lives inside `history_wf` (the
 `causal_delivery` axiom), and the *stability* that the monotone RA provided is
-recovered by a pure lemma (§4.4 L6: happens-before between existing ops is
-unchanged by appends), which makes the persistent certificate sound.
+recovered by a pure lemma (§4.4 hb append-stability: happens-before between
+existing ops is unchanged by appends), which makes the persistent certificate
+sound.
+
+### 3.1 Which operations mutate the ghost state (the lifecycle)
+
+The single most important thing to hold in your head: **the global ghost
+history is mutated by exactly two operations, plus a one-time allocation.**
+Everything else — including the entire physical network — only *reads* it or
+*carries certificates minted by it*. If you are looking for "where does the
+history change", it is here and nowhere else:
+
+| # | Go operation | ghost step | effect on the ghost state |
+|---|---|---|---|
+| A | **`Text.Insert`** (a local edit) | `history_broadcast` | appends `EvBroadcast op; EvDeliver op` to **this replica's own** history `N !! c` (author = `c`), and **mints** the persistent certificate `id ↪[hn_ops]□ (op, D)`. This is the *only* operation that adds a broadcast, i.e. the only place a new op is ever born. |
+| B | **`applyUpdate`** (processing a delivered remote batch) | `history_deliver_batch` | appends `EvDeliver op` (one per batch op) to **this replica's** history `N !! c`. Consumes the ops' certificates; **mints nothing new**. This is the only operation that records a *foreign* op as delivered here. |
+| — | **`history_alloc`** (system init, once) | allocation | creates the invariant and hands each replica its empty `own_client_history γh c []`. |
+
+Concretely, "update the ghost state" = advance `own_client_history γh c h` to a
+longer `h` (and, for A, grow the `ops` registry) — a `ghost_map_update` /
+`ghost_map_insert` done under the store lock while `history_inv` is briefly
+opened. In the proof these appear as the `iMod (history_broadcast …)` /
+`iMod (history_deliver_batch …)` steps inside `wp_Text__Insert` (§6.3) and
+`wp_store__applyUpdate_certs` (§6.5).
+
+**What does NOT touch the ghost state** (the common confusion):
+
+- **`Text.Delete`** — insert-only history, so tombstoning mints nothing and
+  appends nothing (§8.1). The document changes; the op history does not.
+- **Receiving or buffering a not-yet-applicable update** (the realistic
+  implementation's pending buffer, §8.5) — physical arrival is not delivery.
+  A buffered op touches the ghost state only at the moment it is *released*
+  and integrated: case B fires then, possibly in a later `applyUpdate` call
+  than the one that carried the bytes.
+- **The entire network transport** — `grovenet.Send` / `Receive`, and the whole
+  Yjs sync protocol at the byte level. Sending an op is just moving *already
+  certified* bytes across the wire (certificates are persistent and freely
+  copied); it neither creates nor delivers a logical op. The history for op `x`
+  was already advanced when `x` was *minted* (case A, at its author) and is
+  advanced again only when a replica *applies* it (case B). See
+  `docs/plan-network-p2p-layer.md` §3 (its mint/deliver interface = these same
+  two operations) and
+  the note there that transport is ghost-invisible.
+- **`SyncStep1` / `diffSince` / `stateVector`** — these *read* the history (to
+  compute a state vector or a diff, recovering certificates via the `Hcerts`
+  amendment) but never mutate it.
+
+So the mental model is: **mint on local Insert, extend-on-deliver when you apply
+a batch; sending and receiving bytes in between are invisible to the ghost
+state.** A local edit and a remote apply are the only two writers.
 
 ---
 
@@ -266,10 +326,10 @@ Record history_wf (N : RawHistories) : Prop := {
   (* YjsOperationNetwork (yjs_operation_network.v:43) *)
   hwf_client_id           : ...;
   hwf_unique_id           : ...;
-  (* ours: a broadcast is immediately followed by its own delivery.       *)
-  (* Needed for L4/L5 (clock discipline at receivers): it forces the      *)
-  (* author's replayed state at broadcast time to contain all of its own  *)
-  (* earlier items.                                                       *)
+  (* ours: a broadcast is immediately followed by its own delivery.        *)
+  (* Needed for freshness / receiver clock safety (clock discipline at     *)
+  (* receivers): it forces the author's replayed state at broadcast time   *)
+  (* to contain all of its own earlier items.                              *)
   hwf_self_deliver : forall i e pre post,
     to_histories N i = pre ++ [EvBroadcast e] ++ post ->
     exists post', post = EvDeliver e :: post';
@@ -313,28 +373,32 @@ Definition history_state_coh (h : list Ev) (arr : list (YjsItem A)) : Prop :=
 
 `interpHistory` is `operation_network.v:22`; it is deterministic here because
 `yjs_op_effect` is (`YjsState_insert` is a function into `option`), so
-`history_state_coh` pins `arr` uniquely — prove that as lemma L0 below.
+`history_state_coh` pins `arr` uniquely — prove that as the **replay
+determinism** lemma below.
 
 ### 4.4 Lemma inventory (pure)
 
-Difficulty scale: (E)asy < (M)edium < (H)ard. "Home": `up` = belongs upstream
-in iris-yjs (mentions only model types), `here` = `yjs_network_model.v`.
+The lemmas are named, not numbered, and cross-referenced by name (in prose and
+in each other's proof sketches). Difficulty scale: (E)asy < (M)edium <
+(H)ard. "Home": `up` = belongs upstream in iris-yjs (mentions only model
+types), `here` = `yjs_network_model.v`.
 
-| # | statement (sketch) | proof sketch | diff | home |
+| lemma | statement (sketch) | proof sketch | diff | home |
 |---|---|---|---|---|
-| L0 | `history_state_coh h arr → history_state_coh h arr' → arr = arr'` and `effect_list`-append composition: `effect_list O l1 init s → effect_list O l2 s s' → effect_list O (l1++l2) init s'` (and the converse split) | unfold `apply_ops`; induction on `l1`; determinism of `yjs_op_effect` by case on the op | E | up |
-| L1 | `st_items`-monotonicity: `yjs_op_effect op s s' → ∀ x, x ∈ st_items s → x ∈ st_items s'`; corollary for `effect_list` | case on op: `YjsState_insert_insertIdx_form` (yjs_replay_validity.v:46) gives an `insertIdx`; `deleteById` keeps items | E | up |
-| L2 | **hb append-stability**: if `N' = <[c := to_histories N c ++ tail]> N` then (a) `HappensBefore N x y → HappensBefore N' x y`; (b) for `x, y` both *broadcast in `N`*: `HappensBefore N' x y → HappensBefore N x y` | (a) splits survive appends. (b) induction on the derivation; the last local step lands strictly before `y`'s (old, fixed-position) broadcast event, so it lies in the old prefix; transitivity chains through events that are themselves before an old broadcast, hence old | M–H | up |
-| L3 | **hb-past of a fresh broadcast**: `N' = <[c := h ++ [EvBroadcast op; EvDeliver op]]> N`, `N !! c = Some h`, `opid op ∉ op_ids N` ⇒ `∀ x, HappensBefore N' x op → x ∈ events_ops h` (ops mentioned by `h`, broadcast or delivered) | last hop of the derivation must be a local step at `c` below `EvBroadcast op` (msg-id-uniqueness kills other nodes); induct with L2(b) for the prefix chain | M–H | up |
-| L4 | **freshness**: `history_wf N → N !! c = Some h → history_state_coh h arr → (∀ x ∈ arr, clientId (item_id x) = c → clock (item_id x) < k) → MkYjsId c k ∉ op_ids N` | an op with client `c` is broadcast only at `c` (`hwf_client_id` + `hwf_msg_id_unique`), so it is in `h`; `hwf_self_deliver` ⇒ its delivery is in `h`; its item enters `st_items` (`YjsState_insert_mem`, yjs_replay_validity.v:150) and persists (L1) ⇒ its clock `< k` | M | here |
-| L5 | **receiver clock safety** (`isClockSafe_from_source`): `history_wf N`; `OpInsert input` broadcast at its author; `l` a list of ops all broadcast in `N`, `OpInsert input ∉ l`, `l ⊇` its strict hb-past; `effect_list O l init s` ⇒ `isClockSafe (in_id input) (st_items s) = true`, hence `maximalId item (st_items s)` for the resolved item | a same-client item `x ∈ st_items s` comes from some `OpInsert x_op ∈ l` (induction/L1); both authored at `c'` (client of `input`); locally ordered one way: `x_op` before ⇒ `hwf_self_deliver` puts `EvDeliver x_op` before `EvBroadcast op`, so `hwf_unique_id`'s replayed prefix state contains `x` (needs L0 split) ⇒ `clock x < clock op`; `op` before `x_op` ⇒ `op` hb `x_op` ⇒ `op ∈ l` by hb-past coverage — contradiction | H (the one real theorem) | up (needs `hwf_self_deliver` as an explicit hypothesis if stated model-side) |
-| L6 | **broadcast step**: `history_wf N`, `N !! c = Some h`, `history_state_coh h arr`, `op = OpInsert input`, `toItem input arr = Some item`, `IsItemValid item`, `maximalId item arr`, `opid op = MkYjsId c k`, `k` fresh per L4's hypothesis ⇒ `history_wf (<[c := h ++ [EvBroadcast op; EvDeliver op]]> N)` ∧ `history_state_coh (h ++ …) (insertIdx-result)` ∧ `∀ x, HappensBefore N' x op → opid x ∈ delivered_ids h` | field by field: NoDup from freshness; `hwf_broadcast_valid` for the new split is exactly `toItem`+`IsItemValid` at `arr` (via L0); `hwf_unique_id` new split = `maximalId` (via L0 + `hwf_self_deliver`); `hwf_causal_delivery` for the new `EvDeliver op` = L3 + `hwf_self_deliver` (everything in `h` is delivered in `h`); old splits unchanged (append). The `coh` part: `YjsState_insert` succeeds because `maximalId ↔ isClockSafe` (L9) and `integrate_some` (commutativity.v) | H | here |
-| L7 | **deliver step**: `history_wf N`, `N !! c = Some h`, cert facts (`op` broadcast in `N` with registered `(op, D)`, `D ⊇` hb-past ids), `D ⊆ delivered_ids h`, `opid op ∉ delivered_ids h`, `clientId (opid op) ≠ c` or op simply not yet delivered ⇒ `history_wf (<[c := h ++ [EvDeliver op]]> N)` | NoDup: no prior `EvDeliver op` (id-injectivity via `hwf_msg_id_unique`); `deliver_has_a_cause`: cert; `causal_delivery` for the new event: hb-past ids `⊆ D ⊆ delivered_ids h`, and id-uniqueness turns id-membership into op-membership; delivers add no broadcast splits, so the operation-network fields are untouched | M | here |
-| L8 | **certificate soundness is stable**: if `∀ x, HappensBefore N x op → opid x ∈ D` and `N'` extends `N` by appends, then the same holds for `N'` (for `op` broadcast in `N`) | direct from L2(b) | E | here |
-| L9 | `maximalId item arr ↔ isClockSafe (item_id item) arr = true` (with `toItem input arr = Some item`, so ids agree via `toItem_id`) | unfold both (`insert_loop.v:534`, `insert_basic.v:122`); `forallb`/`bool_decide` reflection | E | here |
-| L10 | **certs ⇒ ValidReplay** (the applyUpdate bridge): see full statement below | per-step: L5 (+ `isValidState_insert_from_source`, yjs_replay_validity.v:614) for `toItem`/`IsItemValid`; L5 for `maximalId`; `integrate_some` for progress; L7 iterated for wf of the extended history; induction over the batch | M given L5–L7 | here |
+| **replay determinism** | `history_state_coh h arr → history_state_coh h arr' → arr = arr'` and `effect_list`-append composition: `effect_list O l1 init s → effect_list O l2 s s' → effect_list O (l1++l2) init s'` (and the converse split) | unfold `apply_ops`; induction on `l1`; determinism of `yjs_op_effect` by case on the op | E | up |
+| **item monotonicity** | `st_items`-monotonicity: `yjs_op_effect op s s' → ∀ x, x ∈ st_items s → x ∈ st_items s'`; corollary for `effect_list` | case on op: `YjsState_insert_insertIdx_form` (yjs_replay_validity.v:46) gives an `insertIdx`; `deleteById` keeps items | E | up |
+| **hb append-stability** | if `N' = <[c := to_histories N c ++ tail]> N` then (a) `HappensBefore N x y → HappensBefore N' x y`; (b) for `x, y` both *broadcast in `N`*: `HappensBefore N' x y → HappensBefore N x y` | (a) splits survive appends. (b) induction on the derivation; the last local step lands strictly before `y`'s (old, fixed-position) broadcast event, so it lies in the old prefix; transitivity chains through events that are themselves before an old broadcast, hence old | M–H | up |
+| **fresh-broadcast past** | `N' = <[c := h ++ [EvBroadcast op; EvDeliver op]]> N`, `N !! c = Some h`, `opid op ∉ op_ids N` ⇒ `∀ x, HappensBefore N' x op → x ∈ events_ops h` (ops mentioned by `h`, broadcast or delivered) | last hop of the derivation must be a local step at `c` below `EvBroadcast op` (msg-id-uniqueness kills other nodes); induct with hb append-stability (b) for the prefix chain | M–H | up |
+| **freshness** | `history_wf N → N !! c = Some h → history_state_coh h arr → (∀ x ∈ arr, clientId (item_id x) = c → clock (item_id x) < k) → MkYjsId c k ∉ op_ids N` | an op with client `c` is broadcast only at `c` (`hwf_client_id` + `hwf_msg_id_unique`), so it is in `h`; `hwf_self_deliver` ⇒ its delivery is in `h`; its item enters `st_items` (`YjsState_insert_mem`, yjs_replay_validity.v:150) and persists (item monotonicity) ⇒ its clock `< k` | M | here |
+| **receiver clock safety** | (`isClockSafe_from_source`): `history_wf N`; `OpInsert input` broadcast at its author; `l` a list of ops all broadcast in `N`, `OpInsert input ∉ l`, `l ⊇` its strict hb-past; `effect_list O l init s` ⇒ `isClockSafe (in_id input) (st_items s) = true`, hence `maximalId item (st_items s)` for the resolved item | a same-client item `x ∈ st_items s` comes from some `OpInsert x_op ∈ l` (induction / item monotonicity); both authored at `c'` (client of `input`); locally ordered one way: `x_op` before ⇒ `hwf_self_deliver` puts `EvDeliver x_op` before `EvBroadcast op`, so `hwf_unique_id`'s replayed prefix state contains `x` (needs the replay-determinism split) ⇒ `clock x < clock op`; `op` before `x_op` ⇒ `op` hb `x_op` ⇒ `op ∈ l` by hb-past coverage — contradiction | H (the one real theorem) | up (needs `hwf_self_deliver` as an explicit hypothesis if stated model-side) |
+| **broadcast step** | `history_wf N`, `N !! c = Some h`, `history_state_coh h arr`, `op = OpInsert input`, `toItem input arr = Some item`, `IsItemValid item`, `maximalId item arr`, `opid op = MkYjsId c k`, `k` fresh per freshness's hypothesis ⇒ `history_wf (<[c := h ++ [EvBroadcast op; EvDeliver op]]> N)` ∧ `history_state_coh (h ++ …) (insertIdx-result)` ∧ `∀ x, HappensBefore N' x op → opid x ∈ delivered_ids h` | field by field: NoDup from freshness; `hwf_broadcast_valid` for the new split is exactly `toItem`+`IsItemValid` at `arr` (via replay determinism); `hwf_unique_id` new split = `maximalId` (via replay determinism + `hwf_self_deliver`); `hwf_causal_delivery` for the new `EvDeliver op` = fresh-broadcast past + `hwf_self_deliver` (everything in `h` is delivered in `h`); old splits unchanged (append). The `coh` part: `YjsState_insert` succeeds because `maximalId ↔ isClockSafe` (the clock-safety equivalence) and `integrate_some` (commutativity.v) | H | here |
+| **deliver step** | `history_wf N`, `N !! c = Some h`, cert facts (`op` broadcast in `N` with registered `(op, D)`, `D ⊇` hb-past ids), `D ⊆ delivered_ids h`, `opid op ∉ delivered_ids h`, `clientId (opid op) ≠ c` or op simply not yet delivered ⇒ `history_wf (<[c := h ++ [EvDeliver op]]> N)` | NoDup: no prior `EvDeliver op` (id-injectivity via `hwf_msg_id_unique`); `deliver_has_a_cause`: cert; `causal_delivery` for the new event: hb-past ids `⊆ D ⊆ delivered_ids h`, and id-uniqueness turns id-membership into op-membership; delivers add no broadcast splits, so the operation-network fields are untouched | M | here |
+| **certificate stability** | if `∀ x, HappensBefore N x op → opid x ∈ D` and `N'` extends `N` by appends, then the same holds for `N'` (for `op` broadcast in `N`) | direct from hb append-stability (b) | E | here |
+| **clock-safety equivalence** | `maximalId item arr ↔ isClockSafe (item_id item) arr = true` (with `toItem input arr = Some item`, so ids agree via `toItem_id`) | unfold both (`insert_loop.v:534`, `insert_basic.v:122`); `forallb`/`bool_decide` reflection | E | here |
+| **certs ⇒ ValidReplay** | the applyUpdate bridge: see full statement below | per-step: receiver clock safety (+ `isValidState_insert_from_source`, yjs_replay_validity.v:614) for `toItem`/`IsItemValid`; receiver clock safety for `maximalId`; `integrate_some` for progress; deliver step iterated for wf of the extended history; induction over the batch | M given receiver clock safety / broadcast step / deliver step | here |
 
-Full statement of L10 (shapes the WP spec, so it is worth writing out):
+Full statement of **certs ⇒ ValidReplay** (shapes the WP spec, so it is worth
+writing out):
 
 ```rocq
 (* Batch delivery precondition, receiver-side but *pure and id-level*:
@@ -374,9 +438,13 @@ re-export `yjs.crdt.network.causal_network`, `yjs.crdt.network.operation_network
 it alone; it compiles without goose output. This is where most of the proof
 effort lives, and none of it touches WP.
 
-Order of implementation inside M1: L0, L1, L9 (warm-up) → L2 → L3 → L4 →
-L5 → L6, L7, L8 → L10. L2/L3/L5 are the hard kernel; if L5 stalls, everything
-else can still land (L10 is the only consumer).
+Order of implementation inside the pure-bridge milestone: replay determinism,
+item monotonicity, clock-safety equivalence (warm-up) → hb append-stability →
+fresh-broadcast past → freshness → receiver clock safety → broadcast step,
+deliver step, certificate stability → certs ⇒ ValidReplay. hb
+append-stability / fresh-broadcast past / receiver clock safety are the hard
+kernel; if receiver clock safety stalls, everything else can still land
+(certs ⇒ ValidReplay is the only consumer).
 
 ---
 
@@ -418,7 +486,8 @@ Definition histN : namespace := nroot .@ "cert_yjs" .@ "history".
 (* ops registry coherence: every registered op is broadcast (at its author),
    its D covers its causal past, and every broadcast op is registered.
    ops_coh / op_registered are pure Props — define them in
-   yjs_network_model.v (they are hypotheses of L10) and only USE them here. *)
+   yjs_network_model.v (they are hypotheses of certs ⇒ ValidReplay) and only
+   USE them here. *)
 Definition ops_coh (N : RawHistories) (ops : gmap YjsId (Op * gset YjsId)) : Prop :=
   (forall id op D, ops !! id = Some (op, D) ->
      opid op = id /\
@@ -436,8 +505,8 @@ Definition history_inv (γh : history_names) : iProp Σ :=
     (* Certificate recovery (needed by the network layer's relay server,
        docs/plan-network-p2p-layer.md §3): keep a copy of every persisted
        fragment inside the invariant, so any party that can open [is_history]
-       and name a registered id can duplicate its certificate.  G2 mints the
-       [↪□] fragment anyway, so re-establishing this big-op is free. *)
+       and name a registered id can duplicate its certificate.  history_broadcast
+       mints the [↪□] fragment anyway, so re-establishing this big-op is free. *)
     "#Hcerts"   ∷ ([∗ map] id ↦ p ∈ ops, id ↪[γh.(hn_ops)]□ p) ∗
     "%Hwf"      ∷ ⌜history_wf N⌝ ∗
     "%Hopscoh"  ∷ ⌜ops_coh N ops⌝.
@@ -459,8 +528,8 @@ Technical note on `ops_coh`'s hb clause: quantifying over `wf : history_wf N`
 avoids storing a proof term; `HappensBefore` only reads `to_histories`, so any
 `wf` gives the same relation. If this proves awkward, restate `HappensBefore`
 over `NodeHistories`-as-function without the record (it only uses
-`locallyOrdered`), which needs no `wf` at all — preferred if L2/L3 are stated
-that way anyway.
+`locallyOrdered`), which needs no `wf` at all — preferred if hb
+append-stability / fresh-broadcast past are stated that way anyway.
 
 ### 5.3 Ghost update lemmas (the whole API)
 
@@ -469,13 +538,53 @@ to re-establish `history_wf`/`ops_coh`, and close. Usable inside any WP proof
 via `iApply fupd_wp` / around a step (no atomic step is *required* since the
 invariant is not held open across one).
 
+**Why no atomicity, given `Text.Insert` is a multi-step operation** (the
+natural objection): Iris demands atomicity only to keep an invariant open
+*across a physical step* — so that no other thread interleaves while you hold
+`▷P`. These lemmas never do that. Each opens `inv histN`, performs the ghost
+update, re-establishes the invariant, and closes — **all inside one
+mask-preserving fancy update `|={⊤}=>`, with zero program steps in between**.
+
+To be clear, this is *not* avoiding the network-global invariant: `inv histN`
+holds `⌜history_wf N⌝` over the **whole** map `N` — that predicate *is* the
+network-model invariant — and every ghost update **opens it and must re-prove
+`history_wf N'` to close it**. Re-establishing `history_wf` on each append is
+exactly the synchronization with the model (the refinement obligation), and it
+is where the broadcast step / deliver step (§4.4) are discharged. "No
+atomicity" refers only to not
+spanning a *program step*; the invariant is opened on every single update. The
+per-key point in (3) below concerns lost-update freedom (which entry changes),
+not skipping the invariant. The concrete mechanics:
+
+1. The history update is a **resource update** (`ghost_map_update` /
+   `ghost_map_insert`, an `==∗`), not a program step: it moves
+   `auth ⋅ frag ⤳ auth' ⋅ frag'` at the logical level.
+2. A mask-preserving fupd can be eliminated **anywhere** in a WP goal
+   (`(|={⊤}=> WP e {{Φ}}) ⊢ WP e {{Φ}}`), so the `iMod (history_broadcast …)`
+   need not coincide with any instruction — it slots into the middle of
+   `Insert`'s multi-step body (specifically, under the store lock, after the
+   heap integrate, while reassembling `store_inv` for `Unlock`).
+3. Soundness (no lost updates) rests on the textbook *auth-in-invariant,
+   fragment-held-by-the-updater* pattern, doubled: the store `sync.Mutex`
+   serialises all of `Insert`/`applyUpdate` on one replica — and the exclusive
+   `own_client_history γh c h` lives *inside* `store_inv` (the lock invariant),
+   so the history is only ever touched while holding the lock — while each
+   replica mutates only its own key `c`, so replicas never contend on the same
+   cell. `histN` is disjoint from the lock's namespace, so opening it while
+   holding the lock's resources is mask-legal.
+
+Contrast — the one place atomicity *does* bite is the **physical
+`Send`/`Receive`** (`docs/plan-network-yjs-protocol.md` §2): the Grove op is a
+single atomic `ExternalOp`, and there the mailbox `c↦ ms` invariant *is* opened
+across that atomic step. The ghost history never needs this.
+
 ```rocq
-(* G1: allocation, client set fixed up front (§8.2). *)
+(* allocation: client set fixed up front (§8.2). *)
 Lemma history_alloc (C : gset ClientId) E :
   ⊢ |={E}=> ∃ γh, is_history γh ∗ [∗ set] c ∈ C, own_client_history γh c [].
 
-(* G2: broadcast (mint). Preconditions = L6's hypotheses, all available
-   inside wp_Text__Insert's loop at the call site.                         *)
+(* broadcast (mint). Preconditions = the broadcast step's hypotheses, all
+   available inside wp_Text__Insert's loop at the call site.               *)
 Lemma history_broadcast γh (c : ClientId) (k : nat) h arr input item E :
   ↑histN ⊆ E ->
   toItem input arr = Some item -> IsItemValid item -> maximalId item arr ->
@@ -486,9 +595,9 @@ Lemma history_broadcast γh (c : ClientId) (k : nat) h arr input item E :
   ∃ D, own_client_history γh c (h ++ [EvBroadcast (OpInsert input); EvDeliver (OpInsert input)]) ∗
        is_op_cert γh (OpInsert input) D ∗
        ⌜D ⊆ delivered_ids h⌝ ∗
-       ⌜history_state_coh (h ++ [_; _]) (the L6 arr')⌝.
+       ⌜history_state_coh (h ++ [_; _]) (the broadcast-step arr')⌝.
 
-(* G3: deliver a certified batch (used by applyUpdate's spec).             *)
+(* deliver a certified batch (used by applyUpdate's spec).                  *)
 Lemma history_deliver_batch γh c h arr inputs Ds E :
   ↑histN ⊆ E ->
   batch_ok h inputs Ds ->
@@ -499,15 +608,18 @@ Lemma history_deliver_batch γh c h arr inputs Ds E :
           ⌜ValidReplay inputs arr arr'⌝ ∗
           ⌜history_state_coh (h ++ …) arr'⌝.
 
-(* G4: agreement/read — combine cert with the auth to extract op_registered
-   facts under the invariant (used inside G3's proof, exported for #40).   *)
+(* read/agreement — combine cert with the auth to extract op_registered
+   facts under the invariant (used inside history_deliver_batch's proof,
+   exported for #40).                                                       *)
 ```
 
-Proof shape for G2/G3: `iInv histN as (N ops) "(>Hauth & >Hops & >%Hwf & >%Hcoh)"`,
-`ghost_map_lookup` (elem vs auth) to learn `N !! c = Some h`, apply L6/L7+L10,
-`ghost_map_update` / `ghost_map_insert` + `ghost_map_elem_persist` for the new
-cert, close with the new pure facts. Freshness for `ghost_map_insert` on
-`hn_ops` comes from L4 + `ops_coh` (registered ⇒ broadcast ⇒ id in `op_ids N`).
+Proof shape for history_broadcast / history_deliver_batch: `iInv histN as
+(N ops) "(>Hauth & >Hops & >%Hwf & >%Hcoh)"`, `ghost_map_lookup` (elem vs
+auth) to learn `N !! c = Some h`, apply the broadcast / deliver step +
+certs ⇒ ValidReplay, `ghost_map_update` / `ghost_map_insert` +
+`ghost_map_elem_persist` for the new cert, close with the new pure facts.
+Freshness for `ghost_map_insert` on `hn_ops` comes from freshness + `ops_coh`
+(registered ⇒ broadcast ⇒ id in `op_ids N`).
 
 ---
 
@@ -588,7 +700,7 @@ passes are precedent):
 2. The insert loop already establishes, per character, exactly
    `toItem`/`IsItemValid`/`maximalId` (they feed `wp_Store__Integrate`) and has
    `Hctr` for the clock bound. **Mint inside the loop**: after
-   `wp_Store__Integrate` returns, `iMod (history_broadcast …)` (G2) with those
+   `wp_Store__Integrate` returns, `iMod (history_broadcast …)` with those
    facts; accumulate `is_op_cert` (persistent) and the updated
    `own_client_history`/`history_state_coh` in the loop invariant. The loop
    invariant gains: current `h_j`, `history_state_coh h_j arr_j`, and the cert
@@ -619,18 +731,20 @@ Lemma wp_store__applyUpdate_certs (s parent : loc) (sl : slice.t)
   {{{ is_pkg_init yjs ∗ is_history γh ∗
       own_client_history γh c h ∗ ⌜history_state_coh h arr⌝ ∗
       ([∗ list] input;D ∈ inputs;Ds, is_op_cert γh (OpInsert input) D) ∗
-      is_valid_ytype parent arr ∗ is_update sl inputs }}}
+      own_ytype_cells parent (DfracOwn 1) cells arr ∗ ⌜YjsArrInvariant arr⌝ ∗
+      own_update sl dq inputs }}}
     s @! (go.PointerType yjs.store) @! "applyUpdate" #parent #sl
   {{{ (cells' : list item_cell) (arr' : list (YjsItem A)), RET #();
-      is_ytype parent cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ ∗
+      own_ytype_cells parent (DfracOwn 1) cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ ∗
       own_client_history γh c (h ++ (EvDeliver ∘ OpInsert <$> inputs)) ∗
       ⌜history_state_coh (h ++ (EvDeliver ∘ OpInsert <$> inputs)) arr'⌝ }}}.
 ```
 
-Proof: `iApply fupd_wp`, `iMod (history_deliver_batch …)` (G3) — this yields
+Proof: `iApply fupd_wp`, `iMod (history_deliver_batch …)` — this yields
 `ValidReplay inputs arr arr'` *before any code runs* — then apply the existing
 `wp_store__applyUpdate` **verbatim** and match `arr'` (unique by
-determinism/L0). The 80-line existing loop proof is untouched. Note the ghost
+determinism / replay determinism). The 80-line existing loop proof is
+untouched. Note the ghost
 history is advanced up front while the heap catches up during the loop; that
 is fine because the tie is only re-asserted in the postcondition (the caller —
 the locked wrapper in #40 — restores `store_inv` afterwards).
@@ -638,6 +752,37 @@ the locked wrapper in #40 — restores `store_inv` afterwards).
 The old `ValidReplay`-based `wp_store__applyUpdate` remains as the internal
 composition lemma (it is what the new spec calls); its doc comment should be
 updated to say so.
+
+#### 6.5.1 Where this spec sits: the staged path to the realistic total spec
+
+`wp_store__applyUpdate_certs` still has an applicability *precondition*
+(`batch_ok`), which no shipping implementation asks of its callers: y-octo /
+yrs / yjs all make `apply_update` **total**, dedup re-deliveries internally,
+and park inapplicable structs in a store-held pending buffer that is retried
+as later updates fill the gaps (evidence with code citations, the release
+gate, and the `ready_closure` target contract over per-replica state
+`(delivered h, pending P)`: `docs/plan-network-p2p-layer.md` §3.1). The three
+specs, using that document's names:
+
+- The **total heap spec** (no ghost) and the **covered-batch spec** (ghost,
+  applicable batches only) are provable against the current model once the Go
+  pending port lands (the p2p-layer *pending-buffer port* milestone). The
+  covered-batch spec *is* this section's lemma restated on top of the total
+  heap spec: a floor-covered fresh batch is swallowed whole (`deps ⊆ D`, so the
+  batch order itself is a ready enumeration), giving `Δ = inputs`, `P' = ∅`.
+- The **arbitrary-arrival spec** (ghost, any input — the realistic endpoint)
+  additionally requires weakening the model's `causal_delivery` to the `deps`
+  relation, because the implementations' release gate is strictly weaker than
+  happens-before coverage (p2p-layer §3.1/§7).
+
+So the applyUpdate-certs deliverable is unchanged and stays provable *now*,
+against the current no-pending Go `applyUpdate`; it is later absorbed as the
+covered-batch spec. `history_deliver_batch` is reused verbatim by the
+covered-batch and arbitrary-arrival specs — only its call site moves (fired
+per *released* op, which under the arbitrary-arrival spec may happen in a later
+`applyUpdate` call than the arrival), and there its `batch_ok` hypothesis is
+replaced by the weakened model's deps-coverage, which the release gate
+discharges directly.
 
 ### 6.6 `yjs_doc.v`
 
@@ -653,17 +798,21 @@ green, `Print Assumptions` on the new top-level lemmas showing only
 goose/Perennial axioms. Suggested PR granularity below follows
 `pr-granularity` guidance (each PR has real review value).
 
-| M | contents | deliverables / acceptance | risk |
-|---|---|---|---|
-| **M0** | iris-yjs: `deliver_locally` fix (§2) — **merged, iris-yjs#24 / lean-yjs#31**; remaining: upstream lemmas L0–L3, L5 if stated model-side; bump `pin-depends` in `cert-yjs.opam` to `b95e6da`+; full rebuild | iris-yjs CI green ✓; cert-yjs `./build.sh` green on the new pin | low (fix landed; L2/L3/L5 are the real work and can trail in a second upstream PR — M1 can start against local pins) |
-| **M1** | `yjs_network_model.v`: §4 defs + L4, L6–L10 (+ any of L0–L5 not yet upstream, proved here first and upstreamed later) | file compiles standalone; `certs_ValidReplay` Qed | **highest** — L5 is the one genuinely hard theorem; do it early to de-risk |
-| **M2** | `yjs_history.v`: §5 classes, predicates, G1–G4 | compiles; G2/G3 Qed; a smoke lemma: alloc + one broadcast + one remote deliver composed end-to-end (two ghost clients, no WP) proving the ghost story is consistent | low — mechanical given M1 |
-| **M3** | `store_inv`/`is_Store`/`is_Text` extension + `store_inv_init` + **Insert minting** + Delete/other call-site rethreading | `wp_Text__Insert` (new post) and `wp_Text__Delete` Qed, axiom-clean | medium — big mechanical rethreading (cf. #29: ~7 call sites then; grep `store_inv`/`is_Store`/`is_Text` uses first and list them in the PR) |
-| **M4** | `wp_store__applyUpdate_certs` (§6.5) + doc comments + CLAUDE.md "verified so far" update | Qed, axiom-clean; issue #42 acceptance boxes checkable | low given M2 (thin wrapper) |
-| **M5** (stretch, coordinate with #40/#43) | OpDelete minting + delete_range receiver; dynamic client registration; multi-text; delivered-set lower-bound ghost for #40 | — | out of #42 scope; see §8 |
+Named, not numbered.
 
-PR slicing: M0 (upstream + pin bump) / M1 / M2+M4-statement / M3 / M4-proof —
-or M1+M2 together if M1 lands fast. Avoid a single mega-PR.
+| milestone | contents | deliverables / acceptance | risk |
+|---|---|---|---|
+| **Upstream fix** | iris-yjs: `deliver_locally` fix (§2) — **merged, iris-yjs#24 / lean-yjs#31**; remaining: upstream the lemmas replay determinism through fresh-broadcast past, and receiver clock safety if stated model-side; bump `pin-depends` in `cert-yjs.opam` to `b95e6da`+; full rebuild | iris-yjs CI green ✓; cert-yjs `./build.sh` green on the new pin | low (fix landed; hb append-stability / fresh-broadcast past / receiver clock safety are the real work and can trail in a second upstream PR — the pure bridge can start against local pins) |
+| **Pure bridge** | `yjs_network_model.v`: §4 defs + freshness, broadcast step through certs ⇒ ValidReplay (+ any of replay determinism through receiver clock safety not yet upstream, proved here first and upstreamed later) | file compiles standalone; `certs_ValidReplay` Qed | **highest** — receiver clock safety is the one genuinely hard theorem; do it early to de-risk |
+| **Ghost layer** | `yjs_history.v`: §5 classes, predicates, the ghost API (`history_alloc`/`history_broadcast`/`history_deliver_batch`/read) | compiles; history_broadcast / history_deliver_batch Qed; a smoke lemma: alloc + one broadcast + one remote deliver composed end-to-end (two ghost clients, no WP) proving the ghost story is consistent | low — mechanical given the pure bridge |
+| **WP rethreading** | `store_inv`/`is_Store`/`is_Text` extension + `store_inv_init` + **Insert minting** + Delete/other call-site rethreading | `wp_Text__Insert` (new post) and `wp_Text__Delete` Qed, axiom-clean | medium — big mechanical rethreading (cf. #29: ~7 call sites then; grep `store_inv`/`is_Store`/`is_Text` uses first and list them in the PR) |
+| **applyUpdate-certs spec** | `wp_store__applyUpdate_certs` (§6.5) + doc comments + CLAUDE.md "verified so far" update | Qed, axiom-clean; issue #42 acceptance boxes checkable | low given the ghost layer (thin wrapper) |
+| **Stretch** (coordinate with #40/#43) | OpDelete minting + delete_range receiver; dynamic client registration; multi-text; delivered-set lower-bound ghost for #40 | — | out of #42 scope; see §8 |
+
+PR slicing: upstream fix (upstream + pin bump) / pure bridge / ghost layer +
+applyUpdate-certs statement / WP rethreading / applyUpdate-certs proof — or
+pure bridge + ghost layer together if the bridge lands fast. Avoid a single
+mega-PR.
 
 ---
 
@@ -685,7 +834,8 @@ mints; `hwf_insert_only` bakes this in.
 - Extension path: drop `hwf_insert_only`, give `OpDelete` ids above the item
   clock (or mirror y-octo's actual delete-set semantics), extend
   `history_state_coh` to also track `st_deleted`, add an `OpDelete` branch to
-  L6/L7 (validity is trivial: `IsValidMessage _ (OpDelete _ _) = True`).
+  the broadcast step / deliver step (validity is trivial:
+  `IsValidMessage _ (OpDelete _ _) = True`).
 
 ### 8.2 Client set fixed at `history_alloc`
 
@@ -712,25 +862,58 @@ sequence. #40's convergence statement is therefore about the item sequence.
 This matches what the model's `effect_list` on insert-only histories
 determines anyway (`st_deleted` stays `∅`).
 
-### 8.5 `batch_ok` is a pure precondition, not code
+### 8.5 `batch_ok` is a stand-in for the pending buffer, not for a sender check
 
-The Go `applyUpdate` does not check causal order / re-delivery (y-octo's
-`UpdateIterator` + state vector do; out of subset, #43). The certificate
-design moves *validity* to the sender; *ordering within a batch* remains a
-caller obligation, now expressed purely over ids (`batch_ok`) instead of over
-receiver state (`ValidReplay`) — strictly weaker to discharge for a caller
-that trusts the sender's state vector.
+The Go `applyUpdate` currently checks nothing — no causal order, no
+re-delivery. What real implementations do in its place is **not** a sender
+obligation but a *receiver-internal tolerance mechanism*: y-octo's
+`apply_update` (`y-octo/src/doc/document.rs:242`) iterates the update through
+`UpdateIterator` against the store's state vector, integrates exactly the
+structs whose dependencies (origin / rightOrigin / parent) are already
+integrated and whose author clocks are contiguous
+(`codec/update.rs:280–310, 340–346`), drops already-known prefixes by offset
+(dedup, `update.rs:369–376`), and parks the rest in `DocStore.pending`
+(`store.rs:30`), retried whenever a later update fills a missing clock
+(`document.rs:276–317`). yrs states the same contract in its doc comment
+("out of order updates … will be stashed internally … until missing blocks
+arrive first", `yrs/src/transaction.rs:815–819`); yjs v14 keeps
+`pendingStructs`/`pendingDs` with a retry-to-fixpoint loop
+(`src/utils/encoding.js:246–327`). `apply_update` is **total** at the API.
+
+So `batch_ok`'s two halves have different fates on the way to the realistic
+spec (p2p-layer doc §3.1):
+
+- **freshness** is not a precondition anywhere in reality — it is internal
+  dedup. It survives here only until the pending-buffer port (p2p-layer) lands;
+  then it becomes the `∖ delivered_ids h` inside the total contract.
+- **floor coverage** is a genuine logical residue, but of *our current
+  model*, not of Yjs: the implementations' release gate checks the `deps`
+  relation, which is strictly weaker than the model's happens-before
+  coverage, so the unconditional arbitrary-arrival spec needs the
+  weakened-model route (p2p-layer §7). Until then, coverage stays as the
+  hypothesis of the covered-batch spec (= §6.5's lemma), discharged
+  structurally by the star transport.
+
+This section's earlier framing — "ordering within a batch remains a caller
+obligation" — was therefore the provisional reading; the design intent is
+recorded by the three-spec staging in §6.5.1. Extension path: the
+pending-buffer port ports the pending machinery to Go (insert-only subset;
+**a `yjs/*.go` behavior change — maintainer sign-off per CLAUDE.md**), keeping
+the current integrate loop as the inner kernel each released run passes
+through, so `ValidReplay` and this plan's proofs remain the workhorse. Pending
+delete-sets (`pending_delete_set` / `pendingDs`) stay out of scope with the
+rest of the delete story (#43).
 
 ---
 
 ## 9. Gotchas / risk register
 
-- **L5 is the crux.** It is the only lemma whose *statement* needed a new
-  network discipline (`hwf_self_deliver`). If its proof stalls, check first
-  whether `yjs_replay_validity.v` already has a same-client-clock lemma to
-  adapt (grep `UniqueId`/`isClockSafe` there; as of `245ada52` all such lemmas
-  point the wrong way — from `YjsState_insert = Some` — so a new proof is
-  expected).
+- **Receiver clock safety is the crux.** It is the only lemma whose
+  *statement* needed a new network discipline (`hwf_self_deliver`). If its
+  proof stalls, check first whether `yjs_replay_validity.v` already has a
+  same-client-clock lemma to adapt (grep `UniqueId`/`isClockSafe` there; as of
+  `245ada52` all such lemmas point the wrong way — from
+  `YjsState_insert = Some` — so a new proof is expected).
 - **State `HappensBefore` facts over `to_histories` functions, not
   `to_network` records**, or every lemma drags a `history_wf` proof term.
   `HappensBefore`/`locallyOrdered` only need the histories function.
@@ -742,23 +925,24 @@ that trusts the sender's state vector.
   the persistent-big-op re-open clash (`iClear` before `wp_for`, cf.
   `iris-big-sep-origin-refactor-gotchas`).
 - **`ghost_map_insert` freshness for `hn_ops`** needs `opid ∉ dom ops`; it
-  comes from L4 via `ops_coh` (dom = broadcast ids). Don't try to get it from
-  the elem side.
-- **Determinism plumbing**: `interpHistory` is relational; L0's determinism
-  and append/split lemmas get used constantly — write them first and make them
+  comes from freshness via `ops_coh` (dom = broadcast ids). Don't try to get it
+  from the elem side.
+- **Determinism plumbing**: `interpHistory` is relational; replay determinism's
+  append/split lemmas get used constantly — write them first and make them
   `Hint`-friendly (plain rewriting equalities where possible).
-- **Pin bump fallout** (M0): the pinned iris-yjs SHA moves across
-  `setfii_loop_eq_fii_loop`; if any cert-yjs proof named an admitted constant
-  from before, `./build.sh make` will flag it — expected clean, verify.
-- **Arity churn** (M3): `store_inv`/`is_Store`/`is_Text` signature changes
-  touch every proof in `yjs_text.v`/`yjs_doc.v`; do a grep inventory first and
-  land as one mechanical commit separate from the minting logic.
+- **Pin bump fallout** (upstream-fix milestone): the pinned iris-yjs SHA moves
+  across `setfii_loop_eq_fii_loop`; if any cert-yjs proof named an admitted
+  constant from before, `./build.sh make` will flag it — expected clean,
+  verify.
+- **Arity churn** (WP rethreading): `store_inv`/`is_Store`/`is_Text` signature
+  changes touch every proof in `yjs_text.v`/`yjs_doc.v`; do a grep inventory
+  first and land as one mechanical commit separate from the minting logic.
 
 ---
 
 ## 10. Relation to #40 (what this hands over)
 
-After M4, #40 gets:
+After the applyUpdate-certs milestone, #40 gets:
 
 - `is_history γh` + `is_op_cert` as the persistent vocabulary to state
   "document = function of the delivered op-set";
@@ -766,17 +950,23 @@ After M4, #40 gets:
   `YjsOperationNetwork_converge_final` (`yjs_replay_validity.v:669`) applies to
   the invariant's `N` directly — the convergence theorem is *consumed at the
   ghost boundary, not re-proved*;
-- the deliver lemma G3 and `history_state_coh`, from which the locked public
-  `ApplyUpdate` wrapper re-establishes `store_inv`;
+- the deliver lemma `history_deliver_batch` and `history_state_coh`, from which
+  the locked public `ApplyUpdate` wrapper re-establishes `store_inv`;
 - one known gap to fill there: a persistent *delivered-set lower bound* per
   replica (e.g. a mono-set ghost beside `hn_hist`) so two replicas can be
-  compared without holding both locks — deliberately left out of #42.
+  compared without holding both locks — deliberately left out of #42;
+- a strengthening to aim for: with the pending-aware total spec (§6.5.1),
+  `ready_closure` makes the post-state a deterministic function of the
+  *received* op set, so #40's "document = function of the delivered op-set"
+  upgrades to "…of the received op-set" at the public API — delivery order
+  and batching stop appearing in the statement altogether.
 
 The network story is specified separately, split along the model/protocol
 seam: `docs/plan-network-p2p-layer.md` (the transport-agnostic causal-delivery
-layer faithful to the P2P model — the T1/T2 interface, the sv guard toolkit,
-milestones P1–P2) and `docs/plan-network-yjs-protocol.md` (the Yjs sync
-protocol SyncStep1/SyncStep2/Update as one implementation: star topology +
-FIFO streams over Grove, milestones N0–N3). Both consume this design unchanged
-(plus the `Hcerts` amendment in §5.2 and a `hwf_dense_clocks` field on
-`history_wf` established by G2).
+layer faithful to the P2P model — the mint/deliver interface, the sv guard
+toolkit, the guard-toolkit and two-replica-demo milestones) and
+`docs/plan-network-yjs-protocol.md` (the Yjs sync protocol
+SyncStep1/SyncStep2/Update as one implementation: star topology + FIFO streams
+over Grove, the Grove-spike through Grove-transport milestones). Both consume
+this design unchanged (plus the `Hcerts` amendment in §5.2 and a
+`hwf_dense_clocks` field on `history_wf` established by `history_broadcast`).
