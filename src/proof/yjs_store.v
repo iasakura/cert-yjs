@@ -14,7 +14,9 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype.
 From New.proof Require Import yjs_history.             (* ghost op history (issue #42) *)
-From New.proof.sync_proof Require Import mutex.        (* is_Mutex (store lock) *)
+From New.proof.sync_proof Require Import base mutex rwmutex.
+                                                      (* store lock: is_RWMutex + LP Lock/Unlock
+                                                         (y-octo Arc<RwLock<DocStore>>) *)
 From iris.algebra Require Import auth gmap gset.       (* grow-only item-set RA *)
 From stdpp Require Import sorting.                     (* merge_sort for client_run *)
 
@@ -466,6 +468,43 @@ Definition own_item_map (mref : loc) (dq : dfrac) (types : gmap loc type_state) 
                     cell_client c1 = cell_client c2 → (cell_pr c1).1 = (cell_pr c2).1 →
                     ic_loc c1 = ic_loc c2⌝.
 
+(* The [∷] (named) wrapper blocks [Timeless] TC resolution; unfold it (as
+   [New.proof.sync_proof.rwmutex] does) so the [Timeless] instances below go
+   through the named conjuncts of [own_item_map] / [store_inv]. *)
+#[local] Hint Extern 100 (Timeless (?n ∷ ?P)) =>
+  (change (n ∷ P) with P) : typeclass_instances.
+
+(* [own_slice_cap] (a sealed disjunction of pure facts and a [↦{dq}] array) is
+   timeless, but the New.golang slice library ships no such instance; provide it
+   here (candidate upstream addition) so [own_item_map] / [store_inv] are
+   timeless. *)
+#[global] Instance own_slice_cap_timeless (V : Type) `{!ZeroVal V} `{!TypedPointsto V} (s : slice.t) (dq : dfrac) :
+  Timeless (own_slice_cap V s dq).
+Proof. rewrite own_slice_cap_unseal /own_slice_cap_def. apply _. Qed.
+
+#[global] Instance own_item_map_timeless mref dq types : Timeless (own_item_map mref dq types).
+Proof. rewrite /own_item_map. apply _. Qed.
+
+(* The DLL predicate stack is timeless too (heap points-to + pure + persistent
+   origin handles); register the instances so [store_inv] is timeless. *)
+#[global] Instance is_origin_id_timeless p oid : Timeless (is_origin_id p oid).
+Proof. rewrite /is_origin_id. by destruct oid; apply _. Qed.
+
+#[global] Instance own_dll_timeless dq l last prev next cells :
+  Timeless (own_dll dq l last prev next cells).
+Proof.
+  revert l last prev next.
+  induction cells as [|c rest IH]; intros l last prev next; simpl.
+  - apply _.
+  - repeat (apply bi.exist_timeless; intros ?).
+    repeat (apply bi.sep_timeless; [ apply _ | ]).
+    apply IH.
+Qed.
+
+#[global] Instance own_ytype_cells_timeless parent dq cells arr :
+  Timeless (own_ytype_cells parent dq cells arr).
+Proof. rewrite /own_ytype_cells. apply _. Qed.
+
 (** [own_item_map] is a function of the document-global (client, clock, loc)
     projection [cell_kp <$> all_cells] alone: two [types] with the same [cell_kp]
     multiset carry the same run-map. [Text.Delete] flips [ic_deleted] bits, which
@@ -531,6 +570,7 @@ Qed.
 Record store_names := StoreNames {
   sn_seq : gname;    (* authR (gmapUR loc (gsetUR (YjsItem A)))  *)
   sn_types : gname;  (* ghost_map go_string loc                  *)
+  sn_wl : gname;     (* [own_wlock]: the exclusive write-lock witness (ghost_var _ 1 ()) *)
 }.
 
 (** The root-type binding: [name] is bound to the type at [p], forever
@@ -555,7 +595,7 @@ Qed.
 
 (** [store_inv s_loc γs γh]: everything the store lock protects.
     - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
-      [mu] is owned by [is_Mutex] in [is_Store], not here);
+      [mu] is owned by the [sync.RWMutex] ([is_RWMutex] in [is_Store]), not here);
     - the item-set authority [own γ (●…)] per type loc (id-set), whose fragments
       are the [is_type_lb] lower bounds / registration witnesses [Text] holds;
     - each registered type's DLL (keyed by [parent]) + [YjsArrInvariant];
@@ -610,12 +650,59 @@ Definition store_inv (s_loc : loc) (γs : store_names) (γh : history_names) : i
     "%Hmdom" ∷ ⌜∀ t, docm_get m t ≠ [] →
                   ∃ name p, t = RootId name ∧ bind !! name = Some p⌝.
 
-(** Store handle (persistent): the lock at [&store.mu] guards [store_inv]. ALL
-    store-field / item-set / DLL references are sealed here or in [store_inv].
-    (The persistent [is_history γh] handle rides in [is_Text], not here, to
-    keep [store_inv] first-order.) *)
+(** [store_inv] is timeless (heap points-to + ghost state over discrete cameras +
+    pure facts), so the write [Lock] wrapper hands it back WITHOUT a [▷] even
+    though it is extracted from the tie invariant — the Insert/Delete proofs use
+    it immediately (no intervening program step to strip a later). *)
+#[global] Instance store_inv_timeless s_loc γs γh : Timeless (store_inv s_loc γs γh).
+Proof. rewrite /store_inv. apply _. Qed.
+
+(** ---------------------------------------------------------------------------
+    Store lock = a [sync.RWMutex] (y-octo's [Arc<RwLock<DocStore>>]).
+
+    Writers (Insert/Delete/GetText/applyUpdate) take the write lock; the pure
+    readers (String/Len) take the read lock, so concurrent reads are allowed.
+    [is_Store] is a PERSISTENT handle built over Perennial's logically-atomic
+    RWMutex ([New.proof.sync_proof.rwmutex]): a tying [inv] relates the RWMutex's
+    abstract lock state to [store_inv]. The RWMutex ghost names [γrw] are hidden
+    (existential) inside [is_Store], so [is_Store]'s signature is unchanged.
+
+    Write path (this port): the write [Lock] linearizes only at [RLocked 0] (no
+    readers outstanding), where it can take the WHOLE [store_inv]; [Unlock]
+    returns it. So [store_lock_res] maps [RLocked _ ↦ store_inv ∗ own_wlock] and
+    [Locked ↦ True]; a writer never observes [RLocked (S _)]. [own_wlock] is the
+    exclusive "I hold the write lock" witness (like [own_Mutex]); it makes the
+    [Unlock] proof's "not actually locked" case a clean [ghost_var] clash.
+    Concurrent readers (the verified String/Len read API) only REFINE the
+    [RLocked (S _)] branch to a fractional share of [store_inv]; that is a
+    follow-on and does not touch these write proofs. --------------------------- *)
+
+(** The exclusive write-lock witness (mirrors [own_Mutex]). *)
+Definition own_wlock (γs : store_names) : iProp Σ :=
+  ghost_var γs.(sn_wl) 1 ().
+
+(** The resource the tie invariant holds in each abstract lock state. *)
+Definition store_lock_res (s_loc : loc) (γs : store_names) (γh : history_names)
+    (st : rwmutex) : iProp Σ :=
+  match st with
+  | Locked => True
+  | RLocked _ => store_inv s_loc γs γh ∗ own_wlock γs
+  end.
+
+Definition storeN : namespace := nroot .@ "yjs_store".
+
+(** Needed to commute [▷ ∃ st : rwmutex, …] when opening the tie invariant. *)
+#[local] Instance rwmutex_inhabited : Inhabited rwmutex := populate Locked.
+
+(** Store handle (persistent): the [sync.RWMutex] at [&store.mu] guards
+    [store_inv] via the tie invariant. ALL store-field / item-set / DLL
+    references are sealed here or in [store_inv]. (The persistent [is_history γh]
+    handle rides in [is_Text], not here, to keep [store_inv] first-order.) *)
 Definition is_Store (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
-  is_Mutex (s_loc .[(yjs.store.t), "mu"]) (store_inv s_loc γs γh).
+  ∃ γrw : RWMutex_names,
+    "#Hrw" ∷ is_RWMutex (s_loc .[(yjs.store.t), "mu"]) γrw (storeN .@ "rw") ∗
+    "#Htie" ∷ inv (storeN .@ "tie")
+       (∃ st : rwmutex, own_RWMutex γrw st ∗ store_lock_res s_loc γs γh st).
 
 (** [is_type_lb γ parent S]: a persistent SUBSET (membership) lower bound on the
     type at [parent] — [S ⊆] its current item set (of full [YjsItem]s) — AND the
@@ -629,8 +716,58 @@ Definition is_type_lb (γ : gname) (parent : loc) (S : gset (YjsItem A)) : iProp
 
 #[global] Instance is_Store_persistent s_loc γs γh : Persistent (is_Store s_loc γs γh).
 Proof. apply _. Qed.
+#[global] Instance own_wlock_timeless γs : Timeless (own_wlock γs).
+Proof. apply _. Qed.
 #[global] Instance is_type_lb_persistent γ parent S : Persistent (is_type_lb γ parent S).
 Proof. apply _. Qed.
+
+(** Write-lock acquire: mirrors [wp_Mutex__Lock]. The write [Lock] linearizes at
+    [RLocked 0], where the tie invariant releases the full [store_inv] and the
+    exclusive [own_wlock] witness; the invariant is left holding [Locked ↦ True]. *)
+Lemma wp_Store__wlock (s_loc : loc) (γs : store_names) (γh : history_names) :
+  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh }}}
+    (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Lock" #()
+  {{{ RET #(); own_wlock γs ∗ store_inv s_loc γs γh }}}.
+Proof.
+  wp_start_folded as "His". iNamed "His".
+  wp_apply (wp_RWMutex__Lock with "[$Hrw]").
+  iInv "Htie" as "Hi" "Hclose".
+  iDestruct "Hi" as (st) "[>Hown Hres]".
+  iFrame "Hown". iApply fupd_mask_intro; first solve_ndisj. iIntros "Hmask".
+  iIntros "%Hst Hlocked". subst st.
+  iEval (cbn) in "Hres". iDestruct "Hres" as ">[Hinv Hwl]".
+  iMod "Hmask" as "_".
+  iMod ("Hclose" with "[Hlocked]") as "_".
+  { iExists Locked. by iFrame "Hlocked". }
+  iModIntro. iApply "HΦ". iFrame "Hwl Hinv".
+Qed.
+
+(** Write-lock release: mirrors [wp_Mutex__Unlock]. Consumes the [own_wlock]
+    witness and returns [store_inv] to the invariant. The "invariant is in
+    [RLocked]" case (unlock without holding the lock) is impossible: the tie
+    invariant would then also hold [own_wlock], clashing with the caller's. *)
+Lemma wp_Store__wunlock (s_loc : loc) (γs : store_names) (γh : history_names) :
+  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_wlock γs ∗ ▷ store_inv s_loc γs γh }}}
+    (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Unlock" #()
+  {{{ RET #(); True }}}.
+Proof.
+  wp_start_folded as "(His & Hwl & HR)". iNamed "His".
+  wp_apply (wp_RWMutex__Unlock with "[$Hrw]").
+  iInv "Htie" as "Hi" "Hclose".
+  iDestruct "Hi" as (st) "[>Hown Hres]".
+  destruct st.
+  { (* RLocked: the invariant's own_wlock clashes with the caller's. *)
+    iDestruct "Hres" as "[_ >Hbad]".
+    iDestruct (ghost_var_valid_2 with "Hwl Hbad") as %[Hq _].
+    exfalso. by apply (Qp.not_add_le_l 1 1). }
+  (* Locked: hand [own_RWMutex γrw Locked] to the LP, restore store_inv. *)
+  iFrame "Hown". iApply fupd_mask_intro; first solve_ndisj. iIntros "Hmask".
+  iIntros "Hrl0".
+  iMod "Hmask" as "_".
+  iMod ("Hclose" with "[Hrl0 HR Hwl]") as "_".
+  { iExists (RLocked 0). iFrame "Hrl0 HR Hwl". }
+  iModIntro. by iApply "HΦ".
+Qed.
 
 (** Non-vacuity witness / the [wp_NewDoc] seam: a fresh store's heap fields, a
     fresh empty registered type, and this client's (empty) history element
@@ -654,7 +791,11 @@ Proof.
     as (γseq) "Hseq".
   { apply auth_auth_valid. rewrite /types fmap_empty //. }
   iMod (ghost_map_alloc_empty (K := P) (V := loc)) as (γtypes) "HtypesAuth".
-  set (γs := {| sn_seq := γseq; sn_types := γtypes |}).
+  (* [sn_wl] names the write-lock witness [own_wlock]; it belongs to the lock
+     layer ([is_Store]'s tie invariant), not to [store_inv], so allocate the
+     name and drop the token here. *)
+  iMod (ghost_var_alloc ()) as (γwl) "Hwl". iClear "Hwl".
+  set (γs := {| sn_seq := γseq; sn_types := γtypes; sn_wl := γwl |}).
   iModIntro. iExists γs.
   iExists client, k, items_mref, types_mref, dset, types, (∅ : gmap P loc),
     ([] : list Ev), (∅ : DocM).

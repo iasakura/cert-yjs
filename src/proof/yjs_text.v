@@ -10,7 +10,10 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype yjs_history yjs_store.
-From New.proof.sync_proof Require Import mutex.        (* is_Mutex / Lock / Unlock *)
+From New.proof.sync_proof Require Import mutex.        (* transitive; the store's
+                                                          RWMutex write lock is taken
+                                                          via [wp_Store__wlock] /
+                                                          [wp_Store__wunlock] (yjs_store) *)
 From iris.algebra Require Import auth gmap gset.        (* is_type_lb grow-only item-set RA *)
 From stdpp Require Import sorting.                      (* StronglySorted / sublist *)
 
@@ -22,7 +25,8 @@ Local Open Scope Z_scope.
 Section text.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
-(** Store lock = a [sync.Mutex]; the per-text item set lives in a grow-only auth
+(** Store lock = a [sync.RWMutex] (write path here, via [wp_Store__wlock] /
+    [wp_Store__wunlock]); the per-text item set lives in a grow-only auth
     (the same RA as [yjs_store], used by [is_type_lb]). *)
 Context {sync_pkg : sync.Assumptions}.
 
@@ -184,8 +188,9 @@ Proof. apply _. Qed.
     This says exactly "the characters you inserted are in [L'−L], with these
     content / id / left / right".
 
-    Proof shape: peel [is_Text → is_Store] to reach [is_Mutex]; [Lock] yields
-    [store_inv]; combine [is_type_lb] with [Hseq] (auth) via
+    Proof shape: peel [is_Text → is_Store] and take the RWMutex write lock
+    ([wp_Store__wlock]), which yields [store_inv]; combine [is_type_lb] with
+    [Hseq] (auth) via
     [auth_gmap_gset_lookup] to learn [parent ∈ dom types] and extract THIS text's
     [type_state] / DLL from [Htypes]; run the findPos/Integrate loop, whose
     invariant accumulates [ins] with the per-byte facts (content/id/origins) plus
@@ -226,7 +231,7 @@ Proof.
   iDestruct "His_store" as "#His_store".   (* keep is_Store (persistent) for the later Unlock *)
   wp_auto.
   subst s_loc.
-  wp_apply (wp_Mutex__Lock with "[$His_store]"). iIntros "[Hlk Hinv]". iNamed "Hinv".
+  wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]". iNamed "Hinv".
   iDestruct (auth_gmap_gset_lookup with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS.
   apply fmap_Some in HmS as (ts & Htsp & ->).
@@ -246,7 +251,7 @@ Proof.
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. exact Hinvarr. }
     iEval (rewrite (insert_id types (tv.(yjs.Text.inner')) ts Htsp)) in "Htypes".
-    wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
     { iNext. iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
       iFrame "∗#". iPureIntro.
       split_and!;
@@ -273,7 +278,7 @@ Proof.
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. exact Hinvarr. }
     iEval (rewrite (insert_id types (tv.(yjs.Text.inner')) ts Htsp)) in "Htypes".
-    wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
     { iNext. iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
       iFrame "∗#". iPureIntro.
       split_and!;
@@ -373,7 +378,7 @@ Proof.
     "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) ∗
     "Htypesf" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "types"] ↦ types_mref ∗
     "Hdset" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "deletedSet"] ↦ dset ∗
-    "Hlk" ∷ own_Mutex ((tv.(yjs.Text.store')).[yjs.store.t, "mu"]) ∗
+    "Hlk" ∷ own_wlock γs ∗
     "Hseq" ∷ own γs.(sn_seq) (● ((λ ts0 : type_state, (list_to_set ts0.(ty_arr) : gset (YjsItem A))) <$> types) : authR (gmapUR loc (gsetUR (YjsItem A)))) ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
@@ -777,7 +782,7 @@ Proof.
   iMod (auth_gmap_gset_grow γs.(sn_seq) _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) (list_to_set arr) Hmk Hsubarr with "Hseq") as "[Hseq Hfrag]".
   iDestruct ("Hclose" $! (MkTypeState cells arr) with "[Htextj]") as "Htypes".
   { iFrame "Htextj". iPureIntro. exact Hinvj. }
-  wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhistj]").
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhistj]").
   { iNext. iExists client, (W64 (uint.Z k + j)), items_mref, types_mref, dset,
       (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types), bind, hj,
       (<[RootId name := arr]> m).
@@ -870,7 +875,7 @@ Proof.
   iDestruct "His_store" as "#His_store".
   wp_auto.
   subst s_loc.
-  wp_apply (wp_Mutex__Lock with "[$His_store]"). iIntros "[Hlk Hinv]". iNamed "Hinv".
+  wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]". iNamed "Hinv".
   iDestruct (auth_gmap_gset_lookup with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS.
   apply fmap_Some in HmS as (ts & Htsp & ->).
@@ -900,7 +905,7 @@ Proof.
     "Hrem" ∷ remaining_ptr ↦ rem ∗
     "Hparent" ∷ tv.(yjs.Text.inner') ↦ yt' ∗
     "Hdll" ∷ own_dll (DfracOwn 1) yt'.(yjs.yType.start') tl0' null null cells' ∗
-    "Hlk" ∷ own_Mutex ((tv.(yjs.Text.store')).[yjs.store.t, "mu"]) ∗
+    "Hlk" ∷ own_wlock γs ∗
     "Hclient" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "client"] ↦ client ∗
     "Hclock" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "clock"] ↦ k ∗
     "Hitemsf" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "items"] ↦ items_mref ∗
@@ -940,7 +945,7 @@ Proof.
         rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
         rewrite !fmap_app /= Hkpeq. reflexivity. }
       iDestruct (own_item_map_kp_perm items_mref (DfracOwn 1) types (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) Hkpperm with "Hitemmap") as "Hitemmap".
-      wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
+      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
       { iNext. iExists client, k, items_mref, types_mref, dset,
           (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m.
         iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hhist HtypesAuth Hbinds".
@@ -994,7 +999,7 @@ Proof.
         rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
         rewrite !fmap_app /= Hkpeq. reflexivity. }
       iDestruct (own_item_map_kp_perm items_mref (DfracOwn 1) types (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) Hkpperm with "Hitemmap") as "Hitemmap".
-      wp_apply (wp_Mutex__Unlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
+      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
       { iNext. iExists client, k, items_mref, types_mref, dset,
           (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m.
         iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hhist HtypesAuth Hbinds".

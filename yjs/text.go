@@ -26,21 +26,24 @@ type Text struct {
 	inner *yType
 }
 
-// String returns the current visible text. Reads the shared DLL under the lock.
+// String returns the current visible text. A pure read: takes the read lock
+// (RLock) so it runs concurrently with other readers (y-octo reads the type
+// under the RwLock read guard).
 func (t *Text) String() string {
 	s := t.store
-	s.mu.Lock()
+	s.mu.RLock()
 	r := t.inner.Text()
-	s.mu.Unlock()
+	s.mu.RUnlock()
 	return r
 }
 
-// Len returns the visible (countable, non-deleted) length, read under the lock.
+// Len returns the visible (countable, non-deleted) length. A pure read: takes
+// the read lock (RLock) so it runs concurrently with other readers.
 func (t *Text) Len() uint64 {
 	s := t.store
-	s.mu.Lock()
+	s.mu.RLock()
 	n := t.inner.len
-	s.mu.Unlock()
+	s.mu.RUnlock()
 	return n
 }
 
