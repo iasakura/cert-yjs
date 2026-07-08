@@ -43,6 +43,11 @@ verification of a *realistic* Yjs implementation, not a toy.
   `integrate_commutative`, `yjs_strong_convergence`, …). Extract algorithmic
   cores into their own Go functions (e.g. `scanConflicts` /
   `findIntegrationLeft`) so hard loops are provable in isolation.
+- **Writing style**: do not use em-dashes or en-dashes (the "—" / "–" long
+  dashes) in prose, code comments, commit messages, PR text, or docs; they
+  read as machine-written. Use commas, parentheses, colons, or a fresh
+  sentence instead. Ordinary hyphens in compound words (`hand-written`,
+  `goose-only`) are fine.
 
 ## Workflow
 
