@@ -150,8 +150,10 @@ needing only `common`) and reopen the same `Section` boilerplate:
   `diff_state_vector`, the WP specs `wp_computeStateVector` / `wp_computeDiff`
   (over `own_map` / `own_slice`, no codec), and the capstone
   `diff_of_own_state_vector_empty` (a replica's own state vector covers its own
-  document). The byte-level message codec + dispatch is the unverified rind in
-  `yjs/protocol.go`.
+  document). Also the decoded-message handler (issue #63 intermediate):
+  `wp_syncDoc__HandleSyncMessage_Step1` (answers with the diff) /
+  `wp_syncDoc__HandleSyncMessage_Apply` (no answer; state vector only grows). The
+  byte-level message codec + dispatch is the unverified rind in `yjs/protocol.go`.
 
 ## Notes
 
