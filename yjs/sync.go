@@ -78,3 +78,61 @@ func computeDiff(items []updateItem, sv map[Client]Clock) []updateItem {
 	}
 	return diff
 }
+
+// ---------------------------------------------------------------------------
+// Decoded sync-message handler.
+//
+// SyncMessage is the DECODED y-protocols/sync doc message, and
+// (*syncDoc).HandleSyncMessage is the handler over it. This is deliberately an
+// EXTRA INTERMEDIATE representation (tracked for removal in issue #63): syncDoc
+// holds the whole document as a flat decoded item list (a copy of what the
+// store's DLLs already hold), and "applying" a batch just appends to that list
+// instead of running the real conflict-resolving integration. A faithful port
+// would decode straight from the wire (no SyncMessage sum type) and run against
+// the real store (snapshot-free diff for Step1, store.applyUpdate for
+// Step2/Update).
+//
+// The point of the intermediate is a clean, codec-free spec (proofs in
+// src/proof/yjs_sync.v):
+//   - Step1(sv):    the response is Step2 carrying computeDiff(items, sv) -- the
+//                   exact structs the peer is missing;
+//   - Step2/Update: no response, and the doc's state advances -- its state vector
+//                   only grows (never regresses). This "state went up" spec is
+//                   used in place of the faithful store.applyUpdate's
+//                   computational (replay) postcondition on purpose.
+
+// SyncMessage tags (y-octo: protocol/doc.rs DOC_MESSAGE_STEP1/STEP2/UPDATE).
+const (
+	syncStep1  = 0
+	syncStep2  = 1
+	syncUpdate = 2
+)
+
+// SyncMessage is a decoded doc message. Exactly one payload is meaningful: sv
+// for Step1, update for Step2/Update.
+type SyncMessage struct {
+	tag    uint64
+	sv     map[Client]Clock
+	update []updateItem
+}
+
+// syncDoc is a document viewed as its decoded item list -- the extra intermediate
+// data the handler runs against (issue #63).
+type syncDoc struct {
+	items []updateItem
+}
+
+// HandleSyncMessage executes one decoded sync message against the doc and returns
+// the optional decoded response (y-protocols readSyncMessage, decoded form). The
+// second result is false when there is no response (Step2/Update).
+func (d *syncDoc) HandleSyncMessage(msg SyncMessage) (SyncMessage, bool) {
+	if msg.tag == syncStep1 {
+		// Step1: answer with the structs the peer is missing.
+		return SyncMessage{tag: syncStep2, update: computeDiff(d.items, msg.sv)}, true
+	}
+	// Step2 / Update: absorb the batch. The state vector only grows.
+	for i := 0; i < len(msg.update); i++ {
+		d.items = append(d.items, msg.update[i])
+	}
+	return SyncMessage{}, false
+}

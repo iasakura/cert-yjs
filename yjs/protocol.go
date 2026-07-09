@@ -25,12 +25,8 @@ import "sort"
 // the DLLs and ApplyUpdate mutates the store without taking the lock, as the
 // other codec entry points (EncodeUpdate / ApplyUpdate) already do.
 
-// doc-message tags (y-octo: protocol/doc.rs DOC_MESSAGE_STEP1/STEP2/UPDATE).
-const (
-	docMessageStep1  = 0
-	docMessageStep2  = 1
-	docMessageUpdate = 2
-)
+// The doc-message tags (syncStep1/syncStep2/syncUpdate) live in sync.go so the
+// goose-translated decoded handler can share them.
 
 // ----- lib0 var buffer (length-prefixed byte slice) --------------------------
 
@@ -208,13 +204,13 @@ func writeDocMessage(tag uint64, payload []byte) []byte {
 // computed by the verified computeStateVector over a document snapshot.
 func (doc *Doc) WriteSyncStep1() []byte {
 	sv := computeStateVector(snapshotStructs(doc))
-	return writeDocMessage(docMessageStep1, writeStateVector(sv))
+	return writeDocMessage(syncStep1, writeStateVector(sv))
 }
 
 // WriteUpdate frames a raw v1 update as an Update message (y-protocols:
 // writeUpdate), for broadcasting a local change to peers.
 func WriteUpdate(update []byte) []byte {
-	return writeDocMessage(docMessageUpdate, update)
+	return writeDocMessage(syncUpdate, update)
 }
 
 // HandleSyncMessage parses one incoming sync doc message, executes it against
@@ -224,17 +220,27 @@ func WriteUpdate(update []byte) []byte {
 //   - Step1(sv):  reply with Step2 carrying computeDiff(doc, sv);
 //   - Step2(u):   apply u (no reply);
 //   - Update(u):  apply u (no reply).
+//
+// Step1 routes through the verified decoded handler (*syncDoc).HandleSyncMessage:
+// syncDoc's item list is exactly the document snapshot the diff is computed
+// against, so this exercises the proven Step1 spec. Step2/Update still apply to
+// the real store (syncDoc's append does not integrate); unifying the two is
+// issue #63.
 func (doc *Doc) HandleSyncMessage(msg []byte) []byte {
 	tag, payload := readDocMessage(msg)
 	switch tag {
-	case docMessageStep1:
+	case syncStep1:
 		sv := readStateVector(payload)
-		diff := computeDiff(snapshotStructs(doc), sv)
-		return writeDocMessage(docMessageStep2, encodeDiffUpdate(diff, doc))
-	case docMessageStep2:
+		d := &syncDoc{items: snapshotStructs(doc)}
+		resp, ok := d.HandleSyncMessage(SyncMessage{tag: syncStep1, sv: sv})
+		if ok {
+			return writeDocMessage(syncStep2, encodeDiffUpdate(resp.update, doc))
+		}
+		return nil
+	case syncStep2:
 		doc.ApplyUpdate(payload)
 		return nil
-	case docMessageUpdate:
+	case syncUpdate:
 		doc.ApplyUpdate(payload)
 		return nil
 	}

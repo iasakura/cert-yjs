@@ -15,7 +15,13 @@
       functions composed.
 
     The Step2/Update execution (applying a received update) is the already-proven
-    [wp_store__applyUpdate] (yjs_store.v). *)
+    [wp_store__applyUpdate] (yjs_store.v).
+
+    The decoded message handler (issue #63 intermediate, at the bottom):
+    [wp_syncDoc__HandleSyncMessage_Step1] (answers with the [diff_model]) and
+    [wp_syncDoc__HandleSyncMessage_Apply] (no answer; the doc's state vector only
+    grows, [state_vector_model_app_grew]). The latter's "state advanced" spec is
+    used in place of a computational replay postcondition. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -311,6 +317,116 @@ Proof.
     have Hieq : uint.nat i = length items by word.
     rewrite Hieq take_ge; [| lia].
     iApply "HΦ". iFrame.
+Qed.
+
+(* ===================================================================== *)
+(* Decoded SyncMessage handler (issue #63 intermediate)                   *)
+(* ===================================================================== *)
+
+(** A syncDoc owns its decoded item list. *)
+Definition own_syncDoc (d : loc) (items : list yjs.updateItem.t) : iProp Σ :=
+  ∃ (sl : slice.t),
+    "Hitems" ∷ (d .[(yjs.syncDoc.t), "items"]) ↦ sl ∗
+    "Hsl" ∷ sl ↦* items ∗
+    "Hcap" ∷ own_slice_cap yjs.updateItem.t sl (DfracOwn 1).
+
+(** Applying a batch (append) only advances the state vector: never regresses. *)
+Lemma state_vector_model_app_grew (items upd : list yjs.updateItem.t) (c : w64) :
+  (uint.Z (sv_get (state_vector_model items) c)
+     <= uint.Z (sv_get (state_vector_model (items ++ upd)) c))%Z.
+Proof. rewrite /state_vector_model foldl_app. apply sv_get_foldl_mono. Qed.
+
+(** Step1: answer with Step2 carrying exactly the structs the peer is missing
+    (the [diff_model]). The doc is unchanged. *)
+Lemma wp_syncDoc__HandleSyncMessage_Step1 (d : loc) (items : list yjs.updateItem.t)
+    (msg : yjs.SyncMessage.t) (dqsv : dfrac) (sv : gmap w64 w64) :
+  msg.(yjs.SyncMessage.tag') = W64 0 ->
+  {{{ is_pkg_init yjs ∗ own_syncDoc d items ∗ own_map msg.(yjs.SyncMessage.sv') dqsv sv }}}
+    d @! (go.PointerType yjs.syncDoc) @! "HandleSyncMessage" #msg
+  {{{ (resp : yjs.SyncMessage.t) (ok : bool), RET (#resp, #ok);
+      ⌜ok = true⌝ ∗ ⌜resp.(yjs.SyncMessage.tag') = W64 1⌝ ∗
+      own_syncDoc d items ∗ own_map msg.(yjs.SyncMessage.sv') dqsv sv ∗
+      resp.(yjs.SyncMessage.update') ↦* (diff_model sv items) ∗
+      own_slice_cap yjs.updateItem.t resp.(yjs.SyncMessage.update') (DfracOwn 1) }}}.
+Proof.
+  intros Htag. wp_start as "(Hdoc & Hmap)". iNamed "Hdoc".
+  wp_auto.
+  rewrite Htag.
+  rewrite bool_decide_eq_true_2; [| done].
+  wp_auto.
+  wp_apply (wp_computeDiff with "[$Hsl $Hmap]") as "%out (Hsl & Hmap & Hout & Houtcap)".
+  iApply "HΦ".
+  iSplit; [done|].
+  iSplit; [done|].
+  iSplitR "Hmap Hout Houtcap".
+  { iExists sl. iFrame. }
+  iFrame.
+Qed.
+
+(** Step2 / Update: no response, and the doc's state advances (state vector grows). *)
+Lemma wp_syncDoc__HandleSyncMessage_Apply (d : loc) (items : list yjs.updateItem.t)
+    (msg : yjs.SyncMessage.t) (dq : dfrac) (upd : list yjs.updateItem.t) :
+  msg.(yjs.SyncMessage.tag') ≠ W64 0 ->
+  {{{ is_pkg_init yjs ∗ own_syncDoc d items ∗ msg.(yjs.SyncMessage.update') ↦*{dq} upd }}}
+    d @! (go.PointerType yjs.syncDoc) @! "HandleSyncMessage" #msg
+  {{{ (resp : yjs.SyncMessage.t) (ok : bool), RET (#resp, #ok);
+      ⌜ok = false⌝ ∗ own_syncDoc d (items ++ upd) ∗
+      ⌜∀ c, (uint.Z (sv_get (state_vector_model items) c)
+               <= uint.Z (sv_get (state_vector_model (items ++ upd)) c))%Z⌝ ∗
+      msg.(yjs.SyncMessage.update') ↦*{dq} upd }}}.
+Proof.
+  intros Htag. wp_start as "(Hdoc & Hupd)". iNamed "Hdoc".
+  wp_auto.
+  rewrite (bool_decide_eq_false_2 _ Htag).
+  wp_auto.
+  iDestruct (own_slice_len with "Hupd") as %[Hupdlen Hupdlen0].
+  iAssert (∃ (i : w64) (sl : slice.t),
+    "Hi" ∷ i_ptr ↦ i ∗ "Hd" ∷ d_ptr ↦ d ∗ "Hmsg" ∷ msg_ptr ↦ msg ∗
+    "Hitems" ∷ (d .[(yjs.syncDoc.t), "items"]) ↦ sl ∗
+    "Hsl" ∷ sl ↦* (items ++ take (uint.nat i) upd) ∗
+    "Hcap" ∷ own_slice_cap yjs.updateItem.t sl (DfracOwn 1) ∗
+    "Hupd" ∷ msg.(yjs.SyncMessage.update') ↦*{dq} upd ∗
+    "%Hile" ∷ ⌜(uint.Z i <= Z.of_nat (length upd))%Z⌝)%I
+    with "[i d msg Hitems Hsl Hcap Hupd]" as "IH".
+  { iExists (W64 0), sl. iFrame. rewrite take_0 app_nil_r. iFrame. word. }
+  wp_for "IH".
+  case_bool_decide as Hcond.
+  - have Hilt : (uint.nat i < length upd)%nat by word.
+    destruct (upd !! uint.nat i) as [u|] eqn:Hu; [| apply lookup_ge_None in Hu; lia].
+    iDestruct (own_slice_elem_acc (sint.Z i) u msg.(yjs.SyncMessage.update') dq upd with "Hupd")
+      as "[Hel Hgive]".
+    { word. }
+    { replace (Z.to_nat (sint.Z i)) with (uint.nat i) by word. exact Hu. }
+    wp_auto.
+    rewrite decide_True; [| word].
+    wp_auto.
+    wp_apply wp_slice_literal.
+    iSplitR; first done.
+    iIntros "%s1 [Hs1 _]".
+    wp_auto.
+    wp_apply (wp_slice_append with "[$Hsl $Hcap $Hs1]") as "%sl' (Hsl & Hcap & _)".
+    have Hz0 : forall (z : yjs.updateItem.t), <[sint.nat (W64 0):=u]> [z] = [u].
+    { intro z. have Hz : sint.nat (W64 0) = 0%nat by word. rewrite Hz //. }
+    iEval (rewrite Hz0) in "Hsl".
+    iDestruct ("Hgive" $! u with "Hel") as "Hupd".
+    rewrite list_insert_id; [| replace (sint.nat i) with (uint.nat i) by word; exact Hu].
+    wp_for_post.
+    iFrame "HΦ".
+    iExists (word.add i (W64 1)), sl'.
+    iFrame "Hi Hd Hmsg Hitems Hcap Hupd".
+    have Hi1 : uint.nat (word.add i (W64 1)) = S (uint.nat i) by word.
+    rewrite Hi1 (take_S_r upd (uint.nat i) u Hu) app_assoc.
+    iFrame "Hsl". word.
+  - wp_auto.
+    have Hieq : uint.nat i = length upd by word.
+    rewrite Hieq take_ge; [| lia].
+    iApply "HΦ".
+    iSplit; [done |].
+    iSplitL "Hitems Hsl Hcap".
+    { iExists sl0. iFrame. }
+    iSplit.
+    { iPureIntro. move=> c. apply state_vector_model_app_grew. }
+    iFrame "Hupd".
 Qed.
 
 End sync.
