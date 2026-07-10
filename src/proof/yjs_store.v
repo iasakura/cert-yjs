@@ -14,8 +14,14 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype.
 From New.proof Require Import yjs_history.             (* ghost op history (issue #42) *)
-From New.proof.sync_proof Require Import mutex.        (* is_Mutex (store lock) *)
+From New.proof.sync_proof Require Import base mutex rwmutex rwmutex_guard.
+                                                      (* store lock: rwmutex.is_RWMutex + LP Lock/Unlock
+                                                         (y-octo Arc<RwLock<DocStore>>); the
+                                                         guard's rfrac + tok_set reader accounting *)
+From New.proof Require Import tok_set.                 (* own_tok_auth / own_toks *)
 From iris.algebra Require Import auth gmap gset.       (* grow-only item-set RA *)
+From iris.algebra.lib Require Import dfrac_agree.      (* reader/lock agreement on the types map *)
+From iris.bi.lib Require Import fractional.            (* Fractional (read-share of store_inv) *)
 From stdpp Require Import sorting.                     (* merge_sort for client_run *)
 
 (* iris.algebra / stdpp.sorting push [nat_scope], retuning the default [<] / [≤].
@@ -84,6 +90,25 @@ Proof.
   split; assumption.
 Qed.
 
+(** Fractional variant of [auth_gmap_gset_lookup]: a reader holding a [dq]-share
+    of the authority ([●{dq} m], from [store_inv_ro]) can still learn membership
+    and the lower bound. Used by the concurrent read API (Text.Len). *)
+Lemma auth_gmap_gset_lookup_dq {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (dq : dfrac) (m : gmap K (gset V)) (k : K) (S : gset V) :
+  own γ (●{dq} m) -∗ own γ (◯ {[k := S]}) -∗ ⌜∃ S', m !! k = Some S' ∧ S ⊆ S'⌝.
+Proof.
+  iIntros "Ha Hf".
+  iDestruct (own_valid_2 with "Ha Hf") as %Hv.
+  iPureIntro.
+  apply auth_both_dfrac_valid_discrete in Hv as [_ [Hincl _]].
+  apply singleton_included_l in Hincl as [S' [Hlk Hsub]].
+  exists S'.
+  apply leibniz_equiv in Hlk.
+  rewrite Some_included_total in Hsub.
+  rewrite gset_included in Hsub.
+  split; assumption.
+Qed.
+
 (** Grow the set at [k] (from [Sold] to [Snew ⊇ Sold]) in the authority and mint
     the matching fragment [◯ {[k := Snew]}] (= the new [is_type_lb]). *)
 Lemma auth_gmap_gset_grow {K V : Type} `{Countable K} `{Countable V}
@@ -138,6 +163,10 @@ Record type_state := MkTypeState {
   ty_cells : list item_cell;
   ty_arr   : list (YjsItem A);
 }.
+
+(* reader/lock agreement on the [types] map (concurrent read API); declared here,
+   after [type_state], since it mentions it. *)
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 
 (** All cells across all types (the document-global item pool). *)
 Definition all_cells (types : gmap loc type_state) : list item_cell :=
@@ -466,6 +495,107 @@ Definition own_item_map (mref : loc) (dq : dfrac) (types : gmap loc type_state) 
                     cell_client c1 = cell_client c2 → (cell_pr c1).1 = (cell_pr c2).1 →
                     ic_loc c1 = ic_loc c2⌝.
 
+(* The [∷] (named) wrapper blocks [Timeless] TC resolution; unfold it (as
+   [New.proof.sync_proof.rwmutex] does) so the [Timeless] instances below go
+   through the named conjuncts of [own_item_map] / [store_inv]. *)
+#[local] Hint Extern 100 (Timeless (?n ∷ ?P)) =>
+  (change (n ∷ P) with P) : typeclass_instances.
+
+(* [own_slice_cap] (a sealed disjunction of pure facts and a [↦{dq}] array) is
+   timeless, but the New.golang slice library ships no such instance; provide it
+   here (candidate upstream addition) so [own_item_map] / [store_inv] are
+   timeless. *)
+#[global] Instance own_slice_cap_timeless (V : Type) `{!ZeroVal V} `{!TypedPointsto V} (s : slice.t) (dq : dfrac) :
+  Timeless (own_slice_cap V s dq).
+Proof. rewrite own_slice_cap_unseal /own_slice_cap_def. apply _. Qed.
+
+#[global] Instance own_item_map_timeless mref dq types : Timeless (own_item_map mref dq types).
+Proof. rewrite /own_item_map. apply _. Qed.
+
+(* The DLL predicate stack is timeless too (heap points-to + pure + persistent
+   origin handles); register the instances so [store_inv] is timeless. *)
+#[global] Instance is_origin_id_timeless p oid : Timeless (is_origin_id p oid).
+Proof. rewrite /is_origin_id. by destruct oid; apply _. Qed.
+
+#[global] Instance own_dll_timeless dq l last prev next cells :
+  Timeless (own_dll dq l last prev next cells).
+Proof.
+  revert l last prev next.
+  induction cells as [|c rest IH]; intros l last prev next; simpl.
+  - apply _.
+  - repeat (apply bi.exist_timeless; intros ?).
+    repeat (apply bi.sep_timeless; [ apply _ | ]).
+    apply IH.
+Qed.
+
+#[global] Instance own_ytype_cells_timeless parent dq cells arr :
+  Timeless (own_ytype_cells parent dq cells arr).
+Proof. rewrite /own_ytype_cells. apply _. Qed.
+
+(* ----- fractional DLL stack (for the concurrent-read share of [store_inv]) ---
+   The read lock hands each reader a fractional share of the read-only part of
+   [store_inv] (its DLLs + the item-set auth). These make that share splittable:
+   [own_dll] / [own_ytype_cells] are [Fractional] in their [DfracOwn q]. The
+   [⊣⊢]-backward direction needs the existential heap struct ([iv] / [yt]) and
+   the DLL tail loc ([tl]) to AGREE across the two shares; [own_dll_last_agree]
+   supplies the [tl] agreement (both DLLs over the same cells end at the same
+   node); [iv]/[yt] agree by [pointsto] agreement. *)
+#[global] Instance own_dll_fractional l last prev next cells :
+  Fractional (λ q, own_dll (DfracOwn q) l last prev next cells).
+Proof.
+  intros q1 q2. revert l last prev next.
+  induction cells as [|c rest IH]; intros l last prev next; simpl.
+  - iSplit; [ iIntros "#H"; iSplit; iFrame "H" | iIntros "[H _]"; iFrame "H" ].
+  - iSplit.
+    + iIntros "H". iNamed "H".
+      iDestruct "Holeft" as "#Holeft". iDestruct "Horight" as "#Horight".
+      iDestruct "Hval" as "[Hv1 Hv2]".
+      iDestruct (IH with "Hrest") as "[Hr1 Hr2]".
+      iSplitL "Hv1 Hr1".
+      * iExists iv, olid, orid. iFrame "Hv1 Holeft Horight Hr1". done.
+      * iExists iv, olid, orid. iFrame "Hv2 Holeft Horight Hr2". done.
+    + iIntros "[H1 H2]".
+      iDestruct "H1" as (iv1 olid1 orid1) "H1". iNamedSuffix "H1" "1".
+      iDestruct "H2" as (iv2 olid2 orid2) "H2". iNamedSuffix "H2" "2".
+      iCombine "Hval1 Hval2" gives %Hiv. subst iv2.
+      iCombine "Hval1 Hval2" as "Hval".
+      iDestruct (IH with "[$Hrest1 $Hrest2]") as "Hrest".
+      iExists iv1, olid1, orid1. iFrame "Hval Hrest Holeft1 Horight1". done.
+Qed.
+
+Lemma own_dll_last_agree dq1 dq2 (l la1 la2 prev next : loc) (cells : list item_cell) :
+  own_dll dq1 l la1 prev next cells -∗ own_dll dq2 l la2 prev next cells -∗ ⌜la1 = la2⌝.
+Proof.
+  revert l la1 la2 prev next.
+  induction cells as [|c rest IH]; intros l la1 la2 prev next; simpl.
+  - iIntros "[%H1a %H1b] [%H2a %H2b]". subst. done.
+  - iIntros "H1 H2".
+    iDestruct "H1" as (iv1 ol1 or1) "H1". iNamedSuffix "H1" "1".
+    iDestruct "H2" as (iv2 ol2 or2) "H2". iNamedSuffix "H2" "2".
+    iCombine "Hval1 Hval2" gives %->.
+    iApply (IH with "Hrest1 Hrest2").
+Qed.
+
+#[global] Instance own_ytype_cells_fractional parent cells arr :
+  Fractional (λ q, own_ytype_cells parent (DfracOwn q) cells arr).
+Proof.
+  intros q1 q2. rewrite /own_ytype_cells. iSplit.
+  - iIntros "H". iNamed "H".
+    iDestruct "Hparent" as "[Hp1 Hp2]".
+    iDestruct (own_dll_fractional _ _ _ _ _ q1 q2 with "Hdll") as "[Hd1 Hd2]".
+    iSplitL "Hp1 Hd1".
+    + iExists yt, tl. iFrame "Hp1 Hd1". auto.
+    + iExists yt, tl. iFrame "Hp2 Hd2". auto.
+  - iIntros "[H1 H2]".
+    iDestruct "H1" as (yt1 tl1) "H1". iNamedSuffix "H1" "1".
+    iDestruct "H2" as (yt2 tl2) "H2". iNamedSuffix "H2" "2".
+    iCombine "Hparent1 Hparent2" gives %Hyt. subst yt2.
+    iDestruct (own_dll_last_agree with "Hdll1 Hdll2") as %Htl. subst tl2.
+    iCombine "Hparent1 Hparent2" as "Hparent".
+    iDestruct (own_dll_fractional _ _ _ _ _ q1 q2 with "[$Hdll1 $Hdll2]") as "Hdll".
+    iExists yt1, tl1. iFrame "Hparent Hdll". auto.
+Qed.
+
 (** [own_item_map] is a function of the document-global (client, clock, loc)
     projection [cell_kp <$> all_cells] alone: two [types] with the same [cell_kp]
     multiset carry the same run-map. [Text.Delete] flips [ic_deleted] bits, which
@@ -531,6 +661,12 @@ Qed.
 Record store_names := StoreNames {
   sn_seq : gname;    (* authR (gmapUR loc (gsetUR (YjsItem A)))  *)
   sn_types : gname;  (* ghost_map go_string loc                  *)
+  sn_wl : gname;     (* [own_wlock]: the exclusive write-lock witness (ghost_var _ 1 ()) *)
+  (* --- RWMutex lock layer (reader-count accounting for the concurrent read API) --- *)
+  sn_rw : RWMutex_names; (* the logically-atomic RWMutex ghost names             *)
+  sn_rmax : gname;   (* own_toks bound: # readers ≤ actualMaxReaders            *)
+  sn_rrlocked : gname; (* own_tok_auth: the active reader count                 *)
+  sn_types_agree : gname; (* dfrac_agree on the types map (reader/inv agreement) *)
 }.
 
 (** The root-type binding: [name] is bound to the type at [p], forever
@@ -555,7 +691,7 @@ Qed.
 
 (** [store_inv s_loc γs γh]: everything the store lock protects.
     - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
-      [mu] is owned by [is_Mutex] in [is_Store], not here);
+      [mu] is owned by the [sync.RWMutex] ([rwmutex.is_RWMutex] in [is_Store]), not here);
     - the item-set authority [own γ (●…)] per type loc (id-set), whose fragments
       are the [is_type_lb] lower bounds / registration witnesses [Text] holds;
     - each registered type's DLL (keyed by [parent]) + [YjsArrInvariant];
@@ -610,12 +746,201 @@ Definition store_inv (s_loc : loc) (γs : store_names) (γh : history_names) : i
     "%Hmdom" ∷ ⌜∀ t, docm_get m t ≠ [] →
                   ∃ name p, t = RootId name ∧ bind !! name = Some p⌝.
 
-(** Store handle (persistent): the lock at [&store.mu] guards [store_inv]. ALL
-    store-field / item-set / DLL references are sealed here or in [store_inv].
-    (The persistent [is_history γh] handle rides in [is_Text], not here, to
-    keep [store_inv] first-order.) *)
+(** [store_inv] is timeless (heap points-to + ghost state over discrete cameras +
+    pure facts), so the write [Lock] wrapper hands it back WITHOUT a [▷] even
+    though it is extracted from the tie invariant — the Insert/Delete proofs use
+    it immediately (no intervening program step to strip a later). *)
+#[global] Instance store_inv_timeless s_loc γs γh : Timeless (store_inv s_loc γs γh).
+Proof. rewrite /store_inv. apply _. Qed.
+
+(** [store_inv_ro γs types q]: the read-only-shareable slice of [store_inv] that a
+    concurrent reader needs: the per-type DLLs (from which [Text.String]/[Len]
+    read visible content / length) and the item-set authority (combined with a
+    reader's [is_type_lb] to locate its type). Fractional in [q]: the read lock
+    hands each of up to [rwmutexMaxReaders] readers a share, and the write lock
+    reassembles the whole ([q = 1]). The store's mutable-exclusive parts (the
+    struct fields, [own_item_map], the registry [ghost_map_auth], the ghost
+    history) are NOT here; they stay whole in the lock invariant while readers
+    hold shares, since no writer runs concurrently with readers. *)
+Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
+  "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
+  "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
+                own_ytype_cells parent (DfracOwn q) (ty_cells ts) (ty_arr ts) ∗
+                ⌜YjsArrInvariant (ty_arr ts)⌝).
+
+#[global] Instance store_inv_ro_fractional γs types : Fractional (store_inv_ro γs types).
+Proof.
+  rewrite /store_inv_ro /named. apply fractional_sep.
+  - intros q1 q2. rewrite -own_op -auth_auth_dfrac_op dfrac_op_own //.
+  - apply fractional_big_sepM. intros parent ts.
+    apply fractional_sep; [ apply own_ytype_cells_fractional | apply _ ].
+Qed.
+
+(** [store_inv_excl]: the complement of [store_inv_ro] within [store_inv], the
+    mutable-exclusive state the read lock does NOT share (struct fields, the
+    per-client item map, the registry [ghost_map_auth], the ghost history, and
+    the counter / registry side conditions). It stays whole in the lock
+    invariant while readers hold fractional shares of [store_inv_ro]. *)
+Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names)
+    (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
+    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocM) : iProp Σ :=
+    "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
+    "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
+    "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
+    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types ∗
+    "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
+    "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
+    "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
+    "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
+                   clientId (item_id x) = uint.nat client →
+                   (clock (item_id x) < uint.nat k)%nat⌝ ∗
+    "%Hcellctr" ∷ ⌜∀ c, c ∈ all_cells types → cell_client c = client →
+                   (uint.Z (cell_clock c) < uint.Z k)%Z⌝ ∗
+    "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
+    "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
+    "%Hbindtypes" ∷ ⌜∀ name p, bind !! name = Some p → is_Some (types !! p)⌝ ∗
+    "%Hbindinj" ∷ ⌜∀ n1 n2 p, bind !! n1 = Some p → bind !! n2 = Some p → n1 = n2⌝ ∗
+    "%Htypesbound" ∷ ⌜∀ p, is_Some (types !! p) → ∃ name, bind !! name = Some p⌝ ∗
+    "Hhist"   ∷ own_client_history γh (uint.nat client) h ∗
+    "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
+    "%Hmtypes" ∷ ⌜∀ name p ts, bind !! name = Some p → types !! p = Some ts →
+                    docm_get m (RootId name) = ty_arr ts⌝ ∗
+    "%Hmdom" ∷ ⌜∀ t, docm_get m t ≠ [] →
+                  ∃ name p, t = RootId name ∧ bind !! name = Some p⌝.
+
+(** [store_inv] partitions into its exclusive part and the read-shareable part at
+    full fraction. The write lock reassembles the whole via this bridge; the read
+    lock keeps [store_inv_excl] whole and shares [store_inv_ro]. *)
+Lemma store_inv_bridge (s_loc : loc) (γs : store_names) (γh : history_names) :
+  store_inv s_loc γs γh ⊣⊢
+  ∃ client k items_mref types_mref dset types bind h m,
+    store_inv_excl s_loc γs γh client k items_mref types_mref dset types bind h m ∗
+    store_inv_ro γs types 1.
+Proof.
+  rewrite /store_inv /store_inv_excl /store_inv_ro. iSplit.
+  - iIntros "H". iNamed "H". iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+    iSplitR "Hseq Htypes".
+    + iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset HtypesAuth Hhist Hbinds".
+      iPureIntro. split_and!; assumption.
+    + iFrame "Hseq Htypes".
+  - iIntros "H". iDestruct "H" as (client k items_mref types_mref dset types bind h m) "[He Hro]".
+    iNamed "He". iNamed "Hro".
+    iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset HtypesAuth Hhist Hbinds Hseq Htypes".
+    iPureIntro. split_and!; assumption.
+Qed.
+
+(** ---------------------------------------------------------------------------
+    Store lock = a [sync.RWMutex] (y-octo's [Arc<RwLock<DocStore>>]).
+
+    Writers (Insert/Delete/GetText/applyUpdate) take the write lock; the pure
+    readers (String/Len) take the read lock, so concurrent reads are allowed.
+    [is_Store] is a PERSISTENT handle built over Perennial's logically-atomic
+    RWMutex ([New.proof.sync_proof.rwmutex]): a tying [inv] relates the RWMutex's
+    abstract lock state to [store_inv]. The RWMutex ghost names [γrw] are hidden
+    (existential) inside [is_Store], so [is_Store]'s signature is unchanged.
+
+    Write path (this port): the write [Lock] linearizes only at [RLocked 0] (no
+    readers outstanding), where it can take the WHOLE [store_inv]; [Unlock]
+    returns it. So [store_lock_res] maps [RLocked _ ↦ store_inv ∗ own_wlock] and
+    [Locked ↦ True]; a writer never observes [RLocked (S _)]. [own_wlock] is the
+    exclusive "I hold the write lock" witness (like [own_Mutex]); it makes the
+    [Unlock] proof's "not actually locked" case a clean [ghost_var] clash.
+    Concurrent readers (the verified String/Len read API) only REFINE the
+    [RLocked (S _)] branch to a fractional share of [store_inv]; that is a
+    follow-on and does not touch these write proofs. --------------------------- *)
+
+(** The exclusive write-lock witness (mirrors [own_Mutex]). *)
+Definition own_wlock (γs : store_names) : iProp Σ :=
+  ghost_var γs.(sn_wl) 1 ().
+
+(** ---------- reader-count accounting (concurrent read API) ----------------
+    The tie invariant carries [rwmutex_guard]-style accounting so multiple readers
+    can each hold a fractional [store_inv_ro] share:
+    - [own_tok_auth γs.(sn_rrlocked) n]: the active reader count [n];
+    - [own_toks γs.(sn_rmax) n] bounded by the persistent
+      [own_tok_auth_dfrac γs.(sn_rmax) □ (max)]: [n ≤ actualMaxReaders], so the
+      per-reader fraction stays positive;
+    - [types_frag] ([dfrac_agree] on the [types] map) ties the readers' share to
+      the store's current [types] (needed to recombine at RUnlock, since the
+      item-set auth alone does not determine the [type_state] map);
+    - the mutable-exclusive [store_inv_excl] whole + the shared [store_inv_ro] at
+      the remaining fraction [frac_of n]. The write [Lock] linearizes at
+      [RLocked 0] (fraction 1 = the whole [store_inv] via [store_inv_bridge]);
+      each read [RLock] peels off one [rfrac] share. The fraction arithmetic
+      mirrors [rwmutex_guard.rfrac]. ------------------------------------------ *)
+
+Definition frac_of (n : nat) : Qp :=
+  (pos_to_Qp (Z.to_pos (rwmutex.actualMaxReaders + 1 - Z.of_nat n)) * rwmutex_guard.rfrac)%Qp.
+
+Lemma frac_of_0 : frac_of 0 = 1%Qp.
+Proof.
+  rewrite /frac_of rwmutex_guard.rfrac_unseal /rwmutex_guard.rfrac_def.
+  replace (rwmutex.actualMaxReaders + 1 - Z.of_nat 0)%Z with (rwmutex.actualMaxReaders + 1)%Z by lia.
+  rewrite Qp.mul_inv_r //.
+Qed.
+
+Lemma frac_of_split (n : nat) : (Z.of_nat n < rwmutex.actualMaxReaders)%Z →
+  frac_of n = (rwmutex_guard.rfrac + frac_of (S n))%Qp.
+Proof.
+  intros Hn. rewrite /frac_of.
+  rewrite -{2}(Qp.mul_1_l rwmutex_guard.rfrac) -Qp.mul_add_distr_r. f_equal.
+  replace (Z.to_pos (rwmutex.actualMaxReaders + 1 - n))
+    with (1 + Z.to_pos (rwmutex.actualMaxReaders + 1 - S n))%positive by lia.
+  rewrite pos_to_Qp_add. f_equal.
+Qed.
+
+(** Fractional agreement on the [types] map between a reader's share and the
+    lock invariant. *)
+Definition types_frag (γs : store_names) (q : Qp) (types : gmap loc type_state) : iProp Σ :=
+  own γs.(sn_types_agree) (to_frac_agree q (types : leibnizO (gmap loc type_state))).
+
+Lemma tf_split γs q1 q2 types :
+  types_frag γs (q1 + q2) types ⊣⊢ types_frag γs q1 types ∗ types_frag γs q2 types.
+Proof. rewrite /types_frag -own_op -frac_agree_op //. Qed.
+
+Lemma tf_agree γs q1 q2 t1 t2 : types_frag γs q1 t1 -∗ types_frag γs q2 t2 -∗ ⌜t1 = t2⌝.
+Proof.
+  iIntros "H1 H2". iCombine "H1 H2" gives %Hv.
+  iPureIntro. by apply frac_agree_op_valid_L in Hv as [_ ->].
+Qed.
+
+#[global] Instance store_inv_ro_timeless γs types q : Timeless (store_inv_ro γs types q).
+Proof. rewrite /store_inv_ro. apply _. Qed.
+#[global] Instance store_inv_excl_timeless s_loc γs γh client k im tm dset types bind h m :
+  Timeless (store_inv_excl s_loc γs γh client k im tm dset types bind h m).
+Proof. rewrite /store_inv_excl. apply _. Qed.
+
+Definition storeN : namespace := nroot .@ "yjs_store".
+
+(** Needed to commute [▷ ∃ st : rwmutex, …] when opening the tie invariant. *)
+#[local] Instance rwmutex_inhabited : Inhabited rwmutex := populate Locked.
+
+Definition tie_body (s_loc : loc) (γs : store_names) (γh : history_names) (st : rwmutex) : iProp Σ :=
+  match st with
+  | Locked => ∃ types, own_tok_auth γs.(sn_rrlocked) 0 ∗ types_frag γs 1 types
+  | RLocked n =>
+      own_tok_auth γs.(sn_rrlocked) n ∗ own_toks γs.(sn_rmax) n ∗ own_wlock γs ∗
+      (∃ client k items_mref types_mref dset types bind h m,
+         types_frag γs (frac_of n) types ∗
+         store_inv_excl s_loc γs γh client k items_mref types_mref dset types bind h m ∗
+         store_inv_ro γs types (frac_of n))
+  end.
+
+(** Store handle (persistent): the [sync.RWMutex] at [&store.mu] with the
+    reader-count accounting invariant. The lock ghost names live in [γs] (see
+    [store_names]); ALL store-field / item-set / DLL references are sealed here or
+    in [store_inv]. *)
 Definition is_Store (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
-  is_Mutex (s_loc .[(yjs.store.t), "mu"]) (store_inv s_loc γs γh).
+  "#Hrw" ∷ rwmutex.is_RWMutex (s_loc .[(yjs.store.t), "mu"]) γs.(sn_rw) (storeN .@ "rw") ∗
+  "#Hmax" ∷ own_tok_auth_dfrac γs.(sn_rmax) DfracDiscarded (Z.to_nat rwmutex.actualMaxReaders) ∗
+  "#Htie" ∷ inv (storeN .@ "tie") (∃ st, rwmutex.own_RWMutex γs.(sn_rw) st ∗ tie_body s_loc γs γh st).
+
+(** The read capability (one reader slot) and the post-RLock reader state. *)
+Definition own_read_cap (γs : store_names) : iProp Σ :=
+  rwmutex.own_RLock_token γs.(sn_rw) ∗ own_toks γs.(sn_rmax) 1.
+Definition own_read_locked (γs : store_names) (types : gmap loc type_state) : iProp Σ :=
+  own_toks γs.(sn_rrlocked) 1 ∗ types_frag γs rwmutex_guard.rfrac types.
 
 (** [is_type_lb γ parent S]: a persistent SUBSET (membership) lower bound on the
     type at [parent] — [S ⊆] its current item set (of full [YjsItem]s) — AND the
@@ -629,8 +954,150 @@ Definition is_type_lb (γ : gname) (parent : loc) (S : gset (YjsItem A)) : iProp
 
 #[global] Instance is_Store_persistent s_loc γs γh : Persistent (is_Store s_loc γs γh).
 Proof. apply _. Qed.
+#[global] Instance own_wlock_timeless γs : Timeless (own_wlock γs).
+Proof. apply _. Qed.
 #[global] Instance is_type_lb_persistent γ parent S : Persistent (is_type_lb γ parent S).
 Proof. apply _. Qed.
+
+(** Write-lock acquire. The write [Lock] linearizes at [RLocked 0] (fraction 1),
+    where [store_inv_bridge] reassembles the whole [store_inv]; the invariant is
+    left holding [Locked] (which keeps the [types_frag] for the next transition).
+    Signature unchanged from the Phase-1 wrapper, so Insert/Delete are untouched. *)
+Lemma wp_Store__wlock (s_loc : loc) (γs : store_names) (γh : history_names) :
+  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh }}}
+    (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Lock" #()
+  {{{ RET #(); own_wlock γs ∗ store_inv s_loc γs γh }}}.
+Proof.
+  wp_start_folded as "His". iNamed "His".
+  wp_apply (rwmutex.wp_RWMutex__Lock with "[$Hrw]").
+  iInv "Htie" as "Hi" "Hclose".
+  iDestruct "Hi" as (st) "[>Hown Hbody]".
+  iFrame "Hown". iApply fupd_mask_intro; first solve_ndisj. iIntros "Hmask".
+  iIntros "%Hst Hlocked". subst st.
+  iEval (cbn) in "Hbody".
+  iDestruct "Hbody" as "(>Hrauth & >Htoks0 & >Hwl & >Hrest)".
+  iDestruct "Hrest" as (client k items_mref types_mref dset types bind h m) "(Hfrag & Hexcl & Hro)".
+  rewrite frac_of_0.
+  iMod "Hmask" as "_".
+  iMod ("Hclose" with "[Hlocked Hrauth Hfrag]") as "_".
+  { iExists Locked. iFrame "Hlocked". iExists types. iFrame "Hrauth Hfrag". }
+  iModIntro. iApply "HΦ". iFrame "Hwl".
+  iApply store_inv_bridge. iExists client, k, items_mref, types_mref, dset, types, bind, h, m. iFrame "Hexcl Hro".
+Qed.
+
+(** Write-lock release. Consumes [own_wlock] and returns [store_inv]; updates the
+    lock invariant's [types_frag] to the (possibly changed) current [types] read
+    off the returned [store_inv] via the bridge; this is what lets the write
+    proofs stay ignorant of the reader accounting. The "invariant is in [RLocked]"
+    case (unlock without the lock) is impossible: the [own_wlock] clash. *)
+Lemma wp_Store__wunlock (s_loc : loc) (γs : store_names) (γh : history_names) :
+  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_wlock γs ∗ ▷ store_inv s_loc γs γh }}}
+    (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Unlock" #()
+  {{{ RET #(); True }}}.
+Proof.
+  wp_start_folded as "(His & Hwl & HR)". iNamed "His".
+  wp_apply (rwmutex.wp_RWMutex__Unlock with "[$Hrw]").
+  iInv "Htie" as "Hi" "Hclose".
+  iDestruct "Hi" as (st) "[>Hown Hbody]".
+  destruct st.
+  - iEval (cbn) in "Hbody".
+    iDestruct "Hbody" as "(_ & _ & >Hwl2 & _)".
+    iDestruct (ghost_var_valid_2 with "Hwl Hwl2") as %[Hbad _].
+    exfalso. by apply (Qp.not_add_le_l 1 1).
+  - iEval (cbn) in "Hbody".
+    iDestruct "Hbody" as (types_old) "(>Hrauth & >Hfrag)".
+    iFrame "Hown". iApply fupd_mask_intro; first solve_ndisj. iIntros "Hmask".
+    iIntros "Hrl0".
+    iMod "Hmask" as "_".
+    iMod (own_toks_0 γs.(sn_rmax)) as "Htoks0".
+    iEval (rewrite store_inv_bridge) in "HR".
+    iDestruct "HR" as (client k items_mref types_mref dset types' bind h m) "[Hexcl Hro]".
+    iMod (own_update _ _ (to_frac_agree 1 (types' : leibnizO _)) with "Hfrag") as "Hfrag".
+    { apply cmra_update_exclusive. done. }
+    iMod ("Hclose" with "[Hrl0 Hrauth Htoks0 Hwl Hfrag Hexcl Hro]") as "_".
+    { iExists (RLocked 0). iFrame "Hrl0". iEval (cbn). iFrame "Hrauth Htoks0 Hwl".
+      iExists client, k, items_mref, types_mref, dset, types', bind, h, m.
+      rewrite frac_of_0. iFrame "Hfrag Hexcl Hro". }
+    iModIntro. by iApply "HΦ".
+Qed.
+
+(** Read-lock acquire: peels one [rfrac] share of [store_inv_ro] off the lock
+    invariant (bumping the reader count), returning the reader's slot witness
+    [own_read_locked] and that share for the specific current [types]. *)
+Lemma wp_Store__rlock (s_loc : loc) (γs : store_names) (γh : history_names) :
+  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_read_cap γs }}}
+    (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "RLock" #()
+  {{{ types, RET #(); own_read_locked γs types ∗ store_inv_ro γs types rwmutex_guard.rfrac }}}.
+Proof.
+  wp_start_folded as "(His & Hcap)". iNamed "His".
+  iDestruct "Hcap" as "[Htok Hmaxtok]".
+  wp_apply (rwmutex.wp_RWMutex__RLock with "[$Hrw $Htok]").
+  iInv "Htie" as "Hi" "Hclose".
+  iDestruct "Hi" as (st) "[>Hown Hbody]".
+  iFrame "Hown". iApply fupd_mask_intro; first solve_ndisj. iIntros "Hmask".
+  iIntros (n) "%Hst Hrl". subst st.
+  iEval (cbn) in "Hbody".
+  iDestruct "Hbody" as "(>Hrauth & >Hmaxn & >Hwl & >Hrest)".
+  iDestruct "Hrest" as (client k items_mref types_mref dset types bind h m) "(Hfrag & Hexcl & Hro)".
+  iCombine "Hmaxn Hmaxtok" as "Hmaxn1".
+  iCombine "Hmax Hmaxn1" gives %Hbound.
+  iMod (own_tok_auth_S with "Hrauth") as "[Hrauth Hrtok]".
+  assert (Z.of_nat n < rwmutex.actualMaxReaders)%Z as Hlt by (rewrite rwmutex.actualMaxReaders_unseal in Hbound |- *; lia).
+  rewrite (frac_of_split n Hlt).
+  iDestruct (tf_split with "Hfrag") as "[Hfrag_r Hfrag_i]".
+  iDestruct (store_inv_ro_fractional γs types with "Hro") as "[Hro_r Hro_i]".
+  iMod "Hmask" as "_".
+  iMod ("Hclose" with "[Hrl Hrauth Hmaxn1 Hwl Hfrag_i Hexcl Hro_i]") as "_".
+  { iExists (RLocked (S n)). iFrame "Hrl". iEval (cbn).
+    replace (S n) with (n + 1)%nat by lia.
+    iFrame "Hrauth Hmaxn1 Hwl".
+    iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+    iFrame "Hfrag_i Hexcl Hro_i". }
+  iModIntro. iApply ("HΦ" $! types). iFrame "Hrtok Hfrag_r Hro_r".
+Qed.
+
+(** Read-lock release: returns the reader's [rfrac] share (proving via [tf_agree]
+    that the store's [types] is unchanged since the [RLock], so the share
+    recombines) and the reader slot; returns [own_read_cap]. *)
+Lemma wp_Store__runlock (s_loc : loc) (γs : store_names) (γh : history_names) types_r :
+  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_read_locked γs types_r ∗
+        store_inv_ro γs types_r rwmutex_guard.rfrac }}}
+    (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "RUnlock" #()
+  {{{ RET #(); own_read_cap γs }}}.
+Proof.
+  wp_start_folded as "(His & Hrlo & Hro_r)". iNamed "His".
+  iDestruct "Hrlo" as "[Hrtok Hfrag_r]".
+  wp_apply (rwmutex.wp_RWMutex__RUnlock with "[$Hrw]").
+  iInv "Htie" as "Hi" "Hclose".
+  iDestruct "Hi" as (st) "[>Hown Hbody]".
+  destruct st as [nr | ].
+  2:{ iEval (cbn) in "Hbody". iDestruct "Hbody" as (types0) "(>Hrauth & _)".
+      iCombine "Hrauth Hrtok" gives %Hbad. exfalso. lia. }
+  destruct nr as [ | n ].
+  { iEval (cbn) in "Hbody". iDestruct "Hbody" as "(>Hrauth & _)".
+    iCombine "Hrauth Hrtok" gives %Hbad. exfalso. lia. }
+  iEval (cbn) in "Hbody".
+  iDestruct "Hbody" as "(>Hrauth & >Hmaxsn & >Hwl & >Hrest)".
+  iDestruct "Hrest" as (client k items_mref types_mref dset types_i bind h m) "(Hfrag_i & Hexcl & Hro_i)".
+  iDestruct (tf_agree with "Hfrag_r Hfrag_i") as %->.
+  iCombine "Hmax Hmaxsn" gives %Hbound.
+  assert (Z.of_nat n < rwmutex.actualMaxReaders)%Z as Hlt by (rewrite rwmutex.actualMaxReaders_unseal in Hbound |- *; lia).
+  iExists n. iFrame "Hown".
+  iApply fupd_mask_intro; first solve_ndisj. iIntros "Hmask".
+  iIntros "[Hrln Htok]".
+  iMod "Hmask" as "_".
+  iMod (own_tok_auth_delete_S with "Hrauth Hrtok") as "Hrauth".
+  iEval (rewrite -Nat.add_1_r) in "Hmaxsn".
+  iDestruct (own_toks_add_1 1 n γs.(sn_rmax) with "Hmaxsn") as "[Hmaxn Hmaxtok]".
+  iDestruct (tf_split γs rwmutex_guard.rfrac (frac_of (S n)) types_i with "[$Hfrag_r $Hfrag_i]") as "Hfrag".
+  iDestruct (store_inv_ro_fractional γs types_i rwmutex_guard.rfrac (frac_of (S n)) with "[$Hro_r $Hro_i]") as "Hro".
+  rewrite -(frac_of_split n Hlt).
+  iMod ("Hclose" with "[Hrln Hrauth Hmaxn Hwl Hfrag Hexcl Hro]") as "_".
+  { iExists (RLocked n). iFrame "Hrln". iEval (cbn). iFrame "Hrauth Hmaxn Hwl".
+    iExists client, k, items_mref, types_mref, dset, types_i, bind, h, m.
+    iFrame "Hfrag Hexcl Hro". }
+  iModIntro. iApply "HΦ". iFrame "Htok Hmaxtok".
+Qed.
 
 (** Non-vacuity witness / the [wp_NewDoc] seam: a fresh store's heap fields, a
     fresh empty registered type, and this client's (empty) history element
@@ -654,7 +1121,26 @@ Proof.
     as (γseq) "Hseq".
   { apply auth_auth_valid. rewrite /types fmap_empty //. }
   iMod (ghost_map_alloc_empty (K := P) (V := loc)) as (γtypes) "HtypesAuth".
-  set (γs := {| sn_seq := γseq; sn_types := γtypes |}).
+  (* [sn_wl] names the write-lock witness [own_wlock]; it belongs to the lock
+     layer ([is_Store]'s tie invariant), not to [store_inv], so allocate the
+     name and drop the token here. *)
+  iMod (ghost_var_alloc ()) as (γwl) "Hwl". iClear "Hwl".
+  (* The RWMutex-lock-layer ghosts (reader accounting + types agreement) also
+     belong to [is_Store]'s tie invariant, not to [store_inv]; allocate the names
+     and drop the tokens here (a future [wp_NewDoc] wires the physical lock). The
+     RWMutex names are a placeholder record over a fresh dummy gname. *)
+  iMod (ghost_var_alloc ()) as (γd) "Hd". iClear "Hd".
+  iMod (own_tok_auth_alloc) as (γrmax) "Hrmax". iClear "Hrmax".
+  iMod (own_tok_auth_alloc) as (γrrlocked) "Hrrlocked". iClear "Hrrlocked".
+  iMod (own_alloc (to_frac_agree 1 (∅ : leibnizO (gmap loc type_state)))) as (γta) "Hta".
+  { done. }
+  iClear "Hta".
+  set (γrw := {| prot_gn := {| read_wait_gn := γd; rlock_overflow_gn := γd;
+                               wlock_gn := γd; writer_sem_tok_gn := γd; state_gn := γd |};
+                 reader_sem_gn := γd; writer_sem_gn := γd |} : RWMutex_names).
+  set (γs := {| sn_seq := γseq; sn_types := γtypes; sn_wl := γwl;
+                sn_rw := γrw; sn_rmax := γrmax; sn_rrlocked := γrrlocked;
+                sn_types_agree := γta |}).
   iModIntro. iExists γs.
   iExists client, k, items_mref, types_mref, dset, types, (∅ : gmap P loc),
     ([] : list Ev), (∅ : DocM).
