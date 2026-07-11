@@ -184,6 +184,25 @@ Definition is_Text (t : loc) (γs : store_names) (γh : history_names) (name : P
 #[global] Instance is_Text_persistent t γs γh name L : Persistent (is_Text t γs γh name L).
 Proof. apply _. Qed.
 
+(** A Text handle certifies its root at the store level: the name is
+    registered ([is_root]) and the handle's known content is a lower bound
+    of the root's item set ([is_root_lb]), with the handle's inner pointer
+    as the hidden binding witness. These are the projections that let a
+    Text-handle holder feed the [applyUpdate] certificate spec (its
+    [is_root] precondition) and compare its content bound against the
+    [is_root_lb] certificates the spec returns. [is_Text] itself keeps the
+    binding and the lower bound as separate conjuncts because it must also
+    pin the binding's loc to the handle's [inner] field. *)
+Lemma is_Text_root (t : loc) (γs : store_names) (γh : history_names)
+    (name : P) (L : list (YjsItem A)) :
+  is_Text t γs γh name L -∗ is_root γs name.
+Proof. iIntros "H". iNamed "H". iExists _. iFrame "Hbind". Qed.
+
+Lemma is_Text_root_lb (t : loc) (γs : store_names) (γh : history_names)
+    (name : P) (L : list (YjsItem A)) :
+  is_Text t γs γh name L -∗ is_root_lb γs name (list_to_set L).
+Proof. iIntros "H". iNamed "H". iExists _. iFrame "Hbind His_lb". Qed.
+
 (** [Text.Insert] preserves the (persistent) document handle, grows the known
     content ([L ⊑ L']), AND exposes the inserted run [ins]: one fresh item per
     byte of [content], each now known ([∈ L'], and [∉ L] since its id is fresh),
@@ -236,7 +255,8 @@ Proof.
   iDestruct "His_store" as "#His_store".   (* keep is_Store (persistent) for the later Unlock *)
   wp_auto.
   subst s_loc.
-  wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]". iNamed "Hinv".
+  wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
+  iNamed "Hinv". iNamed "Hexcl". iNamed "Hro".
   iDestruct (auth_gmap_gset_lookup with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS.
   apply fmap_Some in HmS as (ts & Htsp & ->).
@@ -258,6 +278,7 @@ Proof.
     iEval (rewrite (insert_id types (tv.(yjs.Text.inner')) ts Htsp)) in "Htypes".
     wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
     { iNext. iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+      iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iFrame "∗#". iPureIntro.
       split_and!;
         [exact Hctr | exact Hcellctr | exact Hbindtypes | exact Hbindinj
@@ -285,6 +306,7 @@ Proof.
     iEval (rewrite (insert_id types (tv.(yjs.Text.inner')) ts Htsp)) in "Htypes".
     wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
     { iNext. iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+      iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iFrame "∗#". iPureIntro.
       split_and!;
         [exact Hctr | exact Hcellctr | exact Hbindtypes | exact Hbindinj
@@ -791,8 +813,9 @@ Proof.
   { iNext. iExists client, (W64 (uint.Z k + j)), items_mref, types_mref, dset,
       (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types), bind, hj,
       (<[RootId name := arr]> m).
+    iSplitR "Hseq Htypes"; last first.
+    { rewrite /store_inv_ro fmap_insert /=. iFrame "Hseq Htypes". }
     iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hhistj HtypesAuth Hbinds".
-    rewrite fmap_insert /=. iFrame "Hseq Htypes".
     iPureIntro. split_and!.
     - intros parent' ts' x Hlook Hxin Hxc. rewrite Hk'val.
       destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
@@ -880,7 +903,8 @@ Proof.
   iDestruct "His_store" as "#His_store".
   wp_auto.
   subst s_loc.
-  wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]". iNamed "Hinv".
+  wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
+  iNamed "Hinv". iNamed "Hexcl". iNamed "Hro".
   iDestruct (auth_gmap_gset_lookup with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS.
   apply fmap_Some in HmS as (ts & Htsp & ->).
@@ -953,9 +977,11 @@ Proof.
       wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
       { iNext. iExists client, k, items_mref, types_mref, dset,
           (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m.
+        iSplitR "Hseq Htypes"; last first.
+        { rewrite /store_inv_ro fmap_insert /=.
+          rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
+          iFrame "Hseq Htypes". }
         iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hhist HtypesAuth Hbinds".
-        rewrite fmap_insert /=. rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
-        iFrame "Hseq Htypes".
         iPureIntro. split_and!.
         - intros parent' ts' x Hlook Hxin Hxc.
           destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
@@ -1007,9 +1033,11 @@ Proof.
       wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
       { iNext. iExists client, k, items_mref, types_mref, dset,
           (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m.
+        iSplitR "Hseq Htypes"; last first.
+        { rewrite /store_inv_ro fmap_insert /=.
+          rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
+          iFrame "Hseq Htypes". }
         iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hhist HtypesAuth Hbinds".
-        rewrite fmap_insert /=. rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
-        iFrame "Hseq Htypes".
         iPureIntro. split_and!.
         - intros parent' ts' x Hlook Hxin Hxc.
           destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
