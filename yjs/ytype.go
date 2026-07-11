@@ -34,16 +34,20 @@ func newYType() *yType {
 }
 
 // findPos walks to the visible character index and returns the doubly-linked
-// neighbours (left, right) straddling that position (y-octo: ListType::find_pos
-// specialised to 1-char items, so the offset/normalize/split path is gone).
+// neighbours (left, right) straddling that position, plus the offset of the
+// position inside [left] when it does not fall on an item boundary (y-octo:
+// ListType::find_pos building an ItemPosition{left, right, offset}).
 //
 // The walk advances through tombstones as well as visible items, moving [left]
-// in lockstep with [right] (so [right == left.right] on return) and decrementing
-// the budget only on visible (Indexable) items. This mirrors y-octo's
-// TextPosition::forward (doc/types/text.rs): a deleted item still becomes the new
-// [left], so the returned neighbours are always adjacent in the list and supply a
-// consistent origin pair for the inserted item.
-func (y *yType) findPos(index uint64) (*item, *item) {
+// in lockstep with [right] (so [right == left.right] on return) and spending
+// the budget only on visible (Indexable) items. When the budget lands strictly
+// inside an item's run (remaining < Len), the offset into that item is
+// recorded and the cursor still advances, so on return [left] is the item
+// containing the offset (y-octo keeps this cursor discipline so the caller's
+// normalize/split rebinds left/right around the split point). A deleted item
+// still becomes the new [left], so the returned neighbours are always adjacent
+// in the list and supply a consistent origin pair for the inserted item.
+func (y *yType) findPos(index uint64) (*item, *item, uint64) {
 	var left *item
 	right := y.start
 
@@ -57,14 +61,26 @@ func (y *yType) findPos(index uint64) (*item, *item) {
 	}
 
 	remaining := index
+	offset := uint64(0)
 	for remaining > 0 && right != nil {
 		if right.Indexable() {
-			remaining = remaining - right.Len()
+			if remaining < right.Len() {
+				// The index lands inside this run: record the offset and
+				// stop spending (the cursor advance below makes [left] the
+				// containing item). With 1-char items this branch is
+				// unreachable (Len() == 1 <= remaining); it is here so the
+				// walk is total and y-octo-faithful once multi-element runs
+				// exist (issue #28).
+				offset = remaining
+				remaining = 0
+			} else {
+				remaining = remaining - right.Len()
+			}
 		}
 		left = right
 		right = right.right
 	}
-	return left, right
+	return left, right, offset
 }
 
 // Text reads the current visible string by walking the item list left to right

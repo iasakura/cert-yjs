@@ -108,17 +108,28 @@ Definition toYjsId (i : yjs.id.t) : YjsId :=
 
 Definition toContent (c : yjs.content.t) : A := c.(yjs.content.content').
 
-(** One node of the heap DLL: its location and the *model* item it carries.
+(** One node of the heap DLL: its location and the *model* items it carries.
+
+    A node covers a RUN of consecutive per-char model items ([ic_run], issue
+    #28): the heap item's content of clock-length n denotes n model items with
+    consecutive clocks, each chained to the previous one by its left origin and
+    all sharing the run's right origin ([run_wf] below). Every current creator
+    mints runs of length 1, but the representation layer is stated for any
+    length so splitting (and later multi-element content, #25) is pure cell
+    surgery with the flattened model unchanged.
 
     The cell holds only stable, model-relevant data — the heap struct
     ([yjs.item.t]) with its volatile [left']/[right'] links, its [w64] id /
     content / origin-id pointers, and its flags is *not* stored here; it is
     existentially quantified inside [own_dll] (see [yjs_item]) and constrained to
-    *translate* to [ic_item] (heap id [toYjsId]-maps to [item_id (ic_item c)],
-    etc.). This keeps the abstract cell list invariant under [Store.Integrate]'s
-    neighbour relinking — relinking changes only the existential heap struct, not
-    [ic_item], so the abstract [cells] is unchanged across the splice. Origins
-    live in [ic_item] (they are order-defining model data), so order recovery
+    *translate* to the run's HEAD item (heap id [toYjsId]-maps to
+    [item_id (run_head c)], the content explodes to the per-char contents,
+    etc.); the non-head items carry no heap data of their own — [run_wf]
+    reconstructs their ids and origins from the head. This keeps the abstract
+    cell list invariant under [Store.Integrate]'s neighbour relinking —
+    relinking changes only the existential heap struct, not [ic_run], so the
+    abstract [cells] is unchanged across the splice. Origins live in the model
+    items (they are order-defining model data), so order recovery
     ([YjsLt'] / [YjsArrInvariant.yai_sorted]) is intact.
 
     One non-link flag is promoted out of the existential heap struct: [ic_deleted]
@@ -137,10 +148,86 @@ Definition toContent (c : yjs.content.t) : A := c.(yjs.content.content').
     DLL to that type's own loc. *)
 Record item_cell := MkItemCell {
   ic_loc : loc;
-  ic_item : YjsItem A;
+  ic_run : list (YjsItem A);
   ic_deleted : bool;
   ic_parent : loc;
 }.
+
+(** Model items are inhabited (needed to make [run_head] total; [run_wf]
+    guarantees the run is nonempty wherever the head matters). *)
+#[global] Instance YjsItem_inhabited : Inhabited (YjsItem A) :=
+  populate (Item First Last (MkYjsId O O) inhabitant).
+
+(** The head model item of a cell's run: the one the heap struct's id /
+    origin-id fields translate to. *)
+Definition run_head (c : item_cell) : YjsItem A := hd inhabitant (ic_run c).
+
+(** Run well-formedness: the model shadow of the reference implementations'
+    split/merge invariant (yjs [splitItem] / y-octo [split_node_at] / yrs
+    [ItemPtr::splice]): nonempty, consecutive clocks from the head, each
+    non-head item's left origin is exactly the previous item, and every item
+    shares the head's right origin. Everything about a non-head item is thus
+    a function of the head, which is why the heap stores one id/origin pair
+    per node. *)
+Definition run_wf (r : list (YjsItem A)) : Prop :=
+  r ≠ [] ∧
+  ∀ (k : nat) (x y : YjsItem A), r !! k = Some x → r !! S k = Some y →
+    item_id y = MkYjsId (clientId (item_id x)) (S (clock (item_id x))) ∧
+    origin y = itemPtr x ∧
+    rightOrigin y = rightOrigin x.
+
+(** A singleton run is trivially well-formed; every current creator mints
+    these. *)
+Lemma run_wf_singleton (y : YjsItem A) : run_wf [y].
+Proof.
+  split; first done.
+  intros k x y' Hx Hy'. destruct k; simpl in *; [done | by destruct k].
+Qed.
+
+(** Per-char explosion of a heap content string: byte k becomes the content of
+    the run's k-th model item. (For future non-string content types, this is
+    the per-content-type element decomposition.) *)
+Definition explode (s : go_string) : list A := (λ b, [b]) <$> s.
+
+Lemma explode_length (s : go_string) : length (explode s) = length s.
+Proof. by rewrite /explode length_fmap. Qed.
+
+Lemma explode_singleton (s : go_string) :
+  length s = 1%nat → explode s = [s].
+Proof.
+  destruct s as [|b s']; first done.
+  destruct s' as [|b' s'']; [done | done].
+Qed.
+
+(** The flattened per-char document list a cell list denotes. *)
+Definition run_flatten (cells : list item_cell) : list (YjsItem A) :=
+  mjoin (ic_run <$> cells).
+
+Lemma run_flatten_nil : run_flatten [] = [].
+Proof. done. Qed.
+
+Lemma run_flatten_cons (c : item_cell) (cells : list item_cell) :
+  run_flatten (c :: cells) = ic_run c ++ run_flatten cells.
+Proof. done. Qed.
+
+Lemma run_flatten_app (cs1 cs2 : list item_cell) :
+  run_flatten (cs1 ++ cs2) = run_flatten cs1 ++ run_flatten cs2.
+Proof. by rewrite /run_flatten fmap_app join_app. Qed.
+
+(** Under the all-singleton invariant (every creator today mints 1-char runs;
+    temporary until the run-scan bridge of issue #28 M4), the flatten is a
+    plain head map, recovering the pre-#28 cell/model 1:1 correspondence. *)
+Definition cell_unit (c : item_cell) : Prop := length (ic_run c) = 1%nat.
+
+Lemma run_flatten_singletons (cells : list item_cell) :
+  Forall cell_unit cells →
+  run_flatten cells = run_head <$> cells.
+Proof.
+  induction 1 as [|c cells Hc Hcells IH]; first done.
+  rewrite run_flatten_cons IH fmap_cons /run_head.
+  rewrite /cell_unit in Hc.
+  destruct (ic_run c) as [|y [|y' r']]; simpl in Hc; [lia | done | lia].
+Qed.
 
 (** The loc of the node at index [k] of [cells] ([null] outside [0, len)).
     Used to place the heap [conflict] / [left] pointers within the DLL. *)
