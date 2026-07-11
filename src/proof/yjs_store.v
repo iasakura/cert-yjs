@@ -730,70 +730,6 @@ Qed.
 
 (* ----- the lock invariant ----------------------------------------------- *)
 
-(** [store_inv s_loc γs γh]: everything the store lock protects.
-    - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
-      [mu] is owned by the [sync.RWMutex] ([rwmutex.is_RWMutex] in [is_Store]), not here);
-    - the item-set authority [own γ (●…)] per type loc (id-set), whose fragments
-      are the [is_type_lb] lower bounds / registration witnesses [Text] holds;
-    - each registered type's DLL (keyed by [parent]) + [YjsArrInvariant];
-    - the store's per-client item set ([own_item_map]: [store.items] holds every
-      integrated item's loc, clock-sorted — maintained by Integrate's [AddNode]);
-    - the global per-client counter [Hctr] (source of [maximalId]) and its
-      cell-level shadow [Hcellctr] (every same-local-client cell across ALL types
-      has heap clock [< k]) — what lets [Text.Insert] discharge the wrapper's
-      global-max side condition for the OTHER types, whose [cells_repr] is sealed
-      in the [big_sepM] accumulator once THIS type is borrowed; re-established at
-      each [Unlock] from the loop's carried bound (no [W64] round-trip).
-    [client]/[k]/[types] etc. are existential — the fixed lock invariant hides
-    the per-operation state. [own_item_map] and [Htypes] share the SAME [types], so
-    Insert grows both consistently (DLL splice + [AddNode] tail-append).
-
-    Network layer (issues #42 / #49): the lock also holds this replica's
-    exclusive ghost-history element [own_client_history] for the store's
-    client. The history's replayed *doc model* [m] is coherent with the whole
-    registry, not a single governed type ([history_state_coh h m], plus
-    [Hmtypes]: each registered type's [ty_arr] equals [docm_get m] at its
-    bound name). *)
-Definition store_inv (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
-  ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
-    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocM),
-    "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
-    "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
-    "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
-    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types ∗
-    "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
-    "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
-    "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
-    "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
-    "Htypes"  ∷ ([∗ map] parent ↦ ts ∈ types,
-                  own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-                  ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
-    "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
-                   clientId (item_id x) = uint.nat client →
-                   (clock (item_id x) < uint.nat k)%nat⌝ ∗
-    "%Hcellctr" ∷ ⌜∀ c, c ∈ all_cells types → cell_client c = client →
-                   (uint.Z (cell_clock c) < uint.Z k)%Z⌝ ∗
-    (* --- the root-type registry (issue #49) --- *)
-    "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
-    "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
-    "%Hbindtypes" ∷ ⌜∀ name p, bind !! name = Some p → is_Some (types !! p)⌝ ∗
-    "%Hbindinj" ∷ ⌜∀ n1 n2 p, bind !! n1 = Some p → bind !! n2 = Some p → n1 = n2⌝ ∗
-    "%Htypesbound" ∷ ⌜∀ p, is_Some (types !! p) → ∃ name, bind !! name = Some p⌝ ∗
-    (* --- network layer (issues #42 / #49: doc-level, all types) --- *)
-    "Hhist"   ∷ own_client_history γh (uint.nat client) h ∗
-    "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
-    "%Hmtypes" ∷ ⌜∀ name p ts, bind !! name = Some p → types !! p = Some ts →
-                    docm_get m (RootId name) = ty_arr ts⌝ ∗
-    "%Hmdom" ∷ ⌜∀ t, docm_get m t ≠ [] →
-                  ∃ name p, t = RootId name ∧ bind !! name = Some p⌝.
-
-(** [store_inv] is timeless (heap points-to + ghost state over discrete cameras +
-    pure facts), so the write [Lock] wrapper hands it back WITHOUT a [▷] even
-    though it is extracted from the tie invariant — the Insert/Delete proofs use
-    it immediately (no intervening program step to strip a later). *)
-#[global] Instance store_inv_timeless s_loc γs γh : Timeless (store_inv s_loc γs γh).
-Proof. rewrite /store_inv. apply _. Qed.
-
 (** [store_inv_ro γs types q]: the read-only-shareable slice of [store_inv] that a
     concurrent reader needs: the per-type DLLs (from which [Text.String]/[Len]
     read visible content / length) and the item-set authority (combined with a
@@ -849,27 +785,63 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "%Hmdom" ∷ ⌜∀ t, docm_get m t ≠ [] →
                   ∃ name p, t = RootId name ∧ bind !! name = Some p⌝.
 
-(** [store_inv] partitions into its exclusive part and the read-shareable part at
-    full fraction. The write lock reassembles the whole via this bridge; the read
-    lock keeps [store_inv_excl] whole and shares [store_inv_ro]. *)
+#[global] Instance store_inv_ro_timeless γs types q : Timeless (store_inv_ro γs types q).
+Proof. rewrite /store_inv_ro. apply _. Qed.
+#[global] Instance store_inv_excl_timeless s_loc γs γh client k im tm dset types bind h m :
+  Timeless (store_inv_excl s_loc γs γh client k im tm dset types bind h m).
+Proof. rewrite /store_inv_excl. apply _. Qed.
+
+(** [store_inv s_loc γs γh]: everything the store lock protects.
+    - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
+      [mu] is owned by the [sync.RWMutex] ([rwmutex.is_RWMutex] in [is_Store]), not here);
+    - the item-set authority [own γ (●…)] per type loc (id-set), whose fragments
+      are the [is_type_lb] lower bounds / registration witnesses [Text] holds;
+    - each registered type's DLL (keyed by [parent]) + [YjsArrInvariant];
+    - the store's per-client item set ([own_item_map]: [store.items] holds every
+      integrated item's loc, clock-sorted — maintained by Integrate's [AddNode]);
+    - the global per-client counter [Hctr] (source of [maximalId]) and its
+      cell-level shadow [Hcellctr] (every same-local-client cell across ALL types
+      has heap clock [< k]) — what lets [Text.Insert] discharge the wrapper's
+      global-max side condition for the OTHER types, whose [cells_repr] is sealed
+      in the [big_sepM] accumulator once THIS type is borrowed; re-established at
+      each [Unlock] from the loop's carried bound (no [W64] round-trip).
+    [client]/[k]/[types] etc. are existential — the fixed lock invariant hides
+    the per-operation state. [own_item_map] and [Htypes] share the SAME [types], so
+    Insert grows both consistently (DLL splice + [AddNode] tail-append).
+
+    Network layer (issues #42 / #49): the lock also holds this replica's
+    exclusive ghost-history element [own_client_history] for the store's
+    client. The history's replayed *doc model* [m] is coherent with the whole
+    registry, not a single governed type ([history_state_coh h m], plus
+    [Hmtypes]: each registered type's [ty_arr] equals [docm_get m] at its
+    bound name).
+
+    The body is [store_inv_excl] (the mutable-exclusive clauses, documented
+    there) next to [store_inv_ro] at full fraction: exactly the two halves
+    the RWMutex tie invariant tracks separately while readers hold shares,
+    so [store_inv_bridge] is definitional. *)
+Definition store_inv (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
+  ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
+    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocM),
+    "Hexcl" ∷ store_inv_excl s_loc γs γh client k items_mref types_mref dset types bind h m ∗
+    "Hro"   ∷ store_inv_ro γs types 1.
+
+(** [store_inv] is timeless (heap points-to + ghost state over discrete cameras +
+    pure facts), so the write [Lock] wrapper hands it back WITHOUT a [▷] even
+    though it is extracted from the tie invariant — the Insert/Delete proofs use
+    it immediately (no intervening program step to strip a later). *)
+#[global] Instance store_inv_timeless s_loc γs γh : Timeless (store_inv s_loc γs γh).
+Proof. rewrite /store_inv. apply _. Qed.
+
+(** [store_inv] partitions into its exclusive part and the read-shareable part
+    at full fraction; since the body IS that split, the bridge is definitional
+    (kept as a lemma for the lock-layer proofs that rewrite with it). *)
 Lemma store_inv_bridge (s_loc : loc) (γs : store_names) (γh : history_names) :
   store_inv s_loc γs γh ⊣⊢
   ∃ client k items_mref types_mref dset types bind h m,
     store_inv_excl s_loc γs γh client k items_mref types_mref dset types bind h m ∗
     store_inv_ro γs types 1.
-Proof.
-  rewrite /store_inv /store_inv_excl /store_inv_ro. iSplit.
-  - iIntros "H". iNamed "H". iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
-    iSplitR "Hseq Htypes".
-    + iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset HtypesAuth Hhist Hbinds".
-      iPureIntro. split_and!; assumption.
-    + iFrame "Hseq Htypes".
-  - iIntros "H". iDestruct "H" as (client k items_mref types_mref dset types bind h m) "[He Hro]".
-    iNamed "He". iNamed "Hro".
-    iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset HtypesAuth Hhist Hbinds Hseq Htypes".
-    iPureIntro. split_and!; assumption.
-Qed.
+Proof. rewrite /store_inv /named //. Qed.
 
 (** ---------------------------------------------------------------------------
     Store lock = a [sync.RWMutex] (y-octo's [Arc<RwLock<DocStore>>]).
@@ -945,12 +917,6 @@ Proof.
   iIntros "H1 H2". iCombine "H1 H2" gives %Hv.
   iPureIntro. by apply frac_agree_op_valid_L in Hv as [_ ->].
 Qed.
-
-#[global] Instance store_inv_ro_timeless γs types q : Timeless (store_inv_ro γs types q).
-Proof. rewrite /store_inv_ro. apply _. Qed.
-#[global] Instance store_inv_excl_timeless s_loc γs γh client k im tm dset types bind h m :
-  Timeless (store_inv_excl s_loc γs γh client k im tm dset types bind h m).
-Proof. rewrite /store_inv_excl. apply _. Qed.
 
 Definition storeN : namespace := nroot .@ "yjs_store".
 
@@ -1263,7 +1229,11 @@ Proof.
   iModIntro. iExists γs.
   iExists client, k, items_mref, types_mref, dset, types, (∅ : gmap P loc),
     ([] : list Ev), (∅ : DocM).
-  iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap Hdset Hhist Hseq HtypesAuth".
+  iSplitR "Hseq"; last first.
+  { (* store_inv_ro over the empty types map *)
+    iFrame "Hseq". rewrite /types big_sepM_empty //. }
+  (* store_inv_excl *)
+  iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap Hdset Hhist HtypesAuth".
   iSplitL "Hmap".
   { (* own_item_map over the empty run map *)
     iExists (∅ : gmap w64 slice.t). iFrame "Hmap".
@@ -1273,7 +1243,6 @@ Proof.
       rewrite /types /all_cells map_to_list_empty /= elem_of_nil //.
     - move=> c1 c2 Hc1. exfalso. move: Hc1.
       rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
-  iSplitL. { rewrite /types big_sepM_empty //. }
   iSplitR. { iPureIntro. move=> parent' ts' x Hlk. rewrite /types lookup_empty // in Hlk. }
   iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
@@ -4140,7 +4109,7 @@ Lemma store_inv_own_store (s_loc : loc) (γs : store_names) (γh : history_names
   ∃ (c : ClientId) (h : list Ev) (m : DocM), own_store s_loc γs γh c h m.
 Proof.
   iSplit.
-  - iIntros "H". iNamed "H".
+  - iIntros "H". iNamed "H". iNamed "Hexcl". iNamed "Hro".
     iExists (uint.nat client), h, m.
     iExists client, k, items_mref, types_mref, dset, types, bind.
     iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
@@ -4185,7 +4154,8 @@ Proof.
       have Hlt := Hctrt p ts (ic_item c0) Hts Hitemmem Hceq.
       rewrite /cell_clock. word. }
     iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
+    iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset HtypesAuth Hbinds Hhist".
     iPureIntro. split_and!;
       [exact Hctrt | exact Hcellctr | exact Hbindtypes | exact Hbindinj
       | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom].
