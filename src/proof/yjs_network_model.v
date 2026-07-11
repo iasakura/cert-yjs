@@ -1513,6 +1513,172 @@ Proof.
   apply Hfresh. apply elem_of_union_l. exact Hidin.
 Qed.
 
+(* ===== state vectors (max semantics) ====================================== *)
+
+(** The vector-clock view of delivered state ([docs/plan-predicate-refactor.md]
+    section 6, step 1). [sv_of h] summarizes [delivered_ids h] per client as
+    "max delivered clock + 1" (absent = 0); [sv_join] is the pointwise-max
+    least upper bound; delivering a batch is exactly a join
+    ([sv_of_deliver_batch]), and each [Text.Insert] event pair is a one-op
+    join ([sv_of_broadcast]).
+
+    These are the MAX-semantics laws only: [sv_of] soundly bounds every
+    delivered id ([delivered_ids_lt_sv]) and is attained ([sv_of_attained]),
+    but it determines the delivered SET only under per-client gaplessness,
+    which the current broadcast step does not yet enforce (an author's clocks
+    are only required to grow, not to be successors). The faithful reading
+    (ids strictly below [sv_of h] = [delivered_ids h]) and the persistent
+    [is_sv_lb] certificates are staged as steps 2 and 3 of the plan. *)
+
+(** [sv_get sv c]: the per-client "next clock" (absent = 0). *)
+Definition sv_get (sv : gmap ClientId nat) (c : ClientId) : nat :=
+  default 0%nat (sv !! c).
+
+(** Pointwise-max join: the least upper bound of two state vectors. *)
+Definition sv_join (sv1 sv2 : gmap ClientId nat) : gmap ClientId nat :=
+  union_with (λ a b, Some (a `max` b)%nat) sv1 sv2.
+
+(** The one-op state vector: its author's clock, plus one. *)
+Definition op_sv (op : Op) : gmap ClientId nat :=
+  {[ clientId (opid op) := S (clock (opid op)) ]}.
+
+(** The state vector of a list of (delivered) ops / of a history's delivers. *)
+Definition svs_of (l : list Op) : gmap ClientId nat :=
+  foldr (λ op acc, sv_join (op_sv op) acc) ∅ l.
+
+Definition sv_of (h : list Ev) : gmap ClientId nat := svs_of (delivered_ops h).
+
+(** The state vector a decoded batch contributes. *)
+Definition batch_sv (inputs : list (TId * IntegrateInput (A := A))) : gmap ClientId nat :=
+  svs_of ((λ ti, (ti.1, OpInsert ti.2)) <$> inputs).
+
+(* ----- the join semilattice ----- *)
+
+Lemma sv_join_lookup sv1 sv2 c :
+  sv_join sv1 sv2 !! c =
+  match sv1 !! c, sv2 !! c with
+  | Some a, Some b => Some (a `max` b)%nat
+  | Some a, None => Some a
+  | None, mb => mb
+  end.
+Proof. rewrite /sv_join lookup_union_with. by destruct (sv1 !! c), (sv2 !! c). Qed.
+
+Lemma sv_get_join sv1 sv2 c :
+  sv_get (sv_join sv1 sv2) c = (sv_get sv1 c `max` sv_get sv2 c)%nat.
+Proof. rewrite /sv_get sv_join_lookup. destruct (sv1 !! c), (sv2 !! c); simpl; lia. Qed.
+
+Lemma sv_join_comm sv1 sv2 : sv_join sv1 sv2 = sv_join sv2 sv1.
+Proof.
+  apply map_eq => c. rewrite !sv_join_lookup.
+  destruct (sv1 !! c), (sv2 !! c) => //. f_equal. lia.
+Qed.
+
+Lemma sv_join_assoc sv1 sv2 sv3 :
+  sv_join sv1 (sv_join sv2 sv3) = sv_join (sv_join sv1 sv2) sv3.
+Proof.
+  apply map_eq => c. rewrite !sv_join_lookup.
+  destruct (sv1 !! c), (sv2 !! c), (sv3 !! c) => //=; f_equal; lia.
+Qed.
+
+Lemma sv_join_empty_l sv : sv_join ∅ sv = sv.
+Proof. apply map_eq => c. rewrite sv_join_lookup lookup_empty //. Qed.
+
+Lemma sv_join_empty_r sv : sv_join sv ∅ = sv.
+Proof. apply map_eq => c. rewrite sv_join_lookup lookup_empty. by destruct (sv !! c). Qed.
+
+Lemma sv_join_idemp sv : sv_join sv sv = sv.
+Proof.
+  apply map_eq => c. rewrite sv_join_lookup.
+  destruct (sv !! c) => //. f_equal. lia.
+Qed.
+
+(* ----- homomorphism over histories ----- *)
+
+Lemma svs_of_app (l1 l2 : list Op) :
+  svs_of (l1 ++ l2) = sv_join (svs_of l1) (svs_of l2).
+Proof.
+  induction l1 as [| op l1 IH]; simpl.
+  - rewrite sv_join_empty_l //.
+  - rewrite IH sv_join_assoc //.
+Qed.
+
+Lemma sv_of_app (h1 h2 : list Ev) :
+  sv_of (h1 ++ h2) = sv_join (sv_of h1) (sv_of h2).
+Proof. rewrite /sv_of delivered_ops_app svs_of_app //. Qed.
+
+Lemma delivered_ops_deliver_batch (inputs : list (TId * IntegrateInput (A := A))) :
+  delivered_ops (deliver_ev <$> inputs) = (λ ti, (ti.1, OpInsert ti.2)) <$> inputs.
+Proof.
+  induction inputs as [| ti inputs IH]; [done |].
+  rewrite /delivered_ops /deliver_ev !fmap_cons /=. f_equal. exact IH.
+Qed.
+
+(** THE join law: delivering a batch advances the state vector to the least
+    upper bound of the receiver's and the batch's. *)
+Lemma sv_of_deliver_batch (h : list Ev) (inputs : list (TId * IntegrateInput (A := A))) :
+  sv_of (h ++ (deliver_ev <$> inputs)) = sv_join (sv_of h) (batch_sv inputs).
+Proof. rewrite sv_of_app /sv_of /batch_sv delivered_ops_deliver_batch //. Qed.
+
+(** The broadcast-side law (the two events [Text.Insert] appends per item). *)
+Lemma sv_of_broadcast (h : list Ev) (op : Op) :
+  sv_of (h ++ [EvBroadcast op; EvDeliver op]) = sv_join (sv_of h) (op_sv op).
+Proof.
+  rewrite sv_of_app. f_equal.
+  rewrite /sv_of /delivered_ops /= sv_join_empty_r //.
+Qed.
+
+(* ----- semantics: upper bound + attainment (max reading) ----- *)
+
+Lemma sv_get_op_sv_same (op : Op) :
+  sv_get (op_sv op) (clientId (opid op)) = S (clock (opid op)).
+Proof. rewrite /op_sv /sv_get lookup_singleton_eq. reflexivity. Qed.
+
+Lemma svs_of_sound (l : list Op) (op : Op) :
+  op ∈ l -> (clock (opid op) < sv_get (svs_of l) (clientId (opid op)))%nat.
+Proof.
+  induction l as [| op' l IH]; [by intros ?%elem_of_nil |].
+  intros [-> | Hin]%elem_of_cons; simpl.
+  - rewrite sv_get_join sv_get_op_sv_same. lia.
+  - rewrite sv_get_join. have := IH Hin. lia.
+Qed.
+
+Lemma svs_of_attained (l : list Op) (c : ClientId) (n : nat) :
+  sv_get (svs_of l) c = S n ->
+  ∃ op, op ∈ l ∧ clientId (opid op) = c ∧ clock (opid op) = n.
+Proof.
+  induction l as [| op' l IH]; simpl.
+  - rewrite /sv_get lookup_empty //.
+  - rewrite sv_get_join => Hmax.
+    destruct (Nat.max_dec (sv_get (op_sv op') c) (sv_get (svs_of l) c)) as [He | He];
+      rewrite He in Hmax.
+    + move: Hmax. rewrite /op_sv /sv_get.
+      destruct (decide (clientId (opid op') = c)) as [Heq | Hne].
+      * rewrite Heq lookup_singleton_eq. move=> /= [= <-].
+        exists op'. split_and!; [by left | exact Heq | done].
+      * rewrite lookup_singleton_ne; [| exact Hne]. move=> /= H. discriminate H.
+    + destruct (IH Hmax) as (op & Hin & Hc & Hk).
+      exists op. split_and!; [by right | done | done].
+Qed.
+
+(** Every delivered id sits strictly below the history's state vector at its
+    client (the sound, gaplessness-free reading of [sv_of]). *)
+Lemma delivered_ids_lt_sv (h : list Ev) (id : YjsId) :
+  id ∈ delivered_ids h -> (clock id < sv_get (sv_of h) (clientId id))%nat.
+Proof.
+  rewrite /delivered_ids elem_of_list_to_set list_elem_of_fmap.
+  move=> [op [-> Hin]]. exact (svs_of_sound (delivered_ops h) op Hin).
+Qed.
+
+(** A positive state-vector entry is attained by a delivered id. *)
+Lemma sv_of_attained (h : list Ev) (c : ClientId) (n : nat) :
+  sv_get (sv_of h) c = S n ->
+  ∃ id, id ∈ delivered_ids h ∧ clientId id = c ∧ clock id = n.
+Proof.
+  move=> /svs_of_attained [op [Hin [Hc Hk]]].
+  exists (opid op). split_and!; [| exact Hc | exact Hk].
+  rewrite /delivered_ids elem_of_list_to_set. apply list_elem_of_fmap_2. exact Hin.
+Qed.
+
 (** The applyUpdate bridge: certificates + coverage turn into a [ValidReplay]
     of the batch, the coherent state advances by the batch's delivers, and the
     extended history is well-formed. Produces the existential [m'], so the

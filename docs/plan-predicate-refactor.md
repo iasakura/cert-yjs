@@ -326,7 +326,13 @@ Staged plan (separate from PR 1/2; the own_store refactor makes each step
 a local postcondition extension):
 
 1. Pure sv toolkit: `sv_of`, `batch_sv`, `sv_of_deliver_batch` (max
-   semantics), extra pure conjunct in the applyUpdate post. No new ghost.
+   semantics). No new ghost. SHIPPED (PR 3): the state-vector section of
+   `yjs_network_model.v` (join semilattice, `sv_of_app` /
+   `sv_of_deliver_batch` / `sv_of_broadcast`, `delivered_ids_lt_sv` +
+   `sv_of_attained`). The "extra pure conjunct in the applyUpdate post"
+   turned out redundant: the post's history is `h ++ (deliver_ev <$>
+   inputs)` over the spec's own parameters, so callers get the join law by
+   applying `sv_of_deliver_batch` themselves; the spec stays untouched.
 2. Model strengthening: broadcast requires the successor clock
    (`k = own max + 1`, matching store.clock++), new invariant
    `delivered_downward_closed : history_wf N -> per-client prefix-closed
