@@ -1382,6 +1382,33 @@ Proof.
   - rewrite docm_get_insert_ne //.
 Qed.
 
+(** Converse provenance: a replayed item is an original item or carries the
+    id of some batch input (the model-level analogue of the heap-level
+    [all_cells] provenance clause of [wp_store__applyUpdate]). *)
+Lemma ValidReplay_prov (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocM) :
+  ValidReplay inputs m m' ->
+  ∀ (t : TId) x, x ∈ docm_get m' t ->
+    x ∈ docm_get m t ∨
+    ∃ (i : nat) (ti : TId * IntegrateInput (A := A)),
+      inputs !! i = Some ti ∧ item_id x = in_id ti.2.
+Proof.
+  elim => [m0 | t0 input0 rest m0 arr2 m1 nit Htoit _ _ _ Hint Hvr IH] t x Hx.
+  - by left.
+  - destruct (IH t x Hx) as [Hmid | (i & ti & Hi & Hid)]; last first.
+    { right. by exists (S i), ti. }
+    destruct (decide (t = t0)) as [-> | Hne]; last first.
+    { left. rewrite docm_get_insert_ne // in Hmid. }
+    rewrite docm_get_insert_eq in Hmid.
+    pose proof (integrate_insertIdx_form input0 (docm_get m0 t0) arr2 Hint)
+      as (didx & item & Hitid & Hres).
+    rewrite Hres in Hmid.
+    case: (decide (didx <= length (docm_get m0 t0))%nat) => Hd.
+    + apply (proj1 (mem_insertIdxIfInBounds (docm_get m0 t0) item x didx Hd)) in Hmid.
+      destruct Hmid as [-> | Hin]; [right | by left].
+      exists 0%nat, (t0, input0). split; [done | exact Hitid].
+    + rewrite /insertIdxIfInBounds decide_False // in Hmid. by left.
+Qed.
+
 (** Every batch item's clock strictly exceeds all same-client items already in
     the initial documents — any type (the heap-level freshness side condition
     of [wp_store__applyUpdate], at the model level). *)
@@ -1448,6 +1475,43 @@ Definition batch_ok h (inputs : list (TId * IntegrateInput (A := A)))
 (** The deliver event a decoded, type-tagged input denotes. *)
 Definition deliver_ev (ti : TId * IntegrateInput (A := A)) : Ev :=
   EvDeliver (ti.1, OpInsert ti.2).
+
+(** A certified [batch_ok] batch contains no op authored by the receiving
+    client: a certificate pins its op as broadcast at the author
+    ([op_registered]), own broadcasts are immediately self-delivered
+    ([hwf_self_deliver]), and [batch_ok]'s freshness excludes anything
+    already delivered here. This is what lets the receiver's per-client
+    clock invariant survive [applyUpdate] (no delivered item carries the
+    local client id). *)
+Lemma batch_not_own_client N c h
+    (inputs : list (TId * IntegrateInput (A := A))) (Ds : list (gset YjsId)) :
+  history_wf N -> N !! c = Some h ->
+  length Ds = length inputs ->
+  (∀ (i : nat) (ti : TId * IntegrateInput (A := A)) (D : gset YjsId),
+     inputs !! i = Some ti -> Ds !! i = Some D ->
+     op_registered N (ti.1, OpInsert ti.2) D) ->
+  batch_ok h inputs Ds ->
+  ∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
+    inputs !! i = Some ti -> clientId (in_id ti.2) ≠ c.
+Proof.
+  move=> Hwf Hc Hlen Hreg Hbatch i ti Hi Hcc.
+  have [D HD] : is_Some (Ds !! i)
+    by apply lookup_lt_is_Some; rewrite Hlen; exact (lookup_lt_Some _ _ _ Hi).
+  have [Hbc _] := Hreg i ti D Hi HD.
+  have Hopid : opid (ti.1, OpInsert ti.2) = in_id ti.2 by [].
+  rewrite Hopid Hcc in Hbc.
+  (* self-delivery: the op is already delivered in [h] *)
+  rewrite (to_histories_lookup N c h Hc) in Hbc.
+  have [pre [post Hsplit]] := list_elem_of_split _ _ Hbc.
+  have Hsplit' : to_histories N c = pre ++ [EvBroadcast (ti.1, OpInsert ti.2)] ++ post
+    by rewrite (to_histories_lookup N c h Hc) Hsplit.
+  have [post' Hpost] := hwf_self_deliver N Hwf c _ pre post Hsplit'.
+  have Hidin : in_id ti.2 ∈ delivered_ids h.
+  { apply elem_of_delivered_ids. exists (ti.1, OpInsert ti.2).
+    split; [| exact Hopid]. rewrite Hsplit Hpost. set_solver. }
+  have [_ Hfresh] := Hbatch i ti D Hi HD.
+  apply Hfresh. apply elem_of_union_l. exact Hidin.
+Qed.
 
 (** The applyUpdate bridge: certificates + coverage turn into a [ValidReplay]
     of the batch, the coherent state advances by the batch's delivers, and the

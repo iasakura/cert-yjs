@@ -126,9 +126,13 @@ ytype → history → store → text` and reopen the same `Section` boilerplate:
 - `yjs_store.v` — the `store` proofs: conflict scan refining `setfii_loop`,
   the item-set layer `own_item_map`, the lock layer (`store_inv` /
   `is_Store`, now carrying the client's ghost history tied to the governed
-  text), and the Integrate stack up to `wp_Store__Integrate` /
-  `wp_store__applyUpdate` / the certificate-based
-  `wp_store__applyUpdate_certs`.
+  text), the cohesive store-state predicate `own_store` over the model
+  `(client, history, doc)` (with `store_inv ⊣⊢ ∃ model, own_store` via
+  `store_inv_own_store`, and the name-keyed persistent witnesses `is_root`
+  / `is_root_lb`), and the Integrate stack up to `wp_Store__Integrate` /
+  `wp_store__applyUpdate` / the `own_store`-level certificate spec
+  `wp_store__applyUpdate_certs` (delivered content comes back as
+  `is_root_lb` fragments).
 - `yjs_text.v` — the `Text` handle `is_Text t γh L` and the top-level
   `wp_Text__Insert` (which mints one op certificate per inserted item) /
   `wp_Text__Delete`.

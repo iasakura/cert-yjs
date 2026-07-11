@@ -131,6 +131,47 @@ Proof.
   iModIntro. iDestruct "H" as "[$ $]".
 Qed.
 
+(** Batch variant of [auth_gmap_gset_grow]: grow EVERY key's set at once
+    (same domain, pointwise [⊆]) and mint a persistent whole-map snapshot
+    fragment, out of which each key's [◯ {[k := S]}] projects
+    ([auth_gmap_gset_frag_lookup]). Used by [applyUpdate], which grows many
+    types in one batch. *)
+Lemma auth_gmap_gset_grow_snap {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (m m' : gmap K (gset V)) :
+  dom m' = dom m ->
+  (∀ k S S', m !! k = Some S -> m' !! k = Some S' -> S ⊆ S') ->
+  own γ (● m) ==∗ own γ (● m') ∗ own γ (◯ m').
+Proof.
+  iIntros (Hdom Hsub) "Ha".
+  iMod (own_update _ _ (● m' ⋅ ◯ m') with "Ha") as "H".
+  { apply auth_update_alloc.
+    apply local_update_unital_discrete. intros z Hvm Hz.
+    rewrite left_id in Hz. rewrite -Hz. split.
+    - intros k. destruct (m' !! k) eqn:Hk; rewrite Hk //.
+    - intros k. rewrite lookup_op.
+      destruct (m !! k) as [S|] eqn:Hmk; destruct (m' !! k) as [S'|] eqn:Hm'k.
+      + rewrite Hmk Hm'k -Some_op. f_equiv. rewrite gset_op.
+        pose proof (Hsub k S S' Hmk Hm'k). set_solver.
+      + exfalso. apply (elem_of_dom_2 (D := gset K)) in Hmk.
+        rewrite -Hdom in Hmk. apply elem_of_dom in Hmk.
+        rewrite Hm'k in Hmk. exact (is_Some_None Hmk).
+      + rewrite Hmk Hm'k right_id //.
+      + rewrite Hmk Hm'k //. }
+  iModIntro. iDestruct "H" as "[$ $]".
+Qed.
+
+(** Project one key's fragment (an [is_type_lb] to be) out of a whole-map
+    snapshot fragment. *)
+Lemma auth_gmap_gset_frag_lookup {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (m : gmap K (gset V)) (k : K) (S : gset V) :
+  m !! k = Some S ->
+  own γ (◯ m) ⊢ own γ (◯ {[k := S]}).
+Proof.
+  intros Hk. apply own_mono, auth_frag_mono.
+  apply/singleton_included_l. exists S.
+  split; [by rewrite Hk | apply/Some_included; by left].
+Qed.
+
 (** Store lock = a [sync.Mutex]. The per-type item SET lives in a grow-only ghost
     (below), keyed by the type's [parent] loc. *)
 Context {sync_pkg : sync.Assumptions}.
@@ -958,6 +999,84 @@ Proof. apply _. Qed.
 Proof. apply _. Qed.
 #[global] Instance is_type_lb_persistent γ parent S : Persistent (is_type_lb γ parent S).
 Proof. apply _. Qed.
+
+(* ----- name-keyed public witnesses + the cohesive store-state predicate --- *)
+
+(** [is_root γs name]: persistent witness that the root type [name] is
+    registered in the store (bound in the registry to SOME type loc, which
+    stays hidden). This is what the [applyUpdate] certificate spec asks for
+    per target root, in place of a raw registry lookup; any holder of the
+    binding (a [Text] handle, [getOrCreateYType]'s hit path) can mint it. *)
+Definition is_root (γs : store_names) (name : P) : iProp Σ :=
+  ∃ p : loc, is_type_binding γs.(sn_types) name p.
+
+(** [is_root_lb γs name S]: the name-keyed monotone content lower bound,
+    i.e. the loc-keyed [is_type_lb] lifted through the persistent binding:
+    [S] is a subset of the item set of the root named [name], now and at all
+    future times (the item-set authority is grow-only). This is the "how the
+    store grew" certificate [applyUpdate] hands back per delivered root. *)
+Definition is_root_lb (γs : store_names) (name : P) (S : gset (YjsItem A)) : iProp Σ :=
+  ∃ p : loc, is_type_binding γs.(sn_types) name p ∗ is_type_lb γs.(sn_seq) p S.
+
+#[global] Instance is_root_persistent γs name : Persistent (is_root γs name).
+Proof. apply _. Qed.
+#[global] Instance is_root_lb_persistent γs name S : Persistent (is_root_lb γs name S).
+Proof. apply _. Qed.
+
+(** The store's *registry coherence*: the name->loc bindings [bind], the
+    per-type heap state [types], and the replayed doc model [m] fit together:
+    every bound name has a live type and vice versa, [bind] is injective, the
+    model agrees with each bound type's item list, and the model is populated
+    only at bound names. This is exactly the [bind]/[types]/[m] invariant
+    [store_inv] maintains inline; naming it keeps [own_store] (and through
+    it the [applyUpdate] spec) readable instead of a wall of raw quantified
+    side conditions. *)
+Definition doc_registry_coh (m : DocM) (bind : gmap P loc)
+    (types : gmap loc type_state) : Prop :=
+  (∀ nm p, bind !! nm = Some p -> is_Some (types !! p)) /\
+  (∀ n1 n2 p, bind !! n1 = Some p -> bind !! n2 = Some p -> n1 = n2) /\
+  (∀ p, is_Some (types !! p) -> ∃ nm, bind !! nm = Some p) /\
+  (∀ nm p ts, bind !! nm = Some p -> types !! p = Some ts ->
+     docm_get m (RootId nm) = ty_arr ts) /\
+  (∀ t, docm_get m t ≠ [] -> ∃ nm p, t = RootId nm /\ bind !! nm = Some p).
+
+(** [own_store s γs γh c h m]: the WHOLE lock-protected store state, as one
+    exclusive predicate over its public model: this replica is client [c]
+    with ghost op history [h], whose replayed doc model is [m]. Everything
+    else ([types], [bind], the field locs, the local clock) is existential.
+    [store_inv] is exactly its model-existential closure
+    ([store_inv_own_store] below), so a lock-holding caller can trade the
+    lock body for [own_store] and back; top-level specs over store state
+    ([wp_store__applyUpdate_certs]) are stated [own_store] in, [own_store]
+    out, per the public-spec rule (no fields, no raw registry maps).
+
+    The per-client counter clause [Hctr] is stated over the MODEL [m] (all
+    items of the replayed doc); the W64 cell-level shadow that [store_inv]
+    carries ([Hcellctr]) is derivable from it plus the DLL id-bound pins
+    (see [store_inv_own_store]), not a separate clause here. *)
+Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocM) : iProp Σ :=
+  ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
+    (types : gmap loc type_state) (bind : gmap P loc),
+    "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗
+    "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
+    "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
+    "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
+    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types ∗
+    "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
+    "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
+    "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
+    "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
+    "Htypes"  ∷ ([∗ map] parent ↦ ts ∈ types,
+                  own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+                  ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+    "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
+    "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
+    "Hhist"   ∷ own_client_history γh c h ∗
+    "%Hregcoh" ∷ ⌜doc_registry_coh m bind types⌝ ∗
+    "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
+    "%Hctr"   ∷ ⌜∀ (t : TId) x, x ∈ docm_get m t -> clientId (item_id x) = c ->
+                   (clock (item_id x) < uint.nat k)%nat⌝.
 
 (** Write-lock acquire. The write [Lock] linearizes at [RLocked 0] (fraction 1),
     where [store_inv_bridge] reassembles the whole [store_inv]; the invariant is
@@ -4009,6 +4128,69 @@ Proof.
   iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
 Qed.
 
+(** [store_inv] is exactly [own_store] with the model existentially closed.
+    The forward direction restates the per-client counter clause at the
+    model; the backward direction re-derives the [types]-level and the W64
+    cell-level counter bounds from the model-level one, via the registry
+    coherence and the DLL id-bound pins. A lock-holding caller uses this to
+    trade the lock body for [own_store] (feeding a store-state spec such as
+    [wp_store__applyUpdate_certs]) and back. *)
+Lemma store_inv_own_store (s_loc : loc) (γs : store_names) (γh : history_names) :
+  store_inv s_loc γs γh ⊣⊢
+  ∃ (c : ClientId) (h : list Ev) (m : DocM), own_store s_loc γs γh c h m.
+Proof.
+  iSplit.
+  - iIntros "H". iNamed "H".
+    iExists (uint.nat client), h, m.
+    iExists client, k, items_mref, types_mref, dset, types, bind.
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
+    iPureIntro. split_and!.
+    + reflexivity.
+    + rewrite /doc_registry_coh. split_and!; assumption.
+    + exact Hhcoh.
+    + (* the model-level counter from the [types]-level one *)
+      move=> t x Hx Hcx.
+      have Hne : docm_get m t ≠ [].
+      { move=> Heq. move: Hx. rewrite Heq elem_of_nil. done. }
+      destruct (Hmdom t Hne) as (nm & p & -> & Hbnm).
+      destruct (Hbindtypes nm p Hbnm) as [ts Hts].
+      have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
+      rewrite Hdg in Hx.
+      exact (Hctr p ts x Hts Hx Hcx).
+  - iIntros "H". iDestruct "H" as (c h m) "H". iNamed "H". subst c.
+    iDestruct (types_repr_all with "Htypes") as %Hreprall.
+    iDestruct (types_cells_id_bounds with "Htypes") as %Hcellbnd.
+    destruct Hregcoh as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
+    (* the [types]-level counter from the model-level one *)
+    have Hctrt : ∀ parent ts x, types !! parent = Some ts -> x ∈ ty_arr ts ->
+        clientId (item_id x) = uint.nat client -> (clock (item_id x) < uint.nat k)%nat.
+    { move=> parent ts x Hts Hx Hcx.
+      destruct (Htypesbound parent (ex_intro _ ts Hts)) as [nm Hbnm].
+      have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm parent ts Hbnm Hts.
+      apply (Hctr (RootId nm) x); [by rewrite Hdg | exact Hcx]. }
+    (* the W64 cell-level shadow, via the id-bound pins *)
+    have Hcellctr : ∀ c0, c0 ∈ all_cells types -> cell_client c0 = client ->
+        (uint.Z (cell_clock c0) < uint.Z k)%Z.
+    { move=> c0 Hc0 Hcc.
+      have Hc0m := Hc0. apply all_cells_elem_of in Hc0m.
+      destruct Hc0m as (p & ts & Hts & Hcts).
+      have Hitemmem : ic_item c0 ∈ ty_arr ts.
+      { rewrite (Hreprall p ts Hts). apply list_elem_of_fmap_2. exact Hcts. }
+      have [Hcb Hkb] := Hcellbnd c0 Hc0.
+      have Hceq : clientId (item_id (ic_item c0)) = uint.nat client.
+      { move: Hcc. rewrite /cell_client. move=> Hcc.
+        have Hz : uint.Z (W64 (clientId (item_id (ic_item c0)))) = uint.Z client
+          by rewrite Hcc.
+        word. }
+      have Hlt := Hctrt p ts (ic_item c0) Hts Hitemmem Hceq.
+      rewrite /cell_clock. word. }
+    iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
+    iPureIntro. split_and!;
+      [exact Hctrt | exact Hcellctr | exact Hbindtypes | exact Hbindinj
+      | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom].
+Qed.
+
 (** [store.applyUpdate], doc-level (#49): integrate the decoded, type-tagged
     batch in list order, [repair]ing each struct against the whole store and
     integrating it into its OWN root type — a refinement of the doc-level
@@ -4025,8 +4207,9 @@ Qed.
     replay itself.
 
     This receiver-side [ValidReplay] spec is the INTERNAL composition lemma:
-    the certificate spec [wp_store__applyUpdate_certs] below obtains the
-    [ValidReplay] from the ghost op history and invokes this proof verbatim. *)
+    [wp_store__applyUpdate_certs_aux] below obtains the [ValidReplay] from
+    the ghost op history and invokes this proof verbatim, and the public
+    [wp_store__applyUpdate_certs] wraps that in [own_store]. *)
 Lemma wp_store__applyUpdate (s : loc) (sl : slice.t) (dq : dfrac)
     (inputs : list (TId * IntegrateInput (A := A)))
     (m m' : DocM) (types : gmap loc type_state) (bind : gmap P loc)
@@ -4391,40 +4574,27 @@ Proof.
   move=> Heq. exact (Hoff 0%nat (t0, input) eq_refl (eq_sym Heq)).
 Qed.
 
-(** The store's *registry coherence*: the name->loc bindings [bind], the
-    per-type heap state [types], and the replayed doc model [m] fit together —
-    every bound name has a live type and vice versa, [bind] is injective, the
-    model agrees with each bound type's item list, and the model is populated
-    only at bound names. This is exactly the [bind]/[types]/[m] invariant
-    [store_inv] maintains; naming it keeps the [applyUpdate] specs (both the
-    precondition and the postcondition) readable instead of a wall of raw
-    quantified side conditions. *)
-Definition doc_registry_coh (m : DocM) (bind : gmap P loc)
-    (types : gmap loc type_state) : Prop :=
-  (∀ nm p, bind !! nm = Some p -> is_Some (types !! p)) /\
-  (∀ n1 n2 p, bind !! n1 = Some p -> bind !! n2 = Some p -> n1 = n2) /\
-  (∀ p, is_Some (types !! p) -> ∃ nm, bind !! nm = Some p) /\
-  (∀ nm p ts, bind !! nm = Some p -> types !! p = Some ts ->
-     docm_get m (RootId nm) = ty_arr ts) /\
-  (∀ t, docm_get m t ≠ [] -> ∃ nm p, t = RootId nm /\ bind !! nm = Some p).
-
-(** [applyUpdate], certificate-based (issues #42/#49): the receiver-side
-    [ValidReplay] precondition of [wp_store__applyUpdate] is replaced by the
-    sender-side op certificates plus the id-level coverage [batch_ok] (what
-    y-octo's UpdateIterator establishes with the state vector). The proof
-    advances the ghost history up front ([history_deliver_batch] — which
-    yields the doc-level [ValidReplay] before any code runs) and then invokes
-    the heap-level loop proof verbatim.
+(** INTERNAL certificate lemma (field-level): the receiver-side [ValidReplay]
+    precondition of [wp_store__applyUpdate] is replaced by the sender-side op
+    certificates plus the id-level coverage [batch_ok] (what y-octo's
+    UpdateIterator establishes with the state vector). The proof advances the
+    ghost history up front ([history_deliver_batch], which yields the
+    doc-level [ValidReplay] before any code runs) and then invokes the
+    heap-level loop proof verbatim.
 
     The batch's W64-level freshness/order side conditions are derived from
     the replay itself ([ValidReplay_arr_fresh] / [ValidReplay_batch_causal],
-    id components bounded via [own_update_id_bounds] / the DLL pins) —
-    including the freshness against OTHER types' cells, which pre-#49 was a
-    leftover hypothesis: the doc-level [ValidReplay] carries doc-GLOBAL
-    per-step freshness, and the registry ties every type to its entry of
-    [m]. Only the [2^64-1] no-wrap seam remains hypothetical (see
-    [wp_store__applyUpdate]). *)
-Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
+    id components bounded via [own_update_id_bounds] / the DLL pins),
+    including the freshness against OTHER types' cells: the doc-level
+    [ValidReplay] carries doc-GLOBAL per-step freshness, and the registry
+    ties every type to its entry of [m]. Only the [2^64-1] no-wrap seam
+    remains hypothetical (see [wp_store__applyUpdate]).
+
+    The public spec is [wp_store__applyUpdate_certs] below, which wraps this
+    lemma's raw footprint (struct fields, [types]/[bind] maps) in
+    [own_store] and its raw pure post in [ValidReplay] + [is_root_lb]
+    certificates. *)
+Lemma wp_store__applyUpdate_certs_aux (s : loc) (sl : slice.t) (dq : dfrac)
     (γh : history_names) (c : ClientId) (h : list Ev)
     (inputs : list (TId * IntegrateInput (A := A))) (Ds : list (gset YjsId))
     (m : DocM) (types : gmap loc type_state) (bind : gmap P loc)
@@ -4455,6 +4625,10 @@ Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
       own_client_history γh c (h ++ (deliver_ev <$> inputs)) ∗
       ⌜history_state_coh (h ++ (deliver_ev <$> inputs)) m'⌝ ∗
       ⌜doc_registry_coh m' bind types'⌝ ∗
+      ⌜dom types' = dom types⌝ ∗
+      ⌜ValidReplay inputs m m'⌝ ∗
+      ⌜∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
+         inputs !! i = Some ti -> clientId (in_id ti.2) ≠ c⌝ ∗
       ⌜∀ c0, c0 ∈ all_cells types' -> c0 ∈ all_cells types ∨
          ∃ i ti, inputs !! i = Some ti /\
             cell_client c0 = W64 (clientId (in_id ti.2)) /\
@@ -4479,7 +4653,7 @@ Proof using Type*.
   iApply fupd_wp.
   have HmaskN : ↑histN ⊆ (⊤ : coPset) by solve_ndisj.
   iMod (history_deliver_batch γh c h m inputs Ds ⊤ HmaskN Hbatch Hcoh Harrinv
-          with "Hhist Hown Hcerts") as (m') "(Hown & %Hvr & %Hcoh')".
+          with "Hhist Hown Hcerts") as (m') "(Hown & %Hvr & %Hcoh' & %Hnoc)".
   iModIntro.
   (* the W64-level freshness of the batch against ALL cells *)
   have Hfresh : ∀ (i : nat) (ti : TId * IntegrateInput (A := A)), inputs !! i = Some ti →
@@ -4546,7 +4720,136 @@ Proof using Type*.
   - exact Hcoh'.
   - rewrite /doc_registry_coh. split_and!;
       [exact Hbindtypes' | exact Hbindinj | exact Htypesbound' | exact Hmtypes' | exact Hmdom'].
+  - exact Hdom'.
+  - exact Hvr.
+  - exact Hnoc.
   - exact Hprov'.
+Qed.
+
+(** [applyUpdate], the PUBLIC certificate spec (issues #42/#49): the whole
+    store state is ONE [own_store] before and after, at models [(c, h, m)]
+    and [(c, h ++ delivers, m')]. The batch comes with its persistent
+    certificates ([is_certified_batch], covering sets hidden) and one
+    registration witness per target root ([is_root], replacing the raw
+    registry-lookup hypothesis). The pure post is the doc-level replay
+    [ValidReplay inputs m m'], which determines [m']; the resource post
+    additionally hands back one monotone content certificate per input:
+    [is_root_lb] at the root's full post-delivery item set, a persistent
+    fragment of the grow-only item-set authority (which this spec, unlike
+    the internal lemma, also advances, so a lock-holding caller can rebuild
+    [store_inv] via [store_inv_own_store]).
+
+    The only pure preconditions left are the [2^64-1] no-wrap seam, now
+    stated over the model [m] (see [wp_store__applyUpdate]). *)
+Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
+    (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocM)
+    (inputs : list (TId * IntegrateInput (A := A))) :
+  (∀ (t : TId) x, x ∈ docm_get m t -> (Z.of_nat (clock (item_id x)) + 1 < 2^64)%Z) ->
+  (∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
+     inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
+  {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
+      own_store s γs γh c h m ∗
+      own_update sl dq inputs ∗
+      is_certified_batch γh h inputs ∗
+      ([∗ list] ti ∈ inputs, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗ is_root γs nm) }}}
+    s @! (go.PointerType yjs.store) @! "applyUpdate" #sl
+  {{{ (m' : DocM), RET #();
+      own_store s γs γh c (h ++ (deliver_ev <$> inputs)) m' ∗
+      own_update sl dq inputs ∗
+      ⌜ValidReplay inputs m m'⌝ ∗
+      ([∗ list] ti ∈ inputs, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗
+         is_root_lb γs nm (list_to_set (docm_get m' ti.1))) }}}.
+Proof using Type*.
+  move=> Hnowrapm Hnowrapb.
+  iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertb & #Hroots) HΦ".
+  iNamed "Hstore".
+  iDestruct "Hcertb" as (Ds) "[%Hbatch #Hcerts]".
+  (* recover the raw registry-lookup facts the internal lemma wants *)
+  iAssert (⌜∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
+      inputs !! i = Some ti -> ∃ nm p, ti.1 = RootId nm /\ bind !! nm = Some p⌝)%I
+    as %Hbatchbnd.
+  { iIntros (i ti Hi).
+    iDestruct (big_sepL_lookup _ _ i ti Hi with "Hroots") as (nm) "[%Htieq Hroot]".
+    iDestruct "Hroot" as (p) "Hbind".
+    iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hb.
+    iPureIntro. by exists nm, p. }
+  (* the cell-level no-wrap seam from the model-level one *)
+  iDestruct (types_repr_all with "Htypes") as %Hreprall.
+  iDestruct (types_cells_id_bounds with "Htypes") as %Hcellbnd.
+  have Hregcohd := Hregcoh.
+  destruct Hregcohd as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
+  have Hnowrap : ∀ c0, c0 ∈ all_cells types -> (uint.Z (cell_clock c0) + 1 < 2^64)%Z.
+  { move=> c0 Hc0.
+    have Hc0m := Hc0. apply all_cells_elem_of in Hc0m.
+    destruct Hc0m as (p & ts & Hts & Hcts).
+    have Hitemmem : ic_item c0 ∈ ty_arr ts.
+    { rewrite (Hreprall p ts Hts). apply list_elem_of_fmap_2. exact Hcts. }
+    destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
+    have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
+    have Hmem : ic_item c0 ∈ docm_get m (RootId nm) by rewrite Hdg.
+    have [Hcb Hkb] := Hcellbnd c0 Hc0.
+    have Hnw := Hnowrapm (RootId nm) (ic_item c0) Hmem.
+    rewrite /cell_clock. word. }
+  (* run the internal certificate lemma; keep a fupd after the call for the
+     item-set authority update *)
+  iApply wp_fupd.
+  wp_apply (wp_store__applyUpdate_certs_aux s sl dq γh c h inputs Ds m types bind
+              items_mref types_mref Hbatch Hhcoh Hregcoh Hbatchbnd Hnowrap Hnowrapb
+              with "[$Hpkg $Hishist $Hhist $Hcerts $Hupd $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
+  iIntros (types' m') "(Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & Hhist & %Hcoh' & %Hregcoh' & %Hdom' & %Hvr & %Hnoc & %Hprov')".
+  have Hregcohd' := Hregcoh'.
+  destruct Hregcohd' as (Hbindtypes' & Hbindinj' & Htypesbound' & Hmtypes' & Hmdom').
+  (* grow the item-set authority to the new types and snapshot it *)
+  have Hdomf : dom ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types')
+             = dom ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types)
+    by rewrite !dom_fmap_L Hdom'.
+  have Hgrowf : ∀ p S S',
+      ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) !! p = Some S ->
+      ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types') !! p = Some S' ->
+      S ⊆ S'.
+  { move=> p S S'. rewrite !lookup_fmap.
+    destruct (types !! p) as [ts|] eqn:Hts; last done.
+    destruct (types' !! p) as [ts'|] eqn:Hts'; last done.
+    move=> [= <-] [= <-].
+    destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
+    have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
+    have Hdg' : docm_get m' (RootId nm) = ty_arr ts' := Hmtypes' nm p ts' Hbnm Hts'.
+    move=> x. rewrite !elem_of_list_to_set. move=> Hx.
+    rewrite -Hdg'. apply (ValidReplay_mem inputs m m' Hvr (RootId nm)).
+    by rewrite Hdg. }
+  iMod (auth_gmap_gset_grow_snap γs.(sn_seq) _ _ Hdomf Hgrowf with "Hseq")
+    as "[Hseq #Hsnap]".
+  (* one content certificate per input, projected out of the snapshot; built
+     under [big_sepL_intro]'s box, so only pure facts ([Hbatchbnd]) and
+     persistent resources ([Hbinds], [Hsnap]) feed it *)
+  iAssert ([∗ list] ti ∈ inputs, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗
+             is_root_lb γs nm (list_to_set (docm_get m' ti.1)))%I as "#Hlbs".
+  { iApply big_sepL_intro.
+    iIntros "!#" (i ti Hi).
+    destruct (Hbatchbnd i ti Hi) as (nm & p & Htieq & Hbnm).
+    destruct (Hbindtypes' nm p Hbnm) as [ts' Hts'].
+    have Hdg' : docm_get m' (RootId nm) = ty_arr ts' := Hmtypes' nm p ts' Hbnm Hts'.
+    iDestruct (big_sepM_lookup _ _ nm p Hbnm with "Hbinds") as "#Hbind".
+    iExists nm. iSplit; [done |].
+    iExists p. iFrame "Hbind".
+    rewrite /is_type_lb Htieq Hdg'.
+    iApply (auth_gmap_gset_frag_lookup with "Hsnap").
+    rewrite lookup_fmap Hts' //. }
+  (* the model-level counter clause survives: nothing in the batch is ours *)
+  have Hctr' : ∀ (t : TId) x, x ∈ docm_get m' t -> clientId (item_id x) = c ->
+      (clock (item_id x) < uint.nat k)%nat.
+  { move=> t x Hx Hcx.
+    destruct (ValidReplay_prov inputs m m' Hvr t x Hx) as [Hold | (i & ti & Hi & Hid)].
+    - exact (Hctr t x Hold Hcx).
+    - exfalso. apply (Hnoc i ti Hi). by rewrite -Hid. }
+  iModIntro. iApply ("HΦ" $! m').
+  iFrame "Hupd". iFrame "Hlbs".
+  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hhist";
+    last by iPureIntro.
+  iExists client, k, items_mref, types_mref, dset, types', bind.
+  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
+  iPureIntro. split_and!; [exact Hclientc | exact Hregcoh' | exact Hcoh' | exact Hctr'].
 Qed.
 
 End store.

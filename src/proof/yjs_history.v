@@ -70,11 +70,25 @@ Definition own_client_history (γh : history_names) (c : ClientId) (h : list Ev)
 Definition is_op_cert (γh : history_names) (op : Op) (D : gset YjsId) : iProp Σ :=
   (opid op) ↪[γh.(hn_ops)]□ (op, D).
 
+(** Persistent: a batch of insert inputs certified AGAINST the receiver
+    history [h]: one op certificate per input, whose causal-past covers
+    ([batch_ok]) are discharged by [h] plus the earlier batch, and no input
+    is a re-delivery. The covering sets [Ds] are an internal witness, so
+    callers of the [applyUpdate] certificate spec never see them. *)
+Definition is_certified_batch (γh : history_names) (h : list Ev)
+    (inputs : list (TId * IntegrateInput (A := A))) : iProp Σ :=
+  ∃ Ds : list (gset YjsId),
+    ⌜batch_ok h inputs Ds⌝ ∗
+    [∗ list] ti;D ∈ inputs;Ds, is_op_cert γh (ti.1, OpInsert ti.2) D.
+
 #[global] Instance history_inv_timeless γh : Timeless (history_inv γh).
 Proof. apply _. Qed.
 #[global] Instance is_history_persistent γh : Persistent (is_history γh).
 Proof. apply _. Qed.
 #[global] Instance is_op_cert_persistent γh op D : Persistent (is_op_cert γh op D).
+Proof. apply _. Qed.
+#[global] Instance is_certified_batch_persistent γh h inputs :
+  Persistent (is_certified_batch γh h inputs).
 Proof. apply _. Qed.
 #[global] Instance own_client_history_timeless γh c h : Timeless (own_client_history γh c h).
 Proof. apply _. Qed.
@@ -163,7 +177,9 @@ Lemma history_deliver_batch γh (c : ClientId) h (m : DocM)
   ∃ m' : DocM,
     own_client_history γh c (h ++ (deliver_ev <$> inputs)) ∗
     ⌜ValidReplay inputs m m'⌝ ∗
-    ⌜history_state_coh (h ++ (deliver_ev <$> inputs)) m'⌝.
+    ⌜history_state_coh (h ++ (deliver_ev <$> inputs)) m'⌝ ∗
+    ⌜∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
+       inputs !! i = Some ti -> clientId (in_id ti.2) ≠ c⌝.
 Proof.
   iIntros (HE Hbatch Hcoh Harrinv) "#Hinv Hown #Hcertsin".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".
@@ -182,6 +198,8 @@ Proof.
     exact (proj2 (Hc1 _ _ _ (Hlk i ti D Hi HD))). }
   pose proof (certs_ValidReplay N c h m inputs Ds Hwf HNc Hcoh Harrinv Hreg
                 (eq_sym Hlen) Hbatch) as (m' & Hvr & Hcoh' & Hwf').
+  pose proof (batch_not_own_client N c h inputs Ds Hwf HNc (eq_sym Hlen) Hreg Hbatch)
+    as Hnoc.
   iMod (ghost_map_update (h ++ (deliver_ev <$> inputs))
           with "HhistAuth Hown") as "[HhistAuth Hown]".
   iMod ("Hclose" with "[HhistAuth HopsAuth]") as "_".
@@ -192,7 +210,7 @@ Proof.
     move=> [ti [Heq _]]. rewrite /deliver_ev in Heq. discriminate.
   }
   iModIntro. iExists m'. iFrame "Hown".
-  iPureIntro. split; [exact Hvr | exact Hcoh'].
+  iPureIntro. split_and!; [exact Hvr | exact Hcoh' | exact Hnoc].
 Qed.
 
 (* ===== a two-client smoke test (ghost only, no WP) ======================= *)
