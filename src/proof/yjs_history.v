@@ -2,15 +2,16 @@
 
     Wraps the pure bridge ([yjs_network_model]) in Perennial ghost state:
 
-    - two [ghost_map]s under one global invariant [inv histN (history_inv γh)]:
-      the per-client event histories (mirroring the model's [NodeHistories]
-      directly) and the broadcast-op registry whose persistent elements are the
-      op certificates;
+    - under one global invariant [inv histN (history_inv γh)]: the per-client
+      event histories as ONE auth-of-mono-lists map (mirroring the model's
+      [NodeHistories]; elements are the replicas' exclusive handles, lower
+      bounds the prefix certificates) and a broadcast-op registry [ghost_map]
+      whose persistent elements are the op certificates;
     - [own_client_history γh c h]: the exclusive per-replica element (= the
-      append capability), held by the replica's store-lock invariant; it
-      carries a per-replica mono-list authority whose persistent fragments
-      [is_history_lb γh c h0] certify [h0] as a history prefix (the lossless
-      replica-progress lower bound), minted afresh at every ghost append;
+      append capability), held by the replica's store-lock invariant; its
+      persistent fragments [is_history_lb γh c h0] certify [h0] as a history
+      prefix (the lossless replica-progress lower bound), minted afresh at
+      every ghost append;
     - [is_op_cert γh op D]: the persistent certificate — "op was broadcast, and
       [D] covers its strict causal past" — minted by [Text.Insert], consumed by
       [applyUpdate];
@@ -24,6 +25,7 @@
 From New.proof Require Import proof_prelude.
 From New.golang Require Import theory.
 From New.proof Require Export yjs_core yjs_network_model.
+From iris.algebra Require Import auth gmap max_prefix_list.
 From iris.algebra.lib Require Import mono_list.
 
 Section history.
@@ -39,20 +41,38 @@ Local Notation opid := (DocOp_id (A := A) (P := P)).
 Local Notation Ev := (@Event Op).
 Local Notation RawHistories := (gmap ClientId (list Ev)).
 Local Notation DocM := (gmap TId (list (YjsItem A))).
-(** The per-replica history-prefix RA: one mono-list per client, packed into
-    one gmap so a single gname serves every replica (composition is per key,
-    so distinct clients' authorities coexist and fragments are per-client
-    prefix certificates). *)
-Local Notation histlbUR := (gmapUR ClientId (mono_listR (leibnizO Ev))).
+(** The per-replica history RA: an authoritative map of mono-lists, ONE
+    gname for everything history-shaped. The outer [auth] ties the whole map
+    [N] to the invariant (membership + agreement); each client's inner
+    [●ML h] fragment is that replica's exclusive element (two compose
+    invalidly); the inner [◯ML h0] fragments are the persistent
+    history-prefix certificates [is_history_lb]. *)
+Local Notation EvO := (leibnizO Ev).
+Local Notation histUR := (authR (gmapUR ClientId (mono_listR EvO))).
 
 (** One record instead of loose gnames (Perennial house style). *)
 Record history_names := HistoryNames {
-  hn_hist : gname;   (* ghost_map ClientId (list Ev)      *)
-  hn_ops  : gname;   (* ghost_map YjsId (Op * gset YjsId) *)
-  hn_lb   : gname;   (* histlbUR: per-replica history-prefix bounds *)
+  hn_hist : gname;   (* histUR: per-client histories (auth map of mono-lists;
+                        elements = replicas' exclusive handles, lbs = the
+                        prefix certificates) *)
+  hn_ops  : gname;   (* ghost_map YjsId (Op * gset YjsId). Informationally
+                        derivable from the histories ([ops_coh] says so), but
+                        kept as its own gname: its persisted elements give
+                        UNCONDITIONAL certificate agreement
+                        ([is_op_cert_agree]), which a prefix-certificate
+                        encoding of op certs could only provide under the
+                        invariant. *)
 }.
 
 Definition histN : namespace := nroot .@ "cert_yjs" .@ "history".
+
+(** The per-client mono-list image of the raw history map (what the
+    invariant's authority holds). *)
+Definition hist_auth_map (N : RawHistories) : gmap ClientId (mono_listR EvO) :=
+  (λ h, ●ML (h : list EvO)) <$> N.
+
+Definition hist_auth (γ : gname) (N : RawHistories) : iProp Σ :=
+  own γ (● (hist_auth_map N) : histUR).
 
 (** The global invariant: both authorities, a copy of every certificate (so
     any party that can open the invariant and name a registered id can
@@ -61,7 +81,7 @@ Definition histN : namespace := nroot .@ "cert_yjs" .@ "history".
     append is the refinement of the network model. *)
 Definition history_inv (γh : history_names) : iProp Σ :=
   ∃ (N : RawHistories) (ops : gmap YjsId (Op * gset YjsId)),
-    "HhistAuth" ∷ ghost_map_auth γh.(hn_hist) 1 N ∗
+    "HhistAuth" ∷ hist_auth γh.(hn_hist) N ∗
     "HopsAuth"  ∷ ghost_map_auth γh.(hn_ops) 1 ops ∗
     "#Hcerts"   ∷ ([∗ map] id ↦ p ∈ ops, id ↪[γh.(hn_ops)]□ p) ∗
     "%Hwf"      ∷ ⌜history_wf N⌝ ∗
@@ -71,11 +91,9 @@ Definition is_history (γh : history_names) : iProp Σ :=
   inv histN (history_inv γh).
 
 (** Exclusive: this replica IS client [c], with event history [h]. Lives in
-    the store lock invariant. Next to the raw [ghost_map] element it carries
-    the mono-list authority whose persistent fragments are the history-prefix
-    certificates [is_history_lb]. *)
+    the store lock invariant. *)
 Definition own_client_history (γh : history_names) (c : ClientId) (h : list Ev) : iProp Σ :=
-  c ↪[γh.(hn_hist)] h ∗ own γh.(hn_lb) ({[ c := ●ML (h : list (leibnizO Ev)) ]} : histlbUR).
+  own γh.(hn_hist) (◯ {[ c := ●ML (h : list EvO) ]} : histUR).
 
 (** Persistent: [h0] is (forever) a prefix of client [c]'s event history —
     the lossless "how far has this replica advanced" certificate. All the
@@ -85,7 +103,7 @@ Definition own_client_history (γh : history_names) (c : ClientId) (h : list Ev)
     log ([delivered_from_prefix]), so two certificates about the same author
     are always comparable ([prefix_weak_total]). *)
 Definition is_history_lb (γh : history_names) (c : ClientId) (h0 : list Ev) : iProp Σ :=
-  own γh.(hn_lb) ({[ c := ◯ML (h0 : list (leibnizO Ev)) ]} : histlbUR).
+  own γh.(hn_hist) (◯ {[ c := ◯ML (h0 : list EvO) ]} : histUR).
 
 (** Persistent: [op] was broadcast; [D] covers its causal past. THE
     certificate. *)
@@ -118,68 +136,129 @@ Proof. apply _. Qed.
 Proof. apply _. Qed.
 #[global] Instance is_history_lb_timeless γh c h0 : Timeless (is_history_lb γh c h0).
 Proof. apply _. Qed.
+#[global] Instance hist_auth_timeless γ N : Timeless (hist_auth γ N).
+Proof. apply _. Qed.
 
-(** A mono-list authority singleton contains its own lower-bound fragment. *)
-Local Lemma singleton_auth_lb_op (c : ClientId) (h : list Ev) :
-  ({[ c := ●ML (h : list (leibnizO Ev)) ]} : histlbUR) ≡
-  ({[ c := ●ML (h : list (leibnizO Ev)) ]} : histlbUR) ⋅
-  ({[ c := ◯ML (h : list (leibnizO Ev)) ]} : histlbUR).
-Proof. rewrite singleton_op -mono_list_auth_lb_op //. Qed.
+(** A saturated mono-list authority is only included in itself. *)
+Local Lemma mono_list_auth_included_eq (l l' : list EvO) :
+  (●ML l : mono_listR EvO) ≼ ●ML l' -> l = l'.
+Proof.
+  move=> Hincl.
+  have Hincl' : (● (to_max_prefix_list l) : authR (max_prefix_listUR EvO)) ≼
+                ● (to_max_prefix_list l') ⋅ ◯ (to_max_prefix_list l').
+  { etrans; [apply cmra_included_l | exact Hincl]. }
+  move: Hincl'. rewrite auth_auth_included. move=> Heq.
+  have Hpre1 : l `prefix_of` l'.
+  { apply to_max_prefix_list_included_L.
+    exists (to_max_prefix_list l'). rewrite Heq -core_id_dup //. }
+  have Hpre2 : l' `prefix_of` l.
+  { apply to_max_prefix_list_included_L.
+    exists (to_max_prefix_list l). rewrite -Heq -core_id_dup //. }
+  by apply (anti_symm prefix).
+Qed.
 
-(** Duplicate the current prefix certificate out of the authority (a
-    mono-list authority contains its own lower bound). *)
+(** Membership + agreement: the authority pins a replica element exactly. *)
+Lemma hist_auth_elem_lookup (γ : gname) (N : RawHistories) (c : ClientId) (h : list Ev) :
+  hist_auth γ N -∗ own γ (◯ {[ c := ●ML (h : list EvO) ]} : histUR) -∗
+  ⌜N !! c = Some h⌝.
+Proof.
+  iIntros "Ha He". iDestruct (own_valid_2 with "Ha He") as %Hv.
+  iPureIntro. move: Hv.
+  rewrite auth_both_valid_discrete. move=> [Hincl _].
+  apply singleton_included_l in Hincl. destruct Hincl as (y & Hy & Hinc).
+  move: Hy. rewrite /hist_auth_map lookup_fmap.
+  move=> /fmap_Some_equiv [h' [HN Hyeq]].
+  rewrite Hyeq in Hinc.
+  have Hle : (●ML (h : list EvO) : mono_listR EvO) ≼ ●ML (h' : list EvO).
+  { move: Hinc. rewrite Some_included. move=> [Heq | Hle]; [| exact Hle].
+    exists (◯ML (h' : list EvO)). rewrite Heq -mono_list_auth_lb_op //. }
+  by rewrite HN (mono_list_auth_included_eq h h' Hle).
+Qed.
+
+(** Duplicate the current prefix certificate out of the element (a mono-list
+    authority contains its own lower bound). *)
 Lemma own_client_history_lb (γh : history_names) (c : ClientId) (h : list Ev) :
   own_client_history γh c h -∗ own_client_history γh c h ∗ is_history_lb γh c h.
 Proof.
-  iIntros "[Helem Hauth]".
-  iAssert (own γh.(hn_lb) (({[ c := ●ML (h : list (leibnizO Ev)) ]} : histlbUR) ⋅
-                           ({[ c := ◯ML (h : list (leibnizO Ev)) ]} : histlbUR)))%I
-    with "[Hauth]" as "[Hauth #Hlb]".
-  { rewrite -singleton_auth_lb_op. iFrame "Hauth". }
-  iFrame "∗#".
+  iIntros "He".
+  iAssert (own γh.(hn_hist) ((◯ {[ c := ●ML (h : list EvO) ]} : histUR) ⋅
+                             (◯ {[ c := ◯ML (h : list EvO) ]} : histUR)))%I
+    with "[He]" as "[$ $]".
+  rewrite -auth_frag_op singleton_op -mono_list_auth_lb_op. iFrame "He".
 Qed.
 
 (** A certificate really is a prefix of the current history. *)
 Lemma is_history_lb_prefix (γh : history_names) (c : ClientId) (h h0 : list Ev) :
   own_client_history γh c h -∗ is_history_lb γh c h0 -∗ ⌜h0 `prefix_of` h⌝.
 Proof.
-  iIntros "[_ Hauth] Hlb".
-  iDestruct (own_valid_2 with "Hauth Hlb") as %Hv.
+  iIntros "He Hlb". iDestruct (own_valid_2 with "He Hlb") as %Hv.
   iPureIntro. move: Hv.
-  rewrite singleton_op singleton_valid.
-  by move=> /mono_list_both_valid_L.
+  rewrite -auth_frag_op auth_frag_valid singleton_op singleton_valid.
+  rewrite mono_list_both_valid_L. done.
 Qed.
 
-(** Advance the authority along an append and mint the new certificate (the
-    ghost-step lemmas below use it at each history append). *)
-Lemma history_lb_advance (γh : history_names) (c : ClientId) (h tail : list Ev) :
-  own γh.(hn_lb) ({[ c := ●ML (h : list (leibnizO Ev)) ]} : histlbUR) ==∗
-  own γh.(hn_lb) ({[ c := ●ML ((h ++ tail) : list (leibnizO Ev)) ]} : histlbUR) ∗
+(** Two replica elements for the same client cannot coexist. *)
+Lemma own_client_history_exclusive (γh : history_names) (c : ClientId) (h h' : list Ev) :
+  own_client_history γh c h -∗ own_client_history γh c h' -∗ False.
+Proof.
+  iIntros "H1 H2". iDestruct (own_valid_2 with "H1 H2") as %Hv.
+  iPureIntro. move: Hv.
+  rewrite -auth_frag_op auth_frag_valid singleton_op singleton_valid.
+  rewrite mono_list_auth_op_valid //.
+Qed.
+
+(** Append: advance the authority and the element together, minting the new
+    certificate (the ghost-step lemmas below use it at each history append). *)
+Lemma hist_auth_elem_advance (γh : history_names) (N : RawHistories) (c : ClientId)
+    (h tail : list Ev) :
+  N !! c = Some h ->
+  hist_auth γh.(hn_hist) N -∗ own_client_history γh c h ==∗
+  hist_auth γh.(hn_hist) (<[c := h ++ tail]> N) ∗ own_client_history γh c (h ++ tail) ∗
   is_history_lb γh c (h ++ tail).
 Proof.
-  iIntros "Hauth".
-  iMod (own_update _ _ ({[ c := ●ML ((h ++ tail) : list (leibnizO Ev)) ]} : histlbUR) with "Hauth") as "Hauth".
-  { apply singleton_update, mono_list_update. by exists tail. }
-  iModIntro.
-  iAssert (own γh.(hn_lb) (({[ c := ●ML ((h ++ tail) : list (leibnizO Ev)) ]} : histlbUR) ⋅
-                           ({[ c := ◯ML ((h ++ tail) : list (leibnizO Ev)) ]} : histlbUR)))%I
-    with "[Hauth]" as "[$ $]".
-  { rewrite -singleton_auth_lb_op. iFrame "Hauth". }
+  iIntros (HN) "Ha He".
+  iMod (own_update_2 _ _ _
+          ((● (hist_auth_map (<[c := h ++ tail]> N)) : histUR) ⋅
+           (◯ {[ c := ●ML ((h ++ tail) : list EvO) ]} : histUR))
+          with "Ha He") as "[Ha He]".
+  { rewrite /hist_auth_map fmap_insert.
+    apply auth_update.
+    apply (singleton_local_update ((λ h1, ●ML (h1 : list EvO)) <$> N) c
+             (●ML (h : list EvO)) (●ML (h : list EvO))
+             (●ML ((h ++ tail) : list EvO)) (●ML ((h ++ tail) : list EvO))).
+    { rewrite lookup_fmap HN //. }
+    rewrite /mono_list_auth.
+    apply auth_local_update.
+    - apply max_prefix_list_local_update. by exists tail.
+    - exists (to_max_prefix_list ((h ++ tail) : list EvO)). rewrite -core_id_dup //.
+    - apply to_max_prefix_list_valid. }
+  iModIntro. iFrame "Ha".
+  iApply (own_client_history_lb with "He").
 Qed.
 
 (* ===== the ghost API ====================================================== *)
 
-(** Split a freshly allocated constant map into its per-client singletons. *)
-Local Lemma own_gset_to_gmap_singletons (γ : gname) (x : mono_listR (leibnizO Ev))
+(** Allocation plumbing: the constant-[[]] authority map, and splitting the
+    combined fragment into per-client elements. *)
+Local Lemma hist_auth_map_gset_to_gmap (C : gset ClientId) :
+  hist_auth_map (gset_to_gmap [] C) = gset_to_gmap (●ML ([] : list EvO)) C.
+Proof.
+  apply map_eq => c. rewrite /hist_auth_map lookup_fmap !lookup_gset_to_gmap.
+  destruct (decide (c ∈ C)).
+  - rewrite !option_guard_True //.
+  - rewrite !option_guard_False //.
+Qed.
+
+Local Lemma own_frag_gset_to_gmap_singletons (γ : gname) (x : mono_listR EvO)
     (C : gset ClientId) :
-  own γ (gset_to_gmap x C : histlbUR) -∗
-  [∗ set] c ∈ C, own γ ({[ c := x ]} : histlbUR).
+  own γ (◯ (gset_to_gmap x C) : histUR) -∗
+  [∗ set] c ∈ C, own γ (◯ {[ c := x ]} : histUR).
 Proof.
   induction C as [| c C Hc IH] using set_ind_L.
   - rewrite gset_to_gmap_empty big_sepS_empty. by iIntros "_".
   - rewrite gset_to_gmap_union_singleton.
     rewrite insert_singleton_op; last by rewrite lookup_gset_to_gmap_None.
-    iIntros "[Hc Hrest]".
+    rewrite auth_frag_op. iIntros "[Hc Hrest]".
     rewrite big_sepS_union; last set_solver.
     rewrite big_sepS_singleton. iFrame "Hc".
     by iApply IH.
@@ -189,23 +268,22 @@ Qed.
 Lemma history_alloc (C : gset ClientId) E :
   ⊢ |={E}=> ∃ γh, is_history γh ∗ [∗ set] c ∈ C, own_client_history γh c [].
 Proof.
-  iMod (ghost_map_alloc (gset_to_gmap ([] : list Ev) C)) as (γhist) "[HhistAuth Helems]".
-  iMod (ghost_map_alloc (∅ : gmap YjsId (Op * gset YjsId))) as (γops) "[HopsAuth _]".
-  iMod (own_alloc (gset_to_gmap (●ML ([] : list (leibnizO Ev))) C : histlbUR)) as (γlb) "Hlbs".
-  { move=> c. rewrite lookup_gset_to_gmap.
+  iMod (own_alloc ((● (hist_auth_map (gset_to_gmap [] C)) : histUR) ⋅
+                   (◯ (hist_auth_map (gset_to_gmap [] C)) : histUR))) as (γhist) "[HhistAuth Hf]".
+  { apply auth_both_valid_discrete. split; [done |].
+    move=> c. rewrite /hist_auth_map lookup_fmap lookup_gset_to_gmap.
     destruct (decide (c ∈ C)).
-    - rewrite option_guard_True //. apply mono_list_auth_valid.
+    - rewrite option_guard_True //. apply Some_valid, mono_list_auth_valid.
     - rewrite option_guard_False //. }
-  set (γh := {| hn_hist := γhist; hn_ops := γops; hn_lb := γlb |}).
+  iMod (ghost_map_alloc (∅ : gmap YjsId (Op * gset YjsId))) as (γops) "[HopsAuth _]".
+  set (γh := {| hn_hist := γhist; hn_ops := γops |}).
   iMod (inv_alloc histN _ (history_inv γh) with "[HhistAuth HopsAuth]") as "#Hinv".
   { iNext. iExists _, ∅. iFrame "HhistAuth HopsAuth".
     rewrite big_sepM_empty. iSplit; [done |].
     iPureIntro. split; [exact (history_wf_init C) | exact (ops_coh_init C)]. }
   iModIntro. iExists γh. iFrame "Hinv".
-  rewrite /own_client_history big_sepS_sep.
-  iSplitL "Helems".
-  { rewrite big_sepM_gset_to_gmap. iApply "Helems". }
-  by iApply (own_gset_to_gmap_singletons with "Hlbs").
+  rewrite hist_auth_map_gset_to_gmap.
+  by iApply (own_frag_gset_to_gmap_singletons with "Hf").
 Qed.
 
 (** Broadcast (mint): append [EvBroadcast op; EvDeliver op] to the caller's
@@ -237,17 +315,16 @@ Lemma history_broadcast γh (c k : nat) h (m : DocM) (t0 : TId)
        (<[t0 := arr']> m)⌝.
 Proof.
   iIntros (HE Htoitem Hvalid Hmax Hinid Hbound Hint Hcoh) "#Hinv Hown".
-  iDestruct "Hown" as "[Hown Hlbauth]".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".
-  iDestruct (ghost_map_lookup with "HhistAuth Hown") as %HNc.
+  iDestruct (hist_auth_elem_lookup with "HhistAuth Hown") as %HNc.
   have Hfresh : ¬ id_broadcast N (in_id input).
   { rewrite Hinid. exact (history_fresh_id N c h m k Hwf HNc Hcoh Hbound). }
   pose proof (history_wf_broadcast N c h m t0 arr' input item k
                 Hwf HNc Hcoh Htoitem Hvalid Hmax Hinid Hbound Hint)
     as (Hwf' & Hcoh' & Hreg').
-  iMod (ghost_map_update
-          (h ++ [EvBroadcast (t0, OpInsert input); EvDeliver (t0, OpInsert input)])
-          with "HhistAuth Hown") as "[HhistAuth Hown]".
+  iMod (hist_auth_elem_advance γh N c h
+          [EvBroadcast (t0, OpInsert input); EvDeliver (t0, OpInsert input)]
+          HNc with "HhistAuth Hown") as "(HhistAuth & Hown & #Hlb)".
   pose proof (ops_coh_lookup_fresh N ops (in_id input) Hopscoh Hfresh) as Hnone.
   iMod (ghost_map_insert (in_id input) ((t0, OpInsert input) : Op, delivered_ids h) Hnone
           with "HopsAuth") as "[HopsAuth Hcert]".
@@ -259,10 +336,7 @@ Proof.
     iPureIntro. split; [exact Hwf' |].
     exact (ops_coh_broadcast N c h ops (t0, OpInsert input) (delivered_ids h)
              Hwf HNc Hfresh Hopscoh Hreg'). }
-  iMod (history_lb_advance γh c h
-          [EvBroadcast (t0, OpInsert input); EvDeliver (t0, OpInsert input)]
-          with "Hlbauth") as "[Hlbauth #Hlb]".
-  iModIntro. iExists (delivered_ids h). iFrame "Hown Hlbauth Hcert Hlb".
+  iModIntro. iExists (delivered_ids h). iFrame "Hown Hcert Hlb".
   iPureIntro. split; [done | exact Hcoh'].
 Qed.
 
@@ -287,9 +361,8 @@ Lemma history_deliver_batch γh (c : ClientId) h (m : DocM)
        inputs !! i = Some ti -> clientId (in_id ti.2) ≠ c⌝.
 Proof.
   iIntros (HE Hbatch Hcoh Harrinv) "#Hinv Hown #Hcertsin".
-  iDestruct "Hown" as "[Hown Hlbauth]".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".
-  iDestruct (ghost_map_lookup with "HhistAuth Hown") as %HNc.
+  iDestruct (hist_auth_elem_lookup with "HhistAuth Hown") as %HNc.
   iDestruct (big_sepL2_length with "Hcertsin") as %Hlen.
   iAssert (⌜∀ (i : nat) (ti : TId * IntegrateInput (A := A)) (D : gset YjsId),
              inputs !! i = Some ti -> Ds !! i = Some D ->
@@ -306,8 +379,8 @@ Proof.
                 (eq_sym Hlen) Hbatch) as (m' & Hvr & Hcoh' & Hwf').
   pose proof (batch_not_own_client N c h inputs Ds Hwf HNc (eq_sym Hlen) Hreg Hbatch)
     as Hnoc.
-  iMod (ghost_map_update (h ++ (deliver_ev <$> inputs))
-          with "HhistAuth Hown") as "[HhistAuth Hown]".
+  iMod (hist_auth_elem_advance γh N c h (deliver_ev <$> inputs)
+          HNc with "HhistAuth Hown") as "(HhistAuth & Hown & #Hlb)".
   iMod ("Hclose" with "[HhistAuth HopsAuth]") as "_".
   { iNext. iExists _, _. iFrame "HhistAuth HopsAuth Hcerts".
     iPureIntro. split; [exact Hwf' |].
@@ -315,9 +388,7 @@ Proof.
     move=> e He. move: He. rewrite list_elem_of_fmap.
     move=> [ti [Heq _]]. rewrite /deliver_ev in Heq. discriminate.
   }
-  iMod (history_lb_advance γh c h (deliver_ev <$> inputs)
-          with "Hlbauth") as "[Hlbauth #Hlb]".
-  iModIntro. iExists m'. iFrame "Hown Hlbauth Hlb".
+  iModIntro. iExists m'. iFrame "Hown Hlb".
   iPureIntro. split_and!; [exact Hvr | exact Hcoh' | exact Hnoc].
 Qed.
 
