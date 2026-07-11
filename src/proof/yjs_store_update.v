@@ -1272,6 +1272,7 @@ Lemma wp_store__applyUpdate_certs_aux (s : loc) (sl : slice.t) (dq : dfrac)
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
       own_client_history γh c (h ++ (deliver_ev <$> inputs)) ∗
+      is_history_lb γh c (h ++ (deliver_ev <$> inputs)) ∗
       ⌜history_state_coh (h ++ (deliver_ev <$> inputs)) m'⌝ ∗
       ⌜doc_registry_coh m' bind types'⌝ ∗
       ⌜dom types' = dom types⌝ ∗
@@ -1302,7 +1303,7 @@ Proof using Type*.
   iApply fupd_wp.
   have HmaskN : ↑histN ⊆ (⊤ : coPset) by solve_ndisj.
   iMod (history_deliver_batch γh c h m inputs Ds ⊤ HmaskN Hbatch Hcoh Harrinv
-          with "Hhist Hown Hcerts") as (m') "(Hown & %Hvr & %Hcoh' & %Hnoc)".
+          with "Hhist Hown Hcerts") as (m') "(Hown & #Hlbnew & %Hvr & %Hcoh' & %Hnoc)".
   iModIntro.
   (* the W64-level freshness of the batch against ALL cells *)
   have Hfresh : ∀ (i : nat) (ti : TId * IntegrateInput (A := A)), inputs !! i = Some ti →
@@ -1344,7 +1345,7 @@ Proof using Type*.
               with "[$Hupd $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
   iIntros (types') "(Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hdom' & %Hmtypes' & %Hprov')".
   iApply ("HΦ" $! types' m').
-  iFrame "Hupd Hitemsf Hitemmap Htypesf Htypesmap Htypes Hown".
+  iFrame "Hupd Hitemsf Hitemmap Htypesf Htypesmap Htypes Hown Hlbnew".
   (* re-package [doc_registry_coh] for [m']/[types']: [bind] is unchanged and
      [dom types' = dom types], so the structural halves transfer; [Hmtypes']
      gives model agreement, and off-batch types are untouched by the replay. *)
@@ -1407,6 +1408,7 @@ Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
       own_store s γs γh c (h ++ (deliver_ev <$> inputs)) m' ∗
       own_update sl dq inputs ∗
       ⌜ValidReplay inputs m m'⌝ ∗
+      is_history_lb γh c (h ++ (deliver_ev <$> inputs)) ∗
       ([∗ list] ti ∈ inputs, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗
          is_root_lb γs nm (list_to_set (docm_get m' ti.1))) }}}.
 Proof using Type*.
@@ -1446,7 +1448,7 @@ Proof using Type*.
   wp_apply (wp_store__applyUpdate_certs_aux s sl dq γh c h inputs Ds m types bind
               items_mref types_mref Hbatch Hhcoh Hregcoh Hbatchbnd Hnowrap Hnowrapb
               with "[$Hpkg $Hishist $Hhist $Hcerts $Hupd $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
-  iIntros (types' m') "(Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & Hhist & %Hcoh' & %Hregcoh' & %Hdom' & %Hvr & %Hnoc & %Hprov')".
+  iIntros (types' m') "(Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & Hhist & #Hlbnew & %Hcoh' & %Hregcoh' & %Hdom' & %Hvr & %Hnoc & %Hprov')".
   have Hregcohd' := Hregcoh'.
   destruct Hregcohd' as (Hbindtypes' & Hbindinj' & Htypesbound' & Hmtypes' & Hmdom').
   (* grow the item-set authority to the new types and snapshot it *)
@@ -1493,7 +1495,7 @@ Proof using Type*.
     - exact (Hctr t x Hold Hcx).
     - exfalso. apply (Hnoc i ti Hi). by rewrite -Hid. }
   iModIntro. iApply ("HΦ" $! m').
-  iFrame "Hupd". iFrame "Hlbs".
+  iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
   iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hhist";
     last by iPureIntro.
   iExists client, k, items_mref, types_mref, dset, types', bind.

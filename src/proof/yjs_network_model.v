@@ -1679,6 +1679,251 @@ Proof.
   rewrite /delivered_ids elem_of_list_to_set. apply list_elem_of_fmap_2. exact Hin.
 Qed.
 
+(* ===== the per-author prefix order (lossless "state vector") ============== *)
+
+(** The broadcast projection of one history (the author's op log), the dual
+    of [delivered_ops]. *)
+Definition broadcast_ops (h : list Ev) : list Op :=
+  omap (λ e, match e with EvBroadcast op => Some op | _ => None end) h.
+
+(** The ops of author [j] delivered in [h], in delivery order. *)
+Definition delivered_from (h : list Ev) (j : ClientId) : list Op :=
+  filter (λ op, clientId (opid op) = j) (delivered_ops h).
+
+(* ----- prefix monotonicity of the delivered views ----- *)
+
+Lemma delivered_ops_prefix (h0 h : list Ev) :
+  h0 `prefix_of` h -> delivered_ops h0 `prefix_of` delivered_ops h.
+Proof.
+  move=> [t ->]. rewrite delivered_ops_app. by eexists.
+Qed.
+
+Lemma delivered_from_prefix_mono (h0 h : list Ev) (j : ClientId) :
+  h0 `prefix_of` h -> delivered_from h0 j `prefix_of` delivered_from h j.
+Proof.
+  move=> [t ->]. rewrite /delivered_from delivered_ops_app filter_app. by eexists.
+Qed.
+
+Lemma delivered_ids_prefix (h0 h : list Ev) :
+  h0 `prefix_of` h -> delivered_ids h0 ⊆ delivered_ids h.
+Proof.
+  move=> [t ->]. rewrite delivered_ids_app. set_solver.
+Qed.
+
+Lemma sv_of_prefix (h0 h : list Ev) (c : ClientId) :
+  h0 `prefix_of` h -> (sv_get (sv_of h0) c <= sv_get (sv_of h) c)%nat.
+Proof.
+  move=> [t ->]. rewrite sv_of_app sv_get_join. lia.
+Qed.
+
+
+(* ----- membership / NoDup transport through the projections ----- *)
+
+Lemma elem_of_broadcast_ops (h : list Ev) (op : Op) :
+  op ∈ broadcast_ops h ↔ EvBroadcast op ∈ h.
+Proof.
+  rewrite /broadcast_ops list_elem_of_omap. split.
+  - move=> [e [He Hfe]]. destruct e; [| done]. simpl in Hfe.
+    injection Hfe as ->. exact He.
+  - move=> He. exists (EvBroadcast op). by split.
+Qed.
+
+Lemma elem_of_delivered_ops_ev (h : list Ev) (op : Op) :
+  op ∈ delivered_ops h ↔ EvDeliver op ∈ h.
+Proof.
+  rewrite /delivered_ops list_elem_of_omap. split.
+  - move=> [e [He Hfe]]. destruct e; [done |]. simpl in Hfe.
+    injection Hfe as ->. exact He.
+  - move=> He. exists (EvDeliver op). by split.
+Qed.
+
+Lemma elem_of_delivered_from (h : list Ev) (j : ClientId) (op : Op) :
+  op ∈ delivered_from h j ↔ EvDeliver op ∈ h ∧ clientId (opid op) = j.
+Proof.
+  rewrite /delivered_from list_elem_of_filter elem_of_delivered_ops_ev.
+  split; move=> [? ?]; by split.
+Qed.
+
+Lemma NoDup_broadcast_ops (h : list Ev) :
+  NoDup h -> NoDup (broadcast_ops h).
+Proof.
+  induction 1 as [| e h He Hnd IH]; simpl; [constructor |].
+  destruct e as [op | op]; simpl; [| exact IH].
+  constructor; [| exact IH].
+  rewrite elem_of_broadcast_ops. move=> Hin. exact (He Hin).
+Qed.
+
+(* ----- snoc laws for the per-author delivered view ----- *)
+
+Lemma delivered_from_snoc_deliver (p : list Ev) (op : Op) (j : ClientId) :
+  clientId (opid op) = j ->
+  delivered_from (p ++ [EvDeliver op]) j = delivered_from p j ++ [op].
+Proof.
+  move=> Hj.
+  rewrite /delivered_from delivered_ops_app delivered_ops_deliver filter_app
+          filter_cons_True // filter_nil //.
+Qed.
+
+Lemma delivered_from_snoc_deliver_ne (p : list Ev) (op : Op) (j : ClientId) :
+  clientId (opid op) ≠ j ->
+  delivered_from (p ++ [EvDeliver op]) j = delivered_from p j.
+Proof.
+  move=> Hj.
+  rewrite /delivered_from delivered_ops_app delivered_ops_deliver filter_app
+          filter_cons_False // filter_nil app_nil_r //.
+Qed.
+
+Lemma delivered_from_snoc_broadcast (p : list Ev) (op : Op) (j : ClientId) :
+  delivered_from (p ++ [EvBroadcast op]) j = delivered_from p j.
+Proof.
+  rewrite /delivered_from delivered_ops_app delivered_ops_broadcast app_nil_r //.
+Qed.
+
+(* ----- positions: omap splits, unique occurrences, local order ----- *)
+
+(** Split a list at the event backing position [n] of its [omap] image. *)
+Lemma omap_lookup_split {X Y : Type} (f : X -> option Y) (l : list X) (n : nat) (y : Y) :
+  omap f l !! n = Some y ->
+  ∃ p e s, l = p ++ e :: s ∧ f e = Some y ∧ length (omap f p) = n.
+Proof.
+  move: n. induction l as [| x l IH] => n; simpl.
+  - rewrite lookup_nil //.
+  - destruct (f x) as [y'|] eqn:Hfx; simpl.
+    + destruct n as [| n']; simpl.
+      * move=> [= <-]. exists [], x, l. split_and!; [done | exact Hfx | done].
+      * move=> Hn. destruct (IH n' Hn) as (p & e & s & -> & Hfe & Hlen).
+        exists (x :: p), e, s. split_and!; [done | exact Hfe |].
+        simpl. rewrite Hfx /= Hlen //.
+    + move=> Hn. destruct (IH n Hn) as (p & e & s & -> & Hfe & Hlen).
+      exists (x :: p), e, s. split_and!; [done | exact Hfe |].
+      simpl. rewrite Hfx Hlen //.
+Qed.
+
+(** With duplicate-free events, anything locally ordered before the event at
+    the split point lands in the prefix. *)
+Lemma raw_lo_in_prefix (hc p rest : list Ev) (e1 e2 : Ev) :
+  NoDup hc -> hc = p ++ e2 :: rest ->
+  (∃ l1 l2 l3, hc = l1 ++ [e1] ++ l2 ++ [e2] ++ l3) ->
+  e1 ∈ p.
+Proof.
+  move=> Hnd Hsplit [l1 [l2 [l3 Hsplit2]]].
+  have He2a : hc !! length p = Some e2 by rewrite Hsplit list_lookup_middle //.
+  have He2b : hc !! length (l1 ++ e1 :: l2) = Some e2.
+  { rewrite Hsplit2 /=.
+    replace (l1 ++ e1 :: l2 ++ e2 :: l3) with ((l1 ++ e1 :: l2) ++ e2 :: l3)
+      by (rewrite -app_assoc //).
+    rewrite list_lookup_middle //. }
+  have Hpos := NoDup_lookup hc _ _ e2 Hnd He2a He2b.
+  have He1 : hc !! length l1 = Some e1 by rewrite Hsplit2 list_lookup_middle //.
+  have Hlt : (length l1 < length p)%nat.
+  { rewrite Hpos length_app /=. lia. }
+  rewrite Hsplit lookup_app_l // in He1.
+  exact (list_elem_of_lookup_2 _ _ _ He1).
+Qed.
+
+(** Two positions of an author's broadcast log are locally ordered at the
+    author. *)
+Lemma broadcast_ops_lo (h : list Ev) (q1 q2 : nat) (o1 o2 : Op) :
+  (q1 < q2)%nat ->
+  broadcast_ops h !! q1 = Some o1 ->
+  broadcast_ops h !! q2 = Some o2 ->
+  ∃ l1 l2 l3, h = l1 ++ [EvBroadcast o1] ++ l2 ++ [EvBroadcast o2] ++ l3.
+Proof.
+  move=> Hlt H1 H2.
+  destruct (omap_lookup_split _ _ _ _ H2) as (p & e2 & s & Hsp & Hfe2 & Hlen2).
+  have He2 : e2 = EvBroadcast o2.
+  { destruct e2; [| done]. simpl in Hfe2. by injection Hfe2 as ->. }
+  have H1p : broadcast_ops p !! q1 = Some o1.
+  { move: H1. rewrite Hsp /broadcast_ops omap_app lookup_app_l //.
+    rewrite -/(broadcast_ops p) Hlen2 //. }
+  destruct (omap_lookup_split _ _ _ _ H1p) as (p' & e1 & s' & Hsp' & Hfe1 & _).
+  have He1 : e1 = EvBroadcast o1.
+  { destruct e1; [| done]. simpl in Hfe1. by injection Hfe1 as ->. }
+  exists p', s', s. rewrite Hsp Hsp' He1 He2 -app_assoc //.
+Qed.
+
+(* ----- THE per-author prefix theorem ----- *)
+
+(** At any replica, the delivered ops of author [j] are a PREFIX of [j]'s
+    broadcast log: causal delivery + immediate self-delivery mean an op's
+    author-side past is covered before it, and duplicate-freeness pins the
+    positions. This is the lossless analogue of state-vector gaplessness and
+    needs NO successor-clock discipline. *)
+Lemma delivered_from_prefix (N : RawHistories) (c j : ClientId) :
+  history_wf N ->
+  delivered_from (to_histories N c) j `prefix_of` broadcast_ops (to_histories N j).
+Proof.
+  move=> Hwf.
+  have Hndc : NoDup (to_histories N c) := hwf_nodup N Hwf c.
+  have Hndbl : NoDup (broadcast_ops (to_histories N j)) :=
+    NoDup_broadcast_ops _ (hwf_nodup N Hwf j).
+  set bl := broadcast_ops (to_histories N j).
+  suff Hgen : ∀ p rest, to_histories N c = p ++ rest ->
+      delivered_from p j `prefix_of` bl.
+  { have := Hgen (to_histories N c) []. rewrite app_nil_r. by apply. }
+  elim/rev_ind => [| e p IH] rest Hsplit.
+  { rewrite /delivered_from /delivered_ops /=. apply prefix_nil. }
+  have Hsplit' : to_histories N c = p ++ (e :: rest) by rewrite Hsplit -app_assoc //.
+  have Hpre := IH (e :: rest) Hsplit'.
+  destruct e as [op | op].
+  { rewrite delivered_from_snoc_broadcast //. }
+  destruct (decide (clientId (opid op) = j)) as [Hj | Hj]; last first.
+  { rewrite delivered_from_snoc_deliver_ne //. }
+  rewrite delivered_from_snoc_deliver //.
+  (* the delivered op is in the author's log *)
+  have Hdel : EvDeliver op ∈ to_histories N c.
+  { rewrite Hsplit'. apply elem_of_app. right. by left. }
+  have Hbl : op ∈ bl.
+  { destruct (hwf_deliver_has_a_cause N Hwf c op Hdel) as [i Hbc].
+    have Hij : i = j by rewrite -(hwf_client_id N Hwf op i Hbc).
+    subst i. apply elem_of_broadcast_ops. exact Hbc. }
+  destruct (list_elem_of_lookup_1 _ _ Hbl) as [q Hq].
+  (* the prefix so far is [take L bl] *)
+  set L := length (delivered_from p j).
+  have HtakeL : delivered_from p j = take L bl.
+  { destruct Hpre as [k Hk]. rewrite /L Hk take_app_length //. }
+  (* not yet delivered: the deliver event occurs once *)
+  have Hnotp : op ∉ delivered_from p j.
+  { move=> Hin. apply elem_of_delivered_from in Hin. destruct Hin as [Hin _].
+    move: Hndc. rewrite Hsplit' NoDup_app. move=> [_ [Hdisj _]].
+    apply (Hdisj (EvDeliver op) Hin). by left. }
+  (* everything before [q] in the log is already delivered here *)
+  have Hbefore : ∀ q' o', (q' < q)%nat -> bl !! q' = Some o' ->
+      o' ∈ delivered_from p j.
+  { move=> q' o' Hlt' Hq'.
+    have Hlo := broadcast_ops_lo (to_histories N j) q' q o' op Hlt' Hq' Hq.
+    have Hhb : raw_hb (to_histories N) o' op.
+    { apply (raw_hb_bb _ j). exact Hlo. }
+    have Hcd := hwf_causal_delivery N Hwf c o' op Hdel Hhb.
+    have Hinp : EvDeliver o' ∈ p.
+    { apply (raw_lo_in_prefix (to_histories N c) p rest (EvDeliver o') (EvDeliver op));
+        [exact Hndc | exact Hsplit' | exact Hcd]. }
+    apply elem_of_delivered_from. split; [exact Hinp |].
+    have Hbc' : EvBroadcast o' ∈ to_histories N j.
+    { apply elem_of_broadcast_ops. exact (list_elem_of_lookup_2 _ _ _ Hq'). }
+    exact (hwf_client_id N Hwf o' j Hbc'). }
+  (* so the log position is exactly [L] *)
+  have HqL : q = L.
+  { have Hqle : (q <= L)%nat.
+    { destruct (decide (q <= L)%nat) as [| Hgt]; [done |].
+      exfalso.
+      have HL : (L < q)%nat by lia.
+      have HblL : ∃ oL, bl !! L = Some oL.
+      { apply lookup_lt_is_Some. have := lookup_lt_Some _ _ _ Hq. lia. }
+      destruct HblL as [oL HblL].
+      have HoL : oL ∈ delivered_from p j := Hbefore L oL HL HblL.
+      rewrite HtakeL in HoL.
+      apply elem_of_take in HoL. destruct HoL as (i & Hi & Hilt).
+      have := NoDup_lookup bl _ _ oL Hndbl Hi HblL. lia. }
+    destruct (decide (q < L)%nat) as [HqL | HqL]; [| lia].
+    exfalso. apply Hnotp. rewrite HtakeL.
+    apply elem_of_take. exists q. by split. }
+  (* append is the next log entry: still a prefix *)
+  exists (drop (S L) bl).
+  rewrite HtakeL -(take_S_r bl L op); [| by rewrite -HqL].
+  rewrite take_drop //.
+Qed.
+
 (** The applyUpdate bridge: certificates + coverage turn into a [ValidReplay]
     of the batch, the coherent state advances by the batch's delivers, and the
     extended history is well-formed. Produces the existential [m'], so the

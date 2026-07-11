@@ -333,19 +333,34 @@ a local postcondition extension):
    turned out redundant: the post's history is `h ++ (deliver_ev <$>
    inputs)` over the spec's own parameters, so callers get the join law by
    applying `sv_of_deliver_batch` themselves; the spec stays untouched.
-2. Model strengthening: broadcast requires the successor clock
-   (`k = own max + 1`, matching store.clock++), new invariant
-   `delivered_downward_closed : history_wf N -> per-client prefix-closed
-   (delivered_ids h)` (uses `hwf_self_deliver` on the author side, causal
-   coverage of the cert `D` on the receiver side). After this,
-   `ids_below (sv_of h) = delivered_ids h`, and an op cert's `D` is
-   representable as the author's sv (the wire format of y-octo updates);
-   keep the `gset` as the ghost-layer source of truth, sv as the
-   compressed interface.
-3. The `is_sv_lb` ghost + minting in Insert / applyUpdate. This is the
-   interface the issue #51 protocol composition consumes (Step1 sends
-   `sv_of h`; Step2's `diff_model` correctness is stated against
-   `ids_below`; after apply, the receiver holds `is_sv_lb` at the join).
+2. RESTAGED, then SHIPPED as the PREFIX-ORDER cert layer (PR 4). Review
+   feedback: the certificate layer does not need the nat compression at
+   all. Per-replica knowledge ordered by history PREFIX is lossless,
+   already a join semilattice (two prefixes of one history are comparable,
+   `prefix_weak_total`), and better to reason with; the sv is only the
+   WIRE-level compression. Shipped:
+   - ghost: `own_client_history` now carries a per-replica mono-list
+     authority (one `gmapUR ClientId (mono_listR Ev)` under a single
+     gname); `is_history_lb γh c h0` is the persistent history-prefix
+     certificate, minted afresh by `history_broadcast` /
+     `history_deliver_batch` and returned by the `applyUpdate` spec
+     (`is_history_lb` at `h ++ delivers`). `is_history_lb_prefix` pins it
+     against the authority; every delivered view is monotone under it
+     (`delivered_ops_prefix` / `delivered_ids_prefix` /
+     `delivered_from_prefix_mono` / `sv_of_prefix`).
+   - pure: `broadcast_ops` (the author's op log) and `delivered_from`
+     (per-author delivered view), and THE theorem `delivered_from_prefix`:
+     at any replica, the delivered ops of author `j` form a PREFIX of
+     `j`'s broadcast log. This is the lossless analogue of state-vector
+     gaplessness and needs NO successor-clock discipline (causal delivery
+     + self-delivery + duplicate-freeness suffice).
+3. Wire boundary only (with the issue #51 sync-protocol composition): the
+   successor-clock strengthening of the broadcast step (matching
+   store.clock++ and y-octo's contiguous ranges) and the bridge "under
+   that discipline the wire sv determines the delivered set" (per author,
+   length of the delivered prefix = sv entry). This is forced by the
+   PROTOCOL's compression, not by the ghost layer; `is_sv_lb` becomes a
+   derived view of `is_history_lb` if still wanted.
 
 Caveat for later: the exact join equality is a feature of the verified
 no-pending subset. Once the pending buffer (issue #43 territory) exists,
@@ -355,13 +370,13 @@ should be designed then, not now.
 
 ## 7. Non-goals / other follow-ups
 
-- A persistent PREFIX lower bound on the history (`mono_list` per client)
-  is the analogous refactor for `own_client_history`, and is what a future
-  public `Doc.ApplyUpdate` spec needs (the dropped wrapper's "caller does
-  not know h" problem). Out of scope here; the store-side certs do not
-  depend on it.
+- DONE (PR 4): the persistent PREFIX lower bound on the history
+  (`is_history_lb`, one mono-list per client) now exists; what remains for
+  a future public `Doc.ApplyUpdate` spec is USING it (the dropped
+  wrapper's "caller does not know h" problem: a caller can now hold a
+  certificate and reason up to prefix).
 - Tombstone/delete-set state is still existential (the history does not
-  track flags); `is_root_lb` and `is_sv_lb` are membership bounds, not
-  visibility bounds. Unchanged by this refactor.
+  track flags); `is_root_lb` and `is_history_lb` are membership/progress
+  bounds, not visibility bounds. Unchanged by this refactor.
 - The `2^64 - 1` no-wrap seam remains a pure hypothesis, now stated over
   the model.
