@@ -839,4 +839,112 @@ Proof.
     done.
 Qed.
 
+(** THE block step: one whole [run_step]-chained block of the scan window
+    reduces to a single node-level decision made by its HEAD char, exactly as
+    the node-stepping heap scan decides it (issue #28 M4). The four outcomes:
+    move past the block (case 1 with a smaller client, or case 2 with the
+    conflict's origin scanned but not conflicting), break (same integration
+    points, or an origin before the window), or scan on (accumulators absorb
+    the block). *)
+Lemma setfii_block_step (h : YjsItem A) (tail : list (YjsItem A))
+    (restfuel offset : nat) (leftIdx rightIdx : Z)
+    (oLeftId oRightId : option YjsId) (newId : YjsId)
+    (arr : list (YjsItem A)) (ibo ci : gset YjsId) (destIdx : Z) :
+  run_step (h :: tail) ->
+  (forall k c, (h :: tail) !! k = Some c ->
+     arr !! (Z.to_nat (leftIdx + Z.of_nat (offset + k))) = Some c) ->
+  (forall c, c ∈ h :: tail -> Some (item_id c) ≠ oLeftId) ->
+  (0 <= leftIdx + Z.of_nat offset)%Z ->
+  setfii_loop (length (h :: tail) + restfuel) offset leftIdx rightIdx
+    oLeftId oRightId newId arr ibo ci destIdx
+  = (if decide (origin_id (origin h) = oLeftId) then
+       if decide (clientId (item_id h) < clientId newId)%nat then
+         setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+           oLeftId oRightId newId arr
+           (char_ids (h :: tail) ∪ ibo) ∅
+           (leftIdx + Z.of_nat (offset + length (h :: tail)))%Z
+       else if decide (origin_id (rightOrigin h) = oRightId) then Some destIdx
+       else
+         setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+           oLeftId oRightId newId arr
+           (char_ids (h :: tail) ∪ ibo) (char_ids (h :: tail) ∪ ci) destIdx
+     else
+       match origin_id (origin h) with
+       | Some col =>
+         if decide (col ∈ ({[item_id h]} ∪ ibo)) then
+           if decide (col ∉ ({[item_id h]} ∪ ci)) then
+             setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+               oLeftId oRightId newId arr
+               (char_ids (h :: tail) ∪ ibo) ∅
+               (leftIdx + Z.of_nat (offset + length (h :: tail)))%Z
+           else
+             setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+               oLeftId oRightId newId arr
+               (char_ids (h :: tail) ∪ ibo) (char_ids (h :: tail) ∪ ci) destIdx
+         else Some destIdx
+       | None => Some destIdx
+       end).
+Proof.
+  move=> Hstep Hlook Hnotleft Hpos.
+  have Hh0 : arr !! Z.to_nat (leftIdx + Z.of_nat offset) = Some h.
+  { have := Hlook 0%nat h eq_refl. rewrite Nat.add_0_r //. }
+  have Hlook' : forall k c, tail !! k = Some c ->
+      arr !! Z.to_nat (leftIdx + Z.of_nat (S offset + k)) = Some c.
+  { move=> k c Hk. have := Hlook (S k) c Hk.
+    have -> : (offset + S k)%nat = (S offset + k)%nat by lia.
+    done. }
+  have Hidx1 : Z.of_nat (Z.to_nat (leftIdx + Z.of_nat offset) + 1)
+             = (leftIdx + Z.of_nat (S offset))%Z by lia.
+  have Hin_ibo : item_id h ∈ ({[item_id h]} ∪ ibo) by set_solver.
+  have Hin_ci : item_id h ∈ ({[item_id h]} ∪ ci) by set_solver.
+  have Hpos' : (0 <= leftIdx + Z.of_nat (S offset))%Z by lia.
+  have Hlen : length (h :: tail) = S (length tail) by done.
+  (* unfold the head step *)
+  simpl setfii_loop. rewrite Hh0 /=.
+  destruct (decide (origin_id (origin h) = oLeftId)) as [Hc1 | Hc1].
+  - destruct (decide (clientId (item_id h) < clientId newId)%nat) as [Hcl | Hcl].
+    + (* case 1, smaller client: move past the head, then the MOVE cascade *)
+      rewrite Hidx1.
+      rewrite (setfii_tail_move tail h restfuel (S offset) leftIdx rightIdx
+                 oLeftId oRightId newId arr ({[item_id h]} ∪ ibo)
+                 Hstep Hlook' Hnotleft Hin_ibo Hpos').
+      have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
+      have -> : char_ids tail ∪ ({[item_id h]} ∪ ibo) = char_ids (h :: tail) ∪ ibo
+        by (rewrite char_ids_cons; set_solver).
+      done.
+    + destruct (decide (origin_id (rightOrigin h) = oRightId)) as [Hro | Hro]; first done.
+      (* case 1, scan on: the STAY cascade *)
+      rewrite (setfii_tail_stay tail h restfuel (S offset) leftIdx rightIdx
+                 oLeftId oRightId newId arr ({[item_id h]} ∪ ibo) ({[item_id h]} ∪ ci) destIdx
+                 Hstep Hlook' Hnotleft Hin_ibo Hin_ci).
+      have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
+      have -> : char_ids tail ∪ ({[item_id h]} ∪ ibo) = char_ids (h :: tail) ∪ ibo
+        by (rewrite char_ids_cons; set_solver).
+      have -> : char_ids tail ∪ ({[item_id h]} ∪ ci) = char_ids (h :: tail) ∪ ci
+        by (rewrite char_ids_cons; set_solver).
+      done.
+  - destruct (origin_id (origin h)) as [col|] eqn:Hcol; last done.
+    destruct (decide (col ∈ ({[item_id h]} ∪ ibo))) as [Hmem | Hmem]; last done.
+    destruct (decide (col ∉ ({[item_id h]} ∪ ci))) as [Hnot | Hnot].
+    + (* case 2, move: MOVE cascade *)
+      rewrite Hidx1.
+      rewrite (setfii_tail_move tail h restfuel (S offset) leftIdx rightIdx
+                 oLeftId oRightId newId arr ({[item_id h]} ∪ ibo)
+                 Hstep Hlook' Hnotleft Hin_ibo Hpos').
+      have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
+      have -> : char_ids tail ∪ ({[item_id h]} ∪ ibo) = char_ids (h :: tail) ∪ ibo
+        by (rewrite char_ids_cons; set_solver).
+      done.
+    + (* case 2, stay: STAY cascade *)
+      rewrite (setfii_tail_stay tail h restfuel (S offset) leftIdx rightIdx
+                 oLeftId oRightId newId arr ({[item_id h]} ∪ ibo) ({[item_id h]} ∪ ci) destIdx
+                 Hstep Hlook' Hnotleft Hin_ibo Hin_ci).
+      have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
+      have -> : char_ids tail ∪ ({[item_id h]} ∪ ibo) = char_ids (h :: tail) ∪ ibo
+        by (rewrite char_ids_cons; set_solver).
+      have -> : char_ids tail ∪ ({[item_id h]} ∪ ci) = char_ids (h :: tail) ∪ ci
+        by (rewrite char_ids_cons; set_solver).
+      done.
+Qed.
+
 End run_theory.
