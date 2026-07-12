@@ -480,4 +480,188 @@ Proof.
     rewrite HR //.
 Qed.
 
+(* ----- the run integrates contiguously ------------------------------------- *)
+
+Lemma splice_elem_of arr (j : nat) (newit z : YjsItem A) :
+  z ∈ (take (S j) arr ++ newit :: drop (S j) arr) -> z = newit \/ z ∈ arr.
+Proof.
+  move=> Hz. apply elem_of_app in Hz. destruct Hz as [Hz | Hz].
+  - right. apply list_elem_of_lookup_1 in Hz. destruct Hz as [i Hi].
+    apply lookup_take_Some in Hi. destruct Hi as [Hi _].
+    exact (list_elem_of_lookup_2 _ _ _ Hi).
+  - apply elem_of_cons in Hz. destruct Hz as [-> | Hz]; [by left | right].
+    apply list_elem_of_lookup_1 in Hz. destruct Hz as [i Hi].
+    rewrite lookup_drop in Hi.
+    exact (list_elem_of_lookup_2 _ _ _ Hi).
+Qed.
+
+(** THE run theorem: a chained input list with fresh ids, a valid head, and
+    per-char clock maximality integrates as ONE contiguous splice right after
+    its anchor. This is what lets the heap integrate a multi-element node in a
+    single splice while the model steps per char (issue #28 M4). *)
+Lemma integrate_chain (inputs : list (IntegrateInput (A := A))) :
+  forall arr (j : nat) (x : YjsItem A) (rid : option YjsId) (rightIdx : Z) (rptr : YjsPtr A),
+  YjsArrInvariant arr ->
+  arr !! j = Some x ->
+  chained_after (item_id x) rid inputs ->
+  ids_fresh arr inputs ->
+  (forall i inp, inputs !! i = Some inp -> item_id x ≠ inp.(in_id)) ->
+  findRightIdx rid arr = Some rightIdx ->
+  (Z.of_nat j < rightIdx)%Z ->
+  getPtrExcept arr rightIdx = Some rptr ->
+  (forall z, z ∈ arr -> origin z ≠ itemPtr x) ->
+  (forall i0 rest0, inputs = i0 :: rest0 ->
+     IsItemValid (Item (itemPtr x) rptr i0.(in_id) i0.(in_content))) ->
+  (forall k inp, inputs !! k = Some inp ->
+     forall z, z ∈ arr -> clientId (item_id z) = clientId inp.(in_id) ->
+       (clock (item_id z) < clock inp.(in_id))%nat) ->
+  (forall i k inpi inpk, (i < k)%nat -> inputs !! i = Some inpi -> inputs !! k = Some inpk ->
+     clientId inpi.(in_id) = clientId inpk.(in_id) ->
+     (clock inpi.(in_id) < clock inpk.(in_id))%nat) ->
+  exists news : list (YjsItem A),
+    integrate_all inputs arr = Some (take (S j) arr ++ news ++ drop (S j) arr) ∧
+    length news = length inputs ∧
+    YjsArrInvariant (take (S j) arr ++ news ++ drop (S j) arr) ∧
+    (forall k inp, inputs !! k = Some inp -> exists it, news !! k = Some it ∧
+       item_id it = inp.(in_id) ∧ content it = inp.(in_content) ∧
+       rightOrigin it = rptr ∧
+       (k = 0%nat -> origin it = itemPtr x) ∧
+       (forall k' itp, k = S k' -> news !! k' = Some itp -> origin it = itemPtr itp)).
+Proof.
+  induction inputs as [|input rest IH];
+    intros arr j x rid rightIdx rptr
+      Hinv Hj Hchain Hfresh Hxid Hri Hjr Hrptr Hnosucc Hvalid0 Hmaxs Hchainclk.
+  - (* empty chain *)
+    exists []. simpl. rewrite take_drop.
+    split_and!; [done | done | exact Hinv | by move=> k inp Hk].
+  - (* input :: rest *)
+    destruct Hchain as (Hoin & Hrin & Hchain').
+    destruct Hfresh as [Hfresh Hnodup].
+    have Hjlen : (j < length arr)%nat by (apply lookup_lt_Some in Hj).
+    (* the head integrates right after the anchor *)
+    have Hri' : findRightIdx input.(in_rightOriginId) arr = Some rightIdx
+      by rewrite Hrin.
+    destruct (integrate_after_no_successor arr j x input rightIdx
+                Hinv Hj Hoin Hri' Hjr Hnosucc) as (rptr0 & Hrptr0 & Hint0).
+    have Heqr : rptr0 = rptr.
+    { rewrite Hrptr in Hrptr0. by injection Hrptr0. }
+    subst rptr0.
+    set (newit := Item (itemPtr x) rptr input.(in_id) input.(in_content)).
+    set (arr1 := take (S j) arr ++ newit :: drop (S j) arr).
+    have Hvalid0' : IsItemValid newit := Hvalid0 input rest eq_refl.
+    have Htoit : toItem input arr = Some newit
+      := toItem_resolved arr j x rightIdx rptr input Hinv Hj Hoin Hri' Hrptr.
+    have Hmax0 : maximalId newit arr.
+    { move=> z Hz Hcz. exact (Hmaxs 0%nat input eq_refl z Hz Hcz). }
+    destruct (YjsArrInvariant_integrate input arr arr1 newit Hinv Htoit Hvalid0' Hmax0 Hint0)
+      as (i0 & _ & _ & Hinv1).
+    (* facts for the tail at the new anchor [newit] *)
+    have Hj1 : arr1 !! S j = Some newit.
+    { rewrite /arr1 (splice_lookup arr j newit (S j) Hjlen).
+      destruct (decide (S j < S j)%nat); first lia.
+      destruct (decide (S j = S j)); [done | lia]. }
+    have Hidnew : item_id newit = input.(in_id) by done.
+    have Hheadfresh : forall z, z ∈ arr -> item_id z ≠ item_id newit.
+    { move=> z Hz. exact (Hfresh z Hz 0%nat input eq_refl). }
+    have Hnodup' : input.(in_id) ∉ input_ids rest /\ NoDup (input_ids rest).
+    { move: Hnodup. rewrite /input_ids fmap_cons NoDup_cons. done. }
+    destruct Hnodup' as [Hnotin Hnodup'].
+    have Hidtail : forall i inp, rest !! i = Some inp -> input.(in_id) ≠ inp.(in_id).
+    { move=> i inp Hi Heq. apply Hnotin. rewrite Heq /input_ids.
+      apply list_elem_of_fmap_2. exact (list_elem_of_lookup_2 _ _ _ Hi). }
+    have Hfresh1 : ids_fresh arr1 rest.
+    { split; last exact Hnodup'.
+      move=> z Hz i inp Hinp.
+      case: (splice_elem_of arr j newit z Hz) => [-> | Hz'].
+      - rewrite Hidnew. exact (Hidtail i inp Hinp).
+      - exact (Hfresh z Hz' (S i) inp Hinp). }
+    have Hxid1 : forall i inp, rest !! i = Some inp -> item_id newit ≠ inp.(in_id).
+    { move=> i inp Hi. rewrite Hidnew. exact (Hidtail i inp Hi). }
+    have Hri1 : findRightIdx rid arr1 = Some (rightIdx + 1)%Z
+      := findRightIdx_splice_shift arr j newit rid rightIdx Hjlen Hjr
+           (yai_unique _ Hinv) Hri Hheadfresh.
+    have Hjr1 : (Z.of_nat (S j) < rightIdx + 1)%Z by lia.
+    have Hrptr1 : getPtrExcept arr1 (rightIdx + 1) = Some rptr
+      := getPtrExcept_splice_shift arr j newit rightIdx rptr Hjlen Hjr Hrptr.
+    have Hnosucc1 : forall z, z ∈ arr1 -> origin z ≠ itemPtr newit.
+    { move=> z Hz.
+      case: (splice_elem_of arr j newit z Hz) => [-> | Hz'].
+      - (* [newit]'s own origin is [x], which has a non-fresh id *)
+        rewrite /newit /=. move=> Heq.
+        have Hxeq : x = newit by (injection Heq).
+        apply (Hxid 0%nat input eq_refl). rewrite Hxeq //.
+      - (* an old element: its origin lives in [arr] by closedness, but
+           [newit]'s id is fresh *)
+        move=> Horig.
+        have Hcl := yai_closed _ Hinv.
+        destruct z as [oz rz idz cz]. simpl in Horig. subst oz.
+        have Hznew : ArrSet arr (itemPtr newit)
+          := closedLeft _ Hcl _ _ _ _ Hz'.
+        simpl in Hznew.
+        exact (Hheadfresh newit Hznew eq_refl). }
+    have Hvalid1 : forall i1 rest1, rest = i1 :: rest1 ->
+        IsItemValid (Item (itemPtr newit) rptr i1.(in_id) i1.(in_content)).
+    { move=> i1 rest1 _.
+      apply (chain_link_valid (ArrSet arr1) newit rptr i1.(in_id) i1.(in_content)
+               (yai_closed _ Hinv1) (yai_item_set_inv _ Hinv1)).
+      - simpl. exact (list_elem_of_lookup_2 _ _ _ Hj1).
+      - done.
+      - exact Hvalid0'. }
+    have Hmaxs1 : forall k inp, rest !! k = Some inp ->
+        forall z, z ∈ arr1 -> clientId (item_id z) = clientId inp.(in_id) ->
+          (clock (item_id z) < clock inp.(in_id))%nat.
+    { move=> k inp Hk z Hz Hcz.
+      case: (splice_elem_of arr j newit z Hz) => [Heq | Hz']; [subst z |].
+      - rewrite Hidnew. rewrite Hidnew in Hcz.
+        exact (Hchainclk 0%nat (S k) input inp ltac:(lia) eq_refl Hk Hcz).
+      - exact (Hmaxs (S k) inp Hk z Hz' Hcz). }
+    have Hchainclk1 : forall i k inpi inpk, (i < k)%nat ->
+        rest !! i = Some inpi -> rest !! k = Some inpk ->
+        clientId inpi.(in_id) = clientId inpk.(in_id) ->
+        (clock inpi.(in_id) < clock inpk.(in_id))%nat.
+    { move=> i k inpi inpk Hik Hi Hk.
+      exact (Hchainclk (S i) (S k) inpi inpk ltac:(lia) Hi Hk). }
+    have Hchain1 : chained_after (item_id newit) rid rest by rewrite Hidnew.
+    (* the tail integrates contiguously after [newit] *)
+    destruct (IH arr1 (S j) newit rid (rightIdx + 1)%Z rptr
+                Hinv1 Hj1 Hchain1 Hfresh1 Hxid1 Hri1 Hjr1 Hrptr1 Hnosucc1 Hvalid1
+                Hmaxs1 Hchainclk1)
+      as (news' & Hint' & Hlen' & Hinv' & Hfacts').
+    (* compose the two splices *)
+    have Hlentake : length (take (S j) arr) = S j by (rewrite length_take; lia).
+    have Htake1 : take (S (S j)) arr1 = take (S j) arr ++ [newit].
+    { rewrite /arr1 take_app_ge; last lia.
+      rewrite Hlentake.
+      have -> : (S (S j) - S j)%nat = 1%nat by lia.
+      done. }
+    have Hdrop1 : drop (S (S j)) arr1 = drop (S j) arr.
+    { rewrite /arr1 drop_app_ge; last lia.
+      rewrite Hlentake.
+      have -> : (S (S j) - S j)%nat = 1%nat by lia.
+      done. }
+    exists (newit :: news').
+    have Hcompose : take (S (S j)) arr1 ++ news' ++ drop (S (S j)) arr1
+                  = take (S j) arr ++ (newit :: news') ++ drop (S j) arr.
+    { rewrite Htake1 Hdrop1 -app_assoc //. }
+    split_and!.
+    + simpl. rewrite Hint0 /=. rewrite Hint' Hcompose //.
+    + simpl. rewrite Hlen' //.
+    + rewrite -Hcompose. exact Hinv'.
+    + move=> k inp Hk.
+      destruct k as [|k'].
+      * injection Hk as <-.
+        exists newit. split_and!; try done.
+      * simpl in Hk.
+        destruct (Hfacts' k' inp Hk) as (it & Hit & Hitid & Hitc & Hitr & Hit0 & Hitchain).
+        exists it. split_and!; try done.
+        move=> k'' itp Hk'' Hitp.
+        injection Hk'' as Hkeq. subst k''.
+        destruct k' as [|k'''].
+        -- (* the second char's origin is the head char *)
+           simpl in Hitp. injection Hitp as Hitp'. subst itp.
+           exact (Hit0 eq_refl).
+        -- simpl in Hitp.
+           exact (Hitchain k''' itp eq_refl Hitp).
+Qed.
+
 End run_theory.
