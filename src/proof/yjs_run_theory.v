@@ -215,4 +215,40 @@ Proof.
   done.
 Qed.
 
+
+(* ===== the chained fold: a run integrates contiguously ==================== *)
+
+(** [chained_after xid rid inputs]: each input's left origin is the id of the
+    previous input (starting from [xid]) and all inputs share the right origin
+    [rid]. This is the wire shape of a multi-element run seen per-char
+    ([run_wf] on the heap side). *)
+Fixpoint chained_after (xid : YjsId) (rid : option YjsId)
+    (inputs : list (IntegrateInput (A := A))) : Prop :=
+  match inputs with
+  | [] => True
+  | i :: rest =>
+      i.(in_originId) = Some xid ∧ i.(in_rightOriginId) = rid ∧
+      chained_after i.(in_id) rid rest
+  end.
+
+(** Monadic fold of [integrate]. *)
+Fixpoint integrate_all (inputs : list (IntegrateInput (A := A)))
+    (arr : list (YjsItem A)) : option (list (YjsItem A)) :=
+  match inputs with
+  | [] => Some arr
+  | i :: rest => arr' ← integrate i arr; integrate_all rest arr'
+  end.
+
+(** The ids an input list mints. *)
+Definition input_ids (inputs : list (IntegrateInput (A := A))) : list YjsId :=
+  (fun i => i.(in_id)) <$> inputs.
+
+(** Fresh ids: none of the minted ids occurs in the document, and they are
+    pairwise distinct (consecutive clocks in practice). *)
+Definition ids_fresh (arr : list (YjsItem A))
+    (inputs : list (IntegrateInput (A := A))) : Prop :=
+  (forall z, z ∈ arr -> forall i inp, inputs !! i = Some inp ->
+     item_id z ≠ inp.(in_id)) ∧
+  NoDup (input_ids inputs).
+
 End run_theory.
