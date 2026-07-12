@@ -117,10 +117,15 @@ covered by the M2 no-op cell surgery (`split_cells_flatten` etc.).
 
 ## 7. Milestones
 
-- **D1 (local tracking, = #37's stepping stone 3 minus position pinning)**:
-  `sn_ds` ghost + `deleted_match` + domain invariant in `store_inv`;
-  `wp_Text__Delete` mints the lower bound; Insert/Integrate/applyUpdate
-  re-establish coherence (fresh-id argument). No Go changes.
+- **D1 (local tracking, trimmed)**: `sn_ds` ghost + the DOMAIN invariant
+  only (`ds ⊆ integrated ids`) in `store_inv`; `wp_Text__Delete` mints the
+  lower bound. The bit-mirror `deleted_match` is NOT yet carried: its
+  visible-side direction needs store-global id uniqueness (same id in two
+  cells would break the mirror under a flip), which is derivable from the
+  history layer's global uniqueness but is real plumbing; it lands with D2,
+  where `deleteRange`'s idempotence actually consumes it. Growth-only
+  tracking needs no uniqueness: the domain bound is monotone in the pool and
+  Delete only ever adds ids of chars it just tombstoned. No Go changes.
 - **D2 (wire deletes)**: `deleteSpan`/`deletes` + `store.deleteRange` +
   `applyUpdate` phase 2, with the WP specs above. Depends on the issue #28
   M2 split machinery being merged (the split calls sit in `deleteRange` even
