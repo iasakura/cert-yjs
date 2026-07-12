@@ -626,7 +626,7 @@ Proof.
     have Hunitj' : Forall cell_unit cells'
       by (rewrite Hcellsp; exact (Forall_cell_unit_splice cells nx c Hunitj Hcunit)).
     have Hnode' : ∃ x, cells' !! x = Some c ∧ ic_loc c = oL2 ∧ run_head c = nit
-      by (exists nx; destruct Hnode as (Ha & Hb & Hc0 & _); exact (conj Ha (conj Hb Hc0))).
+      by (exists nx; destruct Hnode as (Hn1 & Hn2 & Hn3 & _); exact (conj Hn1 (conj Hn2 Hn3))).
     have Hinsins : <[tv.(yjs.Text.inner') := MkTypeState cells' arr']>
                  (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types)
              = <[tv.(yjs.Text.inner') := MkTypeState cells' arr']> types.
@@ -1085,7 +1085,7 @@ Proof.
   rewrite (bool_decide_eq_false_2 (node_loc cells' (Z.of_nat q) = null) Hnn). simpl negb.
   rewrite decide_True; [| done].
   destruct (cells' !! q) as [cq|] eqn:Hcq; [| apply lookup_ge_None in Hcq; lia].
-  have [yiq [Hyiq Hcrq]] := cells_repr_lookup ts.(ty_arr) cells' ts.(ty_arr) q cq Hrepr' Hcq.
+  have [yiq [Hyiq Hcrq]] := cells_repr_lookup ts.(ty_arr) cells' ts.(ty_arr) q cq Hunitq Hrepr' Hcq.
   iDestruct (own_dll_update_gen cells' yt'.(yjs.yType.start') tl0' q cq Hcq with "Hdll")
     as (iv) "(%Hcloc & %Hcr & %Hflags & %Hrunwf & %Hcontq & Hcval & Hback)".
   have Hcountq : is_countable_flag iv = true := flags_if_countable iv (ic_deleted cq) Hflags.
@@ -1107,7 +1107,7 @@ Proof.
     iFrame "Ht His_lb HΦ". iExists (S q), rem, cells', yt'.
     iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hhist HtypesAuth Hclose".
     rewrite Hcr. replace (Z.of_nat (S q)) with (Z.of_nat q + 1)%Z by lia. iFrame "Hcur".
-    iPureIntro. split_and!; [lia | exact Hlencells | exact Hytlen | exact Hrepr' | exact Hkpeq | exact Hcparj].
+    iPureIntro. split_and!; [lia | exact Hlencells | exact Hytlen | exact Hrepr' | exact Hunitq | exact Hkpeq | exact Hcparj].
   - (* visible node: set the Deleted flag, shrink the visible length *)
     simpl negb. wp_auto.
     wp_apply (wp_item__Len cq.(ic_loc) (DfracOwn 1) (set_deleted iv) with "[$Hcval]"). iIntros "Hcval".
@@ -1148,6 +1148,8 @@ Proof.
     + rewrite length_insert. exact Hlencells.
     + simpl. rewrite (num_visible_flip cells' q cq Hcq Hdq (Forall_lookup_1 _ _ _ _ Hunitq Hcq)) Hytlen. word.
     + exact (cells_repr_update_run ts.(ty_arr) cells' ts.(ty_arr) q cq (flip_cell cq) Hcq eq_refl Hrepr').
+    + apply Forall_insert; [exact Hunitq |].
+      exact (Forall_lookup_1 _ _ _ _ Hunitq Hcq).
     + rewrite list_fmap_insert cell_kp_flip.
       have Hlk : (cell_kp <$> cells') !! q = Some (cell_kp cq) by rewrite list_lookup_fmap Hcq //.
       rewrite (list_insert_id (cell_kp <$> cells') q (cell_kp cq) Hlk). exact Hkpeq.
