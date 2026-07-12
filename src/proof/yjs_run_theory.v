@@ -11,7 +11,7 @@
     of rocq-yjs ([yjs.algorithm.insert_basic]). Sits between [yjs_core] and
     [yjs_store] in the Require chain; a candidate for upstreaming into
     rocq-yjs next to [insert_basic] once stable. *)
-From stdpp Require Import base numbers list sorting.
+From stdpp Require Import base numbers list sorting gmap sets.
 From stdpp Require Import ssreflect.
 From iris.prelude Require Import options.
 From New.proof Require Import yjs_core.
@@ -662,6 +662,181 @@ Proof.
            exact (Hit0 eq_refl).
         -- simpl in Hitp.
            exact (Hitchain k''' itp eq_refl Hitp).
+Qed.
+
+(* ===== the run-block scan bridge (issue #28 M4, part 3) ===================
+   The heap scan steps NODE by node while [setfii_loop] steps char by char.
+   A [run_wf] block behaves as one unit inside the scan: the head char decides
+   the outcome exactly as the node-level Go does, and the tail chars cascade
+   deterministically (their origin is always the previous char, which was just
+   scanned). [setfii_block_step] below packages one whole block as a single
+   rewrite, so a node-stepping WP loop invariant can couple to [setfii_loop]
+   at block boundaries only. *)
+
+Definition char_ids (r : list (YjsItem A)) : gset YjsId :=
+  list_to_set (item_id <$> r).
+
+Lemma char_ids_cons (c : YjsItem A) (r : list (YjsItem A)) :
+  char_ids (c :: r) = {[item_id c]} ∪ char_ids r.
+Proof. rewrite /char_ids fmap_cons list_to_set_cons //. Qed.
+
+(** The chaining discipline of a run's chars, as this module consumes it (the
+    WP layer's [run_wf] destructs to exactly this; stated inline so this file
+    stays below the heap layer). *)
+Definition run_step (r : list (YjsItem A)) : Prop :=
+  forall (k : nat) (x y : YjsItem A), r !! k = Some x -> r !! S k = Some y ->
+    item_id y = MkYjsId (clientId (item_id x)) (S (clock (item_id x))) ∧
+    origin y = itemPtr x ∧
+    rightOrigin y = rightOrigin x.
+
+(** Along a chained run, each char's origin id is the previous char's id, and
+    consecutive ids differ (the clock strictly increments). *)
+Lemma run_step_tail_origin (r : list (YjsItem A)) (k : nat) (x y : YjsItem A) :
+  run_step r -> r !! k = Some x -> r !! S k = Some y ->
+  origin_id (origin y) = Some (item_id x) ∧ item_id x ≠ item_id y.
+Proof.
+  move=> Hstep Hx Hy.
+  destruct (Hstep k x y Hx Hy) as (Hid & Horig & _).
+  split.
+  - rewrite Horig //.
+  - rewrite Hid. move=> Heq.
+    have : clock (item_id x) = clock (MkYjsId (clientId (item_id x)) (S (clock (item_id x))))
+      by rewrite -Heq.
+    simpl. lia.
+Qed.
+
+Lemma run_step_tail (x : YjsItem A) (l : list (YjsItem A)) :
+  run_step (x :: l) -> run_step l.
+Proof.
+  move=> Hstep k a b Ha Hb. exact (Hstep (S k) a b Ha Hb).
+Qed.
+
+(** Tail cascade, STAY flavor: with the previous char's id in both
+    accumulators, every tail char takes the continue-unchanged branch and the
+    accumulators absorb the block. *)
+Lemma setfii_tail_stay (tail : list (YjsItem A)) :
+  forall (prev : YjsItem A) (restfuel offset : nat) (leftIdx rightIdx : Z)
+    (oLeftId oRightId : option YjsId) (newId : YjsId)
+    (arr : list (YjsItem A)) (ibo ci : gset YjsId) (destIdx : Z),
+  run_step (prev :: tail) ->
+  (forall k c, tail !! k = Some c ->
+     arr !! (Z.to_nat (leftIdx + Z.of_nat (offset + k))) = Some c) ->
+  (forall c, c ∈ prev :: tail -> Some (item_id c) ≠ oLeftId) ->
+  item_id prev ∈ ibo ->
+  item_id prev ∈ ci ->
+  setfii_loop (length tail + restfuel) offset leftIdx rightIdx oLeftId oRightId newId arr ibo ci destIdx
+  = setfii_loop restfuel (offset + length tail)%nat leftIdx rightIdx oLeftId oRightId newId arr
+      (char_ids tail ∪ ibo) (char_ids tail ∪ ci) destIdx.
+Proof.
+  induction tail as [|c tail' IH];
+    intros prev restfuel offset leftIdx rightIdx oLeftId oRightId newId arr ibo ci destIdx
+      Hstep Hlook Hnotleft Hpibo Hpici.
+  - simpl. rewrite Nat.add_0_r.
+    have -> : char_ids [] ∪ ibo = ibo by set_solver.
+    have -> : char_ids [] ∪ ci = ci by set_solver.
+    done.
+  - simpl length. simpl plus.
+    (* unfold one loop step for [c] *)
+    simpl setfii_loop.
+    have Hc0 : arr !! Z.to_nat (leftIdx + Z.of_nat offset) = Some c.
+    { have := Hlook 0%nat c eq_refl. rewrite Nat.add_0_r //. }
+    rewrite Hc0 /=.
+    have [Hor Hne] : origin_id (origin c) = Some (item_id prev) ∧
+                     item_id prev ≠ item_id c
+      := run_step_tail_origin (prev :: c :: tail') 0 prev c Hstep eq_refl eq_refl.
+    have Hnl : origin_id (origin c) ≠ oLeftId.
+    { rewrite Hor. apply Hnotleft. apply elem_of_cons. by left. }
+    rewrite decide_False; last exact Hnl.
+    rewrite Hor.
+    rewrite decide_True; last first.
+    { apply elem_of_union. right. exact Hpibo. }
+    rewrite decide_False; last first.
+    { move=> Hnotin. apply Hnotin. apply elem_of_union. right. exact Hpici. }
+    (* continue-unchanged: recurse with [c] as the new previous char *)
+    have Hstep' : run_step (c :: tail') := run_step_tail prev (c :: tail') Hstep.
+    have Hlook' : forall k c0, tail' !! k = Some c0 ->
+        arr !! Z.to_nat (leftIdx + Z.of_nat (S offset + k)) = Some c0.
+    { move=> k c0 Hk. have := Hlook (S k) c0 Hk.
+      have -> : (offset + S k)%nat = (S offset + k)%nat by lia.
+      done. }
+    have Hnl' : forall c0, c0 ∈ c :: tail' -> Some (item_id c0) ≠ oLeftId.
+    { move=> c0 Hc0'. apply Hnotleft. apply elem_of_cons. right. exact Hc0'. }
+    have Hin1 : item_id c ∈ ({[item_id c]} ∪ ibo) by set_solver.
+    have Hin2 : item_id c ∈ ({[item_id c]} ∪ ci) by set_solver.
+    rewrite (IH c restfuel (S offset) leftIdx rightIdx oLeftId oRightId newId arr
+               ({[item_id c]} ∪ ibo) ({[item_id c]} ∪ ci) destIdx
+               Hstep' Hlook' Hnl' Hin1 Hin2).
+    have -> : (S offset + length tail')%nat = (offset + S (length tail'))%nat by lia.
+    have -> : char_ids tail' ∪ ({[item_id c]} ∪ ibo) = char_ids (c :: tail') ∪ ibo
+      by (rewrite char_ids_cons; set_solver).
+    have -> : char_ids tail' ∪ ({[item_id c]} ∪ ci) = char_ids (c :: tail') ∪ ci
+      by (rewrite char_ids_cons; set_solver).
+    done.
+Qed.
+
+(** Tail cascade, MOVE flavor: with an empty conflicting set, every tail char
+    repositions the destination one past itself. The destination tracks the
+    cursor ([destIdx = leftIdx + offset]). *)
+Lemma setfii_tail_move (tail : list (YjsItem A)) :
+  forall (prev : YjsItem A) (restfuel offset : nat) (leftIdx rightIdx : Z)
+    (oLeftId oRightId : option YjsId) (newId : YjsId)
+    (arr : list (YjsItem A)) (ibo : gset YjsId),
+  run_step (prev :: tail) ->
+  (forall k c, tail !! k = Some c ->
+     arr !! (Z.to_nat (leftIdx + Z.of_nat (offset + k))) = Some c) ->
+  (forall c, c ∈ prev :: tail -> Some (item_id c) ≠ oLeftId) ->
+  item_id prev ∈ ibo ->
+  (0 <= leftIdx + Z.of_nat offset)%Z ->
+  setfii_loop (length tail + restfuel) offset leftIdx rightIdx oLeftId oRightId newId arr
+    ibo ∅ (leftIdx + Z.of_nat offset)%Z
+  = setfii_loop restfuel (offset + length tail)%nat leftIdx rightIdx oLeftId oRightId newId arr
+      (char_ids tail ∪ ibo) ∅ (leftIdx + Z.of_nat (offset + length tail))%Z.
+Proof.
+  induction tail as [|c tail' IH];
+    intros prev restfuel offset leftIdx rightIdx oLeftId oRightId newId arr ibo
+      Hstep Hlook Hnotleft Hpibo Hpos.
+  - simpl. rewrite Nat.add_0_r.
+    have -> : char_ids [] ∪ ibo = ibo by set_solver.
+    done.
+  - simpl length. simpl plus.
+    simpl setfii_loop.
+    have Hc0 : arr !! Z.to_nat (leftIdx + Z.of_nat offset) = Some c.
+    { have := Hlook 0%nat c eq_refl. rewrite Nat.add_0_r //. }
+    rewrite Hc0 /=.
+    have [Hor Hne] : origin_id (origin c) = Some (item_id prev) ∧
+                     item_id prev ≠ item_id c
+      := run_step_tail_origin (prev :: c :: tail') 0 prev c Hstep eq_refl eq_refl.
+    have Hnl : origin_id (origin c) ≠ oLeftId.
+    { rewrite Hor. apply Hnotleft. apply elem_of_cons. by left. }
+    rewrite decide_False; last exact Hnl.
+    rewrite Hor.
+    rewrite decide_True; last first.
+    { apply elem_of_union. right. exact Hpibo. }
+    rewrite decide_True; last first.
+    { move=> Hin. apply elem_of_union in Hin.
+      destruct Hin as [Hin | Hin].
+      - apply elem_of_singleton in Hin. exact (Hne Hin).
+      - set_solver. }
+    (* reposition one past [c] and recurse *)
+    have Hidx : Z.of_nat (Z.to_nat (leftIdx + Z.of_nat offset) + 1)
+              = (leftIdx + Z.of_nat (S offset))%Z by lia.
+    rewrite Hidx.
+    have Hstep' : run_step (c :: tail') := run_step_tail prev (c :: tail') Hstep.
+    have Hlook' : forall k c0, tail' !! k = Some c0 ->
+        arr !! Z.to_nat (leftIdx + Z.of_nat (S offset + k)) = Some c0.
+    { move=> k c0 Hk. have := Hlook (S k) c0 Hk.
+      have -> : (offset + S k)%nat = (S offset + k)%nat by lia.
+      done. }
+    have Hnl' : forall c0, c0 ∈ c :: tail' -> Some (item_id c0) ≠ oLeftId.
+    { move=> c0 Hc0'. apply Hnotleft. apply elem_of_cons. right. exact Hc0'. }
+    have Hin1 : item_id c ∈ ({[item_id c]} ∪ ibo) by set_solver.
+    have Hpos' : (0 <= leftIdx + Z.of_nat (S offset))%Z by lia.
+    rewrite (IH c restfuel (S offset) leftIdx rightIdx oLeftId oRightId newId arr
+               ({[item_id c]} ∪ ibo) Hstep' Hlook' Hnl' Hin1 Hpos').
+    have -> : (S offset + length tail')%nat = (offset + S (length tail'))%nat by lia.
+    have -> : char_ids tail' ∪ ({[item_id c]} ∪ ibo) = char_ids (c :: tail') ∪ ibo
+      by (rewrite char_ids_cons; set_solver).
+    done.
 Qed.
 
 End run_theory.
