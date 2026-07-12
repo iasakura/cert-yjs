@@ -251,4 +251,68 @@ Definition ids_fresh (arr : list (YjsItem A))
      item_id z ≠ inp.(in_id)) ∧
   NoDup (input_ids inputs).
 
+(** Origin-reachability stays inside a closed set. *)
+Lemma reachable_in_set (P : YjsPtr A -> Prop) (x p : YjsPtr A) :
+  IsClosedItemSet P -> P x -> OriginReachable x p -> P p.
+Proof.
+  move=> Hc Hx Hr. move: Hr Hx. elim.
+  - move=> x' y' Hstep Hx'.
+    inversion Hstep; subst;
+      [exact (closedLeft _ Hc _ _ _ _ Hx') | exact (closedRight _ Hc _ _ _ _ Hx')].
+  - move=> x' y' z' Hstep _ IH Hx'. apply IH.
+    inversion Hstep; subst;
+      [exact (closedLeft _ Hc _ _ _ _ Hx') | exact (closedRight _ Hc _ _ _ _ Hx')].
+Qed.
+
+(** The telescoping heart of run validity: if [cur] is a valid member of a
+    valid closed set and its right origin is [rptr], then the next chain link
+    (origin [cur], right origin [rptr]) is a valid item too. Everything the
+    new link can reach goes through [cur] or through [rptr]; the paths through
+    [rptr] are also paths of [cur], so [cur]'s own validity bounds them. *)
+Lemma chain_link_valid (P : YjsPtr A -> Prop) (cur : YjsItem A) (rptr : YjsPtr A)
+    (id' : YjsId) (c' : A) :
+  IsClosedItemSet P -> ItemSetInvariant P ->
+  P (itemPtr cur) ->
+  rightOrigin cur = rptr ->
+  IsItemValid cur ->
+  IsItemValid (Item (itemPtr cur) rptr id' c').
+Proof.
+  move=> Hc Hinv Hcur Hror Hvalid.
+  have Hcur_lt_r : YjsLt' (itemPtr cur) rptr.
+  { rewrite -Hror. destruct cur as [o r id c]. exists 1%nat.
+    apply (ltRightOrigin 0). apply leqSame. }
+  have Horigin_cur : P (origin cur).
+  { destruct cur as [o r id c]. exact (closedLeft _ Hc _ _ _ _ Hcur). }
+  have Hstep_right : OriginReachableStep (itemPtr cur) rptr.
+  { rewrite -Hror. destruct cur as [o r id c]. apply reachable_right. }
+  constructor.
+  - (* origin < rightOrigin *)
+    simpl. exact Hcur_lt_r.
+  - (* reachability *)
+    move=> p Hreach. simpl.
+    have Hvia_cur : forall q, OriginReachable (itemPtr cur) q ->
+        YjsLeq' q (itemPtr cur) \/ YjsLeq' rptr q.
+    { move=> q Hq.
+      have Hpq : P q := reachable_in_set P (itemPtr cur) q Hc Hcur Hq.
+      case: (iiv_reachable _ Hvalid q Hq) => [Hle | Hge].
+      - left.
+        have Holt : YjsLt' (origin cur) (itemPtr cur) := item_origin_lt cur.
+        apply YjsLeq'_leqLt.
+        exact (transitivity.yjs_leq'_p_trans1 Hinv q (origin cur) (itemPtr cur)
+                 Hpq Horigin_cur Hcur Hc Hle Holt).
+      - right. rewrite -Hror. exact Hge. }
+    (* the two edges out of the new link *)
+    inversion Hreach as [x0 y0 Hstep | x0 y0 z0 Hstep Hr']; subst.
+    + (* single step: origin or right origin of the new link itself *)
+      inversion Hstep; subst.
+      * left. exists 0%nat. apply leqSame.
+      * right. exists 0%nat. apply leqSame.
+    + (* longer path: through [cur] or through [rptr] *)
+      inversion Hstep; subst.
+      * (* via the origin edge = via [cur] *)
+        exact (Hvia_cur p Hr').
+      * (* via the right-origin edge: also a path of [cur] *)
+        exact (Hvia_cur p (reachable_head _ _ _ Hstep_right Hr')).
+Qed.
+
 End run_theory.
