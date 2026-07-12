@@ -247,6 +247,72 @@ Definition client_run (types : gmap loc type_state) (client : w64) : list item_c
     strictly-clock-maximal cell is appended at the tail. *)
 Definition cell_pr (c : item_cell) : Z * loc := (uint.Z (cell_clock c), ic_loc c).
 
+(* ===== the split surgery on abstract cells (issue #28 M2) ================
+   Splitting a run node is pure cell surgery: the left half keeps the node
+   location and the first [o] model items, the right half is a fresh node
+   carrying the rest, and BOTH halves inherit the deleted bit and parent (the
+   yjs splitItem semantics; y-octo drops the right half's flags, a reported
+   divergence). The flatten and the visible count are unchanged, which is why
+   every public predicate is invariant under splits. *)
+
+Definition split_cell_left (c : item_cell) (o : nat) : item_cell :=
+  MkItemCell (ic_loc c) (take o (ic_run c)) (ic_deleted c) (ic_parent c).
+Definition split_cell_right (c : item_cell) (o : nat) (r_loc : loc) : item_cell :=
+  MkItemCell r_loc (drop o (ic_run c)) (ic_deleted c) (ic_parent c).
+
+Definition split_cells (cells : list item_cell) (k o : nat) (r_loc : loc) : list item_cell :=
+  match cells !! k with
+  | Some c => take k cells ++ [split_cell_left c o; split_cell_right c o r_loc] ++ drop (S k) cells
+  | None => cells
+  end.
+
+(** The split is invisible to the per-char document: the flatten is unchanged. *)
+Lemma split_cells_flatten (cells : list item_cell) (k o : nat) (r_loc : loc) (c : item_cell) :
+  cells !! k = Some c ->
+  run_flatten (split_cells cells k o r_loc) = run_flatten cells.
+Proof.
+  move=> Hk. rewrite /split_cells Hk.
+  rewrite -[in X in _ = X](take_drop_middle cells k c Hk).
+  rewrite !run_flatten_app !run_flatten_cons run_flatten_nil.
+  rewrite /split_cell_left /split_cell_right /=.
+  rewrite app_nil_r take_drop //.
+Qed.
+
+(** ... and to the visible count. *)
+Lemma split_cells_num_visible (cells : list item_cell) (k o : nat) (r_loc : loc) (c : item_cell) :
+  cells !! k = Some c ->
+  num_visible (split_cells cells k o r_loc) = num_visible cells.
+Proof.
+  move=> Hk. rewrite /split_cells Hk.
+  rewrite -[in X in _ = X](take_drop_middle cells k c Hk).
+  rewrite /num_visible !fmap_app !fmap_cons !list_sum_app /=.
+  rewrite /split_cell_left /split_cell_right /=.
+  destruct (ic_deleted c); [lia |].
+  rewrite !length_take !length_drop. lia.
+Qed.
+
+(** Both halves of a well-formed run are well-formed (offset strictly inside). *)
+Lemma run_wf_take (r : list (YjsItem A)) (o : nat) :
+  (0 < o)%nat -> run_wf r -> run_wf (take o r).
+Proof.
+  move=> Ho [Hne Hstep]. split.
+  - destruct r as [|y r']; [done |]. destruct o; [lia | done].
+  - move=> k x y Hx Hy.
+    apply lookup_take_Some in Hx as [Hx _]. apply lookup_take_Some in Hy as [Hy _].
+    exact (Hstep k x y Hx Hy).
+Qed.
+
+Lemma run_wf_drop (r : list (YjsItem A)) (o : nat) :
+  (o < length r)%nat -> run_wf r -> run_wf (drop o r).
+Proof.
+  move=> Ho [Hne Hstep]. split.
+  - move=> Hnil. have := f_equal length Hnil. rewrite length_drop /=. lia.
+  - move=> k x y Hx Hy.
+    rewrite lookup_drop in Hx. rewrite lookup_drop in Hy.
+    replace (o + S k)%nat with (S (o + k))%nat in Hy by lia.
+    exact (Hstep (o + k)%nat x y Hx Hy).
+Qed.
+
 (** A cell's head model item is in the flatten (nonempty run via the unit
     invariant; issue #28). *)
 Lemma run_head_in_flatten (cells : list item_cell) (c : item_cell) :
@@ -3865,6 +3931,96 @@ Proof using Type*.
   iFrame "Htypes".
 Qed.
 
+(** [store.splitAtAndGetLeft] / [store.splitAtAndGetRight], unit fast path
+    (issue #28 M2): with every run 1-char (the M1 all-singleton invariant) the
+    found node already ends (resp. starts) at the requested id — the offset is
+    0 and [Len() - 1] is 0 — so the split branch is dead and each helper
+    coincides with [GetNode]. The general (actually splitting) specs arrive
+    with the run-integrate milestone (M4), where runs become reachable. *)
+Lemma wp_store__splitAtAndGetLeft (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
+    (types : gmap loc type_state) (cw : item_cell) :
+  cw ∈ all_cells types ->
+  item_id (run_head cw) = toYjsId idv ->
+  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + 1 < 2^64)%Z) ->
+  {{{ is_pkg_init yjs ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
+  {{{ RET (#(ic_loc cw), #true);
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) }}}.
+Proof using Type*.
+  move=> Hcw Hcwid Hnowrap.
+  iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
+  wp_method_call. wp_call. wp_call. wp_auto.
+  wp_apply (wp_store__GetNode s mref dq idv types cw Hcw Hcwid Hnowrap
+              with "[$Hitemsf $Hitemmap $Htypes]").
+  iIntros "(Hitemsf & Hitemmap & Htypes)".
+  wp_auto.
+  iDestruct (types_cell_acc types cw Hcw with "Htypes") as "Hacc".
+  iNamed "Hacc".
+  have Hclkeq : iv.(yjs.item.id').(yjs.id.clock') = idv.(yjs.id.clock').
+  { have Heq : toYjsId iv.(yjs.item.id') = toYjsId idv by rewrite -Hid Hcwid //.
+    injection Heq => Hclk Hcli. word. }
+  wp_auto.
+  wp_apply (wp_item__Len (ic_loc cw) (DfracOwn 1) iv with "[$Hval]"). iIntros "Hval".
+  rewrite Hrun Hclkeq.
+  wp_auto.
+  (* the offset is clock - clock = 0 and Len() - 1 = 0: goose destructs the
+     [!=] through the underlying equality, so the FIRST goal is the equal
+     (no-split) return path and the SECOND the dead split branch *)
+  wp_if_destruct.
+  2: exfalso; word.
+  iDestruct ("Hback" with "Hval") as "Htypes".
+  iApply "HΦ". iFrame "Hitemsf Hitemmap Htypes".
+Qed.
+
+Lemma wp_store__splitAtAndGetRight (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
+    (types : gmap loc type_state) (cw : item_cell) :
+  cw ∈ all_cells types ->
+  item_id (run_head cw) = toYjsId idv ->
+  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + 1 < 2^64)%Z) ->
+  {{{ is_pkg_init yjs ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
+  {{{ RET (#(ic_loc cw), #true);
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) }}}.
+Proof using Type*.
+  move=> Hcw Hcwid Hnowrap.
+  iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
+  wp_method_call. wp_call. wp_call. wp_auto.
+  wp_apply (wp_store__GetNode s mref dq idv types cw Hcw Hcwid Hnowrap
+              with "[$Hitemsf $Hitemmap $Htypes]").
+  iIntros "(Hitemsf & Hitemmap & Htypes)".
+  wp_auto.
+  iDestruct (types_cell_acc types cw Hcw with "Htypes") as "Hacc".
+  iNamed "Hacc".
+  have Hclkeq : iv.(yjs.item.id').(yjs.id.clock') = idv.(yjs.id.clock').
+  { have Heq : toYjsId iv.(yjs.item.id') = toYjsId idv by rewrite -Hid Hcwid //.
+    injection Heq => Hclk Hcli. word. }
+  wp_auto.
+  rewrite Hclkeq.
+  (* offset = clock - clock = 0: the split branch is dead *)
+  wp_if_destruct.
+  1: exfalso; word.
+  iDestruct ("Hback" with "Hval") as "Htypes".
+  iApply "HΦ". iFrame "Hitemsf Hitemmap Htypes".
+Qed.
+
 (** [store.getOrCreateYType], lookup-hit case: the name is already bound in
     the registry, so the creation branch is dead and the bound type comes
     back. This is the only case the verified update path needs — see
@@ -3956,7 +4112,7 @@ Proof using Type*.
     iDestruct "Holeft" as "[%HnnL #HolC]".
     rewrite (bool_decide_eq_false_2 (iv.(yjs.item.originLeftId') = null) HnnL) /=.
     wp_auto.
-    wp_apply (wp_store__GetNode s mref dq idvL types cL HcLmem (eq_trans HcLid eq_refl) Hnowrap
+    wp_apply (wp_store__splitAtAndGetLeft s mref dq idvL types cL HcLmem (eq_trans HcLid eq_refl) Hnowrap
                 with "[$Hitemsf $Hitemmap $Htypes]").
     iIntros "(Hitemsf & Hitemmap & Htypes)".
     wp_auto.
@@ -3968,7 +4124,7 @@ Proof using Type*.
       iDestruct "Horight" as "[%HnnR #HorC]".
       rewrite (bool_decide_eq_false_2 (iv.(yjs.item.originRightId') = null) HnnR) /=.
       wp_auto.
-      wp_apply (wp_store__GetNode s mref dq idvR types cR HcRmem (eq_trans HcRid eq_refl) Hnowrap
+      wp_apply (wp_store__splitAtAndGetRight s mref dq idvR types cR HcRmem (eq_trans HcRid eq_refl) Hnowrap
                   with "[$Hitemsf $Hitemmap $Htypes]").
       iIntros "(Hitemsf & Hitemmap & Htypes)".
       wp_auto.
@@ -4056,7 +4212,7 @@ Proof using Type*.
       iDestruct "Horight" as "[%HnnR #HorC]".
       rewrite (bool_decide_eq_false_2 (iv.(yjs.item.originRightId') = null) HnnR) /=.
       wp_auto.
-      wp_apply (wp_store__GetNode s mref dq idvR types cR HcRmem (eq_trans HcRid eq_refl) Hnowrap
+      wp_apply (wp_store__splitAtAndGetRight s mref dq idvR types cR HcRmem (eq_trans HcRid eq_refl) Hnowrap
                   with "[$Hitemsf $Hitemmap $Htypes]").
       iIntros "(Hitemsf & Hitemmap & Htypes)".
       wp_auto.
