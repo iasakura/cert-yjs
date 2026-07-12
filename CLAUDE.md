@@ -97,7 +97,9 @@ same `build.sh`.
 
 Never hand-edit generated files; change the Go and re-run goose. Proof files
 `Require` each other in order `core → common (∥ network_model) → id → item →
-ytype → history → store → text` and reopen the same `Section` boilerplate:
+ytype → history → store → text` (where `store` is a `Require Export` facade
+over `store_base → store_integrate → store_update`; downstream files import
+only the facade) and reopen the same `Section` boilerplate:
 
 - `yjs_core.v` — re-exports the `rocq-yjs` / `iris-yjs` library (pure
   `integrate` / `setintegrate` model and its order theory).
@@ -123,16 +125,23 @@ ytype → history → store → text` and reopen the same `Section` boilerplate:
   per-replica `own_client_history`, the persistent op certificate
   `is_op_cert`, and the fupd API `history_alloc` / `history_broadcast` /
   `history_deliver_batch` (+ a two-client smoke test).
-- `yjs_store.v` — the `store` proofs: conflict scan refining `setfii_loop`,
-  the item-set layer `own_item_map`, the lock layer (`store_inv` /
-  `is_Store`, now carrying the client's ghost history tied to the governed
-  text), the cohesive store-state predicate `own_store` over the model
-  `(client, history, doc)` (with `store_inv ⊣⊢ ∃ model, own_store` via
-  `store_inv_own_store`, and the name-keyed persistent witnesses `is_root`
-  / `is_root_lb`), and the Integrate stack up to `wp_Store__Integrate` /
-  `wp_store__applyUpdate` / the `own_store`-level certificate spec
-  `wp_store__applyUpdate_certs` (delivered content comes back as
-  `is_root_lb` fragments).
+- `yjs_store.v` — facade over the `store` proofs (one Go file, three
+  internal proof files for build-time isolation; downstream files import
+  only this):
+  - `yjs_store_base.v` — ghost names and RAs, the item-set layer
+    `own_item_map`, the lock body (`store_inv_ro` / `store_inv_excl` /
+    `store_inv`, carrying the client's ghost history), the cohesive
+    store-state predicate `own_store` over the model `(client, history,
+    doc)`, the persistent witnesses `is_Store` / `is_type_lb` / `is_root`
+    / `is_root_lb`, the RWMutex lock wrappers, and `store_inv_init`.
+  - `yjs_store_integrate.v` — the integration stack: id-lookup helpers,
+    the conflict scan refining `setfii_loop`, and `wp_Store__Integrate`
+    (cells-level and model-level, with the item-map maintenance).
+  - `yjs_store_update.v` — the update path: `GetNode` /
+    `getOrCreateYType` / `store.repair`, `store_inv ⊣⊢ ∃ model,
+    own_store` (`store_inv_own_store`), and the applyUpdate stack up to
+    the `own_store`-level certificate spec `wp_store__applyUpdate_certs`
+    (delivered content comes back as `is_root_lb` fragments).
 - `yjs_text.v` — the `Text` handle `is_Text t γh L` and the top-level
   `wp_Text__Insert` (which mints one op certificate per inserted item) /
   `wp_Text__Delete`.
