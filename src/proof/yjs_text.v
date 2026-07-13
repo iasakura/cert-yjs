@@ -326,6 +326,13 @@ Proof.
   { iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
   wp_apply (wp_yType__findPos (tv.(yjs.Text.inner')) (DfracOwn 1) ts.(ty_cells) ts.(ty_arr) idx with "[$Htext]").
   iIntros (lft rgt p off) "(Htext & %Hpbound & %Hlftloc & %Hrgtloc & %Hoff)".
+  (* the boundary offset is dead while every run is 1-char (issue #28 M3) *)
+  have Hoff0 : off = W64 0.
+  { destruct Hoff as [-> | (Hpos & c0off & Hc0off & _ & Hlenoff)]; first done.
+    exfalso.
+    have Hu : cell_unit c0off := Forall_lookup_1 _ _ _ _ Hunitc Hc0off.
+    rewrite /cell_unit in Hu. rewrite Hu in Hlenoff. word. }
+  subst off.
   wp_auto.
   (* shared right origin *)
   wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗ ∃ (oRptr : loc) (in_rO : option yjs.id.t),
@@ -932,6 +939,13 @@ Proof.
   { iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
   wp_apply (wp_yType__findPos (tv.(yjs.Text.inner')) (DfracOwn 1) ts.(ty_cells) ts.(ty_arr) index with "[$Htext]").
   iIntros (lft rgt p off) "(Htext & %Hpbound & %Hlftloc & %Hrgtloc & %Hoff)".
+  (* the boundary offset is dead while every run is 1-char (issue #28 M3) *)
+  have Hoff0 : off = W64 0.
+  { destruct Hoff as [-> | (Hpos & c0off & Hc0off & _ & Hlenoff)]; first done.
+    exfalso.
+    have Hu : cell_unit c0off := Forall_lookup_1 _ _ _ _ Hunitc Hc0off.
+    rewrite /cell_unit in Hu. rewrite Hu in Hlenoff. word. }
+  subst off.
   wp_auto.
   iDestruct "Htext" as (yt0' tl0') "(Hparent & Hdll & %Hlen0 & %Hrepr0 & %Hcpar0)".
   (* Loop invariant: a prefix of the run from cursor [q] has been tombstoned.
@@ -1108,21 +1122,21 @@ Proof.
     iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hhist HtypesAuth Hclose".
     rewrite Hcr. replace (Z.of_nat (S q)) with (Z.of_nat q + 1)%Z by lia. iFrame "Hcur".
     iPureIntro. split_and!; [lia | exact Hlencells | exact Hytlen | exact Hrepr' | exact Hunitq | exact Hkpeq | exact Hcparj].
-  - (* visible node: set the Deleted flag, shrink the visible length *)
+  - (* visible node: the range-end split guard is dead (Len() = 1 <= remaining),
+       then set the Deleted flag and shrink the visible length *)
     simpl negb. wp_auto.
-    wp_apply (wp_item__Len cq.(ic_loc) (DfracOwn 1) (set_deleted iv) with "[$Hcval]"). iIntros "Hcval".
     have Hlen1q : length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat.
     { have Hu : cell_unit cq := Forall_lookup_1 _ _ _ _ Hunitq Hcq.
       rewrite /cell_unit in Hu.
       have Hleq := f_equal length Hcontq.
       rewrite length_fmap explode_length /toContent in Hleq. lia. }
-    rewrite Hlen1q. wp_auto.
+    wp_apply (wp_item__Len cq.(ic_loc) (DfracOwn 1) iv with "[$Hcval]"). iIntros "Hcval".
+    rewrite Hlen1q.
+    wp_auto.
+    wp_if_destruct.
+    1: exfalso; word.
     wp_apply (wp_item__Len cq.(ic_loc) (DfracOwn 1) (set_deleted iv) with "[$Hcval]"). iIntros "Hcval".
     rewrite Hlen1q. wp_auto.
-    (* the range-end split guard (issue #28, consumed in M3) is dead while
-       every run is 1-char: remaining >= 1 = Len() *)
-    rewrite bool_decide_eq_false_2; last word.
-    wp_auto.
     wp_apply (wp_item__Len cq.(ic_loc) (DfracOwn 1) (set_deleted iv) with "[$Hcval]"). iIntros "Hcval".
     rewrite Hlen1q. wp_auto.
     iDestruct ("Hback" $! (set_deleted iv) true eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl
