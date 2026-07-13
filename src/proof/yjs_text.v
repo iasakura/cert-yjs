@@ -35,6 +35,10 @@ Set Default Proof Using "Type*".
 
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+
+(* The delete-set RA (docs/plan-delete-set.md, D1): the same instance as
+   [yjs_store]'s [ds_inG], re-declared for this file's section. *)
+Context {ds_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
@@ -276,7 +280,7 @@ Proof.
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. split; [exact Hinvarr | exact Hunitc]. }
     iEval (rewrite (insert_id types (tv.(yjs.Text.inner')) ts Htsp)) in "Htypes".
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hds HtypesAuth Htypes Hhist]").
     { iNext. iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iFrame "∗#". iPureIntro.
@@ -304,7 +308,7 @@ Proof.
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. split; [exact Hinvarr | exact Hunitc]. }
     iEval (rewrite (insert_id types (tv.(yjs.Text.inner')) ts Htsp)) in "Htypes".
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hds HtypesAuth Htypes Hhist]").
     { iNext. iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iFrame "∗#". iPureIntro.
@@ -414,6 +418,7 @@ Proof.
     "Hdset" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "deletedSet"] ↦ dset ∗
     "Hlk" ∷ own_wlock γs ∗
     "Hseq" ∷ own γs.(sn_seq) (● ((λ ts0 : type_state, (list_to_set ts0.(ty_arr) : gset (YjsItem A))) <$> types) : authR (gmapUR loc (gsetUR (YjsItem A)))) ∗
+    "Hds" ∷ own_ds γs (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
     "Hrightp" ∷ right_ptr ↦ rgt ∗
@@ -449,12 +454,12 @@ Proof.
     "%Hhcohj" ∷ ⌜history_state_coh hj (<[RootId name := arr]> m)⌝ ∗
     "Hcertsj" ∷ ([∗ list] it;D ∈ ins;Ds,
                    is_op_cert γh (RootId name, OpInsert (input_of_item it)) D)
-    )%I with "[i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq HtypesAuth Htypesmap Hright Hclose Htext Hhist]" as "IH".
+    )%I with "[i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq Hds HtypesAuth Htypesmap Hright Hclose Htext Hhist]" as "IH".
   { iExists 0%nat, ts.(ty_arr), ts.(ty_cells), lft, [], h, [].
     replace (W64 (uint.Z k + Z.of_nat 0)) with k by word.
     have Hts_eta : MkTypeState ts.(ty_cells) ts.(ty_arr) = ts by (destruct ts; reflexivity).
     rewrite Hts_eta (insert_id types (tv.(yjs.Text.inner')) ts Htsp).
-    iFrame "i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq HtypesAuth Htypesmap Hright Hclose Htext Hhist".
+    iFrame "i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq Hds HtypesAuth Htypesmap Hright Hclose Htext Hhist".
     rewrite big_sepL2_nil sep_emp.
     iPureIntro. split_and!.
     - exact Hinvarr.
@@ -629,7 +634,7 @@ Proof.
                 with "[$Hfresh $Htextj $Hitemsf $Hitemmap]").
     iIntros (arr' iidx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & Hitemsf & Hitemmap & %Hpermc & %Hsi & %Hnode)".
     destruct Hnode as [nx (Hcellsp & Harrsp2 & Hnode)].
-    have Hcunit : cell_unit c by (destruct Hnode as (_ & _ & _ & Hcu); exact Hcu).
+    have Hcunit : cell_unit c by (destruct Hnode as (_ & _ & _ & Hcu & _); exact Hcu).
     have Hunitj' : Forall cell_unit cells'
       by (rewrite Hcellsp; exact (Forall_cell_unit_splice cells nx c Hunitj Hcunit)).
     have Hnode' : ∃ x, cells' !! x = Some c ∧ ic_loc c = oL2 ∧ run_head c = nit
@@ -639,6 +644,14 @@ Proof.
              = <[tv.(yjs.Text.inner') := MkTypeState cells' arr']> types.
     { rewrite insert_insert. case_decide as Hd; [reflexivity | congruence]. }
     iEval (rewrite Hinsins) in "Hitemmap".
+    (* D1: the splice grows the cell pool by exactly [c]; the delete set's
+       domain bound is monotone in the pool. *)
+    have Hacj : all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' arr']> types)
+              ≡ₚ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) ++ [c].
+    { rewrite -Hinsins.
+      exact (all_cells_insert_snoc (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types)
+               (tv.(yjs.Text.inner')) cells arr cells' arr' c Hlookj Hpermc). }
+    iDestruct (own_ds_grow_pool γs _ _ c Hacj with "Hds") as "Hds".
     (* --- mint the op certificate (issue #42): the heap integrate above is
        mirrored by a ghost broadcast(+self-delivery) of the op this item
        denotes, keeping the history coherent with the new [arr']. --- *)
@@ -716,7 +729,7 @@ Proof.
               EvDeliver (RootId name, OpInsert input)]), (Ds ++ [Dj]).
     replace (W64 (uint.Z k + Z.of_nat (S j))) with (w64_word_instance.(word.add) (W64 (uint.Z k + j)) (W64 1)) by word.
     replace (W64 (S j)) with (w64_word_instance.(word.add) (W64 j) (W64 1)) by word.
-    iFrame "Hi Htptr Hcontentp Hclientp HoRp Hleftp Hsp Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq HtypesAuth Htypesmap Hrightp Hclose Hhistj Hcertsj".
+    iFrame "Hi Htptr Hcontentp Hclientp HoRp Hleftp Hsp Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq Hds HtypesAuth Htypesmap Hrightp Hclose Hhistj Hcertsj".
     iSplitL "Hp3 Hdll3".
     { iExists yt3, tl3. iFrame "Hp3 Hdll3". iPureIntro. split_and!; [exact Hlen3 | exact Hrepr3 | exact Hcpar3]. }
     have HmroR : mrightorigin = oR.
@@ -828,13 +841,13 @@ Proof.
   iMod (auth_gmap_gset_grow γs.(sn_seq) _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) (list_to_set arr) Hmk Hsubarr with "Hseq") as "[Hseq Hfrag]".
   iDestruct ("Hclose" $! (MkTypeState cells arr) with "[Htextj]") as "Htypes".
   { iFrame "Htextj". iPureIntro. split; [exact Hinvj | exact Hunitj]. }
-  wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhistj]").
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hds HtypesAuth Htypes Hhistj]").
   { iNext. iExists client, (W64 (uint.Z k + j)), items_mref, types_mref, dset,
       (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types), bind, hj,
       (<[RootId name := arr]> m).
     iSplitR "Hseq Htypes"; last first.
     { rewrite /store_inv_ro fmap_insert /=. iFrame "Hseq Htypes". }
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hhistj HtypesAuth Hbinds".
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hds Hhistj HtypesAuth Hbinds".
     iPureIntro. split_and!.
     - intros parent' ts' x Hlook Hxin Hxc. rewrite Hk'val.
       destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
@@ -897,6 +910,88 @@ Proof.
   iExists Ds. iFrame "Hcertsj".
 Qed.
 
+(* ===== Delete-set D1 helpers (docs/plan-delete-set.md) ================== *)
+
+(** Two delete-set lower bounds join into their union (the [◯] fragments of a
+    [gset] authority compose by union). *)
+Lemma ds_lb_union (γs : store_names) (S1 S2 : gset YjsId) :
+  is_ds_lb γs S1 -∗ is_ds_lb γs S2 -∗ is_ds_lb γs (S1 ∪ S2).
+Proof.
+  iIntros "H1 H2". rewrite /is_ds_lb.
+  iCombine "H1 H2" as "H".
+  rewrite -gset_op auth_frag_op. iExact "H".
+Qed.
+
+(** Surgery on ONE registered type's cell list transfers pointwise to the
+    document-global cell pool: if every old cell of that type survives (up to
+    flag mutation that keeps its run), so does every pool cell. This is the
+    [own_ds_flip] transfer premise, factored over [all_cells]. *)
+Lemma all_cells_pointwise (types : gmap loc type_state) (p : loc)
+    (ts ts' : type_state) :
+  types !! p = Some ts ->
+  (forall c, c ∈ ts.(ty_cells) -> c ∈ ts'.(ty_cells) ∨
+     exists c', c' ∈ ts'.(ty_cells) ∧ ic_run c' = ic_run c) ->
+  forall c, c ∈ all_cells types ->
+    c ∈ all_cells (<[p:=ts']> types) ∨
+    exists c', c' ∈ all_cells (<[p:=ts']> types) ∧ ic_run c' = ic_run c.
+Proof.
+  move=> Hp Hpt c Hc.
+  have Hto : forall c0, c0 ∈ ts'.(ty_cells) ++ all_cells (delete p types) ->
+      c0 ∈ all_cells (<[p:=ts']> types).
+  { move=> c0 Hc0. rewrite (all_cells_insert types p ts ts' Hp). exact Hc0. }
+  rewrite (all_cells_lookup types p ts Hp) in Hc.
+  apply elem_of_app in Hc as [Hin | Hin].
+  - destruct (Hpt c Hin) as [Hin' | (c' & Hc' & Hr)].
+    + left. apply Hto. apply elem_of_app. by left.
+    + right. exists c'. split; [| exact Hr].
+      apply Hto. apply elem_of_app. by left.
+  - left. apply Hto. apply elem_of_app. by right.
+Qed.
+
+(** The [Text.Delete] loop's one-cell flag flip as a delete-set ghost step:
+    the flip keeps the run ([flip_cell] only sets the bit), so the pool
+    transfer holds, and the tombstoned char's id enters the set with its
+    lower bound certificate minted. *)
+Lemma own_ds_flip_cell (γs : store_names) (types : gmap loc type_state)
+    (p : loc) (cells : list item_cell) (arr : list (YjsItem A))
+    (q : nat) (cq : item_cell) (y : YjsItem A) :
+  cells !! q = Some cq ->
+  y ∈ ic_run cq ->
+  own_ds γs (<[p := MkTypeState cells arr]> types) ==∗
+  own_ds γs (<[p := MkTypeState (<[q := flip_cell cq]> cells) arr]> types) ∗
+  is_ds_lb γs {[item_id y]}.
+Proof.
+  intros Hcq Hy.
+  have Hqlt : (q < length cells)%nat by eapply lookup_lt_Some.
+  have HT'eq : <[p := MkTypeState (<[q := flip_cell cq]> cells) arr]>
+                 (<[p := MkTypeState cells arr]> types)
+             = <[p := MkTypeState (<[q := flip_cell cq]> cells) arr]> types.
+  { rewrite insert_insert. case_decide; [reflexivity | congruence]. }
+  have HTp : (<[p := MkTypeState cells arr]> types) !! p
+             = Some (MkTypeState cells arr) by apply lookup_insert_eq.
+  have Hflipin : flip_cell cq
+      ∈ all_cells (<[p := MkTypeState (<[q := flip_cell cq]> cells) arr]> types).
+  { rewrite -HT'eq.
+    rewrite (all_cells_insert _ p (MkTypeState cells arr) _ HTp).
+    apply elem_of_app. left. simpl.
+    eapply list_elem_of_lookup_2.
+    apply list_lookup_insert_eq. exact Hqlt. }
+  apply own_ds_flip.
+  - move=> idd Hidd. apply elem_of_singleton in Hidd. subst idd.
+    exists (flip_cell cq), y. split_and!; [exact Hflipin | exact Hy | reflexivity].
+  - move=> c0 Hc0. rewrite -HT'eq.
+    apply (all_cells_pointwise _ p (MkTypeState cells arr) _ HTp); [| exact Hc0].
+    move=> c1 Hc1. simpl in Hc1. simpl.
+    apply list_elem_of_lookup_1 in Hc1 as [i1 Hi1].
+    destruct (decide (i1 = q)) as [-> | Hne].
+    + rewrite Hi1 in Hcq. injection Hcq as ->.
+      right. exists (flip_cell cq). split; [| reflexivity].
+      eapply list_elem_of_lookup_2.
+      apply list_lookup_insert_eq. exact Hqlt.
+    + left. eapply list_elem_of_lookup_2.
+      rewrite list_lookup_insert_ne; [exact Hi1 | congruence].
+Qed.
+
 (* ===== Text.Delete: WP proof ============================================ *)
 
 (** [Text.Delete] tombstones a run of visible characters and preserves the
@@ -910,12 +1005,23 @@ Qed.
     [cell_repr_flip] keeps the isomorphism, [num_visible_flip] shrinks the count)
     until the budget is spent or the list ends; rebuild [store_inv] with the same
     [ty_arr] (so the auth [Hseq] / counter [Hctr] are preserved), Unlock, and
-    return [is_Text t L]. *)
+    return [is_Text t L].
+
+    Delete-set D1 (docs/plan-delete-set.md section 6): the call additionally
+    returns a persistent delete-set lower bound [is_ds_lb γs dels]: the ids it
+    tombstoned are in the store's monotone delete set, now and forever. The
+    set stays existential (the spec does not pin positions), bounded by the
+    budget ([size dels <= len]) and in domain: every deleted id names an item
+    of the document, witnessed by a content lower bound [is_root_lb]. *)
 Lemma wp_Text__Delete (t : loc) (index len : w64) (γs : store_names) (γh : history_names)
     (name : P) (L : list (YjsItem A)) :
   {{{ is_pkg_init yjs ∗ is_Text t γs γh name L }}}
     t @! (go.PointerType yjs.Text) @! "Delete" #index #len
-  {{{ RET #(); is_Text t γs γh name L }}}.
+  {{{ RET #(); is_Text t γs γh name L ∗
+      ∃ (dels : gset YjsId) (S : gset (YjsItem A)),
+        is_ds_lb γs dels ∗ is_root_lb γs name S ∗
+        ⌜(size dels <= uint.nat len)%nat⌝ ∗
+        ⌜forall idd, idd ∈ dels -> exists x, x ∈ S ∧ item_id x = idd⌝ }}}.
 Proof.
   (* ---- Prologue: take the store lock, extract THIS text. ---- *)
   wp_start as "Hpre". iNamed "Hpre".
@@ -948,12 +1054,34 @@ Proof.
   subst off.
   wp_auto.
   iDestruct "Htext" as (yt0' tl0') "(Hparent & Hdll & %Hlen0 & %Hrepr0 & %Hcpar0)".
+  (* --- D1: mint the content lower bound (the dom witness for the returned
+     delete set) and the empty delete-set bound; re-index [Hds] to the loop's
+     insert form. --- *)
+  have Hmk0 : ((λ ts0 : type_state, (list_to_set ts0.(ty_arr) : gset (YjsItem A))) <$> types)
+                !! (tv.(yjs.Text.inner')) = Some (list_to_set ts.(ty_arr)).
+  { rewrite lookup_fmap Htsp //. }
+  have Hsub0 : (list_to_set ts.(ty_arr) : gset (YjsItem A)) ⊆ list_to_set ts.(ty_arr) by done.
+  iMod (auth_gmap_gset_grow γs.(sn_seq) _ (tv.(yjs.Text.inner'))
+          (list_to_set ts.(ty_arr)) (list_to_set ts.(ty_arr)) Hmk0 Hsub0
+          with "Hseq") as "[Hseq #Hfullb]".
+  iEval (rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk0)) in "Hseq".
+  iAssert (is_root_lb γs name (list_to_set ts.(ty_arr))) as "#Hrootlb".
+  { iExists (tv.(yjs.Text.inner')). iFrame "Hbind Hfullb". }
+  have Hdom0 : forall idd : YjsId, idd ∈ (∅ : gset YjsId) ->
+      exists c y, c ∈ all_cells types ∧ y ∈ ic_run c ∧ item_id y = idd.
+  { move=> idd /elem_of_empty []. }
+  have Htr0 : forall c : item_cell, c ∈ all_cells types -> c ∈ all_cells types ∨
+      exists c', c' ∈ all_cells types ∧ ic_run c' = ic_run c.
+  { move=> c0 Hc0. by left. }
+  iMod (own_ds_flip γs types types ∅ Hdom0 Htr0 with "Hds") as "[Hds Hdels0]".
+  have Hts_eta : MkTypeState ts.(ty_cells) ts.(ty_arr) = ts by (destruct ts; reflexivity).
   (* Loop invariant: a prefix of the run from cursor [q] has been tombstoned.
      [cells'] is the flag-mutated heap list; it still represents the SAME model
      [ty_arr] ([cells_repr]) with the visible count tracked in [yType.len]. The
      model list and its length are unchanged, so [ty_arr] / [YjsArrInvariant] /
      [L] are untouched. All the lock resources are threaded through unchanged. *)
-  iAssert (∃ (q : nat) (rem : w64) (cells' : list item_cell) (yt' : yjs.yType.t),
+  iAssert (∃ (q : nat) (rem : w64) (cells' : list item_cell) (yt' : yjs.yType.t)
+             (dels : gset YjsId),
     "Htptr" ∷ t_ptr ↦ t ∗
     "Hsp" ∷ s_ptr ↦ tv.(yjs.Text.store') ∗
     "Hcur" ∷ cur_ptr ↦ node_loc cells' (Z.of_nat q) ∗
@@ -968,6 +1096,8 @@ Proof.
     "Htypesf" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "types"] ↦ types_mref ∗
     "Hdset" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "deletedSet"] ↦ dset ∗
     "Hseq" ∷ own γs.(sn_seq) (● ((λ ts0 : type_state, (list_to_set ts0.(ty_arr) : gset (YjsItem A))) <$> types) : authR (gmapUR loc (gsetUR (YjsItem A)))) ∗
+    "Hds" ∷ own_ds γs (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) ∗
+    "Hdels" ∷ is_ds_lb γs dels ∗
     "Hhist" ∷ own_client_history γh (uint.nat client) h ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
@@ -978,12 +1108,15 @@ Proof.
     "%Hrepr'" ∷ ⌜cells_repr ts.(ty_arr) cells' ts.(ty_arr)⌝ ∗
     "%Hunitq" ∷ ⌜Forall cell_unit cells'⌝ ∗
     "%Hkpeq" ∷ ⌜cell_kp <$> cells' = cell_kp <$> ts.(ty_cells)⌝ ∗
-    "%Hcparj" ∷ ⌜∀ c0, c0 ∈ cells' -> ic_parent c0 = tv.(yjs.Text.inner')⌝)%I
-    with "[t s cur remaining Hparent Hdll Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hhist HtypesAuth Hclose]" as "IH".
-  { iExists p, len, ts.(ty_cells), yt0'.
-    iFrame "t s Hparent Hdll remaining Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hhist HtypesAuth Hclose".
+    "%Hcparj" ∷ ⌜∀ c0, c0 ∈ cells' -> ic_parent c0 = tv.(yjs.Text.inner')⌝ ∗
+    "%Hdelsz" ∷ ⌜(size dels + uint.nat rem <= uint.nat len)%nat⌝ ∗
+    "%Hdelsdom" ∷ ⌜forall idd, idd ∈ dels -> exists x, x ∈ ts.(ty_arr) ∧ item_id x = idd⌝)%I
+    with "[t s cur remaining Hparent Hdll Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hds Hdels0 Hhist HtypesAuth Hclose]" as "IH".
+  { iExists p, len, ts.(ty_cells), yt0', (∅ : gset YjsId).
+    rewrite Hts_eta (insert_id types (tv.(yjs.Text.inner')) ts Htsp).
+    iFrame "t s Hparent Hdll remaining Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hds Hdels0 Hhist HtypesAuth Hclose".
     iEval (rewrite Hrgtloc) in "cur". iFrame "cur".
-    iPureIntro. split_and!; [exact Hpbound | reflexivity | exact Hlen0 | exact Hrepr0 | exact Hunitc | reflexivity | exact Hcpar0]. }
+    iPureIntro. split_and!; [exact Hpbound | reflexivity | exact Hlen0 | exact Hrepr0 | exact Hunitc | reflexivity | exact Hcpar0 | rewrite size_empty; lia | move=> idd /elem_of_empty []]. }
   wp_for "IH".
   case_bool_decide as Hrem.
   2:{ (* budget exhausted: rebuild store_inv (same ty_arr), Unlock, return. *)
@@ -1001,14 +1134,14 @@ Proof.
         rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
         rewrite !fmap_app /= Hkpeq. reflexivity. }
       iDestruct (own_item_map_kp_perm items_mref (DfracOwn 1) types (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) Hkpperm with "Hitemmap") as "Hitemmap".
-      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
+      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hds HtypesAuth Htypes Hhist]").
       { iNext. iExists client, k, items_mref, types_mref, dset,
           (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m.
         iSplitR "Hseq Htypes"; last first.
         { rewrite /store_inv_ro fmap_insert /=.
           rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
           iFrame "Hseq Htypes". }
-        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hhist HtypesAuth Hbinds".
+        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hds Hhist HtypesAuth Hbinds".
         iPureIntro. split_and!.
         - intros parent' ts' x Hlook Hxin Hxc.
           destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
@@ -1035,8 +1168,15 @@ Proof.
           + rewrite lookup_insert_ne in Hts'; [| congruence].
             exact (Hmtypes name' p' ts' Hb' Hts').
         - exact Hmdom. }
-      iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
-      iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
+      iApply "HΦ".
+      iSplitR "Hdels".
+      { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
+        iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
+      iExists dels, (list_to_set ts.(ty_arr)).
+      iFrame "Hdels Hrootlb".
+      iPureIntro. split; [lia |].
+      move=> idd Hidd. destruct (Hdelsdom idd Hidd) as (x & Hx & Hxid).
+      exists x. split; [| exact Hxid]. rewrite elem_of_list_to_set. exact Hx. }
   wp_auto.
   destruct (decide (q < length cells')%nat) as [Hqlt | Hqge].
   2:{ (* cursor at end: rebuild store_inv (same ty_arr), Unlock, return. *)
@@ -1057,14 +1197,14 @@ Proof.
         rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
         rewrite !fmap_app /= Hkpeq. reflexivity. }
       iDestruct (own_item_map_kp_perm items_mref (DfracOwn 1) types (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) Hkpperm with "Hitemmap") as "Hitemmap".
-      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
+      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hds HtypesAuth Htypes Hhist]").
       { iNext. iExists client, k, items_mref, types_mref, dset,
           (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m.
         iSplitR "Hseq Htypes"; last first.
         { rewrite /store_inv_ro fmap_insert /=.
           rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
           iFrame "Hseq Htypes". }
-        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hhist HtypesAuth Hbinds".
+        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hds Hhist HtypesAuth Hbinds".
         iPureIntro. split_and!.
         - intros parent' ts' x Hlook Hxin Hxc.
           destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
@@ -1091,8 +1231,15 @@ Proof.
           + rewrite lookup_insert_ne in Hts'; [| congruence].
             exact (Hmtypes name' p' ts' Hb' Hts').
         - exact Hmdom. }
-      iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
-      iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
+      iApply "HΦ".
+      iSplitR "Hdels".
+      { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
+        iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
+      iExists dels, (list_to_set ts.(ty_arr)).
+      iFrame "Hdels Hrootlb".
+      iPureIntro. split; [lia |].
+      move=> idd Hidd. destruct (Hdelsdom idd Hidd) as (x & Hx & Hxid).
+      exists x. split; [| exact Hxid]. rewrite elem_of_list_to_set. exact Hx. }
   (* cursor in range: read node [q] (single borrow exposing [iv] + the update
      wand), decide visible/deleted via [Indexable], advance to [q+1]. *)
   iDestruct (node_loc_lt_not_null (DfracOwn 1) cells' yt'.(yjs.yType.start') tl0' q Hqlt with "Hdll") as "[%Hnn Hdll]".
@@ -1118,13 +1265,28 @@ Proof.
       apply list_insert_id; exact Hcq. }
     rewrite Hins0.
     wp_for_post.
-    iFrame "Ht His_lb HΦ". iExists (S q), rem, cells', yt'.
-    iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hhist HtypesAuth Hclose".
+    iFrame "Ht His_lb HΦ". iExists (S q), rem, cells', yt', dels.
+    iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hds Hdels Hhist HtypesAuth Hclose".
     rewrite Hcr. replace (Z.of_nat (S q)) with (Z.of_nat q + 1)%Z by lia. iFrame "Hcur".
-    iPureIntro. split_and!; [lia | exact Hlencells | exact Hytlen | exact Hrepr' | exact Hunitq | exact Hkpeq | exact Hcparj].
+    iPureIntro. split_and!; [lia | exact Hlencells | exact Hytlen | exact Hrepr' | exact Hunitq | exact Hkpeq | exact Hcparj | exact Hdelsz | exact Hdelsdom].
   - (* visible node: the range-end split guard is dead (Len() = 1 <= remaining),
        then set the Deleted flag and shrink the visible length *)
     simpl negb. wp_auto.
+    (* --- D1 ghost step (while the goal is still a WP): the flipped char's
+       id enters the delete set. --- *)
+    have Hu2 : cell_unit cq := Forall_lookup_1 _ _ _ _ Hunitq Hcq.
+    have Hrunq : ic_run cq = [yiq].
+    { have Hh : run_head cq = yiq := cell_repr_head _ _ _ Hcrq.
+      move: Hu2 Hh. rewrite /cell_unit /run_head.
+      destruct (ic_run cq) as [|y0 [|y1 r]]; simpl.
+      - move=> Hrunlen _. exfalso. lia.
+      - move=> _ ->. reflexivity.
+      - move=> Hrunlen _. exfalso. lia. }
+    have Hyin : yiq ∈ ic_run cq.
+    { rewrite Hrunq. constructor. }
+    iMod (own_ds_flip_cell γs types (tv.(yjs.Text.inner')) cells' ts.(ty_arr) q cq yiq Hcq Hyin
+          with "Hds") as "[Hds Hlb1]".
+    iDestruct (ds_lb_union γs dels {[item_id yiq]} with "Hdels Hlb1") as "Hdels".
     have Hlen1q : length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat.
     { have Hu : cell_unit cq := Forall_lookup_1 _ _ _ _ Hunitq Hcq.
       rewrite /cell_unit in Hu.
@@ -1150,8 +1312,8 @@ Proof.
       rewrite /num_visible -(take_drop_middle cells' q cq Hcq) fmap_app list_sum_app fmap_cons /=.
       rewrite Hdq Hu /=. lia. }
     iFrame "Ht His_lb HΦ".
-    iExists (S q), (w64_word_instance.(word.sub) rem (W64 1%nat)), (<[q := flip_cell cq]> cells'), (yt' <| yjs.yType.len' := w64_word_instance.(word.sub) yt'.(yjs.yType.len') (W64 1%nat) |>).
-    iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hhist HtypesAuth Hclose".
+    iExists (S q), (w64_word_instance.(word.sub) rem (W64 1%nat)), (<[q := flip_cell cq]> cells'), (yt' <| yjs.yType.len' := w64_word_instance.(word.sub) yt'.(yjs.yType.len') (W64 1%nat) |>), (dels ∪ {[item_id yiq]}).
+    iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hds Hdels Hhist HtypesAuth Hclose".
     have Hcurloc : node_loc (<[q := flip_cell cq]> cells') (Z.of_nat (S q)) = iv.(yjs.item.right').
     { rewrite Hcr /node_loc. replace (Z.of_nat (S q)) with (Z.of_nat q + 1)%Z by lia.
       rewrite !decide_True; [| lia | lia]. f_equal. f_equal.
@@ -1175,6 +1337,20 @@ Proof.
         exact (Hcparj cq (list_elem_of_lookup_2 _ _ _ Hcq)).
       * rewrite list_lookup_insert_ne in Hi0; last congruence.
         exact (Hcparj c0 (list_elem_of_lookup_2 _ _ _ Hi0)).
+    + (* budget: at most one new id per consumed unit of [remaining] *)
+      have Hszle : (size (dels ∪ {[item_id yiq]}) <= size dels + 1)%nat.
+      { rewrite size_union_alt.
+        have Hd1 : ({[item_id yiq]} ∖ dels : gset YjsId) ⊆ {[item_id yiq]}.
+        { intros z Hz. apply elem_of_difference in Hz as [Hz _]. exact Hz. }
+        pose proof (subseteq_size _ _ Hd1) as Hs.
+        pose proof (size_singleton (C:=gset YjsId) (item_id yiq)) as Hone.
+        lia. }
+      have Hremn : (uint.nat rem = S (uint.nat (w64_word_instance.(word.sub) rem (W64 1%nat))))%nat by word.
+      lia.
+    + move=> idd Hidd. apply elem_of_union in Hidd as [Hidd | Hidd].
+      * exact (Hdelsdom idd Hidd).
+      * apply elem_of_singleton in Hidd. subst idd.
+        exists yiq. split; [exact (list_elem_of_lookup_2 _ _ _ Hyiq) | reflexivity].
 Qed.
 
 (** [Text.Len]: a CONCURRENT read (issue #22). Takes the RWMutex read lock, reads

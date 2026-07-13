@@ -175,6 +175,13 @@ Context {sync_pkg : sync.Assumptions}.
 Notation seqUR := (authR (gmapUR loc (gsetUR (YjsItem A)))).
 Context {seq_inG : inG Σ seqUR}.
 
+(** The store-global monotone delete set (roadmap 2 / issue #37,
+    docs/plan-delete-set.md): an [auth] over a [gset] of per-char ids, grown
+    by [Text.Delete] and (later) the update path's [deleteRange]; fragments
+    are persistent lower bounds. *)
+Notation dsUR := (authR (gsetUR YjsId)).
+Context {ds_inG : inG Σ dsUR}.
+
 (* ----- one registered type's state -------------------------------------- *)
 
 (** What [store_inv] tracks per registered YType (keyed by its [parent] loc): the
@@ -775,7 +782,105 @@ Record store_names := StoreNames {
   sn_rmax : gname;   (* own_toks bound: # readers ≤ actualMaxReaders            *)
   sn_rrlocked : gname; (* own_tok_auth: the active reader count                 *)
   sn_types_agree : gname; (* dfrac_agree on the types map (reader/inv agreement) *)
+  sn_ds : gname;     (* authR (gsetUR YjsId): the monotone delete set          *)
 }.
+
+(** Persistent lower bound on the delete set: these ids are (and stay)
+    deleted. *)
+Definition is_ds_lb (γs : store_names) (S : gset YjsId) : iProp Σ :=
+  own γs.(sn_ds) (◯ S).
+
+#[global] Instance is_ds_lb_persistent γs S : Persistent (is_ds_lb γs S).
+Proof. rewrite /is_ds_lb. apply _. Qed.
+
+Lemma ds_lb_subset (γs : store_names) (ds S : gset YjsId) :
+  own γs.(sn_ds) (● ds) -∗ is_ds_lb γs S -∗ ⌜S ⊆ ds⌝.
+Proof.
+  iIntros "Hauth Hlb".
+  iCombine "Hauth Hlb" gives %Hv.
+  iPureIntro.
+  apply auth_both_valid_discrete in Hv. destruct Hv as [Hincl _].
+  by apply gset_included.
+Qed.
+
+Lemma ds_grow (γs : store_names) (ds S : gset YjsId) :
+  own γs.(sn_ds) (● ds) ==∗
+  own γs.(sn_ds) (● (ds ∪ S)) ∗ is_ds_lb γs S.
+Proof.
+  iIntros "Hauth".
+  iMod (own_update _ _ (● (ds ∪ S) ⋅ ◯ (ds ∪ S)) with "Hauth") as "[Hauth Hfrag]".
+  { apply auth_update_alloc.
+    apply gset_local_update. set_solver. }
+  iModIntro. iFrame "Hauth".
+  rewrite /is_ds_lb.
+  iApply (own_mono with "Hfrag").
+  apply auth_frag_mono. apply gset_included. set_solver.
+Qed.
+
+(** [deleted_match ds cells]: each cell's Deleted bit mirrors membership of
+    ALL its run's char ids in the delete set (run-uniform: split halves
+    inherit the bit, issue #28 M2). NOT yet carried by the invariant: the
+    visible-side direction needs store-global id uniqueness, which arrives
+    with the wire-delete milestone (D2, docs/plan-delete-set.md section 3);
+    D1 tracks growth only. *)
+Definition deleted_match (ds : gset YjsId) (cells : list item_cell) : Prop :=
+  forall c, c ∈ cells -> forall y, y ∈ ic_run c ->
+    (ic_deleted c = true -> item_id y ∈ ds) ∧
+    (ic_deleted c = false -> item_id y ∉ ds).
+
+(** Delete-set domain: every deleted id names an integrated char. *)
+Definition ds_dom (ds : gset YjsId) (types : gmap loc type_state) : Prop :=
+  forall idd, idd ∈ ds ->
+    exists c y, c ∈ all_cells types ∧ y ∈ ic_run c ∧ item_id y = idd.
+
+(** The delete-set ghost bundle carried by the store invariant: the auth and
+    the domain bound, with the current set existential (observable only
+    through [is_ds_lb] certificates). *)
+Definition own_ds (γs : store_names) (types : gmap loc type_state) : iProp Σ :=
+  ∃ ds : gset YjsId,
+    "Hdsauth" ∷ own γs.(sn_ds) (● ds) ∗
+    "%Hdsdom" ∷ ⌜ds_dom ds types⌝.
+
+#[global] Instance own_ds_timeless γs types : Timeless (own_ds γs types).
+Proof. rewrite /own_ds. apply _. Qed.
+
+(** Growing the pool preserves the bundle (the domain bound is monotone in
+    the pool). *)
+Lemma own_ds_grow_pool (γs : store_names) (types types' : gmap loc type_state)
+    (c : item_cell) :
+  all_cells types' ≡ₚ all_cells types ++ [c] ->
+  own_ds γs types -∗ own_ds γs types'.
+Proof.
+  iIntros (Hperm) "H". iNamed "H".
+  iExists ds. iFrame "Hdsauth".
+  iPureIntro.
+  move=> idd Hidd.
+  destruct (Hdsdom idd Hidd) as (c1 & y1 & Hc1 & Hy1 & Hid1).
+  exists c1, y1. split_and!; [| exact Hy1 | exact Hid1].
+  rewrite Hperm. apply elem_of_app. by left.
+Qed.
+
+(** Tombstoning ids that name pool chars grows the set within its domain. *)
+Lemma own_ds_flip (γs : store_names) (types types' : gmap loc type_state)
+    (S : gset YjsId) :
+  (forall idd, idd ∈ S ->
+     exists c y, c ∈ all_cells types' ∧ y ∈ ic_run c ∧ item_id y = idd) ->
+  (forall c, c ∈ all_cells types -> c ∈ all_cells types' \/
+     exists c', c' ∈ all_cells types' ∧ ic_run c' = ic_run c) ->
+  own_ds γs types ==∗ own_ds γs types' ∗ is_ds_lb γs S.
+Proof.
+  iIntros (HSdom Htrans) "H". iNamed "H".
+  iMod (ds_grow γs ds S with "Hdsauth") as "[Hdsauth Hlb]".
+  iModIntro. iFrame "Hlb".
+  iExists (ds ∪ S). iFrame "Hdsauth".
+  iPureIntro.
+  move=> idd Hidd. apply elem_of_union in Hidd. destruct Hidd as [Hidd | Hidd].
+  - destruct (Hdsdom idd Hidd) as (c1 & y1 & Hc1 & Hy1 & Hid1).
+    destruct (Htrans c1 Hc1) as [Hc1' | (c' & Hc' & Hrun')].
+    + exists c1, y1. split_and!; assumption.
+    + exists c', y1. rewrite Hrun'. split_and!; assumption.
+  - exact (HSdom idd Hidd).
+Qed.
 
 (** The root-type binding: [name] is bound to the type at [p], forever
     (bindings are insert-only — [getOrCreateYType] never rebinds a name).
@@ -838,6 +943,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
     "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
+    "Hds"     ∷ own_ds γs types ∗
     "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
@@ -1102,6 +1208,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
     "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
+    "Hds"     ∷ own_ds γs types ∗
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
     "Htypes"  ∷ ([∗ map] parent ↦ ts ∈ types,
                   own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
@@ -1313,6 +1420,8 @@ Proof.
      layer ([is_Store]'s tie invariant), not to [store_inv], so allocate the
      name and drop the token here. *)
   iMod (ghost_var_alloc ()) as (γwl) "Hwl". iClear "Hwl".
+  iMod (own_alloc (● (∅ : gset YjsId) : dsUR)) as (γds) "Hds".
+  { apply auth_auth_valid. done. }
   (* The RWMutex-lock-layer ghosts (reader accounting + types agreement) also
      belong to [is_Store]'s tie invariant, not to [store_inv]; allocate the names
      and drop the tokens here (a future [wp_NewDoc] wires the physical lock). The
@@ -1328,7 +1437,7 @@ Proof.
                  reader_sem_gn := γd; writer_sem_gn := γd |} : RWMutex_names).
   set (γs := {| sn_seq := γseq; sn_types := γtypes; sn_wl := γwl;
                 sn_rw := γrw; sn_rmax := γrmax; sn_rrlocked := γrrlocked;
-                sn_types_agree := γta |}).
+                sn_types_agree := γta; sn_ds := γds |}).
   iModIntro. iExists γs.
   iExists client, k, items_mref, types_mref, dset, types, (∅ : gmap P loc),
     ([] : list Ev), (∅ : DocM).
@@ -1346,6 +1455,10 @@ Proof.
       rewrite /types /all_cells map_to_list_empty /= elem_of_nil //.
     - move=> c1 c2 Hc1. exfalso. move: Hc1.
       rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
+  iSplitL "Hds".
+  { (* the delete set starts empty over the empty pool *)
+    iExists (∅ : gset YjsId). iFrame "Hds". iPureIntro.
+    move=> idd Hidd. exfalso. set_solver. }
   iSplitR. { iPureIntro. move=> parent' ts' x Hlk. rewrite /types lookup_empty // in Hlk. }
   iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }

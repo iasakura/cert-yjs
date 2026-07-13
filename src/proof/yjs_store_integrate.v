@@ -1905,7 +1905,7 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
       ∃ idx, ⌜cells' = take idx cells ++ c :: drop idx cells⌝ ∗
              ⌜arr' = take idx arr ++ newItem :: drop idx arr⌝ ∗
              ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗ ⌜run_head c = newItem⌝ ∗
-             ⌜cell_unit c⌝ }}}.
+             ⌜cell_unit c⌝ ∗ ⌜ic_deleted c = false⌝ }}}.
 Proof using Type*.
   move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hunitc.
   iIntros (Φ) "(Hpkg & Htext & Hfresh & Hitemsf & Hitemmap) HΦ".
@@ -2033,7 +2033,7 @@ Proof using Type*.
   have Harrsp : arr' = take idx arr ++ newItem :: drop idx arr
     by rewrite Harr'eq /insertIdxIfInBounds decide_True //.
   iExists idx. iPureIntro.
-  split_and!; [exact Hsplice | exact Harrsp | exact Hlook | exact Hloc | exact Hcid | exact Hcunit].
+  split_and!; [exact Hsplice | exact Harrsp | exact Hlook | exact Hloc | exact Hcid | exact Hcunit | exact Hcdel].
 Qed.
 
 
@@ -2071,7 +2071,7 @@ Lemma wp_Store__Integrate_nil (s parent item_l : loc) (arr : list (YjsItem A))
       ∃ idx, ⌜cells' = take idx cells ++ c :: drop idx cells⌝ ∗
              ⌜arr' = take idx arr ++ newItem :: drop idx arr⌝ ∗
              ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗ ⌜run_head c = newItem⌝ ∗
-             ⌜cell_unit c⌝ }}}.
+             ⌜cell_unit c⌝ ∗ ⌜ic_deleted c = false⌝ }}}.
 Proof using Type*.
   move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hunitc.
   iIntros (Φ) "(Hpkg & Htext & Hfresh & Hitemsf & Hitemmap) HΦ".
@@ -2199,7 +2199,7 @@ Proof using Type*.
   have Harrsp : arr' = take idx arr ++ newItem :: drop idx arr
     by rewrite Harr'eq /insertIdxIfInBounds decide_True //.
   iExists idx. iPureIntro.
-  split_and!; [exact Hsplice | exact Harrsp | exact Hlook | exact Hloc | exact Hcid | exact Hcunit].
+  split_and!; [exact Hsplice | exact Harrsp | exact Hlook | exact Hloc | exact Hcid | exact Hcunit | exact Hcdel].
 Qed.
 
 End store_integrate.
