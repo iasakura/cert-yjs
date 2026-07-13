@@ -60,77 +60,98 @@ Definition own_ytype_cells (parent : loc) (dq : dfrac)
 
 (* ----- the abstract model and the public predicate ----------------------- *)
 
-(** The abstract cell a heap cell denotes: its model item and tombstone bit.
-    The heap location is dropped — this is the abstraction wall. *)
-Definition cell_model (c : item_cell) : YjsItem A * bool := (ic_item c, ic_deleted c).
+(** The abstract per-char cells a heap cell denotes: each model item of its run
+    paired with the cell's tombstone bit. The heap location is dropped — this
+    is the abstraction wall (the model stays per-char; runs are invisible,
+    issue #28). *)
+Definition cell_models (c : item_cell) : list (YjsItem A * bool) :=
+  (λ x, (x, ic_deleted c)) <$> ic_run c.
 
-Lemma cell_model_fst (cells : list item_cell) :
-  (cell_model <$> cells).*1 = ic_item <$> cells.
-Proof. induction cells as [|c cs IH]; [done | by rewrite !fmap_cons IH]. Qed.
+Definition cells_model (cells : list item_cell) : list (YjsItem A * bool) :=
+  mjoin (cell_models <$> cells).
+
+Lemma fmap_pair_fst (d : bool) (r : list (YjsItem A)) :
+  ((λ x : YjsItem A, (x, d)) <$> r).*1 = r.
+Proof. induction r as [|x r IH]; [done | by rewrite !fmap_cons IH]. Qed.
+
+Lemma cells_model_fst (cells : list item_cell) :
+  (cells_model cells).*1 = run_flatten cells.
+Proof.
+  induction cells as [|c cs IH]; first done.
+  rewrite /cells_model /run_flatten /= fmap_app IH /cell_models fmap_pair_fst //.
+Qed.
 
 (** [own_ytype parent dq m]: the public [yType] predicate. [m] pairs each
-    document item with its tombstone bit, in document order; [m.*1] is the
-    document list ([YjsArrInvariant] etc. are stated about it as pure side
-    conditions of the specs, not baked in here). *)
+    document (per-char) item with its tombstone bit, in document order; [m.*1]
+    is the document list ([YjsArrInvariant] etc. are stated about it as pure
+    side conditions of the specs, not baked in here). *)
 Definition own_ytype (parent : loc) (dq : dfrac) (m : list (YjsItem A * bool)) : iProp Σ :=
   ∃ (cells : list item_cell),
     "Hcells" ∷ own_ytype_cells parent dq cells m.*1 ∗
-    "%Hm" ∷ ⌜m = cell_model <$> cells⌝.
+    "%Hm" ∷ ⌜m = cells_model cells⌝.
 
 (** Introduction: any cells-level view is the public view at its cell model
     (whose item list is the cells-level [arr]). *)
 Lemma own_ytype_intro (parent : loc) (dq : dfrac)
     (cells : list item_cell) (arr : list (YjsItem A)) :
   own_ytype_cells parent dq cells arr ⊢
-    own_ytype parent dq (cell_model <$> cells) ∗ ⌜(cell_model <$> cells).*1 = arr⌝.
+    own_ytype parent dq (cells_model cells) ∗ ⌜(cells_model cells).*1 = arr⌝.
 Proof.
   iIntros "H". iDestruct "H" as (yt tl) "(Hp & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  have Harr : (cell_model <$> cells).*1 = arr.
-  { rewrite cell_model_fst. rewrite /cells_repr in Hrepr. rewrite Hrepr //. }
+  have Harr : (cells_model cells).*1 = arr.
+  { rewrite cells_model_fst. rewrite /cells_repr in Hrepr. rewrite Hrepr //. }
   iSplitL; last (iPureIntro; exact Harr).
   iExists cells. rewrite Harr. iSplitL; last done.
   iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
 Qed.
 
 (** General tombstone-aware [findPos]: walk to the visible character index [idx]
-    (≤ number of *visible* nodes) and return the straddling neighbours. The Go
-    walks two loops: a skip loop that advances past leading tombstones, then a
-    count loop that spends the budget [idx] on visible ([Indexable]) nodes only.
-    Deletions make the answer a *list* position [p] (the node index, ≥ the visible
-    index because tombstones are skipped), so the spec returns an existential [p ≤
+    and return the straddling neighbours plus the in-node offset. The Go walks
+    two loops: a skip loop that advances past leading tombstones, then a count
+    loop that spends the budget [idx] on visible ([Indexable]) nodes. Deletions
+    make the answer a *list* position [p] (the node index, ≥ the visible index
+    because tombstones are skipped), so the spec returns an existential [p ≤
     length cells] with the two straddle locations [node_loc cells (p-1)] /
-    [node_loc cells p] (which are [null] out of range). That an adjacent
-    ([left]/[right]) pair is all the [Insert] / [Delete] callers need. *)
+    [node_loc cells p] (which are [null] out of range). When the budget lands
+    strictly inside a multi-element run (issue #28) the returned [off] is
+    nonzero and measures into the VISIBLE node at [p-1], strictly below its run
+    length; [off] = 0 means a node-boundary position. The adjacent
+    ([left]/[right]) pair is all the M1 [Insert] / [Delete] callers consume;
+    the offset feeds the normalize/split path (M3). *)
 Lemma wp_yType__findPos (parent : loc) (dq : dfrac) (cells : list item_cell)
     (arr : list (YjsItem A)) (idx : w64) :
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent dq cells arr }}}
     parent @! (go.PointerType yjs.yType) @! "findPos" #idx
-  {{{ (lft rgt : loc) (p : nat), RET (#lft, #rgt);
+  {{{ (lft rgt : loc) (p : nat) (off : w64), RET (#lft, #rgt, #off);
       own_ytype_cells parent dq cells arr ∗
       ⌜(p <= length cells)%nat⌝ ∗
       ⌜lft = node_loc cells (Z.of_nat p - 1)⌝ ∗
-      ⌜rgt = node_loc cells (Z.of_nat p)⌝ }}}.
+      ⌜rgt = node_loc cells (Z.of_nat p)⌝ ∗
+      ⌜off = W64 0 ∨
+       (0 < uint.Z off)%Z ∧
+       (∃ c, cells !! (p - 1)%nat = Some c ∧ ic_deleted c = false ∧
+             (uint.nat off < length (ic_run c))%nat)⌝ }}}.
 Proof.
   wp_start as "Hyt". iNamed "Hyt".
   iDestruct (own_dll_head_node dq cells _ tl with "Hdll") as %Hhead.
   destruct cells as [|c0 cs].
-  - (* empty document: both loops are no-ops, return (null, null) at p = 0 *)
+  - (* empty document: both loops are no-ops, return (null, null, 0) at p = 0 *)
     iDestruct "Hdll" as %[Hs Ht]. wp_auto. rewrite Hs.
     iAssert ("Hp" ∷ parent ↦{dq} yt ∗ "Hl" ∷ left_ptr ↦ null ∗ "Hr" ∷ right_ptr ↦ null ∗ "Hidx" ∷ index_ptr ↦ idx)%I
       with "[Hparent left right index]" as "IH".
     { iFrame. }
     wp_for "IH".
-    iAssert ("Hp" ∷ parent ↦{dq} yt ∗ "Hl" ∷ left_ptr ↦ null ∗ "Hr" ∷ right_ptr ↦ null ∗ "Hrem" ∷ remaining_ptr ↦ idx)%I
-      with "[Hp Hl Hr remaining]" as "IH".
+    iAssert ("Hp" ∷ parent ↦{dq} yt ∗ "Hl" ∷ left_ptr ↦ null ∗ "Hr" ∷ right_ptr ↦ null ∗ "Hrem" ∷ remaining_ptr ↦ idx ∗ "Hoff" ∷ offset_ptr ↦ (W64 0))%I
+      with "[Hp Hl Hr remaining offset]" as "IH".
     { iFrame. }
     wp_for "IH".
     wp_if_destruct.
-    + wp_auto. iApply ("HΦ" $! null null 0%nat). iSplitL "Hp".
+    + wp_auto. iApply ("HΦ" $! null null 0%nat (W64 0)). iSplitL "Hp".
       { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen | exact Hrepr | exact Hcpar]. }
-      iPureIntro. split_and!; [lia | rewrite /node_loc; case_decide; reflexivity | rewrite /node_loc; case_decide; reflexivity].
-    + iApply ("HΦ" $! null null 0%nat). iSplitL "Hp".
+      iPureIntro. split_and!; [lia | rewrite /node_loc; case_decide; reflexivity | rewrite /node_loc; case_decide; reflexivity | by left].
+    + iApply ("HΦ" $! null null 0%nat (W64 0)). iSplitL "Hp".
       { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen | exact Hrepr | exact Hcpar]. }
-      iPureIntro. split_and!; [lia | rewrite /node_loc; case_decide; reflexivity | rewrite /node_loc; case_decide; reflexivity].
+      iPureIntro. split_and!; [lia | rewrite /node_loc; case_decide; reflexivity | rewrite /node_loc; case_decide; reflexivity | by left].
   - (* non-empty: skip leading tombstones, then count visible nodes to [idx] *)
     wp_auto.
     (* ----- skip loop invariant (runs before [remaining := index]) ----- *)
@@ -175,38 +196,48 @@ Proof.
         iEval (rewrite Hcloc) in "Hrightp".
         iClear "Hcol Hcor".
         wp_auto.
-        iAssert (∃ (q2 : nat) (rem : w64),
+        iAssert (∃ (q2 : nat) (rem off : w64),
           "Hp" ∷ parent ↦{dq} yt ∗
           "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
           "Hleftp" ∷ left_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2 - 1) ∗
           "Hrightp" ∷ right_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2) ∗
           "Hrem" ∷ remaining_ptr ↦ rem ∗
-          "%Hq2" ∷ ⌜(q2 <= length (c0 :: cs))%nat⌝)%I
-          with "[Hp Hdll Hleftp Hrightp remaining]" as "IH".
-        { iExists q, idx. iFrame "Hp Hdll Hleftp Hrightp remaining". iPureIntro. exact Hq. }
+          "Hoffp" ∷ offset_ptr ↦ off ∗
+          "%Hq2" ∷ ⌜(q2 <= length (c0 :: cs))%nat⌝ ∗
+          "%Hoffinv" ∷ ⌜off = W64 0 ∨
+             (0 < uint.Z off)%Z ∧ rem = W64 0 ∧
+             (∃ c, (c0 :: cs) !! (q2 - 1)%nat = Some c ∧ ic_deleted c = false ∧
+                   (uint.nat off < length (ic_run c))%nat)⌝)%I
+          with "[Hp Hdll Hleftp Hrightp remaining offset]" as "IH".
+        { iExists q, idx, (W64 0). iFrame "Hp Hdll Hleftp Hrightp remaining offset".
+          iPureIntro. split; [exact Hq | by left]. }
         wp_for "IH".
         case_bool_decide as Hrem.
         2:{ wp_auto. rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
-            iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2).
+            iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2 off).
             iSplitR "".
             { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
-            iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity]. }
+            iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity |].
+            destruct Hoffinv as [-> | (Hpos & _ & Hc)]; [by left | right; exact (conj Hpos Hc)]. }
         wp_auto.
+        have Hoff0 : off = W64 0.
+        { destruct Hoffinv as [-> | (_ & Hrem0 & _)]; [done | exfalso; rewrite Hrem0 in Hrem; word]. }
+        subst off.
         destruct (decide (q2 < length (c0 :: cs))%nat) as [Hq2lt | Hq2ge].
         2:{ have Hnull2 : node_loc (c0 :: cs) q2 = null.
             { rewrite /node_loc decide_True; [| lia]. rewrite Nat2Z.id lookup_ge_None_2; [done | lia]. }
             rewrite (bool_decide_eq_true_2 (node_loc (c0 :: cs) q2 = null) Hnull2). simpl negb.
             rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
-            iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2).
+            iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2 (W64 0)).
             iSplitR "".
             { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
-            iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity]. }
+            iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity | by left]. }
         iDestruct (node_loc_lt_not_null dq (c0 :: cs) yt.(yjs.yType.start') tl q2 Hq2lt with "Hdll") as "[%Hnn2 Hdll]".
         rewrite (bool_decide_eq_false_2 (node_loc (c0 :: cs) q2 = null) Hnn2). simpl negb.
         rewrite decide_True; [| done].
         destruct ((c0 :: cs) !! q2) as [c2|] eqn:Hc2; [| apply lookup_ge_None in Hc2; lia].
         iDestruct (own_dll_acc dq (c0 :: cs) yt.(yjs.yType.start') tl q2 c2 Hc2 with "Hdll") as (iv2 olid2 orid2)
-          "(%Hc2loc & %Hc2l & %Hc2r & %Hc2id & %Hc2cont & %Hc2olid & %Hc2orid & %Hc2flags & %Hc2contlen & %Hc2par & Hc2val & #Hc2ol & #Hc2or & Hback2)".
+          "(%Hc2loc & %Hc2l & %Hc2r & %Hc2id & %Hc2cont & %Hc2olid & %Hc2orid & %Hc2flags & %Hc2run & %Hc2par & Hc2val & #Hc2ol & #Hc2or & Hback2)".
         have Hcount2 : is_countable_flag iv2 = true := flags_if_countable iv2 (ic_deleted c2) Hc2flags.
         have Hdel2 : is_deleted_flag iv2 = ic_deleted c2 := flags_if_deleted iv2 (ic_deleted c2) Hc2flags.
         iEval (rewrite -Hc2loc) in "Hrightp".
@@ -214,22 +245,43 @@ Proof.
         wp_apply (wp_item__Indexable c2.(ic_loc) dq iv2 Hcount2 with "[$Hc2val]"). iIntros "Hc2val".
         rewrite Hdel2.
         destruct (ic_deleted c2) eqn:Hd2; simpl negb; wp_auto.
-        2:{ wp_apply (wp_item__Len c2.(ic_loc) dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
-            rewrite Hc2contlen. wp_auto.
-            iDestruct ("Hback2" with "Hc2val") as "Hdll".
-            wp_for_post.
-            iFrame "HΦ". iExists (S q2), (w64_word_instance.(word.sub) rem (W64 1)).
-            iFrame "Hp Hdll Hrem".
-            rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
-            replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
-            rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro. lia. }
+        2:{ (* visible node: spend the budget, or record the in-run offset *)
+            wp_apply (wp_item__Len c2.(ic_loc) dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
+            wp_auto.
+            case_bool_decide as Hcmp; wp_auto.
+            - (* remaining < Len: the index lands inside this run (issue #28) *)
+              iDestruct ("Hback2" with "Hc2val") as "Hdll".
+              wp_for_post.
+              iFrame "HΦ". iExists (S q2), (W64 0), rem.
+              iFrame "Hp Hdll Hrem Hoffp".
+              rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
+              replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
+              rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro.
+              have Hrlen : length (ic_run c2) = length (iv2.(yjs.item.content').(yjs.content.content')).
+              { by rewrite -(length_fmap content (ic_run c2)) Hc2cont /toContent explode_length. }
+              split; [lia |]. right.
+              split_and!; [word | done |].
+              exists c2. replace (S q2 - 1)%nat with q2 by lia.
+              split_and!; [exact Hc2 | exact Hd2 | rewrite Hrlen; word].
+            - (* Len <= remaining: spend the whole node (the else branch
+                 re-reads right.Len(), a second method call) *)
+              wp_apply (wp_item__Len c2.(ic_loc) dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
+              wp_auto.
+              iDestruct ("Hback2" with "Hc2val") as "Hdll".
+              wp_for_post.
+              iFrame "HΦ".
+              iExists (S q2), (w64_word_instance.(word.sub) rem (W64 (length (iv2.(yjs.item.content').(yjs.content.content'))))), (W64 0).
+              iFrame "Hp Hdll Hrem Hoffp".
+              rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
+              replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
+              rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro. split; [lia | by left]. }
         iDestruct ("Hback2" with "Hc2val") as "Hdll".
         wp_for_post.
-        iFrame "HΦ". iExists (S q2), rem.
-        iFrame "Hp Hdll Hrem".
+        iFrame "HΦ". iExists (S q2), rem, (W64 0).
+        iFrame "Hp Hdll Hrem Hoffp".
         rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
         replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
-        rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro. lia.
+        rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro. split; [lia | by left].
     + (* right = null (q = length): skip loop exits, count loop exits at once *)
       have Hnull : node_loc (c0 :: cs) q = null.
       { rewrite /node_loc decide_True; [| lia]. rewrite Nat2Z.id lookup_ge_None_2; [done | lia]. }
@@ -237,38 +289,48 @@ Proof.
       wp_auto.
       rewrite decide_False; [| done]. rewrite decide_True; [| done].
       wp_auto.
-        iAssert (∃ (q2 : nat) (rem : w64),
+        iAssert (∃ (q2 : nat) (rem off : w64),
           "Hp" ∷ parent ↦{dq} yt ∗
           "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
           "Hleftp" ∷ left_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2 - 1) ∗
           "Hrightp" ∷ right_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2) ∗
           "Hrem" ∷ remaining_ptr ↦ rem ∗
-          "%Hq2" ∷ ⌜(q2 <= length (c0 :: cs))%nat⌝)%I
-          with "[Hp Hdll Hleftp Hrightp remaining]" as "IH".
-        { iExists q, idx. iFrame "Hp Hdll Hleftp Hrightp remaining". iPureIntro. exact Hq. }
+          "Hoffp" ∷ offset_ptr ↦ off ∗
+          "%Hq2" ∷ ⌜(q2 <= length (c0 :: cs))%nat⌝ ∗
+          "%Hoffinv" ∷ ⌜off = W64 0 ∨
+             (0 < uint.Z off)%Z ∧ rem = W64 0 ∧
+             (∃ c, (c0 :: cs) !! (q2 - 1)%nat = Some c ∧ ic_deleted c = false ∧
+                   (uint.nat off < length (ic_run c))%nat)⌝)%I
+          with "[Hp Hdll Hleftp Hrightp remaining offset]" as "IH".
+        { iExists q, idx, (W64 0). iFrame "Hp Hdll Hleftp Hrightp remaining offset".
+          iPureIntro. split; [exact Hq | by left]. }
         wp_for "IH".
         case_bool_decide as Hrem.
         2:{ wp_auto. rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
-            iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2).
+            iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2 off).
             iSplitR "".
             { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
-            iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity]. }
+            iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity |].
+            destruct Hoffinv as [-> | (Hpos & _ & Hc)]; [by left | right; exact (conj Hpos Hc)]. }
         wp_auto.
+        have Hoff0 : off = W64 0.
+        { destruct Hoffinv as [-> | (_ & Hrem0 & _)]; [done | exfalso; rewrite Hrem0 in Hrem; word]. }
+        subst off.
         destruct (decide (q2 < length (c0 :: cs))%nat) as [Hq2lt | Hq2ge].
         2:{ have Hnull2 : node_loc (c0 :: cs) q2 = null.
             { rewrite /node_loc decide_True; [| lia]. rewrite Nat2Z.id lookup_ge_None_2; [done | lia]. }
             rewrite (bool_decide_eq_true_2 (node_loc (c0 :: cs) q2 = null) Hnull2). simpl negb.
             rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
-            iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2).
+            iApply ("HΦ" $! (node_loc (c0 :: cs) (Z.of_nat q2 - 1)) (node_loc (c0 :: cs) q2) q2 (W64 0)).
             iSplitR "".
             { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
-            iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity]. }
+            iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity | by left]. }
         iDestruct (node_loc_lt_not_null dq (c0 :: cs) yt.(yjs.yType.start') tl q2 Hq2lt with "Hdll") as "[%Hnn2 Hdll]".
         rewrite (bool_decide_eq_false_2 (node_loc (c0 :: cs) q2 = null) Hnn2). simpl negb.
         rewrite decide_True; [| done].
         destruct ((c0 :: cs) !! q2) as [c2|] eqn:Hc2; [| apply lookup_ge_None in Hc2; lia].
         iDestruct (own_dll_acc dq (c0 :: cs) yt.(yjs.yType.start') tl q2 c2 Hc2 with "Hdll") as (iv2 olid2 orid2)
-          "(%Hc2loc & %Hc2l & %Hc2r & %Hc2id & %Hc2cont & %Hc2olid & %Hc2orid & %Hc2flags & %Hc2contlen & %Hc2par & Hc2val & #Hc2ol & #Hc2or & Hback2)".
+          "(%Hc2loc & %Hc2l & %Hc2r & %Hc2id & %Hc2cont & %Hc2olid & %Hc2orid & %Hc2flags & %Hc2run & %Hc2par & Hc2val & #Hc2ol & #Hc2or & Hback2)".
         have Hcount2 : is_countable_flag iv2 = true := flags_if_countable iv2 (ic_deleted c2) Hc2flags.
         have Hdel2 : is_deleted_flag iv2 = ic_deleted c2 := flags_if_deleted iv2 (ic_deleted c2) Hc2flags.
         iEval (rewrite -Hc2loc) in "Hrightp".
@@ -276,22 +338,43 @@ Proof.
         wp_apply (wp_item__Indexable c2.(ic_loc) dq iv2 Hcount2 with "[$Hc2val]"). iIntros "Hc2val".
         rewrite Hdel2.
         destruct (ic_deleted c2) eqn:Hd2; simpl negb; wp_auto.
-        2:{ wp_apply (wp_item__Len c2.(ic_loc) dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
-            rewrite Hc2contlen. wp_auto.
-            iDestruct ("Hback2" with "Hc2val") as "Hdll".
-            wp_for_post.
-            iFrame "HΦ". iExists (S q2), (w64_word_instance.(word.sub) rem (W64 1)).
-            iFrame "Hp Hdll Hrem".
-            rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
-            replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
-            rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro. lia. }
+        2:{ (* visible node: spend the budget, or record the in-run offset *)
+            wp_apply (wp_item__Len c2.(ic_loc) dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
+            wp_auto.
+            case_bool_decide as Hcmp; wp_auto.
+            - (* remaining < Len: the index lands inside this run (issue #28) *)
+              iDestruct ("Hback2" with "Hc2val") as "Hdll".
+              wp_for_post.
+              iFrame "HΦ". iExists (S q2), (W64 0), rem.
+              iFrame "Hp Hdll Hrem Hoffp".
+              rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
+              replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
+              rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro.
+              have Hrlen : length (ic_run c2) = length (iv2.(yjs.item.content').(yjs.content.content')).
+              { by rewrite -(length_fmap content (ic_run c2)) Hc2cont /toContent explode_length. }
+              split; [lia |]. right.
+              split_and!; [word | done |].
+              exists c2. replace (S q2 - 1)%nat with q2 by lia.
+              split_and!; [exact Hc2 | exact Hd2 | rewrite Hrlen; word].
+            - (* Len <= remaining: spend the whole node (the else branch
+                 re-reads right.Len(), a second method call) *)
+              wp_apply (wp_item__Len c2.(ic_loc) dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
+              wp_auto.
+              iDestruct ("Hback2" with "Hc2val") as "Hdll".
+              wp_for_post.
+              iFrame "HΦ".
+              iExists (S q2), (w64_word_instance.(word.sub) rem (W64 (length (iv2.(yjs.item.content').(yjs.content.content'))))), (W64 0).
+              iFrame "Hp Hdll Hrem Hoffp".
+              rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
+              replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
+              rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro. split; [lia | by left]. }
         iDestruct ("Hback2" with "Hc2val") as "Hdll".
         wp_for_post.
-        iFrame "HΦ". iExists (S q2), rem.
-        iFrame "Hp Hdll Hrem".
+        iFrame "HΦ". iExists (S q2), rem, (W64 0).
+        iFrame "Hp Hdll Hrem Hoffp".
         rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
         replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
-        rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro. lia.
+        rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro. split; [lia | by left].
 Qed.
 
 End ytype.

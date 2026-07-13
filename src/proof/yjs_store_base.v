@@ -198,8 +198,8 @@ Definition all_cells (types : gmap loc type_state) : list item_cell :=
     [YjsId], whose [nat] fields round-trip through [W64] from the original heap
     id), so [own_item_map] can speak about clocks while owning only the map, not
     the item cells. *)
-Definition cell_client (c : item_cell) : w64 := W64 (clientId (item_id (ic_item c))).
-Definition cell_clock  (c : item_cell) : w64 := W64 (clock (item_id (ic_item c))).
+Definition cell_client (c : item_cell) : w64 := W64 (clientId (item_id (run_head c))).
+Definition cell_clock  (c : item_cell) : w64 := W64 (clock (item_id (run_head c))).
 
 Definition cell_le (a b : item_cell) : Prop := (uint.Z (cell_clock a) ≤ uint.Z (cell_clock b))%Z.
 #[local] Instance cell_le_dec : RelDecision cell_le.
@@ -225,6 +225,28 @@ Definition client_run (types : gmap loc type_state) (client : w64) : list item_c
     under any reshuffle with the same (clock, loc) multiset and (b) when a
     strictly-clock-maximal cell is appended at the tail. *)
 Definition cell_pr (c : item_cell) : Z * loc := (uint.Z (cell_clock c), ic_loc c).
+
+(** A cell's head model item is in the flatten (nonempty run via the unit
+    invariant; issue #28). *)
+Lemma run_head_in_flatten (cells : list item_cell) (c : item_cell) :
+  c ∈ cells -> cell_unit c -> run_head c ∈ run_flatten cells.
+Proof.
+  intros Hc Hu. rewrite /cell_unit in Hu.
+  apply list_elem_of_join. exists (ic_run c).
+  split; last (apply list_elem_of_fmap_2; exact Hc).
+  rewrite /run_head. destruct (ic_run c) as [|y [|y' r']]; simpl in Hu; [lia | | lia].
+  simpl. apply list_elem_of_singleton. reflexivity.
+Qed.
+
+(** The all-singleton invariant survives a cell splice (issue #28, M1). *)
+Lemma Forall_cell_unit_splice (cells : list item_cell) (k : nat) (c : item_cell) :
+  Forall cell_unit cells -> cell_unit c ->
+  Forall cell_unit (take k cells ++ c :: drop k cells).
+Proof.
+  intros H Hc. apply Forall_app_2; [by apply Forall_take |].
+  constructor; [exact Hc | by apply Forall_drop].
+Qed.
+
 Definition pr_le (p q : Z * loc) : Prop := (p.1 <= q.1)%Z.
 
 Lemma ic_loc_fmap_pr (l : list item_cell) : ic_loc <$> l = snd <$> (cell_pr <$> l).
@@ -374,7 +396,7 @@ Definition cell_kp (c : item_cell) : w64 * (Z * loc) := (cell_client c, cell_pr 
     key-pair records, so equal key-pairs give equal components. Used to transfer
     the run-map / clock-bound side conditions across a [cell_kp]-preserving
     reshuffle (what [Text.Delete]'s [ic_deleted] flip is — [flip_cell] touches
-    neither [ic_item] nor [ic_loc], so [cell_kp (flip_cell c) = cell_kp c]). *)
+    neither [ic_run] nor [ic_loc], so [cell_kp (flip_cell c) = cell_kp c]). *)
 Lemma cell_kp_client (a b : item_cell) : cell_kp a = cell_kp b -> cell_client a = cell_client b.
 Proof. move=> H. exact (f_equal fst H). Qed.
 Lemma cell_kp_pr (a b : item_cell) : cell_kp a = cell_kp b -> cell_pr a = cell_pr b.
@@ -722,7 +744,10 @@ Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Q
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
   "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
                 own_ytype_cells parent (DfracOwn q) (ty_cells ts) (ty_arr ts) ∗
-                ⌜YjsArrInvariant (ty_arr ts)⌝).
+                ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+                (* all-singleton invariant (issue #28): every creator today
+                   mints 1-char runs; dropped in M4 with the run-scan bridge *)
+                ⌜Forall cell_unit (ty_cells ts)⌝).
 
 #[global] Instance store_inv_ro_fractional γs types : Fractional (store_inv_ro γs types).
 Proof.
@@ -1014,7 +1039,9 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
     "Htypes"  ∷ ([∗ map] parent ↦ ts ∈ types,
                   own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-                  ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+                  ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+                  (* all-singleton invariant (issue #28): dropped in M4 *)
+                  ⌜Forall cell_unit (ty_cells ts)⌝) ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
     "Hhist"   ∷ own_client_history γh c h ∗
