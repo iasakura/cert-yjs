@@ -649,7 +649,7 @@ Proof.
     iMod (history_broadcast γh (uint.nat client) (uint.nat (W64 (uint.Z k + j))) hj
             (<[RootId name := arr]> m) (RootId name) arr'
             input nit ⊤ HmaskN Htoitem2 Hvalid Hmax2 eq_refl Hboundj Hsi2' Hhcohj
-            with "His_hist Hhistj") as (Dj) "(Hhistj & #Hcertj & %HDjsub & %Hhcohj2)".
+            with "His_hist Hhistj") as (Dj) "(Hhistj & #Hlbj & #Hcertj & %HDjsub & %Hhcohj2)".
     have Hcollm : <[RootId name := arr']> (<[RootId name := arr]> m) = <[RootId name := arr']> m
       by (rewrite insert_insert; case_decide; [reflexivity | congruence]).
     rewrite Hcollm in Hhcohj2.
