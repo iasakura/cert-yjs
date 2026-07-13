@@ -27,3 +27,17 @@ func (d *Doc) GetText(name string) *Text {
 	s.mu.Unlock()
 	return &Text{store: s, inner: inner}
 }
+
+// applyUpdate integrates a decoded, causal-order batch of insert structs under
+// the store lock: the locking public entry over the verified store.applyUpdate
+// core (y-octo: Doc::apply_update, document.rs, whose whole update application
+// runs inside store.write(), the RwLock write guard). The byte-level decode
+// stays in the unverified codec rind (Doc.ApplyUpdate in codec.go), which
+// routes each ready batch through this wrapper. Verified as
+// wp_Doc__applyUpdate in src/proof/yjs_doc.v (issue #40).
+func (d *Doc) applyUpdate(structs []updateItem) {
+	s := d.store
+	s.mu.Lock()
+	s.applyUpdate(structs)
+	s.mu.Unlock()
+}

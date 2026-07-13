@@ -399,9 +399,11 @@ func (s *store) Integrate(parent *yType, item *item) {
 // Structural deviation from y-octo (deliberate, reported): y-octo keeps this
 // orchestration in Doc::apply_update and exposes only the per-struct primitives
 // (integrate/repair) on DocStore. cert-yjs encapsulates the whole loop as a
-// store method instead, so the store owns its own update logic and the public
-// Doc.ApplyUpdate (codec.go) is a thin decode+lock+call wrapper over it; this
-// keeps the verified core (wp_store__applyUpdate in src/proof/yjs_store.v) self
+// store method instead, so the store owns its own update logic; the locking
+// entry is Doc.applyUpdate (doc.go, verified as wp_Doc__applyUpdate, issue
+// #40), through which the
+// byte-level Doc.ApplyUpdate (codec.go) routes each decoded batch. This keeps
+// the verified core (wp_store__applyUpdate in src/proof/yjs_store.v) self
 // contained. Callers hold s.mu.
 func (s *store) applyUpdate(structs []updateItem) {
 	for i := 0; i < len(structs); i++ {

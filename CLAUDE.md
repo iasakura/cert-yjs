@@ -97,7 +97,8 @@ same `build.sh`.
 
 Never hand-edit generated files; change the Go and re-run goose. Proof files
 `Require` each other in order `core → common (∥ network_model) → id → item →
-ytype → history → store → text` and reopen the same `Section` boilerplate:
+ytype → history → store → text → doc` and reopen the same `Section`
+boilerplate:
 
 - `yjs_core.v` — re-exports the `rocq-yjs` / `iris-yjs` library (pure
   `integrate` / `setintegrate` model and its order theory).
@@ -108,8 +109,10 @@ ytype → history → store → text` and reopen the same `Section` boilerplate:
   model (issue #42): `history_wf` over a raw `gmap ClientId (list Event)`,
   the packaging `to_network : … → YjsOperationNetwork`, `history_state_coh`,
   happens-before append-stability, freshness, receiver clock safety, the
-  broadcast/deliver steps, `ValidReplay`, and `certs_ValidReplay`. No goose —
-  iterate on it standalone.
+  broadcast/deliver steps, `ValidReplay`, `certs_ValidReplay`, and the
+  raw-history convergence theorem `history_state_converge` (issue #40:
+  same delivered id set, pointwise-equal documents). No goose; iterate
+  on it standalone.
 - `yjs_id.v` — the `id` type: arithmetic round-trip, injectivity, equality
   specs.
 - `yjs_item.v` — the `item` type: method specs, the DLL spine `own_dll` and
@@ -121,8 +124,10 @@ ytype → history → store → text` and reopen the same `Section` boilerplate:
 - `yjs_history.v` — the ghost op history (issue #42): the global invariant
   `is_history γh` (two `ghost_map`s + `history_wf`/`ops_coh`), the exclusive
   per-replica `own_client_history`, the persistent op certificate
-  `is_op_cert`, and the fupd API `history_alloc` / `history_broadcast` /
-  `history_deliver_batch` (+ a two-client smoke test).
+  `is_op_cert`, the fupd API `history_alloc` / `history_broadcast` /
+  `history_deliver_batch`, and the ghost-boundary order-independence
+  theorem `history_converge` (issue #40), with two-client smoke tests
+  (delivery, and opposite-order convergence).
 - `yjs_store.v` — the `store` proofs: conflict scan refining `setfii_loop`,
   the item-set layer `own_item_map`, the lock layer (`store_inv` /
   `is_Store`, now carrying the client's ghost history tied to the governed
@@ -132,10 +137,17 @@ ytype → history → store → text` and reopen the same `Section` boilerplate:
   / `is_root_lb`), and the Integrate stack up to `wp_Store__Integrate` /
   `wp_store__applyUpdate` / the `own_store`-level certificate spec
   `wp_store__applyUpdate_certs` (delivered content comes back as
-  `is_root_lb` fragments).
+  `is_root_lb` fragments), plus the store-level order-independence
+  theorems `own_store_converge` / `own_store_applyUpdate_converge`
+  (issue #40: the document is a function of the delivered op-set).
 - `yjs_text.v` — the `Text` handle `is_Text t γh L` and the top-level
   `wp_Text__Insert` (which mints one op certificate per inserted item) /
   `wp_Text__Delete`.
+- `yjs_doc.v` — the `Doc` handle `is_Doc`, and the public locking entry
+  `wp_Doc__applyUpdate` (issue #40): lock, certificate-based
+  `store.applyUpdate`, unlock; the batch's validity enters through the
+  caller's linearization-point view shift (`own_store ={⊤}=∗ own_store ∗
+  is_certified_batch …`), never a receiver-side `ValidReplay`.
 
 ## Notes
 

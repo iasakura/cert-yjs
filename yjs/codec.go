@@ -398,7 +398,10 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 		if len(ready) == 0 {
 			break // missing dependencies: drop the remainder (minimal codec)
 		}
-		s.applyUpdate(ready)
+		// each ready batch goes through the verified locking wrapper
+		// (doc.applyUpdate takes s.mu; the hasNode probes above are
+		// lock-free, fine on this single-threaded decode path)
+		doc.applyUpdate(ready)
 		pending = next
 	}
 }

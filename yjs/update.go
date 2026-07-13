@@ -10,9 +10,9 @@ package yjs
 // causal-order iterator (UpdateIterator), the delete set (store::delete_range),
 // GC/Skip nodes, Parent::Id / parent_sub and multi-clock runs are all out of the
 // verified subset; the unverified runtime path for those stays in codec.go
-// (//go:build !goose), whose Doc.ApplyUpdate is the thin decode+lock+call
-// wrapper over store.applyUpdate. Its honest verified public spec is tracked in
-// issue #40.
+// (//go:build !goose), whose Doc.ApplyUpdate decodes and routes each ready
+// batch through the verified locking wrapper Doc.applyUpdate (doc.go, spec
+// wp_Doc__applyUpdate in src/proof/yjs_doc.v -- issue #40).
 
 // updateItem is one decoded insert struct in the verified subset: an item carrying
 // its id, both sibling origins, its parent info and its single-char string content
