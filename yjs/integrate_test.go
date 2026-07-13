@@ -82,3 +82,61 @@ func TestConcurrentMiddleInsertConverges(t *testing.T) {
 		t.Fatalf("expected AXYC, got %q", g0)
 	}
 }
+
+// TestSplitNode exercises the run-split machinery directly (the public API
+// only mints 1-char items until multi-element updates land, so the split
+// paths are otherwise unreachable): id/origin arithmetic, DLL splicing, run
+// list insertion, and the deleted-flag inheritance of the right half (where
+// y-octo diverges; see docs/plan-issue-28-runs-split.md).
+func TestSplitNode(t *testing.T) {
+	s := newStore(1)
+	y := s.getOrCreateYType("text")
+	it := newItem(newId(1, 0), "abc", nil, nil)
+	it.parent = y
+	s.Integrate(y, it)
+
+	left, right := s.splitNode(it, 1)
+	if got := y.Text(); got != "abc" {
+		t.Fatalf("split changed the document: %q", got)
+	}
+	if left.content.content != "a" || right.content.content != "bc" {
+		t.Fatalf("bad contents: %q / %q", left.content.content, right.content.content)
+	}
+	if right.id != newId(1, 1) {
+		t.Fatalf("bad right id: %+v", right.id)
+	}
+	if right.originLeftId == nil || *right.originLeftId != left.LastId() {
+		t.Fatalf("right originLeft is not left.LastId")
+	}
+	if left.right != right || right.left != left {
+		t.Fatalf("DLL not rewired around the split")
+	}
+	if len(s.items[1]) != 2 || s.items[1][0] != left || s.items[1][1] != right {
+		t.Fatalf("run list not updated: %v", s.items[1])
+	}
+
+	// clean-start split of the remaining "bc" run via the repair-side helper
+	mid, ok := s.splitAtAndGetRight(newId(1, 2))
+	if !ok || mid.content.content != "c" || mid.id != newId(1, 2) {
+		t.Fatalf("splitAtAndGetRight: %v %+v", ok, mid)
+	}
+	if got := y.Text(); got != "abc" {
+		t.Fatalf("second split changed the document: %q", got)
+	}
+
+	// the right half of a tombstoned run stays deleted (y-octo drops the flag)
+	s2 := newStore(2)
+	y2 := s2.getOrCreateYType("text")
+	dead := newItem(newId(2, 0), "xy", nil, nil)
+	dead.parent = y2
+	s2.Integrate(y2, dead)
+	dead.flags = dead.flags | itemDeleted
+	y2.len = y2.len - dead.Len()
+	_, r2 := s2.splitNode(dead, 1)
+	if !r2.Deleted() {
+		t.Fatalf("right half of a tombstoned run lost the deleted flag")
+	}
+	if got := y2.Text(); got != "" {
+		t.Fatalf("tombstoned content resurrected: %q", got)
+	}
+}
