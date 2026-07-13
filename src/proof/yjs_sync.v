@@ -19,9 +19,22 @@
 
     The decoded message handler (issue #63 intermediate, at the bottom):
     [wp_syncDoc__HandleSyncMessage_Step1] (answers with the [diff_model]) and
-    [wp_syncDoc__HandleSyncMessage_Apply] (no answer; the doc's state vector only
-    grows, [state_vector_model_app_grew]). The latter's "state advanced" spec is
-    used in place of a computational replay postcondition. *)
+    [wp_syncDoc__HandleSyncMessage_Apply] (no answer; the doc absorbs the batch
+    and its fragment advances). Both specs are stated as changes to the
+    document's *fragment*, the state vector viewed as "which updates the doc
+    has" ([sv_covers]): Step1's return value is exactly the local structs the
+    peer's fragment misses ([diff_model_covers] / [diff_model_subset]), and
+    Apply's effect is that the fragment grows to cover [upd] while keeping what
+    it had ([state_vector_model_app_covers] + [_app_grew]); one round's
+    convergence is [apply_diff_covers].
+
+    Fragment vocabulary caveat (future work): [own_syncDoc] is a standalone
+    decoded item list, so the "fragment" here is the doc's own state vector,
+    NOT yet the ghost history prefix [is_history_lb] (yjs_history). Tying the
+    two ([sv_of] the applied ops = the delivered prefix, so the sync fragment
+    IS the replica's [is_history_lb]) needs [HandleSyncMessage]'s apply branch
+    to run through [store.applyUpdate] rather than appending to a raw list;
+    that store integration is the remaining #51/#63 step. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -71,7 +84,18 @@ Proof. rewrite /ui_missing. apply _. Defined.
 Definition diff_model (sv : gmap w64 w64) (items : list yjs.updateItem.t) : list yjs.updateItem.t :=
   filter (ui_missing sv) items.
 
-(* ----- characterization of the diff (the output spec) ----------------- *)
+(** [sv_covers sv u]: the state vector already accounts for struct [u] (its
+    client's next-clock sits strictly past [u]'s clock). This is the "the doc's
+    delivered fragment contains [u]" reading of a state vector, and the exact
+    complement of [ui_missing] on the total order of clocks. *)
+Definition sv_covers (sv : gmap w64 w64) (u : yjs.updateItem.t) : Prop :=
+  (uint.Z (ui_clock u) < uint.Z (sv_get sv (ui_client u)))%Z.
+
+Lemma sv_covers_not_missing (sv : gmap w64 w64) (u : yjs.updateItem.t) :
+  sv_covers sv u <-> ¬ ui_missing sv u.
+Proof. rewrite /sv_covers /ui_missing. lia. Qed.
+
+(* ----- characterization of the diff (the return-value spec) ------------ *)
 
 Lemma diff_model_spec (sv : gmap w64 w64) (items : list yjs.updateItem.t) (u : yjs.updateItem.t) :
   u ∈ diff_model sv items <->
@@ -79,6 +103,19 @@ Lemma diff_model_spec (sv : gmap w64 w64) (items : list yjs.updateItem.t) (u : y
 Proof.
   rewrite /diff_model list_elem_of_filter /ui_missing. tauto.
 Qed.
+
+(** The diff a Step1 answer carries is EXACTLY the local structs the peer's
+    state vector does not already cover: every element is a local struct the
+    peer is missing, and conversely. This is the return-value characterization
+    ("which updates the response contains"). *)
+Lemma diff_model_covers (sv : gmap w64 w64) (items : list yjs.updateItem.t) (u : yjs.updateItem.t) :
+  u ∈ diff_model sv items <-> (u ∈ items /\ ¬ sv_covers sv u).
+Proof. rewrite diff_model_spec sv_covers_not_missing /ui_missing. tauto. Qed.
+
+(** ...and it draws only from the local document (never invents structs). *)
+Lemma diff_model_subset (sv : gmap w64 w64) (items : list yjs.updateItem.t) :
+  ∀ u, u ∈ diff_model sv items -> u ∈ items.
+Proof. move=> u. rewrite diff_model_covers. tauto. Qed.
 
 (* ----- state-vector monotonicity + coverage --------------------------- *)
 
@@ -149,6 +186,35 @@ Proof.
   intros u Hu. rewrite /ui_missing.
   have := state_vector_model_covers items u Hnowrap Hu. lia.
 Qed.
+
+(* ----- how the document fragment changes when a batch is applied ------- *)
+
+(** Applying a batch [upd] (append) advances the document's fragment to cover
+    every struct in [upd]: after the apply, the state vector accounts for each
+    of them. Together with [state_vector_model_app_grew] (nothing already in
+    the fragment is lost), this says the fragment grows to exactly the old
+    fragment plus [upd]. *)
+Lemma state_vector_model_app_covers (items upd : list yjs.updateItem.t) (u : yjs.updateItem.t) :
+  (forall w, w ∈ items ++ upd -> (uint.Z (ui_clock w) + 1 < 2^64)%Z) ->
+  u ∈ upd ->
+  sv_covers (state_vector_model (items ++ upd)) u.
+Proof.
+  intros Hnowrap Hu. rewrite /sv_covers.
+  apply state_vector_model_covers; [exact Hnowrap |].
+  apply elem_of_app. by right.
+Qed.
+
+(** Convergence of one sync round: after replica A (document [itemsA]) applies
+    the diff B answered against A's own state vector, A's fragment covers every
+    struct that answer carried, i.e. exactly the structs of B that A had been
+    missing. So after the round A's fragment includes B's contribution: the
+    exec-core meaning of "sync makes A catch up to B". *)
+Lemma apply_diff_covers (itemsA itemsB : list yjs.updateItem.t) (u : yjs.updateItem.t) :
+  (forall w, w ∈ itemsA ++ diff_model (state_vector_model itemsA) itemsB ->
+     (uint.Z (ui_clock w) + 1 < 2^64)%Z) ->
+  u ∈ diff_model (state_vector_model itemsA) itemsB ->
+  sv_covers (state_vector_model (itemsA ++ diff_model (state_vector_model itemsA) itemsB)) u.
+Proof. move=> Hnowrap Hu. exact (state_vector_model_app_covers itemsA _ u Hnowrap Hu). Qed.
 
 (* ===================================================================== *)
 (* WP specs                                                               *)
@@ -337,17 +403,26 @@ Lemma state_vector_model_app_grew (items upd : list yjs.updateItem.t) (c : w64) 
 Proof. rewrite /state_vector_model foldl_app. apply sv_get_foldl_mono. Qed.
 
 (** Step1: answer with Step2 carrying exactly the structs the peer is missing
-    (the [diff_model]). The doc is unchanged. *)
+    (the [diff_model]). The doc is unchanged.
+
+    The return value is characterized as a fragment difference: the response's
+    update slice holds precisely the local structs whose id the peer's state
+    vector [sv] does NOT already cover ([diff_model_covers]), and nothing that
+    is not local ([diff_model_subset]). So a reader sees, at the spec level,
+    which updates the answer contains. *)
 Lemma wp_syncDoc__HandleSyncMessage_Step1 (d : loc) (items : list yjs.updateItem.t)
     (msg : yjs.SyncMessage.t) (dqsv : dfrac) (sv : gmap w64 w64) :
   msg.(yjs.SyncMessage.tag') = W64 0 ->
   {{{ is_pkg_init yjs ∗ own_syncDoc d items ∗ own_map msg.(yjs.SyncMessage.sv') dqsv sv }}}
     d @! (go.PointerType yjs.syncDoc) @! "HandleSyncMessage" #msg
-  {{{ (resp : yjs.SyncMessage.t) (ok : bool), RET (#resp, #ok);
+  {{{ (resp : yjs.SyncMessage.t) (ok : bool) (diff : list yjs.updateItem.t), RET (#resp, #ok);
       ⌜ok = true⌝ ∗ ⌜resp.(yjs.SyncMessage.tag') = W64 1⌝ ∗
       own_syncDoc d items ∗ own_map msg.(yjs.SyncMessage.sv') dqsv sv ∗
-      resp.(yjs.SyncMessage.update') ↦* (diff_model sv items) ∗
-      own_slice_cap yjs.updateItem.t resp.(yjs.SyncMessage.update') (DfracOwn 1) }}}.
+      resp.(yjs.SyncMessage.update') ↦* diff ∗
+      own_slice_cap yjs.updateItem.t resp.(yjs.SyncMessage.update') (DfracOwn 1) ∗
+      (* the return value = exactly the local structs the peer's sv misses *)
+      ⌜∀ u, u ∈ diff <-> (u ∈ items /\ ¬ sv_covers sv u)⌝ ∗
+      ⌜∀ u, u ∈ diff -> u ∈ items⌝ }}}.
 Proof.
   intros Htag. wp_start as "(Hdoc & Hmap)". iNamed "Hdoc".
   wp_auto.
@@ -355,27 +430,40 @@ Proof.
   rewrite bool_decide_eq_true_2; [| done].
   wp_auto.
   wp_apply (wp_computeDiff with "[$Hsl $Hmap]") as "%out (Hsl & Hmap & Hout & Houtcap)".
-  iApply "HΦ".
+  iApply ("HΦ" $! _ _ (diff_model sv items)).
   iSplit; [done|].
   iSplit; [done|].
   iSplitR "Hmap Hout Houtcap".
   { iExists sl. iFrame. }
   iFrame.
+  iPureIntro. split.
+  - move=> u. exact (diff_model_covers sv items u).
+  - exact (diff_model_subset sv items).
 Qed.
 
-(** Step2 / Update: no response, and the doc's state advances (state vector grows). *)
+(** Step2 / Update: no response; the document absorbs [upd] and its fragment
+    advances. The fragment change is characterized both ways: every struct in
+    [upd] is now covered by the doc's state vector (the update is delivered),
+    and nothing already covered is lost (monotone). So the new fragment is
+    exactly the old one plus [upd]. The [nowrap] hypothesis is the [2^64] seam
+    (the coverage claim uses [clock + 1] in [w64]); it matches the no-wrap
+    precondition of the store's [applyUpdate]. *)
 Lemma wp_syncDoc__HandleSyncMessage_Apply (d : loc) (items : list yjs.updateItem.t)
     (msg : yjs.SyncMessage.t) (dq : dfrac) (upd : list yjs.updateItem.t) :
   msg.(yjs.SyncMessage.tag') ≠ W64 0 ->
+  (∀ w, w ∈ items ++ upd -> (uint.Z (ui_clock w) + 1 < 2^64)%Z) ->
   {{{ is_pkg_init yjs ∗ own_syncDoc d items ∗ msg.(yjs.SyncMessage.update') ↦*{dq} upd }}}
     d @! (go.PointerType yjs.syncDoc) @! "HandleSyncMessage" #msg
   {{{ (resp : yjs.SyncMessage.t) (ok : bool), RET (#resp, #ok);
       ⌜ok = false⌝ ∗ own_syncDoc d (items ++ upd) ∗
+      (* the update is now part of the document's delivered fragment *)
+      ⌜∀ u, u ∈ upd -> sv_covers (state_vector_model (items ++ upd)) u⌝ ∗
+      (* and nothing previously covered was lost *)
       ⌜∀ c, (uint.Z (sv_get (state_vector_model items) c)
                <= uint.Z (sv_get (state_vector_model (items ++ upd)) c))%Z⌝ ∗
       msg.(yjs.SyncMessage.update') ↦*{dq} upd }}}.
 Proof.
-  intros Htag. wp_start as "(Hdoc & Hupd)". iNamed "Hdoc".
+  intros Htag Hnowrap. wp_start as "(Hdoc & Hupd)". iNamed "Hdoc".
   wp_auto.
   rewrite (bool_decide_eq_false_2 _ Htag).
   wp_auto.
@@ -424,6 +512,8 @@ Proof.
     iSplit; [done |].
     iSplitL "Hitems Hsl Hcap".
     { iExists sl0. iFrame. }
+    iSplit.
+    { iPureIntro. move=> u Hu. exact (state_vector_model_app_covers items upd u Hnowrap Hu). }
     iSplit.
     { iPureIntro. move=> c. apply state_vector_model_app_grew. }
     iFrame "Hupd".
