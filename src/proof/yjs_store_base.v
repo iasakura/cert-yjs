@@ -1023,6 +1023,37 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "%Hctr"   ∷ ⌜∀ (t : TId) x, x ∈ docm_get m t -> clientId (item_id x) = c ->
                    (clock (item_id x) < uint.nat k)%nat⌝.
 
+(* ---- lock-layer compile-time fix -------------------------------------------
+   Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked
+   n)], whose payload nests [store_inv_excl ∗ store_inv_ro] (the latter an auth
+   plus a [big_sepM] of the DLL fixpoint). Stripping the [▷] off the payload
+   conjunct-by-conjunct with those predicates TRANSPARENT makes the [Timeless]
+   search unfold that whole structure into its normal form: ~750 s per lock
+   proof (wlock / rlock / runlock), i.e. essentially the entire ~37 min compile
+   of this file. Instead we strip the later exactly ONCE, off the whole
+   [tie_body], via a dedicated instance; sealing [tie_body] for typeclass
+   resolution makes that strip a single instance lookup (never unfolding the
+   store payload), and [cbn [tie_body]] afterwards still reduces the [match]
+   (delta reduction ignores [Typeclasses Opaque]). Only [tie_body] is sealed for
+   typeclass resolution (nothing frames into or [iNamed]s it, so this is safe);
+   the payload predicates stay transparent so [iFrame] / [iNamed] on them keep
+   working (store_inv_init, store_inv_own_store, Insert / Delete). The one-off
+   [tie_body_timeless] proof decomposes the [∗]/[∃] by hand so each leaf
+   [Timeless] goal is a flat instance lookup (store_inv_excl_timeless etc.);
+   letting [apply _] tackle the whole nested goal instead costs ~85 s of TC
+   backtracking. Each lock proof drops from ~750 s to sub-second, and the file
+   from ~37 min to well under a minute. *)
+#[global] Instance types_frag_timeless γs q types : Timeless (types_frag γs q types).
+Proof. rewrite /types_frag. apply _. Qed.
+
+#[local] Instance tie_body_timeless s_loc γs γh st : Timeless (tie_body s_loc γs γh st).
+Proof.
+  destruct st; rewrite /tie_body;
+    repeat first [ apply sep_timeless | apply exist_timeless; intros ? ]; apply _.
+Qed.
+
+#[global] Typeclasses Opaque tie_body.
+
 (** Write-lock acquire. The write [Lock] linearizes at [RLocked 0] (fraction 1),
     where [store_inv_bridge] reassembles the whole [store_inv]; the invariant is
     left holding [Locked] (which keeps the [types_frag] for the next transition).
@@ -1038,8 +1069,8 @@ Proof.
   iDestruct "Hi" as (st) "[>Hown Hbody]".
   iFrame "Hown". iApply fupd_mask_intro; first solve_ndisj. iIntros "Hmask".
   iIntros "%Hst Hlocked". subst st.
-  iEval (cbn) in "Hbody".
-  iDestruct "Hbody" as "(>Hrauth & >Htoks0 & >Hwl & >Hrest)".
+  iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
+  iDestruct "Hbody" as "(Hrauth & Htoks0 & Hwl & Hrest)".
   iDestruct "Hrest" as (client k items_mref types_mref dset types bind h m) "(Hfrag & Hexcl & Hro)".
   rewrite frac_of_0.
   iMod "Hmask" as "_".
@@ -1064,11 +1095,11 @@ Proof.
   iInv "Htie" as "Hi" "Hclose".
   iDestruct "Hi" as (st) "[>Hown Hbody]".
   destruct st.
-  - iEval (cbn) in "Hbody".
+  - iEval (cbn [tie_body]) in "Hbody".
     iDestruct "Hbody" as "(_ & _ & >Hwl2 & _)".
     iDestruct (ghost_var_valid_2 with "Hwl Hwl2") as %[Hbad _].
     exfalso. by apply (Qp.not_add_le_l 1 1).
-  - iEval (cbn) in "Hbody".
+  - iEval (cbn [tie_body]) in "Hbody".
     iDestruct "Hbody" as (types_old) "(>Hrauth & >Hfrag)".
     iFrame "Hown". iApply fupd_mask_intro; first solve_ndisj. iIntros "Hmask".
     iIntros "Hrl0".
@@ -1079,7 +1110,7 @@ Proof.
     iMod (own_update _ _ (to_frac_agree 1 (types' : leibnizO _)) with "Hfrag") as "Hfrag".
     { apply cmra_update_exclusive. done. }
     iMod ("Hclose" with "[Hrl0 Hrauth Htoks0 Hwl Hfrag Hexcl Hro]") as "_".
-    { iExists (RLocked 0). iFrame "Hrl0". iEval (cbn). iFrame "Hrauth Htoks0 Hwl".
+    { iExists (RLocked 0). iFrame "Hrl0". iEval (cbn [tie_body]). iFrame "Hrauth Htoks0 Hwl".
       iExists client, k, items_mref, types_mref, dset, types', bind, h, m.
       rewrite frac_of_0. iFrame "Hfrag Hexcl Hro". }
     iModIntro. by iApply "HΦ".
@@ -1100,8 +1131,8 @@ Proof.
   iDestruct "Hi" as (st) "[>Hown Hbody]".
   iFrame "Hown". iApply fupd_mask_intro; first solve_ndisj. iIntros "Hmask".
   iIntros (n) "%Hst Hrl". subst st.
-  iEval (cbn) in "Hbody".
-  iDestruct "Hbody" as "(>Hrauth & >Hmaxn & >Hwl & >Hrest)".
+  iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
+  iDestruct "Hbody" as "(Hrauth & Hmaxn & Hwl & Hrest)".
   iDestruct "Hrest" as (client k items_mref types_mref dset types bind h m) "(Hfrag & Hexcl & Hro)".
   iCombine "Hmaxn Hmaxtok" as "Hmaxn1".
   iCombine "Hmax Hmaxn1" gives %Hbound.
@@ -1112,7 +1143,7 @@ Proof.
   iDestruct (store_inv_ro_fractional γs types with "Hro") as "[Hro_r Hro_i]".
   iMod "Hmask" as "_".
   iMod ("Hclose" with "[Hrl Hrauth Hmaxn1 Hwl Hfrag_i Hexcl Hro_i]") as "_".
-  { iExists (RLocked (S n)). iFrame "Hrl". iEval (cbn).
+  { iExists (RLocked (S n)). iFrame "Hrl". iEval (cbn [tie_body]).
     replace (S n) with (n + 1)%nat by lia.
     iFrame "Hrauth Hmaxn1 Hwl".
     iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
@@ -1135,13 +1166,13 @@ Proof.
   iInv "Htie" as "Hi" "Hclose".
   iDestruct "Hi" as (st) "[>Hown Hbody]".
   destruct st as [nr | ].
-  2:{ iEval (cbn) in "Hbody". iDestruct "Hbody" as (types0) "(>Hrauth & _)".
+  2:{ iEval (cbn [tie_body]) in "Hbody". iDestruct "Hbody" as (types0) "(>Hrauth & _)".
       iCombine "Hrauth Hrtok" gives %Hbad. exfalso. lia. }
   destruct nr as [ | n ].
-  { iEval (cbn) in "Hbody". iDestruct "Hbody" as "(>Hrauth & _)".
+  { iEval (cbn [tie_body]) in "Hbody". iDestruct "Hbody" as "(>Hrauth & _)".
     iCombine "Hrauth Hrtok" gives %Hbad. exfalso. lia. }
-  iEval (cbn) in "Hbody".
-  iDestruct "Hbody" as "(>Hrauth & >Hmaxsn & >Hwl & >Hrest)".
+  iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
+  iDestruct "Hbody" as "(Hrauth & Hmaxsn & Hwl & Hrest)".
   iDestruct "Hrest" as (client k items_mref types_mref dset types_i bind h m) "(Hfrag_i & Hexcl & Hro_i)".
   iDestruct (tf_agree with "Hfrag_r Hfrag_i") as %->.
   iCombine "Hmax Hmaxsn" gives %Hbound.
@@ -1157,7 +1188,7 @@ Proof.
   iDestruct (store_inv_ro_fractional γs types_i rwmutex_guard.rfrac (frac_of (S n)) with "[$Hro_r $Hro_i]") as "Hro".
   rewrite -(frac_of_split n Hlt).
   iMod ("Hclose" with "[Hrln Hrauth Hmaxn Hwl Hfrag Hexcl Hro]") as "_".
-  { iExists (RLocked n). iFrame "Hrln". iEval (cbn). iFrame "Hrauth Hmaxn Hwl".
+  { iExists (RLocked n). iFrame "Hrln". iEval (cbn [tie_body]). iFrame "Hrauth Hmaxn Hwl".
     iExists client, k, items_mref, types_mref, dset, types_i, bind, h, m.
     iFrame "Hfrag Hexcl Hro". }
   iModIntro. iApply "HΦ". iFrame "Htok Hmaxtok".
