@@ -424,6 +424,43 @@ Proof.
   - move=> Ho Hr. subst o r. destruct input; simpl in *; congruence.
 Qed.
 
+(** The concrete FIRST insert (both origins sentinels, clock 0) into an empty
+    document: resolution, validity, maximality, the resulting singleton
+    splice, and its invariant. The ghost layer's smoke tests ([history_smoke],
+    [history_converge_smoke]) broadcast and deliver exactly this op. *)
+Lemma first_insert_facts (c : nat) (a : A) :
+  toItem (MkIntegrateInput (A := A) None None a (MkYjsId c 0)) ([] : list (YjsItem A))
+    = Some (Item (A := A) First Last (MkYjsId c 0) a) ∧
+  IsItemValid (Item (A := A) First Last (MkYjsId c 0) a) ∧
+  maximalId (Item (A := A) First Last (MkYjsId c 0) a) ([] : list (YjsItem A)) ∧
+  integrate (MkIntegrateInput (A := A) None None a (MkYjsId c 0)) ([] : list (YjsItem A))
+    = Some [Item (A := A) First Last (MkYjsId c 0) a] ∧
+  YjsArrInvariant [Item (A := A) First Last (MkYjsId c 0) a].
+Proof.
+  set (input := MkIntegrateInput (A := A) None None a (MkYjsId c 0)).
+  set (item := Item (A := A) First Last (MkYjsId c 0) a).
+  have Htoitem : toItem input ([] : list (YjsItem A)) = Some item by done.
+  have Hvalid : IsItemValid item.
+  { split.
+    - apply YjsLt'_ltOriginOrder. exact lt_first_last.
+    - move=> x Hx.
+      inversion Hx as [x0 y0 Hstep | x0 y0 z0 Hstep Hreach]; subst.
+      + inversion Hstep; subst; [left | right]; exists 0%nat; exact (leqSame _ _).
+      + inversion Hstep; subst;
+          inversion Hreach as [x1 y1 Hstep2 | x1 y1 z1 Hstep2 ?]; subst;
+          inversion Hstep2. }
+  have Hmax : maximalId item ([] : list (YjsItem A)).
+  { move=> x Hx. exfalso. move: Hx. rewrite /ArrSet /= elem_of_nil //. }
+  have Hint : integrate input ([] : list (YjsItem A)) = Some [item] by vm_compute.
+  destruct (YjsArrInvariant_integrate input [] [item] item YjsArrInvariant_empty
+              Htoitem Hvalid Hmax Hint) as (didx & _ & _ & Hinv).
+  split_and!; [exact Htoitem | exact Hvalid | exact Hmax | exact Hint | exact Hinv].
+Qed.
+
+Lemma YjsArrInvariant_first_item (c : nat) (a : A) :
+  YjsArrInvariant [Item (A := A) First Last (MkYjsId c 0) a].
+Proof. destruct (first_insert_facts c a) as (_ & _ & _ & _ & Hinv). exact Hinv. Qed.
+
 (* ===== happens-before append stability ==================================== *)
 
 (** (a) Monotonicity: appending a tail to one client's history preserves every
@@ -1694,6 +1731,126 @@ Proof.
         = <[c := (h ++ [EvDeliver op0]) ++ (deliver_ev <$> inputs')]> N.
       { rewrite insert_insert. case_decide; [reflexivity | congruence]. }
       rewrite Hcollapse in Hwf'. exact Hwf'.
+Qed.
+
+(* ===== convergence: document = f(delivered op-set) (issue #40) =========== *)
+
+(** Membership in the delivered-op list, event-level. *)
+Lemma elem_of_delivered_ops h (op : Op) :
+  op ∈ delivered_ops h ↔ EvDeliver op ∈ h.
+Proof.
+  rewrite /delivered_ops list_elem_of_omap. split.
+  - move=> [ev [Hev Hdel]]. destruct ev as [a | a]; simpl in Hdel;
+      [done | by injection Hdel as ->].
+  - move=> Hin. by exists (EvDeliver op).
+Qed.
+
+(** Delivered ops are membership-determined by their delivered IDS: every
+    delivered op has a broadcast cause, and broadcast ids are unique
+    network-wide ([hwf_msg_id_unique]), so two replicas of one well-formed
+    network that delivered the same id sets delivered the same op sets. This
+    is what lets the convergence statement (and the sync protocol's state
+    vectors) speak in ids. *)
+Lemma delivered_ops_same_ids N c1 c2 h1 h2 :
+  history_wf N -> N !! c1 = Some h1 -> N !! c2 = Some h2 ->
+  (∀ id : YjsId, id ∈ delivered_ids h1 ↔ id ∈ delivered_ids h2) ->
+  ∀ x : Op, x ∈ delivered_ops h1 ↔ x ∈ delivered_ops h2.
+Proof.
+  move=> Hwf Hc1 Hc2 Hids.
+  have Haux : ∀ ca cb ha hb, N !! ca = Some ha -> N !! cb = Some hb ->
+      (∀ id : YjsId, id ∈ delivered_ids ha -> id ∈ delivered_ids hb) ->
+      ∀ x : Op, x ∈ delivered_ops ha -> x ∈ delivered_ops hb.
+  { move=> ca cb ha hb Hca Hcb Hsub x Hx.
+    have Hidx : opid x ∈ delivered_ids ha.
+    { apply elem_of_delivered_ids. exists x. split; [| done].
+      by apply elem_of_delivered_ops. }
+    have Hidb := Hsub _ Hidx.
+    apply elem_of_delivered_ids in Hidb. destruct Hidb as (y & Hyb & Hyid).
+    have Hxa : EvDeliver x ∈ to_histories N ca.
+    { rewrite (to_histories_lookup N ca ha Hca). by apply elem_of_delivered_ops. }
+    pose proof (hwf_deliver_has_a_cause N Hwf ca x Hxa) as (ja & Hja).
+    have Hyc : EvDeliver y ∈ to_histories N cb
+      by rewrite (to_histories_lookup N cb hb Hcb).
+    pose proof (hwf_deliver_has_a_cause N Hwf cb y Hyc) as (jb & Hjb).
+    have Hxy : x = y
+      := proj2 (hwf_msg_id_unique N Hwf x y ja jb Hja Hjb (eq_sym Hyid)).
+    subst y. by apply elem_of_delivered_ops. }
+  move=> x. split.
+  - apply (Haux c1 c2 h1 h2 Hc1 Hc2). move=> id Hid. by apply Hids.
+  - apply (Haux c2 c1 h2 h1 Hc2 Hc1). move=> id Hid. by apply Hids.
+Qed.
+
+(** THE issue #40 statement, raw-history level: the document is a function of
+    the delivered op-set. Two replicas of one well-formed network whose
+    delivered id sets agree replay to pointwise-equal documents; delivery
+    order and batching appear nowhere, so any two causally consistent orders
+    of one op set land in the same document. The proof packages the raw map
+    into the doc operation network and CONSUMES the model's strong eventual
+    consistency ([DocOperationNetwork_converge_final]) at this boundary; no
+    convergence argument is re-proved here. Per §8.4 of the #42 plan the
+    statement is about the item sequence ([docm_get]); tombstone flags are
+    not tracked by the history. *)
+Lemma history_state_converge N c1 c2 h1 h2 (m1 m2 : DocM) :
+  history_wf N ->
+  N !! c1 = Some h1 -> N !! c2 = Some h2 ->
+  history_state_coh h1 m1 -> history_state_coh h2 m2 ->
+  (∀ id : YjsId, id ∈ delivered_ids h1 ↔ id ∈ delivered_ids h2) ->
+  ∀ t : TId, docm_get m1 t = docm_get m2 t.
+Proof.
+  move=> Hwf Hc1 Hc2 [s1 [Hint1 Hm1]] [s2 [Hint2 Hm2]] Hids t.
+  have Hops := delivered_ops_same_ids N c1 c2 h1 h2 Hwf Hc1 Hc2 Hids.
+  set dn := to_doc_network N Hwf.
+  have Heff1 : effect_list O (toDeliverMessages dn c1) (op_init O) s1.
+  { rewrite /toDeliverMessages to_doc_network_histories (to_histories_lookup N c1 h1 Hc1).
+    exact Hint1. }
+  have Heff2 : effect_list O (toDeliverMessages dn c2) (op_init O) s2.
+  { rewrite /toDeliverMessages to_doc_network_histories (to_histories_lookup N c2 h2 Hc2).
+    exact Hint2. }
+  have Hmem : ∀ x, x ∈ toDeliverMessages dn c1 ↔ x ∈ toDeliverMessages dn c2.
+  { move=> x.
+    rewrite /toDeliverMessages to_doc_network_histories
+      (to_histories_lookup N c1 h1 Hc1) (to_histories_lookup N c2 h2 Hc2).
+    exact (Hops x). }
+  have Heq : s1 = s2
+    := DocOperationNetwork_converge_final dn c1 c2 s1 s2 Heff1 Heff2 Hmem.
+  rewrite -(Hm1 t) -(Hm2 t) Heq //.
+Qed.
+
+(** Delivered ids of an [applyUpdate] extension: the receiver's delivered set
+    grows by exactly the batch's input ids. This is the rewriting that plugs
+    [wp_store__applyUpdate_certs]' post-state history into the convergence
+    statement. *)
+Lemma delivered_ids_deliver_evs h (inputs : list (TId * IntegrateInput (A := A))) :
+  delivered_ids (h ++ (deliver_ev <$> inputs)) =
+  delivered_ids h ∪ list_to_set ((λ ti : TId * IntegrateInput (A := A), in_id ti.2) <$> inputs).
+Proof.
+  rewrite delivered_ids_app. f_equal.
+  elim: inputs => [| ti inputs' IH].
+  - rewrite /delivered_ids /=. done.
+  - rewrite !fmap_cons.
+    have -> : delivered_ids (deliver_ev ti :: (deliver_ev <$> inputs'))
+            = {[in_id ti.2]} ∪ delivered_ids (deliver_ev <$> inputs').
+    { rewrite /delivered_ids /delivered_ops omap_cons /=. done. }
+    rewrite IH /=. done.
+Qed.
+
+(** Order independence of batch delivery, id-level: applying PERMUTED batches
+    on top of histories with equal delivered sets leaves the delivered sets
+    equal, so (via [history_state_converge]) the documents agree. *)
+Lemma delivered_ids_deliver_evs_perm h1 h2
+    (inputs1 inputs2 : list (TId * IntegrateInput (A := A))) :
+  inputs1 ≡ₚ inputs2 ->
+  (∀ id : YjsId, id ∈ delivered_ids h1 ↔ id ∈ delivered_ids h2) ->
+  ∀ id : YjsId,
+    id ∈ delivered_ids (h1 ++ (deliver_ev <$> inputs1)) ↔
+    id ∈ delivered_ids (h2 ++ (deliver_ev <$> inputs2)).
+Proof.
+  move=> Hperm Hids id.
+  rewrite !delivered_ids_deliver_evs.
+  have -> : (list_to_set ((λ ti : TId * IntegrateInput (A := A), in_id ti.2) <$> inputs1) : gset YjsId)
+          = list_to_set ((λ ti : TId * IntegrateInput (A := A), in_id ti.2) <$> inputs2).
+  { apply list_to_set_perm_L. by apply fmap_Permutation. }
+  rewrite !elem_of_union. by rewrite Hids.
 Qed.
 
 (* ===== allocation ========================================================= *)

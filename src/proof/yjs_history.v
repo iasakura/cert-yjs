@@ -15,7 +15,11 @@
       [history_deliver_batch]. All are fupd-only (no WP): they open the
       invariant, apply a bridge lemma to re-establish [history_wf]/[ops_coh]
       (THE refinement obligation), and close — all inside one mask-preserving
-      fancy update, no program step in between (plan §5.3).
+      fancy update, no program step in between (plan §5.3);
+    - [history_converge] (issue #40): the order-independence theorem at the
+      ghost boundary: two replicas with the same delivered id set have
+      pointwise-equal coherent documents (the model's strong eventual
+      consistency, consumed through [history_state_converge]).
 
     No goose here; [Σ] enters only through [heapGS] (for [allG] + invariants). *)
 From New.proof Require Import proof_prelude.
@@ -213,7 +217,77 @@ Proof.
   iPureIntro. split_and!; [exact Hvr | exact Hcoh' | exact Hnoc].
 Qed.
 
-(* ===== a two-client smoke test (ghost only, no WP) ======================= *)
+(* ===== convergence at the ghost boundary (issue #40) ===================== *)
+
+(** Order independence / strong convergence, as a ghost fact: two replicas'
+    exclusive history elements plus the invariant's [history_wf] turn the
+    model convergence theorem ([history_state_converge], which consumes the
+    doc network's strong eventual consistency) into a pure statement about
+    their coherent documents: same delivered id set, same document. This is
+    the "document = function of the delivered op-set" theorem at the ghost
+    boundary; [own_store_converge] (yjs_store) wraps it in store state. *)
+Lemma history_converge γh (c1 c2 : ClientId) (h1 h2 : list Ev) (m1 m2 : DocM) E :
+  ↑histN ⊆ E ->
+  history_state_coh h1 m1 -> history_state_coh h2 m2 ->
+  (∀ id : YjsId, id ∈ delivered_ids h1 ↔ id ∈ delivered_ids h2) ->
+  is_history γh -∗
+  own_client_history γh c1 h1 -∗ own_client_history γh c2 h2 ={E}=∗
+  own_client_history γh c1 h1 ∗ own_client_history γh c2 h2 ∗
+  ⌜∀ t : TId, docm_get m1 t = docm_get m2 t⌝.
+Proof.
+  iIntros (HE Hcoh1 Hcoh2 Hids) "#Hinv H1 H2".
+  iDestruct (ghost_map_elem_ne with "H1 H2") as %Hne.
+  iInv "Hinv" as ">H" "Hclose". iNamed "H".
+  iDestruct (ghost_map_lookup with "HhistAuth H1") as %HN1.
+  iDestruct (ghost_map_lookup with "HhistAuth H2") as %HN2.
+  iMod ("Hclose" with "[HhistAuth HopsAuth]") as "_".
+  { iNext. iExists _, _. iFrame "HhistAuth HopsAuth Hcerts".
+    iPureIntro. by split. }
+  iModIntro. iFrame "H1 H2".
+  iPureIntro.
+  exact (history_state_converge N c1 c2 h1 h2 m1 m2 Hwf HN1 HN2 Hcoh1 Hcoh2 Hids).
+Qed.
+
+(* ===== two-client smoke tests (ghost only, no WP) ======================== *)
+
+(** The first insert of a fresh client: broadcast the trivial op (both origins
+    sentinels, clock 0, concrete facts from [first_insert_facts]) into the
+    empty document at root [t]. Shared prologue of both smoke tests. *)
+Lemma history_broadcast_empty γh (c : nat) (a : A) (t : TId) E :
+  ↑histN ⊆ E ->
+  is_history γh -∗ own_client_history γh c [] ={E}=∗
+  own_client_history γh c
+    [EvBroadcast (t, OpInsert (MkIntegrateInput (A := A) None None a (MkYjsId c 0)));
+     EvDeliver (t, OpInsert (MkIntegrateInput (A := A) None None a (MkYjsId c 0)))] ∗
+  is_op_cert γh (t, OpInsert (MkIntegrateInput (A := A) None None a (MkYjsId c 0))) ∅ ∗
+  ⌜history_state_coh
+     [EvBroadcast (t, OpInsert (MkIntegrateInput (A := A) None None a (MkYjsId c 0)));
+      EvDeliver (t, OpInsert (MkIntegrateInput (A := A) None None a (MkYjsId c 0)))]
+     (<[t := [Item (A := A) First Last (MkYjsId c 0) a]]> ∅)⌝.
+Proof.
+  iIntros (HE) "#Hinv Hown".
+  set (input := MkIntegrateInput (A := A) None None a (MkYjsId c 0)).
+  set (item := Item (A := A) First Last (MkYjsId c 0) a).
+  destruct (first_insert_facts c a) as (Htoitem0 & Hvalid & Hmax0 & Hint0 & _).
+  have Hnilget : ∀ t' : TId, docm_get (∅ : DocM) t' = []
+    by move=> t'; rewrite /docm_get lookup_empty.
+  have Htoitem : toItem input (docm_get (∅ : DocM) t) = Some item
+    by rewrite Hnilget.
+  have Hmax : maximalId item (docm_get (∅ : DocM) t) by rewrite Hnilget.
+  have Hint : integrate input (docm_get (∅ : DocM) t) = Some [item]
+    by rewrite Hnilget.
+  have Hbound : ∀ (t' : TId) (x : YjsItem A), x ∈ docm_get (∅ : DocM) t' ->
+      clientId (item_id x) = c -> (clock (item_id x) < 0)%nat.
+  { move=> t' x Hx. exfalso. move: Hx. rewrite Hnilget elem_of_nil //. }
+  iMod (history_broadcast γh c 0%nat [] ∅ t [item] input item E HE
+          Htoitem Hvalid Hmax eq_refl Hbound Hint history_state_coh_nil
+          with "Hinv Hown") as (D) "(Hown & #Hcert & %HDsub & %Hcoh)".
+  have HDempty : D = ∅.
+  { move: HDsub. rewrite /delivered_ids /=. set_solver. }
+  subst D.
+  iModIntro. iFrame "Hown Hcert".
+  iPureIntro. exact Hcoh.
+Qed.
 
 (** Non-vacuity of the ghost story: allocate a two-client history, let client
     1 mint the trivial first insert (into the empty document, at an arbitrary
@@ -237,46 +311,108 @@ Proof.
   rewrite !big_sepS_singleton.
   iDestruct "Helems" as "[H1 H2]".
   set (input := MkIntegrateInput (A := A) None None a (MkYjsId c1 0)).
-  set (item := Item (A := A) First Last (MkYjsId c1 0) a).
-  have Hnilget : ∀ t' : TId, docm_get (∅ : DocM) t' = []
-    by move=> t'; rewrite /docm_get lookup_empty.
-  have Htoitem : toItem input (docm_get (∅ : DocM) t) = Some item
-    by rewrite Hnilget.
-  have Hvalid : IsItemValid item.
-  { split.
-    - apply YjsLt'_ltOriginOrder. exact lt_first_last.
-    - move=> x Hx.
-      inversion Hx as [x0 y0 Hstep | x0 y0 z0 Hstep Hreach]; subst.
-      + inversion Hstep; subst; [left | right]; exists 0%nat; exact (leqSame _ _).
-      + inversion Hstep; subst;
-          inversion Hreach as [x1 y1 Hstep2 | x1 y1 z1 Hstep2 ?]; subst;
-          inversion Hstep2. }
-  have Hmax : maximalId item (docm_get (∅ : DocM) t).
-  { rewrite Hnilget. move=> x Hx. exfalso. move: Hx. rewrite /ArrSet /= elem_of_nil //. }
-  have Hint : integrate input (docm_get (∅ : DocM) t) = Some [item]
-    by rewrite Hnilget; vm_compute.
-  have Hbound : ∀ (t' : TId) (x : YjsItem A), x ∈ docm_get (∅ : DocM) t' ->
-      clientId (item_id x) = c1 -> (clock (item_id x) < 0)%nat.
-  { move=> t' x Hx. exfalso. move: Hx. rewrite Hnilget elem_of_nil //. }
-  iMod (history_broadcast γh c1 0%nat [] ∅ t [item] input item E HE
-          Htoitem Hvalid Hmax eq_refl Hbound Hint history_state_coh_nil
-          with "Hinv H1") as (D) "(H1 & #Hcert & %HDsub & %Hcoh1)".
-  have HDempty : D = ∅.
-  { move: HDsub. rewrite /delivered_ids /=. set_solver. }
-  subst D.
+  iMod (history_broadcast_empty γh c1 a t E HE with "Hinv H1")
+    as "(H1 & #Hcert & %Hcoh1)".
   have Hbatch : batch_ok [] [(t, input)] [∅ : gset YjsId].
   { move=> i ti' D' Hi HD'.
     destruct i as [| i]; last by (destruct i; discriminate).
     injection Hi as <-. injection HD' as <-.
     rewrite /delivered_ids take_0 /=. split; set_solver. }
   have Hinvempty : ∀ t' : TId, YjsArrInvariant (docm_get (∅ : DocM) t').
-  { move=> t'. rewrite Hnilget. exact YjsArrInvariant_empty. }
+  { move=> t'. rewrite /docm_get lookup_empty. exact YjsArrInvariant_empty. }
   iMod (history_deliver_batch γh c2 [] ∅ [(t, input)] [∅] E HE Hbatch
           history_state_coh_nil Hinvempty
           with "Hinv H2 []") as (m2) "(H2 & %Hvr & %Hcoh2)".
   { rewrite big_sepL2_singleton. iApply "Hcert". }
   iModIntro. iExists γh, input, ∅.
   iFrame "Hinv Hcert H1 H2".
+Qed.
+
+(** Non-vacuity of the CONVERGENCE story (issue #40): both clients broadcast
+    one concurrent insert into the same empty root and deliver each other's
+    op, so each ends with the same two-op set delivered in the OPPOSITE
+    order. [history_converge] pins their coherent documents to pointwise
+    equality without computing which of the two conflicting resolutions won
+    (the client ids are abstract, so that winner is not even determined). *)
+Lemma history_converge_smoke (a1 a2 : A) (t : TId) (c1 c2 : ClientId) E :
+  ↑histN ⊆ E ->
+  c1 ≠ c2 ->
+  ⊢ |={E}=> ∃ γh (op1 op2 : Op) (m1 m2 : DocM),
+      is_history γh ∗
+      own_client_history γh c1 [EvBroadcast op1; EvDeliver op1; EvDeliver op2] ∗
+      own_client_history γh c2 [EvBroadcast op2; EvDeliver op2; EvDeliver op1] ∗
+      ⌜history_state_coh [EvBroadcast op1; EvDeliver op1; EvDeliver op2] m1⌝ ∗
+      ⌜history_state_coh [EvBroadcast op2; EvDeliver op2; EvDeliver op1] m2⌝ ∗
+      ⌜∀ t' : TId, docm_get m1 t' = docm_get m2 t'⌝ ∗
+      ⌜docm_get m1 t ≠ []⌝.
+Proof.
+  iIntros (HE Hne).
+  iMod (history_alloc {[c1; c2]} E) as (γh) "[#Hinv Helems]".
+  rewrite big_sepS_union; last set_solver.
+  rewrite !big_sepS_singleton.
+  iDestruct "Helems" as "[H1 H2]".
+  set (input1 := MkIntegrateInput (A := A) None None a1 (MkYjsId c1 0)).
+  set (input2 := MkIntegrateInput (A := A) None None a2 (MkYjsId c2 0)).
+  set (item1 := Item (A := A) First Last (MkYjsId c1 0) a1).
+  set (item2 := Item (A := A) First Last (MkYjsId c2 0) a2).
+  set (op1 := ((t, OpInsert input1) : Op)).
+  set (op2 := ((t, OpInsert input2) : Op)).
+  iMod (history_broadcast_empty γh c1 a1 t E HE with "Hinv H1")
+    as "(H1 & #Hcert1 & %Hcoh1)".
+  iMod (history_broadcast_empty γh c2 a2 t E HE with "Hinv H2")
+    as "(H2 & #Hcert2 & %Hcoh2)".
+  set (h1 := [EvBroadcast op1; EvDeliver op1]).
+  set (h2 := [EvBroadcast op2; EvDeliver op2]).
+  set (m1 := (<[t := [item1]]> ∅ : DocM)).
+  set (m2 := (<[t := [item2]]> ∅ : DocM)).
+  have Hne12 : MkYjsId c2 0 ≠ MkYjsId c1 0.
+  { move=> [= Heq]. exact (Hne (eq_sym Heq)). }
+  have Hne21 : MkYjsId c1 0 ≠ MkYjsId c2 0.
+  { move=> [= Heq]. exact (Hne Heq). }
+  have Hdel1 : delivered_ids h1 = ({[MkYjsId c1 0]} : gset YjsId).
+  { rewrite /h1 /delivered_ids /=. set_solver. }
+  have Hdel2 : delivered_ids h2 = ({[MkYjsId c2 0]} : gset YjsId).
+  { rewrite /h2 /delivered_ids /=. set_solver. }
+  have Harrinv1 : ∀ t' : TId, YjsArrInvariant (docm_get m1 t').
+  { move=> t'. destruct (decide (t' = t)) as [-> | Hnet].
+    - rewrite /m1 docm_get_insert_eq. exact (YjsArrInvariant_first_item c1 a1).
+    - rewrite /m1 docm_get_insert_ne // /docm_get lookup_empty.
+      exact YjsArrInvariant_empty. }
+  have Harrinv2 : ∀ t' : TId, YjsArrInvariant (docm_get m2 t').
+  { move=> t'. destruct (decide (t' = t)) as [-> | Hnet].
+    - rewrite /m2 docm_get_insert_eq. exact (YjsArrInvariant_first_item c2 a2).
+    - rewrite /m2 docm_get_insert_ne // /docm_get lookup_empty.
+      exact YjsArrInvariant_empty. }
+  have Hbatch1 : batch_ok h1 [(t, input2)] [∅ : gset YjsId].
+  { move=> i ti' D' Hi HD'.
+    destruct i as [| i]; last by (destruct i; discriminate).
+    injection Hi as <-. injection HD' as <-.
+    rewrite take_0 /= Hdel1. split; set_solver. }
+  have Hbatch2 : batch_ok h2 [(t, input1)] [∅ : gset YjsId].
+  { move=> i ti' D' Hi HD'.
+    destruct i as [| i]; last by (destruct i; discriminate).
+    injection Hi as <-. injection HD' as <-.
+    rewrite take_0 /= Hdel2. split; set_solver. }
+  iMod (history_deliver_batch γh c1 h1 m1 [(t, input2)] [∅] E HE Hbatch1 Hcoh1 Harrinv1
+          with "Hinv H1 []") as (m1') "(H1 & %Hvr1 & %Hcoh1' & %Hnoc1)".
+  { rewrite big_sepL2_singleton. iApply "Hcert2". }
+  iMod (history_deliver_batch γh c2 h2 m2 [(t, input1)] [∅] E HE Hbatch2 Hcoh2 Harrinv2
+          with "Hinv H2 []") as (m2') "(H2 & %Hvr2 & %Hcoh2' & %Hnoc2)".
+  { rewrite big_sepL2_singleton. iApply "Hcert1". }
+  have Hids : ∀ id : YjsId,
+      id ∈ delivered_ids (h1 ++ (deliver_ev <$> [(t, input2)])) ↔
+      id ∈ delivered_ids (h2 ++ (deliver_ev <$> [(t, input1)])).
+  { move=> id. rewrite !delivered_ids_deliver_evs Hdel1 Hdel2 /=. set_solver. }
+  iMod (history_converge γh c1 c2 _ _ m1' m2' E HE Hcoh1' Hcoh2' Hids
+          with "Hinv H1 H2") as "(H1 & H2 & %Heq)".
+  have Hmem1 : item1 ∈ docm_get m1 t.
+  { rewrite /m1 docm_get_insert_eq. by apply list_elem_of_singleton. }
+  have Hne1 : docm_get m1' t ≠ [].
+  { have Hmem1' := ValidReplay_mem [(t, input2)] m1 m1' Hvr1 t item1 Hmem1.
+    move=> Heq0. rewrite Heq0 in Hmem1'. by apply (elem_of_nil item1). }
+  iModIntro. iExists γh, op1, op2, m1', m2'.
+  iFrame "Hinv H1 H2".
+  iPureIntro. split_and!; [exact Hcoh1' | exact Hcoh2' | exact Heq | exact Hne1].
 Qed.
 
 (** Certificate recovery: any party holding the invariant handle can duplicate

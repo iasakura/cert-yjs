@@ -5089,4 +5089,76 @@ Proof using Type*.
   iPureIntro. split_and!; [exact Hclientc | exact Hregcoh' | exact Hcoh' | exact Hctr'].
 Qed.
 
+(* ===== order independence: document = f(delivered op-set) (issue #40) ===== *)
+
+(** Project the replica's ghost history element (and the history-state tie)
+    out of [own_store], with a wand to reassemble. This is what lets two
+    stores' histories meet under [is_history] without unfolding both
+    [own_store]s in one context. *)
+Lemma own_store_history_acc (s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocM) :
+  own_store s_loc γs γh c h m -∗
+  own_client_history γh c h ∗ ⌜history_state_coh h m⌝ ∗
+  (own_client_history γh c h -∗ own_store s_loc γs γh c h m).
+Proof.
+  iIntros "H". iNamed "H".
+  iFrame "Hhist". iSplit; [by iPureIntro |].
+  iIntros "Hhist".
+  iExists client, k, items_mref, types_mref, dset, types, bind.
+  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
+  iPureIntro. split_and!; [exact Hclientc | exact Hregcoh | exact Hhcoh | exact Hctr].
+Qed.
+
+(** THE issue #40 theorem, store level: the document STATE of a store is a
+    function of the delivered op-set. Two stores of one document network
+    (same [is_history]) whose delivered id sets agree hold pointwise-equal
+    doc models, whatever order and batching the deliveries used; through
+    [doc_registry_coh] the model pins every registered root's item list, so
+    the heap contents agree as well. Consumes [history_converge] (which in
+    turn consumes the pure model's strong eventual consistency at the ghost
+    boundary). *)
+Lemma own_store_converge (s1 s2 : loc) (γs1 γs2 : store_names) (γh : history_names)
+    (c1 c2 : ClientId) (h1 h2 : list Ev) (m1 m2 : DocM) E :
+  ↑histN ⊆ E ->
+  (∀ id : YjsId, id ∈ delivered_ids h1 ↔ id ∈ delivered_ids h2) ->
+  is_history (A := A) (P := P) γh -∗
+  own_store s1 γs1 γh c1 h1 m1 -∗ own_store s2 γs2 γh c2 h2 m2 ={E}=∗
+  own_store s1 γs1 γh c1 h1 m1 ∗ own_store s2 γs2 γh c2 h2 m2 ∗
+  ⌜∀ t : TId, docm_get m1 t = docm_get m2 t⌝.
+Proof.
+  iIntros (HE Hids) "#Hinv Hs1 Hs2".
+  iDestruct (own_store_history_acc with "Hs1") as "(Hh1 & %Hcoh1 & Hw1)".
+  iDestruct (own_store_history_acc with "Hs2") as "(Hh2 & %Hcoh2 & Hw2)".
+  iMod (history_converge γh c1 c2 h1 h2 m1 m2 E HE Hcoh1 Hcoh2 Hids
+          with "Hinv Hh1 Hh2") as "(Hh1 & Hh2 & %Heq)".
+  iModIntro.
+  iDestruct ("Hw1" with "Hh1") as "Hs1".
+  iDestruct ("Hw2" with "Hh2") as "Hs2".
+  iFrame "Hs1 Hs2". by iPureIntro.
+Qed.
+
+(** [applyUpdate] is order-independent, the composition corollary: two stores
+    that started with agreeing delivered sets and each delivered a batch of
+    the same op-set (any permutation) agree on every root's document. The
+    [h ++ (deliver_ev <$> inputs)] histories are exactly what
+    [wp_store__applyUpdate_certs] (or [wp_Doc__applyUpdate]) leaves behind,
+    so this composes directly with two of its postconditions. *)
+Corollary own_store_applyUpdate_converge (s1 s2 : loc) (γs1 γs2 : store_names)
+    (γh : history_names) (c1 c2 : ClientId) (h1 h2 : list Ev) (m1' m2' : DocM)
+    (inputs1 inputs2 : list (TId * IntegrateInput (A := A))) E :
+  ↑histN ⊆ E ->
+  inputs1 ≡ₚ inputs2 ->
+  (∀ id : YjsId, id ∈ delivered_ids h1 ↔ id ∈ delivered_ids h2) ->
+  is_history (A := A) (P := P) γh -∗
+  own_store s1 γs1 γh c1 (h1 ++ (deliver_ev <$> inputs1)) m1' -∗
+  own_store s2 γs2 γh c2 (h2 ++ (deliver_ev <$> inputs2)) m2' ={E}=∗
+  own_store s1 γs1 γh c1 (h1 ++ (deliver_ev <$> inputs1)) m1' ∗
+  own_store s2 γs2 γh c2 (h2 ++ (deliver_ev <$> inputs2)) m2' ∗
+  ⌜∀ t : TId, docm_get m1' t = docm_get m2' t⌝.
+Proof.
+  iIntros (HE Hperm Hids) "#Hinv Hs1 Hs2".
+  iApply (own_store_converge with "Hinv Hs1 Hs2"); [done |].
+  exact (delivered_ids_deliver_evs_perm h1 h2 inputs1 inputs2 Hperm Hids).
+Qed.
+
 End store.
