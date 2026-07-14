@@ -135,11 +135,89 @@ func containsId(s []id, id id) bool {
 	return false
 }
 
+// splitNode splits the run node n at offset diff (0 < diff < n.Len()) into
+// (left, right) (y-octo: DocStore::split_node_at): the original node is
+// truncated in place to its first diff clocks and a fresh right node covering
+// the rest is spliced after it in the doubly linked list and inserted into the
+// per-client run list right after n. The right node's left origin is the last
+// id of the truncated left half and its right origin is copied from n, so the
+// split is invisible to the per-char document (yjs: splitItem).
+//
+// The right half INHERITS the deleted flag: this deliberately diverges from
+// y-octo, whose Item::split_at drops the deleted/keep bits of the right half
+// (its inheritance block is a tautological self-check on the freshly built
+// halves; yjs's splitItem and yrs's ItemPtr::splice both inherit). Dropping
+// the bit resurrects tombstoned content when repair splits a deleted run
+// (candidate upstream bug, see docs/plan-issue-28-runs-split.md).
+func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
+	olid := newId(n.id.clientId, n.id.clock+diff-1)
+	right := &item{
+		id:            newId(n.id.clientId, n.id.clock+diff),
+		originLeftId:  &olid,
+		originRightId: n.originRightId,
+		left:          n,
+		right:         n.right,
+		parent:        n.parent,
+		content:       content{content: n.content.content[diff:]},
+		flags:         n.flags,
+	}
+	n.content = content{content: n.content.content[:diff]}
+	if n.right != nil {
+		n.right.left = right
+	}
+	n.right = right
+	// Insert the right node into the client's run list just after n
+	// (y-octo: items.insert(index + 1, right)), keeping it clock-sorted.
+	nodes := s.items[n.id.clientId]
+	index, _ := getNodeIndex(nodes, n.id.clock)
+	nodes = append(nodes, nil)
+	copy(nodes[index+2:], nodes[index+1:])
+	nodes[index+1] = right
+	s.items[n.id.clientId] = nodes
+	return n, right
+}
+
+// splitAtAndGetLeft returns the node ENDING exactly at id (y-octo:
+// DocStore::split_at_and_get_left): when id falls before the last clock of
+// its node, the node is split just after id and the left half is returned.
+// Resolves a decoded item's LEFT origin, which names the element it sits
+// after (clean-end semantics, yjs: getItemCleanEnd).
+func (s *store) splitAtAndGetLeft(id id) (*item, bool) {
+	n, ok := s.GetNode(id)
+	if !ok {
+		return nil, false
+	}
+	offset := id.clock - n.id.clock
+	if offset != n.Len()-1 {
+		left, _ := s.splitNode(n, offset+1)
+		return left, true
+	}
+	return n, true
+}
+
+// splitAtAndGetRight returns the node STARTING exactly at id (y-octo:
+// DocStore::split_at_and_get_right): when id falls inside its node, the node
+// is split at id and the right half is returned. Resolves a decoded item's
+// RIGHT origin, which names the element it sits before (clean-start
+// semantics, yjs: getItemCleanStart).
+func (s *store) splitAtAndGetRight(id id) (*item, bool) {
+	n, ok := s.GetNode(id)
+	if !ok {
+		return nil, false
+	}
+	offset := id.clock - n.id.clock
+	if offset > 0 {
+		_, right := s.splitNode(n, offset)
+		return right, true
+	}
+	return n, true
+}
+
 // repair resolves a decoded item's references before integration (y-octo:
 // DocStore::repair). The origin ids resolve to live items through the store's
-// per-client run lists (with 1-char contents, split_at_and_get_left/right
-// degenerate to the plain get_node lookup and the origin ids never move), and
-// the parent is recovered:
+// per-client run lists, splitting a run when an origin points inside it
+// (split_at_and_get_left/right; with 1-char contents the split branches are
+// dead and the origin ids never move), and the parent is recovered:
 //   - parentName != nil is Parent::String: look up / create the root type by
 //     name (y-octo: get_or_create_type);
 //   - parentName == nil is Parent::None: borrow the parent from the resolved
@@ -149,14 +227,18 @@ func containsId(s []id, id id) bool {
 // passed alongside the item because the decoded wire form lives on updateItem,
 // not on item (see item.parent). Callers hold s.mu.
 func (s *store) repair(it *item, parentName *string) {
+	// After the clean-end/clean-start splits the origin ids already sit on
+	// node boundaries (the left origin IS the left node's LastId, the right
+	// origin IS the right node's id), so y-octo's re-normalization
+	// assignments of the origin ids are identities and are omitted here.
 	if it.originLeftId != nil {
-		left, ok := s.GetNode(*it.originLeftId)
+		left, ok := s.splitAtAndGetLeft(*it.originLeftId)
 		if ok {
 			it.left = left
 		}
 	}
 	if it.originRightId != nil {
-		right, ok := s.GetNode(*it.originRightId)
+		right, ok := s.splitAtAndGetRight(*it.originRightId)
 		if ok {
 			it.right = right
 		}
