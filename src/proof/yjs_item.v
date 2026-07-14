@@ -84,11 +84,13 @@ Definition is_deleted_flag (v : yjs.item.t) : bool :=
 Definition is_countable_flag (v : yjs.item.t) : bool :=
   negb (bool_decide (w8_word_instance.(word.and) v.(yjs.item.flags') (W8 2) = W8 0)).
 
-(** Number of visible (non-deleted) cells: the value carried in the heap
+(** Number of visible (non-deleted) CHARACTERS: the value carried in the heap
     [yType.len] field. Every cell is Countable, so visible ⇔ not Deleted; the
-    flag is promoted onto the abstract cell as [ic_deleted]. *)
+    flag is promoted onto the abstract cell as [ic_deleted], and a visible cell
+    contributes its whole run length (issue #28; the Go bumps [parent.len] by
+    [item.Len()]). *)
 Definition num_visible (cells : list item_cell) : nat :=
-  length (List.filter (λ c, negb (ic_deleted c)) cells).
+  list_sum ((λ c, if ic_deleted c then 0%nat else length (ic_run c)) <$> cells).
 
 (** Read the promoted Deleted / Countable bits back off the [own_dll] flag pin
     ([flags'] = [if d then W8 6 else W8 2]): the struct is always Countable, and
@@ -159,15 +161,17 @@ Qed.
 
     Each node existentially quantifies its full heap struct [iv : yjs.item.t] and
     the two resolved origin ids [olid]/[orid], constrained to *translate* to the
-    cell's model item [ic_item c]: the heap id [toYjsId]-maps to [item_id], the
-    content matches, and the origin pointers carry ids whose [toYjsId] images are
-    [ic_item c]'s origin ids. The volatile spine links ([left'] = [prev],
-    [right'] heads the rest) are also constraints on [iv], NOT data of the cell —
-    so [Store.Integrate]'s neighbour relinking changes only [iv] and leaves the
-    abstract [cells] (hence [ic_item <$> cells]) unchanged. The flag / length pins
-    live here too: the struct is Countable and its Deleted bit equals the cell's
-    [ic_deleted] ([flags'] = [W8 6] when deleted, [W8 2] when visible), and its
-    content is one byte. *)
+    HEAD of the cell's model run [ic_run c] (issue #28): the heap id
+    [toYjsId]-maps to [item_id (run_head c)], the content explodes to the
+    per-char contents of the run, and the origin pointers carry ids whose
+    [toYjsId] images are the head's origin ids. The non-head run items carry no
+    heap data of their own: [run_wf] pins their ids/origins to the head. The
+    volatile spine links ([left'] = [prev], [right'] heads the rest) are also
+    constraints on [iv], NOT data of the cell — so [Store.Integrate]'s neighbour
+    relinking changes only [iv] and leaves the abstract [cells] (hence
+    [run_flatten cells]) unchanged. The flag pin lives here too: the struct is
+    Countable and its Deleted bit equals the cell's [ic_deleted] ([flags'] =
+    [W8 6] when deleted, [W8 2] when visible). *)
 Fixpoint own_dll (dq : dfrac) (l last prev next : loc) (cells : list item_cell) : iProp Σ :=
   match cells with
   | [] => ⌜l = next ∧ last = prev⌝
@@ -176,12 +180,12 @@ Fixpoint own_dll (dq : dfrac) (l last prev next : loc) (cells : list item_cell) 
       "%Hloc" ∷ ⌜l = ic_loc c ∧ l ≠ null⌝ ∗
       "%Hprev" ∷ ⌜iv.(yjs.item.left') = prev⌝ ∗
       "%Hpar" ∷ ⌜iv.(yjs.item.parent') = ic_parent c⌝ ∗
-      "%Hid" ∷ ⌜item_id (ic_item c) = toYjsId iv.(yjs.item.id')⌝ ∗
-      "%Hcontent" ∷ ⌜content (ic_item c) = toContent iv.(yjs.item.content')⌝ ∗
-      "%Holid" ∷ ⌜origin_id (origin (ic_item c)) = toYjsId <$> olid⌝ ∗
-      "%Horid" ∷ ⌜origin_id (rightOrigin (ic_item c)) = toYjsId <$> orid⌝ ∗
+      "%Hid" ∷ ⌜item_id (run_head c) = toYjsId iv.(yjs.item.id')⌝ ∗
+      "%Hcontent" ∷ ⌜content <$> ic_run c = explode (toContent iv.(yjs.item.content'))⌝ ∗
+      "%Holid" ∷ ⌜origin_id (origin (run_head c)) = toYjsId <$> olid⌝ ∗
+      "%Horid" ∷ ⌜origin_id (rightOrigin (run_head c)) = toYjsId <$> orid⌝ ∗
       "%Hflags" ∷ ⌜iv.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
-      "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
+      "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
       "Hval" ∷ ic_loc c ↦{dq} iv ∗
       "Holeft" ∷ is_origin_id iv.(yjs.item.originLeftId') olid ∗
       "Horight" ∷ is_origin_id iv.(yjs.item.originRightId') orid ∗
@@ -222,12 +226,12 @@ Lemma own_dll_insert_middle (dq : dfrac) (cs1 cs2 : list item_cell) (newc : item
   iv.(yjs.item.left') = ml ->
   iv.(yjs.item.right') = mr ->
   iv.(yjs.item.parent') = ic_parent newc ->
-  item_id (ic_item newc) = toYjsId iv.(yjs.item.id') ->
-  content (ic_item newc) = toContent iv.(yjs.item.content') ->
-  origin_id (origin (ic_item newc)) = toYjsId <$> olid ->
-  origin_id (rightOrigin (ic_item newc)) = toYjsId <$> orid ->
+  item_id (run_head newc) = toYjsId iv.(yjs.item.id') ->
+  content <$> ic_run newc = explode (toContent iv.(yjs.item.content')) ->
+  origin_id (origin (run_head newc)) = toYjsId <$> olid ->
+  origin_id (rightOrigin (run_head newc)) = toYjsId <$> orid ->
   iv.(yjs.item.flags') = (if ic_deleted newc then W8 6 else W8 2) ->
-  length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat ->
+  run_wf (ic_run newc) ->
   own_dll dq hd ml null (ic_loc newc) cs1 ∗
   ic_loc newc ↦{dq} iv ∗
   is_origin_id iv.(yjs.item.originLeftId') olid ∗
@@ -235,13 +239,13 @@ Lemma own_dll_insert_middle (dq : dfrac) (cs1 cs2 : list item_cell) (newc : item
   own_dll dq mr tl (ic_loc newc) null cs2
   ⊢ own_dll dq hd tl null null (cs1 ++ newc :: cs2).
 Proof.
-  move=> Hnn Hl Hr Hpart Hidt Hcont Holidt Horidt Hflags Hcontlen.
+  move=> Hnn Hl Hr Hpart Hidt Hcont Holidt Horidt Hflags Hrun.
   iIntros "(Hdll1 & Hnode & Hol & Hor & Hdll2)".
   rewrite own_dll_app. iExists ml, (ic_loc newc). iFrame "Hdll1".
   simpl. iExists iv, olid, orid. rewrite Hr. iFrame "Hnode Hol Hor Hdll2".
   iPureIntro; split_and!;
     [reflexivity | exact Hnn | exact Hl | exact Hpart | exact Hidt | exact Hcont
-    | exact Holidt | exact Horidt | exact Hflags | exact Hcontlen].
+    | exact Holidt | exact Horidt | exact Hflags | exact Hrun].
 Qed.
 
 (** A DLL headed by [null] is empty. *)
@@ -270,7 +274,7 @@ Proof.
     + iExists iv, olid, orid. iFrame "Hval Holeft Horight Hrest".
       iPureIntro; split_and!;
         [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev | exact Hpar | exact Hid
-        | exact Hcontent | exact Holid | exact Horid | exact Hflags | exact Hcontlen].
+        | exact Hcontent | exact Holid | exact Horid | exact Hflags | exact Hrun].
 Qed.
 
 (** The head pointer of a DLL segment is the location of its first node (or the
@@ -289,7 +293,7 @@ Proof.
     + iExists iv, olid, orid. iFrame "Hval Holeft Horight Hrest".
       iPureIntro; split_and!;
         [exact (proj1 Hloc) | exact (proj2 Hloc) | exact Hprev | exact Hpar | exact Hid
-        | exact Hcontent | exact Holid | exact Horid | exact Hflags | exact Hcontlen].
+        | exact Hcontent | exact Holid | exact Horid | exact Hflags | exact Hrun].
 Qed.
 
 (** The head of a full DLL is [node_loc cells 0] (the first node, or [null] when
@@ -318,12 +322,12 @@ Lemma own_dll_acc (dq : dfrac) (cells : list item_cell) (hd tl : loc) (k : nat) 
     "%Hcloc" ∷ ⌜ic_loc c = node_loc cells (Z.of_nat k)⌝ ∗
     "%Hcl" ∷ ⌜iv.(yjs.item.left') = node_loc cells (Z.of_nat k - 1)⌝ ∗
     "%Hcr" ∷ ⌜iv.(yjs.item.right') = node_loc cells (Z.of_nat k + 1)⌝ ∗
-    "%Hid" ∷ ⌜item_id (ic_item c) = toYjsId iv.(yjs.item.id')⌝ ∗
-    "%Hcontent" ∷ ⌜content (ic_item c) = toContent iv.(yjs.item.content')⌝ ∗
-    "%Holid" ∷ ⌜origin_id (origin (ic_item c)) = toYjsId <$> olid⌝ ∗
-    "%Horid" ∷ ⌜origin_id (rightOrigin (ic_item c)) = toYjsId <$> orid⌝ ∗
+    "%Hid" ∷ ⌜item_id (run_head c) = toYjsId iv.(yjs.item.id')⌝ ∗
+    "%Hcontent" ∷ ⌜content <$> ic_run c = explode (toContent iv.(yjs.item.content'))⌝ ∗
+    "%Holid" ∷ ⌜origin_id (origin (run_head c)) = toYjsId <$> olid⌝ ∗
+    "%Horid" ∷ ⌜origin_id (rightOrigin (run_head c)) = toYjsId <$> orid⌝ ∗
     "%Hflags" ∷ ⌜iv.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
-    "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
+    "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
     "%Hpar" ∷ ⌜iv.(yjs.item.parent') = ic_parent c⌝ ∗
     "Hcval" ∷ ic_loc c ↦{dq} iv ∗
     "Hcol" ∷ is_origin_id iv.(yjs.item.originLeftId') olid ∗
@@ -347,7 +351,7 @@ Proof.
   iEval (rewrite own_dll_app) in "Hdll".
   iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
   iDestruct "Hrest" as (iv olid orid)
-    "(%Hloc & %Hprev & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest2)".
+    "(%Hloc & %Hprev & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hrunc & Hval & #Hol & #Hor & Hrest2)".
   iDestruct (own_dll_lastptr with "Hpre") as "[%Hml Hpre]".
   iDestruct (own_dll_headptr with "Hrest2") as "[%Hhd Hrest2]".
   have Hcl : iv.(yjs.item.left') = node_loc cells (Z.of_nat k - 1).
@@ -364,7 +368,7 @@ Proof.
   iAssert (ic_loc c ↦{dq} iv -∗ own_dll dq hd tl null null cells)%I with "[Hpre Hrest2]" as "Hback".
   { iIntros "Hval2". iEval (rewrite -Hsplit).
     iApply (own_dll_insert_middle dq pre suf c iv olid orid hd tl ml iv.(yjs.item.right')
-              Hnn Hprev eq_refl Hparc Hidc Hcontentc Holidc Horidc Hflagsc Hcontlenc).
+              Hnn Hprev eq_refl Hparc Hidc Hcontentc Holidc Horidc Hflagsc Hrunc).
     iFrame "Hval2 Hol Hor". rewrite -(proj1 Hloc). iFrame "Hpre Hrest2". }
   iFrame "Hback". by iPureIntro.
 Qed.
@@ -385,15 +389,15 @@ Proof.
   - iApply "Hback". iFrame "Hcval".
 Qed.
 
-(** Every cell's model id round-trips through the heap's [w64] id fields
-    ([own_dll] pins [item_id (ic_item c) = toYjsId iv.(id')]), so both id
+(** Every cell's HEAD model id round-trips through the heap's [w64] id fields
+    ([own_dll] pins [item_id (run_head c) = toYjsId iv.(id')]), so both id
     components are bounded by [2^64]. This is what lets W64-level clock
     comparisons ([cell_clock] / [cell_client]) be recovered from nat-level
     model facts (used by the certificate-based [applyUpdate] spec). *)
 Lemma own_dll_id_bounds (dq : dfrac) (l last prev next : loc) (cells : list item_cell) :
   own_dll dq l last prev next cells -∗
-  ⌜∀ c, c ∈ cells → (Z.of_nat (clientId (item_id (ic_item c))) < 2^64)%Z ∧
-                    (Z.of_nat (clock (item_id (ic_item c))) < 2^64)%Z⌝.
+  ⌜∀ c, c ∈ cells → (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
+                    (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝.
 Proof.
   iInduction cells as [|c0 cells] "IH" forall (l prev).
   - iIntros "_". iPureIntro. move=> c Hc. rewrite elem_of_nil in Hc. done.
@@ -413,12 +417,12 @@ Lemma own_dll_lookup_acc (dq : dfrac) (l lst prev nxt : loc) (cs : list item_cel
   cs !! k = Some c ->
   own_dll dq l lst prev nxt cs -∗
     ∃ (iv : yjs.item.t) (olid orid : option yjs.id.t),
-      "%Hid" ∷ ⌜item_id (ic_item c) = toYjsId iv.(yjs.item.id')⌝ ∗
-      "%Hcontent" ∷ ⌜content (ic_item c) = toContent iv.(yjs.item.content')⌝ ∗
-      "%Holid" ∷ ⌜origin_id (origin (ic_item c)) = toYjsId <$> olid⌝ ∗
-      "%Horid" ∷ ⌜origin_id (rightOrigin (ic_item c)) = toYjsId <$> orid⌝ ∗
+      "%Hid" ∷ ⌜item_id (run_head c) = toYjsId iv.(yjs.item.id')⌝ ∗
+      "%Hcontent" ∷ ⌜content <$> ic_run c = explode (toContent iv.(yjs.item.content'))⌝ ∗
+      "%Holid" ∷ ⌜origin_id (origin (run_head c)) = toYjsId <$> olid⌝ ∗
+      "%Horid" ∷ ⌜origin_id (rightOrigin (run_head c)) = toYjsId <$> orid⌝ ∗
       "%Hflags" ∷ ⌜iv.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
-      "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
+      "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
       "Hval" ∷ c.(ic_loc) ↦{dq} iv ∗
       "Hcol" ∷ is_origin_id iv.(yjs.item.originLeftId') olid ∗
       "Hcor" ∷ is_origin_id iv.(yjs.item.originRightId') orid ∗
@@ -431,7 +435,7 @@ Proof.
   iEval (rewrite -Hsplit own_dll_app) in "Hdll".
   iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
   iDestruct "Hrest" as (iv olid orid)
-    "(%Hloc & %Hprev & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest)".
+    "(%Hloc & %Hprev & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hrunc & Hval & #Hol & #Hor & Hrest)".
   iExists iv, olid, orid. iFrame "Hval Hol Hor".
   iAssert (c.(ic_loc) ↦{dq} iv -∗ own_dll dq l lst prev nxt cs)%I with "[Hpre Hrest]" as "Hback".
   { iIntros "Hval2". rewrite -Hsplit own_dll_app. iExists ml, mf. iFrame "Hpre".
@@ -459,7 +463,8 @@ Lemma own_dll_update_gen (cells : list item_cell) (hd tl : loc) (k : nat) (c : i
       "%Hcloc" ∷ ⌜ic_loc c = node_loc cells (Z.of_nat k)⌝ ∗
       "%Hcr" ∷ ⌜iv.(yjs.item.right') = node_loc cells (Z.of_nat k + 1)⌝ ∗
       "%Hflags" ∷ ⌜iv.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
-      "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
+      "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
+      "%Hcontent" ∷ ⌜content <$> ic_run c = explode (toContent iv.(yjs.item.content'))⌝ ∗
       "Hval" ∷ ic_loc c ↦ iv ∗
       "Hback" ∷ (∀ (v' : yjs.item.t) (d' : bool),
         ⌜v'.(yjs.item.left') = iv.(yjs.item.left')⌝ -∗
@@ -472,7 +477,7 @@ Lemma own_dll_update_gen (cells : list item_cell) (hd tl : loc) (k : nat) (c : i
         ⌜v'.(yjs.item.flags') = (if d' then W8 6 else W8 2)⌝ -∗
         ic_loc c ↦ v' -∗
         own_dll (DfracOwn 1) hd tl null null
-          (<[k := MkItemCell (ic_loc c) (ic_item c) d' (ic_parent c)]> cells)).
+          (<[k := MkItemCell (ic_loc c) (ic_run c) d' (ic_parent c)]> cells)).
 Proof.
   move=> Hk. iIntros "Hdll".
   pose proof (take_drop_middle cells k c Hk) as Hsplit.
@@ -481,7 +486,7 @@ Proof.
   iEval (rewrite -Hsplit own_dll_app) in "Hdll".
   iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
   iDestruct "Hrest" as (iv olid orid)
-    "(%Hloc & %Hprev & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hcontlenc & Hval & #Hol & #Hor & Hrest2)".
+    "(%Hloc & %Hprev & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hrunc & Hval & #Hol & #Hor & Hrest2)".
   iDestruct (own_dll_headptr with "Hrest2") as "[%Hhd Hrest2]".
   have Hcloc : ic_loc c = node_loc cells (Z.of_nat k)
     by rewrite /node_loc decide_True; [rewrite Nat2Z.id Hk | lia].
@@ -494,22 +499,22 @@ Proof.
   iSplit; [iPureIntro; exact Hcloc|].
   iSplit; [iPureIntro; exact Hcr|].
   iSplit; [iPureIntro; exact Hflagsc|].
-  iSplit; [iPureIntro; exact Hcontlenc|].
+  iSplit; [iPureIntro; exact Hrunc|].
+  iSplit; [iPureIntro; exact Hcontentc|].
   iIntros (v' d' Hl' Hr' Hid' Hcont' HoL' HoR' Hpar' Hfl') "Hval2".
   have Hpv : v'.(yjs.item.left') = ml by rewrite Hl'; exact Hprev.
   have Hparv : v'.(yjs.item.parent') = ic_parent c by rewrite Hpar'; exact Hparc.
-  have Hidt : item_id (ic_item c) = toYjsId v'.(yjs.item.id') by rewrite Hid'; exact Hidc.
-  have Hcontt : content (ic_item c) = toContent v'.(yjs.item.content') by rewrite Hcont'; exact Hcontentc.
-  have Hcontlent : length (v'.(yjs.item.content').(yjs.content.content')) = 1%nat
-    by rewrite Hcont'; exact Hcontlenc.
-  have Hins : <[k := MkItemCell (ic_loc c) (ic_item c) d' (ic_parent c)]> cells
-            = pre ++ MkItemCell (ic_loc c) (ic_item c) d' (ic_parent c) :: suf.
+  have Hidt : item_id (run_head c) = toYjsId v'.(yjs.item.id') by rewrite Hid'; exact Hidc.
+  have Hcontt : content <$> ic_run c = explode (toContent v'.(yjs.item.content'))
+    by rewrite Hcont'; exact Hcontentc.
+  have Hins : <[k := MkItemCell (ic_loc c) (ic_run c) d' (ic_parent c)]> cells
+            = pre ++ MkItemCell (ic_loc c) (ic_run c) d' (ic_parent c) :: suf.
   { rewrite /pre /suf. apply insert_take_drop. apply lookup_lt_Some in Hk; exact Hk. }
   rewrite Hins.
   iApply (own_dll_insert_middle (DfracOwn 1) pre suf
-            (MkItemCell (ic_loc c) (ic_item c) d' (ic_parent c)) v' olid orid
+            (MkItemCell (ic_loc c) (ic_run c) d' (ic_parent c)) v' olid orid
             hd tl ml v'.(yjs.item.right')
-            Hnn Hpv eq_refl Hparv Hidt Hcontt Holidc Horidc Hfl' Hcontlent).
+            Hnn Hpv eq_refl Hparv Hidt Hcontt Holidc Horidc Hfl' Hrunc).
   rewrite Hr' HoL' HoR'.
   iEval (rewrite (proj1 Hloc)) in "Hpre".
   iEval (rewrite (proj1 Hloc)) in "Hrest2".
@@ -518,32 +523,47 @@ Qed.
 
 (* ----- isomorphism to a YjsArrInvariant model ---------------------------- *)
 
-(** [cell_repr m c yi]: the model item [yi] the heap cell [c] represents is
-    exactly [ic_item c]. Since the cell now carries its model item directly, the
-    "isomorphism" collapses to near-identity: the id / content / origin / flag /
-    length facts that the old [cell_repr] spelled out are now carried by [own_dll]
-    (constraining the existential heap struct), and order-defining origins live in
-    [ic_item]. ([m] is kept for signature uniformity with the call sites.) *)
+(** [cell_repr m c yi]: the heap cell [c] represents the SINGLE model item
+    [yi], i.e. its run is the singleton [[yi]]. Every current creator mints
+    such cells; multi-element cells relate to the model only through
+    [cells_repr]'s flatten. ([m] is kept for signature uniformity with the
+    call sites.) *)
 Definition cell_repr (m : list (YjsItem A)) (c : item_cell) (yi : YjsItem A) : Prop :=
-  yi = ic_item c.
+  ic_run c = [yi].
 
-(** [cells_repr m cells items]: the heap cell list represents the model item list
-    cellwise, i.e. [items = ic_item <$> cells]. This is the (now trivial)
-    "isomorphism" between the heap node sequence and a [list (YjsItem A)]. *)
+(** A [cell_repr] cell is a unit cell. *)
+Lemma cell_repr_unit m c yi : cell_repr m c yi -> cell_unit c.
+Proof. rewrite /cell_repr /cell_unit => -> //. Qed.
+
+Lemma cell_repr_head m c yi : cell_repr m c yi -> run_head c = yi.
+Proof. rewrite /cell_repr /run_head => -> //. Qed.
+
+(** [cells_repr m cells items]: the heap cell list represents the model item
+    list by flattening the runs (issue #28): [items = run_flatten cells]. *)
 Definition cells_repr (m : list (YjsItem A)) (cells : list item_cell) (items : list (YjsItem A)) : Prop :=
-  items = ic_item <$> cells.
+  items = run_flatten cells.
 
-(** The isomorphism is length-preserving and cellwise. *)
+(** Under the all-singleton invariant the isomorphism is length-preserving and
+    cellwise (the pre-#28 1:1 correspondence). *)
 Lemma cells_repr_length m cells items :
+  Forall cell_unit cells ->
   cells_repr m cells items -> length cells = length items.
-Proof. rewrite /cells_repr => ->. by rewrite length_fmap. Qed.
+Proof.
+  rewrite /cells_repr => Hunit ->.
+  by rewrite (run_flatten_singletons cells Hunit) length_fmap.
+Qed.
 
 Lemma cells_repr_lookup m cells items k c :
+  Forall cell_unit cells ->
   cells_repr m cells items -> cells !! k = Some c ->
   ∃ yi, items !! k = Some yi ∧ cell_repr m c yi.
 Proof.
-  rewrite /cells_repr /cell_repr => -> Hk. exists (ic_item c).
-  by rewrite list_lookup_fmap Hk /=.
+  rewrite /cells_repr /cell_repr => Hunit -> Hk. exists (run_head c).
+  rewrite (run_flatten_singletons cells Hunit) list_lookup_fmap Hk /=.
+  split; first done.
+  have Hu : cell_unit c := Forall_lookup_1 _ _ _ _ Hunit Hk.
+  rewrite /cell_unit in Hu. rewrite /run_head.
+  destruct (ic_run c) as [|y [|y' r']]; simpl in Hu; [lia | done | lia].
 Qed.
 
 Lemma cells_repr_nil m : cells_repr m [] [].
@@ -551,16 +571,24 @@ Proof. reflexivity. Qed.
 
 Lemma cells_repr_cons m c yi cs ys :
   cell_repr m c yi -> cells_repr m cs ys -> cells_repr m (c :: cs) (yi :: ys).
-Proof. rewrite /cells_repr /cell_repr => -> ->. reflexivity. Qed.
+Proof.
+  rewrite /cells_repr /cell_repr => Hc Hcs.
+  by rewrite run_flatten_cons Hc Hcs.
+Qed.
 
 (** Inserting a corresponding cell/item at the same position preserves the
-    isomorphism (the splice's model side). *)
+    isomorphism (the splice's model side); position alignment needs the
+    all-singleton invariant. *)
 Lemma cells_repr_insert m cells items (k : nat) c yi :
+  Forall cell_unit cells ->
   cells_repr m cells items -> cell_repr m c yi ->
   cells_repr m (take k cells ++ c :: drop k cells) (take k items ++ yi :: drop k items).
 Proof.
-  rewrite /cells_repr /cell_repr => -> ->.
-  by rewrite fmap_app fmap_cons fmap_take fmap_drop.
+  rewrite /cells_repr /cell_repr => Hunit -> Hc.
+  rewrite run_flatten_app run_flatten_cons Hc.
+  rewrite (run_flatten_singletons _ (Forall_take _ _ _ Hunit)).
+  rewrite (run_flatten_singletons _ (Forall_drop _ _ _ Hunit)).
+  by rewrite (run_flatten_singletons cells Hunit) fmap_take fmap_drop.
 Qed.
 
 (** [cells_repr] does not depend on the resolution context [m] (it is a plain
@@ -571,26 +599,36 @@ Proof. by rewrite /cells_repr. Qed.
 
 Lemma cells_repr_app (m : list (YjsItem A)) cs1 cs2 ys1 ys2 :
   cells_repr m cs1 ys1 -> cells_repr m cs2 ys2 -> cells_repr m (cs1 ++ cs2) (ys1 ++ ys2).
-Proof. rewrite /cells_repr => -> ->. by rewrite fmap_app. Qed.
+Proof. rewrite /cells_repr => -> ->. by rewrite run_flatten_app. Qed.
 
 Lemma cells_repr_take (m : list (YjsItem A)) cells items k :
+  Forall cell_unit cells ->
   cells_repr m cells items -> cells_repr m (take k cells) (take k items).
-Proof. rewrite /cells_repr => ->. by rewrite fmap_take. Qed.
+Proof.
+  rewrite /cells_repr => Hunit ->.
+  rewrite (run_flatten_singletons _ (Forall_take _ _ _ Hunit)).
+  by rewrite (run_flatten_singletons cells Hunit) fmap_take.
+Qed.
 
 Lemma cells_repr_drop (m : list (YjsItem A)) cells items k :
+  Forall cell_unit cells ->
   cells_repr m cells items -> cells_repr m (drop k cells) (drop k items).
-Proof. rewrite /cells_repr => ->. by rewrite fmap_drop. Qed.
-
-(** Replacing a cell with another carrying the *same* model item ([cell_repr] to
-    the same [yi]) preserves the isomorphism. [Text.Delete] flips a cell's
-    [ic_deleted] without touching its [ic_item], so this keeps [cells_repr]. *)
-Lemma cells_repr_update m cells items (k : nat) c yi c' :
-  cells_repr m cells items -> cells !! k = Some c -> items !! k = Some yi -> cell_repr m c' yi ->
-  cells_repr m (<[k := c']> cells) items.
 Proof.
-  rewrite /cells_repr /cell_repr => Hrepr Hck Hik Hc'.
-  rewrite Hrepr list_fmap_insert -Hc'. symmetry. apply list_insert_id.
-  rewrite -Hrepr. exact Hik.
+  rewrite /cells_repr => Hunit ->.
+  rewrite (run_flatten_singletons _ (Forall_drop _ _ _ Hunit)).
+  by rewrite (run_flatten_singletons cells Hunit) fmap_drop.
+Qed.
+
+(** Replacing a cell with one carrying the SAME run preserves the isomorphism
+    (the flatten never reads [ic_deleted] / [ic_loc]). [Text.Delete] flips a
+    cell's [ic_deleted] without touching its [ic_run]. *)
+Lemma cells_repr_update_run m cells items (k : nat) c c' :
+  cells !! k = Some c -> ic_run c' = ic_run c ->
+  cells_repr m cells items -> cells_repr m (<[k := c']> cells) items.
+Proof.
+  rewrite /cells_repr => Hck Hrun ->.
+  rewrite /run_flatten list_fmap_insert Hrun. f_equal. symmetry.
+  apply list_insert_id. rewrite list_lookup_fmap Hck //.
 Qed.
 
 (* ----- the deletion layer: tombstoning a cell ---------------------------- *)
@@ -598,17 +636,18 @@ Qed.
 (** Visible count is additive over append. *)
 Lemma num_visible_app (l1 l2 : list item_cell) :
   num_visible (l1 ++ l2) = (num_visible l1 + num_visible l2)%nat.
-Proof. rewrite /num_visible List.filter_app length_app //. Qed.
+Proof. rewrite /num_visible fmap_app list_sum_app //. Qed.
 
-(** Inserting a *visible* cell increments the visible count. Read by
-    [Store.Integrate] / [Text.Insert], whose new items are always visible. *)
+(** Inserting a *visible* unit cell increments the visible count. Read by
+    [Store.Integrate] / [Text.Insert], whose new items are always visible
+    1-char runs. *)
 Lemma num_visible_insert_visible (cells : list item_cell) (k : nat) (c : item_cell) :
-  ic_deleted c = false ->
+  ic_deleted c = false -> cell_unit c ->
   num_visible (take k cells ++ c :: drop k cells) = S (num_visible cells).
 Proof.
-  move=> Hc. rewrite /num_visible.
-  rewrite List.filter_app /=. rewrite Hc /=. rewrite length_app /=.
-  rewrite -{3}(take_drop k cells) List.filter_app length_app. lia.
+  rewrite /cell_unit => Hc Hu. rewrite /num_visible.
+  rewrite fmap_app fmap_cons list_sum_app /=. rewrite Hc Hu.
+  rewrite -[in S (list_sum _)](take_drop k cells) fmap_app list_sum_app. lia.
 Qed.
 
 (** The heap effect of [item.flags |= itemDeleted]: set the Deleted bit. *)
@@ -622,27 +661,26 @@ Lemma set_deleted_flags (v : yjs.item.t) (d : bool) :
   (set_deleted v).(yjs.item.flags') = W8 6.
 Proof. rewrite /set_deleted /= => ->. by destruct d. Qed.
 
-(** The cell with its [ic_deleted] bit set (its model item [ic_item] unchanged). *)
+(** The cell with its [ic_deleted] bit set (its model run [ic_run] unchanged). *)
 Definition flip_cell (c : item_cell) : item_cell :=
-  MkItemCell (ic_loc c) (ic_item c) true (ic_parent c).
+  MkItemCell (ic_loc c) (ic_run c) true (ic_parent c).
 
-(** Flipping a cell's Deleted bit preserves [cell_repr]: [ic_item] is untouched. *)
+(** Flipping a cell's Deleted bit preserves [cell_repr]: [ic_run] is untouched. *)
 Lemma cell_repr_flip (m : list (YjsItem A)) (c : item_cell) (yi : YjsItem A) :
   cell_repr m c yi -> cell_repr m (flip_cell c) yi.
 Proof. rewrite /cell_repr /flip_cell /=. tauto. Qed.
 
-(** Tombstoning a visible cell drops the visible count by one. *)
+(** Tombstoning a visible unit cell drops the visible count by one. *)
 Lemma num_visible_flip (cells : list item_cell) (k : nat) (c : item_cell) :
-  cells !! k = Some c -> ic_deleted c = false ->
+  cells !! k = Some c -> ic_deleted c = false -> cell_unit c ->
   num_visible (<[k := flip_cell c]> cells) = pred (num_visible cells).
 Proof.
-  move=> Hk Hd.
+  rewrite /cell_unit => Hk Hd Hu.
   have Hins : <[k := flip_cell c]> cells = take k cells ++ flip_cell c :: drop (S k) cells
     by (apply insert_take_drop; apply lookup_lt_Some in Hk; exact Hk).
-  rewrite Hins /num_visible List.filter_app /flip_cell /=.
-  rewrite length_app.
-  rewrite -{3}(take_drop_middle cells k c Hk).
-  rewrite List.filter_app /=. rewrite Hd /=. rewrite length_app /=. lia.
+  rewrite Hins /num_visible fmap_app fmap_cons list_sum_app /flip_cell /=.
+  rewrite -[in pred (list_sum _)](take_drop_middle cells k c Hk).
+  rewrite fmap_app fmap_cons list_sum_app /=. rewrite Hd Hu. lia.
 Qed.
 
 End item.

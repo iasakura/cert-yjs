@@ -69,7 +69,11 @@ func (t *Text) Insert(index uint64, content string) {
 		s.mu.Unlock()
 		return
 	}
-	left, right := t.inner.findPos(index)
+	// The offset is nonzero only when the index lands inside a multi-element
+	// run; every current creator mints 1-char items, so it is always 0 here.
+	// Once runs exist, this is where y-octo normalizes the position by
+	// splitting [left] at the offset (issue #28, splitNode).
+	left, right, _ := t.inner.findPos(index)
 	client := s.client
 
 	// Every character in this run shares the same right origin: the node that
@@ -121,14 +125,24 @@ func (t *Text) Insert(index uint64, content string) {
 func (t *Text) Delete(index uint64, length uint64) {
 	s := t.store
 	s.mu.Lock()
-	_, right := t.inner.findPos(index)
+	// As in Insert, the offset is always 0 while every item is 1-char; with
+	// multi-element runs y-octo splits at both range boundaries before
+	// tombstoning (issue #28, splitNode).
+	_, right, _ := t.inner.findPos(index)
 	remaining := length
 	cur := right
 	for remaining > 0 && cur != nil {
 		if cur.Indexable() {
 			cur.flags = cur.flags | itemDeleted
 			t.inner.len = t.inner.len - cur.Len()
-			remaining = remaining - cur.Len()
+			if remaining < cur.Len() {
+				// A run longer than the remaining budget would need a split
+				// at the range end (unreachable with 1-char items); stop the
+				// budget at zero so the counter cannot wrap.
+				remaining = 0
+			} else {
+				remaining = remaining - cur.Len()
+			}
 		}
 		cur = cur.right
 	}
