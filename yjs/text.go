@@ -69,11 +69,15 @@ func (t *Text) Insert(index uint64, content string) {
 		s.mu.Unlock()
 		return
 	}
-	// The offset is nonzero only when the index lands inside a multi-element
-	// run; every current creator mints 1-char items, so it is always 0 here.
-	// Once runs exist, this is where y-octo normalizes the position by
-	// splitting [left] at the offset (issue #28, splitNode).
-	left, right, _ := t.inner.findPos(index)
+	// Normalize the position (y-octo: ItemPosition::normalize): when the
+	// index lands inside a multi-element run, split [left] at the offset so
+	// the insertion point sits on a node boundary. With 1-char items the
+	// offset is always 0 and the split is dead code (issue #28; reachable
+	// once multi-element updates land, M4).
+	left, right, offset := t.inner.findPos(index)
+	if offset > 0 {
+		left, right = s.splitNode(left, offset)
+	}
 	client := s.client
 
 	// Every character in this run shares the same right origin: the node that
@@ -113,8 +117,8 @@ func (t *Text) Insert(index uint64, content string) {
 
 // Delete tombstones length visible characters starting at the visible index,
 // marking each item deleted and shrinking the visible length (y-octo:
-// ListType::remove_after via store::delete_item, here specialised to 1-char
-// items so no split is needed). Tombstoning keeps the items in the list and the
+// ListType::remove_after via store::delete_item, splitting at both range
+// boundaries when they land inside a run). Tombstoning keeps the items in the list and the
 // document order, so it preserves the integrate invariant -- only visibility
 // changes. The whole edit runs under the store lock.
 //
@@ -125,24 +129,28 @@ func (t *Text) Insert(index uint64, content string) {
 func (t *Text) Delete(index uint64, length uint64) {
 	s := t.store
 	s.mu.Lock()
-	// As in Insert, the offset is always 0 while every item is 1-char; with
-	// multi-element runs y-octo splits at both range boundaries before
-	// tombstoning (issue #28, splitNode).
-	_, right, _ := t.inner.findPos(index)
+	// Normalize the range start (split [left] when the index lands inside a
+	// run), then tombstone forward, splitting once more when the budget ends
+	// inside a run (y-octo: ListType::remove_after; both splits are dead code
+	// while every item is 1-char, issue #28).
+	left, right, offset := t.inner.findPos(index)
+	if offset > 0 {
+		_, r2 := s.splitNode(left, offset)
+		right = r2
+	}
 	remaining := length
 	cur := right
 	for remaining > 0 && cur != nil {
 		if cur.Indexable() {
+			if remaining < cur.Len() {
+				// Split at the range end: [cur] is truncated in place to
+				// exactly the remaining budget (the in-place left half),
+				// so the tombstone below covers precisely the range.
+				s.splitNode(cur, remaining)
+			}
 			cur.flags = cur.flags | itemDeleted
 			t.inner.len = t.inner.len - cur.Len()
-			if remaining < cur.Len() {
-				// A run longer than the remaining budget would need a split
-				// at the range end (unreachable with 1-char items); stop the
-				// budget at zero so the counter cannot wrap.
-				remaining = 0
-			} else {
-				remaining = remaining - cur.Len()
-			}
+			remaining = remaining - cur.Len()
 		}
 		cur = cur.right
 	}
