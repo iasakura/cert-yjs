@@ -151,6 +151,11 @@ func containsId(s []id, id id) bool {
 // (candidate upstream bug, see docs/plan-issue-28-runs-split.md).
 func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 	olid := newId(n.id.clientId, n.id.clock+diff-1)
+	// Split the content through a []byte round-trip rather than slicing the
+	// string directly: Perennial's goose model has no reduction for slicing a
+	// Go string (Slice go.string), whereas byte-slice slicing steps normally
+	// (same reason Insert uses string(content[i]) instead of content[i:i+1]).
+	cb := []byte(n.content.content)
 	right := &item{
 		id:            newId(n.id.clientId, n.id.clock+diff),
 		originLeftId:  &olid,
@@ -158,10 +163,10 @@ func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 		left:          n,
 		right:         n.right,
 		parent:        n.parent,
-		content:       content{content: n.content.content[diff:]},
+		content:       content{content: string(cb[diff:])},
 		flags:         n.flags,
 	}
-	n.content = content{content: n.content.content[:diff]}
+	n.content = content{content: string(cb[:diff])}
 	if n.right != nil {
 		n.right.left = right
 	}
