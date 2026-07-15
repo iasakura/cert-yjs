@@ -63,6 +63,26 @@ Self-check before you present a question: *"Does answering this require
 understanding the system, or just remembering a label?"* If the latter, rewrite
 it into a why / what-if / how-do-these-relate form, or drop it.
 
+**Frame the ask like an exam question (fairness).** Because the learner reasons
+hard WITHOUT the answer, an unclear intent wastes their time: they can reason
+correctly in a frame you did not mean and miss the point. Make explicit WHAT is
+asked and FROM WHICH FRAME, so the solver knows what would count as a complete
+answer. This matters most for "what breaks / what goes wrong" questions, where
+"wrong" is ambiguous across at least three frames:
+- **semantic**: "is the implementation broken AS a Yjs / does the visible
+  behavior go wrong?"
+- **spec-level**: "is the current spec still provable / does the invariant
+  still hold?" (these can DIVERGE from semantic: a purely structural spec can
+  stay provable while the behavior is wrong, e.g. `wp_yType__findPos` certifies
+  only an adjacent straddle pair, so miscounting tombstones breaks the Yjs
+  semantics yet the spec still holds)
+- **open**: "discuss the consequences" (論じろ).
+Pick and NAME the frame, or explicitly invite discussion. When the semantic and
+spec frames diverge, that divergence is often the best question ("it breaks Yjs
+semantically, yet the spec still passes: why, and what does that tell you about
+the spec?") but you must ASK it that way, not leave the solver to guess which
+frame you meant.
+
 ---
 
 ## Flow
@@ -146,6 +166,16 @@ then compare:
   are validating the QUESTION and your answer, not testing a human's memory).
   Do NOT include your intended answer. Also ask it to flag if the question is
   ambiguous or under-specified.
+- **Fairness / frame check (make this an explicit evaluation point).** Ask the
+  agent, separately: "can a serious solver reasoning WITHOUT the answer tell
+  exactly what is being asked and from which frame (Yjs-semantic correctness vs
+  current-spec provability vs open discussion)? Could a correct line of
+  reasoning still miss the intended point because the frame is unstated?" If the
+  agent says a "what breaks / is it right" ask is answerable differently
+  depending on an unstated frame, treat that as a defect and re-frame BEFORE
+  presenting, even if the question is otherwise well-posed. A question can be
+  unambiguous to someone holding the answer key and still be UNFAIR to someone
+  reasoning blind; this check catches exactly that.
 - Even on convergence, READ the agent's "is this well-posed?" verdict: a matching
   answer can still come with a flagged phrasing imprecision (e.g. a parenthetical
   gloss that is not a strict equivalence). Fix the phrasing before presenting.

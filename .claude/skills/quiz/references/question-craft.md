@@ -90,6 +90,29 @@ the next; the depth IS the product.
   tautological). When two "explain why" questions in a row land as
   obvious-or-generic, switch to a proof exercise or a real past-problem.
 
+## Frame the ask; "what breaks" is unfair without a named frame
+
+Because the learner reasons blind (no answer given), a question whose intent is
+unstated wastes their effort: they reason correctly in a frame you did not mean.
+"What goes wrong if X?" is the worst offender, because "wrong" splits across
+frames that can DISAGREE:
+
+- **Yjs-semantic**: does the visible behavior go wrong? (usually yes)
+- **spec-provability**: is the current spec still provable / invariant still
+  held? (can be yes even when semantics break, if the spec is only structural)
+- **open**: discuss the consequences.
+
+Worked example (findPos, from a live session): "what if findPos consumed `idx`
+on deleted cells too?" As posed it is unfair. Semantically the insert lands at
+the wrong visible position (broken as a Yjs). But `wp_yType__findPos` certifies
+only that it returns an adjacent straddle pair at some `p <= length cells`, with
+no clause tying `p` to `idx`/`num_visible`, so the SPEC still holds. A solver
+reasoning blind cannot know which you meant. Fair versions: "(b-1) is this
+broken AS a Yjs implementation? (b-2) is `wp_yType__findPos` still provable?
+what does the gap between your two answers say about the spec?" Name the frame,
+or split it, or say "discuss". Make this a blind-agent evaluation point: a
+question can be unambiguous to the answer-holder yet unfair to the blind solver.
+
 ## Answering discipline (do not pad, do not ask vague sub-questions)
 
 - **A vague sub-question is a bug, but an unfamiliar real term is not.**
