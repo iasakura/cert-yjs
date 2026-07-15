@@ -15,7 +15,11 @@
 # opam local switch (or symlink to a shared one)
 /_opam
 
-# local tooling / workspace state (not part of the project)
-.claude/
+# local tooling / workspace state (not part of the project),
+# but keep the project-specific /quiz skill under version control
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/quiz/
 .vscode/
 .idea/
