@@ -168,12 +168,17 @@ func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 	n.right = right
 	// Insert the right node into the client's run list just after n
 	// (y-octo: items.insert(index + 1, right)), keeping it clock-sorted.
+	// Built as three disjoint appends into a fresh slice (rather than the
+	// in-place grow+copy+set idiom) so the insertion is an aliasing-free
+	// slice concatenation: prefix through the found node, the new right node,
+	// then the suffix. Same result as items.insert(index+1, right).
 	nodes := s.items[n.id.clientId]
 	index, _ := getNodeIndex(nodes, n.id.clock)
-	nodes = append(nodes, nil)
-	copy(nodes[index+2:], nodes[index+1:])
-	nodes[index+1] = right
-	s.items[n.id.clientId] = nodes
+	var newNodes []*item
+	newNodes = append(newNodes, nodes[:index+1]...)
+	newNodes = append(newNodes, right)
+	newNodes = append(newNodes, nodes[index+1:]...)
+	s.items[n.id.clientId] = newNodes
 	return n, right
 }
 
