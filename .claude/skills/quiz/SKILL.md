@@ -4,7 +4,7 @@ description: Quiz yourself on the cert-yjs project to keep up as it grows. Use w
 user-invocable: true
 ---
 
-# /quiz — cert-yjs understanding drills
+# /quiz: cert-yjs understanding drills
 
 Run an interactive quiz that helps the user keep pace with this fast-moving
 formally-verified-Yjs project. The point is *understanding*, not trivia: the
