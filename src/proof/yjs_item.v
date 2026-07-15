@@ -248,6 +248,60 @@ Proof.
     | exact Holidt | exact Horidt | exact Hflags | exact Hrun].
 Qed.
 
+(** Split one run node into two adjacent nodes [cl] (left half, same loc) and
+    [cr] (right half, fresh loc) in place: the caller (the [splitNode] WP) has
+    already truncated [cl]'s struct, allocated [cr]'s struct, and relinked the
+    following segment's head [left'] to [cr]. This is the DLL-spine counterpart
+    of the pure [split_cells] surgery; both [cl] and [cr] carry ordinary node
+    field conditions, discharged from [run_wf] telescoping at the call site. It
+    is [own_dll_insert_middle] applied to [cl], with [cr] pre-consed onto the
+    tail. *)
+Lemma own_dll_split (dq : dfrac) (cs1 cs2 : list item_cell) (cl cr : item_cell)
+    (ivl ivr : yjs.item.t) (olidl oridl olidr oridr : option yjs.id.t)
+    (hd tl ml : loc) :
+  ic_loc cl ≠ null ->
+  ic_loc cr ≠ null ->
+  ivl.(yjs.item.left') = ml ->
+  ivl.(yjs.item.right') = ic_loc cr ->
+  ivl.(yjs.item.parent') = ic_parent cl ->
+  item_id (run_head cl) = toYjsId ivl.(yjs.item.id') ->
+  content <$> ic_run cl = explode (toContent ivl.(yjs.item.content')) ->
+  origin_id (origin (run_head cl)) = toYjsId <$> olidl ->
+  origin_id (rightOrigin (run_head cl)) = toYjsId <$> oridl ->
+  ivl.(yjs.item.flags') = (if ic_deleted cl then W8 6 else W8 2) ->
+  run_wf (ic_run cl) ->
+  ivr.(yjs.item.left') = ic_loc cl ->
+  ivr.(yjs.item.parent') = ic_parent cr ->
+  item_id (run_head cr) = toYjsId ivr.(yjs.item.id') ->
+  content <$> ic_run cr = explode (toContent ivr.(yjs.item.content')) ->
+  origin_id (origin (run_head cr)) = toYjsId <$> olidr ->
+  origin_id (rightOrigin (run_head cr)) = toYjsId <$> oridr ->
+  ivr.(yjs.item.flags') = (if ic_deleted cr then W8 6 else W8 2) ->
+  run_wf (ic_run cr) ->
+  own_dll dq hd ml null (ic_loc cl) cs1 ∗
+  ic_loc cl ↦{dq} ivl ∗
+  is_origin_id ivl.(yjs.item.originLeftId') olidl ∗
+  is_origin_id ivl.(yjs.item.originRightId') oridl ∗
+  ic_loc cr ↦{dq} ivr ∗
+  is_origin_id ivr.(yjs.item.originLeftId') olidr ∗
+  is_origin_id ivr.(yjs.item.originRightId') oridr ∗
+  own_dll dq ivr.(yjs.item.right') tl (ic_loc cr) null cs2
+  ⊢ own_dll dq hd tl null null (cs1 ++ cl :: cr :: cs2).
+Proof.
+  move=> Hclnn Hcrnn Hivl_l Hivl_r Hivl_p Hclid Hclcont Holidl Horidl Hclflags Hclrun
+         Hivr_l Hivr_p Hcrid Hcrcont Holidr Horidr Hcrflags Hcrrun.
+  iIntros "(Hdll1 & Hnodel & Holl & Horl & Hnoder & Holr & Horr & Hdll2)".
+  iAssert (own_dll dq (ic_loc cr) tl (ic_loc cl) null (cr :: cs2))
+    with "[Hnoder Holr Horr Hdll2]" as "Hdllr".
+  { simpl. iExists ivr, olidr, oridr. iFrame "Hnoder Holr Horr Hdll2".
+    iPureIntro; split_and!;
+      [reflexivity | exact Hcrnn | exact Hivr_l | exact Hivr_p | exact Hcrid | exact Hcrcont
+      | exact Holidr | exact Horidr | exact Hcrflags | exact Hcrrun]. }
+  iApply (own_dll_insert_middle dq cs1 (cr :: cs2) cl ivl olidl oridl hd tl ml (ic_loc cr)
+            Hclnn Hivl_l Hivl_r Hivl_p Hclid Hclcont Holidl Horidl Hclflags Hclrun).
+  iFrame "Hdll1 Hnodel Holl Horl Hdllr".
+Qed.
+
 (** A DLL headed by [null] is empty. *)
 Lemma own_dll_null_nil dq last prev next cells :
   own_dll dq null last prev next cells -∗ ⌜cells = []⌝.
