@@ -173,16 +173,19 @@ func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 	n.right = right
 	// Insert the right node into the client's run list just after n
 	// (y-octo: items.insert(index + 1, right)), keeping it clock-sorted.
-	// Built as three disjoint appends into a fresh slice (rather than the
-	// in-place grow+copy+set idiom) so the insertion is an aliasing-free
-	// slice concatenation: prefix through the found node, the new right node,
-	// then the suffix. Same result as items.insert(index+1, right).
+	// Built by copying the prefix and suffix into a fresh, pre-sized slice
+	// (rather than the in-place grow+copy+set idiom, or appends into a nil
+	// slice) so every copy is between DISJOINT backing arrays: the standard
+	// wp_slice_copy models it directly, with no overlapping-copy or
+	// append-into-nil edge case. Same result as items.insert(index+1, right).
 	nodes := s.items[n.id.clientId]
 	index, _ := getNodeIndex(nodes, n.id.clock)
-	var newNodes []*item
-	newNodes = append(newNodes, nodes[:index+1]...)
-	newNodes = append(newNodes, right)
-	newNodes = append(newNodes, nodes[index+1:]...)
+	prefix := nodes[:index+1]
+	suffix := nodes[index+1:]
+	newNodes := make([]*item, uint64(len(nodes))+1)
+	copy(newNodes, prefix)
+	newNodes[index+1] = right
+	copy(newNodes[index+2:], suffix)
 	s.items[n.id.clientId] = newNodes
 	return n, right
 }
