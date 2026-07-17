@@ -2398,8 +2398,15 @@ Proof using Type*.
     { intros c0 Hc0 Hcc0. rewrite Hidnit in Hcc0 |- *.
       exact (Hbndj c0 Hc0 j (RootId nmj, input) ltac:(lia) Hinput Hcc0). }
     iDestruct (big_sepM_delete _ _ pj _ Htsj with "Htypes") as "[[Hyt _] Htypesrest]".
+    have Hfitscj : ∀ c0, c0 ∈ cellsj -> cell_fits c0.
+    { move=> c0 Hc0.
+      have Hmem : c0 ∈ all_cells typesj.
+      { rewrite (all_cells_lookup _ _ _ Htsj). apply elem_of_app. left. exact Hc0. }
+      have Hu : cell_unit c0 := proj1 (Forall_forall _ _) Hunitcj c0 Hc0.
+      have Hnw := Hnowrapj c0 Hmem.
+      rewrite /cell_fits. rewrite /cell_unit in Hu. rewrite Hu. lia. }
     wp_apply (wp_Store__Integrate_nil s pj itv arrj input nit cellsj typesj mref leftIdx rightIdx
-                Hinvj Htoit Hvld Hmaxj HfindL HfindR Htsj Hgmaxj Hunitcj
+                Hinvj Htoit Hvld Hmaxj HfindL HfindR Htsj Hgmaxj Hunitcj Hfitscj
                 with "[$Hyt $Hlinked $Hitemsf $Hitemmap]").
     iIntros (arr2' iidx2 cells'' c2)
       "(%Hile2 & %Harr2eq & %Hinv2 & Htext2 & Hitemsf & Hitemmap & %Hperm2 & %Hsi2 & %Hnode2)".
