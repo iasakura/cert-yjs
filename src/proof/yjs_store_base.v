@@ -648,6 +648,45 @@ Proof.
   rewrite Hck1 Hck2 -Hr1 -Hr2 in Hd. exact Hd.
 Qed.
 
+(** A cell's clock range [clock, clock + len) fits in [w64] arithmetic without
+    wrapping (issue #28 part 6). This is the run-aware strengthening of the
+    per-cell [+ 1 < 2^64] no-wrap: [getNodeIndex] computes [middleClock + Len()]
+    and the conflict scan's [idSpan] range test computes [clock + len], both in
+    [w64], so every pooled cell must satisfy it. It cannot be derived per call
+    on the [Text.Insert] path (the public spec carries no premise about remote
+    clients' clocks), hence it lives in the store invariant. *)
+Definition cell_fits (c : item_cell) : Prop :=
+  (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z.
+
+(** [cell_fits] only reads a cell's run; the same reshuffle transport as the
+    other two pool invariants. *)
+Lemma locs_run_perm_fits (pool1 pool2 : list item_cell) :
+  (λ c, (ic_loc c, ic_run c)) <$> pool2 ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> pool1 ->
+  (∀ c, c ∈ pool1 → cell_fits c) -> (∀ c, c ∈ pool2 → cell_fits c).
+Proof.
+  move=> Hperm Hfits c Hc.
+  have Hin : (ic_loc c, ic_run c) ∈ ((λ c0, (ic_loc c0, ic_run c0)) <$> pool1).
+  { rewrite -Hperm. exact (list_elem_of_fmap_2 _ _ _ Hc). }
+  apply list_elem_of_fmap in Hin as (c' & Heq & Hc').
+  have Hr : ic_run c = ic_run c' := f_equal snd Heq.
+  have Hf := Hfits c' Hc'.
+  rewrite /cell_fits /cell_clock /run_head Hr. exact Hf.
+Qed.
+
+(** [cell_fits] survives an integrate splice: membership transport over the
+    snoc permutation. *)
+Lemma fits_snoc (pool1 pool2 : list item_cell) (c : item_cell) :
+  pool2 ≡ₚ pool1 ++ [c] ->
+  cell_fits c ->
+  (∀ c0, c0 ∈ pool1 → cell_fits c0) ->
+  (∀ c0, c0 ∈ pool2 → cell_fits c0).
+Proof.
+  move=> Hperm Hfc Hfits c0 Hc0.
+  rewrite Hperm in Hc0. apply elem_of_app in Hc0 as [Hc0 | Hc0].
+  - exact (Hfits c0 Hc0).
+  - apply list_elem_of_singleton in Hc0 as ->. exact Hfc.
+Qed.
+
 (** [cell_kp] bundles a cell's (client, clock, loc). The slice/run preservation
     consumes a [cell_kp] multiset permutation; on this base the integrate splice
     gives an EXACT [item_cell] permutation [cells' ≡ₚ cells ++ [new]] (the cell
@@ -1121,6 +1160,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     (* part-6 pool invariants (issue #28): the split branches' index pin *)
     "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
     "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝ ∗
+    "%Hrunfits" ∷ ⌜∀ c, c ∈ all_cells types → cell_fits c⌝ ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
     "%Hbindtypes" ∷ ⌜∀ name p, bind !! name = Some p → is_Some (types !! p)⌝ ∗
@@ -1396,7 +1436,8 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (* part-6 pool invariants (issue #28): heap-level facts the model does not
        determine, so [own_store] carries them (store_inv ⊣⊢ ∃ own_store) *)
     "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
-    "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝.
+    "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝ ∗
+    "%Hrunfits" ∷ ⌜∀ c, c ∈ all_cells types → cell_fits c⌝.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
    Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked
@@ -1633,6 +1674,8 @@ Proof.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
   iSplitR. { iPureIntro. rewrite /types /all_cells map_to_list_empty /=. constructor. }
   iSplitR. { iPureIntro. move=> c1 c2 Hc1. exfalso. move: Hc1.
+    rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
+  iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
   iSplitR. { rewrite big_sepM_empty //. }
   iPureIntro. split_and!.

@@ -2084,6 +2084,7 @@ Proof.
       exact (Hctr p ts x Hts Hx Hcx).
     + exact Hlocdup.
     + exact Hrangedisj.
+    + exact Hrunfits.
   - iIntros "H". iDestruct "H" as (c h m) "H". iNamed "H". subst c.
     iDestruct (types_repr_all with "Htypes") as %Hreprall.
     iDestruct (types_unit_all with "Htypes") as %Hunitall.
@@ -2119,7 +2120,7 @@ Proof.
     iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset HtypesAuth Hbinds Hhist".
     iPureIntro. split_and!;
       [exact Hctrt | exact Hcellctr | exact Hlocdup | exact Hrangedisj
-      | exact Hbindtypes | exact Hbindinj
+      | exact Hrunfits | exact Hbindtypes | exact Hbindinj
       | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom].
 Qed.
 
@@ -2827,6 +2828,19 @@ Proof using Type*.
     destruct (ValidReplay_prov inputs m m' Hvr t x Hx) as [Hold | (i & ti & Hi & Hid)].
     - exact (Hctr t x Hold Hcx).
     - exfalso. apply (Hnoc i ti Hi). by rewrite -Hid. }
+  (* the run-fits pool invariant survives: old cells keep their value, batch
+     cells are singleton runs at a batch id whose clock has the no-wrap bound *)
+  iDestruct (types_unit_all with "Htypes") as %Hunitall'.
+  have Hrunfits' : ∀ c0, c0 ∈ all_cells types' -> cell_fits c0.
+  { move=> c0 Hc0.
+    destruct (Hprov' c0 Hc0) as [Hold | (i & ti & Hi & Hcc & Hck)].
+    - exact (Hrunfits c0 Hold).
+    - have Hc0m := Hc0. apply all_cells_elem_of in Hc0m.
+      destruct Hc0m as (p & ts & Hts & Hcts).
+      have Hu : cell_unit c0 := proj1 (Forall_forall _ _) (Hunitall' p ts Hts) _ Hcts.
+      rewrite /cell_unit in Hu.
+      rewrite /cell_fits Hck Hu.
+      have := Hnowrapb i ti Hi. word. }
   iModIntro. iApply ("HΦ" $! m').
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
   iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hhist";
@@ -2835,7 +2849,7 @@ Proof using Type*.
   iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
   iPureIntro. split_and!;
     [exact Hclientc | exact Hregcoh' | exact Hcoh' | exact Hctr'
-    | exact Hlocdup' | exact Hrangedisj'].
+    | exact Hlocdup' | exact Hrangedisj' | exact Hrunfits'].
 Qed.
 
 End store_update.
