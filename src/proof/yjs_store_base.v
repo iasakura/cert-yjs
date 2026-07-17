@@ -388,6 +388,84 @@ Proof.
     apply Permutation_map. symmetry. apply (merge_sort_Permutation cell_le L).
 Qed.
 
+Lemma merge_sort_loc_insert (L : list item_cell) (x : item_cell) (i : nat) :
+  (∀ y1 y2, y1 ∈ L → y2 ∈ L → (cell_pr y1).1 = (cell_pr y2).1 → ic_loc y1 = ic_loc y2) ->
+  (∀ y, y ∈ take i (merge_sort cell_le L) → ((cell_pr y).1 < (cell_pr x).1)%Z) ->
+  (∀ y, y ∈ drop i (merge_sort cell_le L) → ((cell_pr x).1 < (cell_pr y).1)%Z) ->
+  ic_loc <$> merge_sort cell_le (L ++ [x])
+  = take i (ic_loc <$> merge_sort cell_le L) ++ ic_loc x :: drop i (ic_loc <$> merge_sort cell_le L).
+Proof.
+  move=> Hkd Hbef Haft.
+  remember (merge_sort cell_le L) as S eqn:HS.
+  have HinL : ∀ z, z ∈ S -> z ∈ L.
+  { move=> z Hz. rewrite HS in Hz. by rewrite (merge_sort_Permutation cell_le L) in Hz. }
+  have HinS_take : ∀ z, z ∈ take i S -> z ∈ S.
+  { move=> z Hz. rewrite -(take_drop i S). apply elem_of_app. by left. }
+  have HinS_drop : ∀ z, z ∈ drop i S -> z ∈ S.
+  { move=> z Hz. rewrite -(take_drop i S). apply elem_of_app. by right. }
+  have HSSp : StronglySorted pr_le (cell_pr <$> S).
+  { rewrite HS. apply SS_cell_pr_merge. }
+  have HABeq : cell_pr <$> S = (cell_pr <$> take i S) ++ (cell_pr <$> drop i S).
+  { by rewrite -fmap_app take_drop. }
+  have HpermSL : cell_pr <$> S ≡ₚ cell_pr <$> L.
+  { rewrite HS. apply Permutation_map. apply (merge_sort_Permutation cell_le L). }
+  have Hpr : cell_pr <$> merge_sort cell_le (L ++ [x])
+           = (cell_pr <$> take i S) ++ cell_pr x :: (cell_pr <$> drop i S).
+  { apply (StronglySorted_unique_strong pr_le).
+    - move=> p1 p2 Hp1 Hp2 H12 H21.
+      have Hkeq : p1.1 = p2.1 by (rewrite /pr_le in H12 H21; lia).
+      apply list_elem_of_fmap in Hp1 as (x1 & -> & Hx1).
+      rewrite (merge_sort_Permutation cell_le (L ++ [x])) in Hx1.
+      have Hp2c : (∃ x2, p2 = cell_pr x2 ∧ x2 ∈ S) ∨ p2 = cell_pr x.
+      { apply elem_of_app in Hp2 as [Hp2 | Hp2].
+        - apply list_elem_of_fmap in Hp2 as (x2 & -> & Hx2).
+          left. exists x2. split; [reflexivity | exact (HinS_take x2 Hx2)].
+        - apply elem_of_cons in Hp2 as [-> | Hp2]; [by right |].
+          apply list_elem_of_fmap in Hp2 as (x2 & -> & Hx2).
+          left. exists x2. split; [reflexivity | exact (HinS_drop x2 Hx2)]. }
+      apply elem_of_app in Hx1 as [Hx1L | Hx1x]; last apply list_elem_of_singleton in Hx1x as ->.
+      + destruct Hp2c as [(x2 & -> & Hx2S) | ->].
+        * have Hx2L := HinL x2 Hx2S.
+          rewrite /cell_pr /=. rewrite /cell_pr /= in Hkeq. f_equal;
+            [exact Hkeq | exact (Hkd x1 x2 Hx1L Hx2L Hkeq)].
+        * exfalso.
+          have Hx1S : x1 ∈ S.
+          { rewrite HS. by rewrite (merge_sort_Permutation cell_le L). }
+          rewrite -(take_drop i S) in Hx1S. apply elem_of_app in Hx1S as [Ht | Hd].
+          -- have := Hbef x1 Ht. lia.
+          -- have := Haft x1 Hd. lia.
+      + destruct Hp2c as [(x2 & -> & Hx2S) | ->]; [| reflexivity].
+        exfalso.
+        rewrite -(take_drop i S) in Hx2S. apply elem_of_app in Hx2S as [Ht | Hd].
+        * have := Hbef x2 Ht. lia.
+        * have := Haft x2 Hd. lia.
+    - apply SS_cell_pr_merge.
+    - apply StronglySorted_app_2.
+      + move=> a c Ha Hc.
+        apply list_elem_of_fmap in Ha as (ya & -> & Hya).
+        apply elem_of_cons in Hc as [-> | Hc].
+        * rewrite /pr_le. have := Hbef ya Hya. lia.
+        * apply list_elem_of_fmap in Hc as (yc & -> & Hyc).
+          rewrite /pr_le. have := Hbef ya Hya. have := Haft yc Hyc. lia.
+      + rewrite HABeq in HSSp. exact (StronglySorted_app_1_l _ _ _ HSSp).
+      + change (cell_pr x :: (cell_pr <$> drop i S)) with ([cell_pr x] ++ (cell_pr <$> drop i S)).
+        apply StronglySorted_app_2.
+        * move=> a c Ha Hc. apply list_elem_of_singleton in Ha as ->.
+          apply list_elem_of_fmap in Hc as (yc & -> & Hyc).
+          rewrite /pr_le. have := Haft yc Hyc. lia.
+        * repeat constructor.
+        * rewrite HABeq in HSSp. exact (StronglySorted_app_1_r _ _ _ HSSp).
+    - transitivity ((cell_pr <$> L) ++ [cell_pr x]).
+      { rewrite (merge_sort_Permutation cell_le (L ++ [x])) fmap_app //. }
+      symmetry. transitivity (cell_pr x :: (cell_pr <$> S)).
+      { rewrite -Permutation_middle -HABeq //. }
+      rewrite HpermSL.
+      by rewrite Permutation_cons_append. }
+  rewrite (ic_loc_fmap_pr (merge_sort cell_le (L ++ [x]))) Hpr.
+  rewrite fmap_app fmap_cons -!ic_loc_fmap_pr -fmap_take -fmap_drop.
+  done.
+Qed.
+
 (** [concat] respects permutation of the outer list. *)
 Lemma concat_perm {D : Type} (ll1 ll2 : list (list D)) :
   ll1 ≡ₚ ll2 -> concat ll1 ≡ₚ concat ll2.
@@ -550,6 +628,83 @@ Proof.
       rewrite /Lpre list_elem_of_filter in Hy2.
       apply (Hclkloc y1 y2 (proj2 Hy1) (proj2 Hy2)); [rewrite (proj1 Hy1) (proj1 Hy2) // | exact Hk].
     - move=> y Hy. rewrite /Lpre list_elem_of_filter in Hy. apply (Hmax y (proj2 Hy) (proj1 Hy)). }
+  rewrite fmap_app /=. exact Hpermf.
+Qed.
+
+(** The insert-at-position-[i] analogue of [client_run_loc_tail]: when the new
+    cell's clock is NOT maximal but sits strictly between the sorted-run cells
+    at [i-1] and [i] (the two [take]/[drop] strict-clock premises), its loc lands
+    at position [i]. This is the [store.splitNode] item-map effect: the right
+    half is inserted just after its (unchanged-loc) left half in the client run.
+    Wraps [merge_sort_loc_insert] the way the tail lemma wraps
+    [merge_sort_loc_snoc]. *)
+Lemma client_run_loc_insert (types types2 : gmap loc type_state) (newcell : item_cell) (i : nat) :
+  cell_kp <$> all_cells types2 ≡ₚ (cell_kp <$> all_cells types) ++ [cell_kp newcell] ->
+  (∀ c1 c2, c1 ∈ all_cells types → c2 ∈ all_cells types → cell_client c1 = cell_client c2 →
+            (cell_pr c1).1 = (cell_pr c2).1 → ic_loc c1 = ic_loc c2) ->
+  (∀ y, y ∈ take i (client_run types (cell_client newcell)) → ((cell_pr y).1 < (cell_pr newcell).1)%Z) ->
+  (∀ y, y ∈ drop i (client_run types (cell_client newcell)) → ((cell_pr newcell).1 < (cell_pr y).1)%Z) ->
+  ic_loc <$> client_run types2 (cell_client newcell)
+  = take i (ic_loc <$> client_run types (cell_client newcell))
+      ++ ic_loc newcell :: drop i (ic_loc <$> client_run types (cell_client newcell)).
+Proof.
+  move=> Hkp Hclkloc Hbef Haft.
+  set client := cell_client newcell.
+  set Lpre := filter (λ c, cell_client c = client) (all_cells types).
+  set Lpost := filter (λ c, cell_client c = client) (all_cells types2).
+  have Hkp2 : cell_kp <$> all_cells types2 ≡ₚ cell_kp <$> (all_cells types ++ [newcell]).
+  { rewrite fmap_app /=. exact Hkp. }
+  have Hfilt : filter (λ c, cell_client c = client) (all_cells types ++ [newcell])
+             = Lpre ++ [newcell].
+  { rewrite filter_app /Lpre. f_equal. rewrite filter_cons.
+    rewrite decide_True; [reflexivity | rewrite /client; reflexivity]. }
+  have Hpermf : cell_pr <$> Lpost ≡ₚ (cell_pr <$> Lpre) ++ [cell_pr newcell].
+  { rewrite /Lpost (cell_pr_filter_perm client (all_cells types2) (all_cells types ++ [newcell]) Hkp2).
+    rewrite Hfilt fmap_app /=. reflexivity. }
+  have HLpre_CR : ∀ z, z ∈ Lpre → z ∈ client_run types client.
+  { move=> z Hz. change (client_run types client) with (merge_sort cell_le Lpre).
+    by rewrite (merge_sort_Permutation cell_le Lpre). }
+  have Hkd_pre : ∀ y1 y2, y1 ∈ Lpre → y2 ∈ Lpre → (cell_pr y1).1 = (cell_pr y2).1 → ic_loc y1 = ic_loc y2.
+  { move=> y1 y2 Hy1 Hy2 Hk. rewrite /Lpre list_elem_of_filter in Hy1.
+    rewrite /Lpre list_elem_of_filter in Hy2.
+    apply (Hclkloc y1 y2 (proj2 Hy1) (proj2 Hy2)); [rewrite (proj1 Hy1) (proj1 Hy2) // | exact Hk]. }
+  have Hkdl2 : ∀ x y, x ∈ Lpre ++ [newcell] → y ∈ Lpre ++ [newcell] →
+                (cell_pr x).1 = (cell_pr y).1 → ic_loc x = ic_loc y.
+  { move=> x y Hx Hy Hxy.
+    have Hin : ∀ z, z ∈ Lpre ++ [newcell] → (z ∈ all_cells types ∧ cell_client z = client) ∨ z = newcell.
+    { move=> z Hz. apply elem_of_app in Hz as [Hz | Hz].
+      - left. rewrite /Lpre list_elem_of_filter in Hz. tauto.
+      - right. by apply list_elem_of_singleton in Hz. }
+    destruct (Hin x Hx) as [[Hxa Hxc] | ->]; destruct (Hin y Hy) as [[Hya Hyc] | ->].
+    - apply (Hclkloc x y Hxa Hya); [rewrite Hxc Hyc // | exact Hxy].
+    - exfalso.
+      have HxLpre : x ∈ Lpre by (rewrite /Lpre list_elem_of_filter; split; [exact Hxc | exact Hxa]).
+      have HxS : x ∈ client_run types client := HLpre_CR x HxLpre.
+      rewrite -(take_drop i (client_run types client)) in HxS. apply elem_of_app in HxS as [Ht|Hd].
+      + have := Hbef x Ht. lia.
+      + have := Haft x Hd. lia.
+    - exfalso.
+      have HyLpre : y ∈ Lpre by (rewrite /Lpre list_elem_of_filter; split; [exact Hyc | exact Hya]).
+      have HyS : y ∈ client_run types client := HLpre_CR y HyLpre.
+      rewrite -(take_drop i (client_run types client)) in HyS. apply elem_of_app in HyS as [Ht|Hd].
+      + have := Hbef y Ht. lia.
+      + have := Haft y Hd. lia.
+    - reflexivity. }
+  have Hcross : ∀ x1 x2, x1 ∈ Lpost → x2 ∈ Lpre ++ [newcell] →
+                  (cell_pr x1).1 = (cell_pr x2).1 → ic_loc x1 = ic_loc x2.
+  { move=> x1 x2 Hx1 Hx2 H12.
+    have Hp1 : cell_pr x1 ∈ cell_pr <$> Lpost by apply list_elem_of_fmap_2.
+    rewrite Hpermf in Hp1.
+    have Hp1' : cell_pr x1 ∈ cell_pr <$> (Lpre ++ [newcell]) by (rewrite fmap_app /=; exact Hp1).
+    apply list_elem_of_fmap in Hp1' as (x2' & Hx1eq & Hx2').
+    have Hloc1 : ic_loc x1 = ic_loc x2' by (rewrite /cell_pr /= in Hx1eq; injection Hx1eq; auto).
+    rewrite Hloc1. apply (Hkdl2 x2' x2 Hx2' Hx2). rewrite -Hx1eq. exact H12. }
+  rewrite /client_run -/client.
+  rewrite (merge_sort_loc_perm Lpost (Lpre ++ [newcell]) Hcross).
+  { rewrite (merge_sort_loc_insert Lpre newcell i Hkd_pre).
+    - reflexivity.
+    - move=> y Hy. apply Hbef. exact Hy.
+    - move=> y Hy. apply Haft. exact Hy. }
   rewrite fmap_app /=. exact Hpermf.
 Qed.
 
