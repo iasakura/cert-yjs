@@ -687,6 +687,45 @@ Proof.
   - apply list_elem_of_singleton in Hc0 as ->. exact Hfc.
 Qed.
 
+(** A cell head's same-client left origin strictly precedes it in clock
+    (causal creation order, issue #28 stage C1b): the premise of
+    [block_query_head], which lets the scan's whole-run span query collapse
+    to [setfii_block_step]'s head-only accumulator test. Only the HEAD's
+    origin needs the invariant: tail chars' origins are in-run by [run_wf].
+    Local inserts satisfy it by the clock counter; remote integrations by
+    per-client causal delivery (the update batch's freshness bound). *)
+Definition cell_origin_clk (c : item_cell) : Prop :=
+  ∀ oid, origin_id (origin (run_head c)) = Some oid →
+    clientId oid = clientId (item_id (run_head c)) →
+    (clock oid < clock (item_id (run_head c)))%nat.
+
+Lemma originclk_snoc (pool1 pool2 : list item_cell) (c : item_cell) :
+  pool2 ≡ₚ pool1 ++ [c] ->
+  cell_origin_clk c ->
+  (∀ c0, c0 ∈ pool1 → cell_origin_clk c0) ->
+  (∀ c0, c0 ∈ pool2 → cell_origin_clk c0).
+Proof.
+  move=> Hperm Hoc Hall c0 Hc0.
+  rewrite Hperm in Hc0. apply elem_of_app in Hc0 as [Hc0 | Hc0].
+  - exact (Hall c0 Hc0).
+  - apply list_elem_of_singleton in Hc0 as ->. exact Hoc.
+Qed.
+
+(** [cell_origin_clk] only reads a cell's run; the same reshuffle transport
+    as the other pool invariants. *)
+Lemma locs_run_perm_originclk (pool1 pool2 : list item_cell) :
+  (λ c, (ic_loc c, ic_run c)) <$> pool2 ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> pool1 ->
+  (∀ c, c ∈ pool1 → cell_origin_clk c) -> (∀ c, c ∈ pool2 → cell_origin_clk c).
+Proof.
+  move=> Hperm Hall c Hc.
+  have Hin : (ic_loc c, ic_run c) ∈ ((λ c0, (ic_loc c0, ic_run c0)) <$> pool1).
+  { rewrite -Hperm. exact (list_elem_of_fmap_2 _ _ _ Hc). }
+  apply list_elem_of_fmap in Hin as (c' & Heq & Hc').
+  have Hr : ic_run c = ic_run c' := f_equal snd Heq.
+  have Hoc := Hall c' Hc'.
+  rewrite /cell_origin_clk /run_head Hr. exact Hoc.
+Qed.
+
 (** [cell_kp] bundles a cell's (client, clock, loc). The slice/run preservation
     consumes a [cell_kp] multiset permutation; on this base the integrate splice
     gives an EXACT [item_cell] permutation [cells' ≡ₚ cells ++ [new]] (the cell
@@ -1161,6 +1200,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
     "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝ ∗
     "%Hrunfits" ∷ ⌜∀ c, c ∈ all_cells types → cell_fits c⌝ ∗
+    "%Horiginclk" ∷ ⌜∀ c, c ∈ all_cells types → cell_origin_clk c⌝ ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
     "%Hbindtypes" ∷ ⌜∀ name p, bind !! name = Some p → is_Some (types !! p)⌝ ∗
@@ -1437,7 +1477,8 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
        determine, so [own_store] carries them (store_inv ⊣⊢ ∃ own_store) *)
     "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
     "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝ ∗
-    "%Hrunfits" ∷ ⌜∀ c, c ∈ all_cells types → cell_fits c⌝.
+    "%Hrunfits" ∷ ⌜∀ c, c ∈ all_cells types → cell_fits c⌝ ∗
+    "%Horiginclk" ∷ ⌜∀ c, c ∈ all_cells types → cell_origin_clk c⌝.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
    Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked
@@ -1674,6 +1715,8 @@ Proof.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
   iSplitR. { iPureIntro. rewrite /types /all_cells map_to_list_empty /=. constructor. }
   iSplitR. { iPureIntro. move=> c1 c2 Hc1. exfalso. move: Hc1.
+    rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
+  iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
   iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }

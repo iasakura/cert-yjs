@@ -61,7 +61,7 @@ Proof.
     iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hregcoh | exact Hhcoh | exact Hctr
-      | exact Hlocdup | exact Hrangedisj | exact Hrunfits].
+      | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk].
   - iPureIntro. exact Hhcoh.
 Qed.
 
