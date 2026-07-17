@@ -472,6 +472,39 @@ Definition own_linked_item (item_l : loc) (input : IntegrateInput (A := A))
     ⌜iv.(yjs.item.flags') = W8 2⌝ ∗
     ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝.
 
+(** The not-yet-integrated item's location is fresh for the whole cell pool
+    (issue #28 part 6): the [Hlocdup] maintenance source at each integrate. *)
+Lemma linked_item_fresh (item_l parent lft rgt : loc)
+    (input : IntegrateInput (A := A)) (dq : dfrac) (types : gmap loc type_state) :
+  own_linked_item item_l input parent lft rgt -∗
+  ([∗ map] p ↦ ts ∈ types,
+      own_ytype_cells p dq (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
+  ⌜item_l ∉ ic_loc <$> all_cells types⌝.
+Proof.
+  iIntros "Hlinked Htypes".
+  iDestruct "Hlinked" as (iv oleft oright) "(Hraw & _)".
+  iDestruct "Hraw" as "(Hitem & _)".
+  iApply (all_cells_fresh3 with "Hitem Htypes").
+Qed.
+
+(** [linked_item_fresh] against a single type's cells (the shape the
+    [Text.Insert] loop holds for its own type). *)
+Lemma linked_item_fresh_ytype (item_l parent2 lft rgt parent : loc)
+    (input : IntegrateInput (A := A)) (dq : dfrac)
+    (cells : list item_cell) (arr : list (YjsItem A)) :
+  own_linked_item item_l input parent2 lft rgt -∗
+  own_ytype_cells parent dq cells arr -∗
+  ⌜item_l ∉ ic_loc <$> cells⌝.
+Proof.
+  iIntros "Hlinked Hyt".
+  iDestruct "Hlinked" as (iv oleft oright) "(Hraw & _)".
+  iDestruct "Hraw" as "(Hitem & _)".
+  iDestruct "Hyt" as (yt tl) "(_ & Hdll & _)".
+  iApply (own_dll_fresh with "Hitem Hdll").
+Qed.
+
 (** The algorithmic core (extracted Go function [scanConflicts]): starting at the
     cursor [node_loc cells (leftIdx + 1)] with the anchor at [node_loc cells leftIdx],
     the scan returns the resolved left anchor [node_loc cells (destIdx - 1)], where

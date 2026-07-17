@@ -536,7 +536,7 @@ Lemma all_cells_fresh (p : loc) (v : yjs.item.t) (dq : dfrac) (types : gmap loc 
   p ↦ v -∗
   ([∗ map] parent ↦ ts ∈ types, own_ytype_cells parent dq (ty_cells ts) (ty_arr ts)) -∗
   ⌜p ∉ ic_loc <$> all_cells types⌝.
-Proof.
+Proof using ext ffi ffi_interp0 Σ hG ffi_semantics0 sem package_sem.
   iIntros "Hp Htypes".
   rewrite big_sepM_map_to_list /all_cells.
   remember (map_to_list types) as L eqn:HeqL. clear HeqL.
@@ -548,6 +548,104 @@ Proof.
     iDestruct ("IH" with "Hp Htypes") as %H2.
     iPureIntro. rewrite fmap_app not_elem_of_app.
     split; [exact H1 | exact H2].
+Qed.
+
+(** [all_cells_fresh] over the 3-conjunct store big-sep (the shape the store
+    proofs thread). *)
+Lemma all_cells_fresh3 (p : loc) (v : yjs.item.t) (dq : dfrac) (types : gmap loc type_state) :
+  p ↦ v -∗
+  ([∗ map] parent ↦ ts ∈ types,
+      own_ytype_cells parent dq (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
+  ⌜p ∉ ic_loc <$> all_cells types⌝.
+Proof using ext ffi ffi_interp0 Σ hG ffi_semantics0 sem package_sem.
+  iIntros "Hp Htypes".
+  iDestruct (big_sepM_sep with "Htypes") as "[Hbare _]".
+  iApply (all_cells_fresh with "Hp Hbare").
+Qed.
+
+(* ----- the part-6 pool invariants (issue #28): loc NoDup + range disjointness *)
+
+(** Per-client clock-RANGE disjointness of the document cell pool: two distinct
+    same-client cells occupy disjoint clock intervals [clock, clock + len).
+    This is [wp_store__splitNode]'s [Hdisj] hypothesis shape: it pins the
+    covering cell [getNodeIndex] returns uniquely once runs are multi-char. *)
+Definition cells_range_disjoint (pool : list item_cell) : Prop :=
+  ∀ c1 c2, c1 ∈ pool → c2 ∈ pool →
+    cell_client c1 = cell_client c2 → ic_loc c1 ≠ ic_loc c2 →
+    (uint.Z (cell_clock c1) + Z.of_nat (length (ic_run c1)) ≤ uint.Z (cell_clock c2))%Z ∨
+    (uint.Z (cell_clock c2) + Z.of_nat (length (ic_run c2)) ≤ uint.Z (cell_clock c1))%Z.
+
+(** [NoDup] of the pool's locations survives an integrate splice: the pool
+    grows by exactly one cell at a fresh location ([all_cells_fresh]). *)
+Lemma nodup_locs_snoc (pool1 pool2 : list item_cell) (c : item_cell) :
+  pool2 ≡ₚ pool1 ++ [c] ->
+  ic_loc c ∉ ic_loc <$> pool1 ->
+  NoDup (ic_loc <$> pool1) ->
+  NoDup (ic_loc <$> pool2).
+Proof.
+  move=> Hperm Hfresh Hnd.
+  rewrite Hperm fmap_app /=.
+  apply NoDup_app. split_and!; [exact Hnd | | apply NoDup_singleton].
+  move=> x Hx Hx1. apply list_elem_of_singleton in Hx1. subst x. done.
+Qed.
+
+(** Range disjointness survives an integrate splice whose new cell's range sits
+    fully above every same-client range (the range-aware maximality that the
+    insert counter / remote-op freshness provides). *)
+Lemma rangedisj_snoc (pool1 pool2 : list item_cell) (c : item_cell) :
+  pool2 ≡ₚ pool1 ++ [c] ->
+  (∀ c0, c0 ∈ pool1 → cell_client c0 = cell_client c →
+     (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) ≤ uint.Z (cell_clock c))%Z) ->
+  cells_range_disjoint pool1 ->
+  cells_range_disjoint pool2.
+Proof.
+  move=> Hperm Hmax Hdisj c1 c2 Hc1 Hc2 Hcc Hne.
+  rewrite Hperm in Hc1 Hc2.
+  apply elem_of_app in Hc1 as [Hc1 | Hc1]; apply elem_of_app in Hc2 as [Hc2 | Hc2].
+  - exact (Hdisj c1 c2 Hc1 Hc2 Hcc Hne).
+  - apply list_elem_of_singleton in Hc2 as ->. left. exact (Hmax c1 Hc1 Hcc).
+  - apply list_elem_of_singleton in Hc1 as ->. right. apply (Hmax c2 Hc2). symmetry. exact Hcc.
+  - apply list_elem_of_singleton in Hc1 as ->. apply list_elem_of_singleton in Hc2 as ->. done.
+Qed.
+
+(** Both pool invariants only read a cell's location and run; transport them
+    across a pool reshuffle preserving those (what [Text.Delete]'s
+    [ic_deleted] flip is). *)
+Lemma locs_run_perm_nodup (pool1 pool2 : list item_cell) :
+  (λ c, (ic_loc c, ic_run c)) <$> pool2 ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> pool1 ->
+  NoDup (ic_loc <$> pool1) -> NoDup (ic_loc <$> pool2).
+Proof.
+  move=> Hperm Hnd.
+  have Hcomp : ∀ (l : list item_cell), (fst ∘ (λ c, (ic_loc c, ic_run c))) <$> l = ic_loc <$> l.
+  { elim => [//| a l' IH] /=. by f_equal. }
+  have Hf : (fst ∘ (λ c, (ic_loc c, ic_run c))) <$> pool2 ≡ₚ (fst ∘ (λ c, (ic_loc c, ic_run c))) <$> pool1.
+  { rewrite !list_fmap_compose Hperm //. }
+  rewrite !Hcomp in Hf. by rewrite Hf.
+Qed.
+
+Lemma locs_run_perm_rangedisj (pool1 pool2 : list item_cell) :
+  (λ c, (ic_loc c, ic_run c)) <$> pool2 ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> pool1 ->
+  cells_range_disjoint pool1 -> cells_range_disjoint pool2.
+Proof.
+  move=> Hperm Hdisj c1 c2 Hc1 Hc2 Hcc Hne.
+  have Hlift : ∀ c', c' ∈ pool2 → ∃ c'', c'' ∈ pool1 ∧
+      ic_loc c' = ic_loc c'' ∧ ic_run c' = ic_run c''.
+  { move=> c' Hc'.
+    have Hin : (ic_loc c', ic_run c') ∈ ((λ c0, (ic_loc c0, ic_run c0)) <$> pool1).
+    { rewrite -Hperm. exact (list_elem_of_fmap_2 _ _ _ Hc'). }
+    apply list_elem_of_fmap in Hin as (c'' & Heq & Hc'').
+    exists c''. split; [exact Hc'' |].
+    split; [exact (f_equal fst Heq) | exact (f_equal snd Heq)]. }
+  destruct (Hlift c1 Hc1) as (c1' & Hc1' & Hl1 & Hr1).
+  destruct (Hlift c2 Hc2) as (c2' & Hc2' & Hl2 & Hr2).
+  have Hcl1 : cell_client c1' = cell_client c1 by (rewrite /cell_client /run_head -Hr1 //).
+  have Hcl2 : cell_client c2' = cell_client c2 by (rewrite /cell_client /run_head -Hr2 //).
+  have Hck1 : cell_clock c1' = cell_clock c1 by (rewrite /cell_clock /run_head -Hr1 //).
+  have Hck2 : cell_clock c2' = cell_clock c2 by (rewrite /cell_clock /run_head -Hr2 //).
+  have Hd := Hdisj c1' c2' Hc1' Hc2' ltac:(rewrite Hcl1 Hcl2 //) ltac:(rewrite -Hl1 -Hl2 //).
+  rewrite Hck1 Hck2 -Hr1 -Hr2 in Hd. exact Hd.
 Qed.
 
 (** [cell_kp] bundles a cell's (client, clock, loc). The slice/run preservation
@@ -1020,6 +1118,9 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
     "%Hcellctr" ∷ ⌜∀ c, c ∈ all_cells types → cell_client c = client →
                    (uint.Z (cell_clock c) < uint.Z k)%Z⌝ ∗
+    (* part-6 pool invariants (issue #28): the split branches' index pin *)
+    "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
+    "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝ ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
     "%Hbindtypes" ∷ ⌜∀ name p, bind !! name = Some p → is_Some (types !! p)⌝ ∗
@@ -1291,7 +1392,11 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "%Hregcoh" ∷ ⌜doc_registry_coh m bind types⌝ ∗
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
     "%Hctr"   ∷ ⌜∀ (t : TId) x, x ∈ docm_get m t -> clientId (item_id x) = c ->
-                   (clock (item_id x) < uint.nat k)%nat⌝.
+                   (clock (item_id x) < uint.nat k)%nat⌝ ∗
+    (* part-6 pool invariants (issue #28): heap-level facts the model does not
+       determine, so [own_store] carries them (store_inv ⊣⊢ ∃ own_store) *)
+    "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
+    "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
    Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked
@@ -1525,6 +1630,9 @@ Proof.
       rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
   iSplitR. { iPureIntro. move=> parent' ts' x Hlk. rewrite /types lookup_empty // in Hlk. }
   iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
+    rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
+  iSplitR. { iPureIntro. rewrite /types /all_cells map_to_list_empty /=. constructor. }
+  iSplitR. { iPureIntro. move=> c1 c2 Hc1. exfalso. move: Hc1.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
   iSplitR. { rewrite big_sepM_empty //. }
   iPureIntro. split_and!.

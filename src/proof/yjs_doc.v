@@ -59,7 +59,9 @@ Proof.
   iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hhist".
   - iExists client, k, items_mref, types_mref, dset, types, bind.
     iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
-    iPureIntro. split_and!; [exact Hclientc | exact Hregcoh | exact Hhcoh | exact Hctr].
+    iPureIntro. split_and!;
+      [exact Hclientc | exact Hregcoh | exact Hhcoh | exact Hctr
+      | exact Hlocdup | exact Hrangedisj].
   - iPureIntro. exact Hhcoh.
 Qed.
 
