@@ -24,6 +24,7 @@ From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
+From New.proof Require Import yjs_run_theory.
 (* The Go package now imports sync (store.mu : sync.Mutex), so the generated yjs
    package imports sync; building [IsPkgInit yjs] below needs [IsPkgInit sync]
    (and [GetIsPkgInitWf sync]) in scope, provided by the sync proof base. The
@@ -388,5 +389,51 @@ Definition own_id_set (s : slice.t) (dq : dfrac) (gs : gset YjsId) : iProp Σ :=
     "Hcap" ∷ own_slice_cap yjs.idSpan.t s dq ∗
     "%Hwf" ∷ ⌜Forall span_wf vs⌝ ∗
     "%Hset" ∷ ⌜⋃ (span_ids <$> vs) = gs⌝.
+
+(* ----- span <-> run-char bridge (issue #28 M4, stage C1a) ---------------- *)
+
+(** [run_wf]'s chaining clause is [yjs_run_theory]'s [run_step]. *)
+Lemma run_wf_run_step (r : list (YjsItem A)) : run_wf r -> run_step r.
+Proof. move=> [_ Hstep]. exact Hstep. Qed.
+
+(** A scanned node's span denotes exactly its run's char ids: the run's chars
+    sit at the head's client with consecutive clocks from the head
+    ([run_step]), which is what [span_ids] enumerates. Pure nat arithmetic on
+    both sides, so no no-wrap premise is needed here (the [w64] no-wrap only
+    matters for [containsId]'s range test). *)
+Lemma span_ids_char_ids (idv : yjs.id.t) (len : w64)
+    (h : YjsItem A) (tail : list (YjsItem A)) :
+  item_id h = toYjsId idv ->
+  run_step (h :: tail) ->
+  length (h :: tail) = uint.nat len ->
+  span_ids (yjs.idSpan.mk idv len) = char_ids (h :: tail).
+Proof.
+  move=> Hid Hstep Hlen.
+  have Heta : forall i : YjsId, i = MkYjsId (clientId i) (clock i) by move=> [] //.
+  apply set_eq => x.
+  rewrite /span_ids /char_ids !elem_of_list_to_set !list_elem_of_fmap.
+  split.
+  - move=> [o [-> Ho]]. apply elem_of_seq in Ho. simpl in Ho.
+    destruct o as [|k].
+    + exists h. split; [| apply elem_of_cons; by left].
+      rewrite Hid /toYjsId /= Nat.add_0_r //.
+    + have Hk : (k < length tail)%nat by (simpl in Hlen; lia).
+      destruct (lookup_lt_is_Some_2 tail k Hk) as [y Hy].
+      exists y. split; [| apply elem_of_cons; right; by eapply list_elem_of_lookup_2].
+      destruct (run_step_tail_ids h tail Hstep k y Hy) as [Hcl Hck].
+      rewrite (Heta (item_id y)) Hcl Hck Hid /toYjsId /=.
+      f_equal. lia.
+  - move=> [y [-> Hy]]. apply elem_of_cons in Hy as [-> | Hy].
+    + exists 0%nat. split.
+      * rewrite Hid /toYjsId /= Nat.add_0_r //.
+      * apply elem_of_seq. simpl. simpl in Hlen. lia.
+    + apply list_elem_of_lookup_1 in Hy as [k Hk].
+      have Hklt : (k < length tail)%nat by (eapply lookup_lt_Some; exact Hk).
+      exists (S k). split.
+      * destruct (run_step_tail_ids h tail Hstep k y Hk) as [Hcl Hck].
+        rewrite (Heta (item_id y)) Hcl Hck Hid /toYjsId /=.
+        f_equal. lia.
+      * apply elem_of_seq. simpl. simpl in Hlen. lia.
+Qed.
 
 End common.
