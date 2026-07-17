@@ -528,6 +528,28 @@ Proof.
   rewrite -!app_assoc. apply Permutation_app_head. apply Permutation_app_comm.
 Qed.
 
+(** A fully-owned node struct's location is fresh for the whole document cell
+    pool: the source of the [NoDup (ic_loc <$> all_cells types)] maintenance
+    when a freshly allocated node is spliced in (issue #28 part 6). Stated over
+    the bare [own_ytype_cells] big-sep; callers peel the pure conjuncts. *)
+Lemma all_cells_fresh (p : loc) (v : yjs.item.t) (dq : dfrac) (types : gmap loc type_state) :
+  p ↦ v -∗
+  ([∗ map] parent ↦ ts ∈ types, own_ytype_cells parent dq (ty_cells ts) (ty_arr ts)) -∗
+  ⌜p ∉ ic_loc <$> all_cells types⌝.
+Proof.
+  iIntros "Hp Htypes".
+  rewrite big_sepM_map_to_list /all_cells.
+  remember (map_to_list types) as L eqn:HeqL. clear HeqL.
+  iInduction L as [|[parent ts] L] "IH".
+  - iPureIntro. apply not_elem_of_nil.
+  - simpl. iDestruct "Htypes" as "[Hhd Htypes]".
+    iDestruct "Hhd" as (yt tl) "(Hyt & Hdll & _)".
+    iDestruct (own_dll_fresh with "Hp Hdll") as %H1.
+    iDestruct ("IH" with "Hp Htypes") as %H2.
+    iPureIntro. rewrite fmap_app not_elem_of_app.
+    split; [exact H1 | exact H2].
+Qed.
+
 (** [cell_kp] bundles a cell's (client, clock, loc). The slice/run preservation
     consumes a [cell_kp] multiset permutation; on this base the integrate splice
     gives an EXACT [item_cell] permutation [cells' ≡ₚ cells ++ [new]] (the cell
