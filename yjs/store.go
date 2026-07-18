@@ -160,6 +160,11 @@ func containsId(s []id, id id) bool {
 // (candidate upstream bug, see docs/plan-issue-28-runs-split.md).
 func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 	olid := newId(n.id.clientId, n.id.clock+diff-1)
+	// Split the content through a []byte round-trip rather than slicing the
+	// string directly: Perennial's goose model has no reduction for slicing a
+	// Go string (Slice go.string), whereas byte-slice slicing steps normally
+	// (same reason Insert uses string(content[i]) instead of content[i:i+1]).
+	cb := []byte(n.content.content)
 	right := &item{
 		id:            newId(n.id.clientId, n.id.clock+diff),
 		originLeftId:  &olid,
@@ -167,22 +172,30 @@ func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 		left:          n,
 		right:         n.right,
 		parent:        n.parent,
-		content:       content{content: n.content.content[diff:]},
+		content:       content{content: string(cb[diff:])},
 		flags:         n.flags,
 	}
-	n.content = content{content: n.content.content[:diff]}
+	n.content = content{content: string(cb[:diff])}
 	if n.right != nil {
 		n.right.left = right
 	}
 	n.right = right
 	// Insert the right node into the client's run list just after n
 	// (y-octo: items.insert(index + 1, right)), keeping it clock-sorted.
+	// Built by copying the prefix and suffix into a fresh, pre-sized slice
+	// (rather than the in-place grow+copy+set idiom, or appends into a nil
+	// slice) so every copy is between DISJOINT backing arrays: the standard
+	// wp_slice_copy models it directly, with no overlapping-copy or
+	// append-into-nil edge case. Same result as items.insert(index+1, right).
 	nodes := s.items[n.id.clientId]
 	index, _ := getNodeIndex(nodes, n.id.clock)
-	nodes = append(nodes, nil)
-	copy(nodes[index+2:], nodes[index+1:])
-	nodes[index+1] = right
-	s.items[n.id.clientId] = nodes
+	prefix := nodes[:index+1]
+	suffix := nodes[index+1:]
+	newNodes := make([]*item, uint64(len(nodes))+1)
+	copy(newNodes, prefix)
+	newNodes[index+1] = right
+	copy(newNodes[index+2:], suffix)
+	s.items[n.id.clientId] = newNodes
 	return n, right
 }
 

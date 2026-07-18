@@ -248,6 +248,60 @@ Proof.
     | exact Holidt | exact Horidt | exact Hflags | exact Hrun].
 Qed.
 
+(** Split one run node into two adjacent nodes [cl] (left half, same loc) and
+    [cr] (right half, fresh loc) in place: the caller (the [splitNode] WP) has
+    already truncated [cl]'s struct, allocated [cr]'s struct, and relinked the
+    following segment's head [left'] to [cr]. This is the DLL-spine counterpart
+    of the pure [split_cells] surgery; both [cl] and [cr] carry ordinary node
+    field conditions, discharged from [run_wf] telescoping at the call site. It
+    is [own_dll_insert_middle] applied to [cl], with [cr] pre-consed onto the
+    tail. *)
+Lemma own_dll_split (dq : dfrac) (cs1 cs2 : list item_cell) (cl cr : item_cell)
+    (ivl ivr : yjs.item.t) (olidl oridl olidr oridr : option yjs.id.t)
+    (hd tl ml : loc) :
+  ic_loc cl ≠ null ->
+  ic_loc cr ≠ null ->
+  ivl.(yjs.item.left') = ml ->
+  ivl.(yjs.item.right') = ic_loc cr ->
+  ivl.(yjs.item.parent') = ic_parent cl ->
+  item_id (run_head cl) = toYjsId ivl.(yjs.item.id') ->
+  content <$> ic_run cl = explode (toContent ivl.(yjs.item.content')) ->
+  origin_id (origin (run_head cl)) = toYjsId <$> olidl ->
+  origin_id (rightOrigin (run_head cl)) = toYjsId <$> oridl ->
+  ivl.(yjs.item.flags') = (if ic_deleted cl then W8 6 else W8 2) ->
+  run_wf (ic_run cl) ->
+  ivr.(yjs.item.left') = ic_loc cl ->
+  ivr.(yjs.item.parent') = ic_parent cr ->
+  item_id (run_head cr) = toYjsId ivr.(yjs.item.id') ->
+  content <$> ic_run cr = explode (toContent ivr.(yjs.item.content')) ->
+  origin_id (origin (run_head cr)) = toYjsId <$> olidr ->
+  origin_id (rightOrigin (run_head cr)) = toYjsId <$> oridr ->
+  ivr.(yjs.item.flags') = (if ic_deleted cr then W8 6 else W8 2) ->
+  run_wf (ic_run cr) ->
+  own_dll dq hd ml null (ic_loc cl) cs1 ∗
+  ic_loc cl ↦{dq} ivl ∗
+  is_origin_id ivl.(yjs.item.originLeftId') olidl ∗
+  is_origin_id ivl.(yjs.item.originRightId') oridl ∗
+  ic_loc cr ↦{dq} ivr ∗
+  is_origin_id ivr.(yjs.item.originLeftId') olidr ∗
+  is_origin_id ivr.(yjs.item.originRightId') oridr ∗
+  own_dll dq ivr.(yjs.item.right') tl (ic_loc cr) null cs2
+  ⊢ own_dll dq hd tl null null (cs1 ++ cl :: cr :: cs2).
+Proof.
+  move=> Hclnn Hcrnn Hivl_l Hivl_r Hivl_p Hclid Hclcont Holidl Horidl Hclflags Hclrun
+         Hivr_l Hivr_p Hcrid Hcrcont Holidr Horidr Hcrflags Hcrrun.
+  iIntros "(Hdll1 & Hnodel & Holl & Horl & Hnoder & Holr & Horr & Hdll2)".
+  iAssert (own_dll dq (ic_loc cr) tl (ic_loc cl) null (cr :: cs2))
+    with "[Hnoder Holr Horr Hdll2]" as "Hdllr".
+  { simpl. iExists ivr, olidr, oridr. iFrame "Hnoder Holr Horr Hdll2".
+    iPureIntro; split_and!;
+      [reflexivity | exact Hcrnn | exact Hivr_l | exact Hivr_p | exact Hcrid | exact Hcrcont
+      | exact Holidr | exact Horidr | exact Hcrflags | exact Hcrrun]. }
+  iApply (own_dll_insert_middle dq cs1 (cr :: cs2) cl ivl olidl oridl hd tl ml (ic_loc cr)
+            Hclnn Hivl_l Hivl_r Hivl_p Hclid Hclcont Holidl Horidl Hclflags Hclrun).
+  iFrame "Hdll1 Hnodel Holl Horl Hdllr".
+Qed.
+
 (** A DLL headed by [null] is empty. *)
 Lemma own_dll_null_nil dq last prev next cells :
   own_dll dq null last prev next cells -∗ ⌜cells = []⌝.
@@ -681,6 +735,75 @@ Proof.
   rewrite Hins /num_visible fmap_app fmap_cons list_sum_app /flip_cell /=.
   rewrite -[in pred (list_sum _)](take_drop_middle cells k c Hk).
   rewrite fmap_app fmap_cons list_sum_app /=. rewrite Hd Hu. lia.
+Qed.
+
+(* ----- run-aware generalizations (issue #28 part 6) ----------------------- *)
+
+(** Inserting a *visible* cell adds its whole run length to the visible count:
+    the general form of [num_visible_insert_visible] (the Go bumps [parent.len]
+    by [item.Len()], the run length). *)
+Lemma num_visible_insert_visible_run (cells : list item_cell) (k : nat) (c : item_cell) :
+  ic_deleted c = false ->
+  num_visible (take k cells ++ c :: drop k cells) = (num_visible cells + length (ic_run c))%nat.
+Proof.
+  move=> Hc. rewrite /num_visible.
+  rewrite fmap_app fmap_cons list_sum_app /=. rewrite Hc.
+  rewrite -[in X in _ = (X + _)%nat](take_drop k cells) fmap_app list_sum_app. lia.
+Qed.
+
+(** Tombstoning a visible cell drops the visible count by its run length: the
+    general form of [num_visible_flip]. *)
+Lemma num_visible_flip_run (cells : list item_cell) (k : nat) (c : item_cell) :
+  cells !! k = Some c -> ic_deleted c = false ->
+  num_visible (<[k := flip_cell c]> cells) = (num_visible cells - length (ic_run c))%nat.
+Proof.
+  move=> Hk Hd.
+  have Hins : <[k := flip_cell c]> cells = take k cells ++ flip_cell c :: drop (S k) cells
+    by (apply insert_take_drop; apply lookup_lt_Some in Hk; exact Hk).
+  rewrite Hins /num_visible fmap_app fmap_cons list_sum_app /flip_cell /=.
+  rewrite -[in X in _ = (X - _)%nat](take_drop_middle cells k c Hk).
+  rewrite fmap_app fmap_cons list_sum_app /=. rewrite Hd. lia.
+Qed.
+
+(* ----- location freshness (issue #28 part 6) ------------------------------ *)
+
+(** A fully-owned [item] struct points-to conflicts with any other points-to at
+    the same location. Perennial New's [TypedPointsto] class carries no
+    dfrac-validity law (only [typed_pointsto_agree]), so no generic conflict
+    lemma exists; derive it for [yjs.item.t] concretely through the generated
+    field decomposition and the primitive [heap_pointsto] fraction validity
+    (candidate upstream addition: a validity law in [TypedPointsto]). *)
+Lemma item_pointsto_conflict (l : loc) (v1 v2 : yjs.item.t) (dq : dfrac) :
+  l ↦ v1 -∗ l ↦{dq} v2 -∗ False.
+Proof.
+  iIntros "H1 H2".
+  iDestruct (typed_pointsto_split with "H1") as "H1".
+  iDestruct (typed_pointsto_split with "H2") as "H2".
+  iDestruct "H1" as "(_ & _ & _ & _ & _ & _ & _ & Hf1 & _)".
+  iDestruct "H2" as "(_ & _ & _ & _ & _ & _ & _ & Hf2 & _)".
+  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hf1".
+  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hf2".
+  iDestruct "Hf1" as "[Hf1 _]". iDestruct "Hf2" as "[Hf2 _]".
+  iCombine "Hf1 Hf2" gives %[Hvalid _].
+  exfalso. exact (exclusive_l (DfracOwn 1) dq Hvalid).
+Qed.
+
+(** A fully-owned node struct's location is fresh for any DLL segment: the
+    source of the [NoDup (ic_loc <$> cells)] maintenance when [Integrate] /
+    [splitNode] splice a freshly allocated node (issue #28 part 6). *)
+Lemma own_dll_fresh (dq : dfrac) (p : loc) (v : yjs.item.t)
+    (l last prev next : loc) (cells : list item_cell) :
+  p ↦ v -∗ own_dll dq l last prev next cells -∗ ⌜p ∉ ic_loc <$> cells⌝.
+Proof.
+  iIntros "Hp Hdll".
+  iInduction cells as [|c rest] "IH" forall (l prev).
+  - iPureIntro. apply not_elem_of_nil.
+  - iDestruct "Hdll" as (iv olid orid) "H". iNamed "H".
+    destruct (decide (p = ic_loc c)) as [-> | Hne].
+    + iExFalso. iApply (item_pointsto_conflict with "Hp Hval").
+    + iDestruct ("IH" with "Hp Hrest") as %Hnotin.
+      iPureIntro. rewrite fmap_cons. apply not_elem_of_cons.
+      split; [exact Hne | exact Hnotin].
 Qed.
 
 End item.

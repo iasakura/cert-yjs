@@ -184,6 +184,53 @@ Proof.
   intros k x y' Hx Hy'. destruct k; simpl in *; [done | by destruct k].
 Qed.
 
+(** The head model item survives a nonempty left truncation ([take]) — used by
+    the split's LEFT half ([ic_run = take o (ic_run c)]), which keeps the node's
+    location and head. Stated over the raw run list ([run_head c = hd inhabitant
+    (ic_run c)]); [split_cell_left] lives in [yjs_store_base]. *)
+Lemma hd_inhabitant_take (r : list (YjsItem A)) (o : nat) :
+  (0 < o)%nat -> hd inhabitant (take o r) = hd inhabitant r.
+Proof.
+  move=> Ho. destruct r as [|a r']; first by rewrite take_nil.
+  destruct o; [lia | done].
+Qed.
+
+(** The head of a right drop is the element at the drop offset — the split's
+    RIGHT half heads at [ic_run c !! o]. *)
+Lemma hd_inhabitant_drop (r : list (YjsItem A)) (o : nat) (y : YjsItem A) :
+  r !! o = Some y -> hd inhabitant (drop o r) = y.
+Proof. move=> Ho. rewrite (drop_S r y o Ho) //=. Qed.
+
+(** [run_wf] telescoping: the [o]-th char's id sits exactly [o] clocks past the
+    head's (same client). Feeds the RIGHT half's [id] field condition, where
+    [splitNode] sets [right.id = (client, head_clock + diff)]. *)
+Lemma run_wf_lookup_clock (r : list (YjsItem A)) (o : nat) (x y : YjsItem A) :
+  run_wf r -> r !! 0%nat = Some x -> r !! o = Some y ->
+  item_id y = MkYjsId (clientId (item_id x)) (clock (item_id x) + o).
+Proof.
+  move=> [_ Hstep] Hx. revert y. induction o as [|o IH] => y Hy.
+  - rewrite Hx in Hy. injection Hy as <-. rewrite Nat.add_0_r.
+    destruct (item_id x) as [cl ck]; done.
+  - have [z Hz] : is_Some (r !! o).
+    { apply lookup_lt_is_Some. apply lookup_lt_Some in Hy. lia. }
+    have [Hidy _] := Hstep o z y Hz Hy.
+    rewrite Hidy (IH z Hz) /= Nat.add_succ_r //.
+Qed.
+
+(** [run_wf] telescoping: every char shares the run's right origin. Feeds the
+    RIGHT half's [rightOrigin] condition ([splitNode] keeps [n.originRightId]). *)
+Lemma run_wf_lookup_rightOrigin (r : list (YjsItem A)) (o : nat) (x y : YjsItem A) :
+  run_wf r -> r !! 0%nat = Some x -> r !! o = Some y ->
+  rightOrigin y = rightOrigin x.
+Proof.
+  move=> [_ Hstep] Hx. revert y. induction o as [|o IH] => y Hy.
+  - rewrite Hx in Hy. by injection Hy as <-.
+  - have [z Hz] : is_Some (r !! o).
+    { apply lookup_lt_is_Some. apply lookup_lt_Some in Hy. lia. }
+    have [_ [_ Hro]] := Hstep o z y Hz Hy.
+    rewrite Hro (IH z Hz) //.
+Qed.
+
 (** Per-char explosion of a heap content string: byte k becomes the content of
     the run's k-th model item. (For future non-string content types, this is
     the per-content-type element decomposition.) *)
