@@ -2604,6 +2604,135 @@ Proof.
   - right. rewrite HclkrZ Hlenr. split_and!; lia.
 Qed.
 
+(** [types_cells_id_bounds] over the 2-conjunct big-sep (issue #28 stage D). *)
+Lemma types_cells_id_bounds2 (types : gmap loc type_state) :
+  ([∗ map] parent ↦ ts ∈ types,
+      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  ⌜∀ c, c ∈ all_cells types ->
+     (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
+     (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types,
+      ⌜∀ c, c ∈ ty_cells ts ->
+         (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
+         (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "[Hyt _]".
+    iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    iApply (own_dll_id_bounds with "Hdll"). }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> c Hc.
+  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
+  exact (Hall p ts Hp c Hcts).
+Qed.
+
+(** A split preserves each type's model document, and the map's domain. *)
+Lemma split_types_preserve (types : gmap loc type_state) (parent : loc)
+    (cells : list item_cell) (arr : list (YjsItem A)) (k o : nat) (rloc : loc)
+    (cw : item_cell) :
+  types !! parent = Some (MkTypeState cells arr) ->
+  cells !! k = Some cw ->
+  ∀ p ts', <[parent := MkTypeState (split_cells cells k o rloc) arr]> types !! p = Some ts' ->
+    ∃ ts, types !! p = Some ts ∧ ty_arr ts' = ty_arr ts ∧
+          run_flatten (ty_cells ts') = run_flatten (ty_cells ts).
+Proof.
+  move=> Htypes Hck p ts' Hp.
+  destruct (decide (p = parent)) as [-> | Hne].
+  - rewrite lookup_insert_eq in Hp. injection Hp as <-.
+    exists (MkTypeState cells arr). split_and!; [exact Htypes | done |].
+    rewrite /= (split_cells_flatten cells k o rloc cw Hck) //.
+  - rewrite lookup_insert_ne in Hp; last congruence.
+    exists ts'. split_and!; done.
+Qed.
+
+(** Coverage transport across a split: a pool cell covering a clock is
+    replaced by a covering pool cell of the split map (one of the halves
+    when the covered cell IS the split one). *)
+Lemma split_pool_cover (types : gmap loc type_state) (parent : loc)
+    (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
+    (o : nat) (rloc : loc) (ccl : w64) (clkZ : Z) :
+  types !! parent = Some (MkTypeState cells arr) ->
+  cells !! k = Some cw ->
+  run_wf (ic_run cw) ->
+  (0 < o < length (ic_run cw))%nat ->
+  (Z.of_nat (clock (item_id (run_head cw))) < 2^64)%Z ->
+  (uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)) < 2^64)%Z ->
+  ∀ c, c ∈ all_cells types ->
+    cell_client c = ccl ->
+    (uint.Z (cell_clock c) <= clkZ)%Z ->
+    (clkZ < uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z ->
+    ∃ c', c' ∈ all_cells (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types) ∧
+          cell_client c' = ccl ∧
+          (uint.Z (cell_clock c') <= clkZ)%Z ∧
+          (clkZ < uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')))%Z.
+Proof.
+  move=> Htypes Hck Hrunwf Ho Hckbnd Hfitscw c Hc Hccl Hle Hlt.
+  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck) as (rest & Hold & Hnew).
+  destruct (split_cell_facts cw o rloc Hrunwf Ho)
+    as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
+  rewrite Hold in Hc. apply elem_of_cons in Hc as [-> | Hc].
+  - destruct (split_cell_cover cw o rloc clkZ Hrunwf Ho Hckbnd Hfitscw Hle Hlt)
+      as [(Hd & Hle' & Hlt') | (Hd & Hle' & Hlt')].
+    + exists (split_cell_left cw o). split_and!;
+        [rewrite Hnew; apply list_elem_of_here | rewrite Hclientl; exact Hccl | exact Hle' | exact Hlt'].
+    + exists (split_cell_right cw o rloc). split_and!;
+        [rewrite Hnew; apply elem_of_cons; right; apply list_elem_of_here
+        | rewrite Hclientr; exact Hccl | exact Hle' | exact Hlt'].
+  - exists c. split_and!;
+      [rewrite Hnew; apply elem_of_cons; right; apply elem_of_cons; by right
+      | exact Hccl | exact Hle | exact Hlt].
+Qed.
+
+(** Cells away from the split location survive a split verbatim. *)
+Lemma split_pool_stable (types : gmap loc type_state) (parent : loc)
+    (cells : list item_cell) (arr : list (YjsItem A)) (k o : nat) (rloc : loc)
+    (cw : item_cell) :
+  types !! parent = Some (MkTypeState cells arr) ->
+  cells !! k = Some cw ->
+  ∀ c, c ∈ all_cells types -> ic_loc c ≠ ic_loc cw ->
+    c ∈ all_cells (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types).
+Proof.
+  move=> Htypes Hck c Hc Hlocne.
+  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck) as (rest & Hold & Hnew).
+  rewrite Hold in Hc. apply elem_of_cons in Hc as [-> | Hc].
+  { exfalso. exact (Hlocne eq_refl). }
+  rewrite Hnew. apply elem_of_cons; right. apply elem_of_cons; by right.
+Qed.
+
+(** A split grows only the split client's run list, by one. *)
+Lemma split_pool_client_run_len (types : gmap loc type_state) (parent : loc)
+    (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
+    (o : nat) (rloc : loc) (kc : w64) :
+  types !! parent = Some (MkTypeState cells arr) ->
+  cells !! k = Some cw ->
+  run_wf (ic_run cw) ->
+  (0 < o < length (ic_run cw))%nat ->
+  (length (client_run (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types) kc)
+   <= S (length (client_run types kc)))%nat.
+Proof.
+  move=> Htypes Hck Hrunwf Ho.
+  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck) as (rest & Hold & Hnew).
+  destruct (split_cell_facts cw o rloc Hrunwf Ho)
+    as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
+  rewrite /client_run.
+  have Hmsl : ∀ l : list item_cell, length (merge_sort cell_le l) = length l.
+  { move=> l. apply Permutation_length. apply merge_sort_Permutation. }
+  rewrite !Hmsl.
+  have -> : length (filter (λ c, cell_client c = kc)
+              (all_cells (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types)))
+          = length (filter (λ c, cell_client c = kc)
+              (split_cell_left cw o :: split_cell_right cw o rloc :: rest)).
+  { apply Permutation_length. by rewrite Hnew. }
+  have -> : length (filter (λ c, cell_client c = kc) (all_cells types))
+          = length (filter (λ c, cell_client c = kc) (cw :: rest)).
+  { apply Permutation_length. by rewrite Hold. }
+  rewrite !filter_cons Hclientl Hclientr.
+  case_decide; simpl; lia.
+Qed.
+
 (** [store.getOrCreateYType], lookup-hit case: the name is already bound in
     the registry, so the creation branch is dead and the bound type comes
     back. This is the only case the verified update path needs — see
