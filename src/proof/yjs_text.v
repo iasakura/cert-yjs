@@ -244,11 +244,10 @@ Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (γs : store_names)
            (∀ (j : nat) (itj : YjsItem A),
               i = S j → ins !! j = Some itj → origin it = itemPtr itj)⌝ ∗
       (* the op certificates: one broadcast fragment per inserted item
-         (issues #42/#49; the doc-level op an item denotes is
+         (issues #42/#49/#40; the doc-level op an item denotes is
          [(RootId name, OpInsert (input_of_item it))]) *)
-      (∃ Ds : list (gset YjsId),
-         [∗ list] it;D ∈ ins;Ds,
-           is_op_cert γh (RootId name, OpInsert (input_of_item it)) D) }}}.
+      ([∗ list] it ∈ ins,
+         is_op_cert γh (RootId name, OpInsert (input_of_item it))) }}}.
 Proof.
   (* ---- Prologue: take the store lock, extract THIS text. ---- *)
   wp_start as "Hpre". iNamed "Hpre".
@@ -276,12 +275,12 @@ Proof.
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. split; [exact Hinvarr | exact Hunitc]. }
     iEval (rewrite (insert_id types (tv.(yjs.Text.inner')) ts Htsp)) in "Htypes".
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist]").
+    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iFrame "∗#". iPureIntro.
       split_and!;
-        [exact Hctr | exact Hcellctr | exact Hbindtypes | exact Hbindinj
+        [exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hbindtypes | exact Hbindinj
         | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
@@ -290,7 +289,7 @@ Proof.
     iSplit; [iPureIntro; reflexivity |].
     iSplit; [iPureIntro; left; reflexivity |].
     iSplit; [iPureIntro; intros i it b Hii; rewrite lookup_nil in Hii; inversion Hii |].
-    iExists ([] : list (gset YjsId)). rewrite big_sepL2_nil. done. }
+    rewrite big_sepL_nil. done. }
   (* ---- in-range: insert one 1-char item per byte. ---- *)
   rewrite Hlen in Hbound.
   wp_auto.
@@ -304,12 +303,12 @@ Proof.
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. split; [exact Hinvarr | exact Hunitc]. }
     iEval (rewrite (insert_id types (tv.(yjs.Text.inner')) ts Htsp)) in "Htypes".
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist]").
+    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iFrame "∗#". iPureIntro.
       split_and!;
-        [exact Hctr | exact Hcellctr | exact Hbindtypes | exact Hbindinj
+        [exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hbindtypes | exact Hbindinj
         | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
@@ -318,7 +317,7 @@ Proof.
     iSplit; [iPureIntro; reflexivity |].
     iSplit; [iPureIntro; left; reflexivity |].
     iSplit; [iPureIntro; intros i it b Hii; rewrite lookup_nil in Hii; inversion Hii |].
-    iExists ([] : list (gset YjsId)). rewrite big_sepL2_nil. done. }
+    rewrite big_sepL_nil. done. }
   (* no overflow: the run fits. *)
   have Hnoof : (uint.Z k + Z.of_nat (length cs) < 2^64)%Z by word.
   wp_auto.
@@ -398,7 +397,7 @@ Proof.
      the ghost history [hj] grows by one mint per inserted item, staying coherent
      with [arr], and the certificates of the run accumulate in [Hcertsj]. *)
   iAssert (∃ (j : nat) (arr : list (YjsItem A)) (cells : list item_cell) (leftloc : loc)
-             (ins : list (YjsItem A)) (hj : list Ev) (Ds : list (gset YjsId)),
+             (ins : list (YjsItem A)) (hj : list Ev),
     "Hi" ∷ i_ptr ↦ W64 j ∗
     "Htptr" ∷ t_ptr ↦ t ∗
     "Hcontentp" ∷ content_ptr ↦ cs ∗
@@ -447,15 +446,15 @@ Proof.
        cell_client c0 = client → (uint.Z (cell_clock c0) < uint.Z k + Z.of_nat j)%Z⌝ ∗
     "Hhistj" ∷ own_client_history γh (uint.nat client) hj ∗
     "%Hhcohj" ∷ ⌜history_state_coh hj (<[RootId name := arr]> m)⌝ ∗
-    "Hcertsj" ∷ ([∗ list] it;D ∈ ins;Ds,
-                   is_op_cert γh (RootId name, OpInsert (input_of_item it)) D)
+    "Hcertsj" ∷ ([∗ list] it ∈ ins,
+                   is_op_cert γh (RootId name, OpInsert (input_of_item it)))
     )%I with "[i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq HtypesAuth Htypesmap Hright Hclose Htext Hhist]" as "IH".
-  { iExists 0%nat, ts.(ty_arr), ts.(ty_cells), lft, [], h, [].
+  { iExists 0%nat, ts.(ty_arr), ts.(ty_cells), lft, [], h.
     replace (W64 (uint.Z k + Z.of_nat 0)) with k by word.
     have Hts_eta : MkTypeState ts.(ty_cells) ts.(ty_arr) = ts by (destruct ts; reflexivity).
     rewrite Hts_eta (insert_id types (tv.(yjs.Text.inner')) ts Htsp).
     iFrame "i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq HtypesAuth Htypesmap Hright Hclose Htext Hhist".
-    rewrite big_sepL2_nil sep_emp.
+    rewrite big_sepL_nil sep_emp.
     iPureIntro. split_and!.
     - exact Hinvarr.
     - exact Hunitc.
@@ -667,17 +666,16 @@ Proof.
     iMod (history_broadcast γh (uint.nat client) (uint.nat (W64 (uint.Z k + j))) hj
             (<[RootId name := arr]> m) (RootId name) arr'
             input nit ⊤ HmaskN Htoitem2 Hvalid Hmax2 eq_refl Hboundj Hsi2' Hhcohj
-            with "His_hist Hhistj") as (Dj) "(Hhistj & #Hlbj & #Hcertj & %HDjsub & %Hhcohj2)".
+            with "His_hist Hhistj") as "(Hhistj & #Hlbj & #Hcertj & %Hhcohj2)".
     have Hcollm : <[RootId name := arr']> (<[RootId name := arr]> m) = <[RootId name := arr']> m
       by (rewrite insert_insert; case_decide; [reflexivity | congruence]).
     rewrite Hcollm in Hhcohj2.
     pose proof (toItem_input_of_item input arr nit Htoitem) as Hinputeq.
     iEval (rewrite Hinputeq) in "Hcertj".
-    iAssert ([∗ list] it;D ∈ (ins ++ [nit]);(Ds ++ [Dj]),
-               is_op_cert γh (RootId name, OpInsert (input_of_item it)) D)%I
+    iAssert ([∗ list] it ∈ (ins ++ [nit]),
+               is_op_cert γh (RootId name, OpInsert (input_of_item it)))%I
       with "[Hcertsj]" as "Hcertsj".
-    { iApply (big_sepL2_app with "Hcertsj").
-      rewrite big_sepL2_singleton. iApply "Hcertj". }
+    { rewrite big_sepL_snoc. iFrame "Hcertsj". iApply "Hcertj". }
     wp_auto.
     (* place the new item, identify its index *)
     have Hcllen0 := cells_repr_length ts.(ty_arr) ts.(ty_cells) ts.(ty_arr) Hunitc Hrepr.
@@ -710,10 +708,10 @@ Proof.
     subst x.
     wp_for_post.
     (* re-establish the loop invariant for [S j] with [ins ++ [nit]] *)
-    iFrame "Ht His_lb HΦ HisRp".
+    iFrame "Ht His_lb HΦ HisRp Hpendf Hpend".
     iExists (S j), arr', cells', oL2, (ins ++ [nit]),
       (hj ++ [EvBroadcast (RootId name, OpInsert input);
-              EvDeliver (RootId name, OpInsert input)]), (Ds ++ [Dj]).
+              EvDeliver (RootId name, OpInsert input)]).
     replace (W64 (uint.Z k + Z.of_nat (S j))) with (w64_word_instance.(word.add) (W64 (uint.Z k + j)) (W64 1)) by word.
     replace (W64 (S j)) with (w64_word_instance.(word.add) (W64 j) (W64 1)) by word.
     iFrame "Hi Htptr Hcontentp Hclientp HoRp Hleftp Hsp Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq HtypesAuth Htypesmap Hrightp Hclose Hhistj Hcertsj".
@@ -828,14 +826,17 @@ Proof.
   iMod (auth_gmap_gset_grow γs.(sn_seq) _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) (list_to_set arr) Hmk Hsubarr with "Hseq") as "[Hseq Hfrag]".
   iDestruct ("Hclose" $! (MkTypeState cells arr) with "[Htextj]") as "Htypes".
   { iFrame "Htextj". iPureIntro. split; [exact Hinvj | exact Hunitj]. }
-  wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhistj]").
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhistj]").
   { iNext. iExists client, (W64 (uint.Z k + j)), items_mref, types_mref, dset,
+      pend_sl,
       (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types), bind, hj,
-      (<[RootId name := arr]> m).
+      (<[RootId name := arr]> m), pend.
     iSplitR "Hseq Htypes"; last first.
     { rewrite /store_inv_ro fmap_insert /=. iFrame "Hseq Htypes". }
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hhistj HtypesAuth Hbinds".
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhistj HtypesAuth Hbinds".
+    iFrame "Hpendcert Hpendroot".
     iPureIntro. split_and!.
+    - exact Hpendbnd.
     - intros parent' ts' x Hlook Hxin Hxc. rewrite Hk'val.
       destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
       + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctrj x Hxin Hxc).
@@ -894,7 +895,7 @@ Proof.
     - exact Hror.
     - exact Horg.
     - exact Hchain. }
-  iExists Ds. iFrame "Hcertsj".
+  iFrame "Hcertsj".
 Qed.
 
 (* ===== Text.Delete: WP proof ============================================ *)
@@ -1001,15 +1002,18 @@ Proof.
         rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
         rewrite !fmap_app /= Hkpeq. reflexivity. }
       iDestruct (own_item_map_kp_perm items_mref (DfracOwn 1) types (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) Hkpperm with "Hitemmap") as "Hitemmap".
-      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
+      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist]").
       { iNext. iExists client, k, items_mref, types_mref, dset,
-          (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m.
+          pend_sl,
+          (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m, pend.
         iSplitR "Hseq Htypes"; last first.
         { rewrite /store_inv_ro fmap_insert /=.
           rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
           iFrame "Hseq Htypes". }
-        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hhist HtypesAuth Hbinds".
+        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhist HtypesAuth Hbinds".
+        iFrame "Hpendcert Hpendroot".
         iPureIntro. split_and!.
+        - exact Hpendbnd.
         - intros parent' ts' x Hlook Hxin Hxc.
           destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
           + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
@@ -1057,15 +1061,18 @@ Proof.
         rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
         rewrite !fmap_app /= Hkpeq. reflexivity. }
       iDestruct (own_item_map_kp_perm items_mref (DfracOwn 1) types (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) Hkpperm with "Hitemmap") as "Hitemmap".
-      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq HtypesAuth Htypes Hhist]").
+      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist]").
       { iNext. iExists client, k, items_mref, types_mref, dset,
-          (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m.
+          pend_sl,
+          (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m, pend.
         iSplitR "Hseq Htypes"; last first.
         { rewrite /store_inv_ro fmap_insert /=.
           rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
           iFrame "Hseq Htypes". }
-        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hhist HtypesAuth Hbinds".
+        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhist HtypesAuth Hbinds".
+        iFrame "Hpendcert Hpendroot".
         iPureIntro. split_and!.
+        - exact Hpendbnd.
         - intros parent' ts' x Hlook Hxin Hxc.
           destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
           + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
@@ -1118,7 +1125,7 @@ Proof.
       apply list_insert_id; exact Hcq. }
     rewrite Hins0.
     wp_for_post.
-    iFrame "Ht His_lb HΦ". iExists (S q), rem, cells', yt'.
+    iFrame "Ht His_lb HΦ Hpendf Hpend". iExists (S q), rem, cells', yt'.
     iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hhist HtypesAuth Hclose".
     rewrite Hcr. replace (Z.of_nat (S q)) with (Z.of_nat q + 1)%Z by lia. iFrame "Hcur".
     iPureIntro. split_and!; [lia | exact Hlencells | exact Hytlen | exact Hrepr' | exact Hunitq | exact Hkpeq | exact Hcparj].
@@ -1149,7 +1156,7 @@ Proof.
       rewrite /cell_unit in Hu.
       rewrite /num_visible -(take_drop_middle cells' q cq Hcq) fmap_app list_sum_app fmap_cons /=.
       rewrite Hdq Hu /=. lia. }
-    iFrame "Ht His_lb HΦ".
+    iFrame "Ht His_lb HΦ Hpendf Hpend".
     iExists (S q), (w64_word_instance.(word.sub) rem (W64 1%nat)), (<[q := flip_cell cq]> cells'), (yt' <| yjs.yType.len' := w64_word_instance.(word.sub) yt'.(yjs.yType.len') (W64 1%nat) |>).
     iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Hhist HtypesAuth Hclose".
     have Hcurloc : node_loc (<[q := flip_cell cq]> cells') (Z.of_nat (S q)) = iv.(yjs.item.right').

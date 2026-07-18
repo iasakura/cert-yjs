@@ -48,57 +48,27 @@ Proof. rewrite /cell_le. move=> x y z. lia. Qed.
 #[local] Instance cell_le_total : Total cell_le.
 Proof. rewrite /cell_le. move=> x y. lia. Qed.
 
+(* [is_pool_rooted]'s instances are declared in [yjs_store_base] under its
+   wider section context ([Proof using Type*] closes them over instances this
+   file's section lacks), so re-declare them here (the [client_run] pattern
+   above). *)
+#[local] Instance pool_item_rooted_persistent' γs ti :
+  Persistent (pool_item_rooted γs ti).
+Proof. rewrite /pool_item_rooted. destruct (decide _); apply _. Qed.
+#[local] Instance is_pool_rooted_persistent' γs pool :
+  Persistent (is_pool_rooted γs pool).
+Proof. apply _. Qed.
+#[local] Instance pool_item_rooted_timeless' γs ti :
+  Timeless (pool_item_rooted γs ti).
+Proof. rewrite /pool_item_rooted. destruct (decide _); apply _. Qed.
+#[local] Instance is_pool_rooted_timeless' γs pool :
+  Timeless (is_pool_rooted γs pool).
+Proof. apply _. Qed.
+
 (* ===== apply_update: store.applyUpdate (insert-only, decoded, causal-order ==
    subset). The integrate loop of y-octo's Doc::apply_update, refining a valid
    causal replay of the pure model. See issue #40 for the order-independent /
    ghost-global-history end state (which will also add the public entry). *)
-
-(** A decoded parent name is either absent (Parent::None: borrow from a
-    neighbour in [store.repair]) or a read-only string cell (Parent::String).
-    Mirrors [is_origin_id]. *)
-Definition is_parent_name (p : loc) (opn : option go_string) : iProp Σ :=
-  match opn with
-  | None => ⌜p = null⌝
-  | Some nm => ⌜p ≠ null⌝ ∗ p ↦□ nm
-  end.
-
-Global Instance is_parent_name_persistent p opn : Persistent (is_parent_name p opn).
-Proof. rewrite /is_parent_name. by destruct opn; apply _. Qed.
-
-(** [is_update_item uiv ti]: the decoded heap struct [uiv] (a [updateItem])
-    translates to the model doc-op payload [ti = (tid, input)] -- its id /
-    content / both origin pointers map across (origins via [is_origin_id],
-    persistent), its content is a single char, and its decoded parent name
-    (when present) is the name of the root type [tid] (issue #49; when absent
-    the batch-level well-formedness pins [tid] through the origins). *)
-Definition is_update_item (uiv : yjs.updateItem.t)
-    (ti : TId * IntegrateInput (A := A)) : iProp Σ :=
-  ∃ (oleft oright : option yjs.id.t) (opn : option go_string),
-    "HisL" ∷ is_origin_id uiv.(yjs.updateItem.originLeftId') oleft ∗
-    "HisR" ∷ is_origin_id uiv.(yjs.updateItem.originRightId') oright ∗
-    "HisPN" ∷ is_parent_name uiv.(yjs.updateItem.parentName') opn ∗
-    "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId ti.2⌝ ∗
-    "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId ti.2⌝ ∗
-    "%Hin_id" ∷ ⌜toYjsId uiv.(yjs.updateItem.id') = in_id ti.2⌝ ∗
-    "%Hin_c" ∷ ⌜uiv.(yjs.updateItem.content') = in_content ti.2⌝ ∗
-    "%Hulen" ∷ ⌜length uiv.(yjs.updateItem.content') = 1%nat⌝ ∗
-    "%Htid" ∷ ⌜∀ nm, opn = Some nm -> ti.1 = RootId nm⌝ ∗
-    "%Hborrow" ∷ ⌜opn = None -> in_originId ti.2 ≠ None ∨ in_rightOriginId ti.2 ≠ None⌝.
-
-#[global] Instance is_update_item_persistent uiv ti : Persistent (is_update_item uiv ti).
-Proof. rewrite /is_update_item. apply _. Qed.
-
-(** [own_update sl dq inputs]: the heap slice of decoded structs at [sl] (Go
-    [Update.structs]) abstracts to the model list [inputs] of type-tagged
-    integrate inputs. Owns the backing array (+ cap) at [dq] — [applyUpdate]
-    only reads it, so any fraction works — and, per element, the persistent
-    [is_update_item]. *)
-Definition own_update (sl : slice.t) (dq : dfrac)
-    (inputs : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  ∃ (uivs : list yjs.updateItem.t),
-    "Hsl" ∷ sl ↦*{dq} uivs ∗
-    "Hcap" ∷ own_slice_cap yjs.updateItem.t sl dq ∗
-    "Hitems" ∷ ([∗ list] uiv;ti ∈ uivs;inputs, is_update_item uiv ti).
 
 (* ===== applyUpdate (doc-level, #49): store-wide node lookup ==============
    [store.repair] resolves a decoded struct's origins through the store-wide
@@ -488,6 +458,287 @@ Proof using Type*.
   iSplitL "Hmap Hruns".
   { iExists gm. iFrame "Hmap Hruns". iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
   iFrame "Htypes".
+Qed.
+
+(** [getNodeIndex], TOTAL (issue #40): the pending gate probes arbitrary
+    ids, so the miss return is live code. A hit returns a covering cell's
+    index; a miss certifies that no run cell's clock is [clk] (1-char cells:
+    covering = clock equality). Same binary search and window invariant as
+    [wp_getNodeIndex]; only the exit case differs. *)
+Lemma wp_getNodeIndex_total (sl : slice.t) (dq : dfrac) (types : gmap loc type_state)
+    (run : list item_cell) (clk : w64) :
+  StronglySorted cell_le run ->
+  (∀ c, c ∈ run -> c ∈ all_cells types) ->
+  (∀ c, c ∈ run -> (uint.Z (cell_clock c) + 1 < 2^64)%Z) ->
+  {{{ is_pkg_init yjs ∗ sl ↦*{dq} (ic_loc <$> run) ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) }}}
+    @! yjs.getNodeIndex #sl #clk
+  {{{ (i : w64) (ok : bool), RET (#i, #ok);
+      sl ↦*{dq} (ic_loc <$> run) ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) ∗
+      ⌜if ok then ∃ c, run !! uint.nat i = Some c ∧ cell_clock c = clk
+       else ∀ (k : nat) (c : item_cell), run !! k = Some c -> cell_clock c ≠ clk⌝ }}}.
+Proof using Type*.
+  move=> Hsort Hmem Hnowrap.
+  wp_start as "(Hsl & Htypes)".
+  iDestruct (own_slice_len with "Hsl") as %[Hsllen Hsllen0].
+  rewrite length_fmap in Hsllen Hsllen0.
+  wp_auto.
+  iAssert (∃ (lo hi : w64),
+    "Hleft" ∷ left_ptr ↦ lo ∗ "Hright" ∷ right_ptr ↦ hi ∗
+    "Hnodes" ∷ nodes_ptr ↦ sl ∗ "Hclock" ∷ clock_ptr ↦ clk ∗
+    "Hsl" ∷ sl ↦*{dq} (ic_loc <$> run) ∗
+    "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
+        own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+        ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+        ⌜Forall cell_unit (ty_cells ts)⌝) ∗
+    "%Hbnd" ∷ ⌜(0 <= uint.Z lo /\ uint.Z hi <= Z.of_nat (length run))%Z⌝ ∗
+    "%Hwin" ∷ ⌜∀ (k : nat) (c : item_cell), run !! k = Some c -> cell_clock c = clk ->
+                (uint.Z lo <= Z.of_nat k < uint.Z hi)%Z⌝)%I
+    with "[left right nodes clock Hsl Htypes]" as "IH".
+  { iExists (W64 0), sl.(slice.len).
+    iFrame "left right nodes clock Hsl Htypes".
+    iPureIntro. split; [word |].
+    move=> k c Hk Hc. have Hklt := lookup_lt_Some _ _ _ Hk. word. }
+  wp_for "IH".
+  case_bool_decide as Hcond.
+  - (* probe the middle *)
+    set (mid := word.add lo (word.divu (word.sub hi lo) (W64 2))).
+    have Hmid : (uint.Z lo <= uint.Z mid < uint.Z hi)%Z.
+    { rewrite /mid. destruct Hbnd as [Hb1 Hb2]. word. }
+    wp_auto.
+    rewrite decide_True; last word.
+    have Hmidlt : (uint.nat mid < length run)%nat by word.
+    destruct (run !! uint.nat mid) as [cmid|] eqn:Hcmid;
+      last by (apply lookup_ge_None in Hcmid; lia).
+    have Hlocmid : (ic_loc <$> run) !! uint.nat mid = Some cmid.(ic_loc)
+      by rewrite list_lookup_fmap Hcmid //.
+    iDestruct (own_slice_elem_acc (sint.Z mid) (ic_loc cmid) sl dq (ic_loc <$> run) with "Hsl") as "[Hel Hgive]".
+    { word. }
+    { replace (Z.to_nat (sint.Z mid)) with (uint.nat mid) by word. exact Hlocmid. }
+    wp_auto.
+    iDestruct ("Hgive" $! cmid.(ic_loc) with "Hel") as "Hsl".
+    have Hinsid : (<[sint.nat mid := cmid.(ic_loc)]> (ic_loc <$> run)) = (ic_loc <$> run).
+    { apply list_insert_id. replace (sint.nat mid) with (uint.nat mid) by word. exact Hlocmid. }
+    iEval (rewrite Hinsid) in "Hsl".
+    have Hcmemall : cmid ∈ all_cells types
+      by (apply Hmem; exact (list_elem_of_lookup_2 _ _ _ Hcmid)).
+    iDestruct (types_cell_acc types cmid Hcmemall with "Htypes") as "Hacc".
+    iNamed "Hacc".
+    wp_auto.
+    have Hmcv : cell_clock cmid = iv.(yjs.item.id').(yjs.id.clock')
+      by (rewrite /cell_clock Hid /toYjsId /=; word).
+    wp_apply (wp_item__Len cmid.(ic_loc) (DfracOwn 1) iv with "[$Hval]"). iIntros "Hval".
+    rewrite Hrun.
+    iDestruct ("Hback" with "Hval") as "Htypes".
+    wp_auto.
+    destruct (bool_decide (uint.Z clk < uint.Z iv.(yjs.item.id').(yjs.id.clock'))) eqn:Hcmp1.
+    + (* clk < middleClock: shrink [right] to [mid] *)
+      apply bool_decide_eq_true_1 in Hcmp1.
+      wp_auto. wp_for_post.
+      iFrame "HΦ". iExists lo, mid.
+      iFrame "Hleft Hright Hnodes Hclock Hsl Htypes".
+      iPureIntro. split.
+      { lia. }
+      move=> k c Hk Hc.
+      have [Hlo Hhi] := Hwin k c Hk Hc.
+      split; [exact Hlo |].
+      destruct (Nat.lt_trichotomy k (uint.nat mid)) as [Hlt | [Heq | Hgt]].
+      * lia.
+      * exfalso. subst k. rewrite Hcmid in Hk. injection Hk as <-.
+        rewrite -Hmcv Hc in Hcmp1. lia.
+      * exfalso.
+        have Hle := StronglySorted_lookup_le cell_le run (uint.nat mid) k cmid c Hsort Hcmid Hk Hgt.
+        rewrite /cell_le Hc Hmcv in Hle. lia.
+    + (* clk >= middleClock *)
+      apply bool_decide_eq_false_1 in Hcmp1.
+      have Hnw : (uint.Z (cell_clock cmid) + 1 < 2^64)%Z
+        by (apply Hnowrap; exact (list_elem_of_lookup_2 _ _ _ Hcmid)).
+      rewrite Hmcv in Hnw.
+      wp_auto.
+      case_bool_decide as Hcmp2.
+      * (* clk >= middleEnd: move [left] past [mid] *)
+        have Hgtm : (uint.Z iv.(yjs.item.id').(yjs.id.clock') < uint.Z clk)%Z by word.
+        wp_auto. wp_for_post.
+        iFrame "HΦ". iExists (word.add mid (W64 1)), hi.
+        iFrame "Hleft Hright Hnodes Hclock Hsl Htypes".
+        iPureIntro. split.
+        { word. }
+        move=> k c Hk Hc.
+        have [Hlo Hhi] := Hwin k c Hk Hc.
+        split; [| exact Hhi].
+        destruct (Nat.lt_trichotomy k (uint.nat mid)) as [Hlt | [Heq | Hgt]].
+        { exfalso.
+          have Hle := StronglySorted_lookup_le cell_le run k (uint.nat mid) c cmid Hsort Hk Hcmid Hlt.
+          rewrite /cell_le Hc Hmcv in Hle. lia. }
+        { exfalso. subst k. rewrite Hcmid in Hk. injection Hk as <-.
+          rewrite -Hmcv Hc in Hgtm. lia. }
+        word.
+      * (* middleClock <= clk < middleClock + 1: the probe hit *)
+        have Hclkeq : cell_clock cmid = clk by (apply word.unsigned_inj; rewrite Hmcv; word).
+        wp_auto. wp_for_post.
+        iApply ("HΦ" $! mid true). iFrame "Hsl Htypes".
+        iPureIntro. exists cmid. split; [exact Hcmid | exact Hclkeq].
+  - (* the window is empty: no run cell carries [clk] *)
+    wp_auto.
+    iApply ("HΦ" $! (W64 0) false). iFrame "Hsl Htypes".
+    iPureIntro. move=> k c Hk Hc.
+    have := Hwin k c Hk Hc. lia.
+Qed.
+
+(** [store.GetNode], TOTAL (issue #40): the pending gate probes ids that may
+    be absent, so both miss paths (unknown client, clock not covered) are live.
+    [ok = true] pins the returned loc to a store cell carrying the probed id;
+    [ok = false] certifies no store cell carries it. *)
+Lemma wp_store__GetNode_total (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
+    (types : gmap loc type_state) :
+  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + 1 < 2^64)%Z) ->
+  {{{ is_pkg_init yjs ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "GetNode" #idv
+  {{{ (l : loc) (ok : bool), RET (#l, #ok);
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) ∗
+      ⌜if ok
+       then ∃ c, c ∈ all_cells types ∧ item_id (run_head c) = toYjsId idv ∧
+                 ic_loc c = l
+       else ∀ c, c ∈ all_cells types -> item_id (run_head c) ≠ toYjsId idv⌝ }}}.
+Proof using Type*.
+  move=> Hnowrap.
+  iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
+  set (kc := idv.(yjs.id.clientId')).
+  iDestruct (types_cells_id_bounds with "Htypes") as %Hcellbnd.
+  (* the id glue: a cell carries [toYjsId idv] iff its W64 components are
+     [idv]'s *)
+  have Hglue : ∀ c, c ∈ all_cells types ->
+      (item_id (run_head c) = toYjsId idv <->
+       cell_client c = kc ∧ cell_clock c = idv.(yjs.id.clock')).
+  { move=> c Hc. have [Hab Hbb] := Hcellbnd c Hc. split.
+    - move=> Hid. split.
+      + rewrite /cell_client Hid /toYjsId /kc /=. word.
+      + rewrite /cell_clock Hid /toYjsId /=. word.
+    - move=> [Hcc Hck].
+      move: Hcc Hck Hab Hbb. rewrite /cell_client /cell_clock /toYjsId.
+      destruct (item_id (run_head c)) as [a b]. simpl.
+      move=> Hcc Hck Hab Hbb. f_equal; word. }
+  iNamed "Hitemmap".
+  wp_method_call. wp_call. wp_call. wp_auto.
+  wp_apply (wp_map_lookup2 with "Hmap"). iIntros "Hmap".
+  destruct (gm !! kc) as [slk |] eqn:Hslk; rewrite Hslk /=.
+  - (* known client: run the binary search *)
+    wp_auto.
+    iDestruct (big_sepM_lookup_acc _ _ kc slk Hslk with "Hruns") as "[Hrun Hrunsback]".
+    iNamed "Hrun".
+    wp_apply (wp_getNodeIndex_total slk dq types (client_run types kc) idv.(yjs.id.clock')
+                (client_run_sorted types kc)
+                (fun c Hc => proj1 (proj1 (client_run_mem types kc c) Hc))
+                (fun c Hc => Hnowrap c (proj1 (proj1 (client_run_mem types kc c) Hc)))
+                with "[$Hslice $Htypes]").
+    iIntros (i ok) "(Hslice & Htypes & %Hires)".
+    destruct ok.
+    + (* hit *)
+      destruct Hires as (cres & Hcres & Hcresclk).
+      wp_auto.
+      iDestruct (own_slice_len with "Hslice") as %[Hsllen Hsllen0].
+      rewrite length_fmap in Hsllen Hsllen0.
+      have Hilt : (uint.nat i < length (client_run types kc))%nat
+        by (apply lookup_lt_Some in Hcres; lia).
+      rewrite decide_True; last word.
+      have Hlocres : (ic_loc <$> client_run types kc) !! uint.nat i = Some cres.(ic_loc)
+        by rewrite list_lookup_fmap Hcres //.
+      iDestruct (own_slice_elem_acc (sint.Z i) (ic_loc cres) slk dq (ic_loc <$> client_run types kc) with "Hslice") as "[Hel Hgive]".
+      { word. }
+      { replace (Z.to_nat (sint.Z i)) with (uint.nat i) by word. exact Hlocres. }
+      wp_auto.
+      iDestruct ("Hgive" $! cres.(ic_loc) with "Hel") as "Hslice".
+      have Hinsid : (<[sint.nat i := cres.(ic_loc)]> (ic_loc <$> client_run types kc)) = (ic_loc <$> client_run types kc).
+      { apply list_insert_id. replace (sint.nat i) with (uint.nat i) by word. exact Hlocres. }
+      iEval (rewrite Hinsid) in "Hslice".
+      have Hcresmem : cres ∈ all_cells types /\ cell_client cres = kc.
+      { apply client_run_mem. exact (list_elem_of_lookup_2 _ _ _ Hcres). }
+      iApply ("HΦ" $! (ic_loc cres) true).
+      iFrame "Hitemsf".
+      iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
+      iSplitL "Hmap Hruns".
+      { iExists gm. iFrame "Hmap Hruns". iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+      iFrame "Htypes".
+      iPureIntro. exists cres.
+      split_and!; [exact (proj1 Hcresmem) | | done].
+      apply (Hglue cres (proj1 Hcresmem)).
+      split; [exact (proj2 Hcresmem) | exact Hcresclk].
+    + (* clock miss within a known client *)
+      wp_auto.
+      iApply ("HΦ" $! null false).
+      iFrame "Hitemsf".
+      iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
+      iSplitL "Hmap Hruns".
+      { iExists gm. iFrame "Hmap Hruns". iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+      iFrame "Htypes".
+      iPureIntro. move=> c Hc Hid.
+      have [Hcc Hck] := proj1 (Hglue c Hc) Hid.
+      have Hcrun : c ∈ client_run types kc by (apply client_run_mem; by split).
+      apply list_elem_of_lookup_1 in Hcrun. destruct Hcrun as [kx Hkx].
+      exact (Hires kx c Hkx Hck).
+  - (* unknown client: no cell of this author at all *)
+    wp_auto.
+    iApply ("HΦ" $! null false).
+    iFrame "Hitemsf".
+    iSplitL "Hmap Hruns".
+    { iExists gm. iFrame "Hmap Hruns". iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+    iFrame "Htypes".
+    iPureIntro. move=> c Hc Hid.
+    have [Hcc _] := proj1 (Hglue c Hc) Hid.
+    have Hkcin : kc ∈ (cell_client <$> all_cells types).
+    { rewrite -Hcc. apply list_elem_of_fmap_2. exact Hc. }
+    destruct (Hcomplete kc Hkcin) as [slk Hslk'].
+    rewrite Hslk in Hslk'. discriminate.
+Qed.
+
+(** [store.hasNode] (issue #40): the arrival test the pending gate runs. *)
+Lemma wp_store__hasNode (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
+    (types : gmap loc type_state) :
+  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + 1 < 2^64)%Z) ->
+  {{{ is_pkg_init yjs ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "hasNode" #idv
+  {{{ (ok : bool), RET #ok;
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) ∗
+      ⌜ok = true <-> ∃ c, c ∈ all_cells types ∧ item_id (run_head c) = toYjsId idv⌝ }}}.
+Proof using Type*.
+  move=> Hnowrap.
+  iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
+  wp_method_call. wp_call. wp_call. wp_auto.
+  wp_apply (wp_store__GetNode_total s mref dq idv types Hnowrap
+              with "[$Hitemsf $Hitemmap $Htypes]").
+  iIntros (l ok) "(Hitemsf & Hitemmap & Htypes & %Hres)".
+  wp_auto.
+  iApply ("HΦ" $! ok).
+  iFrame "Hitemsf Hitemmap Htypes".
+  iPureIntro. destruct ok.
+  - split; [| done]. move=> _.
+    destruct Hres as (c & Hc & Hid & _). by exists c.
+  - split; [done |]. move=> [c [Hc Hid]]. by destruct (Hres c Hc Hid).
 Qed.
 
 (** [store.splitAtAndGetLeft] / [store.splitAtAndGetRight], unit fast path
@@ -914,15 +1165,18 @@ Qed.
     [wp_store__applyUpdate_certs]) and back. *)
 Lemma store_inv_own_store (s_loc : loc) (γs : store_names) (γh : history_names) :
   store_inv s_loc γs γh ⊣⊢
-  ∃ (c : ClientId) (h : list Ev) (m : DocM), own_store s_loc γs γh c h m.
+  ∃ (c : ClientId) (h : list Ev) (m : DocM)
+    (pend : list (TId * IntegrateInput (A := A))),
+    own_store s_loc γs γh c h m pend.
 Proof.
   iSplit.
   - iIntros "H". iNamed "H". iNamed "Hexcl". iNamed "Hro".
-    iExists (uint.nat client), h, m.
-    iExists client, k, items_mref, types_mref, dset, types, bind.
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
+    iExists (uint.nat client), h, m, pend.
+    iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind.
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpendcert Hpendroot Hseq Htypes HtypesAuth Hbinds Hhist".
     iPureIntro. split_and!.
     + reflexivity.
+    + exact Hpendbnd.
     + rewrite /doc_registry_coh. split_and!; assumption.
     + exact Hhcoh.
     + (* the model-level counter from the [types]-level one *)
@@ -934,7 +1188,7 @@ Proof.
       have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
       rewrite Hdg in Hx.
       exact (Hctr p ts x Hts Hx Hcx).
-  - iIntros "H". iDestruct "H" as (c h m) "H". iNamed "H". subst c.
+  - iIntros "H". iDestruct "H" as (c h m pend) "H". iNamed "H". subst c.
     iDestruct (types_repr_all with "Htypes") as %Hreprall.
     iDestruct (types_unit_all with "Htypes") as %Hunitall.
     iDestruct (types_cells_id_bounds with "Htypes") as %Hcellbnd.
@@ -964,360 +1218,13 @@ Proof.
         word. }
       have Hlt := Hctrt p ts (run_head c0) Hts Hitemmem Hceq.
       rewrite /cell_clock. word. }
-    iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+    iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
     iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset HtypesAuth Hbinds Hhist".
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpendcert Hpendroot HtypesAuth Hbinds Hhist".
     iPureIntro. split_and!;
-      [exact Hctrt | exact Hcellctr | exact Hbindtypes | exact Hbindinj
-      | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom].
-Qed.
-
-(** [store.applyUpdate], doc-level (#49): integrate the decoded, type-tagged
-    batch in list order, [repair]ing each struct against the whole store and
-    integrating it into its OWN root type — a refinement of the doc-level
-    [ValidReplay] from [m] to [m'].
-
-    Restriction (issue #49 slice): every struct's target root must already be
-    bound in the registry ([Hbatchbnd]) — the on-the-fly type creation of
-    y-octo's update path (getOrCreateYType's miss branch growing
-    [types]/[bind]/[m] mid-batch) is outside the verified subset for now.
-    The two no-wrap hypotheses are the W64 seam: [getNodeIndex] computes
-    [middleClock + 1] in [w64], so every probed clock (existing cells and the
-    batch's own, which land in the pool mid-batch) must not sit at [2^64-1];
-    the pure model's clocks are unbounded [nat]s, so this cannot come from the
-    replay itself.
-
-    This receiver-side [ValidReplay] spec is the INTERNAL composition lemma:
-    [wp_store__applyUpdate_certs_aux] below obtains the [ValidReplay] from
-    the ghost op history and invokes this proof verbatim, and the public
-    [wp_store__applyUpdate_certs] wraps that in [own_store]. *)
-Lemma wp_store__applyUpdate (s : loc) (sl : slice.t) (dq : dfrac)
-    (inputs : list (TId * IntegrateInput (A := A)))
-    (m m' : DocM) (types : gmap loc type_state) (bind : gmap P loc)
-    (mref tref : loc) :
-  ValidReplay inputs m m' ->
-  (∀ nm p, bind !! nm = Some p -> is_Some (types !! p)) ->
-  (∀ n1 n2 p, bind !! n1 = Some p -> bind !! n2 = Some p -> n1 = n2) ->
-  (∀ nm p ts, bind !! nm = Some p -> types !! p = Some ts ->
-     docm_get m (RootId nm) = ty_arr ts) ->
-  (∀ i ti, inputs !! i = Some ti -> ∃ nm p, ti.1 = RootId nm /\ bind !! nm = Some p) ->
-  (∀ (i : nat) (ti : TId * IntegrateInput (A := A)), inputs !! i = Some ti ->
-     ∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (in_id ti.2)) ->
-        (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id ti.2))))%Z) ->
-  (∀ (i j : nat) (ti tj : TId * IntegrateInput (A := A)),
-     inputs !! i = Some ti -> inputs !! j = Some tj ->
-     (j < i)%nat -> W64 (clientId (in_id tj.2)) = W64 (clientId (in_id ti.2)) ->
-        (uint.Z (W64 (clock (in_id tj.2))) < uint.Z (W64 (clock (in_id ti.2))))%Z) ->
-  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + 1 < 2^64)%Z) ->
-  (∀ i ti, inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
-  {{{ is_pkg_init yjs ∗ own_update sl dq inputs ∗
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
-      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
-      ([∗ map] p ↦ ts ∈ types,
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-          ⌜Forall cell_unit (ty_cells ts)⌝) }}}
-    s @! (go.PointerType yjs.store) @! "applyUpdate" #sl
-  {{{ (types' : gmap loc type_state), RET #();
-      own_update sl dq inputs ∗
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
-      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
-      ([∗ map] p ↦ ts ∈ types',
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-          ⌜Forall cell_unit (ty_cells ts)⌝) ∗
-      ⌜dom types' = dom types⌝ ∗
-      ⌜∀ nm p ts', bind !! nm = Some p -> types' !! p = Some ts' ->
-         docm_get m' (RootId nm) = ty_arr ts'⌝ ∗
-      ⌜∀ c, c ∈ all_cells types' -> c ∈ all_cells types ∨
-         ∃ i ti, inputs !! i = Some ti /\
-            cell_client c = W64 (clientId (in_id ti.2)) /\
-            cell_clock c = W64 (clock (in_id ti.2))⌝ }}}.
-Proof using Type*.
-  move=> Hreplay Hbindtypes Hbindinj Hmtypes Hbatchbnd Hfresh Hcausal Hnowrap Hnowrapb.
-  iIntros (Φ) "(#Hpkg & Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
-  iDestruct "Hupd" as (uivs) "(Hsl & Hcap & Hitems)".
-  iDestruct (big_sepL2_length with "Hitems") as %Hlen_ui.
-  wp_method_call. wp_call. wp_call. wp_auto.
-  iDestruct "Hitems" as "#Hitems".
-  (* loop invariant: [j] structs integrated, [typesj]/[mj] in step, the
-     remainder still a valid replay to [m'] *)
-  iAssert (∃ (j : nat) (typesj : gmap loc type_state) (mj : DocM),
-    "Hi" ∷ i_ptr ↦ W64 j ∗ "Hs" ∷ s_ptr ↦ s ∗ "Hstructs" ∷ structs_ptr ↦ sl ∗
-    "Hsl" ∷ sl ↦*{dq} uivs ∗
-    "Hcap" ∷ own_slice_cap yjs.updateItem.t sl dq ∗
-    "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
-    "Hitemmap" ∷ own_item_map mref (DfracOwn 1) typesj ∗
-    "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ tref ∗
-    "Htypesmap" ∷ own_map tref (DfracOwn 1) bind ∗
-    "Htypes" ∷ ([∗ map] p ↦ ts ∈ typesj,
-        own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-        ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-        ⌜Forall cell_unit (ty_cells ts)⌝) ∗
-    "%Hreplayj" ∷ ⌜ValidReplay (drop j inputs) mj m'⌝ ∗
-    "%Hjle" ∷ ⌜(j <= length uivs)%nat⌝ ∗
-    "%Hdomj" ∷ ⌜dom typesj = dom types⌝ ∗
-    "%Hmtypesj" ∷ ⌜∀ nm p ts, bind !! nm = Some p -> typesj !! p = Some ts ->
-        docm_get mj (RootId nm) = ty_arr ts⌝ ∗
-    "%Hbndj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj ->
-        ∀ i ti, (j <= i)%nat -> inputs !! i = Some ti ->
-          cell_client c0 = W64 (clientId (in_id ti.2)) ->
-          (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id ti.2))))%Z⌝ ∗
-    "%Hnowrapj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> (uint.Z (cell_clock c0) + 1 < 2^64)%Z⌝ ∗
-    "%Hprovj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> c0 ∈ all_cells types ∨
-        ∃ i ti, inputs !! i = Some ti /\
-           cell_client c0 = W64 (clientId (in_id ti.2)) /\
-           cell_clock c0 = W64 (clock (in_id ti.2))⌝)%I
-    with "[i s structs Hsl Hcap Hitemsf Hitemmap Htypesf Htypesmap Htypes]" as "IH".
-  { iExists 0%nat, types, m.
-    iFrame "i s structs Hsl Hcap Hitemsf Hitemmap Htypesf Htypesmap Htypes".
-    iPureIntro. split_and!.
-    - rewrite drop_0. exact Hreplay.
-    - lia.
-    - reflexivity.
-    - exact Hmtypes.
-    - move=> c0 Hc0 i ti _ Hti Hcc. exact (Hfresh i ti Hti c0 Hc0 Hcc).
-    - exact Hnowrap.
-    - move=> c0 Hc0. by left. }
-  wp_for "IH".
-  iDestruct (own_slice_len with "Hsl") as %[Hsllen Hsllen0].
-  case_bool_decide as Hcond.
-  - (* loop body: repair + integrate the j-th struct *)
-    have Hjlt : (j < length uivs)%nat by word.
-    destruct (uivs !! j) as [uiv|] eqn:Huiv; [| apply lookup_ge_None in Huiv; lia].
-    destruct (inputs !! j) as [[tj input]|] eqn:Hinput;
-      [| apply lookup_ge_None in Hinput; lia].
-    iDestruct (big_sepL2_lookup _ _ _ j with "Hitems") as "Hui"; [exact Huiv | exact Hinput |].
-    iDestruct "Hui" as (oleft oright opn)
-      "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hulen & %Htid & %Hborrow)".
-    simpl in Hin_l, Hin_r, Hin_id, Hin_c, Htid, Hborrow.
-    destruct (Hbatchbnd j (tj, input) Hinput) as (nmj & pj & Htjeq & Hbindj).
-    simpl in Htjeq.
-    have Htsj0 : is_Some (typesj !! pj).
-    { apply elem_of_dom. rewrite Hdomj. apply elem_of_dom. exact (Hbindtypes nmj pj Hbindj). }
-    destruct Htsj0 as [[cellsj arrj] Htsj].
-    have Hdgj : docm_get mj (RootId nmj) = arrj := Hmtypesj nmj pj _ Hbindj Htsj.
-    (* peel the head [VR_cons] off the remaining replay *)
-    erewrite (drop_S inputs (tj, input) j Hinput) in Hreplayj.
-    inversion Hreplayj as
-      [| t0 input0 rest0 m0 arr2 mf nit Htoit Hvld Hmaxj Hglob Hintg Hrest Heqin [Heqi Heqa Heqf]];
-      subst.
-    set (arrj := docm_get mj (RootId nmj)) in *.
-    iDestruct (types_arr_inv with "Htypes") as %Harrinvs.
-    have Hinvj : YjsArrInvariant arrj := Harrinvs pj _ Htsj.
-    have Hsi : setintegrate input arrj = Some arr2.
-    { rewrite (setintegrate_eq_integrate input arrj nit Hinvj Htoit Hvld Hmaxj). exact Hintg. }
-    destruct (integrate_finds input arrj arr2 Hintg) as (leftIdx & rightIdx & HfindL & HfindR).
-    iDestruct (types_entry_pures typesj pj _ Htsj with "Htypes") as %(Hreprj & Hcparj & Hunitcj).
-    simpl in Hreprj, Hcparj.
-    (* uniform repair witnesses: present origins resolve inside this type's own
-       cells (that is where [toItem] found them), so the borrow's parent IS
-       [pj]; a named parent is [nmj]'s binding *)
-    have Hwits : ∃ (ocL ocR : option item_cell),
-      (match in_originId input, ocL with
-       | Some oid, Some c => c ∈ all_cells typesj /\ item_id (run_head c) = oid
-       | None, None => True
-       | _, _ => False
-       end) /\
-      (match in_rightOriginId input, ocR with
-       | Some oid, Some c => c ∈ all_cells typesj /\ item_id (run_head c) = oid
-       | None, None => True
-       | _, _ => False
-       end) /\
-      (match opn with
-       | Some nm => bind !! nm = Some pj
-       | None => match ocL with
-                 | Some c => pj = ic_parent c
-                 | None => match ocR with
-                           | Some c => pj = ic_parent c
-                           | None => False
-                           end
-                 end
-       end) /\
-      (match ocL with Some c => ic_loc c | None => null end) = node_loc cellsj leftIdx /\
-      (match ocR with Some c => ic_loc c | None => null end) = node_loc cellsj rightIdx.
-    { have Hcellsw : ∀ (kn : nat) (it : YjsItem A), arrj !! kn = Some it ->
-        ∃ c, cellsj !! kn = Some c /\ run_head c = it.
-      { move=> kn it Hkn. rewrite /cells_repr in Hreprj.
-        rewrite Hreprj (run_flatten_singletons cellsj Hunitcj) list_lookup_fmap in Hkn.
-        destruct (cellsj !! kn) as [c|] eqn:Hc; last done.
-        injection Hkn as <-. by exists c. }
-      have HocL : ∃ ocL,
-        (match in_originId input, ocL with
-         | Some oid, Some c => c ∈ all_cells typesj /\ item_id (run_head c) = oid
-         | None, None => True
-         | _, _ => False
-         end) /\
-        (match ocL with Some c => ic_loc c | None => null end) = node_loc cellsj leftIdx /\
-        (match ocL with Some c => ic_parent c = pj | None => True end).
-      { destruct (in_originId input) as [oidL|] eqn:HoinL.
-        - destruct (findLeftIdx_inv oidL arrj leftIdx HfindL) as (kn & it & -> & Hkn & HidL).
-          destruct (Hcellsw kn it Hkn) as (cL & HcLk & HcLit).
-          exists (Some cL). split_and!.
-          + apply all_cells_elem_of. exists pj, (MkTypeState cellsj arrj).
-            split; [exact Htsj | exact (list_elem_of_lookup_2 _ _ _ HcLk)].
-          + by rewrite HcLit.
-          + rewrite /node_loc decide_True; last lia. rewrite Nat2Z.id HcLk //.
-          + exact (Hcparj cL (list_elem_of_lookup_2 _ _ _ HcLk)).
-        - exists None. move: HfindL. rewrite /findLeftIdx. move=> [= <-].
-          split_and!; [done | | done].
-          rewrite /node_loc. case_decide; [lia | done]. }
-      have HocR : ∃ ocR,
-        (match in_rightOriginId input, ocR with
-         | Some oid, Some c => c ∈ all_cells typesj /\ item_id (run_head c) = oid
-         | None, None => True
-         | _, _ => False
-         end) /\
-        (match ocR with Some c => ic_loc c | None => null end) = node_loc cellsj rightIdx /\
-        (match ocR with Some c => ic_parent c = pj | None => True end).
-      { destruct (in_rightOriginId input) as [oidR|] eqn:HoinR.
-        - destruct (findRightIdx_inv oidR arrj rightIdx HfindR) as (kn & it & -> & Hkn & HidR).
-          destruct (Hcellsw kn it Hkn) as (cR & HcRk & HcRit).
-          exists (Some cR). split_and!.
-          + apply all_cells_elem_of. exists pj, (MkTypeState cellsj arrj).
-            split; [exact Htsj | exact (list_elem_of_lookup_2 _ _ _ HcRk)].
-          + by rewrite HcRit.
-          + rewrite /node_loc decide_True; last lia. rewrite Nat2Z.id HcRk //.
-          + exact (Hcparj cR (list_elem_of_lookup_2 _ _ _ HcRk)).
-        - exists None. move: HfindR. rewrite /findRightIdx. move=> [= <-].
-          split_and!; [done | | done].
-          have Hlencells : length cellsj = length arrj.
-          { rewrite /cells_repr in Hreprj.
-            rewrite Hreprj (run_flatten_singletons cellsj Hunitcj) length_fmap //. }
-          rewrite /node_loc. case_decide; [| lia].
-          rewrite lookup_ge_None_2 //; lia. }
-      destruct HocL as (ocL & HwL & HlocL & HparL).
-      destruct HocR as (ocR & HwR & HlocR & HparR).
-      exists ocL, ocR. split_and!; try done.
-      destruct opn as [nm|].
-      - have Hnmeq : RootId nmj = RootId nm := Htid nm eq_refl.
-        injection Hnmeq as <-. exact Hbindj.
-      - destruct ocL as [cL|]; [by rewrite -(HparL) |].
-        destruct ocR as [cR|]; [by rewrite -(HparR) |].
-        destruct (Hborrow eq_refl) as [HL | HR].
-        + move: HwL. by destruct (in_originId input).
-        + move: HwR. by destruct (in_rightOriginId input). }
-    destruct Hwits as (ocL & ocR & HwL & HwR & Hwpar & HlocLeq & HlocReq).
-    wp_auto.
-    rewrite decide_True; last by word.
-    iDestruct (own_slice_elem_acc (sint.Z (W64 j)) uiv sl dq uivs with "Hsl") as "[Hel Hgive]".
-    { word. }
-    { replace (Z.to_nat (sint.Z (W64 j))) with j by word. exact Huiv. }
-    wp_auto.
-    have Huiv2 : uivs !! sint.nat (W64 j) = Some uiv
-      by (replace (sint.nat (W64 j)) with j by word; exact Huiv).
-    iDestruct ("Hgive" $! uiv with "Hel") as "Hsl".
-    iEval (rewrite (list_insert_id _ _ _ Huiv2)) in "Hsl".
-    wp_func_call. wp_call. wp_auto.
-    wp_alloc itv as "Hitv". wp_auto.
-    set (iv := {| yjs.item.id' := uiv.(yjs.updateItem.id');
-                  yjs.item.originLeftId' := uiv.(yjs.updateItem.originLeftId');
-                  yjs.item.originRightId' := uiv.(yjs.updateItem.originRightId');
-                  yjs.item.left' := null; yjs.item.right' := null;
-                  yjs.item.parent' := null;
-                  yjs.item.content' := {| yjs.content.content' := uiv.(yjs.updateItem.content') |};
-                  yjs.item.flags' := W8 2 |}).
-    iAssert (own_linked_item itv input null null null) with "[Hitv]" as "Hfresh".
-    { iExists iv, oleft, oright. rewrite /own_fresh_item_raw.
-      iFrame "Hitv HisL HisR". iPureIntro.
-      split_and!;
-        [exact Hin_l | exact Hin_r | exact Hin_id | exact Hin_c
-        | reflexivity | reflexivity | reflexivity | reflexivity | exact Hulen]. }
-    wp_apply (wp_store__repair s mref tref itv (uiv.(yjs.updateItem.parentName'))
-                (DfracOwn 1) input opn typesj bind ocL ocR pj
-                HwL HwR Hwpar Hnowrapj
-                with "[$Hfresh $HisPN $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
-    iIntros "(Hlinked & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes)".
-    iEval (rewrite HlocLeq HlocReq) in "Hlinked".
-    wp_auto.
-    have Hidnit : item_id nit = in_id input := commutativity.toItem_id input arrj nit Htoit.
-    have Hgmaxj : ∀ c0, c0 ∈ all_cells typesj → cell_client c0 = W64 (clientId (item_id nit)) →
-                    (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id nit))))%Z.
-    { intros c0 Hc0 Hcc0. rewrite Hidnit in Hcc0 |- *.
-      exact (Hbndj c0 Hc0 j (RootId nmj, input) ltac:(lia) Hinput Hcc0). }
-    iDestruct (big_sepM_delete _ _ pj _ Htsj with "Htypes") as "[[Hyt _] Htypesrest]".
-    wp_apply (wp_Store__Integrate_nil s pj itv arrj input nit cellsj typesj mref leftIdx rightIdx
-                Hinvj Htoit Hvld Hmaxj HfindL HfindR Htsj Hgmaxj Hunitcj
-                with "[$Hyt $Hlinked $Hitemsf $Hitemmap]").
-    iIntros (arr2' iidx2 cells'' c2)
-      "(%Hile2 & %Harr2eq & %Hinv2 & Htext2 & Hitemsf & Hitemmap & %Hperm2 & %Hsi2 & %Hnode2)".
-    rewrite Hsi2 in Hsi. injection Hsi as Harr22. subst arr2'.
-    destruct Hnode2 as (idx2 & Hsplice2 & Harrsp2 & Hc2look & Hc2loc & Hc2id & Hc2unit).
-    have Hunitcells'' : Forall cell_unit cells''
-      by (rewrite Hsplice2; exact (Forall_cell_unit_splice cellsj idx2 c2 Hunitcj Hc2unit)).
-    (* the pool grows by exactly [c2] *)
-    have Hac_step : all_cells (<[pj := MkTypeState cells'' arr2]> typesj)
-                  ≡ₚ all_cells typesj ++ [c2]
-      by apply (all_cells_insert_snoc typesj pj cellsj arrj cells'' arr2 c2 Htsj Hperm2).
-    have Hcc2 : cell_client c2 = W64 (clientId (in_id input))
-      by rewrite /cell_client Hc2id Hidnit //.
-    have Hclk2 : cell_clock c2 = W64 (clock (in_id input))
-      by rewrite /cell_clock Hc2id Hidnit //.
-    (* rebuild the per-type big-sep over the grown map *)
-    iAssert ([∗ map] p ↦ ts ∈ <[pj := MkTypeState cells'' arr2]> typesj,
-        own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-        ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-        ⌜Forall cell_unit (ty_cells ts)⌝)%I
-      with "[Htext2 Htypesrest]" as "Htypes".
-    { rewrite -insert_delete_eq.
-      rewrite big_sepM_insert; last apply lookup_delete_eq.
-      iFrame "Htypesrest". simpl. rewrite Harr22. iFrame "Htext2".
-      iPureIntro. split; [rewrite -Harr22; exact Hinv2 | exact Hunitcells'']. }
-    wp_auto. wp_for_post.
-    iFrame "HΦ".
-    iExists (S j), (<[pj := MkTypeState cells'' arr2]> typesj), (<[RootId nmj := arr2]> mj).
-    replace (W64 (S j)) with (word.add (W64 j) (W64 1)) by word.
-    iEval (rewrite Harr22) in "Hitemmap".
-    iFrame "Hi Hs Hstructs Hsl Hcap Hitemsf Hitemmap Htypesf Htypesmap Htypes".
-    iPureIntro. split_and!.
-    + exact Hrest.
-    + lia.
-    + rewrite dom_insert_lookup_L; [exact Hdomj | eauto].
-    + (* per-name coherence after the splice *)
-      move=> nm p ts Hbnm.
-      destruct (decide (p = pj)) as [-> | Hne].
-      * have Hnmj : nm = nmj := Hbindinj nm nmj pj Hbnm Hbindj.
-        subst nm. rewrite lookup_insert_eq. move=> [= <-].
-        rewrite docm_get_insert_eq //.
-      * rewrite lookup_insert_ne; last congruence.
-        move=> Hts.
-        have Hnenm : RootId nm ≠ RootId nmj.
-        { move=> [= Heqnm]. subst nm. apply Hne.
-          have : Some p = Some pj by rewrite -Hbnm -Hbindj //.
-          by move=> [=]. }
-        rewrite docm_get_insert_ne //.
-        exact (Hmtypesj nm p ts Hbnm Hts).
-    + (* freshness of the remaining batch against the grown pool *)
-      move=> c0 Hc0 i ti Hile' Hinput' Hcc0.
-      rewrite Hac_step in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew].
-      * exact (Hbndj c0 Hold i ti ltac:(lia) Hinput' Hcc0).
-      * apply list_elem_of_singleton in Hnew as ->.
-        rewrite Hclk2.
-        exact (Hcausal i j ti (RootId nmj, input) Hinput' Hinput ltac:(lia)
-                 (eq_trans (eq_sym Hcc2) Hcc0)).
-    + (* no-wrap for the grown pool *)
-      move=> c0 Hc0.
-      rewrite Hac_step in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew].
-      * exact (Hnowrapj c0 Hold).
-      * apply list_elem_of_singleton in Hnew as ->.
-        rewrite Hclk2.
-        have := Hnowrapb j (RootId nmj, input) Hinput. simpl. word.
-    + (* provenance *)
-      move=> c0 Hc0.
-      rewrite Hac_step in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew].
-      * exact (Hprovj c0 Hold).
-      * apply list_elem_of_singleton in Hnew as ->.
-        right. exists j, (RootId nmj, input). split_and!; [exact Hinput | exact Hcc2 | exact Hclk2].
-  - (* loop exit: the whole batch is integrated, [mj = m'] *)
-    have Hjeq : (j = length uivs)%nat by word.
-    rewrite Hjeq Hlen_ui drop_all in Hreplayj.
-    inversion Hreplayj; subst.
-    wp_auto.
-    iApply ("HΦ" $! typesj).
-    iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
-    iSplitL "Hsl Hcap".
-    { iExists uivs. iFrame "Hsl Hcap Hitems". }
-    iPureIntro. split_and!; [exact Hdomj | exact Hmtypesj | exact Hprovj].
+      [exact Hpendbnd | exact Hctrt | exact Hcellctr | exact Hbindtypes
+      | exact Hbindinj | exact Htypesbound | exact Hhcoh | exact Hmtypes
+      | exact Hmdom].
 Qed.
 
 (** The decoded batch's ids round-trip through the heap's [w64] id fields
@@ -1326,7 +1233,7 @@ Qed.
     W64-level side conditions of [wp_store__applyUpdate]. *)
 Lemma own_update_id_bounds (sl : slice.t) (dq : dfrac)
     (inputs : list (TId * IntegrateInput (A := A))) :
-  own_update sl dq inputs -∗
+  own_update_structs sl dq inputs -∗
   ⌜∀ (i : nat) (ti : TId * IntegrateInput (A := A)), inputs !! i = Some ti →
      (Z.of_nat (clientId (in_id ti.2)) < 2^64)%Z ∧
      (Z.of_nat (clock (in_id ti.2)) < 2^64)%Z⌝.
@@ -1362,77 +1269,1276 @@ Proof.
   move=> Heq. exact (Hoff 0%nat (t0, input) eq_refl (eq_sym Heq)).
 Qed.
 
-(** INTERNAL certificate lemma (field-level): the receiver-side [ValidReplay]
-    precondition of [wp_store__applyUpdate] is replaced by the sender-side op
-    certificates plus the id-level coverage [batch_ok] (what y-octo's
-    UpdateIterator establishes with the state vector). The proof advances the
-    ghost history up front ([history_deliver_batch], which yields the
-    doc-level [ValidReplay] before any code runs) and then invokes the
-    heap-level loop proof verbatim.
+(* ===== the pending gate, heap side (issue #40) ============================ *)
 
-    The batch's W64-level freshness/order side conditions are derived from
-    the replay itself ([ValidReplay_arr_fresh] / [ValidReplay_batch_causal],
-    id components bounded via [own_update_id_bounds] / the DLL pins),
-    including the freshness against OTHER types' cells: the doc-level
-    [ValidReplay] carries doc-GLOBAL per-step freshness, and the registry
-    ties every type to its entry of [m]. Only the [2^64-1] no-wrap seam
-    remains hypothetical (see [wp_store__applyUpdate]).
+(** [containsUpdateItemId] (the in-pool dedup probe): scans a decoded pool
+    slice for a struct carrying [idv]. *)
+Lemma wp_containsUpdateItemId (sl : slice.t) (dq : dfrac)
+    (inputs : list (TId * IntegrateInput (A := A))) (idv : yjs.id.t) :
+  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs }}}
+    @! yjs.containsUpdateItemId #sl #idv
+  {{{ RET #(existsb (λ tj, bool_decide (in_id tj.2 = toYjsId idv)) inputs);
+      own_update_structs sl dq inputs }}}.
+Proof using Type*.
+  wp_start as "Hupd".
+  iDestruct "Hupd" as (uivs) "(Hsl & Hcap & #Hitems)".
+  iDestruct (big_sepL2_length with "Hitems") as %Hlen2.
+  iDestruct (own_slice_len with "Hsl") as %[Hsllen Hsllen0].
+  wp_auto.
+  iAssert (∃ (j : nat),
+    "Hi" ∷ i_ptr ↦ W64 j ∗ "Hitemsp" ∷ items_ptr ↦ sl ∗ "Hid" ∷ id_ptr ↦ idv ∗
+    "Hsl" ∷ sl ↦*{dq} uivs ∗
+    "Hcap" ∷ own_slice_cap yjs.updateItem.t sl dq ∗
+    "%Hjbnd" ∷ ⌜(j <= length uivs)%nat⌝ ∗
+    "%Hnomatch" ∷ ⌜existsb (λ tj, bool_decide (in_id tj.2 = toYjsId idv))
+                    (take j inputs) = false⌝)%I
+    with "[i items id Hsl Hcap]" as "IH".
+  { iExists 0%nat. iFrame "i items id Hsl Hcap". iPureIntro.
+    split; [lia | rewrite take_0 //]. }
+  wp_for "IH".
+  case_bool_decide as Hcond.
+  - (* probe element j *)
+    have Hjlt : (j < length uivs)%nat.
+    { move: Hcond. rewrite Hsllen. word. }
+    destruct (uivs !! j) as [uiv|] eqn:Huiv;
+      last by (apply lookup_ge_None in Huiv; lia).
+    have [ti Hti] : is_Some (inputs !! j).
+    { apply lookup_lt_is_Some_2. rewrite -Hlen2. exact Hjlt. }
+    iDestruct (big_sepL2_lookup _ _ _ j with "Hitems") as "Hui";
+      [exact Huiv | exact Hti |].
+    iDestruct "Hui" as (oleft oright opn)
+      "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hulen & %Htid & %Hborrow)".
+    wp_auto.
+    rewrite decide_True; last by word.
+    iDestruct (own_slice_elem_acc (sint.Z (W64 j)) uiv sl dq uivs with "Hsl") as "[Hel Hgive]".
+    { word. }
+    { replace (Z.to_nat (sint.Z (W64 j))) with j by word. exact Huiv. }
+    wp_auto.
+    wp_method_call. wp_call. wp_auto.
+    wp_apply (wp_Id__Equal uiv.(yjs.updateItem.id') idv).
+    iDestruct ("Hgive" $! uiv with "Hel") as "Hsl".
+    have Hinsid : (<[sint.nat (W64 j) := uiv]> uivs) = uivs.
+    { apply list_insert_id. replace (sint.nat (W64 j)) with j by word. exact Huiv. }
+    iEval (rewrite Hinsid) in "Hsl".
+    case_bool_decide as Heqid.
+    + (* match: the whole scan is true *)
+      wp_auto. wp_for_post.
+      have -> : existsb (λ tj, bool_decide (in_id tj.2 = toYjsId idv)) inputs = true.
+      { apply existsb_exists. exists ti.
+        split; [by apply list_elem_of_In, (list_elem_of_lookup_2 _ j) |].
+        apply bool_decide_eq_true_2. rewrite -Hin_id //. }
+      iApply ("HΦ" with "[Hsl Hcap]").
+      iExists uivs. iFrame "Hsl Hcap Hitems".
+    + (* no match at j: advance *)
+      wp_auto. wp_for_post.
+      iFrame "HΦ".
+      iExists (S j).
+      replace (word.add (W64 j) (W64 1)) with (W64 (S j)) by word.
+      iFrame "Hi Hitemsp Hid Hsl Hcap".
+      iPureIntro. split; [lia |].
+      erewrite take_S_r; last exact Hti.
+      rewrite existsb_app Hnomatch /=.
+      rewrite bool_decide_eq_false_2; first done.
+      rewrite -Hin_id //.
+  - (* scanned everything: the scan is false *)
+    wp_auto.
+    have Hjall : (j >= length uivs)%nat.
+    { move: Hcond. rewrite Hsllen. rewrite Hsllen in Hjbnd. word. }
+    have -> : existsb (λ tj, bool_decide (in_id tj.2 = toYjsId idv)) inputs = false.
+    { rewrite -(take_ge inputs j); [exact Hnomatch | rewrite -Hlen2; lia]. }
+    iApply ("HΦ" with "[Hsl Hcap]").
+    iExists uivs. iFrame "Hsl Hcap Hitems".
+Qed.
 
-    The public spec is [wp_store__applyUpdate_certs] below, which wraps this
-    lemma's raw footprint (struct fields, [types]/[bind] maps) in
-    [own_store] and its raw pure post in [ValidReplay] + [is_root_lb]
-    certificates. *)
-Lemma wp_store__applyUpdate_certs_aux (s : loc) (sl : slice.t) (dq : dfrac)
-    (γh : history_names) (c : ClientId) (h : list Ev)
-    (inputs : list (TId * IntegrateInput (A := A))) (Ds : list (gset YjsId))
+(** The doc-model / cell-level agreement (issue #40): under the registry
+    coherence [store_inv] maintains, an id is integrated in the model iff a
+    store cell carries it. This is what aligns the Go gate ([hasNode], cells)
+    with the pure gate ([docm_has], the model). *)
+Lemma docm_cells_agree (m : DocM) (bind : gmap P loc)
+    (types : gmap loc type_state) (d : YjsId) :
+  (∀ name p ts, bind !! name = Some p -> types !! p = Some ts ->
+     docm_get m (RootId name) = ty_arr ts) ->
+  (∀ t, docm_get m t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
+  (∀ name p, bind !! name = Some p -> is_Some (types !! p)) ->
+  (∀ p, is_Some (types !! p) -> ∃ name, bind !! name = Some p) ->
+  (∀ p ts, types !! p = Some ts -> cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)) ->
+  (∀ p ts, types !! p = Some ts -> Forall cell_unit (ty_cells ts)) ->
+  (docm_has m d = true <-> ∃ c, c ∈ all_cells types ∧ item_id (run_head c) = d).
+Proof.
+  move=> Hmtypes Hmdom Hbindtypes Htypesbound Hreprall Hunitall. split.
+  - move=> /docm_has_spec [t [x [Hx Hid]]].
+    have Hne : docm_get m t ≠ [].
+    { move=> Heq. move: Hx. rewrite Heq elem_of_nil //. }
+    destruct (Hmdom t Hne) as (nm & p & -> & Hbnm).
+    destruct (Hbindtypes nm p Hbnm) as [ts Hts].
+    have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
+    have Hrep : ty_arr ts = run_flatten (ty_cells ts) := Hreprall p ts Hts.
+    rewrite Hdg Hrep /run_flatten in Hx.
+    apply list_elem_of_join in Hx. destruct Hx as (li & Hxin & Hli).
+    apply list_elem_of_fmap in Hli. destruct Hli as (c & -> & Hcin).
+    have Hu : cell_unit c := proj1 (Forall_forall _ _) (Hunitall p ts Hts) c Hcin.
+    exists c. split.
+    + apply all_cells_elem_of. exists p, ts. by split.
+    + rewrite /cell_unit in Hu.
+      rewrite /run_head.
+      destruct (ic_run c) as [| y [| ? ?]] eqn:Hicr; simpl in Hu; try lia.
+      move: Hxin. rewrite list_elem_of_singleton. move=> Heq. simpl.
+      rewrite -Heq. exact Hid.
+  - move=> [c [Hc Hid]].
+    apply docm_has_spec.
+    apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hts & Hcts).
+    destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
+    have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
+    exists (RootId nm), (run_head c). split; [| exact Hid].
+    rewrite Hdg (Hreprall p ts Hts).
+    apply run_head_in_flatten; [exact Hcts |].
+    exact (proj1 (Forall_forall _ _) (Hunitall p ts Hts) c Hcts).
+Qed.
+
+(* ----- the arrival gate ----- *)
+(* (the pure gate lemmas [input_ready_false_of_dep] / [input_ready_true_of] /
+   [input_deps_*] live in [yjs_network_model] with the pool theory) *)
+
+(** [store.originArrived] (issue #40): the per-origin arrival check; a nil
+    origin imposes no dependency. *)
+Lemma wp_store__originArrived (s mref : loc) (dq : dfrac) (p : loc)
+    (oid : option yjs.id.t) (types : gmap loc type_state) :
+  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + 1 < 2^64)%Z) ->
+  {{{ is_pkg_init yjs ∗ is_origin_id p oid ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "originArrived" #p
+  {{{ (ok : bool), RET #ok;
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) ∗
+      ⌜ok = true <-> match oid with
+                     | None => True
+                     | Some idv => ∃ c, c ∈ all_cells types ∧
+                                        item_id (run_head c) = toYjsId idv
+                     end⌝ }}}.
+Proof using Type*.
+  move=> Hnowrap.
+  iIntros (Φ) "(#Hpkg & #HisP & Hitemsf & Hitemmap & Htypes) HΦ".
+  wp_method_call. wp_call. wp_call. wp_auto.
+  destruct oid as [idv |]; simpl.
+  - (* a real origin: dereference and probe *)
+    iDestruct "HisP" as "[%Hpne #Hpid]".
+    rewrite bool_decide_eq_false_2; last first.
+    { move=> Heq. exact (Hpne Heq). }
+    wp_auto.
+    wp_apply (wp_store__hasNode s mref dq idv types Hnowrap
+                with "[$Hitemsf $Hitemmap $Htypes]").
+    iIntros (ok) "(Hitemsf & Hitemmap & Htypes & %Hok)".
+    wp_auto.
+    iApply ("HΦ" $! ok).
+    iFrame "Hitemsf Hitemmap Htypes".
+    iPureIntro. exact Hok.
+  - (* nil origin: no dependency *)
+    iDestruct "HisP" as %->.
+    rewrite bool_decide_eq_true_2 //.
+    wp_auto.
+    iApply ("HΦ" $! true).
+    iFrame "Hitemsf Hitemmap Htypes".
+    iPureIntro. done.
+Qed.
+
+(** [store.depsArrived] (issue #40): the structural gate, as arrival checks.
+    The return value IS the pure gate [input_ready] of the decoded struct,
+    given the model/cell agreement (which [store_inv]'s registry coherence
+    supplies through [docm_cells_agree]). *)
+Lemma wp_store__depsArrived (s mref : loc) (dq : dfrac) (uiv : yjs.updateItem.t)
+    (ti : TId * IntegrateInput (A := A)) (m : DocM) (types : gmap loc type_state) :
+  (∀ d : YjsId, docm_has m d = true <->
+     ∃ c, c ∈ all_cells types ∧ item_id (run_head c) = d) ->
+  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + 1 < 2^64)%Z) ->
+  {{{ is_pkg_init yjs ∗ is_update_item uiv ti ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "depsArrived" #uiv
+  {{{ RET #(input_ready m ti.2);
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) }}}.
+Proof using Type*.
+  move=> Hagree Hnowrap.
+  iIntros (Φ) "(#Hpkg & #Hui & Hitemsf & Hitemmap & Htypes) HΦ".
+  iDestruct "Hui" as (oleft oright opn)
+    "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hulen & %Htid & %Hborrow)".
+  (* the id-component views of the struct's own id *)
+  have Hcid : clientId (in_id ti.2) = uint.nat uiv.(yjs.updateItem.id').(yjs.id.clientId').
+  { rewrite -Hin_id /toYjsId //. }
+  have Hck : clock (in_id ti.2) = uint.nat uiv.(yjs.updateItem.id').(yjs.id.clock').
+  { rewrite -Hin_id /toYjsId //. }
+  wp_method_call. wp_call. wp_call. wp_auto.
+  (* ---- left origin ---- *)
+  wp_apply (wp_store__originArrived s mref dq _ oleft types Hnowrap
+              with "[$HisL $Hitemsf $Hitemmap $Htypes]").
+  iIntros (okL) "(Hitemsf & Hitemmap & Htypes & %HokL)".
+  wp_auto.
+  destruct okL; last first.
+  { (* left origin missing *)
+    wp_auto.
+    have Hready : input_ready m ti.2 = false.
+    { destruct oleft as [idL |]; simpl in Hin_l; last first.
+      { exfalso. destruct HokL as [_ H2]. have := H2 I. discriminate. }
+      apply (input_ready_false_of_dep m ti.2 (toYjsId idL)).
+      - apply input_deps_originL. rewrite -Hin_l //.
+      - apply not_true_iff_false => Hd.
+        apply Hagree in Hd. destruct HokL as [_ H2].
+        have := H2 Hd. discriminate. }
+    iEval (rewrite Hready) in "HΦ".
+    iApply ("HΦ" with "[$Hitemsf $Hitemmap $Htypes]"). }
+  wp_auto.
+  (* ---- right origin ---- *)
+  wp_apply (wp_store__originArrived s mref dq _ oright types Hnowrap
+              with "[$HisR $Hitemsf $Hitemmap $Htypes]").
+  iIntros (okR) "(Hitemsf & Hitemmap & Htypes & %HokR)".
+  wp_auto.
+  destruct okR; last first.
+  { (* right origin missing *)
+    wp_auto.
+    have Hready : input_ready m ti.2 = false.
+    { destruct oright as [idR |]; simpl in Hin_r; last first.
+      { exfalso. destruct HokR as [_ H2]. have := H2 I. discriminate. }
+      apply (input_ready_false_of_dep m ti.2 (toYjsId idR)).
+      - apply input_deps_originR. rewrite -Hin_r //.
+      - apply not_true_iff_false => Hd.
+        apply Hagree in Hd. destruct HokR as [_ H2].
+        have := H2 Hd. discriminate. }
+    iEval (rewrite Hready) in "HΦ".
+    iApply ("HΦ" with "[$Hitemsf $Hitemmap $Htypes]"). }
+  wp_auto.
+  (* the origin facts carried into the tail *)
+  have HLarr : ∀ oid, in_originId ti.2 = Some oid -> docm_has m oid = true.
+  { move=> oid Hoid.
+    destruct oleft as [idL |]; simpl in Hin_l; last by rewrite -Hin_l in Hoid.
+    rewrite -Hin_l in Hoid. injection Hoid as <-.
+    apply Hagree. apply (proj1 HokL). done. }
+  have HRarr : ∀ oid, in_rightOriginId ti.2 = Some oid -> docm_has m oid = true.
+  { move=> oid Hoid.
+    destruct oright as [idR |]; simpl in Hin_r; last by rewrite -Hin_r in Hoid.
+    rewrite -Hin_r in Hoid. injection Hoid as <-.
+    apply Hagree. apply (proj1 HokR). done. }
+  (* ---- the own-predecessor gate ---- *)
+  destruct (bool_decide
+      (uint.Z (W64 0) < uint.Z uiv.(yjs.updateItem.id').(yjs.id.clock'))) eqn:Hckpos.
+  - (* clock > 0: probe (client, clock-1) *)
+    apply bool_decide_eq_true_1 in Hckpos.
+    wp_auto.
+    wp_apply (wp_NewId uiv.(yjs.updateItem.id').(yjs.id.clientId')
+                (word.sub uiv.(yjs.updateItem.id').(yjs.id.clock') (W64 1))).
+    wp_apply (wp_store__hasNode s mref dq _ types Hnowrap
+                with "[$Hitemsf $Hitemmap $Htypes]").
+    iIntros (okP) "(Hitemsf & Hitemmap & Htypes & %HokP)".
+    wp_auto.
+    have Hpredid : toYjsId (yjs.id.mk uiv.(yjs.updateItem.id').(yjs.id.clientId')
+                     (word.sub uiv.(yjs.updateItem.id').(yjs.id.clock') (W64 1)))
+                 = MkYjsId (clientId (in_id ti.2)) (clock (in_id ti.2) - 1)%nat.
+    { rewrite /toYjsId /= Hcid Hck. f_equal. word. }
+    have Hckform : ∃ k, clock (in_id ti.2) = S k ∧ (k = clock (in_id ti.2) - 1)%nat.
+    { exists (clock (in_id ti.2) - 1)%nat. rewrite Hck. split; [word | done]. }
+    destruct Hckform as (k & HckS & Hkval).
+    destruct okP; last first.
+    + (* predecessor missing *)
+      wp_auto.
+      have Hready : input_ready m ti.2 = false.
+      { apply (input_ready_false_of_dep m ti.2 (MkYjsId (clientId (in_id ti.2)) k)).
+        - exact (input_deps_pred ti.2 k HckS).
+        - apply not_true_iff_false => Hd.
+          apply Hagree in Hd. destruct HokP as [_ H2].
+          rewrite Hpredid -Hkval in H2.
+          have := H2 Hd. discriminate. }
+      iEval (rewrite Hready) in "HΦ".
+      iApply ("HΦ" with "[$Hitemsf $Hitemmap $Htypes]").
+    + (* everything arrived *)
+      wp_auto.
+      have Hready : input_ready m ti.2 = true.
+      { apply input_ready_true_of; [exact HLarr | exact HRarr |].
+        move=> k' Hk'.
+        have -> : k' = k by lia.
+        apply Hagree.
+        rewrite Hkval -Hpredid.
+        exact (proj1 HokP eq_refl). }
+      iEval (rewrite Hready) in "HΦ".
+      iApply ("HΦ" with "[$Hitemsf $Hitemmap $Htypes]").
+  - (* clock 0: no predecessor *)
+    apply bool_decide_eq_false_1 in Hckpos.
+    wp_auto.
+    have Hready : input_ready m ti.2 = true.
+    { apply input_ready_true_of; [exact HLarr | exact HRarr |].
+      move=> k' Hk'. exfalso. rewrite Hck in Hk'. word. }
+    iEval (rewrite Hready) in "HΦ".
+    iApply ("HΦ" with "[$Hitemsf $Hitemmap $Htypes]").
+Qed.
+
+(* ----- the ready step: one decoded struct, repaired and integrated ----- *)
+
+(** [store.integrateDecoded] (issue #40): the ready branch of the drain, as a
+    per-struct contract — the loop-free core of the retired batch loop. The
+    struct's target root must be bound ([Hbnm]; the #49 pre-bound-roots
+    restriction, discharged by the drain from [is_pool_rooted] or from the
+    origins' arrival), its [ValidReplay]-step facts hold at the current model
+    [m], and the heap advances to the model spliced at [ti.1]. *)
+Lemma wp_store__integrateDecoded (s mref tref : loc)
+    (uiv : yjs.updateItem.t) (ti : TId * IntegrateInput (A := A))
     (m : DocM) (types : gmap loc type_state) (bind : gmap P loc)
-    (mref tref : loc) :
-  batch_ok h inputs Ds ->
-  history_state_coh h m ->
-  doc_registry_coh m bind types ->
-  (∀ i ti, inputs !! i = Some ti -> ∃ nm p, ti.1 = RootId nm /\ bind !! nm = Some p) ->
-  (∀ c0, c0 ∈ all_cells types -> (uint.Z (cell_clock c0) + 1 < 2^64)%Z) ->
-  (∀ i ti, inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
-  {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
-      own_client_history γh c h ∗
-      ([∗ list] ti;D ∈ inputs;Ds, is_op_cert γh (ti.1, OpInsert ti.2) D) ∗
-      own_update sl dq inputs ∗
+    (nit : YjsItem A) (arr2 : list (YjsItem A)) (nm : P) (p : loc) :
+  ti.1 = RootId nm ->
+  bind !! nm = Some p ->
+  toItem ti.2 (docm_get m ti.1) = Some nit ->
+  IsItemValid nit ->
+  maximalId nit (docm_get m ti.1) ->
+  (∀ (t' : TId) x, x ∈ docm_get m t' ->
+     clientId (item_id x) = clientId (in_id ti.2) ->
+     (clock (item_id x) < clock (in_id ti.2))%nat) ->
+  integrate ti.2 (docm_get m ti.1) = Some arr2 ->
+  (∀ name p', bind !! name = Some p' -> is_Some (types !! p')) ->
+  (∀ n1 n2 p', bind !! n1 = Some p' -> bind !! n2 = Some p' -> n1 = n2) ->
+  (∀ name p' ts, bind !! name = Some p' -> types !! p' = Some ts ->
+     docm_get m (RootId name) = ty_arr ts) ->
+  (∀ d : YjsId, docm_has m d = true <->
+     ∃ c, c ∈ all_cells types ∧ item_id (run_head c) = d) ->
+  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + 1 < 2^64)%Z) ->
+  (Z.of_nat (clientId (in_id ti.2)) < 2^64)%Z ->
+  (Z.of_nat (clock (in_id ti.2)) < 2^64)%Z ->
+  {{{ is_pkg_init yjs ∗ is_update_item uiv ti ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
       (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
-      ([∗ map] p ↦ ts ∈ types,
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "integrateDecoded" #uiv
+  {{{ (types' : gmap loc type_state), RET #();
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
+      ([∗ map] parent ↦ ts ∈ types',
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+          ⌜Forall cell_unit (ty_cells ts)⌝) ∗
+      ⌜dom types' = dom types⌝ ∗
+      ⌜∀ name p' ts', bind !! name = Some p' -> types' !! p' = Some ts' ->
+         docm_get (<[ti.1 := arr2]> m) (RootId name) = ty_arr ts'⌝ ∗
+      ⌜∀ c, c ∈ all_cells types' -> c ∈ all_cells types ∨
+         (cell_client c = W64 (clientId (in_id ti.2)) ∧
+          cell_clock c = W64 (clock (in_id ti.2)))⌝ }}}.
+Proof using Type*.
+  move=> Htieq Hbnm Htoit Hvld Hmax Hglob Hintg Hbindtypes Hbindinj Hmtypes
+         Hagree Hnowrap Hcidb Hckb.
+  iIntros (Φ) "(#Hpkg & #Hui & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
+  iDestruct (types_cells_id_bounds with "Htypes") as %Hcellbnd.
+  iDestruct "Hui" as (oleft oright opn)
+    "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hulen & %Htid & %Hborrow)".
+  destruct ti as [tj input]. simpl in *. subst tj.
+  have Hts0 : is_Some (types !! p) := Hbindtypes nm p Hbnm.
+  destruct Hts0 as [[cellsj arrj0] Htsj].
+  have Hdgj : docm_get m (RootId nm) = arrj0 := Hmtypes nm p _ Hbnm Htsj.
+  set (arrj := docm_get m (RootId nm)) in *.
+  rewrite -Hdgj in Htsj.
+  iDestruct (types_arr_inv with "Htypes") as %Harrinvs.
+  have Hinvj : YjsArrInvariant arrj := Harrinvs p _ Htsj.
+  have Hsi : setintegrate input arrj = Some arr2.
+  { rewrite (setintegrate_eq_integrate input arrj nit Hinvj Htoit Hvld Hmax). exact Hintg. }
+  destruct (integrate_finds input arrj arr2 Hintg) as (leftIdx & rightIdx & HfindL & HfindR).
+  iDestruct (types_entry_pures types p _ Htsj with "Htypes") as %(Hreprj & Hcparj & Hunitcj).
+  simpl in Hreprj, Hcparj.
+  (* uniform repair witnesses: present origins resolve inside this type's own
+     cells (that is where [toItem] found them), so the borrow's parent IS
+     [p]; a named parent is [nm]'s binding *)
+  have Hwits : ∃ (ocL ocR : option item_cell),
+    (match in_originId input, ocL with
+     | Some oid, Some c => c ∈ all_cells types /\ item_id (run_head c) = oid
+     | None, None => True
+     | _, _ => False
+     end) /\
+    (match in_rightOriginId input, ocR with
+     | Some oid, Some c => c ∈ all_cells types /\ item_id (run_head c) = oid
+     | None, None => True
+     | _, _ => False
+     end) /\
+    (match opn with
+     | Some nm' => bind !! nm' = Some p
+     | None => match ocL with
+               | Some c => p = ic_parent c
+               | None => match ocR with
+                         | Some c => p = ic_parent c
+                         | None => False
+                         end
+               end
+     end) /\
+    (match ocL with Some c => ic_loc c | None => null end) = node_loc cellsj leftIdx /\
+    (match ocR with Some c => ic_loc c | None => null end) = node_loc cellsj rightIdx.
+  { have Hcellsw : ∀ (kn : nat) (it : YjsItem A), arrj !! kn = Some it ->
+      ∃ c, cellsj !! kn = Some c /\ run_head c = it.
+    { move=> kn it Hkn. rewrite /cells_repr in Hreprj.
+      rewrite Hreprj (run_flatten_singletons cellsj Hunitcj) list_lookup_fmap in Hkn.
+      destruct (cellsj !! kn) as [c|] eqn:Hc; last done.
+      injection Hkn as <-. by exists c. }
+    have HocL : ∃ ocL,
+      (match in_originId input, ocL with
+       | Some oid, Some c => c ∈ all_cells types /\ item_id (run_head c) = oid
+       | None, None => True
+       | _, _ => False
+       end) /\
+      (match ocL with Some c => ic_loc c | None => null end) = node_loc cellsj leftIdx /\
+      (match ocL with Some c => ic_parent c = p | None => True end).
+    { destruct (in_originId input) as [oidL|] eqn:HoinL.
+      - destruct (findLeftIdx_inv oidL arrj leftIdx HfindL) as (kn & it & -> & Hkn & HidL).
+        destruct (Hcellsw kn it Hkn) as (cL & HcLk & HcLit).
+        exists (Some cL). split_and!.
+        + apply all_cells_elem_of. exists p, (MkTypeState cellsj arrj).
+          split; [exact Htsj | exact (list_elem_of_lookup_2 _ _ _ HcLk)].
+        + by rewrite HcLit.
+        + rewrite /node_loc decide_True; last lia. rewrite Nat2Z.id HcLk //.
+        + exact (Hcparj cL (list_elem_of_lookup_2 _ _ _ HcLk)).
+      - exists None. move: HfindL. rewrite /findLeftIdx. move=> [= <-].
+        split_and!; [done | | done].
+        rewrite /node_loc. case_decide; [lia | done]. }
+    have HocR : ∃ ocR,
+      (match in_rightOriginId input, ocR with
+       | Some oid, Some c => c ∈ all_cells types /\ item_id (run_head c) = oid
+       | None, None => True
+       | _, _ => False
+       end) /\
+      (match ocR with Some c => ic_loc c | None => null end) = node_loc cellsj rightIdx /\
+      (match ocR with Some c => ic_parent c = p | None => True end).
+    { destruct (in_rightOriginId input) as [oidR|] eqn:HoinR.
+      - destruct (findRightIdx_inv oidR arrj rightIdx HfindR) as (kn & it & -> & Hkn & HidR).
+        destruct (Hcellsw kn it Hkn) as (cR & HcRk & HcRit).
+        exists (Some cR). split_and!.
+        + apply all_cells_elem_of. exists p, (MkTypeState cellsj arrj).
+          split; [exact Htsj | exact (list_elem_of_lookup_2 _ _ _ HcRk)].
+        + by rewrite HcRit.
+        + rewrite /node_loc decide_True; last lia. rewrite Nat2Z.id HcRk //.
+        + exact (Hcparj cR (list_elem_of_lookup_2 _ _ _ HcRk)).
+      - exists None. move: HfindR. rewrite /findRightIdx. move=> [= <-].
+        split_and!; [done | | done].
+        have Hlencells : length cellsj = length arrj.
+        { rewrite /cells_repr in Hreprj.
+          rewrite Hreprj (run_flatten_singletons cellsj Hunitcj) length_fmap //. }
+        rewrite /node_loc. case_decide; [| lia].
+        rewrite lookup_ge_None_2 //; lia. }
+    destruct HocL as (ocL & HwL & HlocL & HparL).
+    destruct HocR as (ocR & HwR & HlocR & HparR).
+    exists ocL, ocR. split_and!; try done.
+    destruct opn as [nm'|].
+    - have Hnmeq : RootId nm = RootId nm' := Htid nm' eq_refl.
+      injection Hnmeq as <-. exact Hbnm.
+    - destruct ocL as [cL|]; [by rewrite -(HparL) |].
+      destruct ocR as [cR|]; [by rewrite -(HparR) |].
+      destruct (Hborrow eq_refl) as [HL | HR].
+      + move: HwL. by destruct (in_originId input).
+      + move: HwR. by destruct (in_rightOriginId input). }
+  destruct Hwits as (ocL & ocR & HwL & HwR & Hwpar & HlocLeq & HlocReq).
+  wp_method_call. wp_call. wp_call. wp_auto.
+  wp_func_call. wp_call. wp_auto.
+  wp_alloc itv as "Hitv". wp_auto.
+  set (iv := {| yjs.item.id' := uiv.(yjs.updateItem.id');
+                yjs.item.originLeftId' := uiv.(yjs.updateItem.originLeftId');
+                yjs.item.originRightId' := uiv.(yjs.updateItem.originRightId');
+                yjs.item.left' := null; yjs.item.right' := null;
+                yjs.item.parent' := null;
+                yjs.item.content' := {| yjs.content.content' := uiv.(yjs.updateItem.content') |};
+                yjs.item.flags' := W8 2 |}).
+  iAssert (own_linked_item itv input null null null) with "[Hitv]" as "Hfresh".
+  { iExists iv, oleft, oright. rewrite /own_fresh_item_raw.
+    iFrame "Hitv HisL HisR". iPureIntro.
+    split_and!;
+      [exact Hin_l | exact Hin_r | exact Hin_id | exact Hin_c
+      | reflexivity | reflexivity | reflexivity | reflexivity | exact Hulen]. }
+  wp_apply (wp_store__repair s mref tref itv (uiv.(yjs.updateItem.parentName'))
+              (DfracOwn 1) input opn types bind ocL ocR p
+              HwL HwR Hwpar Hnowrap
+              with "[$Hfresh $HisPN $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
+  iIntros "(Hlinked & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes)".
+  iEval (rewrite HlocLeq HlocReq) in "Hlinked".
+  wp_auto.
+  have Hidnit : item_id nit = in_id input := commutativity.toItem_id input arrj nit Htoit.
+  (* the doc-global W64 clock bound from the model-level one, through the
+     cells agreement *)
+  have Hgmax : ∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (item_id nit)) ->
+                  (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id nit))))%Z.
+  { move=> c0 Hc0 Hcc0.
+    have [Hcb0 Hkb0] := Hcellbnd c0 Hc0.
+    have Hdh : docm_has m (item_id (run_head c0)) = true.
+    { apply Hagree. by exists c0. }
+    apply docm_has_spec in Hdh. destruct Hdh as (t' & x & Hx & Hxid).
+    have Hcc0' : clientId (item_id (run_head c0)) = clientId (in_id input).
+    { move: Hcc0. rewrite /cell_client Hidnit. move=> Hcc0. word. }
+    have Hclt : (clock (item_id x) < clock (in_id input))%nat.
+    { apply (Hglob t' x Hx). rewrite Hxid. exact Hcc0'. }
+    rewrite /cell_clock Hidnit.
+    have Hkeq : clock (item_id x) = clock (item_id (run_head c0)) by rewrite Hxid.
+    word. }
+  iDestruct (big_sepM_delete _ _ p _ Htsj with "Htypes") as "[[Hyt _] Htypesrest]".
+  wp_apply (wp_Store__Integrate_nil s p itv arrj input nit cellsj types mref leftIdx rightIdx
+              Hinvj Htoit Hvld Hmax HfindL HfindR Htsj Hgmax Hunitcj
+              with "[$Hyt $Hlinked $Hitemsf $Hitemmap]").
+  iIntros (arr2' iidx2 cells'' c2)
+    "(%Hile2 & %Harr2eq & %Hinv2 & Htext2 & Hitemsf & Hitemmap & %Hperm2 & %Hsi2 & %Hnode2)".
+  rewrite Hsi2 in Hsi. injection Hsi as Harr22. subst arr2'.
+  destruct Hnode2 as (idx2 & Hsplice2 & Harrsp2 & Hc2look & Hc2loc & Hc2id & Hc2unit).
+  have Hunitcells'' : Forall cell_unit cells''
+    by (rewrite Hsplice2; exact (Forall_cell_unit_splice cellsj idx2 c2 Hunitcj Hc2unit)).
+  have Hac_step : all_cells (<[p := MkTypeState cells'' arr2]> types)
+                ≡ₚ all_cells types ++ [c2]
+    by apply (all_cells_insert_snoc types p cellsj arrj cells'' arr2 c2 Htsj Hperm2).
+  have Hcc2 : cell_client c2 = W64 (clientId (in_id input))
+    by rewrite /cell_client Hc2id Hidnit //.
+  have Hclk2 : cell_clock c2 = W64 (clock (in_id input))
+    by rewrite /cell_clock Hc2id Hidnit //.
+  iAssert ([∗ map] p' ↦ ts ∈ <[p := MkTypeState cells'' arr2]> types,
+      own_ytype_cells p' (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+      ⌜Forall cell_unit (ty_cells ts)⌝)%I
+    with "[Htext2 Htypesrest]" as "Htypes".
+  { rewrite -insert_delete_eq.
+    rewrite big_sepM_insert; last apply lookup_delete_eq.
+    iFrame "Htypesrest". simpl. rewrite Harr22. iFrame "Htext2".
+    iPureIntro. split; [rewrite -Harr22; exact Hinv2 | exact Hunitcells'']. }
+  wp_auto.
+  iEval (rewrite Harr22) in "Hitemmap".
+  iApply ("HΦ" $! (<[p := MkTypeState cells'' arr2]> types)).
+  iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+  iPureIntro. split_and!.
+  - rewrite dom_insert_lookup_L; [done | eauto].
+  - move=> nm' p' ts' Hbnm'.
+    destruct (decide (p' = p)) as [-> | Hne].
+    + have Hnm' : nm' = nm := Hbindinj nm' nm p Hbnm' Hbnm.
+      subst nm'. rewrite lookup_insert_eq. move=> [= <-]. simpl.
+      rewrite docm_get_insert_eq //.
+    + rewrite lookup_insert_ne; last congruence.
+      move=> Hts'.
+      have Hnenm : RootId nm' ≠ RootId nm.
+      { move=> [= Heqnm]. subst nm'. apply Hne.
+        have : Some p' = Some p by rewrite -Hbnm' -Hbnm //.
+        by move=> [=]. }
+      rewrite docm_get_insert_ne //.
+      exact (Hmtypes nm' p' ts' Hbnm' Hts').
+  - move=> c0 Hc0.
+    rewrite Hac_step in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew].
+    + by left.
+    + apply list_elem_of_singleton in Hnew as ->.
+      right. split; [exact Hcc2 | exact Hclk2].
+Qed.
+
+(* ===== the total applyUpdate loop (issue #40) ============================= *)
+
+(** A [toItem] success with a present origin resolved that origin inside the
+    target array, so the array is nonempty. This is how the drain derives the
+    target root's binding for origin-carrying structs: a nonempty model entry
+    is a registered root by [Hmdom] (origin-less structs instead carry a
+    [pool_item_rooted]-style witness). *)
+Lemma toItem_nonempty_of_origin (input : IntegrateInput (A := A))
+    (arr : list (YjsItem A)) (nit : YjsItem A) :
+  toItem input arr = Some nit ->
+  in_originId input ≠ None ∨ in_rightOriginId input ≠ None ->
+  arr ≠ [].
+Proof.
+  move=> Htoit Hor Heq. subst arr.
+  have [o [r [idx [cx [_ [HoL [HoR _]]]]]]] :=
+    proj1 (toItem_ok_iff input [] nit) Htoit.
+  destruct Hor as [Ho | Ho].
+  - destruct (in_originId input) as [oid|]; last by apply Ho.
+    destruct HoL as (it & _ & Hf).
+    rewrite /find_by_id /= in Hf. discriminate.
+  - destruct (in_rightOriginId input) as [oid|]; last by apply Ho.
+    destruct HoR as (it & _ & Hf).
+    rewrite /find_by_id /= in Hf. discriminate.
+Qed.
+
+(** The two destructed corollaries of [pool_drain_unfold] the loop invariant
+    steps with (goal-side rewriting keeps the [let]-reduction by conversion). *)
+Lemma pool_drain_step_nil (m : DocM)
+    (pool kept : list (TId * IntegrateInput (A := A))) (m1 : DocM) :
+  pool_pass m pool [] = ([], kept, m1) ->
+  pool_drain m pool = ([], kept, m1).
+Proof. move=> Hpass. rewrite pool_drain_unfold Hpass //. Qed.
+
+Lemma pool_drain_step_cons (m : DocM)
+    (pool : list (TId * IntegrateInput (A := A)))
+    (a : TId * IntegrateInput (A := A))
+    (app kept app2 rest2 : list (TId * IntegrateInput (A := A))) (m1 m2 : DocM) :
+  pool_pass m pool [] = (a :: app, kept, m1) ->
+  pool_drain m1 kept = (app2, rest2, m2) ->
+  pool_drain m pool = ((a :: app) ++ app2, rest2, m2).
+Proof. move=> Hpass Hdrec. rewrite pool_drain_unfold Hpass Hdrec //. Qed.
+
+(** [store.applyUpdate] (issue #40), the internal total loop: the pending
+    buffer plus the incoming batch drain to the structural-dependency
+    fixpoint. The pure [pool_drain] names the applied list, the leftover pool
+    and the final model; [ValidReplay applied] carries the per-struct validity
+    facts (the certificate layer produces it via [history_deliver_pool]); and
+    [pool_ready_total] excludes the ready-but-stuck branch, so the Go loop
+    (which integrates whenever the arrival gate passes) stays aligned with the
+    model scan. Origin-less pool structs must target registered roots (the
+    issue #49 pre-bound-roots restriction); origin-carrying structs derive
+    their binding from the origin's arrival at integration time. *)
+Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
+    (dq : dfrac)
+    (inputs pend0 applied rest : list (TId * IntegrateInput (A := A)))
+    (m m' : DocM) (types : gmap loc type_state) (bind : gmap P loc) :
+  pool_drain m (pend0 ++ inputs) = (applied, rest, m') ->
+  ValidReplay applied m m' ->
+  pool_ready_total m (pend0 ++ inputs) applied ->
+  (∀ name p, bind !! name = Some p -> is_Some (types !! p)) ->
+  (∀ n1 n2 p, bind !! n1 = Some p -> bind !! n2 = Some p -> n1 = n2) ->
+  (∀ p, is_Some (types !! p) -> ∃ name, bind !! name = Some p) ->
+  (∀ name p ts, bind !! name = Some p -> types !! p = Some ts ->
+     docm_get m (RootId name) = ty_arr ts) ->
+  (∀ t, docm_get m t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
+  (∀ ti : TId * IntegrateInput (A := A), ti ∈ pend0 ++ inputs ->
+     in_originId ti.2 = None -> in_rightOriginId ti.2 = None ->
+     ∃ nm, ti.1 = RootId nm ∧ is_Some (bind !! nm)) ->
+  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + 1 < 2^64)%Z) ->
+  (∀ ti : TId * IntegrateInput (A := A), ti ∈ pend0 ++ inputs ->
+     (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
+  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗
+      (s .[(yjs.store.t), "pending"]) ↦ pend_sl0 ∗
+      own_update_structs pend_sl0 (DfracOwn 1) pend0 ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
           ⌜Forall cell_unit (ty_cells ts)⌝) }}}
     s @! (go.PointerType yjs.store) @! "applyUpdate" #sl
-  {{{ (types' : gmap loc type_state) (m' : DocM), RET #();
-      own_update sl dq inputs ∗
+  {{{ (pend_sl' : slice.t) (types' : gmap loc type_state), RET #();
+      own_update_structs sl dq inputs ∗
+      (s .[(yjs.store.t), "pending"]) ↦ pend_sl' ∗
+      own_update_structs pend_sl' (DfracOwn 1) rest ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
       (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
-      ([∗ map] p ↦ ts ∈ types',
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ([∗ map] parent ↦ ts ∈ types',
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
           ⌜Forall cell_unit (ty_cells ts)⌝) ∗
-      own_client_history γh c (h ++ (deliver_ev <$> inputs)) ∗
-      is_history_lb γh c (h ++ (deliver_ev <$> inputs)) ∗
-      ⌜history_state_coh (h ++ (deliver_ev <$> inputs)) m'⌝ ∗
-      ⌜doc_registry_coh m' bind types'⌝ ∗
       ⌜dom types' = dom types⌝ ∗
-      ⌜ValidReplay inputs m m'⌝ ∗
-      ⌜∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
-         inputs !! i = Some ti -> clientId (in_id ti.2) ≠ c⌝ ∗
-      ⌜∀ c0, c0 ∈ all_cells types' -> c0 ∈ all_cells types ∨
-         ∃ i ti, inputs !! i = Some ti /\
-            cell_client c0 = W64 (clientId (in_id ti.2)) /\
-            cell_clock c0 = W64 (clock (in_id ti.2))⌝ }}}.
+      ⌜∀ name p ts', bind !! name = Some p -> types' !! p = Some ts' ->
+         docm_get m' (RootId name) = ty_arr ts'⌝ ∗
+      ⌜∀ t, docm_get m' t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p⌝ ∗
+      ⌜∀ c, c ∈ all_cells types' -> c ∈ all_cells types ∨
+         ∃ ti : TId * IntegrateInput (A := A), ti ∈ applied ∧
+            cell_client c = W64 (clientId (in_id ti.2)) ∧
+            cell_clock c = W64 (clock (in_id ti.2))⌝ }}}.
 Proof using Type*.
-  move=> Hbatch Hcoh Hcohreg Hbatchbnd Hnowrap Hnowrapb.
-  destruct Hcohreg as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
-  iIntros (Φ) "(#Hpkg & #Hhist & Hown & #Hcerts & Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
+  move=> Hdrain Hvr Hrtot Hbindtypes Hbindinj Htypesbound Hmtypes Hmdom
+         Hrooted Hnowrap Hkb1.
+  iIntros (Φ) "(#Hpkg & Hupd & Hpendf & Hpend & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
+  (* W64 id bounds of the whole pool, from the two heap slices *)
+  iDestruct (own_update_id_bounds with "Hupd") as %Hidbin.
+  iDestruct (own_update_id_bounds with "Hpend") as %Hidbpd.
+  have Hidb : ∀ ti : TId * IntegrateInput (A := A), ti ∈ pend0 ++ inputs ->
+      (Z.of_nat (clientId (in_id ti.2)) < 2^64)%Z ∧
+      (Z.of_nat (clock (in_id ti.2)) < 2^64)%Z.
+  { move=> ti /elem_of_app [Hin | Hin];
+      apply list_elem_of_lookup_1 in Hin; destruct Hin as [ix Hix];
+      [exact (Hidbpd ix ti Hix) | exact (Hidbin ix ti Hix)]. }
+  iDestruct "Hupd" as (uivs_in) "(Hslin & Hcapin & #Hitemsin)".
+  iDestruct (big_sepL2_length with "Hitemsin") as %Hlenin.
+  iDestruct "Hpend" as (uivs_pd) "(Hslpd & Hcappd & #Hitemspd)".
+  iDestruct (big_sepL2_length with "Hitemspd") as %Hlenpd.
+  wp_method_call. wp_call. wp_call. wp_auto.
+  (* ----- phase A: pool := pending ++ structs ----- *)
+  iDestruct (own_slice_len with "Hslin") as %[Hinlen Hinlen0].
+  iAssert (∃ (j : nat) (pslA : slice.t) (uivsA : list yjs.updateItem.t),
+      "Hi" ∷ i_ptr ↦ W64 j ∗
+      "Hpoolp" ∷ pool_ptr ↦ pslA ∗
+      "HslA" ∷ pslA ↦* uivsA ∗
+      "HcapA" ∷ own_slice_cap yjs.updateItem.t pslA (DfracOwn 1) ∗
+      "#HitemsA" ∷ ([∗ list] uiv;ti ∈ uivsA;(pend0 ++ take j inputs),
+          is_update_item uiv ti) ∗
+      "Hslin" ∷ sl ↦*{dq} uivs_in ∗
+      "%HjA" ∷ ⌜(j <= length uivs_in)%nat⌝)%I
+    with "[i pool Hslpd Hcappd Hslin]" as "IH".
+  { iExists 0%nat, pend_sl0, uivs_pd. iFrame "i pool Hslpd Hcappd Hslin".
+    rewrite take_0 app_nil_r. iFrame "Hitemspd".
+    iPureIntro. lia. }
+  wp_for "IH".
+  case_bool_decide as Hcond.
+  - (* append structs[j] *)
+    have Hjlt : (j < length uivs_in)%nat.
+    { move: Hcond. rewrite Hinlen. word. }
+    destruct (uivs_in !! j) as [uiv|] eqn:Huiv;
+      last by (apply lookup_ge_None in Huiv; lia).
+    have [ti Hti] : is_Some (inputs !! j).
+    { apply lookup_lt_is_Some_2. rewrite -Hlenin. exact Hjlt. }
+    iDestruct (big_sepL2_lookup _ _ _ j with "Hitemsin") as "#Hui";
+      [exact Huiv | exact Hti |].
+    wp_auto.
+    rewrite decide_True; last by word.
+    iDestruct (own_slice_elem_acc (sint.Z (W64 j)) uiv sl dq uivs_in with "Hslin")
+      as "[Hel Hgive]".
+    { word. }
+    { replace (Z.to_nat (sint.Z (W64 j))) with j by word. exact Huiv. }
+    wp_auto.
+    iDestruct ("Hgive" $! uiv with "Hel") as "Hslin".
+    have Hinsid : (<[sint.nat (W64 j) := uiv]> uivs_in) = uivs_in.
+    { apply list_insert_id. replace (sint.nat (W64 j)) with j by word. exact Huiv. }
+    iEval (rewrite Hinsid) in "Hslin".
+    wp_apply wp_slice_literal. iSplitR; first done.
+    iIntros "%sing [Hsing _]". wp_auto.
+    wp_apply (wp_slice_append with "[$HslA $HcapA $Hsing]").
+    iIntros (pslA') "(HslA' & HcapA' & _)". wp_auto.
+    wp_for_post.
+    iFrame "Hcapin Hpendf Hitemsf Hitemmap Htypesf Htypesmap Htypes HΦ s structs".
+    iExists (S j), pslA', (uivsA ++ [uiv]).
+    replace (word.add (W64 j) (W64 1)) with (W64 (S j)) by word.
+    have H00 : sint.nat (W64 0) = 0%nat by word.
+    iEval (rewrite H00 /=) in "HslA'".
+    iFrame "Hi Hpoolp HslA' HcapA' Hslin".
+    iSplit.
+    { erewrite take_S_r; last exact Hti.
+      rewrite app_assoc. rewrite big_sepL2_snoc.
+      iSplit; [iFrame "HitemsA" | iFrame "Hui"]. }
+    iPureIntro. lia.
+  - (* pool complete: content is pend0 ++ inputs; pending := nil *)
+    wp_auto.
+    have Hjge : (j >= length uivs_in)%nat.
+    { move: Hcond. rewrite Hinlen. rewrite Hinlen in HjA. word. }
+    have Htakeall : take j inputs = inputs.
+    { apply take_ge. rewrite -Hlenin. lia. }
+    iEval (rewrite Htakeall) in "HitemsA".
+    (* ----- phase B: the drain loop ----- *)
+    iAssert (∃ (pv : bool) (poolS : slice.t) (uivsP : list yjs.updateItem.t)
+               (poolj appliedj suffix : list (TId * IntegrateInput (A := A)))
+               (typesj : gmap loc type_state) (mj : DocM),
+        "Hprog" ∷ progress_ptr ↦ pv ∗
+        "Hpoolp" ∷ pool_ptr ↦ poolS ∗
+        "HslP" ∷ poolS ↦* uivsP ∗
+        "HcapP" ∷ own_slice_cap yjs.updateItem.t poolS (DfracOwn 1) ∗
+        "#HitemsPj" ∷ ([∗ list] uiv;ti ∈ uivsP;poolj, is_update_item uiv ti) ∗
+        "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
+        "Hitemmap" ∷ own_item_map mref (DfracOwn 1) typesj ∗
+        "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ tref ∗
+        "Htypesmap" ∷ own_map tref (DfracOwn 1) bind ∗
+        "Htypes" ∷ ([∗ map] parent ↦ ts ∈ typesj,
+            own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+            ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+            ⌜Forall cell_unit (ty_cells ts)⌝) ∗
+        "%Hpoolsubj" ∷ ⌜∀ ti : TId * IntegrateInput (A := A),
+            ti ∈ poolj -> ti ∈ pend0 ++ inputs⌝ ∗
+        "%Hprj" ∷ ⌜PoolReplay m appliedj mj⌝ ∗
+        "%Hdomj" ∷ ⌜dom typesj = dom types⌝ ∗
+        "%Hmtypesj" ∷ ⌜∀ name pl ts, bind !! name = Some pl ->
+            typesj !! pl = Some ts -> docm_get mj (RootId name) = ty_arr ts⌝ ∗
+        "%Hmdomj" ∷ ⌜∀ t, docm_get mj t ≠ [] ->
+            ∃ name pl, t = RootId name ∧ bind !! name = Some pl⌝ ∗
+        "%Hnowrapj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj ->
+            (uint.Z (cell_clock c0) + 1 < 2^64)%Z⌝ ∗
+        "%Hprovj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> c0 ∈ all_cells types ∨
+            ∃ ti : TId * IntegrateInput (A := A), ti ∈ applied ∧
+               cell_client c0 = W64 (clientId (in_id ti.2)) ∧
+               cell_clock c0 = W64 (clock (in_id ti.2))⌝ ∗
+        "%Hmid" ∷ ⌜pv = true ->
+            pool_drain mj poolj = (suffix, rest, m') ∧
+            applied = appliedj ++ suffix ∧ ValidReplay suffix mj m'⌝ ∗
+        "%Hfin" ∷ ⌜pv = false -> poolj = rest ∧ mj = m' ∧ applied = appliedj⌝)%I
+      with "[progress Hpoolp HslA HcapA Hitemsf Hitemmap Htypesf Htypesmap Htypes]"
+      as "IH".
+    { iExists true, pslA, uivsA, (pend0 ++ inputs), [], applied, types, m.
+      iFrame "progress Hpoolp HslA HcapA Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+      iFrame "HitemsA".
+      iPureIntro. split_and!.
+      - done.
+      - constructor.
+      - done.
+      - exact Hmtypes.
+      - exact Hmdom.
+      - exact Hnowrap.
+      - move=> c0 Hc0. by left.
+      - move=> _. split_and!; [exact Hdrain | done | exact Hvr].
+      - move=> Hf. discriminate. }
+    wp_for "IH".
+    destruct pv.
+    + (* progress: run one more pass *)
+      rewrite decide_True; last done.
+      destruct (Hmid eq_refl) as (Hdrainj & Happj & Hvrj).
+      wp_auto.
+      wp_apply wp_slice_literal. iSplitR; first done.
+      iIntros "%rsl0 [Hrsl0 Hrcap0]". wp_auto.
+      (* the pass computation this iteration refines *)
+      destruct (pool_pass mj poolj []) as [[app_rem0 keptfin0] m_pend0] eqn:Hpass0.
+      (* the future passes' applied list ([suffix] is introduced as [suffix0]:
+         the binder shadows stdpp's [suffix]) *)
+      have [af [Hsufdec Hvraf]] : ∃ af,
+          suffix0 = app_rem0 ++ af ∧ ValidReplay (app_rem0 ++ af) mj m'.
+      { destruct app_rem0 as [| a0 ar0].
+        - have Hdd := pool_drain_step_nil mj poolj keptfin0 m_pend0 Hpass0.
+          rewrite Hdrainj in Hdd.
+          move: Hdd => [= Hsuf Hrest2 Hm2].
+          have Hmp0 : m_pend0 = mj :=
+            pool_pass_no_progress poolj mj [] keptfin0 m_pend0 Hpass0.
+          subst suffix0. exists []. split; first done.
+          rewrite Hm2 Hmp0. constructor.
+        - destruct (pool_drain m_pend0 keptfin0) as [[app2 rest2] m2] eqn:Hdrec.
+          have Hdd := pool_drain_step_cons mj poolj a0 ar0 keptfin0 app2 rest2
+                        m_pend0 m2 Hpass0 Hdrec.
+          rewrite Hdrainj in Hdd.
+          move: Hdd => [= Hsuf Hrest2 Hm2].
+          exists app2. split; first exact Hsuf.
+          rewrite Hsuf in Hvrj. exact Hvrj. }
+      iDestruct (big_sepL2_length with "HitemsPj") as %HlenP.
+      iDestruct (own_slice_len with "HslP") as %[HPlen HPlen0].
+      (* ----- the inner scan ----- *)
+      iAssert (∃ (i : nat) (pvi : bool) (restS : slice.t)
+                 (uivsR : list yjs.updateItem.t)
+                 (keptacc appacc app_rem af2 : list (TId * IntegrateInput (A := A)))
+                 (types_c : gmap loc type_state) (m_c : DocM),
+          "Hii" ∷ i_ptr ↦ W64 i ∗
+          "Hprog" ∷ progress_ptr ↦ pvi ∗
+          "Hrestp" ∷ rest_ptr ↦ restS ∗
+          "HslR" ∷ restS ↦* uivsR ∗
+          "HcapR" ∷ own_slice_cap yjs.updateItem.t restS (DfracOwn 1) ∗
+          "#HitemsR" ∷ ([∗ list] uiv;ti ∈ uivsR;keptacc, is_update_item uiv ti) ∗
+          "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
+          "Hitemmap" ∷ own_item_map mref (DfracOwn 1) types_c ∗
+          "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ tref ∗
+          "Htypesmap" ∷ own_map tref (DfracOwn 1) bind ∗
+          "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types_c,
+              own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+              ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+              ⌜Forall cell_unit (ty_cells ts)⌝) ∗
+          "%Hilen" ∷ ⌜(i <= length poolj)%nat⌝ ∗
+          "%Hpassa" ∷ ⌜pool_pass m_c (drop i poolj) keptacc =
+              (app_rem, keptfin0, m_pend0)⌝ ∗
+          "%Hpassc" ∷ ⌜pool_pass mj poolj [] =
+              (appacc ++ app_rem, keptfin0, m_pend0)⌝ ∗
+          "%Happdec" ∷ ⌜applied = appliedj ++ appacc ++ app_rem ++ af2⌝ ∗
+          "%Hvrc" ∷ ⌜ValidReplay (app_rem ++ af2) m_c m'⌝ ∗
+          "%Hprc" ∷ ⌜PoolReplay m (appliedj ++ appacc) m_c⌝ ∗
+          "%Hkeptsub" ∷ ⌜∀ ti, ti ∈ keptacc -> ti ∈ poolj⌝ ∗
+          "%Hpv" ∷ ⌜pvi = false <-> appacc = []⌝ ∗
+          "%Hdomc" ∷ ⌜dom types_c = dom types⌝ ∗
+          "%Hmtypesc" ∷ ⌜∀ name pl ts, bind !! name = Some pl ->
+              types_c !! pl = Some ts -> docm_get m_c (RootId name) = ty_arr ts⌝ ∗
+          "%Hmdomc" ∷ ⌜∀ t, docm_get m_c t ≠ [] ->
+              ∃ name pl, t = RootId name ∧ bind !! name = Some pl⌝ ∗
+          "%Hnowrapc" ∷ ⌜∀ c0, c0 ∈ all_cells types_c ->
+              (uint.Z (cell_clock c0) + 1 < 2^64)%Z⌝ ∗
+          "%Hprovc" ∷ ⌜∀ c0, c0 ∈ all_cells types_c -> c0 ∈ all_cells types ∨
+              ∃ ti : TId * IntegrateInput (A := A), ti ∈ applied ∧
+                 cell_client c0 = W64 (clientId (in_id ti.2)) ∧
+                 cell_clock c0 = W64 (clock (in_id ti.2))⌝)%I
+        with "[i Hprog rest Hrsl0 Hrcap0 Hitemsf Hitemmap Htypesf Htypesmap Htypes]"
+        as "IHin".
+      { iExists 0%nat, false, _, [], [], [], app_rem0, af, typesj, mj.
+        iFrame "i Hprog rest Hrsl0 Hrcap0 Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+        iSplit; first by rewrite big_sepL2_nil.
+        iPureIntro. split_and!.
+        - lia.
+        - rewrite drop_0. exact Hpass0.
+        - exact Hpass0.
+        - rewrite Happj Hsufdec //.
+        - exact Hvraf.
+        - rewrite app_nil_r. exact Hprj.
+        - move=> ti Hti. by apply elem_of_nil in Hti.
+        - done.
+        - exact Hdomj.
+        - exact Hmtypesj.
+        - exact Hmdomj.
+        - exact Hnowrapj.
+        - exact Hprovj. }
+      wp_for "IHin".
+      case_bool_decide as Hcondi.
+      * (* scan struct i *)
+        have Hilt : (i < length uivsP)%nat.
+        { move: Hcondi. rewrite HPlen. word. }
+        destruct (uivsP !! i) as [uiv|] eqn:Huiv;
+          last by (apply lookup_ge_None in Huiv; lia).
+        destruct (poolj !! i) as [[tj input]|] eqn:Hpi;
+          last by (apply lookup_ge_None in Hpi; rewrite -HlenP in Hpi; lia).
+        iDestruct (big_sepL2_lookup _ _ _ i with "HitemsPj") as "#Hui";
+          [exact Huiv | exact Hpi |].
+        iDestruct (big_sepL2_lookup _ _ _ i with "HitemsPj") as
+          (oleft oright opn)
+          "(#HisL & #HisR & #HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hulen & %Htid & %Hborrow)";
+          [exact Huiv | exact Hpi |].
+        simpl in Hin_l, Hin_r, Hin_id, Hin_c, Htid, Hborrow.
+        (* registry coherence, transported to the current [types_c] *)
+        have Hbindtypesc : ∀ name pl, bind !! name = Some pl ->
+            is_Some (types_c !! pl).
+        { move=> name pl Hb. apply elem_of_dom. rewrite Hdomc.
+          apply elem_of_dom. exact (Hbindtypes name pl Hb). }
+        have Htypesboundc : ∀ pl, is_Some (types_c !! pl) ->
+            ∃ name, bind !! name = Some pl.
+        { move=> pl Hs0. apply Htypesbound. apply elem_of_dom. rewrite -Hdomc.
+          apply elem_of_dom. exact Hs0. }
+        iDestruct (types_repr_all with "Htypes") as %Hreprallc.
+        iDestruct (types_unit_all with "Htypes") as %Hunitallc.
+        have Hagreec : ∀ d : YjsId, docm_has m_c d = true <->
+            ∃ c0, c0 ∈ all_cells types_c ∧ item_id (run_head c0) = d.
+        { move=> d.
+          exact (docm_cells_agree m_c bind types_c d Hmtypesc Hmdomc
+                   Hbindtypesc Htypesboundc Hreprallc Hunitallc). }
+        have Hpool0in : (tj, input) ∈ pend0 ++ inputs.
+        { apply Hpoolsubj. exact (list_elem_of_lookup_2 _ _ _ Hpi). }
+        (* read pool[i] into ui *)
+        wp_auto.
+        rewrite decide_True; last by word.
+        iDestruct (own_slice_elem_acc (sint.Z (W64 i)) uiv poolS (DfracOwn 1)
+                     uivsP with "HslP") as "[Hel Hgive]".
+        { word. }
+        { replace (Z.to_nat (sint.Z (W64 i))) with i by word. exact Huiv. }
+        wp_auto.
+        iDestruct ("Hgive" $! uiv with "Hel") as "HslP".
+        have Hinsid : (<[sint.nat (W64 i) := uiv]> uivsP) = uivsP.
+        { apply list_insert_id.
+          replace (sint.nat (W64 i)) with i by word. exact Huiv. }
+        iEval (rewrite Hinsid) in "HslP".
+        (* the arrival probe: hasNode *)
+        wp_apply (wp_store__hasNode s mref (DfracOwn 1)
+                    (uiv.(yjs.updateItem.id')) types_c Hnowrapc
+                    with "[$Hitemsf $Hitemmap $Htypes]").
+        iIntros (ok) "(Hitemsf & Hitemmap & Htypes & %Hok)".
+        have Hokm : ok = docm_has m_c (in_id input).
+        { destruct (docm_has m_c (in_id input)) eqn:Hd.
+          - apply Hagreec in Hd. destruct Hd as (c0 & Hc0 & Hid0).
+            apply Hok. exists c0. split; [exact Hc0 | by rewrite Hid0 -Hin_id].
+          - destruct ok; last done.
+            destruct (proj1 Hok eq_refl) as (c0 & Hc0 & Hid0).
+            have Hd' : docm_has m_c (in_id input) = true.
+            { apply Hagreec. exists c0.
+              split; [exact Hc0 | by rewrite Hid0 Hin_id]. }
+            congruence. }
+        destruct (docm_has m_c (in_id input)) eqn:Hd; subst ok.
+        { (* duplicate: continue *)
+          wp_auto. wp_for_post.
+          iFrame "Hcapin Hpendf HΦ s Hslin Hpoolp HslP HcapP".
+          iExists (S i), pvi, restS, uivsR, keptacc, appacc, app_rem, af2,
+            types_c, m_c.
+          replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
+          iFrame "Hii Hprog Hrestp HslR HcapR Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+          iFrame "HitemsR".
+          iPureIntro. split_and!; try done.
+          - apply (lookup_lt_Some _ _ _ Hpi).
+          - rewrite (drop_S poolj (tj, input) i Hpi) /= Hd in Hpassa.
+            exact Hpassa. }
+        (* fresh: probe the structural gate *)
+        wp_auto.
+        wp_apply (wp_store__depsArrived s mref (DfracOwn 1) uiv (tj, input)
+                    m_c types_c Hagreec Hnowrapc
+                    with "[$Hui $Hitemsf $Hitemmap $Htypes]").
+        iIntros "(Hitemsf & Hitemmap & Htypes)".
+        destruct (input_ready m_c input) eqn:Hready.
+        -- (* ready: certified pools always integrate *)
+           have Hsome : is_Some (integrate input (docm_get m_c tj)).
+           { apply (Hrtot (appliedj ++ appacc) (app_rem ++ af2) m_c (tj, input)).
+             - rewrite Happdec !app_assoc //.
+             - exact Hprc.
+             - exact Hpool0in.
+             - exact Hd.
+             - exact Hready. }
+           destruct Hsome as [arr' Hint'].
+           (* step the pass equation *)
+           rewrite (drop_S poolj (tj, input) i Hpi) /= Hd Hready Hint' in Hpassa.
+           destruct (pool_pass (<[tj := arr']> m_c) (drop (S i) poolj) keptacc)
+             as [[app2 kept2] m2] eqn:Hrec.
+           move: Hpassa => [= Happrem Hkeq Hmeq].
+           subst app_rem kept2 m2.
+           (* align with the replay: the head is exactly this struct *)
+           rewrite -app_comm_cons in Hvrc.
+           inversion Hvrc as [| t0 input0 rest0 m0 arr2 mf nit Htoit Hvld
+                                Hmax Hglob Hintg Hrest Heqin [Heqi Heqa Heqf]];
+             subst.
+           have Harr2 : arr2 = arr'.
+           { rewrite Hint' in Hintg. by injection Hintg. }
+           subst arr2.
+           (* the target root's binding: origin-less structs carry a witness,
+              origin-carrying structs land in a nonempty (hence bound) type *)
+           have [nm [Htjeq [pl Hbnm]]] : ∃ nm, tj = RootId nm ∧ is_Some (bind !! nm).
+           { destruct (decide (in_originId input = None ∧
+                               in_rightOriginId input = None)) as [[HoN HrN] | Hor].
+             - destruct (Hrooted (tj, input) Hpool0in HoN HrN) as (nm & Heq & Hsm).
+               by exists nm.
+             - have Hne : docm_get m_c tj ≠ [].
+               { apply (toItem_nonempty_of_origin input _ nit Htoit).
+                 apply not_and_l in Hor.
+                 by destruct Hor as [Ho | Ho]; [left | right]. }
+               destruct (Hmdomc tj Hne) as (nm & pl & Heq & Hb).
+               exists nm. split; [exact Heq | by exists pl]. }
+           have Hcidb : (Z.of_nat (clientId (in_id input)) < 2^64)%Z.
+           { exact (proj1 (Hidb (tj, input) Hpool0in)). }
+           have Hckb : (Z.of_nat (clock (in_id input)) < 2^64)%Z.
+           { exact (proj2 (Hidb (tj, input) Hpool0in)). }
+           simpl. rewrite Hready. wp_auto.
+           wp_apply (wp_store__integrateDecoded s mref tref uiv (tj, input)
+                       m_c types_c bind nit arr' nm pl
+                       Htjeq Hbnm Htoit Hvld Hmax Hglob Hint'
+                       Hbindtypesc Hbindinj Hmtypesc Hagreec Hnowrapc Hcidb Hckb
+                       with "[$Hui $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
+           iIntros (types'') "(Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hdom'' & %Hmtypes'' & %Hprov'')".
+           wp_auto. wp_for_post.
+           iFrame "Hcapin Hpendf HΦ s Hslin Hpoolp HslP HcapP".
+           iExists (S i), true, restS, uivsR, keptacc, (appacc ++ [(tj, input)]),
+             app2, af2, types'', (<[tj := arr']> m_c).
+           replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
+           iFrame "Hii Hprog Hrestp HslR HcapR Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+           iFrame "HitemsR".
+           iPureIntro. split_and!.
+           ++ apply (lookup_lt_Some _ _ _ Hpi).
+           ++ exact Hrec.
+           ++ rewrite -app_assoc /=. exact Hpassc.
+           ++ rewrite -app_assoc /=. exact Happdec.
+           ++ exact Hrest.
+           ++ rewrite app_assoc.
+              apply (PoolReplay_app m m_c _ (appliedj ++ appacc) [(tj, input)] Hprc).
+              apply (PoolReplay_cons m_c (tj, input) arr' [] _ Hd Hready Hint').
+              constructor.
+           ++ exact Hkeptsub.
+           ++ split; [move=> Hf; discriminate | move=> Habs; by destruct appacc].
+           ++ by rewrite Hdom''.
+           ++ exact Hmtypes''.
+           ++ move=> t Hne.
+              destruct (decide (t = tj)) as [-> | Hnet].
+              { exists nm, pl. split; [exact Htjeq | exact Hbnm]. }
+              rewrite docm_get_insert_ne // in Hne.
+              exact (Hmdomc t Hne).
+           ++ move=> c0 Hc0.
+              destruct (Hprov'' c0 Hc0) as [Hold | [Hcc Hck]].
+              { exact (Hnowrapc c0 Hold). }
+              rewrite Hck. simpl in Hck |- *.
+              have Hb := Hkb1 (tj, input) Hpool0in. simpl in Hb. word.
+           ++ move=> c0 Hc0.
+              destruct (Hprov'' c0 Hc0) as [Hold | [Hcc Hck]].
+              { exact (Hprovc c0 Hold). }
+              right. exists (tj, input). split_and!; [| exact Hcc | exact Hck].
+              rewrite Happdec. apply elem_of_app; right.
+              apply elem_of_app; right. apply elem_of_app; left.
+              apply elem_of_cons. by left.
+        -- (* blocked: keep (deduplicated by id) *)
+           rewrite (drop_S poolj (tj, input) i Hpi) /= Hd Hready in Hpassa.
+           simpl. rewrite Hready. wp_auto.
+           wp_apply (wp_containsUpdateItemId restS (DfracOwn 1) keptacc
+                       (uiv.(yjs.updateItem.id')) with "[HslR HcapR]").
+           { iExists uivsR. iFrame "HslR HcapR HitemsR". }
+           iIntros "Hos". iDestruct "Hos" as (uivsR2) "(HslR & HcapR & #HitemsR2)".
+           rewrite Hin_id.
+           destruct (existsb (λ tj0, bool_decide (in_id tj0.2 = in_id input))
+                       keptacc) eqn:Hex.
+           ** (* already kept: skip *)
+              wp_auto. wp_for_post.
+              iFrame "Hcapin Hpendf HΦ s Hslin Hpoolp HslP HcapP".
+              iExists (S i), pvi, restS, uivsR2, keptacc, appacc, app_rem, af2,
+                types_c, m_c.
+              replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
+              iFrame "Hii Hprog Hrestp HslR HcapR Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+              iFrame "HitemsR2".
+              iPureIntro. split_and!; try done.
+              --- apply (lookup_lt_Some _ _ _ Hpi).
+              --- rewrite /pool_keep /= Hex in Hpassa. exact Hpassa.
+           ** (* newly kept: append to rest *)
+              wp_auto.
+              wp_apply wp_slice_literal. iSplitR; first done.
+              iIntros "%sing [Hsing _]". wp_auto.
+              wp_apply (wp_slice_append with "[$HslR $HcapR $Hsing]").
+              iIntros (restS') "(HslR' & HcapR' & _)". wp_auto.
+              wp_for_post.
+              iFrame "Hcapin Hpendf HΦ s Hslin Hpoolp HslP HcapP".
+              iExists (S i), pvi, restS', (uivsR2 ++ [uiv]),
+                (keptacc ++ [(tj, input)]), appacc, app_rem, af2, types_c, m_c.
+              replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
+              have H00 : sint.nat (W64 0) = 0%nat by word.
+              iEval (rewrite H00 /=) in "HslR'".
+              iFrame "Hii Hprog Hrestp HslR' HcapR' Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+              iSplit.
+              { rewrite big_sepL2_snoc.
+                iSplit; [iFrame "HitemsR2" | iFrame "Hui"]. }
+              iPureIntro. split_and!; try done.
+              --- apply (lookup_lt_Some _ _ _ Hpi).
+              --- rewrite /pool_keep /= Hex in Hpassa. exact Hpassa.
+              --- move=> ti Hti. apply elem_of_app in Hti.
+                  destruct Hti as [Hti | Hti]; first exact (Hkeptsub ti Hti).
+                  apply list_elem_of_singleton in Hti. subst ti.
+                  exact (list_elem_of_lookup_2 _ _ _ Hpi).
+      * (* scan done: close the pass *)
+        have Hige : (length poolj <= i)%nat.
+        { rewrite -HlenP HPlen. rewrite -HlenP HPlen in Hilen.
+          move: Hcondi. word. }
+        rewrite drop_ge in Hpassa; last exact Hige.
+        simpl in Hpassa.
+        move: Hpassa => [= Happrem Hkeq Hmeq].
+        subst app_rem keptfin0 m_pend0.
+        rewrite app_nil_r in Hpassc.
+        have Hsufeq : suffix0 = appacc ++ af2.
+        { apply (app_inv_head appliedj). rewrite -Happj.
+          rewrite Happdec /= //. }
+        wp_auto. wp_for_post.
+        iFrame "Hcapin Hpendf HΦ s Hslin".
+        iExists pvi, restS, uivsR, keptacc, (appliedj ++ appacc), af2,
+          types_c, m_c.
+        iFrame "Hprog Hpoolp HslR HcapR Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+        iFrame "HitemsR".
+        iPureIntro. split_and!.
+        ** move=> ti Hti. apply Hpoolsubj. exact (Hkeptsub ti Hti).
+        ** exact Hprc.
+        ** exact Hdomc.
+        ** exact Hmtypesc.
+        ** exact Hmdomc.
+        ** exact Hnowrapc.
+        ** exact Hprovc.
+        ** (* progress: one more drain iteration remains *)
+           move=> Hpvt.
+           destruct appacc as [| a0 acc0].
+           { have := proj2 Hpv eq_refl. rewrite Hpvt.
+             move=> Hcontra. discriminate. }
+           destruct (pool_drain m_c keptacc) as [[app2' rest2'] m2'] eqn:Hdrec2.
+           have Hdd := pool_drain_step_cons mj poolj a0 acc0 keptacc app2'
+                         rest2' m_c m2' Hpassc Hdrec2.
+           rewrite Hdrainj in Hdd.
+           move: Hdd => [= Hsuf Hrest2 Hm2].
+           have Haf2 : af2 = app2'.
+           { apply (app_inv_head (a0 :: acc0)). rewrite -Hsufeq Hsuf //. }
+           split_and!.
+           --- rewrite Haf2 Hrest2 Hm2 //.
+           --- rewrite -app_assoc. exact Happdec.
+           --- exact Hvrc.
+        ** (* no progress: the drain is complete *)
+           move=> Hpvf.
+           have Hacc0 : appacc = [] := proj1 Hpv Hpvf.
+           subst appacc.
+           have Hdd := pool_drain_step_nil mj poolj keptacc m_c Hpassc.
+           rewrite Hdrainj in Hdd.
+           move: Hdd => [= Hsuf Hrest2 Hm2].
+           split_and!.
+           --- by rewrite Hrest2.
+           --- by rewrite Hm2.
+           --- rewrite Happj Hsuf app_nil_r //.
+    + (* drain complete: write back the pending pool and return *)
+      rewrite decide_False; last done.
+      rewrite decide_True; last done.
+      destruct (Hfin eq_refl) as (Hpooleq & Hmeq & Happeq).
+      subst poolj mj.
+      wp_auto.
+      iApply ("HΦ" $! poolS typesj).
+      iFrame "Hpendf Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+      iSplitL "Hslin Hcapin".
+      { iExists uivs_in. iFrame "Hslin Hcapin Hitemsin". }
+      iSplitL "HslP HcapP".
+      { iExists uivsP. iFrame "HslP HcapP HitemsPj". }
+      iPureIntro. split_and!.
+      * exact Hdomj.
+      * exact Hmtypesj.
+      * exact Hmdomj.
+      * move=> c0 Hc0.
+        destruct (Hprovj c0 Hc0) as [Hold | Hnew]; [by left | by right].
+Qed.
+
+(* ===== the public certificate spec (issue #40) ============================ *)
+
+(** An applied struct's target type is nonempty at the final model (its own
+    item landed there and membership is monotone) -- what lets the public spec
+    mint one [is_root_lb] content certificate per applied struct. *)
+Lemma ValidReplay_applied_nonempty
+    (l : list (TId * IntegrateInput (A := A))) (m0 m1 : DocM) :
+  ValidReplay l m0 m1 ->
+  ∀ ti : TId * IntegrateInput (A := A), ti ∈ l -> docm_get m1 ti.1 ≠ [].
+Proof.
+  elim => [mx | t input rest0 mr arr2 mr' nit Htoit Hvld Hmax Hglob Hint Hrest IH]
+    ti Hin.
+  - by apply elem_of_nil in Hin.
+  - apply elem_of_cons in Hin. destruct Hin as [-> | Hin]; last exact (IH ti Hin).
+    simpl.
+    destruct (integrate_new_mem input _ _ Hint) as (it & Hid & Hit).
+    have Hit' : it ∈ docm_get mr' t.
+    { apply (ValidReplay_mem rest0 (<[t := arr2]> mr) mr' Hrest t).
+      rewrite docm_get_insert_eq //. }
+    move=> Heq. rewrite Heq in Hit'. by apply elem_of_nil in Hit'.
+Qed.
+
+(** The gate totality of a certified pool, extracted from the ghost history:
+    at any drain intermediate, a fresh ready struct integrates. Stated here
+    rather than in [yjs_history] to keep this iteration off the slow
+    downstream rebuild; the proof opens the history invariant read-only,
+    mirroring [history_deliver_pool]. *)
+Lemma history_pool_ready_total γh (c : ClientId) h (m : DocM)
+    (pool applied : list (TId * IntegrateInput (A := A))) E :
+  ↑histN ⊆ E ->
+  history_state_coh h m ->
+  (∀ t : TId, YjsArrInvariant (docm_get m t)) ->
+  (∀ ti : TId * IntegrateInput (A := A), ti ∈ applied -> ti ∈ pool) ->
+  is_history (A := A) (P := P) γh -∗ own_client_history γh c h -∗
+  is_pool_certified γh pool ={E}=∗
+    own_client_history γh c h ∗ ⌜pool_ready_total m pool applied⌝.
+Proof.
+  iIntros (HE Hcoh Hinvs Happsub) "#Hinv Hown #Hcertsin".
+  iInv "Hinv" as ">H" "Hclose". iNamed "H".
+  iDestruct (hist_auth_elem_lookup with "HhistAuth Hown") as %HNc.
+  iAssert (⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pool ->
+             ops !! (in_id ti.2) = Some ((ti.1, OpInsert ti.2) : Op)⌝)%I as %Hlk.
+  { iIntros (ti Hin).
+    destruct (list_elem_of_lookup_1 _ _ Hin) as (i & Hi).
+    iDestruct (big_sepL_lookup _ _ i with "Hcertsin") as "Hc"; [exact Hi |].
+    iApply (ghost_map_lookup with "HopsAuth Hc"). }
+  have Hbc : ∀ ti : TId * IntegrateInput (A := A), ti ∈ pool ->
+      op_broadcast N (ti.1, OpInsert ti.2).
+  { move=> ti Hin. destruct Hopscoh as [Hc1 _].
+    have [_ Hreg] := Hc1 _ _ (Hlk ti Hin).
+    exists (clientId (DocOp_id ((ti.1, OpInsert ti.2) : Op))). exact Hreg. }
+  have Hrt := pool_ready_total_of_certs N c h m pool applied Hwf HNc Hcoh
+                Hinvs Hbc Happsub.
+  iMod ("Hclose" with "[HhistAuth HopsAuth]") as "_".
+  { iNext. iExists _, _. iFrame "HhistAuth HopsAuth Hcerts".
+    iPureIntro. split; [exact Hwf | exact Hopscoh]. }
+  iModIntro. iFrame "Hown". iPureIntro. exact Hrt.
+Qed.
+
+(** [applyUpdate], the PUBLIC certificate spec (issue #40): the whole store
+    state is ONE [own_store] before and after. The incoming batch carries its
+    persistent certificates and its rooted-head witnesses; there is NO
+    causal-order assumption, not even within the batch, and no state-vector
+    tracking -- the heap drains the pending buffer plus the batch to the
+    structural-dependency fixpoint. [pool_drain] names the applied list, the
+    new pending buffer and the final model; the delivery's pure content is
+    [ValidReplay applied m m'] (which determines [m']), every applied struct
+    is foreign (a replica never receives its own insert back before minting
+    the next one: per-author FIFO), and each applied struct yields one
+    monotone content certificate [is_root_lb] at its root's full
+    post-delivery item set. *)
+Lemma wp_store__applyUpdate_certs (s_loc : loc) (sl : slice.t) (dq : dfrac)
+    (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocM)
+    (pend inputs : list (TId * IntegrateInput (A := A))) :
+  (∀ (t : TId) x, x ∈ docm_get m t -> (Z.of_nat (clock (item_id x)) + 1 < 2^64)%Z) ->
+  (∀ ti : TId * IntegrateInput (A := A), ti ∈ inputs ->
+     (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
+  {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
+      own_store s_loc γs γh c h m pend ∗
+      own_update_structs sl dq inputs ∗
+      is_pool_certified γh inputs ∗
+      is_pool_rooted γs inputs }}}
+    s_loc @! (go.PointerType yjs.store) @! "applyUpdate" #sl
+  {{{ (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocM),
+      RET #();
+      own_update_structs sl dq inputs ∗
+      own_store s_loc γs γh c (h ++ (deliver_ev <$> applied)) m' rest ∗
+      is_history_lb γh c (h ++ (deliver_ev <$> applied)) ∗
+      ⌜pool_drain m (pend ++ inputs) = (applied, rest, m')⌝ ∗
+      ⌜ValidReplay applied m m'⌝ ∗
+      ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
+         clientId (in_id ti.2) ≠ c⌝ ∗
+      ([∗ list] ti ∈ applied, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗
+         is_root_lb γs nm (list_to_set (docm_get m' ti.1))) }}}.
+Proof using Type*.
+  move=> Hnowrapm Hnowrapb.
+  iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertsin & #Hrootsin) HΦ".
+  iNamed "Hstore".
+  destruct Hregcoh as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
   iDestruct (types_arr_inv with "Htypes") as %Htsinv.
   iDestruct (types_repr_all with "Htypes") as %Hreprall.
-    iDestruct (types_unit_all with "Htypes") as %Hunitall.
+  iDestruct (types_unit_all with "Htypes") as %Hunitall.
   iDestruct (types_cells_id_bounds with "Htypes") as %Hcellbnd.
-  iDestruct (own_update_id_bounds with "Hupd") as %Hidbnd.
   have Harrinv : ∀ t : TId, YjsArrInvariant (docm_get m t).
   { move=> t. destruct (docm_get m t) as [|x l] eqn:Hdg.
     - exact YjsArrInvariant_empty.
@@ -1441,163 +2547,66 @@ Proof using Type*.
       destruct (Hmdom t Hne) as (nm & p & -> & Hbnm).
       destruct (Hbindtypes nm p Hbnm) as [ts Hts].
       rewrite (Hmtypes nm p ts Hbnm Hts). exact (Htsinv p ts Hts). }
-  (* ghost first: deliver the batch, obtaining the ValidReplay *)
-  iApply fupd_wp.
-  have HmaskN : ↑histN ⊆ (⊤ : coPset) by solve_ndisj.
-  iMod (history_deliver_batch γh c h m inputs Ds ⊤ HmaskN Hbatch Hcoh Harrinv
-          with "Hhist Hown Hcerts") as (m') "(Hown & #Hlbnew & %Hvr & %Hcoh' & %Hnoc)".
-  iModIntro.
-  (* the W64-level freshness of the batch against ALL cells *)
-  have Hfresh : ∀ (i : nat) (ti : TId * IntegrateInput (A := A)), inputs !! i = Some ti →
-     ∀ c0, c0 ∈ all_cells types → cell_client c0 = W64 (clientId (in_id ti.2)) →
-        (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id ti.2))))%Z.
-  { move=> i ti Hi c0 Hc0 Hcc.
-    have Hc0m := Hc0.
-    apply all_cells_elem_of in Hc0m. destruct Hc0m as (p & ts & Hts & Hcts).
-    have Hitemmem : run_head c0 ∈ ty_arr ts.
-    { rewrite (Hreprall p ts Hts).
-        apply run_head_in_flatten; [exact Hcts |].
-        exact (proj1 (Forall_forall _ _) (Hunitall p ts Hts) _ Hcts). }
-    destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
-    have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
-    have Hmem : run_head c0 ∈ docm_get m (RootId nm) by rewrite Hdg.
-    have [Hcb Hkb] := Hcellbnd c0 Hc0.
-    have [Hicb Hikb] := Hidbnd i ti Hi.
-    have Hceq : clientId (item_id (run_head c0)) = clientId (in_id ti.2).
-    { move: Hcc. rewrite /cell_client. move=> Hcc.
-      have Hz : uint.Z (W64 (clientId (item_id (run_head c0))))
-              = uint.Z (W64 (clientId (in_id ti.2))) by rewrite Hcc.
-      word. }
-    have Hlt := ValidReplay_arr_fresh inputs m m' Hvr i ti Hi (RootId nm) (run_head c0) Hmem Hceq.
-    rewrite /cell_clock. word. }
-  (* the W64-level intra-batch causal order *)
-  have Hcausal : ∀ (i j : nat) (ti tj : TId * IntegrateInput (A := A)),
-     inputs !! i = Some ti → inputs !! j = Some tj →
-     (j < i)%nat → W64 (clientId (in_id tj.2)) = W64 (clientId (in_id ti.2)) →
-        (uint.Z (W64 (clock (in_id tj.2))) < uint.Z (W64 (clock (in_id ti.2))))%Z.
-  { move=> i j ti tj Hi Hj Hji Hcc.
-    have [Hicbi Hikbi] := Hidbnd i ti Hi.
-    have [Hicbj Hikbj] := Hidbnd j tj Hj.
-    have Hceq : clientId (in_id tj.2) = clientId (in_id ti.2).
-    { have Hz : uint.Z (W64 (clientId (in_id tj.2)))
-              = uint.Z (W64 (clientId (in_id ti.2))) by rewrite Hcc.
-      word. }
-    have Hlt := ValidReplay_batch_causal inputs m m' Hvr i j ti tj Hi Hj Hji Hceq.
-    word. }
-  wp_apply (wp_store__applyUpdate s sl dq inputs m m' types bind mref tref
-              Hvr Hbindtypes Hbindinj Hmtypes Hbatchbnd Hfresh Hcausal Hnowrap Hnowrapb
-              with "[$Hupd $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
-  iIntros (types') "(Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hdom' & %Hmtypes' & %Hprov')".
-  iApply ("HΦ" $! types' m').
-  iFrame "Hupd Hitemsf Hitemmap Htypesf Htypesmap Htypes Hown Hlbnew".
-  (* re-package [doc_registry_coh] for [m']/[types']: [bind] is unchanged and
-     [dom types' = dom types], so the structural halves transfer; [Hmtypes']
-     gives model agreement, and off-batch types are untouched by the replay. *)
-  have Hbindtypes' : ∀ nm p, bind !! nm = Some p -> is_Some (types' !! p).
-  { move=> nm p Hb. apply elem_of_dom. rewrite Hdom'. apply elem_of_dom.
-    exact (Hbindtypes nm p Hb). }
-  have Htypesbound' : ∀ p, is_Some (types' !! p) -> ∃ nm, bind !! nm = Some p.
-  { move=> p Hs. apply Htypesbound. apply elem_of_dom. rewrite -Hdom'.
-    apply elem_of_dom. exact Hs. }
-  have Hmdom' : ∀ t, docm_get m' t ≠ [] -> ∃ nm p, t = RootId nm /\ bind !! nm = Some p.
-  { move=> t Hne.
-    destruct (decide (t ∈ ((fun ti : TId * IntegrateInput (A := A) => ti.1) <$> inputs))) as [Hin | Hnin].
-    - apply list_elem_of_fmap in Hin. destruct Hin as (ti & -> & Htiin).
-      apply list_elem_of_lookup_1 in Htiin. destruct Htiin as [i Hi].
-      exact (Hbatchbnd i ti Hi).
-    - have Hoff : ∀ i ti, inputs !! i = Some ti -> ti.1 ≠ t.
-      { move=> i ti Hi Heq. apply Hnin. rewrite -Heq.
-        apply list_elem_of_fmap_2. exact (list_elem_of_lookup_2 _ _ _ Hi). }
-      rewrite (ValidReplay_docm_get_off inputs m m' t Hvr Hoff) in Hne.
-      exact (Hmdom t Hne). }
-  iPureIntro. split_and!.
-  - exact Hcoh'.
-  - rewrite /doc_registry_coh. split_and!;
-      [exact Hbindtypes' | exact Hbindinj | exact Htypesbound' | exact Hmtypes' | exact Hmdom'].
-  - exact Hdom'.
-  - exact Hvr.
-  - exact Hnoc.
-  - exact Hprov'.
-Qed.
-
-(** [applyUpdate], the PUBLIC certificate spec (issues #42/#49): the whole
-    store state is ONE [own_store] before and after, at models [(c, h, m)]
-    and [(c, h ++ delivers, m')]. The batch comes with its persistent
-    certificates ([is_certified_batch], covering sets hidden) and one
-    registration witness per target root ([is_root], replacing the raw
-    registry-lookup hypothesis). The pure post is the doc-level replay
-    [ValidReplay inputs m m'], which determines [m']; the resource post
-    additionally hands back one monotone content certificate per input:
-    [is_root_lb] at the root's full post-delivery item set, a persistent
-    fragment of the grow-only item-set authority (which this spec, unlike
-    the internal lemma, also advances, so a lock-holding caller can rebuild
-    [store_inv] via [store_inv_own_store]).
-
-    The only pure preconditions left are the [2^64-1] no-wrap seam, now
-    stated over the model [m] (see [wp_store__applyUpdate]). *)
-Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
-    (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocM)
-    (inputs : list (TId * IntegrateInput (A := A))) :
-  (∀ (t : TId) x, x ∈ docm_get m t -> (Z.of_nat (clock (item_id x)) + 1 < 2^64)%Z) ->
-  (∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
-     inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
-  {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
-      own_store s γs γh c h m ∗
-      own_update sl dq inputs ∗
-      is_certified_batch γh h inputs ∗
-      ([∗ list] ti ∈ inputs, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗ is_root γs nm) }}}
-    s @! (go.PointerType yjs.store) @! "applyUpdate" #sl
-  {{{ (m' : DocM), RET #();
-      own_store s γs γh c (h ++ (deliver_ev <$> inputs)) m' ∗
-      own_update sl dq inputs ∗
-      ⌜ValidReplay inputs m m'⌝ ∗
-      is_history_lb γh c (h ++ (deliver_ev <$> inputs)) ∗
-      ([∗ list] ti ∈ inputs, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗
-         is_root_lb γs nm (list_to_set (docm_get m' ti.1))) }}}.
-Proof using Type*.
-  move=> Hnowrapm Hnowrapb.
-  iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertb & #Hroots) HΦ".
-  iNamed "Hstore".
-  iDestruct "Hcertb" as (Ds) "[%Hbatch #Hcerts]".
-  (* recover the raw registry-lookup facts the internal lemma wants *)
-  iAssert (⌜∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
-      inputs !! i = Some ti -> ∃ nm p, ti.1 = RootId nm /\ bind !! nm = Some p⌝)%I
-    as %Hbatchbnd.
-  { iIntros (i ti Hi).
-    iDestruct (big_sepL_lookup _ _ i ti Hi with "Hroots") as (nm) "[%Htieq Hroot]".
-    iDestruct "Hroot" as (p) "Hbind".
-    iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hb.
-    iPureIntro. by exists nm, p. }
-  (* the cell-level no-wrap seam from the model-level one *)
-  iDestruct (types_repr_all with "Htypes") as %Hreprall.
-    iDestruct (types_unit_all with "Htypes") as %Hunitall.
-  iDestruct (types_cells_id_bounds with "Htypes") as %Hcellbnd.
-  have Hregcohd := Hregcoh.
-  destruct Hregcohd as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
   have Hnowrap : ∀ c0, c0 ∈ all_cells types -> (uint.Z (cell_clock c0) + 1 < 2^64)%Z.
   { move=> c0 Hc0.
     have Hc0m := Hc0. apply all_cells_elem_of in Hc0m.
     destruct Hc0m as (p & ts & Hts & Hcts).
     have Hitemmem : run_head c0 ∈ ty_arr ts.
     { rewrite (Hreprall p ts Hts).
-        apply run_head_in_flatten; [exact Hcts |].
-        exact (proj1 (Forall_forall _ _) (Hunitall p ts Hts) _ Hcts). }
+      apply run_head_in_flatten; [exact Hcts |].
+      exact (proj1 (Forall_forall _ _) (Hunitall p ts Hts) _ Hcts). }
     destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
     have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
     have Hmem : run_head c0 ∈ docm_get m (RootId nm) by rewrite Hdg.
     have [Hcb Hkb] := Hcellbnd c0 Hc0.
     have Hnw := Hnowrapm (RootId nm) (run_head c0) Hmem.
     rewrite /cell_clock. word. }
-  (* run the internal certificate lemma; keep a fupd after the call for the
-     item-set authority update *)
+  have Hkb1c : ∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ++ inputs ->
+      (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z.
+  { move=> ti /elem_of_app [Hin | Hin];
+      [exact (Hpendbnd ti Hin) | exact (Hnowrapb ti Hin)]. }
+  (* the whole drained pool and its certificates *)
+  iAssert (is_pool_certified γh (pend ++ inputs)) as "#Hcertpool".
+  { rewrite /is_pool_certified big_sepL_app.
+    iSplit; [iFrame "Hpendcert" | iFrame "Hcertsin"]. }
+  iAssert (is_pool_rooted γs (pend ++ inputs)) as "#Hrootpool".
+  { rewrite /is_pool_rooted big_sepL_app.
+    iSplit; [iFrame "Hpendroot" | iFrame "Hrootsin"]. }
+  iAssert (⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ++ inputs ->
+      in_originId ti.2 = None -> in_rightOriginId ti.2 = None ->
+      ∃ nm, ti.1 = RootId nm ∧ is_Some (bind !! nm)⌝)%I as %Hrooted0.
+  { iIntros (ti Hin HoN HrN).
+    iDestruct (big_sepL_elem_of _ _ ti Hin with "Hrootpool") as "Hri".
+    rewrite /pool_item_rooted decide_True; last by split.
+    iDestruct "Hri" as (nm) "[%Htieq Hroot]".
+    iDestruct "Hroot" as (p) "Hbind".
+    iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hb.
+    iPureIntro. exists nm. split; [exact Htieq | by exists p]. }
+  destruct (pool_drain m (pend ++ inputs)) as [[applied rest'] m'] eqn:Hdrainc.
+  have Happsub := proj1 (pool_drain_subset m (pend ++ inputs) applied rest' m' Hdrainc).
+  have Hrestsub := proj2 (pool_drain_subset m (pend ++ inputs) applied rest' m' Hdrainc).
+  (* ghost first: the gate totality, then the batch delivery *)
   iApply wp_fupd.
-  wp_apply (wp_store__applyUpdate_certs_aux s sl dq γh c h inputs Ds m types bind
-              items_mref types_mref Hbatch Hhcoh Hregcoh Hbatchbnd Hnowrap Hnowrapb
-              with "[$Hpkg $Hishist $Hhist $Hcerts $Hupd $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
-  iIntros (types' m') "(Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & Hhist & #Hlbnew & %Hcoh' & %Hregcoh' & %Hdom' & %Hvr & %Hnoc & %Hprov')".
-  have Hregcohd' := Hregcoh'.
-  destruct Hregcohd' as (Hbindtypes' & Hbindinj' & Htypesbound' & Hmtypes' & Hmdom').
+  iApply fupd_wp.
+  have HmaskN : ↑histN ⊆ (⊤ : coPset) by solve_ndisj.
+  iMod (history_pool_ready_total γh c h m (pend ++ inputs) applied ⊤ HmaskN
+          Hhcoh Harrinv Happsub with "Hishist Hhist Hcertpool") as "[Hhist %Hrtot]".
+  iMod (history_deliver_pool γh c h m (pend ++ inputs) applied rest' m' ⊤ HmaskN
+          Hdrainc Hhcoh with "Hishist Hhist Hcertpool")
+    as "(Hhist & #Hlbnew & %Hvr & %Hcoh' & %Hnoc)".
+  iModIntro.
+  wp_apply (wp_store__applyUpdate s_loc items_mref types_mref sl pend_sl dq
+              inputs pend applied rest' m m' types bind
+              Hdrainc Hvr Hrtot Hbindtypes Hbindinj Htypesbound Hmtypes Hmdom
+              Hrooted0 Hnowrap Hkb1c
+              with "[$Hupd $Hpendf $Hpend $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
+  iIntros (pend_sl' types') "(Hupd & Hpendf & Hpend' & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hdom' & %Hmtypes' & %Hmdom' & %Hprov')".
+  have Hbindtypes' : ∀ nm p, bind !! nm = Some p -> is_Some (types' !! p).
+  { move=> nm p Hb. apply elem_of_dom. rewrite Hdom'. apply elem_of_dom.
+    exact (Hbindtypes nm p Hb). }
+  have Htypesbound' : ∀ p, is_Some (types' !! p) -> ∃ nm, bind !! nm = Some p.
+  { move=> p Hs. apply Htypesbound. apply elem_of_dom. rewrite -Hdom'.
+    apply elem_of_dom. exact Hs. }
   (* grow the item-set authority to the new types and snapshot it *)
   have Hdomf : dom ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types')
              = dom ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types)
@@ -1614,18 +2623,21 @@ Proof using Type*.
     have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
     have Hdg' : docm_get m' (RootId nm) = ty_arr ts' := Hmtypes' nm p ts' Hbnm Hts'.
     move=> x. rewrite !elem_of_list_to_set. move=> Hx.
-    rewrite -Hdg'. apply (ValidReplay_mem inputs m m' Hvr (RootId nm)).
+    rewrite -Hdg'. apply (ValidReplay_mem applied m m' Hvr (RootId nm)).
     by rewrite Hdg. }
   iMod (auth_gmap_gset_grow_snap γs.(sn_seq) _ _ Hdomf Hgrowf with "Hseq")
     as "[Hseq #Hsnap]".
-  (* one content certificate per input, projected out of the snapshot; built
-     under [big_sepL_intro]'s box, so only pure facts ([Hbatchbnd]) and
-     persistent resources ([Hbinds], [Hsnap]) feed it *)
-  iAssert ([∗ list] ti ∈ inputs, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗
+  (* per-applied bindings: the applied item landed in its (hence bound) root *)
+  have Happbnd : ∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
+      ∃ nm p, ti.1 = RootId nm ∧ bind !! nm = Some p.
+  { move=> ti Hin.
+    have Hne := ValidReplay_applied_nonempty applied m m' Hvr ti Hin.
+    destruct (Hmdom' ti.1 Hne) as (nm & p & Heq & Hb). by exists nm, p. }
+  iAssert ([∗ list] ti ∈ applied, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗
              is_root_lb γs nm (list_to_set (docm_get m' ti.1)))%I as "#Hlbs".
   { iApply big_sepL_intro.
     iIntros "!#" (i ti Hi).
-    destruct (Hbatchbnd i ti Hi) as (nm & p & Htieq & Hbnm).
+    destruct (Happbnd ti (list_elem_of_lookup_2 _ _ _ Hi)) as (nm & p & Htieq & Hbnm).
     destruct (Hbindtypes' nm p Hbnm) as [ts' Hts'].
     have Hdg' : docm_get m' (RootId nm) = ty_arr ts' := Hmtypes' nm p ts' Hbnm Hts'.
     iDestruct (big_sepM_lookup _ _ nm p Hbnm with "Hbinds") as "#Hbind".
@@ -1634,20 +2646,42 @@ Proof using Type*.
     rewrite /is_type_lb Htieq Hdg'.
     iApply (auth_gmap_gset_frag_lookup with "Hsnap").
     rewrite lookup_fmap Hts' //. }
-  (* the model-level counter clause survives: nothing in the batch is ours *)
+  (* the leftover pool re-certifies the new pending buffer *)
+  iAssert (is_pool_certified γh rest') as "#Hpendcert'".
+  { rewrite /is_pool_certified. iApply big_sepL_intro.
+    iIntros "!#" (i ti Hi).
+    iApply (big_sepL_elem_of _ _ ti (Hrestsub ti (list_elem_of_lookup_2 _ _ _ Hi))
+              with "Hcertpool"). }
+  iAssert (is_pool_rooted γs rest') as "#Hpendroot'".
+  { rewrite /is_pool_rooted. iApply big_sepL_intro.
+    iIntros "!#" (i ti Hi).
+    iApply (big_sepL_elem_of _ _ ti (Hrestsub ti (list_elem_of_lookup_2 _ _ _ Hi))
+              with "Hrootpool"). }
+  have Hpendbnd' : ∀ ti : TId * IntegrateInput (A := A), ti ∈ rest' ->
+      (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z.
+  { move=> ti Hin. exact (Hkb1c ti (Hrestsub ti Hin)). }
+  (* the counter clause survives: nothing applied is ours *)
   have Hctr' : ∀ (t : TId) x, x ∈ docm_get m' t -> clientId (item_id x) = c ->
       (clock (item_id x) < uint.nat k)%nat.
   { move=> t x Hx Hcx.
-    destruct (ValidReplay_prov inputs m m' Hvr t x Hx) as [Hold | (i & ti & Hi & Hid)].
+    destruct (ValidReplay_prov applied m m' Hvr t x Hx) as [Hold | (i & ti & Hi & Hid)].
     - exact (Hctr t x Hold Hcx).
-    - exfalso. apply (Hnoc i ti Hi). by rewrite -Hid. }
-  iModIntro. iApply ("HΦ" $! m').
+    - exfalso. apply (Hnoc ti (list_elem_of_lookup_2 _ _ _ Hi)). by rewrite -Hid. }
+  iModIntro. iApply ("HΦ" $! applied rest' m').
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
-  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hhist";
-    last by iPureIntro.
-  iExists client, k, items_mref, types_mref, dset, types', bind.
-  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
-  iPureIntro. split_and!; [exact Hclientc | exact Hregcoh' | exact Hcoh' | exact Hctr'].
+  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hhist";
+    last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc]).
+  iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind.
+  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hbinds Hhist".
+  iFrame "Hpendcert' Hpendroot'".
+  iPureIntro. split_and!.
+  - exact Hclientc.
+  - exact Hpendbnd'.
+  - rewrite /doc_registry_coh.
+    split_and!; [exact Hbindtypes' | exact Hbindinj | exact Htypesbound'
+                 | exact Hmtypes' | exact Hmdom'].
+  - exact Hcoh'.
+  - exact Hctr'.
 Qed.
 
 End store_update.

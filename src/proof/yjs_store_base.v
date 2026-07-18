@@ -806,6 +806,98 @@ Qed.
     struct fields, [own_item_map], the registry [ghost_map_auth], the ghost
     history) are NOT here; they stay whole in the lock invariant while readers
     hold shares, since no writer runs concurrently with readers. *)
+(* ----- the decoded update pool (issue #40) --------------------------------
+   [own_update_structs] abstracts a heap slice of decoded structs to the model list of
+   type-tagged integrate inputs. It lives here (moved from the update proofs)
+   because the lock invariant now owns the store's PENDING pool through it. *)
+
+(** A decoded parent name is either absent (Parent::None: borrow from a
+    neighbour in [store.repair]) or a read-only string cell (Parent::String).
+    Mirrors [is_origin_id]. *)
+Definition is_parent_name (p : loc) (opn : option go_string) : iProp Σ :=
+  match opn with
+  | None => ⌜p = null⌝
+  | Some nm => ⌜p ≠ null⌝ ∗ p ↦□ nm
+  end.
+
+Global Instance is_parent_name_persistent p opn : Persistent (is_parent_name p opn).
+Proof. rewrite /is_parent_name. by destruct opn; apply _. Qed.
+
+(** [is_update_item uiv ti]: the decoded heap struct [uiv] (a [updateItem])
+    translates to the model doc-op payload [ti = (tid, input)] -- its id /
+    content / both origin pointers map across (origins via [is_origin_id],
+    persistent), its content is a single char, and its decoded parent name
+    (when present) is the name of the root type [tid] (issue #49; when absent
+    the batch-level well-formedness pins [tid] through the origins). *)
+Definition is_update_item (uiv : yjs.updateItem.t)
+    (ti : TId * IntegrateInput (A := A)) : iProp Σ :=
+  ∃ (oleft oright : option yjs.id.t) (opn : option go_string),
+    "HisL" ∷ is_origin_id uiv.(yjs.updateItem.originLeftId') oleft ∗
+    "HisR" ∷ is_origin_id uiv.(yjs.updateItem.originRightId') oright ∗
+    "HisPN" ∷ is_parent_name uiv.(yjs.updateItem.parentName') opn ∗
+    "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId ti.2⌝ ∗
+    "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId ti.2⌝ ∗
+    "%Hin_id" ∷ ⌜toYjsId uiv.(yjs.updateItem.id') = in_id ti.2⌝ ∗
+    "%Hin_c" ∷ ⌜uiv.(yjs.updateItem.content') = in_content ti.2⌝ ∗
+    "%Hulen" ∷ ⌜length uiv.(yjs.updateItem.content') = 1%nat⌝ ∗
+    "%Htid" ∷ ⌜∀ nm, opn = Some nm -> ti.1 = RootId nm⌝ ∗
+    "%Hborrow" ∷ ⌜opn = None -> in_originId ti.2 ≠ None ∨ in_rightOriginId ti.2 ≠ None⌝.
+
+#[global] Instance is_update_item_persistent uiv ti : Persistent (is_update_item uiv ti).
+Proof. rewrite /is_update_item. apply _. Qed.
+
+(** [own_update_structs sl dq inputs]: the heap slice of decoded structs at [sl] (Go
+    [Update.structs]) abstracts to the model list [inputs] of type-tagged
+    integrate inputs. Owns the backing array (+ cap) at [dq] — [applyUpdate]
+    only reads it, so any fraction works — and, per element, the persistent
+    [is_update_item]. *)
+Definition own_update_structs (sl : slice.t) (dq : dfrac)
+    (inputs : list (TId * IntegrateInput (A := A))) : iProp Σ :=
+  ∃ (uivs : list yjs.updateItem.t),
+    "Hsl" ∷ sl ↦*{dq} uivs ∗
+    "Hcap" ∷ own_slice_cap yjs.updateItem.t sl dq ∗
+    "Hitems" ∷ ([∗ list] uiv;ti ∈ uivs;inputs, is_update_item uiv ti).
+
+
+(** [is_root γs name]: persistent witness that the root type [name] is
+    registered in the store (bound in the registry to SOME type loc, which
+    stays hidden). This is what the [applyUpdate] certificate spec asks for
+    per target root, in place of a raw registry lookup; any holder of the
+    binding (a [Text] handle, [getOrCreateYType]'s hit path) can mint it. *)
+Definition is_root (γs : store_names) (name : P) : iProp Σ :=
+  ∃ p : loc, is_type_binding γs.(sn_types) name p.
+
+#[global] Instance is_root_persistent γs name : Persistent (is_root γs name).
+Proof. apply _. Qed.
+
+(** [pool_item_rooted]/[is_pool_rooted] (issue #40): every HEAD struct of a
+    decoded pool (both origins absent, so it carries its root's name on the
+    wire) targets a REGISTERED root. This is the #49 pre-bound-roots
+    restriction, kept under the total applyUpdate: structs with an origin
+    derive their binding from the origin's arrival at integration time, so
+    only head structs need a witness; the store carries it for the pending
+    buffer so a later drain can re-discharge it without the caller knowing
+    what is buffered. Lifted when [getOrCreateYType]'s miss branch enters the
+    verified subset. *)
+Definition pool_item_rooted (γs : store_names)
+    (ti : TId * IntegrateInput (A := A)) : iProp Σ :=
+  if decide (in_originId ti.2 = None ∧ in_rightOriginId ti.2 = None)
+  then (∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗ is_root γs nm)%I
+  else True%I.
+
+Definition is_pool_rooted (γs : store_names)
+    (pool : list (TId * IntegrateInput (A := A))) : iProp Σ :=
+  [∗ list] ti ∈ pool, pool_item_rooted γs ti.
+
+#[global] Instance pool_item_rooted_persistent γs ti : Persistent (pool_item_rooted γs ti).
+Proof. rewrite /pool_item_rooted. destruct (decide _); apply _. Qed.
+#[global] Instance is_pool_rooted_persistent γs pool : Persistent (is_pool_rooted γs pool).
+Proof. apply _. Qed.
+#[global] Instance pool_item_rooted_timeless γs ti : Timeless (pool_item_rooted γs ti).
+Proof. rewrite /pool_item_rooted. destruct (decide _); apply _. Qed.
+#[global] Instance is_pool_rooted_timeless γs pool : Timeless (is_pool_rooted γs pool).
+Proof. apply _. Qed.
+
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
   "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
@@ -830,7 +922,9 @@ Qed.
     invariant while readers hold fractional shares of [store_inv_ro]. *)
 Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names)
     (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
-    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocM) : iProp Σ :=
+    (pend_sl : slice.t)
+    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocM)
+    (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
     "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
     "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
@@ -838,6 +932,16 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
     "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
+    (* the pending pool (issue #40): the buffered structs whose dependencies
+       have not arrived, with their certificates (persistent), so the next
+       applyUpdate can re-certify the whole drained pool without the caller
+       knowing what is buffered. *)
+    "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
+    "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
+    "#Hpendcert" ∷ is_pool_certified γh pend ∗
+    "#Hpendroot" ∷ is_pool_rooted γs pend ∗
+    "%Hpendbnd" ∷ ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ->
+                    (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z⌝ ∗
     "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
@@ -857,9 +961,9 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
 
 #[global] Instance store_inv_ro_timeless γs types q : Timeless (store_inv_ro γs types q).
 Proof. rewrite /store_inv_ro. apply _. Qed.
-#[global] Instance store_inv_excl_timeless s_loc γs γh client k im tm dset types bind h m :
-  Timeless (store_inv_excl s_loc γs γh client k im tm dset types bind h m).
-Proof. rewrite /store_inv_excl. apply _. Qed.
+#[global] Instance store_inv_excl_timeless s_loc γs γh client k im tm dset psl types bind h m pend :
+  Timeless (store_inv_excl s_loc γs γh client k im tm dset psl types bind h m pend).
+Proof. rewrite /store_inv_excl /own_update_structs /is_update_item. apply _. Qed.
 
 (** [store_inv s_loc γs γh]: everything the store lock protects.
     - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
@@ -892,8 +996,10 @@ Proof. rewrite /store_inv_excl. apply _. Qed.
     so [store_inv_bridge] is definitional. *)
 Definition store_inv (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
-    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocM),
-    "Hexcl" ∷ store_inv_excl s_loc γs γh client k items_mref types_mref dset types bind h m ∗
+    (pend_sl : slice.t)
+    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocM)
+    (pend : list (TId * IntegrateInput (A := A))),
+    "Hexcl" ∷ store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend ∗
     "Hro"   ∷ store_inv_ro γs types 1.
 
 (** [store_inv] is timeless (heap points-to + ghost state over discrete cameras +
@@ -908,8 +1014,8 @@ Proof. rewrite /store_inv. apply _. Qed.
     (kept as a lemma for the lock-layer proofs that rewrite with it). *)
 Lemma store_inv_bridge (s_loc : loc) (γs : store_names) (γh : history_names) :
   store_inv s_loc γs γh ⊣⊢
-  ∃ client k items_mref types_mref dset types bind h m,
-    store_inv_excl s_loc γs γh client k items_mref types_mref dset types bind h m ∗
+  ∃ client k items_mref types_mref dset pend_sl types bind h m pend,
+    store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend ∗
     store_inv_ro γs types 1.
 Proof. rewrite /store_inv /named //. Qed.
 
@@ -998,9 +1104,9 @@ Definition tie_body (s_loc : loc) (γs : store_names) (γh : history_names) (st 
   | Locked => ∃ types, own_tok_auth γs.(sn_rrlocked) 0 ∗ types_frag γs 1 types
   | RLocked n =>
       own_tok_auth γs.(sn_rrlocked) n ∗ own_toks γs.(sn_rmax) n ∗ own_wlock γs ∗
-      (∃ client k items_mref types_mref dset types bind h m,
+      (∃ client k items_mref types_mref dset pend_sl types bind h m pend,
          types_frag γs (frac_of n) types ∗
-         store_inv_excl s_loc γs γh client k items_mref types_mref dset types bind h m ∗
+         store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend ∗
          store_inv_ro γs types (frac_of n))
   end.
 
@@ -1038,14 +1144,6 @@ Proof. apply _. Qed.
 
 (* ----- name-keyed public witnesses + the cohesive store-state predicate --- *)
 
-(** [is_root γs name]: persistent witness that the root type [name] is
-    registered in the store (bound in the registry to SOME type loc, which
-    stays hidden). This is what the [applyUpdate] certificate spec asks for
-    per target root, in place of a raw registry lookup; any holder of the
-    binding (a [Text] handle, [getOrCreateYType]'s hit path) can mint it. *)
-Definition is_root (γs : store_names) (name : P) : iProp Σ :=
-  ∃ p : loc, is_type_binding γs.(sn_types) name p.
-
 (** [is_root_lb γs name S]: the name-keyed monotone content lower bound,
     i.e. the loc-keyed [is_type_lb] lifted through the persistent binding:
     [S] is a subset of the item set of the root named [name], now and at all
@@ -1054,10 +1152,10 @@ Definition is_root (γs : store_names) (name : P) : iProp Σ :=
 Definition is_root_lb (γs : store_names) (name : P) (S : gset (YjsItem A)) : iProp Σ :=
   ∃ p : loc, is_type_binding γs.(sn_types) name p ∗ is_type_lb γs.(sn_seq) p S.
 
-#[global] Instance is_root_persistent γs name : Persistent (is_root γs name).
-Proof. apply _. Qed.
 #[global] Instance is_root_lb_persistent γs name S : Persistent (is_root_lb γs name S).
 Proof. apply _. Qed.
+
+
 
 (** The store's *registry coherence*: the name->loc bindings [bind], the
     per-type heap state [types], and the replayed doc model [m] fit together:
@@ -1091,8 +1189,10 @@ Definition doc_registry_coh (m : DocM) (bind : gmap P loc)
     carries ([Hcellctr]) is derivable from it plus the DLL id-bound pins
     (see [store_inv_own_store]), not a separate clause here. *)
 Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocM) : iProp Σ :=
+    (c : ClientId) (h : list Ev) (m : DocM)
+    (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
+    (pend_sl : slice.t)
     (types : gmap loc type_state) (bind : gmap P loc),
     "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
@@ -1102,6 +1202,12 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
     "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
+    "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
+    "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
+    "#Hpendcert" ∷ is_pool_certified γh pend ∗
+    "#Hpendroot" ∷ is_pool_rooted γs pend ∗
+    "%Hpendbnd" ∷ ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ->
+                    (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z⌝ ∗
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
     "Htypes"  ∷ ([∗ map] parent ↦ ts ∈ types,
                   own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
@@ -1164,13 +1270,13 @@ Proof.
   iIntros "%Hst Hlocked". subst st.
   iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(Hrauth & Htoks0 & Hwl & Hrest)".
-  iDestruct "Hrest" as (client k items_mref types_mref dset types bind h m) "(Hfrag & Hexcl & Hro)".
+  iDestruct "Hrest" as (client k items_mref types_mref dset pend_sl types bind h m pend) "(Hfrag & Hexcl & Hro)".
   rewrite frac_of_0.
   iMod "Hmask" as "_".
   iMod ("Hclose" with "[Hlocked Hrauth Hfrag]") as "_".
   { iExists Locked. iFrame "Hlocked". iExists types. iFrame "Hrauth Hfrag". }
   iModIntro. iApply "HΦ". iFrame "Hwl".
-  iApply store_inv_bridge. iExists client, k, items_mref, types_mref, dset, types, bind, h, m. iFrame "Hexcl Hro".
+  iApply store_inv_bridge. iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend. iFrame "Hexcl Hro".
 Qed.
 
 (** Write-lock release. Consumes [own_wlock] and returns [store_inv]; updates the
@@ -1199,12 +1305,12 @@ Proof.
     iMod "Hmask" as "_".
     iMod (own_toks_0 γs.(sn_rmax)) as "Htoks0".
     iEval (rewrite store_inv_bridge) in "HR".
-    iDestruct "HR" as (client k items_mref types_mref dset types' bind h m) "[Hexcl Hro]".
+    iDestruct "HR" as (client k items_mref types_mref dset pend_sl types' bind h m pend) "[Hexcl Hro]".
     iMod (own_update _ _ (to_frac_agree 1 (types' : leibnizO _)) with "Hfrag") as "Hfrag".
     { apply cmra_update_exclusive. done. }
     iMod ("Hclose" with "[Hrl0 Hrauth Htoks0 Hwl Hfrag Hexcl Hro]") as "_".
     { iExists (RLocked 0). iFrame "Hrl0". iEval (cbn [tie_body]). iFrame "Hrauth Htoks0 Hwl".
-      iExists client, k, items_mref, types_mref, dset, types', bind, h, m.
+      iExists client, k, items_mref, types_mref, dset, pend_sl, types', bind, h, m, pend.
       rewrite frac_of_0. iFrame "Hfrag Hexcl Hro". }
     iModIntro. by iApply "HΦ".
 Qed.
@@ -1226,7 +1332,7 @@ Proof.
   iIntros (n) "%Hst Hrl". subst st.
   iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(Hrauth & Hmaxn & Hwl & Hrest)".
-  iDestruct "Hrest" as (client k items_mref types_mref dset types bind h m) "(Hfrag & Hexcl & Hro)".
+  iDestruct "Hrest" as (client k items_mref types_mref dset pend_sl types bind h m pend) "(Hfrag & Hexcl & Hro)".
   iCombine "Hmaxn Hmaxtok" as "Hmaxn1".
   iCombine "Hmax Hmaxn1" gives %Hbound.
   iMod (own_tok_auth_S with "Hrauth") as "[Hrauth Hrtok]".
@@ -1239,7 +1345,7 @@ Proof.
   { iExists (RLocked (S n)). iFrame "Hrl". iEval (cbn [tie_body]).
     replace (S n) with (n + 1)%nat by lia.
     iFrame "Hrauth Hmaxn1 Hwl".
-    iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
+    iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
     iFrame "Hfrag_i Hexcl Hro_i". }
   iModIntro. iApply ("HΦ" $! types). iFrame "Hrtok Hfrag_r Hro_r".
 Qed.
@@ -1266,7 +1372,7 @@ Proof.
     iCombine "Hrauth Hrtok" gives %Hbad. exfalso. lia. }
   iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(Hrauth & Hmaxsn & Hwl & Hrest)".
-  iDestruct "Hrest" as (client k items_mref types_mref dset types_i bind h m) "(Hfrag_i & Hexcl & Hro_i)".
+  iDestruct "Hrest" as (client k items_mref types_mref dset pend_sl types_i bind h m pend) "(Hfrag_i & Hexcl & Hro_i)".
   iDestruct (tf_agree with "Hfrag_r Hfrag_i") as %->.
   iCombine "Hmax Hmaxsn" gives %Hbound.
   assert (Z.of_nat n < rwmutex.actualMaxReaders)%Z as Hlt by (rewrite rwmutex.actualMaxReaders_unseal in Hbound |- *; lia).
@@ -1282,7 +1388,7 @@ Proof.
   rewrite -(frac_of_split n Hlt).
   iMod ("Hclose" with "[Hrln Hrauth Hmaxn Hwl Hfrag Hexcl Hro]") as "_".
   { iExists (RLocked n). iFrame "Hrln". iEval (cbn [tie_body]). iFrame "Hrauth Hmaxn Hwl".
-    iExists client, k, items_mref, types_mref, dset, types_i, bind, h, m.
+    iExists client, k, items_mref, types_mref, dset, pend_sl, types_i, bind, h, m, pend.
     iFrame "Hfrag Hexcl Hro". }
   iModIntro. iApply "HΦ". iFrame "Htok Hmaxtok".
 Qed.
@@ -1300,10 +1406,11 @@ Lemma store_inv_init (s_loc : loc) (γh : history_names) (client k : w64)
   "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref -∗
   "Htypesmap" ∷ own_map types_mref (DfracOwn 1) (∅ : gmap P loc) -∗
   "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset -∗
+  "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ slice.nil -∗
   "Hhist"   ∷ own_client_history γh (uint.nat client) ([] : list Ev) ==∗
   ∃ γs : store_names, store_inv s_loc γs γh.
 Proof.
-  iIntros "Hclient Hclock Hitemsf Hmap Htypesf Htypesmap Hdset Hhist".
+  iIntros "Hclient Hclock Hitemsf Hmap Htypesf Htypesmap Hdset Hpendf Hhist".
   set (types := ∅ : gmap loc type_state).
   iMod (own_alloc (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR))
     as (γseq) "Hseq".
@@ -1330,13 +1437,13 @@ Proof.
                 sn_rw := γrw; sn_rmax := γrmax; sn_rrlocked := γrrlocked;
                 sn_types_agree := γta |}).
   iModIntro. iExists γs.
-  iExists client, k, items_mref, types_mref, dset, types, (∅ : gmap P loc),
-    ([] : list Ev), (∅ : DocM).
+  iExists client, k, items_mref, types_mref, dset, slice.nil, types, (∅ : gmap P loc),
+    ([] : list Ev), (∅ : DocM), ([] : list (TId * IntegrateInput (A := A))).
   iSplitR "Hseq"; last first.
   { (* store_inv_ro over the empty types map *)
     iFrame "Hseq". rewrite /types big_sepM_empty //. }
   (* store_inv_excl *)
-  iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap Hdset Hhist HtypesAuth".
+  iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap Hdset Hpendf Hhist HtypesAuth".
   iSplitL "Hmap".
   { (* own_item_map over the empty run map *)
     iExists (∅ : gmap w64 slice.t). iFrame "Hmap".
@@ -1346,6 +1453,16 @@ Proof.
       rewrite /types /all_cells map_to_list_empty /= elem_of_nil //.
     - move=> c1 c2 Hc1. exfalso. move: Hc1.
       rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
+  iSplitR.
+  { (* the empty pending pool over the nil slice *)
+    iExists []. iSplitR; [iApply own_slice_nil |].
+    iSplitR; [iApply own_slice_cap_nil |]. rewrite big_sepL2_nil //. }
+  iSplitR.
+  { rewrite /is_pool_certified big_sepL_nil //. }
+  iSplitR.
+  { rewrite /is_pool_rooted big_sepL_nil //. }
+  iSplitR.
+  { iPureIntro. move=> ti Hin. by apply elem_of_nil in Hin. }
   iSplitR. { iPureIntro. move=> parent' ts' x Hlk. rewrite /types lookup_empty // in Hlk. }
   iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }

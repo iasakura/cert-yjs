@@ -35,6 +35,14 @@ type store struct {
 	// types is the root-type registry by name (y-octo: DocStore.types).
 	types      map[string]*yType
 	deletedSet deletedSet
+	// pending buffers decoded structs whose dependencies have not arrived yet
+	// (y-octo: DocStore.pending Option<Update>); every later applyUpdate
+	// re-drains it. Deliberate container deviation from y-octo (reported):
+	// y-octo keeps per-client queues (Update.structs
+	// ClientMap<VecDeque<Node>>) while this is the decoded flat batch shape
+	// store.applyUpdate already consumes; the flattening preserves each
+	// client's clock order (see docs/plan-issue-40-pending.md, section 3).
+	pending []updateItem
 }
 
 // newStore creates an empty store owned by the given client.
@@ -45,6 +53,7 @@ func newStore(client Client) *store {
 		items:      make(map[Client][]*item),
 		types:      make(map[string]*yType),
 		deletedSet: deletedSet{deletedSet: make(map[Client]orderRange)},
+		pending:    nil,
 	}
 }
 
@@ -388,26 +397,120 @@ func (s *store) Integrate(parent *yType, item *item) {
 	s.AddNode(item)
 }
 
-// applyUpdate integrates a decoded, causal-order batch of insert structs: each
-// struct is repaired (origins and parent resolved against the store) and then
-// integrated with the proven store.Integrate. This is the integrate loop of
-// y-octo's Doc::apply_update (document.rs): there the UpdateIterator yields the
-// structs in causal order and store.repair + store.integrate(s, offset, None)
-// splice each one in; here the caller supplies that causal order directly, and
-// each struct carries its own target type (doc-level batch, issue #49).
-//
-// Structural deviation from y-octo (deliberate, reported): y-octo keeps this
-// orchestration in Doc::apply_update and exposes only the per-struct primitives
-// (integrate/repair) on DocStore. cert-yjs encapsulates the whole loop as a
-// store method instead, so the store owns its own update logic and the public
-// Doc.ApplyUpdate (codec.go) is a thin decode+lock+call wrapper over it; this
-// keeps the verified core (wp_store__applyUpdate in src/proof/yjs_store.v) self
-// contained. Callers hold s.mu.
-func (s *store) applyUpdate(structs []updateItem) {
-	for i := 0; i < len(structs); i++ {
-		ui := structs[i]
-		it := newItem(ui.id, ui.content, ui.originLeftId, ui.originRightId)
-		s.repair(it, ui.parentName)
-		s.Integrate(nil, it)
+// hasNode reports whether the struct with the given id has been integrated.
+func (s *store) hasNode(id id) bool {
+	_, ok := s.GetNode(id)
+	return ok
+}
+
+// containsUpdateItemId reports whether any queued struct carries id.
+func containsUpdateItemId(items []updateItem, id id) bool {
+	for i := 0; i < len(items); i++ {
+		if items[i].id.Equal(id) {
+			return true
+		}
 	}
+	return false
+}
+
+// originArrived reports whether an optional origin dependency has been
+// integrated; a nil origin imposes none.
+func (s *store) originArrived(p *id) bool {
+	if p == nil {
+		return true
+	}
+	return s.hasNode(*p)
+}
+
+// depsArrived reports whether every dependency of the decoded struct has
+// already been integrated: both origins (y-octo: UpdateIterator's
+// get_missing_dep, update.rs) and, for clock > 0, the author's preceding
+// struct. The predecessor clause is y-octo's per-client state-vector
+// contiguity check (state.contains(id)): with gap-free per-client run lists,
+// "(c, k-1) integrated" is exactly "state(c) >= k", but phrased as an arrival
+// check so the store tracks no state vector. Parents never gate in this
+// subset: a parentName resolves by getOrCreateYType (creating on first use)
+// and a nil parentName borrows the parent from a resolved origin
+// (Parent::Id, which y-octo also gates on, is out of the subset, #43).
+func (s *store) depsArrived(ui updateItem) bool {
+	if !s.originArrived(ui.originLeftId) {
+		return false
+	}
+	if !s.originArrived(ui.originRightId) {
+		return false
+	}
+	if ui.id.clock > 0 && !s.hasNode(newId(ui.id.clientId, ui.id.clock-1)) {
+		return false
+	}
+	return true
+}
+
+// integrateDecoded builds, repairs and integrates one decoded struct whose
+// dependencies have arrived: the ready branch of applyUpdate's drain,
+// extracted so the per-struct integration contract is provable in isolation
+// (mirrors the findIntegrationLeft / integrateCore extractions).
+func (s *store) integrateDecoded(ui updateItem) {
+	it := newItem(ui.id, ui.content, ui.originLeftId, ui.originRightId)
+	s.repair(it, ui.parentName)
+	s.Integrate(nil, it)
+}
+
+// applyUpdate integrates a decoded batch of insert structs, in any order and
+// under no causal-closure assumption, buffering what cannot integrate yet
+// (issue #40; y-octo: the Doc::apply_update fixpoint over UpdateIterator and
+// DocStore.pending, document.rs / codec/update.rs). The pool is the store's
+// pending buffer plus the new batch. A struct whose id is already integrated
+// is dropped (a re-delivery; y-octo's offset >= len case). A struct whose
+// dependencies have all arrived (depsArrived) is repaired and integrated with
+// the proven store.Integrate; the rest is retried, pass after pass, until a
+// pass integrates nothing, and the remainder becomes the new pending buffer,
+// drained by later calls. Structs that can never resolve a parent (no
+// origins and no parentName, which the wire format never produces) are
+// dropped inside Integrate, as in y-octo.
+//
+// Structural deviations from y-octo (deliberate, reported; see
+// docs/plan-issue-40-pending.md, section 3):
+//   - the round-based fixpoint replaces UpdateIterator's stack-based
+//     dependency chase; both integrate exactly the least
+//     structural-dependency closure of the pool over the store, the chase
+//     being a within-pass shortcut for the later passes;
+//   - the pending buffer is re-drained on every call instead of gated on
+//     missing_state thresholds; the threshold is a retry optimization, and
+//     y-octo drops the stored thresholds when merging pending updates
+//     (document.rs merge branch), a liveness defect this port avoids;
+//   - pool re-deliveries are dropped by id on requeue rather than by
+//     merge_into's structural comparison (certified ids determine their
+//     struct);
+//   - as before, the loop lives on the store rather than on Doc, so the
+//     verified core stays self-contained; Doc.applyUpdate (doc.go) is the
+//     locking wrapper and the codec-level Doc.ApplyUpdate (codec.go) the
+//     decode rind.
+//
+// Callers hold s.mu.
+func (s *store) applyUpdate(structs []updateItem) {
+	pool := s.pending
+	for i := 0; i < len(structs); i++ {
+		pool = append(pool, structs[i])
+	}
+	s.pending = nil
+	progress := true
+	for progress {
+		progress = false
+		rest := []updateItem{}
+		for i := 0; i < len(pool); i++ {
+			ui := pool[i]
+			if s.hasNode(ui.id) {
+				// already integrated: a duplicate delivery, dropped.
+				continue
+			}
+			if s.depsArrived(ui) {
+				s.integrateDecoded(ui)
+				progress = true
+			} else if !containsUpdateItemId(rest, ui.id) {
+				rest = append(rest, ui)
+			}
+		}
+		pool = rest
+	}
+	s.pending = pool
 }

@@ -55,13 +55,16 @@ Record history_names := HistoryNames {
   hn_hist : gname;   (* histUR: per-client histories (auth map of mono-lists;
                         elements = replicas' exclusive handles, lbs = the
                         prefix certificates) *)
-  hn_ops  : gname;   (* ghost_map YjsId (Op * gset YjsId). Informationally
-                        derivable from the histories ([ops_coh] says so), but
-                        kept as its own gname: its persisted elements give
-                        UNCONDITIONAL certificate agreement
-                        ([is_op_cert_agree]), which a prefix-certificate
-                        encoding of op certs could only provide under the
-                        invariant. *)
+  hn_ops  : gname;   (* ghost_map YjsId Op. Informationally derivable from
+                        the histories ([ops_coh] says so), but kept as its
+                        own gname: its persisted elements give UNCONDITIONAL
+                        certificate agreement ([is_op_cert_agree]), which a
+                        prefix-certificate encoding of op certs could only
+                        provide under the invariant. Since issue #40 the
+                        certificate carries NO causal-cover set: the
+                        structural pending gate replaces causal-closure
+                        obligations, so "broadcast, with this id" is the
+                        whole certificate. *)
 }.
 
 Definition histN : namespace := nroot .@ "cert_yjs" .@ "history".
@@ -80,7 +83,7 @@ Definition hist_auth (γ : gname) (N : RawHistories) : iProp Σ :=
     and the two pure coherence facts. Re-proving [history_wf] at each ghost
     append is the refinement of the network model. *)
 Definition history_inv (γh : history_names) : iProp Σ :=
-  ∃ (N : RawHistories) (ops : gmap YjsId (Op * gset YjsId)),
+  ∃ (N : RawHistories) (ops : gmap YjsId Op),
     "HhistAuth" ∷ hist_auth γh.(hn_hist) N ∗
     "HopsAuth"  ∷ ghost_map_auth γh.(hn_ops) 1 ops ∗
     "#Hcerts"   ∷ ([∗ map] id ↦ p ∈ ops, id ↪[γh.(hn_ops)]□ p) ∗
@@ -105,30 +108,26 @@ Definition own_client_history (γh : history_names) (c : ClientId) (h : list Ev)
 Definition is_history_lb (γh : history_names) (c : ClientId) (h0 : list Ev) : iProp Σ :=
   own γh.(hn_hist) (◯ {[ c := ◯ML (h0 : list EvO) ]} : histUR).
 
-(** Persistent: [op] was broadcast; [D] covers its causal past. THE
-    certificate. *)
-Definition is_op_cert (γh : history_names) (op : Op) (D : gset YjsId) : iProp Σ :=
-  (opid op) ↪[γh.(hn_ops)]□ (op, D).
+(** Persistent: [op] was broadcast. THE certificate (issue #40: no
+    causal-cover component — the structural pending gate needs none). *)
+Definition is_op_cert (γh : history_names) (op : Op) : iProp Σ :=
+  (opid op) ↪[γh.(hn_ops)]□ op.
 
-(** Persistent: a batch of insert inputs certified AGAINST the receiver
-    history [h]: one op certificate per input, whose causal-past covers
-    ([batch_ok]) are discharged by [h] plus the earlier batch, and no input
-    is a re-delivery. The covering sets [Ds] are an internal witness, so
-    callers of the [applyUpdate] certificate spec never see them. *)
-Definition is_certified_batch (γh : history_names) (h : list Ev)
-    (inputs : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  ∃ Ds : list (gset YjsId),
-    ⌜batch_ok h inputs Ds⌝ ∗
-    [∗ list] ti;D ∈ inputs;Ds, is_op_cert γh (ti.1, OpInsert ti.2) D.
+(** Persistent: every struct of a decoded pool is certified — the ONLY
+    obligation on an [applyUpdate] pool (issue #40): no ordering, closure,
+    freshness, or receiver-relative condition. *)
+Definition is_pool_certified (γh : history_names)
+    (pool : list (TId * IntegrateInput (A := A))) : iProp Σ :=
+  [∗ list] ti ∈ pool, is_op_cert γh (ti.1, OpInsert ti.2).
 
 #[global] Instance history_inv_timeless γh : Timeless (history_inv γh).
 Proof. apply _. Qed.
 #[global] Instance is_history_persistent γh : Persistent (is_history γh).
 Proof. apply _. Qed.
-#[global] Instance is_op_cert_persistent γh op D : Persistent (is_op_cert γh op D).
+#[global] Instance is_op_cert_persistent γh op : Persistent (is_op_cert γh op).
 Proof. apply _. Qed.
-#[global] Instance is_certified_batch_persistent γh h inputs :
-  Persistent (is_certified_batch γh h inputs).
+#[global] Instance is_pool_certified_persistent γh pool :
+  Persistent (is_pool_certified γh pool).
 Proof. apply _. Qed.
 #[global] Instance own_client_history_timeless γh c h : Timeless (own_client_history γh c h).
 Proof. apply _. Qed.
@@ -275,7 +274,7 @@ Proof.
     destruct (decide (c ∈ C)).
     - rewrite option_guard_True //. apply Some_valid, mono_list_auth_valid.
     - rewrite option_guard_False //. }
-  iMod (ghost_map_alloc (∅ : gmap YjsId (Op * gset YjsId))) as (γops) "[HopsAuth _]".
+  iMod (ghost_map_alloc (∅ : gmap YjsId Op)) as (γops) "[HopsAuth _]".
   set (γh := {| hn_hist := γhist; hn_ops := γops |}).
   iMod (inv_alloc histN _ (history_inv γh) with "[HhistAuth HopsAuth]") as "#Hinv".
   { iNext. iExists _, ∅. iFrame "HhistAuth HopsAuth".
@@ -287,10 +286,9 @@ Proof.
 Qed.
 
 (** Broadcast (mint): append [EvBroadcast op; EvDeliver op] to the caller's
-    own history and register the op with its causal-past cover
-    [delivered_ids h]. Preconditions = the broadcast step's hypotheses, all
-    available inside [wp_Text__Insert]'s loop at the call site; the clock
-    bound is doc-global (all types, issue #49). *)
+    own history and register the op. Preconditions = the broadcast step's
+    hypotheses, all available inside [wp_Text__Insert]'s loop at the call
+    site; the clock bound is doc-global (all types, issue #49). *)
 Lemma history_broadcast γh (c k : nat) h (m : DocM) (t0 : TId)
     (arr' : list (YjsItem A)) (input : IntegrateInput (A := A)) (item : YjsItem A) E :
   ↑histN ⊆ E ->
@@ -303,13 +301,11 @@ Lemma history_broadcast γh (c k : nat) h (m : DocM) (t0 : TId)
   integrate input (docm_get m t0) = Some arr' ->
   history_state_coh h m ->
   is_history γh -∗ own_client_history γh c h ={E}=∗
-  ∃ D : gset YjsId,
     own_client_history γh c
       (h ++ [EvBroadcast (t0, OpInsert input); EvDeliver (t0, OpInsert input)]) ∗
     is_history_lb γh c
       (h ++ [EvBroadcast (t0, OpInsert input); EvDeliver (t0, OpInsert input)]) ∗
-    is_op_cert γh (t0, OpInsert input) D ∗
-    ⌜D ⊆ delivered_ids h⌝ ∗
+    is_op_cert γh (t0, OpInsert input) ∗
     ⌜history_state_coh
        (h ++ [EvBroadcast (t0, OpInsert input); EvDeliver (t0, OpInsert input)])
        (<[t0 := arr']> m)⌝.
@@ -326,7 +322,7 @@ Proof.
           [EvBroadcast (t0, OpInsert input); EvDeliver (t0, OpInsert input)]
           HNc with "HhistAuth Hown") as "(HhistAuth & Hown & #Hlb)".
   pose proof (ops_coh_lookup_fresh N ops (in_id input) Hopscoh Hfresh) as Hnone.
-  iMod (ghost_map_insert (in_id input) ((t0, OpInsert input) : Op, delivered_ids h) Hnone
+  iMod (ghost_map_insert (in_id input) ((t0, OpInsert input) : Op) Hnone
           with "HopsAuth") as "[HopsAuth Hcert]".
   iMod (ghost_map_elem_persist with "Hcert") as "#Hcert".
   iMod ("Hclose" with "[HhistAuth HopsAuth]") as "_".
@@ -334,52 +330,55 @@ Proof.
     iSplit.
     { rewrite big_sepM_insert; [| exact Hnone]. iFrame "Hcert Hcerts". }
     iPureIntro. split; [exact Hwf' |].
-    exact (ops_coh_broadcast N c h ops (t0, OpInsert input) (delivered_ids h)
+    exact (ops_coh_broadcast N c h ops (t0, OpInsert input)
              Hwf HNc Hfresh Hopscoh Hreg'). }
-  iModIntro. iExists (delivered_ids h). iFrame "Hown Hcert Hlb".
-  iPureIntro. split; [done | exact Hcoh'].
+  iModIntro. iFrame "Hown Hcert Hlb".
+  iPureIntro. exact Hcoh'.
 Qed.
 
-(** Deliver a certified batch (used by [applyUpdate]'s certificate spec):
-    append one [EvDeliver] per batch op to the caller's history. Produces the
-    [ValidReplay] the heap-level [applyUpdate] proof consumes, before any code
-    runs. *)
-Lemma history_deliver_batch γh (c : ClientId) h (m : DocM)
-    (inputs : list (TId * IntegrateInput (A := A))) (Ds : list (gset YjsId)) E :
+(** Deliver a certified pool (used by the total [applyUpdate]'s certificate
+    spec, issue #40): drain the pool against the coherent model, append one
+    [EvDeliver] per APPLIED struct to the caller's history (the pending rest
+    is delivered by a later call, when its dependencies have arrived), and
+    return the [ValidReplay] the heap-level proof consumes. The ONLY
+    obligation on the pool is per-op certification: no ordering, causal
+    closure, freshness, or receiver-relative condition. *)
+Lemma history_deliver_pool γh (c : ClientId) h (m : DocM)
+    (pool applied rest : list (TId * IntegrateInput (A := A))) (m' : DocM) E :
   ↑histN ⊆ E ->
-  batch_ok h inputs Ds ->
+  pool_drain m pool = (applied, rest, m') ->
   history_state_coh h m ->
-  (∀ t : TId, YjsArrInvariant (docm_get m t)) ->
   is_history γh -∗ own_client_history γh c h -∗
-  ([∗ list] ti;D ∈ inputs;Ds, is_op_cert γh (ti.1, OpInsert ti.2) D) ={E}=∗
-  ∃ m' : DocM,
-    own_client_history γh c (h ++ (deliver_ev <$> inputs)) ∗
-    is_history_lb γh c (h ++ (deliver_ev <$> inputs)) ∗
-    ⌜ValidReplay inputs m m'⌝ ∗
-    ⌜history_state_coh (h ++ (deliver_ev <$> inputs)) m'⌝ ∗
-    ⌜∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
-       inputs !! i = Some ti -> clientId (in_id ti.2) ≠ c⌝.
+  is_pool_certified γh pool ={E}=∗
+    own_client_history γh c (h ++ (deliver_ev <$> applied)) ∗
+    is_history_lb γh c (h ++ (deliver_ev <$> applied)) ∗
+    ⌜ValidReplay applied m m'⌝ ∗
+    ⌜history_state_coh (h ++ (deliver_ev <$> applied)) m'⌝ ∗
+    ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
+       clientId (in_id ti.2) ≠ c⌝.
 Proof.
-  iIntros (HE Hbatch Hcoh Harrinv) "#Hinv Hown #Hcertsin".
+  iIntros (HE Hdrain Hcoh) "#Hinv Hown #Hcertsin".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".
   iDestruct (hist_auth_elem_lookup with "HhistAuth Hown") as %HNc.
-  iDestruct (big_sepL2_length with "Hcertsin") as %Hlen.
-  iAssert (⌜∀ (i : nat) (ti : TId * IntegrateInput (A := A)) (D : gset YjsId),
-             inputs !! i = Some ti -> Ds !! i = Some D ->
-             ops !! (in_id ti.2) = Some ((ti.1, OpInsert ti.2), D)⌝)%I as %Hlk.
-  { iIntros (i ti D Hi HD).
-    iDestruct (big_sepL2_lookup _ _ _ i with "Hcertsin") as "Hc"; [exact Hi | exact HD |].
+  iAssert (⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pool ->
+             ops !! (in_id ti.2) = Some ((ti.1, OpInsert ti.2) : Op)⌝)%I as %Hlk.
+  { iIntros (ti Hin).
+    destruct (list_elem_of_lookup_1 _ _ Hin) as (i & Hi).
+    iDestruct (big_sepL_lookup _ _ i with "Hcertsin") as "Hc"; [exact Hi |].
     iApply (ghost_map_lookup with "HopsAuth Hc"). }
-  have Hreg : ∀ (i : nat) (ti : TId * IntegrateInput (A := A)) (D : gset YjsId),
-      inputs !! i = Some ti -> Ds !! i = Some D ->
-      op_registered N (ti.1, OpInsert ti.2) D.
-  { move=> i ti D Hi HD. destruct Hopscoh as [Hc1 _].
-    exact (proj2 (Hc1 _ _ _ (Hlk i ti D Hi HD))). }
-  pose proof (certs_ValidReplay N c h m inputs Ds Hwf HNc Hcoh Harrinv Hreg
-                (eq_sym Hlen) Hbatch) as (m' & Hvr & Hcoh' & Hwf').
-  pose proof (batch_not_own_client N c h inputs Ds Hwf HNc (eq_sym Hlen) Hreg Hbatch)
-    as Hnoc.
-  iMod (hist_auth_elem_advance γh N c h (deliver_ev <$> inputs)
+  have Hbc : ∀ ti : TId * IntegrateInput (A := A), ti ∈ pool ->
+      op_broadcast N (ti.1, OpInsert ti.2).
+  { move=> ti Hin. destruct Hopscoh as [Hc1 _].
+    have [_ Hreg] := Hc1 _ _ (Hlk ti Hin).
+    exists (clientId (opid ((ti.1, OpInsert ti.2) : Op))). exact Hreg. }
+  have Happsub := proj1 (pool_drain_subset m pool applied rest m' Hdrain).
+  have Hbcapp : ∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
+      op_broadcast N (ti.1, OpInsert ti.2).
+  { move=> ti Hin. exact (Hbc ti (Happsub ti Hin)). }
+  pose proof (pool_ValidReplay N c h m applied m' Hwf HNc Hcoh Hbcapp
+                (pool_drain_replay m pool applied rest m' Hdrain))
+    as (Hvr & Hcoh' & Hwf' & Hnoc).
+  iMod (hist_auth_elem_advance γh N c h (deliver_ev <$> applied)
           HNc with "HhistAuth Hown") as "(HhistAuth & Hown & #Hlb)".
   iMod ("Hclose" with "[HhistAuth HopsAuth]") as "_".
   { iNext. iExists _, _. iFrame "HhistAuth HopsAuth Hcerts".
@@ -388,7 +387,7 @@ Proof.
     move=> e He. move: He. rewrite list_elem_of_fmap.
     move=> [ti [Heq _]]. rewrite /deliver_ev in Heq. discriminate.
   }
-  iModIntro. iExists m'. iFrame "Hown Hlb".
+  iModIntro. iFrame "Hown Hlb".
   iPureIntro. split_and!; [exact Hvr | exact Hcoh' | exact Hnoc].
 Qed.
 
@@ -403,12 +402,12 @@ Qed.
 Lemma history_smoke (a : A) (t : TId) (c1 c2 : ClientId) E :
   ↑histN ⊆ E ->
   c1 ≠ c2 ->
-  ⊢ |={E}=> ∃ γh (input : IntegrateInput (A := A)) (D : gset YjsId),
+  ⊢ |={E}=> ∃ γh (input : IntegrateInput (A := A)),
       is_history γh ∗
       own_client_history γh c1
         [EvBroadcast (t, OpInsert input); EvDeliver (t, OpInsert input)] ∗
       own_client_history γh c2 [EvDeliver (t, OpInsert input)] ∗
-      is_op_cert γh (t, OpInsert input) D.
+      is_op_cert γh (t, OpInsert input).
 Proof.
   iIntros (HE Hne).
   iMod (history_alloc {[c1; c2]} E) as (γh) "[#Hinv Helems]".
@@ -439,22 +438,18 @@ Proof.
   { move=> t' x Hx. exfalso. move: Hx. rewrite Hnilget elem_of_nil //. }
   iMod (history_broadcast γh c1 0%nat [] ∅ t [item] input item E HE
           Htoitem Hvalid Hmax eq_refl Hbound Hint history_state_coh_nil
-          with "Hinv H1") as (D) "(H1 & #Hlb1 & #Hcert & %HDsub & %Hcoh1)".
-  have HDempty : D = ∅.
-  { move: HDsub. rewrite /delivered_ids /=. set_solver. }
-  subst D.
-  have Hbatch : batch_ok [] [(t, input)] [∅ : gset YjsId].
-  { move=> i ti' D' Hi HD'.
-    destruct i as [| i]; last by (destruct i; discriminate).
-    injection Hi as <-. injection HD' as <-.
-    rewrite /delivered_ids take_0 /=. split; set_solver. }
-  have Hinvempty : ∀ t' : TId, YjsArrInvariant (docm_get (∅ : DocM) t').
-  { move=> t'. rewrite Hnilget. exact YjsArrInvariant_empty. }
-  iMod (history_deliver_batch γh c2 [] ∅ [(t, input)] [∅] E HE Hbatch
-          history_state_coh_nil Hinvempty
-          with "Hinv H2 []") as (m2) "(H2 & #Hlb2 & %Hvr & %Hcoh2)".
-  { rewrite big_sepL2_singleton. iApply "Hcert". }
-  iModIntro. iExists γh, input, ∅.
+          with "Hinv H1") as "(H1 & #Hlb1 & #Hcert & %Hcoh1)".
+  (* client 2 receives the op as a one-struct pool: the drain applies it *)
+  have Hdmh : docm_has (∅ : DocM) (in_id input) = false.
+  { rewrite /docm_has map_to_list_empty //. }
+  have Hdrain : pool_drain (∅ : DocM) [(t, input)]
+              = ([(t, input)], [], <[t := [item]]> (∅ : DocM)).
+  { rewrite /pool_drain /= Hdmh /= Hint //=. }
+  iMod (history_deliver_pool γh c2 [] ∅ [(t, input)] [(t, input)] []
+          (<[t := [item]]> ∅) E HE Hdrain history_state_coh_nil
+          with "Hinv H2 []") as "(H2 & #Hlb2 & %Hvr & %Hcoh2 & %Hnoc)".
+  { rewrite /is_pool_certified big_sepL_singleton. iApply "Hcert". }
+  iModIntro. iExists γh, input.
   iFrame "Hinv Hcert H1 H2".
 Qed.
 
@@ -463,13 +458,13 @@ Qed.
     docs/plan-network-p2p-layer.md §3). Registration is witnessed by any
     (partial) certificate-shaped fact; here we expose the basic agreement
     form: two certificates for ops with the same id agree. *)
-Lemma is_op_cert_agree γh (op1 op2 : Op) (D1 D2 : gset YjsId) :
+Lemma is_op_cert_agree γh (op1 op2 : Op) :
   opid op1 = opid op2 ->
-  is_op_cert γh op1 D1 -∗ is_op_cert γh op2 D2 -∗ ⌜op1 = op2 ∧ D1 = D2⌝.
+  is_op_cert γh op1 -∗ is_op_cert γh op2 -∗ ⌜op1 = op2⌝.
 Proof.
   iIntros (Hid) "H1 H2". rewrite /is_op_cert Hid.
   iDestruct (ghost_map_elem_agree with "H1 H2") as %Heq.
-  iPureIntro. by injection Heq.
+  iPureIntro. exact Heq.
 Qed.
 
 End history.

@@ -4,15 +4,17 @@ package yjs
 // Update + codec/item.rs Item): the Update batch and its updateItem structs.
 // The application loop itself lives in store.applyUpdate (store.go) -- the
 // *verified core* of apply_update, proved by wp_store__applyUpdate in
-// src/proof/yjs_store.v.
+// src/proof/yjs_store.v. Since issue #40 that loop is TOTAL: the batch needs
+// no ordering or causal closure, and structs whose dependencies (origins /
+// own predecessor) have not arrived are buffered in store.pending and drained
+// by later calls, mirroring y-octo's UpdateIterator + DocStore.pending.
 //
-// The byte-level v1 decode (Update::read), the state-vector + pending/missing
-// causal-order iterator (UpdateIterator), the delete set (store::delete_range),
-// GC/Skip nodes, Parent::Id / parent_sub and multi-clock runs are all out of the
-// verified subset; the unverified runtime path for those stays in codec.go
-// (//go:build !goose), whose Doc.ApplyUpdate is the thin decode+lock+call
-// wrapper over store.applyUpdate. Its honest verified public spec is tracked in
-// issue #40.
+// The byte-level v1 decode (Update::read), the delete set
+// (store::delete_range), GC/Skip nodes, Parent::Id / parent_sub and
+// multi-clock runs remain out of the verified subset; the unverified runtime
+// path for those stays in codec.go (//go:build !goose), whose Doc.ApplyUpdate
+// is the thin decode wrapper routing through the locked Doc.applyUpdate
+// (doc.go).
 
 // updateItem is one decoded insert struct in the verified subset: an item carrying
 // its id, both sibling origins, its parent info and its single-char string content
@@ -33,13 +35,13 @@ type updateItem struct {
 }
 
 // Update is the decoded, in-memory update of the verified subset: a batch of
-// insert structs in causal order -- every struct's origins occur earlier in the
-// list, and each client's structs are clock-ascending (y-octo: codec/update.rs
-// Update, restricted to its structs field). Each struct carries its own parent
-// info, so one update may touch several root types (issue #49). The
-// pending_structs / missing_state / pending_delete_set fields that drive
-// UpdateIterator's retry machinery, and delete_set which drives delete_range, are
-// out of the verified subset.
+// insert structs in ARBITRARY order, with no causal-closure requirement
+// (y-octo: codec/update.rs Update, restricted to its structs field). Each
+// struct carries its own parent info, so one update may touch several root
+// types (issue #49). Structs whose dependencies are missing are buffered by
+// store.applyUpdate in store.pending (issue #40); y-octo's in-update
+// pending_structs / missing_state staging fields and delete_set (which drives
+// delete_range) are out of the verified subset.
 type Update struct {
 	structs []updateItem
 }
