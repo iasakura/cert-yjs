@@ -3903,7 +3903,8 @@ Lemma wp_store__applyUpdate (s : loc) (sl : slice.t) (dq : dfrac)
   (∀ i ti, inputs !! i = Some ti -> ∃ nm p, ti.1 = RootId nm /\ bind !! nm = Some p) ->
   (∀ (i : nat) (ti : TId * IntegrateInput (A := A)), inputs !! i = Some ti ->
      ∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (in_id ti.2)) ->
-        (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id ti.2))))%Z) ->
+        (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id ti.2))))%Z /\
+        (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (in_id ti.2))))%Z) ->
   (∀ (i j : nat) (ti tj : TId * IntegrateInput (A := A)),
      inputs !! i = Some ti -> inputs !! j = Some tj ->
      (j < i)%nat -> W64 (clientId (in_id tj.2)) = W64 (clientId (in_id ti.2)) ->
@@ -3968,7 +3969,8 @@ Proof using Type*.
     "%Hbndj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj ->
         ∀ i ti, (j <= i)%nat -> inputs !! i = Some ti ->
           cell_client c0 = W64 (clientId (in_id ti.2)) ->
-          (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id ti.2))))%Z⌝ ∗
+          (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id ti.2))))%Z ∧
+          (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (in_id ti.2))))%Z⌝ ∗
     "%Hnowrapj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> (uint.Z (cell_clock c0) + 1 < 2^64)%Z⌝ ∗
     "%Hprovj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> c0 ∈ all_cells types ∨
         ∃ i ti, inputs !! i = Some ti /\
@@ -4255,9 +4257,7 @@ Proof using Type*.
                     (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (item_id nit))))%Z.
     { intros c0 Hc0 Hcc0. rewrite Hidnit in Hcc0 |- *.
       have Hh := Hbndj c0 Hc0 j (RootId nmj, input) ltac:(lia) Hinput Hcc0.
-      simpl in Hh.
-      have Hu := Hcellunit c0 Hc0. rewrite /cell_unit in Hu.
-      split; [exact Hh | rewrite Hu; lia]. }
+      simpl in Hh. exact Hh. }
     iDestruct (big_sepM_delete _ _ pj _ Htsj with "Htypes") as "[[Hyt _] Htypesrest]".
     have Hfitscj : ∀ c0, c0 ∈ cellsj -> cell_fits c0.
     { move=> c0 Hc0.
@@ -4353,7 +4353,7 @@ Proof using Type*.
       { rewrite (all_cells_lookup _ _ _ Htsj). apply elem_of_app. by left. }
       have Hcl' : cell_client c0' = W64 (clientId (in_id input)).
       { rewrite /cell_client -Hxhead Hxid Hcl Hidnit //. }
-      have Hbnd := Hbndj c0' Hc0'all j (RootId nmj, input) ltac:(lia) Hinput Hcl'.
+      have Hbnd := proj1 (Hbndj c0' Hc0'all j (RootId nmj, input) ltac:(lia) Hinput Hcl').
       have Hck' : cell_clock c0' = W64 (clock oid).
       { rewrite /cell_clock -Hxhead Hxid //. }
       have [_ Hkb] := Hcellbndj c0' Hc0'all.
@@ -4406,8 +4406,11 @@ Proof using Type*.
       * exact (Hbndj c0 Hold i ti ltac:(lia) Hinput' Hcc0).
       * apply list_elem_of_singleton in Hnew as ->.
         rewrite Hclk2.
-        exact (Hcausal i j ti (RootId nmj, input) Hinput' Hinput ltac:(lia)
-                 (eq_trans (eq_sym Hcc2) Hcc0)).
+        have Hcl := Hcausal i j ti (RootId nmj, input) Hinput' Hinput ltac:(lia)
+                 (eq_trans (eq_sym Hcc2) Hcc0).
+        simpl in Hcl.
+        have Hu2 := Hc2unit. rewrite /cell_unit in Hu2.
+        split; [exact Hcl | rewrite Hu2; lia].
     + (* no-wrap for the grown pool *)
       move=> c0 Hc0.
       rewrite Hac_step in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew].
@@ -4572,14 +4575,15 @@ Proof using Type*.
   (* the W64-level freshness of the batch against ALL cells *)
   have Hfresh : ∀ (i : nat) (ti : TId * IntegrateInput (A := A)), inputs !! i = Some ti →
      ∀ c0, c0 ∈ all_cells types → cell_client c0 = W64 (clientId (in_id ti.2)) →
-        (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id ti.2))))%Z.
+        (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id ti.2))))%Z ∧
+        (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (in_id ti.2))))%Z.
   { move=> i ti Hi c0 Hc0 Hcc.
     have Hc0m := Hc0.
     apply all_cells_elem_of in Hc0m. destruct Hc0m as (p & ts & Hts & Hcts).
+    have Hu : cell_unit c0 := proj1 (Forall_forall _ _) (Hunitall p ts Hts) _ Hcts.
     have Hitemmem : run_head c0 ∈ ty_arr ts.
     { rewrite (Hreprall p ts Hts).
-        apply run_head_in_flatten; [exact Hcts |].
-        exact (proj1 (Forall_forall _ _) (Hunitall p ts Hts) _ Hcts). }
+        apply run_head_in_flatten; [exact Hcts | exact Hu]. }
     destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
     have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
     have Hmem : run_head c0 ∈ docm_get m (RootId nm) by rewrite Hdg.
@@ -4591,7 +4595,8 @@ Proof using Type*.
               = uint.Z (W64 (clientId (in_id ti.2))) by rewrite Hcc.
       word. }
     have Hlt := ValidReplay_arr_fresh inputs m m' Hvr i ti Hi (RootId nm) (run_head c0) Hmem Hceq.
-    rewrite /cell_clock. word. }
+    rewrite /cell_unit in Hu.
+    split; [rewrite /cell_clock; word | rewrite /cell_clock Hu; word]. }
   (* the W64-level intra-batch causal order *)
   have Hcausal : ∀ (i j : nat) (ti tj : TId * IntegrateInput (A := A)),
      inputs !! i = Some ti → inputs !! j = Some tj →
