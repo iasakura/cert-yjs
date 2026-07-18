@@ -1099,18 +1099,25 @@ Proof.
       * rewrite -(cell_kp_pr c1 y1 Hkp1) -(cell_kp_pr c2 y2 Hkp2). exact Hpr.
 Qed.
 
-(** The cell-clock bound ([store_inv]'s [Hcellctr]) likewise transfers across a
-    [cell_kp]-preserving reshuffle: same client, same clock. *)
-Lemma cellctr_kp_perm (M1 M2 : gmap loc type_state) (client k : w64) :
-  cell_kp <$> all_cells M2 ≡ₚ cell_kp <$> all_cells M1 ->
-  (∀ c, c ∈ all_cells M1 → cell_client c = client → (uint.Z (cell_clock c) < uint.Z k)%Z) ->
-  (∀ c, c ∈ all_cells M2 → cell_client c = client → (uint.Z (cell_clock c) < uint.Z k)%Z).
+(** The cell-clock range bound ([store_inv]'s [Hcellctr]) transfers across a
+    (loc, run)-preserving reshuffle: client, clock, and run length all derive
+    from the run. *)
+Lemma cellctr_locs_run_perm (pool1 pool2 : list item_cell) (client k : w64) :
+  (λ c, (ic_loc c, ic_run c)) <$> pool2 ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> pool1 ->
+  (∀ c, c ∈ pool1 → cell_client c = client →
+     (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z k)%Z) ->
+  (∀ c, c ∈ pool2 → cell_client c = client →
+     (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z k)%Z).
 Proof.
   move=> Hperm Hbnd c Hc Hcc.
-  have Hin : cell_kp c ∈ cell_kp <$> all_cells M2 by apply list_elem_of_fmap_2.
-  rewrite Hperm in Hin. apply list_elem_of_fmap in Hin as (c' & Hkp & Hc').
-  rewrite (cell_kp_clock c c' Hkp).
-  apply (Hbnd c' Hc'). rewrite -(cell_kp_client c c' Hkp). exact Hcc.
+  have Hin : (ic_loc c, ic_run c) ∈ ((λ c0, (ic_loc c0, ic_run c0)) <$> pool1).
+  { rewrite -Hperm. exact (list_elem_of_fmap_2 _ _ _ Hc). }
+  apply list_elem_of_fmap in Hin as (c' & Heq & Hc').
+  have Hr : ic_run c = ic_run c' := f_equal snd Heq.
+  have Hcc' : cell_client c' = client.
+  { rewrite -Hcc /cell_client /run_head Hr //. }
+  have Hb := Hbnd c' Hc' Hcc'.
+  rewrite /cell_clock /run_head Hr. exact Hb.
 Qed.
 
 (* ----- per-store ghost names and the root-type registry ------------------ *)
@@ -1195,7 +1202,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
     "%Hcellctr" ∷ ⌜∀ c, c ∈ all_cells types → cell_client c = client →
-                   (uint.Z (cell_clock c) < uint.Z k)%Z⌝ ∗
+                   (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z k)%Z⌝ ∗
     (* part-6 pool invariants (issue #28): the split branches' index pin *)
     "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
     "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝ ∗

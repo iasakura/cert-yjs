@@ -466,7 +466,7 @@ Proof.
     "%Hrgtj" ∷ ⌜rgt = node_loc cells (Z.of_nat (p + j))⌝ ∗
     "%Hcoupj" ∷ ⌜length (run_flatten (take (p + j)%nat cells)) = (mp + j)%nat⌝ ∗
     "%Hcellbnd" ∷ ⌜∀ c0 : item_cell, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) →
-       cell_client c0 = client → (uint.Z (cell_clock c0) < uint.Z k + Z.of_nat j)%Z⌝ ∗
+       cell_client c0 = client → (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z k + Z.of_nat j)%Z⌝ ∗
     "%Hlocdupj" ∷ ⌜NoDup (ic_loc <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types))⌝ ∗
     "%Hrangedisjj" ∷ ⌜cells_range_disjoint (all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types))⌝ ∗
     "%Hrunfitsj" ∷ ⌜∀ c0, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) → cell_fits c0⌝ ∗
@@ -676,8 +676,8 @@ Proof.
           destruct Hin' as (p0 & ts0 & Hp0 & Hcts0).
           exact (proj1 (Forall_forall _ _) (Hunitrest p0 ts0 Hp0) c0 Hcts0). }
       rewrite /cell_unit in Hu0.
-      have Hhd := Hcellbnd c0 Hc0 Hcl0.
-      rewrite Hrhs. split; [exact Hhd | rewrite Hu0; lia]. }
+      have Hrg := Hcellbnd c0 Hc0 Hcl0.
+      rewrite Hrhs. split; lia. }
     have Hfitsj : ∀ c0, c0 ∈ cells -> cell_fits c0.
     { move=> c0 Hc0. apply Hrunfitsj.
       rewrite (all_cells_lookup _ _ _ Hlookj).
@@ -916,7 +916,8 @@ Proof.
       rewrite Hac_step in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew].
       + have := Hcellbnd c0 Hold Hcc0. lia.
       + apply list_elem_of_singleton in Hnew as ->.
-        rewrite /cell_clock Hcid /nit /in_id1 /=. rewrite Hclocknit. word.
+        have Hcu1 : length (ic_run c) = 1%nat := Hcunit.
+        rewrite /cell_clock Hcid Hcu1 /nit /in_id1 /=. rewrite Hclocknit. word.
     - (* Hlocdupj at S j *)
       have Hac_step2 : all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' arr']> types)
                     ≡ₚ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) ++ [c]
@@ -1172,7 +1173,12 @@ Proof.
           + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
           + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
             exact (Hctr parent' ts' x Hlook Hxin Hxc).
-        - exact (cellctr_kp_perm types (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) client k Hkpperm Hcellctr).
+        - have Hlrperm : (λ c, (ic_loc c, ic_run c)) <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
+                       ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> all_cells types.
+          { rewrite (all_cells_insert types (tv.(yjs.Text.inner')) ts (MkTypeState cells' ts.(ty_arr)) Htsp).
+            rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
+            rewrite !fmap_app /= Hlreq. reflexivity. }
+          exact (cellctr_locs_run_perm _ _ client k Hlrperm Hcellctr).
         - have Hlrperm : (λ c, (ic_loc c, ic_run c)) <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
                        ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> all_cells types.
           { rewrite (all_cells_insert types (tv.(yjs.Text.inner')) ts (MkTypeState cells' ts.(ty_arr)) Htsp).
@@ -1252,7 +1258,12 @@ Proof.
           + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
           + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
             exact (Hctr parent' ts' x Hlook Hxin Hxc).
-        - exact (cellctr_kp_perm types (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) client k Hkpperm Hcellctr).
+        - have Hlrperm : (λ c, (ic_loc c, ic_run c)) <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
+                       ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> all_cells types.
+          { rewrite (all_cells_insert types (tv.(yjs.Text.inner')) ts (MkTypeState cells' ts.(ty_arr)) Htsp).
+            rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
+            rewrite !fmap_app /= Hlreq. reflexivity. }
+          exact (cellctr_locs_run_perm _ _ client k Hlrperm Hcellctr).
         - have Hlrperm : (λ c, (ic_loc c, ic_run c)) <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
                        ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> all_cells types.
           { rewrite (all_cells_insert types (tv.(yjs.Text.inner')) ts (MkTypeState cells' ts.(ty_arr)) Htsp).

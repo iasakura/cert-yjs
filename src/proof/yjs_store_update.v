@@ -3763,14 +3763,14 @@ Proof.
       apply (Hctr (RootId nm) x); [by rewrite Hdg | exact Hcx]. }
     (* the W64 cell-level shadow, via the id-bound pins *)
     have Hcellctr : ∀ c0, c0 ∈ all_cells types -> cell_client c0 = client ->
-        (uint.Z (cell_clock c0) < uint.Z k)%Z.
+        (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z k)%Z.
     { move=> c0 Hc0 Hcc.
       have Hc0m := Hc0. apply all_cells_elem_of in Hc0m.
       destruct Hc0m as (p & ts & Hts & Hcts).
+      have Hu : cell_unit c0 := proj1 (Forall_forall _ _) (Hunitall p ts Hts) _ Hcts.
       have Hitemmem : run_head c0 ∈ ty_arr ts.
       { rewrite (Hreprall p ts Hts).
-        apply run_head_in_flatten; [exact Hcts |].
-        exact (proj1 (Forall_forall _ _) (Hunitall p ts Hts) _ Hcts). }
+        apply run_head_in_flatten; [exact Hcts | exact Hu]. }
       have [Hcb Hkb] := Hcellbnd c0 Hc0.
       have Hceq : clientId (item_id (run_head c0)) = uint.nat client.
       { move: Hcc. rewrite /cell_client. move=> Hcc.
@@ -3778,7 +3778,8 @@ Proof.
           by rewrite Hcc.
         word. }
       have Hlt := Hctrt p ts (run_head c0) Hts Hitemmem Hceq.
-      rewrite /cell_clock. word. }
+      rewrite /cell_unit in Hu.
+      rewrite /cell_clock Hu. word. }
     iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
     iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
     iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset HtypesAuth Hbinds Hhist".
