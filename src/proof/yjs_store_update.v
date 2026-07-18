@@ -2669,6 +2669,7 @@ Lemma split_pool_cover (types : gmap loc type_state) (parent : loc)
           cell_client c' = ccl ∧
           (uint.Z (cell_clock c') <= clkZ)%Z ∧
           (clkZ < uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')))%Z ∧
+          ic_parent c' = ic_parent c ∧
           (c' = c ∨ (c = cw ∧ (ic_loc c' = ic_loc cw ∨
                                ic_loc c' ∉ (ic_loc <$> all_cells types)))).
 Proof.
@@ -2680,15 +2681,15 @@ Proof.
   - destruct (split_cell_cover cw o rloc clkZ Hrunwf Ho Hckbnd Hfitscw Hle Hlt)
       as [(Hd & Hle' & Hlt') | (Hd & Hle' & Hlt')].
     + exists (split_cell_left cw o). split_and!;
-        [rewrite Hnew; apply list_elem_of_here | rewrite Hclientl; exact Hccl | exact Hle' | exact Hlt' |].
+        [rewrite Hnew; apply list_elem_of_here | rewrite Hclientl; exact Hccl | exact Hle' | exact Hlt' | done |].
       right. split; [done | by left].
     + exists (split_cell_right cw o rloc). split_and!;
         [rewrite Hnew; apply elem_of_cons; right; apply list_elem_of_here
-        | rewrite Hclientr; exact Hccl | exact Hle' | exact Hlt' |].
+        | rewrite Hclientr; exact Hccl | exact Hle' | exact Hlt' | done |].
       right. split; [done | by right].
   - exists c. split_and!;
       [rewrite Hnew; apply elem_of_cons; right; apply elem_of_cons; by right
-      | exact Hccl | exact Hle | exact Hlt | by left].
+      | exact Hccl | exact Hle | exact Hlt | done | by left].
 Qed.
 
 (** Cells away from the split location survive a split verbatim. *)
@@ -2764,6 +2765,7 @@ Definition split_step_facts (types types' : gmap loc type_state) (w : item_cell)
      ∃ c', c' ∈ all_cells types' ∧ cell_client c' = ccl ∧
            (uint.Z (cell_clock c') <= clkZ)%Z ∧
            (clkZ < uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')))%Z ∧
+           ic_parent c' = ic_parent c ∧
            (c' = c ∨ (c = w ∧ (ic_loc c' = ic_loc w ∨
                                ic_loc c' ∉ (ic_loc <$> all_cells types))))).
 
@@ -3218,6 +3220,458 @@ Proof using Type*.
       rewrite /own_fresh_item_raw. simpl.
       iFrame "Hitem".
       iPureIntro. split_and!; try done.
+Qed.
+
+(* ----- the general repair (issue #28 stage D2b) ---------------------------
+   [store.repair] over the invariant-carrying split wrappers: the origin ids
+   may address ANY char of their covering cells' runs; the clean-end /
+   clean-start splits put them on run boundaries. The two splits are
+   sequenced by the wrappers' transport records. *)
+
+(** Loc-NoDup makes the location injective on the pool. *)
+Lemma pool_loc_inj (pool : list item_cell) :
+  NoDup (ic_loc <$> pool) ->
+  ∀ x y, x ∈ pool → y ∈ pool → ic_loc x = ic_loc y → x = y.
+Proof.
+  move=> Hnd x y Hx Hy Hxy.
+  apply list_elem_of_lookup_1 in Hx as [ix Hix].
+  apply list_elem_of_lookup_1 in Hy as [iy Hiy].
+  have Hlix : (ic_loc <$> pool) !! ix = Some (ic_loc y) by (rewrite list_lookup_fmap Hix /= Hxy //).
+  have Hliy : (ic_loc <$> pool) !! iy = Some (ic_loc y) by (rewrite list_lookup_fmap Hiy //).
+  have Hijeq : ix = iy := NoDup_lookup _ _ _ _ Hnd Hlix Hliy.
+  congruence.
+Qed.
+
+(** What [repair] guarantees about the type map: per-type model documents and
+    the domain survive, and each client's run list grows by at most the two
+    possible splits. *)
+Definition repair_types_facts (types types2 : gmap loc type_state) : Prop :=
+  (∀ p ts', types2 !! p = Some ts' ->
+     ∃ ts, types !! p = Some ts ∧ ty_arr ts' = ty_arr ts ∧
+           run_flatten (ty_cells ts') = run_flatten (ty_cells ts)) ∧
+  (∀ p, is_Some (types !! p) -> is_Some (types2 !! p)) ∧
+  (∀ kc, (length (client_run types2 kc) <= 2 + length (client_run types kc))%nat).
+
+Lemma repair_types_facts_refl (types : gmap loc type_state) :
+  repair_types_facts types types.
+Proof.
+  split_and!.
+  - move=> p ts' Hp. exists ts'. split_and!; done.
+  - move=> p Hp. exact Hp.
+  - move=> kc. lia.
+Qed.
+
+Lemma split_step_facts_single (types types1 : gmap loc type_state) (w : item_cell) :
+  split_step_facts types types1 w -> repair_types_facts types types1.
+Proof.
+  move=> H. destruct H as (Hp & Hd & Hr & _ & _).
+  split_and!; [exact Hp | exact Hd | move=> kc; have := Hr kc; lia].
+Qed.
+
+Lemma split_step_facts_compose (types types1 types2 : gmap loc type_state) (w1 w2 : item_cell) :
+  split_step_facts types types1 w1 -> split_step_facts types1 types2 w2 ->
+  repair_types_facts types types2.
+Proof.
+  move=> H1 H2.
+  destruct H1 as (Hp1 & Hd1 & Hr1 & _ & _).
+  destruct H2 as (Hp2 & Hd2 & Hr2 & _ & _).
+  split_and!.
+  - move=> p ts2 Hp.
+    destruct (Hp2 p ts2 Hp) as (ts1 & Hp1' & Ha2 & Hf2).
+    destruct (Hp1 p ts1 Hp1') as (ts0 & Hp0 & Ha1 & Hf1).
+    exists ts0. split_and!; [exact Hp0 | congruence | congruence].
+  - move=> p Hp. exact (Hd2 p (Hd1 p Hp)).
+  - move=> kc. have := Hr1 kc. have := Hr2 kc. lia.
+Qed.
+
+(** [store.repair], general splitting form (issue #28 stage D2b): the origin
+    ids address arbitrary chars of their covering witness cells; repair puts
+    both on run boundaries by splitting, and the item comes back linked to
+    the boundary cells. The same-run premise (equal witnesses force the left
+    origin strictly below the right one in clock) is what item validity
+    provides: within one run, doc order is clock order, and an item's origin
+    precedes its right origin. *)
+Lemma wp_store__repair_split (s mref tref item_l pname : loc)
+    (input : IntegrateInput (A := A)) (opn : option go_string)
+    (types : gmap loc type_state) (bind : gmap P loc)
+    (ocL ocR : option item_cell) (p_t : loc) :
+  match in_originId input, ocL with
+  | Some oid, Some c => c ∈ all_cells types ∧
+      clientId (item_id (run_head c)) = clientId oid ∧
+      (clock (item_id (run_head c)) <= clock oid)%nat ∧
+      (clock oid < clock (item_id (run_head c)) + length (ic_run c))%nat
+  | None, None => True
+  | _, _ => False
+  end ->
+  match in_rightOriginId input, ocR with
+  | Some oid, Some c => c ∈ all_cells types ∧
+      clientId (item_id (run_head c)) = clientId oid ∧
+      (clock (item_id (run_head c)) <= clock oid)%nat ∧
+      (clock oid < clock (item_id (run_head c)) + length (ic_run c))%nat
+  | None, None => True
+  | _, _ => False
+  end ->
+  match in_originId input, in_rightOriginId input, ocL, ocR with
+  | Some a, Some b, Some cL0, Some cR0 => cL0 = cR0 -> (clock a < clock b)%nat
+  | _, _, _, _ => True
+  end ->
+  match opn with
+  | Some nm => bind !! nm = Some p_t
+  | None => match ocL with
+            | Some c => p_t = ic_parent c
+            | None => match ocR with
+                      | Some c => p_t = ic_parent c
+                      | None => False
+                      end
+            end
+  end ->
+  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
+  NoDup (ic_loc <$> all_cells types) ->
+  cells_range_disjoint (all_cells types) ->
+  (∀ c, c ∈ all_cells types -> cell_origin_clk c) ->
+  (∀ kc, (Z.of_nat (length (client_run types kc)) + 2 < 2^63)%Z) ->
+  {{{ is_pkg_init yjs ∗
+      own_linked_item item_l input null null null ∗
+      is_parent_name pname opn ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
+      ([∗ map] p ↦ ts ∈ types,
+          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
+  {{{ (lft rgt : loc) (types2 : gmap loc type_state), RET #();
+      own_linked_item item_l input p_t lft rgt ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types2 ∗
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
+      ([∗ map] p ↦ ts ∈ types2,
+          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      ⌜pool_invs types2⌝ ∗
+      ⌜repair_types_facts types types2⌝ ∗
+      ⌜match in_originId input, ocL with
+       | Some oid, Some c0 => lft = ic_loc c0 ∧
+           ∃ cL', cL' ∈ all_cells types2 ∧ ic_loc cL' = lft ∧
+             cell_client cL' = W64 (clientId oid) ∧
+             (uint.Z (cell_clock cL') + Z.of_nat (length (ic_run cL'))
+              = Z.of_nat (clock oid) + 1)%Z ∧
+             ic_parent cL' = ic_parent c0
+       | None, None => lft = null
+       | _, _ => False
+       end⌝ ∗
+      ⌜match in_rightOriginId input, ocR with
+       | Some oid, Some c0 =>
+           ∃ cR', cR' ∈ all_cells types2 ∧ ic_loc cR' = rgt ∧
+             cell_client cR' = W64 (clientId oid) ∧
+             (uint.Z (cell_clock cR') = Z.of_nat (clock oid))%Z ∧
+             ic_parent cR' = ic_parent c0
+       | None, None => rgt = null
+       | _, _ => False
+       end⌝ }}}.
+Proof using Type*.
+  move=> HwL HwR Hsame Hwpar Hfits Hnodup Hrangedisj Horiginclk Hrunlen.
+  iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
+  iDestruct "Hlinked" as (iv oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrunc)".
+  iNamed "Hraw".
+  iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds0.
+  have Hpinvs : pool_invs types by (split_and!; assumption).
+  have Hrunlen1 : ∀ kc, (Z.of_nat (length (client_run types kc)) + 1 < 2^63)%Z.
+  { move=> kc. have := Hrunlen kc. lia. }
+  wp_method_call. wp_call. wp_call. wp_auto.
+  destruct oleft as [idvL|].
+  - (* left origin present: clean-end split *)
+    have HinlS : input.(in_originId) = Some (toYjsId idvL) by rewrite -Hin_l //.
+    rewrite HinlS in HwL. destruct ocL as [cL|]; last done.
+    destruct HwL as (HcLmem & HcLcl & HcLle & HcLlt).
+    iDestruct "Holeft" as "[%HnnL #HolC]".
+    rewrite (bool_decide_eq_false_2 (iv.(yjs.item.originLeftId') = null) HnnL) /=.
+    wp_auto.
+    have HcLbnd := proj2 (Hbnds0 cL HcLmem).
+    have HcLccw : cell_client cL = idvL.(yjs.id.clientId').
+    { rewrite /cell_client. move: HcLcl. rewrite /toYjsId /=. move=> ->. word. }
+    have HcLleZ : (uint.Z (cell_clock cL) <= uint.Z idvL.(yjs.id.clock'))%Z.
+    { move: HcLle. rewrite /toYjsId /= /cell_clock. move=> H. word. }
+    have HcLltZ : (uint.Z idvL.(yjs.id.clock') < uint.Z (cell_clock cL) + Z.of_nat (length (ic_run cL)))%Z.
+    { move: HcLlt. rewrite /toYjsId /= /cell_clock. move=> H. word. }
+    wp_apply (wp_store__splitAtAndGetLeft_inv s mref idvL types cL
+                HcLmem HcLccw HcLleZ HcLltZ Hpinvs Hrunlen1
+                with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
+    iIntros (types1) "(Hitemsf & Hitemmap & Htypes & %Hpinvs1 & %Hstep1 & %HbdL)".
+    destruct HbdL as (cL1 & HcL1mem & HcL1loc & HcL1cl & HcL1end & HcL1par).
+    wp_auto.
+    destruct oright as [idvR|].
+    + (* right origin present: relocate the witness, clean-start split *)
+      have HinrS : input.(in_rightOriginId) = Some (toYjsId idvR) by rewrite -Hin_r //.
+      rewrite HinrS in HwR. destruct ocR as [cR|]; last done.
+      destruct HwR as (HcRmem & HcRcl & HcRle & HcRlt).
+      rewrite HinlS HinrS in Hsame.
+      have Hsame' : cL = cR -> (clock (toYjsId idvL) < clock (toYjsId idvR))%nat := Hsame.
+      iDestruct "Horight" as "[%HnnR #HorC]".
+      rewrite (bool_decide_eq_false_2 (iv.(yjs.item.originRightId') = null) HnnR) /=.
+      wp_auto.
+      have HcRbnd := proj2 (Hbnds0 cR HcRmem).
+      have HcRccw : cell_client cR = idvR.(yjs.id.clientId').
+      { rewrite /cell_client. move: HcRcl. rewrite /toYjsId /=. move=> ->. word. }
+      have HcRleZ : (uint.Z (cell_clock cR) <= uint.Z idvR.(yjs.id.clock'))%Z.
+      { move: HcRle. rewrite /toYjsId /= /cell_clock. move=> H. word. }
+      have HcRltZ : (uint.Z idvR.(yjs.id.clock') < uint.Z (cell_clock cR) + Z.of_nat (length (ic_run cR)))%Z.
+      { move: HcRlt. rewrite /toYjsId /= /cell_clock. move=> H. word. }
+      have Hstep1' := Hstep1.
+      destruct Hstep1' as (Hpres1 & Hdom1 & Hrl1 & Hstable1 & Hcover1).
+      destruct (Hcover1 idvR.(yjs.id.clientId') (uint.Z idvR.(yjs.id.clock')) cR HcRmem HcRccw HcRleZ HcRltZ)
+        as (cR1 & HcR1mem & HcR1cc & HcR1le & HcR1lt & HcR1parw & Hprov).
+      destruct Hpinvs1 as (Hfits1 & Hnodup1 & Hrangedisj1 & Horiginclk1).
+      have Hlocne : ic_loc cL1 ≠ ic_loc cR1.
+      { move=> Heqloc.
+        have Hceq : cL1 = cR1 := pool_loc_inj (all_cells types1) Hnodup1 _ _ HcL1mem HcR1mem Heqloc.
+        have HleRL : (uint.Z idvR.(yjs.id.clock') <= uint.Z idvL.(yjs.id.clock'))%Z.
+        { rewrite -Hceq in HcR1lt. clear -HcR1lt HcL1end. lia. }
+        have Hfire : cL = cR -> False.
+        { move=> HeqLR. have := Hsame' HeqLR. rewrite /toYjsId /=. move=> H.
+          clear -H HleRL. word. }
+        destruct Hprov as [Hc'c | [HcRcw _]].
+        - have HlocRL : ic_loc cR = ic_loc cL.
+          { rewrite -Hc'c -Hceq HcL1loc //. }
+          exact (Hfire (eq_sym (pool_loc_inj (all_cells types) Hnodup _ _ HcRmem HcLmem HlocRL))).
+        - exact (Hfire (eq_sym HcRcw)). }
+      have Hrunlen2 : ∀ kc, (Z.of_nat (length (client_run types1 kc)) + 1 < 2^63)%Z.
+      { move=> kc. have := Hrl1 kc. have := Hrunlen kc. lia. }
+      have Hpinvs1' : pool_invs types1 by (split_and!; assumption).
+      wp_apply (wp_store__splitAtAndGetRight_inv s mref idvR types1 cR1
+                  HcR1mem HcR1cc HcR1le HcR1lt Hpinvs1' Hrunlen2
+                  with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
+      iIntros (rl types2) "(Hitemsf & Hitemmap & Htypes & %Hpinvs2 & %Hstep2 & %HbdR)".
+      destruct HbdR as (cR2 & HcR2mem & HcR2loc & HcR2cl & HcR2clk & HcR2par).
+      wp_auto.
+      have Hstep2' := Hstep2.
+      destruct Hstep2' as (Hpres2 & Hdom2 & Hrl2 & Hstable2 & Hcover2).
+      have HcL2mem : cL1 ∈ all_cells types2 := Hstable2 cL1 HcL1mem Hlocne.
+      have HparR : ic_parent cR2 = ic_parent cR by rewrite HcR2par HcR1parw //.
+      destruct opn as [nm|].
+      * (* Parent::String *)
+        iDestruct "HisPN" as "[%HnnP #HpnC]".
+        rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
+        wp_auto.
+        wp_apply (wp_store__getOrCreateYType s tref (DfracOwn 1) bind nm p_t Hwpar
+                    with "[$Htypesf $Htypesmap]").
+        iIntros "(Htypesf & Htypesmap)".
+        wp_auto.
+        iApply ("HΦ" $! (ic_loc cL) rl types2).
+        iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+        iSplitL "Hitem".
+        { iExists _, (Some idvL), (Some idvR). rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HolC HorC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split_and!.
+        { destruct Hpinvs2 as (?&?&?&?). split_and!; assumption. }
+        { exact (split_step_facts_compose types types1 types2 cL cR1 Hstep1 Hstep2). }
+        { rewrite HinlS /=. split; [done |].
+          exists cL1. split_and!;
+            [exact HcL2mem | rewrite HcL1loc // | | | rewrite HcL1par //].
+          - rewrite HcL1cl /toYjsId /=. word.
+          - move: HcL1end. rewrite /toYjsId /=. move=> H. word. }
+        { rewrite HinrS /=.
+          exists cR2. split_and!;
+            [exact HcR2mem | exact HcR2loc | | | exact HparR].
+          - rewrite HcR2cl /toYjsId /=. word.
+          - move: HcR2clk. rewrite /toYjsId /=. move=> H. word. }
+      * (* Parent::None: borrow from the resolved left neighbour *)
+        iDestruct "HisPN" as "%HpN".
+        rewrite (bool_decide_eq_true_2 (pname = null) HpN) /=.
+        iDestruct (types_cell_acc_gen types2 cL1 HcL2mem with "Htypes") as "Hacc".
+        iNamed "Hacc".
+        iDestruct (typed_pointsto_not_null with "Hval") as %HnnCL.
+        iEval (rewrite HcL1loc) in "Hval".
+        wp_auto.
+        rewrite (bool_decide_eq_false_2 (cL.(ic_loc) = null) ltac:(rewrite -HcL1loc; exact HnnCL)) /=.
+        wp_auto.
+        iEval (rewrite -HcL1loc) in "Hval".
+        iDestruct ("Hback" with "Hval") as "Htypes".
+        rewrite Hpar HcL1par Hwpar.
+        iApply ("HΦ" $! (ic_loc cL) rl types2).
+        iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+        iSplitL "Hitem".
+        { iExists _, (Some idvL), (Some idvR). rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HolC HorC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split_and!.
+        { destruct Hpinvs2 as (?&?&?&?). split_and!; assumption. }
+        { exact (split_step_facts_compose types types1 types2 cL cR1 Hstep1 Hstep2). }
+        { rewrite HinlS /=. split; [done |].
+          exists cL1. split_and!;
+            [exact HcL2mem | rewrite HcL1loc // | | | rewrite HcL1par //].
+          - rewrite HcL1cl /toYjsId /=. word.
+          - move: HcL1end. rewrite /toYjsId /=. move=> H. word. }
+        { rewrite HinrS /=.
+          exists cR2. split_and!;
+            [exact HcR2mem | exact HcR2loc | | | exact HparR].
+          - rewrite HcR2cl /toYjsId /=. word.
+          - move: HcR2clk. rewrite /toYjsId /=. move=> H. word. }
+    + (* no right origin *)
+      have HinrN : input.(in_rightOriginId) = None by rewrite -Hin_r //.
+      rewrite HinrN in HwR. destruct ocR as [cR|]; first done.
+      iDestruct "Horight" as "%HnR".
+      rewrite (bool_decide_eq_true_2 (iv.(yjs.item.originRightId') = null) HnR) /=.
+      wp_auto.
+      destruct opn as [nm|].
+      * (* Parent::String *)
+        iDestruct "HisPN" as "[%HnnP #HpnC]".
+        rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
+        wp_auto.
+        wp_apply (wp_store__getOrCreateYType s tref (DfracOwn 1) bind nm p_t Hwpar
+                    with "[$Htypesf $Htypesmap]").
+        iIntros "(Htypesf & Htypesmap)".
+        wp_auto.
+        iApply ("HΦ" $! (ic_loc cL) null types1).
+        iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+        iSplitL "Hitem".
+        { iExists _, (Some idvL), None. rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HolC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split_and!.
+        { destruct Hpinvs1 as (?&?&?&?). split_and!; assumption. }
+        { exact (split_step_facts_single types types1 cL Hstep1). }
+        { rewrite HinlS /=. split; [done |].
+          exists cL1. split_and!;
+            [exact HcL1mem | rewrite HcL1loc // | | | rewrite HcL1par //].
+          - rewrite HcL1cl /toYjsId /=. word.
+          - move: HcL1end. rewrite /toYjsId /=. move=> H. word. }
+        { rewrite HinrN //. }
+      * (* Parent::None: borrow from the resolved left neighbour *)
+        iDestruct "HisPN" as "%HpN".
+        rewrite (bool_decide_eq_true_2 (pname = null) HpN) /=.
+        iDestruct (types_cell_acc_gen types1 cL1 HcL1mem with "Htypes") as "Hacc".
+        iNamed "Hacc".
+        iDestruct (typed_pointsto_not_null with "Hval") as %HnnCL.
+        iEval (rewrite HcL1loc) in "Hval".
+        wp_auto.
+        rewrite (bool_decide_eq_false_2 (cL.(ic_loc) = null) ltac:(rewrite -HcL1loc; exact HnnCL)) /=.
+        wp_auto.
+        iEval (rewrite -HcL1loc) in "Hval".
+        iDestruct ("Hback" with "Hval") as "Htypes".
+        rewrite Hpar HcL1par Hwpar.
+        iApply ("HΦ" $! (ic_loc cL) null types1).
+        iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+        iSplitL "Hitem".
+        { iExists _, (Some idvL), None. rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HolC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split_and!.
+        { destruct Hpinvs1 as (?&?&?&?). split_and!; assumption. }
+        { exact (split_step_facts_single types types1 cL Hstep1). }
+        { rewrite HinlS /=. split; [done |].
+          exists cL1. split_and!;
+            [exact HcL1mem | rewrite HcL1loc // | | | rewrite HcL1par //].
+          - rewrite HcL1cl /toYjsId /=. word.
+          - move: HcL1end. rewrite /toYjsId /=. move=> H. word. }
+        { rewrite HinrN //. }
+  - (* no left origin *)
+    have HinlN : input.(in_originId) = None by rewrite -Hin_l //.
+    rewrite HinlN in HwL. destruct ocL as [cL|]; first done.
+    iDestruct "Holeft" as "%HnL".
+    rewrite (bool_decide_eq_true_2 (iv.(yjs.item.originLeftId') = null) HnL) /=.
+    wp_auto.
+    destruct oright as [idvR|].
+    + (* right origin present: clean-start split, no relocation *)
+      have HinrS : input.(in_rightOriginId) = Some (toYjsId idvR) by rewrite -Hin_r //.
+      rewrite HinrS in HwR. destruct ocR as [cR|]; last done.
+      destruct HwR as (HcRmem & HcRcl & HcRle & HcRlt).
+      iDestruct "Horight" as "[%HnnR #HorC]".
+      rewrite (bool_decide_eq_false_2 (iv.(yjs.item.originRightId') = null) HnnR) /=.
+      wp_auto.
+      have HcRbnd := proj2 (Hbnds0 cR HcRmem).
+      have HcRccw : cell_client cR = idvR.(yjs.id.clientId').
+      { rewrite /cell_client. move: HcRcl. rewrite /toYjsId /=. move=> ->. word. }
+      have HcRleZ : (uint.Z (cell_clock cR) <= uint.Z idvR.(yjs.id.clock'))%Z.
+      { move: HcRle. rewrite /toYjsId /= /cell_clock. move=> H. word. }
+      have HcRltZ : (uint.Z idvR.(yjs.id.clock') < uint.Z (cell_clock cR) + Z.of_nat (length (ic_run cR)))%Z.
+      { move: HcRlt. rewrite /toYjsId /= /cell_clock. move=> H. word. }
+      wp_apply (wp_store__splitAtAndGetRight_inv s mref idvR types cR
+                  HcRmem HcRccw HcRleZ HcRltZ Hpinvs Hrunlen1
+                  with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
+      iIntros (rl types2) "(Hitemsf & Hitemmap & Htypes & %Hpinvs2 & %Hstep2 & %HbdR)".
+      destruct HbdR as (cR2 & HcR2mem & HcR2loc & HcR2cl & HcR2clk & HcR2par).
+      wp_auto.
+      destruct opn as [nm|].
+      * (* Parent::String *)
+        iDestruct "HisPN" as "[%HnnP #HpnC]".
+        rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
+        wp_auto.
+        wp_apply (wp_store__getOrCreateYType s tref (DfracOwn 1) bind nm p_t Hwpar
+                    with "[$Htypesf $Htypesmap]").
+        iIntros "(Htypesf & Htypesmap)".
+        wp_auto.
+        iApply ("HΦ" $! null rl types2).
+        iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+        iSplitL "Hitem".
+        { iExists _, None, (Some idvR). rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HorC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split_and!.
+        { destruct Hpinvs2 as (?&?&?&?). split_and!; assumption. }
+        { exact (split_step_facts_single types types2 cR Hstep2). }
+        { rewrite HinlN //. }
+        { rewrite HinrS /=.
+          exists cR2. split_and!;
+            [exact HcR2mem | exact HcR2loc | | | exact HcR2par].
+          - rewrite HcR2cl /toYjsId /=. word.
+          - move: HcR2clk. rewrite /toYjsId /=. move=> H. word. }
+      * (* Parent::None: borrow from the resolved right neighbour *)
+        iDestruct "HisPN" as "%HpN".
+        rewrite (bool_decide_eq_true_2 (pname = null) HpN) /=.
+        have Hfl' : (iv <| yjs.item.right' := rl |>).(yjs.item.left') = null
+          by simpl; exact Hfl.
+        iDestruct (types_cell_acc_gen types2 cR2 HcR2mem with "Htypes") as "Hacc".
+        iNamed "Hacc".
+        iDestruct (typed_pointsto_not_null with "Hval") as %HnnCR.
+        iEval (rewrite HcR2loc) in "Hval".
+        wp_auto.
+        rewrite (bool_decide_eq_true_2 _ Hfl') /=.
+        wp_auto.
+        rewrite (bool_decide_eq_false_2 (rl = null) ltac:(rewrite -HcR2loc; exact HnnCR)) /=.
+        wp_auto.
+        iEval (rewrite -HcR2loc) in "Hval".
+        iDestruct ("Hback" with "Hval") as "Htypes".
+        rewrite Hpar HcR2par Hwpar.
+        iApply ("HΦ" $! null rl types2).
+        iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+        iSplitL "Hitem".
+        { iExists _, None, (Some idvR). rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HorC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split_and!.
+        { destruct Hpinvs2 as (?&?&?&?). split_and!; assumption. }
+        { exact (split_step_facts_single types types2 cR Hstep2). }
+        { rewrite HinlN //. }
+        { rewrite HinrS /=.
+          exists cR2. split_and!;
+            [exact HcR2mem | exact HcR2loc | | | exact HcR2par].
+          - rewrite HcR2cl /toYjsId /=. word.
+          - move: HcR2clk. rewrite /toYjsId /=. move=> H. word. }
+    + (* no origins at all: Parent::None is ruled out by the premise *)
+      have HinrN : input.(in_rightOriginId) = None by rewrite -Hin_r //.
+      rewrite HinrN in HwR. destruct ocR as [cR|]; first done.
+      iDestruct "Horight" as "%HnR".
+      rewrite (bool_decide_eq_true_2 (iv.(yjs.item.originRightId') = null) HnR) /=.
+      wp_auto.
+      destruct opn as [nm|]; last done.
+      iDestruct "HisPN" as "[%HnnP #HpnC]".
+      rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
+      wp_auto.
+      wp_apply (wp_store__getOrCreateYType s tref (DfracOwn 1) bind nm p_t Hwpar
+                  with "[$Htypesf $Htypesmap]").
+      iIntros "(Htypesf & Htypesmap)".
+      wp_auto.
+      iApply ("HΦ" $! null null types).
+      iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+      iSplitL "Hitem".
+      { iExists _, None, None. rewrite /own_fresh_item_raw. simpl.
+        iFrame "Hitem".
+        iPureIntro. split_and!; try done. }
+      iPureIntro. split_and!.
+      { split_and!; assumption. }
+      { exact (repair_types_facts_refl types). }
+      { rewrite HinlN //. }
+      { rewrite HinrN //. }
 Qed.
 
 (* ===== applyUpdate (doc-level, #49) ====================================== *)
