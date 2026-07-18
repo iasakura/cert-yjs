@@ -2509,6 +2509,101 @@ Proof.
   apply NoDup_cons. split; [exact Hrnotin | exact Hndrest].
 Qed.
 
+(** [split_cells] index bookkeeping (issue #28 stage D2b prep): length and
+    the four lookup regions. The general [repair] uses these to relocate its
+    second (clean-start) witness after the first (clean-end) split touched
+    the same type. *)
+Lemma split_cells_length (cells : list item_cell) (k o : nat) (rloc : loc) (cw : item_cell) :
+  cells !! k = Some cw ->
+  length (split_cells cells k o rloc) = S (length cells).
+Proof.
+  move=> Hck. rewrite /split_cells Hck !length_app /= length_take length_drop.
+  have := lookup_lt_Some _ _ _ Hck. lia.
+Qed.
+
+Lemma split_cells_lookup_left (cells : list item_cell) (k o : nat) (rloc : loc) (cw : item_cell) :
+  cells !! k = Some cw ->
+  split_cells cells k o rloc !! k = Some (split_cell_left cw o).
+Proof.
+  move=> Hck. rewrite /split_cells Hck.
+  have Hklen : (k < length cells)%nat := lookup_lt_Some _ _ _ Hck.
+  have Htk : length (take k cells) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk Nat.sub_diag //.
+Qed.
+
+Lemma split_cells_lookup_right (cells : list item_cell) (k o : nat) (rloc : loc) (cw : item_cell) :
+  cells !! k = Some cw ->
+  split_cells cells k o rloc !! (S k) = Some (split_cell_right cw o rloc).
+Proof.
+  move=> Hck. rewrite /split_cells Hck.
+  have Hklen : (k < length cells)%nat := lookup_lt_Some _ _ _ Hck.
+  have Htk : length (take k cells) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk.
+  have -> : (S k - k)%nat = 1%nat by lia.
+  done.
+Qed.
+
+Lemma split_cells_lookup_before (cells : list item_cell) (k o : nat) (rloc : loc)
+    (cw : item_cell) (j : nat) :
+  cells !! k = Some cw -> (j < k)%nat ->
+  split_cells cells k o rloc !! j = cells !! j.
+Proof.
+  move=> Hck Hj. rewrite /split_cells Hck.
+  have Hklen : (k < length cells)%nat := lookup_lt_Some _ _ _ Hck.
+  have Htk : length (take k cells) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_l; last lia.
+  rewrite lookup_take_lt; [done | lia].
+Qed.
+
+Lemma split_cells_lookup_after (cells : list item_cell) (k o : nat) (rloc : loc)
+    (cw : item_cell) (j : nat) :
+  cells !! k = Some cw -> (k < j)%nat ->
+  split_cells cells k o rloc !! (S j) = cells !! j.
+Proof.
+  move=> Hck Hj. rewrite /split_cells Hck.
+  have Hklen : (k < length cells)%nat := lookup_lt_Some _ _ _ Hck.
+  have Htk : length (take k cells) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk /=.
+  have -> : (S j - k)%nat = S (S (j - S k)) by lia.
+  simpl. rewrite lookup_drop. f_equal. lia.
+Qed.
+
+(** A clock covered by [cw]'s range is covered by exactly one of the two
+    halves; the dispatch is [clkZ < clock cw + o]. Relocates a covering
+    witness across a split when both origins land in the same run. *)
+Lemma split_cell_cover (cw : item_cell) (o : nat) (rloc : loc) (clkZ : Z) :
+  run_wf (ic_run cw) ->
+  (0 < o < length (ic_run cw))%nat ->
+  (Z.of_nat (clock (item_id (run_head cw))) < 2^64)%Z ->
+  (uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)) < 2^64)%Z ->
+  (uint.Z (cell_clock cw) <= clkZ)%Z ->
+  (clkZ < uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)))%Z ->
+  ((clkZ < uint.Z (cell_clock cw) + Z.of_nat o)%Z ∧
+   (uint.Z (cell_clock (split_cell_left cw o)) <= clkZ)%Z ∧
+   (clkZ < uint.Z (cell_clock (split_cell_left cw o))
+           + Z.of_nat (length (ic_run (split_cell_left cw o))))%Z)
+  ∨ ((uint.Z (cell_clock cw) + Z.of_nat o <= clkZ)%Z ∧
+     (uint.Z (cell_clock (split_cell_right cw o rloc)) <= clkZ)%Z ∧
+     (clkZ < uint.Z (cell_clock (split_cell_right cw o rloc))
+             + Z.of_nat (length (ic_run (split_cell_right cw o rloc))))%Z).
+Proof.
+  move=> Hrunwf Ho Hckbnd Hfitscw Hle Hlt.
+  destruct (split_cell_facts cw o rloc Hrunwf Ho)
+    as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
+  have HclkZ : uint.Z (cell_clock cw) = Z.of_nat (clock (item_id (run_head cw))).
+  { rewrite /cell_clock. word. }
+  have Hbo : (Z.of_nat (clock (item_id (run_head cw)) + o) < 2^64)%Z by lia.
+  have HclkrZ : uint.Z (cell_clock (split_cell_right cw o rloc))
+              = (uint.Z (cell_clock cw) + Z.of_nat o)%Z.
+  { rewrite Hclockr HclkZ. word. }
+  destruct (decide (clkZ < uint.Z (cell_clock cw) + Z.of_nat o)%Z) as [Hd | Hd].
+  - left. rewrite Hclockl Hlenl. split_and!; lia.
+  - right. rewrite HclkrZ Hlenr. split_and!; lia.
+Qed.
+
 (** [store.getOrCreateYType], lookup-hit case: the name is already bound in
     the registry, so the creation branch is dead and the bound type comes
     back. This is the only case the verified update path needs — see
