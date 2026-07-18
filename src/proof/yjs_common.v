@@ -278,6 +278,52 @@ Proof.
   destruct (ic_run c) as [|y [|y' r']]; simpl in Hc; [lia | done | lia].
 Qed.
 
+(* ----- cell-cursor prefix sums (issue #28 M4, stage C1c) ----------------- *)
+
+(** Advancing the cell cursor by one appends that cell's whole run to the
+    flattened prefix. The scan steps NODE by node while the model steps CHAR
+    by char, so a cursor over cells couples to a [setfii_loop] offset over
+    chars via these prefix sums. *)
+Lemma run_flatten_take_S (cells : list item_cell) (cur : nat) (ci : item_cell) :
+  cells !! cur = Some ci ->
+  run_flatten (take (S cur) cells) = run_flatten (take cur cells) ++ ic_run ci.
+Proof.
+  move=> Hcur.
+  rewrite (take_S_r _ _ ci Hcur) run_flatten_app run_flatten_cons run_flatten_nil app_nil_r //.
+Qed.
+
+(** The chars of the cell at the cursor sit at consecutive model indices
+    starting at the flattened-prefix length — [setfii_block_step]'s [Hlook]
+    premise, read off [cells_repr]'s [arr = run_flatten cells]. *)
+Lemma run_flatten_take_lookup (cells : list item_cell) (cur : nat) (ci : item_cell)
+    (k : nat) (y : YjsItem A) :
+  cells !! cur = Some ci ->
+  ic_run ci !! k = Some y ->
+  run_flatten cells !! (length (run_flatten (take cur cells)) + k)%nat = Some y.
+Proof.
+  move=> Hcur Hk.
+  have Hdec : run_flatten cells
+            = run_flatten (take cur cells) ++ (ic_run ci ++ run_flatten (drop (S cur) cells)).
+  { rewrite -{1}(take_drop_middle cells cur ci Hcur) run_flatten_app run_flatten_cons //. }
+  rewrite Hdec lookup_app_r; last lia.
+  have -> : (length (run_flatten (take cur cells)) + k
+             - length (run_flatten (take cur cells)))%nat = k by lia.
+  rewrite lookup_app_l; last (apply lookup_lt_Some in Hk; lia).
+  exact Hk.
+Qed.
+
+(** Under the unit scaffold the cell cursor and the model offset coincide:
+    each cell contributes exactly one char, so the flattened prefix length is
+    the cursor (clamped to the cell count). *)
+Lemma run_flatten_take_length_unit (cells : list item_cell) (cur : nat) :
+  Forall cell_unit cells ->
+  length (run_flatten (take cur cells)) = (cur `min` length cells)%nat.
+Proof.
+  move=> Hunit.
+  have Hunit' : Forall cell_unit (take cur cells) := Forall_take _ _ _ Hunit.
+  rewrite (run_flatten_singletons _ Hunit') length_fmap length_take //.
+Qed.
+
 (** The loc of the node at index [k] of [cells] ([null] outside [0, len)).
     Used to place the heap [conflict] / [left] pointers within the DLL. *)
 Definition node_loc (cells : list item_cell) (k : Z) : loc :=
