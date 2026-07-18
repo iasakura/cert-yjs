@@ -4251,9 +4251,13 @@ Proof using Type*.
     wp_auto.
     have Hidnit : item_id nit = in_id input := commutativity.toItem_id input arrj nit Htoit.
     have Hgmaxj : ∀ c0, c0 ∈ all_cells typesj → cell_client c0 = W64 (clientId (item_id nit)) →
-                    (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id nit))))%Z.
+                    (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id nit))))%Z ∧
+                    (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (item_id nit))))%Z.
     { intros c0 Hc0 Hcc0. rewrite Hidnit in Hcc0 |- *.
-      exact (Hbndj c0 Hc0 j (RootId nmj, input) ltac:(lia) Hinput Hcc0). }
+      have Hh := Hbndj c0 Hc0 j (RootId nmj, input) ltac:(lia) Hinput Hcc0.
+      simpl in Hh.
+      have Hu := Hcellunit c0 Hc0. rewrite /cell_unit in Hu.
+      split; [exact Hh | rewrite Hu; lia]. }
     iDestruct (big_sepM_delete _ _ pj _ Htsj with "Htypes") as "[[Hyt _] Htypesrest]".
     have Hfitscj : ∀ c0, c0 ∈ cellsj -> cell_fits c0.
     { move=> c0 Hc0.
@@ -4319,15 +4323,11 @@ Proof using Type*.
     have Hrangedisj' : cells_range_disjoint (all_cells (<[pj := MkTypeState cells'' arr2]> typesj)).
     { apply (rangedisj_snoc (all_cells typesj) _ c2 Hac_step); [| exact Hrangedisjj].
       move=> c0 Hc0 Hcc0.
-      have Hc0m := Hc0. apply all_cells_elem_of in Hc0m.
-      destruct Hc0m as (p0 & ts0 & Hp0 & Hcts0).
-      have Hunit0 : cell_unit c0 := proj1 (Forall_forall _ _) (Hunitallj p0 ts0 Hp0) c0 Hcts0.
-      rewrite /cell_unit in Hunit0.
       have Hccnit : cell_client c0 = W64 (clientId (item_id nit)).
       { rewrite Hcc0 Hcc2 Hidnit //. }
-      have Hlt := Hgmaxj c0 Hc0 Hccnit.
-      rewrite Hidnit in Hlt.
-      rewrite Hclk2 Hunit0. clear -Hlt. lia. }
+      have Hle := proj2 (Hgmaxj c0 Hc0 Hccnit).
+      rewrite Hidnit in Hle.
+      rewrite Hclk2. clear -Hle. lia. }
     (* origin-clock for the grown pool: the new cell's head is [nit], whose
        resolved same-client origin is an existing doc item strictly below the
        batch id's clock (per-client causal freshness, Hbndj) *)

@@ -2258,8 +2258,9 @@ Qed.
     (record the item in [store.items]). Threads [own_item_map]: [AddNode] appends
     the new item's loc, which [client_run_loc_tail] shows lands at the tail of its
     client's clock-sorted run (other clients untouched, [client_run_loc_other]).
-    [Hgmax] (the new item's clock strictly exceeds every same-client heap clock
-    across all types, sourced from the store counter at the [Text.Insert] layer)
+    [Hgmax] (the new item's clock lies strictly above every same-client cell's
+    clock range across all types, sourced from the store counter at the
+    [Text.Insert] layer)
     puts the new loc at the tail. *)
 Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A)
@@ -2273,7 +2274,8 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
   findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
   types !! parent = Some (MkTypeState cells arr) ->
   (∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (item_id newItem)) ->
-     (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z) ->
+     (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z /\
+     (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (item_id newItem))))%Z) ->
   Forall (λ c, ic_run c ≠ []) cells ->
   (∀ c0, c0 ∈ cells -> cell_fits c0) ->
   (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->
@@ -2341,7 +2343,9 @@ Proof using Type*.
                     ((cell_pr c0).1 < (cell_pr c).1)%Z.
   { intros c0 Hc0 Hcce. rewrite /cell_pr /=.
     have Hclkc : cell_clock c = W64 (clock (item_id newItem)) by rewrite /cell_clock Hcid.
-    rewrite Hclkc. apply (Hgmax c0 Hc0). rewrite Hcce /cell_client Hcid //. }
+    have Hcc' : cell_client c0 = W64 (clientId (item_id newItem))
+      by rewrite Hcce /cell_client Hcid //.
+    rewrite Hclkc. exact (proj1 (Hgmax c0 Hc0 Hcc')). }
   have Hrun_eq := client_run_loc_tail types
                     (<[parent := {| ty_cells := cells'; ty_arr := arr' |}]> types) c Hkp Hclkloc Hmax_arg.
   set (kc := iv.(yjs.item.id').(yjs.id.clientId')) in *.
@@ -2448,7 +2452,8 @@ Lemma wp_Store__Integrate_nil (s parent item_l : loc) (arr : list (YjsItem A))
   findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
   types !! parent = Some (MkTypeState cells arr) ->
   (∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (item_id newItem)) ->
-     (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z) ->
+     (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z /\
+     (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (item_id newItem))))%Z) ->
   Forall (λ c, ic_run c ≠ []) cells ->
   (∀ c0, c0 ∈ cells -> cell_fits c0) ->
   (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->
@@ -2521,7 +2526,9 @@ Proof using Type*.
                     ((cell_pr c0).1 < (cell_pr c).1)%Z.
   { intros c0 Hc0 Hcce. rewrite /cell_pr /=.
     have Hclkc : cell_clock c = W64 (clock (item_id newItem)) by rewrite /cell_clock Hcid.
-    rewrite Hclkc. apply (Hgmax c0 Hc0). rewrite Hcce /cell_client Hcid //. }
+    have Hcc' : cell_client c0 = W64 (clientId (item_id newItem))
+      by rewrite Hcce /cell_client Hcid //.
+    rewrite Hclkc. exact (proj1 (Hgmax c0 Hc0 Hcc')). }
   have Hrun_eq := client_run_loc_tail types
                     (<[parent := {| ty_cells := cells'; ty_arr := arr' |}]> types) c Hkp Hclkloc Hmax_arg.
   set (kc := iv.(yjs.item.id').(yjs.id.clientId')) in *.

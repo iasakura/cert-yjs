@@ -642,12 +642,22 @@ Proof.
                   = Some (MkTypeState cells arr) by apply lookup_insert_eq.
     have Hgmaxj : ∀ c0, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) →
                     cell_client c0 = W64 (clientId (item_id nit)) →
-                    (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id nit))))%Z.
+                    (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id nit))))%Z ∧
+                    (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (item_id nit))))%Z.
     { intros c0 Hc0 Hcc0.
       have Hcl0 : cell_client c0 = client by (rewrite Hcc0 /nit /in_id1 /=; word).
       have Hrhs : uint.Z (W64 (clock (item_id nit))) = uint.Z k + Z.of_nat j
         by (rewrite /nit /in_id1 /= Hclocknit; word).
-      rewrite Hrhs. exact (Hcellbnd c0 Hc0 Hcl0). }
+      have Hu0 : cell_unit c0.
+      { move: Hc0. rewrite (all_cells_insert types (tv.(yjs.Text.inner')) ts (MkTypeState cells arr) Htsp) /=.
+        move=> /elem_of_app [Hin | Hin].
+        - exact (proj1 (Forall_forall _ _) Hunitj c0 Hin).
+        - have Hin' := Hin. apply all_cells_elem_of in Hin'.
+          destruct Hin' as (p0 & ts0 & Hp0 & Hcts0).
+          exact (proj1 (Forall_forall _ _) (Hunitrest p0 ts0 Hp0) c0 Hcts0). }
+      rewrite /cell_unit in Hu0.
+      have Hhd := Hcellbnd c0 Hc0 Hcl0.
+      rewrite Hrhs. split; [exact Hhd | rewrite Hu0; lia]. }
     have Hfitsj : ∀ c0, c0 ∈ cells -> cell_fits c0.
     { move=> c0 Hc0. apply Hrunfitsj.
       rewrite (all_cells_lookup _ _ _ Hlookj).
@@ -875,17 +885,9 @@ Proof.
                (tv.(yjs.Text.inner')) cells arr cells' arr' c Hlookj Hpermc)).
       apply (rangedisj_snoc _ _ c Hac_step2); [| exact Hrangedisjj].
       move=> c0 Hc0 Hcc0.
-      have Hu0 : cell_unit c0.
-      { move: Hc0. rewrite (all_cells_insert types (tv.(yjs.Text.inner')) ts (MkTypeState cells arr) Htsp) /=.
-        move=> /elem_of_app [Hin | Hin].
-        - exact (proj1 (Forall_forall _ _) Hunitj c0 Hin).
-        - have Hin' := Hin. apply all_cells_elem_of in Hin'.
-          destruct Hin' as (p0 & ts0 & Hp0 & Hcts0).
-          exact (proj1 (Forall_forall _ _) (Hunitrest p0 ts0 Hp0) c0 Hcts0). }
-      rewrite /cell_unit in Hu0. rewrite Hu0.
       have Hcc0' : cell_client c0 = W64 (clientId (item_id nit)).
       { rewrite Hcc0 /cell_client Hcid //. }
-      have Hlt := Hgmaxj c0 Hc0 Hcc0'.
+      have Hle := proj2 (Hgmaxj c0 Hc0 Hcc0').
       have Hck : cell_clock c = W64 (clock (item_id nit)) by rewrite /cell_clock Hcid //.
       rewrite Hck. lia.
     - (* Hrunfitsj at S j *)
