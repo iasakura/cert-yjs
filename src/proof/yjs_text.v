@@ -449,7 +449,7 @@ Proof.
       ∨ (∃ (lc : item_cell) (li : YjsItem A),
            cells !! (p + j - 1)%nat = Some lc ∧ ic_loc lc = leftloc ∧
            arr !! (mp + j - 1)%nat = Some li ∧
-           ic_run lc = [li] ∧ (1 <= p + j)%nat ∧
+           ic_run lc !! (length (ic_run lc) - 1)%nat = Some li ∧ (1 <= p + j)%nat ∧
            (j = 0%nat → itemPtr li = oL) ∧ (∀ j', j = S j' → ins !! j' = Some li))⌝ ∗
     "%Hrightj" ∷ ⌜(in_rO = None ∧ oR = Last ∧ (mp + j = length arr)%nat)
       ∨ (∃ (ri : YjsItem A) (rid : yjs.id.t),
@@ -502,7 +502,7 @@ Proof.
           have -> : Z.to_nat (Z.of_nat (p) - 1) = (p - 1)%nat by lia.
           rewrite Hlc //.
         * replace (mp + 0 - 1)%nat with (p - 1)%nat by lia. exact Hli2.
-        * exact Hcrlc.
+        * by rewrite Hcrlc.
         * lia.
         * intros _. rewrite HoLi. f_equal.
           have Hli' : ts.(ty_arr) !! (p - 1)%nat = Some li
@@ -576,7 +576,13 @@ Proof.
       { rewrite /is_origin_id. iSplit; [iPureIntro; exact Hlidnn | iFrame "lid"]. }
       iSplitL "Hpar Hdll".
       { iExists yth, tlh. iFrame "Hpar Hdll". iPureIntro. split_and!; [exact Hlenh | exact Hreprh | exact Hcparh]. }
-      have Hheadlc : run_head lc = li by rewrite /run_head Hliitem //.
+      have Hu2 : cell_unit lc := Forall_lookup_1 _ _ _ _ Hunitj Hlccells.
+      rewrite /cell_unit in Hu2.
+      have Hlz : (length (ic_run lc) - 1)%nat = 0%nat by lia.
+      rewrite Hlz in Hliitem.
+      have Hheadlc : run_head lc = li.
+      { move: Hliitem. rewrite /run_head.
+        destruct (ic_run lc) as [|h0 t0]; [done | move=> /= [= ->] //]. }
       have Hliid : item_id li = toYjsId iv.(yjs.item.id') by (rewrite -Hheadlc; exact Hid).
       iPureIntro. right. exists li. split_and!.
       - exact Hge1.
@@ -818,7 +824,7 @@ Proof.
       + replace (p + S j - 1)%nat with (p + j)%nat by lia. exact Hcx.
       + exact Hcloc.
       + replace (mp + S j - 1)%nat with (mp + j)%nat by lia. exact Hnitpos.
-      + exact Hcr3.
+      + by rewrite Hcr3.
       + lia.
       + intros Hsj. lia.
       + intros j' Hsj. injection Hsj as ->. rewrite lookup_app_r; [| rewrite Hinslen; lia]. rewrite Hinslen. rewrite Nat.sub_diag. reflexivity.
