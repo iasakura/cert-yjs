@@ -3763,6 +3763,115 @@ Proof.
   by exists kn, it.
 Qed.
 
+(** ---- boundary-cell / cursor bridges (issue #28 U2): locating a flattened
+    char inside its cell, and the id arithmetic along a well-formed run.
+    These replace the unit-scaffold identifications (cell index = model
+    index) once runs can be longer than one char. ---- *)
+
+(** The id of the [o]-th char of a chained run: same client, head clock + o. *)
+Lemma run_wf_char_id (r : list (YjsItem A)) (o : nat) (x : YjsItem A) :
+  run_wf r -> r !! o = Some x ->
+  item_id x = MkYjsId (clientId (item_id (hd inhabitant r)))
+                      (clock (item_id (hd inhabitant r)) + o).
+Proof.
+  move=> [Hne Hstep].
+  elim: o x => [| o IH] x Hx.
+  - destruct r as [| h t]; first done.
+    move: Hx => /= [= <-]. rewrite Nat.add_0_r. by destruct (item_id h).
+  - have Hprev : is_Some (r !! o).
+    { apply lookup_lt_is_Some. apply lookup_lt_Some in Hx. lia. }
+    destruct Hprev as [y Hy].
+    have [Hid _] := Hstep o y x Hy Hx.
+    rewrite Hid (IH y Hy) /=. f_equal. lia.
+Qed.
+
+(** A flattened index decomposes into (containing cell, offset, prefix sum). *)
+Lemma run_flatten_lookup_cell (cells : list item_cell) (kn : nat) (it : YjsItem A) :
+  run_flatten cells !! kn = Some it ->
+  ∃ (ci off : nat) (c : item_cell), cells !! ci = Some c ∧ ic_run c !! off = Some it ∧
+    kn = (length (run_flatten (take ci cells)) + off)%nat.
+Proof.
+  elim: cells kn => [| c0 cs IH] kn.
+  { rewrite /run_flatten /= lookup_nil //. }
+  rewrite run_flatten_cons => /lookup_app_Some [Hin | [Hge Hlk]].
+  - exists 0%nat, kn, c0. split_and!; [done | done | rewrite take_0 /run_flatten //=].
+  - destruct (IH _ Hlk) as (ci & off & c & Hci & Hoff & Hkn).
+    exists (S ci), off, c. split_and!; [done | done |].
+    rewrite /= run_flatten_cons length_app. lia.
+Qed.
+
+(** Converse: the [off]-th char of cell [ci] sits at prefix-sum + [off]. *)
+Lemma run_flatten_lookup_of_cell (cells : list item_cell) (ci off : nat)
+    (c : item_cell) (it : YjsItem A) :
+  cells !! ci = Some c -> ic_run c !! off = Some it ->
+  run_flatten cells !! (length (run_flatten (take ci cells)) + off)%nat = Some it.
+Proof.
+  move=> Hci Hoff.
+  have Hsplit := take_drop_middle cells ci c Hci.
+  have Hdec : run_flatten cells
+            = run_flatten (take ci cells) ++ ic_run c ++ run_flatten (drop (S ci) cells).
+  { transitivity (run_flatten (take ci cells ++ c :: drop (S ci) cells)).
+    - by rewrite Hsplit.
+    - by rewrite run_flatten_app run_flatten_cons. }
+  rewrite Hdec lookup_app_r; last lia.
+  replace (length (run_flatten (take ci cells)) + off -
+           length (run_flatten (take ci cells)))%nat with off by lia.
+  rewrite lookup_app_l; [exact Hoff | by apply lookup_lt_Some in Hoff].
+Qed.
+
+(** Under [uniqueId] the flattened position of a char is unique: any index
+    holding the [off]-th char of cell [ci] IS prefix-sum + [off]. *)
+Lemma uniqueId_flatten_char_index (cells : list item_cell)
+    (ci off : nat) (c : item_cell) (x : YjsItem A) (kn : nat) :
+  uniqueId (run_flatten cells) ->
+  cells !! ci = Some c -> ic_run c !! off = Some x ->
+  run_flatten cells !! kn = Some x ->
+  kn = (length (run_flatten (take ci cells)) + off)%nat.
+Proof.
+  move=> Huniq Hci Hoff Hkn.
+  have Hpos := run_flatten_lookup_of_cell cells ci off c x Hci Hoff.
+  set pos := (length (run_flatten (take ci cells)) + off)%nat in Hpos |- *.
+  destruct (Nat.lt_trichotomy kn pos) as [Hlt | [Heq | Hgt]]; [| exact Heq |].
+  - exact (False_ind _ (uniqueId_lookup_ne _ kn pos x x Huniq Hkn Hpos Hlt eq_refl)).
+  - exact (False_ind _ (uniqueId_lookup_ne _ pos kn x x Huniq Hpos Hkn Hgt eq_refl)).
+Qed.
+
+(** Every cell of a DLL segment carries a well-formed run (pure extraction;
+    the run-aware counterpart of the unit scaffold's per-cell length pin). *)
+Lemma own_dll_runs_wf (dq : dfrac) (l last prev next : loc) (cells : list item_cell) :
+  own_dll dq l last prev next cells -∗
+  ⌜∀ c, c ∈ cells → run_wf (ic_run c)⌝.
+Proof.
+  iInduction cells as [|c0 cells] "IH" forall (l prev).
+  - iIntros "_". iPureIntro. move=> c Hc. rewrite elem_of_nil in Hc. done.
+  - iIntros "H". iNamed "H".
+    iDestruct ("IH" with "Hrest") as %Hrest.
+    iPureIntro. move=> c Hc.
+    apply elem_of_cons in Hc as [-> | Hc]; last exact (Hrest c Hc).
+    exact Hrun.
+Qed.
+
+(** Pool-wide run well-formedness, read off the types big-sep. *)
+Lemma types_runs_wf (types : gmap loc type_state) :
+  ([∗ map] parent ↦ ts ∈ types,
+      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
+      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
+  ⌜∀ c, c ∈ all_cells types → run_wf (ic_run c)⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types, ⌜∀ c, c ∈ ty_cells ts → run_wf (ic_run c)⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "(Hyt & _ & _)".
+    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    iApply (own_dll_runs_wf with "Hdll"). }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> c Hc.
+  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
+  exact (Hall p ts Hp c Hcts).
+Qed.
+
 (** One entry's [own_ytype_cells] pures, read off the big-sep (which the
     conclusion being pure lets the caller keep). *)
 Lemma types_entry_pures (types : gmap loc type_state) (p : loc) (ts : type_state) :
