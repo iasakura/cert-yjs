@@ -892,7 +892,8 @@ Lemma wp_store__splitNode (s mref : loc) (types : gmap loc type_state)
       ([∗ map] p ↦ ts ∈ types, own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗ ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
     s @! (go.PointerType yjs.store) @! "splitNode" #(ic_loc cw) #diff
   {{{ (rloc : loc), RET (#(ic_loc cw), #rloc);
-      ⌜rloc ≠ null⌝ ∗ (s .[(yjs.store.t), "items"]) ↦ mref ∗
+      ⌜rloc ≠ null⌝ ∗ ⌜rloc ∉ ic_loc <$> all_cells types⌝ ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗
       own_item_map mref (DfracOwn 1) (<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types) ∗
       ([∗ map] p ↦ ts ∈ (<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types),
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗ ⌜YjsArrInvariant (ty_arr ts)⌝) }}}.
@@ -900,7 +901,7 @@ Proof using Type*.
   move=> Htypes Hcellk Hdiff Hrunfits Hnodup Hdisj Hrunlen.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
   (* open [parent]'s [own_ytype_cells], peel node [k] out of the DLL *)
-  iDestruct (big_sepM_insert_acc _ _ parent _ Htypes with "Htypes") as "[(Hpc & %Harrinv) Hclose]".
+  iDestruct (big_sepM_delete _ _ parent _ Htypes with "Htypes") as "[(Hpc & %Harrinv) Hrestmap]".
   simpl.
   iDestruct "Hpc" as (yt tl0) "(Hparent & Hdll & %Hlen0 & %Hrepr0 & %Hcpar0)".
   pose proof (take_drop_middle cells k cw Hcellk) as Hsplit.
@@ -939,6 +940,32 @@ Proof using Type*.
   wp_auto.
   (* ===== branch-agnostic pure run-telescoping facts (the split's model core) *)
   iDestruct (typed_pointsto_not_null with "Hrs") as %Hrsnn.
+  (* the fresh right node's location misses the whole pool (issue #28 D2a):
+     the parent's cells conflict through the opened DLL segments, the other
+     types' through the delete-map big-sep *)
+  iDestruct (own_dll_fresh with "Hrs Hseg1") as %Hfr_pre.
+  iDestruct (own_dll_fresh with "Hrs Hrest") as %Hfr_suf.
+  iAssert (⌜rs ≠ ic_loc cw⌝)%I as %Hfr_cw.
+  { destruct (decide (rs = ic_loc cw)) as [Heqloc | Hneloc]; last by iPureIntro.
+    iEval (rewrite Heqloc) in "Hrs".
+    iDestruct (item_pointsto_conflict with "Hrs Hval") as %[]. }
+  iDestruct (big_sepM_sep with "Hrestmap") as "[Hrestown Hrestinv]".
+  iDestruct (all_cells_fresh rs _ (DfracOwn 1) (delete parent types) with "Hrs Hrestown") as %Hfr_rest.
+  iAssert ([∗ map] p0 ↦ ts0 ∈ delete parent types,
+      own_ytype_cells p0 (DfracOwn 1) (ty_cells ts0) (ty_arr ts0) ∗
+      ⌜YjsArrInvariant (ty_arr ts0)⌝)%I with "[Hrestown Hrestinv]" as "Hrestmap".
+  { rewrite big_sepM_sep. iFrame "Hrestown Hrestinv". }
+  have Hrsfresh : rs ∉ ic_loc <$> all_cells types.
+  { move=> Hin.
+    rewrite (all_cells_lookup types parent _ Htypes) /= in Hin.
+    rewrite -Hsplit in Hin.
+    rewrite fmap_app in Hin. apply elem_of_app in Hin as [Hin | Hin].
+    - rewrite fmap_app in Hin. apply elem_of_app in Hin as [Hin | Hin].
+      + exact (Hfr_pre Hin).
+      + rewrite fmap_cons in Hin. apply elem_of_cons in Hin as [Heqc | Hin].
+        * exact (Hfr_cw Heqc).
+        * exact (Hfr_suf Hin).
+    - exact (Hfr_rest Hin). }
   set (o := uint.nat diff).
   have Hcwmem : cw ∈ all_cells types.
   { apply all_cells_elem_of. exists parent, (MkTypeState cells arr).
@@ -1081,8 +1108,11 @@ Proof using Type*.
       - rewrite (split_cells_num_visible cells k o rs cw Hcellk). exact Hlen0.
       - rewrite /cells_repr (split_cells_flatten cells k o rs cw Hcellk). exact Hrepr0.
       - exact Hcpar_split. }
-    iDestruct ("Hclose" $! {| ty_cells := split_cells cells k o rs; ty_arr := arr |} with "[Hyt2]") as "Htypes2".
-    { iFrame "Hyt2". iPureIntro. exact Harrinv. }
+    iAssert ([∗ map] p0 ↦ ts0 ∈ <[parent := {| ty_cells := split_cells cells k o rs; ty_arr := arr |}]> types,
+        own_ytype_cells p0 (DfracOwn 1) (ty_cells ts0) (ty_arr ts0) ∗
+        ⌜YjsArrInvariant (ty_arr ts0)⌝)%I with "[Hyt2 Hrestmap]" as "Htypes2".
+    { rewrite -insert_delete_eq big_sepM_insert_delete delete_delete_eq.
+      iFrame "Hrestmap". simpl. iFrame "Hyt2". iPureIntro. exact Harrinv. }
     (* ----- getNodeIndex over the split run [run_half] = client_run with cw -> cl ----- *)
     have Hss_replace : ∀ (ll : list item_cell) (i : nat) (a b : item_cell),
         StronglySorted cell_le ll → ll !! i = Some a → cell_clock b = cell_clock a →
@@ -1424,7 +1454,7 @@ Proof using Type*.
     wp_auto.
     iApply ("HΦ" $! rs).
     iFrame "Hitemsf Hitemmap2 Htypes2".
-    iPureIntro. exact Hrsnn.
+    iPureIntro. split; [exact Hrsnn | exact Hrsfresh].
   - (* cw has a right neighbour d0: relink d0.left := right, then the same DLL
        split, ytype rebuild, getNodeIndex pin, and item-map surgery as the
        last-cell branch (suf = d0 :: drest threads through own_dll_split's cs2
@@ -1566,8 +1596,11 @@ Proof using Type*.
       - rewrite (split_cells_num_visible cells k o rs cw Hcellk). exact Hlen0.
       - rewrite /cells_repr (split_cells_flatten cells k o rs cw Hcellk). exact Hrepr0.
       - exact Hcpar_split. }
-    iDestruct ("Hclose" $! {| ty_cells := split_cells cells k o rs; ty_arr := arr |} with "[Hyt2]") as "Htypes2".
-    { iFrame "Hyt2". iPureIntro. exact Harrinv. }
+    iAssert ([∗ map] p0 ↦ ts0 ∈ <[parent := {| ty_cells := split_cells cells k o rs; ty_arr := arr |}]> types,
+        own_ytype_cells p0 (DfracOwn 1) (ty_cells ts0) (ty_arr ts0) ∗
+        ⌜YjsArrInvariant (ty_arr ts0)⌝)%I with "[Hyt2 Hrestmap]" as "Htypes2".
+    { rewrite -insert_delete_eq big_sepM_insert_delete delete_delete_eq.
+      iFrame "Hrestmap". simpl. iFrame "Hyt2". iPureIntro. exact Harrinv. }
     (* ----- getNodeIndex over the split run [run_half] = client_run with cw -> cl ----- *)
     have Hss_replace : ∀ (ll : list item_cell) (i : nat) (a b : item_cell),
         StronglySorted cell_le ll → ll !! i = Some a → cell_clock b = cell_clock a →
@@ -1917,7 +1950,7 @@ Proof using Type*.
     wp_auto.
     iApply ("HΦ" $! rs).
     iFrame "Hitemsf Hitemmap2 Htypes2".
-    iPureIntro. exact Hrsnn.
+    iPureIntro. split; [exact Hrsnn | exact Hrsfresh].
 Qed.
 
 (** [store.splitAtAndGetLeft] / [store.splitAtAndGetRight], unit fast path
@@ -2045,7 +2078,7 @@ Lemma wp_store__splitAtAndGetLeft_range (s mref : loc) (idv : yjs.id.t)
       ⌜((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))%nat = (length (ic_run cw) - 1)%nat ∧
         types' = types)
        ∨ (((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) < length (ic_run cw) - 1)%nat ∧
-          ∃ rloc : loc, rloc ≠ null ∧
+          ∃ rloc : loc, rloc ≠ null ∧ rloc ∉ (ic_loc <$> all_cells types) ∧
             types' = <[parent := MkTypeState
               (split_cells cells k ((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) + 1) rloc)
               arr]> types)⌝ }}}.
@@ -2110,7 +2143,7 @@ Proof using Type*.
                    (W64 1))
                 Htypes Hcellk Hdiffb Hrunfits Hnodup Hdisjcw Hrunlen
                 with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
-    iIntros (rloc) "(%Hrlocnn & Hitemsf & Hitemmap & Htypes)".
+    iIntros (rloc) "(%Hrlocnn & %Hrlocfresh & Hitemsf & Hitemmap & Htypes)".
     wp_auto.
     iApply ("HΦ" $! (<[parent := MkTypeState (split_cells cells k (uint.nat (w64_word_instance.(word.add)
                    (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
@@ -2118,7 +2151,7 @@ Proof using Type*.
     iFrame "Hitemsf Hitemmap Htypes".
     iPureIntro. right. split.
     { exact Hnlt. }
-    exists rloc. split; [exact Hrlocnn |].
+    exists rloc. split_and!; [exact Hrlocnn | exact Hrlocfresh |].
     rewrite Hdiffnat //.
 Qed.
 
@@ -2154,7 +2187,7 @@ Lemma wp_store__splitAtAndGetRight_range (s mref : loc) (idv : yjs.id.t)
       ⌜((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))%nat = 0%nat ∧
         rl = ic_loc cw ∧ types' = types)
        ∨ ((0 < (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)))%nat ∧
-          rl ≠ null ∧
+          rl ≠ null ∧ rl ∉ (ic_loc <$> all_cells types) ∧
           types' = <[parent := MkTypeState
             (split_cells cells k (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) rl)
             arr]> types)⌝ }}}.
@@ -2202,7 +2235,7 @@ Proof using Type*.
                 (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
                 Htypes Hcellk Hdiffb Hrunfits Hnodup Hdisjcw Hrunlen
                 with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
-    iIntros (rloc) "(%Hrlocnn & Hitemsf & Hitemmap & Htypes)".
+    iIntros (rloc) "(%Hrlocnn & %Hrlocfresh & Hitemsf & Hitemmap & Htypes)".
     wp_auto.
     iApply ("HΦ" $! rloc (<[parent := MkTypeState (split_cells cells k
                 (uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock')))
@@ -2210,7 +2243,7 @@ Proof using Type*.
     iFrame "Hitemsf Hitemmap Htypes".
     iPureIntro. right. split.
     { exact Hopos. }
-    split; [exact Hrlocnn |].
+    split_and!; [exact Hrlocnn | exact Hrlocfresh |].
     rewrite Hdiffnat //.
   - (* offset = 0: the run already starts at [idv]; no split *)
     iDestruct ("Hback" with "Hval") as "Htypes".
