@@ -652,10 +652,14 @@ Proof.
     { move=> c0 Hc0. apply Hrunfitsj.
       rewrite (all_cells_lookup _ _ _ Hlookj).
       apply elem_of_app. left. exact Hc0. }
+    have Hoclkj : ∀ c0, c0 ∈ cells -> cell_origin_clk c0.
+    { move=> c0 Hc0. apply Horiginclkj.
+      rewrite (all_cells_lookup _ _ _ Hlookj).
+      apply elem_of_app. left. exact Hc0. }
     wp_apply (wp_Store__Integrate (tv.(yjs.Text.store')) (tv.(yjs.Text.inner')) oL2 arr input nit cells
                 (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) items_mref
                 (Z.of_nat (p + j) - 1) (Z.of_nat (p + j))
-                Hinvj Htoitem Hvalid Hmax' HfindLj HfindRj Hlookj Hgmaxj Hunitj Hfitsj
+                Hinvj Htoitem Hvalid Hmax' HfindLj HfindRj Hlookj Hgmaxj Hunitj Hfitsj Hoclkj
                 with "[$Hfresh $Htextj $Hitemsf $Hitemmap]").
     iIntros (arr' iidx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & Hitemsf & Hitemmap & %Hpermc & %Hsi & %Hnode)".
     destruct Hnode as [nx (Hcellsp & Harrsp2 & Hnode)].
