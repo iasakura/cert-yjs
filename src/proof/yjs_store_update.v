@@ -589,6 +589,271 @@ Proof using Type*.
   iPureIntro. exact (Hunitsaved p ts Hp).
 Qed.
 
+(** [getNodeIndex], general covering-witness form (issue #28 stage D1): the
+    witness cell [c0]'s run COVERS [clk] (it need not START there), so the
+    search may end on a cell probed mid-run. The window argument needs
+    index-wise clock-range disjointness of the run ([Hidisj], sourced from
+    the pool's [cells_range_disjoint] + loc-NoDup at the call site): at most
+    one run cell covers [clk], and the binary search corners it. Additive
+    alongside the exact-hit form above, which dies with the unit scaffold at
+    the C2 flip. *)
+Lemma wp_getNodeIndex_range (sl : slice.t) (dq : dfrac) (types : gmap loc type_state)
+    (run : list item_cell) (clk : w64) (k0 : nat) (c0 : item_cell) :
+  StronglySorted cell_le run ->
+  (∀ c, c ∈ run -> c ∈ all_cells types) ->
+  (∀ c, c ∈ run -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
+  (∀ (k1 k2 : nat) (c1 c2 : item_cell),
+     run !! k1 = Some c1 -> run !! k2 = Some c2 -> k1 ≠ k2 ->
+     (uint.Z (cell_clock c1) + Z.of_nat (length (ic_run c1)) <= uint.Z (cell_clock c2))%Z ∨
+     (uint.Z (cell_clock c2) + Z.of_nat (length (ic_run c2)) <= uint.Z (cell_clock c1))%Z) ->
+  run !! k0 = Some c0 ->
+  (uint.Z (cell_clock c0) <= uint.Z clk)%Z ->
+  (uint.Z clk < uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)))%Z ->
+  {{{ is_pkg_init yjs ∗ sl ↦*{dq} (ic_loc <$> run) ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+    @! yjs.getNodeIndex #sl #clk
+  {{{ (i : w64), RET (#i, #true);
+      sl ↦*{dq} (ic_loc <$> run) ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      ∃ c, ⌜run !! uint.nat i = Some c ∧
+             (uint.Z (cell_clock c) <= uint.Z clk)%Z ∧
+             (uint.Z clk < uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z⌝ }}}.
+Proof using Type*.
+  move=> Hsort Hmem Hrunfits Hidisj Hk0 Hc0le Hc0lt.
+  wp_start as "(Hsl & Htypes)".
+  iDestruct (own_slice_len with "Hsl") as %[Hsllen Hsllen0].
+  rewrite length_fmap in Hsllen Hsllen0.
+  wp_auto.
+  (* loop invariant: the window [lo, hi) contains every COVERING cell *)
+  iAssert (∃ (lo hi : w64),
+    "Hleft" ∷ left_ptr ↦ lo ∗ "Hright" ∷ right_ptr ↦ hi ∗
+    "Hnodes" ∷ nodes_ptr ↦ sl ∗ "Hclock" ∷ clock_ptr ↦ clk ∗
+    "Hsl" ∷ sl ↦*{dq} (ic_loc <$> run) ∗
+    "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
+        own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+        ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+    "%Hbnd" ∷ ⌜(0 <= uint.Z lo /\ uint.Z hi <= Z.of_nat (length run))%Z⌝ ∗
+    "%Hwin" ∷ ⌜∀ (k : nat) (c : item_cell), run !! k = Some c ->
+                (uint.Z (cell_clock c) <= uint.Z clk)%Z ->
+                (uint.Z clk < uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z ->
+                (uint.Z lo <= Z.of_nat k < uint.Z hi)%Z⌝)%I
+    with "[left right nodes clock Hsl Htypes]" as "IH".
+  { iExists (W64 0), sl.(slice.len).
+    iFrame "left right nodes clock Hsl Htypes".
+    iPureIntro. split; [word |].
+    move=> k c Hk _ _. have Hklt := lookup_lt_Some _ _ _ Hk. word. }
+  wp_for "IH".
+  case_bool_decide as Hcond.
+  - (* probe the middle *)
+    set (mid := word.add lo (word.divu (word.sub hi lo) (W64 2))).
+    have Hmid : (uint.Z lo <= uint.Z mid < uint.Z hi)%Z.
+    { rewrite /mid. destruct Hbnd as [Hb1 Hb2]. word. }
+    wp_auto.
+    rewrite decide_True; last word.
+    have Hmidlt : (uint.nat mid < length run)%nat by word.
+    destruct (run !! uint.nat mid) as [cmid|] eqn:Hcmid;
+      last by (apply lookup_ge_None in Hcmid; lia).
+    have Hlocmid : (ic_loc <$> run) !! uint.nat mid = Some cmid.(ic_loc)
+      by rewrite list_lookup_fmap Hcmid //.
+    iDestruct (own_slice_elem_acc (sint.Z mid) (ic_loc cmid) sl dq (ic_loc <$> run) with "Hsl") as "[Hel Hgive]".
+    { word. }
+    { replace (Z.to_nat (sint.Z mid)) with (uint.nat mid) by word. exact Hlocmid. }
+    wp_auto.
+    iDestruct ("Hgive" $! cmid.(ic_loc) with "Hel") as "Hsl".
+    have Hinsid : (<[sint.nat mid := cmid.(ic_loc)]> (ic_loc <$> run)) = (ic_loc <$> run).
+    { apply list_insert_id. replace (sint.nat mid) with (uint.nat mid) by word. exact Hlocmid. }
+    iEval (rewrite Hinsid) in "Hsl".
+    have Hcmemall : cmid ∈ all_cells types
+      by (apply Hmem; exact (list_elem_of_lookup_2 _ _ _ Hcmid)).
+    iDestruct (types_cell_acc_gen types cmid Hcmemall with "Htypes") as "Hacc".
+    iNamed "Hacc".
+    wp_auto.
+    have Hmcv : cell_clock cmid = iv.(yjs.item.id').(yjs.id.clock')
+      by (rewrite /cell_clock Hid /toYjsId /=; word).
+    have HlenEq : length (iv.(yjs.item.content').(yjs.content.content')) = length (ic_run cmid).
+    { have H := f_equal length Hcontent.
+      rewrite length_fmap explode_length /toContent in H. lia. }
+    have Hlenpos : (1 <= Z.of_nat (length (ic_run cmid)))%Z.
+    { have [Hne _] := Hrun. destruct (ic_run cmid) as [|? ?]; [done | simpl; lia]. }
+    have Hnw : (uint.Z (cell_clock cmid) + Z.of_nat (length (ic_run cmid)) < 2^64)%Z
+      by (apply Hrunfits; exact (list_elem_of_lookup_2 _ _ _ Hcmid)).
+    wp_apply (wp_item__Len cmid.(ic_loc) (DfracOwn 1) iv with "[$Hval]"). iIntros "Hval".
+    rewrite HlenEq.
+    iDestruct ("Hback" with "Hval") as "Htypes".
+    wp_auto.
+    destruct (bool_decide (uint.Z clk < uint.Z iv.(yjs.item.id').(yjs.id.clock'))) eqn:Hcmp1.
+    + (* clk < middleClock: every covering cell sits strictly left of [mid] *)
+      apply bool_decide_eq_true_1 in Hcmp1.
+      wp_auto. wp_for_post.
+      iFrame "HΦ". iExists lo, mid.
+      iFrame "Hleft Hright Hnodes Hclock Hsl Htypes".
+      iPureIntro. split.
+      { lia. }
+      move=> k c Hk Hcov1 Hcov2.
+      have [Hlo Hhi] := Hwin k c Hk Hcov1 Hcov2.
+      split; [exact Hlo |].
+      destruct (Nat.lt_trichotomy k (uint.nat mid)) as [Hlt | [Heq | Hgt]].
+      * lia.
+      * exfalso. subst k. rewrite Hcmid in Hk. injection Hk as <-.
+        rewrite Hmcv in Hcov1. lia.
+      * exfalso.
+        have Hle := StronglySorted_lookup_le cell_le run (uint.nat mid) k cmid c Hsort Hcmid Hk Hgt.
+        rewrite /cell_le Hmcv in Hle. lia.
+    + apply bool_decide_eq_false_1 in Hcmp1.
+      rewrite Hmcv in Hnw.
+      wp_auto.
+      case_bool_decide as Hcmp2.
+      * (* clk >= middleEnd: every covering cell sits strictly right of [mid]
+           (a left cell's range would have to swallow [mid]'s whole range,
+           contradicting the index-wise disjointness) *)
+        wp_auto. wp_for_post.
+        iFrame "HΦ". iExists (word.add mid (W64 1)), hi.
+        iFrame "Hleft Hright Hnodes Hclock Hsl Htypes".
+        have Hmide : (uint.Z (w64_word_instance.(word.add) iv.(yjs.item.id').(yjs.id.clock') (W64 (length (ic_run cmid))))
+                      = uint.Z iv.(yjs.item.id').(yjs.id.clock') + Z.of_nat (length (ic_run cmid)))%Z by word.
+        rewrite Hmide in Hcmp2.
+        iPureIntro. split.
+        { word. }
+        move=> k c Hk Hcov1 Hcov2.
+        have [Hlo Hhi] := Hwin k c Hk Hcov1 Hcov2.
+        split; [| exact Hhi].
+        destruct (Nat.lt_trichotomy k (uint.nat mid)) as [Hlt | [Heq | Hgt]].
+        { exfalso.
+          have Hle := StronglySorted_lookup_le cell_le run k (uint.nat mid) c cmid Hsort Hk Hcmid Hlt.
+          rewrite /cell_le Hmcv in Hle.
+          destruct (Hidisj k (uint.nat mid) c cmid Hk Hcmid ltac:(lia)) as [Hd | Hd];
+            rewrite Hmcv in Hd; lia. }
+        { exfalso. subst k. rewrite Hcmid in Hk. injection Hk as <-.
+          rewrite Hmcv in Hcov2. lia. }
+        word.
+      * (* middleClock <= clk < middleEnd: the probe COVERS clk *)
+        wp_auto. wp_for_post.
+        iApply ("HΦ" $! mid). iFrame "Hsl Htypes".
+        iExists cmid. iPureIntro. split; [exact Hcmid |].
+        split; rewrite Hmcv; word.
+  - (* [left >= right] never happens: the covering witness pins a nonempty window *)
+    exfalso. have [Hf1 Hf2] := Hwin k0 c0 Hk0 Hc0le Hc0lt. lia.
+Qed.
+
+(** [store.GetNode], general covering form (issue #28 stage D1): the id may
+    address ANY char of the witness cell's run; the returned node is pinned
+    to [cw] by per-client clock-range disjointness (two same-client cells
+    whose ranges both cover the id must share a location) instead of the
+    all-singleton identification. Takes only the 2-conjunct big-sep (no
+    [cell_unit]); additive alongside the unit fast path above, which it
+    replaces at the C2 flip. *)
+Lemma wp_store__GetNode_range (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
+    (types : gmap loc type_state) (cw : item_cell) :
+  cw ∈ all_cells types ->
+  cell_client cw = idv.(yjs.id.clientId') ->
+  (uint.Z (cell_clock cw) <= uint.Z idv.(yjs.id.clock'))%Z ->
+  (uint.Z idv.(yjs.id.clock') < uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)))%Z ->
+  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
+  NoDup (ic_loc <$> all_cells types) ->
+  cells_range_disjoint (all_cells types) ->
+  {{{ is_pkg_init yjs ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "GetNode" #idv
+  {{{ RET (#(ic_loc cw), #true);
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}.
+Proof using Type*.
+  move=> Hcw Hcwcc Hcwle Hcwlt Hrunfits Hnodup Hrangedisj.
+  iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
+  set (kc := idv.(yjs.id.clientId')).
+  have Hcwkc : cell_client cw = kc := Hcwcc.
+  iNamed "Hitemmap".
+  have Hkcin : kc ∈ (cell_client <$> all_cells types).
+  { rewrite -Hcwkc. apply list_elem_of_fmap_2. exact Hcw. }
+  destruct (Hcomplete kc Hkcin) as [slk Hslk].
+  wp_method_call. wp_call. wp_call. wp_auto.
+  wp_apply (wp_map_lookup2 with "Hmap"). iIntros "Hmap".
+  rewrite Hslk /=.
+  wp_auto.
+  iDestruct (big_sepM_lookup_acc _ _ kc slk Hslk with "Hruns") as "[Hrun Hrunsback]".
+  iNamed "Hrun".
+  have Hcwrun : cw ∈ client_run types kc by (apply client_run_mem; split; [exact Hcw | exact Hcwcc]).
+  apply list_elem_of_lookup_1 in Hcwrun. destruct Hcwrun as [kw Hkw].
+  have Hrunfits' : ∀ c, c ∈ client_run types kc ->
+      (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z.
+  { move=> c Hc. exact (Hrunfits c (proj1 (proj1 (client_run_mem types kc c) Hc))). }
+  (* index-wise disjointness of the run from the pool invariants *)
+  have HndAll : NoDup (all_cells types) := NoDup_fmap_1 ic_loc _ Hnodup.
+  have Hndrun : NoDup (client_run types kc).
+  { rewrite /client_run (merge_sort_Permutation cell_le _). apply NoDup_filter. exact HndAll. }
+  have Hinj : ∀ x y, x ∈ client_run types kc → y ∈ client_run types kc → ic_loc x = ic_loc y → x = y.
+  { move=> x y Hx Hy Hxy.
+    have Hxa : x ∈ all_cells types := proj1 (proj1 (client_run_mem types kc x) Hx).
+    have Hya : y ∈ all_cells types := proj1 (proj1 (client_run_mem types kc y) Hy).
+    apply list_elem_of_lookup_1 in Hxa as [ix Hix]. apply list_elem_of_lookup_1 in Hya as [iy Hiy].
+    have Hlix : (ic_loc <$> all_cells types) !! ix = Some (ic_loc y) by (rewrite list_lookup_fmap Hix /= Hxy //).
+    have Hliy : (ic_loc <$> all_cells types) !! iy = Some (ic_loc y) by (rewrite list_lookup_fmap Hiy //).
+    have Hijeq : ix = iy := NoDup_lookup _ _ _ _ Hnodup Hlix Hliy.
+    congruence. }
+  have Hidisj : ∀ (k1 k2 : nat) (c1 c2 : item_cell),
+      client_run types kc !! k1 = Some c1 -> client_run types kc !! k2 = Some c2 -> k1 ≠ k2 ->
+      (uint.Z (cell_clock c1) + Z.of_nat (length (ic_run c1)) <= uint.Z (cell_clock c2))%Z ∨
+      (uint.Z (cell_clock c2) + Z.of_nat (length (ic_run c2)) <= uint.Z (cell_clock c1))%Z.
+  { move=> k1 k2 c1 c2 Hk1 Hk2 Hkne.
+    have Hc1r : c1 ∈ client_run types kc := list_elem_of_lookup_2 _ _ _ Hk1.
+    have Hc2r : c2 ∈ client_run types kc := list_elem_of_lookup_2 _ _ _ Hk2.
+    have Hlocne : ic_loc c1 ≠ ic_loc c2.
+    { move=> Heq. have Hceq : c1 = c2 := Hinj c1 c2 Hc1r Hc2r Heq.
+      rewrite Hceq in Hk1. exact (Hkne (NoDup_lookup _ _ _ _ Hndrun Hk1 Hk2)). }
+    apply (Hrangedisj c1 c2
+             (proj1 (proj1 (client_run_mem types kc c1) Hc1r))
+             (proj1 (proj1 (client_run_mem types kc c2) Hc2r)));
+      [| exact Hlocne].
+    rewrite (proj2 (proj1 (client_run_mem types kc c1) Hc1r))
+            (proj2 (proj1 (client_run_mem types kc c2) Hc2r)) //. }
+  wp_apply (wp_getNodeIndex_range slk dq types (client_run types kc) idv.(yjs.id.clock') kw cw
+              (client_run_sorted types kc)
+              (fun c Hc => proj1 (proj1 (client_run_mem types kc c) Hc))
+              Hrunfits' Hidisj Hkw Hcwle Hcwlt
+              with "[$Hslice $Htypes]").
+  iIntros (i) "(Hslice & Htypes & %Hires)".
+  destruct Hires as (cres & Hcres & Hcresle & Hcreslt).
+  wp_auto.
+  iDestruct (own_slice_len with "Hslice") as %[Hsllen Hsllen0].
+  rewrite length_fmap in Hsllen Hsllen0.
+  have Hilt : (uint.nat i < length (client_run types kc))%nat by (apply lookup_lt_Some in Hcres; lia).
+  rewrite decide_True; last word.
+  have Hlocres : (ic_loc <$> client_run types kc) !! uint.nat i = Some cres.(ic_loc)
+    by rewrite list_lookup_fmap Hcres //.
+  iDestruct (own_slice_elem_acc (sint.Z i) (ic_loc cres) slk dq (ic_loc <$> client_run types kc) with "Hslice") as "[Hel Hgive]".
+  { word. }
+  { replace (Z.to_nat (sint.Z i)) with (uint.nat i) by word. exact Hlocres. }
+  wp_auto.
+  iDestruct ("Hgive" $! cres.(ic_loc) with "Hel") as "Hslice".
+  have Hinsid : (<[sint.nat i := cres.(ic_loc)]> (ic_loc <$> client_run types kc)) = (ic_loc <$> client_run types kc).
+  { apply list_insert_id. replace (sint.nat i) with (uint.nat i) by word. exact Hlocres. }
+  iEval (rewrite Hinsid) in "Hslice".
+  (* both [cres] and [cw] cover the requested clock at the same client:
+     range disjointness forces the same location *)
+  have Hcresmem : cres ∈ all_cells types /\ cell_client cres = kc.
+  { apply client_run_mem. exact (list_elem_of_lookup_2 _ _ _ Hcres). }
+  have Hloceq : cres.(ic_loc) = cw.(ic_loc).
+  { destruct (decide (cres.(ic_loc) = cw.(ic_loc))) as [He | Hne]; [exact He | exfalso].
+    destruct (Hrangedisj cres cw (proj1 Hcresmem) Hcw
+                ltac:(rewrite (proj2 Hcresmem) Hcwcc //) Hne) as [Hd | Hd]; lia. }
+  rewrite Hloceq.
+  iApply "HΦ".
+  iFrame "Hitemsf".
+  iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
+  iSplitL "Hmap Hruns".
+  { iExists gm. iFrame "Hmap Hruns". iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+  iFrame "Htypes".
+Qed.
+
 (** [store.splitNode n diff] (issue #28 M4): split the run cell [cw] (at DLL
     index [k] of type [parent]) at offset [diff] into a truncated left half (same
     node loc) and a fresh right half ([rloc]), updating both the per-type DLL and
