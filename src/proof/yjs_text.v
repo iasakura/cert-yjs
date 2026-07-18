@@ -344,12 +344,20 @@ Proof.
     rewrite /cell_unit in Hu. rewrite Hu in Hlenoff. word. }
   subst off.
   wp_auto.
+  (* the model position of the cell boundary [p] (issue #28 U3): under the
+     unit scaffold it coincides with [p]; the flip re-derives the couplings
+     from run structure instead of [Hmp_p] *)
+  have [mp Hmpdef] : ∃ mp0 : nat, mp0 = length (run_flatten (take p ts.(ty_cells)))
+    by (eexists; reflexivity).
+  have Hmp_p : mp = p.
+  { rewrite Hmpdef (run_flatten_take_length_unit _ _ Hunitc).
+    exact (Nat.min_l _ _ Hpbound). }
   (* shared right origin *)
   wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗ ∃ (oRptr : loc) (in_rO : option yjs.id.t),
       "HoR" ∷ originRightId_ptr ↦ oRptr ∗ "HisR" ∷ is_origin_id oRptr in_rO ∗
       "Htext" ∷ own_ytype_cells (tv.(yjs.Text.inner')) (DfracOwn 1) ts.(ty_cells) ts.(ty_arr) ∗ "Hright" ∷ right_ptr ↦ rgt ∗
       "%Hrightinit" ∷ ⌜(in_rO = None ∧ (p = length ts.(ty_cells))%nat) ∨
-        (∃ (ri : YjsItem A) (rid : yjs.id.t), ts.(ty_arr) !! (p) = Some ri ∧ in_rO = Some rid ∧ item_id ri = toYjsId rid)⌝)%I
+        (∃ (ri : YjsItem A) (rid : yjs.id.t), ts.(ty_arr) !! mp = Some ri ∧ in_rO = Some rid ∧ item_id ri = toYjsId rid)⌝)%I
       with "[right Htext originRightId]".
   { iSplitR; [done|].
     destruct (decide (p = length ts.(ty_cells))%nat) as [Hpeq|Hne].
@@ -383,27 +391,28 @@ Proof.
     { rewrite /is_origin_id. iSplit; [iPureIntro; exact Hridnn | iFrame "rid"]. }
     iSplitL "Hpar1 Hdll1".
     { iExists yt1, tl1. iFrame "Hpar1 Hdll1". iPureIntro. split_and!; [exact Hlen1 | exact Hrepr1 | exact Hcpar1]. }
-    iPureIntro. right. exists yi0, iv.(yjs.item.id'). split_and!; [exact Hyi0 | reflexivity | (rewrite -Hcr0h; exact Hid)]. }
+    iPureIntro. right. exists yi0, iv.(yjs.item.id').
+    split_and!; [rewrite Hmp_p; exact Hyi0 | reflexivity | (rewrite -Hcr0h; exact Hid)]. }
   iIntros (v) "[%Hv HQ]". subst v. iNamed "HQ". wp_auto.
   (* fix the run's shared right origin oR and the first item's left origin oL as values *)
   assert (∃ (oR : YjsPtr A),
-     (in_rO = None ∧ oR = Last ∧ (p = length ts.(ty_arr))%nat) ∨
-     (∃ (ri : YjsItem A) (rid : yjs.id.t), ts.(ty_arr) !! (p) = Some ri ∧ in_rO = Some rid ∧ item_id ri = toYjsId rid ∧ oR = itemPtr ri))
+     (in_rO = None ∧ oR = Last ∧ (mp = length ts.(ty_arr))%nat) ∨
+     (∃ (ri : YjsItem A) (rid : yjs.id.t), ts.(ty_arr) !! mp = Some ri ∧ in_rO = Some rid ∧ item_id ri = toYjsId rid ∧ oR = itemPtr ri))
      as [oR HoRspec].
   { have Hcl := cells_repr_length ts.(ty_arr) ts.(ty_cells) ts.(ty_arr) Hunitc Hrepr.
     destruct Hrightinit as [[Hn Hpe] | (ri & rid & Hria & Hrs & Hrid)].
-    - exists Last. left. split_and!; [exact Hn | reflexivity | rewrite -Hcl; exact Hpe].
+    - exists Last. left. split_and!; [exact Hn | reflexivity | rewrite Hmp_p -Hcl; exact Hpe].
     - exists (itemPtr ri). right. exists ri, rid. split_and!; [exact Hria | exact Hrs | exact Hrid | reflexivity]. }
   assert (∃ (oL : YjsPtr A),
      (oL = First ∧ (p = 0)%nat) ∨
-     (∃ li : YjsItem A, (1 <= p)%nat ∧ ts.(ty_arr) !! (p - 1)%nat = Some li ∧ oL = itemPtr li))
+     (∃ li : YjsItem A, (1 <= p)%nat ∧ ts.(ty_arr) !! (mp - 1)%nat = Some li ∧ oL = itemPtr li))
      as [oL HoLspec].
   { destruct (decide (p = 0)%nat) as [Hidx0 | Hidxpos].
     - exists First. left. split; [reflexivity | exact Hidx0].
     - have Hidxm : (p - 1 < length ts.(ty_cells))%nat by lia.
       destruct (ts.(ty_cells) !! (p - 1)%nat) as [lc|] eqn:Hlc; [| apply lookup_ge_None in Hlc; lia].
       have [li [Hli Hcrlc]] := cells_repr_lookup ts.(ty_arr) ts.(ty_cells) ts.(ty_arr) (p - 1) lc Hunitc Hrepr Hlc.
-      exists (itemPtr li). right. exists li. split_and!; [lia | exact Hli | reflexivity]. }
+      exists (itemPtr li). right. exists li. split_and!; [lia | rewrite Hmp_p; exact Hli | reflexivity]. }
   (* loop invariant: [j] inserted so far, [arr]/[cells]/[leftloc] grow, [ins] is the run;
      the ghost history [hj] grows by one mint per inserted item, staying coherent
      with [arr], and the certificates of the run accumulate in [Hcertsj]. *)
@@ -439,12 +448,12 @@ Proof.
     "%Hleftj" ∷ ⌜(leftloc = null ∧ (p + j = 0)%nat)
       ∨ (∃ (lc : item_cell) (li : YjsItem A),
            cells !! (p + j - 1)%nat = Some lc ∧ ic_loc lc = leftloc ∧
-           arr !! (p + j - 1)%nat = Some li ∧
+           arr !! (mp + j - 1)%nat = Some li ∧
            ic_run lc = [li] ∧ (1 <= p + j)%nat ∧
            (j = 0%nat → itemPtr li = oL) ∧ (∀ j', j = S j' → ins !! j' = Some li))⌝ ∗
-    "%Hrightj" ∷ ⌜(in_rO = None ∧ oR = Last ∧ (p + j = length arr)%nat)
+    "%Hrightj" ∷ ⌜(in_rO = None ∧ oR = Last ∧ (mp + j = length arr)%nat)
       ∨ (∃ (ri : YjsItem A) (rid : yjs.id.t),
-           arr !! (p + j)%nat = Some ri ∧ in_rO = Some rid ∧ item_id ri = toYjsId rid ∧ oR = itemPtr ri)⌝ ∗
+           arr !! (mp + j)%nat = Some ri ∧ in_rO = Some rid ∧ item_id ri = toYjsId rid ∧ oR = itemPtr ri)⌝ ∗
     "%Hinslen" ∷ ⌜length ins = j⌝ ∗
     "%Hins" ∷ ⌜∀ (i : nat) (it : YjsItem A), ins !! i = Some it →
        it ∈ arr ∧
@@ -455,6 +464,7 @@ Proof.
        (∀ (j' : nat) (itj : YjsItem A), i = S j' → ins !! j' = Some itj → origin it = itemPtr itj)⌝ ∗
     "%Hsubold" ∷ ⌜∀ x : YjsItem A, x ∈ ts.(ty_arr) → x ∈ arr⌝ ∗
     "%Hrgtj" ∷ ⌜rgt = node_loc cells (Z.of_nat (p + j))⌝ ∗
+    "%Hcoupj" ∷ ⌜length (run_flatten (take (p + j)%nat cells)) = (mp + j)%nat⌝ ∗
     "%Hcellbnd" ∷ ⌜∀ c0 : item_cell, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) →
        cell_client c0 = client → (uint.Z (cell_clock c0) < uint.Z k + Z.of_nat j)%Z⌝ ∗
     "%Hlocdupj" ∷ ⌜NoDup (ic_loc <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types))⌝ ∗
@@ -491,10 +501,13 @@ Proof.
         * rewrite Hlftloc /node_loc. case_decide as Hd; [| lia].
           have -> : Z.to_nat (Z.of_nat (p) - 1) = (p - 1)%nat by lia.
           rewrite Hlc //.
-        * replace (p + 0 - 1)%nat with (p - 1)%nat by lia. exact Hli2.
+        * replace (mp + 0 - 1)%nat with (p - 1)%nat by lia. exact Hli2.
         * exact Hcrlc.
         * lia.
-        * intros _. rewrite HoLi. f_equal. rewrite Hli in Hli2. injection Hli2 as ->. reflexivity.
+        * intros _. rewrite HoLi. f_equal.
+          have Hli' : ts.(ty_arr) !! (p - 1)%nat = Some li
+            by (replace (p - 1)%nat with (mp - 1)%nat by lia; exact Hli).
+          rewrite Hli' in Hli2. injection Hli2 as ->. reflexivity.
         * intros j' Hj'. lia.
     - destruct HoRspec as [(Hn & HoRl & Hidxlen) | (ri & rid & Hria & Hrs & Hrid & HoRi)].
       + left. split_and!; [exact Hn | exact HoRl | rewrite Nat.add_0_r; exact Hidxlen].
@@ -503,6 +516,7 @@ Proof.
     - intros i it Hii. rewrite lookup_nil in Hii. inversion Hii.
     - intros x Hx. exact Hx.
     - rewrite Nat.add_0_r. exact Hrgtloc.
+    - rewrite !Nat.add_0_r Hmpdef //.
     - intros c0 Hc0 Hcc0. have := Hcellctr c0 Hc0 Hcc0. lia.
     - exact Hlocdup.
     - exact Hrangedisj.
@@ -526,7 +540,7 @@ Proof.
         "Htextj" ∷ own_ytype_cells tv.(yjs.Text.inner') (DfracOwn 1) cells arr ∗
         "Hleftp" ∷ left_ptr ↦ leftloc ∗
         "%Hleftspec" ∷ ⌜(olo = None ∧ (p + length ins = 0)%nat) ∨
-           (∃ (li : YjsItem A), (1 <= p + length ins)%nat ∧ arr !! (p + length ins - 1)%nat = Some li ∧ (toYjsId <$> olo) = Some (item_id li))⌝)%I
+           (∃ (li : YjsItem A), (1 <= p + length ins)%nat ∧ arr !! (mp + length ins - 1)%nat = Some li ∧ (toYjsId <$> olo) = Some (item_id li))⌝)%I
       with "[Hleftp Htextj originLeftId]".
     { destruct Hleftj as [[Hln Hpe0] | (lc & li & Hlccells & Hlcloc & Hliarr & Hliitem & Hge1 & _)].
       - iSplitR; [done|]. iExists null, None. iFrame "originLeftId Htextj Hleftp".
@@ -579,15 +593,15 @@ Proof.
     have Hclocknit : uint.nat (W64 (uint.Z k + j)) = (uint.nat k + j)%nat by word.
     rewrite Hinslen in Hleftspec.
     have Horig : ∃ (o : YjsPtr A),
-       (toYjsId <$> olo = None ∧ o = First ∧ (p + j)%nat = 0%nat) ∨
-       (∃ li, (1 <= p + j)%nat ∧ arr !! (p + j - 1)%nat = Some li ∧ toYjsId <$> olo = Some (item_id li) ∧ o = itemPtr li).
+       (toYjsId <$> olo = None ∧ o = First ∧ (mp + j)%nat = 0%nat) ∨
+       (∃ li, (1 <= mp + j)%nat ∧ arr !! (mp + j - 1)%nat = Some li ∧ toYjsId <$> olo = Some (item_id li) ∧ o = itemPtr li).
     { destruct Hleftspec as [[Hon Hp0] | (li & Hge & Hla & Hom)].
-      - exists First. left. subst olo. split_and!; [reflexivity | reflexivity | exact Hp0].
-      - exists (itemPtr li). right. exists li. split_and!; [exact Hge | exact Hla | exact Hom | reflexivity]. }
+      - exists First. left. subst olo. split_and!; [reflexivity | reflexivity | lia].
+      - exists (itemPtr li). right. exists li. split_and!; [lia | exact Hla | exact Hom | reflexivity]. }
     destruct Horig as [morigin Horig].
     have Hrorig : ∃ (r : YjsPtr A),
-       (toYjsId <$> in_rO = None ∧ r = Last ∧ (p + j)%nat = length arr) ∨
-       (∃ ri, arr !! (p + j)%nat = Some ri ∧ toYjsId <$> in_rO = Some (item_id ri) ∧ r = itemPtr ri).
+       (toYjsId <$> in_rO = None ∧ r = Last ∧ (mp + j)%nat = length arr) ∨
+       (∃ ri, arr !! (mp + j)%nat = Some ri ∧ toYjsId <$> in_rO = Some (item_id ri) ∧ r = itemPtr ri).
     { destruct Hrightj as [(Hrn & Hoeq & Hpl) | (ri & rid & Hria & Hros & Hrii & HoRi)].
       - exists Last. left. subst in_rO. split_and!; [reflexivity | reflexivity | exact Hpl].
       - exists (itemPtr ri). right. exists ri. split_and!; [exact Hria | rewrite Hros /= Hrii // | reflexivity]. }
@@ -600,24 +614,24 @@ Proof.
       - destruct Horig as [(Hon & Ho & _) | (li & _ & Hla & Hom & Ho)]; [left; split; [exact Hon | exact Ho] | right; exists li; split_and!; [exact Hom | exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hla) | exact Ho]].
       - destruct Hrorig as [(Hrn & Hr & _) | (ri & Hria & Hri & Hr)]; [left; split; [exact Hrn | exact Hr] | right; exists ri; split_and!; [exact Hri | exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hria) | exact Hr]]. }
     have Hvalid : IsItemValid nit :=
-      insert_item_valid arr (p + j) in_id1 [b] morigin mrightorigin
+      insert_item_valid arr (mp + j) in_id1 [b] morigin mrightorigin
         (toYjsId <$> olo) (toYjsId <$> in_rO) Hinvj Horig Hrorig.
     have Hmax' : maximalId nit arr.
     { apply (insert_maximalId arr morigin mrightorigin (uint.nat client) (uint.nat (W64 (uint.Z k + j))) [b]).
       intros x Hx Hc. rewrite Hclocknit. exact (Hctrj x Hx Hc). }
     iDestruct "HisR" as "#HisRp".
     (* the resolved neighbour indices the Integrate spec takes (issue #49) *)
-    have HfindLj : findLeftIdx (in_originId input) arr = Some (Z.of_nat (p + j) - 1).
+    have HfindLj : findLeftIdx (in_originId input) arr = Some (Z.of_nat (mp + j) - 1).
     { destruct Horig as [(Hon & _ & Hp0) | (li & Hge & Hla & Hom & _)].
       - rewrite /input /= Hon /findLeftIdx Hp0 //.
       - rewrite /input /= Hom
-          (findLeftIdx_at arr (p + j - 1) li (yai_unique _ Hinvj) Hla).
+          (findLeftIdx_at arr (mp + j - 1) li (yai_unique _ Hinvj) Hla).
         f_equal. lia. }
-    have HfindRj : findRightIdx (in_rightOriginId input) arr = Some (Z.of_nat (p + j)).
+    have HfindRj : findRightIdx (in_rightOriginId input) arr = Some (Z.of_nat (mp + j)).
     { destruct Hrorig as [(Hrn & _ & Hpl) | (ri & Hria & Hri & _)].
       - rewrite /input /= Hrn /findRightIdx Hpl //.
       - rewrite /input /= Hri
-          (findRightIdx_at arr (p + j) ri (yai_unique _ Hinvj) Hria) //. }
+          (findRightIdx_at arr (mp + j) ri (yai_unique _ Hinvj) Hria) //. }
     have Hleftloc_eq : leftloc = node_loc cells (Z.of_nat (p + j) - 1).
     { destruct Hleftj as [[-> Hp0] | (lc & li & Hlccells & Hlcloc & _ & _ & Hge1 & _)].
       - rewrite /node_loc. case_decide as Hd; [exfalso; lia | done].
@@ -675,17 +689,17 @@ Proof.
       iSplitR; [done|]. iExists ytj, tlj. iFrame "Hpj Hdj". iPureIntro.
       split_and!; [exact Hlj | exact Hrj | exact Hcpj]. }
     have Hcllen0 := cells_repr_length ts.(ty_arr) ts.(ty_cells) ts.(ty_arr) Hunitc Hrepr.
-    have Hple : (p + j <= length arr)%nat by (rewrite Hlenarr; lia).
+    have Hple : (mp + j <= length arr)%nat by (rewrite Hlenarr; lia).
     have Hcelllenj : length cells = length arr := cells_repr_length _ _ _ Hunitj Hreprj.
-    have HpjLb : ((p + j) <= length cells)%nat by rewrite Hcelllenj; exact Hple.
+    have HpjLb : ((p + j) <= length cells)%nat by (rewrite Hcelllenj Hlenarr -Hcllen0; lia).
     have Hnecj := Forall_cell_unit_nonempty cells Hunitj.
-    have HcurLj : (Z.of_nat (length (run_flatten (take (p + j)%nat cells))) = Z.of_nat (p + j) - 1 + 1)%Z.
-    { rewrite (run_flatten_take_length_unit cells (p + j)%nat Hunitj) (Nat.min_l _ _ HpjLb). lia. }
-    have HcurRj : (Z.of_nat (length (run_flatten (take (p + j)%nat cells))) = Z.of_nat (p + j))%Z.
-    { rewrite (run_flatten_take_length_unit cells (p + j)%nat Hunitj) (Nat.min_l _ _ HpjLb). lia. }
+    have HcurLj : (Z.of_nat (length (run_flatten (take (p + j)%nat cells))) = Z.of_nat (mp + j) - 1 + 1)%Z.
+    { rewrite Hcoupj. lia. }
+    have HcurRj : (Z.of_nat (length (run_flatten (take (p + j)%nat cells))) = Z.of_nat (mp + j))%Z.
+    { rewrite Hcoupj. lia. }
     wp_apply (wp_Store__Integrate (tv.(yjs.Text.store')) (tv.(yjs.Text.inner')) oL2 arr input nit cells
                 (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) items_mref
-                (Z.of_nat (p + j) - 1) (Z.of_nat (p + j)) (p + j)%nat (p + j)%nat
+                (Z.of_nat (mp + j) - 1) (Z.of_nat (mp + j)) (p + j)%nat (p + j)%nat
                 Hinvj Htoitem Hvalid Hmax' HfindLj HfindRj Hlookj Hgmaxj Hnecj Hfitsj Hoclkj
                 HcurLj HpjLb HcurRj HpjLb
                 with "[$Hfresh $Htextj $Hitemsf $Hitemmap]").
@@ -740,16 +754,16 @@ Proof.
       rewrite big_sepL2_singleton. iApply "Hcertj". }
     wp_auto.
     (* place the new item, identify its index *)
-    have Hplace : arr' = take (p + j)%nat arr ++ nit :: drop (p + j)%nat arr.
-    { rewrite Harr'eq. apply (insert_straddle arr nit iidx (p + j)%nat Hinvj ltac:(rewrite -Harr'eq; exact Hinv') Hile Hple).
+    have Hplace : arr' = take (mp + j)%nat arr ++ nit :: drop (mp + j)%nat arr.
+    { rewrite Harr'eq. apply (insert_straddle arr nit iidx (mp + j)%nat Hinvj ltac:(rewrite -Harr'eq; exact Hinv') Hile Hple).
       - destruct Horig as [(_ & Ho & Hp0) | (li & Hge & Hla & _ & Ho)]; [left; split; [exact Hp0 | rewrite /nit /=; exact Ho] | right; split; [exact Hge | exists li; split; [exact Hla | rewrite /nit /=; exact Ho]]].
       - destruct Hrorig as [(_ & Hr & Hpl) | (ri & Hria & _ & Hr)]; [left; split; [exact Hpl | rewrite /nit /=; exact Hr] | right; exists ri; split; [exact Hria | rewrite /nit /=; exact Hr]]. }
-    have Hnitpos : arr' !! (p + j)%nat = Some nit.
+    have Hnitpos : arr' !! (mp + j)%nat = Some nit.
     { rewrite Hplace. apply list_lookup_middle. symmetry. apply length_take_le. exact Hple. }
-    have Hshift : arr' !! (p + j + 1)%nat = arr !! (p + j)%nat.
+    have Hshift : arr' !! (mp + j + 1)%nat = arr !! (mp + j)%nat.
     { rewrite Hplace. rewrite lookup_app_r; last (rewrite length_take_le; [lia | exact Hple]).
       rewrite length_take_le; last exact Hple.
-      replace (p + j + 1 - (p + j))%nat with 1%nat by lia.
+      replace (mp + j + 1 - (mp + j))%nat with 1%nat by lia.
       simpl. rewrite lookup_drop. f_equal. lia. }
     iDestruct "Htext'" as (yt3 tl3) "(Hp3 & Hdll3 & %Hlen3 & %Hrepr3 & %Hcpar3)".
     destruct Hnode' as [x (Hcx & Hcloc & Hcid)].
@@ -760,11 +774,13 @@ Proof.
     { have Hcr3eq : run_head c = yi := cell_repr_head _ _ _ Hcr3. rewrite -Hcr3eq. exact Hcid. }
     subst yi.
     have Hxpos : x = (p + j)%nat.
-    { destruct (Nat.lt_trichotomy x (p + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
-      - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' x (p + j)%nat nit nit Hinv' Hyi Hnitpos Hlt.
-        exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH).
-      - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' (p + j)%nat x nit nit Hinv' Hnitpos Hyi Hgt.
-        exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH). }
+    { have Hxm : x = (mp + j)%nat.
+      { destruct (Nat.lt_trichotomy x (mp + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
+        - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' x (mp + j)%nat nit nit Hinv' Hyi Hnitpos Hlt.
+          exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH).
+        - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' (mp + j)%nat x nit nit Hinv' Hnitpos Hyi Hgt.
+          exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH). }
+      lia. }
     subst x.
     wp_for_post.
     (* re-establish the loop invariant for [S j] with [ins ++ [nit]] *)
@@ -792,16 +808,16 @@ Proof.
     - lia.
     - intros x Hx Hc. rewrite Hplace in Hx.
       apply elem_of_app in Hx as [Hxt | Hxc].
-      + have Hxa : ArrSet arr x by (rewrite -(take_drop (p + j)%nat arr); apply elem_of_app; left; exact Hxt).
+      + have Hxa : ArrSet arr x by (rewrite -(take_drop (mp + j)%nat arr); apply elem_of_app; left; exact Hxt).
         have := Hctrj x Hxa Hc. lia.
       + apply elem_of_cons in Hxc as [-> | Hxd].
         * rewrite /nit /in_id1 /=. rewrite Hclocknit. lia.
-        * have Hxa : ArrSet arr x by (rewrite -(take_drop (p + j)%nat arr); apply elem_of_app; right; exact Hxd).
+        * have Hxa : ArrSet arr x by (rewrite -(take_drop (mp + j)%nat arr); apply elem_of_app; right; exact Hxd).
           have := Hctrj x Hxa Hc. lia.
     - right. exists c, nit. split_and!.
       + replace (p + S j - 1)%nat with (p + j)%nat by lia. exact Hcx.
       + exact Hcloc.
-      + replace (p + S j - 1)%nat with (p + j)%nat by lia. exact Hnitpos.
+      + replace (mp + S j - 1)%nat with (mp + j)%nat by lia. exact Hnitpos.
       + exact Hcr3.
       + lia.
       + intros Hsj. lia.
@@ -810,7 +826,7 @@ Proof.
       + left. split_and!; [exact Hrn | exact HoRl |].
         rewrite Hplace length_app length_take_le; [| exact Hple]. simpl. rewrite length_drop. lia.
       + right. exists ri, rid. split_and!.
-        * replace (p + S j)%nat with (p + j + 1)%nat by lia. rewrite Hshift. exact Hria.
+        * replace (mp + S j)%nat with (mp + j + 1)%nat by lia. rewrite Hshift. exact Hria.
         * exact Hros.
         * exact Hrii.
         * exact HoRi.
@@ -820,7 +836,7 @@ Proof.
       + rewrite lookup_app_l in Hii; [| exact Hilt].
         have [Hitin [Hcont [Hid [Hror [Horg Hchain]]]]] := Hins i it Hii.
         split_and!.
-        * rewrite Hplace. rewrite -(take_drop (p + j)%nat arr) in Hitin. apply elem_of_app in Hitin as [H1 | H2]; [apply elem_of_app; left; exact H1 | apply elem_of_app; right; apply elem_of_cons; right; exact H2].
+        * rewrite Hplace. rewrite -(take_drop (mp + j)%nat arr) in Hitin. apply elem_of_app in Hitin as [H1 | H2]; [apply elem_of_app; left; exact H1 | apply elem_of_app; right; apply elem_of_cons; right; exact H2].
         * exact Hcont.
         * exact Hid.
         * exact Hror.
@@ -841,18 +857,18 @@ Proof.
         * intros j' itj Hisj Hlookj'. rewrite /nit /=. rewrite Hieq Hinslen in Hisj. rewrite lookup_app_l in Hlookj'; [| rewrite Hinslen; lia].
           destruct Horig as [(_ & _ & Hp0) | (li & Hge & Hla & _ & Hmo)]; [lia |].
           rewrite Hmo. destruct Hleftj as [[_ Hp0] | (lc2 & li2 & _ & _ & Hla2 & _ & _ & _ & Hlk)]; [lia |]. have -> : li = li2 by (rewrite Hla in Hla2; injection Hla2 as ->; reflexivity). have Hli2 := Hlk j' Hisj. rewrite Hli2 in Hlookj'. injection Hlookj' as <-. reflexivity.
-    - intros x Hx. have Hxa := Hsubold x Hx. rewrite Hplace. rewrite -(take_drop (p + j)%nat arr) in Hxa. apply elem_of_app in Hxa as [H1 | H2]; [apply elem_of_app; left; exact H1 | apply elem_of_app; right; apply elem_of_cons; right; exact H2].
+    - intros x Hx. have Hxa := Hsubold x Hx. rewrite Hplace. rewrite -(take_drop (mp + j)%nat arr) in Hxa. apply elem_of_app in Hxa as [H1 | H2]; [apply elem_of_app; left; exact H1 | apply elem_of_app; right; apply elem_of_cons; right; exact H2].
     - (* the loop-constant [right] pointer's index shifts across the splice *)
       have Hlcells' : (length cells' = length arr + 1)%nat.
       { rewrite (cells_repr_length _ _ _ Hunitj' Hrepr3).
         rewrite Hplace length_app length_take_le /=; [rewrite length_drop; lia | exact Hple]. }
       have Hnit_i : arr' !! iidx = Some nit.
       { rewrite Harrsp2. apply list_lookup_middle. rewrite length_take_le //. }
-      have Hiidxpos : iidx = (p + j)%nat.
-      { destruct (Nat.lt_trichotomy iidx (p + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
-        - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' iidx (p + j)%nat nit nit Hinv' Hnit_i Hnitpos Hlt.
+      have Hiidxpos : iidx = (mp + j)%nat.
+      { destruct (Nat.lt_trichotomy iidx (mp + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
+        - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' iidx (mp + j)%nat nit nit Hinv' Hnit_i Hnitpos Hlt.
           exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH).
-        - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' (p + j)%nat iidx nit nit Hinv' Hnitpos Hnit_i Hgt.
+        - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' (mp + j)%nat iidx nit nit Hinv' Hnitpos Hnit_i Hgt.
           exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH). }
       have Hnxpos : nx = (p + j)%nat.
       { have H := Hcoupx.
@@ -862,6 +878,30 @@ Proof.
       have -> : (Z.of_nat (p + S j)) = (Z.of_nat (p + j) + 1)%Z by lia.
       rewrite (node_loc_splice_ge cells c (p + j)%nat (Z.of_nat (p + j)) ltac:(lia) Hpjlen).
       exact Hrgtj.
+    - (* Hcoupj at S j: the splice adds one unit cell at the cursor *)
+      have Hnxpos2 : nx = (p + j)%nat.
+      { have H := Hcoupx.
+        rewrite (run_flatten_take_length_unit cells nx Hunitj) (Nat.min_l _ _ Hnxb) in H.
+        have Hiidxpos2 : iidx = (mp + j)%nat.
+        { have Hnit_i2 : arr' !! iidx = Some nit.
+          { rewrite Harrsp2. apply list_lookup_middle. rewrite length_take_le //. }
+          destruct (Nat.lt_trichotomy iidx (mp + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
+          - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' iidx (mp + j)%nat nit nit Hinv' Hnit_i2 Hnitpos Hlt.
+            exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH).
+          - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' (mp + j)%nat iidx nit nit Hinv' Hnitpos Hnit_i2 Hgt.
+            exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH). }
+        lia. }
+      replace (p + S j)%nat with (S (p + j))%nat by lia.
+      rewrite Hcellsp Hnxpos2.
+      have Hpjlen2 : ((p + j) <= length cells)%nat by rewrite -Hnxpos2; exact Hnxb.
+      have Htk : take (S (p + j)) (take (p + j)%nat cells ++ c :: drop (p + j)%nat cells)
+               = take (p + j)%nat cells ++ [c].
+      { rewrite take_app_ge; last (rewrite length_take_le; lia).
+        rewrite length_take_le; last lia.
+        replace (S (p + j) - (p + j))%nat with 1%nat by lia. done. }
+      rewrite Htk run_flatten_app length_app Hcoupj.
+      have Hcu1 : length (ic_run c) = 1%nat := Hcunit.
+      rewrite run_flatten_cons length_app Hcu1 /run_flatten /=. lia.
     - intros c0 Hc0 Hcc0.
       have Hac_step : all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' arr']> types)
                     ≡ₚ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) ++ [c]
