@@ -2777,7 +2777,63 @@ Definition split_step_facts (types types' : gmap loc type_state) (w : item_cell)
                       (ic_loc c' = ic_loc w ∨
                        ic_loc c' ∉ (ic_loc <$> all_cells types))))) ∧
   (∀ p ts ts', types !! p = Some ts -> types' !! p = Some ts' ->
-     Forall cell_unit (ty_cells ts) -> ts' = ts).
+     Forall cell_unit (ty_cells ts) -> ts' = ts) ∧
+  (∀ c', c' ∈ all_cells types' -> ∃ c, c ∈ all_cells types ∧
+     cell_client c' = cell_client c ∧
+     (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
+     (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')) <=
+      uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z).
+
+(** Every post-split cell's clock range sits inside a same-client cell of the
+    original pool (the halves inside the split cell, the rest inside itself);
+    this is what transports the range-form freshness facts across a split. *)
+Lemma split_pool_subrange (types : gmap loc type_state) (parent : loc)
+    (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
+    (o : nat) (rloc : loc) :
+  types !! parent = Some (MkTypeState cells arr) ->
+  cells !! k = Some cw ->
+  run_wf (ic_run cw) ->
+  (0 < o < length (ic_run cw))%nat ->
+  (Z.of_nat (clock (item_id (run_head cw))) < 2^64)%Z ->
+  cell_fits cw ->
+  ∀ c', c' ∈ all_cells (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types) ->
+    ∃ c, c ∈ all_cells types ∧ cell_client c' = cell_client c ∧
+      (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
+      (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')) <=
+       uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z.
+Proof.
+  move=> Htypes Hck Hrunwf Ho Hckbnd Hfitscw c' Hc'.
+  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck)
+    as (rest & Hold & Hnew).
+  destruct (split_cell_facts cw o rloc Hrunwf Ho)
+    as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
+  have HclkZ : uint.Z (cell_clock cw) = Z.of_nat (clock (item_id (run_head cw))).
+  { rewrite /cell_clock. word. }
+  rewrite Hnew in Hc'.
+  apply elem_of_cons in Hc' as [-> | Hc'].
+  { exists cw. split_and!.
+    - rewrite Hold. apply list_elem_of_here.
+    - exact Hclientl.
+    - rewrite Hclockl. lia.
+    - rewrite Hclockl Hlenl. lia. }
+  apply elem_of_cons in Hc' as [-> | Hc'].
+  { have Hzr : (uint.Z (cell_clock (split_cell_right cw o rloc))
+               = Z.of_nat (clock (item_id (run_head cw)) + o))%Z.
+    { rewrite Hclockr.
+      have Hbo : (Z.of_nat (clock (item_id (run_head cw)) + o) < 2^64)%Z.
+      { rewrite /cell_fits in Hfitscw. clear -HclkZ Hfitscw Ho Hckbnd. lia. }
+      clear -Hbo. word. }
+    exists cw. split_and!.
+    - rewrite Hold. apply list_elem_of_here.
+    - exact Hclientr.
+    - rewrite Hzr. lia.
+    - rewrite Hzr Hlenr. lia. }
+  { exists c'. split_and!.
+    - rewrite Hold. apply elem_of_cons. by right.
+    - done.
+    - lia.
+    - lia. }
+Qed.
 
 Lemma wp_store__splitAtAndGetLeft_inv (s mref : loc) (idv : yjs.id.t)
     (types : gmap loc type_state) (cw : item_cell) :
@@ -2839,6 +2895,7 @@ Proof using Type*.
       * move=> c Hc _. exact Hc.
       * move=> ccl clkZ c Hc Hccl Hle2 Hlt2. exists c. split_and!; try done. by left.
       * move=> p ts0 ts0' Hp Hp' _. congruence.
+      * move=> c1 Hc1. exists c1. split_and!; [exact Hc1 | done | lia | lia].
     + exists cw. split_and!; [exact Hcwmem | done | exact Hcwcc | | done].
       clear -Hoeq Hcwle Hcwlt Hlenpos. word.
   - (* split just after the id *)
@@ -2871,6 +2928,7 @@ Proof using Type*.
           have Hu := Forall_lookup_1 _ _ _ _ Hunit0 Hck.
           rewrite /cell_unit in Hu. lia. }
         { rewrite lookup_insert_ne in Hp'; last congruence. congruence. }
+      * exact (split_pool_subrange types parent cells arr k cw _ rloc Htypes0 Hck Hrunwf Ho2 Hckbnd Hfitscw).
     + destruct (split_pool_perm types parent cells arr k cw
                   ((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) + 1) rloc Htypes0 Hck)
         as (rest & Hold & Hnew).
@@ -2945,6 +3003,7 @@ Proof using Type*.
       * move=> c Hc _. exact Hc.
       * move=> ccl clkZ c Hc Hccl Hle2 Hlt2. exists c. split_and!; try done. by left.
       * move=> p ts0 ts0' Hp Hp' _. congruence.
+      * move=> c1 Hc1. exists c1. split_and!; [exact Hc1 | done | lia | lia].
     + exists cw. split_and!; [exact Hcwmem | done | exact Hcwcc | | done].
       clear -Hoeq Hcwle. word.
   - (* split at the offset: the fresh right half starts at the id *)
@@ -2978,6 +3037,7 @@ Proof using Type*.
           have Hu := Forall_lookup_1 _ _ _ _ Hunit0 Hck.
           rewrite /cell_unit in Hu. lia. }
         { rewrite lookup_insert_ne in Hp'; last congruence. congruence. }
+      * exact (split_pool_subrange types parent cells arr k cw _ rl Htypes0 Hck Hrunwf Ho2 Hckbnd Hfitscw).
     + destruct (split_pool_perm types parent cells arr k cw
                   (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) rl Htypes0 Hck)
         as (rest & Hold & Hnew).
@@ -3051,7 +3111,12 @@ Definition repair_types_facts (types types2 : gmap loc type_state) : Prop :=
   (∀ p, is_Some (types !! p) -> is_Some (types2 !! p)) ∧
   (∀ kc, (length (client_run types2 kc) <= 2 + length (client_run types kc))%nat) ∧
   (∀ p ts ts', types !! p = Some ts -> types2 !! p = Some ts' ->
-     Forall cell_unit (ty_cells ts) -> ts' = ts).
+     Forall cell_unit (ty_cells ts) -> ts' = ts) ∧
+  (∀ c', c' ∈ all_cells types2 -> ∃ c, c ∈ all_cells types ∧
+     cell_client c' = cell_client c ∧
+     (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
+     (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')) <=
+      uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z).
 
 Lemma repair_types_facts_refl (types : gmap loc type_state) :
   repair_types_facts types types.
@@ -3061,13 +3126,14 @@ Proof.
   - move=> p Hp. exact Hp.
   - move=> kc. lia.
   - move=> p ts ts' Hp Hp' _. congruence.
+  - move=> c' Hc'. exists c'. split_and!; [exact Hc' | done | lia | lia].
 Qed.
 
 Lemma split_step_facts_single (types types1 : gmap loc type_state) (w : item_cell) :
   split_step_facts types types1 w -> repair_types_facts types types1.
 Proof.
-  move=> H. destruct H as (Hp & Hd & Hr & _ & _ & Hu).
-  split_and!; [exact Hp | exact Hd | move=> kc; have := Hr kc; lia | exact Hu].
+  move=> H. destruct H as (Hp & Hd & Hr & _ & _ & Hu & Hsub).
+  split_and!; [exact Hp | exact Hd | move=> kc; have := Hr kc; lia | exact Hu | exact Hsub].
 Qed.
 
 Lemma split_step_facts_compose (types types1 types2 : gmap loc type_state) (w1 w2 : item_cell) :
@@ -3075,8 +3141,8 @@ Lemma split_step_facts_compose (types types1 types2 : gmap loc type_state) (w1 w
   repair_types_facts types types2.
 Proof.
   move=> H1 H2.
-  destruct H1 as (Hp1 & Hd1 & Hr1 & _ & _ & Hu1).
-  destruct H2 as (Hp2 & Hd2 & Hr2 & _ & _ & Hu2).
+  destruct H1 as (Hp1 & Hd1 & Hr1 & _ & _ & Hu1 & Hsub1).
+  destruct H2 as (Hp2 & Hd2 & Hr2 & _ & _ & Hu2 & Hsub2).
   split_and!.
   - move=> p ts2 Hp.
     destruct (Hp2 p ts2 Hp) as (ts1 & Hp1' & Ha2 & Hf2).
@@ -3089,6 +3155,10 @@ Proof.
     have Hts1 : ts1 = ts := Hu1 p ts ts1 Hpa Hpm Hunit.
     subst ts1.
     exact (Hu2 p ts ts2 Hpm Hpb Hunit).
+  - move=> c2 Hc2.
+    destruct (Hsub2 c2 Hc2) as (c1 & Hc1 & Hcl2 & Hlo2 & Hhi2).
+    destruct (Hsub1 c1 Hc1) as (c0 & Hc0 & Hcl1 & Hlo1 & Hhi1).
+    exists c0. split_and!; [exact Hc0 | congruence | lia | lia].
 Qed.
 
 (** [store.repair], general splitting form (issue #28 stage D2b): the origin
@@ -4149,7 +4219,7 @@ Proof using Type*.
     iIntros (lft rgt types2) "(Hlinked & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hpinv2 & %Hrtf & %HbdL & %HbdR)".
     (* under the unit scaffold no split fires: the map is unchanged *)
     have Htyeq : types2 = typesj.
-    { destruct Hrtf as (Hpres & Hdom2m & _ & Hunitpres).
+    { destruct Hrtf as (Hpres & Hdom2m & _ & Hunitpres & _).
       apply map_eq => p0.
       destruct (typesj !! p0) as [ts0|] eqn:Hp0.
       - destruct (Hdom2m p0 (mk_is_Some _ _ Hp0)) as [ts2 Hp2].
