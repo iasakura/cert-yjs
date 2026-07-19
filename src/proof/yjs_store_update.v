@@ -3550,6 +3550,91 @@ Proof.
   iPureIntro. move=> p ts c Hp Hc. exact (Hall p ts Hp c Hc).
 Qed.
 
+(** 2-conjunct (post-flip) variants of the pure extractions: the same
+    facts read off the big-sep without the unit scaffold conjunct. *)
+Lemma types_runs_wf2 (types : gmap loc type_state) :
+  ([∗ map] parent ↦ ts ∈ types,
+      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  ⌜∀ c, c ∈ all_cells types → run_wf (ic_run c)⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types, ⌜∀ c, c ∈ ty_cells ts → run_wf (ic_run c)⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "(Hyt & _)".
+    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    iApply (own_dll_runs_wf with "Hdll"). }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> c Hc.
+  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
+  exact (Hall p ts Hp c Hcts).
+Qed.
+
+Lemma types_parents_all2 (types : gmap loc type_state) :
+  ([∗ map] parent ↦ ts ∈ types,
+      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  ⌜∀ p ts c, types !! p = Some ts → c ∈ ty_cells ts → ic_parent c = p⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types, ⌜∀ c, c ∈ ty_cells ts → ic_parent c = p⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "(Hyt & _)".
+    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    by iPureIntro. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> p ts c Hp Hc. exact (Hall p ts Hp c Hc).
+Qed.
+
+Lemma types_arr_inv2 (types : gmap loc type_state) :
+  ([∗ map] parent ↦ ts ∈ types,
+      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  ⌜∀ p ts, types !! p = Some ts -> YjsArrInvariant (ty_arr ts)⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types, ⌜YjsArrInvariant (ty_arr ts)⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "(_ & %Hi)". by iPureIntro. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
+Qed.
+
+Lemma types_repr_all2 (types : gmap loc type_state) :
+  ([∗ map] parent ↦ ts ∈ types,
+      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  ⌜∀ p ts, types !! p = Some ts -> cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types,
+      ⌜cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "(Hyt & _)".
+    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    by iPureIntro. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
+Qed.
+
+Lemma types_entry_pures2 (types : gmap loc type_state) (p : loc) (ts : type_state) :
+  types !! p = Some ts ->
+  ([∗ map] parent ↦ ts0 ∈ types,
+      own_ytype_cells parent (DfracOwn 1) (ty_cells ts0) (ty_arr ts0) ∗
+      ⌜YjsArrInvariant (ty_arr ts0)⌝) -∗
+  ⌜cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts) ∧
+   (∀ c, c ∈ ty_cells ts -> ic_parent c = p)⌝.
+Proof.
+  move=> Hp. iIntros "Htypes".
+  iDestruct (big_sepM_lookup_acc _ _ p ts Hp with "Htypes") as "[(Hyt & _) _]".
+  iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
+  iPureIntro. split; [exact Hrepr | exact Hcpar].
+Qed.
+
 (** One entry's [own_ytype_cells] pures, read off the big-sep (which the
     conclusion being pure lets the caller keep). *)
 Lemma types_entry_pures (types : gmap loc type_state) (p : loc) (ts : type_state) :
