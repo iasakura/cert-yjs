@@ -3832,24 +3832,41 @@ Proof.
       have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm parent ts Hbnm Hts.
       apply (Hctr (RootId nm) x); [by rewrite Hdg | exact Hcx]. }
     (* the W64 cell-level shadow, via the id-bound pins *)
+    iDestruct (types_runs_wf with "Htypes") as %Hrunwfall0.
     have Hcellctr : ∀ c0, c0 ∈ all_cells types -> cell_client c0 = client ->
         (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z k)%Z.
     { move=> c0 Hc0 Hcc.
       have Hc0m := Hc0. apply all_cells_elem_of in Hc0m.
       destruct Hc0m as (p & ts & Hts & Hcts).
-      have Hu : cell_unit c0 := proj1 (Forall_forall _ _) (Hunitall p ts Hts) _ Hcts.
-      have Hitemmem : run_head c0 ∈ ty_arr ts.
+      have Hwf : run_wf (ic_run c0) := Hrunwfall0 c0 Hc0.
+      have Hlen1 : (1 <= length (ic_run c0))%nat.
+      { destruct (ic_run c0) eqn:Hrc; [exact (False_ind _ (proj1 Hwf eq_refl)) | simpl; lia]. }
+      destruct (lookup_lt_is_Some_2 (ic_run c0) (length (ic_run c0) - 1)%nat ltac:(lia)) as [xl Hxl].
+      have Hxlid := run_wf_char_id _ _ _ Hwf Hxl.
+      apply list_elem_of_lookup_1 in Hcts as [ci Hci].
+      have Hxlmem : xl ∈ ty_arr ts.
       { rewrite (Hreprall p ts Hts).
-        apply run_head_in_flatten; [exact Hcts | exact Hu]. }
+        apply (list_elem_of_lookup_2 _
+                 (length (run_flatten (take ci (ty_cells ts))) + (length (ic_run c0) - 1))%nat).
+        exact (run_flatten_lookup_of_cell (ty_cells ts) ci _ c0 xl Hci Hxl). }
       have [Hcb Hkb] := Hcellbnd c0 Hc0.
-      have Hceq : clientId (item_id (run_head c0)) = uint.nat client.
-      { move: Hcc. rewrite /cell_client. move=> Hcc.
-        have Hz : uint.Z (W64 (clientId (item_id (run_head c0)))) = uint.Z client
+      have Hceq : clientId (item_id xl) = uint.nat client.
+      { move: Hcc. rewrite /cell_client /run_head. move=> Hcc.
+        have Hz : uint.Z (W64 (clientId (item_id (hd inhabitant (ic_run c0))))) = uint.Z client
           by rewrite Hcc.
-        word. }
-      have Hlt := Hctrt p ts (run_head c0) Hts Hitemmem Hceq.
-      rewrite /cell_unit in Hu.
-      rewrite /cell_clock Hu. word. }
+        have Hcb' : (Z.of_nat (clientId (item_id (hd inhabitant (ic_run c0)))) < 2^64)%Z := Hcb.
+        have Hcl2 : clientId (item_id (hd inhabitant (ic_run c0))) = uint.nat client.
+        { clear -Hz Hcb'. word. }
+        rewrite Hxlid. exact Hcl2. }
+      have Hlt := Hctrt p ts xl Hts Hxlmem Hceq.
+      rewrite Hxlid in Hlt.
+      have Hlt2 : (clock (item_id (hd inhabitant (ic_run c0))) + (length (ic_run c0) - 1)
+                   < uint.nat k)%nat := Hlt.
+      rewrite /run_head in Hkb.
+      have Hlt3 : (clock (item_id (hd inhabitant (ic_run c0))) + length (ic_run c0)
+                   <= uint.nat k)%nat.
+      { clear -Hlt2 Hlen1. lia. }
+      rewrite /cell_clock /run_head. clear -Hlt3 Hkb. word. }
     iExists client, k, items_mref, types_mref, dset, types, bind, h, m.
     iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
     iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset HtypesAuth Hbinds Hhist".
