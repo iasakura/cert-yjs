@@ -48,22 +48,22 @@ Proof. rewrite /cell_le. move=> x y z. lia. Qed.
 #[local] Instance cell_le_total : Total cell_le.
 Proof. rewrite /cell_le. move=> x y. lia. Qed.
 
-(* [is_pool_rooted]'s instances are declared in [yjs_store_base] under its
+(* [is_pending_rooted]'s instances are declared in [yjs_store_base] under its
    wider section context ([Proof using Type*] closes them over instances this
    file's section lacks), so re-declare them here (the [cell_le] pattern
    above); without them [iNamed] stalls at the persistent [#Hpendroot]
    conjunct of [store_inv_excl] / [own_store]. *)
-#[local] Instance pool_item_rooted_persistent' γs ti :
-  Persistent (pool_item_rooted γs ti).
-Proof. rewrite /pool_item_rooted. destruct (decide _); apply _. Qed.
-#[local] Instance is_pool_rooted_persistent' γs pool :
-  Persistent (is_pool_rooted γs pool).
+#[local] Instance pending_item_rooted_persistent' γs ti :
+  Persistent (pending_item_rooted γs ti).
+Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
+#[local] Instance is_pending_rooted_persistent' γs pending :
+  Persistent (is_pending_rooted γs pending).
 Proof. apply _. Qed.
-#[local] Instance pool_item_rooted_timeless' γs ti :
-  Timeless (pool_item_rooted γs ti).
-Proof. rewrite /pool_item_rooted. destruct (decide _); apply _. Qed.
-#[local] Instance is_pool_rooted_timeless' γs pool :
-  Timeless (is_pool_rooted γs pool).
+#[local] Instance pending_item_rooted_timeless' γs ti :
+  Timeless (pending_item_rooted γs ti).
+Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
+#[local] Instance is_pending_rooted_timeless' γs pending :
+  Timeless (is_pending_rooted γs pending).
 Proof. apply _. Qed.
 
 (* ===== apply_update: store.applyUpdate (insert-only, decoded, causal-order ==
@@ -86,7 +86,7 @@ Proof.
     + move=> [l [Hx Hl]]. apply elem_of_cons in Hl as [-> | Hl]; [by left | right; by exists l].
 Qed.
 
-(** Pool membership, decomposed to the owning type. *)
+(** Pending membership, decomposed to the owning type. *)
 Lemma all_cells_elem_of (types : gmap loc type_state) (c : item_cell) :
   c ∈ all_cells types <-> ∃ p ts, types !! p = Some ts /\ c ∈ ty_cells ts.
 Proof.
@@ -104,7 +104,7 @@ Proof.
     by apply elem_of_map_to_list.
 Qed.
 
-(** A client run holds exactly the pool's cells with that client tag. *)
+(** A client run holds exactly the pending's cells with that client tag. *)
 Lemma client_run_mem (types : gmap loc type_state) (kc : w64) (c : item_cell) :
   c ∈ client_run types kc <-> (c ∈ all_cells types /\ cell_client c = kc).
 Proof.
@@ -129,7 +129,7 @@ Proof.
     have -> : (S i + (j - S i))%nat = j by lia. exact Hj.
 Qed.
 
-(** Borrow one pool cell's heap struct out of the per-type DLL big-sep: its
+(** Borrow one pending cell's heap struct out of the per-type DLL big-sep: its
     struct points-to plus the [own_dll]-pinned translation facts, and a wand
     restoring the big-sep. What [GetNode]'s binary search and [repair]'s
     parent borrow read through. *)
@@ -176,7 +176,7 @@ Proof.
   split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
 Qed.
 
-(** The general, run-aware sibling of [types_cell_acc]: borrows one pool cell's
+(** The general, run-aware sibling of [types_cell_acc]: borrows one pending cell's
     heap struct out of the 2-conjunct per-type DLL big-sep (no [cell_unit]) and
     exposes the full [own_dll_acc] translation facts (id / parent / content
     coupling / origins / flags / [run_wf]) rather than the [cell_unit]-derived
@@ -225,7 +225,7 @@ Proof using Type*.
   split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
 Qed.
 
-(** Every pool cell's id components round-trip through [w64] heap fields
+(** Every pending cell's id components round-trip through [w64] heap fields
     ([own_dll_id_bounds], lifted over the big-sep) — the certificate spec's
     glue from nat-level replay facts to W64 comparisons. *)
 Lemma types_cells_id_bounds (types : gmap loc type_state) :
@@ -2376,7 +2376,7 @@ Qed.
     coincides with [GetNode]. The general (actually splitting) specs arrive
     with the run-integrate milestone (M4), where runs become reachable. *)
 
-(* ===== #40 pending pool stack (issue #40) ===== *)
+(* ===== #40 pending stack (issue #40) ===== *)
 Lemma own_update_id_bounds (sl : slice.t) (dq : dfrac)
     (inputs : list (TId * IntegrateInput (A := A))) :
   own_update_structs sl dq inputs -∗
@@ -2417,7 +2417,7 @@ Qed.
 
 (* ===== the pending gate, heap side (issue #40) ============================ *)
 
-(** [containsUpdateItemId] (the in-pool dedup probe): scans a decoded pool
+(** [containsUpdateItemId] (the in-pending dedup probe): scans a decoded pending
     slice for a struct carrying [idv]. *)
 Lemma wp_containsUpdateItemId (sl : slice.t) (dq : dfrac)
     (inputs : list (TId * IntegrateInput (A := A))) (idv : yjs.id.t) :
@@ -2543,7 +2543,7 @@ Qed.
 
 (* ----- the arrival gate ----- *)
 (* (the pure gate lemmas [input_ready_false_of_dep] / [input_ready_true_of] /
-   [input_deps_*] live in [yjs_network_model] with the pool theory) *)
+   [input_deps_*] live in [yjs_network_model] with the pending theory) *)
 
 (** [store.originArrived] (issue #40): the per-origin arrival check; a nil
     origin imposes no dependency. *)
@@ -2733,7 +2733,7 @@ Qed.
 (** [store.integrateDecoded] (issue #40): the ready branch of the drain, as a
     per-struct contract — the loop-free core of the retired batch loop. The
     struct's target root must be bound ([Hbnm]; the #49 pre-bound-roots
-    restriction, discharged by the drain from [is_pool_rooted] or from the
+    restriction, discharged by the drain from [is_pending_rooted] or from the
     origins' arrival), its [ValidReplay]-step facts hold at the current model
     [m], and the heap advances to the model spliced at [ti.1]. *)
 Lemma wp_store__integrateDecoded (s mref tref : loc)
@@ -3008,7 +3008,7 @@ Qed.
     target array, so the array is nonempty. This is how the drain derives the
     target root's binding for origin-carrying structs: a nonempty model entry
     is a registered root by [Hmdom] (origin-less structs instead carry a
-    [pool_item_rooted]-style witness). *)
+    [pending_item_rooted]-style witness). *)
 Lemma toItem_nonempty_of_origin (input : IntegrateInput (A := A))
     (arr : list (YjsItem A)) (nit : YjsItem A) :
   toItem input arr = Some nit ->
@@ -3027,40 +3027,40 @@ Proof.
     rewrite /find_by_id /= in Hf. discriminate.
 Qed.
 
-(** The two destructed corollaries of [pool_drain_unfold] the loop invariant
+(** The two destructed corollaries of [pending_drain_unfold] the loop invariant
     steps with (goal-side rewriting keeps the [let]-reduction by conversion). *)
-Lemma pool_drain_step_nil (m : DocM)
-    (pool kept : list (TId * IntegrateInput (A := A))) (m1 : DocM) :
-  pool_pass m pool [] = ([], kept, m1) ->
-  pool_drain m pool = ([], kept, m1).
-Proof. move=> Hpass. rewrite pool_drain_unfold Hpass //. Qed.
+Lemma pending_drain_step_nil (m : DocM)
+    (pending kept : list (TId * IntegrateInput (A := A))) (m1 : DocM) :
+  pending_pass m pending [] = ([], kept, m1) ->
+  pending_drain m pending = ([], kept, m1).
+Proof. move=> Hpass. rewrite pending_drain_unfold Hpass //. Qed.
 
-Lemma pool_drain_step_cons (m : DocM)
-    (pool : list (TId * IntegrateInput (A := A)))
+Lemma pending_drain_step_cons (m : DocM)
+    (pending : list (TId * IntegrateInput (A := A)))
     (a : TId * IntegrateInput (A := A))
     (app kept app2 rest2 : list (TId * IntegrateInput (A := A))) (m1 m2 : DocM) :
-  pool_pass m pool [] = (a :: app, kept, m1) ->
-  pool_drain m1 kept = (app2, rest2, m2) ->
-  pool_drain m pool = ((a :: app) ++ app2, rest2, m2).
-Proof. move=> Hpass Hdrec. rewrite pool_drain_unfold Hpass Hdrec //. Qed.
+  pending_pass m pending [] = (a :: app, kept, m1) ->
+  pending_drain m1 kept = (app2, rest2, m2) ->
+  pending_drain m pending = ((a :: app) ++ app2, rest2, m2).
+Proof. move=> Hpass Hdrec. rewrite pending_drain_unfold Hpass Hdrec //. Qed.
 
 (** [store.applyUpdate] (issue #40), the internal total loop: the pending
     buffer plus the incoming batch drain to the structural-dependency
-    fixpoint. The pure [pool_drain] names the applied list, the leftover pool
+    fixpoint. The pure [pending_drain] names the applied list, the leftover pending
     and the final model; [ValidReplay applied] carries the per-struct validity
-    facts (the certificate layer produces it via [history_deliver_pool]); and
-    [pool_ready_total] excludes the ready-but-stuck branch, so the Go loop
+    facts (the certificate layer produces it via [history_deliver_pending]); and
+    [pending_ready_total] excludes the ready-but-stuck branch, so the Go loop
     (which integrates whenever the arrival gate passes) stays aligned with the
-    model scan. Origin-less pool structs must target registered roots (the
+    model scan. Origin-less pending structs must target registered roots (the
     issue #49 pre-bound-roots restriction); origin-carrying structs derive
     their binding from the origin's arrival at integration time. *)
 Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
     (dq : dfrac)
     (inputs pend0 applied rest : list (TId * IntegrateInput (A := A)))
     (m m' : DocM) (types : gmap loc type_state) (bind : gmap P loc) :
-  pool_drain m (pend0 ++ inputs) = (applied, rest, m') ->
+  pending_drain m (pend0 ++ inputs) = (applied, rest, m') ->
   ValidReplay applied m m' ->
-  pool_ready_total m (pend0 ++ inputs) applied ->
+  pending_ready_total m (pend0 ++ inputs) applied ->
   (∀ name p, bind !! name = Some p -> is_Some (types !! p)) ->
   (∀ n1 n2 p, bind !! n1 = Some p -> bind !! n2 = Some p -> n1 = n2) ->
   (∀ p, is_Some (types !! p) -> ∃ name, bind !! name = Some p) ->
@@ -3109,7 +3109,7 @@ Proof using Type*.
   move=> Hdrain Hvr Hrtot Hbindtypes Hbindinj Htypesbound Hmtypes Hmdom
          Hrooted Hnowrap Hkb1 Hlocdup Hrangedisj.
   iIntros (Φ) "(#Hpkg & Hupd & Hpendf & Hpend & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
-  (* W64 id bounds of the whole pool, from the two heap slices *)
+  (* W64 id bounds of the whole pending, from the two heap slices *)
   iDestruct (own_update_id_bounds with "Hupd") as %Hidbin.
   iDestruct (own_update_id_bounds with "Hpend") as %Hidbpd.
   have Hidb : ∀ ti : TId * IntegrateInput (A := A), ti ∈ pend0 ++ inputs ->
@@ -3123,19 +3123,19 @@ Proof using Type*.
   iDestruct "Hpend" as (uivs_pd) "(Hslpd & Hcappd & #Hitemspd)".
   iDestruct (big_sepL2_length with "Hitemspd") as %Hlenpd.
   wp_method_call. wp_call. wp_call. wp_auto.
-  (* ----- phase A: pool := pending ++ structs ----- *)
+  (* ----- phase A: pending := pending ++ structs ----- *)
   iDestruct (own_slice_len with "Hslin") as %[Hinlen Hinlen0].
   iAssert (∃ (j : nat) (pslA : slice.t) (uivsA : list yjs.updateItem.t),
       "Hi" ∷ i_ptr ↦ W64 j ∗
-      "Hpoolp" ∷ pool_ptr ↦ pslA ∗
+      "Hpendingp" ∷ pending_ptr ↦ pslA ∗
       "HslA" ∷ pslA ↦* uivsA ∗
       "HcapA" ∷ own_slice_cap yjs.updateItem.t pslA (DfracOwn 1) ∗
       "#HitemsA" ∷ ([∗ list] uiv;ti ∈ uivsA;(pend0 ++ take j inputs),
           is_update_item uiv ti) ∗
       "Hslin" ∷ sl ↦*{dq} uivs_in ∗
       "%HjA" ∷ ⌜(j <= length uivs_in)%nat⌝)%I
-    with "[i pool Hslpd Hcappd Hslin]" as "IH".
-  { iExists 0%nat, pend_sl0, uivs_pd. iFrame "i pool Hslpd Hcappd Hslin".
+    with "[i pending Hslpd Hcappd Hslin]" as "IH".
+  { iExists 0%nat, pend_sl0, uivs_pd. iFrame "i pending Hslpd Hcappd Hslin".
     rewrite take_0 app_nil_r. iFrame "Hitemspd".
     iPureIntro. lia. }
   wp_for "IH".
@@ -3170,13 +3170,13 @@ Proof using Type*.
     replace (word.add (W64 j) (W64 1)) with (W64 (S j)) by word.
     have H00 : sint.nat (W64 0) = 0%nat by word.
     iEval (rewrite H00 /=) in "HslA'".
-    iFrame "Hi Hpoolp HslA' HcapA' Hslin".
+    iFrame "Hi Hpendingp HslA' HcapA' Hslin".
     iSplit.
     { erewrite take_S_r; last exact Hti.
       rewrite app_assoc. rewrite big_sepL2_snoc.
       iSplit; [iFrame "HitemsA" | iFrame "Hui"]. }
     iPureIntro. lia.
-  - (* pool complete: content is pend0 ++ inputs; pending := nil *)
+  - (* pending complete: content is pend0 ++ inputs; pending := nil *)
     wp_auto.
     have Hjge : (j >= length uivs_in)%nat.
     { move: Hcond. rewrite Hinlen. rewrite Hinlen in HjA. word. }
@@ -3184,14 +3184,14 @@ Proof using Type*.
     { apply take_ge. rewrite -Hlenin. lia. }
     iEval (rewrite Htakeall) in "HitemsA".
     (* ----- phase B: the drain loop ----- *)
-    iAssert (∃ (pv : bool) (poolS : slice.t) (uivsP : list yjs.updateItem.t)
-               (poolj appliedj suffix : list (TId * IntegrateInput (A := A)))
+    iAssert (∃ (pv : bool) (pendingS : slice.t) (uivsP : list yjs.updateItem.t)
+               (pendingj appliedj suffix : list (TId * IntegrateInput (A := A)))
                (typesj : gmap loc type_state) (mj : DocM),
         "Hprog" ∷ progress_ptr ↦ pv ∗
-        "Hpoolp" ∷ pool_ptr ↦ poolS ∗
-        "HslP" ∷ poolS ↦* uivsP ∗
-        "HcapP" ∷ own_slice_cap yjs.updateItem.t poolS (DfracOwn 1) ∗
-        "#HitemsPj" ∷ ([∗ list] uiv;ti ∈ uivsP;poolj, is_update_item uiv ti) ∗
+        "Hpendingp" ∷ pending_ptr ↦ pendingS ∗
+        "HslP" ∷ pendingS ↦* uivsP ∗
+        "HcapP" ∷ own_slice_cap yjs.updateItem.t pendingS (DfracOwn 1) ∗
+        "#HitemsPj" ∷ ([∗ list] uiv;ti ∈ uivsP;pendingj, is_update_item uiv ti) ∗
         "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
         "Hitemmap" ∷ own_item_map mref (DfracOwn 1) typesj ∗
         "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ tref ∗
@@ -3200,9 +3200,9 @@ Proof using Type*.
             own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
             ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
             ⌜Forall cell_unit (ty_cells ts)⌝) ∗
-        "%Hpoolsubj" ∷ ⌜∀ ti : TId * IntegrateInput (A := A),
-            ti ∈ poolj -> ti ∈ pend0 ++ inputs⌝ ∗
-        "%Hprj" ∷ ⌜PoolReplay m appliedj mj⌝ ∗
+        "%Hpendingsubj" ∷ ⌜∀ ti : TId * IntegrateInput (A := A),
+            ti ∈ pendingj -> ti ∈ pend0 ++ inputs⌝ ∗
+        "%Hprj" ∷ ⌜PendingReplay m appliedj mj⌝ ∗
         "%Hdomj" ∷ ⌜dom typesj = dom types⌝ ∗
         "%Hmtypesj" ∷ ⌜∀ name pl ts, bind !! name = Some pl ->
             typesj !! pl = Some ts -> docm_get mj (RootId name) = ty_arr ts⌝ ∗
@@ -3217,13 +3217,13 @@ Proof using Type*.
         "%Hlocdupj" ∷ ⌜NoDup (ic_loc <$> all_cells typesj)⌝ ∗
         "%Hrangedisjj" ∷ ⌜cells_range_disjoint (all_cells typesj)⌝ ∗
         "%Hmid" ∷ ⌜pv = true ->
-            pool_drain mj poolj = (suffix, rest, m') ∧
+            pending_drain mj pendingj = (suffix, rest, m') ∧
             applied = appliedj ++ suffix ∧ ValidReplay suffix mj m'⌝ ∗
-        "%Hfin" ∷ ⌜pv = false -> poolj = rest ∧ mj = m' ∧ applied = appliedj⌝)%I
-      with "[progress Hpoolp HslA HcapA Hitemsf Hitemmap Htypesf Htypesmap Htypes]"
+        "%Hfin" ∷ ⌜pv = false -> pendingj = rest ∧ mj = m' ∧ applied = appliedj⌝)%I
+      with "[progress Hpendingp HslA HcapA Hitemsf Hitemmap Htypesf Htypesmap Htypes]"
       as "IH".
     { iExists true, pslA, uivsA, (pend0 ++ inputs), [], applied, types, m.
-      iFrame "progress Hpoolp HslA HcapA Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+      iFrame "progress Hpendingp HslA HcapA Hitemsf Hitemmap Htypesf Htypesmap Htypes".
       iFrame "HitemsA".
       iPureIntro. split_and!.
       - done.
@@ -3246,21 +3246,21 @@ Proof using Type*.
       wp_apply wp_slice_literal. iSplitR; first done.
       iIntros "%rsl0 [Hrsl0 Hrcap0]". wp_auto.
       (* the pass computation this iteration refines *)
-      destruct (pool_pass mj poolj []) as [[app_rem0 keptfin0] m_pend0] eqn:Hpass0.
+      destruct (pending_pass mj pendingj []) as [[app_rem0 keptfin0] m_pend0] eqn:Hpass0.
       (* the future passes' applied list ([suffix] is introduced as [suffix0]:
          the binder shadows stdpp's [suffix]) *)
       have [af [Hsufdec Hvraf]] : ∃ af,
           suffix0 = app_rem0 ++ af ∧ ValidReplay (app_rem0 ++ af) mj m'.
       { destruct app_rem0 as [| a0 ar0].
-        - have Hdd := pool_drain_step_nil mj poolj keptfin0 m_pend0 Hpass0.
+        - have Hdd := pending_drain_step_nil mj pendingj keptfin0 m_pend0 Hpass0.
           rewrite Hdrainj in Hdd.
           move: Hdd => [= Hsuf Hrest2 Hm2].
           have Hmp0 : m_pend0 = mj :=
-            pool_pass_no_progress poolj mj [] keptfin0 m_pend0 Hpass0.
+            pending_pass_no_progress pendingj mj [] keptfin0 m_pend0 Hpass0.
           subst suffix0. exists []. split; first done.
           rewrite Hm2 Hmp0. constructor.
-        - destruct (pool_drain m_pend0 keptfin0) as [[app2 rest2] m2] eqn:Hdrec.
-          have Hdd := pool_drain_step_cons mj poolj a0 ar0 keptfin0 app2 rest2
+        - destruct (pending_drain m_pend0 keptfin0) as [[app2 rest2] m2] eqn:Hdrec.
+          have Hdd := pending_drain_step_cons mj pendingj a0 ar0 keptfin0 app2 rest2
                         m_pend0 m2 Hpass0 Hdrec.
           rewrite Hdrainj in Hdd.
           move: Hdd => [= Hsuf Hrest2 Hm2].
@@ -3287,15 +3287,15 @@ Proof using Type*.
               own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
               ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
               ⌜Forall cell_unit (ty_cells ts)⌝) ∗
-          "%Hilen" ∷ ⌜(i <= length poolj)%nat⌝ ∗
-          "%Hpassa" ∷ ⌜pool_pass m_c (drop i poolj) keptacc =
+          "%Hilen" ∷ ⌜(i <= length pendingj)%nat⌝ ∗
+          "%Hpassa" ∷ ⌜pending_pass m_c (drop i pendingj) keptacc =
               (app_rem, keptfin0, m_pend0)⌝ ∗
-          "%Hpassc" ∷ ⌜pool_pass mj poolj [] =
+          "%Hpassc" ∷ ⌜pending_pass mj pendingj [] =
               (appacc ++ app_rem, keptfin0, m_pend0)⌝ ∗
           "%Happdec" ∷ ⌜applied = appliedj ++ appacc ++ app_rem ++ af2⌝ ∗
           "%Hvrc" ∷ ⌜ValidReplay (app_rem ++ af2) m_c m'⌝ ∗
-          "%Hprc" ∷ ⌜PoolReplay m (appliedj ++ appacc) m_c⌝ ∗
-          "%Hkeptsub" ∷ ⌜∀ ti, ti ∈ keptacc -> ti ∈ poolj⌝ ∗
+          "%Hprc" ∷ ⌜PendingReplay m (appliedj ++ appacc) m_c⌝ ∗
+          "%Hkeptsub" ∷ ⌜∀ ti, ti ∈ keptacc -> ti ∈ pendingj⌝ ∗
           "%Hpv" ∷ ⌜pvi = false <-> appacc = []⌝ ∗
           "%Hdomc" ∷ ⌜dom types_c = dom types⌝ ∗
           "%Hmtypesc" ∷ ⌜∀ name pl ts, bind !! name = Some pl ->
@@ -3338,7 +3338,7 @@ Proof using Type*.
         { move: Hcondi. rewrite HPlen. word. }
         destruct (uivsP !! i) as [uiv|] eqn:Huiv;
           last by (apply lookup_ge_None in Huiv; lia).
-        destruct (poolj !! i) as [[tj input]|] eqn:Hpi;
+        destruct (pendingj !! i) as [[tj input]|] eqn:Hpi;
           last by (apply lookup_ge_None in Hpi; rewrite -HlenP in Hpi; lia).
         iDestruct (big_sepL2_lookup _ _ _ i with "HitemsPj") as "#Hui";
           [exact Huiv | exact Hpi |].
@@ -3363,12 +3363,12 @@ Proof using Type*.
         { move=> d.
           exact (docm_cells_agree m_c bind types_c d Hmtypesc Hmdomc
                    Hbindtypesc Htypesboundc Hreprallc Hunitallc). }
-        have Hpool0in : (tj, input) ∈ pend0 ++ inputs.
-        { apply Hpoolsubj. exact (list_elem_of_lookup_2 _ _ _ Hpi). }
-        (* read pool[i] into ui *)
+        have Hpending0in : (tj, input) ∈ pend0 ++ inputs.
+        { apply Hpendingsubj. exact (list_elem_of_lookup_2 _ _ _ Hpi). }
+        (* read pending[i] into ui *)
         wp_auto.
         rewrite decide_True; last by word.
-        iDestruct (own_slice_elem_acc (sint.Z (W64 i)) uiv poolS (DfracOwn 1)
+        iDestruct (own_slice_elem_acc (sint.Z (W64 i)) uiv pendingS (DfracOwn 1)
                      uivsP with "HslP") as "[Hel Hgive]".
         { word. }
         { replace (Z.to_nat (sint.Z (W64 i))) with i by word. exact Huiv. }
@@ -3396,7 +3396,7 @@ Proof using Type*.
         destruct (docm_has m_c (in_id input)) eqn:Hd; subst ok.
         { (* duplicate: continue *)
           wp_auto. wp_for_post.
-          iFrame "Hcapin Hpendf HΦ s Hslin Hpoolp HslP HcapP".
+          iFrame "Hcapin Hpendf HΦ s Hslin Hpendingp HslP HcapP".
           iExists (S i), pvi, restS, uivsR, keptacc, appacc, app_rem, af2,
             types_c, m_c.
           replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
@@ -3404,7 +3404,7 @@ Proof using Type*.
           iFrame "HitemsR".
           iPureIntro. split_and!; try done.
           - apply (lookup_lt_Some _ _ _ Hpi).
-          - rewrite (drop_S poolj (tj, input) i Hpi) /= Hd in Hpassa.
+          - rewrite (drop_S pendingj (tj, input) i Hpi) /= Hd in Hpassa.
             exact Hpassa. }
         (* fresh: probe the structural gate *)
         wp_auto.
@@ -3413,18 +3413,18 @@ Proof using Type*.
                     with "[$Hui $Hitemsf $Hitemmap $Htypes]").
         iIntros "(Hitemsf & Hitemmap & Htypes)".
         destruct (input_ready m_c input) eqn:Hready.
-        -- (* ready: certified pools always integrate *)
+        -- (* ready: certified pendings always integrate *)
            have Hsome : is_Some (integrate input (docm_get m_c tj)).
            { apply (Hrtot (appliedj ++ appacc) (app_rem ++ af2) m_c (tj, input)).
              - rewrite Happdec !app_assoc //.
              - exact Hprc.
-             - exact Hpool0in.
+             - exact Hpending0in.
              - exact Hd.
              - exact Hready. }
            destruct Hsome as [arr' Hint'].
            (* step the pass equation *)
-           rewrite (drop_S poolj (tj, input) i Hpi) /= Hd Hready Hint' in Hpassa.
-           destruct (pool_pass (<[tj := arr']> m_c) (drop (S i) poolj) keptacc)
+           rewrite (drop_S pendingj (tj, input) i Hpi) /= Hd Hready Hint' in Hpassa.
+           destruct (pending_pass (<[tj := arr']> m_c) (drop (S i) pendingj) keptacc)
              as [[app2 kept2] m2] eqn:Hrec.
            move: Hpassa => [= Happrem Hkeq Hmeq].
            subst app_rem kept2 m2.
@@ -3441,7 +3441,7 @@ Proof using Type*.
            have [nm [Htjeq [pl Hbnm]]] : ∃ nm, tj = RootId nm ∧ is_Some (bind !! nm).
            { destruct (decide (in_originId input = None ∧
                                in_rightOriginId input = None)) as [[HoN HrN] | Hor].
-             - destruct (Hrooted (tj, input) Hpool0in HoN HrN) as (nm & Heq & Hsm).
+             - destruct (Hrooted (tj, input) Hpending0in HoN HrN) as (nm & Heq & Hsm).
                by exists nm.
              - have Hne : docm_get m_c tj ≠ [].
                { apply (toItem_nonempty_of_origin input _ nit Htoit).
@@ -3450,9 +3450,9 @@ Proof using Type*.
                destruct (Hmdomc tj Hne) as (nm & pl & Heq & Hb).
                exists nm. split; [exact Heq | by exists pl]. }
            have Hcidb : (Z.of_nat (clientId (in_id input)) < 2^64)%Z.
-           { exact (proj1 (Hidb (tj, input) Hpool0in)). }
+           { exact (proj1 (Hidb (tj, input) Hpending0in)). }
            have Hckb : (Z.of_nat (clock (in_id input)) < 2^64)%Z.
-           { exact (proj2 (Hidb (tj, input) Hpool0in)). }
+           { exact (proj2 (Hidb (tj, input) Hpending0in)). }
            simpl. rewrite Hready. wp_auto.
            wp_apply (wp_store__integrateDecoded s mref tref uiv (tj, input)
                        m_c types_c bind nit arr' nm pl
@@ -3462,7 +3462,7 @@ Proof using Type*.
                        with "[$Hui $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
            iIntros (types'') "(Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hdom'' & %Hmtypes'' & %Hprov'' & %Hlocdup'' & %Hrangedisj'')".
            wp_auto. wp_for_post.
-           iFrame "Hcapin Hpendf HΦ s Hslin Hpoolp HslP HcapP".
+           iFrame "Hcapin Hpendf HΦ s Hslin Hpendingp HslP HcapP".
            iExists (S i), true, restS, uivsR, keptacc, (appacc ++ [(tj, input)]),
              app2, af2, types'', (<[tj := arr']> m_c).
            replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
@@ -3475,8 +3475,8 @@ Proof using Type*.
            ++ rewrite -app_assoc /=. exact Happdec.
            ++ exact Hrest.
            ++ rewrite app_assoc.
-              apply (PoolReplay_app m m_c _ (appliedj ++ appacc) [(tj, input)] Hprc).
-              apply (PoolReplay_cons m_c (tj, input) arr' [] _ Hd Hready Hint').
+              apply (PendingReplay_app m m_c _ (appliedj ++ appacc) [(tj, input)] Hprc).
+              apply (PendingReplay_cons m_c (tj, input) arr' [] _ Hd Hready Hint').
               constructor.
            ++ exact Hkeptsub.
            ++ split; [move=> Hf; discriminate | move=> Habs; by destruct appacc].
@@ -3491,7 +3491,7 @@ Proof using Type*.
               destruct (Hprov'' c0 Hc0) as [Hold | [Hcc Hck]].
               { exact (Hnowrapc c0 Hold). }
               rewrite Hck. simpl in Hck |- *.
-              have Hb := Hkb1 (tj, input) Hpool0in. simpl in Hb. word.
+              have Hb := Hkb1 (tj, input) Hpending0in. simpl in Hb. word.
            ++ move=> c0 Hc0.
               destruct (Hprov'' c0 Hc0) as [Hold | [Hcc Hck]].
               { exact (Hprovc c0 Hold). }
@@ -3502,7 +3502,7 @@ Proof using Type*.
            ++ exact Hlocdup''.
            ++ exact Hrangedisj''.
         -- (* blocked: keep (deduplicated by id) *)
-           rewrite (drop_S poolj (tj, input) i Hpi) /= Hd Hready in Hpassa.
+           rewrite (drop_S pendingj (tj, input) i Hpi) /= Hd Hready in Hpassa.
            simpl. rewrite Hready. wp_auto.
            wp_apply (wp_containsUpdateItemId restS (DfracOwn 1) keptacc
                        (uiv.(yjs.updateItem.id')) with "[HslR HcapR]").
@@ -3513,7 +3513,7 @@ Proof using Type*.
                        keptacc) eqn:Hex.
            ** (* already kept: skip *)
               wp_auto. wp_for_post.
-              iFrame "Hcapin Hpendf HΦ s Hslin Hpoolp HslP HcapP".
+              iFrame "Hcapin Hpendf HΦ s Hslin Hpendingp HslP HcapP".
               iExists (S i), pvi, restS, uivsR2, keptacc, appacc, app_rem, af2,
                 types_c, m_c.
               replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
@@ -3521,7 +3521,7 @@ Proof using Type*.
               iFrame "HitemsR2".
               iPureIntro. split_and!; try done.
               --- apply (lookup_lt_Some _ _ _ Hpi).
-              --- rewrite /pool_keep /= Hex in Hpassa. exact Hpassa.
+              --- rewrite /pending_keep /= Hex in Hpassa. exact Hpassa.
            ** (* newly kept: append to rest *)
               wp_auto.
               wp_apply wp_slice_literal. iSplitR; first done.
@@ -3529,7 +3529,7 @@ Proof using Type*.
               wp_apply (wp_slice_append with "[$HslR $HcapR $Hsing]").
               iIntros (restS') "(HslR' & HcapR' & _)". wp_auto.
               wp_for_post.
-              iFrame "Hcapin Hpendf HΦ s Hslin Hpoolp HslP HcapP".
+              iFrame "Hcapin Hpendf HΦ s Hslin Hpendingp HslP HcapP".
               iExists (S i), pvi, restS', (uivsR2 ++ [uiv]),
                 (keptacc ++ [(tj, input)]), appacc, app_rem, af2, types_c, m_c.
               replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
@@ -3541,13 +3541,13 @@ Proof using Type*.
                 iSplit; [iFrame "HitemsR2" | iFrame "Hui"]. }
               iPureIntro. split_and!; try done.
               --- apply (lookup_lt_Some _ _ _ Hpi).
-              --- rewrite /pool_keep /= Hex in Hpassa. exact Hpassa.
+              --- rewrite /pending_keep /= Hex in Hpassa. exact Hpassa.
               --- move=> ti Hti. apply elem_of_app in Hti.
                   destruct Hti as [Hti | Hti]; first exact (Hkeptsub ti Hti).
                   apply list_elem_of_singleton in Hti. subst ti.
                   exact (list_elem_of_lookup_2 _ _ _ Hpi).
       * (* scan done: close the pass *)
-        have Hige : (length poolj <= i)%nat.
+        have Hige : (length pendingj <= i)%nat.
         { rewrite -HlenP HPlen. rewrite -HlenP HPlen in Hilen.
           move: Hcondi. word. }
         rewrite drop_ge in Hpassa; last exact Hige.
@@ -3562,10 +3562,10 @@ Proof using Type*.
         iFrame "Hcapin Hpendf HΦ s Hslin".
         iExists pvi, restS, uivsR, keptacc, (appliedj ++ appacc), af2,
           types_c, m_c.
-        iFrame "Hprog Hpoolp HslR HcapR Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+        iFrame "Hprog Hpendingp HslR HcapR Hitemsf Hitemmap Htypesf Htypesmap Htypes".
         iFrame "HitemsR".
         iPureIntro. split_and!.
-        ** move=> ti Hti. apply Hpoolsubj. exact (Hkeptsub ti Hti).
+        ** move=> ti Hti. apply Hpendingsubj. exact (Hkeptsub ti Hti).
         ** exact Hprc.
         ** exact Hdomc.
         ** exact Hmtypesc.
@@ -3579,8 +3579,8 @@ Proof using Type*.
            destruct appacc as [| a0 acc0].
            { have := proj2 Hpv eq_refl. rewrite Hpvt.
              move=> Hcontra. discriminate. }
-           destruct (pool_drain m_c keptacc) as [[app2' rest2'] m2'] eqn:Hdrec2.
-           have Hdd := pool_drain_step_cons mj poolj a0 acc0 keptacc app2'
+           destruct (pending_drain m_c keptacc) as [[app2' rest2'] m2'] eqn:Hdrec2.
+           have Hdd := pending_drain_step_cons mj pendingj a0 acc0 keptacc app2'
                          rest2' m_c m2' Hpassc Hdrec2.
            rewrite Hdrainj in Hdd.
            move: Hdd => [= Hsuf Hrest2 Hm2].
@@ -3594,20 +3594,20 @@ Proof using Type*.
            move=> Hpvf.
            have Hacc0 : appacc = [] := proj1 Hpv Hpvf.
            subst appacc.
-           have Hdd := pool_drain_step_nil mj poolj keptacc m_c Hpassc.
+           have Hdd := pending_drain_step_nil mj pendingj keptacc m_c Hpassc.
            rewrite Hdrainj in Hdd.
            move: Hdd => [= Hsuf Hrest2 Hm2].
            split_and!.
            --- by rewrite Hrest2.
            --- by rewrite Hm2.
            --- rewrite Happj Hsuf app_nil_r //.
-    + (* drain complete: write back the pending pool and return *)
+    + (* drain complete: write back the pending and return *)
       rewrite decide_False; last done.
       rewrite decide_True; last done.
-      destruct (Hfin eq_refl) as (Hpooleq & Hmeq & Happeq).
-      subst poolj mj.
+      destruct (Hfin eq_refl) as (Hpendingeq & Hmeq & Happeq).
+      subst pendingj mj.
       wp_auto.
-      iApply ("HΦ" $! poolS typesj).
+      iApply ("HΦ" $! pendingS typesj).
       iFrame "Hpendf Hitemsf Hitemmap Htypesf Htypesmap Htypes".
       iSplitL "Hslin Hcapin".
       { iExists uivs_in. iFrame "Hslin Hcapin Hitemsin". }
@@ -3645,36 +3645,36 @@ Proof.
     move=> Heq. rewrite Heq in Hit'. by apply elem_of_nil in Hit'.
 Qed.
 
-(** The gate totality of a certified pool, extracted from the ghost history:
+(** The gate totality of a certified pending, extracted from the ghost history:
     at any drain intermediate, a fresh ready struct integrates. Stated here
     rather than in [yjs_history] to keep this iteration off the slow
     downstream rebuild; the proof opens the history invariant read-only,
-    mirroring [history_deliver_pool]. *)
-Lemma history_pool_ready_total γh (c : ClientId) h (m : DocM)
-    (pool applied : list (TId * IntegrateInput (A := A))) E :
+    mirroring [history_deliver_pending]. *)
+Lemma history_pending_ready_total γh (c : ClientId) h (m : DocM)
+    (pending applied : list (TId * IntegrateInput (A := A))) E :
   ↑histN ⊆ E ->
   history_state_coh h m ->
   (∀ t : TId, YjsArrInvariant (docm_get m t)) ->
-  (∀ ti : TId * IntegrateInput (A := A), ti ∈ applied -> ti ∈ pool) ->
+  (∀ ti : TId * IntegrateInput (A := A), ti ∈ applied -> ti ∈ pending) ->
   is_history (A := A) (P := P) γh -∗ own_client_history γh c h -∗
-  is_pool_certified γh pool ={E}=∗
-    own_client_history γh c h ∗ ⌜pool_ready_total m pool applied⌝.
+  is_pending_certified γh pending ={E}=∗
+    own_client_history γh c h ∗ ⌜pending_ready_total m pending applied⌝.
 Proof.
   iIntros (HE Hcoh Hinvs Happsub) "#Hinv Hown #Hcertsin".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".
   iDestruct (hist_auth_elem_lookup with "HhistAuth Hown") as %HNc.
-  iAssert (⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pool ->
+  iAssert (⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
              ops !! (in_id ti.2) = Some ((ti.1, OpInsert ti.2) : Op)⌝)%I as %Hlk.
   { iIntros (ti Hin).
     destruct (list_elem_of_lookup_1 _ _ Hin) as (i & Hi).
     iDestruct (big_sepL_lookup _ _ i with "Hcertsin") as "Hc"; [exact Hi |].
     iApply (ghost_map_lookup with "HopsAuth Hc"). }
-  have Hbc : ∀ ti : TId * IntegrateInput (A := A), ti ∈ pool ->
+  have Hbc : ∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
       op_broadcast N (ti.1, OpInsert ti.2).
   { move=> ti Hin. destruct Hopscoh as [Hc1 _].
     have [_ Hreg] := Hc1 _ _ (Hlk ti Hin).
     exists (clientId (DocOp_id ((ti.1, OpInsert ti.2) : Op))). exact Hreg. }
-  have Hrt := pool_ready_total_of_certs N c h m pool applied Hwf HNc Hcoh
+  have Hrt := pending_ready_total_of_certs N c h m pending applied Hwf HNc Hcoh
                 Hinvs Hbc Happsub.
   iMod ("Hclose" with "[HhistAuth HopsAuth]") as "_".
   { iNext. iExists _, _. iFrame "HhistAuth HopsAuth Hcerts".
@@ -3687,7 +3687,7 @@ Qed.
     persistent certificates and its rooted-head witnesses; there is NO
     causal-order assumption, not even within the batch, and no state-vector
     tracking -- the heap drains the pending buffer plus the batch to the
-    structural-dependency fixpoint. [pool_drain] names the applied list, the
+    structural-dependency fixpoint. [pending_drain] names the applied list, the
     new pending buffer and the final model; the delivery's pure content is
     [ValidReplay applied m m'] (which determines [m']), every applied struct
     is foreign (a replica never receives its own insert back before minting
@@ -3704,15 +3704,15 @@ Lemma wp_store__applyUpdate_certs (s_loc : loc) (sl : slice.t) (dq : dfrac)
   {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
       own_store s_loc γs γh c h m pend ∗
       own_update_structs sl dq inputs ∗
-      is_pool_certified γh inputs ∗
-      is_pool_rooted γs inputs }}}
+      is_pending_certified γh inputs ∗
+      is_pending_rooted γs inputs }}}
     s_loc @! (go.PointerType yjs.store) @! "applyUpdate" #sl
   {{{ (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocM),
       RET #();
       own_update_structs sl dq inputs ∗
       own_store s_loc γs γh c (h ++ (deliver_ev <$> applied)) m' rest ∗
       is_history_lb γh c (h ++ (deliver_ev <$> applied)) ∗
-      ⌜pool_drain m (pend ++ inputs) = (applied, rest, m')⌝ ∗
+      ⌜pending_drain m (pend ++ inputs) = (applied, rest, m')⌝ ∗
       ⌜ValidReplay applied m m'⌝ ∗
       ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
          clientId (in_id ti.2) ≠ c⌝ ∗
@@ -3753,34 +3753,34 @@ Proof using Type*.
       (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z.
   { move=> ti /elem_of_app [Hin | Hin];
       [exact (Hpendbnd ti Hin) | exact (Hnowrapb ti Hin)]. }
-  (* the whole drained pool and its certificates *)
-  iAssert (is_pool_certified γh (pend ++ inputs)) as "#Hcertpool".
-  { rewrite /is_pool_certified big_sepL_app.
+  (* the whole drained pending and its certificates *)
+  iAssert (is_pending_certified γh (pend ++ inputs)) as "#Hcertpending".
+  { rewrite /is_pending_certified big_sepL_app.
     iSplit; [iFrame "Hpendcert" | iFrame "Hcertsin"]. }
-  iAssert (is_pool_rooted γs (pend ++ inputs)) as "#Hrootpool".
-  { rewrite /is_pool_rooted big_sepL_app.
+  iAssert (is_pending_rooted γs (pend ++ inputs)) as "#Hrootpending".
+  { rewrite /is_pending_rooted big_sepL_app.
     iSplit; [iFrame "Hpendroot" | iFrame "Hrootsin"]. }
   iAssert (⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ++ inputs ->
       in_originId ti.2 = None -> in_rightOriginId ti.2 = None ->
       ∃ nm, ti.1 = RootId nm ∧ is_Some (bind !! nm)⌝)%I as %Hrooted0.
   { iIntros (ti Hin HoN HrN).
-    iDestruct (big_sepL_elem_of _ _ ti Hin with "Hrootpool") as "Hri".
-    rewrite /pool_item_rooted decide_True; last by split.
+    iDestruct (big_sepL_elem_of _ _ ti Hin with "Hrootpending") as "Hri".
+    rewrite /pending_item_rooted decide_True; last by split.
     iDestruct "Hri" as (nm) "[%Htieq Hroot]".
     iDestruct "Hroot" as (p) "Hbind".
     iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hb.
     iPureIntro. exists nm. split; [exact Htieq | by exists p]. }
-  destruct (pool_drain m (pend ++ inputs)) as [[applied rest'] m'] eqn:Hdrainc.
-  have Happsub := proj1 (pool_drain_subset m (pend ++ inputs) applied rest' m' Hdrainc).
-  have Hrestsub := proj2 (pool_drain_subset m (pend ++ inputs) applied rest' m' Hdrainc).
+  destruct (pending_drain m (pend ++ inputs)) as [[applied rest'] m'] eqn:Hdrainc.
+  have Happsub := proj1 (pending_drain_subset m (pend ++ inputs) applied rest' m' Hdrainc).
+  have Hrestsub := proj2 (pending_drain_subset m (pend ++ inputs) applied rest' m' Hdrainc).
   (* ghost first: the gate totality, then the batch delivery *)
   iApply wp_fupd.
   iApply fupd_wp.
   have HmaskN : ↑histN ⊆ (⊤ : coPset) by solve_ndisj.
-  iMod (history_pool_ready_total γh c h m (pend ++ inputs) applied ⊤ HmaskN
-          Hhcoh Harrinv Happsub with "Hishist Hhist Hcertpool") as "[Hhist %Hrtot]".
-  iMod (history_deliver_pool γh c h m (pend ++ inputs) applied rest' m' ⊤ HmaskN
-          Hdrainc Hhcoh with "Hishist Hhist Hcertpool")
+  iMod (history_pending_ready_total γh c h m (pend ++ inputs) applied ⊤ HmaskN
+          Hhcoh Harrinv Happsub with "Hishist Hhist Hcertpending") as "[Hhist %Hrtot]".
+  iMod (history_deliver_pending γh c h m (pend ++ inputs) applied rest' m' ⊤ HmaskN
+          Hdrainc Hhcoh with "Hishist Hhist Hcertpending")
     as "(Hhist & #Hlbnew & %Hvr & %Hcoh' & %Hnoc)".
   iModIntro.
   wp_apply (wp_store__applyUpdate s_loc items_mref types_mref sl pend_sl dq
@@ -3834,17 +3834,17 @@ Proof using Type*.
     rewrite /is_type_lb Htieq Hdg'.
     iApply (auth_gmap_gset_frag_lookup with "Hsnap").
     rewrite lookup_fmap Hts' //. }
-  (* the leftover pool re-certifies the new pending buffer *)
-  iAssert (is_pool_certified γh rest') as "#Hpendcert'".
-  { rewrite /is_pool_certified. iApply big_sepL_intro.
+  (* the leftover pending re-certifies the new pending buffer *)
+  iAssert (is_pending_certified γh rest') as "#Hpendcert'".
+  { rewrite /is_pending_certified. iApply big_sepL_intro.
     iIntros "!#" (i ti Hi).
     iApply (big_sepL_elem_of _ _ ti (Hrestsub ti (list_elem_of_lookup_2 _ _ _ Hi))
-              with "Hcertpool"). }
-  iAssert (is_pool_rooted γs rest') as "#Hpendroot'".
-  { rewrite /is_pool_rooted. iApply big_sepL_intro.
+              with "Hcertpending"). }
+  iAssert (is_pending_rooted γs rest') as "#Hpendroot'".
+  { rewrite /is_pending_rooted. iApply big_sepL_intro.
     iIntros "!#" (i ti Hi).
     iApply (big_sepL_elem_of _ _ ti (Hrestsub ti (list_elem_of_lookup_2 _ _ _ Hi))
-              with "Hrootpool"). }
+              with "Hrootpending"). }
   have Hpendbnd' : ∀ ti : TId * IntegrateInput (A := A), ti ∈ rest' ->
       (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z.
   { move=> ti Hin. exact (Hkb1c ti (Hrestsub ti Hin)). }

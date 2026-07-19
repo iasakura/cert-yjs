@@ -113,12 +113,12 @@ Definition is_history_lb (γh : history_names) (c : ClientId) (h0 : list Ev) : i
 Definition is_op_cert (γh : history_names) (op : Op) : iProp Σ :=
   (opid op) ↪[γh.(hn_ops)]□ op.
 
-(** Persistent: every struct of a decoded pool is certified — the ONLY
-    obligation on an [applyUpdate] pool (issue #40): no ordering, closure,
+(** Persistent: every struct of a decoded pending is certified — the ONLY
+    obligation on an [applyUpdate] pending (issue #40): no ordering, closure,
     freshness, or receiver-relative condition. *)
-Definition is_pool_certified (γh : history_names)
-    (pool : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  [∗ list] ti ∈ pool, is_op_cert γh (ti.1, OpInsert ti.2).
+Definition is_pending_certified (γh : history_names)
+    (pending : list (TId * IntegrateInput (A := A))) : iProp Σ :=
+  [∗ list] ti ∈ pending, is_op_cert γh (ti.1, OpInsert ti.2).
 
 #[global] Instance history_inv_timeless γh : Timeless (history_inv γh).
 Proof. apply _. Qed.
@@ -126,8 +126,8 @@ Proof. apply _. Qed.
 Proof. apply _. Qed.
 #[global] Instance is_op_cert_persistent γh op : Persistent (is_op_cert γh op).
 Proof. apply _. Qed.
-#[global] Instance is_pool_certified_persistent γh pool :
-  Persistent (is_pool_certified γh pool).
+#[global] Instance is_pending_certified_persistent γh pending :
+  Persistent (is_pending_certified γh pending).
 Proof. apply _. Qed.
 #[global] Instance own_client_history_timeless γh c h : Timeless (own_client_history γh c h).
 Proof. apply _. Qed.
@@ -336,20 +336,20 @@ Proof.
   iPureIntro. exact Hcoh'.
 Qed.
 
-(** Deliver a certified pool (used by the total [applyUpdate]'s certificate
-    spec, issue #40): drain the pool against the coherent model, append one
+(** Deliver a certified pending (used by the total [applyUpdate]'s certificate
+    spec, issue #40): drain the pending against the coherent model, append one
     [EvDeliver] per APPLIED struct to the caller's history (the pending rest
     is delivered by a later call, when its dependencies have arrived), and
     return the [ValidReplay] the heap-level proof consumes. The ONLY
-    obligation on the pool is per-op certification: no ordering, causal
+    obligation on the pending is per-op certification: no ordering, causal
     closure, freshness, or receiver-relative condition. *)
-Lemma history_deliver_pool γh (c : ClientId) h (m : DocM)
-    (pool applied rest : list (TId * IntegrateInput (A := A))) (m' : DocM) E :
+Lemma history_deliver_pending γh (c : ClientId) h (m : DocM)
+    (pending applied rest : list (TId * IntegrateInput (A := A))) (m' : DocM) E :
   ↑histN ⊆ E ->
-  pool_drain m pool = (applied, rest, m') ->
+  pending_drain m pending = (applied, rest, m') ->
   history_state_coh h m ->
   is_history γh -∗ own_client_history γh c h -∗
-  is_pool_certified γh pool ={E}=∗
+  is_pending_certified γh pending ={E}=∗
     own_client_history γh c (h ++ (deliver_ev <$> applied)) ∗
     is_history_lb γh c (h ++ (deliver_ev <$> applied)) ∗
     ⌜ValidReplay applied m m'⌝ ∗
@@ -360,23 +360,23 @@ Proof.
   iIntros (HE Hdrain Hcoh) "#Hinv Hown #Hcertsin".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".
   iDestruct (hist_auth_elem_lookup with "HhistAuth Hown") as %HNc.
-  iAssert (⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pool ->
+  iAssert (⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
              ops !! (in_id ti.2) = Some ((ti.1, OpInsert ti.2) : Op)⌝)%I as %Hlk.
   { iIntros (ti Hin).
     destruct (list_elem_of_lookup_1 _ _ Hin) as (i & Hi).
     iDestruct (big_sepL_lookup _ _ i with "Hcertsin") as "Hc"; [exact Hi |].
     iApply (ghost_map_lookup with "HopsAuth Hc"). }
-  have Hbc : ∀ ti : TId * IntegrateInput (A := A), ti ∈ pool ->
+  have Hbc : ∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
       op_broadcast N (ti.1, OpInsert ti.2).
   { move=> ti Hin. destruct Hopscoh as [Hc1 _].
     have [_ Hreg] := Hc1 _ _ (Hlk ti Hin).
     exists (clientId (opid ((ti.1, OpInsert ti.2) : Op))). exact Hreg. }
-  have Happsub := proj1 (pool_drain_subset m pool applied rest m' Hdrain).
+  have Happsub := proj1 (pending_drain_subset m pending applied rest m' Hdrain).
   have Hbcapp : ∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
       op_broadcast N (ti.1, OpInsert ti.2).
   { move=> ti Hin. exact (Hbc ti (Happsub ti Hin)). }
-  pose proof (pool_ValidReplay N c h m applied m' Hwf HNc Hcoh Hbcapp
-                (pool_drain_replay m pool applied rest m' Hdrain))
+  pose proof (pending_ValidReplay N c h m applied m' Hwf HNc Hcoh Hbcapp
+                (pending_drain_replay m pending applied rest m' Hdrain))
     as (Hvr & Hcoh' & Hwf' & Hnoc).
   iMod (hist_auth_elem_advance γh N c h (deliver_ev <$> applied)
           HNc with "HhistAuth Hown") as "(HhistAuth & Hown & #Hlb)".
@@ -439,16 +439,16 @@ Proof.
   iMod (history_broadcast γh c1 0%nat [] ∅ t [item] input item E HE
           Htoitem Hvalid Hmax eq_refl Hbound Hint history_state_coh_nil
           with "Hinv H1") as "(H1 & #Hlb1 & #Hcert & %Hcoh1)".
-  (* client 2 receives the op as a one-struct pool: the drain applies it *)
+  (* client 2 receives the op as a one-struct pending: the drain applies it *)
   have Hdmh : docm_has (∅ : DocM) (in_id input) = false.
   { rewrite /docm_has map_to_list_empty //. }
-  have Hdrain : pool_drain (∅ : DocM) [(t, input)]
+  have Hdrain : pending_drain (∅ : DocM) [(t, input)]
               = ([(t, input)], [], <[t := [item]]> (∅ : DocM)).
-  { rewrite /pool_drain /= Hdmh /= Hint //=. }
-  iMod (history_deliver_pool γh c2 [] ∅ [(t, input)] [(t, input)] []
+  { rewrite /pending_drain /= Hdmh /= Hint //=. }
+  iMod (history_deliver_pending γh c2 [] ∅ [(t, input)] [(t, input)] []
           (<[t := [item]]> ∅) E HE Hdrain history_state_coh_nil
           with "Hinv H2 []") as "(H2 & #Hlb2 & %Hvr & %Hcoh2 & %Hnoc)".
-  { rewrite /is_pool_certified big_sepL_singleton. iApply "Hcert". }
+  { rewrite /is_pending_certified big_sepL_singleton. iApply "Hcert". }
   iModIntro. iExists γh, input.
   iFrame "Hinv Hcert H1 H2".
 Qed.

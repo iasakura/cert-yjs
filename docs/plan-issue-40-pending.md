@@ -90,31 +90,31 @@ the run tail).
 - `store.applyUpdate(structs)` becomes TOTAL:
 
   ```
-  pool := s.pending ++ structs ; s.pending = nil
+  pending := s.pending ++ structs ; s.pending = nil
   repeat
       progress := false; rest := []
-      for ui in pool:
+      for ui in pending:
           if GetNode(ui.id) hit        -> drop (duplicate; y-octo offset>=len)
           else if deps arrived         -> newItem; repair; Integrate; progress = true
-          else if id not yet in rest   -> rest = append(rest, ui)   // in-pool dedup
-      pool = rest
+          else if id not yet in rest   -> rest = append(rest, ui)   // in-pending dedup
+      pending = rest
   until !progress
-  s.pending = pool
+  s.pending = pending
   ```
 
   Deliberate structural deviations from y-octo (all commented in code and
   reported):
   1. round-based fixpoint instead of `UpdateIterator`'s stack-based dependency
      chase. Both compute the same applied set (the least structural-dependency
-     closure over store + pool): the chase is a within-pass shortcut for the
+     closure over store + pending): the chase is a within-pass shortcut for the
      later rounds, and the parked-client analysis shows a pass of the iterator
      applies exactly the closure too. Rounds are O(n^2) worst case but trivial
      to verify; the applied SET (the spec) is identical.
-  2. always drain the whole pending pool instead of the `missing_state`
+  2. always drain the whole pending instead of the `missing_state`
      threshold check. The threshold is a retry optimization; y-octo implements
      it with the state-drop defect above. Draining is deterministic, never
      applies less than y-octo, and needs no missing-state bookkeeping.
-  3. in-pool dedup by id instead of `merge_into`'s equal-struct pruning
+  3. in-pending dedup by id instead of `merge_into`'s equal-struct pruning
      (equal ids imply equal certified ops, so keeping the first is enough).
 - `Doc.ApplyUpdate` (codec.go): decode + run-split as today, then ONE locked
   call to `store.applyUpdate`; the unverified codec-side fixpoint loop is
@@ -128,23 +128,23 @@ the run tail).
 ## 4. Pure model layer (new, Iris-free)
 
 File: extend `yjs_network_model.v` (or a new `yjs_pending_model.v` imported
-by it) over the doc model `DocM` and pools `list (TId * IntegrateInput)`.
+by it) over the doc model `DocM` and pendings `list (TId * IntegrateInput)`.
 
 - `deps_of (input) : list YjsId` = origins + own predecessor (clock > 0).
-- `pool_step m pool = (applied, rest, m')`: one scan, mirroring the Go pass
+- `pending_step m pending = (applied, rest, m')`: one scan, mirroring the Go pass
   exactly (dup drop, ready -> `integrate` into its type's array, else keep,
   keeping first occurrence per id).
-- `pool_drain m pool = (applied_list, rest)`: iterate `pool_step` to a
-  fixpoint (fuel = |pool|; progress strictly shrinks).
+- `pending_drain m pending = (applied_list, rest)`: iterate `pending_step` to a
+  fixpoint (fuel = |pending|; progress strictly shrinks).
 - Characterization: `list_to_set applied_list` is the least fixpoint of
-  `X ↦ { x ∈ pool | fresh(x) ∧ deps(x) ⊆ ids(m) ∪ ids(X) }`, and
-  `rest = pool \ applied \ dups` (as multisets mod first-occurrence dedup).
+  `X ↦ { x ∈ pending | fresh(x) ∧ deps(x) ⊆ ids(m) ∪ ids(X) }`, and
+  `rest = pending \ applied \ dups` (as multisets mod first-occurrence dedup).
 - Composition / order independence (the headline): draining `(p1)` then
   `(rest1 ++ p2)` equals draining `(p1 ++ p2)` in one go, up to applied-list
   permutation with the same final document and the same rest set; hence store
   state after any sequence of `applyUpdate` calls is a function of the
   multiset-union of delivered batches (dedup makes it a set function).
-- `ValidReplay` production: for certified pools, the applied list in drain
+- `ValidReplay` production: for certified pendings, the applied list in drain
   order is a `ValidReplay` (per-step `toItem` resolution from the gate,
   `maximalId` + doc-global clock bound from contiguity, `IsItemValid` from
   the certificate transport of section 5, `integrate = Some` from origins
@@ -184,11 +184,11 @@ absent). Replacement:
   universe (upstream item/toItem determinism lemmas). This is the precise
   sense in which structural dependencies, not happens-before, are what
   validity needs.
-- Deliver step `history_deliver_pool`: given per-op certificates for the pool
-  (NO `batch_ok`), compute `pool_drain`, append `EvDeliver` for the APPLIED
+- Deliver step `history_deliver_pending`: given per-op certificates for the pending
+  (NO `batch_ok`), compute `pending_drain`, append `EvDeliver` for the APPLIED
   list only (pending ops stay certificate-only), re-establish the relaxed
   `history_wf` + `history_state_coh`, and return the `ValidReplay` for the
-  applied list. Own-client pool entries are provably duplicates (self
+  applied list. Own-client pending entries are provably duplicates (self
   delivery) and land in the dropped class, preserving the local clock
   invariant.
 - Convergence endgame (redo of PR #76 on the new base):
@@ -202,7 +202,7 @@ absent). Replacement:
 
 ## 6. WP layer
 
-- `store_inv` / `own_store` gain the pending pool: model becomes
+- `store_inv` / `own_store` gain the pending: model becomes
   `(c, h, m, pend)` with `pend : list (TId * IntegrateInput)` tied to the
   `pending` field (an `own_update`-style slice predicate, dq-owned by the
   lock). All lock-body threading (Insert / Delete / GetText / read API)
@@ -211,19 +211,19 @@ absent). Replacement:
 
   ```
   {{{ own_store s c h m pend ∗ own_update sl dq inputs ∗
-      is_pool_certified γh (pend ++ inputs) ∗ (W64 no-wrap seams) }}}
+      is_pending_certified γh (pend ++ inputs) ∗ (W64 no-wrap seams) }}}
       store.applyUpdate(sl)
   {{{ RET #(); ∃ applied pend' m' h',
       own_store s c h' m' pend' ∗ own_update sl dq inputs ∗
-      ⌜pool_drain m (pend ++ inputs) = (applied, pend')⌝ ∗
+      ⌜pending_drain m (pend ++ inputs) = (applied, pend')⌝ ∗
       ⌜ValidReplay applied m m'⌝ ∗ ⌜h' = h ++ (deliver_ev <$> applied)⌝ ∗
       (is_root_lb fragments for the applied roots) }}}
   ```
 
   No ordering, closure, freshness, or dedup obligations on the caller; the
-  postcondition determines applied/pending/model from the pure `pool_drain`.
+  postcondition determines applied/pending/model from the pure `pending_drain`.
 - The loop proof: outer fixpoint over rounds (progress measure), inner loop
-  refining `pool_step`; the dup branch consumes `GetNode`'s hit, the ready
+  refining `pending_step`; the dup branch consumes `GetNode`'s hit, the ready
   branch reuses `wp_Store__Integrate`'s model-level spec, the keep branch is
   bookkeeping. `getOrCreateYType`'s MISS branch becomes verified (the #49
   pre-bound-roots restriction falls: totality requires on-the-fly root
@@ -235,11 +235,11 @@ absent). Replacement:
 ## 7. Milestones
 
 - M1 Go: pending field + total loop + codec thinning + tests; goose green.
-- M2 pure closure theory: `pool_step` / `pool_drain` / closure
+- M2 pure closure theory: `pending_step` / `pending_drain` / closure
   characterization / composition; compiles standalone.
 - M3 network-model rework: relaxed `history_wf` (realizability, FIFO),
-  `dep_lt` CausalOrder, RV_dep, `history_deliver_pool`, and the ValidReplay
-  production for drained pools.
+  `dep_lt` CausalOrder, RV_dep, `history_deliver_pending`, and the ValidReplay
+  production for drained pendings.
 - M4 WP re-plumb: store field threading, the total `wp_store__applyUpdate`,
   certificate spec, `getOrCreateYType` miss branch, Text/Insert re-thread.
 - M5 convergence endgame + `Doc.ApplyUpdate` public entry; strict

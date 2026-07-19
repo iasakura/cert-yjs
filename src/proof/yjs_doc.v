@@ -32,14 +32,14 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
    [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Store]. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 
-(* [is_pool_rooted]'s instances are [#[local]] in [yjs_store_base] (closed over
+(* [is_pending_rooted]'s instances are [#[local]] in [yjs_store_base] (closed over
    a wider section context); re-declare here so [iNamed] can unpack the
    persistent [#Hpendroot] conjunct of [own_store]. *)
-#[local] Instance pool_item_rooted_persistent'' γs ti :
-  Persistent (pool_item_rooted γs ti).
-Proof. rewrite /pool_item_rooted. destruct (decide _); apply _. Qed.
-#[local] Instance is_pool_rooted_persistent'' γs pool :
-  Persistent (is_pool_rooted γs pool).
+#[local] Instance pending_item_rooted_persistent'' γs ti :
+  Persistent (pending_item_rooted γs ti).
+Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
+#[local] Instance is_pending_rooted_persistent'' γs pending :
+  Persistent (is_pending_rooted γs pending).
 Proof. apply _. Qed.
 
 (** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
@@ -105,8 +105,8 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
      (∀ (t : TId) x, x ∈ docm_get m t -> (Z.of_nat (clock (item_id x)) + 1 < 2^64)%Z)) ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
       own_update_structs sl dq inputs ∗
-      is_pool_certified γh inputs ∗
-      is_pool_rooted γs inputs }}}
+      is_pending_certified γh inputs ∗
+      is_pending_rooted γs inputs }}}
     dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl
   {{{ (c : ClientId) (h : list Ev)
       (applied rest : list (TId * IntegrateInput (A := A))), RET #();
@@ -124,7 +124,7 @@ Proof.
   have Hnowrapm := Hrecv h m Hhcoh.
   wp_auto.
   (* run the total certificate-based applyUpdate on the real store: no
-     causal-closure obligation; the pending pool plus the batch drain to the
+     causal-closure obligation; the pending plus the batch drain to the
      structural fixpoint, delivering only the applied structs *)
   wp_apply (wp_store__applyUpdate_certs _ sl dq γs γh c h m pend inputs
               Hnowrapm Hnowrapb
@@ -132,7 +132,7 @@ Proof.
   iIntros (applied rest m') "(Hupd & Hstore & #Hlb & %Hdrain & %Hvr & %Hnoc & #Hrootlbs)".
   wp_auto.
   (* rebuild store_inv at the advanced history (delivered = applied) with the
-     leftover pool as the new pending, and release the lock *)
+     leftover as the new pending, and release the lock *)
   iAssert (▷ store_inv dvv.(yjs.Doc.store') γs γh)%I with "[Hstore]" as "Hinv".
   { iNext. iApply store_inv_own_store.
     iExists c, (h ++ (deliver_ev <$> applied)), m', rest. iFrame "Hstore". }

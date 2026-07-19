@@ -471,7 +471,7 @@ func (s *store) integrateDecoded(ui updateItem) {
 // applyUpdate integrates a decoded batch of insert structs, in any order and
 // under no causal-closure assumption, buffering what cannot integrate yet
 // (issue #40; y-octo: the Doc::apply_update fixpoint over UpdateIterator and
-// DocStore.pending, document.rs / codec/update.rs). The pool is the store's
+// DocStore.pending, document.rs / codec/update.rs). The `pending` local is the store's
 // pending buffer plus the new batch. A struct whose id is already integrated
 // is dropped (a re-delivery; y-octo's offset >= len case). A struct whose
 // dependencies have all arrived (depsArrived) is repaired and integrated with
@@ -485,13 +485,13 @@ func (s *store) integrateDecoded(ui updateItem) {
 // docs/plan-issue-40-pending.md, section 3):
 //   - the round-based fixpoint replaces UpdateIterator's stack-based
 //     dependency chase; both integrate exactly the least
-//     structural-dependency closure of the pool over the store, the chase
+//     structural-dependency closure of the pending over the store, the chase
 //     being a within-pass shortcut for the later passes;
 //   - the pending buffer is re-drained on every call instead of gated on
 //     missing_state thresholds; the threshold is a retry optimization, and
 //     y-octo drops the stored thresholds when merging pending updates
 //     (document.rs merge branch), a liveness defect this port avoids;
-//   - pool re-deliveries are dropped by id on requeue rather than by
+//   - pending re-deliveries are dropped by id on requeue rather than by
 //     merge_into's structural comparison (certified ids determine their
 //     struct);
 //   - as before, the loop lives on the store rather than on Doc, so the
@@ -501,17 +501,17 @@ func (s *store) integrateDecoded(ui updateItem) {
 //
 // Callers hold s.mu.
 func (s *store) applyUpdate(structs []updateItem) {
-	pool := s.pending
+	pending := s.pending
 	for i := 0; i < len(structs); i++ {
-		pool = append(pool, structs[i])
+		pending = append(pending, structs[i])
 	}
 	s.pending = nil
 	progress := true
 	for progress {
 		progress = false
 		rest := []updateItem{}
-		for i := 0; i < len(pool); i++ {
-			ui := pool[i]
+		for i := 0; i < len(pending); i++ {
+			ui := pending[i]
 			if s.hasNode(ui.id) {
 				// already integrated: a duplicate delivery, dropped.
 				continue
@@ -523,7 +523,7 @@ func (s *store) applyUpdate(structs []updateItem) {
 				rest = append(rest, ui)
 			}
 		}
-		pool = rest
+		pending = rest
 	}
-	s.pending = pool
+	s.pending = pending
 }

@@ -256,7 +256,7 @@ type pendingDelete struct {
 // ApplyUpdate decodes a Yjs v1 update and integrates it into the document.
 // The update may arrive in any order and need not be self-contained: structs
 // whose dependencies have not arrived yet are buffered in the store's pending
-// pool by the verified store.applyUpdate and drained by later updates
+// buffer by the verified store.applyUpdate and drained by later updates
 // (issue #40).
 func (doc *Doc) ApplyUpdate(data []byte) {
 	d := &decoder{buf: data}
@@ -347,7 +347,7 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 // integrateStructs splits each item struct into 1-char updateItems (chained
 // left origins, shared right origin) and hands the whole batch to the
 // verified total update path in one locked call: Doc.applyUpdate buffers
-// structs whose dependencies are missing in the store's pending pool, so no
+// structs whose dependencies are missing in the store's pending, so no
 // ordering or self-containedness is assumed here (issue #40).
 func (doc *Doc) integrateStructs(structs []decodedStruct) {
 	var items []updateItem

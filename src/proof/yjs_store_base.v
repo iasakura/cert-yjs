@@ -1081,10 +1081,10 @@ Qed.
     struct fields, [own_item_map], the registry [ghost_map_auth], the ghost
     history) are NOT here; they stay whole in the lock invariant while readers
     hold shares, since no writer runs concurrently with readers. *)
-(* ----- the decoded update pool (issue #40) --------------------------------
+(* ----- the decoded update buffer (issue #40) --------------------------------
    [own_update_structs] abstracts a heap slice of decoded structs to the model list of
    type-tagged integrate inputs. It lives here (moved from the update proofs)
-   because the lock invariant now owns the store's PENDING pool through it. *)
+   because the lock invariant now owns the store's pending buffer through it. *)
 
 (** A decoded parent name is either absent (Parent::None: borrow from a
     neighbour in [store.repair]) or a read-only string cell (Parent::String).
@@ -1145,8 +1145,8 @@ Definition is_root (γs : store_names) (name : P) : iProp Σ :=
 #[global] Instance is_root_persistent γs name : Persistent (is_root γs name).
 Proof. apply _. Qed.
 
-(** [pool_item_rooted]/[is_pool_rooted] (issue #40): every HEAD struct of a
-    decoded pool (both origins absent, so it carries its root's name on the
+(** [pending_item_rooted]/[is_pending_rooted] (issue #40): every HEAD struct of a
+    decoded buffer (both origins absent, so it carries its root's name on the
     wire) targets a REGISTERED root. This is the #49 pre-bound-roots
     restriction, kept under the total applyUpdate: structs with an origin
     derive their binding from the origin's arrival at integration time, so
@@ -1154,23 +1154,23 @@ Proof. apply _. Qed.
     buffer so a later drain can re-discharge it without the caller knowing
     what is buffered. Lifted when [getOrCreateYType]'s miss branch enters the
     verified subset. *)
-Definition pool_item_rooted (γs : store_names)
+Definition pending_item_rooted (γs : store_names)
     (ti : TId * IntegrateInput (A := A)) : iProp Σ :=
   if decide (in_originId ti.2 = None ∧ in_rightOriginId ti.2 = None)
   then (∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗ is_root γs nm)%I
   else True%I.
 
-Definition is_pool_rooted (γs : store_names)
-    (pool : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  [∗ list] ti ∈ pool, pool_item_rooted γs ti.
+Definition is_pending_rooted (γs : store_names)
+    (pending : list (TId * IntegrateInput (A := A))) : iProp Σ :=
+  [∗ list] ti ∈ pending, pending_item_rooted γs ti.
 
-#[global] Instance pool_item_rooted_persistent γs ti : Persistent (pool_item_rooted γs ti).
-Proof. rewrite /pool_item_rooted. destruct (decide _); apply _. Qed.
-#[global] Instance is_pool_rooted_persistent γs pool : Persistent (is_pool_rooted γs pool).
+#[global] Instance pending_item_rooted_persistent γs ti : Persistent (pending_item_rooted γs ti).
+Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
+#[global] Instance is_pending_rooted_persistent γs pending : Persistent (is_pending_rooted γs pending).
 Proof. apply _. Qed.
-#[global] Instance pool_item_rooted_timeless γs ti : Timeless (pool_item_rooted γs ti).
-Proof. rewrite /pool_item_rooted. destruct (decide _); apply _. Qed.
-#[global] Instance is_pool_rooted_timeless γs pool : Timeless (is_pool_rooted γs pool).
+#[global] Instance pending_item_rooted_timeless γs ti : Timeless (pending_item_rooted γs ti).
+Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
+#[global] Instance is_pending_rooted_timeless γs pending : Timeless (is_pending_rooted γs pending).
 Proof. apply _. Qed.
 
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
@@ -1207,14 +1207,14 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
     "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
-    (* the pending pool (issue #40): the buffered structs whose dependencies
+    (* the pending buffer (issue #40): the buffered structs whose dependencies
        have not arrived, with their certificates (persistent), so the next
-       applyUpdate can re-certify the whole drained pool without the caller
+       applyUpdate can re-certify the whole drained buffer without the caller
        knowing what is buffered. *)
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
-    "#Hpendcert" ∷ is_pool_certified γh pend ∗
-    "#Hpendroot" ∷ is_pool_rooted γs pend ∗
+    "#Hpendcert" ∷ is_pending_certified γh pend ∗
+    "#Hpendroot" ∷ is_pending_rooted γs pend ∗
     "%Hpendbnd" ∷ ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ->
                     (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z⌝ ∗
     "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
@@ -1482,8 +1482,8 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
-    "#Hpendcert" ∷ is_pool_certified γh pend ∗
-    "#Hpendroot" ∷ is_pool_rooted γs pend ∗
+    "#Hpendcert" ∷ is_pending_certified γh pend ∗
+    "#Hpendroot" ∷ is_pending_rooted γs pend ∗
     "%Hpendbnd" ∷ ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ->
                     (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z⌝ ∗
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
@@ -1736,13 +1736,13 @@ Proof.
     - move=> c1 c2 Hc1. exfalso. move: Hc1.
       rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
   iSplitR.
-  { (* the empty pending pool over the nil slice *)
+  { (* the empty pending buffer over the nil slice *)
     iExists []. iSplitR; [iApply own_slice_nil |].
     iSplitR; [iApply own_slice_cap_nil |]. rewrite big_sepL2_nil //. }
   iSplitR.
-  { rewrite /is_pool_certified big_sepL_nil //. }
+  { rewrite /is_pending_certified big_sepL_nil //. }
   iSplitR.
-  { rewrite /is_pool_rooted big_sepL_nil //. }
+  { rewrite /is_pending_rooted big_sepL_nil //. }
   iSplitR.
   { iPureIntro. move=> ti Hin. by apply elem_of_nil in Hin. }
   iSplitR. { iPureIntro. move=> parent' ts' x Hlk. rewrite /types lookup_empty // in Hlk. }

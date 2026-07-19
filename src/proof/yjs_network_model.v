@@ -1469,7 +1469,7 @@ Qed.
     the network model, so a proof against it inherits the model's invariant
     preservation and strong convergence.
 
-    (Moved here from [yjs_store]: it is pure; the pool machinery below
+    (Moved here from [yjs_store]: it is pure; the pending machinery below
     produces it for the drained applied list, issue #40.) *)
 Inductive ValidReplay :
     list (TId * IntegrateInput (A := A)) -> DocM -> DocM -> Prop :=
@@ -1614,14 +1614,14 @@ Qed.
 Definition deliver_ev (ti : TId * IntegrateInput (A := A)) : Ev :=
   EvDeliver (ti.1, OpInsert ti.2).
 
-(* ===== the pending pool (issue #40) ======================================= *)
+(* ===== the pending drain (issue #40) ======================================= *)
 
-(** The pure mirror of the total [store.applyUpdate] loop (store.go): the pool
+(** The pure mirror of the total [store.applyUpdate] loop (store.go): the drained set
     is the store's pending buffer plus the incoming batch, each struct tagged
-    with its target type. One [pool_pass] is one scan of the pool -- drop the
+    with its target type. One [pending_pass] is one scan of the pending -- drop the
     structs already integrated (re-deliveries), integrate the structs whose
     structural dependencies have arrived, keep the rest deduplicated by id --
-    and [pool_drain] repeats passes until one integrates nothing. The WP proof
+    and [pending_drain] repeats passes until one integrates nothing. The WP proof
     refines the Go loop against these functions step by step; the certificate
     layer characterizes their output ([ValidReplay] on the applied list, the
     fixpoint property on the rest). *)
@@ -1673,164 +1673,164 @@ Proof.
 Qed.
 
 (** Keep a struct for the next pass unless an equal id is already kept
-    (store.go: [containsUpdateItemId] -- pool re-deliveries drop by id). *)
-Definition pool_keep (kept : list (TId * IntegrateInput (A := A)))
+    (store.go: [containsUpdateItemId] -- pending re-deliveries drop by id). *)
+Definition pending_keep (kept : list (TId * IntegrateInput (A := A)))
     (ti : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
   if existsb (λ tj, bool_decide (in_id tj.2 = in_id ti.2)) kept
   then kept
   else kept ++ [ti].
 
-(** One pass over the pool, mirroring one iteration of the Go outer loop:
-    [pool_pass m pool kept = (applied, kept', m')] where [applied] lists the
+(** One pass over the pending, mirroring one iteration of the Go outer loop:
+    [pending_pass m pending kept = (applied, kept', m')] where [applied] lists the
     structs integrated this pass in application order, [m'] is the doc model
     after them, and [kept'] extends [kept] with the structs queued for the
     next pass. A ready struct whose pure [integrate] fails is kept; the
     certificate layer proves this branch dead (a ready certified struct
     always integrates), and the heap-level loop is only ever related to
     passes where it is dead. *)
-Fixpoint pool_pass (m : DocM) (pool kept : list (TId * IntegrateInput (A := A)))
+Fixpoint pending_pass (m : DocM) (pending kept : list (TId * IntegrateInput (A := A)))
     : list (TId * IntegrateInput (A := A)) * list (TId * IntegrateInput (A := A)) * DocM :=
-  match pool with
+  match pending with
   | [] => ([], kept, m)
   | ti :: tl =>
-      if docm_has m (in_id ti.2) then pool_pass m tl kept
+      if docm_has m (in_id ti.2) then pending_pass m tl kept
       else if input_ready m ti.2 then
         match integrate ti.2 (docm_get m ti.1) with
         | Some arr' =>
-            let '(app, kept', m') := pool_pass (<[ti.1 := arr']> m) tl kept in
+            let '(app, kept', m') := pending_pass (<[ti.1 := arr']> m) tl kept in
             (ti :: app, kept', m')
-        | None => pool_pass m tl (pool_keep kept ti)
+        | None => pending_pass m tl (pending_keep kept ti)
         end
-      else pool_pass m tl (pool_keep kept ti)
+      else pending_pass m tl (pending_keep kept ti)
   end.
 
-Fixpoint pool_drain_aux (fuel : nat) (m : DocM)
-    (pool : list (TId * IntegrateInput (A := A)))
+Fixpoint pending_drain_aux (fuel : nat) (m : DocM)
+    (pending : list (TId * IntegrateInput (A := A)))
     : list (TId * IntegrateInput (A := A)) * list (TId * IntegrateInput (A := A)) * DocM :=
   match fuel with
-  | 0%nat => ([], pool, m)
+  | 0%nat => ([], pending, m)
   | S f =>
-      let '(app, kept, m') := pool_pass m pool [] in
+      let '(app, kept, m') := pending_pass m pending [] in
       match app with
       | [] => ([], kept, m')
       | _ :: _ =>
-          let '(app2, rest, m'') := pool_drain_aux f m' kept in
+          let '(app2, rest, m'') := pending_drain_aux f m' kept in
           (app ++ app2, rest, m'')
       end
   end.
 
 (** Drain to the fixpoint (store.go applyUpdate: passes repeat until one
-    integrates nothing). A progressing pass strictly shrinks the pool
-    ([pool_pass_kept_lt]), so [length pool] passes always suffice and the
-    fuel is irrelevant beyond that ([pool_drain_aux_fuel_ge]). *)
-Definition pool_drain (m : DocM) (pool : list (TId * IntegrateInput (A := A)))
+    integrates nothing). A progressing pass strictly shrinks the pending
+    ([pending_pass_kept_lt]), so [length pending] passes always suffice and the
+    fuel is irrelevant beyond that ([pending_drain_aux_fuel_ge]). *)
+Definition pending_drain (m : DocM) (pending : list (TId * IntegrateInput (A := A)))
     : list (TId * IntegrateInput (A := A)) * list (TId * IntegrateInput (A := A)) * DocM :=
-  pool_drain_aux (S (length pool)) m pool.
+  pending_drain_aux (S (length pending)) m pending.
 
 (* ----- pass structure ----- *)
 
-Lemma pool_keep_length kept ti :
-  (length (pool_keep kept ti) <= S (length kept))%nat.
+Lemma pending_keep_length kept ti :
+  (length (pending_keep kept ti) <= S (length kept))%nat.
 Proof.
-  rewrite /pool_keep. destruct (existsb _ kept); [lia | rewrite length_app /=; lia].
+  rewrite /pending_keep. destruct (existsb _ kept); [lia | rewrite length_app /=; lia].
 Qed.
 
-Lemma pool_keep_prefix kept ti : kept `prefix_of` pool_keep kept ti.
+Lemma pending_keep_prefix kept ti : kept `prefix_of` pending_keep kept ti.
 Proof.
-  rewrite /pool_keep. destruct (existsb _ kept); [done | by eexists].
+  rewrite /pending_keep. destruct (existsb _ kept); [done | by eexists].
 Qed.
 
-(** The kept list grows from [kept] by at most the non-applied pool
+(** The kept list grows from [kept] by at most the non-applied pending
     elements. *)
-Lemma pool_pass_kept_le (pool : list (TId * IntegrateInput (A := A))) :
+Lemma pending_pass_kept_le (pending : list (TId * IntegrateInput (A := A))) :
   ∀ m kept app kept' m',
-    pool_pass m pool kept = (app, kept', m') ->
-    (length kept' + length app <= length kept + length pool)%nat.
+    pending_pass m pending kept = (app, kept', m') ->
+    (length kept' + length app <= length kept + length pending)%nat.
 Proof.
-  elim: pool => [| ti tl IH] m kept app kept' m' /=.
+  elim: pending => [| ti tl IH] m kept app kept' m' /=.
   - move=> [= <- <- _] /=. lia.
   - destruct (docm_has m (in_id ti.2)).
     { move=> /IH. lia. }
     destruct (input_ready m ti.2); last first.
-    { move=> /IH. move: (pool_keep_length kept ti). lia. }
+    { move=> /IH. move: (pending_keep_length kept ti). lia. }
     destruct (integrate ti.2 (docm_get m ti.1)) as [arr' |]; last first.
-    { move=> /IH. move: (pool_keep_length kept ti). lia. }
-    destruct (pool_pass (<[ti.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    { move=> /IH. move: (pending_keep_length kept ti). lia. }
+    destruct (pending_pass (<[ti.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= <- <- _] /=.
     move: (IH _ _ _ _ _ Hrec). lia.
 Qed.
 
 (** A progressing pass (from an empty kept accumulator) strictly shrinks. *)
-Lemma pool_pass_kept_lt (pool app kept' : list (TId * IntegrateInput (A := A)))
+Lemma pending_pass_kept_lt (pending app kept' : list (TId * IntegrateInput (A := A)))
     (m m' : DocM) :
-  pool_pass m pool [] = (app, kept', m') ->
+  pending_pass m pending [] = (app, kept', m') ->
   app ≠ [] ->
-  (length kept' < length pool)%nat.
+  (length kept' < length pending)%nat.
 Proof.
   move=> Hpass Hne.
-  move: (pool_pass_kept_le pool m [] app kept' m' Hpass) => /=.
+  move: (pending_pass_kept_le pending m [] app kept' m' Hpass) => /=.
   destruct app; [done | simpl; lia].
 Qed.
 
-Lemma pool_pass_kept_prefix (pool : list (TId * IntegrateInput (A := A))) :
+Lemma pending_pass_kept_prefix (pending : list (TId * IntegrateInput (A := A))) :
   ∀ m kept app kept' m',
-    pool_pass m pool kept = (app, kept', m') ->
+    pending_pass m pending kept = (app, kept', m') ->
     kept `prefix_of` kept'.
 Proof.
-  elim: pool => [| ti tl IH] m kept app kept' m' /=.
+  elim: pending => [| ti tl IH] m kept app kept' m' /=.
   - move=> [= _ <- _] //.
   - destruct (docm_has m (in_id ti.2)).
     { move=> /IH //. }
     destruct (input_ready m ti.2); last first.
-    { move=> /IH Hpre. etrans; [apply pool_keep_prefix | exact Hpre]. }
+    { move=> /IH Hpre. etrans; [apply pending_keep_prefix | exact Hpre]. }
     destruct (integrate ti.2 (docm_get m ti.1)) as [arr' |]; last first.
-    { move=> /IH Hpre. etrans; [apply pool_keep_prefix | exact Hpre]. }
-    destruct (pool_pass (<[ti.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    { move=> /IH Hpre. etrans; [apply pending_keep_prefix | exact Hpre]. }
+    destruct (pending_pass (<[ti.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= _ <- _]. exact (IH _ _ _ _ _ Hrec).
 Qed.
 
 (* ----- fuel irrelevance ----- *)
 
-Lemma pool_drain_aux_fuel_agree (f1 : nat) :
-  ∀ (f2 : nat) (m : DocM) (pool : list (TId * IntegrateInput (A := A))),
-    (length pool < f1)%nat -> (length pool < f2)%nat ->
-    pool_drain_aux f1 m pool = pool_drain_aux f2 m pool.
+Lemma pending_drain_aux_fuel_agree (f1 : nat) :
+  ∀ (f2 : nat) (m : DocM) (pending : list (TId * IntegrateInput (A := A))),
+    (length pending < f1)%nat -> (length pending < f2)%nat ->
+    pending_drain_aux f1 m pending = pending_drain_aux f2 m pending.
 Proof.
-  elim: f1 => [| f1 IH] f2 m pool Hlt1 Hlt2; first lia.
+  elim: f1 => [| f1 IH] f2 m pending Hlt1 Hlt2; first lia.
   destruct f2 as [| f2]; first lia.
   simpl.
-  destruct (pool_pass m pool []) as [[app kept] m'] eqn:Hpass.
+  destruct (pending_pass m pending []) as [[app kept] m'] eqn:Hpass.
   destruct app as [| a app0]; first done.
-  have Hklt : (length kept < length pool)%nat
-    by exact (pool_pass_kept_lt pool (a :: app0) kept m m' Hpass ltac:(done)).
+  have Hklt : (length kept < length pending)%nat
+    by exact (pending_pass_kept_lt pending (a :: app0) kept m m' Hpass ltac:(done)).
   rewrite (IH f2 m' kept ltac:(lia) ltac:(lia)) //.
 Qed.
 
-Lemma pool_drain_aux_fuel_ge (fuel : nat) (m : DocM)
-    (pool : list (TId * IntegrateInput (A := A))) :
-  (length pool < fuel)%nat ->
-  pool_drain_aux fuel m pool = pool_drain_aux (S (length pool)) m pool.
+Lemma pending_drain_aux_fuel_ge (fuel : nat) (m : DocM)
+    (pending : list (TId * IntegrateInput (A := A))) :
+  (length pending < fuel)%nat ->
+  pending_drain_aux fuel m pending = pending_drain_aux (S (length pending)) m pending.
 Proof.
-  move=> Hlt. exact (pool_drain_aux_fuel_agree fuel (S (length pool)) m pool Hlt ltac:(lia)).
+  move=> Hlt. exact (pending_drain_aux_fuel_agree fuel (S (length pending)) m pending Hlt ltac:(lia)).
 Qed.
 
-(** The one-pass unfolding of [pool_drain] (the Go outer loop consumes exactly
+(** The one-pass unfolding of [pending_drain] (the Go outer loop consumes exactly
     one pass per iteration; the WP loop invariant steps with this equation). *)
-Lemma pool_drain_unfold (m : DocM) (pool : list (TId * IntegrateInput (A := A))) :
-  pool_drain m pool =
-    let '(app, kept, m') := pool_pass m pool [] in
+Lemma pending_drain_unfold (m : DocM) (pending : list (TId * IntegrateInput (A := A))) :
+  pending_drain m pending =
+    let '(app, kept, m') := pending_pass m pending [] in
     match app with
     | [] => ([], kept, m')
     | _ :: _ =>
-        let '(app2, rest, m'') := pool_drain m' kept in (app ++ app2, rest, m'')
+        let '(app2, rest, m'') := pending_drain m' kept in (app ++ app2, rest, m'')
     end.
 Proof.
-  rewrite {1}/pool_drain /=.
-  destruct (pool_pass m pool []) as [[app kept] m'] eqn:Hpass.
+  rewrite {1}/pending_drain /=.
+  destruct (pending_pass m pending []) as [[app kept] m'] eqn:Hpass.
   destruct app as [| a app0]; first done.
-  have Hklt : (length kept < length pool)%nat
-    by exact (pool_pass_kept_lt pool (a :: app0) kept m m' Hpass ltac:(done)).
-  rewrite (pool_drain_aux_fuel_ge (length pool) m' kept Hklt) //.
+  have Hklt : (length kept < length pending)%nat
+    by exact (pending_pass_kept_lt pending (a :: app0) kept m m' Hpass ltac:(done)).
+  rewrite (pending_drain_aux_fuel_ge (length pending) m' kept Hklt) //.
 Qed.
 
 (* ----- the replay view of a pass / drain ----- *)
@@ -1840,31 +1840,31 @@ Qed.
     pure [integrate] advanced its type's list. This is [ValidReplay] minus the
     validity facts ([toItem] / [IsItemValid] / clock maximality), which the
     certificate layer supplies on top. *)
-Inductive PoolReplay : DocM -> list (TId * IntegrateInput (A := A)) -> DocM -> Prop :=
-  | PoolReplay_nil m : PoolReplay m [] m
-  | PoolReplay_cons m ti arr' rest m' :
+Inductive PendingReplay : DocM -> list (TId * IntegrateInput (A := A)) -> DocM -> Prop :=
+  | PendingReplay_nil m : PendingReplay m [] m
+  | PendingReplay_cons m ti arr' rest m' :
       docm_has m (in_id ti.2) = false ->
       input_ready m ti.2 = true ->
       integrate ti.2 (docm_get m ti.1) = Some arr' ->
-      PoolReplay (<[ti.1 := arr']> m) rest m' ->
-      PoolReplay m (ti :: rest) m'.
+      PendingReplay (<[ti.1 := arr']> m) rest m' ->
+      PendingReplay m (ti :: rest) m'.
 
-Lemma PoolReplay_app (m m1 m2 : DocM)
+Lemma PendingReplay_app (m m1 m2 : DocM)
     (a1 a2 : list (TId * IntegrateInput (A := A))) :
-  PoolReplay m a1 m1 -> PoolReplay m1 a2 m2 -> PoolReplay m (a1 ++ a2) m2.
+  PendingReplay m a1 m1 -> PendingReplay m1 a2 m2 -> PendingReplay m (a1 ++ a2) m2.
 Proof.
   move=> H1. elim: H1 a2 m2 => [m0 | m0 ti arr' rest m0' Hdup Hready Hint Hrest IH] a2 m2 H2 /=.
   - exact H2.
-  - apply (PoolReplay_cons m0 ti arr' (rest ++ a2) m2 Hdup Hready Hint).
+  - apply (PendingReplay_cons m0 ti arr' (rest ++ a2) m2 Hdup Hready Hint).
     exact (IH a2 m2 H2).
 Qed.
 
-Lemma pool_pass_replay (pool : list (TId * IntegrateInput (A := A))) :
+Lemma pending_pass_replay (pending : list (TId * IntegrateInput (A := A))) :
   ∀ m kept app kept' m',
-    pool_pass m pool kept = (app, kept', m') ->
-    PoolReplay m app m'.
+    pending_pass m pending kept = (app, kept', m') ->
+    PendingReplay m app m'.
 Proof.
-  elim: pool => [| ti tl IH] m kept app kept' m' /=.
+  elim: pending => [| ti tl IH] m kept app kept' m' /=.
   - move=> [= <- _ <-]. constructor.
   - destruct (docm_has m (in_id ti.2)) eqn:Hdup.
     { move=> /IH //. }
@@ -1872,18 +1872,18 @@ Proof.
     { move=> /IH //. }
     destruct (integrate ti.2 (docm_get m ti.1)) as [arr' |] eqn:Hint; last first.
     { move=> /IH //. }
-    destruct (pool_pass (<[ti.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    destruct (pending_pass (<[ti.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= <- _ <-].
-    exact (PoolReplay_cons m ti arr' app0 m0 Hdup Hready Hint (IH _ _ _ _ _ Hrec)).
+    exact (PendingReplay_cons m ti arr' app0 m0 Hdup Hready Hint (IH _ _ _ _ _ Hrec)).
 Qed.
 
 (** A pass that applies nothing leaves the model unchanged. *)
-Lemma pool_pass_no_progress (pool : list (TId * IntegrateInput (A := A))) :
+Lemma pending_pass_no_progress (pending : list (TId * IntegrateInput (A := A))) :
   ∀ m kept kept' m',
-    pool_pass m pool kept = ([], kept', m') ->
+    pending_pass m pending kept = ([], kept', m') ->
     m' = m.
 Proof.
-  elim: pool => [| ti tl IH] m kept kept' m' /=.
+  elim: pending => [| ti tl IH] m kept kept' m' /=.
   - move=> [= _ <-] //.
   - destruct (docm_has m (in_id ti.2)).
     { move=> /IH //. }
@@ -1891,32 +1891,32 @@ Proof.
     { move=> /IH //. }
     destruct (integrate ti.2 (docm_get m ti.1)) as [arr' |]; last first.
     { move=> /IH //. }
-    destruct (pool_pass (<[ti.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    destruct (pending_pass (<[ti.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= Happ _ _]. discriminate.
 Qed.
 
-Lemma pool_drain_aux_replay (fuel : nat) :
-  ∀ (m : DocM) (pool app rest : list (TId * IntegrateInput (A := A))) (m' : DocM),
-    pool_drain_aux fuel m pool = (app, rest, m') ->
-    PoolReplay m app m'.
+Lemma pending_drain_aux_replay (fuel : nat) :
+  ∀ (m : DocM) (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM),
+    pending_drain_aux fuel m pending = (app, rest, m') ->
+    PendingReplay m app m'.
 Proof.
-  elim: fuel => [| f IH] m pool app rest m' /=.
+  elim: fuel => [| f IH] m pending app rest m' /=.
   - move=> [= <- _ <-]. constructor.
-  - destruct (pool_pass m pool []) as [[app0 kept] m0] eqn:Hpass.
+  - destruct (pending_pass m pending []) as [[app0 kept] m0] eqn:Hpass.
     destruct app0 as [| a app0'].
     { move=> [= <- _ <-].
-      rewrite (pool_pass_no_progress pool m [] kept m0 Hpass). constructor. }
-    destruct (pool_drain_aux f m0 kept) as [[app2 rest2] m2] eqn:Hrec.
+      rewrite (pending_pass_no_progress pending m [] kept m0 Hpass). constructor. }
+    destruct (pending_drain_aux f m0 kept) as [[app2 rest2] m2] eqn:Hrec.
     move=> [= <- _ <-].
-    exact (PoolReplay_app _ _ _ _ _ (pool_pass_replay pool m [] _ _ _ Hpass)
+    exact (PendingReplay_app _ _ _ _ _ (pending_pass_replay pending m [] _ _ _ Hpass)
              (IH _ _ _ _ _ Hrec)).
 Qed.
 
-Lemma pool_drain_replay (m : DocM)
-    (pool app rest : list (TId * IntegrateInput (A := A))) (m' : DocM) :
-  pool_drain m pool = (app, rest, m') ->
-  PoolReplay m app m'.
-Proof. apply pool_drain_aux_replay. Qed.
+Lemma pending_drain_replay (m : DocM)
+    (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM) :
+  pending_drain m pending = (app, rest, m') ->
+  PendingReplay m app m'.
+Proof. apply pending_drain_aux_replay. Qed.
 
 (* ----- monotonicity: integrated structs stay integrated ----- *)
 
@@ -1935,9 +1935,9 @@ Proof.
   - exists t0, x. rewrite docm_get_insert_ne //.
 Qed.
 
-Lemma PoolReplay_docm_has_mono (m m' : DocM)
+Lemma PendingReplay_docm_has_mono (m m' : DocM)
     (app : list (TId * IntegrateInput (A := A))) (d : YjsId) :
-  PoolReplay m app m' ->
+  PendingReplay m app m' ->
   docm_has m d = true ->
   docm_has m' d = true.
 Proof.
@@ -1946,15 +1946,15 @@ Proof.
 Qed.
 
 (** An applied struct is integrated from its application point on. *)
-Lemma PoolReplay_applied_present (m m' : DocM)
+Lemma PendingReplay_applied_present (m m' : DocM)
     (app : list (TId * IntegrateInput (A := A))) :
-  PoolReplay m app m' ->
+  PendingReplay m app m' ->
   ∀ ti, ti ∈ app -> docm_has m' (in_id ti.2) = true.
 Proof.
   move=> H. elim: H => [m0 | m0 ti0 arr' rest m0' Hdup Hready Hint Hrest IH] ti Hin.
   - by apply elem_of_nil in Hin.
   - apply elem_of_cons in Hin. destruct Hin as [-> | Hin]; last exact (IH ti Hin).
-    apply (PoolReplay_docm_has_mono _ _ _ _ Hrest).
+    apply (PendingReplay_docm_has_mono _ _ _ _ Hrest).
     apply docm_has_spec.
     destruct (integrate_new_mem ti0.2 (docm_get m0 ti0.1) arr' Hint) as (it & Hitid & Hitmem).
     exists ti0.1, it. rewrite docm_get_insert_eq. by split.
@@ -1962,9 +1962,9 @@ Qed.
 
 (** Applied ids are pairwise distinct (freshness at each step plus
     monotonicity), the pure dedup fact behind [IdNoDup] downstream. *)
-Lemma PoolReplay_ids_nodup (m m' : DocM)
+Lemma PendingReplay_ids_nodup (m m' : DocM)
     (app : list (TId * IntegrateInput (A := A))) :
-  PoolReplay m app m' ->
+  PendingReplay m app m' ->
   NoDup ((λ ti, in_id ti.2) <$> app).
 Proof.
   move=> H. elim: H => [m0 | m0 ti arr' rest m0' Hdup Hready Hint Hrest IH] /=; first constructor.
@@ -1989,83 +1989,83 @@ Qed.
 
 (** A struct the drain leaves pending is genuinely blocked in the final model:
     not integrated, and either a dependency is still missing or (for
-    uncertified pools) its [integrate] fails. *)
-Definition pool_blocked (m : DocM) (ti : TId * IntegrateInput (A := A)) : Prop :=
+    uncertified pendings) its [integrate] fails. *)
+Definition pending_blocked (m : DocM) (ti : TId * IntegrateInput (A := A)) : Prop :=
   docm_has m (in_id ti.2) = false ∧
   (input_ready m ti.2 = false ∨ integrate ti.2 (docm_get m ti.1) = None).
 
-Lemma pool_pass_kept_blocked (pool : list (TId * IntegrateInput (A := A))) :
+Lemma pending_pass_kept_blocked (pending : list (TId * IntegrateInput (A := A))) :
   ∀ m kept kept' m',
-    pool_pass m pool kept = ([], kept', m') ->
-    ∀ ti, ti ∈ kept' -> ti ∈ kept ∨ pool_blocked m ti.
+    pending_pass m pending kept = ([], kept', m') ->
+    ∀ ti, ti ∈ kept' -> ti ∈ kept ∨ pending_blocked m ti.
 Proof.
-  elim: pool => [| ti0 tl IH] m kept kept' m' /=.
+  elim: pending => [| ti0 tl IH] m kept kept' m' /=.
   - move=> [= <- _] ti Hin. by left.
   - destruct (docm_has m (in_id ti0.2)) eqn:Hdup.
     { move=> /IH //. }
     destruct (input_ready m ti0.2) eqn:Hready; last first.
     { move=> Hpass ti Hin.
       destruct (IH _ _ _ _ Hpass ti Hin) as [Hkept | Hblocked]; last by right.
-      move: Hkept. rewrite /pool_keep.
+      move: Hkept. rewrite /pending_keep.
       destruct (existsb _ kept); first by left.
       rewrite elem_of_app list_elem_of_singleton. move=> [Hk | ->]; first by left.
       right. split; [exact Hdup | by left]. }
     destruct (integrate ti0.2 (docm_get m ti0.1)) as [arr' |] eqn:Hint; last first.
     { move=> Hpass ti Hin.
       destruct (IH _ _ _ _ Hpass ti Hin) as [Hkept | Hblocked]; last by right.
-      move: Hkept. rewrite /pool_keep.
+      move: Hkept. rewrite /pending_keep.
       destruct (existsb _ kept); first by left.
       rewrite elem_of_app list_elem_of_singleton. move=> [Hk | ->]; first by left.
       right. split; [exact Hdup | by right]. }
-    destruct (pool_pass (<[ti0.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    destruct (pending_pass (<[ti0.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= Happ _ _]. discriminate.
 Qed.
 
-Lemma pool_drain_aux_rest_blocked (fuel : nat) :
-  ∀ (m : DocM) (pool app rest : list (TId * IntegrateInput (A := A))) (m' : DocM),
-    (length pool < fuel)%nat ->
-    pool_drain_aux fuel m pool = (app, rest, m') ->
-    ∀ ti, ti ∈ rest -> pool_blocked m' ti.
+Lemma pending_drain_aux_rest_blocked (fuel : nat) :
+  ∀ (m : DocM) (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM),
+    (length pending < fuel)%nat ->
+    pending_drain_aux fuel m pending = (app, rest, m') ->
+    ∀ ti, ti ∈ rest -> pending_blocked m' ti.
 Proof.
-  elim: fuel => [| f IH] m pool app rest m' Hfuel /=; first lia.
-  destruct (pool_pass m pool []) as [[app0 kept] m0] eqn:Hpass.
+  elim: fuel => [| f IH] m pending app rest m' Hfuel /=; first lia.
+  destruct (pending_pass m pending []) as [[app0 kept] m0] eqn:Hpass.
   destruct app0 as [| a app0'].
   - move=> [= _ <- <-] ti Hin.
-    have Hm : m0 = m := pool_pass_no_progress pool m [] kept m0 Hpass.
-    destruct (pool_pass_kept_blocked pool m [] kept m0 Hpass ti Hin) as [Hk | Hb].
+    have Hm : m0 = m := pending_pass_no_progress pending m [] kept m0 Hpass.
+    destruct (pending_pass_kept_blocked pending m [] kept m0 Hpass ti Hin) as [Hk | Hb].
     + by apply elem_of_nil in Hk.
     + rewrite Hm //.
-  - destruct (pool_drain_aux f m0 kept) as [[app2 rest2] m2] eqn:Hrec.
+  - destruct (pending_drain_aux f m0 kept) as [[app2 rest2] m2] eqn:Hrec.
     move=> [= _ <- <-].
-    have Hklt : (length kept < length pool)%nat
-      by exact (pool_pass_kept_lt pool (a :: app0') kept m m0 Hpass ltac:(done)).
+    have Hklt : (length kept < length pending)%nat
+      by exact (pending_pass_kept_lt pending (a :: app0') kept m m0 Hpass ltac:(done)).
     exact (IH m0 kept app2 rest2 m2 ltac:(lia) Hrec).
 Qed.
 
-Lemma pool_drain_rest_blocked (m : DocM)
-    (pool app rest : list (TId * IntegrateInput (A := A))) (m' : DocM) :
-  pool_drain m pool = (app, rest, m') ->
-  ∀ ti, ti ∈ rest -> pool_blocked m' ti.
+Lemma pending_drain_rest_blocked (m : DocM)
+    (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM) :
+  pending_drain m pending = (app, rest, m') ->
+  ∀ ti, ti ∈ rest -> pending_blocked m' ti.
 Proof.
-  apply pool_drain_aux_rest_blocked. lia.
+  apply pending_drain_aux_rest_blocked. lia.
 Qed.
 
-(* ----- provenance: everything applied/kept comes from the pool ----- *)
+(* ----- provenance: everything applied/kept comes from the pending ----- *)
 
-Lemma pool_keep_subset kept ti tj :
-  tj ∈ pool_keep kept ti -> tj ∈ kept ∨ tj = ti.
+Lemma pending_keep_subset kept ti tj :
+  tj ∈ pending_keep kept ti -> tj ∈ kept ∨ tj = ti.
 Proof.
-  rewrite /pool_keep. destruct (existsb _ kept); first by left.
+  rewrite /pending_keep. destruct (existsb _ kept); first by left.
   rewrite elem_of_app list_elem_of_singleton. move=> [Hk | ->]; [by left | by right].
 Qed.
 
-Lemma pool_pass_subset (pool : list (TId * IntegrateInput (A := A))) :
+Lemma pending_pass_subset (pending : list (TId * IntegrateInput (A := A))) :
   ∀ m kept app kept' m',
-    pool_pass m pool kept = (app, kept', m') ->
-    (∀ ti, ti ∈ app -> ti ∈ pool) ∧
-    (∀ ti, ti ∈ kept' -> ti ∈ kept ∨ ti ∈ pool).
+    pending_pass m pending kept = (app, kept', m') ->
+    (∀ ti, ti ∈ app -> ti ∈ pending) ∧
+    (∀ ti, ti ∈ kept' -> ti ∈ kept ∨ ti ∈ pending).
 Proof.
-  elim: pool => [| ti0 tl IH] m kept app kept' m' /=.
+  elim: pending => [| ti0 tl IH] m kept app kept' m' /=.
   - move=> [= <- <- _]. split; [move=> ti Hin; by apply elem_of_nil in Hin |].
     move=> ti Hin. by left.
   - destruct (docm_has m (in_id ti0.2)).
@@ -2077,17 +2077,17 @@ Proof.
     { move=> /IH [Happ Hkept]. split.
       - move=> ti Hin. apply elem_of_cons. right. exact (Happ ti Hin).
       - move=> ti Hin. destruct (Hkept ti Hin) as [Hk | Hp].
-        + destruct (pool_keep_subset kept ti0 ti Hk) as [Hk' | ->]; [by left |].
+        + destruct (pending_keep_subset kept ti0 ti Hk) as [Hk' | ->]; [by left |].
           right. apply elem_of_cons. by left.
         + right. apply elem_of_cons. by right. }
     destruct (integrate ti0.2 (docm_get m ti0.1)) as [arr' |]; last first.
     { move=> /IH [Happ Hkept]. split.
       - move=> ti Hin. apply elem_of_cons. right. exact (Happ ti Hin).
       - move=> ti Hin. destruct (Hkept ti Hin) as [Hk | Hp].
-        + destruct (pool_keep_subset kept ti0 ti Hk) as [Hk' | ->]; [by left |].
+        + destruct (pending_keep_subset kept ti0 ti Hk) as [Hk' | ->]; [by left |].
           right. apply elem_of_cons. by left.
         + right. apply elem_of_cons. by right. }
-    destruct (pool_pass (<[ti0.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    destruct (pending_pass (<[ti0.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= <- <- _].
     destruct (IH _ _ _ _ _ Hrec) as [Happ Hkept]. split.
     + move=> ti Hin. apply elem_of_cons in Hin.
@@ -2096,20 +2096,20 @@ Proof.
       right. apply elem_of_cons. by right.
 Qed.
 
-Lemma pool_drain_aux_subset (fuel : nat) :
-  ∀ (m : DocM) (pool app rest : list (TId * IntegrateInput (A := A))) (m' : DocM),
-    pool_drain_aux fuel m pool = (app, rest, m') ->
-    (∀ ti, ti ∈ app -> ti ∈ pool) ∧ (∀ ti, ti ∈ rest -> ti ∈ pool).
+Lemma pending_drain_aux_subset (fuel : nat) :
+  ∀ (m : DocM) (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM),
+    pending_drain_aux fuel m pending = (app, rest, m') ->
+    (∀ ti, ti ∈ app -> ti ∈ pending) ∧ (∀ ti, ti ∈ rest -> ti ∈ pending).
 Proof.
-  elim: fuel => [| f IH] m pool app rest m' /=.
+  elim: fuel => [| f IH] m pending app rest m' /=.
   - move=> [= <- <- _]. split; [move=> ti Hin; by apply elem_of_nil in Hin | done].
-  - destruct (pool_pass m pool []) as [[app0 kept] m0] eqn:Hpass.
-    destruct (pool_pass_subset pool m [] app0 kept m0 Hpass) as [Happ0 Hkept0].
-    have Hkept0' : ∀ ti, ti ∈ kept -> ti ∈ pool.
+  - destruct (pending_pass m pending []) as [[app0 kept] m0] eqn:Hpass.
+    destruct (pending_pass_subset pending m [] app0 kept m0 Hpass) as [Happ0 Hkept0].
+    have Hkept0' : ∀ ti, ti ∈ kept -> ti ∈ pending.
     { move=> ti Hin. destruct (Hkept0 ti Hin) as [Hk | Hp]; [by apply elem_of_nil in Hk | done]. }
     destruct app0 as [| a app0'].
     { move=> [= <- <- _]. split; [move=> ti Hin; by apply elem_of_nil in Hin | done]. }
-    destruct (pool_drain_aux f m0 kept) as [[app2 rest2] m2] eqn:Hrec.
+    destruct (pending_drain_aux f m0 kept) as [[app2 rest2] m2] eqn:Hrec.
     move=> [= <- <- _].
     destruct (IH _ _ _ _ _ Hrec) as [Happ2 Hrest2]. split.
     + move=> ti Hin.
@@ -2121,11 +2121,11 @@ Proof.
     + move=> ti Hin. exact (Hkept0' ti (Hrest2 ti Hin)).
 Qed.
 
-Lemma pool_drain_subset (m : DocM)
-    (pool app rest : list (TId * IntegrateInput (A := A))) (m' : DocM) :
-  pool_drain m pool = (app, rest, m') ->
-  (∀ ti, ti ∈ app -> ti ∈ pool) ∧ (∀ ti, ti ∈ rest -> ti ∈ pool).
-Proof. apply pool_drain_aux_subset. Qed.
+Lemma pending_drain_subset (m : DocM)
+    (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM) :
+  pending_drain m pending = (app, rest, m') ->
+  (∀ ti, ti ∈ app -> ti ∈ pending) ∧ (∀ ti, ti ∈ rest -> ti ∈ pending).
+Proof. apply pending_drain_aux_subset. Qed.
 (* ===== gate arithmetic and integrate totality (issue #40) ================= *)
 
 (** Pure: one failing dependency falsifies the gate. *)
@@ -2311,14 +2311,14 @@ Proof.
   - rewrite docm_get_insert_ne //.
 Qed.
 
-(** [pool_ready_total]: along the drain, a fresh, ready pool struct always
+(** [pending_ready_total]: along the drain, a fresh, ready pending struct always
     integrates (the pure exclusion of the ready-but-stuck branch, which the
     heap loop's refinement needs: Go integrates whenever the gate passes). *)
-Definition pool_ready_total (m : DocM)
-    (pool applied : list (TId * IntegrateInput (A := A))) : Prop :=
+Definition pending_ready_total (m : DocM)
+    (pending applied : list (TId * IntegrateInput (A := A))) : Prop :=
   ∀ pre suf mx (ti : TId * IntegrateInput (A := A)),
-    applied = pre ++ suf -> PoolReplay m pre mx ->
-    ti ∈ pool ->
+    applied = pre ++ suf -> PendingReplay m pre mx ->
+    ti ∈ pending ->
     docm_has mx (in_id ti.2) = false ->
     input_ready mx ti.2 = true ->
     is_Some (integrate ti.2 (docm_get mx ti.1)).
@@ -2622,21 +2622,21 @@ Proof.
   move: Hlt. rewrite /DocOp_id /= Hxid //.
 Qed.
 
-(* ----- the drained pool is a valid replay ----- *)
+(* ----- the drained pending is a valid replay ----- *)
 
-(** THE certificate lemma (issue #40): draining a pool of broadcast ops
+(** THE certificate lemma (issue #40): draining a pending of broadcast ops
     against a coherent store yields a [ValidReplay] of the applied list, the
     coherent state and well-formed history advance by exactly those
     deliveries, and no applied op is authored by the receiver. This replaces
     the retired [certs_ValidReplay]: there is NO ordering, causal-closure, or
-    freshness obligation on the pool. *)
-Lemma pool_ValidReplay N c h (m : DocM)
+    freshness obligation on the pending. *)
+Lemma pending_ValidReplay N c h (m : DocM)
     (applied : list (TId * IntegrateInput (A := A))) (m' : DocM) :
   history_wf N -> N !! c = Some h ->
   history_state_coh h m ->
   (∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
      op_broadcast N (ti.1, OpInsert ti.2)) ->
-  PoolReplay m applied m' ->
+  PendingReplay m applied m' ->
   ValidReplay applied m m' ∧
   history_state_coh (h ++ (deliver_ev <$> applied)) m' ∧
   history_wf (<[c := h ++ (deliver_ev <$> applied)]> N) ∧
@@ -2768,23 +2768,23 @@ Proof.
       destruct Hin as [-> | Hin]; [exact Hnoc | exact (Hnoc' ti Hin)].
 Qed.
 
-(** Certified pools are ready-total: broadcast-time validity transports to any
+(** Certified pendings are ready-total: broadcast-time validity transports to any
     drain intermediate along the structural dependencies alone. *)
-Lemma pool_ready_total_of_certs N c h (m : DocM)
-    (pool applied : list (TId * IntegrateInput (A := A))) :
+Lemma pending_ready_total_of_certs N c h (m : DocM)
+    (pending applied : list (TId * IntegrateInput (A := A))) :
   history_wf N -> N !! c = Some h ->
   history_state_coh h m ->
   (∀ t : TId, YjsArrInvariant (docm_get m t)) ->
-  (∀ ti : TId * IntegrateInput (A := A), ti ∈ pool ->
+  (∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
      op_broadcast N (ti.1, OpInsert ti.2)) ->
-  (∀ ti : TId * IntegrateInput (A := A), ti ∈ applied -> ti ∈ pool) ->
-  pool_ready_total m pool applied.
+  (∀ ti : TId * IntegrateInput (A := A), ti ∈ applied -> ti ∈ pending) ->
+  pending_ready_total m pending applied.
 Proof.
   move=> Hwf HNc Hcoh Hinvs Hcerts Happsub pre suf mx ti Heq Hpr Hin Hfresh Hready.
   have Hcpre : ∀ tj : TId * IntegrateInput (A := A), tj ∈ pre ->
       op_broadcast N (tj.1, OpInsert tj.2).
   { move=> tj Htj. apply Hcerts, Happsub. rewrite Heq elem_of_app. by left. }
-  pose proof (pool_ValidReplay N c h m pre mx Hwf HNc Hcoh Hcpre Hpr)
+  pose proof (pending_ValidReplay N c h m pre mx Hwf HNc Hcoh Hcpre Hpr)
     as (Hvr & Hcoh' & Hwf' & _).
   set N' := <[c := h ++ (deliver_ev <$> pre)]> N.
   set h' := h ++ (deliver_ev <$> pre).
