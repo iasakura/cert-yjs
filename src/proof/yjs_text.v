@@ -344,14 +344,11 @@ Proof.
     rewrite /cell_unit in Hu. rewrite Hu in Hlenoff. word. }
   subst off.
   wp_auto.
-  (* the model position of the cell boundary [p] (issue #28 U3): under the
-     unit scaffold it coincides with [p]; the flip re-derives the couplings
-     from run structure instead of [Hmp_p] *)
+  (* the model position of the cell boundary [p] (issue #28 U3): all
+     couplings are derived from the run structure, independent of the
+     unit scaffold *)
   have [mp Hmpdef] : ∃ mp0 : nat, mp0 = length (run_flatten (take p ts.(ty_cells)))
     by (eexists; reflexivity).
-  have Hmp_p : mp = p.
-  { rewrite Hmpdef (run_flatten_take_length_unit _ _ Hunitc).
-    exact (Nat.min_l _ _ Hpbound). }
   (* shared right origin *)
   wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗ ∃ (oRptr : loc) (in_rO : option yjs.id.t),
       "HoR" ∷ originRightId_ptr ↦ oRptr ∗ "HisR" ∷ is_origin_id oRptr in_rO ∗
@@ -374,8 +371,6 @@ Proof.
       have Hpe : (p = length ts.(ty_cells))%nat by lia.
       rewrite Hpe Nat2Z.id lookup_ge_None_2; [done|lia]. }
     destruct (ts.(ty_cells) !! p) as [c0|] eqn:Hc0; [| apply lookup_ge_None in Hc0; lia].
-    have [yi0 [Hyi0 Hcr0]] := cells_repr_lookup ts.(ty_arr) ts.(ty_cells) ts.(ty_arr) (p) c0 Hunitc Hrepr1 Hc0.
-    have Hcr0h := cell_repr_head _ _ _ Hcr0.
     iDestruct (own_dll_acc (DfracOwn 1) ts.(ty_cells) yt1.(yjs.yType.start') tl1 (p) c0 Hc0 with "Hdll1") as "Hacc". iNamed "Hacc".
     iEval (rewrite Hcloc) in "Hcval".
     wp_load. wp_pures. wp_store.
@@ -391,28 +386,71 @@ Proof.
     { rewrite /is_origin_id. iSplit; [iPureIntro; exact Hridnn | iFrame "rid"]. }
     iSplitL "Hpar1 Hdll1".
     { iExists yt1, tl1. iFrame "Hpar1 Hdll1". iPureIntro. split_and!; [exact Hlen1 | exact Hrepr1 | exact Hcpar1]. }
-    iPureIntro. right. exists yi0, iv.(yjs.item.id').
-    split_and!; [rewrite Hmp_p; exact Hyi0 | reflexivity | (rewrite -Hcr0h; exact Hid)]. }
+    iPureIntro. right. exists (run_head c0), iv.(yjs.item.id').
+    have Hr1 : ts.(ty_arr) = run_flatten ts.(ty_cells) by move: Hrepr1; rewrite /cells_repr //.
+    have Hhd0 : ic_run c0 !! 0%nat = Some (run_head c0).
+    { rewrite /run_head. destruct (ic_run c0); [exact (False_ind _ (proj1 Hrun eq_refl)) | reflexivity]. }
+    have Hpos := run_flatten_lookup_of_cell ts.(ty_cells) p 0%nat c0 (run_head c0) Hc0 Hhd0.
+    rewrite Nat.add_0_r in Hpos.
+    split_and!; [rewrite Hr1; exact Hpos | reflexivity | exact Hid]. }
   iIntros (v) "[%Hv HQ]". subst v. iNamed "HQ". wp_auto.
   (* fix the run's shared right origin oR and the first item's left origin oL as values *)
   assert (∃ (oR : YjsPtr A),
      (in_rO = None ∧ oR = Last ∧ (mp = length ts.(ty_arr))%nat) ∨
      (∃ (ri : YjsItem A) (rid : yjs.id.t), ts.(ty_arr) !! mp = Some ri ∧ in_rO = Some rid ∧ item_id ri = toYjsId rid ∧ oR = itemPtr ri))
      as [oR HoRspec].
-  { have Hcl := cells_repr_length ts.(ty_arr) ts.(ty_cells) ts.(ty_arr) Hunitc Hrepr.
-    destruct Hrightinit as [[Hn Hpe] | (ri & rid & Hria & Hrs & Hrid)].
-    - exists Last. left. split_and!; [exact Hn | reflexivity | rewrite Hmp_p -Hcl; exact Hpe].
+  { destruct Hrightinit as [[Hn Hpe] | (ri & rid & Hria & Hrs & Hrid)].
+    - exists Last. left. split_and!; [exact Hn | reflexivity |].
+      have Hr1 : ts.(ty_arr) = run_flatten ts.(ty_cells) by move: Hrepr; rewrite /cells_repr //.
+      rewrite Hmpdef Hpe take_ge; last lia.
+      rewrite Hr1 //.
     - exists (itemPtr ri). right. exists ri, rid. split_and!; [exact Hria | exact Hrs | exact Hrid | reflexivity]. }
+  iAssert (⌜∀ c0, c0 ∈ ts.(ty_cells) → run_wf (ic_run c0)⌝ ∗
+           own_ytype_cells (tv.(yjs.Text.inner')) (DfracOwn 1) ts.(ty_cells) ts.(ty_arr))%I
+    with "[Htext]" as "[%Hrunwf0 Htext]".
+  { iDestruct "Htext" as (ytw tlw) "(Hpw & Hdw & %Hlw & %Hrw & %Hcw)".
+    iDestruct (own_dll_runs_wf with "Hdw") as %Hrwf.
+    iSplitR; [by iPureIntro|]. iExists ytw, tlw. iFrame "Hpw Hdw". iPureIntro.
+    split_and!; [exact Hlw | exact Hrw | exact Hcw]. }
+  have Hnec00 : Forall (λ c0, ic_run c0 ≠ []) ts.(ty_cells).
+  { apply Forall_forall. move=> c0 Hc0. exact (proj1 (Hrunwf0 c0 Hc0)). }
+  have Hr10 : ts.(ty_arr) = run_flatten ts.(ty_cells) by move: Hrepr; rewrite /cells_repr //.
+  have Hmple : (mp <= length ts.(ty_arr))%nat.
+  { rewrite Hmpdef Hr10.
+    have Htg : take (length ts.(ty_cells)) ts.(ty_cells) = ts.(ty_cells)
+      by (apply take_ge; lia).
+    have := run_flatten_take_length_le ts.(ty_cells) p (length ts.(ty_cells)) Hpbound.
+    rewrite Htg. lia. }
+  have Hmp1 : (1 <= p)%nat -> (1 <= mp)%nat.
+  { move=> Hp1. rewrite Hmpdef.
+    have := run_flatten_take_length_lt ts.(ty_cells) 0 p Hnec00 Hp1 Hpbound.
+    rewrite take_0 /run_flatten /=. lia. }
   assert (∃ (oL : YjsPtr A),
      (oL = First ∧ (p = 0)%nat) ∨
-     (∃ li : YjsItem A, (1 <= p)%nat ∧ ts.(ty_arr) !! (mp - 1)%nat = Some li ∧ oL = itemPtr li))
+     (∃ (lc : item_cell) (li : YjsItem A), (1 <= p)%nat ∧
+        ts.(ty_cells) !! (p - 1)%nat = Some lc ∧
+        ic_run lc !! (length (ic_run lc) - 1)%nat = Some li ∧
+        ts.(ty_arr) !! (mp - 1)%nat = Some li ∧ oL = itemPtr li))
      as [oL HoLspec].
   { destruct (decide (p = 0)%nat) as [Hidx0 | Hidxpos].
     - exists First. left. split; [reflexivity | exact Hidx0].
     - have Hidxm : (p - 1 < length ts.(ty_cells))%nat by lia.
       destruct (ts.(ty_cells) !! (p - 1)%nat) as [lc|] eqn:Hlc; [| apply lookup_ge_None in Hlc; lia].
-      have [li [Hli Hcrlc]] := cells_repr_lookup ts.(ty_arr) ts.(ty_cells) ts.(ty_arr) (p - 1) lc Hunitc Hrepr Hlc.
-      exists (itemPtr li). right. exists li. split_and!; [lia | rewrite Hmp_p; exact Hli | reflexivity]. }
+      have Hwflc : run_wf (ic_run lc) := Hrunwf0 lc (list_elem_of_lookup_2 _ _ _ Hlc).
+      have Hlen1lc : (1 <= length (ic_run lc))%nat.
+      { destruct (ic_run lc) eqn:Hrc; [exact (False_ind _ (proj1 Hwflc eq_refl)) | simpl; lia]. }
+      destruct (lookup_lt_is_Some_2 (ic_run lc) (length (ic_run lc) - 1)%nat ltac:(lia)) as [lch Hlch].
+      have Hpos := run_flatten_lookup_of_cell ts.(ty_cells) (p - 1)%nat _ lc lch Hlc Hlch.
+      have Hpstep : length (run_flatten (take p ts.(ty_cells)))
+                  = (length (run_flatten (take (p - 1)%nat ts.(ty_cells))) + length (ic_run lc))%nat.
+      { have Hps : p = S (p - 1)%nat by lia.
+        rewrite {1}Hps (run_flatten_take_S _ _ _ Hlc) length_app //. }
+      exists (itemPtr lch). right. exists lc, lch. split_and!; [lia | reflexivity | exact Hlch | | reflexivity].
+      rewrite Hmpdef Hr10.
+      replace (length (run_flatten (take p ts.(ty_cells))) - 1)%nat
+        with (length (run_flatten (take (p - 1)%nat ts.(ty_cells))) + (length (ic_run lc) - 1))%nat
+        by lia.
+      exact Hpos. }
   (* loop invariant: [j] inserted so far, [arr]/[cells]/[leftloc] grow, [ins] is the run;
      the ghost history [hj] grows by one mint per inserted item, staying coherent
      with [arr], and the certificates of the run accumulate in [Hcertsj]. *)
@@ -490,26 +528,19 @@ Proof.
     - rewrite Nat.add_0_r //.
     - lia.
     - intros x Hx Hc. have := Hctr (tv.(yjs.Text.inner')) ts x Htsp Hx Hc. lia.
-    - destruct HoLspec as [[HoLF Hidx0] | (li & Hge1 & Hli & HoLi)].
+    - destruct HoLspec as [[HoLF Hidx0] | (lc & li & Hge1 & Hlc & Hlast & Hli & HoLi)].
       + left. split; [| lia].
         rewrite Hlftloc /node_loc. case_decide as Hd; [exfalso; rewrite Hidx0 in Hd; simpl in Hd; lia | reflexivity].
       + right.
-        have Hidxm : (p - 1 < length ts.(ty_cells))%nat by lia.
-        destruct (ts.(ty_cells) !! (p - 1)%nat) as [lc|] eqn:Hlc; [| apply lookup_ge_None in Hlc; lia].
-        have [li2 [Hli2 Hcrlc]] := cells_repr_lookup ts.(ty_arr) ts.(ty_cells) ts.(ty_arr) (p - 1) lc Hunitc Hrepr Hlc.
-        rewrite /cell_repr in Hcrlc.
-        exists lc, li2. split_and!.
+        exists lc, li. split_and!.
         * replace (p + 0 - 1)%nat with (p - 1)%nat by lia. exact Hlc.
         * rewrite Hlftloc /node_loc. case_decide as Hd; [| lia].
           have -> : Z.to_nat (Z.of_nat (p) - 1) = (p - 1)%nat by lia.
           rewrite Hlc //.
-        * replace (mp + 0 - 1)%nat with (p - 1)%nat by lia. exact Hli2.
-        * by rewrite Hcrlc.
+        * replace (mp + 0 - 1)%nat with (mp - 1)%nat by lia. exact Hli.
+        * exact Hlast.
         * lia.
-        * intros _. rewrite HoLi. f_equal.
-          have Hli' : ts.(ty_arr) !! (p - 1)%nat = Some li
-            by (replace (p - 1)%nat with (mp - 1)%nat by lia; exact Hli).
-          rewrite Hli' in Hli2. injection Hli2 as ->. reflexivity.
+        * intros _. rewrite HoLi //.
         * intros j' Hj'. lia.
     - destruct HoRspec as [(Hn & HoRl & Hidxlen) | (ri & rid & Hria & Hrs & Hrid & HoRi)].
       + left. split_and!; [exact Hn | exact HoRl | rewrite Nat.add_0_r; exact Hidxlen].
@@ -612,7 +643,10 @@ Proof.
         have Hp00 : p = 0%nat by lia.
         have Hj00 : j = 0%nat by lia.
         rewrite Hmpdef Hp00 take_0 /run_flatten /= Hj00 //.
-      - exists (itemPtr li). right. exists li. split_and!; [lia | exact Hla | exact Hom | reflexivity]. }
+      - exists (itemPtr li). right. exists li. split_and!; [| exact Hla | exact Hom | reflexivity].
+        destruct j as [|j']; [| lia].
+        have Hp1 : (1 <= p)%nat by lia.
+        have := Hmp1 Hp1. lia. }
     destruct Horig as [morigin Horig].
     have Hrorig : ∃ (r : YjsPtr A),
        (toYjsId <$> in_rO = None ∧ r = Last ∧ (mp + j)%nat = length arr) ∨
@@ -883,8 +917,11 @@ Proof.
         * rewrite /nit /=. exact HmroR.
         * intros Hi0. rewrite /nit /=. rewrite Hieq Hinslen in Hi0.
           destruct Horig as [(_ & Hmo & Hp0) | (li & Hge & Hla & _ & Hmo)].
-          -- rewrite Hmo. destruct HoLspec as [[HoLF _] | (li2 & Hge2 & _ & _)]; [rewrite HoLF // | lia].
-          -- rewrite Hmo. destruct Hleftj as [[_ Hp0] | (lc2 & li2 & _ & _ & Hla2 & _ & _ & Hlk0 & _)]; [lia |]. have -> : li = li2 by (rewrite Hla in Hla2; injection Hla2 as ->; reflexivity). exact (Hlk0 Hi0).
+          -- rewrite Hmo. destruct HoLspec as [[HoLF _] | (lc2 & li2 & Hge2 & _)]; [rewrite HoLF // | lia].
+          -- rewrite Hmo. destruct Hleftj as [[_ Hp0] | (lc2 & li2 & _ & _ & Hla2 & _ & _ & Hlk0 & _)].
+             { exfalso. have Hp00 : p = 0%nat by lia. have Hj00 : j = 0%nat by lia.
+               move: Hge. rewrite Hmpdef Hp00 take_0 /run_flatten /= Hj00. lia. }
+             have -> : li = li2 by (rewrite Hla in Hla2; injection Hla2 as ->; reflexivity). exact (Hlk0 Hi0).
         * intros j' itj Hisj Hlookj'. rewrite /nit /=. rewrite Hieq Hinslen in Hisj. rewrite lookup_app_l in Hlookj'; [| rewrite Hinslen; lia].
           destruct Horig as [(_ & _ & Hp0) | (li & Hge & Hla & _ & Hmo)]; [lia |].
           rewrite Hmo. destruct Hleftj as [[_ Hp0] | (lc2 & li2 & _ & _ & Hla2 & _ & _ & _ & Hlk)]; [lia |]. have -> : li = li2 by (rewrite Hla in Hla2; injection Hla2 as ->; reflexivity). have Hli2 := Hlk j' Hisj. rewrite Hli2 in Hlookj'. injection Hlookj' as <-. reflexivity.
