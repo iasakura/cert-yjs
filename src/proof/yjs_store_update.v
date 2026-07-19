@@ -106,7 +106,7 @@ Definition own_update (sl : slice.t) (dq : dfrac)
    walking one type's DLL. The heap cells backing the probes live in the
    per-type DLLs, so the lookup specs borrow single cells out of the
    document-wide big-sep (what [store_inv] holds as [Htypes]) via
-   [types_cell_acc]. *)
+   [types_cell_acc_gen]. *)
 
 Lemma list_elem_of_concat {D : Type} (x : D) (ls : list (list D)) :
   x ∈ concat ls <-> ∃ l, x ∈ l ∧ l ∈ ls.
@@ -163,58 +163,10 @@ Proof.
     have -> : (S i + (j - S i))%nat = j by lia. exact Hj.
 Qed.
 
-(** Borrow one pool cell's heap struct out of the per-type DLL big-sep: its
-    struct points-to plus the [own_dll]-pinned translation facts, and a wand
-    restoring the big-sep. What [GetNode]'s binary search and [repair]'s
-    parent borrow read through. *)
-Lemma types_cell_acc (types : gmap loc type_state) (c : item_cell) :
-  c ∈ all_cells types ->
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
-    ∃ (iv : yjs.item.t),
-      "%Hid" ∷ ⌜item_id (run_head c) = toYjsId iv.(yjs.item.id')⌝ ∗
-      "%Hrun" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝ ∗
-      "%Hpar" ∷ ⌜iv.(yjs.item.parent') = ic_parent c⌝ ∗
-      "Hval" ∷ ic_loc c ↦ iv ∗
-      "Hback" ∷ (ic_loc c ↦ iv -∗
-        ([∗ map] parent ↦ ts ∈ types,
-            own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-            ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-            ⌜Forall cell_unit (ty_cells ts)⌝)).
-Proof.
-  move=> Hc. iIntros "Htypes".
-  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
-  apply list_elem_of_lookup_1 in Hcts. destruct Hcts as [k Hk].
-  iDestruct (big_sepM_lookup_acc _ _ p ts Hp with "Htypes") as "[(Hyt & %Hinvp & %Hunitp) Hrest]".
-  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  iDestruct (own_dll_acc (DfracOwn 1) (ty_cells ts) yt.(yjs.yType.start') tl k c Hk with "Hdll") as "Hacc".
-  iNamed "Hacc".
-  (* the 1-char length is no longer a DLL pin (issue #28); derive it from the
-     all-singleton invariant through the content coupling *)
-  have Hlen1 : length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat.
-  { have Hu : cell_unit c := Forall_lookup_1 _ _ _ _ Hunitp Hk.
-    rewrite /cell_unit in Hu.
-    have Hleq := f_equal length Hcontent.
-    rewrite length_fmap explode_length /toContent in Hleq. lia. }
-  iExists iv.
-  iFrame "Hcval".
-  iSplitR; [iPureIntro; exact Hid |].
-  iSplitR; [iPureIntro; exact Hlen1 |].
-  iSplitR; [iPureIntro; exact Hpar |].
-  iIntros "Hval".
-  iDestruct ("Hback" with "Hval") as "Hdll".
-  iApply "Hrest". iSplitL; [| iPureIntro; split; [exact Hinvp | exact Hunitp]].
-  iExists yt, tl. iFrame "Hparent Hdll". iPureIntro.
-  split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
-Qed.
-
-(** The general, run-aware sibling of [types_cell_acc]: borrows one pool cell's
-    heap struct out of the 2-conjunct per-type DLL big-sep (no [cell_unit]) and
-    exposes the full [own_dll_acc] translation facts (id / parent / content
-    coupling / origins / flags / [run_wf]) rather than the [cell_unit]-derived
-    1-char length. What [getNodeIndex] (over runs) and [splitNode] read. *)
+(** Borrow one pool cell's heap struct out of the per-type DLL big-sep,
+    exposing the full [own_dll_acc] translation facts (id / parent / content
+    coupling / origins / flags / [run_wf]) and a wand restoring the big-sep.
+    What [GetNode] / [getNodeIndex] / [splitNode] / [repair] read through. *)
 Lemma types_cell_acc_gen (types : gmap loc type_state) (c : item_cell) :
   c ∈ all_cells types ->
   ([∗ map] parent ↦ ts ∈ types,
@@ -259,91 +211,11 @@ Proof using Type*.
   split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
 Qed.
 
-(** Under the unit scaffold every doc item is a run head of some cell
-    (the inverse of [run_head_in_flatten]; stage C1b's origin-item bridge). *)
-Lemma unit_cells_arr_head (cells : list item_cell) (arr : list (YjsItem A)) (x : YjsItem A) :
-  cells_repr arr cells arr ->
-  Forall cell_unit cells ->
-  x ∈ arr ->
-  ∃ c, c ∈ cells ∧ x = run_head c.
-Proof.
-  rewrite /cells_repr. move=> Hrepr Hunit Hx.
-  rewrite Hrepr (run_flatten_singletons cells Hunit) in Hx.
-  apply list_elem_of_lookup_1 in Hx. destruct Hx as [i Hx].
-  rewrite list_lookup_fmap in Hx.
-  destruct (cells !! i) as [c|] eqn:Hc; last done.
-  injection Hx as Heq. exists c.
-  split; [by eapply list_elem_of_lookup_2 | by rewrite Heq].
-Qed.
-
-(** Every pool cell's id components round-trip through [w64] heap fields
-    ([own_dll_id_bounds], lifted over the big-sep) — the certificate spec's
-    glue from nat-level replay facts to W64 comparisons. *)
-Lemma types_cells_id_bounds (types : gmap loc type_state) :
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
-  ⌜∀ c, c ∈ all_cells types ->
-     (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
-     (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types,
-      ⌜∀ c, c ∈ ty_cells ts ->
-         (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
-         (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "[Hyt _]".
-    iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    iApply (own_dll_id_bounds with "Hdll"). }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> c Hc.
-  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
-  exact (Hall p ts Hp c Hcts).
-Qed.
-
-(** The per-entry document invariant, extracted from the big-sep. *)
-Lemma types_arr_inv (types : gmap loc type_state) :
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
-  ⌜∀ p ts, types !! p = Some ts -> YjsArrInvariant (ty_arr ts)⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types, ⌜YjsArrInvariant (ty_arr ts)⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(_ & %Hinv & _)". by iPureIntro. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
-Qed.
-
-(** The per-entry all-singleton invariant, extracted from the big-sep
-    (issue #28, M1). *)
-Lemma types_unit_all (types : gmap loc type_state) :
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
-  ⌜∀ p ts, types !! p = Some ts -> Forall cell_unit (ty_cells ts)⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types, ⌜Forall cell_unit (ty_cells ts)⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(_ & _ & %Hu)". by iPureIntro. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
-Qed.
-
 (** [getNodeIndex] (binary search over a clock-sorted run), specified for the
     hit path only: the verified update path always resolves (a [ValidReplay]
     input's origins exist), witnessed by [k0]/[c0], so the not-found return is
     dead code (the loop cannot exhaust a window that provably contains a hit).
-    The probed cells are read through the per-type DLL big-sep ([types_cell_acc]);
+    The probed cells are read through the per-type DLL big-sep ([types_cell_acc_gen]);
     their 1-char pin makes [Len() = 1], so a run covers [clk] iff some cell's
     clock IS [clk]. [Hnowrap] rules out [middleClock + 1] wrap-around (the
     [middleEnd] compare would otherwise skip a max-clock hit). *)
@@ -634,9 +506,7 @@ Qed.
     address ANY char of the witness cell's run; the returned node is pinned
     to [cw] by per-client clock-range disjointness (two same-client cells
     whose ranges both cover the id must share a location) instead of the
-    all-singleton identification. Takes only the 2-conjunct big-sep (no
-    [cell_unit]); additive alongside the unit fast path above, which it
-    replaces at the C2 flip. *)
+    all-singleton identification. *)
 Lemma wp_store__GetNode_range (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
     (types : gmap loc type_state) (cw : item_cell) :
   cw ∈ all_cells types ->
@@ -1973,7 +1843,7 @@ Proof.
 Qed.
 
 (** Run-fits survives a split: each half's range is a sub-range of [cw]'s.
-    [Hckbnd] (the head clock fits as a NAT, from [types_cells_id_bounds])
+    [Hckbnd] (the head clock fits as a NAT, from [types_cells_id_bounds2])
     makes the right half's [W64] clock exact. *)
 Lemma split_pool_fits (types : gmap loc type_state) (parent : loc)
     (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
@@ -2258,7 +2128,9 @@ Proof.
   - right. rewrite HclkrZ Hlenr. split_and!; lia.
 Qed.
 
-(** [types_cells_id_bounds] over the 2-conjunct big-sep (issue #28 stage D). *)
+(** Every pool cell's id components round-trip through [w64] heap fields
+    ([own_dll_id_bounds], lifted over the big-sep): the glue from nat-level
+    replay facts to W64 comparisons (issue #28 stage D). *)
 Lemma types_cells_id_bounds2 (types : gmap loc type_state) :
   ([∗ map] parent ↦ ts ∈ types,
       own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
@@ -3333,48 +3205,9 @@ Proof.
     exact Hrun.
 Qed.
 
-(** Pool-wide run well-formedness, read off the types big-sep. *)
-Lemma types_runs_wf (types : gmap loc type_state) :
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
-  ⌜∀ c, c ∈ all_cells types → run_wf (ic_run c)⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types, ⌜∀ c, c ∈ ty_cells ts → run_wf (ic_run c)⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(Hyt & _ & _)".
-    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    iApply (own_dll_runs_wf with "Hdll"). }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> c Hc.
-  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
-  exact (Hall p ts Hp c Hcts).
-Qed.
-
-(** Pool-wide parent discipline: a cell listed under [p] carries parent [p]. *)
-Lemma types_parents_all (types : gmap loc type_state) :
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
-  ⌜∀ p ts c, types !! p = Some ts → c ∈ ty_cells ts → ic_parent c = p⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types, ⌜∀ c, c ∈ ty_cells ts → ic_parent c = p⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(Hyt & _ & _)".
-    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    by iPureIntro. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> p ts c Hp Hc. exact (Hall p ts Hp c Hc).
-Qed.
-
-(** 2-conjunct (post-flip) variants of the pure extractions: the same
-    facts read off the big-sep without the unit scaffold conjunct. *)
+(** Pure extractions read off the types big-sep: pool-wide run
+    well-formedness, parent discipline, the per-entry document invariant,
+    and the cells/model isomorphism. *)
 Lemma types_runs_wf2 (types : gmap loc type_state) :
   ([∗ map] parent ↦ ts ∈ types,
       own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
@@ -3458,43 +3291,6 @@ Proof.
   iPureIntro. split; [exact Hrepr | exact Hcpar].
 Qed.
 
-(** One entry's [own_ytype_cells] pures, read off the big-sep (which the
-    conclusion being pure lets the caller keep). *)
-Lemma types_entry_pures (types : gmap loc type_state) (p : loc) (ts : type_state) :
-  types !! p = Some ts ->
-  ([∗ map] parent ↦ ts0 ∈ types,
-      own_ytype_cells parent (DfracOwn 1) (ty_cells ts0) (ty_arr ts0) ∗
-      ⌜YjsArrInvariant (ty_arr ts0)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts0)⌝) -∗
-  ⌜cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts) ∧
-   (∀ c, c ∈ ty_cells ts -> ic_parent c = p) ∧
-   Forall cell_unit (ty_cells ts)⌝.
-Proof.
-  move=> Hp. iIntros "Htypes".
-  iDestruct (big_sepM_lookup_acc _ _ p ts Hp with "Htypes") as "[(Hyt & _ & %Hunitp) _]".
-  iDestruct "Hyt" as (yt tl) "(_ & _ & %Hlen & %Hrepr & %Hcpar)".
-  iPureIntro. by split_and!.
-Qed.
-
-Lemma types_repr_all (types : gmap loc type_state) :
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
-  ⌜∀ p ts, types !! p = Some ts -> cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types,
-      ⌜cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "[Hyt _]".
-    iDestruct "Hyt" as (yt tl) "(_ & _ & %Hlen & %Hrepr & %Hcpar)".
-    by iPureIntro. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
-Qed.
-
 (** [store_inv] is exactly [own_store] with the model existentially closed.
     The forward direction restates the per-client counter clause at the
     model; the backward direction re-derives the [types]-level and the W64
@@ -3529,9 +3325,8 @@ Proof.
     + exact Hrunfits.
     + exact Horiginclk.
   - iIntros "H". iDestruct "H" as (c h m) "H". iNamed "H". subst c.
-    iDestruct (types_repr_all with "Htypes") as %Hreprall.
-    iDestruct (types_unit_all with "Htypes") as %Hunitall.
-    iDestruct (types_cells_id_bounds with "Htypes") as %Hcellbnd.
+    iDestruct (types_repr_all2 with "Htypes") as %Hreprall.
+    iDestruct (types_cells_id_bounds2 with "Htypes") as %Hcellbnd.
     destruct Hregcoh as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
     (* the [types]-level counter from the model-level one *)
     have Hctrt : ∀ parent ts x, types !! parent = Some ts -> x ∈ ty_arr ts ->
@@ -3541,7 +3336,7 @@ Proof.
       have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm parent ts Hbnm Hts.
       apply (Hctr (RootId nm) x); [by rewrite Hdg | exact Hcx]. }
     (* the W64 cell-level shadow, via the id-bound pins *)
-    iDestruct (types_runs_wf with "Htypes") as %Hrunwfall0.
+    iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfall0.
     have Hcellctr : ∀ c0, c0 ∈ all_cells types -> cell_client c0 = client ->
         (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z k)%Z.
     { move=> c0 Hc0 Hcc.
@@ -4595,9 +4390,8 @@ Proof using Type*.
     iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hb.
     iPureIntro. by exists nm, p. }
   (* the cell-level no-wrap seam from the model-level one *)
-  iDestruct (types_repr_all with "Htypes") as %Hreprall.
-    iDestruct (types_unit_all with "Htypes") as %Hunitall.
-  iDestruct (types_cells_id_bounds with "Htypes") as %Hcellbnd.
+  iDestruct (types_repr_all2 with "Htypes") as %Hreprall.
+  iDestruct (types_cells_id_bounds2 with "Htypes") as %Hcellbnd.
   have Hregcohd := Hregcoh.
   destruct Hregcohd as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
   have Hnowrap : ∀ c0, c0 ∈ all_cells types ->
@@ -4606,38 +4400,11 @@ Proof using Type*.
   (* run the internal certificate lemma; keep a fupd after the call for the
      item-set authority update *)
   iApply wp_fupd.
-  iDestruct (types_unit_all with "Htypes") as %Hunitallcs.
-  iAssert (([∗ map] p ↦ ts ∈ types,
-      own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝))%I with "[Htypes]" as "Htypes".
-  { iApply (big_sepM_impl with "Htypes"). iIntros "!#" (p ts Hp) "($ & $ & _)". }
   wp_apply (wp_store__applyUpdate_certs_aux s sl dq γh c h inputs Ds m types bind
               items_mref types_mref Hbatch Hhcoh Hregcoh Hbatchbnd Hnowrap Hnowrapb
               Hlocdup Hrangedisj Horiginclk
               with "[$Hpkg $Hishist $Hhist $Hcerts $Hupd $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
   iIntros (types' m') "(Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & Hhist & #Hlbnew & %Hcoh' & %Hregcoh' & %Hdom' & %Hvr & %Hnoc & %Hprov' & %Hlocdup' & %Hrangedisj' & %Horiginclk')".
-  (* unit survives the batch: every new cell is a sub-range of a unit cell or
-     a batch singleton (dies with the flip) *)
-  iDestruct (types_runs_wf2 with "Htypes") as %Hrunwf'.
-  have Hunit' : ∀ p ts', types' !! p = Some ts' -> Forall cell_unit (ty_cells ts').
-  { move=> p ts' Hp. apply Forall_forall. move=> c1 Hc1.
-    have Hcall : c1 ∈ all_cells types'.
-    { rewrite (all_cells_lookup _ _ _ Hp). apply elem_of_app. by left. }
-    have Hlen1 : (1 <= length (ic_run c1))%nat.
-    { have Hwf := Hrunwf' c1 Hcall.
-      destruct (ic_run c1) eqn:Hrc; [exact (False_ind _ (proj1 Hwf eq_refl)) | simpl; lia]. }
-    destruct (Hprov' c1 Hcall) as [(cold & Hcold & _ & Hlo & Hhi) | (i & ti & _ & _ & _ & Hlen1b)].
-    - have Hc0m := Hcold. apply all_cells_elem_of in Hc0m.
-      destruct Hc0m as (p0 & ts0 & Hts0 & Hcts0).
-      have Hu := proj1 (Forall_forall _ _) (Hunitallcs p0 ts0 Hts0) _ Hcts0.
-      rewrite /cell_unit in Hu. rewrite /cell_unit. lia.
-    - rewrite /cell_unit. exact Hlen1b. }
-  iAssert (([∗ map] p ↦ ts' ∈ types',
-      own_ytype_cells p (DfracOwn 1) (ty_cells ts') (ty_arr ts') ∗
-      ⌜YjsArrInvariant (ty_arr ts')⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts')⌝))%I with "[Htypes]" as "Htypes".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts' Hp) "($ & $)". iPureIntro. exact (Hunit' p ts' Hp). }
   have Hregcohd' := Hregcoh'.
   destruct Hregcohd' as (Hbindtypes' & Hbindinj' & Htypesbound' & Hmtypes' & Hmdom').
   (* grow the item-set authority to the new types and snapshot it *)

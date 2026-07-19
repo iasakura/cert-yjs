@@ -329,16 +329,6 @@ Qed.
    live here (not [yjs_common]) to keep the root dependency stable; promote at
    stage C2 when the update path needs them too. *)
 
-(** [cell_unit] cells have nonempty runs: the unit-scaffold callers discharge
-    the scan stack's nonemptiness premise with this. *)
-Lemma Forall_cell_unit_nonempty (cells : list item_cell) :
-  Forall cell_unit cells -> Forall (λ c, ic_run c ≠ []) cells.
-Proof.
-  move=> Hunit. apply (Forall_impl _ _ _ Hunit).
-  move=> c Hc. rewrite /cell_unit in Hc.
-  destruct (ic_run c); [simpl in Hc; lia | done].
-Qed.
-
 (** Non-strict monotonicity of the flattened-prefix length in the cursor. *)
 Lemma run_flatten_take_length_le (cells : list item_cell) (cur1 cur2 : nat) :
   (cur1 <= cur2)%nat ->
@@ -634,22 +624,6 @@ Definition own_linked_item (item_l : loc) (input : IntegrateInput (A := A))
 
 (** The not-yet-integrated item's location is fresh for the whole cell pool
     (issue #28 part 6): the [Hlocdup] maintenance source at each integrate. *)
-Lemma linked_item_fresh (item_l parent lft rgt : loc)
-    (input : IntegrateInput (A := A)) (dq : dfrac) (types : gmap loc type_state) :
-  own_linked_item item_l input parent lft rgt -∗
-  ([∗ map] p ↦ ts ∈ types,
-      own_ytype_cells p dq (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
-  ⌜item_l ∉ ic_loc <$> all_cells types⌝.
-Proof.
-  iIntros "Hlinked Htypes".
-  iDestruct "Hlinked" as (iv oleft oright) "(Hraw & _)".
-  iDestruct "Hraw" as "(Hitem & _)".
-  iApply (all_cells_fresh3 with "Hitem Htypes").
-Qed.
-
-(** [linked_item_fresh] over the 2-conjunct big-sep (post-flip shape). *)
 Lemma linked_item_fresh2 (item_l parent lft rgt : loc)
     (input : IntegrateInput (A := A)) (dq : dfrac) (types : gmap loc type_state) :
   own_linked_item item_l input parent lft rgt -∗
@@ -667,7 +641,7 @@ Proof.
   iApply (all_cells_fresh with "Hitem Htypes").
 Qed.
 
-(** [linked_item_fresh] against a single type's cells (the shape the
+(** [linked_item_fresh2] against a single type's cells (the shape the
     [Text.Insert] loop holds for its own type). *)
 Lemma linked_item_fresh_ytype (item_l parent2 lft rgt parent : loc)
     (input : IntegrateInput (A := A)) (dq : dfrac)

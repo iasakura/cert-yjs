@@ -550,21 +550,6 @@ Proof using ext ffi ffi_interp0 Σ hG ffi_semantics0 sem package_sem.
     split; [exact H1 | exact H2].
 Qed.
 
-(** [all_cells_fresh] over the 3-conjunct store big-sep (the shape the store
-    proofs thread). *)
-Lemma all_cells_fresh3 (p : loc) (v : yjs.item.t) (dq : dfrac) (types : gmap loc type_state) :
-  p ↦ v -∗
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent dq (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
-  ⌜p ∉ ic_loc <$> all_cells types⌝.
-Proof using ext ffi ffi_interp0 Σ hG ffi_semantics0 sem package_sem.
-  iIntros "Hp Htypes".
-  iDestruct (big_sepM_sep with "Htypes") as "[Hbare _]".
-  iApply (all_cells_fresh with "Hp Hbare").
-Qed.
-
 (* ----- the part-6 pool invariants (issue #28): loc NoDup + range disjointness *)
 
 (** Per-client clock-RANGE disjointness of the document cell pool: two distinct
@@ -1170,10 +1155,7 @@ Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Q
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
   "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
                 own_ytype_cells parent (DfracOwn q) (ty_cells ts) (ty_arr ts) ∗
-                ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-                (* all-singleton invariant (issue #28): every creator today
-                   mints 1-char runs; dropped in M4 with the run-scan bridge *)
-                ⌜Forall cell_unit (ty_cells ts)⌝).
+                ⌜YjsArrInvariant (ty_arr ts)⌝).
 
 #[global] Instance store_inv_ro_fractional γs types : Fractional (store_inv_ro γs types).
 Proof.
@@ -1470,9 +1452,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
     "Htypes"  ∷ ([∗ map] parent ↦ ts ∈ types,
                   own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-                  ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-                  (* all-singleton invariant (issue #28): dropped in M4 *)
-                  ⌜Forall cell_unit (ty_cells ts)⌝) ∗
+                  ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
     "Hhist"   ∷ own_client_history γh c h ∗
