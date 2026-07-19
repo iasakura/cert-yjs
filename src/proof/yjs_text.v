@@ -561,35 +561,39 @@ Proof.
       wp_alloc icopy as "Hic". wp_auto.
       wp_bind (icopy @! (go.PointerType yjs.item) @! "Len" (# ()))%E.
       wp_apply (wp_item__Len icopy (DfracOwn 1) iv with "[$Hic]"). iIntros "Hic".
-      have Hlen1L : length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat.
-      { have Hu : cell_unit lc := Forall_lookup_1 _ _ _ _ Hunitj Hlccells.
-        rewrite /cell_unit in Hu.
-        have Hleq := f_equal length Hcontent.
+      have Hlenrun : length (iv.(yjs.item.content').(yjs.content.content')) = length (ic_run lc).
+      { have Hleq := f_equal length Hcontent.
         rewrite length_fmap explode_length /toContent in Hleq. lia. }
-      rewrite Hlen1L. wp_pures. wp_store.
+      wp_pures. wp_store.
       iDestruct (typed_pointsto_not_null with "lid") as %Hlidnn.
       iPersist "lid". wp_auto.
       iEval (rewrite -Hlcloc) in "Hcval".
       iDestruct ("Hback" with "Hcval") as "Hdll".
       iSplitR; [done|].
-      iExists lid_ptr, (Some {| yjs.id.clientId' := iv.(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := w64_word_instance.(word.sub) (w64_word_instance.(word.add) iv.(yjs.item.id').(yjs.id.clock') (W64 1%nat)) (W64 1) |}).
+      iExists lid_ptr, (Some {| yjs.id.clientId' := iv.(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := w64_word_instance.(word.sub) (w64_word_instance.(word.add) iv.(yjs.item.id').(yjs.id.clock') (W64 (length (iv.(yjs.item.content').(yjs.content.content'))))) (W64 1) |}).
       iFrame "originLeftId Hleftp".
       iSplitR "Hpar Hdll".
       { rewrite /is_origin_id. iSplit; [iPureIntro; exact Hlidnn | iFrame "lid"]. }
       iSplitL "Hpar Hdll".
       { iExists yth, tlh. iFrame "Hpar Hdll". iPureIntro. split_and!; [exact Hlenh | exact Hreprh | exact Hcparh]. }
-      have Hu2 : cell_unit lc := Forall_lookup_1 _ _ _ _ Hunitj Hlccells.
-      rewrite /cell_unit in Hu2.
-      have Hlz : (length (ic_run lc) - 1)%nat = 0%nat by lia.
-      rewrite Hlz in Hliitem.
-      have Hheadlc : run_head lc = li.
-      { move: Hliitem. rewrite /run_head.
-        destruct (ic_run lc) as [|h0 t0]; [done | move=> /= [= ->] //]. }
-      have Hliid : item_id li = toYjsId iv.(yjs.item.id') by (rewrite -Hheadlc; exact Hid).
+      (* the produced id is the LAST char of the left cell's run:
+         head clock + run length - 1 (run_wf), no-wrap from the pool fits *)
+      have Hmemlc : lc ∈ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types).
+      { rewrite (all_cells_insert types (tv.(yjs.Text.inner')) ts (MkTypeState cells arr) Htsp) /=.
+        apply elem_of_app. left. exact (list_elem_of_lookup_2 _ _ _ Hlccells). }
+      have Hfitslc := Hrunfitsj lc Hmemlc.
+      have Hlen1lc : (1 <= length (ic_run lc))%nat.
+      { destruct (ic_run lc) eqn:Hrc; [exact (False_ind _ (proj1 Hrun eq_refl)) | simpl; lia]. }
+      have Hnw : (uint.Z (iv.(yjs.item.id').(yjs.id.clock')) + Z.of_nat (length (ic_run lc)) < 2^64)%Z.
+      { move: Hfitslc. rewrite /cell_fits /cell_clock Hid /toYjsId /=. move=> H. word. }
       iPureIntro. right. exists li. split_and!.
       - exact Hge1.
       - exact Hliarr.
-      - rewrite Hliid /toYjsId /=. f_equal. f_equal. word. }
+      - rewrite (run_wf_char_id _ _ _ Hrun Hliitem) /=.
+        rewrite /run_head in Hid.
+        rewrite Hid /toYjsId /=.
+        do 2 f_equal.
+        rewrite Hlenrun. clear -Hnw Hlen1lc. word. }
     iIntros (v) "[%Hv HQL]". subst v. iNamed "HQL". wp_auto.
     wp_func_call. wp_call.
     destruct (cs !! sint.nat (W64 j)) as [b|] eqn:Hb;
