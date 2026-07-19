@@ -649,6 +649,24 @@ Proof.
   iApply (all_cells_fresh3 with "Hitem Htypes").
 Qed.
 
+(** [linked_item_fresh] over the 2-conjunct big-sep (post-flip shape). *)
+Lemma linked_item_fresh2 (item_l parent lft rgt : loc)
+    (input : IntegrateInput (A := A)) (dq : dfrac) (types : gmap loc type_state) :
+  own_linked_item item_l input parent lft rgt -∗
+  ([∗ map] p ↦ ts ∈ types,
+      own_ytype_cells p dq (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  ⌜item_l ∉ ic_loc <$> all_cells types⌝.
+Proof.
+  iIntros "Hlinked Htypes".
+  iDestruct "Hlinked" as (iv oleft oright) "(Hraw & _)".
+  iDestruct "Hraw" as "(Hitem & _)".
+  iAssert ([∗ map] p ↦ ts ∈ types,
+      own_ytype_cells p dq (ty_cells ts) (ty_arr ts))%I with "[Htypes]" as "Htypes".
+  { iApply (big_sepM_impl with "Htypes"). iIntros "!#" (p ts Hp) "($ & _)". }
+  iApply (all_cells_fresh with "Hitem Htypes").
+Qed.
+
 (** [linked_item_fresh] against a single type's cells (the shape the
     [Text.Insert] loop holds for its own type). *)
 Lemma linked_item_fresh_ytype (item_l parent2 lft rgt parent : loc)
