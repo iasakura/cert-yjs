@@ -776,9 +776,6 @@ Lemma wp_store__splitNode (s mref : loc) (types : gmap loc type_state)
   (∀ c, c ∈ all_cells types -> cell_client c = cell_client cw -> ic_loc c ≠ ic_loc cw ->
      (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z (cell_clock cw))%Z ∨
      (uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)) <= uint.Z (cell_clock c))%Z) ->
-  (* the client run has room for one more node: [make(len+1)] must not sign-wrap
-     (the run list is a [signed] slice length; analogous to the clock no-wraps) *)
-  (Z.of_nat (length (client_run types (cell_client cw))) + 1 < 2^63)%Z ->
   {{{ is_pkg_init yjs ∗ (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
       ([∗ map] p ↦ ts ∈ types, own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗ ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
     s @! (go.PointerType yjs.store) @! "splitNode" #(ic_loc cw) #diff
@@ -789,7 +786,7 @@ Lemma wp_store__splitNode (s mref : loc) (types : gmap loc type_state)
       ([∗ map] p ↦ ts ∈ (<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types),
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗ ⌜YjsArrInvariant (ty_arr ts)⌝) }}}.
 Proof using Type*.
-  move=> Htypes Hcellk Hdiff Hrunfits Hnodup Hdisj Hrunlen.
+  move=> Htypes Hcellk Hdiff Hrunfits Hnodup Hdisj.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
   (* open [parent]'s [own_ytype_cells], peel node [k] out of the DLL *)
   iDestruct (big_sepM_delete _ _ parent _ Htypes with "Htypes") as "[(Hpc & %Harrinv) Hrestmap]".
@@ -1090,116 +1087,45 @@ Proof using Type*.
     have Hcrescl : cres = cl.
     { have Htmp : run_half !! kw = Some cres by (rewrite -Hidxkw; exact Hcres). congruence. }
     iEval (rewrite Hlocs) in "Hslice".
-    (* ----- the make+copy item-map surgery ----- *)
+    (* ----- the append-based item-map surgery (no length-fit side condition:
+       append's growth is modeled with an overflow assume, so no client-run
+       capacity premise is needed, unlike a pre-sized make) ----- *)
     iDestruct (own_slice_len with "Hslice") as %[Hslklen Hslklen0].
     rewrite length_fmap in Hslklen Hslklen0.
-    have Hnbound : (Z.of_nat (length (client_run types kc)) + 1 < 2^63)%Z by (rewrite -Hcwcc; lia).
     have Hkwlt2 : (kw < length (client_run types kc))%nat by (apply lookup_lt_Some in Hkw).
-    have Hidxsint : sint.Z idx = Z.of_nat kw by (move: Hnbound Hkwlt2; rewrite -Hidxkw => ? ?; word).
+    have Hidxsint : sint.Z idx = Z.of_nat kw by (move: Hslklen Hslklen0 Hkwlt2; rewrite -Hidxkw => ? ? ?; word).
     wp_auto.
     iDestruct (own_slice_wf with "Hslice") as %Hslkwf.
-    (* prefix := nodes[:index+1] *)
+    (* newNodes = append(nil, nodes[:index+1]...) *)
     rewrite decide_True; last word.
     wp_auto.
-    (* suffix := nodes[index+1:] *)
-    rewrite decide_True; last word.
-    wp_auto.
-    (* newNodes := make([]*item, uint64(len(nodes))+1) *)
-    wp_apply wp_slice_make2.
-    { iPureIntro. word. }
-    iIntros (newSl) "[HnewNodes HnewCap]".
-    wp_auto.
-    (* copy(newNodes, prefix): split the client slice, copy the disjoint prefix *)
     have Hsplitbnd : (0 ≤ sint.Z (w64_word_instance.(word.add) idx (W64 1)) ≤ sint.Z slk.(slice.len) ≤ sint.Z slk.(slice.len))%Z by word.
     iDestruct (own_slice_slice (w64_word_instance.(word.add) idx (W64 1)) slk.(slice.len) slk (DfracOwn 1) (ic_loc <$> client_run types kc) Hsplitbnd with "Hslice") as "(Hsl_pre & Hsl_suf & Hsl_tail)".
-    wp_apply (wp_slice_copy with "[$HnewNodes $Hsl_pre]").
-    iIntros (nc1) "(%Hnc1 & HnewNodes & Hsl_pre)".
+    iAssert (slice.nil ↦* ([] : list loc))%I with "[]" as "Hnil0"; first iApply own_slice_nil.
+    iAssert (own_slice_cap loc slice.nil (DfracOwn 1))%I with "[]" as "Hnilcap"; first iApply own_slice_cap_nil.
+    wp_apply (wp_slice_append with "[Hnil0 Hnilcap Hsl_pre]"); first (iFrame "Hnil0 Hnilcap Hsl_pre").
+    iIntros (sl1) "(Hsl1 & Hsl1cap & Hsl_pre)".
     wp_auto.
-    have HnkA : sint.nat (w64_word_instance.(word.add) slk.(slice.len) (W64 1)) = (length (client_run types kc) + 1)%nat by word.
-    have HB : (sint.Z (w64_word_instance.(word.add) idx (W64 1)) = Z.of_nat kw + 1)%Z by word.
-    have HnkB : sint.nat (w64_word_instance.(word.add) idx (W64 1)) = (kw + 1)%nat by rewrite HB; lia.
-    have HnewEq : take (length (replicate (sint.nat (w64_word_instance.(word.add) slk.(slice.len) (W64 1))) (zero_val loc))) (take (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (ic_loc <$> client_run types kc)) ++ drop (length (take (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (ic_loc <$> client_run types kc))) (replicate (sint.nat (w64_word_instance.(word.add) slk.(slice.len) (W64 1))) (zero_val loc)) = take (kw + 1) (ic_loc <$> client_run types kc) ++ replicate (length (client_run types kc) - kw) (zero_val loc).
-    { rewrite HnkA HnkB length_replicate take_ge; last first.
-      { rewrite length_take length_fmap. lia. }
-      rewrite length_take length_fmap Nat.min_l; last lia.
-      rewrite drop_replicate. f_equal. f_equal. lia. }
-    iEval (rewrite HnewEq) in "HnewNodes".
-    iDestruct (own_slice_len with "HnewNodes") as %[HnewLen HnewLen0].
-    have HnewLenN : (length (client_run types kc) + 1)%nat = sint.nat newSl.(slice.len).
-    { rewrite -HnewLen length_app length_take length_fmap length_replicate.
-      clear -Hkwlt2. lia. }
-    have HnewLenZ : (sint.Z newSl.(slice.len) = Z.of_nat (length (client_run types kc)) + 1)%Z by (clear -HnewLenN HnewLen0; lia).
-    (* newNodes[index+1] = right *)
-    rewrite decide_True; last (clear -HB HnewLenZ Hkwlt2; rewrite HB HnewLenZ; lia).
+    (* newNodes = append(newNodes, right) *)
+    wp_apply wp_slice_literal. iSplitR; first done. iIntros "%slit [Hslit _]". wp_auto.
+    wp_apply (wp_slice_append with "[Hsl1 Hsl1cap Hslit]"); first (iFrame "Hsl1 Hsl1cap Hslit").
+    iIntros (sl2) "(Hsl2 & Hsl2cap & _)".
     wp_auto.
-    wp_apply (wp_store_slice_index with "[$HnewNodes]").
-    { iPureIntro. rewrite length_app length_take length_fmap length_replicate HB.
-      clear -Hkwlt2. lia. }
-    iIntros "HnewNodes".
-    have HinsEq : <[sint.nat (w64_word_instance.(word.add) idx (W64 1)) := rs]> (take (kw + 1) (ic_loc <$> client_run types kc) ++ replicate (length (client_run types kc) - kw) (zero_val loc)) = take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: replicate (length (client_run types kc) - kw - 1) (zero_val loc).
-    { rewrite HnkB insert_app_r_alt; last (rewrite length_take length_fmap; clear -Hkwlt2; lia).
-      rewrite length_take length_fmap Nat.min_l; last (clear -Hkwlt2; lia).
-      have -> : ((kw + 1) - (kw + 1))%nat = 0%nat by lia.
-      have -> : (length (client_run types kc) - kw)%nat = S (length (client_run types kc) - kw - 1) by (clear -Hkwlt2; lia).
-      simpl. f_equal. f_equal. f_equal. clear -k. lia. }
-    iEval (rewrite HinsEq) in "HnewNodes".
+    (* newNodes = append(newNodes, nodes[index+1:]...) *)
+    rewrite decide_True; last word.
     wp_auto.
-    (* copy(newNodes[index+2:], suffix) *)
-    have HC : (sint.Z (w64_word_instance.(word.add) idx (W64 2)) = Z.of_nat kw + 2)%Z by word.
-    iDestruct (own_slice_wf with "HnewNodes") as %HnewWf.
-    rewrite decide_True; last (clear -HC HnewLenZ HnewWf Hkwlt2; lia).
+    wp_apply (wp_slice_append with "[Hsl2 Hsl2cap Hsl_suf]"); first (iFrame "Hsl2 Hsl2cap Hsl_suf").
+    iIntros (newSl) "(HnewNodes & HnewCap & Hsl_suf)".
     wp_auto.
-    have Hsplitbnd2 : (0 ≤ sint.Z (w64_word_instance.(word.add) idx (W64 2)) ≤ sint.Z newSl.(slice.len) ≤ sint.Z newSl.(slice.len))%Z by (clear -HC HnewLenZ Hkwlt2; lia).
-    iDestruct (own_slice_slice (w64_word_instance.(word.add) idx (W64 2)) newSl.(slice.len) newSl (DfracOwn 1) _ Hsplitbnd2 with "HnewNodes") as "(Hnn_pre & Hnn_mid & Hnn_tail)".
-    wp_apply (wp_slice_copy with "[$Hnn_mid $Hsl_suf]").
-    iIntros (nc2) "(%Hnc2 & Hnn_mid & Hsl_suf)".
-    have HnkC : sint.nat (w64_word_instance.(word.add) idx (W64 2)) = (kw + 2)%nat by (rewrite HC; clear -k; lia).
+    have HnkB : sint.nat (w64_word_instance.(word.add) idx (W64 1)) = (kw + 1)%nat.
+    { move: Hslklen Hslklen0 Hkwlt2 Hidxsint => ? ? ? ?. word. }
     have Esrc : subslice (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (sint.nat slk.(slice.len)) (ic_loc <$> client_run types kc) = drop (kw + 1) (ic_loc <$> client_run types kc).
     { rewrite HnkB -Hslklen /subslice take_ge; [reflexivity | rewrite length_fmap; clear -Hkwlt2; lia]. }
-    have Edst : subslice (sint.nat (w64_word_instance.(word.add) idx (W64 2))) (sint.nat newSl.(slice.len)) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: replicate (length (client_run types kc) - kw - 1) (zero_val loc)) = replicate (length (client_run types kc) - kw - 1) (zero_val loc).
-    { rewrite HnkC -HnewLenN /subslice.
-      rewrite take_ge; last (rewrite length_app length_take length_fmap /= length_replicate; clear -Hkwlt2; lia).
-      rewrite drop_app_ge; last (rewrite length_take length_fmap; clear -Hkwlt2; lia).
-      rewrite length_take length_fmap Nat.min_l; last (clear -Hkwlt2; lia).
-      have -> : ((kw + 2) - (kw + 1))%nat = 1%nat by (clear -k; lia).
-      simpl. reflexivity. }
-    iEval (rewrite Esrc Edst) in "Hnn_mid".
-    have Emid : take (length (replicate (length (client_run types kc) - kw - 1) (zero_val loc))) (drop (kw + 1) (ic_loc <$> client_run types kc)) ++ drop (length (drop (kw + 1) (ic_loc <$> client_run types kc))) (replicate (length (client_run types kc) - kw - 1) (zero_val loc)) = drop (kw + 1) (ic_loc <$> client_run types kc).
-    { rewrite length_replicate length_drop length_fmap.
-      rewrite take_ge; last (rewrite length_drop length_fmap; clear -Hkwlt2; lia).
-      rewrite (drop_ge (replicate (length (client_run types kc) - kw - 1) (zero_val loc))); last (rewrite length_replicate; clear -Hkwlt2; lia).
-      apply app_nil_r. }
-    iEval (rewrite Emid) in "Hnn_mid".
-    (* reassemble newNodes = take (kw+1) ++ rs :: drop (kw+1), and the untouched slk *)
-    have Epre : take (sint.nat (w64_word_instance.(word.add) idx (W64 2))) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: replicate (length (client_run types kc) - kw - 1) (zero_val loc)) = take (kw + 1) (ic_loc <$> client_run types kc) ++ [rs].
-    { rewrite HnkC take_app_ge; last (rewrite length_take length_fmap; clear -Hkwlt2; lia).
-      rewrite length_take length_fmap Nat.min_l; last (clear -Hkwlt2; lia).
-      have -> : ((kw + 2) - (kw + 1))%nat = 1%nat by (clear -k; lia).
-      simpl. reflexivity. }
-    have Etailcur : drop (sint.nat newSl.(slice.len)) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: replicate (length (client_run types kc) - kw - 1) (zero_val loc)) = [].
-    { rewrite -HnewLenN. apply drop_ge.
-      rewrite length_app length_take length_fmap /= length_replicate.
-      clear -Hkwlt2. lia. }
-    have Efl_take : take (sint.nat (w64_word_instance.(word.add) idx (W64 2))) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: drop (kw + 1) (ic_loc <$> client_run types kc)) = take (kw + 1) (ic_loc <$> client_run types kc) ++ [rs].
-    { rewrite HnkC take_app_ge; last (rewrite length_take length_fmap; clear -Hkwlt2; lia).
-      rewrite length_take length_fmap Nat.min_l; last (clear -Hkwlt2; lia).
-      have -> : ((kw + 2) - (kw + 1))%nat = 1%nat by (clear -k; lia).
-      simpl. reflexivity. }
-    have Efl_mid : subslice (sint.nat (w64_word_instance.(word.add) idx (W64 2))) (sint.nat newSl.(slice.len)) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: drop (kw + 1) (ic_loc <$> client_run types kc)) = drop (kw + 1) (ic_loc <$> client_run types kc).
-    { rewrite HnkC -HnewLenN /subslice.
-      rewrite take_ge; last (rewrite length_app length_take length_fmap /= length_drop length_fmap; clear -Hkwlt2; lia).
-      rewrite drop_app_ge; last (rewrite length_take length_fmap; clear -Hkwlt2; lia).
-      rewrite length_take length_fmap Nat.min_l; last (clear -Hkwlt2; lia).
-      have -> : ((kw + 2) - (kw + 1))%nat = 1%nat by (clear -k; lia).
-      simpl. reflexivity. }
-    have Efl_tail : drop (sint.nat newSl.(slice.len)) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: drop (kw + 1) (ic_loc <$> client_run types kc)) = [].
-    { rewrite -HnewLenN. apply drop_ge.
-      rewrite length_app length_take length_fmap /= length_drop length_fmap.
-      clear -Hkwlt2. lia. }
-    iAssert (newSl ↦* (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: drop (kw + 1) (ic_loc <$> client_run types kc)))%I with "[Hnn_pre Hnn_mid Hnn_tail]" as "HnewNodes".
-    { rewrite (own_slice_slice (w64_word_instance.(word.add) idx (W64 2)) newSl.(slice.len) newSl (DfracOwn 1) _ Hsplitbnd2).
-      rewrite Efl_take Efl_mid Efl_tail Epre Etailcur.
-      iFrame. }
+    have Elit : <[sint.nat (W64 0) := rs]> ([null] : list loc) = [rs].
+    { have -> : sint.nat (W64 0) = 0%nat by word. reflexivity. }
+    have Eall : (([] ++ take (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (ic_loc <$> client_run types kc)) ++ <[sint.nat (W64 0) := rs]> ([null] : list loc)) ++ subslice (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (sint.nat slk.(slice.len)) (ic_loc <$> client_run types kc) = take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: drop (kw + 1) (ic_loc <$> client_run types kc).
+    { rewrite Esrc Elit HnkB app_nil_l -app_assoc /=. reflexivity. }
+    iEval (rewrite Eall) in "HnewNodes".
     iAssert (slk ↦* (ic_loc <$> client_run types kc))%I with "[Hsl_pre Hsl_suf Hsl_tail]" as "Hslice".
     { rewrite (own_slice_slice (w64_word_instance.(word.add) idx (W64 1)) slk.(slice.len) slk (DfracOwn 1) (ic_loc <$> client_run types kc) Hsplitbnd). iFrame. }
     (* s.items[client] = newNodes: the key read borrows cl's node back from types2 *)
@@ -1581,116 +1507,45 @@ Proof using Type*.
     have Hcrescl : cres = cl.
     { have Htmp : run_half !! kw = Some cres by (rewrite -Hidxkw; exact Hcres). congruence. }
     iEval (rewrite Hlocs) in "Hslice".
-    (* ----- the make+copy item-map surgery ----- *)
+    (* ----- the append-based item-map surgery (no length-fit side condition:
+       append's growth is modeled with an overflow assume, so no client-run
+       capacity premise is needed, unlike a pre-sized make) ----- *)
     iDestruct (own_slice_len with "Hslice") as %[Hslklen Hslklen0].
     rewrite length_fmap in Hslklen Hslklen0.
-    have Hnbound : (Z.of_nat (length (client_run types kc)) + 1 < 2^63)%Z by (rewrite -Hcwcc; lia).
     have Hkwlt2 : (kw < length (client_run types kc))%nat by (apply lookup_lt_Some in Hkw).
-    have Hidxsint : sint.Z idx = Z.of_nat kw by (move: Hnbound Hkwlt2; rewrite -Hidxkw => ? ?; word).
+    have Hidxsint : sint.Z idx = Z.of_nat kw by (move: Hslklen Hslklen0 Hkwlt2; rewrite -Hidxkw => ? ? ?; word).
     wp_auto.
     iDestruct (own_slice_wf with "Hslice") as %Hslkwf.
-    (* prefix := nodes[:index+1] *)
+    (* newNodes = append(nil, nodes[:index+1]...) *)
     rewrite decide_True; last word.
     wp_auto.
-    (* suffix := nodes[index+1:] *)
-    rewrite decide_True; last word.
-    wp_auto.
-    (* newNodes := make([]*item, uint64(len(nodes))+1) *)
-    wp_apply wp_slice_make2.
-    { iPureIntro. word. }
-    iIntros (newSl) "[HnewNodes HnewCap]".
-    wp_auto.
-    (* copy(newNodes, prefix): split the client slice, copy the disjoint prefix *)
     have Hsplitbnd : (0 ≤ sint.Z (w64_word_instance.(word.add) idx (W64 1)) ≤ sint.Z slk.(slice.len) ≤ sint.Z slk.(slice.len))%Z by word.
     iDestruct (own_slice_slice (w64_word_instance.(word.add) idx (W64 1)) slk.(slice.len) slk (DfracOwn 1) (ic_loc <$> client_run types kc) Hsplitbnd with "Hslice") as "(Hsl_pre & Hsl_suf & Hsl_tail)".
-    wp_apply (wp_slice_copy with "[$HnewNodes $Hsl_pre]").
-    iIntros (nc1) "(%Hnc1 & HnewNodes & Hsl_pre)".
+    iAssert (slice.nil ↦* ([] : list loc))%I with "[]" as "Hnil0"; first iApply own_slice_nil.
+    iAssert (own_slice_cap loc slice.nil (DfracOwn 1))%I with "[]" as "Hnilcap"; first iApply own_slice_cap_nil.
+    wp_apply (wp_slice_append with "[Hnil0 Hnilcap Hsl_pre]"); first (iFrame "Hnil0 Hnilcap Hsl_pre").
+    iIntros (sl1) "(Hsl1 & Hsl1cap & Hsl_pre)".
     wp_auto.
-    have HnkA : sint.nat (w64_word_instance.(word.add) slk.(slice.len) (W64 1)) = (length (client_run types kc) + 1)%nat by word.
-    have HB : (sint.Z (w64_word_instance.(word.add) idx (W64 1)) = Z.of_nat kw + 1)%Z by word.
-    have HnkB : sint.nat (w64_word_instance.(word.add) idx (W64 1)) = (kw + 1)%nat by rewrite HB; lia.
-    have HnewEq : take (length (replicate (sint.nat (w64_word_instance.(word.add) slk.(slice.len) (W64 1))) (zero_val loc))) (take (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (ic_loc <$> client_run types kc)) ++ drop (length (take (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (ic_loc <$> client_run types kc))) (replicate (sint.nat (w64_word_instance.(word.add) slk.(slice.len) (W64 1))) (zero_val loc)) = take (kw + 1) (ic_loc <$> client_run types kc) ++ replicate (length (client_run types kc) - kw) (zero_val loc).
-    { rewrite HnkA HnkB length_replicate take_ge; last first.
-      { rewrite length_take length_fmap. lia. }
-      rewrite length_take length_fmap Nat.min_l; last lia.
-      rewrite drop_replicate. f_equal. f_equal. lia. }
-    iEval (rewrite HnewEq) in "HnewNodes".
-    iDestruct (own_slice_len with "HnewNodes") as %[HnewLen HnewLen0].
-    have HnewLenN : (length (client_run types kc) + 1)%nat = sint.nat newSl.(slice.len).
-    { rewrite -HnewLen length_app length_take length_fmap length_replicate.
-      clear -Hkwlt2. lia. }
-    have HnewLenZ : (sint.Z newSl.(slice.len) = Z.of_nat (length (client_run types kc)) + 1)%Z by (clear -HnewLenN HnewLen0; lia).
-    (* newNodes[index+1] = right *)
-    rewrite decide_True; last (clear -HB HnewLenZ Hkwlt2; rewrite HB HnewLenZ; lia).
+    (* newNodes = append(newNodes, right) *)
+    wp_apply wp_slice_literal. iSplitR; first done. iIntros "%slit [Hslit _]". wp_auto.
+    wp_apply (wp_slice_append with "[Hsl1 Hsl1cap Hslit]"); first (iFrame "Hsl1 Hsl1cap Hslit").
+    iIntros (sl2) "(Hsl2 & Hsl2cap & _)".
     wp_auto.
-    wp_apply (wp_store_slice_index with "[$HnewNodes]").
-    { iPureIntro. rewrite length_app length_take length_fmap length_replicate HB.
-      clear -Hkwlt2. lia. }
-    iIntros "HnewNodes".
-    have HinsEq : <[sint.nat (w64_word_instance.(word.add) idx (W64 1)) := rs]> (take (kw + 1) (ic_loc <$> client_run types kc) ++ replicate (length (client_run types kc) - kw) (zero_val loc)) = take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: replicate (length (client_run types kc) - kw - 1) (zero_val loc).
-    { rewrite HnkB insert_app_r_alt; last (rewrite length_take length_fmap; clear -Hkwlt2; lia).
-      rewrite length_take length_fmap Nat.min_l; last (clear -Hkwlt2; lia).
-      have -> : ((kw + 1) - (kw + 1))%nat = 0%nat by lia.
-      have -> : (length (client_run types kc) - kw)%nat = S (length (client_run types kc) - kw - 1) by (clear -Hkwlt2; lia).
-      simpl. f_equal. f_equal. f_equal. clear -k. lia. }
-    iEval (rewrite HinsEq) in "HnewNodes".
+    (* newNodes = append(newNodes, nodes[index+1:]...) *)
+    rewrite decide_True; last word.
     wp_auto.
-    (* copy(newNodes[index+2:], suffix) *)
-    have HC : (sint.Z (w64_word_instance.(word.add) idx (W64 2)) = Z.of_nat kw + 2)%Z by word.
-    iDestruct (own_slice_wf with "HnewNodes") as %HnewWf.
-    rewrite decide_True; last (clear -HC HnewLenZ HnewWf Hkwlt2; lia).
+    wp_apply (wp_slice_append with "[Hsl2 Hsl2cap Hsl_suf]"); first (iFrame "Hsl2 Hsl2cap Hsl_suf").
+    iIntros (newSl) "(HnewNodes & HnewCap & Hsl_suf)".
     wp_auto.
-    have Hsplitbnd2 : (0 ≤ sint.Z (w64_word_instance.(word.add) idx (W64 2)) ≤ sint.Z newSl.(slice.len) ≤ sint.Z newSl.(slice.len))%Z by (clear -HC HnewLenZ Hkwlt2; lia).
-    iDestruct (own_slice_slice (w64_word_instance.(word.add) idx (W64 2)) newSl.(slice.len) newSl (DfracOwn 1) _ Hsplitbnd2 with "HnewNodes") as "(Hnn_pre & Hnn_mid & Hnn_tail)".
-    wp_apply (wp_slice_copy with "[$Hnn_mid $Hsl_suf]").
-    iIntros (nc2) "(%Hnc2 & Hnn_mid & Hsl_suf)".
-    have HnkC : sint.nat (w64_word_instance.(word.add) idx (W64 2)) = (kw + 2)%nat by (rewrite HC; clear -k; lia).
+    have HnkB : sint.nat (w64_word_instance.(word.add) idx (W64 1)) = (kw + 1)%nat.
+    { move: Hslklen Hslklen0 Hkwlt2 Hidxsint => ? ? ? ?. word. }
     have Esrc : subslice (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (sint.nat slk.(slice.len)) (ic_loc <$> client_run types kc) = drop (kw + 1) (ic_loc <$> client_run types kc).
     { rewrite HnkB -Hslklen /subslice take_ge; [reflexivity | rewrite length_fmap; clear -Hkwlt2; lia]. }
-    have Edst : subslice (sint.nat (w64_word_instance.(word.add) idx (W64 2))) (sint.nat newSl.(slice.len)) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: replicate (length (client_run types kc) - kw - 1) (zero_val loc)) = replicate (length (client_run types kc) - kw - 1) (zero_val loc).
-    { rewrite HnkC -HnewLenN /subslice.
-      rewrite take_ge; last (rewrite length_app length_take length_fmap /= length_replicate; clear -Hkwlt2; lia).
-      rewrite drop_app_ge; last (rewrite length_take length_fmap; clear -Hkwlt2; lia).
-      rewrite length_take length_fmap Nat.min_l; last (clear -Hkwlt2; lia).
-      have -> : ((kw + 2) - (kw + 1))%nat = 1%nat by (clear -k; lia).
-      simpl. reflexivity. }
-    iEval (rewrite Esrc Edst) in "Hnn_mid".
-    have Emid : take (length (replicate (length (client_run types kc) - kw - 1) (zero_val loc))) (drop (kw + 1) (ic_loc <$> client_run types kc)) ++ drop (length (drop (kw + 1) (ic_loc <$> client_run types kc))) (replicate (length (client_run types kc) - kw - 1) (zero_val loc)) = drop (kw + 1) (ic_loc <$> client_run types kc).
-    { rewrite length_replicate length_drop length_fmap.
-      rewrite take_ge; last (rewrite length_drop length_fmap; clear -Hkwlt2; lia).
-      rewrite (drop_ge (replicate (length (client_run types kc) - kw - 1) (zero_val loc))); last (rewrite length_replicate; clear -Hkwlt2; lia).
-      apply app_nil_r. }
-    iEval (rewrite Emid) in "Hnn_mid".
-    (* reassemble newNodes = take (kw+1) ++ rs :: drop (kw+1), and the untouched slk *)
-    have Epre : take (sint.nat (w64_word_instance.(word.add) idx (W64 2))) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: replicate (length (client_run types kc) - kw - 1) (zero_val loc)) = take (kw + 1) (ic_loc <$> client_run types kc) ++ [rs].
-    { rewrite HnkC take_app_ge; last (rewrite length_take length_fmap; clear -Hkwlt2; lia).
-      rewrite length_take length_fmap Nat.min_l; last (clear -Hkwlt2; lia).
-      have -> : ((kw + 2) - (kw + 1))%nat = 1%nat by (clear -k; lia).
-      simpl. reflexivity. }
-    have Etailcur : drop (sint.nat newSl.(slice.len)) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: replicate (length (client_run types kc) - kw - 1) (zero_val loc)) = [].
-    { rewrite -HnewLenN. apply drop_ge.
-      rewrite length_app length_take length_fmap /= length_replicate.
-      clear -Hkwlt2. lia. }
-    have Efl_take : take (sint.nat (w64_word_instance.(word.add) idx (W64 2))) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: drop (kw + 1) (ic_loc <$> client_run types kc)) = take (kw + 1) (ic_loc <$> client_run types kc) ++ [rs].
-    { rewrite HnkC take_app_ge; last (rewrite length_take length_fmap; clear -Hkwlt2; lia).
-      rewrite length_take length_fmap Nat.min_l; last (clear -Hkwlt2; lia).
-      have -> : ((kw + 2) - (kw + 1))%nat = 1%nat by (clear -k; lia).
-      simpl. reflexivity. }
-    have Efl_mid : subslice (sint.nat (w64_word_instance.(word.add) idx (W64 2))) (sint.nat newSl.(slice.len)) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: drop (kw + 1) (ic_loc <$> client_run types kc)) = drop (kw + 1) (ic_loc <$> client_run types kc).
-    { rewrite HnkC -HnewLenN /subslice.
-      rewrite take_ge; last (rewrite length_app length_take length_fmap /= length_drop length_fmap; clear -Hkwlt2; lia).
-      rewrite drop_app_ge; last (rewrite length_take length_fmap; clear -Hkwlt2; lia).
-      rewrite length_take length_fmap Nat.min_l; last (clear -Hkwlt2; lia).
-      have -> : ((kw + 2) - (kw + 1))%nat = 1%nat by (clear -k; lia).
-      simpl. reflexivity. }
-    have Efl_tail : drop (sint.nat newSl.(slice.len)) (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: drop (kw + 1) (ic_loc <$> client_run types kc)) = [].
-    { rewrite -HnewLenN. apply drop_ge.
-      rewrite length_app length_take length_fmap /= length_drop length_fmap.
-      clear -Hkwlt2. lia. }
-    iAssert (newSl ↦* (take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: drop (kw + 1) (ic_loc <$> client_run types kc)))%I with "[Hnn_pre Hnn_mid Hnn_tail]" as "HnewNodes".
-    { rewrite (own_slice_slice (w64_word_instance.(word.add) idx (W64 2)) newSl.(slice.len) newSl (DfracOwn 1) _ Hsplitbnd2).
-      rewrite Efl_take Efl_mid Efl_tail Epre Etailcur.
-      iFrame. }
+    have Elit : <[sint.nat (W64 0) := rs]> ([null] : list loc) = [rs].
+    { have -> : sint.nat (W64 0) = 0%nat by word. reflexivity. }
+    have Eall : (([] ++ take (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (ic_loc <$> client_run types kc)) ++ <[sint.nat (W64 0) := rs]> ([null] : list loc)) ++ subslice (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (sint.nat slk.(slice.len)) (ic_loc <$> client_run types kc) = take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: drop (kw + 1) (ic_loc <$> client_run types kc).
+    { rewrite Esrc Elit HnkB app_nil_l -app_assoc /=. reflexivity. }
+    iEval (rewrite Eall) in "HnewNodes".
     iAssert (slk ↦* (ic_loc <$> client_run types kc))%I with "[Hsl_pre Hsl_suf Hsl_tail]" as "Hslice".
     { rewrite (own_slice_slice (w64_word_instance.(word.add) idx (W64 1)) slk.(slice.len) slk (DfracOwn 1) (ic_loc <$> client_run types kc) Hsplitbnd). iFrame. }
     (* s.items[client] = newNodes: the key read borrows cl's node back from types2 *)
@@ -1852,7 +1707,7 @@ Qed.
     way the returned node's run ends exactly at [idv]: the clean-end
     boundary the C2 flip feeds to Integrate as the left cursor. Mutates the
     item map, hence [DfracOwn 1]; needs the pool invariants (run-fits,
-    loc-NoDup, range disjointness) and the run-list capacity bound. *)
+    loc-NoDup, range disjointness). *)
 Lemma wp_store__splitAtAndGetLeft_range (s mref : loc) (idv : yjs.id.t)
     (types : gmap loc type_state) (parent : loc)
     (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell) :
@@ -1864,8 +1719,6 @@ Lemma wp_store__splitAtAndGetLeft_range (s mref : loc) (idv : yjs.id.t)
   (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
-  ((1 < length (ic_run cw))%nat ->
-   (Z.of_nat (length (client_run types (cell_client cw))) + 1 < 2^63)%Z) ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
       ([∗ map] p ↦ ts ∈ types,
@@ -1885,7 +1738,7 @@ Lemma wp_store__splitAtAndGetLeft_range (s mref : loc) (idv : yjs.id.t)
               (split_cells cells k ((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) + 1) rloc)
               arr]> types)⌝ }}}.
 Proof using Type*.
-  move=> Htypes Hcellk Hcwcc Hcwle Hcwlt Hrunfits Hnodup Hrangedisj Hrunlen.
+  move=> Htypes Hcellk Hcwcc Hcwle Hcwlt Hrunfits Hnodup Hrangedisj.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
   have Hcwmem : cw ∈ all_cells types.
   { apply all_cells_elem_of. exists parent, (MkTypeState cells arr).
@@ -1939,13 +1792,11 @@ Proof using Type*.
        (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z (cell_clock cw))%Z ∨
        (uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)) <= uint.Z (cell_clock c))%Z.
     { move=> c Hc Hcc Hlocne. exact (Hrangedisj c cw Hc Hcwmem Hcc Hlocne). }
-    have Hrunlen' : (Z.of_nat (length (client_run types (cell_client cw))) + 1 < 2^63)%Z.
-    { apply Hrunlen. clear -Hnlt. lia. }
     wp_apply (wp_store__splitNode s mref types parent cells arr k cw
                 (w64_word_instance.(word.add)
                    (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
                    (W64 1))
-                Htypes Hcellk Hdiffb Hrunfits Hnodup Hdisjcw Hrunlen'
+                Htypes Hcellk Hdiffb Hrunfits Hnodup Hdisjcw
                 with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
     iIntros (rloc) "(%Hrlocnn & %Hrlocfresh & Hitemsf & Hitemmap & Htypes)".
     wp_auto.
@@ -1976,8 +1827,6 @@ Lemma wp_store__splitAtAndGetRight_range (s mref : loc) (idv : yjs.id.t)
   (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
-  ((1 < length (ic_run cw))%nat ->
-   (Z.of_nat (length (client_run types (cell_client cw))) + 1 < 2^63)%Z) ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
       ([∗ map] p ↦ ts ∈ types,
@@ -1997,7 +1846,7 @@ Lemma wp_store__splitAtAndGetRight_range (s mref : loc) (idv : yjs.id.t)
             (split_cells cells k (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) rl)
             arr]> types)⌝ }}}.
 Proof using Type*.
-  move=> Htypes Hcellk Hcwcc Hcwle Hcwlt Hrunfits Hnodup Hrangedisj Hrunlen.
+  move=> Htypes Hcellk Hcwcc Hcwle Hcwlt Hrunfits Hnodup Hrangedisj.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
   have Hcwmem : cw ∈ all_cells types.
   { apply all_cells_elem_of. exists parent, (MkTypeState cells arr).
@@ -2036,11 +1885,9 @@ Proof using Type*.
        (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z (cell_clock cw))%Z ∨
        (uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)) <= uint.Z (cell_clock c))%Z.
     { move=> c Hc Hcc Hlocne. exact (Hrangedisj c cw Hc Hcwmem Hcc Hlocne). }
-    have Hrunlen' : (Z.of_nat (length (client_run types (cell_client cw))) + 1 < 2^63)%Z.
-    { apply Hrunlen. clear -Hopos Holt. lia. }
     wp_apply (wp_store__splitNode s mref types parent cells arr k cw
                 (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
-                Htypes Hcellk Hdiffb Hrunfits Hnodup Hdisjcw Hrunlen'
+                Htypes Hcellk Hdiffb Hrunfits Hnodup Hdisjcw
                 with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
     iIntros (rloc) "(%Hrlocnn & %Hrlocfresh & Hitemsf & Hitemmap & Htypes)".
     wp_auto.
@@ -2643,8 +2490,6 @@ Lemma wp_store__splitAtAndGetLeft_inv (s mref : loc) (idv : yjs.id.t)
   (uint.Z (cell_clock cw) <= uint.Z idv.(yjs.id.clock'))%Z ->
   (uint.Z idv.(yjs.id.clock') < uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)))%Z ->
   pool_invs types ->
-  ((1 < length (ic_run cw))%nat ->
-   (Z.of_nat (length (client_run types (cell_client cw))) + 1 < 2^63)%Z) ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
       ([∗ map] p ↦ ts ∈ types,
@@ -2663,7 +2508,7 @@ Lemma wp_store__splitAtAndGetLeft_inv (s mref : loc) (idv : yjs.id.t)
               = uint.Z idv.(yjs.id.clock') + 1)%Z ∧
              ic_parent cL = ic_parent cw⌝ }}}.
 Proof using Type*.
-  move=> Hcwmem Hcwcc Hcwle Hcwlt [Hfits [Hnodup [Hrangedisj Horiginclk]]] Hrunlen.
+  move=> Hcwmem Hcwcc Hcwle Hcwlt [Hfits [Hnodup [Hrangedisj Horiginclk]]].
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
   have Hcoords := Hcwmem.
   apply all_cells_elem_of in Hcoords.
@@ -2680,7 +2525,7 @@ Proof using Type*.
   have Hlenpos : (1 <= Z.of_nat (length (ic_run cw)))%Z.
   { destruct Hrunwf as [Hne0 _]. destruct (ic_run cw) as [|? ?]; [done | simpl; lia]. }
   wp_apply (wp_store__splitAtAndGetLeft_range s mref idv types parent cells arr k cw
-              Htypes0 Hck Hcwcc Hcwle Hcwlt Hfits Hnodup Hrangedisj Hrunlen
+              Htypes0 Hck Hcwcc Hcwle Hcwlt Hfits Hnodup Hrangedisj
               with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
   iIntros (types') "(Hitemsf & Hitemmap & Htypes & %Hbranch)".
   destruct Hbranch as [[Hoeq ->] | [Holt2 (rloc & Hrnn & Hrfresh & ->)]].
@@ -2752,8 +2597,6 @@ Lemma wp_store__splitAtAndGetRight_inv (s mref : loc) (idv : yjs.id.t)
   (uint.Z (cell_clock cw) <= uint.Z idv.(yjs.id.clock'))%Z ->
   (uint.Z idv.(yjs.id.clock') < uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)))%Z ->
   pool_invs types ->
-  ((1 < length (ic_run cw))%nat ->
-   (Z.of_nat (length (client_run types (cell_client cw))) + 1 < 2^63)%Z) ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
       ([∗ map] p ↦ ts ∈ types,
@@ -2771,7 +2614,7 @@ Lemma wp_store__splitAtAndGetRight_inv (s mref : loc) (idv : yjs.id.t)
              (uint.Z (cell_clock cR) = uint.Z idv.(yjs.id.clock'))%Z ∧
              ic_parent cR = ic_parent cw⌝ }}}.
 Proof using Type*.
-  move=> Hcwmem Hcwcc Hcwle Hcwlt [Hfits [Hnodup [Hrangedisj Horiginclk]]] Hrunlen.
+  move=> Hcwmem Hcwcc Hcwle Hcwlt [Hfits [Hnodup [Hrangedisj Horiginclk]]].
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
   have Hcoords := Hcwmem.
   apply all_cells_elem_of in Hcoords.
@@ -2788,7 +2631,7 @@ Proof using Type*.
   have Hlenpos : (1 <= Z.of_nat (length (ic_run cw)))%Z.
   { destruct Hrunwf as [Hne0 _]. destruct (ic_run cw) as [|? ?]; [done | simpl; lia]. }
   wp_apply (wp_store__splitAtAndGetRight_range s mref idv types parent cells arr k cw
-              Htypes0 Hck Hcwcc Hcwle Hcwlt Hfits Hnodup Hrangedisj Hrunlen
+              Htypes0 Hck Hcwcc Hcwle Hcwlt Hfits Hnodup Hrangedisj
               with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
   iIntros (rl types') "(Hitemsf & Hitemmap & Htypes & %Hbranch)".
   destruct Hbranch as [[Hoeq [-> ->]] | [Hopos (Hrlnn & Hrlfresh & ->)]].
@@ -3007,8 +2850,6 @@ Lemma wp_store__repair_split (s mref tref item_l pname : loc)
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
   (∀ c, c ∈ all_cells types -> cell_origin_clk c) ->
-  (∀ c, c ∈ all_cells types -> (1 < length (ic_run c))%nat ->
-     (Z.of_nat (length (client_run types (cell_client c))) + 2 < 2^63)%Z) ->
   {{{ is_pkg_init yjs ∗
       own_linked_item item_l input null null null ∗
       is_parent_name pname opn ∗
@@ -3047,7 +2888,7 @@ Lemma wp_store__repair_split (s mref tref item_l pname : loc)
        | _, _ => False
        end⌝ }}}.
 Proof using Type*.
-  move=> HwL HwR Hsame Hwpar Hfits Hnodup Hrangedisj Horiginclk Hrunlen.
+  move=> HwL HwR Hsame Hwpar Hfits Hnodup Hrangedisj Horiginclk.
   iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
   iDestruct "Hlinked" as (iv oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrunc)".
   iNamed "Hraw".
@@ -3070,11 +2911,8 @@ Proof using Type*.
     { move: HcLle. rewrite /toYjsId /= /cell_clock. move=> H. word. }
     have HcLltZ : (uint.Z idvL.(yjs.id.clock') < uint.Z (cell_clock cL) + Z.of_nat (length (ic_run cL)))%Z.
     { move: HcLlt. rewrite /toYjsId /= /cell_clock. move=> H. word. }
-    have HrunlenL : (1 < length (ic_run cL))%nat ->
-        (Z.of_nat (length (client_run types (cell_client cL))) + 1 < 2^63)%Z.
-    { move=> Hgt. have := Hrunlen cL HcLmem Hgt. lia. }
     wp_apply (wp_store__splitAtAndGetLeft_inv s mref idvL types cL
-                HcLmem HcLccw HcLleZ HcLltZ Hpinvs HrunlenL
+                HcLmem HcLccw HcLleZ HcLltZ Hpinvs
                 with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
     iIntros (types1) "(Hitemsf & Hitemmap & Htypes & %Hpinvs1 & %Hstep1 & %HbdL)".
     destruct HbdL as (cL1 & HcL1mem & HcL1loc & HcL1cl & HcL1end & HcL1par).
@@ -3114,21 +2952,9 @@ Proof using Type*.
           { rewrite -Hc'c -Hceq HcL1loc //. }
           exact (Hfire (eq_sym (pool_loc_inj (all_cells types) Hnodup _ _ HcRmem HcLmem HlocRL))).
         - exact (Hfire (eq_sym HcRcw)). }
-      have HrunlenR : (1 < length (ic_run cR1))%nat ->
-          (Z.of_nat (length (client_run types1 (cell_client cR1))) + 1 < 2^63)%Z.
-      { move=> Hgt.
-        have Hb : (Z.of_nat (length (client_run types (cell_client cR1))) + 2 < 2^63)%Z.
-        { destruct Hprov as [Hc'c | [HcRcw [HgtL _]]].
-          - rewrite Hc'c in Hgt HcR1cc |- *. rewrite HcR1cc.
-            rewrite -HcRccw. exact (Hrunlen cR HcRmem Hgt).
-          - rewrite HcR1cc.
-            have Hcleq : idvR.(yjs.id.clientId') = cell_client cL.
-            { rewrite -HcRccw HcRcw //. }
-            rewrite Hcleq. exact (Hrunlen cL HcLmem HgtL). }
-        have := Hrl1 (cell_client cR1). lia. }
       have Hpinvs1' : pool_invs types1 by (split_and!; assumption).
       wp_apply (wp_store__splitAtAndGetRight_inv s mref idvR types1 cR1
-                  HcR1mem HcR1cc HcR1le HcR1lt Hpinvs1' HrunlenR
+                  HcR1mem HcR1cc HcR1le HcR1lt Hpinvs1'
                   with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
       iIntros (rl types2) "(Hitemsf & Hitemmap & Htypes & %Hpinvs2 & %Hstep2 & %HbdR)".
       destruct HbdR as (cR2 & HcR2mem & HcR2loc & HcR2cl & HcR2clk & HcR2par).
@@ -3276,11 +3102,8 @@ Proof using Type*.
       { move: HcRle. rewrite /toYjsId /= /cell_clock. move=> H. word. }
       have HcRltZ : (uint.Z idvR.(yjs.id.clock') < uint.Z (cell_clock cR) + Z.of_nat (length (ic_run cR)))%Z.
       { move: HcRlt. rewrite /toYjsId /= /cell_clock. move=> H. word. }
-      have HrunlenR0 : (1 < length (ic_run cR))%nat ->
-          (Z.of_nat (length (client_run types (cell_client cR))) + 1 < 2^63)%Z.
-      { move=> Hgt. have := Hrunlen cR HcRmem Hgt. lia. }
       wp_apply (wp_store__splitAtAndGetRight_inv s mref idvR types cR
-                  HcRmem HcRccw HcRleZ HcRltZ Hpinvs HrunlenR0
+                  HcRmem HcRccw HcRleZ HcRltZ Hpinvs
                   with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
       iIntros (rl types2) "(Hitemsf & Hitemmap & Htypes & %Hpinvs2 & %Hstep2 & %HbdR)".
       destruct HbdR as (cR2 & HcR2mem & HcR2loc & HcR2cl & HcR2clk & HcR2par).
@@ -3781,22 +3604,6 @@ Qed.
     [wp_store__applyUpdate_certs_aux] below obtains the [ValidReplay] from
     the ghost op history and invokes this proof verbatim, and the public
     [wp_store__applyUpdate_certs] wraps that in [own_store]. *)
-(** Growing the pool by one cell grows each per-client run by at most one. *)
-Lemma client_run_snoc_len (types types' : gmap loc type_state) (c : item_cell) (kc : w64) :
-  all_cells types' ≡ₚ all_cells types ++ [c] ->
-  (length (client_run types' kc) <= S (length (client_run types kc)))%nat.
-Proof.
-  move=> Hperm. rewrite /client_run.
-  have Hmsl : ∀ l : list item_cell, length (merge_sort cell_le l) = length l.
-  { move=> l. apply Permutation_length. apply merge_sort_Permutation. }
-  rewrite !Hmsl.
-  have -> : length (filter (λ c0, cell_client c0 = kc) (all_cells types'))
-          = length (filter (λ c0, cell_client c0 = kc) (all_cells types ++ [c])).
-  { apply Permutation_length. by rewrite Hperm. }
-  rewrite filter_app length_app filter_cons filter_nil.
-  case_decide; simpl; lia.
-Qed.
-
 Lemma wp_store__applyUpdate (s : loc) (sl : slice.t) (dq : dfrac)
     (inputs : list (TId * IntegrateInput (A := A)))
     (m m' : DocM) (types : gmap loc type_state) (bind : gmap P loc)
@@ -3820,9 +3627,6 @@ Lemma wp_store__applyUpdate (s : loc) (sl : slice.t) (dq : dfrac)
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
   (∀ c, c ∈ all_cells types -> cell_origin_clk c) ->
-  (∀ c, c ∈ all_cells types -> (1 < length (ic_run c))%nat ->
-     (Z.of_nat (length (client_run types (cell_client c)))
-      + 3 * Z.of_nat (length inputs) + 2 < 2^63)%Z) ->
   {{{ is_pkg_init yjs ∗ own_update sl dq inputs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
       (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
@@ -3853,7 +3657,7 @@ Lemma wp_store__applyUpdate (s : loc) (sl : slice.t) (dq : dfrac)
       ⌜cells_range_disjoint (all_cells types')⌝ ∗
       ⌜∀ c, c ∈ all_cells types' -> cell_origin_clk c⌝ }}}.
 Proof using Type*.
-  move=> Hreplay Hbindtypes Hbindinj Hmtypes Hbatchbnd Hfresh Hcausal Hnowrap Hnowrapb Hlocdup0 Hrangedisj0 Horiginclk0 Hrlen0.
+  move=> Hreplay Hbindtypes Hbindinj Hmtypes Hbatchbnd Hfresh Hcausal Hnowrap Hnowrapb Hlocdup0 Hrangedisj0 Horiginclk0.
   iIntros (Φ) "(#Hpkg & Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
   iDestruct "Hupd" as (uivs) "(Hsl & Hcap & Hitems)".
   iDestruct (big_sepL2_length with "Hitems") as %Hlen_ui.
@@ -3894,10 +3698,7 @@ Proof using Type*.
            length (ic_run c0) = 1%nat⌝ ∗
     "%Hlocdupj" ∷ ⌜NoDup (ic_loc <$> all_cells typesj)⌝ ∗
     "%Hrangedisjj" ∷ ⌜cells_range_disjoint (all_cells typesj)⌝ ∗
-    "%Horiginclkj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> cell_origin_clk c0⌝ ∗
-    "%Hrlenj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> (1 < length (ic_run c0))%nat ->
-        (Z.of_nat (length (client_run typesj (cell_client c0)))
-         + 3 * Z.of_nat (length inputs - j) + 2 < 2^63)%Z⌝)%I
+    "%Horiginclkj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> cell_origin_clk c0⌝)%I
     with "[i s structs Hsl Hcap Hitemsf Hitemmap Htypesf Htypesmap Htypes]" as "IH".
   { iExists 0%nat, types, m.
     iFrame "i s structs Hsl Hcap Hitemsf Hitemmap Htypesf Htypesmap Htypes".
@@ -3911,8 +3712,7 @@ Proof using Type*.
     - move=> c0 Hc0. left. exists c0. split_and!; [exact Hc0 | done | lia | lia].
     - exact Hlocdup0.
     - exact Hrangedisj0.
-    - exact Horiginclk0.
-    - move=> c0 Hc0 Hgt. have := Hrlen0 c0 Hc0 Hgt. lia. }
+    - exact Horiginclk0. }
   wp_for "IH".
   iDestruct (own_slice_len with "Hsl") as %[Hsllen Hsllen0].
   case_bool_decide as Hcond.
@@ -4076,13 +3876,9 @@ Proof using Type*.
         [exact Hin_l | exact Hin_r | exact Hin_id | exact Hin_c
         | reflexivity | reflexivity | reflexivity | reflexivity | exact Hulen]. }
     (* general-repair premises (issue #28 U1): covering witnesses from the
-       head-exact ones, pool invariants from the loop, and the run-length
-       guard vacuous under the unit scaffold *)
+       head-exact ones, pool invariants from the loop *)
     iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds0.
     have Hjlt3 : (j < length inputs)%nat by (rewrite -Hlen_ui; exact Hjlt).
-    have Hrunleng : ∀ c, c ∈ all_cells typesj -> (1 < length (ic_run c))%nat ->
-        (Z.of_nat (length (client_run typesj (cell_client c))) + 2 < 2^63)%Z.
-    { move=> c Hc Hgt. have := Hrlenj c Hc Hgt. lia. }
     have Huniqj := yai_unique _ Hinvj.
     have HfLpj : findPtrIdx (origin nit) arrj = Some leftIdx.
     { rewrite -(toitem_lemmas.findLeftIdx_findPtrIdx_eq input nit arrj Huniqj Htoit). exact HfindL. }
@@ -4135,7 +3931,7 @@ Proof using Type*.
       lia. }
     wp_apply (wp_store__repair_split s mref tref itv (uiv.(yjs.updateItem.parentName'))
                 input opn typesj bind ocL ocR pj
-                HwLc HwRc Hsameg Hwpar Hnowrapj Hlocdupj Hrangedisjj Horiginclkj Hrunleng
+                HwLc HwRc Hsameg Hwpar Hnowrapj Hlocdupj Hrangedisjj Horiginclkj
                 with "[$Hfresh $HisPN $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
     iIntros (lft rgt types2) "(Hlinked & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hpinv2 & %Hrtf & %HbdL & %HbdR)".
     (* transport the loop facts across the repair (issue #28 U5): the map
@@ -4495,20 +4291,6 @@ Proof using Type*.
     + exact Hlocdup'.
     + exact Hrangedisj'.
     + exact Horiginclk'.
-    + move=> c0 Hc0 Hgt.
-      have Hjlt2 : (j < length inputs)%nat by (rewrite -Hlen_ui; exact Hjlt).
-      rewrite Hac_step in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew]; last first.
-      { apply list_elem_of_singleton in Hnew as ->.
-        have Hu2 := Hc2unit. rewrite /cell_unit in Hu2. lia. }
-      (* an oversize cell of the post-repair pool sits inside an oversize
-         cell of the pre-repair pool (range widths nest) *)
-      destruct (Hsub2 c0 Hold) as (cold & Hcold & Hcl & Hlo & Hhi).
-      have Hgtold : (1 < length (ic_run cold))%nat by lia.
-      have Hsn := client_run_snoc_len types2 (<[pj := MkTypeState cells'' arr2]> types2) c2
-                    (cell_client cold) Hac_step.
-      have Hr2 := Hrl2 (cell_client cold).
-      have := Hrlenj cold Hcold Hgtold.
-      rewrite Hcl. lia.
   - (* loop exit: the whole batch is integrated, [mj = m'] *)
     have Hjeq : (j = length uivs)%nat by word.
     rewrite Hjeq Hlen_ui drop_all in Hreplayj.
@@ -4583,79 +4365,6 @@ Qed.
     lemma's raw footprint (struct fields, [types]/[bind] maps) in
     [own_store] and its raw pure post in [ValidReplay] + [is_root_lb]
     certificates. *)
-(** ---- history-size discharge of the run-list capacity guard (issue #28
-    U5): cells count at most the replayed items, which count at most the
-    history events ---- *)
-
-Lemma cells_length_le_flatten (cells : list item_cell) :
-  (∀ c, c ∈ cells -> ic_run c ≠ []) ->
-  (length cells <= length (run_flatten cells))%nat.
-Proof.
-  elim: cells => [| c cs IH] Hne; simpl; [lia |].
-  rewrite run_flatten_cons length_app.
-  have Hc1 : (1 <= length (ic_run c))%nat.
-  { destruct (ic_run c) eqn:Hrc; [| simpl; lia].
-    exfalso. apply (Hne c); [apply elem_of_cons; by left | exact Hrc]. }
-  have Hrest : (length cs <= length (run_flatten cs))%nat.
-  { apply IH. move=> c0 Hc0. apply Hne. apply elem_of_cons. by right. }
-  lia.
-Qed.
-
-Lemma foldr_add_app {T : Type} (f : T -> nat) (l1 l2 : list T) :
-  foldr (λ x acc, (f x + acc)%nat) 0%nat (l1 ++ l2)
-  = (foldr (λ x acc, (f x + acc)%nat) 0%nat l1
-     + foldr (λ x acc, (f x + acc)%nat) 0%nat l2)%nat.
-Proof. elim: l1 => [| a l1 IH]; simpl; [lia | rewrite IH; lia]. Qed.
-
-(** Every type's cells are counted by its registry name's document. *)
-Lemma cells_size_by_names (m : DocM) (bind : gmap P loc)
-    (types : gmap loc type_state) :
-  ∀ (nms : list P),
-  (∀ p ts, types !! p = Some ts ->
-     (length (ty_cells ts) <= length (ty_arr ts))%nat ∧
-     ∃ nm, nm ∈ nms ∧ bind !! nm = Some p ∧ docm_get m (RootId nm) = ty_arr ts) ->
-  (length (all_cells types)
-   <= foldr (λ nm acc, (length (docm_get m (RootId nm)) + acc)%nat) 0%nat nms)%nat.
-Proof.
-  induction types as [| p0 ts0 types0 Hnone IH] using map_ind => nms Hfacts.
-  - rewrite /all_cells map_to_list_empty /=. lia.
-  - destruct (Hfacts p0 ts0 (lookup_insert_eq _ _ _)) as (Hlen0 & nm & Hnmin & Hbnm & Hdg).
-    apply list_elem_of_lookup_1 in Hnmin. destruct Hnmin as [k Hk].
-    have Hnms := take_drop_middle nms k nm Hk.
-    have Hperm : all_cells (<[p0 := ts0]> types0) ≡ₚ ty_cells ts0 ++ all_cells types0.
-    { rewrite /all_cells.
-      have Hml : map_to_list (<[p0 := ts0]> types0) ≡ₚ (p0, ts0) :: map_to_list types0
-        by apply map_to_list_insert.
-      rewrite Hml /=. done. }
-    rewrite (Permutation_length Hperm) length_app.
-    have Hrest : (length (all_cells types0)
-       <= foldr (λ nm0 acc, (length (docm_get m (RootId nm0)) + acc)%nat) 0%nat
-            (take k nms ++ drop (S k) nms))%nat.
-    { apply IH. move=> p ts Hp.
-      have Hpne : p ≠ p0.
-      { move=> Heqp. rewrite Heqp Hnone in Hp. done. }
-      destruct (Hfacts p ts) as (Hl & nm0 & Hin0 & Hb0 & Hd0).
-      { rewrite lookup_insert_ne //. }
-      split; [exact Hl |].
-      exists nm0. split_and!; [ | exact Hb0 | exact Hd0].
-      have Hne0 : nm0 ≠ nm.
-      { move=> Heqn. rewrite Heqn Hbnm in Hb0. injection Hb0 as Hpp. exact (Hpne (eq_sym Hpp)). }
-      rewrite -Hnms in Hin0.
-      move: Hin0 => /elem_of_app [Hin1 | Hin2].
-      { rewrite elem_of_app. by left. }
-      apply elem_of_cons in Hin2. destruct Hin2 as [Heqn | Hin2]; [by destruct (Hne0 Heqn) |].
-      rewrite elem_of_app. by right. }
-    have Hfold : foldr (λ nm0 acc, (length (docm_get m (RootId nm0)) + acc)%nat) 0%nat nms
-               = (length (docm_get m (RootId nm))
-                  + foldr (λ nm0 acc, (length (docm_get m (RootId nm0)) + acc)%nat) 0%nat
-                      (take k nms ++ drop (S k) nms))%nat.
-    { rewrite -{1}Hnms.
-      rewrite (foldr_add_app (λ nm0, length (docm_get m (RootId nm0))) (take k nms) (nm :: drop (S k) nms)) /=.
-      rewrite (foldr_add_app (λ nm0, length (docm_get m (RootId nm0))) (take k nms) (drop (S k) nms)).
-      lia. }
-    rewrite Hfold Hdg. lia.
-Qed.
-
 Lemma wp_store__applyUpdate_certs_aux (s : loc) (sl : slice.t) (dq : dfrac)
     (γh : history_names) (c : ClientId) (h : list Ev)
     (inputs : list (TId * IntegrateInput (A := A))) (Ds : list (gset YjsId))
@@ -4670,7 +4379,6 @@ Lemma wp_store__applyUpdate_certs_aux (s : loc) (sl : slice.t) (dq : dfrac)
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
   (∀ c, c ∈ all_cells types -> cell_origin_clk c) ->
-  (Z.of_nat (length h) + 3 * Z.of_nat (length inputs) + 2 < 2^63)%Z ->
   {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
       own_client_history γh c h ∗
       ([∗ list] ti;D ∈ inputs;Ds, is_op_cert γh (ti.1, OpInsert ti.2) D) ∗
@@ -4709,7 +4417,7 @@ Lemma wp_store__applyUpdate_certs_aux (s : loc) (sl : slice.t) (dq : dfrac)
       ⌜cells_range_disjoint (all_cells types')⌝ ∗
       ⌜∀ c, c ∈ all_cells types' -> cell_origin_clk c⌝ }}}.
 Proof using Type*.
-  move=> Hbatch Hcoh Hcohreg Hbatchbnd Hnowrap Hnowrapb Hlocdup0 Hrangedisj0 Horiginclk0 Hhbound.
+  move=> Hbatch Hcoh Hcohreg Hbatchbnd Hnowrap Hnowrapb Hlocdup0 Hrangedisj0 Horiginclk0.
   destruct Hcohreg as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
   iIntros (Φ) "(#Hpkg & #Hhist & Hown & #Hcerts & Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
   iDestruct (types_arr_inv2 with "Htypes") as %Htsinv.
@@ -4797,45 +4505,9 @@ Proof using Type*.
       word. }
     have Hlt := ValidReplay_batch_causal inputs m m' Hvr i j ti tj Hi Hj Hji Hceq.
     word. }
-  have Hrlen0v : ∀ c0, c0 ∈ all_cells types -> (1 < length (ic_run c0))%nat ->
-      (Z.of_nat (length (client_run types (cell_client c0)))
-       + 3 * Z.of_nat (length inputs) + 2 < 2^63)%Z.
-  { move=> c0 Hc0 _.
-    have Hfilterlen : (length (client_run types (cell_client c0)) <= length (all_cells types))%nat.
-    { rewrite /client_run.
-      have Hmsl : ∀ l : list item_cell, length (merge_sort cell_le l) = length l.
-      { move=> l. apply Permutation_length. apply merge_sort_Permutation. }
-      rewrite Hmsl.
-      elim: (all_cells types) => [| c1 l IHl]; simpl; [lia |].
-      rewrite filter_cons. case_decide; simpl; lia. }
-    have Hnec : ∀ cx, cx ∈ all_cells types -> ic_run cx ≠ [].
-    { move=> cx Hcx. exact (proj1 (Hrunwfallc cx Hcx)). }
-    have Hsize : (length (all_cells types)
-       <= foldr (λ nm acc, (length (docm_get m (RootId nm)) + acc)%nat) 0%nat
-            ((map_to_list bind).*1))%nat.
-    { apply (cells_size_by_names m bind types).
-      move=> p ts Hp. split.
-      - have Hrepr := Hreprall p ts Hp.
-        have Hr : ty_arr ts = run_flatten (ty_cells ts)
-          by move: Hrepr; rewrite /cells_repr //.
-        rewrite Hr. apply cells_length_le_flatten. move=> cx Hcx. apply Hnec.
-        rewrite (all_cells_lookup _ _ _ Hp). apply elem_of_app. by left.
-      - destruct (Htypesbound p (mk_is_Some _ _ Hp)) as [nm Hbnm].
-        exists nm. split_and!.
-        + have Hmem : (nm, p) ∈ map_to_list bind by apply elem_of_map_to_list.
-          change ((nm, p).1 ∈ (map_to_list bind).*1).
-          apply list_elem_of_fmap_2. exact Hmem.
-        + exact Hbnm.
-        + exact (Hmtypes nm p ts Hbnm Hp). }
-    have Hnd : NoDup ((λ nm, RootId nm) <$> (map_to_list bind).*1).
-    { apply NoDup_fmap; [move=> a b [=] // | apply NoDup_fst_map_to_list]. }
-    have Hhsz := history_state_coh_size_list h m
-                   ((λ nm, RootId nm) <$> (map_to_list bind).*1) Hcoh Hnd.
-    rewrite foldr_fmap in Hhsz.
-    clear -Hfilterlen Hsize Hhsz Hhbound. lia. }
   wp_apply (wp_store__applyUpdate s sl dq inputs m m' types bind mref tref
               Hvr Hbindtypes Hbindinj Hmtypes Hbatchbnd Hfresh Hcausal Hnowrap Hnowrapb
-              Hlocdup0 Hrangedisj0 Horiginclk0 Hrlen0v
+              Hlocdup0 Hrangedisj0 Horiginclk0
               with "[$Hupd $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
   iIntros (types') "(Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hdom' & %Hmtypes' & %Hprov' & %Hlocdup' & %Hrangedisj' & %Horiginclk')".
   iApply ("HΦ" $! types' m').
@@ -4895,7 +4567,6 @@ Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
   (∀ (t : TId) x, x ∈ docm_get m t -> (Z.of_nat (clock (item_id x)) + 1 < 2^64)%Z) ->
   (∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
      inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
-  (Z.of_nat (length h) + 3 * Z.of_nat (length inputs) + 2 < 2^63)%Z ->
   {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
       own_store s γs γh c h m ∗
       own_update sl dq inputs ∗
@@ -4910,7 +4581,7 @@ Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
       ([∗ list] ti ∈ inputs, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗
          is_root_lb γs nm (list_to_set (docm_get m' ti.1))) }}}.
 Proof using Type*.
-  move=> Hnowrapm Hnowrapb Hhbound.
+  move=> Hnowrapm Hnowrapb.
   iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertb & #Hroots) HΦ".
   iNamed "Hstore".
   iDestruct "Hcertb" as (Ds) "[%Hbatch #Hcerts]".
@@ -4942,7 +4613,7 @@ Proof using Type*.
   { iApply (big_sepM_impl with "Htypes"). iIntros "!#" (p ts Hp) "($ & $ & _)". }
   wp_apply (wp_store__applyUpdate_certs_aux s sl dq γh c h inputs Ds m types bind
               items_mref types_mref Hbatch Hhcoh Hregcoh Hbatchbnd Hnowrap Hnowrapb
-              Hlocdup Hrangedisj Horiginclk Hhbound
+              Hlocdup Hrangedisj Horiginclk
               with "[$Hpkg $Hishist $Hhist $Hcerts $Hupd $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
   iIntros (types' m') "(Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & Hhist & #Hlbnew & %Hcoh' & %Hregcoh' & %Hdom' & %Hvr & %Hnoc & %Hprov' & %Hlocdup' & %Hrangedisj' & %Horiginclk')".
   (* unit survives the batch: every new cell is a sub-range of a unit cell or

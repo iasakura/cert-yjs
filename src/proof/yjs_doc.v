@@ -91,8 +91,7 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
      inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
   (∀ (h : list Ev) (m : DocM), history_state_coh h m ->
      batch_ok h inputs Ds /\
-     (∀ (t : TId) x, x ∈ docm_get m t -> (Z.of_nat (clock (item_id x)) + 1 < 2^64)%Z) /\
-     (Z.of_nat (length h) + 3 * Z.of_nat (length inputs) + 2 < 2^63)%Z) ->
+     (∀ (t : TId) x, x ∈ docm_get m t -> (Z.of_nat (clock (item_id x)) + 1 < 2^64)%Z)) ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
       own_update sl dq inputs ∗
       ([∗ list] ti;D ∈ inputs;Ds, is_op_cert γh (ti.1, OpInsert ti.2) D) ∗
@@ -110,11 +109,11 @@ Proof.
   iEval (rewrite store_inv_own_store) in "Hinv".
   iDestruct "Hinv" as (c h m) "Hstore".
   iDestruct (own_store_hist_coh with "Hstore") as "[Hstore %Hhcoh]".
-  destruct (Hrecv h m Hhcoh) as [Hbatch [Hnowrapm Hhbound]].
+  destruct (Hrecv h m Hhcoh) as [Hbatch Hnowrapm].
   wp_auto.
   (* run the proven certificate-based applyUpdate on the real store *)
   wp_apply (wp_store__applyUpdate_certs _ sl dq γs γh c h m inputs
-              Hnowrapm Hnowrapb Hhbound
+              Hnowrapm Hnowrapb
               with "[$Hishist $Hstore $Hupd $Hroots Hcerts]").
   { iExists Ds. iFrame "Hcerts". iPureIntro. exact Hbatch. }
   iIntros (m') "(Hstore & Hupd & %Hvr & #Hlb & #Hrootlbs)".
