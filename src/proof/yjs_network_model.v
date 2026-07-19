@@ -263,17 +263,6 @@ Qed.
 
 (* ===== history_wf ========================================================= *)
 
-(** A global linearization witnessing that the raw histories arise from one
-    execution: per-client projections match, and every delivery is preceded
-    (somewhere) by its broadcast. This replaces causal delivery as the source
-    of happens-before acyclicity once deliveries need not be causally ordered
-    (issue #40): without SOME cross-history realizability axiom, raw event
-    lists admit happens-before cycles. *)
-Definition history_linearizes (L : list (ClientId * Ev)) N : Prop :=
-  (∀ i, to_histories N i = ((λ ce, ce.2) <$> (filter (λ ce, ce.1 = i) L))) ∧
-  (∀ (q : nat) (i : ClientId) (op : Op), L !! q = Some (i, EvDeliver op) ->
-     ∃ (q' : nat) (j : ClientId), (q' < q)%nat ∧ L !! q' = Some (j, EvBroadcast op)).
-
 (** The model's network axioms over the raw map, plus our disciplines.
     The [interpHistory]-mentioning fields use the doc operation instance [O]
     with [DocIsValidMessage].
@@ -281,13 +270,11 @@ Definition history_linearizes (L : list (ClientId * Ev)) N : Prop :=
     Since issue #40 there is NO causal-delivery field: [applyUpdate] delivers
     an op as soon as its structural dependencies (origins and same-author
     predecessor) have arrived, which is strictly weaker than happens-before.
-    Its two load-bearing consequences are kept as fields, both maintainable
-    by the structural gate:
+    Its load-bearing consequence is kept as a field, maintainable by the
+    structural gate:
     - [hwf_fifo]: per author the delivered ops form a PREFIX of that author's
       broadcast log (the lossless state-vector reading; the same-author
-      predecessor gate maintains it);
-    - [hwf_realizable]: a global linearization exists (broadcasts precede
-      deliveries), keeping happens-before acyclic. *)
+      predecessor gate maintains it). *)
 Record history_wf N : Prop := {
   (* NodeHistories *)
   hwf_nodup : ∀ i, NoDup (to_histories N i);
@@ -319,8 +306,6 @@ Record history_wf N : Prop := {
   (* ours (issue #40): per-author FIFO delivery. *)
   hwf_fifo : ∀ i j,
     delivered_from (to_histories N i) j `prefix_of` broadcast_ops (to_histories N j);
-  (* ours (issue #40): realizability. *)
-  hwf_realizable : ∃ L, history_linearizes L N;
 }.
 
 (** Gomes-form [deliver_locally], derived from [hwf_self_deliver]. *)
@@ -981,58 +966,6 @@ Proof.
               Hd Hp broadcast_ops_snoc_broadcast //.
 Qed.
 
-(* ===== linearization append =============================================== *)
-
-(** Appending a one-client tail whose deliveries are all previously broadcast
-    (or broadcast earlier in the tail) preserves realizability. *)
-Lemma history_linearizes_append (L : list (ClientId * Ev)) N c h (tail : list Ev) :
-  history_linearizes L N -> N !! c = Some h ->
-  (∀ (q : nat) op, tail !! q = Some (EvDeliver op) ->
-     op_broadcast N op ∨ (∃ q', (q' < q)%nat ∧ tail !! q' = Some (EvBroadcast op))) ->
-  history_linearizes (L ++ ((λ e, (c, e)) <$> tail)) (<[c := h ++ tail]> N).
-Proof.
-  move=> [Hproj Hcause] Hc Htail.
-  have Hbpos : ∀ op, op_broadcast N op ->
-      ∃ (q' : nat) (j : ClientId), L !! q' = Some (j, EvBroadcast op).
-  { move=> op [i Hin]. rewrite (Hproj i) in Hin.
-    apply list_elem_of_fmap in Hin. destruct Hin as ([i' e'] & He' & Hin).
-    simpl in He'. subst e'.
-    apply list_elem_of_filter in Hin. destruct Hin as [Hi' Hin]. simpl in Hi'. subst i'.
-    destruct (list_elem_of_lookup_1 _ _ Hin) as (q' & Hq'). by exists q', i. }
-  split.
-  - move=> i. rewrite filter_app fmap_app.
-    destruct (decide (i = c)) as [-> | Hne].
-    + rewrite to_histories_insert -(Hproj c) (to_histories_lookup N c h Hc).
-      f_equal.
-      elim: tail {Htail} => [| e tl IH] //=.
-      rewrite filter_cons_True; last done.
-      simpl. f_equal. exact IH.
-    + rewrite (to_histories_insert_ne _ _ _ _ Hne) -(Hproj i).
-      have -> : filter (λ ce, ce.1 = i) ((λ e, (c, e)) <$> tail) = [].
-      { elim: tail {Htail} => [| e tl IH] //=.
-        rewrite filter_cons_False; [exact IH | simpl; congruence]. }
-      rewrite app_nil_r //.
-  - move=> q i op Hq.
-    destruct (decide (q < length L)%nat) as [Hlt | Hge].
-    + rewrite lookup_app_l // in Hq.
-      destruct (Hcause q i op Hq) as (q' & j & Hq'lt & Hq').
-      exists q', j. split; [exact Hq'lt | rewrite lookup_app_l //; lia].
-    + rewrite lookup_app_r in Hq; [| lia].
-      rewrite list_lookup_fmap in Hq.
-      destruct (tail !! (q - length L)%nat) as [e |] eqn:Htl; simpl in Hq;
-        last discriminate.
-      injection Hq as He1 He2. subst i e.
-      destruct (Htail _ op Htl) as [Hbc | (q' & Hq'lt & Hq')].
-      * destruct (Hbpos op Hbc) as (q' & j & Hq').
-        exists q', j. split; [| rewrite lookup_app_l //].
-        { have := lookup_lt_Some _ _ _ Hq'. lia. }
-        exact (lookup_lt_Some _ _ _ Hq').
-      * exists (length L + q')%nat, c. split; [lia |].
-        rewrite lookup_app_r; [| lia].
-        have -> : (length L + q' - length L)%nat = q' by lia.
-        rewrite list_lookup_fmap Hq' //.
-Qed.
-
 (* ===== author-side clock monotonicity ===================================== *)
 
 (** Of two broadcasts in one author's history, the earlier has the strictly
@@ -1345,14 +1278,6 @@ Proof.
       * rewrite (to_histories_insert_ne _ _ _ _ Hnei)
                 (to_histories_insert_ne _ _ _ _ Hnej).
         exact (hwf_fifo N Hwf i j).
-    + (* realizable (issue #40) *)
-      destruct (hwf_realizable N Hwf) as (L & Hlin).
-      exists (L ++ ((λ e, (c, e)) <$> tail)).
-      apply (history_linearizes_append L N c h tail Hlin Hc).
-      move=> q op1 Hq.
-      destruct q as [| [| q]]; simpl in Hq; [discriminate | | discriminate].
-      injection Hq as Heq.
-      right. exists 0%nat. split; [lia | rewrite -Heq //].
   - (* ---- coherence with the document spliced at [t0] ---- *)
     set st0 := doc_get s t0.
     set s' := <[t0 := MkYjsState arr' (st_deleted st0)]> s.
@@ -1379,8 +1304,7 @@ Qed.
 (** Delivering one broadcast, fresh op whose same-author predecessor (if any)
     is already delivered here preserves [history_wf]. Since issue #40 there is
     NO causal-closure hypothesis: the structural gate's own-predecessor clause
-    is exactly what keeps per-author delivery FIFO, and realizability absorbs
-    the rest. *)
+    is exactly what keeps per-author delivery FIFO. *)
 Lemma history_wf_deliver N c h op :
   history_wf N -> N !! c = Some h ->
   op_broadcast N op ->
@@ -1527,13 +1451,6 @@ Proof.
     exists (drop (S L) log).
     rewrite -(take_S_r log L op); last by rewrite -HqL.
     rewrite take_drop //.
-  - (* realizable (issue #40) *)
-    destruct (hwf_realizable N Hwf) as (Lz & Hlin).
-    exists (Lz ++ ((λ e, (c, e)) <$> tail)).
-    apply (history_linearizes_append Lz N c h tail Hlin Hc).
-    move=> q op1 Hq.
-    destruct q as [| q]; simpl in Hq; last by rewrite lookup_nil in Hq.
-    injection Hq as ->. by left.
 Qed.
 
 (* ===== ValidReplay ======================================================== *)
@@ -3153,9 +3070,6 @@ Proof.
   - move=> i e He. rewrite !Hemp in He.
     destruct He as [He | He]; by apply elem_of_nil in He.
   - move=> i j. rewrite !Hemp /delivered_from /delivered_ops /=. apply prefix_nil.
-  - exists []. split.
-    + move=> i. rewrite Hemp //=.
-    + move=> q i op Hq. by rewrite lookup_nil in Hq.
 Qed.
 
 Lemma ops_coh_init (C : gset ClientId) :
