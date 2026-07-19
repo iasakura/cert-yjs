@@ -4583,6 +4583,79 @@ Qed.
     lemma's raw footprint (struct fields, [types]/[bind] maps) in
     [own_store] and its raw pure post in [ValidReplay] + [is_root_lb]
     certificates. *)
+(** ---- history-size discharge of the run-list capacity guard (issue #28
+    U5): cells count at most the replayed items, which count at most the
+    history events ---- *)
+
+Lemma cells_length_le_flatten (cells : list item_cell) :
+  (∀ c, c ∈ cells -> ic_run c ≠ []) ->
+  (length cells <= length (run_flatten cells))%nat.
+Proof.
+  elim: cells => [| c cs IH] Hne; simpl; [lia |].
+  rewrite run_flatten_cons length_app.
+  have Hc1 : (1 <= length (ic_run c))%nat.
+  { destruct (ic_run c) eqn:Hrc; [| simpl; lia].
+    exfalso. apply (Hne c); [apply elem_of_cons; by left | exact Hrc]. }
+  have Hrest : (length cs <= length (run_flatten cs))%nat.
+  { apply IH. move=> c0 Hc0. apply Hne. apply elem_of_cons. by right. }
+  lia.
+Qed.
+
+Lemma foldr_add_app {T : Type} (f : T -> nat) (l1 l2 : list T) :
+  foldr (λ x acc, (f x + acc)%nat) 0%nat (l1 ++ l2)
+  = (foldr (λ x acc, (f x + acc)%nat) 0%nat l1
+     + foldr (λ x acc, (f x + acc)%nat) 0%nat l2)%nat.
+Proof. elim: l1 => [| a l1 IH]; simpl; [lia | rewrite IH; lia]. Qed.
+
+(** Every type's cells are counted by its registry name's document. *)
+Lemma cells_size_by_names (m : DocM) (bind : gmap P loc)
+    (types : gmap loc type_state) :
+  ∀ (nms : list P),
+  (∀ p ts, types !! p = Some ts ->
+     (length (ty_cells ts) <= length (ty_arr ts))%nat ∧
+     ∃ nm, nm ∈ nms ∧ bind !! nm = Some p ∧ docm_get m (RootId nm) = ty_arr ts) ->
+  (length (all_cells types)
+   <= foldr (λ nm acc, (length (docm_get m (RootId nm)) + acc)%nat) 0%nat nms)%nat.
+Proof.
+  induction types as [| p0 ts0 types0 Hnone IH] using map_ind => nms Hfacts.
+  - rewrite /all_cells map_to_list_empty /=. lia.
+  - destruct (Hfacts p0 ts0 (lookup_insert_eq _ _ _)) as (Hlen0 & nm & Hnmin & Hbnm & Hdg).
+    apply list_elem_of_lookup_1 in Hnmin. destruct Hnmin as [k Hk].
+    have Hnms := take_drop_middle nms k nm Hk.
+    have Hperm : all_cells (<[p0 := ts0]> types0) ≡ₚ ty_cells ts0 ++ all_cells types0.
+    { rewrite /all_cells.
+      have Hml : map_to_list (<[p0 := ts0]> types0) ≡ₚ (p0, ts0) :: map_to_list types0
+        by apply map_to_list_insert.
+      rewrite Hml /=. done. }
+    rewrite (Permutation_length Hperm) length_app.
+    have Hrest : (length (all_cells types0)
+       <= foldr (λ nm0 acc, (length (docm_get m (RootId nm0)) + acc)%nat) 0%nat
+            (take k nms ++ drop (S k) nms))%nat.
+    { apply IH. move=> p ts Hp.
+      have Hpne : p ≠ p0.
+      { move=> Heqp. rewrite Heqp Hnone in Hp. done. }
+      destruct (Hfacts p ts) as (Hl & nm0 & Hin0 & Hb0 & Hd0).
+      { rewrite lookup_insert_ne //. }
+      split; [exact Hl |].
+      exists nm0. split_and!; [ | exact Hb0 | exact Hd0].
+      have Hne0 : nm0 ≠ nm.
+      { move=> Heqn. rewrite Heqn Hbnm in Hb0. injection Hb0 as Hpp. exact (Hpne (eq_sym Hpp)). }
+      rewrite -Hnms in Hin0.
+      move: Hin0 => /elem_of_app [Hin1 | Hin2].
+      { rewrite elem_of_app. by left. }
+      apply elem_of_cons in Hin2. destruct Hin2 as [Heqn | Hin2]; [by destruct (Hne0 Heqn) |].
+      rewrite elem_of_app. by right. }
+    have Hfold : foldr (λ nm0 acc, (length (docm_get m (RootId nm0)) + acc)%nat) 0%nat nms
+               = (length (docm_get m (RootId nm))
+                  + foldr (λ nm0 acc, (length (docm_get m (RootId nm0)) + acc)%nat) 0%nat
+                      (take k nms ++ drop (S k) nms))%nat.
+    { rewrite -{1}Hnms.
+      rewrite (foldr_add_app (λ nm0, length (docm_get m (RootId nm0))) (take k nms) (nm :: drop (S k) nms)) /=.
+      rewrite (foldr_add_app (λ nm0, length (docm_get m (RootId nm0))) (take k nms) (drop (S k) nms)).
+      lia. }
+    rewrite Hfold Hdg. lia.
+Qed.
+
 Lemma wp_store__applyUpdate_certs_aux (s : loc) (sl : slice.t) (dq : dfrac)
     (γh : history_names) (c : ClientId) (h : list Ev)
     (inputs : list (TId * IntegrateInput (A := A))) (Ds : list (gset YjsId))
@@ -4597,6 +4670,7 @@ Lemma wp_store__applyUpdate_certs_aux (s : loc) (sl : slice.t) (dq : dfrac)
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
   (∀ c, c ∈ all_cells types -> cell_origin_clk c) ->
+  (Z.of_nat (length h) + 3 * Z.of_nat (length inputs) + 2 < 2^63)%Z ->
   {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
       own_client_history γh c h ∗
       ([∗ list] ti;D ∈ inputs;Ds, is_op_cert γh (ti.1, OpInsert ti.2) D) ∗
@@ -4637,7 +4711,7 @@ Lemma wp_store__applyUpdate_certs_aux (s : loc) (sl : slice.t) (dq : dfrac)
       ⌜cells_range_disjoint (all_cells types')⌝ ∗
       ⌜∀ c, c ∈ all_cells types' -> cell_origin_clk c⌝ }}}.
 Proof using Type*.
-  move=> Hbatch Hcoh Hcohreg Hbatchbnd Hnowrap Hnowrapb Hlocdup0 Hrangedisj0 Horiginclk0.
+  move=> Hbatch Hcoh Hcohreg Hbatchbnd Hnowrap Hnowrapb Hlocdup0 Hrangedisj0 Horiginclk0 Hhbound.
   destruct Hcohreg as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
   iIntros (Φ) "(#Hpkg & #Hhist & Hown & #Hcerts & Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
   iDestruct (types_arr_inv with "Htypes") as %Htsinv.
@@ -4698,14 +4772,43 @@ Proof using Type*.
       word. }
     have Hlt := ValidReplay_batch_causal inputs m m' Hvr i j ti tj Hi Hj Hji Hceq.
     word. }
+  iDestruct (types_runs_wf with "Htypes") as %Hrunwfallc.
   have Hrlen0v : ∀ c0, c0 ∈ all_cells types -> (1 < length (ic_run c0))%nat ->
       (Z.of_nat (length (client_run types (cell_client c0)))
        + 3 * Z.of_nat (length inputs) + 2 < 2^63)%Z.
-  { move=> c0 Hc0 Hgt. exfalso.
-    have Hc0m := Hc0. apply all_cells_elem_of in Hc0m.
-    destruct Hc0m as (p & ts & Hts & Hcts).
-    have Hu := proj1 (Forall_forall _ _) (Hunitall p ts Hts) _ Hcts.
-    rewrite /cell_unit in Hu. lia. }
+  { move=> c0 Hc0 _.
+    have Hfilterlen : (length (client_run types (cell_client c0)) <= length (all_cells types))%nat.
+    { rewrite /client_run.
+      have Hmsl : ∀ l : list item_cell, length (merge_sort cell_le l) = length l.
+      { move=> l. apply Permutation_length. apply merge_sort_Permutation. }
+      rewrite Hmsl.
+      elim: (all_cells types) => [| c1 l IHl]; simpl; [lia |].
+      rewrite filter_cons. case_decide; simpl; lia. }
+    have Hnec : ∀ cx, cx ∈ all_cells types -> ic_run cx ≠ [].
+    { move=> cx Hcx. exact (proj1 (Hrunwfallc cx Hcx)). }
+    have Hsize : (length (all_cells types)
+       <= foldr (λ nm acc, (length (docm_get m (RootId nm)) + acc)%nat) 0%nat
+            ((map_to_list bind).*1))%nat.
+    { apply (cells_size_by_names m bind types).
+      move=> p ts Hp. split.
+      - have Hrepr := Hreprall p ts Hp.
+        have Hr : ty_arr ts = run_flatten (ty_cells ts)
+          by move: Hrepr; rewrite /cells_repr //.
+        rewrite Hr. apply cells_length_le_flatten. move=> cx Hcx. apply Hnec.
+        rewrite (all_cells_lookup _ _ _ Hp). apply elem_of_app. by left.
+      - destruct (Htypesbound p (mk_is_Some _ _ Hp)) as [nm Hbnm].
+        exists nm. split_and!.
+        + have Hmem : (nm, p) ∈ map_to_list bind by apply elem_of_map_to_list.
+          change ((nm, p).1 ∈ (map_to_list bind).*1).
+          apply list_elem_of_fmap_2. exact Hmem.
+        + exact Hbnm.
+        + exact (Hmtypes nm p ts Hbnm Hp). }
+    have Hnd : NoDup ((λ nm, RootId nm) <$> (map_to_list bind).*1).
+    { apply NoDup_fmap; [move=> a b [=] // | apply NoDup_fst_map_to_list]. }
+    have Hhsz := history_state_coh_size_list h m
+                   ((λ nm, RootId nm) <$> (map_to_list bind).*1) Hcoh Hnd.
+    rewrite foldr_fmap in Hhsz.
+    clear -Hfilterlen Hsize Hhsz Hhbound. lia. }
   iAssert (([∗ map] p ↦ ts ∈ types,
       own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
       ⌜YjsArrInvariant (ty_arr ts)⌝))%I with "[Htypes]" as "Htypes".
@@ -4794,6 +4897,7 @@ Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
   (∀ (t : TId) x, x ∈ docm_get m t -> (Z.of_nat (clock (item_id x)) + 1 < 2^64)%Z) ->
   (∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
      inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
+  (Z.of_nat (length h) + 3 * Z.of_nat (length inputs) + 2 < 2^63)%Z ->
   {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
       own_store s γs γh c h m ∗
       own_update sl dq inputs ∗
@@ -4808,7 +4912,7 @@ Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
       ([∗ list] ti ∈ inputs, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗
          is_root_lb γs nm (list_to_set (docm_get m' ti.1))) }}}.
 Proof using Type*.
-  move=> Hnowrapm Hnowrapb.
+  move=> Hnowrapm Hnowrapb Hhbound.
   iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertb & #Hroots) HΦ".
   iNamed "Hstore".
   iDestruct "Hcertb" as (Ds) "[%Hbatch #Hcerts]".
@@ -4835,7 +4939,7 @@ Proof using Type*.
   iApply wp_fupd.
   wp_apply (wp_store__applyUpdate_certs_aux s sl dq γh c h inputs Ds m types bind
               items_mref types_mref Hbatch Hhcoh Hregcoh Hbatchbnd Hnowrap Hnowrapb
-              Hlocdup Hrangedisj Horiginclk
+              Hlocdup Hrangedisj Horiginclk Hhbound
               with "[$Hpkg $Hishist $Hhist $Hcerts $Hupd $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
   iIntros (types' m') "(Hupd & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & Hhist & #Hlbnew & %Hcoh' & %Hregcoh' & %Hdom' & %Hvr & %Hnoc & %Hprov' & %Hlocdup' & %Hrangedisj' & %Horiginclk')".
   have Hregcohd' := Hregcoh'.
