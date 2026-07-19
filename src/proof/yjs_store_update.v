@@ -4494,28 +4494,35 @@ Proof using Type*.
       destruct HoLp as (x & Ho & Hfind).
       have Hxid : item_id x = oid by apply (find_by_id_id oid arrj x Hfind).
       have Hxmem : x ∈ arrj by apply (find_by_id_mem oid arrj x Hfind).
-      (* the origin item is a run head of a cell of this type *)
-      have Hrepr_pj : cells_repr arrj cellsj2 arrj := Hreprallj pj _ Htsj2.
-      have Hunit_pj : Forall cell_unit cellsj2 := Hunitallj pj _ Htsj2.
-      have Hxcell := unit_cells_arr_head cellsj2 arrj x Hrepr_pj Hunit_pj Hxmem.
-      destruct Hxcell as (c0' & Hc0'mem & Hxhead).
+      (* the origin char lives inside some cell of this type; its clock sits
+         in that cell's range, which the range-form batch freshness bounds *)
+      have Hxmem2 := Hxmem. rewrite Hreprj' in Hxmem2.
+      apply list_elem_of_lookup_1 in Hxmem2 as [kx Hkx].
+      destruct (run_flatten_lookup_cell cellsj2 kx x Hkx) as (cix & offx & c0' & Hcix & Hoffx & _).
+      have Hc0'mem : c0' ∈ cellsj2 := list_elem_of_lookup_2 _ _ _ Hcix.
       have Hc0'all : c0' ∈ all_cells types2.
       { rewrite (all_cells_lookup _ _ _ Htsj2). apply elem_of_app. by left. }
+      have Hwfx : run_wf (ic_run c0') := Hrunwfall2 c0' Hc0'all.
+      have Hxid2 := run_wf_char_id _ _ _ Hwfx Hoffx.
+      have Hoffb := lookup_lt_Some _ _ _ Hoffx.
       have Hcl' : cell_client c0' = W64 (clientId (in_id input)).
-      { rewrite /cell_client -Hxhead Hxid Hcl Hidnit //. }
-      have Hbnd := proj1 (Hbndj2 c0' Hc0'all j (RootId nmj, input) ltac:(lia) Hinput Hcl').
-      have Hck' : cell_clock c0' = W64 (clock oid).
-      { rewrite /cell_clock -Hxhead Hxid //. }
-      have [_ Hkb] := Hcellbndj c0' Hc0'all.
+      { rewrite /cell_client /run_head.
+        have Hclx : clientId (item_id x) = clientId (item_id (hd inhabitant (ic_run c0')))
+          by rewrite Hxid2 //.
+        rewrite -Hclx Hxid Hcl Hidnit //. }
+      have Hbnd := proj2 (Hbndj2 c0' Hc0'all j (RootId nmj, input) ltac:(lia) Hinput Hcl').
+      simpl in Hbnd.
+      have Hclkx : clock oid = (clock (item_id (hd inhabitant (ic_run c0'))) + offx)%nat
+        by rewrite -Hxid Hxid2 //.
+      have [_ Hkb] := Hbnds2 c0' Hc0'all.
+      have Hzc0 : (uint.Z (cell_clock c0') = Z.of_nat (clock (item_id (run_head c0'))))%Z
+        by (rewrite /cell_clock; word).
+      rewrite /run_head in Hzc0.
       have Hnwb := Hnowrapb j (RootId nmj, input) Hinput. simpl in Hnwb.
-      rewrite Hck' in Hbnd.
-      rewrite Hidnit.
-      have Hkb' : (Z.of_nat (clock oid) < 2^64)%Z by rewrite -Hxid Hxhead; exact Hkb.
-      have Ha : uint.Z (W64 (clock oid)) = Z.of_nat (clock oid).
-      { clear -Hkb'. word. }
       have Hb : uint.Z (W64 (clock (in_id input))) = Z.of_nat (clock (in_id input)).
       { clear -Hnwb. word. }
-      rewrite Ha Hb in Hbnd. lia. }
+      rewrite Hb in Hbnd.
+      rewrite Hidnit. lia. }
     (* rebuild the per-type big-sep over the grown map *)
     iAssert ([∗ map] p ↦ ts ∈ <[pj := MkTypeState cells'' arr2]> types2,
         own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
