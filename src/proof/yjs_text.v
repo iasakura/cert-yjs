@@ -724,8 +724,6 @@ Proof.
     iIntros (arr' nx iidx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & Hitemsf & Hitemmap & %Hpermc & %Hsi & %Hcellsp & %Hnxb & %Hcoupx & %Harrsp2 & %Hclook & %Hcloc2 & %Hchead & %Hcdel2 & %Hcunit)".
     have Hunitj' : Forall cell_unit cells'
       by (rewrite Hcellsp; exact (Forall_cell_unit_splice cells nx c Hunitj Hcunit)).
-    have Hnode' : ∃ x, cells' !! x = Some c ∧ ic_loc c = oL2 ∧ run_head c = nit
-      by (exists nx; exact (conj Hclook (conj Hcloc2 Hchead))).
     have Hinsins : <[tv.(yjs.Text.inner') := MkTypeState cells' arr']>
                  (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types)
              = <[tv.(yjs.Text.inner') := MkTypeState cells' arr']> types.
@@ -784,22 +782,31 @@ Proof.
       replace (mp + j + 1 - (mp + j))%nat with 1%nat by lia.
       simpl. rewrite lookup_drop. f_equal. lia. }
     iDestruct "Htext'" as (yt3 tl3) "(Hp3 & Hdll3 & %Hlen3 & %Hrepr3 & %Hcpar3)".
-    destruct Hnode' as [x (Hcx & Hcloc & Hcid)].
-    destruct (cells_repr_lookup arr' cells' arr' x c Hunitj' Hrepr3 Hcx) as [yi [Hyi Hcr3]].
     have HnitIn : nit ∈ arr' by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hnitpos).
-    (* Integrate's post now pins the inserted cell directly: run_head c = nit. *)
-    have Hyinit : yi = nit.
-    { have Hcr3eq : run_head c = yi := cell_repr_head _ _ _ Hcr3. rewrite -Hcr3eq. exact Hcid. }
-    subst yi.
-    have Hxpos : x = (p + j)%nat.
-    { have Hxm : x = (mp + j)%nat.
-      { destruct (Nat.lt_trichotomy x (mp + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
-        - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' x (mp + j)%nat nit nit Hinv' Hyi Hnitpos Hlt.
-          exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH).
-        - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' (mp + j)%nat x nit nit Hinv' Hnitpos Hyi Hgt.
-          exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH). }
-      lia. }
-    subst x.
+    (* the splice index is the cell cursor: the model index of the new cell
+       is mp + j (order theory), and prefix-sum injectivity pins nx *)
+    have Hnec0 : Forall (λ c0, ic_run c0 ≠ []) cells.
+    { apply Forall_forall. move=> c0 Hc0. exact (proj1 (Hrunwfc c0 Hc0)). }
+    have Hiidx0 : iidx = (mp + j)%nat.
+    { have Hnit_i0 : arr' !! iidx = Some nit.
+      { rewrite Harrsp2. apply list_lookup_middle. rewrite length_take_le //. }
+      destruct (Nat.lt_trichotomy iidx (mp + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
+      - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' iidx (mp + j)%nat nit nit Hinv' Hnit_i0 Hnitpos Hlt.
+        exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH).
+      - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' (mp + j)%nat iidx nit nit Hinv' Hnitpos Hnit_i0 Hgt.
+        exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH). }
+    have Hnxpos0 : nx = (p + j)%nat.
+    { apply (run_flatten_take_length_inj cells nx (p + j)%nat Hnec0 Hnxb HpjLb).
+      rewrite Hcoupx Hcoupj Hiidx0 //. }
+    have Hcx : cells' !! (p + j)%nat = Some c by (rewrite -Hnxpos0; exact Hclook).
+    have Hcloc : ic_loc c = oL2 := Hcloc2.
+    have Hcid : run_head c = nit := Hchead.
+    have Hlast_c : ic_run c !! (length (ic_run c) - 1)%nat = Some nit.
+    { have Hcu : length (ic_run c) = 1%nat := Hcunit.
+      have Hh := Hcid. rewrite /run_head in Hh.
+      rewrite Hcu /=.
+      destruct (ic_run c) as [|hc tc]; [simpl in Hcu; discriminate |].
+      simpl in Hh. by rewrite /= Hh. }
     wp_for_post.
     (* re-establish the loop invariant for [S j] with [ins ++ [nit]] *)
     iFrame "Ht His_lb HΦ HisRp".
@@ -838,7 +845,7 @@ Proof.
       + replace (p + S j - 1)%nat with (p + j)%nat by lia. exact Hcx.
       + exact Hcloc.
       + replace (mp + S j - 1)%nat with (mp + j)%nat by lia. exact Hnitpos.
-      + by rewrite Hcr3.
+      + exact Hlast_c.
       + lia.
       + intros Hsj. lia.
       + intros j' Hsj. injection Hsj as ->. rewrite lookup_app_r; [| rewrite Hinslen; lia]. rewrite Hinslen. rewrite Nat.sub_diag. reflexivity.
@@ -879,41 +886,15 @@ Proof.
           rewrite Hmo. destruct Hleftj as [[_ Hp0] | (lc2 & li2 & _ & _ & Hla2 & _ & _ & _ & Hlk)]; [lia |]. have -> : li = li2 by (rewrite Hla in Hla2; injection Hla2 as ->; reflexivity). have Hli2 := Hlk j' Hisj. rewrite Hli2 in Hlookj'. injection Hlookj' as <-. reflexivity.
     - intros x Hx. have Hxa := Hsubold x Hx. rewrite Hplace. rewrite -(take_drop (mp + j)%nat arr) in Hxa. apply elem_of_app in Hxa as [H1 | H2]; [apply elem_of_app; left; exact H1 | apply elem_of_app; right; apply elem_of_cons; right; exact H2].
     - (* the loop-constant [right] pointer's index shifts across the splice *)
-      have Hlcells' : (length cells' = length arr + 1)%nat.
-      { rewrite (cells_repr_length _ _ _ Hunitj' Hrepr3).
-        rewrite Hplace length_app length_take_le /=; [rewrite length_drop; lia | exact Hple]. }
-      have Hnit_i : arr' !! iidx = Some nit.
-      { rewrite Harrsp2. apply list_lookup_middle. rewrite length_take_le //. }
-      have Hiidxpos : iidx = (mp + j)%nat.
-      { destruct (Nat.lt_trichotomy iidx (mp + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
-        - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' iidx (mp + j)%nat nit nit Hinv' Hnit_i Hnitpos Hlt.
-          exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH).
-        - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' (mp + j)%nat iidx nit nit Hinv' Hnitpos Hnit_i Hgt.
-          exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH). }
-      have Hnxpos : nx = (p + j)%nat.
-      { have H := Hcoupx.
-        rewrite (run_flatten_take_length_unit cells nx Hunitj) (Nat.min_l _ _ Hnxb) in H. lia. }
-      rewrite Hcellsp Hnxpos.
-      have Hpjlen : ((p + j) <= length cells)%nat by rewrite -Hnxpos; exact Hnxb.
+      rewrite Hcellsp Hnxpos0.
+      have Hpjlen : ((p + j) <= length cells)%nat by rewrite -Hnxpos0; exact Hnxb.
       have -> : (Z.of_nat (p + S j)) = (Z.of_nat (p + j) + 1)%Z by lia.
       rewrite (node_loc_splice_ge cells c (p + j)%nat (Z.of_nat (p + j)) ltac:(lia) Hpjlen).
       exact Hrgtj.
     - (* Hcoupj at S j: the splice adds one unit cell at the cursor *)
-      have Hnxpos2 : nx = (p + j)%nat.
-      { have H := Hcoupx.
-        rewrite (run_flatten_take_length_unit cells nx Hunitj) (Nat.min_l _ _ Hnxb) in H.
-        have Hiidxpos2 : iidx = (mp + j)%nat.
-        { have Hnit_i2 : arr' !! iidx = Some nit.
-          { rewrite Harrsp2. apply list_lookup_middle. rewrite length_take_le //. }
-          destruct (Nat.lt_trichotomy iidx (mp + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
-          - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' iidx (mp + j)%nat nit nit Hinv' Hnit_i2 Hnitpos Hlt.
-            exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH).
-          - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' (mp + j)%nat iidx nit nit Hinv' Hnitpos Hnit_i2 Hgt.
-            exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH). }
-        lia. }
       replace (p + S j)%nat with (S (p + j))%nat by lia.
-      rewrite Hcellsp Hnxpos2.
-      have Hpjlen2 : ((p + j) <= length cells)%nat by rewrite -Hnxpos2; exact Hnxb.
+      rewrite Hcellsp Hnxpos0.
+      have Hpjlen2 : ((p + j) <= length cells)%nat by rewrite -Hnxpos0; exact Hnxb.
       have Htk : take (S (p + j)) (take (p + j)%nat cells ++ c :: drop (p + j)%nat cells)
                = take (p + j)%nat cells ++ [c].
       { rewrite take_app_ge; last (rewrite length_take_le; lia).
