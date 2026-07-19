@@ -3896,7 +3896,7 @@ Lemma wp_store__applyUpdate (s : loc) (sl : slice.t) (dq : dfrac)
      inputs !! i = Some ti -> inputs !! j = Some tj ->
      (j < i)%nat -> W64 (clientId (in_id tj.2)) = W64 (clientId (in_id ti.2)) ->
         (uint.Z (W64 (clock (in_id tj.2))) < uint.Z (W64 (clock (in_id ti.2))))%Z) ->
-  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + 1 < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
   (∀ i ti, inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
@@ -3963,7 +3963,7 @@ Proof using Type*.
           cell_client c0 = W64 (clientId (in_id ti.2)) ->
           (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id ti.2))))%Z ∧
           (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (in_id ti.2))))%Z⌝ ∗
-    "%Hnowrapj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> (uint.Z (cell_clock c0) + 1 < 2^64)%Z⌝ ∗
+    "%Hnowrapj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) < 2^64)%Z⌝ ∗
     "%Hprovj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj ->
         (∃ c, c ∈ all_cells types ∧ cell_client c0 = cell_client c ∧
            (uint.Z (cell_clock c) <= uint.Z (cell_clock c0))%Z ∧
@@ -4157,16 +4157,12 @@ Proof using Type*.
        guard vacuous under the unit scaffold *)
     iDestruct (types_unit_all with "Htypes") as %Hunitall0.
     iDestruct (types_cells_id_bounds with "Htypes") as %Hbnds0.
-    have Hcellunit : ∀ c, c ∈ all_cells typesj -> cell_unit c.
-    { move=> c Hc. apply all_cells_elem_of in Hc. destruct Hc as (p0 & ts0 & Hp0 & Hcts0).
-      exact (proj1 (Forall_forall _ _) (Hunitall0 p0 ts0 Hp0) c Hcts0). }
-    have Hfitsg : ∀ c, c ∈ all_cells typesj ->
-        (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z.
-    { move=> c Hc. have Hu := Hcellunit c Hc. rewrite /cell_unit in Hu.
-      rewrite Hu. have := Hnowrapj c Hc. lia. }
     have Hrunleng : ∀ c, c ∈ all_cells typesj -> (1 < length (ic_run c))%nat ->
         (Z.of_nat (length (client_run typesj (cell_client c))) + 2 < 2^63)%Z.
-    { move=> c Hc Hgt. have Hu := Hcellunit c Hc. rewrite /cell_unit in Hu. lia. }
+    { move=> c Hc Hgt.
+      apply all_cells_elem_of in Hc. destruct Hc as (p0 & ts0 & Hp0 & Hcts0).
+      have Hu := proj1 (Forall_forall _ _) (Hunitall0 p0 ts0 Hp0) c Hcts0.
+      rewrite /cell_unit in Hu. lia. }
     have Huniqj := yai_unique _ Hinvj.
     have HfLpj : findPtrIdx (origin nit) arrj = Some leftIdx.
     { rewrite -(toitem_lemmas.findLeftIdx_findPtrIdx_eq input nit arrj Huniqj Htoit). exact HfindL. }
@@ -4224,7 +4220,7 @@ Proof using Type*.
       iIntros "!#" (p0 ts0 Hp0) "($ & $ & _)". }
     wp_apply (wp_store__repair_split s mref tref itv (uiv.(yjs.updateItem.parentName'))
                 input opn typesj bind ocL ocR pj
-                HwLc HwRc Hsameg Hwpar Hfitsg Hlocdupj Hrangedisjj Horiginclkj Hrunleng
+                HwLc HwRc Hsameg Hwpar Hnowrapj Hlocdupj Hrangedisjj Horiginclkj Hrunleng
                 with "[$Hfresh $HisPN $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
     iIntros (lft rgt types2) "(Hlinked & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hpinv2 & %Hrtf & %HbdL & %HbdR)".
     (* transport the loop facts across the repair (issue #28 U5): the map
@@ -4577,13 +4573,10 @@ Proof using Type*.
     + (* no-wrap for the grown pool *)
       move=> c0 Hc0.
       rewrite Hac_step in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew].
-      * have Hf := Hfits2 c0 Hold.
-        have Hlen1 : (1 <= length (ic_run c0))%nat.
-        { have Hwf := Hrunwfall2 c0 Hold.
-          destruct (ic_run c0) eqn:Hrc; [exact (False_ind _ (proj1 Hwf eq_refl)) | simpl; lia]. }
-        lia.
+      * exact (Hfits2 c0 Hold).
       * apply list_elem_of_singleton in Hnew as ->.
-        rewrite Hclk2.
+        have Hu2 := Hc2unit. rewrite /cell_unit in Hu2.
+        rewrite Hclk2 Hu2.
         have := Hnowrapb j (RootId nmj, input) Hinput. simpl. word.
     + (* provenance: chase into the pre-repair pool, then compose *)
       move=> c0 Hc0.
@@ -4688,7 +4681,7 @@ Lemma wp_store__applyUpdate_certs_aux (s : loc) (sl : slice.t) (dq : dfrac)
   history_state_coh h m ->
   doc_registry_coh m bind types ->
   (∀ i ti, inputs !! i = Some ti -> ∃ nm p, ti.1 = RootId nm /\ bind !! nm = Some p) ->
-  (∀ c0, c0 ∈ all_cells types -> (uint.Z (cell_clock c0) + 1 < 2^64)%Z) ->
+  (∀ c0, c0 ∈ all_cells types -> (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) < 2^64)%Z) ->
   (∀ i ti, inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
@@ -4889,20 +4882,9 @@ Proof using Type*.
   iDestruct (types_cells_id_bounds with "Htypes") as %Hcellbnd.
   have Hregcohd := Hregcoh.
   destruct Hregcohd as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
-  have Hnowrap : ∀ c0, c0 ∈ all_cells types -> (uint.Z (cell_clock c0) + 1 < 2^64)%Z.
-  { move=> c0 Hc0.
-    have Hc0m := Hc0. apply all_cells_elem_of in Hc0m.
-    destruct Hc0m as (p & ts & Hts & Hcts).
-    have Hitemmem : run_head c0 ∈ ty_arr ts.
-    { rewrite (Hreprall p ts Hts).
-        apply run_head_in_flatten; [exact Hcts |].
-        exact (proj1 (Forall_forall _ _) (Hunitall p ts Hts) _ Hcts). }
-    destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
-    have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
-    have Hmem : run_head c0 ∈ docm_get m (RootId nm) by rewrite Hdg.
-    have [Hcb Hkb] := Hcellbnd c0 Hc0.
-    have Hnw := Hnowrapm (RootId nm) (run_head c0) Hmem.
-    rewrite /cell_clock. word. }
+  have Hnowrap : ∀ c0, c0 ∈ all_cells types ->
+      (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) < 2^64)%Z.
+  { move=> c0 Hc0. exact (Hrunfits c0 Hc0). }
   (* run the internal certificate lemma; keep a fupd after the call for the
      item-set authority update *)
   iApply wp_fupd.
