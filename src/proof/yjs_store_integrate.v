@@ -1527,6 +1527,7 @@ Lemma wp_Store__integrateCore_aux (s parent item_l : loc) (arr arr' : list (YjsI
       ⌜arr' = take midx arr ++ ic_run c ++ drop midx arr⌝ ∗
       ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
       ⌜item_id (run_head c) = in_id input⌝ ∗ ⌜ic_deleted c = false⌝ ∗
+      ⌜origin (run_head c) = origin newItem⌝ ∗ ⌜rightOrigin (run_head c) = rightOrigin newItem⌝ ∗
       ⌜length (ic_run c) = length (explode (toContent iv.(yjs.item.content')))⌝ ∗
       ⌜cells' ≡ₚ cells ++ [c]⌝ }}}.
 Proof using Type*.
@@ -2103,6 +2104,8 @@ Proof using Type*.
   iSplit; [iPureIntro; reflexivity|].
   iSplit; [iPureIntro; rewrite /run_head /= Hheadid //|].
   iSplit; [iPureIntro; reflexivity|].
+  iSplit; [iPureIntro; rewrite /run_head /= HitemMh /headit /= -HnewItemEq //|].
+  iSplit; [iPureIntro; rewrite /run_head /= HitemMh /headit /= -HnewItemEq //|].
   iSplit; [iPureIntro; exact HRUNlen|].
   iPureIntro. rewrite Hcs1eq Hcs2eq.
   rewrite (Permutation_cons_append (drop curD cells) (MkItemCell item_l RUNITEMS false parent)).
@@ -2526,7 +2529,7 @@ Proof using Type*.
               Hinv Htoitem Hvalid Hmax HfindL HfindR Hfl Hfr Hfpar Hflags Hlen1 Hnec Hfits Hoclk
               HcurL HcurLb HcurR HcurRb Hall
               with "[$Hpkg $Hraw $Htext]").
-  iIntros (cells' idx midx c) "(Htext' & %Hinv' & %Hsplice & %Hidxb & %Hcoup & %Hmile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Hclen & %Hperm)".
+  iIntros (cells' idx midx c) "(Htext' & %Hinv' & %Hsplice & %Hidxb & %Hcoup & %Hmile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Horig & %Hrorig & %Hclen & %Hperm)".
   (* n = 1: the run is a singleton, recovering the pre-U7 unit cell shape *)
   have Hclen1 : length (ic_run c) = 1%nat by rewrite Hclen Hexp1.
   have Hrunc : ic_run c = [run_head c].
@@ -2597,6 +2600,7 @@ Lemma wp_Store__integrateCore_cells_run (s parent item_l : loc)
       ⌜arr' = take midx arr ++ ic_run c ++ drop midx arr⌝ ∗
       ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
       ⌜item_id (run_head c) = in_id input⌝ ∗ ⌜ic_deleted c = false⌝ ∗
+      ⌜origin (run_head c) = origin newItem⌝ ∗ ⌜rightOrigin (run_head c) = rightOrigin newItem⌝ ∗
       ⌜length (ic_run c) = length (explode (in_content input))⌝ ∗
       ⌜cells' ≡ₚ cells ++ [c]⌝ }}}.
 Proof using Type*.
@@ -2620,12 +2624,13 @@ Proof using Type*.
               Hinv Htoitem Hvalid Hmax HfindL HfindR Hfl Hfr Hfpar Hflags Hlen1 Hnec Hfits Hoclk
               HcurL HcurLb HcurR HcurRb Hall'
               with "[$Hpkg $Hraw $Htext]").
-  iIntros (cells' idx midx c) "(Htext' & %Hinv' & %Hsplice & %Hidxb & %Hcoup & %Hmile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Hclen & %Hperm)".
+  iIntros (cells' idx midx c) "(Htext' & %Hinv' & %Hsplice & %Hidxb & %Hcoup & %Hmile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Horig & %Hrorig & %Hclen & %Hperm)".
   iApply ("HΦ" $! idx midx cells' c).
   iFrame "Htext'".
   iPureIntro. split_and!;
     [exact Hinv' | exact Hsplice | exact Hidxb | exact Hcoup | exact Hmile | exact Harrsp
-    | exact Hlook | exact Hloc | exact Hcid | exact Hcdel | rewrite Hclen Hcc // | exact Hperm].
+    | exact Hlook | exact Hloc | exact Hcid | exact Hcdel | exact Horig | exact Hrorig
+    | rewrite Hclen Hcc // | exact Hperm].
 Qed.
 
 (* The former public model-level [wp_Store__integrateCore] (over [own_ytype])
@@ -3036,6 +3041,7 @@ Lemma wp_Store__Integrate_nil_run (s parent item_l : loc) (arr arr' : list (YjsI
       ⌜arr' = take midx arr ++ ic_run c ++ drop midx arr⌝ ∗
       ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
       ⌜item_id (run_head c) = in_id input⌝ ∗ ⌜ic_deleted c = false⌝ ∗
+      ⌜origin (run_head c) = origin newItem⌝ ∗ ⌜rightOrigin (run_head c) = rightOrigin newItem⌝ ∗
       ⌜length (ic_run c) = length (explode (in_content input))⌝ }}}.
 Proof using Type*.
   move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb Hall.
@@ -3062,7 +3068,7 @@ Proof using Type*.
               leftIdx rightIdx curL curR
               Hinv Htoitem Hvalid Hmax HfindL HfindR Hnec Hfits Hoclk
               HcurL HcurLb HcurR HcurRb Hall with "[$Hpkg $Htext $Hfresh]").
-  iIntros (idx midx cells' c) "(Htext' & %Hinv' & %Hsplice & %Hidxb & %Hcoup & %Hmile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Hclen & %Hperm)".
+  iIntros (idx midx cells' c) "(Htext' & %Hinv' & %Hsplice & %Hidxb & %Hcoup & %Hmile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Horig & %Hrorig & %Hclen & %Hperm)".
   wp_auto.
   wp_method_call. wp_call. wp_call. wp_auto.
   iDestruct "Htext'" as (yt tl) "(Hpar & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
@@ -3159,7 +3165,7 @@ Proof using Type*.
   iSplitL "Hparent Hdll".
   { iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
   iPureIntro.
-  split_and!; [exact Hperm | exact Hsplice | exact Hidxb | exact Hcoup | exact Hmile | exact Harrsp | exact Hlook | exact Hloc | exact Hcid | exact Hcdel | exact Hclen].
+  split_and!; [exact Hperm | exact Hsplice | exact Hidxb | exact Hcoup | exact Hmile | exact Harrsp | exact Hlook | exact Hloc | exact Hcid | exact Hcdel | exact Horig | exact Hrorig | exact Hclen].
 Qed.
 
 End store_integrate.

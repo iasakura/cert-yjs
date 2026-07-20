@@ -88,18 +88,18 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
     (sl : slice.t) (dq : dfrac)
     (inputs : list (TId * IntegrateInput (A := A))) (Ds : list (gset YjsId)) :
   (∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
-     inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
+     inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z) ->
   (∀ (h : list Ev) (m : DocM), history_state_coh h m ->
-     batch_ok h inputs Ds /\
+     batch_ok h (expand_inputs inputs) Ds /\
      (∀ (t : TId) x, x ∈ docm_get m t -> (Z.of_nat (clock (item_id x)) + 1 < 2^64)%Z)) ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
       own_update sl dq inputs ∗
-      ([∗ list] ti;D ∈ inputs;Ds, is_op_cert γh (ti.1, OpInsert ti.2) D) ∗
+      ([∗ list] ti;D ∈ expand_inputs inputs;Ds, is_op_cert γh (ti.1, OpInsert ti.2) D) ∗
       ([∗ list] ti ∈ inputs, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗ is_root γs nm) }}}
     dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl
   {{{ (c : ClientId) (h : list Ev) (m' : DocM), RET #();
       own_update sl dq inputs ∗
-      is_history_lb γh c (h ++ (deliver_ev <$> inputs)) }}}.
+      is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs inputs)) }}}.
 Proof.
   move=> Hnowrapb Hrecv.
   wp_start as "(#His_doc & #Hishist & Hupd & #Hcerts & #Hroots)".
@@ -121,7 +121,7 @@ Proof.
   (* rebuild store_inv at the advanced history and release the lock *)
   iAssert (▷ store_inv dvv.(yjs.Doc.store') γs γh)%I with "[Hstore]" as "Hinv".
   { iNext. iApply store_inv_own_store.
-    iExists c, (h ++ (deliver_ev <$> inputs)), m'. iFrame "Hstore". }
+    iExists c, (h ++ (deliver_ev <$> expand_inputs inputs)), m'. iFrame "Hstore". }
   wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hinv]").
   iApply ("HΦ" $! c h m'). iFrame "Hupd Hlb".
 Qed.
