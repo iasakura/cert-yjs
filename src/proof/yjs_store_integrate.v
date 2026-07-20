@@ -64,18 +64,22 @@ Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation Ev := (@Event Op).
 Local Notation DocM := (gmap TId (list (YjsItem A))).
 
-(** [containsId] decides membership of the id slice as a [gset] (via [toYjsId]). *)
-Lemma wp_containsId (s : slice.t) (vs : list yjs.id.t) (id : yjs.id.t) (dq : dfrac) :
+(** [containsId] decides membership of the span slice's char-id set (issue #28:
+    an id addresses any char of a scanned run, so the Go test is a clock-range
+    test; [span_wf] makes its [w64] [clock + len] exact). *)
+Lemma wp_containsId (s : slice.t) (vs : list yjs.idSpan.t) (id : yjs.id.t) (dq : dfrac) :
+  Forall span_wf vs ->
   {{{ is_pkg_init yjs ∗ s ↦*{dq} vs }}}
     @! yjs.containsId #s #id
-  {{{ RET #(bool_decide (toYjsId id ∈ (list_to_set (toYjsId <$> vs) : gset YjsId)));
+  {{{ RET #(bool_decide (toYjsId id ∈ ⋃ (span_ids <$> vs)));
       s ↦*{dq} vs }}}.
 Proof.
+  move=> Hwfs.
   wp_start as "Hs". wp_auto.
-  iAssert (∃ (i : w64) (xv : yjs.id.t),
+  iAssert (∃ (i : w64) (xv : yjs.idSpan.t),
     "Hi" ∷ i_ptr ↦ i ∗ "Hx" ∷ x_ptr ↦ xv ∗ "Hs" ∷ s ↦*{dq} vs ∗
     "%Hib" ∷ ⌜(0 ≤ uint.Z i ≤ Z.of_nat (length vs))%Z⌝ ∗
-    "%Hnf" ∷ ⌜toYjsId id ∉ (list_to_set (toYjsId <$> take (uint.nat i) vs) : gset YjsId)⌝)%I
+    "%Hnf" ∷ ⌜toYjsId id ∉ ⋃ (span_ids <$> take (uint.nat i) vs)⌝)%I
     with "[i x Hs]" as "IH".
   { iExists (W64 0), _. iFrame. iPureIntro.
     replace (uint.nat (W64 0)) with 0%nat by word.
@@ -91,26 +95,64 @@ Proof.
     iDestruct (own_slice_elem_acc (sint.Z i) v s dq vs with "Hs") as "[Hel Hrest]".
     { word. }
     { replace (Z.to_nat (sint.Z i)) with (uint.nat i) by word. exact Hv. }
-    wp_auto. wp_method_call; wp_call; wp_auto. wp_apply (wp_Id__Equal v id).
+    wp_auto.
+    have Hwfv : span_wf v := Forall_lookup_1 _ _ _ _ Hwfs Hv.
+    (* under [span_wf] the Go [w64] range test is the mathematical one *)
+    have Hadd : uint.Z (word.add v.(yjs.idSpan.id').(yjs.id.clock') v.(yjs.idSpan.len'))
+              = (uint.Z v.(yjs.idSpan.id').(yjs.id.clock') + uint.Z v.(yjs.idSpan.len'))%Z.
+    { rewrite /span_wf in Hwfv. word. }
     have Hv' : vs !! sint.nat i = Some v.
     { replace (sint.nat i) with (uint.nat i) by word. exact Hv. }
-    iDestruct ("Hrest" $! v with "Hel") as "Hs".
-    iEval (rewrite (list_insert_id _ _ _ Hv')) in "Hs".
-    wp_if_destruct.
-    + wp_for_post.
-      have Hin : toYjsId id ∈ (list_to_set (toYjsId <$> vs) : gset YjsId).
-      { rewrite elem_of_list_to_set.
-        apply (list_elem_of_fmap_2' toYjsId vs v);
-          [ by eapply list_elem_of_lookup_2 | by rewrite e ]. }
-      iEval (rewrite (bool_decide_eq_true_2 _ Hin)) in "HΦ". iApply "HΦ". iFrame.
-    + wp_for_post.
+    have Hstep : toYjsId id ∉ span_ids v ->
+        toYjsId id ∉ ⋃ (span_ids <$> take (uint.nat (word.add i (W64 1))) vs).
+    { move=> Hnotin.
+      replace (uint.nat (word.add i (W64 1))) with (S (uint.nat i)) by word.
+      rewrite (take_S_r _ _ v); [| exact Hv].
+      rewrite fmap_app union_list_app_L /= (right_id_L ∅ (∪)).
+      apply not_elem_of_union. split; [exact Hnf | exact Hnotin]. }
+    (* the short-circuit && is nested ifs: case each test *)
+    destruct (bool_decide (v.(yjs.idSpan.id').(yjs.id.clientId') = id.(yjs.id.clientId'))) eqn:Hcid.
+    + apply bool_decide_eq_true_1 in Hcid.
+      wp_auto.
+      destruct (bool_decide (uint.Z v.(yjs.idSpan.id').(yjs.id.clock') ≤ uint.Z id.(yjs.id.clock'))%Z) eqn:Hle.
+      * apply bool_decide_eq_true_1 in Hle.
+        wp_auto.
+        destruct (bool_decide (uint.Z id.(yjs.id.clock') <
+            uint.Z (word.add v.(yjs.idSpan.id').(yjs.id.clock') v.(yjs.idSpan.len')))%Z) eqn:Hltc.
+        -- apply bool_decide_eq_true_1 in Hltc.
+           wp_auto. wp_for_post.
+           have Hin : toYjsId id ∈ ⋃ (span_ids <$> vs).
+           { apply elem_of_union_list. exists (span_ids v). split.
+             { apply list_elem_of_fmap_2. by eapply list_elem_of_lookup_2. }
+             apply span_ids_elem. split_and!; [exact Hcid | exact Hle | lia]. }
+           iEval (rewrite (bool_decide_eq_true_2 _ Hin)) in "HΦ".
+           iDestruct ("Hrest" $! v with "Hel") as "Hs".
+           iEval (rewrite (list_insert_id _ _ _ Hv')) in "Hs".
+           iApply "HΦ". iFrame.
+        -- apply bool_decide_eq_false_1 in Hltc.
+           wp_auto. wp_for_post.
+           iDestruct ("Hrest" $! v with "Hel") as "Hs".
+           iEval (rewrite (list_insert_id _ _ _ Hv')) in "Hs".
+           iFrame "HΦ id". iExists (word.add i (W64 1)), v. iFrame.
+           iPureIntro. split; [word |].
+           apply Hstep. move=> Hinv. apply span_ids_elem in Hinv.
+           destruct Hinv as (_ & _ & Hc). lia.
+      * apply bool_decide_eq_false_1 in Hle.
+        wp_auto. wp_for_post.
+        iDestruct ("Hrest" $! v with "Hel") as "Hs".
+        iEval (rewrite (list_insert_id _ _ _ Hv')) in "Hs".
+        iFrame "HΦ id". iExists (word.add i (W64 1)), v. iFrame.
+        iPureIntro. split; [word |].
+        apply Hstep. move=> Hinv. apply span_ids_elem in Hinv.
+        destruct Hinv as (_ & Hc & _). lia.
+    + apply bool_decide_eq_false_1 in Hcid.
+      wp_auto. wp_for_post.
+      iDestruct ("Hrest" $! v with "Hel") as "Hs".
+      iEval (rewrite (list_insert_id _ _ _ Hv')) in "Hs".
       iFrame "HΦ id". iExists (word.add i (W64 1)), v. iFrame.
-      iPureIntro. split.
-      * word.
-      * replace (uint.nat (word.add i (W64 1))) with (S (uint.nat i)) by word.
-        rewrite (take_S_r _ _ v); [| exact Hv].
-        rewrite fmap_app list_to_set_app.
-        apply not_elem_of_union. split; [exact Hnf | set_solver].
+      iPureIntro. split; [word |].
+      apply Hstep. move=> Hinv. apply span_ids_elem in Hinv.
+      destruct Hinv as (Hc & _ & _). exact (Hcid Hc).
   - apply bool_decide_eq_false in Hlt. wp_auto.
     have Hge : (length vs <= uint.nat i)%nat by word.
     rewrite (take_ge _ _ Hge) in Hnf.
@@ -526,6 +568,7 @@ Lemma wp_scanConflicts (parent item_l : loc) (dq : dfrac)
   findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
   setfindIntegratedIndex leftIdx rightIdx input arr = Some destIdx ->
   Forall cell_unit cells ->
+  (∀ c0, c0 ∈ cells -> cell_fits c0) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent dq cells arr ∗
       own_fresh_item_raw item_l input iv oleft oright }}}
     @! yjs.scanConflicts #item_l #(node_loc cells leftIdx)
@@ -533,7 +576,7 @@ Lemma wp_scanConflicts (parent item_l : loc) (dq : dfrac)
   {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
       own_ytype_cells parent dq cells arr ∗ own_fresh_item_raw item_l input iv oleft oright }}}.
 Proof using Type*.
-  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc.
+  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits.
   wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh".
   (* Index bounds via the pure model. *)
   have Hids_unique := yai_unique _ Harr.
@@ -575,9 +618,11 @@ Proof using Type*.
     - iSplitL "Hparent Hdll".
       { iExists yt, tl. iFrame "Hparent Hdll". done. }
       iSplitL "itemsBeforeOrigin Hibo_sl Hibo_cap".
-      { iExists _. iFrame "itemsBeforeOrigin". iExists ([] : list yjs.id.t). iFrame "Hibo_sl Hibo_cap". done. }
+      { iExists _. iFrame "itemsBeforeOrigin". iExists ([] : list yjs.idSpan.t). iFrame "Hibo_sl Hibo_cap".
+        iPureIntro. split; [constructor | done]. }
       iSplitL "conflictingItems Hci_sl Hci_cap".
-      { iExists _. iFrame "conflictingItems". iExists ([] : list yjs.id.t). iFrame "Hci_sl Hci_cap". done. }
+      { iExists _. iFrame "conflictingItems". iExists ([] : list yjs.idSpan.t). iFrame "Hci_sl Hci_cap".
+        iPureIntro. split; [constructor | done]. }
       iPureIntro; split_and!; [lia | lia | lia | lia | exact Hsetfii].
     - iPureIntro; split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent]. }
   wp_for "IH".
@@ -645,16 +690,49 @@ Proof using Type*.
       iEval (rewrite -Hci_loc) in "Hcival".
       wp_auto.
       iDestruct "Hids_before" as (ibo_s) "[Hibo_ref Hibo_setf]".
-      iDestruct "Hibo_setf" as (vs_ibo) "(Hibo_sl & Hibo_cap & %Hibo_set)".
+      iDestruct "Hibo_setf" as (vs_ibo) "(Hibo_sl & Hibo_cap & %Hibo_wf & %Hibo_set)".
       iDestruct "Hconflict_ids" as (ci_s) "[Hci_ref Hci_setf]".
-      iDestruct "Hci_setf" as (vs_ci) "(Hci_sl & Hci_cap & %Hci_set)".
-      wp_auto.
+      iDestruct "Hci_setf" as (vs_ci) "(Hci_sl & Hci_cap & %Hci_wf & %Hci_set)".
+      (* the scanned node's span: head id + run length (issue #28) *)
+      wp_apply (wp_item__Len with "[$Hcival]"). iIntros "Hcival". wp_auto.
+      (* under the unit scaffold the span has length 1 and its char-id set is
+         the head id; its no-wrap comes from the run-fits premise *)
+      have Hunit_ci : cell_unit ci := Forall_lookup_1 _ _ _ _ Hunitc Hci.
+      have Hlencont : length (iv_ci.(yjs.item.content').(yjs.content.content')) = 1%nat.
+      { have Hl := f_equal length Hccont_ci.
+        rewrite length_fmap explode_length /toContent in Hl.
+        rewrite /cell_unit in Hunit_ci. lia. }
+      have Hfits_ci : cell_fits ci := Hfits ci (list_elem_of_lookup_2 _ _ _ Hci).
+      have Hclk_ci : clock (item_id (run_head ci)) = uint.nat iv_ci.(yjs.item.id').(yjs.id.clock').
+      { by rewrite Hcid_ci /toYjsId. }
+      have Hwf_sp : span_wf (yjs.idSpan.mk iv_ci.(yjs.item.id') (W64 1)).
+      { rewrite /span_wf /=.
+        rewrite /cell_fits /cell_clock Hclk_ci in Hfits_ci.
+        rewrite /cell_unit in Hunit_ci.
+        move: Hfits_ci. rewrite Hunit_ci. word. }
+      have Hsp_ids : span_ids (yjs.idSpan.mk iv_ci.(yjs.item.id') (W64 1)) = {[item_id yi]}.
+      { rewrite span_ids_singleton /=; last done. by rewrite -Hcid_ci Hcr_head. }
+      rewrite Hlencont.
       wp_apply wp_slice_literal. iSplitR; first done. iIntros "%sing1 [Hsing1 _]". wp_auto.
       wp_apply (wp_slice_append with "[$Hibo_sl $Hibo_cap $Hsing1]").
       iIntros "%ibo_s2 (Hibo_sl & Hibo_cap & _)". wp_auto.
       wp_apply wp_slice_literal. iSplitR; first done. iIntros "%sing2 [Hsing2 _]". wp_auto.
       wp_apply (wp_slice_append with "[$Hci_sl $Hci_cap $Hsing2]").
       iIntros "%ci_s2 (Hci_sl & Hci_cap & _)". wp_auto.
+      (* normalize the appended literal to [.. ++ [sp]] and precompute the new
+         accumulators' representation facts once for every branch below *)
+      have H0 : sint.nat (W64 0) = 0%nat by word.
+      iEval (rewrite H0 /=) in "Hibo_sl".
+      iEval (rewrite H0 /=) in "Hci_sl".
+      set sp := yjs.idSpan.mk iv_ci.(yjs.item.id') (W64 1).
+      have Hibo_wf2 : Forall span_wf (vs_ibo ++ [sp]).
+      { apply Forall_app. split; [exact Hibo_wf | by apply Forall_singleton]. }
+      have Hci_wf2 : Forall span_wf (vs_ci ++ [sp]).
+      { apply Forall_app. split; [exact Hci_wf | by apply Forall_singleton]. }
+      have Hibo_set2 : ⋃ (span_ids <$> (vs_ibo ++ [sp])) = {[item_id yi]} ∪ idsB.
+      { rewrite span_union_snoc Hsp_ids Hibo_set //. }
+      have Hci_set2 : ⋃ (span_ids <$> (vs_ci ++ [sp])) = {[item_id yi]} ∪ conflictI.
+      { rewrite span_union_snoc Hsp_ids Hci_set //. }
       wp_apply (wp_idOptEqual iv.(yjs.item.originLeftId') iv_ci.(yjs.item.originLeftId')
                   oleft olid_ci with "[$Holeft $Hcol]").
       remember ((Z.to_nat (rightIdx - leftIdx) - offset)%nat) as fuel eqn:Hfuel_eq.
@@ -693,10 +771,10 @@ Proof using Type*.
            iSplitL "Hright". { iFrame "Hright". }
            iSplitL "Hibo_ref Hibo_sl Hibo_cap".
            { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
-             have H0 : sint.nat (W64 0) = 0%nat by word.
-             rewrite H0 fmap_app list_to_set_app_L Hibo_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
+             split; [exact Hibo_wf2 | exact Hibo_set2]. }
            iSplitL "Hci_ref Hci_empty Hci_empty_cap".
-           { iExists _. iFrame "Hci_ref". iExists ([] : list yjs.id.t). iFrame "Hci_empty Hci_empty_cap". done. }
+           { iExists _. iFrame "Hci_ref". iExists ([] : list yjs.idSpan.t). iFrame "Hci_empty Hci_empty_cap".
+                 iPureIntro. split; [constructor | done]. }
            iPureIntro; split_and!;
              [lia | lia | lia | lia
              | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia;
@@ -743,12 +821,10 @@ Proof using Type*.
               iSplitL "Hright". { iFrame "Hright". }
               iSplitL "Hibo_ref Hibo_sl Hibo_cap".
               { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
-                have H0 : sint.nat (W64 0) = 0%nat by word.
-                rewrite H0 fmap_app list_to_set_app_L Hibo_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
+                split; [exact Hibo_wf2 | exact Hibo_set2]. }
               iSplitL "Hci_ref Hci_sl Hci_cap".
               { iExists ci_s2. iFrame "Hci_ref". iExists _. iFrame "Hci_sl Hci_cap". iPureIntro.
-                have H0 : sint.nat (W64 0) = 0%nat by word.
-                rewrite H0 fmap_app list_to_set_app_L Hci_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
+                split; [exact Hci_wf2 | exact Hci_set2]. }
               iPureIntro; split_and!;
                 [lia | lia | lia | lia
                 | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia; exact Hloop].
@@ -773,25 +849,20 @@ Proof using Type*.
            iDestruct "Hcol" as "[%Hcol_nn #Hcol_pt]".
            simpl in Hloop.
            wp_auto. rewrite bool_decide_eq_false_2; last exact Hcol_nn. wp_auto.
-           wp_apply (wp_containsId with "[$Hibo_sl]"). iIntros "Hibo_sl".
-           have H0 : sint.nat (W64 0) = 0%nat by word.
-           rewrite H0 fmap_app list_to_set_app_L Hibo_set.
-           cbn [insert list_insert fmap list_fmap list_to_set]. rewrite -HcId.
+           wp_apply (wp_containsId _ _ _ _ Hibo_wf2 with "[$Hibo_sl]"). iIntros "Hibo_sl".
+           rewrite Hibo_set2.
            destruct (decide (toYjsId idv ∈ ({[item_id yi]} ∪ idsB : gset YjsId))) as [Hin_ibo | Hnin_ibo].
            ++ (* conflict's left origin was already scanned (case 2) *)
-              have Hmem_ibo := gset_elem_union_singleton_swap idsB (item_id yi) (toYjsId idv) Hin_ibo.
-              rewrite (bool_decide_eq_true_2 _ Hmem_ibo).
+              rewrite (bool_decide_eq_true_2 _ Hin_ibo).
               (* the [destruct (decide ... ∈ idsB)] above already reduced Hloop's
                  outer guard (it shares the Decision instance), so Hloop is now the
                  inner [if decide (... ∉ conflictI)]. *)
               wp_auto.
-              wp_apply (wp_containsId with "[$Hci_sl]"). iIntros "Hci_sl".
-              rewrite fmap_app list_to_set_app_L Hci_set.
-              cbn [insert list_insert fmap list_fmap list_to_set]. rewrite -HcId.
+              wp_apply (wp_containsId _ _ _ _ Hci_wf2 with "[$Hci_sl]"). iIntros "Hci_sl".
+              rewrite Hci_set2.
               destruct (decide (toYjsId idv ∈ ({[item_id yi]} ∪ conflictI : gset YjsId))) as [Hin_ci | Hnin_ci].
               ** (* already in conflictingItems: no anchor move, keep scanning (continue) *)
-                 have Hmem_ci := gset_elem_union_singleton_swap conflictI (item_id yi) (toYjsId idv) Hin_ci.
-                 rewrite (bool_decide_eq_true_2 _ Hmem_ci).
+                 rewrite (bool_decide_eq_true_2 _ Hin_ci).
                  have Hnn : ¬ (toYjsId idv ∉ ({[item_id yi]} ∪ conflictI : gset YjsId))
                    by (move=> Hcontra; exact (Hcontra Hin_ci)).
                  rewrite (decide_False _ _ Hnn) in Hloop.
@@ -811,16 +882,15 @@ Proof using Type*.
                  iSplitL "Hright". { iFrame "Hright". }
                  iSplitL "Hibo_ref Hibo_sl Hibo_cap".
                  { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
-                   rewrite fmap_app list_to_set_app_L Hibo_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
+                   split; [exact Hibo_wf2 | exact Hibo_set2]. }
                  iSplitL "Hci_ref Hci_sl Hci_cap".
                  { iExists ci_s2. iFrame "Hci_ref". iExists _. iFrame "Hci_sl Hci_cap". iPureIntro.
-                   rewrite fmap_app list_to_set_app_L Hci_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
+                   split; [exact Hci_wf2 | exact Hci_set2]. }
                  iPureIntro; split_and!;
                    [lia | lia | lia | lia
                    | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia; exact Hloop].
               ** (* not yet in conflictingItems: advance the anchor (left := conflict) *)
-                 have Hmem_ci_neg := gset_not_elem_union_singleton_swap conflictI (item_id yi) (toYjsId idv) Hnin_ci.
-                 rewrite (bool_decide_eq_false_2 _ Hmem_ci_neg).
+                 rewrite (bool_decide_eq_false_2 _ Hnin_ci).
                  rewrite (decide_True _ _ Hnin_ci) in Hloop.
                  wp_auto.
                  wp_apply wp_slice_literal. iSplitR; first done.
@@ -841,17 +911,17 @@ Proof using Type*.
                  iSplitL "Hright". { iFrame "Hright". }
                  iSplitL "Hibo_ref Hibo_sl Hibo_cap".
                  { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
-                   rewrite fmap_app list_to_set_app_L Hibo_set; cbn [insert list_insert fmap list_fmap list_to_set]; rewrite -HcId; apply gset_union_singleton_swap. }
+                   split; [exact Hibo_wf2 | exact Hibo_set2]. }
                  iSplitL "Hci_ref Hci_empty Hci_empty_cap".
-                 { iExists _. iFrame "Hci_ref". iExists ([] : list yjs.id.t). iFrame "Hci_empty Hci_empty_cap". done. }
+                 { iExists _. iFrame "Hci_ref". iExists ([] : list yjs.idSpan.t). iFrame "Hci_empty Hci_empty_cap".
+                 iPureIntro. split; [constructor | done]. }
                  iPureIntro; split_and!;
                    [lia | lia | lia | lia
                    | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia;
                      replace (leftIdx + Z.of_nat offset + 1)%Z with (Z.of_nat (Z.to_nat (leftIdx + offset) + 1)) by lia;
                      exact Hloop].
            ++ (* conflict's left origin is before this run: origins cross -> break *)
-              have Hmem_ibo_neg := gset_not_elem_union_singleton_swap idsB (item_id yi) (toYjsId idv) Hnin_ibo.
-              rewrite (bool_decide_eq_false_2 _ Hmem_ibo_neg).
+              rewrite (bool_decide_eq_false_2 _ Hnin_ibo).
               (* the [destruct] already reduced Hloop's guard to its else branch. *)
               injection Hloop as HdestL.
               wp_auto. subst destL.
@@ -884,13 +954,14 @@ Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc : loc) (dq : dfra
   left_loc = node_loc cells leftIdx ->
   right_loc = node_loc cells rightIdx ->
   Forall cell_unit cells ->
+  (∀ c0, c0 ∈ cells -> cell_fits c0) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent dq cells arr ∗
       own_fresh_item_raw item_l input iv oleft oright }}}
     @! yjs.findIntegrationLeft #parent #item_l #left_loc #right_loc
   {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
       own_ytype_cells parent dq cells arr ∗ own_fresh_item_raw item_l input iv oleft oright }}}.
 Proof using Type*.
-  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hll Hrl Hunitc.
+  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hll Hrl Hunitc Hfits.
   wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh". wp_auto.
   (* Index bounds via the pure model (mirrors setintegrate_eq_integrate). *)
   have Huniq := yai_unique _ Harr.
@@ -932,7 +1003,7 @@ Proof using Type*.
       replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
       rewrite Hrl.
       wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
-                  Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc with "[Hparent Hdll Hitem Holeft Horight]").
+                  Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits with "[Hparent Hdll Hitem Holeft Horight]").
       { iSplitL "Hparent Hdll".
         { iExists yt, tl. iFrame "Hparent".
           replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
@@ -986,7 +1057,7 @@ Proof using Type*.
         iAssert (own_ytype_cells parent dq cells arr) with "[Hparent Hdll]" as "Htext".
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
         wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
-                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc with "[Htext Hitem Holeft Horight]").
+                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits with "[Htext Hitem Holeft Horight]").
         { iSplitL "Htext"; [iFrame "Htext" | rewrite /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
         iIntros "[Htext Hfresh]". wp_auto. iApply "HΦ". iFrame "Htext Hfresh". } } }
   { (* right non-null (rightIdx < length cells): read right.left *)
@@ -1044,7 +1115,7 @@ Proof using Type*.
         replace (# null) with (# (node_loc cells leftIdx)) by (rewrite -Hll Hlnull //).
         replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
         wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
-                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc with "[Hparent Hdll Hitem Holeft Horight]").
+                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits with "[Hparent Hdll Hitem Holeft Horight]").
         { iSplitL "Hparent Hdll".
           { iExists yt, tl. iFrame "Hparent".
             replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
@@ -1098,7 +1169,7 @@ Proof using Type*.
         iAssert (own_ytype_cells parent dq cells arr) with "[Hparent Hdll]" as "Htext".
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
         wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
-                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc with "[Htext Hitem Holeft Horight]").
+                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits with "[Htext Hitem Holeft Horight]").
         { iSplitL "Htext"; [iFrame "Htext" | rewrite /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
         iIntros "[Htext Hfresh]". wp_auto. iApply "HΦ". iFrame "Htext Hfresh". } } }
 Qed.
@@ -1125,6 +1196,7 @@ Lemma wp_Store__integrateCore_aux (s parent item_l : loc) (arr arr' : list (YjsI
   iv.(yjs.item.flags') = W8 2 ->   (* freshly built item is Countable (NewItem sets ItemCountable) *)
   length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat ->   (* single-char content => Len() = 1 *)
   Forall cell_unit cells ->   (* all-singleton invariant (issue #28, until M4) *)
+  (∀ c0, c0 ∈ cells -> cell_fits c0) ->   (* run-fits: the scan's idSpan no-wrap *)
   setintegrate input arr = Some arr' ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
       own_fresh_item_raw item_l input iv oleft oright }}}
@@ -1139,7 +1211,7 @@ Lemma wp_Store__integrateCore_aux (s parent item_l : loc) (arr arr' : list (YjsI
       ⌜cell_unit c⌝ ∗
       ⌜cells' ≡ₚ cells ++ [c]⌝ }}}.
 Proof using Type*.
-  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HivL HivR Hivpar Hflags Hrun Hunitc.
+  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HivL HivR Hivpar Hflags Hrun Hunitc Hfits.
   (* Decompose the pure result: destIdx / itemM and
      arr' = insertIdxIfInBounds destIdx itemM arr. *)
   rewrite /setintegrate HfindL HfindR /=.
@@ -1183,7 +1255,7 @@ Proof using Type*.
     iPureIntro; split_and!; [exact Hin_l | exact Hin_r | rewrite Hiv2id; exact Hid | rewrite Hiv2con; exact Hcontent]. }
   wp_apply (wp_findIntegrationLeft parent item_l (node_loc cells leftIdx) (node_loc cells rightIdx)
               (DfracOwn 1) cells arr input newItem iv2 oleft oright leftIdx rightIdx destIdx
-              Harr Htoitem Hvalid Hmax HfindL HfindR HfindD eq_refl eq_refl Hunitc with "[$Htext $Hfresh]").
+              Harr Htoitem Hvalid Hmax HfindL HfindR HfindD eq_refl eq_refl Hunitc Hfits with "[$Htext $Hfresh]").
   iIntros "[Htext Hfresh]".
   wp_auto.
   (* [destIdx] is in bounds ([≤ rightIdx ≤ length]), so the splice index is valid
@@ -1848,6 +1920,7 @@ Lemma wp_Store__integrateCore_cells (s parent item_l : loc) (arr : list (YjsItem
   findLeftIdx (in_originId input) arr = Some leftIdx ->
   findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
   Forall cell_unit cells ->
+  (∀ c0, c0 ∈ cells -> cell_fits c0) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
       own_linked_item item_l input parent (node_loc cells leftIdx) (node_loc cells rightIdx) }}}
     s @! (go.PointerType yjs.store) @! "integrateCore" #parent #item_l
@@ -1859,7 +1932,7 @@ Lemma wp_Store__integrateCore_cells (s parent item_l : loc) (arr : list (YjsItem
       ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
       ⌜run_head c = newItem⌝ ∗ ⌜ic_deleted c = false⌝ ∗ ⌜cell_unit c⌝ }}}.
 Proof using Type*.
-  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc.
+  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc Hfits.
   iIntros (Φ) "(Hpkg & Htext & Hfresh) HΦ".
   iDestruct "Hfresh" as (iv oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrun)".
   destruct (integrate_some input arr newItem Hinv Htoitem) as [arr' Hintegrate].
@@ -1867,7 +1940,7 @@ Proof using Type*.
   { rewrite (setintegrate_eq_integrate input arr newItem Hinv Htoitem Hvalid Hmax). exact Hintegrate. }
   wp_apply (wp_Store__integrateCore_aux s parent item_l arr arr' input newItem cells iv oleft oright
               leftIdx rightIdx
-              Hinv Htoitem Hvalid Hmax HfindL HfindR Hfl Hfr Hfpar Hflags Hrun Hunitc Hsi
+              Hinv Htoitem Hvalid Hmax HfindL HfindR Hfl Hfr Hfpar Hflags Hrun Hunitc Hfits Hsi
               with "[$Hpkg $Hraw $Htext]").
   iIntros (cells' idx c) "(Htext' & %Hinv' & %Hsplice & %Hile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Hcunit & %Hperm)".
   (* identify the inserted cell with the argument: it is the unique [arr']-item of
@@ -1925,6 +1998,7 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
   (∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (item_id newItem)) ->
      (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z) ->
   Forall cell_unit cells ->
+  (∀ c0, c0 ∈ cells -> cell_fits c0) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
       own_linked_item item_l input parent (node_loc cells leftIdx) (node_loc cells rightIdx) ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types }}}
@@ -1940,7 +2014,7 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
              ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗ ⌜run_head c = newItem⌝ ∗
              ⌜cell_unit c⌝ }}}.
 Proof using Type*.
-  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hunitc.
+  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hunitc Hfits.
   iIntros (Φ) "(Hpkg & Htext & Hfresh & Hitemsf & Hitemmap) HΦ".
   (* The explicit-parent fast path: [parent ≠ nil], so the resolution branch is
      skipped (y-octo's Option<&mut YType> Some case, issue #49). *)
@@ -1955,7 +2029,7 @@ Proof using Type*.
   rewrite (bool_decide_eq_false_2 (parent = null) Hpnn). wp_auto.
   wp_apply (wp_Store__integrateCore_cells s parent item_l arr input newItem cells
               leftIdx rightIdx
-              Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc with "[$Hpkg $Htext $Hfresh]").
+              Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc Hfits with "[$Hpkg $Htext $Hfresh]").
   iIntros (arr' idx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & %Hsplice & %Hperm & %Hsi & %Hlook & %Hloc & %Hcid & %Hcdel & %Hcunit)".
   wp_auto.
   (* AddNode: read [it.id.clientId] off the integrated cell, look up its run list,
@@ -2091,6 +2165,7 @@ Lemma wp_Store__Integrate_nil (s parent item_l : loc) (arr : list (YjsItem A))
   (∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (item_id newItem)) ->
      (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z) ->
   Forall cell_unit cells ->
+  (∀ c0, c0 ∈ cells -> cell_fits c0) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
       own_linked_item item_l input parent (node_loc cells leftIdx) (node_loc cells rightIdx) ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types }}}
@@ -2106,7 +2181,7 @@ Lemma wp_Store__Integrate_nil (s parent item_l : loc) (arr : list (YjsItem A))
              ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗ ⌜run_head c = newItem⌝ ∗
              ⌜cell_unit c⌝ }}}.
 Proof using Type*.
-  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hunitc.
+  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hunitc Hfits.
   iIntros (Φ) "(Hpkg & Htext & Hfresh & Hitemsf & Hitemmap) HΦ".
   iDestruct "Htext" as (yt0 tl0) "(Hparent0 & Hdll0 & %Hlen0 & %Hrepr0 & %Hcpar0)".
   iDestruct (typed_pointsto_not_null with "Hparent0") as %Hpnn.
@@ -2129,7 +2204,7 @@ Proof using Type*.
   rewrite Hfpar2.
   wp_apply (wp_Store__integrateCore_cells s parent item_l arr input newItem cells
               leftIdx rightIdx
-              Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc with "[$Hpkg $Htext $Hfresh]").
+              Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc Hfits with "[$Hpkg $Htext $Hfresh]").
   iIntros (arr' idx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & %Hsplice & %Hperm & %Hsi & %Hlook & %Hloc & %Hcid & %Hcdel & %Hcunit)".
   wp_auto.
   (* AddNode — identical to [wp_Store__Integrate] from here on. *)

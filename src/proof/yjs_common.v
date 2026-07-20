@@ -9,7 +9,8 @@
     - the heap-node record [item_cell] and the cursor helper [node_loc];
     - the persistent origin-pointer predicate [is_origin_id];
     - the item-pointer helpers [oid_of] / [item_or_null];
-    - the id-slice abstraction [own_id_set] (a heap [[]Id] as a [gset YjsId]).
+    - the id-span-slice abstraction [own_id_set] (a heap [[]idSpan] as a
+      [gset YjsId] of char ids, issue #28).
 
     Naming convention (issue #47): [is_X] predicates are Persistent (duplicable
     handles / read-only facts); [own_X] predicates are ownership, parameterized
@@ -305,17 +306,87 @@ Definition item_or_null (p : loc) (ov : option yjs.item.t) (dq : dfrac) : iProp 
   | Some v => ⌜p ≠ null⌝ ∗ p ↦{dq} v
   end.
 
-(* ----- id-slice abstraction to a gset ----------------------------------- *)
+(* ----- id-span-slice abstraction to a gset ------------------------------ *)
 
-(** A heap id-slice abstracts to a [gset YjsId]: its elements, mapped to model
-    ids, are exactly [gs]. The Go set ops are [containsId] / [append] / reset to
-    [[]]; [list_to_set] makes membership (not order/duplicates) the observable,
-    matching the pure [gset] with [∪] / [∈]. Owning heap data, it takes a
-    [dfrac] (appending needs [DfracOwn 1]). *)
+(** The char ids one [idSpan] covers: the [len] consecutive clocks from the
+    head id, at the span's client. An id addresses ANY char of a scanned run
+    (yjs getItem semantics, issue #28), so the scan's id sets are CHAR-id sets
+    and a span denotes its whole clock interval. *)
+Definition span_ids (v : yjs.idSpan.t) : gset YjsId :=
+  list_to_set
+    ((λ o, MkYjsId (uint.nat v.(yjs.idSpan.id').(yjs.id.clientId'))
+                   (uint.nat v.(yjs.idSpan.id').(yjs.id.clock') + o)%nat)
+       <$> seq 0 (uint.nat v.(yjs.idSpan.len'))).
+
+(** A span's clock interval does not wrap: [containsId]'s Go range test
+    computes [clock + len] in [w64], so this is what makes the test decide
+    [span_ids] membership. Sourced from the store's run-fits pool invariant. *)
+Definition span_wf (v : yjs.idSpan.t) : Prop :=
+  (uint.Z v.(yjs.idSpan.id').(yjs.id.clock') + uint.Z v.(yjs.idSpan.len') < 2^64)%Z.
+
+(** Membership in [span_ids] is exactly the (mathematical) range test. *)
+Lemma span_ids_elem (v : yjs.idSpan.t) (idv : yjs.id.t) :
+  toYjsId idv ∈ span_ids v ↔
+    (v.(yjs.idSpan.id').(yjs.id.clientId') = idv.(yjs.id.clientId') ∧
+     (uint.Z v.(yjs.idSpan.id').(yjs.id.clock') ≤ uint.Z idv.(yjs.id.clock'))%Z ∧
+     (uint.Z idv.(yjs.id.clock') <
+        uint.Z v.(yjs.idSpan.id').(yjs.id.clock') + uint.Z v.(yjs.idSpan.len'))%Z).
+Proof.
+  have HZn : ∀ w : w64, Z.of_nat (uint.nat w) = uint.Z w by move=> w; word.
+  rewrite /span_ids elem_of_list_to_set list_elem_of_fmap /toYjsId.
+  split.
+  - move=> [o [Hid Ho]]. apply elem_of_seq in Ho.
+    injection Hid => Hclk Hcid.
+    split_and!.
+    + word.
+    + have := f_equal Z.of_nat Hclk. rewrite Nat2Z.inj_add !HZn. lia.
+    + have := f_equal Z.of_nat Hclk. rewrite Nat2Z.inj_add !HZn.
+      have : (Z.of_nat o < uint.Z v.(yjs.idSpan.len'))%Z by rewrite -(HZn v.(yjs.idSpan.len')); lia.
+      lia.
+  - move=> [Hcid [Hle Hlt]].
+    exists (uint.nat idv.(yjs.id.clock') - uint.nat v.(yjs.idSpan.id').(yjs.id.clock'))%nat.
+    have Hlen : (uint.nat idv.(yjs.id.clock') - uint.nat v.(yjs.idSpan.id').(yjs.id.clock')
+                 < uint.nat v.(yjs.idSpan.len'))%nat.
+    { have H1 := HZn idv.(yjs.id.clock'). have H2 := HZn v.(yjs.idSpan.id').(yjs.id.clock').
+      have H3 := HZn v.(yjs.idSpan.len'). lia. }
+    have Hge : (uint.nat v.(yjs.idSpan.id').(yjs.id.clock') <= uint.nat idv.(yjs.id.clock'))%nat.
+    { have H1 := HZn idv.(yjs.id.clock'). have H2 := HZn v.(yjs.idSpan.id').(yjs.id.clock'). lia. }
+    split.
+    + f_equal; [by rewrite Hcid | lia].
+    + apply elem_of_seq. lia.
+Qed.
+
+(** A length-1 span denotes exactly its head id (the pre-#28 singleton case). *)
+Lemma span_ids_singleton (v : yjs.idSpan.t) :
+  v.(yjs.idSpan.len') = W64 1 ->
+  span_ids v = {[ toYjsId v.(yjs.idSpan.id') ]}.
+Proof.
+  move=> Hlen. rewrite /span_ids Hlen.
+  have -> : uint.nat (W64 1) = 1%nat by word.
+  rewrite /= Nat.add_0_r /toYjsId.
+  by rewrite (right_id_L ∅ (∪)).
+Qed.
+
+(** Appending one span adds its char ids in accumulator order. *)
+Lemma span_union_snoc (vs : list yjs.idSpan.t) (v : yjs.idSpan.t) :
+  ⋃ (span_ids <$> (vs ++ [v])) = span_ids v ∪ ⋃ (span_ids <$> vs).
+Proof.
+  rewrite fmap_app union_list_app_L /= (right_id_L ∅ (∪)).
+  apply union_comm_L.
+Qed.
+
+(** A heap [[]idSpan] abstracts to a [gset YjsId]: the union of its spans'
+    char ids is exactly [gs]. The Go set ops are [containsId] / [append] /
+    reset to [[]]; the union makes membership (not order/duplicates) the
+    observable, matching the pure [gset] with [∪] / [∈]. The representation
+    carries [span_wf] for every span so [containsId]'s [w64] range test is
+    exact. Owning heap data, it takes a [dfrac] (appending needs
+    [DfracOwn 1]). *)
 Definition own_id_set (s : slice.t) (dq : dfrac) (gs : gset YjsId) : iProp Σ :=
-  ∃ (vs : list yjs.id.t),
+  ∃ (vs : list yjs.idSpan.t),
     "Hsl" ∷ s ↦*{dq} vs ∗
-    "Hcap" ∷ own_slice_cap yjs.id.t s dq ∗
-    "%Hset" ∷ ⌜list_to_set (toYjsId <$> vs) = gs⌝.
+    "Hcap" ∷ own_slice_cap yjs.idSpan.t s dq ∗
+    "%Hwf" ∷ ⌜Forall span_wf vs⌝ ∗
+    "%Hset" ∷ ⌜⋃ (span_ids <$> vs) = gs⌝.
 
 End common.
