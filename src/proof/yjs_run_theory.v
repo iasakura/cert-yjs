@@ -1105,4 +1105,87 @@ Lemma integrate_all_singleton (i : IntegrateInput (A := A)) (arr : list (YjsItem
   integrate_all [i] arr = integrate i arr.
 Proof. simpl. destruct (integrate i arr) => //. Qed.
 
+(** Insert-at variants of the splice shifts: the HEAD of a run lands at an
+    arbitrary scan position [d] (take d ++ new :: drop d), not after an
+    anchor, so the right-origin index and pointer shift under that form
+    (issue #28 U7). *)
+Lemma findRightIdx_insert_shift arr (d : nat) (newit : YjsItem A)
+    (rid : option YjsId) (rightIdx : Z) :
+  (d <= length arr)%nat ->
+  (Z.of_nat d <= rightIdx)%Z ->
+  findRightIdx rid arr = Some rightIdx ->
+  (forall z, z ∈ arr -> item_id z ≠ item_id newit) ->
+  findRightIdx rid (take d arr ++ newit :: drop d arr) = Some (rightIdx + 1)%Z.
+Proof.
+  move=> Hd Hdr Hri Hfresh.
+  move: Hri. rewrite /findRightIdx.
+  destruct rid as [r_id|]; last first.
+  { move=> [= <-]. rewrite length_app /= length_take length_drop. f_equal. lia. }
+  destruct (list_find (fun it => item_id it = r_id) arr) as [[k R]|] eqn:Hfind; last done.
+  move=> [= HrIdx].
+  apply list_find_Some in Hfind. destruct Hfind as (Hk & HidR & Hfirst).
+  have Hkarr : (k < length arr)%nat by (apply lookup_lt_Some in Hk).
+  have Hdk : (d <= k)%nat by lia.
+  have Hfind' : list_find (fun it => item_id it = r_id)
+                  (take d arr ++ newit :: drop d arr) = Some (S k, R).
+  { apply list_find_Some. split_and!.
+    - rewrite lookup_app_r; last (rewrite length_take; lia).
+      rewrite length_take Nat.min_l; last lia.
+      have -> : (S k - d)%nat = S (k - d)%nat by lia.
+      rewrite /= lookup_drop.
+      have -> : (d + (k - d))%nat = k by lia.
+      exact Hk.
+    - exact HidR.
+    - move=> i y Hlook Hilt.
+      destruct (decide (i < d)%nat) as [Hid2 | Hid2].
+      + rewrite lookup_app_l in Hlook; last (rewrite length_take; lia).
+        rewrite lookup_take_lt in Hlook; last lia.
+        apply (Hfirst i y Hlook). lia.
+      + rewrite lookup_app_r in Hlook; last (rewrite length_take; lia).
+        rewrite length_take Nat.min_l in Hlook; last lia.
+        destruct (decide (i = d)) as [-> | Hne].
+        * rewrite Nat.sub_diag /= in Hlook.
+          injection Hlook as <-.
+          move=> HidN.
+          have HRin : R ∈ arr := list_elem_of_lookup_2 _ _ _ Hk.
+          exact (Hfresh R HRin (eq_trans HidR (eq_sym HidN))).
+        * have Hsub : (i - d)%nat = S (i - d - 1)%nat by lia.
+          rewrite Hsub /= lookup_drop in Hlook.
+          apply (Hfirst (d + (i - d - 1))%nat y Hlook). lia. }
+  rewrite Hfind' /=. f_equal. lia.
+Qed.
+
+Lemma getPtrExcept_insert_shift arr (d : nat) (newit : YjsItem A)
+    (rightIdx : Z) (rptr : YjsPtr A) :
+  (d <= length arr)%nat ->
+  (Z.of_nat d <= rightIdx)%Z ->
+  getPtrExcept arr rightIdx = Some rptr ->
+  getPtrExcept (take d arr ++ newit :: drop d arr) (rightIdx + 1) = Some rptr.
+Proof.
+  move=> Hd Hdr.
+  rewrite /getPtrExcept.
+  have Hlen1 : length (take d arr ++ newit :: drop d arr) = S (length arr)
+    by (rewrite length_app /= length_take length_drop; lia).
+  destruct (decide (rightIdx = -1)%Z) as [-> | Hne1]; first lia.
+  destruct (decide (rightIdx = Z.of_nat (length arr))%Z) as [-> | Hne2].
+  - move=> [= <-].
+    rewrite decide_False; last lia.
+    rewrite decide_True; last (rewrite Hlen1; lia).
+    done.
+  - move=> Hlook.
+    rewrite decide_False; last lia.
+    rewrite decide_False; last (rewrite Hlen1; lia).
+    have Hrn : (Z.to_nat rightIdx < length arr)%nat.
+    { destruct (arr !! Z.to_nat rightIdx) eqn:Hx; last done.
+      apply lookup_lt_Some in Hx. exact Hx. }
+    rewrite -Hlook.
+    have -> : Z.to_nat (rightIdx + 1) = S (Z.to_nat rightIdx) by lia.
+    f_equal.
+    rewrite lookup_app_r; last (rewrite length_take; lia).
+    rewrite length_take Nat.min_l; last lia.
+    have -> : (S (Z.to_nat rightIdx) - d)%nat = S (Z.to_nat rightIdx - d)%nat by lia.
+    rewrite /= lookup_drop.
+    f_equal. lia.
+Qed.
+
 End run_theory.

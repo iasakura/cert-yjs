@@ -186,6 +186,41 @@ Proof.
   intros k x y' Hx Hy'. destruct k; simpl in *; [done | by destruct k].
 Qed.
 
+(** Materialize [run_wf] from the per-position facts a chained integrate
+    produces (issue #28 U7): consecutive ids under one (client, clock+·)
+    ladder, the tail chaining off the previous element, everything sharing
+    the head's right origin. *)
+Lemma run_wf_of_chain (h : YjsItem A) (news : list (YjsItem A)) (cl ck : nat)
+    (rp : YjsPtr A) :
+  item_id h = MkYjsId cl ck ->
+  rightOrigin h = rp ->
+  (∀ (k : nat) (it : YjsItem A), news !! k = Some it ->
+     item_id it = MkYjsId cl (ck + S k)%nat ∧ rightOrigin it = rp ∧
+     (k = 0%nat -> origin it = itemPtr h) ∧
+     (∀ (k' : nat) (itp : YjsItem A), k = S k' -> news !! k' = Some itp ->
+        origin it = itemPtr itp)) ->
+  run_wf (h :: news).
+Proof.
+  move=> Hhid Hhro Hfacts.
+  split; first done.
+  move=> k x y Hx Hy.
+  destruct k as [| k].
+  - simpl in Hx. injection Hx as <-.
+    simpl in Hy.
+    destruct (Hfacts 0%nat y Hy) as (Hid & Hro & Ho0 & _).
+    split_and!.
+    + rewrite Hid Hhid /=. f_equal. lia.
+    + exact (Ho0 eq_refl).
+    + rewrite Hro Hhro //.
+  - simpl in Hx, Hy.
+    destruct (Hfacts k x Hx) as (Hidx & Hrox & _ & _).
+    destruct (Hfacts (S k) y Hy) as (Hidy & Hroy & _ & Hos).
+    split_and!.
+    + rewrite Hidy Hidx /=. f_equal. lia.
+    + exact (Hos k x eq_refl Hx).
+    + rewrite Hroy Hrox //.
+Qed.
+
 (** The head model item survives a nonempty left truncation ([take]) — used by
     the split's LEFT half ([ic_run = take o (ic_run c)]), which keeps the node's
     location and head. Stated over the raw run list ([run_head c = hd inhabitant
