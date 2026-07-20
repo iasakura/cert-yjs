@@ -166,6 +166,16 @@ Proof.
       rewrite Hii in Hvrrest. exact Hvrrest.
 Qed.
 
+(** One loop step's chunk boundary: the [j]-th wire item's ops are the head of
+    the remaining flattened batch (issue #28 U7c). *)
+Lemma expand_inputs_drop_cons (inputs : list (TId * IntegrateInput (A := A)))
+    (j : nat) (ti : TId * IntegrateInput (A := A)) :
+  inputs !! j = Some ti ->
+  expand_inputs (drop j inputs) = expand_input ti ++ expand_inputs (drop (S j) inputs).
+Proof.
+  move=> Hj. rewrite (drop_S inputs ti j Hj) /expand_inputs /=. done.
+Qed.
+
 (* ===== applyUpdate (doc-level, #49): store-wide node lookup ==============
    [store.repair] resolves a decoded struct's origins through the store-wide
    [GetNode] (per-client clock-sorted run lists + binary search) instead of

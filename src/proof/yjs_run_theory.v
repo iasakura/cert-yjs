@@ -1105,6 +1105,34 @@ Lemma integrate_all_singleton (i : IntegrateInput (A := A)) (arr : list (YjsItem
   integrate_all [i] arr = integrate i arr.
 Proof. simpl. destruct (integrate i arr) => //. Qed.
 
+(** [toItem] resolves only the origins (id / content are copied through), so two
+    inputs sharing both origin ids resolve to the same pointers. This bridges a
+    wire item to its per-char head op (issue #28 U7c): they share origins and
+    id, differing only in content. *)
+Lemma toItem_content_swap (a b : IntegrateInput (A := A))
+    (arr : list (YjsItem A)) (ita : YjsItem A) :
+  in_originId a = in_originId b ->
+  in_rightOriginId a = in_rightOriginId b ->
+  toItem a arr = Some ita ->
+  toItem b arr = Some (Item (origin ita) (rightOrigin ita) (in_id b) (in_content b)).
+Proof.
+  rewrite /toItem => Ho Hr. rewrite -Ho -Hr.
+  case: (match in_originId a with
+         | Some id => itemPtr <$> find_by_id id arr | None => Some First end) => [optr|] //=.
+  case: (match in_rightOriginId a with
+         | Some id => itemPtr <$> find_by_id id arr | None => Some Last end) => [rptr|] //=.
+  by move=> [<-].
+Qed.
+
+(** [maximalId] reads only the item's id, so it transfers along equal ids
+    (issue #28 U7c: the wire item's head op shares its id). *)
+Lemma maximalId_id_irrel (a b : YjsItem A) (arr : list (YjsItem A)) :
+  item_id a = item_id b -> maximalId a arr -> maximalId b arr.
+Proof.
+  rewrite /maximalId => Hid Hm x Hx Hcc.
+  rewrite -Hid. apply Hm; [exact Hx | rewrite Hid; exact Hcc].
+Qed.
+
 (** Insert-at variants of the splice shifts: the HEAD of a run lands at an
     arbitrary scan position [d] (take d ++ new :: drop d), not after an
     anchor, so the right-origin index and pointer shift under that form
