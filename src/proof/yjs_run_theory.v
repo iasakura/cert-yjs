@@ -1092,4 +1092,17 @@ Proof.
   exact (proj1 (Hgen chars ck oid)).
 Qed.
 
+(** The 1-char bridge: a single-char wire item denotes exactly itself, and
+    the fold collapses to one step (what the pre-U7 callers integrate). *)
+Lemma ops_of_input_singleton (input : IntegrateInput (A := A)) :
+  ops_of_input input [in_content input] = [input].
+Proof.
+  rewrite /ops_of_input /=.
+  destruct input as [o r c [cl ck]] => //.
+Qed.
+
+Lemma integrate_all_singleton (i : IntegrateInput (A := A)) (arr : list (YjsItem A)) :
+  integrate_all [i] arr = integrate i arr.
+Proof. simpl. destruct (integrate i arr) => //. Qed.
+
 End run_theory.
