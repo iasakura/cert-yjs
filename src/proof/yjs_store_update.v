@@ -118,6 +118,27 @@ Definition expand_input (ti : TId * IntegrateInput (A := A)) : list (TId * Integ
 Definition expand_inputs (inputs : list (TId * IntegrateInput (A := A))) : list (TId * IntegrateInput (A := A)) :=
   mjoin (expand_input <$> inputs).
 
+(** [expand_input] as a plain [fmap] over the item's ops (avoids the beta-redex
+    that unfolding the definition leaves in front of [list_lookup_fmap]). *)
+Lemma expand_input_lookup (ti : TId * IntegrateInput (A := A)) (k : nat)
+    (op : IntegrateInput (A := A)) :
+  ops_of_input ti.2 (explode (in_content ti.2)) !! k = Some op ->
+  expand_input ti !! k = Some (ti.1, op).
+Proof.
+  move=> H.
+  change (expand_input ti) with
+    ((λ op0 : IntegrateInput (A := A), (ti.1, op0)) <$> ops_of_input ti.2 (explode (in_content ti.2))).
+  rewrite list_lookup_fmap H //.
+Qed.
+
+Lemma expand_input_length (ti : TId * IntegrateInput (A := A)) :
+  length (expand_input ti) = length (in_content ti.2).
+Proof.
+  change (expand_input ti) with
+    ((λ op0 : IntegrateInput (A := A), (ti.1, op0)) <$> ops_of_input ti.2 (explode (in_content ti.2))).
+  rewrite length_fmap /ops_of_input ops_from_length explode_length //.
+Qed.
+
 Lemma expand_input_singleton (ti : TId * IntegrateInput (A := A)) :
   length (in_content ti.2) = 1%nat ->
   expand_input ti = [ti].
@@ -174,6 +195,72 @@ Lemma expand_inputs_drop_cons (inputs : list (TId * IntegrateInput (A := A)))
   expand_inputs (drop j inputs) = expand_input ti ++ expand_inputs (drop (S j) inputs).
 Proof.
   move=> Hj. rewrite (drop_S inputs ti j Hj) /expand_inputs /=. done.
+Qed.
+
+(** Range-form batch causality (issue #28 U7c): an earlier same-client wire
+    item's whole clock range lies below a later item's clock. This strengthens
+    the per-op [ValidReplay_batch_causal] (strict [<] on single ops) to the run
+    setting, and is what bounds a freshly-integrated RUN cell (occupying the
+    range [clock, clock + length)) below the remaining batch. It is derived by
+    comparing item [j]'s LAST char op with item [i]'s FIRST char op in the flat
+    [expand_inputs] list (they sit at flat positions [Pj < Pi]). *)
+Lemma expand_inputs_range_causal (inputs : list (TId * IntegrateInput (A := A)))
+    (m m' : DocM) :
+  ValidReplay (expand_inputs inputs) m m' ->
+  ∀ (i j : nat) (ti tj : TId * IntegrateInput (A := A)),
+    inputs !! i = Some ti -> inputs !! j = Some tj -> (j < i)%nat ->
+    clientId (in_id tj.2) = clientId (in_id ti.2) ->
+    (1 <= length (in_content tj.2))%nat ->
+    (1 <= length (in_content ti.2))%nat ->
+    (clock (in_id tj.2) + length (in_content tj.2) <= clock (in_id ti.2))%nat.
+Proof.
+  move=> Hvr i j ti tj Hi Hj Hji Hcc Hnj Hni.
+  set nj := length (in_content tj.2).
+  set ls := (expand_input <$> inputs).
+  have Hlsj : ls !! j = Some (expand_input tj) by rewrite /ls list_lookup_fmap Hj.
+  have Hlsi : ls !! i = Some (expand_input ti) by rewrite /ls list_lookup_fmap Hi.
+  have Hchj : length (explode (in_content tj.2)) = nj by rewrite explode_length.
+  (* item j's last char op *)
+  have Hlenj' : (nj - 1 < length (ops_of_input tj.2 (explode (in_content tj.2))))%nat.
+  { rewrite /ops_of_input ops_from_length Hchj. lia. }
+  destruct (lookup_lt_is_Some_2 _ _ Hlenj') as [lop Hlop].
+  have Hlopf := ops_from_lookup _ _ _ _ _ _ _ Hlop.
+  have Heplj : expand_input tj !! (nj - 1)%nat = Some (tj.1, lop)
+    := expand_input_lookup tj (nj - 1)%nat lop Hlop.
+  (* item i's first char op *)
+  have Hleni' : (0 < length (ops_of_input ti.2 (explode (in_content ti.2))))%nat.
+  { rewrite /ops_of_input ops_from_length explode_length. lia. }
+  destruct (lookup_lt_is_Some_2 _ _ Hleni') as [fop Hfop].
+  have Hfopf := ops_from_lookup _ _ _ _ _ _ _ Hfop.
+  have Hepli : expand_input ti !! 0%nat = Some (ti.1, fop)
+    := expand_input_lookup ti 0%nat fop Hfop.
+  have Helenj : length (expand_input tj) = nj.
+  { rewrite expand_input_length //. }
+  (* their flat positions in expand_inputs *)
+  set Pj := (sum_list (length <$> take j ls) + (nj - 1))%nat.
+  set Pi := (sum_list (length <$> take i ls) + 0)%nat.
+  have HPj : expand_inputs inputs !! Pj = Some (tj.1, lop).
+  { rewrite /expand_inputs -/ls join_lookup_Some.
+    exists j, (expand_input tj), (nj - 1)%nat.
+    split_and!; [exact Hlsj | exact Heplj | rewrite /Pj //]. }
+  have HPi : expand_inputs inputs !! Pi = Some (ti.1, fop).
+  { rewrite /expand_inputs -/ls join_lookup_Some.
+    exists i, (expand_input ti), 0%nat.
+    split_and!; [exact Hlsi | exact Hepli | rewrite /Pi //]. }
+  (* Pj < Pi: item j's chunk sits entirely before item i's *)
+  have Hsplit : take i ls = take (S j) ls ++ drop (S j) (take i ls).
+  { rewrite -{1}(take_drop (S j) (take i ls)) take_take Nat.min_l //. }
+  have HSj : take (S j) ls = take j ls ++ [expand_input tj]
+    by rewrite (take_S_r _ _ _ Hlsj).
+  have HPjPi : (Pj < Pi)%nat.
+  { rewrite /Pj /Pi Nat.add_0_r Hsplit HSj !fmap_app !sum_list_with_app /=.
+    have Hejl := Helenj. lia. }
+  (* now the per-op strict causality on the two boundary ops *)
+  have Hclientj : clientId (in_id (tj.1, lop).2) = clientId (in_id (ti.1, fop).2).
+  { simpl. rewrite (proj1 Hlopf) (proj1 Hfopf) /=. exact Hcc. }
+  move: (ValidReplay_batch_causal (expand_inputs inputs) m m' Hvr Pi Pj
+            (ti.1, fop) (tj.1, lop) HPi HPj HPjPi Hclientj) => Hcaus.
+  simpl in Hcaus. rewrite (proj1 Hlopf) (proj1 Hfopf) /= in Hcaus. lia.
 Qed.
 
 (* ===== applyUpdate (doc-level, #49): store-wide node lookup ==============
