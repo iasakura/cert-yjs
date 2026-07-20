@@ -12,6 +12,7 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype.
+From New.proof Require Import yjs_run_theory.
 From New.proof Require Import yjs_history.
 From New.proof Require Import yjs_store_base yjs_store_integrate.
 From iris.algebra Require Import auth gmap gset.
@@ -99,6 +100,71 @@ Definition own_update (sl : slice.t) (dq : dfrac)
     "Hsl" ∷ sl ↦*{dq} uivs ∗
     "Hcap" ∷ own_slice_cap yjs.updateItem.t sl dq ∗
     "Hitems" ∷ ([∗ list] uiv;ti ∈ uivs;inputs, is_update_item uiv ti).
+
+(* ===== per-char op expansion of a wire batch (issue #28 U7c) =============
+   An n-character wire item denotes n chained per-char ops ([ops_of_input]).
+   [expand_inputs] flattens a wire batch into its per-op list; it is just a
+   LONGER [list (TId * IntegrateInput)], so the network-model and history
+   lemmas ([ValidReplay], [batch_ok], [certs_ValidReplay],
+   [history_deliver_batch]) apply to it unchanged. At n = 1 it is the
+   identity ([expand_inputs_all_singleton]), so the generalized applyUpdate
+   spec strictly refines the single-char one. *)
+
+(** One wire item's per-char op chunk, all sharing the item's [TId]. *)
+Definition expand_input (ti : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
+  (λ op, (ti.1, op)) <$> ops_of_input ti.2 (explode (in_content ti.2)).
+
+(** The whole wire batch flattened into its per-op list. *)
+Definition expand_inputs (inputs : list (TId * IntegrateInput (A := A))) : list (TId * IntegrateInput (A := A)) :=
+  mjoin (expand_input <$> inputs).
+
+Lemma expand_input_singleton (ti : TId * IntegrateInput (A := A)) :
+  length (in_content ti.2) = 1%nat ->
+  expand_input ti = [ti].
+Proof.
+  move=> Hlen. rewrite /expand_input (explode_singleton _ Hlen) ops_of_input_singleton /=.
+  by destruct ti.
+Qed.
+
+Lemma expand_inputs_all_singleton (inputs : list (TId * IntegrateInput (A := A))) :
+  (forall ti, ti ∈ inputs -> length (in_content ti.2) = 1%nat) ->
+  expand_inputs inputs = inputs.
+Proof.
+  induction inputs as [|ti rest IH]; first done.
+  move=> Hall.
+  have Hti : ti ∈ ti :: rest by apply elem_of_cons; left.
+  rewrite /expand_inputs /= (expand_input_singleton ti (Hall ti Hti)) /=.
+  rewrite -/(expand_inputs rest) IH //.
+  move=> tj Htj. apply Hall, elem_of_cons. by right.
+Qed.
+
+(** The heart of the U7c loop rethread: a same-type chunk of a valid replay
+    realizes the chained [integrate_all], and peeling it advances the doc by
+    that fold. Both directions in one shot. [is_Some (m !! t)] holds in the
+    loop (the target type is in the doc), and is what lets the empty-chunk
+    base case use [insert_id]. *)
+Lemma ValidReplay_chunk_extract (t : TId) (ops : list (IntegrateInput (A := A)))
+    (rest : list (TId * IntegrateInput (A := A))) (m m' : DocM) :
+  is_Some (m !! t) ->
+  ValidReplay (((λ op, (t, op)) <$> ops) ++ rest) m m' ->
+  ∃ arr', integrate_all ops (docm_get m t) = Some arr' ∧
+          ValidReplay rest (<[t := arr']> m) m'.
+Proof.
+  revert m. induction ops as [|op ops' IH]; move=> m Hsome Hvr.
+  - simpl in Hvr. exists (docm_get m t). split; first done.
+    destruct Hsome as [arr Harr]. rewrite /docm_get Harr /=.
+    by rewrite (insert_id _ _ _ Harr).
+  - simpl in Hvr.
+    inversion Hvr as [| t0 input0 rest0 m0 arr2 m'0 nit Htoit Hvalid Hmax Hfresh Hint Hvr' Heq1 Heq2 Heq3]; subst.
+    have Hsome2 : is_Some ((<[t := arr2]> m) !! t) by rewrite lookup_insert_eq; eauto.
+    destruct (IH (<[t := arr2]> m) Hsome2 Hvr') as (arr' & Hia & Hvrrest).
+    rewrite docm_get_insert_eq in Hia.
+    exists arr'. split.
+    + simpl. rewrite Hint /=. exact Hia.
+    + have Hii : <[t := arr']> (<[t := arr2]> m) = <[t := arr']> m.
+      { rewrite insert_insert. case_decide; [reflexivity | congruence]. }
+      rewrite Hii in Hvrrest. exact Hvrrest.
+Qed.
 
 (* ===== applyUpdate (doc-level, #49): store-wide node lookup ==============
    [store.repair] resolves a decoded struct's origins through the store-wide
