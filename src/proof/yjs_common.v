@@ -324,6 +324,52 @@ Proof.
   rewrite (run_flatten_singletons _ Hunit') length_fmap length_take //.
 Qed.
 
+(** Advancing the cursor past one more cell adds at least one char (the run is
+    nonempty), so the flattened prefix length strictly grows. Foundation for the
+    C2 boundary matching, where the cursor and the model offset no longer
+    coincide but the prefix sum stays injective. *)
+Lemma run_flatten_take_length_step (cells : list item_cell) (k : nat) :
+  Forall (λ c, ic_run c ≠ []) cells ->
+  (k < length cells)%nat ->
+  (length (run_flatten (take k cells)) < length (run_flatten (take (S k) cells)))%nat.
+Proof.
+  move=> Hne Hk.
+  destruct (lookup_lt_is_Some_2 cells k Hk) as [ci Hci].
+  rewrite (run_flatten_take_S cells k ci Hci) length_app.
+  have Hnn : ic_run ci ≠ [] := Forall_lookup_1 _ _ _ _ Hne Hci.
+  destruct (ic_run ci) as [|y r]; [done | simpl; lia].
+Qed.
+
+(** Strict monotonicity of the flattened-prefix length in the cursor, given
+    nonempty runs: the C2 counterpart of [run_flatten_take_length_unit] for
+    matching run boundaries without the all-singleton scaffold. *)
+Lemma run_flatten_take_length_lt (cells : list item_cell) (cur1 cur2 : nat) :
+  Forall (λ c, ic_run c ≠ []) cells ->
+  (cur1 < cur2)%nat -> (cur2 <= length cells)%nat ->
+  (length (run_flatten (take cur1 cells)) < length (run_flatten (take cur2 cells)))%nat.
+Proof.
+  move=> Hne. move: cur1. induction cur2 as [|c2 IH]; move=> cur1 Hlt Hle; first lia.
+  have Hstep : (length (run_flatten (take c2 cells)) < length (run_flatten (take (S c2) cells)))%nat
+    := run_flatten_take_length_step cells c2 Hne ltac:(lia).
+  destruct (decide (cur1 = c2)) as [-> | Hne2]; first lia.
+  have := IH cur1 ltac:(lia) ltac:(lia). lia.
+Qed.
+
+(** Injectivity of the prefix sum on cursors within range: two cursors with the
+    same flattened-prefix length are equal. Lets the [conflict == right] break
+    (a cell-loc comparison) recover the model-index test at C2. *)
+Lemma run_flatten_take_length_inj (cells : list item_cell) (cur1 cur2 : nat) :
+  Forall (λ c, ic_run c ≠ []) cells ->
+  (cur1 <= length cells)%nat -> (cur2 <= length cells)%nat ->
+  length (run_flatten (take cur1 cells)) = length (run_flatten (take cur2 cells)) ->
+  cur1 = cur2.
+Proof.
+  move=> Hne H1 H2 Heq.
+  destruct (Nat.lt_trichotomy cur1 cur2) as [Hlt | [Heq' | Hgt]]; [| exact Heq' |].
+  - have := run_flatten_take_length_lt cells cur1 cur2 Hne Hlt H2. lia.
+  - have := run_flatten_take_length_lt cells cur2 cur1 Hne Hgt H1. lia.
+Qed.
+
 (** The loc of the node at index [k] of [cells] ([null] outside [0, len)).
     Used to place the heap [conflict] / [left] pointers within the DLL. *)
 Definition node_loc (cells : list item_cell) (k : Z) : loc :=

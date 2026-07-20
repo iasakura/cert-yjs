@@ -2432,13 +2432,44 @@ Proof using Type*.
     have Hoclkcj : ∀ c0, c0 ∈ cellsj -> cell_origin_clk c0.
     { move=> c0 Hc0. apply Horiginclkj.
       rewrite (all_cells_lookup _ _ _ Htsj). apply elem_of_app. by left. }
+    (* place the boundary cursors for the C1e Integrate spec: under the unit
+       scaffold every model index is a run boundary, so [Z.to_nat] of the
+       resolved neighbour indices works *)
+    have Huniq2 := yai_unique _ Hinvj.
+    have HfLp2 : findPtrIdx (origin nit) arrj = Some leftIdx.
+    { rewrite -(toitem_lemmas.findLeftIdx_findPtrIdx_eq input nit arrj Huniq2 Htoit). exact HfindL. }
+    have HfRp2 : findPtrIdx (rightOrigin nit) arrj = Some rightIdx.
+    { rewrite -(toitem_lemmas.findRightIdx_findPtrIdx_eq input nit arrj Huniq2 Htoit). exact HfindR. }
+    have HlB2 := insert_lemmas.findPtrIdx_ge_minus_1 arrj (origin nit) leftIdx HfLp2.
+    have HorigA2 := findptridx_getelem.findPtrIdx_ArrSet arrj (origin nit) leftIdx HfLp2.
+    have HrorA2 := findptridx_getelem.findPtrIdx_ArrSet arrj (rightOrigin nit) rightIdx HfRp2.
+    have Hlr2 := findptridx_order2.YjsLt'_findPtrIdx_lt arrj (origin nit) (rightOrigin nit)
+                  leftIdx rightIdx Hinvj HorigA2 HrorA2 (iiv_origin_lt _ Hvld) HfLp2 HfRp2.
+    have HrUB2 := insert_lemmas.findPtrIdx_le_size arrj (rightOrigin nit) rightIdx HfRp2.
+    have Hreprj2 : cells_repr arrj cellsj arrj := Hreprallj pj _ Htsj.
+    have Hnecj2 := Forall_cell_unit_nonempty cellsj Hunitcj.
+    have Hcelllen2 : length cellsj = length arrj := cells_repr_length _ _ _ Hunitcj Hreprj2.
+    set curL2 := Z.to_nat (leftIdx + 1).
+    set curR2 := Z.to_nat rightIdx.
+    have HcurL2b : (curL2 <= length cellsj)%nat by rewrite /curL2 Hcelllen2; lia.
+    have HcurR2b : (curR2 <= length cellsj)%nat by rewrite /curR2 Hcelllen2; lia.
+    have HcurL2 : (Z.of_nat (length (run_flatten (take curL2 cellsj))) = leftIdx + 1)%Z.
+    { rewrite (run_flatten_take_length_unit cellsj curL2 Hunitcj) (Nat.min_l _ _ HcurL2b) /curL2 Z2Nat.id; lia. }
+    have HcurR2 : (Z.of_nat (length (run_flatten (take curR2 cellsj))) = rightIdx)%Z.
+    { rewrite (run_flatten_take_length_unit cellsj curR2 Hunitcj) (Nat.min_l _ _ HcurR2b) /curR2 Z2Nat.id; lia. }
+    have HnlL2 : node_loc cellsj leftIdx = node_loc cellsj (Z.of_nat curL2 - 1).
+    { f_equal. rewrite /curL2 Z2Nat.id; lia. }
+    have HnlR2 : node_loc cellsj rightIdx = node_loc cellsj (Z.of_nat curR2).
+    { f_equal. rewrite /curR2 Z2Nat.id; lia. }
+    iEval (rewrite HnlL2 HnlR2) in "Hlinked".
     wp_apply (wp_Store__Integrate_nil s pj itv arrj input nit cellsj typesj mref leftIdx rightIdx
-                Hinvj Htoit Hvld Hmaxj HfindL HfindR Htsj Hgmaxj Hunitcj Hfitscj Hoclkcj
+                curL2 curR2
+                Hinvj Htoit Hvld Hmaxj HfindL HfindR Htsj Hgmaxj Hnecj2 Hfitscj Hoclkcj
+                HcurL2 HcurL2b HcurR2 HcurR2b
                 with "[$Hyt $Hlinked $Hitemsf $Hitemmap]").
-    iIntros (arr2' iidx2 cells'' c2)
-      "(%Hile2 & %Harr2eq & %Hinv2 & Htext2 & Hitemsf & Hitemmap & %Hperm2 & %Hsi2 & %Hnode2)".
+    iIntros (arr2' idx2 iidx2 cells'' c2)
+      "(%Hile2 & %Harr2eq & %Hinv2 & Htext2 & Hitemsf & Hitemmap & %Hperm2 & %Hsi2 & %Hsplice2 & %Hidx2b & %Hcoup2 & %Harrsp2 & %Hc2look & %Hc2loc & %Hc2id & %Hc2del & %Hc2unit)".
     rewrite Hsi2 in Hsi. injection Hsi as Harr22. subst arr2'.
-    destruct Hnode2 as (idx2 & Hsplice2 & Harrsp2 & Hc2look & Hc2loc & Hc2id & Hc2unit).
     have Hunitcells'' : Forall cell_unit cells''
       by (rewrite Hsplice2; exact (Forall_cell_unit_splice cellsj idx2 c2 Hunitcj Hc2unit)).
     (* the pool grows by exactly [c2] *)
