@@ -550,21 +550,6 @@ Proof using ext ffi ffi_interp0 Σ hG ffi_semantics0 sem package_sem.
     split; [exact H1 | exact H2].
 Qed.
 
-(** [all_cells_fresh] over the 3-conjunct store big-sep (the shape the store
-    proofs thread). *)
-Lemma all_cells_fresh3 (p : loc) (v : yjs.item.t) (dq : dfrac) (types : gmap loc type_state) :
-  p ↦ v -∗
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent dq (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
-  ⌜p ∉ ic_loc <$> all_cells types⌝.
-Proof using ext ffi ffi_interp0 Σ hG ffi_semantics0 sem package_sem.
-  iIntros "Hp Htypes".
-  iDestruct (big_sepM_sep with "Htypes") as "[Hbare _]".
-  iApply (all_cells_fresh with "Hp Hbare").
-Qed.
-
 (* ----- the part-6 pool invariants (issue #28): loc NoDup + range disjointness *)
 
 (** Per-client clock-RANGE disjointness of the document cell pool: two distinct
@@ -1099,18 +1084,25 @@ Proof.
       * rewrite -(cell_kp_pr c1 y1 Hkp1) -(cell_kp_pr c2 y2 Hkp2). exact Hpr.
 Qed.
 
-(** The cell-clock bound ([store_inv]'s [Hcellctr]) likewise transfers across a
-    [cell_kp]-preserving reshuffle: same client, same clock. *)
-Lemma cellctr_kp_perm (M1 M2 : gmap loc type_state) (client k : w64) :
-  cell_kp <$> all_cells M2 ≡ₚ cell_kp <$> all_cells M1 ->
-  (∀ c, c ∈ all_cells M1 → cell_client c = client → (uint.Z (cell_clock c) < uint.Z k)%Z) ->
-  (∀ c, c ∈ all_cells M2 → cell_client c = client → (uint.Z (cell_clock c) < uint.Z k)%Z).
+(** The cell-clock range bound ([store_inv]'s [Hcellctr]) transfers across a
+    (loc, run)-preserving reshuffle: client, clock, and run length all derive
+    from the run. *)
+Lemma cellctr_locs_run_perm (pool1 pool2 : list item_cell) (client k : w64) :
+  (λ c, (ic_loc c, ic_run c)) <$> pool2 ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> pool1 ->
+  (∀ c, c ∈ pool1 → cell_client c = client →
+     (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z k)%Z) ->
+  (∀ c, c ∈ pool2 → cell_client c = client →
+     (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z k)%Z).
 Proof.
   move=> Hperm Hbnd c Hc Hcc.
-  have Hin : cell_kp c ∈ cell_kp <$> all_cells M2 by apply list_elem_of_fmap_2.
-  rewrite Hperm in Hin. apply list_elem_of_fmap in Hin as (c' & Hkp & Hc').
-  rewrite (cell_kp_clock c c' Hkp).
-  apply (Hbnd c' Hc'). rewrite -(cell_kp_client c c' Hkp). exact Hcc.
+  have Hin : (ic_loc c, ic_run c) ∈ ((λ c0, (ic_loc c0, ic_run c0)) <$> pool1).
+  { rewrite -Hperm. exact (list_elem_of_fmap_2 _ _ _ Hc). }
+  apply list_elem_of_fmap in Hin as (c' & Heq & Hc').
+  have Hr : ic_run c = ic_run c' := f_equal snd Heq.
+  have Hcc' : cell_client c' = client.
+  { rewrite -Hcc /cell_client /run_head Hr //. }
+  have Hb := Hbnd c' Hc' Hcc'.
+  rewrite /cell_clock /run_head Hr. exact Hb.
 Qed.
 
 (* ----- per-store ghost names and the root-type registry ------------------ *)
@@ -1163,10 +1155,7 @@ Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Q
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
   "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
                 own_ytype_cells parent (DfracOwn q) (ty_cells ts) (ty_arr ts) ∗
-                ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-                (* all-singleton invariant (issue #28): every creator today
-                   mints 1-char runs; dropped in M4 with the run-scan bridge *)
-                ⌜Forall cell_unit (ty_cells ts)⌝).
+                ⌜YjsArrInvariant (ty_arr ts)⌝).
 
 #[global] Instance store_inv_ro_fractional γs types : Fractional (store_inv_ro γs types).
 Proof.
@@ -1195,7 +1184,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
     "%Hcellctr" ∷ ⌜∀ c, c ∈ all_cells types → cell_client c = client →
-                   (uint.Z (cell_clock c) < uint.Z k)%Z⌝ ∗
+                   (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z k)%Z⌝ ∗
     (* part-6 pool invariants (issue #28): the split branches' index pin *)
     "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
     "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝ ∗
@@ -1463,9 +1452,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
     "Htypes"  ∷ ([∗ map] parent ↦ ts ∈ types,
                   own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-                  ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-                  (* all-singleton invariant (issue #28): dropped in M4 *)
-                  ⌜Forall cell_unit (ty_cells ts)⌝) ∗
+                  ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
     "Hhist"   ∷ own_client_history γh c h ∗
