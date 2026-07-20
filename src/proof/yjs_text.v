@@ -286,7 +286,7 @@ Proof.
       iFrame "∗#". iPureIntro.
       split_and!;
         [exact Hctr | exact Hcellctr | exact Hlocdup | exact Hrangedisj
-        | exact Hrunfits | exact Hbindtypes | exact Hbindinj
+        | exact Hrunfits | exact Horiginclk | exact Hbindtypes | exact Hbindinj
         | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
@@ -319,7 +319,7 @@ Proof.
       iFrame "∗#". iPureIntro.
       split_and!;
         [exact Hctr | exact Hcellctr | exact Hlocdup | exact Hrangedisj
-        | exact Hrunfits | exact Hbindtypes | exact Hbindinj
+        | exact Hrunfits | exact Horiginclk | exact Hbindtypes | exact Hbindinj
         | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
@@ -460,6 +460,7 @@ Proof.
     "%Hlocdupj" ∷ ⌜NoDup (ic_loc <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types))⌝ ∗
     "%Hrangedisjj" ∷ ⌜cells_range_disjoint (all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types))⌝ ∗
     "%Hrunfitsj" ∷ ⌜∀ c0, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) → cell_fits c0⌝ ∗
+    "%Horiginclkj" ∷ ⌜∀ c0, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) → cell_origin_clk c0⌝ ∗
     "Hhistj" ∷ own_client_history γh (uint.nat client) hj ∗
     "%Hhcohj" ∷ ⌜history_state_coh hj (<[RootId name := arr]> m)⌝ ∗
     "Hcertsj" ∷ ([∗ list] it;D ∈ ins;Ds,
@@ -506,6 +507,7 @@ Proof.
     - exact Hlocdup.
     - exact Hrangedisj.
     - exact Hrunfits.
+    - exact Horiginclk.
     - destruct Hhcoh as (sdoc & Hsd & Hmd). exists sdoc. split; [exact Hsd|].
       move=> t'. destruct (decide (t' = RootId name)) as [-> | Hne'].
       + rewrite docm_get_insert_eq (Hmd (RootId name)). exact Hmt.
@@ -650,10 +652,14 @@ Proof.
     { move=> c0 Hc0. apply Hrunfitsj.
       rewrite (all_cells_lookup _ _ _ Hlookj).
       apply elem_of_app. left. exact Hc0. }
+    have Hoclkj : ∀ c0, c0 ∈ cells -> cell_origin_clk c0.
+    { move=> c0 Hc0. apply Horiginclkj.
+      rewrite (all_cells_lookup _ _ _ Hlookj).
+      apply elem_of_app. left. exact Hc0. }
     wp_apply (wp_Store__Integrate (tv.(yjs.Text.store')) (tv.(yjs.Text.inner')) oL2 arr input nit cells
                 (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) items_mref
                 (Z.of_nat (p + j) - 1) (Z.of_nat (p + j))
-                Hinvj Htoitem Hvalid Hmax' HfindLj HfindRj Hlookj Hgmaxj Hunitj Hfitsj
+                Hinvj Htoitem Hvalid Hmax' HfindLj HfindRj Hlookj Hgmaxj Hunitj Hfitsj Hoclkj
                 with "[$Hfresh $Htextj $Hitemsf $Hitemmap]").
     iIntros (arr' iidx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & Hitemsf & Hitemmap & %Hpermc & %Hsi & %Hnode)".
     destruct Hnode as [nx (Hcellsp & Harrsp2 & Hnode)].
@@ -878,6 +884,23 @@ Proof.
       apply (fits_snoc _ _ c Hac_step2); [| exact Hrunfitsj].
       have Hu1 : length (ic_run c) = 1%nat := Hcunit.
       rewrite /cell_fits /cell_clock Hcid Hu1 /nit /in_id1 /=. rewrite Hclocknit. word.
+    - (* Horiginclkj at S j: the new head [nit]'s same-client origin is an
+         existing doc item below the local clock counter *)
+      have Hac_step2 : all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' arr']> types)
+                    ≡ₚ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) ++ [c]
+        by (rewrite -Hinsins; apply (all_cells_insert_snoc (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types)
+               (tv.(yjs.Text.inner')) cells arr cells' arr' c Hlookj Hpermc)).
+      apply (originclk_snoc _ _ c Hac_step2); [| exact Horiginclkj].
+      move=> oid Hoid Hcl.
+      rewrite Hcid in Hoid Hcl. rewrite Hcid.
+      destruct Horig as [(Hon & Ho & _) | (li & Hge & Hla & Hom & Ho)].
+      + exfalso. move: Hoid. rewrite /nit /= Ho //.
+      + move: Hoid. rewrite /nit /= Ho /origin_id /=. move=> [= Hoideq].
+        rewrite -Hoideq in Hcl. rewrite -Hoideq.
+        have Hliarr : li ∈ arr := list_elem_of_lookup_2 _ _ _ Hla.
+        have Hclli : clientId (item_id li) = uint.nat client := Hcl.
+        have := Hctrj li Hliarr Hclli.
+        rewrite /nit /in_id1 /= Hclocknit. lia.
     - exact Hhcohj2. }
   (* loop exit: the whole run is integrated; rebuild [store_inv] and return. *)
   have Hjend : (j = length cs)%nat by word.
@@ -916,6 +939,7 @@ Proof.
     - exact Hlocdupj.
     - exact Hrangedisjj.
     - exact Hrunfitsj.
+    - exact Horiginclkj.
     - move=> name' p' Hb'. destruct (Hbindtypes name' p' Hb') as [ts' Hts'].
       destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne];
         [rewrite lookup_insert_eq; by eexists
@@ -1107,6 +1131,12 @@ Proof.
             rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
             rewrite !fmap_app /= Hlreq. reflexivity. }
           exact (locs_run_perm_fits _ _ Hlrperm Hrunfits).
+        - have Hlrperm : (λ c, (ic_loc c, ic_run c)) <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
+                       ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> all_cells types.
+          { rewrite (all_cells_insert types (tv.(yjs.Text.inner')) ts (MkTypeState cells' ts.(ty_arr)) Htsp).
+            rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
+            rewrite !fmap_app /= Hlreq. reflexivity. }
+          exact (locs_run_perm_originclk _ _ Hlrperm Horiginclk).
         - move=> name' p' Hb'. destruct (Hbindtypes name' p' Hb') as [ts' Hts'].
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne];
             [rewrite lookup_insert_eq; by eexists
@@ -1181,6 +1211,12 @@ Proof.
             rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
             rewrite !fmap_app /= Hlreq. reflexivity. }
           exact (locs_run_perm_fits _ _ Hlrperm Hrunfits).
+        - have Hlrperm : (λ c, (ic_loc c, ic_run c)) <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
+                       ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> all_cells types.
+          { rewrite (all_cells_insert types (tv.(yjs.Text.inner')) ts (MkTypeState cells' ts.(ty_arr)) Htsp).
+            rewrite (all_cells_lookup types (tv.(yjs.Text.inner')) ts Htsp).
+            rewrite !fmap_app /= Hlreq. reflexivity. }
+          exact (locs_run_perm_originclk _ _ Hlrperm Horiginclk).
         - move=> name' p' Hb'. destruct (Hbindtypes name' p' Hb') as [ts' Hts'].
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne];
             [rewrite lookup_insert_eq; by eexists

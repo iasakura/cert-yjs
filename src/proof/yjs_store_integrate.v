@@ -569,6 +569,7 @@ Lemma wp_scanConflicts (parent item_l : loc) (dq : dfrac)
   setfindIntegratedIndex leftIdx rightIdx input arr = Some destIdx ->
   Forall cell_unit cells ->
   (∀ c0, c0 ∈ cells -> cell_fits c0) ->
+  (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent dq cells arr ∗
       own_fresh_item_raw item_l input iv oleft oright }}}
     @! yjs.scanConflicts #item_l #(node_loc cells leftIdx)
@@ -576,7 +577,7 @@ Lemma wp_scanConflicts (parent item_l : loc) (dq : dfrac)
   {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
       own_ytype_cells parent dq cells arr ∗ own_fresh_item_raw item_l input iv oleft oright }}}.
 Proof using Type*.
-  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits.
+  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits Hoclk.
   wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh".
   (* Index bounds via the pure model. *)
   have Hids_unique := yai_unique _ Harr.
@@ -955,13 +956,14 @@ Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc : loc) (dq : dfra
   right_loc = node_loc cells rightIdx ->
   Forall cell_unit cells ->
   (∀ c0, c0 ∈ cells -> cell_fits c0) ->
+  (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent dq cells arr ∗
       own_fresh_item_raw item_l input iv oleft oright }}}
     @! yjs.findIntegrationLeft #parent #item_l #left_loc #right_loc
   {{{ RET #(node_loc cells (Z.of_nat destIdx - 1));
       own_ytype_cells parent dq cells arr ∗ own_fresh_item_raw item_l input iv oleft oright }}}.
 Proof using Type*.
-  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hll Hrl Hunitc Hfits.
+  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hll Hrl Hunitc Hfits Hoclk.
   wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh". wp_auto.
   (* Index bounds via the pure model (mirrors setintegrate_eq_integrate). *)
   have Huniq := yai_unique _ Harr.
@@ -1003,7 +1005,7 @@ Proof using Type*.
       replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
       rewrite Hrl.
       wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
-                  Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits with "[Hparent Hdll Hitem Holeft Horight]").
+                  Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits Hoclk with "[Hparent Hdll Hitem Holeft Horight]").
       { iSplitL "Hparent Hdll".
         { iExists yt, tl. iFrame "Hparent".
           replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
@@ -1057,7 +1059,7 @@ Proof using Type*.
         iAssert (own_ytype_cells parent dq cells arr) with "[Hparent Hdll]" as "Htext".
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
         wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
-                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits with "[Htext Hitem Holeft Horight]").
+                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits Hoclk with "[Htext Hitem Holeft Horight]").
         { iSplitL "Htext"; [iFrame "Htext" | rewrite /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
         iIntros "[Htext Hfresh]". wp_auto. iApply "HΦ". iFrame "Htext Hfresh". } } }
   { (* right non-null (rightIdx < length cells): read right.left *)
@@ -1115,7 +1117,7 @@ Proof using Type*.
         replace (# null) with (# (node_loc cells leftIdx)) by (rewrite -Hll Hlnull //).
         replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
         wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
-                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits with "[Hparent Hdll Hitem Holeft Horight]").
+                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits Hoclk with "[Hparent Hdll Hitem Holeft Horight]").
         { iSplitL "Hparent Hdll".
           { iExists yt, tl. iFrame "Hparent".
             replace (yt.(yjs.yType.start')) with (node_loc cells (leftIdx + 1)) by (rewrite Hstart Hl0; f_equal; lia).
@@ -1169,7 +1171,7 @@ Proof using Type*.
         iAssert (own_ytype_cells parent dq cells arr) with "[Hparent Hdll]" as "Htext".
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
         wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem iv oleft oright leftIdx rightIdx destIdx
-                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits with "[Htext Hitem Holeft Horight]").
+                    Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hunitc Hfits Hoclk with "[Htext Hitem Holeft Horight]").
         { iSplitL "Htext"; [iFrame "Htext" | rewrite /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
         iIntros "[Htext Hfresh]". wp_auto. iApply "HΦ". iFrame "Htext Hfresh". } } }
 Qed.
@@ -1197,6 +1199,7 @@ Lemma wp_Store__integrateCore_aux (s parent item_l : loc) (arr arr' : list (YjsI
   length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat ->   (* single-char content => Len() = 1 *)
   Forall cell_unit cells ->   (* all-singleton invariant (issue #28, until M4) *)
   (∀ c0, c0 ∈ cells -> cell_fits c0) ->   (* run-fits: the scan's idSpan no-wrap *)
+  (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->   (* origin-clock: the span query collapse *)
   setintegrate input arr = Some arr' ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
       own_fresh_item_raw item_l input iv oleft oright }}}
@@ -1211,7 +1214,7 @@ Lemma wp_Store__integrateCore_aux (s parent item_l : loc) (arr arr' : list (YjsI
       ⌜cell_unit c⌝ ∗
       ⌜cells' ≡ₚ cells ++ [c]⌝ }}}.
 Proof using Type*.
-  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HivL HivR Hivpar Hflags Hrun Hunitc Hfits.
+  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HivL HivR Hivpar Hflags Hrun Hunitc Hfits Hoclk.
   (* Decompose the pure result: destIdx / itemM and
      arr' = insertIdxIfInBounds destIdx itemM arr. *)
   rewrite /setintegrate HfindL HfindR /=.
@@ -1255,7 +1258,7 @@ Proof using Type*.
     iPureIntro; split_and!; [exact Hin_l | exact Hin_r | rewrite Hiv2id; exact Hid | rewrite Hiv2con; exact Hcontent]. }
   wp_apply (wp_findIntegrationLeft parent item_l (node_loc cells leftIdx) (node_loc cells rightIdx)
               (DfracOwn 1) cells arr input newItem iv2 oleft oright leftIdx rightIdx destIdx
-              Harr Htoitem Hvalid Hmax HfindL HfindR HfindD eq_refl eq_refl Hunitc Hfits with "[$Htext $Hfresh]").
+              Harr Htoitem Hvalid Hmax HfindL HfindR HfindD eq_refl eq_refl Hunitc Hfits Hoclk with "[$Htext $Hfresh]").
   iIntros "[Htext Hfresh]".
   wp_auto.
   (* [destIdx] is in bounds ([≤ rightIdx ≤ length]), so the splice index is valid
@@ -1921,6 +1924,7 @@ Lemma wp_Store__integrateCore_cells (s parent item_l : loc) (arr : list (YjsItem
   findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
   Forall cell_unit cells ->
   (∀ c0, c0 ∈ cells -> cell_fits c0) ->
+  (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
       own_linked_item item_l input parent (node_loc cells leftIdx) (node_loc cells rightIdx) }}}
     s @! (go.PointerType yjs.store) @! "integrateCore" #parent #item_l
@@ -1932,7 +1936,7 @@ Lemma wp_Store__integrateCore_cells (s parent item_l : loc) (arr : list (YjsItem
       ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
       ⌜run_head c = newItem⌝ ∗ ⌜ic_deleted c = false⌝ ∗ ⌜cell_unit c⌝ }}}.
 Proof using Type*.
-  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc Hfits.
+  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc Hfits Hoclk.
   iIntros (Φ) "(Hpkg & Htext & Hfresh) HΦ".
   iDestruct "Hfresh" as (iv oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrun)".
   destruct (integrate_some input arr newItem Hinv Htoitem) as [arr' Hintegrate].
@@ -1940,7 +1944,7 @@ Proof using Type*.
   { rewrite (setintegrate_eq_integrate input arr newItem Hinv Htoitem Hvalid Hmax). exact Hintegrate. }
   wp_apply (wp_Store__integrateCore_aux s parent item_l arr arr' input newItem cells iv oleft oright
               leftIdx rightIdx
-              Hinv Htoitem Hvalid Hmax HfindL HfindR Hfl Hfr Hfpar Hflags Hrun Hunitc Hfits Hsi
+              Hinv Htoitem Hvalid Hmax HfindL HfindR Hfl Hfr Hfpar Hflags Hrun Hunitc Hfits Hoclk Hsi
               with "[$Hpkg $Hraw $Htext]").
   iIntros (cells' idx c) "(Htext' & %Hinv' & %Hsplice & %Hile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Hcunit & %Hperm)".
   (* identify the inserted cell with the argument: it is the unique [arr']-item of
@@ -1999,6 +2003,7 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
      (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z) ->
   Forall cell_unit cells ->
   (∀ c0, c0 ∈ cells -> cell_fits c0) ->
+  (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
       own_linked_item item_l input parent (node_loc cells leftIdx) (node_loc cells rightIdx) ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types }}}
@@ -2014,7 +2019,7 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
              ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗ ⌜run_head c = newItem⌝ ∗
              ⌜cell_unit c⌝ }}}.
 Proof using Type*.
-  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hunitc Hfits.
+  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hunitc Hfits Hoclk.
   iIntros (Φ) "(Hpkg & Htext & Hfresh & Hitemsf & Hitemmap) HΦ".
   (* The explicit-parent fast path: [parent ≠ nil], so the resolution branch is
      skipped (y-octo's Option<&mut YType> Some case, issue #49). *)
@@ -2029,7 +2034,7 @@ Proof using Type*.
   rewrite (bool_decide_eq_false_2 (parent = null) Hpnn). wp_auto.
   wp_apply (wp_Store__integrateCore_cells s parent item_l arr input newItem cells
               leftIdx rightIdx
-              Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc Hfits with "[$Hpkg $Htext $Hfresh]").
+              Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc Hfits Hoclk with "[$Hpkg $Htext $Hfresh]").
   iIntros (arr' idx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & %Hsplice & %Hperm & %Hsi & %Hlook & %Hloc & %Hcid & %Hcdel & %Hcunit)".
   wp_auto.
   (* AddNode: read [it.id.clientId] off the integrated cell, look up its run list,
@@ -2166,6 +2171,7 @@ Lemma wp_Store__Integrate_nil (s parent item_l : loc) (arr : list (YjsItem A))
      (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z) ->
   Forall cell_unit cells ->
   (∀ c0, c0 ∈ cells -> cell_fits c0) ->
+  (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
       own_linked_item item_l input parent (node_loc cells leftIdx) (node_loc cells rightIdx) ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types }}}
@@ -2181,7 +2187,7 @@ Lemma wp_Store__Integrate_nil (s parent item_l : loc) (arr : list (YjsItem A))
              ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗ ⌜run_head c = newItem⌝ ∗
              ⌜cell_unit c⌝ }}}.
 Proof using Type*.
-  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hunitc Hfits.
+  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hunitc Hfits Hoclk.
   iIntros (Φ) "(Hpkg & Htext & Hfresh & Hitemsf & Hitemmap) HΦ".
   iDestruct "Htext" as (yt0 tl0) "(Hparent0 & Hdll0 & %Hlen0 & %Hrepr0 & %Hcpar0)".
   iDestruct (typed_pointsto_not_null with "Hparent0") as %Hpnn.
@@ -2204,7 +2210,7 @@ Proof using Type*.
   rewrite Hfpar2.
   wp_apply (wp_Store__integrateCore_cells s parent item_l arr input newItem cells
               leftIdx rightIdx
-              Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc Hfits with "[$Hpkg $Htext $Hfresh]").
+              Hinv Htoitem Hvalid Hmax HfindL HfindR Hunitc Hfits Hoclk with "[$Hpkg $Htext $Hfresh]").
   iIntros (arr' idx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & %Hsplice & %Hperm & %Hsi & %Hlook & %Hloc & %Hcid & %Hcdel & %Hcunit)".
   wp_auto.
   (* AddNode — identical to [wp_Store__Integrate] from here on. *)

@@ -947,4 +947,58 @@ Proof.
       done.
 Qed.
 
+(* ===== block-query bridging (issue #28 M4, stage C1a) =====================
+   The Go scan appends the WHOLE scanned run's id span to its sets before
+   querying the conflict's left origin, so the heap test runs against
+   [char_ids (h :: tail) ∪ X] while [setfii_block_step]'s decisions read
+   [{[item_id h]} ∪ X] (the char-level accumulator at the head). The two
+   agree because the queried id can never be a TAIL char of the very run
+   being scanned: tail ids share the head's client with strictly larger
+   clocks ([run_step]), and a head's same-client left origin has a strictly
+   smaller clock (causal creation order; supplied by the caller as
+   [Horiginclk], sourced from the store's origin-clock invariant). *)
+
+(** Along a [run_step] chain, every tail char's id is the head's client with
+    clock [clock h + k + 1]. *)
+Lemma run_step_tail_ids (h : YjsItem A) (tail : list (YjsItem A)) :
+  run_step (h :: tail) ->
+  forall k y, tail !! k = Some y ->
+    clientId (item_id y) = clientId (item_id h) ∧
+    clock (item_id y) = (clock (item_id h) + k + 1)%nat.
+Proof.
+  intros Hstep k. revert h tail Hstep.
+  induction k as [|k' IH]; intros h tail Hstep y Hk;
+    (destruct tail as [|c tail']; first by rewrite lookup_nil in Hk).
+  - injection Hk as <-.
+    destruct (Hstep 0%nat h c eq_refl eq_refl) as (Hidc & _ & _).
+    rewrite Hidc /=. split; [done | lia].
+  - simpl in Hk.
+    have Hstep' : run_step (c :: tail') := run_step_tail h (c :: tail') Hstep.
+    destruct (IH c tail' Hstep' y Hk) as [Hcl Hck].
+    destruct (Hstep 0%nat h c eq_refl eq_refl) as (Hidc & _ & _).
+    rewrite Hcl Hck Hidc /=. split; [done | lia].
+Qed.
+
+(** The heap query against the block-absorbed set equals the pure query
+    against the head-only set. *)
+Lemma block_query_head (h : YjsItem A) (tail : list (YjsItem A))
+    (col : YjsId) (X : gset YjsId) :
+  run_step (h :: tail) ->
+  (clientId col = clientId (item_id h) -> (clock col < S (clock (item_id h)))%nat) ->
+  col ∈ char_ids (h :: tail) ∪ X <-> col ∈ ({[item_id h]} ∪ X : gset YjsId).
+Proof.
+  move=> Hstep Hclk.
+  rewrite char_ids_cons.
+  split.
+  - move=> Hin. apply elem_of_union in Hin as [Hin | Hin]; last set_solver.
+    apply elem_of_union in Hin as [Hin | Hin]; first set_solver.
+    exfalso.
+    apply elem_of_list_to_set, list_elem_of_fmap in Hin as (y & -> & Hy).
+    apply list_elem_of_lookup_1 in Hy as [k Hk].
+    destruct (run_step_tail_ids h tail Hstep k y Hk) as [Hcl Hck].
+    have := Hclk Hcl. lia.
+  - move=> Hin. apply elem_of_union in Hin as [Hin | Hin]; last set_solver.
+    apply elem_of_union. left. apply elem_of_union. left. exact Hin.
+Qed.
+
 End run_theory.

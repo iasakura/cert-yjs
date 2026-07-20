@@ -24,6 +24,7 @@ From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
+From New.proof Require Import yjs_run_theory.
 (* The Go package now imports sync (store.mu : sync.Mutex), so the generated yjs
    package imports sync; building [IsPkgInit yjs] below needs [IsPkgInit sync]
    (and [GetIsPkgInitWf sync]) in scope, provided by the sync proof base. The
@@ -277,6 +278,52 @@ Proof.
   destruct (ic_run c) as [|y [|y' r']]; simpl in Hc; [lia | done | lia].
 Qed.
 
+(* ----- cell-cursor prefix sums (issue #28 M4, stage C1c) ----------------- *)
+
+(** Advancing the cell cursor by one appends that cell's whole run to the
+    flattened prefix. The scan steps NODE by node while the model steps CHAR
+    by char, so a cursor over cells couples to a [setfii_loop] offset over
+    chars via these prefix sums. *)
+Lemma run_flatten_take_S (cells : list item_cell) (cur : nat) (ci : item_cell) :
+  cells !! cur = Some ci ->
+  run_flatten (take (S cur) cells) = run_flatten (take cur cells) ++ ic_run ci.
+Proof.
+  move=> Hcur.
+  rewrite (take_S_r _ _ ci Hcur) run_flatten_app run_flatten_cons run_flatten_nil app_nil_r //.
+Qed.
+
+(** The chars of the cell at the cursor sit at consecutive model indices
+    starting at the flattened-prefix length — [setfii_block_step]'s [Hlook]
+    premise, read off [cells_repr]'s [arr = run_flatten cells]. *)
+Lemma run_flatten_take_lookup (cells : list item_cell) (cur : nat) (ci : item_cell)
+    (k : nat) (y : YjsItem A) :
+  cells !! cur = Some ci ->
+  ic_run ci !! k = Some y ->
+  run_flatten cells !! (length (run_flatten (take cur cells)) + k)%nat = Some y.
+Proof.
+  move=> Hcur Hk.
+  have Hdec : run_flatten cells
+            = run_flatten (take cur cells) ++ (ic_run ci ++ run_flatten (drop (S cur) cells)).
+  { rewrite -{1}(take_drop_middle cells cur ci Hcur) run_flatten_app run_flatten_cons //. }
+  rewrite Hdec lookup_app_r; last lia.
+  have -> : (length (run_flatten (take cur cells)) + k
+             - length (run_flatten (take cur cells)))%nat = k by lia.
+  rewrite lookup_app_l; last (apply lookup_lt_Some in Hk; lia).
+  exact Hk.
+Qed.
+
+(** Under the unit scaffold the cell cursor and the model offset coincide:
+    each cell contributes exactly one char, so the flattened prefix length is
+    the cursor (clamped to the cell count). *)
+Lemma run_flatten_take_length_unit (cells : list item_cell) (cur : nat) :
+  Forall cell_unit cells ->
+  length (run_flatten (take cur cells)) = (cur `min` length cells)%nat.
+Proof.
+  move=> Hunit.
+  have Hunit' : Forall cell_unit (take cur cells) := Forall_take _ _ _ Hunit.
+  rewrite (run_flatten_singletons _ Hunit') length_fmap length_take //.
+Qed.
+
 (** The loc of the node at index [k] of [cells] ([null] outside [0, len)).
     Used to place the heap [conflict] / [left] pointers within the DLL. *)
 Definition node_loc (cells : list item_cell) (k : Z) : loc :=
@@ -388,5 +435,51 @@ Definition own_id_set (s : slice.t) (dq : dfrac) (gs : gset YjsId) : iProp Σ :=
     "Hcap" ∷ own_slice_cap yjs.idSpan.t s dq ∗
     "%Hwf" ∷ ⌜Forall span_wf vs⌝ ∗
     "%Hset" ∷ ⌜⋃ (span_ids <$> vs) = gs⌝.
+
+(* ----- span <-> run-char bridge (issue #28 M4, stage C1a) ---------------- *)
+
+(** [run_wf]'s chaining clause is [yjs_run_theory]'s [run_step]. *)
+Lemma run_wf_run_step (r : list (YjsItem A)) : run_wf r -> run_step r.
+Proof. move=> [_ Hstep]. exact Hstep. Qed.
+
+(** A scanned node's span denotes exactly its run's char ids: the run's chars
+    sit at the head's client with consecutive clocks from the head
+    ([run_step]), which is what [span_ids] enumerates. Pure nat arithmetic on
+    both sides, so no no-wrap premise is needed here (the [w64] no-wrap only
+    matters for [containsId]'s range test). *)
+Lemma span_ids_char_ids (idv : yjs.id.t) (len : w64)
+    (h : YjsItem A) (tail : list (YjsItem A)) :
+  item_id h = toYjsId idv ->
+  run_step (h :: tail) ->
+  length (h :: tail) = uint.nat len ->
+  span_ids (yjs.idSpan.mk idv len) = char_ids (h :: tail).
+Proof.
+  move=> Hid Hstep Hlen.
+  have Heta : forall i : YjsId, i = MkYjsId (clientId i) (clock i) by move=> [] //.
+  apply set_eq => x.
+  rewrite /span_ids /char_ids !elem_of_list_to_set !list_elem_of_fmap.
+  split.
+  - move=> [o [-> Ho]]. apply elem_of_seq in Ho. simpl in Ho.
+    destruct o as [|k].
+    + exists h. split; [| apply elem_of_cons; by left].
+      rewrite Hid /toYjsId /= Nat.add_0_r //.
+    + have Hk : (k < length tail)%nat by (simpl in Hlen; lia).
+      destruct (lookup_lt_is_Some_2 tail k Hk) as [y Hy].
+      exists y. split; [| apply elem_of_cons; right; by eapply list_elem_of_lookup_2].
+      destruct (run_step_tail_ids h tail Hstep k y Hy) as [Hcl Hck].
+      rewrite (Heta (item_id y)) Hcl Hck Hid /toYjsId /=.
+      f_equal. lia.
+  - move=> [y [-> Hy]]. apply elem_of_cons in Hy as [-> | Hy].
+    + exists 0%nat. split.
+      * rewrite Hid /toYjsId /= Nat.add_0_r //.
+      * apply elem_of_seq. simpl. simpl in Hlen. lia.
+    + apply list_elem_of_lookup_1 in Hy as [k Hk].
+      have Hklt : (k < length tail)%nat by (eapply lookup_lt_Some; exact Hk).
+      exists (S k). split.
+      * destruct (run_step_tail_ids h tail Hstep k y Hk) as [Hcl Hck].
+        rewrite (Heta (item_id y)) Hcl Hck Hid /toYjsId /=.
+        f_equal. lia.
+      * apply elem_of_seq. simpl. simpl in Hlen. lia.
+Qed.
 
 End common.
