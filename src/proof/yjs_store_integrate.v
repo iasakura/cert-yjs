@@ -16,6 +16,7 @@ From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
+From New.proof Require Import yjs_run_theory.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype.
 From New.proof Require Import yjs_history.
 From New.proof Require Import yjs_store_base.
@@ -433,6 +434,32 @@ Proof.
       iDestruct ("Hback" with "Hval") as "Hdll". iFrame "Hdll". done.
 Qed.
 
+(** No array item strictly to the right of the resolved left origin can BE that
+    left origin: the origin (when present) sits at [leftIdx] with a unique id, so
+    any item at an index [> leftIdx] carries a different id. This discharges
+    [setfii_block_step]'s [Hnotleft] for the scanned run block, whose chars all
+    sit at model indices [> leftIdx] (issue #28 stage C1c). *)
+Lemma findLeftIdx_scanned_ne (arr : list (YjsItem A)) (oid : option YjsId)
+    (leftIdx : Z) (i : nat) (c : YjsItem A) :
+  YjsArrInvariant arr ->
+  findLeftIdx oid arr = Some leftIdx ->
+  arr !! i = Some c ->
+  (leftIdx < Z.of_nat i)%Z ->
+  Some (item_id c) ≠ oid.
+Proof.
+  move=> Harr Hfind Hlk Hlt.
+  destruct oid as [lid|]; last done.
+  rewrite /findLeftIdx in Hfind.
+  move: Hfind => /fmap_Some [j [Hj Hleft_eq]].
+  move: Hj => /fmap_Some [[j' oitem] [Hlf Hj_eq]].
+  simpl in Hj_eq. subst j.
+  apply list_find_Some in Hlf as (Hoitem_lk & Hoitem_id & _).
+  have Hlt' : (j' < i)%nat by lia.
+  have Hne : item_id oitem ≠ item_id c
+    := invariant_yjsarray_idx.ss_lookup_lt arr j' i oitem c (yai_unique _ Harr) Hoitem_lk Hlk Hlt'.
+  move=> [= Heq]. apply Hne. by rewrite Hoitem_id Heq.
+Qed.
+
 (** Loop invariant for the conflict scan in [Integrate]. The heap loop refines
     the pure set-based loop [setfii_loop] *directly*: the heap slices
     [itemsBeforeOrigin] / [conflictingItems] literally carry the [setfii_loop]
@@ -459,9 +486,9 @@ Definition integrate_loop_inv
     (leftIdx rightIdx : Z) (originLeftId originRightId : option YjsId) (newItemId : YjsId)
     (loopResult : option Z)
     (conflict_l left_l right_l idsBeforeOrigin_l conflictIds_l : loc)
-    (offset : nat) (idsBeforeOrigin conflictIds : gset YjsId) (destIdx : Z) : iProp Σ :=
+    (offset cur : nat) (idsBeforeOrigin conflictIds : gset YjsId) (destIdx : Z) : iProp Σ :=
   "Htext" ∷ own_ytype_cells parent dq cells arr ∗
-  "Hconflict" ∷ conflict_l ↦ node_loc cells (leftIdx + Z.of_nat offset) ∗
+  "Hconflict" ∷ conflict_l ↦ node_loc cells (Z.of_nat cur) ∗
   "Hleft" ∷ left_l ↦ node_loc cells (destIdx - 1) ∗
   "Hright" ∷ right_l ↦ node_loc cells rightIdx ∗
   "Hids_before" ∷ (∃ s : slice.t, "Hids_before_ref" ∷ idsBeforeOrigin_l ↦ s ∗
@@ -469,6 +496,8 @@ Definition integrate_loop_inv
   "Hconflict_ids" ∷ (∃ s : slice.t, "Hconflict_ids_ref" ∷ conflictIds_l ↦ s ∗
                      "Hconflict_ids_set" ∷ own_id_set s (DfracOwn 1) conflictIds) ∗
   "%Hoff" ∷ ⌜(1 <= offset)%nat⌝ ∗
+  "%Hcur" ∷ ⌜(Z.of_nat (length (run_flatten (take cur cells))) = leftIdx + Z.of_nat offset)%Z⌝ ∗
+  "%Hcurb" ∷ ⌜(cur <= length cells)%nat⌝ ∗
   "%Hdest" ∷ ⌜(leftIdx + 1 <= destIdx <= leftIdx + Z.of_nat offset)%Z⌝ ∗
   "%Hbound" ∷ ⌜(leftIdx + Z.of_nat offset <= rightIdx)%Z⌝ ∗
   "%Hloop" ∷ ⌜setfii_loop (Z.to_nat (rightIdx - leftIdx) - offset) offset leftIdx rightIdx
@@ -603,17 +632,21 @@ Proof using Type*.
               (in_originId input) (in_rightOriginId input) (in_id input) arr ∅ ∅ (leftIdx + 1))
     as [d|] eqn:Hsetfii; last by (simpl in HfindD; done).
   simpl in HfindD. injection HfindD as Hd_eq.
-  (* loop invariant: offset = 1, accumulators empty, dest = leftIdx + 1 *)
-  iAssert (∃ (offset : nat) (idsB conflictI : gset YjsId) (destL : Z),
+  (* loop invariant: offset = 1, cursor at the run boundary [leftIdx+1],
+     accumulators empty, dest = leftIdx + 1 *)
+  have Hcurb0 : (Z.to_nat (leftIdx + 1) <= length cells)%nat by lia.
+  have Hcur0 : Z.of_nat (length (run_flatten (take (Z.to_nat (leftIdx + 1)) cells))) = (leftIdx + Z.of_nat 1)%Z
+    by rewrite (run_flatten_take_length_unit cells (Z.to_nat (leftIdx + 1)) Hunitc) (Nat.min_l _ _ Hcurb0) Z2Nat.id; lia.
+  iAssert (∃ (offset cur : nat) (idsB conflictI : gset YjsId) (destL : Z),
     integrate_loop_inv parent dq cells arr leftIdx rightIdx input.(in_originId)
       input.(in_rightOriginId) input.(in_id) (Some d) conflict_ptr left_ptr right_ptr
-      itemsBeforeOrigin_ptr conflictingItems_ptr offset idsB conflictI destL
+      itemsBeforeOrigin_ptr conflictingItems_ptr offset cur idsB conflictI destL
     ∗ own_fresh_item_raw item_l input iv oleft oright)%I
     with "[Hparent Hdll conflict left right conflictingItems Hci_sl Hci_cap itemsBeforeOrigin Hibo_sl Hibo_cap Hitem Holeft Horight]" as "IH".
-  { iExists 1%nat, ∅, ∅, (leftIdx + 1)%Z.
+  { iExists 1%nat, (Z.to_nat (leftIdx + 1)), ∅, ∅, (leftIdx + 1)%Z.
     rewrite /integrate_loop_inv /own_fresh_item_raw.
     replace (leftIdx + 1 - 1)%Z with leftIdx by lia.
-    replace (leftIdx + Z.of_nat 1)%Z with (leftIdx + 1)%Z by lia.
+    replace (Z.of_nat (Z.to_nat (leftIdx + 1)))%Z with (leftIdx + 1)%Z by (rewrite Z2Nat.id; lia).
     iFrame "conflict left right Hitem Holeft Horight".
     iSplitL "Hparent Hdll itemsBeforeOrigin Hibo_sl Hibo_cap conflictingItems Hci_sl Hci_cap".
     - iSplitL "Hparent Hdll".
@@ -624,19 +657,23 @@ Proof using Type*.
       iSplitL "conflictingItems Hci_sl Hci_cap".
       { iExists _. iFrame "conflictingItems". iExists ([] : list yjs.idSpan.t). iFrame "Hci_sl Hci_cap".
         iPureIntro. split; [constructor | done]. }
-      iPureIntro; split_and!; [lia | lia | lia | lia | exact Hsetfii].
+      iPureIntro; split_and!; [lia | exact Hcur0 | exact Hcurb0 | lia | lia | lia | exact Hsetfii].
     - iPureIntro; split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent]. }
   wp_for "IH".
   iDestruct "IH" as "[Hinv Hfresh]". iNamed "Hinv". iNamed "Hfresh".
   iDestruct "Holeft" as "#Holeft". iDestruct "Horight" as "#Horight".
+  (* couple the cell cursor to the model offset (unit scaffold) *)
+  have Hcureq : Z.of_nat cur = (leftIdx + Z.of_nat offset)%Z
+    by rewrite -Hcur (run_flatten_take_length_unit cells cur Hunitc) (Nat.min_l _ _ Hcurb).
   wp_auto.
-  destruct (decide (leftIdx + offset = Z.of_nat (length cells))%Z) as [Heq_len | Hne_len].
+  destruct (decide (cur = length cells)%nat) as [Heq_len | Hne_len].
   - (* cursor reached the end: [conflict = nil], loop exits; fuel 0 pins [destL = d] *)
-    have Hnull : node_loc cells (leftIdx + offset) = null.
+    have Hnull : node_loc cells (Z.of_nat cur) = null.
     { rewrite /node_loc decide_True; last lia.
-      rewrite Heq_len Nat2Z.id lookup_ge_None_2; [done | lia]. }
+      rewrite Nat2Z.id Heq_len lookup_ge_None_2; [done | lia]. }
     have HdestL : destL = d.
-    { have Hfuel0 : (Z.to_nat (rightIdx - leftIdx) - offset = 0)%nat by lia.
+    { have Hcurlen : (Z.of_nat cur = Z.of_nat (length cells))%Z by rewrite Heq_len.
+      have Hfuel0 : (Z.to_nat (rightIdx - leftIdx) - offset = 0)%nat by (clear -Hcureq Hcurlen Hbound Hrlen; lia).
       rewrite Hfuel0 /= in Hloop. by injection Hloop. }
     rewrite Hnull bool_decide_eq_true_2; last reflexivity. simpl.
     rewrite decide_False; last done.
@@ -647,30 +684,29 @@ Proof using Type*.
     rewrite decide_True; last reflexivity. wp_auto.
     iApply "HΦ". iFrame "Htext". rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight".
     iPureIntro; split_and!; done.
-  - (* cursor in range: run one scan step, matched to a [setfii_loop] unfold. *)
-    have Hlt : (leftIdx + offset < Z.of_nat (length cells))%Z by lia.
-    have Hi_lt : (Z.to_nat (leftIdx + offset) < length cells)%nat by lia.
-    destruct (cells !! Z.to_nat (leftIdx + offset)) as [ci|] eqn:Hci;
+  - (* cursor in range: run one scan step, matched to a [setfii_block_step] unfold. *)
+    have Hcur_lt : (cur < length cells)%nat by lia.
+    destruct (cells !! cur) as [ci|] eqn:Hci;
       last by (apply lookup_ge_None in Hci; lia).
-    have Hci_loc : node_loc cells (leftIdx + offset) = ic_loc ci
-      by rewrite /node_loc decide_True; [rewrite Hci | lia].
+    have Hci_loc : node_loc cells (Z.of_nat cur) = ic_loc ci
+      by rewrite /node_loc decide_True; [rewrite Nat2Z.id Hci | lia].
     iAssert (⌜ic_loc ci ≠ null⌝ ∗ own_ytype_cells parent dq cells arr)%I with "[Htext]" as "[%Hci_nn Htext]".
     { iNamed "Htext". iDestruct (own_dll_lookup_acc _ _ _ _ _ _ _ _ Hci with "Hdll") as (ivx olidx oridx) "Hacc".
       iDestruct "Hacc" as "(_ & _ & _ & _ & _ & _ & Hcival & _ & _ & Hback)".
       iDestruct (typed_pointsto_not_null with "Hcival") as %Hnn.
       iDestruct ("Hback" with "Hcival") as "Hdll".
       iSplitR; first (iPureIntro; exact Hnn). iExists yt0, tl0. iFrame "Hparent Hdll". done. }
-    have Hnnull : node_loc cells (leftIdx + offset) ≠ null by rewrite Hci_loc; exact Hci_nn.
+    have Hnnull : node_loc cells (Z.of_nat cur) ≠ null by rewrite Hci_loc; exact Hci_nn.
     rewrite (bool_decide_eq_false_2 _ Hnnull). simpl. rewrite decide_True; last reflexivity.
     wp_auto.
-    wp_apply (wp_itemPtrEqual_node parent dq cells arr (leftIdx + offset) rightIdx Harr Hunitc
-                ltac:(lia) Hbound Hrlen with "[$Htext]").
+    wp_apply (wp_itemPtrEqual_node parent dq cells arr (Z.of_nat cur) rightIdx Harr Hunitc
+                ltac:(lia) ltac:(rewrite Hcureq; lia) Hrlen with "[$Htext]").
     iIntros "Htext".
-    destruct (decide (leftIdx + offset = rightIdx)) as [Heqr | Hner].
+    destruct (decide (Z.of_nat cur = rightIdx)) as [Heqr | Hner].
     + (* conflict = right: break; fuel 0 pins [destL = d] *)
       rewrite (bool_decide_eq_true_2 _ Heqr).
       have HdestL : destL = d.
-      { have Hfuel0 : (Z.to_nat (rightIdx - leftIdx) - offset = 0)%nat by lia.
+      { have Hfuel0 : (Z.to_nat (rightIdx - leftIdx) - offset = 0)%nat by (clear -Hcureq Heqr Hbound; lia).
         rewrite Hfuel0 /= in Hloop. by injection Hloop. }
       wp_auto. subst destL.
       have Hdpos : (0 <= d)%Z by lia.
@@ -679,40 +715,33 @@ Proof using Type*.
       wp_for_post.
       iApply "HΦ". iFrame "Htext". rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight".
       iPureIntro; split_and!; done.
-    + (* conflict ≠ right: scan one item; match the [setfii_loop] branches *)
+    + (* conflict ≠ right: scan one run block; match [setfii_block_step]'s branches *)
       rewrite (bool_decide_eq_false_2 _ Hner).
-      have Hir : (leftIdx + offset < rightIdx)%Z by lia.
+      have Hir : (leftIdx + Z.of_nat offset < rightIdx)%Z by (clear -Hcureq Hner Hbound; lia).
       wp_auto.
-      have [yi [Hyi Hcr_repr]] := cells_repr_lookup _ _ _ _ _ Hunitc Hrepr Hci.
-      have Hcr_head := cell_repr_head _ _ _ Hcr_repr.
       iNamed "Htext".
-      iDestruct (own_dll_acc _ cells _ _ (Z.to_nat (leftIdx + offset)) ci Hci with "Hdll")
-        as (iv_ci olid_ci orid_ci) "(%Hcloc0 & %Hcl0 & %Hcr0 & %Hcid_ci & %Hccont_ci & %Hcolid_ci & %Hcorid_ci & %Hcflags_ci & %Hccontlen_ci & %Hcpar_ci & Hcival & #Hcol & #Hcor & Hback)".
-      iEval (rewrite -Hci_loc) in "Hcival".
+      iDestruct (own_dll_acc _ cells _ _ cur ci Hci with "Hdll")
+        as (iv_ci olid_ci orid_ci) "(%Hcloc0 & %Hcl0 & %Hcr0 & %Hcid_ci & %Hccont_ci & %Hcolid_ci & %Hcorid_ci & %Hcflags_ci & %Hrunwf_ci & %Hcpar_ci & Hcival & #Hcol & #Hcor & Hback)".
+      iEval (rewrite Hcloc0) in "Hcival".
       wp_auto.
       iDestruct "Hids_before" as (ibo_s) "[Hibo_ref Hibo_setf]".
       iDestruct "Hibo_setf" as (vs_ibo) "(Hibo_sl & Hibo_cap & %Hibo_wf & %Hibo_set)".
       iDestruct "Hconflict_ids" as (ci_s) "[Hci_ref Hci_setf]".
       iDestruct "Hci_setf" as (vs_ci) "(Hci_sl & Hci_cap & %Hci_wf & %Hci_set)".
-      (* the scanned node's span: head id + run length (issue #28) *)
       wp_apply (wp_item__Len with "[$Hcival]"). iIntros "Hcival". wp_auto.
-      (* under the unit scaffold the span has length 1 and its char-id set is
-         the head id; its no-wrap comes from the run-fits premise *)
-      have Hunit_ci : cell_unit ci := Forall_lookup_1 _ _ _ _ Hunitc Hci.
-      have Hlencont : length (iv_ci.(yjs.item.content').(yjs.content.content')) = 1%nat.
+      (* the scanned node's run: split into head [hh] + tail [tl2] (nonempty by run_wf) *)
+      destruct (ic_run ci) as [|hh tl2] eqn:Hrun; first by (exfalso; exact (proj1 Hrunwf_ci eq_refl)).
+      rewrite -Hrun in Hccont_ci Hrunwf_ci.
+      have Hrhead : run_head ci = hh by rewrite /run_head Hrun.
+      have Hrunstep : run_step (hh :: tl2).
+      { have Hrs := run_wf_run_step (ic_run ci) Hrunwf_ci. rewrite Hrun in Hrs. exact Hrs. }
+      have Hunit_ci : (length (ic_run ci) = 1)%nat := Forall_lookup_1 _ _ _ _ Hunitc Hci.
+      have Hlencont : (length (iv_ci.(yjs.item.content').(yjs.content.content')) = length (ic_run ci))%nat.
       { have Hl := f_equal length Hccont_ci.
-        rewrite length_fmap explode_length /toContent in Hl.
-        rewrite /cell_unit in Hunit_ci. lia. }
+        rewrite length_fmap explode_length /toContent in Hl. lia. }
+      have Hlen_w : (length (ic_run ci) = uint.nat (W64 (length (ic_run ci))))%nat by (rewrite Hunit_ci; word).
       have Hfits_ci : cell_fits ci := Hfits ci (list_elem_of_lookup_2 _ _ _ Hci).
-      have Hclk_ci : clock (item_id (run_head ci)) = uint.nat iv_ci.(yjs.item.id').(yjs.id.clock').
-      { by rewrite Hcid_ci /toYjsId. }
-      have Hwf_sp : span_wf (yjs.idSpan.mk iv_ci.(yjs.item.id') (W64 1)).
-      { rewrite /span_wf /=.
-        rewrite /cell_fits /cell_clock Hclk_ci in Hfits_ci.
-        rewrite /cell_unit in Hunit_ci.
-        move: Hfits_ci. rewrite Hunit_ci. word. }
-      have Hsp_ids : span_ids (yjs.idSpan.mk iv_ci.(yjs.item.id') (W64 1)) = {[item_id yi]}.
-      { rewrite span_ids_singleton /=; last done. by rewrite -Hcid_ci Hcr_head. }
+      have Hclk_ci : clock (item_id (run_head ci)) = uint.nat iv_ci.(yjs.item.id').(yjs.id.clock') by rewrite Hcid_ci /toYjsId.
       rewrite Hlencont.
       wp_apply wp_slice_literal. iSplitR; first done. iIntros "%sing1 [Hsing1 _]". wp_auto.
       wp_apply (wp_slice_append with "[$Hibo_sl $Hibo_cap $Hsing1]").
@@ -720,55 +749,90 @@ Proof using Type*.
       wp_apply wp_slice_literal. iSplitR; first done. iIntros "%sing2 [Hsing2 _]". wp_auto.
       wp_apply (wp_slice_append with "[$Hci_sl $Hci_cap $Hsing2]").
       iIntros "%ci_s2 (Hci_sl & Hci_cap & _)". wp_auto.
-      (* normalize the appended literal to [.. ++ [sp]] and precompute the new
-         accumulators' representation facts once for every branch below *)
       have H0 : sint.nat (W64 0) = 0%nat by word.
       iEval (rewrite H0 /=) in "Hibo_sl".
       iEval (rewrite H0 /=) in "Hci_sl".
-      set sp := yjs.idSpan.mk iv_ci.(yjs.item.id') (W64 1).
+      set sp := yjs.idSpan.mk iv_ci.(yjs.item.id') (W64 (length (ic_run ci))).
+      have Hwf_sp : span_wf sp.
+      { rewrite /sp /span_wf /=.
+        rewrite /cell_fits /cell_clock Hclk_ci in Hfits_ci.
+        move: Hfits_ci. rewrite Hunit_ci. word. }
+      have Hidhh : item_id hh = toYjsId iv_ci.(yjs.item.id') by rewrite -Hrhead; exact Hcid_ci.
+      have Hsp_ids : span_ids sp = char_ids (ic_run ci).
+      { rewrite /sp Hrun.
+        apply (span_ids_char_ids iv_ci.(yjs.item.id') (W64 (length (hh :: tl2))) hh tl2 Hidhh Hrunstep).
+        rewrite -Hrun. exact Hlen_w. }
       have Hibo_wf2 : Forall span_wf (vs_ibo ++ [sp]).
       { apply Forall_app. split; [exact Hibo_wf | by apply Forall_singleton]. }
       have Hci_wf2 : Forall span_wf (vs_ci ++ [sp]).
       { apply Forall_app. split; [exact Hci_wf | by apply Forall_singleton]. }
-      have Hibo_set2 : ⋃ (span_ids <$> (vs_ibo ++ [sp])) = {[item_id yi]} ∪ idsB.
+      have Hibo_set2 : ⋃ (span_ids <$> (vs_ibo ++ [sp])) = char_ids (ic_run ci) ∪ idsB.
       { rewrite span_union_snoc Hsp_ids Hibo_set //. }
-      have Hci_set2 : ⋃ (span_ids <$> (vs_ci ++ [sp])) = {[item_id yi]} ∪ conflictI.
+      have Hci_set2 : ⋃ (span_ids <$> (vs_ci ++ [sp])) = char_ids (ic_run ci) ∪ conflictI.
       { rewrite span_union_snoc Hsp_ids Hci_set //. }
+      (* head-char facts (run head = [hh]) matching [setfii_block_step]'s decisions *)
+      have HcId : item_id hh = toYjsId iv_ci.(yjs.item.id') := Hidhh.
+      have HoL : origin_id (origin hh) = toYjsId <$> olid_ci by rewrite -Hrhead; exact Hcolid_ci.
+      have HoR : origin_id (rightOrigin hh) = toYjsId <$> orid_ci by rewrite -Hrhead; exact Hcorid_ci.
+      (* rewrite [Hloop] one whole run block via [setfii_block_step] *)
+      have Hblockfits : (leftIdx + Z.of_nat offset + Z.of_nat (length (ic_run ci)) <= rightIdx)%Z
+        by (rewrite Hunit_ci; clear -Hir; lia).
+      have Hlook : forall k c0, (hh :: tl2) !! k = Some c0 ->
+          arr !! (Z.to_nat (leftIdx + Z.of_nat (offset + k))) = Some c0.
+      { move=> k c0 Hk.
+        have Hrepr' : arr = run_flatten cells := Hrepr.
+        rewrite Hrepr'.
+        have Hprefix : (length (run_flatten (take cur cells)) = Z.to_nat (leftIdx + Z.of_nat offset))%nat.
+        { apply Nat2Z.inj. rewrite Hcur Z2Nat.id; [done | clear -HleftLB Hoff; lia]. }
+        have Hidx : (Z.to_nat (leftIdx + Z.of_nat (offset + k)) = length (run_flatten (take cur cells)) + k)%nat
+          by (rewrite Hprefix; clear -HleftLB Hoff; lia).
+        rewrite Hidx.
+        apply (run_flatten_take_lookup cells cur ci k c0 Hci).
+        rewrite Hrun. exact Hk. }
+      have Hnotleft : forall c0, c0 ∈ hh :: tl2 -> Some (item_id c0) ≠ input.(in_originId).
+      { move=> c0 Hc0. apply list_elem_of_lookup_1 in Hc0 as [k Hk].
+        apply (findLeftIdx_scanned_ne arr input.(in_originId) leftIdx
+                 (Z.to_nat (leftIdx + Z.of_nat (offset + k))) c0 Harr HfindL (Hlook k c0 Hk)).
+        rewrite Z2Nat.id; last (clear -HleftLB Hoff; lia). clear -Hoff; lia. }
+      have Hpos_off : (0 <= leftIdx + Z.of_nat offset)%Z by (clear -HleftLB Hoff; lia).
+      have Hfuel_split : (Z.to_nat (rightIdx - leftIdx) - offset)%nat
+        = (length (hh :: tl2) + (Z.to_nat (rightIdx - leftIdx) - (offset + length (hh :: tl2))))%nat
+        by (rewrite -Hrun; clear -Hblockfits Hoff; lia).
+      rewrite Hfuel_split in Hloop.
+      rewrite (setfii_block_step hh tl2 _ offset leftIdx rightIdx input.(in_originId)
+                 input.(in_rightOriginId) input.(in_id) arr idsB conflictI destL
+                 Hrunstep Hlook Hnotleft Hpos_off) in Hloop.
+      rewrite -Hrun in Hloop.
       wp_apply (wp_idOptEqual iv.(yjs.item.originLeftId') iv_ci.(yjs.item.originLeftId')
                   oleft olid_ci with "[$Holeft $Hcol]").
-      remember ((Z.to_nat (rightIdx - leftIdx) - offset)%nat) as fuel eqn:Hfuel_eq.
-      destruct fuel as [|count']; first (exfalso; lia).
-      cbn [setfii_loop] in Hloop. rewrite Hyi /= in Hloop.
-      have HcId : item_id yi = toYjsId iv_ci.(yjs.item.id') by rewrite -Hcr_head; exact Hcid_ci.
-      have HoL : origin_id (origin yi) = toYjsId <$> olid_ci by rewrite -Hcr_head; exact Hcolid_ci.
-      have HoR : origin_id (rightOrigin yi) = toYjsId <$> orid_ci by rewrite -Hcr_head; exact Hcorid_ci.
       case_bool_decide as Hoeq.
       * (* same left origin as the new item *)
-        have HoeqL : origin_id (origin yi) = input.(in_originId) by rewrite HoL -Hoeq Hin_l.
+        have HoeqL : origin_id (origin hh) = input.(in_originId) by rewrite HoL -Hoeq Hin_l.
         rewrite (decide_True _ _ HoeqL) in Hloop.
         wp_auto.
         case_bool_decide as Hclt.
         -- (* smaller client id: advance the anchor (left := conflict) *)
-           have HcltL : ((item_id yi).(clientId) < input.(in_id).(clientId))%nat
+           have HcltL : ((item_id hh).(clientId) < input.(in_id).(clientId))%nat
              by (rewrite HcId -Hid /toYjsId /=; word).
            rewrite (decide_True _ _ HcltL) in Hloop.
            wp_auto.
            wp_apply wp_slice_literal. iSplitR; first done.
            iIntros "%ci_empty [Hci_empty Hci_empty_cap]". wp_auto.
            wp_for_post.
-           iEval (rewrite Hci_loc) in "Hcival".
+           iEval (rewrite -Hcloc0) in "Hcival".
            iDestruct ("Hback" with "Hcival") as "Hdll".
            iFrame "HΦ item".
-           iExists (S offset), ({[item_id yi]} ∪ idsB), ∅, (leftIdx + Z.of_nat offset + 1)%Z.
+           iExists (offset + length (ic_run ci))%nat, (S cur), (char_ids (ic_run ci) ∪ idsB), ∅, (leftIdx + Z.of_nat (offset + length (ic_run ci)))%Z.
            rewrite /integrate_loop_inv /own_fresh_item_raw.
            iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_empty Hci_empty_cap"; last first.
            { iFrame "Hitem Holeft Horight".
              iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
            iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
            iSplitL "Hconflict".
-           { rewrite Hcr0. replace (leftIdx + Z.of_nat (S offset))%Z with (Z.to_nat (leftIdx + offset) + 1)%Z by lia. iFrame "Hconflict". }
+           { rewrite Hcr0. replace (Z.of_nat (S cur))%Z with (Z.of_nat cur + 1)%Z by lia. iFrame "Hconflict". }
            iSplitL "Hleft".
-           { replace (leftIdx + Z.of_nat offset + 1 - 1)%Z with (leftIdx + offset)%Z by lia. iFrame "Hleft". }
+           { replace (leftIdx + Z.of_nat (offset + length (ic_run ci)) - 1)%Z with (Z.of_nat cur)%Z
+               by (rewrite Hunit_ci; clear -Hcureq; lia). iFrame "Hleft". }
            iSplitL "Hright". { iFrame "Hright". }
            iSplitL "Hibo_ref Hibo_sl Hibo_cap".
            { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
@@ -777,12 +841,13 @@ Proof using Type*.
            { iExists _. iFrame "Hci_ref". iExists ([] : list yjs.idSpan.t). iFrame "Hci_empty Hci_empty_cap".
                  iPureIntro. split; [constructor | done]. }
            iPureIntro; split_and!;
-             [lia | lia | lia | lia
-             | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia;
-               replace (leftIdx + Z.of_nat offset + 1)%Z with (Z.of_nat (Z.to_nat (leftIdx + offset) + 1)) by lia;
-               exact Hloop].
+             [lia
+             | rewrite (run_flatten_take_S cells cur ci Hci) length_app; clear -Hcur; lia
+             | lia | lia | lia
+             | rewrite Nat2Z.inj_add; clear -Hblockfits; lia
+             | exact Hloop].
         -- (* larger-or-equal client id: same right origin -> break, else keep scanning *)
-           have HcltGe : ¬ ((item_id yi).(clientId) < input.(in_id).(clientId))%nat
+           have HcltGe : ¬ ((item_id hh).(clientId) < input.(in_id).(clientId))%nat
              by (rewrite HcId -Hid /toYjsId /=; word).
            rewrite (decide_False _ _ HcltGe) in Hloop.
            wp_auto.
@@ -790,12 +855,12 @@ Proof using Type*.
                        oright orid_ci with "[$Horight $Hcor]").
            case_bool_decide as HoeqR.
            ++ (* same right origin: integration points coincide -> break *)
-              have HoeqRR : origin_id (rightOrigin yi) = input.(in_rightOriginId)
+              have HoeqRR : origin_id (rightOrigin hh) = input.(in_rightOriginId)
                 by rewrite HoR -HoeqR Hin_r.
               rewrite (decide_True _ _ HoeqRR) in Hloop.
               injection Hloop as HdestL.
               wp_auto. subst destL.
-              iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+              iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
               wp_for_post.
               have Hdpos : (0 <= d)%Z by lia.
               replace (node_loc cells (d - 1)) with (node_loc cells (Z.of_nat destIdx - 1))
@@ -803,21 +868,21 @@ Proof using Type*.
               iApply "HΦ". iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
               rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done.
            ++ (* different right origin: keep scanning, anchor unchanged *)
-              have HneqRR : origin_id (rightOrigin yi) ≠ input.(in_rightOriginId).
+              have HneqRR : origin_id (rightOrigin hh) ≠ input.(in_rightOriginId).
               { rewrite HoR -Hin_r; move=> Heq; apply HoeqR; by rewrite Heq. }
               rewrite (decide_False _ _ HneqRR) in Hloop.
               wp_auto.
               wp_for_post.
-              iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+              iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
               iFrame "HΦ item".
-              iExists (S offset), ({[item_id yi]} ∪ idsB), ({[item_id yi]} ∪ conflictI), destL.
+              iExists (offset + length (ic_run ci))%nat, (S cur), (char_ids (ic_run ci) ∪ idsB), (char_ids (ic_run ci) ∪ conflictI), destL.
               rewrite /integrate_loop_inv /own_fresh_item_raw.
               iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_sl Hci_cap"; last first.
               { iFrame "Hitem Holeft Horight".
                 iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
               iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
               iSplitL "Hconflict".
-              { rewrite Hcr0. replace (leftIdx + Z.of_nat (S offset))%Z with (Z.to_nat (leftIdx + offset) + 1)%Z by lia. iFrame "Hconflict". }
+              { rewrite Hcr0. replace (Z.of_nat (S cur))%Z with (Z.of_nat cur + 1)%Z by lia. iFrame "Hconflict". }
               iSplitL "Hleft". { iFrame "Hleft". }
               iSplitL "Hright". { iFrame "Hright". }
               iSplitL "Hibo_ref Hibo_sl Hibo_cap".
@@ -827,10 +892,13 @@ Proof using Type*.
               { iExists ci_s2. iFrame "Hci_ref". iExists _. iFrame "Hci_sl Hci_cap". iPureIntro.
                 split; [exact Hci_wf2 | exact Hci_set2]. }
               iPureIntro; split_and!;
-                [lia | lia | lia | lia
-                | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia; exact Hloop].
+                [lia
+                | rewrite (run_flatten_take_S cells cur ci Hci) length_app; clear -Hcur; lia
+                | lia | lia | clear -Hdest Hunit_ci; lia
+                | rewrite Nat2Z.inj_add; clear -Hblockfits; lia
+                | exact Hloop].
       * (* different left origin from the new item *)
-        have HoLne : origin_id (origin yi) ≠ input.(in_originId)
+        have HoLne : origin_id (origin hh) ≠ input.(in_originId)
           by (rewrite HoL -Hin_l; move=> Heq; apply Hoeq; by rewrite Heq).
         rewrite (decide_False _ _ HoLne) in Hloop.
         rewrite HoL in Hloop.
@@ -839,7 +907,7 @@ Proof using Type*.
            iDestruct "Hcol" as "%Hcol_null".
            simpl in Hloop. injection Hloop as HdestL.
            wp_auto. rewrite Hcol_null. wp_auto. subst destL.
-           iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+           iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
            wp_for_post.
            have Hdpos : (0 <= d)%Z by lia.
            replace (node_loc cells (d - 1)) with (node_loc cells (Z.of_nat destIdx - 1))
@@ -850,35 +918,46 @@ Proof using Type*.
            iDestruct "Hcol" as "[%Hcol_nn #Hcol_pt]".
            simpl in Hloop.
            wp_auto. rewrite bool_decide_eq_false_2; last exact Hcol_nn. wp_auto.
+           (* the block-query bridge: the Go queries the whole run's span, [setfii]
+              decides the head-only set; they agree by the origin-clock invariant *)
+           have Horig_eq : origin_id (origin (run_head ci)) = Some (toYjsId idv)
+             by rewrite Hcolid_ci ?Hcoleft.
+           have Hquery_clk : clientId (toYjsId idv) = clientId (item_id hh) -> (clock (toYjsId idv) < S (clock (item_id hh)))%nat.
+           { move=> Hcl. have Hoc := Hoclk ci (list_elem_of_lookup_2 _ _ _ Hci).
+             have Hlt := Hoc (toYjsId idv) Horig_eq. rewrite Hrhead in Hlt. specialize (Hlt Hcl). lia. }
+           have Hbq_ibo : toYjsId idv ∈ char_ids (ic_run ci) ∪ idsB <-> toYjsId idv ∈ ({[item_id hh]} ∪ idsB : gset YjsId).
+           { rewrite Hrun. apply (block_query_head hh tl2 (toYjsId idv) idsB Hrunstep Hquery_clk). }
            wp_apply (wp_containsId _ _ _ _ Hibo_wf2 with "[$Hibo_sl]"). iIntros "Hibo_sl".
            rewrite Hibo_set2.
-           destruct (decide (toYjsId idv ∈ ({[item_id yi]} ∪ idsB : gset YjsId))) as [Hin_ibo | Hnin_ibo].
+           destruct (decide (toYjsId idv ∈ (char_ids (ic_run ci) ∪ idsB : gset YjsId))) as [Hin_ibo | Hnin_ibo].
            ++ (* conflict's left origin was already scanned (case 2) *)
               rewrite (bool_decide_eq_true_2 _ Hin_ibo).
-              (* the [destruct (decide ... ∈ idsB)] above already reduced Hloop's
-                 outer guard (it shares the Decision instance), so Hloop is now the
-                 inner [if decide (... ∉ conflictI)]. *)
+              have Hin_ibo_head : toYjsId idv ∈ ({[item_id hh]} ∪ idsB : gset YjsId) by apply Hbq_ibo.
+              rewrite (decide_True _ _ Hin_ibo_head) in Hloop.
               wp_auto.
+              have Hbq_ci : toYjsId idv ∈ char_ids (ic_run ci) ∪ conflictI <-> toYjsId idv ∈ ({[item_id hh]} ∪ conflictI : gset YjsId).
+              { rewrite Hrun. apply (block_query_head hh tl2 (toYjsId idv) conflictI Hrunstep Hquery_clk). }
               wp_apply (wp_containsId _ _ _ _ Hci_wf2 with "[$Hci_sl]"). iIntros "Hci_sl".
               rewrite Hci_set2.
-              destruct (decide (toYjsId idv ∈ ({[item_id yi]} ∪ conflictI : gset YjsId))) as [Hin_ci | Hnin_ci].
+              destruct (decide (toYjsId idv ∈ (char_ids (ic_run ci) ∪ conflictI : gset YjsId))) as [Hin_ci | Hnin_ci].
               ** (* already in conflictingItems: no anchor move, keep scanning (continue) *)
                  rewrite (bool_decide_eq_true_2 _ Hin_ci).
-                 have Hnn : ¬ (toYjsId idv ∉ ({[item_id yi]} ∪ conflictI : gset YjsId))
-                   by (move=> Hcontra; exact (Hcontra Hin_ci)).
+                 have Hin_ci_head : toYjsId idv ∈ ({[item_id hh]} ∪ conflictI : gset YjsId) by apply Hbq_ci.
+                 have Hnn : ¬ (toYjsId idv ∉ ({[item_id hh]} ∪ conflictI : gset YjsId))
+                   by (move=> Hcontra; exact (Hcontra Hin_ci_head)).
                  rewrite (decide_False _ _ Hnn) in Hloop.
                  wp_auto.
                  wp_for_post.
-                 iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+                 iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
                  iFrame "HΦ item".
-                 iExists (S offset), ({[item_id yi]} ∪ idsB), ({[item_id yi]} ∪ conflictI), destL.
+                 iExists (offset + length (ic_run ci))%nat, (S cur), (char_ids (ic_run ci) ∪ idsB), (char_ids (ic_run ci) ∪ conflictI), destL.
                  rewrite /integrate_loop_inv /own_fresh_item_raw.
                  iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_sl Hci_cap"; last first.
                  { iFrame "Hitem Holeft Horight".
                    iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
                  iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
                  iSplitL "Hconflict".
-                 { rewrite Hcr0. replace (leftIdx + Z.of_nat (S offset))%Z with (Z.to_nat (leftIdx + offset) + 1)%Z by lia. iFrame "Hconflict". }
+                 { rewrite Hcr0. replace (Z.of_nat (S cur))%Z with (Z.of_nat cur + 1)%Z by lia. iFrame "Hconflict". }
                  iSplitL "Hleft". { iFrame "Hleft". }
                  iSplitL "Hright". { iFrame "Hright". }
                  iSplitL "Hibo_ref Hibo_sl Hibo_cap".
@@ -888,27 +967,33 @@ Proof using Type*.
                  { iExists ci_s2. iFrame "Hci_ref". iExists _. iFrame "Hci_sl Hci_cap". iPureIntro.
                    split; [exact Hci_wf2 | exact Hci_set2]. }
                  iPureIntro; split_and!;
-                   [lia | lia | lia | lia
-                   | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia; exact Hloop].
+                   [lia
+                   | rewrite (run_flatten_take_S cells cur ci Hci) length_app; clear -Hcur; lia
+                   | lia | lia | clear -Hdest Hunit_ci; lia
+                   | rewrite Nat2Z.inj_add; clear -Hblockfits; lia
+                   | exact Hloop].
               ** (* not yet in conflictingItems: advance the anchor (left := conflict) *)
                  rewrite (bool_decide_eq_false_2 _ Hnin_ci).
-                 rewrite (decide_True _ _ Hnin_ci) in Hloop.
+                 have Hnin_ci_head : toYjsId idv ∉ ({[item_id hh]} ∪ conflictI : gset YjsId)
+                   by (move=> Hcontra; apply Hnin_ci; apply Hbq_ci; exact Hcontra).
+                 rewrite (decide_True _ _ Hnin_ci_head) in Hloop.
                  wp_auto.
                  wp_apply wp_slice_literal. iSplitR; first done.
                  iIntros "%ci_empty [Hci_empty Hci_empty_cap]". wp_auto.
                  wp_for_post.
-                 iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+                 iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
                  iFrame "HΦ item".
-                 iExists (S offset), ({[item_id yi]} ∪ idsB), ∅, (leftIdx + Z.of_nat offset + 1)%Z.
+                 iExists (offset + length (ic_run ci))%nat, (S cur), (char_ids (ic_run ci) ∪ idsB), ∅, (leftIdx + Z.of_nat (offset + length (ic_run ci)))%Z.
                  rewrite /integrate_loop_inv /own_fresh_item_raw.
                  iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_empty Hci_empty_cap"; last first.
                  { iFrame "Hitem Holeft Horight".
                    iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
                  iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
                  iSplitL "Hconflict".
-                 { rewrite Hcr0. replace (leftIdx + Z.of_nat (S offset))%Z with (Z.to_nat (leftIdx + offset) + 1)%Z by lia. iFrame "Hconflict". }
+                 { rewrite Hcr0. replace (Z.of_nat (S cur))%Z with (Z.of_nat cur + 1)%Z by lia. iFrame "Hconflict". }
                  iSplitL "Hleft".
-                 { replace (leftIdx + Z.of_nat offset + 1 - 1)%Z with (leftIdx + offset)%Z by lia. iFrame "Hleft". }
+                 { replace (leftIdx + Z.of_nat (offset + length (ic_run ci)) - 1)%Z with (Z.of_nat cur)%Z
+                     by (rewrite Hunit_ci; clear -Hcureq; lia). iFrame "Hleft". }
                  iSplitL "Hright". { iFrame "Hright". }
                  iSplitL "Hibo_ref Hibo_sl Hibo_cap".
                  { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
@@ -917,16 +1002,19 @@ Proof using Type*.
                  { iExists _. iFrame "Hci_ref". iExists ([] : list yjs.idSpan.t). iFrame "Hci_empty Hci_empty_cap".
                  iPureIntro. split; [constructor | done]. }
                  iPureIntro; split_and!;
-                   [lia | lia | lia | lia
-                   | replace (Z.to_nat (rightIdx - leftIdx) - S offset)%nat with count' by lia;
-                     replace (leftIdx + Z.of_nat offset + 1)%Z with (Z.of_nat (Z.to_nat (leftIdx + offset) + 1)) by lia;
-                     exact Hloop].
+                   [lia
+                   | rewrite (run_flatten_take_S cells cur ci Hci) length_app; clear -Hcur; lia
+                   | lia | lia | lia
+                   | rewrite Nat2Z.inj_add; clear -Hblockfits; lia
+                   | exact Hloop].
            ++ (* conflict's left origin is before this run: origins cross -> break *)
               rewrite (bool_decide_eq_false_2 _ Hnin_ibo).
-              (* the [destruct] already reduced Hloop's guard to its else branch. *)
+              have Hnin_ibo_head : toYjsId idv ∉ ({[item_id hh]} ∪ idsB : gset YjsId)
+                by (move=> Hcontra; apply Hnin_ibo; apply Hbq_ibo; exact Hcontra).
+              rewrite (decide_False _ _ Hnin_ibo_head) in Hloop.
               injection Hloop as HdestL.
               wp_auto. subst destL.
-              iEval (rewrite Hci_loc) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+              iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
               wp_for_post.
               have Hdpos : (0 <= d)%Z by lia.
               replace (node_loc cells (d - 1)) with (node_loc cells (Z.of_nat destIdx - 1))
