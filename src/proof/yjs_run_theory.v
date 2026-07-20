@@ -1001,4 +1001,95 @@ Proof.
     apply elem_of_union. left. apply elem_of_union. left. exact Hin.
 Qed.
 
+(* ===== the per-char ops of a multi-element wire item (issue #28 U7) ====== *)
+
+(** [ops_from cl ck oid rid chars]: the per-char ops of a run of [chars]
+    minted by client [cl] from clock [ck]: char [k] gets id [(cl, ck + k)],
+    the first op keeps the wire left origin [oid], each later op chains off
+    the previous char, and every op shares the wire right origin [rid]
+    (y-octo run semantics, the same shape [Text.Insert]'s loop mints). *)
+Fixpoint ops_from (cl ck : nat) (oid rid : option YjsId) (chars : list A) :
+    list (IntegrateInput (A := A)) :=
+  match chars with
+  | [] => []
+  | ch :: rest =>
+      MkIntegrateInput oid rid ch (MkYjsId cl ck)
+        :: ops_from cl (S ck) (Some (MkYjsId cl ck)) rid rest
+  end.
+
+(** The ops a wire item [input] denotes when its content splits into
+    [chars] (on the instantiated side, [explode] of the node's string). *)
+Definition ops_of_input (input : IntegrateInput (A := A)) (chars : list A) :
+    list (IntegrateInput (A := A)) :=
+  ops_from (clientId (in_id input)) (clock (in_id input))
+           (in_originId input) (in_rightOriginId input) chars.
+
+Lemma ops_from_length cl ck oid rid (chars : list A) :
+  length (ops_from cl ck oid rid chars) = length chars.
+Proof.
+  elim: chars cl ck oid rid => [| ch chars IH] cl ck oid rid; simpl; [done |].
+  rewrite IH //.
+Qed.
+
+(** Per-op field facts, by position. *)
+Lemma ops_from_lookup cl ck oid rid (chars : list A) (k : nat)
+    (op : IntegrateInput (A := A)) :
+  ops_from cl ck oid rid chars !! k = Some op ->
+  in_id op = MkYjsId cl (ck + k)%nat ∧
+  in_rightOriginId op = rid ∧
+  chars !! k = Some (in_content op) ∧
+  (k = 0%nat -> in_originId op = oid) ∧
+  (forall k', k = S k' -> in_originId op = Some (MkYjsId cl (ck + k')%nat)).
+Proof.
+  elim: chars cl ck oid rid k op => [| ch chars IH] cl ck oid rid k op; simpl;
+    first by rewrite lookup_nil.
+  destruct k as [| k].
+  - move=> [= <-]. simpl.
+    split_and!; [by rewrite Nat.add_0_r | done | done | done | lia].
+  - move=> Hk.
+    destruct (IH cl (S ck) (Some (MkYjsId cl ck)) rid k op Hk)
+      as (Hid & Hrid & Hch & Ho0 & Hos).
+    split_and!.
+    + rewrite Hid. f_equal. lia.
+    + exact Hrid.
+    + exact Hch.
+    + lia.
+    + move=> k' [= <-].
+      destruct k as [| k2].
+      * rewrite (Ho0 eq_refl). do 2 f_equal. lia.
+      * rewrite (Hos k2 eq_refl). do 2 f_equal. lia.
+Qed.
+
+(** The whole run is [chained_after] whatever the head origin names. *)
+Lemma ops_from_chained cl ck (prev : YjsId) rid (chars : list A) :
+  chained_after prev rid (ops_from cl ck (Some prev) rid chars).
+Proof.
+  elim: chars ck prev => [| ch chars IH] ck prev; first done.
+  simpl. split_and!; [done | done | exact (IH (S ck) (MkYjsId cl ck))].
+Qed.
+
+(** The minted ids are pairwise distinct (consecutive clocks). *)
+Lemma ops_from_ids_nodup cl ck oid rid (chars : list A) :
+  NoDup (input_ids (ops_from cl ck oid rid chars)).
+Proof.
+  have Hgen : forall (l : list A) (ck0 : nat) (oid0 : option YjsId),
+      NoDup (input_ids (ops_from cl ck0 oid0 rid l)) ∧
+      (forall idx inp, ops_from cl ck0 oid0 rid l !! idx = Some inp ->
+         (ck0 <= clock (in_id inp))%nat).
+  { elim => [| ch l IHl] ck0 oid0.
+    - split; [apply NoDup_nil; done | by move=> idx inp; rewrite lookup_nil].
+    - destruct (IHl (S ck0) (Some (MkYjsId cl ck0))) as [Hnd Hlb].
+      split.
+      + rewrite /input_ids fmap_cons. apply NoDup_cons. split; last exact Hnd.
+        move=> Hin. apply list_elem_of_fmap in Hin as (inp & Heq & Hinp).
+        apply list_elem_of_lookup_1 in Hinp as [idx Hidx].
+        have Hle := Hlb idx inp Hidx.
+        have Hck : clock (in_id inp) = ck0 by rewrite -Heq //.
+        lia.
+      + move=> idx inp. destruct idx as [| idx].
+        * move=> [= <-]. simpl. lia.
+        * move=> Hidx. have := Hlb idx inp Hidx. simpl. lia. }
+  exact (proj1 (Hgen chars ck oid)).
+Qed.
+
 End run_theory.
