@@ -422,6 +422,123 @@ Proof.
   exact (doc_interp_proj h s t Hs).
 Qed.
 
+(* ===== history-size bound (issue #28 U5): the replayed document holds at
+   most one item per history event ========================================= *)
+
+Lemma insertIdxIfInBounds_length (n : nat) (x : YjsItem A) (l : list (YjsItem A)) :
+  (length (insertIdxIfInBounds n x l) <= S (length l))%nat.
+Proof.
+  rewrite /insertIdxIfInBounds. case_decide; last lia.
+  rewrite length_app /= length_take length_drop. lia.
+Qed.
+
+Lemma yjs_op_effect_size (op : @YjsOperation A) (st st' : YjsState A) :
+  yjs_op_effect op st st' -> (length (st_items st') <= S (length (st_items st)))%nat.
+Proof.
+  destruct op as [input | id did]; rewrite /yjs_op_effect.
+  - rewrite /YjsState_insert /integrateSafe.
+    destruct (isClockSafe (in_id input) (st_items st)); last done.
+    rewrite /integrate.
+    destruct (findLeftIdx (in_originId input) (st_items st)) as [li|]; simpl; try done.
+    destruct (findRightIdx (in_rightOriginId input) (st_items st)) as [ri|]; simpl; try done.
+    destruct (findIntegratedIndex li ri input (st_items st)) as [di|]; simpl; try done.
+    destruct (mkItemByIndex li ri input (st_items st)) as [it|]; simpl; try done.
+    move=> [= <-]. simpl. apply insertIdxIfInBounds_length.
+  - move=> ->. simpl. lia.
+Qed.
+
+(** Total number of items across a doc state. *)
+Definition doc_total_size (s : gmap TId (YjsState A)) : nat :=
+  map_fold (λ _ st acc, (length (st_items st) + acc)%nat) 0%nat s.
+
+Lemma doc_total_size_insert (s : gmap TId (YjsState A)) (t : TId) (st' : YjsState A) :
+  doc_total_size (<[t := st']> s)
+  = (length (st_items st') + doc_total_size (delete t s))%nat.
+Proof.
+  rewrite /doc_total_size -insert_delete_eq map_fold_insert_L.
+  - done.
+  - move=> j1 j2 z1 z2 y Hne. lia.
+  - apply lookup_delete_eq.
+Qed.
+
+Lemma doc_total_size_get (s : gmap TId (YjsState A)) (t : TId) :
+  doc_total_size s
+  = (length (st_items (doc_get s t)) + doc_total_size (delete t s))%nat.
+Proof.
+  destruct (s !! t) as [st|] eqn:Ht.
+  - rewrite -{1}(insert_id s t st Ht) doc_total_size_insert /doc_get Ht //.
+  - rewrite delete_id // /doc_get Ht /=. lia.
+Qed.
+
+Lemma doc_op_effect_total_size (op : Op) (s s' : gmap TId (YjsState A)) :
+  op_effect O op s s' -> (doc_total_size s' <= S (doc_total_size s))%nat.
+Proof.
+  move=> [st' [Heff ->]].
+  have Hstep := yjs_op_effect_size op.2 (doc_get s op.1) st' Heff.
+  rewrite doc_total_size_insert (doc_total_size_get s op.1). lia.
+Qed.
+
+Lemma effect_list_total_size (l : list Op) (init s : gmap TId (YjsState A)) :
+  effect_list O l init s -> (doc_total_size s <= doc_total_size init + length l)%nat.
+Proof.
+  move: init. induction l as [|op l IH] => init Heff.
+  - move: Heff => /(effect_list_nil O) ->. lia.
+  - move: Heff => /(effect_list_cons O) [mmid [Hop Hrest]].
+    have H1 := doc_op_effect_total_size op init mmid Hop.
+    have H2 := IH mmid Hrest. simpl. lia.
+Qed.
+
+(** The state replayed from a history holds at most [length h] items. *)
+Lemma history_interp_total_size h (s : gmap TId (YjsState A)) :
+  interpHistory O h (op_init O) s -> (doc_total_size s <= length h)%nat.
+Proof.
+  rewrite /interpHistory => Heff.
+  have H1 := effect_list_total_size (omap deliverP h) (op_init O) s Heff.
+  have H2 : ∀ h0, (length (omap deliverP h0) <= length h0)%nat.
+  { clear. elim=> [| e h0 IHh]; cbn; [lia |].
+    destruct (deliverP e); cbn; lia. }
+  have H0 : doc_total_size (op_init O) = 0%nat
+    by rewrite /doc_total_size map_fold_empty.
+  have := H2 h. lia.
+Qed.
+
+(** Per-type-list version for the store-side consumers: a duplicate-free
+    family of types holds at most [length h] items in total. *)
+Lemma history_state_coh_size_list h (m : DocM) (ts : list TId) :
+  history_state_coh h m -> NoDup ts ->
+  (foldr (λ t acc, (length (docm_get m t) + acc)%nat) 0%nat ts <= length h)%nat.
+Proof.
+  move=> [s [Hs Hm]] Hnd.
+  have Hbound := history_interp_total_size h s Hs.
+  have Hsuff : ∀ (ts0 : list TId) (s0 : gmap TId (YjsState A)), NoDup ts0 ->
+      (foldr (λ t acc, (length (st_items (doc_get s0 t)) + acc)%nat) 0%nat ts0
+       <= doc_total_size s0)%nat.
+  { induction ts0 as [|t ts0 IH] => s0 Hnd0.
+    - simpl. lia.
+    - apply NoDup_cons in Hnd0. destruct Hnd0 as [Hnotin Hnd'].
+      simpl.
+      have Hrest : ∀ (ts1 : list TId), t ∉ ts1 ->
+          foldr (λ t' acc, (length (st_items (doc_get s0 t')) + acc)%nat) 0%nat ts1
+        = foldr (λ t' acc, (length (st_items (doc_get (delete t s0) t')) + acc)%nat) 0%nat ts1.
+      { induction ts1 as [|t' ts1 IHts] => Hnotin1; simpl; [done |].
+        f_equal.
+        - have Hne : t' ≠ t.
+          { move=> Heq. apply Hnotin1. apply elem_of_cons. left. by rewrite Heq. }
+          rewrite /doc_get lookup_delete_ne //.
+        - apply IHts. move=> Hin. apply Hnotin1. apply elem_of_cons. by right. }
+      rewrite (Hrest ts0 Hnotin).
+      have Hihd : (foldr (λ t' acc, (length (st_items (doc_get (delete t s0) t')) + acc)%nat) 0%nat ts0
+                   <= doc_total_size (delete t s0))%nat.
+      { apply IH. exact Hnd'. }
+      rewrite (doc_total_size_get s0 t). lia. }
+  have Heq : ∀ ts1 : list TId,
+      foldr (λ t acc, (length (docm_get m t) + acc)%nat) 0%nat ts1
+    = foldr (λ t acc, (length (st_items (doc_get s t)) + acc)%nat) 0%nat ts1.
+  { induction ts1 as [|t1 ts1 IHts]; simpl; [done | rewrite -(Hm t1) IHts //]. }
+  rewrite (Heq ts).
+  have := Hsuff ts s Hnd. lia.
+Qed.
+
 (** Appending a broadcast event does not change the replayed state. *)
 Lemma interpHistory_snoc_broadcast h op (init s : op_State O) :
   interpHistory O h init s -> interpHistory O (h ++ [EvBroadcast op]) init s.

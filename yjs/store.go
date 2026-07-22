@@ -134,10 +134,27 @@ func itemPtrEqual(a *item, b *item) bool {
 	return a.id.Equal(b.id)
 }
 
-// containsId reports membership in an id set represented as a slice.
-func containsId(s []id, id id) bool {
+// idSpan is one scanned node's id range: the clock interval
+// [id.clock, id.clock+len) of the node's run, at the node's client.
+//
+// yjs keeps item REFERENCES in itemsBeforeOrigin / conflictingItems and
+// resolves origin membership through getItem (an id addresses ANY char of an
+// item's run), so membership is clock-range membership. y-octo instead stores
+// raw head ids and tests raw-id equality (HashSet<Id>::contains), which
+// misses an origin pointing into the middle of a multi-char run (candidate
+// upstream bug, see docs/plan-issue-28-runs-split.md); cert-yjs follows the
+// yjs semantics. The (head id, run length) span carries exactly what the
+// range test needs without holding an item reference.
+type idSpan struct {
+	id  id
+	len uint64
+}
+
+// containsId reports whether id addresses a char of any span in s
+// (yjs: getItem semantics).
+func containsId(s []idSpan, id id) bool {
 	for _, x := range s {
-		if x.Equal(id) {
+		if x.id.clientId == id.clientId && x.id.clock <= id.clock && id.clock < x.id.clock+x.len {
 			return true
 		}
 	}
@@ -182,19 +199,20 @@ func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 	n.right = right
 	// Insert the right node into the client's run list just after n
 	// (y-octo: items.insert(index + 1, right)), keeping it clock-sorted.
-	// Built by copying the prefix and suffix into a fresh, pre-sized slice
-	// (rather than the in-place grow+copy+set idiom, or appends into a nil
-	// slice) so every copy is between DISJOINT backing arrays: the standard
-	// wp_slice_copy models it directly, with no overlapping-copy or
-	// append-into-nil edge case. Same result as items.insert(index+1, right).
+	// Built by appending the prefix, the new node, and the suffix into a
+	// fresh nil slice (rather than the in-place grow+copy+set idiom, or a
+	// pre-sized make): every copy is between DISJOINT backing arrays, and
+	// unlike make(len+1) the appends carry no slice-length-fit side
+	// condition (goose models append's growth with an overflow assume, the
+	// same way AddNode's append is handled), so callers such as
+	// Text.Delete's range-end split need no externally supplied capacity
+	// bound. Same result as items.insert(index+1, right).
 	nodes := s.items[n.id.clientId]
 	index, _ := getNodeIndex(nodes, n.id.clock)
-	prefix := nodes[:index+1]
-	suffix := nodes[index+1:]
-	newNodes := make([]*item, uint64(len(nodes))+1)
-	copy(newNodes, prefix)
-	newNodes[index+1] = right
-	copy(newNodes[index+2:], suffix)
+	var newNodes []*item
+	newNodes = append(newNodes, nodes[:index+1]...)
+	newNodes = append(newNodes, right)
+	newNodes = append(newNodes, nodes[index+1:]...)
 	s.items[n.id.clientId] = newNodes
 	return n, right
 }
@@ -281,22 +299,22 @@ func (s *store) repair(it *item, parentName *string) {
 // counterpart of setfindIntegratedIndex; extracted from findIntegrationLeft so
 // the scan can be verified against the pure set-based loop in isolation.
 func scanConflicts(item *item, left *item, conflict *item, right *item) *item {
-	conflictingItems := []id{}
-	itemsBeforeOrigin := []id{}
+	conflictingItems := []idSpan{}
+	itemsBeforeOrigin := []idSpan{}
 
 	for conflict != nil {
 		if itemPtrEqual(conflict, right) {
 			break
 		}
-		conflictId := conflict.id
-		itemsBeforeOrigin = append(itemsBeforeOrigin, conflictId)
-		conflictingItems = append(conflictingItems, conflictId)
+		span := idSpan{id: conflict.id, len: conflict.Len()}
+		itemsBeforeOrigin = append(itemsBeforeOrigin, span)
+		conflictingItems = append(conflictingItems, span)
 
 		if idOptEqual(item.originLeftId, conflict.originLeftId) {
 			// Same left origin: the smaller client id goes first.
 			if conflict.id.clientId < item.id.clientId {
 				left = conflict
-				conflictingItems = []id{}
+				conflictingItems = []idSpan{}
 			} else if idOptEqual(item.originRightId, conflict.originRightId) {
 				// Same integration points; item is to the left of conflict.
 				break
@@ -306,7 +324,7 @@ func scanConflicts(item *item, left *item, conflict *item, right *item) *item {
 			col := *conflict.originLeftId
 			if !containsId(conflictingItems, col) {
 				left = conflict
-				conflictingItems = []id{}
+				conflictingItems = []idSpan{}
 			}
 		} else {
 			// conflict's left origin is before this run (or absent): the

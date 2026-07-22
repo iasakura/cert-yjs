@@ -947,4 +947,273 @@ Proof.
       done.
 Qed.
 
+(* ===== block-query bridging (issue #28 M4, stage C1a) =====================
+   The Go scan appends the WHOLE scanned run's id span to its sets before
+   querying the conflict's left origin, so the heap test runs against
+   [char_ids (h :: tail) ∪ X] while [setfii_block_step]'s decisions read
+   [{[item_id h]} ∪ X] (the char-level accumulator at the head). The two
+   agree because the queried id can never be a TAIL char of the very run
+   being scanned: tail ids share the head's client with strictly larger
+   clocks ([run_step]), and a head's same-client left origin has a strictly
+   smaller clock (causal creation order; supplied by the caller as
+   [Horiginclk], sourced from the store's origin-clock invariant). *)
+
+(** Along a [run_step] chain, every tail char's id is the head's client with
+    clock [clock h + k + 1]. *)
+Lemma run_step_tail_ids (h : YjsItem A) (tail : list (YjsItem A)) :
+  run_step (h :: tail) ->
+  forall k y, tail !! k = Some y ->
+    clientId (item_id y) = clientId (item_id h) ∧
+    clock (item_id y) = (clock (item_id h) + k + 1)%nat.
+Proof.
+  intros Hstep k. revert h tail Hstep.
+  induction k as [|k' IH]; intros h tail Hstep y Hk;
+    (destruct tail as [|c tail']; first by rewrite lookup_nil in Hk).
+  - injection Hk as <-.
+    destruct (Hstep 0%nat h c eq_refl eq_refl) as (Hidc & _ & _).
+    rewrite Hidc /=. split; [done | lia].
+  - simpl in Hk.
+    have Hstep' : run_step (c :: tail') := run_step_tail h (c :: tail') Hstep.
+    destruct (IH c tail' Hstep' y Hk) as [Hcl Hck].
+    destruct (Hstep 0%nat h c eq_refl eq_refl) as (Hidc & _ & _).
+    rewrite Hcl Hck Hidc /=. split; [done | lia].
+Qed.
+
+(** The heap query against the block-absorbed set equals the pure query
+    against the head-only set. *)
+Lemma block_query_head (h : YjsItem A) (tail : list (YjsItem A))
+    (col : YjsId) (X : gset YjsId) :
+  run_step (h :: tail) ->
+  (clientId col = clientId (item_id h) -> (clock col < S (clock (item_id h)))%nat) ->
+  col ∈ char_ids (h :: tail) ∪ X <-> col ∈ ({[item_id h]} ∪ X : gset YjsId).
+Proof.
+  move=> Hstep Hclk.
+  rewrite char_ids_cons.
+  split.
+  - move=> Hin. apply elem_of_union in Hin as [Hin | Hin]; last set_solver.
+    apply elem_of_union in Hin as [Hin | Hin]; first set_solver.
+    exfalso.
+    apply elem_of_list_to_set, list_elem_of_fmap in Hin as (y & -> & Hy).
+    apply list_elem_of_lookup_1 in Hy as [k Hk].
+    destruct (run_step_tail_ids h tail Hstep k y Hk) as [Hcl Hck].
+    have := Hclk Hcl. lia.
+  - move=> Hin. apply elem_of_union in Hin as [Hin | Hin]; last set_solver.
+    apply elem_of_union. left. apply elem_of_union. left. exact Hin.
+Qed.
+
+(* ===== the per-char ops of a multi-element wire item (issue #28 U7) ====== *)
+
+(** [ops_from cl ck oid rid chars]: the per-char ops of a run of [chars]
+    minted by client [cl] from clock [ck]: char [k] gets id [(cl, ck + k)],
+    the first op keeps the wire left origin [oid], each later op chains off
+    the previous char, and every op shares the wire right origin [rid]
+    (y-octo run semantics, the same shape [Text.Insert]'s loop mints). *)
+Fixpoint ops_from (cl ck : nat) (oid rid : option YjsId) (chars : list A) :
+    list (IntegrateInput (A := A)) :=
+  match chars with
+  | [] => []
+  | ch :: rest =>
+      MkIntegrateInput oid rid ch (MkYjsId cl ck)
+        :: ops_from cl (S ck) (Some (MkYjsId cl ck)) rid rest
+  end.
+
+(** The ops a wire item [input] denotes when its content splits into
+    [chars] (on the instantiated side, [explode] of the node's string). *)
+Definition ops_of_input (input : IntegrateInput (A := A)) (chars : list A) :
+    list (IntegrateInput (A := A)) :=
+  ops_from (clientId (in_id input)) (clock (in_id input))
+           (in_originId input) (in_rightOriginId input) chars.
+
+Lemma ops_from_length cl ck oid rid (chars : list A) :
+  length (ops_from cl ck oid rid chars) = length chars.
+Proof.
+  elim: chars cl ck oid rid => [| ch chars IH] cl ck oid rid; simpl; [done |].
+  rewrite IH //.
+Qed.
+
+(** Per-op field facts, by position. *)
+Lemma ops_from_lookup cl ck oid rid (chars : list A) (k : nat)
+    (op : IntegrateInput (A := A)) :
+  ops_from cl ck oid rid chars !! k = Some op ->
+  in_id op = MkYjsId cl (ck + k)%nat ∧
+  in_rightOriginId op = rid ∧
+  chars !! k = Some (in_content op) ∧
+  (k = 0%nat -> in_originId op = oid) ∧
+  (forall k', k = S k' -> in_originId op = Some (MkYjsId cl (ck + k')%nat)).
+Proof.
+  elim: chars cl ck oid rid k op => [| ch chars IH] cl ck oid rid k op; simpl;
+    first by rewrite lookup_nil.
+  destruct k as [| k].
+  - move=> [= <-]. simpl.
+    split_and!; [by rewrite Nat.add_0_r | done | done | done | lia].
+  - move=> Hk.
+    destruct (IH cl (S ck) (Some (MkYjsId cl ck)) rid k op Hk)
+      as (Hid & Hrid & Hch & Ho0 & Hos).
+    split_and!.
+    + rewrite Hid. f_equal. lia.
+    + exact Hrid.
+    + exact Hch.
+    + lia.
+    + move=> k' [= <-].
+      destruct k as [| k2].
+      * rewrite (Ho0 eq_refl). do 2 f_equal. lia.
+      * rewrite (Hos k2 eq_refl). do 2 f_equal. lia.
+Qed.
+
+(** The whole run is [chained_after] whatever the head origin names. *)
+Lemma ops_from_chained cl ck (prev : YjsId) rid (chars : list A) :
+  chained_after prev rid (ops_from cl ck (Some prev) rid chars).
+Proof.
+  elim: chars ck prev => [| ch chars IH] ck prev; first done.
+  simpl. split_and!; [done | done | exact (IH (S ck) (MkYjsId cl ck))].
+Qed.
+
+(** The minted ids are pairwise distinct (consecutive clocks). *)
+Lemma ops_from_ids_nodup cl ck oid rid (chars : list A) :
+  NoDup (input_ids (ops_from cl ck oid rid chars)).
+Proof.
+  have Hgen : forall (l : list A) (ck0 : nat) (oid0 : option YjsId),
+      NoDup (input_ids (ops_from cl ck0 oid0 rid l)) ∧
+      (forall idx inp, ops_from cl ck0 oid0 rid l !! idx = Some inp ->
+         (ck0 <= clock (in_id inp))%nat).
+  { elim => [| ch l IHl] ck0 oid0.
+    - split; [apply NoDup_nil; done | by move=> idx inp; rewrite lookup_nil].
+    - destruct (IHl (S ck0) (Some (MkYjsId cl ck0))) as [Hnd Hlb].
+      split.
+      + rewrite /input_ids fmap_cons. apply NoDup_cons. split; last exact Hnd.
+        move=> Hin. apply list_elem_of_fmap in Hin as (inp & Heq & Hinp).
+        apply list_elem_of_lookup_1 in Hinp as [idx Hidx].
+        have Hle := Hlb idx inp Hidx.
+        have Hck : clock (in_id inp) = ck0 by rewrite -Heq //.
+        lia.
+      + move=> idx inp. destruct idx as [| idx].
+        * move=> [= <-]. simpl. lia.
+        * move=> Hidx. have := Hlb idx inp Hidx. simpl. lia. }
+  exact (proj1 (Hgen chars ck oid)).
+Qed.
+
+(** The 1-char bridge: a single-char wire item denotes exactly itself, and
+    the fold collapses to one step (what the pre-U7 callers integrate). *)
+Lemma ops_of_input_singleton (input : IntegrateInput (A := A)) :
+  ops_of_input input [in_content input] = [input].
+Proof.
+  rewrite /ops_of_input /=.
+  destruct input as [o r c [cl ck]] => //.
+Qed.
+
+Lemma integrate_all_singleton (i : IntegrateInput (A := A)) (arr : list (YjsItem A)) :
+  integrate_all [i] arr = integrate i arr.
+Proof. simpl. destruct (integrate i arr) => //. Qed.
+
+(** [toItem] resolves only the origins (id / content are copied through), so two
+    inputs sharing both origin ids resolve to the same pointers. This bridges a
+    wire item to its per-char head op (issue #28 U7c): they share origins and
+    id, differing only in content. *)
+Lemma toItem_content_swap (a b : IntegrateInput (A := A))
+    (arr : list (YjsItem A)) (ita : YjsItem A) :
+  in_originId a = in_originId b ->
+  in_rightOriginId a = in_rightOriginId b ->
+  toItem a arr = Some ita ->
+  toItem b arr = Some (Item (origin ita) (rightOrigin ita) (in_id b) (in_content b)).
+Proof.
+  rewrite /toItem => Ho Hr. rewrite -Ho -Hr.
+  case: (match in_originId a with
+         | Some id => itemPtr <$> find_by_id id arr | None => Some First end) => [optr|] //=.
+  case: (match in_rightOriginId a with
+         | Some id => itemPtr <$> find_by_id id arr | None => Some Last end) => [rptr|] //=.
+  by move=> [<-].
+Qed.
+
+(** [maximalId] reads only the item's id, so it transfers along equal ids
+    (issue #28 U7c: the wire item's head op shares its id). *)
+Lemma maximalId_id_irrel (a b : YjsItem A) (arr : list (YjsItem A)) :
+  item_id a = item_id b -> maximalId a arr -> maximalId b arr.
+Proof.
+  rewrite /maximalId => Hid Hm x Hx Hcc.
+  rewrite -Hid. apply Hm; [exact Hx | rewrite Hid; exact Hcc].
+Qed.
+
+(** Insert-at variants of the splice shifts: the HEAD of a run lands at an
+    arbitrary scan position [d] (take d ++ new :: drop d), not after an
+    anchor, so the right-origin index and pointer shift under that form
+    (issue #28 U7). *)
+Lemma findRightIdx_insert_shift arr (d : nat) (newit : YjsItem A)
+    (rid : option YjsId) (rightIdx : Z) :
+  (d <= length arr)%nat ->
+  (Z.of_nat d <= rightIdx)%Z ->
+  findRightIdx rid arr = Some rightIdx ->
+  (forall z, z ∈ arr -> item_id z ≠ item_id newit) ->
+  findRightIdx rid (take d arr ++ newit :: drop d arr) = Some (rightIdx + 1)%Z.
+Proof.
+  move=> Hd Hdr Hri Hfresh.
+  move: Hri. rewrite /findRightIdx.
+  destruct rid as [r_id|]; last first.
+  { move=> [= <-]. rewrite length_app /= length_take length_drop. f_equal. lia. }
+  destruct (list_find (fun it => item_id it = r_id) arr) as [[k R]|] eqn:Hfind; last done.
+  move=> [= HrIdx].
+  apply list_find_Some in Hfind. destruct Hfind as (Hk & HidR & Hfirst).
+  have Hkarr : (k < length arr)%nat by (apply lookup_lt_Some in Hk).
+  have Hdk : (d <= k)%nat by lia.
+  have Hfind' : list_find (fun it => item_id it = r_id)
+                  (take d arr ++ newit :: drop d arr) = Some (S k, R).
+  { apply list_find_Some. split_and!.
+    - rewrite lookup_app_r; last (rewrite length_take; lia).
+      rewrite length_take Nat.min_l; last lia.
+      have -> : (S k - d)%nat = S (k - d)%nat by lia.
+      rewrite /= lookup_drop.
+      have -> : (d + (k - d))%nat = k by lia.
+      exact Hk.
+    - exact HidR.
+    - move=> i y Hlook Hilt.
+      destruct (decide (i < d)%nat) as [Hid2 | Hid2].
+      + rewrite lookup_app_l in Hlook; last (rewrite length_take; lia).
+        rewrite lookup_take_lt in Hlook; last lia.
+        apply (Hfirst i y Hlook). lia.
+      + rewrite lookup_app_r in Hlook; last (rewrite length_take; lia).
+        rewrite length_take Nat.min_l in Hlook; last lia.
+        destruct (decide (i = d)) as [-> | Hne].
+        * rewrite Nat.sub_diag /= in Hlook.
+          injection Hlook as <-.
+          move=> HidN.
+          have HRin : R ∈ arr := list_elem_of_lookup_2 _ _ _ Hk.
+          exact (Hfresh R HRin (eq_trans HidR (eq_sym HidN))).
+        * have Hsub : (i - d)%nat = S (i - d - 1)%nat by lia.
+          rewrite Hsub /= lookup_drop in Hlook.
+          apply (Hfirst (d + (i - d - 1))%nat y Hlook). lia. }
+  rewrite Hfind' /=. f_equal. lia.
+Qed.
+
+Lemma getPtrExcept_insert_shift arr (d : nat) (newit : YjsItem A)
+    (rightIdx : Z) (rptr : YjsPtr A) :
+  (d <= length arr)%nat ->
+  (Z.of_nat d <= rightIdx)%Z ->
+  getPtrExcept arr rightIdx = Some rptr ->
+  getPtrExcept (take d arr ++ newit :: drop d arr) (rightIdx + 1) = Some rptr.
+Proof.
+  move=> Hd Hdr.
+  rewrite /getPtrExcept.
+  have Hlen1 : length (take d arr ++ newit :: drop d arr) = S (length arr)
+    by (rewrite length_app /= length_take length_drop; lia).
+  destruct (decide (rightIdx = -1)%Z) as [-> | Hne1]; first lia.
+  destruct (decide (rightIdx = Z.of_nat (length arr))%Z) as [-> | Hne2].
+  - move=> [= <-].
+    rewrite decide_False; last lia.
+    rewrite decide_True; last (rewrite Hlen1; lia).
+    done.
+  - move=> Hlook.
+    rewrite decide_False; last lia.
+    rewrite decide_False; last (rewrite Hlen1; lia).
+    have Hrn : (Z.to_nat rightIdx < length arr)%nat.
+    { destruct (arr !! Z.to_nat rightIdx) eqn:Hx; last done.
+      apply lookup_lt_Some in Hx. exact Hx. }
+    rewrite -Hlook.
+    have -> : Z.to_nat (rightIdx + 1) = S (Z.to_nat rightIdx) by lia.
+    f_equal.
+    rewrite lookup_app_r; last (rewrite length_take; lia).
+    rewrite length_take Nat.min_l; last lia.
+    have -> : (S (Z.to_nat rightIdx) - d)%nat = S (Z.to_nat rightIdx - d)%nat by lia.
+    rewrite /= lookup_drop.
+    f_equal. lia.
+Qed.
+
 End run_theory.

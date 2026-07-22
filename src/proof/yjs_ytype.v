@@ -128,7 +128,7 @@ Lemma wp_yType__findPos (parent : loc) (dq : dfrac) (cells : list item_cell)
       ⌜lft = node_loc cells (Z.of_nat p - 1)⌝ ∗
       ⌜rgt = node_loc cells (Z.of_nat p)⌝ ∗
       ⌜off = W64 0 ∨
-       (0 < uint.Z off)%Z ∧
+       (0 < uint.Z off)%Z ∧ (1 <= p)%nat ∧
        (∃ c, cells !! (p - 1)%nat = Some c ∧ ic_deleted c = false ∧
              (uint.nat off < length (ic_run c))%nat)⌝ }}}.
 Proof.
@@ -205,7 +205,7 @@ Proof.
           "Hoffp" ∷ offset_ptr ↦ off ∗
           "%Hq2" ∷ ⌜(q2 <= length (c0 :: cs))%nat⌝ ∗
           "%Hoffinv" ∷ ⌜off = W64 0 ∨
-             (0 < uint.Z off)%Z ∧ rem = W64 0 ∧
+             (0 < uint.Z off)%Z ∧ rem = W64 0 ∧ (1 <= q2)%nat ∧
              (∃ c, (c0 :: cs) !! (q2 - 1)%nat = Some c ∧ ic_deleted c = false ∧
                    (uint.nat off < length (ic_run c))%nat)⌝)%I
           with "[Hp Hdll Hleftp Hrightp remaining offset]" as "IH".
@@ -218,7 +218,7 @@ Proof.
             iSplitR "".
             { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
             iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity |].
-            destruct Hoffinv as [-> | (Hpos & _ & Hc)]; [by left | right; exact (conj Hpos Hc)]. }
+            destruct Hoffinv as [-> | (Hpos & _ & Hq21 & Hc)]; [by left | right; exact (conj Hpos (conj Hq21 Hc))]. }
         wp_auto.
         have Hoff0 : off = W64 0.
         { destruct Hoffinv as [-> | (_ & Hrem0 & _)]; [done | exfalso; rewrite Hrem0 in Hrem; word]. }
@@ -260,7 +260,7 @@ Proof.
               have Hrlen : length (ic_run c2) = length (iv2.(yjs.item.content').(yjs.content.content')).
               { by rewrite -(length_fmap content (ic_run c2)) Hc2cont /toContent explode_length. }
               split; [lia |]. right.
-              split_and!; [word | done |].
+              split_and!; [word | done | lia |].
               exists c2. replace (S q2 - 1)%nat with q2 by lia.
               split_and!; [exact Hc2 | exact Hd2 | rewrite Hrlen; word].
             - (* Len <= remaining: spend the whole node (the else branch
@@ -298,7 +298,7 @@ Proof.
           "Hoffp" ∷ offset_ptr ↦ off ∗
           "%Hq2" ∷ ⌜(q2 <= length (c0 :: cs))%nat⌝ ∗
           "%Hoffinv" ∷ ⌜off = W64 0 ∨
-             (0 < uint.Z off)%Z ∧ rem = W64 0 ∧
+             (0 < uint.Z off)%Z ∧ rem = W64 0 ∧ (1 <= q2)%nat ∧
              (∃ c, (c0 :: cs) !! (q2 - 1)%nat = Some c ∧ ic_deleted c = false ∧
                    (uint.nat off < length (ic_run c))%nat)⌝)%I
           with "[Hp Hdll Hleftp Hrightp remaining offset]" as "IH".
@@ -311,7 +311,7 @@ Proof.
             iSplitR "".
             { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
             iPureIntro. split_and!; [exact Hq2 | reflexivity | reflexivity |].
-            destruct Hoffinv as [-> | (Hpos & _ & Hc)]; [by left | right; exact (conj Hpos Hc)]. }
+            destruct Hoffinv as [-> | (Hpos & _ & Hq21 & Hc)]; [by left | right; exact (conj Hpos (conj Hq21 Hc))]. }
         wp_auto.
         have Hoff0 : off = W64 0.
         { destruct Hoffinv as [-> | (_ & Hrem0 & _)]; [done | exfalso; rewrite Hrem0 in Hrem; word]. }
@@ -353,7 +353,7 @@ Proof.
               have Hrlen : length (ic_run c2) = length (iv2.(yjs.item.content').(yjs.content.content')).
               { by rewrite -(length_fmap content (ic_run c2)) Hc2cont /toContent explode_length. }
               split; [lia |]. right.
-              split_and!; [word | done |].
+              split_and!; [word | done | lia |].
               exists c2. replace (S q2 - 1)%nat with q2 by lia.
               split_and!; [exact Hc2 | exact Hd2 | rewrite Hrlen; word].
             - (* Len <= remaining: spend the whole node (the else branch
