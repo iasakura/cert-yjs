@@ -997,35 +997,6 @@ Proof.
     + exact Hstep.
 Qed.
 
-(** One wire item denotes a valid per-char [PendingReplay] at its type, given
-    the whole run is fresh in [m] and the head is ready. *)
-Lemma expand_input_pending_replay (m : DocM) (ti : TId * IntegrateInput (A := A))
-    (arr' : list (YjsItem A)) :
-  is_Some (m !! ti.1) ->
-  input_ready m ti.2 = true ->
-  (∀ k, (k < length (in_content ti.2))%nat ->
-     docm_has m (MkYjsId (clientId (in_id ti.2)) (clock (in_id ti.2) + k)) = false) ->
-  wire_intg m ti = Some arr' ->
-  PendingReplay m (expand_input ti) (<[ti.1 := arr']> m).
-Proof.
-  move=> Hsome Hready Hfresh Hint.
-  rewrite /expand_input /wire_intg /ops_of_input in Hint *.
-  have Hlen : length (explode (in_content ti.2)) = length (in_content ti.2)
-    by rewrite /explode length_fmap.
-  apply (ops_from_pending_replay ti.1 (clientId (in_id ti.2)) (in_rightOriginId ti.2)
-           (explode (in_content ti.2)) (clock (in_id ti.2)) (in_originId ti.2)
-           m arr' Hsome).
-  - move=> o Ho. apply (proj1 (input_ready_spec m ti.2) Hready).
-    exact (input_deps_originL ti.2 o Ho).
-  - move=> o Ho. apply (proj1 (input_ready_spec m ti.2) Hready).
-    exact (input_deps_originR ti.2 o Ho).
-  - move=> j Hj. apply (proj1 (input_ready_spec m ti.2) Hready).
-    rewrite /input_deps !elem_of_app. right. right. rewrite Hj /=.
-    apply list_elem_of_singleton. done.
-  - move=> j Hj. rewrite Hlen in Hj. exact (Hfresh j Hj).
-  - exact Hint.
-Qed.
-
 (* ===== the public certificate spec (issue #40) ============================ *)
 
 (** An applied struct's target type is nonempty at the final model (its own
@@ -1454,7 +1425,8 @@ Qed.
 
 (** [wire_ready_total] from the ghost history (issue #40 x n-char): opens the
     invariant read-only, gets the per-char [op_broadcast] and hands them to the
-    pure [wire_ready_total_of_certs]. Mirrors [history_pending_ready_total]. *)
+    pure [wire_ready_total_of_certs]. Mirrors the per-char
+    [pending_ready_total_of_certs] gate in [yjs_network_model]. *)
 Lemma history_wire_ready_total γh (c : ClientId) h (m : DocM)
     (pending applied : list (TId * IntegrateInput (A := A))) E :
   ↑histN ⊆ E ->

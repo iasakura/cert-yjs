@@ -178,26 +178,6 @@ Proof.
   move=> Hj. rewrite (drop_S inputs ti j Hj) /expand_inputs /=. done.
 Qed.
 
-(** [expand_inputs] preserves TIds: every per-op element carries the TId of
-    some wire item (issue #28 U7c). *)
-Lemma expand_inputs_tid (inputs : list (TId * IntegrateInput (A := A)))
-    (i : nat) (ti : TId * IntegrateInput (A := A)) :
-  expand_inputs inputs !! i = Some ti ->
-  ∃ (j : nat) (tj : TId * IntegrateInput (A := A)), inputs !! j = Some tj ∧ ti.1 = tj.1.
-Proof.
-  rewrite /expand_inputs join_lookup_Some.
-  move=> [j [l [i' [Hlj [Hli _]]]]].
-  rewrite list_lookup_fmap in Hlj.
-  apply fmap_Some in Hlj as (tj & Hj & ->).
-  exists j, tj. split; first exact Hj.
-  move: Hli.
-  change (expand_input tj) with
-    ((λ op0 : IntegrateInput (A := A), (tj.1, op0)) <$> ops_of_input tj.2 (explode (in_content tj.2))).
-  rewrite list_lookup_fmap.
-  destruct (ops_of_input tj.2 (explode (in_content tj.2)) !! i') as [op|]; last done.
-  by move=> [= <-].
-Qed.
-
 (** Range-form batch causality (issue #28 U7c): an earlier same-client wire
     item's whole clock range lies below a later item's clock. This strengthens
     the per-op [ValidReplay_batch_causal] (strict [<] on single ops) to the run
@@ -4049,20 +4029,6 @@ Proof.
   exact (Hb i uiv ti Huiv Hi).
 Qed.
 
-(** A valid replay leaves types outside its batch untouched. *)
-Lemma ValidReplay_docm_get_off (inputs : list (TId * IntegrateInput (A := A)))
-    (m0 m1 : DocM) (t : TId) :
-  ValidReplay inputs m0 m1 ->
-  (∀ i ti, inputs !! i = Some ti -> ti.1 ≠ t) ->
-  docm_get m1 t = docm_get m0 t.
-Proof.
-  move=> Hvr. move: Hvr t.
-  elim => [m | t0 input rest mr arr2 mr' nit _ _ _ _ _ _ IH] t Hoff; first done.
-  rewrite (IH t); last by move=> i ti Hi; exact (Hoff (S i) ti Hi).
-  rewrite docm_get_insert_ne //.
-  move=> Heq. exact (Hoff 0%nat (t0, input) eq_refl (eq_sym Heq)).
-Qed.
-
 (* ===== the pending gate, heap side (issue #40) ============================ *)
 
 (** [containsUpdateItemId] (the in-pending dedup probe): scans a decoded pending
@@ -4963,22 +4929,6 @@ Proof.
     rewrite /find_by_id /= in Hf. discriminate.
 Qed.
 
-(** The two destructed corollaries of [pending_drain_unfold] the loop invariant
-    steps with (goal-side rewriting keeps the [let]-reduction by conversion). *)
-Lemma pending_drain_step_nil (m : DocM)
-    (pending kept : list (TId * IntegrateInput (A := A))) (m1 : DocM) :
-  pending_pass m pending [] = ([], kept, m1) ->
-  pending_drain m pending = ([], kept, m1).
-Proof. move=> Hpass. rewrite pending_drain_unfold Hpass //. Qed.
-
-Lemma pending_drain_step_cons (m : DocM)
-    (pending : list (TId * IntegrateInput (A := A)))
-    (a : TId * IntegrateInput (A := A))
-    (app kept app2 rest2 : list (TId * IntegrateInput (A := A))) (m1 m2 : DocM) :
-  pending_pass m pending [] = (a :: app, kept, m1) ->
-  pending_drain m1 kept = (app2, rest2, m2) ->
-  pending_drain m pending = ((a :: app) ++ app2, rest2, m2).
-Proof. move=> Hpass Hdrec. rewrite pending_drain_unfold Hpass Hdrec //. Qed.
 
 (* ===== wire-level drain (issue #40 x issue #28 U7c) =======================
    The Go [applyUpdate] loop drains WIRE items (whole [updateItem] structs),
@@ -4986,8 +4936,10 @@ Proof. move=> Hpass Hdrec. rewrite pending_drain_unfold Hpass Hdrec //. Qed.
    [integrate_all]. [wire_pass] / [wire_drain] mirror the per-char [pending_pass]
    / [pending_drain] ([yjs_network_model]) but step by [integrate_all] over a
    wire item's ops, so the drain loop refines them 1:1. The bridge to the
-   per-char model (for the certificate [ValidReplay]) is [wire_drain_expand]
-   below: draining the wire batch equals draining its [expand_inputs]. Reuses
+   per-char model (for the certificate [ValidReplay]) is
+   [WireReplay_to_PendingReplay] in [yjs_store_update]: it turns a [WireReplay]
+   into a [PendingReplay] of the [expand_inputs], re-deriving each chunk's
+   freshness from head-freshness via [delivered_clock_bound]. Reuses
    [pending_keep] / [docm_has] / [input_ready] (a wire item's readiness is its
    head op's, since [ti.2]'s origins are the head's). *)
 
