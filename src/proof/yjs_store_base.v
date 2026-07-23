@@ -16,6 +16,7 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import yjs_core.
 From New.proof Require Import yjs_common yjs_id yjs_item yjs_ytype.
+From New.proof Require Import yjs_run_theory.          (* ops_of_input, for the per-char expand *)
 From New.proof Require Import yjs_history.             (* ghost op history (issue #42) *)
 From New.proof.sync_proof Require Import base mutex rwmutex rwmutex_guard.
                                                       (* store lock: rwmutex.is_RWMutex + LP Lock/Unlock
@@ -47,6 +48,21 @@ Local Notation TId := (TypeId P).
 Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation Ev := (@Event Op).
 Local Notation DocM := (gmap TId (list (YjsItem A))).
+
+(** Per-char op expansion of a wire batch (issue #28 U7c), lifted here from
+    [yjs_store_node] (which had defined it downstream). The pending-buffer
+    certificate [Hpendcert] must be stated PER-CHAR
+    ([is_pending_certified (expand_inputs pend)]): the ghost op history holds
+    one certificate per character, so a multi-char wire item's head-id op is
+    not itself in the log, only its per-char ops are. The bulk of the
+    [expand_input] theory (lookup / length / singleton / chunk chaining) stays
+    in [yjs_store_node]; only the two definitions live here so [own_store] and
+    [store_inv_excl] can name them. *)
+Definition expand_input (ti : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
+  (λ op, (ti.1, op)) <$> ops_of_input ti.2 (explode (in_content ti.2)).
+
+Definition expand_inputs (inputs : list (TId * IntegrateInput (A := A))) : list (TId * IntegrateInput (A := A)) :=
+  mjoin (expand_input <$> inputs).
 
 (* ----- ghost lemmas for the [auth (gmap K (gset V))] item-set RA --------- *)
 
@@ -550,21 +566,6 @@ Proof using ext ffi ffi_interp0 Σ hG ffi_semantics0 sem package_sem.
     split; [exact H1 | exact H2].
 Qed.
 
-(** [all_cells_fresh] over the 3-conjunct store big-sep (the shape the store
-    proofs thread). *)
-Lemma all_cells_fresh3 (p : loc) (v : yjs.item.t) (dq : dfrac) (types : gmap loc type_state) :
-  p ↦ v -∗
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent dq (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-      ⌜Forall cell_unit (ty_cells ts)⌝) -∗
-  ⌜p ∉ ic_loc <$> all_cells types⌝.
-Proof using ext ffi ffi_interp0 Σ hG ffi_semantics0 sem package_sem.
-  iIntros "Hp Htypes".
-  iDestruct (big_sepM_sep with "Htypes") as "[Hbare _]".
-  iApply (all_cells_fresh with "Hp Hbare").
-Qed.
-
 (* ----- the part-6 pool invariants (issue #28): loc NoDup + range disjointness *)
 
 (** Per-client clock-RANGE disjointness of the document cell pool: two distinct
@@ -646,6 +647,84 @@ Proof.
   have Hck2 : cell_clock c2' = cell_clock c2 by (rewrite /cell_clock /run_head -Hr2 //).
   have Hd := Hdisj c1' c2' Hc1' Hc2' ltac:(rewrite Hcl1 Hcl2 //) ltac:(rewrite -Hl1 -Hl2 //).
   rewrite Hck1 Hck2 -Hr1 -Hr2 in Hd. exact Hd.
+Qed.
+
+(** A cell's clock range [clock, clock + len) fits in [w64] arithmetic without
+    wrapping (issue #28 part 6). This is the run-aware strengthening of the
+    per-cell [+ 1 < 2^64] no-wrap: [getNodeIndex] computes [middleClock + Len()]
+    and the conflict scan's [idSpan] range test computes [clock + len], both in
+    [w64], so every pooled cell must satisfy it. It cannot be derived per call
+    on the [Text.Insert] path (the public spec carries no premise about remote
+    clients' clocks), hence it lives in the store invariant. *)
+Definition cell_fits (c : item_cell) : Prop :=
+  (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z.
+
+(** [cell_fits] only reads a cell's run; the same reshuffle transport as the
+    other two pool invariants. *)
+Lemma locs_run_perm_fits (pool1 pool2 : list item_cell) :
+  (λ c, (ic_loc c, ic_run c)) <$> pool2 ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> pool1 ->
+  (∀ c, c ∈ pool1 → cell_fits c) -> (∀ c, c ∈ pool2 → cell_fits c).
+Proof.
+  move=> Hperm Hfits c Hc.
+  have Hin : (ic_loc c, ic_run c) ∈ ((λ c0, (ic_loc c0, ic_run c0)) <$> pool1).
+  { rewrite -Hperm. exact (list_elem_of_fmap_2 _ _ _ Hc). }
+  apply list_elem_of_fmap in Hin as (c' & Heq & Hc').
+  have Hr : ic_run c = ic_run c' := f_equal snd Heq.
+  have Hf := Hfits c' Hc'.
+  rewrite /cell_fits /cell_clock /run_head Hr. exact Hf.
+Qed.
+
+(** [cell_fits] survives an integrate splice: membership transport over the
+    snoc permutation. *)
+Lemma fits_snoc (pool1 pool2 : list item_cell) (c : item_cell) :
+  pool2 ≡ₚ pool1 ++ [c] ->
+  cell_fits c ->
+  (∀ c0, c0 ∈ pool1 → cell_fits c0) ->
+  (∀ c0, c0 ∈ pool2 → cell_fits c0).
+Proof.
+  move=> Hperm Hfc Hfits c0 Hc0.
+  rewrite Hperm in Hc0. apply elem_of_app in Hc0 as [Hc0 | Hc0].
+  - exact (Hfits c0 Hc0).
+  - apply list_elem_of_singleton in Hc0 as ->. exact Hfc.
+Qed.
+
+(** A cell head's same-client left origin strictly precedes it in clock
+    (causal creation order, issue #28 stage C1b): the premise of
+    [block_query_head], which lets the scan's whole-run span query collapse
+    to [setfii_block_step]'s head-only accumulator test. Only the HEAD's
+    origin needs the invariant: tail chars' origins are in-run by [run_wf].
+    Local inserts satisfy it by the clock counter; remote integrations by
+    per-client causal delivery (the update batch's freshness bound). *)
+Definition cell_origin_clk (c : item_cell) : Prop :=
+  ∀ oid, origin_id (origin (run_head c)) = Some oid →
+    clientId oid = clientId (item_id (run_head c)) →
+    (clock oid < clock (item_id (run_head c)))%nat.
+
+Lemma originclk_snoc (pool1 pool2 : list item_cell) (c : item_cell) :
+  pool2 ≡ₚ pool1 ++ [c] ->
+  cell_origin_clk c ->
+  (∀ c0, c0 ∈ pool1 → cell_origin_clk c0) ->
+  (∀ c0, c0 ∈ pool2 → cell_origin_clk c0).
+Proof.
+  move=> Hperm Hoc Hall c0 Hc0.
+  rewrite Hperm in Hc0. apply elem_of_app in Hc0 as [Hc0 | Hc0].
+  - exact (Hall c0 Hc0).
+  - apply list_elem_of_singleton in Hc0 as ->. exact Hoc.
+Qed.
+
+(** [cell_origin_clk] only reads a cell's run; the same reshuffle transport
+    as the other pool invariants. *)
+Lemma locs_run_perm_originclk (pool1 pool2 : list item_cell) :
+  (λ c, (ic_loc c, ic_run c)) <$> pool2 ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> pool1 ->
+  (∀ c, c ∈ pool1 → cell_origin_clk c) -> (∀ c, c ∈ pool2 → cell_origin_clk c).
+Proof.
+  move=> Hperm Hall c Hc.
+  have Hin : (ic_loc c, ic_run c) ∈ ((λ c0, (ic_loc c0, ic_run c0)) <$> pool1).
+  { rewrite -Hperm. exact (list_elem_of_fmap_2 _ _ _ Hc). }
+  apply list_elem_of_fmap in Hin as (c' & Heq & Hc').
+  have Hr : ic_run c = ic_run c' := f_equal snd Heq.
+  have Hoc := Hall c' Hc'.
+  rewrite /cell_origin_clk /run_head Hr. exact Hoc.
 Qed.
 
 (** [cell_kp] bundles a cell's (client, clock, loc). The slice/run preservation
@@ -1021,18 +1100,25 @@ Proof.
       * rewrite -(cell_kp_pr c1 y1 Hkp1) -(cell_kp_pr c2 y2 Hkp2). exact Hpr.
 Qed.
 
-(** The cell-clock bound ([store_inv]'s [Hcellctr]) likewise transfers across a
-    [cell_kp]-preserving reshuffle: same client, same clock. *)
-Lemma cellctr_kp_perm (M1 M2 : gmap loc type_state) (client k : w64) :
-  cell_kp <$> all_cells M2 ≡ₚ cell_kp <$> all_cells M1 ->
-  (∀ c, c ∈ all_cells M1 → cell_client c = client → (uint.Z (cell_clock c) < uint.Z k)%Z) ->
-  (∀ c, c ∈ all_cells M2 → cell_client c = client → (uint.Z (cell_clock c) < uint.Z k)%Z).
+(** The cell-clock range bound ([store_inv]'s [Hcellctr]) transfers across a
+    (loc, run)-preserving reshuffle: client, clock, and run length all derive
+    from the run. *)
+Lemma cellctr_locs_run_perm (pool1 pool2 : list item_cell) (client k : w64) :
+  (λ c, (ic_loc c, ic_run c)) <$> pool2 ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> pool1 ->
+  (∀ c, c ∈ pool1 → cell_client c = client →
+     (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z k)%Z) ->
+  (∀ c, c ∈ pool2 → cell_client c = client →
+     (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z k)%Z).
 Proof.
   move=> Hperm Hbnd c Hc Hcc.
-  have Hin : cell_kp c ∈ cell_kp <$> all_cells M2 by apply list_elem_of_fmap_2.
-  rewrite Hperm in Hin. apply list_elem_of_fmap in Hin as (c' & Hkp & Hc').
-  rewrite (cell_kp_clock c c' Hkp).
-  apply (Hbnd c' Hc'). rewrite -(cell_kp_client c c' Hkp). exact Hcc.
+  have Hin : (ic_loc c, ic_run c) ∈ ((λ c0, (ic_loc c0, ic_run c0)) <$> pool1).
+  { rewrite -Hperm. exact (list_elem_of_fmap_2 _ _ _ Hc). }
+  apply list_elem_of_fmap in Hin as (c' & Heq & Hc').
+  have Hr : ic_run c = ic_run c' := f_equal snd Heq.
+  have Hcc' : cell_client c' = client.
+  { rewrite -Hcc /cell_client /run_head Hr //. }
+  have Hb := Hbnd c' Hc' Hcc'.
+  rewrite /cell_clock /run_head Hr. exact Hb.
 Qed.
 
 (* ----- per-store ghost names and the root-type registry ------------------ *)
@@ -1101,7 +1187,9 @@ Proof. rewrite /is_parent_name. by destruct opn; apply _. Qed.
 (** [is_update_item uiv ti]: the decoded heap struct [uiv] (a [updateItem])
     translates to the model doc-op payload [ti = (tid, input)] -- its id /
     content / both origin pointers map across (origins via [is_origin_id],
-    persistent), its content is a single char, and its decoded parent name
+    persistent), its content is a nonempty run (issue #28 U7c: the single-char
+    [Hulen = 1] restriction is dropped so a wire item can carry a whole run of
+    chained per-char ops), and its decoded parent name
     (when present) is the name of the root type [tid] (issue #49; when absent
     the batch-level well-formedness pins [tid] through the origins). *)
 Definition is_update_item (uiv : yjs.updateItem.t)
@@ -1114,7 +1202,7 @@ Definition is_update_item (uiv : yjs.updateItem.t)
     "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId ti.2⌝ ∗
     "%Hin_id" ∷ ⌜toYjsId uiv.(yjs.updateItem.id') = in_id ti.2⌝ ∗
     "%Hin_c" ∷ ⌜uiv.(yjs.updateItem.content') = in_content ti.2⌝ ∗
-    "%Hulen" ∷ ⌜length uiv.(yjs.updateItem.content') = 1%nat⌝ ∗
+    "%Hunonempty" ∷ ⌜(1 <= length uiv.(yjs.updateItem.content'))%nat⌝ ∗
     "%Htid" ∷ ⌜∀ nm, opn = Some nm -> ti.1 = RootId nm⌝ ∗
     "%Hborrow" ∷ ⌜opn = None -> in_originId ti.2 ≠ None ∨ in_rightOriginId ti.2 ≠ None⌝.
 
@@ -1177,10 +1265,7 @@ Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Q
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
   "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
                 own_ytype_cells parent (DfracOwn q) (ty_cells ts) (ty_arr ts) ∗
-                ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-                (* all-singleton invariant (issue #28): every creator today
-                   mints 1-char runs; dropped in M4 with the run-scan bridge *)
-                ⌜Forall cell_unit (ty_cells ts)⌝).
+                ⌜YjsArrInvariant (ty_arr ts)⌝).
 
 #[global] Instance store_inv_ro_fractional γs types : Fractional (store_inv_ro γs types).
 Proof.
@@ -1213,18 +1298,20 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
        knowing what is buffered. *)
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
-    "#Hpendcert" ∷ is_pending_certified γh pend ∗
+    "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "#Hpendroot" ∷ is_pending_rooted γs pend ∗
     "%Hpendbnd" ∷ ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ->
-                    (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z⌝ ∗
+                    (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z⌝ ∗
     "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
     "%Hcellctr" ∷ ⌜∀ c, c ∈ all_cells types → cell_client c = client →
-                   (uint.Z (cell_clock c) < uint.Z k)%Z⌝ ∗
+                   (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z k)%Z⌝ ∗
     (* part-6 pool invariants (issue #28): the split branches' index pin *)
     "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
     "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝ ∗
+    "%Hrunfits" ∷ ⌜∀ c, c ∈ all_cells types → cell_fits c⌝ ∗
+    "%Horiginclk" ∷ ⌜∀ c, c ∈ all_cells types → cell_origin_clk c⌝ ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
     "%Hbindtypes" ∷ ⌜∀ name p, bind !! name = Some p → is_Some (types !! p)⌝ ∗
@@ -1482,16 +1569,14 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
-    "#Hpendcert" ∷ is_pending_certified γh pend ∗
+    "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "#Hpendroot" ∷ is_pending_rooted γs pend ∗
     "%Hpendbnd" ∷ ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ->
-                    (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z⌝ ∗
+                    (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z⌝ ∗
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
     "Htypes"  ∷ ([∗ map] parent ↦ ts ∈ types,
                   own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-                  ⌜YjsArrInvariant (ty_arr ts)⌝ ∗
-                  (* all-singleton invariant (issue #28): dropped in M4 *)
-                  ⌜Forall cell_unit (ty_cells ts)⌝) ∗
+                  ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
     "Hhist"   ∷ own_client_history γh c h ∗
@@ -1502,7 +1587,9 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (* part-6 pool invariants (issue #28): heap-level facts the model does not
        determine, so [own_store] carries them (store_inv ⊣⊢ ∃ own_store) *)
     "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
-    "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝.
+    "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝ ∗
+    "%Hrunfits" ∷ ⌜∀ c, c ∈ all_cells types → cell_fits c⌝ ∗
+    "%Horiginclk" ∷ ⌜∀ c, c ∈ all_cells types → cell_origin_clk c⌝.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
    Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked
@@ -1740,7 +1827,8 @@ Proof.
     iExists []. iSplitR; [iApply own_slice_nil |].
     iSplitR; [iApply own_slice_cap_nil |]. rewrite big_sepL2_nil //. }
   iSplitR.
-  { rewrite /is_pending_certified big_sepL_nil //. }
+  { have He : expand_inputs [] = [] by done.
+    rewrite /is_pending_certified He big_sepL_nil //. }
   iSplitR.
   { rewrite /is_pending_rooted big_sepL_nil //. }
   iSplitR.
@@ -1750,6 +1838,10 @@ Proof.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
   iSplitR. { iPureIntro. rewrite /types /all_cells map_to_list_empty /=. constructor. }
   iSplitR. { iPureIntro. move=> c1 c2 Hc1. exfalso. move: Hc1.
+    rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
+  iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
+    rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
+  iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
   iSplitR. { rewrite big_sepM_empty //. }
   iPureIntro. split_and!.
