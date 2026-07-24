@@ -1557,11 +1557,11 @@ Proof.
     have HqL : q = L.
     { destruct (decide (q = L)) as [| Hne]; [done | exfalso].
       have HL : (L < q)%nat by lia.
-      have HlogL : ∃ oL, log !! L = Some oL.
+      have HlogL : ∃ logEntry, log !! L = Some logEntry.
       { apply lookup_lt_is_Some. have := lookup_lt_Some _ _ _ Hq. lia. }
-      destruct HlogL as (oL & HoL).
-      have Hc2 : (clock (opid oL) < clock (opid op))%nat
-        := broadcast_log_clock_lt N j0 L q oL op Hwf HL HoL Hq.
+      destruct HlogL as (logEntry & HoL).
+      have Hc2 : (clock (opid logEntry) < clock (opid op))%nat
+        := broadcast_log_clock_lt N j0 L q logEntry op Hwf HL HoL Hq.
       destruct (clock (opid op)) as [| k] eqn:Hck; first lia.
       have Hpredin : MkYjsId j0 k ∈ delivered_ids h
         by apply (Hpred k); rewrite ?Hck //.
@@ -1572,8 +1572,8 @@ Proof.
       { apply elem_of_delivered_from. by split. }
       rewrite HtakeL in Hyin. apply elem_of_take in Hyin.
       destruct Hyin as (qy & Hqy & HqyL).
-      have Hc1 : (clock (opid y) < clock (opid oL))%nat
-        := broadcast_log_clock_lt N j0 qy L y oL Hwf HqyL Hqy HoL.
+      have Hc1 : (clock (opid y) < clock (opid logEntry))%nat
+        := broadcast_log_clock_lt N j0 qy L y logEntry Hwf HqyL Hqy HoL.
       rewrite Hyid /= in Hc1. lia. }
     rewrite HtakeL.
     exists (drop (S L) log).

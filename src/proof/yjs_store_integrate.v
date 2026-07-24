@@ -2452,11 +2452,11 @@ Qed.
     straddling input to the [Item] with origins [o]/[r], given each origin id is
     either absent (boundary) or the id of the named neighbour. *)
 Lemma toItem_at (arr : list (YjsItem A)) (newid : YjsId) (cont : A) (o r : YjsPtr A)
-    (oL oR : option YjsId) :
+    (originLeft originRight : option YjsId) :
   YjsArrInvariant arr ->
-  (oL = None /\ o = First \/ ∃ a, oL = Some (item_id a) /\ a ∈ arr /\ o = itemPtr a) ->
-  (oR = None /\ r = Last \/ ∃ b, oR = Some (item_id b) /\ b ∈ arr /\ r = itemPtr b) ->
-  toItem (MkIntegrateInput oL oR cont newid) arr = Some (Item o r newid cont).
+  (originLeft = None /\ o = First \/ ∃ a, originLeft = Some (item_id a) /\ a ∈ arr /\ o = itemPtr a) ->
+  (originRight = None /\ r = Last \/ ∃ b, originRight = Some (item_id b) /\ b ∈ arr /\ r = itemPtr b) ->
+  toItem (MkIntegrateInput originLeft originRight cont newid) arr = Some (Item o r newid cont).
 Proof.
   intros Hinv Hleft Hright. rewrite /toItem /=.
   destruct Hleft as [[-> ->] | [a [-> [Ha ->]]]].

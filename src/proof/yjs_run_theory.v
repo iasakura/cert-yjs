@@ -121,14 +121,14 @@ Proof.
       move=> z Heq.
       destruct other as [o r id c]. simpl in Heq. subst o.
       exact (closedLeft _ Hclosed _ _ _ _ Hoin). }
-    destruct (findPtrIdx_closed arr (origin other) Hinv Hoclosed) as (oL & HoL & HoLb).
+    destruct (findPtrIdx_closed arr (origin other) Hinv Hoclosed) as (originLeftIdx & HoL & HoLb).
     rewrite HoL /=.
     have Horclosed : ∀ z : YjsItem A, rightOrigin other = itemPtr z -> z ∈ arr.
     { have Hclosed := yai_closed _ Hinv.
       move=> z Heq.
       destruct other as [o r id c]. simpl in Heq. subst r.
       exact (closedRight _ Hclosed _ _ _ _ Hoin). }
-    destruct (findPtrIdx_closed arr (rightOrigin other) Hinv Horclosed) as (oR & HoR & HoRb).
+    destruct (findPtrIdx_closed arr (rightOrigin other) Hinv Horclosed) as (originRightIdx & HoR & HoRb).
     rewrite HoR /=.
     (* origin other sits strictly left of S j ... *)
     have Hlt : YjsLt' (origin other) (itemPtr other).
@@ -136,15 +136,15 @@ Proof.
       apply (ltOrigin 0). apply leqSame. }
     have HotherIdx : findPtrIdx (itemPtr other) arr = Some (Z.of_nat (S j))
       := findPtrIdx_item arr (S j) other (yai_unique _ Hinv) Hother.
-    have HoLlt : (oL < Z.of_nat (S j))%Z.
+    have HoLlt : (originLeftIdx < Z.of_nat (S j))%Z.
     { exact (findptridx_order2.YjsLt'_findPtrIdx_lt arr (origin other) (itemPtr other)
-               oL (Z.of_nat (S j)) Hinv
-               ltac:(exact (findptridx_getelem.findPtrIdx_ArrSet arr _ oL HoL))
+               originLeftIdx (Z.of_nat (S j)) Hinv
+               ltac:(exact (findptridx_getelem.findPtrIdx_ArrSet arr _ originLeftIdx HoL))
                ltac:(exact (findptridx_getelem.findPtrIdx_ArrSet arr _ (Z.of_nat (S j)) HotherIdx))
                Hlt HoL HotherIdx). }
     (* ... and not AT j (no successor), so strictly below j: the loop exits *)
-    have HoLne : oL <> Z.of_nat j.
-    { move=> HoLj. subst oL.
+    have HoLne : originLeftIdx <> Z.of_nat j.
+    { move=> HoLj. subst originLeftIdx.
       destruct (origin other) as [z | |] eqn:Horig;
         rewrite /findPtrIdx /= in HoL.
       - (* the element at index j is x itself: contradicts no-successor *)

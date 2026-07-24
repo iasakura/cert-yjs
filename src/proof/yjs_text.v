@@ -208,7 +208,7 @@ Proof. iIntros "H". iNamed "H". iExists _. iFrame "Hbind His_lb". Qed.
     byte of [content], each now known ([∈ L'], and [∉ L] since its id is fresh),
     carrying that byte as content, with a fresh id [(client, k0+i)] (one local
     [client], consecutive clocks from some [k0]), the run's shared right origin
-    [oR], and its left origin chained (item 0 from [oL], item i+1 from item i).
+    [originRight], and its left origin chained (item 0 from [originLeft], item i+1 from item i).
     This says exactly "the characters you inserted are in [L'−L], with these
     content / id / left / right".
 
@@ -231,7 +231,7 @@ Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (γs : store_names)
     (name : P) (L : list (YjsItem A)) :
   {{{ is_pkg_init yjs ∗ is_Text t γs γh name L }}}
     t @! (go.PointerType yjs.Text) @! "Insert" #idx #cs
-  {{{ (L' ins : list (YjsItem A)) (client k0 : nat) (oL oR : YjsPtr A), RET #();
+  {{{ (L' ins : list (YjsItem A)) (client k0 : nat) (originLeft originRight : YjsPtr A), RET #();
       is_Text t γs γh name L' ∗ ⌜sublist L L'⌝ ∗
       ⌜ins = [] ∨ length ins = length cs⌝ ∗
       ⌜∀ (i : nat) (it : YjsItem A) (b : w8),
@@ -239,8 +239,8 @@ Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (γs : store_names)
            it ∈ L' ∧ it ∉ L ∧
            content it = [b] ∧
            item_id it = MkYjsId client (k0 + i)%nat ∧
-           rightOrigin it = oR ∧
-           (i = 0%nat → origin it = oL) ∧
+           rightOrigin it = originRight ∧
+           (i = 0%nat → origin it = originLeft) ∧
            (∀ (j : nat) (itj : YjsItem A),
               i = S j → ins !! j = Some itj → origin it = itemPtr itj)⌝ ∗
       (* the op certificates: one broadcast fragment per inserted item
@@ -587,11 +587,11 @@ Proof.
     rewrite Nat.add_0_r in Hpos.
     split_and!; [rewrite Hr1; exact Hpos | reflexivity | exact Hid]. }
   iIntros (v) "[%Hv HQ]". subst v. iNamed "HQ". wp_auto.
-  (* fix the run's shared right origin oR and the first item's left origin oL as values *)
-  assert (∃ (oR : YjsPtr A),
-     (in_rO = None ∧ oR = Last ∧ (mp = length ts.(ty_arr))%nat) ∨
-     (∃ (ri : YjsItem A) (rightOriginId : yjs.id.t), ts.(ty_arr) !! mp = Some ri ∧ in_rO = Some rightOriginId ∧ item_id ri = toYjsId rightOriginId ∧ oR = itemPtr ri))
-     as [oR HoRspec].
+  (* fix the run's shared right origin originRight and the first item's left origin originLeft as values *)
+  assert (∃ (originRight : YjsPtr A),
+     (in_rO = None ∧ originRight = Last ∧ (mp = length ts.(ty_arr))%nat) ∨
+     (∃ (ri : YjsItem A) (rightOriginId : yjs.id.t), ts.(ty_arr) !! mp = Some ri ∧ in_rO = Some rightOriginId ∧ item_id ri = toYjsId rightOriginId ∧ originRight = itemPtr ri))
+     as [originRight HoRspec].
   { destruct Hrightinit as [[Hn Hpe] | (ri & rightOriginId & Hria & Hrs & Hrid)].
     - exists Last. left. split_and!; [exact Hn | reflexivity |].
       have Hr1 : ts.(ty_arr) = run_flatten ts.(ty_cells) by move: Hrepr; rewrite /cells_repr //.
@@ -618,13 +618,13 @@ Proof.
   { move=> Hp1. rewrite Hmpdef.
     have := run_flatten_take_length_lt ts.(ty_cells) 0 p Hnec00 Hp1 Hpbound.
     rewrite take_0 /run_flatten /=. lia. }
-  assert (∃ (oL : YjsPtr A),
-     (oL = First ∧ (p = 0)%nat) ∨
+  assert (∃ (originLeft : YjsPtr A),
+     (originLeft = First ∧ (p = 0)%nat) ∨
      (∃ (lc : item_cell) (li : YjsItem A), (1 <= p)%nat ∧
         ts.(ty_cells) !! (p - 1)%nat = Some lc ∧
         ic_run lc !! (length (ic_run lc) - 1)%nat = Some li ∧
-        ts.(ty_arr) !! (mp - 1)%nat = Some li ∧ oL = itemPtr li))
-     as [oL HoLspec].
+        ts.(ty_arr) !! (mp - 1)%nat = Some li ∧ originLeft = itemPtr li))
+     as [originLeft HoLspec].
   { destruct (decide (p = 0)%nat) as [Hidx0 | Hidxpos].
     - exists First. left. split; [reflexivity | exact Hidx0].
     - have Hidxm : (p - 1 < length ts.(ty_cells))%nat by lia.
@@ -683,17 +683,17 @@ Proof.
            cells !! (p + j - 1)%nat = Some lc ∧ ic_loc lc = leftloc ∧
            arr !! (mp + j - 1)%nat = Some li ∧
            ic_run lc !! (length (ic_run lc) - 1)%nat = Some li ∧ (1 <= p + j)%nat ∧
-           (j = 0%nat → itemPtr li = oL) ∧ (∀ j', j = S j' → ins !! j' = Some li))⌝ ∗
-    "%Hrightj" ∷ ⌜(in_rO = None ∧ oR = Last ∧ (mp + j = length arr)%nat)
+           (j = 0%nat → itemPtr li = originLeft) ∧ (∀ j', j = S j' → ins !! j' = Some li))⌝ ∗
+    "%Hrightj" ∷ ⌜(in_rO = None ∧ originRight = Last ∧ (mp + j = length arr)%nat)
       ∨ (∃ (ri : YjsItem A) (rightOriginId : yjs.id.t),
-           arr !! (mp + j)%nat = Some ri ∧ in_rO = Some rightOriginId ∧ item_id ri = toYjsId rightOriginId ∧ oR = itemPtr ri)⌝ ∗
+           arr !! (mp + j)%nat = Some ri ∧ in_rO = Some rightOriginId ∧ item_id ri = toYjsId rightOriginId ∧ originRight = itemPtr ri)⌝ ∗
     "%Hinslen" ∷ ⌜length ins = j⌝ ∗
     "%Hins" ∷ ⌜∀ (i : nat) (it : YjsItem A), ins !! i = Some it →
        it ∈ arr ∧
        (∀ b : w8, cs !! i = Some b → content it = [b]) ∧
        item_id it = MkYjsId (uint.nat client) (uint.nat k + i)%nat ∧
-       rightOrigin it = oR ∧
-       (i = 0%nat → origin it = oL) ∧
+       rightOrigin it = originRight ∧
+       (i = 0%nat → origin it = originLeft) ∧
        (∀ (j' : nat) (itj : YjsItem A), i = S j' → ins !! j' = Some itj → origin it = itemPtr itj)⌝ ∗
     "%Hsubold" ∷ ⌜∀ x : YjsItem A, x ∈ ts.(ty_arr) → x ∈ arr⌝ ∗
     "%Hrgtj" ∷ ⌜rgt = node_loc cells (Z.of_nat (p + j))⌝ ∗
@@ -1044,7 +1044,7 @@ Proof.
     iFrame "Hi Htptr Hcontentp Hclientp HoRp Hleftp Hsp Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hlk Hseq HtypesAuth Htypesmap Hrightp Hrest Hhistj Hcertsj".
     iSplitL "Hp3 Hdll3".
     { iExists yt3, tl3. iFrame "Hp3 Hdll3". iPureIntro. split_and!; [exact Hlen3 | exact Hrepr3 | exact Hcpar3]. }
-    have HmroR : mrightorigin = oR.
+    have HmroR : mrightorigin = originRight.
     { destruct in_rO as [rightOriginId|] eqn:Hino.
       - destruct Hrorig as [(Hrn & _ & _) | (ri & Hria & _ & Hmr)]; [simpl in Hrn; discriminate |].
         destruct Hrightj as [(Hrn2 & _ & _) | (ri2 & rid2 & Hria2 & _ & _ & HoRi)]; [discriminate |].
@@ -1252,7 +1252,7 @@ Proof.
       destruct (decide (t' = RootId name)) as [-> | Hnr].
       + exists name, (tv.(yjs.Text.inner')). split; [reflexivity | exact Hbindlk].
       + rewrite docm_get_insert_ne // in Hne'. exact (Hmdom t' Hne'). }
-  iApply ("HΦ" $! arr ins (uint.nat client) (uint.nat k) oL oR).
+  iApply ("HΦ" $! arr ins (uint.nat client) (uint.nat k) originLeft originRight).
   iSplitL "Hfrag Ht".
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'). iFrame "Ht His_store His_hist Hbind Hfrag". iPureIntro. split_and!; [reflexivity | reflexivity | exact (yai_sorted _ Hinvj)]. }
   iSplit.
