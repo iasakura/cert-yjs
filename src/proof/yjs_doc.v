@@ -35,8 +35,8 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 (* [is_pending_rooted]'s instances are [#[local]] in [yjs_store_base] (closed over
    a wider section context); re-declare here so [iNamed] can unpack the
    persistent [#Hpendroot] conjunct of [own_store]. *)
-#[local] Instance pending_item_rooted_persistent'' γs ti :
-  Persistent (pending_item_rooted γs ti).
+#[local] Instance pending_item_rooted_persistent'' γs taggedInput :
+  Persistent (pending_item_rooted γs taggedInput).
 Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
 #[local] Instance is_pending_rooted_persistent'' γs pending :
   Persistent (is_pending_rooted γs pending).
@@ -98,8 +98,8 @@ Qed.
 Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (sl : slice.t) (dq : dfrac)
     (inputs : list (TId * IntegrateInput (A := A))) :
-  (∀ ti : TId * IntegrateInput (A := A), ti ∈ inputs ->
-     (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z) ->
+  (∀ taggedInput : TId * IntegrateInput (A := A), taggedInput ∈ inputs ->
+     (Z.of_nat (clock (in_id taggedInput.2)) + Z.of_nat (length (in_content taggedInput.2)) < 2^64)%Z) ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
       own_update_structs sl dq inputs ∗
       is_pending_certified γh (expand_inputs inputs) ∗

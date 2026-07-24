@@ -2397,41 +2397,41 @@ Proof.
 Qed.
 
 (** Companion placement for [item_valid_at]: integrate places the straddling
-    item at exactly [p] ([take p arr ++ nit :: drop p arr]). Discharges the two
+    item at exactly [p] ([take p arr ++ newItem :: drop p arr]). Discharges the two
     order bounds of [insert_at_pos] from the origin / right-origin being the
     [p-1] / [p] neighbours (boundary cases [First] / [Last] make a bound
     vacuous). *)
-Lemma insert_straddle (arr : list (YjsItem A)) (nit : YjsItem A) (i p : nat) :
+Lemma insert_straddle (arr : list (YjsItem A)) (newItem : YjsItem A) (i p : nat) :
   YjsArrInvariant arr ->
-  YjsArrInvariant (insertIdxIfInBounds i nit arr) ->
+  YjsArrInvariant (insertIdxIfInBounds i newItem arr) ->
   (i <= length arr)%nat -> (p <= length arr)%nat ->
-  (p = 0%nat /\ origin nit = First \/ (1 <= p)%nat /\ ∃ a, base.lookup (p-1)%nat arr = Some a /\ origin nit = itemPtr a) ->
-  (p = length arr /\ rightOrigin nit = Last \/ ∃ b, base.lookup p arr = Some b /\ rightOrigin nit = itemPtr b) ->
-  insertIdxIfInBounds i nit arr = take p arr ++ nit :: drop p arr.
+  (p = 0%nat /\ origin newItem = First \/ (1 <= p)%nat /\ ∃ a, base.lookup (p-1)%nat arr = Some a /\ origin newItem = itemPtr a) ->
+  (p = length arr /\ rightOrigin newItem = Last \/ ∃ b, base.lookup p arr = Some b /\ rightOrigin newItem = itemPtr b) ->
+  insertIdxIfInBounds i newItem arr = take p arr ++ newItem :: drop p arr.
 Proof.
   intros Hinv Hinv' Hile Hple Hleft Hright.
   have Hisi' := yai_item_set_inv _ Hinv'.
   have Hclosed' := yai_closed _ Hinv'.
-  have Pnit : nit ∈ insertIdxIfInBounds i nit arr by (apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile)); left; reflexivity).
-  apply (insert_at_pos arr nit i p Hinv Hinv' Hile Hple).
+  have Pnit : newItem ∈ insertIdxIfInBounds i newItem arr by (apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile)); left; reflexivity).
+  apply (insert_at_pos arr newItem i p Hinv Hinv' Hile Hple).
   - intros k a Hk Hak.
     destruct Hleft as [[Hp0 _] | [Hp1 [a0 [Ha0 Horig]]]]; [exfalso; lia |].
-    have Ha0nit : YjsLt' a0 nit by (rewrite -Horig; apply item_origin_lt).
+    have Ha0nit : YjsLt' a0 newItem by (rewrite -Horig; apply item_origin_lt).
     destruct (decide (k = (p - 1)%nat)) as [Hkeq | Hne].
     + rewrite Hkeq Ha0 in Hak. injection Hak as ->. exact Ha0nit.
     + have Hka0 : YjsLt' a a0 by (apply (invariant_yjsarray_idx.getElem_lt_YjsLt' arr k (p-1)%nat a a0 Hinv Hak Ha0); lia).
-      have Pa : a ∈ insertIdxIfInBounds i nit arr by (apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile)); right; exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hak)).
-      have Pa0 : a0 ∈ insertIdxIfInBounds i nit arr by (apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile)); right; exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Ha0)).
-      exact (transitivity.yjs_lt_trans Hisi' Hclosed' (itemPtr a) (itemPtr a0) (itemPtr nit) Pa Pa0 Pnit Hka0 Ha0nit).
+      have Pa : a ∈ insertIdxIfInBounds i newItem arr by (apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile)); right; exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hak)).
+      have Pa0 : a0 ∈ insertIdxIfInBounds i newItem arr by (apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile)); right; exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Ha0)).
+      exact (transitivity.yjs_lt_trans Hisi' Hclosed' (itemPtr a) (itemPtr a0) (itemPtr newItem) Pa Pa0 Pnit Hka0 Ha0nit).
   - intros k b Hk1 Hk2 Hbk.
     destruct Hright as [[Hplen _] | [b0 [Hb0 Horigr]]]; [exfalso; lia |].
-    have Hnitb0 : YjsLt' nit b0 by (rewrite -Horigr; apply item_lt_rightOrigin).
+    have Hnitb0 : YjsLt' newItem b0 by (rewrite -Horigr; apply item_lt_rightOrigin).
     destruct (decide (k = p)) as [Hkeq | Hne].
     + rewrite Hkeq Hb0 in Hbk. injection Hbk as ->. exact Hnitb0.
     + have Hb0b : YjsLt' b0 b by (apply (invariant_yjsarray_idx.getElem_lt_YjsLt' arr p k b0 b Hinv Hb0 Hbk); lia).
-      have Pb : b ∈ insertIdxIfInBounds i nit arr by (apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile)); right; exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hbk)).
-      have Pb0 : b0 ∈ insertIdxIfInBounds i nit arr by (apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile)); right; exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hb0)).
-      exact (transitivity.yjs_lt_trans Hisi' Hclosed' (itemPtr nit) (itemPtr b0) (itemPtr b) Pnit Pb0 Pb Hnitb0 Hb0b).
+      have Pb : b ∈ insertIdxIfInBounds i newItem arr by (apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile)); right; exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hbk)).
+      have Pb0 : b0 ∈ insertIdxIfInBounds i newItem arr by (apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile)); right; exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hb0)).
+      exact (transitivity.yjs_lt_trans Hisi' Hclosed' (itemPtr newItem) (itemPtr b0) (itemPtr b) Pnit Pb0 Pb Hnitb0 Hb0b).
 Qed.
 
 (** In a valid (id-unique) array, [find_by_id] of an element's own id returns

@@ -118,7 +118,7 @@ Definition is_op_cert (γh : history_names) (op : Op) : iProp Σ :=
     freshness, or receiver-relative condition. *)
 Definition is_pending_certified (γh : history_names)
     (pending : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  [∗ list] ti ∈ pending, is_op_cert γh (ti.1, OpInsert ti.2).
+  [∗ list] taggedInput ∈ pending, is_op_cert γh (taggedInput.1, OpInsert taggedInput.2).
 
 #[global] Instance history_inv_timeless γh : Timeless (history_inv γh).
 Proof. apply _. Qed.
@@ -359,21 +359,21 @@ Proof.
   iIntros (HE Hdrain Hcoh) "#Hinv Hown #Hcertsin".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".
   iDestruct (hist_auth_elem_lookup with "HhistAuth Hown") as %HNc.
-  iAssert (⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
-             ops !! (in_id ti.2) = Some ((ti.1, OpInsert ti.2) : Op)⌝)%I as %Hlk.
-  { iIntros (ti Hin).
+  iAssert (⌜∀ taggedInput : TId * IntegrateInput (A := A), taggedInput ∈ pending ->
+             ops !! (in_id taggedInput.2) = Some ((taggedInput.1, OpInsert taggedInput.2) : Op)⌝)%I as %Hlk.
+  { iIntros (taggedInput Hin).
     destruct (list_elem_of_lookup_1 _ _ Hin) as (i & Hi).
     iDestruct (big_sepL_lookup _ _ i with "Hcertsin") as "Hc"; [exact Hi |].
     iApply (ghost_map_lookup with "HopsAuth Hc"). }
-  have Hbc : ∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
-      op_broadcast N (ti.1, OpInsert ti.2).
-  { move=> ti Hin. destruct Hopscoh as [Hc1 _].
-    have [_ Hreg] := Hc1 _ _ (Hlk ti Hin).
-    exists (clientId (opid ((ti.1, OpInsert ti.2) : Op))). exact Hreg. }
+  have Hbc : ∀ taggedInput : TId * IntegrateInput (A := A), taggedInput ∈ pending ->
+      op_broadcast N (taggedInput.1, OpInsert taggedInput.2).
+  { move=> taggedInput Hin. destruct Hopscoh as [Hc1 _].
+    have [_ Hreg] := Hc1 _ _ (Hlk taggedInput Hin).
+    exists (clientId (opid ((taggedInput.1, OpInsert taggedInput.2) : Op))). exact Hreg. }
   have Happsub := proj1 (pending_drain_subset m pending applied rest m' Hdrain).
-  have Hbcapp : ∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
-      op_broadcast N (ti.1, OpInsert ti.2).
-  { move=> ti Hin. exact (Hbc ti (Happsub ti Hin)). }
+  have Hbcapp : ∀ taggedInput : TId * IntegrateInput (A := A), taggedInput ∈ applied ->
+      op_broadcast N (taggedInput.1, OpInsert taggedInput.2).
+  { move=> taggedInput Hin. exact (Hbc taggedInput (Happsub taggedInput Hin)). }
   pose proof (pending_ValidReplay N c h m applied m' Hwf HNc Hcoh Hbcapp
                 (pending_drain_replay m pending applied rest m' Hdrain))
     as (Hvr & Hcoh' & Hwf' & Hnoc).
@@ -384,7 +384,7 @@ Proof.
     iPureIntro. split; [exact Hwf' |].
     apply (ops_coh_deliver_tail N c h ops _ Hwf HNc); [| exact Hopscoh].
     move=> e He. move: He. rewrite list_elem_of_fmap.
-    move=> [ti [Heq _]]. rewrite /deliver_ev in Heq. discriminate.
+    move=> [taggedInput [Heq _]]. rewrite /deliver_ev in Heq. discriminate.
   }
   iModIntro. iFrame "Hown Hlb".
   iPureIntro. split_and!; [exact Hvr | exact Hcoh' | exact Hnoc].

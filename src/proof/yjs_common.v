@@ -69,7 +69,7 @@ Fixpoint YjsItem_dec (t : gen_tree leaf) : option (YjsItem A) :=
   end
 with YjsPtr_dec (t : gen_tree leaf) : option (YjsPtr A) :=
   match t with
-  | GenNode 1 [ti] => match YjsItem_dec ti with Some i => Some (itemPtr i) | None => None end
+  | GenNode 1 [child] => match YjsItem_dec child with Some i => Some (itemPtr i) | None => None end
   | GenNode 2 [] => Some First
   | GenNode 3 [] => Some Last
   | _ => None

@@ -58,8 +58,8 @@ Local Notation DocM := (gmap TId (list (YjsItem A))).
     [expand_input] theory (lookup / length / singleton / chunk chaining) stays
     in [yjs_store_node]; only the two definitions live here so [own_store] and
     [store_inv_excl] can name them. *)
-Definition expand_input (ti : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
-  (λ op, (ti.1, op)) <$> ops_of_input ti.2 (explode (in_content ti.2)).
+Definition expand_input (taggedInput : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
+  (λ op, (taggedInput.1, op)) <$> ops_of_input taggedInput.2 (explode (in_content taggedInput.2)).
 
 Definition expand_inputs (inputs : list (TId * IntegrateInput (A := A))) : list (TId * IntegrateInput (A := A)) :=
   mjoin (expand_input <$> inputs).
@@ -1184,8 +1184,8 @@ Definition is_parent_name (p : loc) (opn : option go_string) : iProp Σ :=
 Global Instance is_parent_name_persistent p opn : Persistent (is_parent_name p opn).
 Proof. rewrite /is_parent_name. by destruct opn; apply _. Qed.
 
-(** [is_update_item updateItemVal ti]: the decoded heap struct [updateItemVal] (a [updateItem])
-    translates to the model doc-op payload [ti = (tid, input)] -- its id /
+(** [is_update_item updateItemVal taggedInput]: the decoded heap struct [updateItemVal] (a [updateItem])
+    translates to the model doc-op payload [taggedInput = (tid, input)] -- its id /
     content / both origin pointers map across (origins via [is_origin_id],
     persistent), its content is a nonempty run (issue #28 U7c: the single-char
     [Hulen = 1] restriction is dropped so a wire item can carry a whole run of
@@ -1193,20 +1193,20 @@ Proof. rewrite /is_parent_name. by destruct opn; apply _. Qed.
     (when present) is the name of the root type [tid] (issue #49; when absent
     the batch-level well-formedness pins [tid] through the origins). *)
 Definition is_update_item (updateItemVal : yjs.updateItem.t)
-    (ti : TId * IntegrateInput (A := A)) : iProp Σ :=
+    (taggedInput : TId * IntegrateInput (A := A)) : iProp Σ :=
   ∃ (oleft oright : option yjs.id.t) (opn : option go_string),
     "HisL" ∷ is_origin_id updateItemVal.(yjs.updateItem.originLeftId') oleft ∗
     "HisR" ∷ is_origin_id updateItemVal.(yjs.updateItem.originRightId') oright ∗
     "HisPN" ∷ is_parent_name updateItemVal.(yjs.updateItem.parentName') opn ∗
-    "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId ti.2⌝ ∗
-    "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId ti.2⌝ ∗
-    "%Hin_id" ∷ ⌜toYjsId updateItemVal.(yjs.updateItem.id') = in_id ti.2⌝ ∗
-    "%Hin_c" ∷ ⌜updateItemVal.(yjs.updateItem.content') = in_content ti.2⌝ ∗
+    "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId taggedInput.2⌝ ∗
+    "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId taggedInput.2⌝ ∗
+    "%Hin_id" ∷ ⌜toYjsId updateItemVal.(yjs.updateItem.id') = in_id taggedInput.2⌝ ∗
+    "%Hin_c" ∷ ⌜updateItemVal.(yjs.updateItem.content') = in_content taggedInput.2⌝ ∗
     "%Hunonempty" ∷ ⌜(1 <= length updateItemVal.(yjs.updateItem.content'))%nat⌝ ∗
-    "%Htid" ∷ ⌜∀ nm, opn = Some nm -> ti.1 = RootId nm⌝ ∗
-    "%Hborrow" ∷ ⌜opn = None -> in_originId ti.2 ≠ None ∨ in_rightOriginId ti.2 ≠ None⌝.
+    "%Htid" ∷ ⌜∀ nm, opn = Some nm -> taggedInput.1 = RootId nm⌝ ∗
+    "%Hborrow" ∷ ⌜opn = None -> in_originId taggedInput.2 ≠ None ∨ in_rightOriginId taggedInput.2 ≠ None⌝.
 
-#[global] Instance is_update_item_persistent updateItemVal ti : Persistent (is_update_item updateItemVal ti).
+#[global] Instance is_update_item_persistent updateItemVal taggedInput : Persistent (is_update_item updateItemVal taggedInput).
 Proof. rewrite /is_update_item. apply _. Qed.
 
 (** [own_update_structs sl dq inputs]: the heap slice of decoded structs at [sl] (Go
@@ -1219,7 +1219,7 @@ Definition own_update_structs (sl : slice.t) (dq : dfrac)
   ∃ (uivs : list yjs.updateItem.t),
     "Hsl" ∷ sl ↦*{dq} uivs ∗
     "Hcap" ∷ own_slice_cap yjs.updateItem.t sl dq ∗
-    "Hitems" ∷ ([∗ list] updateItemVal;ti ∈ uivs;inputs, is_update_item updateItemVal ti).
+    "Hitems" ∷ ([∗ list] updateItemVal;taggedInput ∈ uivs;inputs, is_update_item updateItemVal taggedInput).
 
 
 (** [is_root γs name]: persistent witness that the root type [name] is
@@ -1243,20 +1243,20 @@ Proof. apply _. Qed.
     what is buffered. Lifted when [getOrCreateYType]'s miss branch enters the
     verified subset. *)
 Definition pending_item_rooted (γs : store_names)
-    (ti : TId * IntegrateInput (A := A)) : iProp Σ :=
-  if decide (in_originId ti.2 = None ∧ in_rightOriginId ti.2 = None)
-  then (∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗ is_root γs nm)%I
+    (taggedInput : TId * IntegrateInput (A := A)) : iProp Σ :=
+  if decide (in_originId taggedInput.2 = None ∧ in_rightOriginId taggedInput.2 = None)
+  then (∃ nm : P, ⌜taggedInput.1 = RootId nm⌝ ∗ is_root γs nm)%I
   else True%I.
 
 Definition is_pending_rooted (γs : store_names)
     (pending : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  [∗ list] ti ∈ pending, pending_item_rooted γs ti.
+  [∗ list] taggedInput ∈ pending, pending_item_rooted γs taggedInput.
 
-#[global] Instance pending_item_rooted_persistent γs ti : Persistent (pending_item_rooted γs ti).
+#[global] Instance pending_item_rooted_persistent γs taggedInput : Persistent (pending_item_rooted γs taggedInput).
 Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
 #[global] Instance is_pending_rooted_persistent γs pending : Persistent (is_pending_rooted γs pending).
 Proof. apply _. Qed.
-#[global] Instance pending_item_rooted_timeless γs ti : Timeless (pending_item_rooted γs ti).
+#[global] Instance pending_item_rooted_timeless γs taggedInput : Timeless (pending_item_rooted γs taggedInput).
 Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
 #[global] Instance is_pending_rooted_timeless γs pending : Timeless (is_pending_rooted γs pending).
 Proof. apply _. Qed.
@@ -1300,8 +1300,8 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "#Hpendroot" ∷ is_pending_rooted γs pend ∗
-    "%Hpendbnd" ∷ ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ->
-                    (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z⌝ ∗
+    "%Hpendbnd" ∷ ⌜∀ taggedInput : TId * IntegrateInput (A := A), taggedInput ∈ pend ->
+                    (Z.of_nat (clock (in_id taggedInput.2)) + Z.of_nat (length (in_content taggedInput.2)) < 2^64)%Z⌝ ∗
     "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
@@ -1596,8 +1596,8 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "#Hpendroot" ∷ is_pending_rooted γs pend ∗
-    "%Hpendbnd" ∷ ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ->
-                    (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z⌝ ∗
+    "%Hpendbnd" ∷ ⌜∀ taggedInput : TId * IntegrateInput (A := A), taggedInput ∈ pend ->
+                    (Z.of_nat (clock (in_id taggedInput.2)) + Z.of_nat (length (in_content taggedInput.2)) < 2^64)%Z⌝ ∗
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
     "Htypes"  ∷ ([∗ map] parent ↦ ts ∈ types,
                   own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
@@ -1857,7 +1857,7 @@ Proof.
   iSplitR.
   { rewrite /is_pending_rooted big_sepL_nil //. }
   iSplitR.
-  { iPureIntro. move=> ti Hin. by apply elem_of_nil in Hin. }
+  { iPureIntro. move=> taggedInput Hin. by apply elem_of_nil in Hin. }
   iSplitR. { iPureIntro. move=> parent' ts' x Hlk. rewrite /types lookup_empty // in Hlk. }
   iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }

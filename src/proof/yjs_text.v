@@ -825,7 +825,7 @@ Proof.
     wp_alloc client_l as "Hcl2". wp_auto.
     rewrite Hb. wp_auto. wp_func_call. wp_call.
     wp_alloc oR2 as "HoR2". wp_auto. wp_alloc oL2 as "HoL2". wp_auto.
-    (* build the model item [nit] and integrate *)
+    (* build the model item [newItem] and integrate *)
     have Hclocknit : uint.nat (W64 (uint.Z k + j)) = (uint.nat k + j)%nat by word.
     rewrite Hinslen in Hleftspec.
     have Horig : ∃ (o : YjsPtr A),
@@ -850,15 +850,15 @@ Proof.
     destruct Hrorig as [mrightorigin Hrorig].
     set (in_id1 := MkYjsId (uint.nat client) (uint.nat (W64 (uint.Z k + j)))).
     set (input := MkIntegrateInput (toYjsId <$> olo) (toYjsId <$> in_rO) ([b] : A) in_id1).
-    set (nit := Item (A:=A) morigin mrightorigin in_id1 [b]).
-    have Htoitem : toItem input arr = Some nit.
+    set (newItem := Item (A:=A) morigin mrightorigin in_id1 [b]).
+    have Htoitem : toItem input arr = Some newItem.
     { apply (toItem_at arr in_id1 [b] morigin mrightorigin (toYjsId <$> olo) (toYjsId <$> in_rO) Hinvj).
       - destruct Horig as [(Hon & Ho & _) | (li & _ & Hla & Hom & Ho)]; [left; split; [exact Hon | exact Ho] | right; exists li; split_and!; [exact Hom | exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hla) | exact Ho]].
       - destruct Hrorig as [(Hrn & Hr & _) | (ri & Hria & Hri & Hr)]; [left; split; [exact Hrn | exact Hr] | right; exists ri; split_and!; [exact Hri | exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hria) | exact Hr]]. }
-    have Hvalid : IsItemValid nit :=
+    have Hvalid : IsItemValid newItem :=
       insert_item_valid arr (mp + j) in_id1 [b] morigin mrightorigin
         (toYjsId <$> olo) (toYjsId <$> in_rO) Hinvj Horig Hrorig.
-    have Hmax' : maximalId nit arr.
+    have Hmax' : maximalId newItem arr.
     { apply (insert_maximalId arr morigin mrightorigin (uint.nat client) (uint.nat (W64 (uint.Z k + j))) [b]).
       intros x Hx Hc. rewrite Hclocknit. exact (Hctrj x Hx Hc). }
     iDestruct "HisR" as "#HisRp".
@@ -904,13 +904,13 @@ Proof.
       iSplitR; [by iPureIntro|]. iExists ytw, tlw. iFrame "Hpw Hdw". iPureIntro.
       split_and!; [exact Hlw | exact Hrw | exact Hcw]. }
     have Hgmaxj : ∀ c0, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) →
-                    cell_client c0 = W64 (clientId (item_id nit)) →
-                    (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id nit))))%Z ∧
-                    (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (item_id nit))))%Z.
+                    cell_client c0 = W64 (clientId (item_id newItem)) →
+                    (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z ∧
+                    (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (item_id newItem))))%Z.
     { intros c0 Hc0 Hcc0.
-      have Hcl0 : cell_client c0 = client by (rewrite Hcc0 /nit /in_id1 /=; word).
-      have Hrhs : uint.Z (W64 (clock (item_id nit))) = uint.Z k + Z.of_nat j
-        by (rewrite /nit /in_id1 /= Hclocknit; word).
+      have Hcl0 : cell_client c0 = client by (rewrite Hcc0 /newItem /in_id1 /=; word).
+      have Hrhs : uint.Z (W64 (clock (item_id newItem))) = uint.Z k + Z.of_nat j
+        by (rewrite /newItem /in_id1 /= Hclocknit; word).
       have Hlen1 : (1 <= length (ic_run c0))%nat.
       { have Hwf : run_wf (ic_run c0).
         { move: Hc0. rewrite (all_cells_insert types (tv.(yjs.Text.inner')) ts (MkTypeState cells arr) Htsp) /=.
@@ -944,7 +944,7 @@ Proof.
     { rewrite Hcoupj. lia. }
     have HcurRj : (Z.of_nat (length (run_flatten (take (p + j)%nat cells))) = Z.of_nat (mp + j))%Z.
     { rewrite Hcoupj. lia. }
-    wp_apply (wp_Store__Integrate (tv.(yjs.Text.store')) (tv.(yjs.Text.inner')) oL2 arr input nit cells
+    wp_apply (wp_Store__Integrate (tv.(yjs.Text.store')) (tv.(yjs.Text.inner')) oL2 arr input newItem cells
                 (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) items_mref
                 (Z.of_nat (mp + j) - 1) (Z.of_nat (mp + j)) (p + j)%nat (p + j)%nat
                 Hinvj Htoitem Hvalid Hmax' HfindLj HfindRj Hlookj Hgmaxj Hnecj Hfitsj Hoclkj
@@ -959,13 +959,13 @@ Proof.
     (* --- mint the op certificate (issue #42): the heap integrate above is
        mirrored by a ghost broadcast(+self-delivery) of the op this item
        denotes, keeping the history coherent with the new [arr']. --- *)
-    rewrite (setintegrate_eq_integrate input arr nit Hinvj Htoitem Hvalid Hmax') in Hsi.
+    rewrite (setintegrate_eq_integrate input arr newItem Hinvj Htoitem Hvalid Hmax') in Hsi.
     have HmaskN : ↑histN ⊆ (⊤ : coPset) by solve_ndisj.
     have Hdg : doc_model_get (<[RootId name := arr]> m) (RootId name) = arr
       := docm_get_insert_eq m (RootId name) arr.
-    have Htoitem2 : toItem input (doc_model_get (<[RootId name := arr]> m) (RootId name)) = Some nit
+    have Htoitem2 : toItem input (doc_model_get (<[RootId name := arr]> m) (RootId name)) = Some newItem
       by rewrite Hdg.
-    have Hmax2 : maximalId nit (doc_model_get (<[RootId name := arr]> m) (RootId name))
+    have Hmax2 : maximalId newItem (doc_model_get (<[RootId name := arr]> m) (RootId name))
       by rewrite Hdg.
     have Hsi2' : integrate input (doc_model_get (<[RootId name := arr]> m) (RootId name)) = Some arr'
       by rewrite Hdg.
@@ -983,24 +983,24 @@ Proof.
         have := Hctr p' ts' x Hts' Hx Hcx. lia. }
     iMod (history_broadcast γh (uint.nat client) (uint.nat (W64 (uint.Z k + j))) hj
             (<[RootId name := arr]> m) (RootId name) arr'
-            input nit ⊤ HmaskN Htoitem2 Hvalid Hmax2 eq_refl Hboundj Hsi2' Hhcohj
+            input newItem ⊤ HmaskN Htoitem2 Hvalid Hmax2 eq_refl Hboundj Hsi2' Hhcohj
             with "His_hist Hhistj") as "(Hhistj & #Hlbj & #Hcertj & %Hhcohj2)".
     have Hcollm : <[RootId name := arr']> (<[RootId name := arr]> m) = <[RootId name := arr']> m
       by (rewrite insert_insert; case_decide; [reflexivity | congruence]).
     rewrite Hcollm in Hhcohj2.
-    pose proof (toItem_input_of_item input arr nit Htoitem) as Hinputeq.
+    pose proof (toItem_input_of_item input arr newItem Htoitem) as Hinputeq.
     iEval (rewrite Hinputeq) in "Hcertj".
-    iAssert ([∗ list] it ∈ (ins ++ [nit]),
+    iAssert ([∗ list] it ∈ (ins ++ [newItem]),
                is_op_cert γh (RootId name, OpInsert (input_of_item it)))%I
       with "[Hcertsj]" as "Hcertsj".
     { rewrite big_sepL_snoc. iFrame "Hcertsj". iApply "Hcertj". }
     wp_auto.
     (* place the new item, identify its index *)
-    have Hplace : arr' = take (mp + j)%nat arr ++ nit :: drop (mp + j)%nat arr.
-    { rewrite Harr'eq. apply (insert_straddle arr nit iidx (mp + j)%nat Hinvj ltac:(rewrite -Harr'eq; exact Hinv') Hile Hple).
-      - destruct Horig as [(_ & Ho & Hp0) | (li & Hge & Hla & _ & Ho)]; [left; split; [exact Hp0 | rewrite /nit /=; exact Ho] | right; split; [exact Hge | exists li; split; [exact Hla | rewrite /nit /=; exact Ho]]].
-      - destruct Hrorig as [(_ & Hr & Hpl) | (ri & Hria & _ & Hr)]; [left; split; [exact Hpl | rewrite /nit /=; exact Hr] | right; exists ri; split; [exact Hria | rewrite /nit /=; exact Hr]]. }
-    have Hnitpos : arr' !! (mp + j)%nat = Some nit.
+    have Hplace : arr' = take (mp + j)%nat arr ++ newItem :: drop (mp + j)%nat arr.
+    { rewrite Harr'eq. apply (insert_straddle arr newItem iidx (mp + j)%nat Hinvj ltac:(rewrite -Harr'eq; exact Hinv') Hile Hple).
+      - destruct Horig as [(_ & Ho & Hp0) | (li & Hge & Hla & _ & Ho)]; [left; split; [exact Hp0 | rewrite /newItem /=; exact Ho] | right; split; [exact Hge | exists li; split; [exact Hla | rewrite /newItem /=; exact Ho]]].
+      - destruct Hrorig as [(_ & Hr & Hpl) | (ri & Hria & _ & Hr)]; [left; split; [exact Hpl | rewrite /newItem /=; exact Hr] | right; exists ri; split; [exact Hria | rewrite /newItem /=; exact Hr]]. }
+    have Hnitpos : arr' !! (mp + j)%nat = Some newItem.
     { rewrite Hplace. apply list_lookup_middle. symmetry. apply length_take_le. exact Hple. }
     have Hshift : arr' !! (mp + j + 1)%nat = arr !! (mp + j)%nat.
     { rewrite Hplace. rewrite lookup_app_r; last (rewrite length_take_le; [lia | exact Hple]).
@@ -1008,35 +1008,35 @@ Proof.
       replace (mp + j + 1 - (mp + j))%nat with 1%nat by lia.
       simpl. rewrite lookup_drop. f_equal. lia. }
     iDestruct "Htext'" as (yt3 tl3) "(Hp3 & Hdll3 & %Hlen3 & %Hrepr3 & %Hcpar3)".
-    have HnitIn : nit ∈ arr' by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hnitpos).
+    have HnitIn : newItem ∈ arr' by exact (list_basics.list.list_elem_of_lookup_2 _ _ _ Hnitpos).
     (* the splice index is the cell cursor: the model index of the new cell
        is mp + j (order theory), and prefix-sum injectivity pins nx *)
     have Hnec0 : Forall (λ c0, ic_run c0 ≠ []) cells.
     { apply Forall_forall. move=> c0 Hc0. exact (proj1 (Hrunwfc c0 Hc0)). }
     have Hiidx0 : iidx = (mp + j)%nat.
-    { have Hnit_i0 : arr' !! iidx = Some nit.
+    { have Hnit_i0 : arr' !! iidx = Some newItem.
       { rewrite Harrsp2. apply list_lookup_middle. rewrite length_take_le //. }
       destruct (Nat.lt_trichotomy iidx (mp + j)%nat) as [Hlt|[Heq|Hgt]]; [exfalso|exact Heq|exfalso].
-      - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' iidx (mp + j)%nat nit nit Hinv' Hnit_i0 Hnitpos Hlt.
-        exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH).
-      - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' (mp + j)%nat iidx nit nit Hinv' Hnitpos Hnit_i0 Hgt.
-        exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr nit) (itemPtr nit) HnitIn HnitIn HH HH). }
+      - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' iidx (mp + j)%nat newItem newItem Hinv' Hnit_i0 Hnitpos Hlt.
+        exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr newItem) (itemPtr newItem) HnitIn HnitIn HH HH).
+      - have HH := invariant_yjsarray_idx.getElem_lt_YjsLt' arr' (mp + j)%nat iidx newItem newItem Hinv' Hnitpos Hnit_i0 Hgt.
+        exact (asymmetry.yjs_lt_asymm (yai_closed _ Hinv') (yai_item_set_inv _ Hinv') (itemPtr newItem) (itemPtr newItem) HnitIn HnitIn HH HH). }
     have Hnxpos0 : nx = (p + j)%nat.
     { apply (run_flatten_take_length_inj cells nx (p + j)%nat Hnec0 Hnxb HpjLb).
       rewrite Hcoupx Hcoupj Hiidx0 //. }
     have Hcx : cells' !! (p + j)%nat = Some c by (rewrite -Hnxpos0; exact Hclook).
     have Hcloc : ic_loc c = oL2 := Hcloc2.
-    have Hcid : run_head c = nit := Hchead.
-    have Hlast_c : ic_run c !! (length (ic_run c) - 1)%nat = Some nit.
+    have Hcid : run_head c = newItem := Hchead.
+    have Hlast_c : ic_run c !! (length (ic_run c) - 1)%nat = Some newItem.
     { have Hcu : length (ic_run c) = 1%nat := Hcunit.
       have Hh := Hcid. rewrite /run_head in Hh.
       rewrite Hcu /=.
       destruct (ic_run c) as [|hc tc]; [simpl in Hcu; discriminate |].
       simpl in Hh. by rewrite /= Hh. }
     wp_for_post.
-    (* re-establish the loop invariant for [S j] with [ins ++ [nit]] *)
+    (* re-establish the loop invariant for [S j] with [ins ++ [newItem]] *)
     iFrame "Ht His_lb HΦ HisRp Hpendf Hpend".
-    iExists (S j), arr', cells', oL2, (ins ++ [nit]),
+    iExists (S j), arr', cells', oL2, (ins ++ [newItem]),
       (hj ++ [EvBroadcast (RootId name, OpInsert input);
               EvDeliver (RootId name, OpInsert input)]).
     replace (W64 (uint.Z k + Z.of_nat (S j))) with (w64_word_instance.(word.add) (W64 (uint.Z k + j)) (W64 1)) by word.
@@ -1063,10 +1063,10 @@ Proof.
       + have Hxa : ArrSet arr x by (rewrite -(take_drop (mp + j)%nat arr); apply elem_of_app; left; exact Hxt).
         have := Hctrj x Hxa Hc. lia.
       + apply elem_of_cons in Hxc as [-> | Hxd].
-        * rewrite /nit /in_id1 /=. rewrite Hclocknit. lia.
+        * rewrite /newItem /in_id1 /=. rewrite Hclocknit. lia.
         * have Hxa : ArrSet arr x by (rewrite -(take_drop (mp + j)%nat arr); apply elem_of_app; right; exact Hxd).
           have := Hctrj x Hxa Hc. lia.
-    - right. exists c, nit. split_and!.
+    - right. exists c, newItem. split_and!.
       + replace (p + S j - 1)%nat with (p + j)%nat by lia. exact Hcx.
       + exact Hcloc.
       + replace (mp + S j - 1)%nat with (mp + j)%nat by lia. exact Hnitpos.
@@ -1099,17 +1099,17 @@ Proof.
         rewrite Hieq lookup_app_r in Hii; [| lia]. rewrite Nat.sub_diag /= in Hii. injection Hii as <-.
         split_and!.
         * exact HnitIn.
-        * intros b0 Hcsb. have Hsn : sint.nat (W64 j) = j by word. rewrite Hsn in Hb. rewrite Hieq Hinslen in Hcsb. rewrite Hb in Hcsb. injection Hcsb as Hbb. rewrite /nit /= Hbb //.
-        * rewrite /nit /in_id1 /=. rewrite Hieq Hinslen Hclocknit. reflexivity.
-        * rewrite /nit /=. exact HmroR.
-        * intros Hi0. rewrite /nit /=. rewrite Hieq Hinslen in Hi0.
+        * intros b0 Hcsb. have Hsn : sint.nat (W64 j) = j by word. rewrite Hsn in Hb. rewrite Hieq Hinslen in Hcsb. rewrite Hb in Hcsb. injection Hcsb as Hbb. rewrite /newItem /= Hbb //.
+        * rewrite /newItem /in_id1 /=. rewrite Hieq Hinslen Hclocknit. reflexivity.
+        * rewrite /newItem /=. exact HmroR.
+        * intros Hi0. rewrite /newItem /=. rewrite Hieq Hinslen in Hi0.
           destruct Horig as [(_ & Hmo & Hp0) | (li & Hge & Hla & _ & Hmo)].
           -- rewrite Hmo. destruct HoLspec as [[HoLF _] | (lc2 & li2 & Hge2 & _)]; [rewrite HoLF // | lia].
           -- rewrite Hmo. destruct Hleftj as [[_ Hp0] | (lc2 & li2 & _ & _ & Hla2 & _ & _ & Hlk0 & _)].
              { exfalso. have Hp00 : p = 0%nat by lia. have Hj00 : j = 0%nat by lia.
                move: Hge. rewrite Hmpdef Hp00 take_0 /run_flatten /= Hj00. lia. }
              have -> : li = li2 by (rewrite Hla in Hla2; injection Hla2 as ->; reflexivity). exact (Hlk0 Hi0).
-        * intros j' itj Hisj Hlookj'. rewrite /nit /=. rewrite Hieq Hinslen in Hisj. rewrite lookup_app_l in Hlookj'; [| rewrite Hinslen; lia].
+        * intros j' itj Hisj Hlookj'. rewrite /newItem /=. rewrite Hieq Hinslen in Hisj. rewrite lookup_app_l in Hlookj'; [| rewrite Hinslen; lia].
           destruct Horig as [(_ & _ & Hp0) | (li & Hge & Hla & _ & Hmo)]; [lia |].
           rewrite Hmo. destruct Hleftj as [[_ Hp0] | (lc2 & li2 & _ & _ & Hla2 & _ & _ & _ & Hlk)]; [lia |]. have -> : li = li2 by (rewrite Hla in Hla2; injection Hla2 as ->; reflexivity). have Hli2 := Hlk j' Hisj. rewrite Hli2 in Hlookj'. injection Hlookj' as <-. reflexivity.
     - intros x Hx. have Hxa := Hsubold x Hx. rewrite Hplace. rewrite -(take_drop (mp + j)%nat arr) in Hxa. apply elem_of_app in Hxa as [H1 | H2]; [apply elem_of_app; left; exact H1 | apply elem_of_app; right; apply elem_of_cons; right; exact H2].
@@ -1140,7 +1140,7 @@ Proof.
       + have := Hcellbnd c0 Hold Hcc0. lia.
       + apply list_elem_of_singleton in Hnew as ->.
         have Hcu1 : length (ic_run c) = 1%nat := Hcunit.
-        rewrite /cell_clock Hcid Hcu1 /nit /in_id1 /=. rewrite Hclocknit. word.
+        rewrite /cell_clock Hcid Hcu1 /newItem /in_id1 /=. rewrite Hclocknit. word.
     - (* Hlocdupj at S j *)
       have Hac_step2 : all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' arr']> types)
                     ≡ₚ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) ++ [c]
@@ -1155,10 +1155,10 @@ Proof.
                (tv.(yjs.Text.inner')) cells arr cells' arr' c Hlookj Hpermc)).
       apply (rangedisj_snoc _ _ c Hac_step2); [| exact Hrangedisjj].
       move=> c0 Hc0 Hcc0.
-      have Hcc0' : cell_client c0 = W64 (clientId (item_id nit)).
+      have Hcc0' : cell_client c0 = W64 (clientId (item_id newItem)).
       { rewrite Hcc0 /cell_client Hcid //. }
       have Hle := proj2 (Hgmaxj c0 Hc0 Hcc0').
-      have Hck : cell_clock c = W64 (clock (item_id nit)) by rewrite /cell_clock Hcid //.
+      have Hck : cell_clock c = W64 (clock (item_id newItem)) by rewrite /cell_clock Hcid //.
       rewrite Hck. lia.
     - (* Hrunfitsj at S j *)
       have Hac_step2 : all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' arr']> types)
@@ -1167,8 +1167,8 @@ Proof.
                (tv.(yjs.Text.inner')) cells arr cells' arr' c Hlookj Hpermc)).
       apply (fits_snoc _ _ c Hac_step2); [| exact Hrunfitsj].
       have Hu1 : length (ic_run c) = 1%nat := Hcunit.
-      rewrite /cell_fits /cell_clock Hcid Hu1 /nit /in_id1 /=. rewrite Hclocknit. word.
-    - (* Horiginclkj at S j: the new head [nit]'s same-client origin is an
+      rewrite /cell_fits /cell_clock Hcid Hu1 /newItem /in_id1 /=. rewrite Hclocknit. word.
+    - (* Horiginclkj at S j: the new head [newItem]'s same-client origin is an
          existing doc item below the local clock counter *)
       have Hac_step2 : all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' arr']> types)
                     ≡ₚ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) ++ [c]
@@ -1178,13 +1178,13 @@ Proof.
       move=> originId Hoid Hcl.
       rewrite Hcid in Hoid Hcl. rewrite Hcid.
       destruct Horig as [(Hon & Ho & _) | (li & Hge & Hla & Hom & Ho)].
-      + exfalso. move: Hoid. rewrite /nit /= Ho //.
-      + move: Hoid. rewrite /nit /= Ho /origin_id /=. move=> [= Hoideq].
+      + exfalso. move: Hoid. rewrite /newItem /= Ho //.
+      + move: Hoid. rewrite /newItem /= Ho /origin_id /=. move=> [= Hoideq].
         rewrite -Hoideq in Hcl. rewrite -Hoideq.
         have Hliarr : li ∈ arr := list_elem_of_lookup_2 _ _ _ Hla.
         have Hclli : clientId (item_id li) = uint.nat client := Hcl.
         have := Hctrj li Hliarr Hclli.
-        rewrite /nit /in_id1 /= Hclocknit. lia.
+        rewrite /newItem /in_id1 /= Hclocknit. lia.
     - exact Hhcohj2. }
   (* loop exit: the whole run is integrated; rebuild [store_inv] and return. *)
   have Hjend : (j = length cs)%nat by word.
