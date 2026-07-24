@@ -254,8 +254,10 @@ type pendingDelete struct {
 }
 
 // ApplyUpdate decodes a Yjs v1 update and integrates it into the document.
-// It assumes the update is well-formed and self-contained (every referenced
-// origin is present); items whose dependencies are missing are dropped.
+// The update may arrive in any order and need not be self-contained: structs
+// whose dependencies have not arrived yet are buffered in the store's pending
+// buffer by the verified store.applyUpdate and drained by later updates
+// (issue #40).
 func (doc *Doc) ApplyUpdate(data []byte) {
 	d := &decoder{buf: data}
 
@@ -287,7 +289,9 @@ func (doc *Doc) ApplyUpdate(data []byte) {
 	}
 
 	doc.integrateStructs(structs)
+	doc.store.mu.Lock()
 	doc.applyDeletes(deletes)
+	doc.store.mu.Unlock()
 }
 
 func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
@@ -340,15 +344,13 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 	}
 }
 
-// integrateStructs splits each item struct into 1-char updateItems and
-// integrates them in dependency order with the verified update path
-// (store.repair + store.Integrate): an item is integrated once both of its
-// origins are already in the store, so repair can resolve them (and the
-// parent borrows from them). Repeated passes process the remainder until no
-// progress is made — a minimal stand-in for y-octo's UpdateIterator pending
-// machinery, which is out of the verified subset.
+// integrateStructs splits each item struct into 1-char updateItems (chained
+// left origins, shared right origin) and hands the whole batch to the
+// verified total update path in one locked call: Doc.applyUpdate buffers
+// structs whose dependencies are missing in the store's pending, so no
+// ordering or self-containedness is assumed here (issue #40).
 func (doc *Doc) integrateStructs(structs []decodedStruct) {
-	var pending []updateItem
+	var items []updateItem
 	for _, ds := range structs {
 		if !ds.isItem {
 			// GC / Skip: nothing to integrate (the DLLs hold only items).
@@ -369,7 +371,7 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 				prev := newId(ds.id.clientId, ds.id.clock+uint64(j-1))
 				originLeftId = &prev
 			}
-			pending = append(pending, updateItem{
+			items = append(items, updateItem{
 				id:            subID,
 				originLeftId:  originLeftId,
 				originRightId: ds.originRightId,
@@ -379,28 +381,7 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 		}
 	}
 
-	s := doc.store
-	for len(pending) > 0 {
-		var ready []updateItem
-		readyIds := map[id]bool{}
-		var next []updateItem
-		for _, ui := range pending {
-			resolved := func(dep *id) bool {
-				return dep == nil || readyIds[*dep] || hasNode(s, *dep)
-			}
-			if resolved(ui.originLeftId) && resolved(ui.originRightId) {
-				ready = append(ready, ui)
-				readyIds[ui.id] = true
-			} else {
-				next = append(next, ui)
-			}
-		}
-		if len(ready) == 0 {
-			break // missing dependencies: drop the remainder (minimal codec)
-		}
-		s.applyUpdate(ready)
-		pending = next
-	}
+	doc.applyUpdate(items)
 }
 
 // applyDeletes records each range in the delete set and tombstones the matching
@@ -420,9 +401,4 @@ func (doc *Doc) applyDeletes(deletes []pendingDelete) {
 			}
 		}
 	}
-}
-
-func hasNode(s *store, id id) bool {
-	_, ok := s.GetNode(id)
-	return ok
 }

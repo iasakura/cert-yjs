@@ -32,6 +32,16 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
    [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Store]. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 
+(* [is_pending_rooted]'s instances are [#[local]] in [yjs_store_base] (closed over
+   a wider section context); re-declare here so [iNamed] can unpack the
+   persistent [#Hpendroot] conjunct of [own_store]. *)
+#[local] Instance pending_item_rooted_persistent'' γs ti :
+  Persistent (pending_item_rooted γs ti).
+Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
+#[local] Instance is_pending_rooted_persistent'' γs pending :
+  Persistent (is_pending_rooted γs pending).
+Proof. apply _. Qed.
+
 (** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
     delegates to [is_Store]. Since [Text] holds the store directly (y-octo: the
     YTypeRef carries the store ref), [is_Text] does NOT go through [is_Doc]; this
@@ -52,15 +62,17 @@ Proof. apply _. Qed.
     instantiate the receiver-side obligation of [wp_Doc__ApplySyncUpdate] at
     the history the lock reveals. *)
 Lemma own_store_hist_coh (s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocM) :
-  own_store s_loc γs γh c h m -∗ own_store s_loc γs γh c h m ∗ ⌜history_state_coh h m⌝.
+    (c : ClientId) (h : list Ev) (m : DocM)
+    (pend : list (TId * IntegrateInput (A := A))) :
+  own_store s_loc γs γh c h m pend -∗
+  own_store s_loc γs γh c h m pend ∗ ⌜history_state_coh h m⌝.
 Proof.
   iIntros "H". iNamed "H".
-  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hhist".
-  - iExists client, k, items_mref, types_mref, dset, types, bind.
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hseq Htypes HtypesAuth Hbinds Hhist".
+  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq Htypes HtypesAuth Hhist".
+  - iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind.
+    iFrame "∗#".
     iPureIntro. split_and!;
-      [exact Hclientc | exact Hregcoh | exact Hhcoh | exact Hctr
+      [exact Hclientc | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
       | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk].
   - iPureIntro. exact Hhcoh.
 Qed.
@@ -70,60 +82,58 @@ Qed.
     proven conflict-resolving integrate loop ([store.applyUpdate]) on the
     actual store, so the replica's history genuinely advances by the batch. The
     change is reported as the persistent history-prefix certificate
-    [is_history_lb γh c (h ++ deliver_ev <$> inputs)]: the document's delivered
-    fragment now contains exactly this update.
+    [is_history_lb γh c (h ++ deliver_ev <$> expand_inputs applied)]: the
+    document's delivered fragment now contains exactly the applied (drained)
+    per-char ops.
 
-    The two side conditions are the honest receiver obligations, not faked. The
-    first is the [2^64] no-wrap seam on the inputs. The second is the
-    protocol's freshness/coverage guarantee: for WHATEVER coherent history and
-    model the replica is actually in (revealed only under the lock), the batch
-    is a certified, deliverable update ([batch_ok]) with no clock at [2^64-1].
-    A real sender establishes it by diffing against the receiver's advertised
-    state vector (Step1), so exactly the missing, causally ready structs are
-    sent; here it is a pure precondition, discharged by that protocol argument
-    (which, end to end, needs the state-vector <-> delivered-set faithfulness,
-    the remaining #51/#63 work). Everything h-independent (the op certificates
-    and the root witnesses) is supplied up front. *)
+    Because the drain is TOTAL (issue #40: the pending buffer plus the batch
+    drain to the structural-dependency fixpoint, in ANY order), there is NO
+    causal-closure / [batch_ok] / freshness receiver obligation: whatever
+    coherent history and model the replica is in (revealed only under the lock),
+    the certified structs that are ready get delivered and the rest stay
+    buffered. The only side condition is the honest [2^64] no-wrap seam on the
+    inputs (per char: [clock + length(content) < 2^64]). Everything else (the
+    per-char op certificates over [expand_inputs inputs] and the root witnesses)
+    is supplied up front and is [h]-independent. *)
 Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (sl : slice.t) (dq : dfrac)
-    (inputs : list (TId * IntegrateInput (A := A))) (Ds : list (gset YjsId)) :
-  (∀ (i : nat) (ti : TId * IntegrateInput (A := A)),
-     inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z) ->
-  (∀ (h : list Ev) (m : DocM), history_state_coh h m ->
-     batch_ok h (expand_inputs inputs) Ds /\
-     (∀ (t : TId) x, x ∈ docm_get m t -> (Z.of_nat (clock (item_id x)) + 1 < 2^64)%Z)) ->
+    (inputs : list (TId * IntegrateInput (A := A))) :
+  (∀ ti : TId * IntegrateInput (A := A), ti ∈ inputs ->
+     (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z) ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
-      own_update sl dq inputs ∗
-      ([∗ list] ti;D ∈ expand_inputs inputs;Ds, is_op_cert γh (ti.1, OpInsert ti.2) D) ∗
-      ([∗ list] ti ∈ inputs, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗ is_root γs nm) }}}
+      own_update_structs sl dq inputs ∗
+      is_pending_certified γh (expand_inputs inputs) ∗
+      is_pending_rooted γs inputs }}}
     dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl
-  {{{ (c : ClientId) (h : list Ev) (m' : DocM), RET #();
-      own_update sl dq inputs ∗
-      is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs inputs)) }}}.
+  {{{ (c : ClientId) (h : list Ev)
+      (applied rest : list (TId * IntegrateInput (A := A))), RET #();
+      own_update_structs sl dq inputs ∗
+      is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) }}}.
 Proof.
-  move=> Hnowrapb Hrecv.
+  move=> Hnowrapb.
   wp_start as "(#His_doc & #Hishist & Hupd & #Hcerts & #Hroots)".
   iNamed "His_doc". subst s_loc. wp_auto.
-  (* take the write lock, reveal the store's current (c, h, m) *)
+  (* take the write lock, reveal the store's current (c, h, m, pend) *)
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
   iEval (rewrite store_inv_own_store) in "Hinv".
-  iDestruct "Hinv" as (c h m) "Hstore".
+  iDestruct "Hinv" as (c h m pend) "Hstore".
   iDestruct (own_store_hist_coh with "Hstore") as "[Hstore %Hhcoh]".
-  destruct (Hrecv h m Hhcoh) as [Hbatch Hnowrapm].
   wp_auto.
-  (* run the proven certificate-based applyUpdate on the real store *)
-  wp_apply (wp_store__applyUpdate_certs _ sl dq γs γh c h m inputs
-              Hnowrapm Hnowrapb
-              with "[$Hishist $Hstore $Hupd $Hroots Hcerts]").
-  { iExists Ds. iFrame "Hcerts". iPureIntro. exact Hbatch. }
-  iIntros (m') "(Hstore & Hupd & %Hvr & #Hlb & #Hrootlbs)".
+  (* run the total certificate-based applyUpdate on the real store: no
+     causal-closure obligation; the pending plus the batch drain to the
+     structural fixpoint, delivering only the applied structs (per char) *)
+  wp_apply (wp_store__applyUpdate_certs _ sl dq γs γh c h m pend inputs
+              Hnowrapb
+              with "[$Hishist $Hstore $Hupd $Hcerts $Hroots]").
+  iIntros (applied rest m') "(Hupd & Hstore & #Hlb & %Hdrain & %Hvr & %Hnoc & #Hrootlbs)".
   wp_auto.
-  (* rebuild store_inv at the advanced history and release the lock *)
+  (* rebuild store_inv at the advanced history (delivered = expand_inputs applied)
+     with the leftover as the new pending, and release the lock *)
   iAssert (▷ store_inv dvv.(yjs.Doc.store') γs γh)%I with "[Hstore]" as "Hinv".
   { iNext. iApply store_inv_own_store.
-    iExists c, (h ++ (deliver_ev <$> expand_inputs inputs)), m'. iFrame "Hstore". }
+    iExists c, (h ++ (deliver_ev <$> expand_inputs applied)), m', rest. iFrame "Hstore". }
   wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hinv]").
-  iApply ("HΦ" $! c h m'). iFrame "Hupd Hlb".
+  iApply ("HΦ" $! c h applied rest). iFrame "Hupd Hlb".
 Qed.
 
 End doc.

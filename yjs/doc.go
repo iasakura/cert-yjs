@@ -27,3 +27,16 @@ func (d *Doc) GetText(name string) *Text {
 	s.mu.Unlock()
 	return &Text{store: s, inner: inner}
 }
+
+// applyUpdate integrates a decoded update batch under the store's write lock
+// (y-octo: Doc::apply_update takes store.write() for the whole apply). The
+// verified core is store.applyUpdate, which is total: structs whose
+// dependencies have not arrived are buffered in the store and drained by
+// later calls. The codec-level Doc.ApplyUpdate (codec.go) decodes the wire
+// format and routes the batch through here.
+func (d *Doc) applyUpdate(structs []updateItem) {
+	s := d.store
+	s.mu.Lock()
+	s.applyUpdate(structs)
+	s.mu.Unlock()
+}
