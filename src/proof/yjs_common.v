@@ -8,7 +8,7 @@
       the model);
     - the heap-node record [item_cell] and the cursor helper [node_loc];
     - the persistent origin-pointer predicate [is_origin_id];
-    - the item-pointer helpers [oid_of] / [item_or_null];
+    - the item-pointer helpers [originId_of] / [item_or_null];
     - the id-span-slice abstraction [own_id_set] (a heap [[]idSpan] as a
       [gset YjsId] of char ids, issue #28).
 
@@ -412,20 +412,20 @@ Definition node_loc (cells : list item_cell) (k : Z) : loc :=
 
 (** An origin pointer is either null (no origin) or a read-only [Id] cell.
     Origins are immutable once integrated, hence persistent ([↦□]). *)
-Definition is_origin_id (p : loc) (oid : option yjs.id.t) : iProp Σ :=
-  match oid with
+Definition is_origin_id (p : loc) (originId : option yjs.id.t) : iProp Σ :=
+  match originId with
   | None => ⌜p = null⌝
   | Some idv => ⌜p ≠ null⌝ ∗ p ↦□ idv
   end.
 
 (** Origins are read-only, hence the predicate is persistent. *)
-Global Instance is_origin_id_persistent p oid : Persistent (is_origin_id p oid).
-Proof. rewrite /is_origin_id. by destruct oid; apply _. Qed.
+Global Instance is_origin_id_persistent p originId : Persistent (is_origin_id p originId).
+Proof. rewrite /is_origin_id. by destruct originId; apply _. Qed.
 
 (* ----- item-pointer helpers --------------------------------------------- *)
 
-(** A heap item pointer is null or owns a node; [oid_of] is its model id. *)
-Definition oid_of (ov : option yjs.item.t) : option YjsId :=
+(** A heap item pointer is null or owns a node; [originId_of] is its model id. *)
+Definition originId_of (ov : option yjs.item.t) : option YjsId :=
   (λ v, toYjsId v.(yjs.item.id')) <$> ov.
 
 Definition item_or_null (p : loc) (ov : option yjs.item.t) (dq : dfrac) : iProp Σ :=

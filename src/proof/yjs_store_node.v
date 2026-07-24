@@ -149,12 +149,12 @@ Lemma ValidReplay_chunk_extract (t : TId) (ops : list (IntegrateInput (A := A)))
     (rest : list (TId * IntegrateInput (A := A))) (m m' : DocM) :
   is_Some (m !! t) ->
   ValidReplay (((λ op, (t, op)) <$> ops) ++ rest) m m' ->
-  ∃ arr', integrate_all ops (docm_get m t) = Some arr' ∧
+  ∃ arr', integrate_all ops (doc_model_get m t) = Some arr' ∧
           ValidReplay rest (<[t := arr']> m) m'.
 Proof.
   revert m. induction ops as [|op ops' IH]; move=> m Hsome Hvr.
-  - simpl in Hvr. exists (docm_get m t). split; first done.
-    destruct Hsome as [arr Harr]. rewrite /docm_get Harr /=.
+  - simpl in Hvr. exists (doc_model_get m t). split; first done.
+    destruct Hsome as [arr Harr]. rewrite /doc_model_get Harr /=.
     by rewrite (insert_id _ _ _ Harr).
   - simpl in Hvr.
     inversion Hvr as [| t0 input0 rest0 m0 arr2 m'0 nit Htoit Hvalid Hmax Hfresh Hint Hvr' Heq1 Heq2 Heq3]; subst.
@@ -258,7 +258,7 @@ Lemma expand_inputs_arr_fresh (inputs : list (TId * IntegrateInput (A := A)))
     inputs !! i = Some ti ->
     (1 <= length (in_content ti.2))%nat ->
     ∀ (t : TId) (x : YjsItem A),
-      x ∈ docm_get m t ->
+      x ∈ doc_model_get m t ->
       clientId (item_id x) = clientId (in_id ti.2) ->
       (clock (item_id x) < clock (in_id ti.2))%nat.
 Proof.
@@ -297,7 +297,7 @@ Lemma applyUpdate_peel_step (inputs : list (TId * IntegrateInput (A := A))) (j :
     (t : TId) (input : IntegrateInput (A := A)) (mj m' : DocM) (arrj : list (YjsItem A)) :
   inputs !! j = Some (t, input) ->
   (1 <= length (in_content input))%nat ->
-  docm_get mj t = arrj ->
+  doc_model_get mj t = arrj ->
   ValidReplay (expand_inputs (drop j inputs)) mj m' ->
   ∃ (nit : YjsItem A) (arr' : list (YjsItem A)),
     toItem input arrj = Some nit /\
@@ -326,7 +326,7 @@ Proof.
   inversion Hvr as
     [| t0 hop0 rest0 m0 arr1 mf nit_h Htoith Hvldh Hmaxh Hglob Hinth Hvrtail Heqhd [Heqi Heqa Heqf]];
     subst.
-  set (arrj := docm_get mj t) in *.
+  set (arrj := doc_model_get mj t) in *.
   have Hswaph := toItem_content_swap hop hop arrj nit_h eq_refl eq_refl Htoith.
   rewrite Htoith in Hswaph. injection Hswaph as Hnith.
   have Hidhop : in_id hop = in_id input by rewrite /hop.
@@ -427,18 +427,18 @@ Lemma types_cell_acc_gen (types : gmap loc type_state) (c : item_cell) :
   ([∗ map] parent ↦ ts ∈ types,
       own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
       ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
-    ∃ (iv : yjs.item.t) (olid orid : option yjs.id.t),
-      "%Hid" ∷ ⌜item_id (run_head c) = toYjsId iv.(yjs.item.id')⌝ ∗
-      "%Hpar" ∷ ⌜iv.(yjs.item.parent') = ic_parent c⌝ ∗
-      "%Hcontent" ∷ ⌜content <$> ic_run c = explode (toContent iv.(yjs.item.content'))⌝ ∗
+    ∃ (itemVal : yjs.item.t) (olid orid : option yjs.id.t),
+      "%Hid" ∷ ⌜item_id (run_head c) = toYjsId itemVal.(yjs.item.id')⌝ ∗
+      "%Hpar" ∷ ⌜itemVal.(yjs.item.parent') = ic_parent c⌝ ∗
+      "%Hcontent" ∷ ⌜content <$> ic_run c = explode (toContent itemVal.(yjs.item.content'))⌝ ∗
       "%Holid" ∷ ⌜origin_id (origin (run_head c)) = toYjsId <$> olid⌝ ∗
       "%Horid" ∷ ⌜origin_id (rightOrigin (run_head c)) = toYjsId <$> orid⌝ ∗
-      "%Hflags" ∷ ⌜iv.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
+      "%Hflags" ∷ ⌜itemVal.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
       "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
-      "Hval" ∷ ic_loc c ↦ iv ∗
-      "Hcol" ∷ is_origin_id iv.(yjs.item.originLeftId') olid ∗
-      "Hcor" ∷ is_origin_id iv.(yjs.item.originRightId') orid ∗
-      "Hback" ∷ (ic_loc c ↦ iv -∗
+      "Hval" ∷ ic_loc c ↦ itemVal ∗
+      "Hcol" ∷ is_origin_id itemVal.(yjs.item.originLeftId') olid ∗
+      "Hcor" ∷ is_origin_id itemVal.(yjs.item.originRightId') orid ∗
+      "Hback" ∷ (ic_loc c ↦ itemVal -∗
         ([∗ map] parent ↦ ts ∈ types,
             own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
             ⌜YjsArrInvariant (ty_arr ts)⌝)).
@@ -450,7 +450,7 @@ Proof using Type*.
   iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
   iDestruct (own_dll_acc (DfracOwn 1) (ty_cells ts) yt.(yjs.yType.start') tl k c Hk with "Hdll") as "Hacc".
   iNamed "Hacc".
-  iExists iv, olid, orid.
+  iExists itemVal, olid, orid.
   iSplitR; [iPureIntro; exact Hid |].
   iSplitR; [iPureIntro; exact Hpar |].
   iSplitR; [iPureIntro; exact Hcontent |].
@@ -543,20 +543,20 @@ Proof using Type*.
     iDestruct (types_cell_acc_gen types cmid Hcmemall with "Htypes") as "Hacc".
     iNamed "Hacc".
     wp_auto.
-    have Hmcv : cell_clock cmid = iv.(yjs.item.id').(yjs.id.clock')
+    have Hmcv : cell_clock cmid = itemVal.(yjs.item.id').(yjs.id.clock')
       by (rewrite /cell_clock Hid /toYjsId /=; word).
     (* the run length is what [Len()] reads (the content byte length couples to
        the run via [Hcontent]), replacing the pre-#28 unit-length reasoning *)
-    have HlenEq : length (iv.(yjs.item.content').(yjs.content.content')) = length (ic_run cmid).
+    have HlenEq : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (ic_run cmid).
     { have H := f_equal length Hcontent.
       rewrite length_fmap explode_length /toContent in H. lia. }
     have Hlenpos : (1 <= Z.of_nat (length (ic_run cmid)))%Z.
     { have [Hne _] := Hrun. destruct (ic_run cmid) as [|? ?]; [done | simpl; lia]. }
-    wp_apply (wp_item__Len cmid.(ic_loc) (DfracOwn 1) iv with "[$Hval]"). iIntros "Hval".
+    wp_apply (wp_item__Len cmid.(ic_loc) (DfracOwn 1) itemVal with "[$Hval]"). iIntros "Hval".
     rewrite HlenEq.
     iDestruct ("Hback" with "Hval") as "Htypes".
     wp_auto.
-    destruct (bool_decide (uint.Z clk < uint.Z iv.(yjs.item.id').(yjs.id.clock'))) eqn:Hcmp1.
+    destruct (bool_decide (uint.Z clk < uint.Z itemVal.(yjs.item.id').(yjs.id.clock'))) eqn:Hcmp1.
     + (* clk < middleClock: shrink [right] to [mid] *)
       apply bool_decide_eq_true_1 in Hcmp1.
       wp_auto. wp_for_post.
@@ -582,7 +582,7 @@ Proof using Type*.
       wp_auto.
       case_bool_decide as Hcmp2.
       * (* clk >= middleEnd: move [left] past [mid] *)
-        have Hgtm : (uint.Z iv.(yjs.item.id').(yjs.id.clock') < uint.Z clk)%Z by word.
+        have Hgtm : (uint.Z itemVal.(yjs.item.id').(yjs.id.clock') < uint.Z clk)%Z by word.
         wp_auto. wp_for_post.
         iFrame "HΦ". iExists (word.add mid (W64 1)), hi.
         iFrame "Hleft Hright Hnodes Hclock Hsl Htypes".
@@ -690,20 +690,20 @@ Proof using Type*.
     iDestruct (types_cell_acc_gen types cmid Hcmemall with "Htypes") as "Hacc".
     iNamed "Hacc".
     wp_auto.
-    have Hmcv : cell_clock cmid = iv.(yjs.item.id').(yjs.id.clock')
+    have Hmcv : cell_clock cmid = itemVal.(yjs.item.id').(yjs.id.clock')
       by (rewrite /cell_clock Hid /toYjsId /=; word).
-    have HlenEq : length (iv.(yjs.item.content').(yjs.content.content')) = length (ic_run cmid).
+    have HlenEq : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (ic_run cmid).
     { have H := f_equal length Hcontent.
       rewrite length_fmap explode_length /toContent in H. lia. }
     have Hlenpos : (1 <= Z.of_nat (length (ic_run cmid)))%Z.
     { have [Hne _] := Hrun. destruct (ic_run cmid) as [|? ?]; [done | simpl; lia]. }
     have Hnw : (uint.Z (cell_clock cmid) + Z.of_nat (length (ic_run cmid)) < 2^64)%Z
       by (apply Hrunfits; exact (list_elem_of_lookup_2 _ _ _ Hcmid)).
-    wp_apply (wp_item__Len cmid.(ic_loc) (DfracOwn 1) iv with "[$Hval]"). iIntros "Hval".
+    wp_apply (wp_item__Len cmid.(ic_loc) (DfracOwn 1) itemVal with "[$Hval]"). iIntros "Hval".
     rewrite HlenEq.
     iDestruct ("Hback" with "Hval") as "Htypes".
     wp_auto.
-    destruct (bool_decide (uint.Z clk < uint.Z iv.(yjs.item.id').(yjs.id.clock'))) eqn:Hcmp1.
+    destruct (bool_decide (uint.Z clk < uint.Z itemVal.(yjs.item.id').(yjs.id.clock'))) eqn:Hcmp1.
     + (* clk < middleClock: every covering cell sits strictly left of [mid] *)
       apply bool_decide_eq_true_1 in Hcmp1.
       wp_auto. wp_for_post.
@@ -731,8 +731,8 @@ Proof using Type*.
         wp_auto. wp_for_post.
         iFrame "HΦ". iExists (word.add mid (W64 1)), hi.
         iFrame "Hleft Hright Hnodes Hclock Hsl Htypes".
-        have Hmide : (uint.Z (w64_word_instance.(word.add) iv.(yjs.item.id').(yjs.id.clock') (W64 (length (ic_run cmid))))
-                      = uint.Z iv.(yjs.item.id').(yjs.id.clock') + Z.of_nat (length (ic_run cmid)))%Z by word.
+        have Hmide : (uint.Z (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (ic_run cmid))))
+                      = uint.Z itemVal.(yjs.item.id').(yjs.id.clock') + Z.of_nat (length (ic_run cmid)))%Z by word.
         rewrite Hmide in Hcmp2.
         iPureIntro. split.
         { word. }
@@ -923,7 +923,7 @@ Proof using Type*.
   iEval (rewrite -Hsplit) in "Hdll".
   iEval (rewrite own_dll_app) in "Hdll".
   iDestruct "Hdll" as (ml mf) "[Hseg1 Hseg2]".
-  iDestruct "Hseg2" as (iv olidcw oridcw) "Hcons".
+  iDestruct "Hseg2" as (itemVal olidcw oridcw) "Hcons".
   iNamed "Hcons".
   destruct Hloc as [Hmfeq Hmfnn]. subst mf.
   iDestruct (typed_pointsto_not_null with "Hval") as %Hcwnn.
@@ -934,7 +934,7 @@ Proof using Type*.
   wp_apply wp_string_to_bytes. iIntros (cbs) "[Hcb Hcbcap]". wp_auto.
   (* the right cell's id := newId(client, clock+diff) *)
   wp_apply wp_NewId.
-  have Hsclen : length (iv.(yjs.item.content').(yjs.content.content')) = length cw.(ic_run).
+  have Hsclen : length (itemVal.(yjs.item.content').(yjs.content.content')) = length cw.(ic_run).
   { have H := f_equal length Hcontent. rewrite length_fmap explode_length /toContent in H. lia. }
   iDestruct (own_slice_len with "Hcb") as %Hcbwf.
   iDestruct (own_slice_wf with "Hcb") as %Hcapwf.
@@ -984,7 +984,7 @@ Proof using Type*.
   { apply all_cells_elem_of. exists parent, (MkTypeState cells arr).
     split; [exact Htypes | exact (list_elem_of_lookup_2 _ _ _ Hcellk)]. }
   have Hnowrapcw := Hrunfits cw Hcwmem.
-  have Hcwck : cell_clock cw = iv.(yjs.item.id').(yjs.id.clock').
+  have Hcwck : cell_clock cw = itemVal.(yjs.item.id').(yjs.id.clock').
   { rewrite /cell_clock Hid /toYjsId /=. word. }
   have Hsintlen : sint.nat cbs.(slice.len) = length cw.(ic_run).
   { rewrite -Hsclen. symmetry. exact Hcbwf1. }
@@ -1002,12 +1002,12 @@ Proof using Type*.
   { rewrite /run_head /split_cell_left /=. apply hd_inhabitant_take. rewrite /o; lia. }
   have Hrhcr : run_head (split_cell_right cw o rs) = yo.
   { rewrite /run_head /split_cell_right /=. exact (hd_inhabitant_drop _ o yo Hyo). }
-  have Hcontl : content <$> take o cw.(ic_run) = explode (take (sint.nat diff) iv.(yjs.item.content').(yjs.content.content')).
+  have Hcontl : content <$> take o cw.(ic_run) = explode (take (sint.nat diff) itemVal.(yjs.item.content').(yjs.content.content')).
   { rewrite Hsintdiff fmap_take Hcontent /toContent /explode fmap_take //. }
-  have Hsubdrop : subslice (sint.nat diff) (sint.nat cbs.(slice.len)) iv.(yjs.item.content').(yjs.content.content')
-                = drop o iv.(yjs.item.content').(yjs.content.content').
+  have Hsubdrop : subslice (sint.nat diff) (sint.nat cbs.(slice.len)) itemVal.(yjs.item.content').(yjs.content.content')
+                = drop o itemVal.(yjs.item.content').(yjs.content.content').
   { rewrite Hsintdiff Hsintlen -Hsclen /subslice. rewrite take_ge; [reflexivity | lia]. }
-  have Hcontr : content <$> drop o cw.(ic_run) = explode (drop o iv.(yjs.item.content').(yjs.content.content')).
+  have Hcontr : content <$> drop o cw.(ic_run) = explode (drop o itemVal.(yjs.item.content').(yjs.content.content')).
   { rewrite fmap_drop Hcontent /toContent /explode fmap_drop //. }
   (* [if n.right != nil] branches on whether [cw] is the run's last cell (suf) *)
   destruct suf as [|d0 drest] eqn:Hsufeq.
@@ -1016,17 +1016,17 @@ Proof using Type*.
        (getNodeIndex over the split run + client_run_loc_insert). *)
     (* ----- guard + n.right := rs ----- *)
     iDestruct "Hrest" as %[Hrnull Htl0eq].
-    rewrite (bool_decide_eq_true_2 (iv.(yjs.item.right') = null) Hrnull).
+    rewrite (bool_decide_eq_true_2 (itemVal.(yjs.item.right') = null) Hrnull).
     wp_auto.
     (* ----- branch-agnostic split-cell pure facts (origin telescoping) ----- *)
     set (cl := split_cell_left cw o).
     set (cr := split_cell_right cw o rs).
-    set (oid := {| yjs.id.clientId' := iv.(yjs.item.id').(yjs.id.clientId');
-                   yjs.id.clock' := word.sub (word.add iv.(yjs.item.id').(yjs.id.clock') diff) (W64 1) |}).
+    set (originId := {| yjs.id.clientId' := itemVal.(yjs.item.id').(yjs.id.clientId');
+                   yjs.id.clock' := word.sub (word.add itemVal.(yjs.item.id').(yjs.id.clock') diff) (W64 1) |}).
     have Hopos : (0 < o)%nat by (rewrite /o; lia).
-    have Hnowrap_add : (uint.Z iv.(yjs.item.id').(yjs.id.clock') + uint.Z diff < 2^64)%Z.
+    have Hnowrap_add : (uint.Z itemVal.(yjs.item.id').(yjs.id.clock') + uint.Z diff < 2^64)%Z.
     { rewrite -Hcwck. have H1 := Hnowrapcw. have H2 := Hdiff. word. }
-    have Hadd_eq : (uint.nat iv.(yjs.item.id').(yjs.id.clock') + o)%nat = uint.nat (word.add iv.(yjs.item.id').(yjs.id.clock') diff).
+    have Hadd_eq : (uint.nat itemVal.(yjs.item.id').(yjs.id.clock') + o)%nat = uint.nat (word.add itemVal.(yjs.item.id').(yjs.id.clock') diff).
     { rewrite /o. clear -Hnowrap_add. word. }
     have [xprev Hxprev] : is_Some (cw.(ic_run) !! (o - 1)%nat).
     { apply lookup_lt_is_Some. rewrite /o. lia. }
@@ -1035,10 +1035,10 @@ Proof using Type*.
     have Hstep := proj2 Hrun (o - 1)%nat xprev yo Hxprev Hyo2.
     have Horig : origin yo = itemPtr xprev by (destruct Hstep as [_ [Hh _]]; exact Hh).
     have Hxpid := run_wf_lookup_clock cw.(ic_run) (o - 1)%nat (run_head cw) xprev Hrun Hrun0 Hxprev.
-    have Hcrorig : origin_id (origin (run_head cr)) = toYjsId <$> Some oid.
+    have Hcrorig : origin_id (origin (run_head cr)) = toYjsId <$> Some originId.
     { rewrite /cr Hrhcr Horig /origin_id /=. f_equal.
-      rewrite Hxpid Hid /toYjsId /oid /=. f_equal. clear -Hnowrap_add Hdiff. word. }
-    have Hrhck : clock (item_id (run_head cw)) = uint.nat iv.(yjs.item.id').(yjs.id.clock') by (rewrite Hid /toYjsId /=).
+      rewrite Hxpid Hid /toYjsId /originId /=. f_equal. clear -Hnowrap_add Hdiff. word. }
+    have Hrhck : clock (item_id (run_head cw)) = uint.nat itemVal.(yjs.item.id').(yjs.id.clock') by (rewrite Hid /toYjsId /=).
     have Hclcl : cell_clock cl = cell_clock cw by (rewrite /cl /cell_clock Hrhcl).
     have Hcccl : cell_client cl = cell_client cw by (rewrite /cl /cell_client Hrhcl).
     have Hcccr : cell_client cr = cell_client cw by (rewrite /cr /cell_client Hrhcr Hyoid /=).
@@ -1047,26 +1047,26 @@ Proof using Type*.
     have Hsc : split_cells cells k o rs = pre ++ cl :: cr :: [].
     { rewrite /split_cells Hcellk. rewrite -/suf Hsufeq. rewrite app_nil_r. reflexivity. }
     (* the split-cell struct values [ivl] (truncated cw) / [ivr] (right half) *)
-    set (ivl := iv <| yjs.item.content' := {| yjs.content.content' := take (sint.nat diff) iv.(yjs.item.content').(yjs.content.content') |} |> <| yjs.item.right' := rs |>).
-    set (ivr := {| yjs.item.id' := {| yjs.id.clientId' := iv.(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := word.add iv.(yjs.item.id').(yjs.id.clock') diff |};
+    set (ivl := itemVal <| yjs.item.content' := {| yjs.content.content' := take (sint.nat diff) itemVal.(yjs.item.content').(yjs.content.content') |} |> <| yjs.item.right' := rs |>).
+    set (ivr := {| yjs.item.id' := {| yjs.id.clientId' := itemVal.(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := word.add itemVal.(yjs.item.id').(yjs.id.clock') diff |};
                    yjs.item.originLeftId' := olid_ptr;
-                   yjs.item.originRightId' := iv.(yjs.item.originRightId');
+                   yjs.item.originRightId' := itemVal.(yjs.item.originRightId');
                    yjs.item.left' := cw.(ic_loc);
-                   yjs.item.right' := iv.(yjs.item.right');
-                   yjs.item.parent' := iv.(yjs.item.parent');
-                   yjs.item.content' := {| yjs.content.content' := subslice (sint.nat diff) (sint.nat cbs.(slice.len)) iv.(yjs.item.content').(yjs.content.content') |};
-                   yjs.item.flags' := iv.(yjs.item.flags') |}).
-    have Hivl_ol : ivl.(yjs.item.originLeftId') = iv.(yjs.item.originLeftId') by (rewrite /ivl /=).
-    have Hivl_or : ivl.(yjs.item.originRightId') = iv.(yjs.item.originRightId') by (rewrite /ivl /=).
+                   yjs.item.right' := itemVal.(yjs.item.right');
+                   yjs.item.parent' := itemVal.(yjs.item.parent');
+                   yjs.item.content' := {| yjs.content.content' := subslice (sint.nat diff) (sint.nat cbs.(slice.len)) itemVal.(yjs.item.content').(yjs.content.content') |};
+                   yjs.item.flags' := itemVal.(yjs.item.flags') |}).
+    have Hivl_ol : ivl.(yjs.item.originLeftId') = itemVal.(yjs.item.originLeftId') by (rewrite /ivl /=).
+    have Hivl_or : ivl.(yjs.item.originRightId') = itemVal.(yjs.item.originRightId') by (rewrite /ivl /=).
     have Hivl_left : ivl.(yjs.item.left') = ml by (rewrite /ivl /=; exact Hprev).
     have Hivr_r : ivr.(yjs.item.right') = null by (rewrite /ivr /=; exact Hrnull).
     have Hrhcl' : run_head cl = run_head cw by (rewrite /cl; exact Hrhcl).
     have Hrhcr' : run_head cr = yo by (rewrite /cr; exact Hrhcr).
-    have Hrhcli : clientId (item_id (run_head cw)) = uint.nat iv.(yjs.item.id').(yjs.id.clientId') by (rewrite Hid /toYjsId /=).
+    have Hrhcli : clientId (item_id (run_head cw)) = uint.nat itemVal.(yjs.item.id').(yjs.id.clientId') by (rewrite Hid /toYjsId /=).
     have Hclloc : ic_loc cl = cw.(ic_loc) by (rewrite /cl /=).
     have Hcrloc : ic_loc cr = rs by (rewrite /cr /=).
     have Hivr_ol : ivr.(yjs.item.originLeftId') = olid_ptr by (rewrite /ivr /=).
-    have Hivr_or : ivr.(yjs.item.originRightId') = iv.(yjs.item.originRightId') by (rewrite /ivr /=).
+    have Hivr_or : ivr.(yjs.item.originRightId') = itemVal.(yjs.item.originRightId') by (rewrite /ivr /=).
     have Hp1 : ic_loc cl ≠ null by (rewrite /cl /=; exact Hmfnn).
     have Hp2 : ic_loc cr ≠ null by (rewrite /cr /=; exact Hrsnn).
     have Hp4 : ivl.(yjs.item.right') = ic_loc cr by (rewrite /ivl /cr /=).
@@ -1086,7 +1086,7 @@ Proof using Type*.
     have Hp19 : run_wf (ic_run cr). { rewrite /cr /=. exact (run_wf_drop cw.(ic_run) o Hoinrun Hrun). }
     (* ----- read the client run slice (map.lookup1), BEFORE Phase A locks cw ----- *)
     iNamed "Hitemmap".
-    set (kc := iv.(yjs.item.id').(yjs.id.clientId')).
+    set (kc := itemVal.(yjs.item.id').(yjs.id.clientId')).
     have Hcwcc : cell_client cw = kc by (rewrite /cell_client Hrhcli /kc; word).
     have Hkcin : kc ∈ (cell_client <$> all_cells types).
     { rewrite -Hcwcc. apply list_elem_of_fmap_2. exact Hcwmem. }
@@ -1103,7 +1103,7 @@ Proof using Type*.
     iAssert (own_dll (DfracOwn 1) yt.(yjs.yType.start') rs null null (split_cells cells k o rs))
       with "[Hseg1 Hval Holeft Horight Hrs]" as "Hdll2".
     { rewrite Hsc.
-      iApply (own_dll_split (DfracOwn 1) pre (@nil item_cell) cl cr ivl ivr olidcw oridcw (Some oid) oridcw yt.(yjs.yType.start') rs ml Hp1 Hp2 Hivl_left Hp4 Hp5 Hp6 Hp7 Hp8 Hp9 Hp10 Hp11 Hp12 Hp13 Hp14 Hp15 Hcrorig Hp17 Hp18 Hp19).
+      iApply (own_dll_split (DfracOwn 1) pre (@nil item_cell) cl cr ivl ivr olidcw oridcw (Some originId) oridcw yt.(yjs.yType.start') rs ml Hp1 Hp2 Hivl_left Hp4 Hp5 Hp6 Hp7 Hp8 Hp9 Hp10 Hp11 Hp12 Hp13 Hp14 Hp15 Hcrorig Hp17 Hp18 Hp19).
       rewrite Hclloc Hcrloc Hivl_ol Hivl_or Hivr_ol Hivr_or Hivr_r.
       iDestruct "Horight" as "#HorightP".
       iFrame "Hseg1 Hval Hrs Holeft HorightP".
@@ -1154,7 +1154,7 @@ Proof using Type*.
     { rewrite /run_half list_fmap_insert (list_insert_id _ _ _ Hlockw) //. }
     have Hkw_half : run_half !! kw = Some cl.
     { rewrite /run_half. apply list_lookup_insert_Some. left. split_and!; [reflexivity | reflexivity | exact Hkwlt]. }
-    have Hclk_half : cell_clock cl = iv.(yjs.item.id').(yjs.id.clock') by (rewrite Hclcl Hcwck).
+    have Hclk_half : cell_clock cl = itemVal.(yjs.item.id').(yjs.id.clock') by (rewrite Hclcl Hcwck).
     have Hsub : ∀ c, c ∈ run_half → c = cl ∨ c ∈ client_run types kc.
     { move=> c Hc. apply list_elem_of_lookup_1 in Hc as [j Hj]. rewrite /run_half in Hj.
       apply list_lookup_insert_Some in Hj as [(_ & <- & _) | (_ & Hj)]; [by left | right; exact (list_elem_of_lookup_2 _ _ _ Hj)]. }
@@ -1180,7 +1180,7 @@ Proof using Type*.
         + apply all_cells_elem_of. exists p, ts.
           split; [rewrite lookup_insert_ne; [exact Hp | congruence] | exact Hcts]. }
     iEval (rewrite -Hlocs) in "Hslice".
-    wp_apply (wp_getNodeIndex slk (DfracOwn 1) (<[parent := {| ty_cells := split_cells cells k o rs; ty_arr := arr |}]> types) run_half (iv.(yjs.item.id').(yjs.id.clock')) kw cl Hss_half Hmem_half Hfits_half Hkw_half Hclk_half with "[$Hslice $Htypes2]").
+    wp_apply (wp_getNodeIndex slk (DfracOwn 1) (<[parent := {| ty_cells := split_cells cells k o rs; ty_arr := arr |}]> types) run_half (itemVal.(yjs.item.id').(yjs.id.clock')) kw cl Hss_half Hmem_half Hfits_half Hkw_half Hclk_half with "[$Hslice $Htypes2]").
     iIntros (idx) "(Hslice & Htypes2 & %Hires)".
     destruct Hires as (cres & Hcres & Hcresle & Hcreslt).
     (* pin [uint.nat idx = kw]: the covering cell in [run_half] is [cl] (NoDup locs) *)
@@ -1404,7 +1404,7 @@ Proof using Type*.
     iDestruct "Hrest" as (ivd olidd oridd) "(%Hlocd & %Hprevd & %Hpard & %Hidd & %Hcontentd & %Holidd & %Horidd & %Hflagsd & %Hrund & Hvald & Holeftd & Horightd & Hrestd)".
     destruct Hlocd as [Hlocd1 Hlocdnn].
     (* ----- guard (n.right ≠ nil): relink d0.left := right, then n.right := rs ----- *)
-    rewrite (bool_decide_eq_false_2 (iv.(yjs.item.right') = null) Hlocdnn).
+    rewrite (bool_decide_eq_false_2 (itemVal.(yjs.item.right') = null) Hlocdnn).
     iEval (rewrite -Hlocd1) in "Hvald".
     wp_auto.
     iEval (rewrite Hlocd1) in "Hvald".
@@ -1420,12 +1420,12 @@ Proof using Type*.
     (* ----- branch-agnostic split-cell pure facts (origin telescoping) ----- *)
     set (cl := split_cell_left cw o).
     set (cr := split_cell_right cw o rs).
-    set (oid := {| yjs.id.clientId' := iv.(yjs.item.id').(yjs.id.clientId');
-                   yjs.id.clock' := word.sub (word.add iv.(yjs.item.id').(yjs.id.clock') diff) (W64 1) |}).
+    set (originId := {| yjs.id.clientId' := itemVal.(yjs.item.id').(yjs.id.clientId');
+                   yjs.id.clock' := word.sub (word.add itemVal.(yjs.item.id').(yjs.id.clock') diff) (W64 1) |}).
     have Hopos : (0 < o)%nat by (rewrite /o; lia).
-    have Hnowrap_add : (uint.Z iv.(yjs.item.id').(yjs.id.clock') + uint.Z diff < 2^64)%Z.
+    have Hnowrap_add : (uint.Z itemVal.(yjs.item.id').(yjs.id.clock') + uint.Z diff < 2^64)%Z.
     { rewrite -Hcwck. have H1 := Hnowrapcw. have H2 := Hdiff. word. }
-    have Hadd_eq : (uint.nat iv.(yjs.item.id').(yjs.id.clock') + o)%nat = uint.nat (word.add iv.(yjs.item.id').(yjs.id.clock') diff).
+    have Hadd_eq : (uint.nat itemVal.(yjs.item.id').(yjs.id.clock') + o)%nat = uint.nat (word.add itemVal.(yjs.item.id').(yjs.id.clock') diff).
     { rewrite /o. clear -Hnowrap_add. word. }
     have [xprev Hxprev] : is_Some (cw.(ic_run) !! (o - 1)%nat).
     { apply lookup_lt_is_Some. rewrite /o. lia. }
@@ -1434,10 +1434,10 @@ Proof using Type*.
     have Hstep := proj2 Hrun (o - 1)%nat xprev yo Hxprev Hyo2.
     have Horig : origin yo = itemPtr xprev by (destruct Hstep as [_ [Hh _]]; exact Hh).
     have Hxpid := run_wf_lookup_clock cw.(ic_run) (o - 1)%nat (run_head cw) xprev Hrun Hrun0 Hxprev.
-    have Hcrorig : origin_id (origin (run_head cr)) = toYjsId <$> Some oid.
+    have Hcrorig : origin_id (origin (run_head cr)) = toYjsId <$> Some originId.
     { rewrite /cr Hrhcr Horig /origin_id /=. f_equal.
-      rewrite Hxpid Hid /toYjsId /oid /=. f_equal. clear -Hnowrap_add Hdiff. word. }
-    have Hrhck : clock (item_id (run_head cw)) = uint.nat iv.(yjs.item.id').(yjs.id.clock') by (rewrite Hid /toYjsId /=).
+      rewrite Hxpid Hid /toYjsId /originId /=. f_equal. clear -Hnowrap_add Hdiff. word. }
+    have Hrhck : clock (item_id (run_head cw)) = uint.nat itemVal.(yjs.item.id').(yjs.id.clock') by (rewrite Hid /toYjsId /=).
     have Hclcl : cell_clock cl = cell_clock cw by (rewrite /cl /cell_clock Hrhcl).
     have Hcccl : cell_client cl = cell_client cw by (rewrite /cl /cell_client Hrhcl).
     have Hcccr : cell_client cr = cell_client cw by (rewrite /cr /cell_client Hrhcr Hyoid /=).
@@ -1446,26 +1446,26 @@ Proof using Type*.
     have Hsc : split_cells cells k o rs = pre ++ cl :: cr :: d0 :: drest.
     { rewrite /split_cells Hcellk. rewrite -/suf Hsufeq. reflexivity. }
     (* the split-cell struct values [ivl] (truncated cw) / [ivr] (right half) *)
-    set (ivl := iv <| yjs.item.content' := {| yjs.content.content' := take (sint.nat diff) iv.(yjs.item.content').(yjs.content.content') |} |> <| yjs.item.right' := rs |>).
-    set (ivr := {| yjs.item.id' := {| yjs.id.clientId' := iv.(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := word.add iv.(yjs.item.id').(yjs.id.clock') diff |};
+    set (ivl := itemVal <| yjs.item.content' := {| yjs.content.content' := take (sint.nat diff) itemVal.(yjs.item.content').(yjs.content.content') |} |> <| yjs.item.right' := rs |>).
+    set (ivr := {| yjs.item.id' := {| yjs.id.clientId' := itemVal.(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := word.add itemVal.(yjs.item.id').(yjs.id.clock') diff |};
                    yjs.item.originLeftId' := olid_ptr;
-                   yjs.item.originRightId' := iv.(yjs.item.originRightId');
+                   yjs.item.originRightId' := itemVal.(yjs.item.originRightId');
                    yjs.item.left' := cw.(ic_loc);
-                   yjs.item.right' := iv.(yjs.item.right');
-                   yjs.item.parent' := iv.(yjs.item.parent');
-                   yjs.item.content' := {| yjs.content.content' := subslice (sint.nat diff) (sint.nat cbs.(slice.len)) iv.(yjs.item.content').(yjs.content.content') |};
-                   yjs.item.flags' := iv.(yjs.item.flags') |}).
-    have Hivl_ol : ivl.(yjs.item.originLeftId') = iv.(yjs.item.originLeftId') by (rewrite /ivl /=).
-    have Hivl_or : ivl.(yjs.item.originRightId') = iv.(yjs.item.originRightId') by (rewrite /ivl /=).
+                   yjs.item.right' := itemVal.(yjs.item.right');
+                   yjs.item.parent' := itemVal.(yjs.item.parent');
+                   yjs.item.content' := {| yjs.content.content' := subslice (sint.nat diff) (sint.nat cbs.(slice.len)) itemVal.(yjs.item.content').(yjs.content.content') |};
+                   yjs.item.flags' := itemVal.(yjs.item.flags') |}).
+    have Hivl_ol : ivl.(yjs.item.originLeftId') = itemVal.(yjs.item.originLeftId') by (rewrite /ivl /=).
+    have Hivl_or : ivl.(yjs.item.originRightId') = itemVal.(yjs.item.originRightId') by (rewrite /ivl /=).
     have Hivl_left : ivl.(yjs.item.left') = ml by (rewrite /ivl /=; exact Hprev).
-    have Hivr_r : ivr.(yjs.item.right') = iv.(yjs.item.right') by reflexivity.
+    have Hivr_r : ivr.(yjs.item.right') = itemVal.(yjs.item.right') by reflexivity.
     have Hrhcl' : run_head cl = run_head cw by (rewrite /cl; exact Hrhcl).
     have Hrhcr' : run_head cr = yo by (rewrite /cr; exact Hrhcr).
-    have Hrhcli : clientId (item_id (run_head cw)) = uint.nat iv.(yjs.item.id').(yjs.id.clientId') by (rewrite Hid /toYjsId /=).
+    have Hrhcli : clientId (item_id (run_head cw)) = uint.nat itemVal.(yjs.item.id').(yjs.id.clientId') by (rewrite Hid /toYjsId /=).
     have Hclloc : ic_loc cl = cw.(ic_loc) by (rewrite /cl /=).
     have Hcrloc : ic_loc cr = rs by (rewrite /cr /=).
     have Hivr_ol : ivr.(yjs.item.originLeftId') = olid_ptr by (rewrite /ivr /=).
-    have Hivr_or : ivr.(yjs.item.originRightId') = iv.(yjs.item.originRightId') by (rewrite /ivr /=).
+    have Hivr_or : ivr.(yjs.item.originRightId') = itemVal.(yjs.item.originRightId') by (rewrite /ivr /=).
     have Hp1 : ic_loc cl ≠ null by (rewrite /cl /=; exact Hmfnn).
     have Hp2 : ic_loc cr ≠ null by (rewrite /cr /=; exact Hrsnn).
     have Hp4 : ivl.(yjs.item.right') = ic_loc cr by (rewrite /ivl /cr /=).
@@ -1485,7 +1485,7 @@ Proof using Type*.
     have Hp19 : run_wf (ic_run cr). { rewrite /cr /=. exact (run_wf_drop cw.(ic_run) o Hoinrun Hrun). }
     (* ----- read the client run slice (map.lookup1), BEFORE Phase A locks cw ----- *)
     iNamed "Hitemmap".
-    set (kc := iv.(yjs.item.id').(yjs.id.clientId')).
+    set (kc := itemVal.(yjs.item.id').(yjs.id.clientId')).
     have Hcwcc : cell_client cw = kc by (rewrite /cell_client Hrhcli /kc; word).
     have Hkcin : kc ∈ (cell_client <$> all_cells types).
     { rewrite -Hcwcc. apply list_elem_of_fmap_2. exact Hcwmem. }
@@ -1499,7 +1499,7 @@ Proof using Type*.
     rewrite Hslk /=.
     wp_auto.
     (* ----- Phase A: reassemble the suffix DLL behind [cr], own_dll_split, close ----- *)
-    iAssert (own_dll (DfracOwn 1) iv.(yjs.item.right') tl0 rs null (d0 :: drest))
+    iAssert (own_dll (DfracOwn 1) itemVal.(yjs.item.right') tl0 rs null (d0 :: drest))
       with "[Hvald Holeftd Horightd Hrestd]" as "Hsufdll".
     { simpl. iExists ivd2, olidd, oridd.
       rewrite Hd2ol Hd2or Hd2r.
@@ -1514,7 +1514,7 @@ Proof using Type*.
     iAssert (own_dll (DfracOwn 1) yt.(yjs.yType.start') tl0 null null (split_cells cells k o rs))
       with "[Hseg1 Hval Holeft Horight Hrs Hsufdll]" as "Hdll2".
     { rewrite Hsc.
-      iApply (own_dll_split (DfracOwn 1) pre (d0 :: drest) cl cr ivl ivr olidcw oridcw (Some oid) oridcw yt.(yjs.yType.start') tl0 ml Hp1 Hp2 Hivl_left Hp4 Hp5 Hp6 Hp7 Hp8 Hp9 Hp10 Hp11 Hp12 Hp13 Hp14 Hp15 Hcrorig Hp17 Hp18 Hp19).
+      iApply (own_dll_split (DfracOwn 1) pre (d0 :: drest) cl cr ivl ivr olidcw oridcw (Some originId) oridcw yt.(yjs.yType.start') tl0 ml Hp1 Hp2 Hivl_left Hp4 Hp5 Hp6 Hp7 Hp8 Hp9 Hp10 Hp11 Hp12 Hp13 Hp14 Hp15 Hcrorig Hp17 Hp18 Hp19).
       rewrite Hclloc Hcrloc Hivl_ol Hivl_or Hivr_ol Hivr_or Hivr_r.
       iDestruct "Horight" as "#HorightP".
       (* [iFrame "HorightP"] would leak into the cons segment's existentials
@@ -1571,7 +1571,7 @@ Proof using Type*.
     { rewrite /run_half list_fmap_insert (list_insert_id _ _ _ Hlockw) //. }
     have Hkw_half : run_half !! kw = Some cl.
     { rewrite /run_half. apply list_lookup_insert_Some. left. split_and!; [reflexivity | reflexivity | exact Hkwlt]. }
-    have Hclk_half : cell_clock cl = iv.(yjs.item.id').(yjs.id.clock') by (rewrite Hclcl Hcwck).
+    have Hclk_half : cell_clock cl = itemVal.(yjs.item.id').(yjs.id.clock') by (rewrite Hclcl Hcwck).
     have Hsub : ∀ c, c ∈ run_half → c = cl ∨ c ∈ client_run types kc.
     { move=> c Hc. apply list_elem_of_lookup_1 in Hc as [j Hj]. rewrite /run_half in Hj.
       apply list_lookup_insert_Some in Hj as [(_ & <- & _) | (_ & Hj)]; [by left | right; exact (list_elem_of_lookup_2 _ _ _ Hj)]. }
@@ -1600,7 +1600,7 @@ Proof using Type*.
         + apply all_cells_elem_of. exists p, ts.
           split; [rewrite lookup_insert_ne; [exact Hp | congruence] | exact Hcts]. }
     iEval (rewrite -Hlocs) in "Hslice".
-    wp_apply (wp_getNodeIndex slk (DfracOwn 1) (<[parent := {| ty_cells := split_cells cells k o rs; ty_arr := arr |}]> types) run_half (iv.(yjs.item.id').(yjs.id.clock')) kw cl Hss_half Hmem_half Hfits_half Hkw_half Hclk_half with "[$Hslice $Htypes2]").
+    wp_apply (wp_getNodeIndex slk (DfracOwn 1) (<[parent := {| ty_cells := split_cells cells k o rs; ty_arr := arr |}]> types) run_half (itemVal.(yjs.item.id').(yjs.id.clock')) kw cl Hss_half Hmem_half Hfits_half Hkw_half Hclk_half with "[$Hslice $Htypes2]").
     iIntros (idx) "(Hslice & Htypes2 & %Hires)".
     destruct Hires as (cres & Hcres & Hcresle & Hcreslt).
     (* pin [uint.nat idx = kw]: the covering cell in [run_half] is [cl] (NoDup locs) *)
@@ -1877,20 +1877,20 @@ Proof using Type*.
   iDestruct (types_cell_acc_gen types cw Hcwmem with "Htypes") as "Hacc".
   iNamed "Hacc".
   have Hnwcw := Hrunfits cw Hcwmem.
-  have Hcwck : cell_clock cw = iv.(yjs.item.id').(yjs.id.clock')
+  have Hcwck : cell_clock cw = itemVal.(yjs.item.id').(yjs.id.clock')
     by (rewrite /cell_clock Hid /toYjsId /=; word).
-  have HlenEq : length (iv.(yjs.item.content').(yjs.content.content')) = length (ic_run cw).
+  have HlenEq : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (ic_run cw).
   { have H := f_equal length Hcontent.
     rewrite length_fmap explode_length /toContent in H. lia. }
   have Hlenpos : (1 <= Z.of_nat (length (ic_run cw)))%Z.
   { have [Hne0 _] := Hrun. destruct (ic_run cw) as [|? ?]; [done | simpl; lia]. }
-  have Hosub : uint.Z (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
+  have Hosub : uint.Z (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
              = Z.of_nat (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))%nat.
   { rewrite -Hcwck. clear -Hcwle. word. }
   have Holt : ((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) < length (ic_run cw))%nat.
   { clear -Hcwle Hcwlt. word. }
   wp_auto.
-  wp_apply (wp_item__Len (ic_loc cw) (DfracOwn 1) iv with "[$Hval]"). iIntros "Hval".
+  wp_apply (wp_item__Len (ic_loc cw) (DfracOwn 1) itemVal with "[$Hval]"). iIntros "Hval".
   rewrite HlenEq.
   wp_auto.
   wp_if_destruct.
@@ -1905,12 +1905,12 @@ Proof using Type*.
     have Hnlt : ((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) < length (ic_run cw) - 1)%nat.
     { word. }
     have Hdiffnat : uint.nat (w64_word_instance.(word.add)
-                      (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
+                      (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                       (W64 1))
                   = ((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) + 1)%nat.
     { clear -Hosub Hnlt Hnwcw Hlenpos. word. }
     have Hdiffb : (0 < uint.nat (w64_word_instance.(word.add)
-                      (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
+                      (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                       (W64 1)) < length (ic_run cw))%nat.
     { rewrite Hdiffnat. clear -Hnlt. lia. }
     have Hdisjcw : ∀ c, c ∈ all_cells types -> cell_client c = cell_client cw -> ic_loc c ≠ ic_loc cw ->
@@ -1919,14 +1919,14 @@ Proof using Type*.
     { move=> c Hc Hcc Hlocne. exact (Hrangedisj c cw Hc Hcwmem Hcc Hlocne). }
     wp_apply (wp_store__splitNode s mref types parent cells arr k cw
                 (w64_word_instance.(word.add)
-                   (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
+                   (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                    (W64 1))
                 Htypes Hcellk Hdiffb Hrunfits Hnodup Hdisjcw
                 with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
     iIntros (rloc) "(%Hrlocnn & %Hrlocfresh & Hitemsf & Hitemmap & Htypes)".
     wp_auto.
     iApply ("HΦ" $! (<[parent := MkTypeState (split_cells cells k (uint.nat (w64_word_instance.(word.add)
-                   (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
+                   (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                    (W64 1))) rloc) arr]> types)).
     iFrame "Hitemsf Hitemmap Htypes".
     iPureIntro. right. split.
@@ -1985,11 +1985,11 @@ Proof using Type*.
   iDestruct (types_cell_acc_gen types cw Hcwmem with "Htypes") as "Hacc".
   iNamed "Hacc".
   have Hnwcw := Hrunfits cw Hcwmem.
-  have Hcwck : cell_clock cw = iv.(yjs.item.id').(yjs.id.clock')
+  have Hcwck : cell_clock cw = itemVal.(yjs.item.id').(yjs.id.clock')
     by (rewrite /cell_clock Hid /toYjsId /=; word).
   have Hlenpos : (1 <= Z.of_nat (length (ic_run cw)))%Z.
   { have [Hne0 _] := Hrun. destruct (ic_run cw) as [|? ?]; [done | simpl; lia]. }
-  have Hosub : uint.Z (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
+  have Hosub : uint.Z (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
              = Z.of_nat (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))%nat.
   { rewrite -Hcwck. clear -Hcwle. word. }
   have Holt : ((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) < length (ic_run cw))%nat.
@@ -2000,10 +2000,10 @@ Proof using Type*.
     iDestruct ("Hback" with "Hval") as "Htypes".
     have Hopos : (0 < (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)))%nat.
     { word. }
-    have Hdiffnat : uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
+    have Hdiffnat : uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                   = (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))%nat.
     { clear -Hosub. word. }
-    have Hdiffb : (0 < uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
+    have Hdiffb : (0 < uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                    < length (ic_run cw))%nat.
     { rewrite Hdiffnat. clear -Hopos Holt. lia. }
     have Hdisjcw : ∀ c, c ∈ all_cells types -> cell_client c = cell_client cw -> ic_loc c ≠ ic_loc cw ->
@@ -2011,13 +2011,13 @@ Proof using Type*.
        (uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)) <= uint.Z (cell_clock c))%Z.
     { move=> c Hc Hcc Hlocne. exact (Hrangedisj c cw Hc Hcwmem Hcc Hlocne). }
     wp_apply (wp_store__splitNode s mref types parent cells arr k cw
-                (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock'))
+                (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                 Htypes Hcellk Hdiffb Hrunfits Hnodup Hdisjcw
                 with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
     iIntros (rloc) "(%Hrlocnn & %Hrlocfresh & Hitemsf & Hitemmap & Htypes)".
     wp_auto.
     iApply ("HΦ" $! rloc (<[parent := MkTypeState (split_cells cells k
-                (uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') iv.(yjs.item.id').(yjs.id.clock')))
+                (uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock')))
                 rloc) arr]> types)).
     iFrame "Hitemsf Hitemmap Htypes".
     iPureIntro. right. split.
@@ -2169,7 +2169,7 @@ Proof.
       have Hstep := proj2 Hrunwf (o - 1)%nat yp yo Hyp ltac:(rewrite Hso //).
       destruct Hstep as (Hidyo & Horigyo & _).
       have Hidyp := run_wf_lookup_clock (ic_run cw) (o - 1)%nat (run_head cw) yp Hrunwf Hrun0 Hyp.
-      move=> oid Hoid Hcl.
+      move=> originId Hoid Hcl.
       rewrite Hheadr Horigyo /= in Hoid.
       injection Hoid as <-.
       rewrite Hheadr Hidyo Hidyp /=. lia.
@@ -2944,18 +2944,18 @@ Lemma wp_store__repair_split (s mref tref item_l pname : loc)
     (types : gmap loc type_state) (bind : gmap P loc)
     (ocL ocR : option item_cell) (p_t : loc) :
   match in_originId input, ocL with
-  | Some oid, Some c => c ∈ all_cells types ∧
-      clientId (item_id (run_head c)) = clientId oid ∧
-      (clock (item_id (run_head c)) <= clock oid)%nat ∧
-      (clock oid < clock (item_id (run_head c)) + length (ic_run c))%nat
+  | Some originId, Some c => c ∈ all_cells types ∧
+      clientId (item_id (run_head c)) = clientId originId ∧
+      (clock (item_id (run_head c)) <= clock originId)%nat ∧
+      (clock originId < clock (item_id (run_head c)) + length (ic_run c))%nat
   | None, None => True
   | _, _ => False
   end ->
   match in_rightOriginId input, ocR with
-  | Some oid, Some c => c ∈ all_cells types ∧
-      clientId (item_id (run_head c)) = clientId oid ∧
-      (clock (item_id (run_head c)) <= clock oid)%nat ∧
-      (clock oid < clock (item_id (run_head c)) + length (ic_run c))%nat
+  | Some originId, Some c => c ∈ all_cells types ∧
+      clientId (item_id (run_head c)) = clientId originId ∧
+      (clock (item_id (run_head c)) <= clock originId)%nat ∧
+      (clock originId < clock (item_id (run_head c)) + length (ic_run c))%nat
   | None, None => True
   | _, _ => False
   end ->
@@ -2996,20 +2996,20 @@ Lemma wp_store__repair_split (s mref tref item_l pname : loc)
       ⌜pool_invs types2⌝ ∗
       ⌜repair_types_facts types types2⌝ ∗
       ⌜match in_originId input, ocL with
-       | Some oid, Some c0 => lft = ic_loc c0 ∧
+       | Some originId, Some c0 => lft = ic_loc c0 ∧
            ∃ cL', cL' ∈ all_cells types2 ∧ ic_loc cL' = lft ∧
-             cell_client cL' = W64 (clientId oid) ∧
+             cell_client cL' = W64 (clientId originId) ∧
              (uint.Z (cell_clock cL') + Z.of_nat (length (ic_run cL'))
-              = Z.of_nat (clock oid) + 1)%Z ∧
+              = Z.of_nat (clock originId) + 1)%Z ∧
              ic_parent cL' = ic_parent c0
        | None, None => lft = null
        | _, _ => False
        end⌝ ∗
       ⌜match in_rightOriginId input, ocR with
-       | Some oid, Some c0 =>
+       | Some originId, Some c0 =>
            ∃ cR', cR' ∈ all_cells types2 ∧ ic_loc cR' = rgt ∧
-             cell_client cR' = W64 (clientId oid) ∧
-             (uint.Z (cell_clock cR') = Z.of_nat (clock oid))%Z ∧
+             cell_client cR' = W64 (clientId originId) ∧
+             (uint.Z (cell_clock cR') = Z.of_nat (clock originId))%Z ∧
              ic_parent cR' = ic_parent c0
        | None, None => rgt = null
        | _, _ => False
@@ -3017,7 +3017,7 @@ Lemma wp_store__repair_split (s mref tref item_l pname : loc)
 Proof using Type*.
   move=> HwL HwR Hsame Hwpar Hfits Hnodup Hrangedisj Horiginclk.
   iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
-  iDestruct "Hlinked" as (iv oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrunc)".
+  iDestruct "Hlinked" as (itemVal oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrunc)".
   iNamed "Hraw".
   iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds0.
   have Hpinvs : pool_invs types by (split_and!; assumption).
@@ -3029,7 +3029,7 @@ Proof using Type*.
     rewrite HinlS in HwL. destruct ocL as [cL|]; last done.
     destruct HwL as (HcLmem & HcLcl & HcLle & HcLlt).
     iDestruct "Holeft" as "[%HnnL #HolC]".
-    rewrite (bool_decide_eq_false_2 (iv.(yjs.item.originLeftId') = null) HnnL) /=.
+    rewrite (bool_decide_eq_false_2 (itemVal.(yjs.item.originLeftId') = null) HnnL) /=.
     wp_auto.
     have HcLbnd := proj2 (Hbnds0 cL HcLmem).
     have HcLccw : cell_client cL = idvL.(yjs.id.clientId').
@@ -3052,7 +3052,7 @@ Proof using Type*.
       rewrite HinlS HinrS in Hsame.
       have Hsame' : cL = cR -> (clock (toYjsId idvL) < clock (toYjsId idvR))%nat := Hsame.
       iDestruct "Horight" as "[%HnnR #HorC]".
-      rewrite (bool_decide_eq_false_2 (iv.(yjs.item.originRightId') = null) HnnR) /=.
+      rewrite (bool_decide_eq_false_2 (itemVal.(yjs.item.originRightId') = null) HnnR) /=.
       wp_auto.
       have HcRbnd := proj2 (Hbnds0 cR HcRmem).
       have HcRccw : cell_client cR = idvR.(yjs.id.clientId').
@@ -3154,7 +3154,7 @@ Proof using Type*.
       have HinrN : input.(in_rightOriginId) = None by rewrite -Hin_r //.
       rewrite HinrN in HwR. destruct ocR as [cR|]; first done.
       iDestruct "Horight" as "%HnR".
-      rewrite (bool_decide_eq_true_2 (iv.(yjs.item.originRightId') = null) HnR) /=.
+      rewrite (bool_decide_eq_true_2 (itemVal.(yjs.item.originRightId') = null) HnR) /=.
       wp_auto.
       destruct opn as [nm|].
       * (* Parent::String *)
@@ -3212,7 +3212,7 @@ Proof using Type*.
     have HinlN : input.(in_originId) = None by rewrite -Hin_l //.
     rewrite HinlN in HwL. destruct ocL as [cL|]; first done.
     iDestruct "Holeft" as "%HnL".
-    rewrite (bool_decide_eq_true_2 (iv.(yjs.item.originLeftId') = null) HnL) /=.
+    rewrite (bool_decide_eq_true_2 (itemVal.(yjs.item.originLeftId') = null) HnL) /=.
     wp_auto.
     destruct oright as [idvR|].
     + (* right origin present: clean-start split, no relocation *)
@@ -3220,7 +3220,7 @@ Proof using Type*.
       rewrite HinrS in HwR. destruct ocR as [cR|]; last done.
       destruct HwR as (HcRmem & HcRcl & HcRle & HcRlt).
       iDestruct "Horight" as "[%HnnR #HorC]".
-      rewrite (bool_decide_eq_false_2 (iv.(yjs.item.originRightId') = null) HnnR) /=.
+      rewrite (bool_decide_eq_false_2 (itemVal.(yjs.item.originRightId') = null) HnnR) /=.
       wp_auto.
       have HcRbnd := proj2 (Hbnds0 cR HcRmem).
       have HcRccw : cell_client cR = idvR.(yjs.id.clientId').
@@ -3262,7 +3262,7 @@ Proof using Type*.
       * (* Parent::None: borrow from the resolved right neighbour *)
         iDestruct "HisPN" as "%HpN".
         rewrite (bool_decide_eq_true_2 (pname = null) HpN) /=.
-        have Hfl' : (iv <| yjs.item.right' := rl |>).(yjs.item.left') = null
+        have Hfl' : (itemVal <| yjs.item.right' := rl |>).(yjs.item.left') = null
           by simpl; exact Hfl.
         iDestruct (types_cell_acc_gen types2 cR2 HcR2mem with "Htypes") as "Hacc".
         iNamed "Hacc".
@@ -3295,7 +3295,7 @@ Proof using Type*.
       have HinrN : input.(in_rightOriginId) = None by rewrite -Hin_r //.
       rewrite HinrN in HwR. destruct ocR as [cR|]; first done.
       iDestruct "Horight" as "%HnR".
-      rewrite (bool_decide_eq_true_2 (iv.(yjs.item.originRightId') = null) HnR) /=.
+      rewrite (bool_decide_eq_true_2 (itemVal.(yjs.item.originRightId') = null) HnR) /=.
       wp_auto.
       destruct opn as [nm|]; last done.
       iDestruct "HisPN" as "[%HnnP #HpnC]".
@@ -3333,22 +3333,22 @@ Proof.
 Qed.
 
 (** A present origin's [find*Idx] hit names the origin item's exact index. *)
-Lemma findLeftIdx_inv (oid : YjsId) (arr : list (YjsItem A)) (k : Z) :
-  findLeftIdx (Some oid) arr = Some k ->
-  ∃ (kn : nat) (it : YjsItem A), k = Z.of_nat kn /\ arr !! kn = Some it /\ item_id it = oid.
+Lemma findLeftIdx_inv (originId : YjsId) (arr : list (YjsItem A)) (k : Z) :
+  findLeftIdx (Some originId) arr = Some k ->
+  ∃ (kn : nat) (it : YjsItem A), k = Z.of_nat kn /\ arr !! kn = Some it /\ item_id it = originId.
 Proof.
   rewrite /findLeftIdx.
-  destruct (list_find (fun item => item_id item = oid) arr) as [[kn it]|] eqn:Hf; last done.
+  destruct (list_find (fun item => item_id item = originId) arr) as [[kn it]|] eqn:Hf; last done.
   simpl. move=> [= <-]. apply list_find_Some in Hf. destruct Hf as (Hlk & Hidf & _).
   by exists kn, it.
 Qed.
 
-Lemma findRightIdx_inv (oid : YjsId) (arr : list (YjsItem A)) (k : Z) :
-  findRightIdx (Some oid) arr = Some k ->
-  ∃ (kn : nat) (it : YjsItem A), k = Z.of_nat kn /\ arr !! kn = Some it /\ item_id it = oid.
+Lemma findRightIdx_inv (originId : YjsId) (arr : list (YjsItem A)) (k : Z) :
+  findRightIdx (Some originId) arr = Some k ->
+  ∃ (kn : nat) (it : YjsItem A), k = Z.of_nat kn /\ arr !! kn = Some it /\ item_id it = originId.
 Proof.
   rewrite /findRightIdx.
-  destruct (list_find (fun item => item_id item = oid) arr) as [[kn it]|] eqn:Hf; last done.
+  destruct (list_find (fun item => item_id item = originId) arr) as [[kn it]|] eqn:Hf; last done.
   simpl. move=> [= <-]. apply list_find_Some in Hf. destruct Hf as (Hlk & Hidf & _).
   by exists kn, it.
 Qed.
@@ -3376,21 +3376,21 @@ Proof.
 Qed.
 
 (** The char of a chained run carrying a covered id: at offset
-    clock oid - head clock. *)
-Lemma run_wf_char_at_clock (r : list (YjsItem A)) (oid : YjsId) :
+    clock originId - head clock. *)
+Lemma run_wf_char_at_clock (r : list (YjsItem A)) (originId : YjsId) :
   run_wf r ->
-  clientId (item_id (hd inhabitant r)) = clientId oid ->
-  (clock (item_id (hd inhabitant r)) <= clock oid)%nat ->
-  (clock oid < clock (item_id (hd inhabitant r)) + length r)%nat ->
-  ∃ ch, r !! (clock oid - clock (item_id (hd inhabitant r)))%nat = Some ch ∧
-        item_id ch = oid.
+  clientId (item_id (hd inhabitant r)) = clientId originId ->
+  (clock (item_id (hd inhabitant r)) <= clock originId)%nat ->
+  (clock originId < clock (item_id (hd inhabitant r)) + length r)%nat ->
+  ∃ ch, r !! (clock originId - clock (item_id (hd inhabitant r)))%nat = Some ch ∧
+        item_id ch = originId.
 Proof.
   move=> Hwf Hcl Hle Hlt.
-  have Hlt3 : ((clock oid - clock (item_id (hd inhabitant r))) < length r)%nat by lia.
+  have Hlt3 : ((clock originId - clock (item_id (hd inhabitant r))) < length r)%nat by lia.
   destruct (lookup_lt_is_Some_2 _ _ Hlt3) as [ch Hch].
   exists ch. split; [exact Hch |].
   rewrite (run_wf_char_id _ _ _ Hwf Hch).
-  destruct oid as [oc ok]. simpl in *.
+  destruct originId as [oc ok]. simpl in *.
   f_equal; [exact Hcl | lia].
 Qed.
 
@@ -3571,11 +3571,11 @@ Proof.
     + exact Hhcoh.
     + (* the model-level counter from the [types]-level one *)
       move=> t x Hx Hcx.
-      have Hne : docm_get m t ≠ [].
+      have Hne : doc_model_get m t ≠ [].
       { move=> Heq. move: Hx. rewrite Heq elem_of_nil. done. }
       destruct (Hmdom t Hne) as (nm & p & -> & Hbnm).
       destruct (Hbindtypes nm p Hbnm) as [ts Hts].
-      have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
+      have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
       rewrite Hdg in Hx.
       exact (Hctr p ts x Hts Hx Hcx).
     + exact Hlocdup.
@@ -3591,7 +3591,7 @@ Proof.
         clientId (item_id x) = uint.nat client -> (clock (item_id x) < uint.nat k)%nat.
     { move=> parent ts x Hts Hx Hcx.
       destruct (Htypesbound parent (ex_intro _ ts Hts)) as [nm Hbnm].
-      have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm parent ts Hbnm Hts.
+      have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm parent ts Hbnm Hts.
       apply (Hctr (RootId nm) x); [by rewrite Hdg | exact Hcx]. }
     (* the W64 cell-level shadow, via the id-bound pins *)
     iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfall0.
@@ -3722,20 +3722,20 @@ Proof using Type*.
     iDestruct (types_cell_acc_gen types cmid Hcmemall with "Htypes") as "Hacc".
     iNamed "Hacc".
     wp_auto.
-    have Hmcv : cell_clock cmid = iv.(yjs.item.id').(yjs.id.clock')
+    have Hmcv : cell_clock cmid = itemVal.(yjs.item.id').(yjs.id.clock')
       by (rewrite /cell_clock Hid /toYjsId /=; word).
-    have HlenEq : length (iv.(yjs.item.content').(yjs.content.content')) = length (ic_run cmid).
+    have HlenEq : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (ic_run cmid).
     { have H := f_equal length Hcontent.
       rewrite length_fmap explode_length /toContent in H. lia. }
     have Hlenpos : (1 <= Z.of_nat (length (ic_run cmid)))%Z.
     { have [Hne _] := Hrun. destruct (ic_run cmid) as [|? ?]; [done | simpl; lia]. }
     have Hnw : (uint.Z (cell_clock cmid) + Z.of_nat (length (ic_run cmid)) < 2^64)%Z
       by (apply Hrunfits; exact (list_elem_of_lookup_2 _ _ _ Hcmid)).
-    wp_apply (wp_item__Len cmid.(ic_loc) (DfracOwn 1) iv with "[$Hval]"). iIntros "Hval".
+    wp_apply (wp_item__Len cmid.(ic_loc) (DfracOwn 1) itemVal with "[$Hval]"). iIntros "Hval".
     rewrite HlenEq.
     iDestruct ("Hback" with "Hval") as "Htypes".
     wp_auto.
-    destruct (bool_decide (uint.Z clk < uint.Z iv.(yjs.item.id').(yjs.id.clock'))) eqn:Hcmp1.
+    destruct (bool_decide (uint.Z clk < uint.Z itemVal.(yjs.item.id').(yjs.id.clock'))) eqn:Hcmp1.
     + (* clk < middleClock: every covering cell sits strictly left of [mid] *)
       apply bool_decide_eq_true_1 in Hcmp1.
       wp_auto. wp_for_post.
@@ -3761,8 +3761,8 @@ Proof using Type*.
         wp_auto. wp_for_post.
         iFrame "HΦ". iExists (word.add mid (W64 1)), hi.
         iFrame "Hleft Hright Hnodes Hclock Hsl Htypes".
-        have Hmide : (uint.Z (w64_word_instance.(word.add) iv.(yjs.item.id').(yjs.id.clock') (W64 (length (ic_run cmid))))
-                      = uint.Z iv.(yjs.item.id').(yjs.id.clock') + Z.of_nat (length (ic_run cmid)))%Z by word.
+        have Hmide : (uint.Z (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (ic_run cmid))))
+                      = uint.Z itemVal.(yjs.item.id').(yjs.id.clock') + Z.of_nat (length (ic_run cmid)))%Z by word.
         rewrite Hmide in Hcmp2.
         iPureIntro. split.
         { word. }
@@ -3936,13 +3936,13 @@ Proof using Type*.
 Qed.
 
 (** [store.hasNode] (issue #40 x issue #28 U7c): the arrival test the pending
-    gate runs. Its result IS the model presence [docm_has m (toYjsId idv)]: the
+    gate runs. Its result IS the model presence [doc_model_has m (toYjsId idv)]: the
     covering GetNode (W64 clock range) is bridged to the model per-char
     covering ([cell_covers], nat) through the cell id-bounds, then to
-    [docm_has] through the store's model/cell agreement ([Hagree]). *)
+    [doc_model_has] through the store's model/cell agreement ([Hagree]). *)
 Lemma wp_store__hasNode (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
     (m : DocM) (types : gmap loc type_state) :
-  (∀ d : YjsId, docm_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d) ->
+  (∀ d : YjsId, doc_model_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d) ->
   (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
@@ -3957,7 +3957,7 @@ Lemma wp_store__hasNode (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
       ([∗ map] parent ↦ ts ∈ types,
           own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
-      ⌜ok = true <-> docm_has m (toYjsId idv) = true⌝ }}}.
+      ⌜ok = true <-> doc_model_has m (toYjsId idv) = true⌝ }}}.
 Proof using Type*.
   move=> Hagree Hrunfits Hnodup Hrangedisj.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
@@ -4013,20 +4013,20 @@ Lemma own_update_id_bounds (sl : slice.t) (dq : dfrac)
      (Z.of_nat (clock (in_id ti.2)) < 2^64)%Z⌝.
 Proof.
   iIntros "Hupd". iDestruct "Hupd" as (uivs) "(Hsl & Hcap & #Hitems)".
-  iDestruct (big_sepL2_impl _ (λ _ uiv ti,
+  iDestruct (big_sepL2_impl _ (λ _ updateItemVal ti,
       ⌜(Z.of_nat (clientId (in_id ti.2)) < 2^64)%Z ∧
        (Z.of_nat (clock (in_id ti.2)) < 2^64)%Z⌝)%I
     with "Hitems []") as "Hpure".
-  { iIntros "!>" (i uiv ti Hu Hi) "Hui".
+  { iIntros "!>" (i updateItemVal ti Hu Hi) "Hui".
     iDestruct "Hui" as (oleft oright opn)
       "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hulen & %Htid & %Hborrow)".
     iPureIntro. rewrite -Hin_id /toYjsId /=. split; word. }
   iDestruct (big_sepL2_length with "Hitems") as %Hlen2.
   iDestruct (big_sepL2_pure_1 with "Hpure") as %Hb.
   iPureIntro. move=> i ti Hi.
-  have [uiv Huiv] : is_Some (uivs !! i).
+  have [updateItemVal Huiv] : is_Some (uivs !! i).
   { apply lookup_lt_is_Some_2. rewrite Hlen2. exact (lookup_lt_Some _ _ _ Hi). }
-  exact (Hb i uiv ti Huiv Hi).
+  exact (Hb i updateItemVal ti Huiv Hi).
 Qed.
 
 (* ===== the pending gate, heap side (issue #40) ============================ *)
@@ -4060,7 +4060,7 @@ Proof using Type*.
   - (* probe element j *)
     have Hjlt : (j < length uivs)%nat.
     { move: Hcond. rewrite Hsllen. word. }
-    destruct (uivs !! j) as [uiv|] eqn:Huiv;
+    destruct (uivs !! j) as [updateItemVal|] eqn:Huiv;
       last by (apply lookup_ge_None in Huiv; lia).
     have [ti Hti] : is_Some (inputs !! j).
     { apply lookup_lt_is_Some_2. rewrite -Hlen2. exact Hjlt. }
@@ -4070,14 +4070,14 @@ Proof using Type*.
       "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hulen & %Htid & %Hborrow)".
     wp_auto.
     rewrite decide_True; last by word.
-    iDestruct (own_slice_elem_acc (sint.Z (W64 j)) uiv sl dq uivs with "Hsl") as "[Hel Hgive]".
+    iDestruct (own_slice_elem_acc (sint.Z (W64 j)) updateItemVal sl dq uivs with "Hsl") as "[Hel Hgive]".
     { word. }
     { replace (Z.to_nat (sint.Z (W64 j))) with j by word. exact Huiv. }
     wp_auto.
     wp_method_call. wp_call. wp_auto.
-    wp_apply (wp_Id__Equal uiv.(yjs.updateItem.id') idv).
-    iDestruct ("Hgive" $! uiv with "Hel") as "Hsl".
-    have Hinsid : (<[sint.nat (W64 j) := uiv]> uivs) = uivs.
+    wp_apply (wp_Id__Equal updateItemVal.(yjs.updateItem.id') idv).
+    iDestruct ("Hgive" $! updateItemVal with "Hel") as "Hsl".
+    have Hinsid : (<[sint.nat (W64 j) := updateItemVal]> uivs) = uivs.
     { apply list_insert_id. replace (sint.nat (W64 j)) with j by word. exact Huiv. }
     iEval (rewrite Hinsid) in "Hsl".
     case_bool_decide as Heqid.
@@ -4114,21 +4114,21 @@ Qed.
 Lemma docm_cells_agree (m : DocM) (bind : gmap P loc)
     (types : gmap loc type_state) (d : YjsId) :
   (∀ name p ts, bind !! name = Some p -> types !! p = Some ts ->
-     docm_get m (RootId name) = ty_arr ts) ->
-  (∀ t, docm_get m t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
+     doc_model_get m (RootId name) = ty_arr ts) ->
+  (∀ t, doc_model_get m t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
   (∀ name p, bind !! name = Some p -> is_Some (types !! p)) ->
   (∀ p, is_Some (types !! p) -> ∃ name, bind !! name = Some p) ->
   (∀ p ts, types !! p = Some ts -> cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)) ->
   (∀ c, c ∈ all_cells types -> run_wf (ic_run c)) ->
-  (docm_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d).
+  (doc_model_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d).
 Proof.
   move=> Hmtypes Hmdom Hbindtypes Htypesbound Hreprall Hrunwf. split.
   - move=> /docm_has_spec [t [x [Hx Hid]]].
-    have Hne : docm_get m t ≠ [].
+    have Hne : doc_model_get m t ≠ [].
     { move=> Heq. move: Hx. rewrite Heq elem_of_nil //. }
     destruct (Hmdom t Hne) as (nm & p & -> & Hbnm).
     destruct (Hbindtypes nm p Hbnm) as [ts Hts].
-    have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
+    have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
     have Hrep : ty_arr ts = run_flatten (ty_cells ts) := Hreprall p ts Hts.
     rewrite Hdg Hrep in Hx.
     apply list_elem_of_lookup_1 in Hx as [kn Hkn].
@@ -4147,7 +4147,7 @@ Proof.
     have Hwf : run_wf (ic_run c) := Hrunwf c Hc.
     apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hts & Hcts).
     destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
-    have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
+    have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
     have Hrep : ty_arr ts = run_flatten (ty_cells ts) := Hreprall p ts Hts.
     destruct (run_wf_char_at_clock (ic_run c) d Hwf Hcl Hle Hlt) as (ch & Hch & Hchid).
     exists (RootId nm), ch. split; [| exact Hchid].
@@ -4167,12 +4167,12 @@ Qed.
     origin imposes no dependency. Its result is the model presence of the
     origin id (via [hasNode]). *)
 Lemma wp_store__originArrived (s mref : loc) (dq : dfrac) (p : loc)
-    (oid : option yjs.id.t) (m : DocM) (types : gmap loc type_state) :
-  (∀ d : YjsId, docm_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d) ->
+    (originId : option yjs.id.t) (m : DocM) (types : gmap loc type_state) :
+  (∀ d : YjsId, doc_model_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d) ->
   (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
-  {{{ is_pkg_init yjs ∗ is_origin_id p oid ∗
+  {{{ is_pkg_init yjs ∗ is_origin_id p originId ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
       ([∗ map] parent ↦ ts ∈ types,
           own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
@@ -4183,15 +4183,15 @@ Lemma wp_store__originArrived (s mref : loc) (dq : dfrac) (p : loc)
       ([∗ map] parent ↦ ts ∈ types,
           own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
-      ⌜ok = true <-> match oid with
+      ⌜ok = true <-> match originId with
                      | None => True
-                     | Some idv => docm_has m (toYjsId idv) = true
+                     | Some idv => doc_model_has m (toYjsId idv) = true
                      end⌝ }}}.
 Proof using Type*.
   move=> Hagree Hrunfits Hnodup Hrangedisj.
   iIntros (Φ) "(#Hpkg & #HisP & Hitemsf & Hitemmap & Htypes) HΦ".
   wp_method_call. wp_call. wp_call. wp_auto.
-  destruct oid as [idv |]; simpl.
+  destruct originId as [idv |]; simpl.
   - (* a real origin: dereference and probe *)
     iDestruct "HisP" as "[%Hpne #Hpid]".
     rewrite bool_decide_eq_false_2; last first.
@@ -4218,18 +4218,18 @@ Qed.
     arrival check ([originArrived] / [hasNode]) returns the model presence of a
     dependency, so the gate composes them by [input_ready_true_of] /
     [input_ready_false_of_dep]. *)
-Lemma wp_store__depsArrived (s mref : loc) (dq : dfrac) (uiv : yjs.updateItem.t)
+Lemma wp_store__depsArrived (s mref : loc) (dq : dfrac) (updateItemVal : yjs.updateItem.t)
     (ti : TId * IntegrateInput (A := A)) (m : DocM) (types : gmap loc type_state) :
-  (∀ d : YjsId, docm_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d) ->
+  (∀ d : YjsId, doc_model_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d) ->
   (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
-  {{{ is_pkg_init yjs ∗ is_update_item uiv ti ∗
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal ti ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
       ([∗ map] parent ↦ ts ∈ types,
           own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
-    s @! (go.PointerType yjs.store) @! "depsArrived" #uiv
+    s @! (go.PointerType yjs.store) @! "depsArrived" #updateItemVal
   {{{ RET #(input_ready m ti.2);
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
       ([∗ map] parent ↦ ts ∈ types,
@@ -4240,9 +4240,9 @@ Proof using Type*.
   iIntros (Φ) "(#Hpkg & #Hui & Hitemsf & Hitemmap & Htypes) HΦ".
   iDestruct "Hui" as (oleft oright opn)
     "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)".
-  have Hcid : clientId (in_id ti.2) = uint.nat uiv.(yjs.updateItem.id').(yjs.id.clientId').
+  have Hcid : clientId (in_id ti.2) = uint.nat updateItemVal.(yjs.updateItem.id').(yjs.id.clientId').
   { rewrite -Hin_id /toYjsId //. }
-  have Hck : clock (in_id ti.2) = uint.nat uiv.(yjs.updateItem.id').(yjs.id.clock').
+  have Hck : clock (in_id ti.2) = uint.nat updateItemVal.(yjs.updateItem.id').(yjs.id.clock').
   { rewrite -Hin_id /toYjsId //. }
   wp_method_call. wp_call. wp_call. wp_auto.
   (* ---- left origin ---- *)
@@ -4282,30 +4282,30 @@ Proof using Type*.
     iApply ("HΦ" with "[$Hitemsf $Hitemmap $Htypes]"). }
   wp_auto.
   (* the origin facts carried into the tail *)
-  have HLarr : ∀ oid, in_originId ti.2 = Some oid -> docm_has m oid = true.
-  { move=> oid Hoid.
+  have HLarr : ∀ originId, in_originId ti.2 = Some originId -> doc_model_has m originId = true.
+  { move=> originId Hoid.
     destruct oleft as [idL |]; simpl in Hin_l; last by rewrite -Hin_l in Hoid.
     rewrite -Hin_l in Hoid. injection Hoid as <-.
     exact (proj1 HokL eq_refl). }
-  have HRarr : ∀ oid, in_rightOriginId ti.2 = Some oid -> docm_has m oid = true.
-  { move=> oid Hoid.
+  have HRarr : ∀ originId, in_rightOriginId ti.2 = Some originId -> doc_model_has m originId = true.
+  { move=> originId Hoid.
     destruct oright as [idR |]; simpl in Hin_r; last by rewrite -Hin_r in Hoid.
     rewrite -Hin_r in Hoid. injection Hoid as <-.
     exact (proj1 HokR eq_refl). }
   (* ---- the own-predecessor gate ---- *)
   destruct (bool_decide
-      (uint.Z (W64 0) < uint.Z uiv.(yjs.updateItem.id').(yjs.id.clock'))) eqn:Hckpos.
+      (uint.Z (W64 0) < uint.Z updateItemVal.(yjs.updateItem.id').(yjs.id.clock'))) eqn:Hckpos.
   - (* clock > 0: probe (client, clock-1) *)
     apply bool_decide_eq_true_1 in Hckpos.
     wp_auto.
-    wp_apply (wp_NewId uiv.(yjs.updateItem.id').(yjs.id.clientId')
-                (word.sub uiv.(yjs.updateItem.id').(yjs.id.clock') (W64 1))).
+    wp_apply (wp_NewId updateItemVal.(yjs.updateItem.id').(yjs.id.clientId')
+                (word.sub updateItemVal.(yjs.updateItem.id').(yjs.id.clock') (W64 1))).
     wp_apply (wp_store__hasNode s mref dq _ m types Hagree Hrunfits Hnodup Hrangedisj
                 with "[$Hitemsf $Hitemmap $Htypes]").
     iIntros (okP) "(Hitemsf & Hitemmap & Htypes & %HokP)".
     wp_auto.
-    have Hpredid : toYjsId (yjs.id.mk uiv.(yjs.updateItem.id').(yjs.id.clientId')
-                     (word.sub uiv.(yjs.updateItem.id').(yjs.id.clock') (W64 1)))
+    have Hpredid : toYjsId (yjs.id.mk updateItemVal.(yjs.updateItem.id').(yjs.id.clientId')
+                     (word.sub updateItemVal.(yjs.updateItem.id').(yjs.id.clock') (W64 1)))
                  = MkYjsId (clientId (in_id ti.2)) (clock (in_id ti.2) - 1)%nat.
     { rewrite /toYjsId /= Hcid Hck. f_equal. word. }
     have Hckform : ∃ k, clock (in_id ti.2) = S k ∧ (k = clock (in_id ti.2) - 1)%nat.
@@ -4354,34 +4354,34 @@ Qed.
     with the four store-lock pool invariants maintained. Mirrors one iteration
     of main's whole-batch [wp_store__applyUpdate] body. *)
 Lemma wp_store__integrateDecoded (s mref tref : loc)
-    (uiv : yjs.updateItem.t) (ti : TId * IntegrateInput (A := A))
+    (updateItemVal : yjs.updateItem.t) (ti : TId * IntegrateInput (A := A))
     (m : DocM) (types : gmap loc type_state) (bind : gmap P loc)
     (nit : YjsItem A) (arr2 : list (YjsItem A)) (nm : P) (p : loc) :
   ti.1 = RootId nm ->
   bind !! nm = Some p ->
-  toItem ti.2 (docm_get m ti.1) = Some nit ->
+  toItem ti.2 (doc_model_get m ti.1) = Some nit ->
   IsItemValid nit ->
-  maximalId nit (docm_get m ti.1) ->
-  integrate_all (ops_of_input ti.2 (explode (in_content ti.2))) (docm_get m ti.1) = Some arr2 ->
+  maximalId nit (doc_model_get m ti.1) ->
+  integrate_all (ops_of_input ti.2 (explode (in_content ti.2))) (doc_model_get m ti.1) = Some arr2 ->
   (∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (in_id ti.2)) ->
      (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id ti.2))))%Z ∧
      (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (in_id ti.2))))%Z) ->
   (∀ name p', bind !! name = Some p' -> is_Some (types !! p')) ->
   (∀ n1 n2 p', bind !! n1 = Some p' -> bind !! n2 = Some p' -> n1 = n2) ->
   (∀ name p' ts, bind !! name = Some p' -> types !! p' = Some ts ->
-     docm_get m (RootId name) = ty_arr ts) ->
+     doc_model_get m (RootId name) = ty_arr ts) ->
   (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z ->
   NoDup (ic_loc <$> all_cells types) ->
   cells_range_disjoint (all_cells types) ->
   (∀ c, c ∈ all_cells types -> cell_fits c) ->
   (∀ c, c ∈ all_cells types -> cell_origin_clk c) ->
-  {{{ is_pkg_init yjs ∗ is_update_item uiv ti ∗
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal ti ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
       (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
       ([∗ map] parent ↦ ts ∈ types,
           own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
-    s @! (go.PointerType yjs.store) @! "integrateDecoded" #uiv
+    s @! (go.PointerType yjs.store) @! "integrateDecoded" #updateItemVal
   {{{ (types' : gmap loc type_state), RET #();
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
       (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
@@ -4390,7 +4390,7 @@ Lemma wp_store__integrateDecoded (s mref tref : loc)
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
       ⌜dom types' = dom types⌝ ∗
       ⌜∀ name p' ts', bind !! name = Some p' -> types' !! p' = Some ts' ->
-         docm_get (<[ti.1 := arr2]> m) (RootId name) = ty_arr ts'⌝ ∗
+         doc_model_get (<[ti.1 := arr2]> m) (RootId name) = ty_arr ts'⌝ ∗
       ⌜∀ c, c ∈ all_cells types' ->
          (∃ c0, c0 ∈ all_cells types ∧ cell_client c = cell_client c0 ∧
             (uint.Z (cell_clock c0) <= uint.Z (cell_clock c))%Z ∧
@@ -4413,8 +4413,8 @@ Proof using Type*.
   destruct ti as [tj input]. simpl in *. subst tj.
   have Hts0 : is_Some (types !! p) := Hbindtypes nm p Hbnm.
   destruct Hts0 as [[cellsj arrj0] Htsj].
-  have Hdgj : docm_get m (RootId nm) = arrj0 := Hmtypes nm p _ Hbnm Htsj.
-  set (arrj := docm_get m (RootId nm)) in *.
+  have Hdgj : doc_model_get m (RootId nm) = arrj0 := Hmtypes nm p _ Hbnm Htsj.
+  set (arrj := doc_model_get m (RootId nm)) in *.
   rewrite -Hdgj in Htsj.
   iDestruct (types_arr_inv2 with "Htypes") as %Harrinvs.
   have Hinvj : YjsArrInvariant arrj := Harrinvs p _ Htsj.
@@ -4428,16 +4428,16 @@ Proof using Type*.
      this type's own cells (that is where [toItem]'s find landed) *)
   have Hwits : ∃ (ocL ocR : option item_cell),
     ((match in_originId input, ocL with
-      | Some oid, Some c => c ∈ all_cells types ∧
-          clientId (item_id (run_head c)) = clientId oid ∧
-          (clock (item_id (run_head c)) <= clock oid)%nat ∧
-          (clock oid < clock (item_id (run_head c)) + length (ic_run c))%nat
+      | Some originId, Some c => c ∈ all_cells types ∧
+          clientId (item_id (run_head c)) = clientId originId ∧
+          (clock (item_id (run_head c)) <= clock originId)%nat ∧
+          (clock originId < clock (item_id (run_head c)) + length (ic_run c))%nat
       | None, None => True | _, _ => False end : Prop)) /\
     ((match in_rightOriginId input, ocR with
-      | Some oid, Some c => c ∈ all_cells types ∧
-          clientId (item_id (run_head c)) = clientId oid ∧
-          (clock (item_id (run_head c)) <= clock oid)%nat ∧
-          (clock oid < clock (item_id (run_head c)) + length (ic_run c))%nat
+      | Some originId, Some c => c ∈ all_cells types ∧
+          clientId (item_id (run_head c)) = clientId originId ∧
+          (clock (item_id (run_head c)) <= clock originId)%nat ∧
+          (clock originId < clock (item_id (run_head c)) + length (ic_run c))%nat
       | None, None => True | _, _ => False end : Prop)) /\
     (match opn with
      | Some nm' => bind !! nm' = Some p
@@ -4473,15 +4473,15 @@ Proof using Type*.
       - rewrite Hcid /run_head /=. lia. }
     have HocL : ∃ ocL,
       ((match in_originId input, ocL with
-        | Some oid, Some c => c ∈ all_cells types ∧
-            clientId (item_id (run_head c)) = clientId oid ∧
-            (clock (item_id (run_head c)) <= clock oid)%nat ∧
-            (clock oid < clock (item_id (run_head c)) + length (ic_run c))%nat
+        | Some originId, Some c => c ∈ all_cells types ∧
+            clientId (item_id (run_head c)) = clientId originId ∧
+            (clock (item_id (run_head c)) <= clock originId)%nat ∧
+            (clock originId < clock (item_id (run_head c)) + length (ic_run c))%nat
         | None, None => True | _, _ => False end : Prop)) /\
       (match ocL with Some c => ic_parent c = p | None => True end) /\
       (match ocL with Some c => c ∈ cellsj | None => True end).
-    { destruct (in_originId input) as [oidL|] eqn:HoinL.
-      - destruct (findLeftIdx_inv oidL arrj leftIdx HfindL) as (kn & it & -> & Hkn & HidL).
+    { destruct (in_originId input) as [originIdLeft|] eqn:HoinL.
+      - destruct (findLeftIdx_inv originIdLeft arrj leftIdx HfindL) as (kn & it & -> & Hkn & HidL).
         destruct (Hcellsw kn it Hkn) as (ci & off & cL & HcLk & Hoff & Hpos & Hcl & Hle & Hlt).
         have HcLmem : cL ∈ cellsj := list_elem_of_lookup_2 _ _ _ HcLk.
         exists (Some cL). split_and!.
@@ -4495,15 +4495,15 @@ Proof using Type*.
       - exists None. split_and!; done. }
     have HocR : ∃ ocR,
       ((match in_rightOriginId input, ocR with
-        | Some oid, Some c => c ∈ all_cells types ∧
-            clientId (item_id (run_head c)) = clientId oid ∧
-            (clock (item_id (run_head c)) <= clock oid)%nat ∧
-            (clock oid < clock (item_id (run_head c)) + length (ic_run c))%nat
+        | Some originId, Some c => c ∈ all_cells types ∧
+            clientId (item_id (run_head c)) = clientId originId ∧
+            (clock (item_id (run_head c)) <= clock originId)%nat ∧
+            (clock originId < clock (item_id (run_head c)) + length (ic_run c))%nat
         | None, None => True | _, _ => False end : Prop)) /\
       (match ocR with Some c => ic_parent c = p | None => True end) /\
       (match ocR with Some c => c ∈ cellsj | None => True end).
-    { destruct (in_rightOriginId input) as [oidR|] eqn:HoinR.
-      - destruct (findRightIdx_inv oidR arrj rightIdx HfindR) as (kn & it & -> & Hkn & HidR).
+    { destruct (in_rightOriginId input) as [originIdRight|] eqn:HoinR.
+      - destruct (findRightIdx_inv originIdRight arrj rightIdx HfindR) as (kn & it & -> & Hkn & HidR).
         destruct (Hcellsw kn it Hkn) as (ci & off & cR & HcRk & Hoff & Hpos & Hcl & Hle & Hlt).
         have HcRmem2 : cR ∈ cellsj := list_elem_of_lookup_2 _ _ _ HcRk.
         exists (Some cR). split_and!.
@@ -4530,15 +4530,15 @@ Proof using Type*.
   wp_method_call. wp_call. wp_call. wp_auto.
   wp_func_call. wp_call. wp_auto.
   wp_alloc itv as "Hitv". wp_auto.
-  set (iv := {| yjs.item.id' := uiv.(yjs.updateItem.id');
-                yjs.item.originLeftId' := uiv.(yjs.updateItem.originLeftId');
-                yjs.item.originRightId' := uiv.(yjs.updateItem.originRightId');
+  set (itemVal := {| yjs.item.id' := updateItemVal.(yjs.updateItem.id');
+                yjs.item.originLeftId' := updateItemVal.(yjs.updateItem.originLeftId');
+                yjs.item.originRightId' := updateItemVal.(yjs.updateItem.originRightId');
                 yjs.item.left' := null; yjs.item.right' := null;
                 yjs.item.parent' := null;
-                yjs.item.content' := {| yjs.content.content' := uiv.(yjs.updateItem.content') |};
+                yjs.item.content' := {| yjs.content.content' := updateItemVal.(yjs.updateItem.content') |};
                 yjs.item.flags' := W8 2 |}).
   iAssert (own_linked_item_run itv input null null null) with "[Hitv]" as "Hfresh".
-  { iExists iv, oleft, oright. rewrite /own_fresh_item_raw.
+  { iExists itemVal, oleft, oright. rewrite /own_fresh_item_raw.
     iFrame "Hitv HisL HisR". iPureIntro.
     split_and!;
       [exact Hin_l | exact Hin_r | exact Hin_id | exact Hin_c
@@ -4559,8 +4559,8 @@ Proof using Type*.
     | Some a, Some b, Some cL0, Some cR0 => cL0 = cR0 -> (clock a < clock b)%nat
     | _, _, _, _ => True end : Prop)).
   { move: HwLc HwRc HmemLc HmemRc HfindL HfindR.
-    destruct (in_originId input) as [oidL|] eqn:HoinL2; try done.
-    destruct (in_rightOriginId input) as [oidR|] eqn:HoinR2; try done.
+    destruct (in_originId input) as [originIdLeft|] eqn:HoinL2; try done.
+    destruct (in_rightOriginId input) as [originIdRight|] eqn:HoinR2; try done.
     destruct ocL as [cL0|]; try done. destruct ocR as [cR0|]; try done.
     move=> [_ [HclL [HleL HltL]]] [_ [HclR [HleR HltR]]] HmemL2 HmemR2 HfindL2 HfindR2 Heq.
     subst cR0.
@@ -4568,25 +4568,25 @@ Proof using Type*.
     have Hwf : run_wf (ic_run cL0).
     { apply Hrunwfall. rewrite (all_cells_lookup _ _ _ Htsj). apply elem_of_app.
       by left. }
-    destruct (run_wf_char_at_clock (ic_run cL0) oidL Hwf HclL HleL HltL)
+    destruct (run_wf_char_at_clock (ic_run cL0) originIdLeft Hwf HclL HleL HltL)
       as (chL & HchL & HidchL).
-    destruct (run_wf_char_at_clock (ic_run cL0) oidR Hwf HclR HleR HltR)
+    destruct (run_wf_char_at_clock (ic_run cL0) originIdRight Hwf HclR HleR HltR)
       as (chR & HchR & HidchR).
     have HposL := run_flatten_lookup_of_cell cellsj ciw _ cL0 chL Hciw HchL.
     have HposR := run_flatten_lookup_of_cell cellsj ciw _ cL0 chR Hciw HchR.
     rewrite /cells_repr in Hreprj. rewrite -Hreprj in HposL HposR.
-    destruct (findLeftIdx_inv oidL arrj leftIdx HfindL2) as (knL & itL & HeqL & HknL & HidL2).
-    destruct (findRightIdx_inv oidR arrj rightIdx HfindR2) as (knR & itR & HeqR & HknR & HidR2).
+    destruct (findLeftIdx_inv originIdLeft arrj leftIdx HfindL2) as (knL & itL & HeqL & HknL & HidL2).
+    destruct (findRightIdx_inv originIdRight arrj rightIdx HfindR2) as (knR & itR & HeqR & HknR & HidR2).
     set prefw := length (run_flatten (take ciw cellsj)) in HposL HposR.
-    have HknLp : knL = (prefw + (clock oidL - clock (item_id (run_head cL0))))%nat.
-    { set posL := (prefw + (clock oidL - clock (item_id (run_head cL0))))%nat in HposL |- *.
+    have HknLp : knL = (prefw + (clock originIdLeft - clock (item_id (run_head cL0))))%nat.
+    { set posL := (prefw + (clock originIdLeft - clock (item_id (run_head cL0))))%nat in HposL |- *.
       destruct (Nat.lt_trichotomy knL posL) as [Hlt2 | [Heq2 | Hgt2]]; [| exact Heq2 |]; exfalso.
       - have := uniqueId_lookup_ne arrj knL posL itL chL Huniqj HknL HposL Hlt2.
         rewrite HidL2 HidchL //.
       - have := uniqueId_lookup_ne arrj posL knL chL itL Huniqj HposL HknL Hgt2.
         rewrite HidL2 HidchL //. }
-    have HknRp : knR = (prefw + (clock oidR - clock (item_id (run_head cL0))))%nat.
-    { set posR := (prefw + (clock oidR - clock (item_id (run_head cL0))))%nat in HposR |- *.
+    have HknRp : knR = (prefw + (clock originIdRight - clock (item_id (run_head cL0))))%nat.
+    { set posR := (prefw + (clock originIdRight - clock (item_id (run_head cL0))))%nat in HposR |- *.
       destruct (Nat.lt_trichotomy knR posR) as [Hlt2 | [Heq2 | Hgt2]]; [| exact Heq2 |]; exfalso.
       - have := uniqueId_lookup_ne arrj knR posR itR chR Huniqj HknR HposR Hlt2.
         rewrite HidR2 HidchR //.
@@ -4594,7 +4594,7 @@ Proof using Type*.
         rewrite HidR2 HidchR //. }
     have Hklt : (knL < knR)%nat by lia.
     lia. }
-  wp_apply (wp_store__repair_split s mref tref itv (uiv.(yjs.updateItem.parentName'))
+  wp_apply (wp_store__repair_split s mref tref itv (updateItemVal.(yjs.updateItem.parentName'))
               input opn types bind ocL ocR p
               HwLc HwRc Hsameg Hwpar Hfits Hlocdup Hrangedisj Horiginclk
               with "[$Hfresh $HisPN $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
@@ -4631,7 +4631,7 @@ Proof using Type*.
       (Z.of_nat (length (run_flatten (take curL2 cellsj2))) = leftIdx + 1)%Z ∧
       lft = node_loc cellsj2 (Z.of_nat curL2 - 1).
   { move: HbdL HwLc HmemLc HfindL.
-    destruct (in_originId input) as [oidL|] eqn:HoinL3; destruct ocL as [c0|]; try done.
+    destruct (in_originId input) as [originIdLeft|] eqn:HoinL3; destruct ocL as [c0|]; try done.
     - move=> [Hlft0 [cL' [HcL'mem [HcL'loc [HcL'cl [HcL'clk HcL'par]]]]]]
              [_ [Hclw [Hlew Hltw]]] Hmem0 HfindL3.
       have HparL0 : ic_parent c0 = p := Hcparj c0 Hmem0.
@@ -4652,9 +4652,9 @@ Proof using Type*.
       have HbL' := Hbnds2 cL' HcL'mem.
       have Hzck : (uint.Z (cell_clock cL') = Z.of_nat (clock (item_id (run_head cL'))))%Z
         by (rewrite /cell_clock; destruct HbL'; word).
-      have Hpin : (clock (item_id (run_head cL')) + length (ic_run cL') = clock oidL + 1)%nat.
+      have Hpin : (clock (item_id (run_head cL')) + length (ic_run cL') = clock originIdLeft + 1)%nat.
       { move: HcL'clk. rewrite Hzck. lia. }
-      have HclL' : clientId (item_id (run_head cL')) = clientId oidL.
+      have HclL' : clientId (item_id (run_head cL')) = clientId originIdLeft.
       { have Hb1 := proj1 (Hbnds2 cL' HcL'mem).
         have Hb2 := proj1 (Hbnds0 c0 Hmem0a).
         move: HcL'cl. rewrite /cell_client -Hclw. move=> Hcc.
@@ -4663,16 +4663,16 @@ Proof using Type*.
         word. }
       destruct (lookup_lt_is_Some_2 (ic_run cL') (length (ic_run cL') - 1)%nat
                   ltac:(lia)) as [chL HchL].
-      have HidchL : item_id chL = oidL.
+      have HidchL : item_id chL = originIdLeft.
       { rewrite (run_wf_char_id _ _ _ Hwf' HchL).
         rewrite /run_head in Hpin.
-        destruct oidL as [oc ok].
+        destruct originIdLeft as [oc ok].
         have Hpin' : ((item_id (hd inhabitant (ic_run cL'))).(clock)
                       + length (ic_run cL'))%nat = (ok + 1)%nat := Hpin.
         f_equal; [exact HclL' | lia]. }
       have HposL := run_flatten_lookup_of_cell cellsj2 ciL _ cL' chL Hciw HchL.
       rewrite -Hreprj' in HposL.
-      destruct (findLeftIdx_inv oidL arrj leftIdx HfindL3) as (knL & itL & HeqL & HknL & HidL2).
+      destruct (findLeftIdx_inv originIdLeft arrj leftIdx HfindL3) as (knL & itL & HeqL & HknL & HidL2).
       have HknLp : knL = (length (run_flatten (take ciL cellsj2)) + (length (ic_run cL') - 1))%nat.
       { set posL := (length (run_flatten (take ciL cellsj2)) + (length (ic_run cL') - 1))%nat
           in HposL |- *.
@@ -4698,7 +4698,7 @@ Proof using Type*.
       (Z.of_nat (length (run_flatten (take curR2 cellsj2))) = rightIdx)%Z ∧
       rgt = node_loc cellsj2 (Z.of_nat curR2).
   { move: HbdR HwRc HmemRc HfindR.
-    destruct (in_rightOriginId input) as [oidR|] eqn:HoinR3; destruct ocR as [c0|]; try done.
+    destruct (in_rightOriginId input) as [originIdRight|] eqn:HoinR3; destruct ocR as [c0|]; try done.
     - move=> [cR' [HcR'mem [HcR'loc [HcR'cl [HcR'clk HcR'par]]]]]
              [_ [Hclw [Hlew Hltw]]] Hmem0 HfindR3.
       have HparR0 : ic_parent c0 = p := Hcparj c0 Hmem0.
@@ -4719,9 +4719,9 @@ Proof using Type*.
       have HbR' := Hbnds2 cR' HcR'mem.
       have Hzck : (uint.Z (cell_clock cR') = Z.of_nat (clock (item_id (run_head cR'))))%Z
         by (rewrite /cell_clock; destruct HbR'; word).
-      have Hpin : (clock (item_id (run_head cR')) = clock oidR)%nat.
+      have Hpin : (clock (item_id (run_head cR')) = clock originIdRight)%nat.
       { move: HcR'clk. rewrite Hzck. lia. }
-      have HclR' : clientId (item_id (run_head cR')) = clientId oidR.
+      have HclR' : clientId (item_id (run_head cR')) = clientId originIdRight.
       { have Hb1 := proj1 (Hbnds2 cR' HcR'mem).
         have Hb2 := proj1 (Hbnds0 c0 Hmem0a).
         move: HcR'cl. rewrite /cell_client -Hclw. move=> Hcc.
@@ -4729,15 +4729,15 @@ Proof using Type*.
                 = uint.Z (W64 (clientId (item_id (run_head c0)))) by rewrite Hcc.
         word. }
       destruct (lookup_lt_is_Some_2 (ic_run cR') 0%nat ltac:(lia)) as [chR HchR].
-      have HidchR : item_id chR = oidR.
+      have HidchR : item_id chR = originIdRight.
       { rewrite (run_wf_char_id _ _ _ Hwf' HchR).
         rewrite /run_head in Hpin.
-        destruct oidR as [oc ok].
+        destruct originIdRight as [oc ok].
         have Hpin' : (item_id (hd inhabitant (ic_run cR'))).(clock) = ok := Hpin.
         f_equal; [exact HclR' | lia]. }
       have HposR := run_flatten_lookup_of_cell cellsj2 ciR _ cR' chR Hciw HchR.
       rewrite -Hreprj' in HposR.
-      destruct (findRightIdx_inv oidR arrj rightIdx HfindR3) as (knR & itR & HeqR & HknR & HidR2).
+      destruct (findRightIdx_inv originIdRight arrj rightIdx HfindR3) as (knR & itR & HeqR & HknR & HidR2).
       have HknRp : knR = (length (run_flatten (take ciR cellsj2)) + 0)%nat.
       { set posR := (length (run_flatten (take ciR cellsj2)) + 0)%nat in HposR |- *.
         destruct (Nat.lt_trichotomy knR posR) as [Hlt2 | [Heq2 | Hgt2]]; [| exact Heq2 |]; exfalso.
@@ -4810,7 +4810,7 @@ Proof using Type*.
   have Horiginclk' : ∀ c0, c0 ∈ all_cells (<[p := MkTypeState cells'' arr2]> types2) ->
       cell_origin_clk c0.
   { apply (originclk_snoc (all_cells types2) _ c2 Hac_step); [| exact Horiginclk2].
-    move=> oid Hoid Hcl.
+    move=> originId Hoid Hcl.
     rewrite Hc2orig in Hoid.
     rewrite Hc2id -Hidnit in Hcl.
     rewrite Hc2id -Hidnit.
@@ -4819,8 +4819,8 @@ Proof using Type*.
       := proj1 (toItem_ok_iff input arrj nit) Htoit.
     rewrite Hoid /isLeftIdPtr in HoLp.
     destruct HoLp as (x & Ho & Hfind).
-    have Hxid : item_id x = oid by apply (find_by_id_id oid arrj x Hfind).
-    have Hxmem : x ∈ arrj by apply (find_by_id_mem oid arrj x Hfind).
+    have Hxid : item_id x = originId by apply (find_by_id_id originId arrj x Hfind).
+    have Hxmem : x ∈ arrj by apply (find_by_id_mem originId arrj x Hfind).
     have Hxmem2 := Hxmem. rewrite Hreprj' in Hxmem2.
     apply list_elem_of_lookup_1 in Hxmem2 as [kx Hkx].
     destruct (run_flatten_lookup_cell cellsj2 kx x Hkx) as (cix & offx & c0' & Hcix & Hoffx & _).
@@ -4836,7 +4836,7 @@ Proof using Type*.
         by rewrite Hxid2 //.
       rewrite -Hclx Hxid Hcl Hidnit //. }
     have Hbnd := proj2 (Hbndj2 c0' Hc0'all Hcl').
-    have Hclkx : clock oid = (clock (item_id (hd inhabitant (ic_run c0'))) + offx)%nat
+    have Hclkx : clock originId = (clock (item_id (hd inhabitant (ic_run c0'))) + offx)%nat
       by rewrite -Hxid Hxid2 //.
     have [_ Hkb] := Hbnds2 c0' Hc0'all.
     have Hzc0 : (uint.Z (cell_clock c0') = Z.of_nat (clock (item_id (run_head c0'))))%Z
@@ -4921,10 +4921,10 @@ Proof.
   have [o [r [idx [cx [_ [HoL [HoR _]]]]]]] :=
     proj1 (toItem_ok_iff input [] nit) Htoit.
   destruct Hor as [Ho | Ho].
-  - destruct (in_originId input) as [oid|]; last by apply Ho.
+  - destruct (in_originId input) as [originId|]; last by apply Ho.
     destruct HoL as (it & _ & Hf).
     rewrite /find_by_id /= in Hf. discriminate.
-  - destruct (in_rightOriginId input) as [oid|]; last by apply Ho.
+  - destruct (in_rightOriginId input) as [originId|]; last by apply Ho.
     destruct HoR as (it & _ & Hf).
     rewrite /find_by_id /= in Hf. discriminate.
 Qed.
@@ -4940,19 +4940,19 @@ Qed.
    [WireReplay_to_PendingReplay] in [yjs_store_update]: it turns a [WireReplay]
    into a [PendingReplay] of the [expand_inputs], re-deriving each chunk's
    freshness from head-freshness via [delivered_clock_bound]. Reuses
-   [pending_keep] / [docm_has] / [input_ready] (a wire item's readiness is its
+   [pending_keep] / [doc_model_has] / [input_ready] (a wire item's readiness is its
    head op's, since [ti.2]'s origins are the head's). *)
 
 Definition wire_integrate (m : DocM) (ti : TId * IntegrateInput (A := A))
     : option (list (YjsItem A)) :=
-  integrate_all (ops_of_input ti.2 (explode (in_content ti.2))) (docm_get m ti.1).
+  integrate_all (ops_of_input ti.2 (explode (in_content ti.2))) (doc_model_get m ti.1).
 
 Fixpoint wire_pass (m : DocM) (pending kept : list (TId * IntegrateInput (A := A)))
     : list (TId * IntegrateInput (A := A)) * list (TId * IntegrateInput (A := A)) * DocM :=
   match pending with
   | [] => ([], kept, m)
   | ti :: tl =>
-      if docm_has m (in_id ti.2) then wire_pass m tl kept
+      if doc_model_has m (in_id ti.2) then wire_pass m tl kept
       else if input_ready m ti.2 then
         match wire_integrate m ti with
         | Some arr' =>
@@ -4990,7 +4990,7 @@ Proof.
   elim: pending => [| ti tl IH] m kept app kept' m'.
   - move=> [= <- <- _] /=. lia.
   - have Hcl : length (ti :: tl) = S (length tl) by done.
-    simpl. destruct (docm_has m (in_id ti.2)).
+    simpl. destruct (doc_model_has m (in_id ti.2)).
     { move=> Hwp. have Hle := IH _ _ _ _ _ Hwp. lia. }
     destruct (input_ready m ti.2); last first.
     { move=> Hwp. have Hle := IH _ _ _ _ _ Hwp.
@@ -5060,7 +5060,7 @@ Lemma wire_pass_no_progress (pending : list (TId * IntegrateInput (A := A))) :
 Proof.
   elim: pending => [| ti tl IH] m kept kept' m' /=.
   - move=> [= _ <-] //.
-  - destruct (docm_has m (in_id ti.2)).
+  - destruct (doc_model_has m (in_id ti.2)).
     { move=> /IH //. }
     destruct (input_ready m ti.2); last first.
     { move=> /IH //. }
@@ -5091,7 +5091,7 @@ Proof. move=> Hpass Hdrec. rewrite wire_drain_unfold Hpass Hdrec //. Qed.
 Inductive WireReplay : DocM -> list (TId * IntegrateInput (A := A)) -> DocM -> Prop :=
   | WireReplay_nil m : WireReplay m [] m
   | WireReplay_cons m ti arr' rest m' :
-      docm_has m (in_id ti.2) = false ->
+      doc_model_has m (in_id ti.2) = false ->
       input_ready m ti.2 = true ->
       wire_integrate m ti = Some arr' ->
       WireReplay (<[ti.1 := arr']> m) rest m' ->
@@ -5114,7 +5114,7 @@ Lemma wire_pass_replay (pending : list (TId * IntegrateInput (A := A))) :
 Proof.
   elim: pending => [| ti tl IH] m kept app kept' m' /=.
   - move=> [= <- _ <-]. constructor.
-  - destruct (docm_has m (in_id ti.2)) eqn:Hdup.
+  - destruct (doc_model_has m (in_id ti.2)) eqn:Hdup.
     { move=> /IH //. }
     destruct (input_ready m ti.2) eqn:Hready; last first.
     { move=> /IH //. }
@@ -5135,7 +5135,7 @@ Definition wire_ready_total (m : DocM)
   ∀ pre suf mx (ti : TId * IntegrateInput (A := A)),
     applied = pre ++ suf -> WireReplay m pre mx ->
     ti ∈ pending ->
-    docm_has mx (in_id ti.2) = false ->
+    doc_model_has mx (in_id ti.2) = false ->
     input_ready mx ti.2 = true ->
     is_Some (wire_integrate mx ti).
 

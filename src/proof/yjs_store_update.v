@@ -92,8 +92,8 @@ Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
   (∀ n1 n2 p, bind !! n1 = Some p -> bind !! n2 = Some p -> n1 = n2) ->
   (∀ p, is_Some (types !! p) -> ∃ name, bind !! name = Some p) ->
   (∀ name p ts, bind !! name = Some p -> types !! p = Some ts ->
-     docm_get m (RootId name) = ty_arr ts) ->
-  (∀ t, docm_get m t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
+     doc_model_get m (RootId name) = ty_arr ts) ->
+  (∀ t, doc_model_get m t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
   inputs_rooted_in_bind (pend0 ++ inputs) bind ->
   (∀ c, c ∈ all_cells types -> cell_fits c) ->
   (∀ ti : TId * IntegrateInput (A := A), ti ∈ pend0 ++ inputs ->
@@ -121,8 +121,8 @@ Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
       ⌜dom types' = dom types⌝ ∗
       ⌜∀ name p ts', bind !! name = Some p -> types' !! p = Some ts' ->
-         docm_get m' (RootId name) = ty_arr ts'⌝ ∗
-      ⌜∀ t, docm_get m' t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p⌝ ∗
+         doc_model_get m' (RootId name) = ty_arr ts'⌝ ∗
+      ⌜∀ t, doc_model_get m' t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p⌝ ∗
       ⌜∀ c, c ∈ all_cells types' ->
          (∃ c0, c0 ∈ all_cells types ∧ cell_client c = cell_client c0 ∧
             (uint.Z (cell_clock c0) <= uint.Z (cell_clock c))%Z ∧
@@ -168,8 +168,8 @@ Proof using Type*.
       "Hpendingp" ∷ pending_ptr ↦ pslA ∗
       "HslA" ∷ pslA ↦* uivsA ∗
       "HcapA" ∷ own_slice_cap yjs.updateItem.t pslA (DfracOwn 1) ∗
-      "#HitemsA" ∷ ([∗ list] uiv;ti ∈ uivsA;(pend0 ++ take j inputs),
-          is_update_item uiv ti) ∗
+      "#HitemsA" ∷ ([∗ list] updateItemVal;ti ∈ uivsA;(pend0 ++ take j inputs),
+          is_update_item updateItemVal ti) ∗
       "Hslin" ∷ sl ↦*{dq} uivs_in ∗
       "%HjA" ∷ ⌜(j <= length uivs_in)%nat⌝)%I
     with "[i pending Hslpd Hcappd Hslin]" as "IH".
@@ -181,7 +181,7 @@ Proof using Type*.
   - (* append structs[j] *)
     have Hjlt : (j < length uivs_in)%nat.
     { move: Hcond. rewrite Hinlen. word. }
-    destruct (uivs_in !! j) as [uiv|] eqn:Huiv;
+    destruct (uivs_in !! j) as [updateItemVal|] eqn:Huiv;
       last by (apply lookup_ge_None in Huiv; lia).
     have [ti Hti] : is_Some (inputs !! j).
     { apply lookup_lt_is_Some_2. rewrite -Hlenin. exact Hjlt. }
@@ -189,13 +189,13 @@ Proof using Type*.
       [exact Huiv | exact Hti |].
     wp_auto.
     rewrite decide_True; last by word.
-    iDestruct (own_slice_elem_acc (sint.Z (W64 j)) uiv sl dq uivs_in with "Hslin")
+    iDestruct (own_slice_elem_acc (sint.Z (W64 j)) updateItemVal sl dq uivs_in with "Hslin")
       as "[Hel Hgive]".
     { word. }
     { replace (Z.to_nat (sint.Z (W64 j))) with j by word. exact Huiv. }
     wp_auto.
-    iDestruct ("Hgive" $! uiv with "Hel") as "Hslin".
-    have Hinsid : (<[sint.nat (W64 j) := uiv]> uivs_in) = uivs_in.
+    iDestruct ("Hgive" $! updateItemVal with "Hel") as "Hslin".
+    have Hinsid : (<[sint.nat (W64 j) := updateItemVal]> uivs_in) = uivs_in.
     { apply list_insert_id. replace (sint.nat (W64 j)) with j by word. exact Huiv. }
     iEval (rewrite Hinsid) in "Hslin".
     wp_apply wp_slice_literal. iSplitR; first done.
@@ -204,7 +204,7 @@ Proof using Type*.
     iIntros (pslA') "(HslA' & HcapA' & _)". wp_auto.
     wp_for_post.
     iFrame "Hcapin Hpendf Hitemsf Hitemmap Htypesf Htypesmap Htypes HΦ s structs".
-    iExists (S j), pslA', (uivsA ++ [uiv]).
+    iExists (S j), pslA', (uivsA ++ [updateItemVal]).
     replace (word.add (W64 j) (W64 1)) with (W64 (S j)) by word.
     have H00 : sint.nat (W64 0) = 0%nat by word.
     iEval (rewrite H00 /=) in "HslA'".
@@ -229,7 +229,7 @@ Proof using Type*.
         "Hpendingp" ∷ pending_ptr ↦ pendingS ∗
         "HslP" ∷ pendingS ↦* uivsP ∗
         "HcapP" ∷ own_slice_cap yjs.updateItem.t pendingS (DfracOwn 1) ∗
-        "#HitemsPj" ∷ ([∗ list] uiv;ti ∈ uivsP;pendingj, is_update_item uiv ti) ∗
+        "#HitemsPj" ∷ ([∗ list] updateItemVal;ti ∈ uivsP;pendingj, is_update_item updateItemVal ti) ∗
         "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
         "Hitemmap" ∷ own_item_map mref (DfracOwn 1) typesj ∗
         "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ tref ∗
@@ -242,8 +242,8 @@ Proof using Type*.
         "%Hprj" ∷ ⌜WireReplay m appliedj mj⌝ ∗
         "%Hdomj" ∷ ⌜dom typesj = dom types⌝ ∗
         "%Hmtypesj" ∷ ⌜∀ name pl ts, bind !! name = Some pl ->
-            typesj !! pl = Some ts -> docm_get mj (RootId name) = ty_arr ts⌝ ∗
-        "%Hmdomj" ∷ ⌜∀ t, docm_get mj t ≠ [] ->
+            typesj !! pl = Some ts -> doc_model_get mj (RootId name) = ty_arr ts⌝ ∗
+        "%Hmdomj" ∷ ⌜∀ t, doc_model_get mj t ≠ [] ->
             ∃ name pl, t = RootId name ∧ bind !! name = Some pl⌝ ∗
         "%Hfitsj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> cell_fits c0⌝ ∗
         "%Horiginclkj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> cell_origin_clk c0⌝ ∗
@@ -322,7 +322,7 @@ Proof using Type*.
           "Hrestp" ∷ rest_ptr ↦ restS ∗
           "HslR" ∷ restS ↦* uivsR ∗
           "HcapR" ∷ own_slice_cap yjs.updateItem.t restS (DfracOwn 1) ∗
-          "#HitemsR" ∷ ([∗ list] uiv;ti ∈ uivsR;keptacc, is_update_item uiv ti) ∗
+          "#HitemsR" ∷ ([∗ list] updateItemVal;ti ∈ uivsR;keptacc, is_update_item updateItemVal ti) ∗
           "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
           "Hitemmap" ∷ own_item_map mref (DfracOwn 1) types_c ∗
           "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ tref ∗
@@ -342,8 +342,8 @@ Proof using Type*.
           "%Hpv" ∷ ⌜pvi = false <-> appacc = []⌝ ∗
           "%Hdomc" ∷ ⌜dom types_c = dom types⌝ ∗
           "%Hmtypesc" ∷ ⌜∀ name pl ts, bind !! name = Some pl ->
-              types_c !! pl = Some ts -> docm_get m_c (RootId name) = ty_arr ts⌝ ∗
-          "%Hmdomc" ∷ ⌜∀ t, docm_get m_c t ≠ [] ->
+              types_c !! pl = Some ts -> doc_model_get m_c (RootId name) = ty_arr ts⌝ ∗
+          "%Hmdomc" ∷ ⌜∀ t, doc_model_get m_c t ≠ [] ->
               ∃ name pl, t = RootId name ∧ bind !! name = Some pl⌝ ∗
           "%Hfitsc" ∷ ⌜∀ c0, c0 ∈ all_cells types_c -> cell_fits c0⌝ ∗
           "%Horiginclkc" ∷ ⌜∀ c0, c0 ∈ all_cells types_c -> cell_origin_clk c0⌝ ∗
@@ -388,7 +388,7 @@ Proof using Type*.
       * (* scan struct i *)
         have Hilt : (i < length uivsP)%nat.
         { move: Hcondi. rewrite HPlen. word. }
-        destruct (uivsP !! i) as [uiv|] eqn:Huiv;
+        destruct (uivsP !! i) as [updateItemVal|] eqn:Huiv;
           last by (apply lookup_ge_None in Huiv; lia).
         destruct (pendingj !! i) as [[tj input]|] eqn:Hpi;
           last by (apply lookup_ge_None in Hpi; rewrite -HlenP in Hpi; lia).
@@ -410,7 +410,7 @@ Proof using Type*.
           apply elem_of_dom. exact Hs0. }
         iDestruct (types_repr_all2 with "Htypes") as %Hreprallc.
         iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfc.
-        have Hagreec : ∀ d : YjsId, docm_has m_c d = true <->
+        have Hagreec : ∀ d : YjsId, doc_model_has m_c d = true <->
             ∃ c0, c0 ∈ all_cells types_c ∧ cell_covers c0 d.
         { move=> d.
           exact (docm_cells_agree m_c bind types_c d Hmtypesc Hmdomc
@@ -420,27 +420,27 @@ Proof using Type*.
         (* read pending[i] into ui *)
         wp_auto.
         rewrite decide_True; last by word.
-        iDestruct (own_slice_elem_acc (sint.Z (W64 i)) uiv pendingS (DfracOwn 1)
+        iDestruct (own_slice_elem_acc (sint.Z (W64 i)) updateItemVal pendingS (DfracOwn 1)
                      uivsP with "HslP") as "[Hel Hgive]".
         { word. }
         { replace (Z.to_nat (sint.Z (W64 i))) with i by word. exact Huiv. }
         wp_auto.
-        iDestruct ("Hgive" $! uiv with "Hel") as "HslP".
-        have Hinsid : (<[sint.nat (W64 i) := uiv]> uivsP) = uivsP.
+        iDestruct ("Hgive" $! updateItemVal with "Hel") as "HslP".
+        have Hinsid : (<[sint.nat (W64 i) := updateItemVal]> uivsP) = uivsP.
         { apply list_insert_id.
           replace (sint.nat (W64 i)) with i by word. exact Huiv. }
         iEval (rewrite Hinsid) in "HslP".
         (* the arrival probe: hasNode *)
         wp_apply (wp_store__hasNode s mref (DfracOwn 1)
-                    (uiv.(yjs.updateItem.id')) m_c types_c Hagreec Hfitsc Hlocdupc Hrangedisjc
+                    (updateItemVal.(yjs.updateItem.id')) m_c types_c Hagreec Hfitsc Hlocdupc Hrangedisjc
                     with "[$Hitemsf $Hitemmap $Htypes]").
         iIntros (ok) "(Hitemsf & Hitemmap & Htypes & %Hok)".
         rewrite Hin_id in Hok.
-        have Hokm : ok = docm_has m_c (in_id input).
-        { destruct ok, (docm_has m_c (in_id input)) eqn:Hd;
+        have Hokm : ok = doc_model_has m_c (in_id input).
+        { destruct ok, (doc_model_has m_c (in_id input)) eqn:Hd;
             [done | have := proj1 Hok eq_refl; done
              | have := proj2 Hok eq_refl; done | done]. }
-        destruct (docm_has m_c (in_id input)) eqn:Hd; subst ok.
+        destruct (doc_model_has m_c (in_id input)) eqn:Hd; subst ok.
         { (* duplicate: continue *)
           wp_auto. wp_for_post.
           iFrame "Hcapin Hpendf HΦ s Hslin Hpendingp HslP HcapP".
@@ -455,7 +455,7 @@ Proof using Type*.
             exact Hpassa. }
         (* fresh: probe the structural gate *)
         wp_auto.
-        wp_apply (wp_store__depsArrived s mref (DfracOwn 1) uiv (tj, input)
+        wp_apply (wp_store__depsArrived s mref (DfracOwn 1) updateItemVal (tj, input)
                     m_c types_c Hagreec Hfitsc Hlocdupc Hrangedisjc
                     with "[$Hui $Hitemsf $Hitemmap $Htypes]").
         iIntros "(Hitemsf & Hitemmap & Htypes)".
@@ -480,7 +480,7 @@ Proof using Type*.
            rewrite -app_comm_cons in Hvrc.
            have Hlk0 : ((tj, input) :: app2 ++ af2) !! 0%nat = Some (tj, input) by done.
            destruct (applyUpdate_peel_step ((tj, input) :: app2 ++ af2) 0%nat tj input
-                       m_c m' (docm_get m_c tj) Hlk0 Hne1 eq_refl Hvrc)
+                       m_c m' (doc_model_get m_c tj) Hlk0 Hne1 eq_refl Hvrc)
              as (nit & arrp & Htoit & Hvld & Hmax & Hall & Hvrtail).
            simpl in Hvrtail.
            have Harr2 : arrp = arr'.
@@ -492,7 +492,7 @@ Proof using Type*.
                                in_rightOriginId input = None)) as [[HoN HrN] | Hor].
              - destruct (Hrooted (tj, input) Hpending0in HoN HrN) as (nm & Heq & Hsm).
                by exists nm.
-             - have Hne : docm_get m_c tj ≠ [].
+             - have Hne : doc_model_get m_c tj ≠ [].
                { apply (toItem_nonempty_of_origin input _ nit Htoit).
                  apply not_and_l in Hor.
                  by destruct Hor as [Ho | Ho]; [left | right]. }
@@ -535,10 +535,10 @@ Proof using Type*.
                destruct (lookup_lt_is_Some_2 (ic_run c1) (length (ic_run c1) - 1)%nat ltac:(lia)) as [xl Hxl].
                have Hxlid := run_wf_char_id (ic_run c1) _ xl Hwf1 Hxl.
                destruct (Htypesbound p1 (ex_intro _ ts1 Hp1)) as [name1 Hbnm1].
-               have Hdg1 : docm_get m (RootId name1) = ty_arr ts1 := Hmtypes name1 p1 ts1 Hbnm1 Hp1.
+               have Hdg1 : doc_model_get m (RootId name1) = ty_arr ts1 := Hmtypes name1 p1 ts1 Hbnm1 Hp1.
                have Hrep1 : ty_arr ts1 = run_flatten (ty_cells ts1) := Hreprall_init p1 ts1 Hp1.
                apply list_elem_of_lookup_1 in Hcts1 as [ci1 Hci1].
-               have Hxlmem : xl ∈ docm_get m (RootId name1).
+               have Hxlmem : xl ∈ doc_model_get m (RootId name1).
                { rewrite Hdg1 Hrep1.
                  apply (list_elem_of_lookup_2 _
                           (length (run_flatten (take ci1 (ty_cells ts1))) + (length (ic_run c1) - 1))%nat).
@@ -593,7 +593,7 @@ Proof using Type*.
                  := uint_W64_nat_bound _ _ (Hkb1 ti Hti_pi).
                split; move: Hlo1 Hhi1; rewrite !Hib !Hib4; lia. }
            simpl. rewrite Hready. wp_auto.
-           wp_apply (wp_store__integrateDecoded s mref tref uiv (tj, input)
+           wp_apply (wp_store__integrateDecoded s mref tref updateItemVal (tj, input)
                        m_c types_c bind nit arr' nm pl
                        Htjeq Hbnm Htoit Hvld Hmax Hall Hgmax0
                        Hbindtypesc Hbindinj Hmtypesc Hnwc
@@ -643,7 +643,7 @@ Proof using Type*.
            rewrite (drop_S pendingj (tj, input) i Hpi) /= Hd Hready in Hpassa.
            simpl. rewrite Hready. wp_auto.
            wp_apply (wp_containsUpdateItemId restS (DfracOwn 1) keptacc
-                       (uiv.(yjs.updateItem.id')) with "[HslR HcapR]").
+                       (updateItemVal.(yjs.updateItem.id')) with "[HslR HcapR]").
            { iExists uivsR. iFrame "HslR HcapR HitemsR". }
            iIntros "Hos". iDestruct "Hos" as (uivsR2) "(HslR & HcapR & #HitemsR2)".
            rewrite Hin_id.
@@ -668,7 +668,7 @@ Proof using Type*.
               iIntros (restS') "(HslR' & HcapR' & _)". wp_auto.
               wp_for_post.
               iFrame "Hcapin Hpendf HΦ s Hslin Hpendingp HslP HcapP".
-              iExists (S i), pvi, restS', (uivsR2 ++ [uiv]),
+              iExists (S i), pvi, restS', (uivsR2 ++ [updateItemVal]),
                 (keptacc ++ [(tj, input)]), appacc, app_rem, af2, types_c, m_c.
               replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
               have H00 : sint.nat (W64 0) = 0%nat by word.
@@ -784,7 +784,7 @@ Proof.
   elim: pending => [| ti0 tl IH] m kept app kept' m' /=.
   - move=> [= <- <- _]. split; [move=> ti Hin; by apply elem_of_nil in Hin |].
     move=> ti Hin. by left.
-  - destruct (docm_has m (in_id ti0.2)).
+  - destruct (doc_model_has m (in_id ti0.2)).
     { move=> /IH [Happ Hkept]. split.
       - move=> ti Hin. apply elem_of_cons. right. exact (Happ ti Hin).
       - move=> ti Hin. destruct (Hkept ti Hin) as [Hk | Hp]; [by left |].
@@ -908,23 +908,23 @@ Qed.
     is absent and is not the integrated input's id stays absent. *)
 Lemma docm_has_integrate_ne (m : DocM) (t : TId) (input : IntegrateInput (A := A))
     (arr' : list (YjsItem A)) (d : YjsId) :
-  integrate input (docm_get m t) = Some arr' ->
+  integrate input (doc_model_get m t) = Some arr' ->
   d ≠ in_id input ->
-  docm_has m d = false ->
-  docm_has (<[t := arr']> m) d = false.
+  doc_model_has m d = false ->
+  doc_model_has (<[t := arr']> m) d = false.
 Proof.
   move=> Hint Hne Hfalse.
-  destruct (docm_has (<[t := arr']> m) d) eqn:Hh; [| done].
+  destruct (doc_model_has (<[t := arr']> m) d) eqn:Hh; [| done].
   exfalso. apply docm_has_spec in Hh. destruct Hh as (t' & x & Hx & Hid).
   destruct (decide (t' = t)) as [-> | Hnet].
   - rewrite docm_get_insert_eq in Hx.
-    destruct (integrate_mem_inv input (docm_get m t) arr' x Hint Hx) as [Hxid | Hin].
+    destruct (integrate_mem_inv input (doc_model_get m t) arr' x Hint Hx) as [Hxid | Hin].
     + apply Hne. by rewrite -Hid Hxid.
-    + have : docm_has m d = true.
+    + have : doc_model_has m d = true.
       { apply docm_has_spec. exists t, x. split; [exact Hin | exact Hid]. }
       by rewrite Hfalse.
   - rewrite docm_get_insert_ne // in Hx.
-    have : docm_has m d = true.
+    have : doc_model_has m d = true.
     { apply docm_has_spec. exists t', x. split; [exact Hx | exact Hid]. }
     by rewrite Hfalse.
 Qed.
@@ -934,26 +934,26 @@ Qed.
     [t], provided the head's dependencies are present and every char id is
     fresh. Freshness of char [k>0] follows from the head-freshness plus
     [docm_has_integrate_ne] (the earlier chars only add their own ids). *)
-Lemma ops_from_pending_replay (t : TId) (cl : nat) (rid : option YjsId) :
-  ∀ (chars : list A) (ck : nat) (oid : option YjsId) (m : DocM) (arr' : list (YjsItem A)),
+Lemma ops_from_pending_replay (t : TId) (cl : nat) (rightOriginId : option YjsId) :
+  ∀ (chars : list A) (ck : nat) (originId : option YjsId) (m : DocM) (arr' : list (YjsItem A)),
     is_Some (m !! t) ->
-    (∀ o, oid = Some o -> docm_has m o = true) ->
-    (∀ o, rid = Some o -> docm_has m o = true) ->
-    (∀ j, ck = S j -> docm_has m (MkYjsId cl j) = true) ->
-    (∀ j, (j < length chars)%nat -> docm_has m (MkYjsId cl (ck + j)) = false) ->
-    integrate_all (ops_from cl ck oid rid chars) (docm_get m t) = Some arr' ->
-    PendingReplay m ((λ op, (t, op)) <$> ops_from cl ck oid rid chars) (<[t := arr']> m).
+    (∀ o, originId = Some o -> doc_model_has m o = true) ->
+    (∀ o, rightOriginId = Some o -> doc_model_has m o = true) ->
+    (∀ j, ck = S j -> doc_model_has m (MkYjsId cl j) = true) ->
+    (∀ j, (j < length chars)%nat -> doc_model_has m (MkYjsId cl (ck + j)) = false) ->
+    integrate_all (ops_from cl ck originId rightOriginId chars) (doc_model_get m t) = Some arr' ->
+    PendingReplay m ((λ op, (t, op)) <$> ops_from cl ck originId rightOriginId chars) (<[t := arr']> m).
 Proof.
-  elim => [| ch rest IH] ck oid m arr' Hsome Hoid Hrid Hpred Hfresh Hint /=.
+  elim => [| ch rest IH] ck originId m arr' Hsome Hoid Hrid Hpred Hfresh Hint /=.
   - simpl in Hint. injection Hint as <-.
     destruct Hsome as [v Hv].
-    have -> : docm_get m t = v by rewrite /docm_get Hv.
+    have -> : doc_model_get m t = v by rewrite /doc_model_get Hv.
     rewrite insert_id //. constructor.
   - simpl in Hint.
     apply bind_Some in Hint. destruct Hint as (arr0 & Hint0 & Hintr).
-    set hop := MkIntegrateInput oid rid ch (MkYjsId cl ck).
+    set hop := MkIntegrateInput originId rightOriginId ch (MkYjsId cl ck).
     have Hhid : in_id hop = MkYjsId cl ck by done.
-    have Hfresh0 : docm_has m (MkYjsId cl ck) = false.
+    have Hfresh0 : doc_model_has m (MkYjsId cl ck) = false.
     { have := Hfresh 0%nat ltac:(simpl; lia). rewrite Nat.add_0_r //. }
     have Hready : input_ready m hop = true.
     { apply input_ready_true_of.
@@ -962,32 +962,32 @@ Proof.
       - move=> k Hk. exact (Hpred k Hk). }
     set m1 := <[t := arr0]> m.
     have Hsome1 : is_Some (m1 !! t). { exists arr0. rewrite /m1 lookup_insert_eq //. }
-    have Hhead_in : docm_has m1 (MkYjsId cl ck) = true.
-    { destruct (integrate_new_mem hop (docm_get m t) arr0 Hint0) as (it & Hitid & Hitmem).
+    have Hhead_in : doc_model_has m1 (MkYjsId cl ck) = true.
+    { destruct (integrate_new_mem hop (doc_model_get m t) arr0 Hint0) as (it & Hitid & Hitmem).
       apply docm_has_spec. exists t, it. split.
       - rewrite /m1 docm_get_insert_eq. exact Hitmem.
       - rewrite Hitid /hop //. }
-    have Hoid1 : ∀ o, Some (MkYjsId cl ck) = Some o -> docm_has m1 o = true.
+    have Hoid1 : ∀ o, Some (MkYjsId cl ck) = Some o -> doc_model_has m1 o = true.
     { move=> o [= <-]. exact Hhead_in. }
-    have Hrid1 : ∀ o, rid = Some o -> docm_has m1 o = true.
+    have Hrid1 : ∀ o, rightOriginId = Some o -> doc_model_has m1 o = true.
     { move=> o Ho. rewrite /m1. apply (docm_has_integrate_mono m t hop arr0 o Hint0).
       exact (Hrid o Ho). }
-    have Hpred1 : ∀ j, S ck = S j -> docm_has m1 (MkYjsId cl j) = true.
+    have Hpred1 : ∀ j, S ck = S j -> doc_model_has m1 (MkYjsId cl j) = true.
     { move=> j [= <-]. exact Hhead_in. }
-    have Hfresh1 : ∀ j, (j < length rest)%nat -> docm_has m1 (MkYjsId cl (S ck + j)) = false.
+    have Hfresh1 : ∀ j, (j < length rest)%nat -> doc_model_has m1 (MkYjsId cl (S ck + j)) = false.
     { move=> j Hj.
-      have Hfr : docm_has m (MkYjsId cl (S ck + j)) = false.
+      have Hfr : doc_model_has m (MkYjsId cl (S ck + j)) = false.
       { have := Hfresh (S j) ltac:(simpl; lia). by rewrite -Nat.add_succ_comm. }
       rewrite /m1. apply (docm_has_integrate_ne m t hop arr0 _ Hint0); [| exact Hfr].
       rewrite Hhid. move=> [= Habs]. lia. }
-    have Hint1 : integrate_all (ops_from cl (S ck) (Some (MkYjsId cl ck)) rid rest)
-                   (docm_get m1 t) = Some arr'.
+    have Hint1 : integrate_all (ops_from cl (S ck) (Some (MkYjsId cl ck)) rightOriginId rest)
+                   (doc_model_get m1 t) = Some arr'.
     { rewrite /m1 docm_get_insert_eq. exact Hintr. }
     have Hstep := IH (S ck) (Some (MkYjsId cl ck)) m1 arr' Hsome1 Hoid1 Hrid1 Hpred1 Hfresh1 Hint1.
     have Hrw : <[t := arr']> m1 = <[t := arr']> m by rewrite /m1 insert_insert_eq.
     rewrite Hrw in Hstep.
     apply (PendingReplay_cons m (t, hop) arr0
-             ((λ op, (t, op)) <$> ops_from cl (S ck) (Some (MkYjsId cl ck)) rid rest)
+             ((λ op, (t, op)) <$> ops_from cl (S ck) (Some (MkYjsId cl ck)) rightOriginId rest)
              (<[t := arr']> m)).
     + exact Hfresh0.
     + exact Hready.
@@ -1003,7 +1003,7 @@ Qed.
 Lemma ValidReplay_applied_nonempty
     (l : list (TId * IntegrateInput (A := A))) (m0 m1 : DocM) :
   ValidReplay l m0 m1 ->
-  ∀ ti : TId * IntegrateInput (A := A), ti ∈ l -> docm_get m1 ti.1 ≠ [].
+  ∀ ti : TId * IntegrateInput (A := A), ti ∈ l -> doc_model_get m1 ti.1 ≠ [].
 Proof.
   elim => [mx | t input rest0 mr arr2 mr' nit Htoit Hvld Hmax Hglob Hint Hrest IH]
     ti Hin.
@@ -1011,7 +1011,7 @@ Proof.
   - apply elem_of_cons in Hin. destruct Hin as [-> | Hin]; last exact (IH ti Hin).
     simpl.
     destruct (integrate_new_mem input _ _ Hint) as (it & Hid & Hit).
-    have Hit' : it ∈ docm_get mr' t.
+    have Hit' : it ∈ doc_model_get mr' t.
     { apply (ValidReplay_mem rest0 (<[t := arr2]> mr) mr' Hrest t).
       rewrite docm_get_insert_eq //. }
     move=> Heq. rewrite Heq in Hit'. by apply elem_of_nil in Hit'.
@@ -1032,7 +1032,7 @@ Lemma expand_input_pending_replay_ne (m : DocM) (ti : TId * IntegrateInput (A :=
   (1 <= length (in_content ti.2))%nat ->
   input_ready m ti.2 = true ->
   (∀ k, (k < length (in_content ti.2))%nat ->
-     docm_has m (MkYjsId (clientId (in_id ti.2)) (clock (in_id ti.2) + k)) = false) ->
+     doc_model_has m (MkYjsId (clientId (in_id ti.2)) (clock (in_id ti.2) + k)) = false) ->
   wire_integrate m ti = Some arr' ->
   PendingReplay m (expand_input ti) (<[ti.1 := arr']> m).
 Proof.
@@ -1040,17 +1040,17 @@ Proof.
   rewrite /expand_input /wire_integrate /ops_of_input in Hint *.
   set cl := clientId (in_id ti.2).
   set ck := clock (in_id ti.2).
-  set oid := in_originId ti.2.
-  set rid := in_rightOriginId ti.2.
+  set originId := in_originId ti.2.
+  set rightOriginId := in_rightOriginId ti.2.
   have Hexplen : length (explode (in_content ti.2)) = length (in_content ti.2)
     by rewrite /explode length_fmap.
   destruct (explode (in_content ti.2)) as [| ch rest'] eqn:Hexp.
   { simpl in Hexplen. lia. }
   simpl in Hint.
-  set hop := MkIntegrateInput oid rid ch (MkYjsId cl ck).
+  set hop := MkIntegrateInput originId rightOriginId ch (MkYjsId cl ck).
   apply bind_Some in Hint. destruct Hint as (arr0 & Hint0 & Hintr).
   have Hhid : in_id hop = MkYjsId cl ck by done.
-  have Hfresh0 : docm_has m (MkYjsId cl ck) = false.
+  have Hfresh0 : doc_model_has m (MkYjsId cl ck) = false.
   { have := Hfresh 0%nat ltac:(lia). rewrite Nat.add_0_r //. }
   have Hready0 : input_ready m hop = true.
   { apply input_ready_true_of.
@@ -1064,36 +1064,36 @@ Proof.
       rewrite Hck /=. apply list_elem_of_singleton. done. }
   set m1 := <[ti.1 := arr0]> m.
   have Hsome1 : is_Some (m1 !! ti.1). { exists arr0. rewrite /m1 lookup_insert_eq //. }
-  have Hhead_in : docm_has m1 (MkYjsId cl ck) = true.
-  { destruct (integrate_new_mem hop (docm_get m ti.1) arr0 Hint0) as (it & Hitid & Hitmem).
+  have Hhead_in : doc_model_has m1 (MkYjsId cl ck) = true.
+  { destruct (integrate_new_mem hop (doc_model_get m ti.1) arr0 Hint0) as (it & Hitid & Hitmem).
     apply docm_has_spec. exists ti.1, it. split.
     - rewrite /m1 docm_get_insert_eq. exact Hitmem.
     - rewrite Hitid /hop //. }
-  have Hpred1 : ∀ j, S ck = S j -> docm_has m1 (MkYjsId cl j) = true.
+  have Hpred1 : ∀ j, S ck = S j -> doc_model_has m1 (MkYjsId cl j) = true.
   { move=> j [= <-]. exact Hhead_in. }
-  have Hoid1 : ∀ o, Some (MkYjsId cl ck) = Some o -> docm_has m1 o = true.
+  have Hoid1 : ∀ o, Some (MkYjsId cl ck) = Some o -> doc_model_has m1 o = true.
   { move=> o [= <-]. exact Hhead_in. }
-  have Hrid1 : ∀ o, rid = Some o -> docm_has m1 o = true.
+  have Hrid1 : ∀ o, rightOriginId = Some o -> doc_model_has m1 o = true.
   { move=> o Ho. rewrite /m1. apply (docm_has_integrate_mono m ti.1 hop arr0 o Hint0).
     apply (proj1 (input_ready_spec m ti.2) Hready).
     exact (input_deps_originR ti.2 o Ho). }
-  have Hfresh1 : ∀ j, (j < length rest')%nat -> docm_has m1 (MkYjsId cl (S ck + j)) = false.
+  have Hfresh1 : ∀ j, (j < length rest')%nat -> doc_model_has m1 (MkYjsId cl (S ck + j)) = false.
   { move=> j Hj.
-    have Hfr : docm_has m (MkYjsId cl (S ck + j)) = false.
+    have Hfr : doc_model_has m (MkYjsId cl (S ck + j)) = false.
     { have Hbnd : (S j < length (in_content ti.2))%nat by simpl in Hexplen; lia.
       have := Hfresh (S j) Hbnd. by rewrite -Nat.add_succ_comm. }
     rewrite /m1. apply (docm_has_integrate_ne m ti.1 hop arr0 _ Hint0); [| exact Hfr].
     rewrite Hhid. move=> [= Habs]. lia. }
-  have Hint1 : integrate_all (ops_from cl (S ck) (Some (MkYjsId cl ck)) rid rest')
-                 (docm_get m1 ti.1) = Some arr'.
+  have Hint1 : integrate_all (ops_from cl (S ck) (Some (MkYjsId cl ck)) rightOriginId rest')
+                 (doc_model_get m1 ti.1) = Some arr'.
   { rewrite /m1 docm_get_insert_eq. exact Hintr. }
-  have Hstep := ops_from_pending_replay ti.1 cl rid rest' (S ck) (Some (MkYjsId cl ck))
+  have Hstep := ops_from_pending_replay ti.1 cl rightOriginId rest' (S ck) (Some (MkYjsId cl ck))
                   m1 arr' Hsome1 Hoid1 Hrid1 Hpred1 Hfresh1 Hint1.
   have Hrw : <[ti.1 := arr']> m1 = <[ti.1 := arr']> m by rewrite /m1 insert_insert_eq.
   rewrite Hrw in Hstep.
   simpl.
   apply (PendingReplay_cons m (ti.1, hop) arr0
-           ((λ op, (ti.1, op)) <$> ops_from cl (S ck) (Some (MkYjsId cl ck)) rid rest')
+           ((λ op, (ti.1, op)) <$> ops_from cl (S ck) (Some (MkYjsId cl ck)) rightOriginId rest')
            (<[ti.1 := arr']> m) Hfresh0 Hready0 Hint0 Hstep).
 Qed.
 
@@ -1109,9 +1109,9 @@ Lemma chunk_fresh_of_head
   (∀ op : TId * IntegrateInput (A := A), op ∈ expand_input ti ->
      op_broadcast N (op.1, OpInsert op.2)) ->
   (1 <= length (in_content ti.2))%nat ->
-  docm_has m (in_id ti.2) = false ->
+  doc_model_has m (in_id ti.2) = false ->
   ∀ k, (k < length (in_content ti.2))%nat ->
-     docm_has m (MkYjsId (clientId (in_id ti.2)) (clock (in_id ti.2) + k)) = false.
+     doc_model_has m (MkYjsId (clientId (in_id ti.2)) (clock (in_id ti.2) + k)) = false.
 Proof.
   move=> Hwf HNc Hcoh Hcert Hnonempty Hfreshhead.
   have Hidti : in_id ti.2 = MkYjsId (clientId (in_id ti.2)) (clock (in_id ti.2))
@@ -1128,7 +1128,7 @@ Proof.
   { have Hmem : (ti.1, fop) ∈ expand_input ti.
     { apply (list_elem_of_lookup_2 _ 0%nat). by apply expand_input_lookup. }
     exact (Hcert (ti.1, fop) Hmem). }
-  have Hfreshfop : docm_has m (in_id fop) = false by rewrite Hfopid.
+  have Hfreshfop : doc_model_has m (in_id fop) = false by rewrite Hfopid.
   have Hnotdel : in_id fop ∉ delivered_ids h.
   { move=> Hdel. apply elem_of_delivered_ids in Hdel. destruct Hdel as (y & Hyh & Hyid).
     have Hins : ∃ inputy, y.2 = OpInsert inputy.
@@ -1140,7 +1140,7 @@ Proof.
     rewrite Hfreshfop //. }
   have Hclk := delivered_clock_bound N c h m ((ti.1, OpInsert fop) : Op) Hwf HNc Hcoh Hbcfop Hnotdel.
   move=> k Hk.
-  destruct (docm_has m (MkYjsId (clientId (in_id ti.2)) (clock (in_id ti.2) + k))) eqn:Hh;
+  destruct (doc_model_has m (MkYjsId (clientId (in_id ti.2)) (clock (in_id ti.2) + k))) eqn:Hh;
     [| done].
   exfalso. apply docm_has_spec in Hh. destruct Hh as (t' & x & Hx & Hxid).
   have Hcc : clientId (item_id x) = clientId (in_id fop).
@@ -1161,7 +1161,7 @@ Lemma WireReplay_to_PendingReplay
     (HWR : WireReplay m0 applied m0') :
   ∀ (N : gmap ClientId (list Ev)) (c : ClientId) (h : list Ev),
     history_wf N -> N !! c = Some h -> history_state_coh h m0 ->
-    (∀ t : TId, YjsArrInvariant (docm_get m0 t)) ->
+    (∀ t : TId, YjsArrInvariant (doc_model_get m0 t)) ->
     (∀ (ti : TId * IntegrateInput (A := A)) (op : TId * IntegrateInput (A := A)),
        ti ∈ applied -> op ∈ expand_input ti ->
        op_broadcast N (op.1, OpInsert op.2)) ->
@@ -1186,7 +1186,7 @@ Proof.
     set N' := <[c := h ++ (deliver_ev <$> expand_input ti)]> N.
     set h' := h ++ (deliver_ev <$> expand_input ti).
     have HN'c : N' !! c = Some h' by rewrite /N' lookup_insert_eq.
-    have Harrinv1 : ∀ t : TId, YjsArrInvariant (docm_get (<[ti.1 := arr']> mx) t)
+    have Harrinv1 : ∀ t : TId, YjsArrInvariant (doc_model_get (<[ti.1 := arr']> mx) t)
       := ValidReplay_arrinv (expand_input ti) mx (<[ti.1 := arr']> mx) Hvr1 Harrinv.
     have Hcharcert' : ∀ (tj : TId * IntegrateInput (A := A)) (op : TId * IntegrateInput (A := A)),
         tj ∈ rest -> op ∈ expand_input tj -> op_broadcast N' (op.1, OpInsert op.2).
@@ -1205,22 +1205,22 @@ Qed.
     (same freshness cascade) but PRODUCES [is_Some] of the fold, deriving each
     char's [integrate] via [docm_valid_from_deps] + [delivered_clock_bound] +
     [integrate_some_of_toItem] at the coherence advanced along the chunk. *)
-Lemma ops_from_ready (t : TId) (cl : nat) (rid : option YjsId) :
-  ∀ (chars : list A) (ck : nat) (oid : option YjsId)
+Lemma ops_from_ready (t : TId) (cl : nat) (rightOriginId : option YjsId) :
+  ∀ (chars : list A) (ck : nat) (originId : option YjsId)
     (N : gmap ClientId (list Ev)) (c : ClientId) (h : list Ev) (m : DocM),
     history_wf N -> N !! c = Some h -> history_state_coh h m ->
-    (∀ t' : TId, YjsArrInvariant (docm_get m t')) ->
-    (∀ o, oid = Some o -> docm_has m o = true) ->
-    (∀ o, rid = Some o -> docm_has m o = true) ->
-    (∀ j, ck = S j -> docm_has m (MkYjsId cl j) = true) ->
-    (∀ j, (j < length chars)%nat -> docm_has m (MkYjsId cl (ck + j)) = false) ->
-    (∀ k op, ops_from cl ck oid rid chars !! k = Some op ->
+    (∀ t' : TId, YjsArrInvariant (doc_model_get m t')) ->
+    (∀ o, originId = Some o -> doc_model_has m o = true) ->
+    (∀ o, rightOriginId = Some o -> doc_model_has m o = true) ->
+    (∀ j, ck = S j -> doc_model_has m (MkYjsId cl j) = true) ->
+    (∀ j, (j < length chars)%nat -> doc_model_has m (MkYjsId cl (ck + j)) = false) ->
+    (∀ k op, ops_from cl ck originId rightOriginId chars !! k = Some op ->
        op_broadcast N (t, OpInsert op)) ->
-    is_Some (integrate_all (ops_from cl ck oid rid chars) (docm_get m t)).
+    is_Some (integrate_all (ops_from cl ck originId rightOriginId chars) (doc_model_get m t)).
 Proof.
-  elim => [| ch rest IH] ck oid N c h m Hwf HNc Hcoh Hinvs Hoid Hrid Hpred Hfresh Hcert /=.
+  elim => [| ch rest IH] ck originId N c h m Hwf HNc Hcoh Hinvs Hoid Hrid Hpred Hfresh Hcert /=.
   - by eexists.
-  - set hop := MkIntegrateInput oid rid ch (MkYjsId cl ck).
+  - set hop := MkIntegrateInput originId rightOriginId ch (MkYjsId cl ck).
     have Hbc : op_broadcast N (t, OpInsert hop).
     { apply (Hcert 0%nat hop). done. }
     (* origins arrive as delivered ops *)
@@ -1228,7 +1228,7 @@ Proof.
         ∃ (t' : TId) (x : IntegrateInput (A := A)),
           (t', OpInsert x) ∈ delivered_ops h ∧ in_id x = o.
     { move=> o Ho.
-      have Hhas : docm_has m o = true.
+      have Hhas : doc_model_has m o = true.
       { destruct Ho as [Ho | Ho]; simpl in Ho; [exact (Hoid o Ho) | exact (Hrid o Ho)]. }
       apply docm_has_spec in Hhas. destruct Hhas as (t' & x & Hx & Hxid).
       destruct (docm_mem_delivered h m t' x Hcoh Hx) as (xin & Hxdel & Hxinid).
@@ -1236,7 +1236,7 @@ Proof.
     have Hval := docm_valid_from_deps N c h m t hop Hwf HNc Hcoh Hbc Harrive.
     destruct Hval as (it0 & Htoit & Hvld).
     (* head fresh -> not delivered -> maximalId *)
-    have Hfresh0 : docm_has m (MkYjsId cl ck) = false.
+    have Hfresh0 : doc_model_has m (MkYjsId cl ck) = false.
     { have := Hfresh 0%nat ltac:(simpl; lia). rewrite Nat.add_0_r //. }
     have Hnotdel : in_id hop ∉ delivered_ids h.
     { move=> Hdel. apply elem_of_delivered_ids in Hdel. destruct Hdel as (y & Hyh & Hyid).
@@ -1248,15 +1248,15 @@ Proof.
       have -> : in_id inputy = in_id hop by exact Hyid.
       have -> : in_id hop = MkYjsId cl ck by done. rewrite Hfresh0 //. }
     have Hclk := delivered_clock_bound N c h m ((t, OpInsert hop) : Op) Hwf HNc Hcoh Hbc Hnotdel.
-    have Hmax : maximalId it0 (docm_get m t).
+    have Hmax : maximalId it0 (doc_model_get m t).
     { move=> x Hx Hcx.
-      rewrite (toItem_id hop (docm_get m t) it0 Htoit).
+      rewrite (toItem_id hop (doc_model_get m t) it0 Htoit).
       have Heq : clock (in_id hop) = clock (DocOp_id ((t, OpInsert hop) : Op)) by done.
       rewrite Heq. apply (Hclk t x Hx).
-      rewrite (toItem_id hop (docm_get m t) it0 Htoit) in Hcx.
+      rewrite (toItem_id hop (doc_model_get m t) it0 Htoit) in Hcx.
       have -> : clientId (DocOp_id ((t, OpInsert hop) : Op)) = clientId (in_id hop) by done.
       exact Hcx. }
-    have Hintsome := integrate_some_of_toItem hop (docm_get m t) it0 (Hinvs t) Htoit Hvld Hmax.
+    have Hintsome := integrate_some_of_toItem hop (doc_model_get m t) it0 (Hinvs t) Htoit Hvld Hmax.
     destruct (Hintsome _) as [arr0 Hint0].
     (* advance coherence along the head via pending_ValidReplay of the singleton *)
     have Hready0 : input_ready m hop = true.
@@ -1276,29 +1276,29 @@ Proof.
     set h' := h ++ (deliver_ev <$> [(t, hop)]).
     have HN'c : N' !! c = Some h' by rewrite /N' lookup_insert_eq.
     set m1 := <[t := arr0]> m.
-    have Hgett : docm_get m1 t = arr0 by rewrite /m1 docm_get_insert_eq.
-    have Hinvs1 : ∀ t' : TId, YjsArrInvariant (docm_get m1 t').
+    have Hgett : doc_model_get m1 t = arr0 by rewrite /m1 docm_get_insert_eq.
+    have Hinvs1 : ∀ t' : TId, YjsArrInvariant (doc_model_get m1 t').
     { move=> t'. exact (ValidReplay_arrinv [(t, hop)] m m1 Hvr1 Hinvs t'). }
     (* head now present *)
-    have Hhead_in : docm_has m1 (MkYjsId cl ck) = true.
-    { destruct (integrate_new_mem hop (docm_get m t) arr0 Hint0) as (itn & Hitid & Hitmem).
+    have Hhead_in : doc_model_has m1 (MkYjsId cl ck) = true.
+    { destruct (integrate_new_mem hop (doc_model_get m t) arr0 Hint0) as (itn & Hitid & Hitmem).
       apply docm_has_spec. exists t, itn. split.
       - rewrite Hgett. exact Hitmem.
       - rewrite Hitid //. }
-    have Hoid1 : ∀ o, Some (MkYjsId cl ck) = Some o -> docm_has m1 o = true.
+    have Hoid1 : ∀ o, Some (MkYjsId cl ck) = Some o -> doc_model_has m1 o = true.
     { move=> o [= <-]. exact Hhead_in. }
-    have Hrid1 : ∀ o, rid = Some o -> docm_has m1 o = true.
+    have Hrid1 : ∀ o, rightOriginId = Some o -> doc_model_has m1 o = true.
     { move=> o Ho. rewrite /m1. apply (docm_has_integrate_mono m t hop arr0 o Hint0).
       exact (Hrid o Ho). }
-    have Hpred1 : ∀ j, S ck = S j -> docm_has m1 (MkYjsId cl j) = true.
+    have Hpred1 : ∀ j, S ck = S j -> doc_model_has m1 (MkYjsId cl j) = true.
     { move=> j [= <-]. exact Hhead_in. }
-    have Hfresh1 : ∀ j, (j < length rest)%nat -> docm_has m1 (MkYjsId cl (S ck + j)) = false.
+    have Hfresh1 : ∀ j, (j < length rest)%nat -> doc_model_has m1 (MkYjsId cl (S ck + j)) = false.
     { move=> j Hj.
-      have Hfr : docm_has m (MkYjsId cl (S ck + j)) = false.
+      have Hfr : doc_model_has m (MkYjsId cl (S ck + j)) = false.
       { have := Hfresh (S j) ltac:(simpl; lia). by rewrite -Nat.add_succ_comm. }
       rewrite /m1. apply (docm_has_integrate_ne m t hop arr0 _ Hint0); [| exact Hfr].
       have -> : in_id hop = MkYjsId cl ck by done. move=> [= Habs]. lia. }
-    have Hcert1 : ∀ k op, ops_from cl (S ck) (Some (MkYjsId cl ck)) rid rest !! k = Some op ->
+    have Hcert1 : ∀ k op, ops_from cl (S ck) (Some (MkYjsId cl ck)) rightOriginId rest !! k = Some op ->
         op_broadcast N' (t, OpInsert op).
     { move=> k op Hk. apply (proj2 (op_broadcast_append N c h _ _ HNc)). left.
       apply (Hcert (S k) op). simpl. exact Hk. }
@@ -1316,12 +1316,12 @@ Lemma wire_integrate_some_of_certs
     (N : gmap ClientId (list Ev)) (c : ClientId) (h : list Ev)
     (m : DocM) (ti : TId * IntegrateInput (A := A)) :
   history_wf N -> N !! c = Some h -> history_state_coh h m ->
-  (∀ t' : TId, YjsArrInvariant (docm_get m t')) ->
+  (∀ t' : TId, YjsArrInvariant (doc_model_get m t')) ->
   (∀ op : TId * IntegrateInput (A := A), op ∈ expand_input ti ->
      op_broadcast N (op.1, OpInsert op.2)) ->
   (1 <= length (in_content ti.2))%nat ->
   input_ready m ti.2 = true ->
-  docm_has m (in_id ti.2) = false ->
+  doc_model_has m (in_id ti.2) = false ->
   is_Some (wire_integrate m ti).
 Proof.
   move=> Hwf HNc Hcoh Hinvs Hcert Hnonempty Hready Hfreshhead.
@@ -1354,7 +1354,7 @@ Lemma wire_ready_total_of_certs
     (N : gmap ClientId (list Ev)) (c : ClientId) (h : list Ev) (m : DocM)
     (pending applied : list (TId * IntegrateInput (A := A))) :
   history_wf N -> N !! c = Some h -> history_state_coh h m ->
-  (∀ t' : TId, YjsArrInvariant (docm_get m t')) ->
+  (∀ t' : TId, YjsArrInvariant (doc_model_get m t')) ->
   (∀ (ti : TId * IntegrateInput (A := A)) (op : TId * IntegrateInput (A := A)),
      ti ∈ pending -> op ∈ expand_input ti -> op_broadcast N (op.1, OpInsert op.2)) ->
   (∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
@@ -1381,7 +1381,7 @@ Proof.
   set N' := <[c := h ++ (deliver_ev <$> expand_inputs pre)]> N.
   set h' := h ++ (deliver_ev <$> expand_inputs pre).
   have HN'c : N' !! c = Some h' by rewrite /N' lookup_insert_eq.
-  have Hinvsmx : ∀ t' : TId, YjsArrInvariant (docm_get mx t').
+  have Hinvsmx : ∀ t' : TId, YjsArrInvariant (doc_model_get mx t').
   { move=> t'. exact (ValidReplay_arrinv (expand_inputs pre) m mx Hvrpre Hinvs t'). }
   have Hcertti : ∀ op : TId * IntegrateInput (A := A), op ∈ expand_input ti ->
       op_broadcast N' (op.1, OpInsert op.2).
@@ -1429,7 +1429,7 @@ Lemma history_wire_ready_total γh (c : ClientId) h (m : DocM)
     (pending applied : list (TId * IntegrateInput (A := A))) E :
   ↑histN ⊆ E ->
   history_state_coh h m ->
-  (∀ t : TId, YjsArrInvariant (docm_get m t)) ->
+  (∀ t : TId, YjsArrInvariant (doc_model_get m t)) ->
   (∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
      (1 <= length (in_content ti.2))%nat) ->
   (∀ ti : TId * IntegrateInput (A := A), ti ∈ applied -> ti ∈ pending) ->
@@ -1460,7 +1460,7 @@ Lemma history_deliver_wire γh (c : ClientId) h (m : DocM)
   ↑histN ⊆ E ->
   wire_drain m pending = (applied, rest, m') ->
   history_state_coh h m ->
-  (∀ t : TId, YjsArrInvariant (docm_get m t)) ->
+  (∀ t : TId, YjsArrInvariant (doc_model_get m t)) ->
   (∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
      (1 <= length (in_content ti.2))%nat) ->
   is_history (A := A) (P := P) γh -∗ own_client_history γh c h -∗
@@ -1518,7 +1518,7 @@ Proof.
   iAssert (⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ inputs ->
              (1 <= length (in_content ti.2))%nat⌝)%I as %Hnem.
   { iIntros (ti Hin). destruct (list_elem_of_lookup_1 _ _ Hin) as (i & Hi).
-    iDestruct (big_sepL2_lookup_r _ _ _ i with "Hitems") as (uiv Huiv) "Hit"; [exact Hi |].
+    iDestruct (big_sepL2_lookup_r _ _ _ i with "Hitems") as (updateItemVal Huiv) "Hit"; [exact Hi |].
     iNamed "Hit". iPureIntro. rewrite -Hin_c. exact Hunonempty. }
   iSplitR ""; [iExists uivs; iFrame "Hsl Hcap Hitems" | done].
 Qed.
@@ -1526,14 +1526,14 @@ Qed.
 (** Every applied wire item's target root is nonempty at [m'] (its first char
     landed there): the head of its [expand_input] is in [expand_inputs applied]
     and carries the item's [TId], so [ValidReplay_applied_nonempty] on the
-    expansion pins [docm_get m' ti.1 ≠ []]. *)
+    expansion pins [doc_model_get m' ti.1 ≠ []]. *)
 Lemma applied_root_nonempty
     (applied : list (TId * IntegrateInput (A := A))) (m m' : DocM)
     (ti : TId * IntegrateInput (A := A)) :
   ValidReplay (expand_inputs applied) m m' ->
   ti ∈ applied ->
   (1 <= length (in_content ti.2))%nat ->
-  docm_get m' ti.1 ≠ [].
+  doc_model_get m' ti.1 ≠ [].
 Proof.
   move=> Hvr Hin Hne.
   have [fop Hfop] : is_Some (ops_of_input ti.2 (explode (in_content ti.2)) !! 0%nat).
@@ -1584,11 +1584,11 @@ Proof using Type*.
   iNamed "Hstore".
   destruct Hregcoh as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
   iDestruct (types_arr_inv2 with "Htypes") as %Htsinv.
-  have Harrinv : ∀ t : TId, YjsArrInvariant (docm_get m t).
-  { move=> t. destruct (docm_get m t) as [|x l] eqn:Hdg.
+  have Harrinv : ∀ t : TId, YjsArrInvariant (doc_model_get m t).
+  { move=> t. destruct (doc_model_get m t) as [|x l] eqn:Hdg.
     - exact YjsArrInvariant_empty.
     - rewrite -Hdg.
-      have Hne : docm_get m t ≠ [] by rewrite Hdg.
+      have Hne : doc_model_get m t ≠ [] by rewrite Hdg.
       destruct (Hmdom t Hne) as (nm & p & -> & Hbnm).
       destruct (Hbindtypes nm p Hbnm) as [ts Hts].
       rewrite (Hmtypes nm p ts Hbnm Hts). exact (Htsinv p ts Hts). }
@@ -1657,8 +1657,8 @@ Proof using Type*.
     destruct (types' !! p) as [ts'|] eqn:Hts'; last done.
     move=> [= <-] [= <-].
     destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
-    have Hdg : docm_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
-    have Hdg' : docm_get m' (RootId nm) = ty_arr ts' := Hmtypes' nm p ts' Hbnm Hts'.
+    have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
+    have Hdg' : doc_model_get m' (RootId nm) = ty_arr ts' := Hmtypes' nm p ts' Hbnm Hts'.
     move=> x. rewrite !elem_of_list_to_set. move=> Hx.
     rewrite -Hdg'. apply (ValidReplay_mem (expand_inputs applied) m m' Hvr (RootId nm)).
     by rewrite Hdg. }
@@ -1676,7 +1676,7 @@ Proof using Type*.
     iIntros "!#" (i ti Hi).
     destruct (Happbnd ti (list_elem_of_lookup_2 _ _ _ Hi)) as (nm & p & Htieq & Hbnm).
     destruct (Hbindtypes' nm p Hbnm) as [ts' Hts'].
-    have Hdg' : docm_get m' (RootId nm) = ty_arr ts' := Hmtypes' nm p ts' Hbnm Hts'.
+    have Hdg' : doc_model_get m' (RootId nm) = ty_arr ts' := Hmtypes' nm p ts' Hbnm Hts'.
     iDestruct (big_sepM_lookup _ _ nm p Hbnm with "Hbinds") as "#Hbind".
     iExists nm. iSplit; [done |].
     iExists p. iFrame "Hbind".
@@ -1700,7 +1700,7 @@ Proof using Type*.
       (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z.
   { move=> ti Hin. exact (Hkb1c ti (Hrestsub ti Hin)). }
   (* the counter clause survives: nothing applied is ours *)
-  have Hctr' : ∀ (t : TId) x, x ∈ docm_get m' t -> clientId (item_id x) = c ->
+  have Hctr' : ∀ (t : TId) x, x ∈ doc_model_get m' t -> clientId (item_id x) = c ->
       (clock (item_id x) < uint.nat k)%nat.
   { move=> t x Hx Hcx.
     destruct (ValidReplay_prov (expand_inputs applied) m m' Hvr t x Hx)

@@ -696,9 +696,9 @@ Qed.
     Local inserts satisfy it by the clock counter; remote integrations by
     per-client causal delivery (the update batch's freshness bound). *)
 Definition cell_origin_clk (c : item_cell) : Prop :=
-  ∀ oid, origin_id (origin (run_head c)) = Some oid →
-    clientId oid = clientId (item_id (run_head c)) →
-    (clock oid < clock (item_id (run_head c)))%nat.
+  ∀ originId, origin_id (origin (run_head c)) = Some originId →
+    clientId originId = clientId (item_id (run_head c)) →
+    (clock originId < clock (item_id (run_head c)))%nat.
 
 Lemma originclk_snoc (pool1 pool2 : list item_cell) (c : item_cell) :
   pool2 ≡ₚ pool1 ++ [c] ->
@@ -976,8 +976,8 @@ Proof. rewrite /own_item_map. apply _. Qed.
 
 (* The DLL predicate stack is timeless too (heap points-to + pure + persistent
    origin handles); register the instances so [store_inv] is timeless. *)
-#[global] Instance is_origin_id_timeless p oid : Timeless (is_origin_id p oid).
-Proof. rewrite /is_origin_id. by destruct oid; apply _. Qed.
+#[global] Instance is_origin_id_timeless p originId : Timeless (is_origin_id p originId).
+Proof. rewrite /is_origin_id. by destruct originId; apply _. Qed.
 
 #[global] Instance own_dll_timeless dq l last prev next cells :
   Timeless (own_dll dq l last prev next cells).
@@ -998,10 +998,10 @@ Proof. rewrite /own_ytype_cells. apply _. Qed.
    The read lock hands each reader a fractional share of the read-only part of
    [store_inv] (its DLLs + the item-set auth). These make that share splittable:
    [own_dll] / [own_ytype_cells] are [Fractional] in their [DfracOwn q]. The
-   [⊣⊢]-backward direction needs the existential heap struct ([iv] / [yt]) and
+   [⊣⊢]-backward direction needs the existential heap struct ([itemVal] / [yt]) and
    the DLL tail loc ([tl]) to AGREE across the two shares; [own_dll_last_agree]
    supplies the [tl] agreement (both DLLs over the same cells end at the same
-   node); [iv]/[yt] agree by [pointsto] agreement. *)
+   node); [itemVal]/[yt] agree by [pointsto] agreement. *)
 #[global] Instance own_dll_fractional l last prev next cells :
   Fractional (λ q, own_dll (DfracOwn q) l last prev next cells).
 Proof.
@@ -1014,8 +1014,8 @@ Proof.
       iDestruct "Hval" as "[Hv1 Hv2]".
       iDestruct (IH with "Hrest") as "[Hr1 Hr2]".
       iSplitL "Hv1 Hr1".
-      * iExists iv, olid, orid. iFrame "Hv1 Holeft Horight Hr1". done.
-      * iExists iv, olid, orid. iFrame "Hv2 Holeft Horight Hr2". done.
+      * iExists itemVal, olid, orid. iFrame "Hv1 Holeft Horight Hr1". done.
+      * iExists itemVal, olid, orid. iFrame "Hv2 Holeft Horight Hr2". done.
     + iIntros "[H1 H2]".
       iDestruct "H1" as (iv1 olid1 orid1) "H1". iNamedSuffix "H1" "1".
       iDestruct "H2" as (iv2 olid2 orid2) "H2". iNamedSuffix "H2" "2".
@@ -1184,7 +1184,7 @@ Definition is_parent_name (p : loc) (opn : option go_string) : iProp Σ :=
 Global Instance is_parent_name_persistent p opn : Persistent (is_parent_name p opn).
 Proof. rewrite /is_parent_name. by destruct opn; apply _. Qed.
 
-(** [is_update_item uiv ti]: the decoded heap struct [uiv] (a [updateItem])
+(** [is_update_item updateItemVal ti]: the decoded heap struct [updateItemVal] (a [updateItem])
     translates to the model doc-op payload [ti = (tid, input)] -- its id /
     content / both origin pointers map across (origins via [is_origin_id],
     persistent), its content is a nonempty run (issue #28 U7c: the single-char
@@ -1192,21 +1192,21 @@ Proof. rewrite /is_parent_name. by destruct opn; apply _. Qed.
     chained per-char ops), and its decoded parent name
     (when present) is the name of the root type [tid] (issue #49; when absent
     the batch-level well-formedness pins [tid] through the origins). *)
-Definition is_update_item (uiv : yjs.updateItem.t)
+Definition is_update_item (updateItemVal : yjs.updateItem.t)
     (ti : TId * IntegrateInput (A := A)) : iProp Σ :=
   ∃ (oleft oright : option yjs.id.t) (opn : option go_string),
-    "HisL" ∷ is_origin_id uiv.(yjs.updateItem.originLeftId') oleft ∗
-    "HisR" ∷ is_origin_id uiv.(yjs.updateItem.originRightId') oright ∗
-    "HisPN" ∷ is_parent_name uiv.(yjs.updateItem.parentName') opn ∗
+    "HisL" ∷ is_origin_id updateItemVal.(yjs.updateItem.originLeftId') oleft ∗
+    "HisR" ∷ is_origin_id updateItemVal.(yjs.updateItem.originRightId') oright ∗
+    "HisPN" ∷ is_parent_name updateItemVal.(yjs.updateItem.parentName') opn ∗
     "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId ti.2⌝ ∗
     "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId ti.2⌝ ∗
-    "%Hin_id" ∷ ⌜toYjsId uiv.(yjs.updateItem.id') = in_id ti.2⌝ ∗
-    "%Hin_c" ∷ ⌜uiv.(yjs.updateItem.content') = in_content ti.2⌝ ∗
-    "%Hunonempty" ∷ ⌜(1 <= length uiv.(yjs.updateItem.content'))%nat⌝ ∗
+    "%Hin_id" ∷ ⌜toYjsId updateItemVal.(yjs.updateItem.id') = in_id ti.2⌝ ∗
+    "%Hin_c" ∷ ⌜updateItemVal.(yjs.updateItem.content') = in_content ti.2⌝ ∗
+    "%Hunonempty" ∷ ⌜(1 <= length updateItemVal.(yjs.updateItem.content'))%nat⌝ ∗
     "%Htid" ∷ ⌜∀ nm, opn = Some nm -> ti.1 = RootId nm⌝ ∗
     "%Hborrow" ∷ ⌜opn = None -> in_originId ti.2 ≠ None ∨ in_rightOriginId ti.2 ≠ None⌝.
 
-#[global] Instance is_update_item_persistent uiv ti : Persistent (is_update_item uiv ti).
+#[global] Instance is_update_item_persistent updateItemVal ti : Persistent (is_update_item updateItemVal ti).
 Proof. rewrite /is_update_item. apply _. Qed.
 
 (** [own_update_structs sl dq inputs]: the heap slice of decoded structs at [sl] (Go
@@ -1219,7 +1219,7 @@ Definition own_update_structs (sl : slice.t) (dq : dfrac)
   ∃ (uivs : list yjs.updateItem.t),
     "Hsl" ∷ sl ↦*{dq} uivs ∗
     "Hcap" ∷ own_slice_cap yjs.updateItem.t sl dq ∗
-    "Hitems" ∷ ([∗ list] uiv;ti ∈ uivs;inputs, is_update_item uiv ti).
+    "Hitems" ∷ ([∗ list] updateItemVal;ti ∈ uivs;inputs, is_update_item updateItemVal ti).
 
 
 (** [is_root γs name]: persistent witness that the root type [name] is
@@ -1320,8 +1320,8 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "Hhist"   ∷ own_client_history γh (uint.nat client) h ∗
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
     "%Hmtypes" ∷ ⌜∀ name p ts, bind !! name = Some p → types !! p = Some ts →
-                    docm_get m (RootId name) = ty_arr ts⌝ ∗
-    "%Hmdom" ∷ ⌜∀ t, docm_get m t ≠ [] →
+                    doc_model_get m (RootId name) = ty_arr ts⌝ ∗
+    "%Hmdom" ∷ ⌜∀ t, doc_model_get m t ≠ [] →
                   ∃ name p, t = RootId name ∧ bind !! name = Some p⌝.
 
 #[global] Instance store_inv_ro_timeless γs types q : Timeless (store_inv_ro γs types q).
@@ -1352,7 +1352,7 @@ Proof. rewrite /store_inv_excl /own_update_structs /is_update_item. apply _. Qed
     exclusive ghost-history element [own_client_history] for the store's
     client. The history's replayed *doc model* [m] is coherent with the whole
     registry, not a single governed type ([history_state_coh h m], plus
-    [Hmtypes]: each registered type's [ty_arr] equals [docm_get m] at its
+    [Hmtypes]: each registered type's [ty_arr] equals [doc_model_get m] at its
     bound name).
 
     The body is [store_inv_excl] (the mutable-exclusive clauses, documented
@@ -1529,7 +1529,7 @@ Proof. apply _. Qed.
 Definition is_applied_root_lb (γs : store_names)
     (applied : list (TId * IntegrateInput (A := A))) (m : DocM) : iProp Σ :=
   [∗ list] taggedInput ∈ applied, ∃ name : P, ⌜taggedInput.1 = RootId name⌝ ∗
-    is_root_lb γs name (list_to_set (docm_get m taggedInput.1)).
+    is_root_lb γs name (list_to_set (doc_model_get m taggedInput.1)).
 
 #[global] Instance is_applied_root_lb_persistent γs applied m :
   Persistent (is_applied_root_lb γs applied m).
@@ -1561,8 +1561,8 @@ Definition doc_registry_coh (m : DocM) (bind : gmap P loc)
   (∀ n1 n2 p, bind !! n1 = Some p -> bind !! n2 = Some p -> n1 = n2) /\
   (∀ p, is_Some (types !! p) -> ∃ nm, bind !! nm = Some p) /\
   (∀ nm p ts, bind !! nm = Some p -> types !! p = Some ts ->
-     docm_get m (RootId nm) = ty_arr ts) /\
-  (∀ t, docm_get m t ≠ [] -> ∃ nm p, t = RootId nm /\ bind !! nm = Some p).
+     doc_model_get m (RootId nm) = ty_arr ts) /\
+  (∀ t, doc_model_get m t ≠ [] -> ∃ nm p, t = RootId nm /\ bind !! nm = Some p).
 
 (** [own_store s γs γh c h m]: the WHOLE lock-protected store state, as one
     exclusive predicate over its public model: this replica is client [c]
@@ -1607,7 +1607,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hhist"   ∷ own_client_history γh c h ∗
     "%Hregcoh" ∷ ⌜doc_registry_coh m bind types⌝ ∗
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
-    "%Hctr"   ∷ ⌜∀ (t : TId) x, x ∈ docm_get m t -> clientId (item_id x) = c ->
+    "%Hctr"   ∷ ⌜∀ (t : TId) x, x ∈ doc_model_get m t -> clientId (item_id x) = c ->
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
     (* part-6 pool invariants (issue #28): heap-level facts the model does not
        determine, so [own_store] carries them (store_inv ⊣⊢ ∃ own_store) *)
@@ -1875,7 +1875,7 @@ Proof.
   - move=> p' [ts' Hlk]. rewrite /types lookup_empty // in Hlk.
   - exact history_state_coh_nil.
   - move=> name p' ts' Hlk. rewrite lookup_empty // in Hlk.
-  - move=> t Hne. exfalso. apply Hne. rewrite /docm_get lookup_empty //.
+  - move=> t Hne. exfalso. apply Hne. rewrite /doc_model_get lookup_empty //.
 Qed.
 
 End store.

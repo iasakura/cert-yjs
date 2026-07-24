@@ -292,13 +292,13 @@ Qed.
 Lemma history_broadcast γh (c k : nat) h (m : DocM) (t0 : TId)
     (arr' : list (YjsItem A)) (input : IntegrateInput (A := A)) (item : YjsItem A) E :
   ↑histN ⊆ E ->
-  toItem input (docm_get m t0) = Some item ->
+  toItem input (doc_model_get m t0) = Some item ->
   IsItemValid item ->
-  maximalId item (docm_get m t0) ->
+  maximalId item (doc_model_get m t0) ->
   in_id input = MkYjsId c k ->
-  (∀ (t : TId) x, x ∈ docm_get m t -> clientId (item_id x) = c ->
+  (∀ (t : TId) x, x ∈ doc_model_get m t -> clientId (item_id x) = c ->
      (clock (item_id x) < k)%nat) ->
-  integrate input (docm_get m t0) = Some arr' ->
+  integrate input (doc_model_get m t0) = Some arr' ->
   history_state_coh h m ->
   is_history γh -∗ own_client_history γh c h ={E}=∗
     own_client_history γh c
@@ -415,9 +415,9 @@ Proof.
   iDestruct "Helems" as "[H1 H2]".
   set (input := MkIntegrateInput (A := A) None None a (MkYjsId c1 0)).
   set (item := Item (A := A) First Last (MkYjsId c1 0) a).
-  have Hnilget : ∀ t' : TId, docm_get (∅ : DocM) t' = []
-    by move=> t'; rewrite /docm_get lookup_empty.
-  have Htoitem : toItem input (docm_get (∅ : DocM) t) = Some item
+  have Hnilget : ∀ t' : TId, doc_model_get (∅ : DocM) t' = []
+    by move=> t'; rewrite /doc_model_get lookup_empty.
+  have Htoitem : toItem input (doc_model_get (∅ : DocM) t) = Some item
     by rewrite Hnilget.
   have Hvalid : IsItemValid item.
   { split.
@@ -428,19 +428,19 @@ Proof.
       + inversion Hstep; subst;
           inversion Hreach as [x1 y1 Hstep2 | x1 y1 z1 Hstep2 ?]; subst;
           inversion Hstep2. }
-  have Hmax : maximalId item (docm_get (∅ : DocM) t).
+  have Hmax : maximalId item (doc_model_get (∅ : DocM) t).
   { rewrite Hnilget. move=> x Hx. exfalso. move: Hx. rewrite /ArrSet /= elem_of_nil //. }
-  have Hint : integrate input (docm_get (∅ : DocM) t) = Some [item]
+  have Hint : integrate input (doc_model_get (∅ : DocM) t) = Some [item]
     by rewrite Hnilget; vm_compute.
-  have Hbound : ∀ (t' : TId) (x : YjsItem A), x ∈ docm_get (∅ : DocM) t' ->
+  have Hbound : ∀ (t' : TId) (x : YjsItem A), x ∈ doc_model_get (∅ : DocM) t' ->
       clientId (item_id x) = c1 -> (clock (item_id x) < 0)%nat.
   { move=> t' x Hx. exfalso. move: Hx. rewrite Hnilget elem_of_nil //. }
   iMod (history_broadcast γh c1 0%nat [] ∅ t [item] input item E HE
           Htoitem Hvalid Hmax eq_refl Hbound Hint history_state_coh_nil
           with "Hinv H1") as "(H1 & #Hlb1 & #Hcert & %Hcoh1)".
   (* client 2 receives the op as a one-struct pending: the drain applies it *)
-  have Hdmh : docm_has (∅ : DocM) (in_id input) = false.
-  { rewrite /docm_has map_to_list_empty //. }
+  have Hdmh : doc_model_has (∅ : DocM) (in_id input) = false.
+  { rewrite /doc_model_has map_to_list_empty //. }
   have Hdrain : pending_drain (∅ : DocM) [(t, input)]
               = ([(t, input)], [], <[t := [item]]> (∅ : DocM)).
   { rewrite /pending_drain /= Hdmh /= Hint //=. }

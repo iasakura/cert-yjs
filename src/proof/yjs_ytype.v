@@ -178,8 +178,8 @@ Proof.
       iDestruct (own_dll_acc dq (c0 :: cs) yt.(yjs.yType.start') tl q cq Hcq with "Hdll") as "H". iNamed "H".
       iEval (rewrite -Hcloc) in "Hrightp".
       wp_auto.
-      wp_apply (wp_item__Deleted cq.(ic_loc) dq iv with "[$Hcval]"). iIntros "Hcval".
-      rewrite (flags_if_deleted iv (ic_deleted cq) Hflags).
+      wp_apply (wp_item__Deleted cq.(ic_loc) dq itemVal with "[$Hcval]"). iIntros "Hcval".
+      rewrite (flags_if_deleted itemVal (ic_deleted cq) Hflags).
       destruct (ic_deleted cq) eqn:Hdq.
       * (* tombstone: advance the cursor, re-establish the skip invariant *)
         rewrite decide_True; [| reflexivity].
