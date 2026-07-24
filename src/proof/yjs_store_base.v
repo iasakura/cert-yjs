@@ -1520,6 +1520,31 @@ Definition is_root_lb (γs : store_names) (name : P) (S : gset (YjsItem A)) : iP
 #[global] Instance is_root_lb_persistent γs name S : Persistent (is_root_lb γs name S).
 Proof. apply _. Qed.
 
+(** [is_applied_root_lb γs applied m]: one monotone content certificate per
+    applied wire item (issue #97 names the [applyUpdate] postcondition). Each
+    applied tagged input targets a root [RootId name], and [name]'s full item
+    set in the post-delivery model [m] is a lower bound of the store's grow-only
+    content for that root. This is what [applyUpdate] hands back so the caller
+    learns "the store now contains at least this" per delivered root. *)
+Definition is_applied_root_lb (γs : store_names)
+    (applied : list (TId * IntegrateInput (A := A))) (m : DocM) : iProp Σ :=
+  [∗ list] taggedInput ∈ applied, ∃ name : P, ⌜taggedInput.1 = RootId name⌝ ∗
+    is_root_lb γs name (list_to_set (docm_get m taggedInput.1)).
+
+#[global] Instance is_applied_root_lb_persistent γs applied m :
+  Persistent (is_applied_root_lb γs applied m).
+Proof. rewrite /is_applied_root_lb. apply _. Qed.
+
+(** [inputs_rooted_in_bind inputs bind]: every origin-free tagged input targets
+    a root name that is already bound in [bind]. An op with neither a left nor a
+    right origin attaches directly under a registered root, so that root must
+    exist for the op to integrate. *)
+Definition inputs_rooted_in_bind (inputs : list (TId * IntegrateInput (A := A)))
+    (bind : gmap P loc) : Prop :=
+  ∀ taggedInput, taggedInput ∈ inputs ->
+    in_originId taggedInput.2 = None -> in_rightOriginId taggedInput.2 = None ->
+    ∃ name, taggedInput.1 = RootId name ∧ is_Some (bind !! name).
+
 
 
 (** The store's *registry coherence*: the name->loc bindings [bind], the

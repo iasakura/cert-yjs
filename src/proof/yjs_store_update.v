@@ -94,9 +94,7 @@ Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
   (∀ name p ts, bind !! name = Some p -> types !! p = Some ts ->
      docm_get m (RootId name) = ty_arr ts) ->
   (∀ t, docm_get m t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
-  (∀ ti : TId * IntegrateInput (A := A), ti ∈ pend0 ++ inputs ->
-     in_originId ti.2 = None -> in_rightOriginId ti.2 = None ->
-     ∃ nm, ti.1 = RootId nm ∧ is_Some (bind !! nm)) ->
+  inputs_rooted_in_bind (pend0 ++ inputs) bind ->
   (∀ c, c ∈ all_cells types -> cell_fits c) ->
   (∀ ti : TId * IntegrateInput (A := A), ti ∈ pend0 ++ inputs ->
      (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z) ->
@@ -1471,8 +1469,7 @@ Lemma history_deliver_wire γh (c : ClientId) h (m : DocM)
     is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
     ⌜ValidReplay (expand_inputs applied) m m'⌝ ∗
     ⌜history_state_coh (h ++ (deliver_ev <$> expand_inputs applied)) m'⌝ ∗
-    ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ expand_inputs applied ->
-       clientId (in_id ti.2) ≠ c⌝.
+    ⌜inputs_not_from (expand_inputs applied) c⌝.
 Proof.
   iIntros (HE Hdrain Hcoh Hinvs Hnonempty) "#Hinv Hown #Hcertsin".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".
@@ -1579,10 +1576,8 @@ Lemma wp_store__applyUpdate_certs (s_loc : loc) (sl : slice.t) (dq : dfrac)
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
       ⌜wire_drain m (pend ++ inputs) = (applied, rest, m')⌝ ∗
       ⌜ValidReplay (expand_inputs applied) m m'⌝ ∗
-      ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ expand_inputs applied ->
-         clientId (in_id ti.2) ≠ c⌝ ∗
-      ([∗ list] ti ∈ applied, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗
-         is_root_lb γs nm (list_to_set (docm_get m' ti.1))) }}}.
+      ⌜inputs_not_from (expand_inputs applied) c⌝ ∗
+      is_applied_root_lb γs applied m' }}}.
 Proof using Type*.
   move=> Hnowrapb.
   iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertsin & #Hrootsin) HΦ".
@@ -1676,9 +1671,8 @@ Proof using Type*.
     have Hne := applied_root_nonempty applied m m' ti Hvr Hin
                  (Hnonemptyb ti (Happsub ti Hin)).
     destruct (Hmdom' ti.1 Hne) as (nm & p & Heq & Hb). by exists nm, p. }
-  iAssert ([∗ list] ti ∈ applied, ∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗
-             is_root_lb γs nm (list_to_set (docm_get m' ti.1)))%I as "#Hlbs".
-  { iApply big_sepL_intro.
+  iAssert (is_applied_root_lb γs applied m') as "#Hlbs".
+  { rewrite /is_applied_root_lb. iApply big_sepL_intro.
     iIntros "!#" (i ti Hi).
     destruct (Happbnd ti (list_elem_of_lookup_2 _ _ _ Hi)) as (nm & p & Htieq & Hbnm).
     destruct (Hbindtypes' nm p Hbnm) as [ts' Hts'].

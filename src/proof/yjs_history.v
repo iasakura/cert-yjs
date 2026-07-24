@@ -354,8 +354,7 @@ Lemma history_deliver_pending γh (c : ClientId) h (m : DocM)
     is_history_lb γh c (h ++ (deliver_ev <$> applied)) ∗
     ⌜ValidReplay applied m m'⌝ ∗
     ⌜history_state_coh (h ++ (deliver_ev <$> applied)) m'⌝ ∗
-    ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
-       clientId (in_id ti.2) ≠ c⌝.
+    ⌜inputs_not_from applied c⌝.
 Proof.
   iIntros (HE Hdrain Hcoh) "#Hinv Hown #Hcertsin".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".

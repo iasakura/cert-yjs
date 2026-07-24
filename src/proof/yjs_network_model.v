@@ -65,6 +65,17 @@ Implicit Types (N : RawHistories) (h : list Ev) (op : Op) (c i j : ClientId).
 
 Set Default Proof Using "Type*".
 
+(** [inputs_not_from inputs c] (issue #97): no tagged input in the list is
+    authored by client [c]. A tagged input is a [(TId * IntegrateInput)] pair,
+    with [.1] the target type id and [.2] the operation payload (its id, origins
+    and content). Causal delivery never re-delivers a replica's own ops, so an
+    applied batch excludes its receiver. (Arithmetic side conditions like
+    "content nonempty" or "clock < 2^64" are left inline: they are discharged by
+    [lia]/[word], which want them in raw form, not behind a definition.) *)
+Definition inputs_not_from (inputs : list (TId * IntegrateInput (A := A)))
+    (c : ClientId) : Prop :=
+  ∀ taggedInput, taggedInput ∈ inputs -> clientId (in_id taggedInput.2) ≠ c.
+
 (* ===== raw-history views ================================================== *)
 
 (** The per-client history function a raw map denotes (absent = empty). *)
@@ -2757,8 +2768,7 @@ Lemma pending_ValidReplay N c h (m : DocM)
   ValidReplay applied m m' ∧
   history_state_coh (h ++ (deliver_ev <$> applied)) m' ∧
   history_wf (<[c := h ++ (deliver_ev <$> applied)]> N) ∧
-  (∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
-     clientId (in_id ti.2) ≠ c).
+  inputs_not_from applied c.
 Proof.
   move=> Hwf HNc Hcoh Hcerts Hreplay.
   move: N h Hwf HNc Hcoh Hcerts.
