@@ -121,14 +121,14 @@ Proof.
       move=> z Heq.
       destruct other as [o r id c]. simpl in Heq. subst o.
       exact (closedLeft _ Hclosed _ _ _ _ Hoin). }
-    destruct (findPtrIdx_closed arr (origin other) Hinv Hoclosed) as (oL & HoL & HoLb).
+    destruct (findPtrIdx_closed arr (origin other) Hinv Hoclosed) as (originLeftIdx & HoL & HoLb).
     rewrite HoL /=.
     have Horclosed : ∀ z : YjsItem A, rightOrigin other = itemPtr z -> z ∈ arr.
     { have Hclosed := yai_closed _ Hinv.
       move=> z Heq.
       destruct other as [o r id c]. simpl in Heq. subst r.
       exact (closedRight _ Hclosed _ _ _ _ Hoin). }
-    destruct (findPtrIdx_closed arr (rightOrigin other) Hinv Horclosed) as (oR & HoR & HoRb).
+    destruct (findPtrIdx_closed arr (rightOrigin other) Hinv Horclosed) as (originRightIdx & HoR & HoRb).
     rewrite HoR /=.
     (* origin other sits strictly left of S j ... *)
     have Hlt : YjsLt' (origin other) (itemPtr other).
@@ -136,15 +136,15 @@ Proof.
       apply (ltOrigin 0). apply leqSame. }
     have HotherIdx : findPtrIdx (itemPtr other) arr = Some (Z.of_nat (S j))
       := findPtrIdx_item arr (S j) other (yai_unique _ Hinv) Hother.
-    have HoLlt : (oL < Z.of_nat (S j))%Z.
+    have HoLlt : (originLeftIdx < Z.of_nat (S j))%Z.
     { exact (findptridx_order2.YjsLt'_findPtrIdx_lt arr (origin other) (itemPtr other)
-               oL (Z.of_nat (S j)) Hinv
-               ltac:(exact (findptridx_getelem.findPtrIdx_ArrSet arr _ oL HoL))
+               originLeftIdx (Z.of_nat (S j)) Hinv
+               ltac:(exact (findptridx_getelem.findPtrIdx_ArrSet arr _ originLeftIdx HoL))
                ltac:(exact (findptridx_getelem.findPtrIdx_ArrSet arr _ (Z.of_nat (S j)) HotherIdx))
                Hlt HoL HotherIdx). }
     (* ... and not AT j (no successor), so strictly below j: the loop exits *)
-    have HoLne : oL <> Z.of_nat j.
-    { move=> HoLj. subst oL.
+    have HoLne : originLeftIdx <> Z.of_nat j.
+    { move=> HoLj. subst originLeftIdx.
       destruct (origin other) as [z | |] eqn:Horig;
         rewrite /findPtrIdx /= in HoL.
       - (* the element at index j is x itself: contradicts no-successor *)
@@ -184,7 +184,7 @@ Proof.
   have Huniq := yai_unique _ Hinv.
   have HriUB : (rightIdx <= Z.of_nat (length arr))%Z.
   { move: Hri. rewrite /findRightIdx.
-    destruct (in_rightOriginId input) as [rid|].
+    destruct (in_rightOriginId input) as [rightOriginId|].
     - destruct (list_find _ arr) as [[k y]|] eqn:Hf; last done.
       move=> [=] <-. apply list_find_Some in Hf. destruct Hf as (Hk & _ & _).
       apply lookup_lt_Some in Hk. lia.
@@ -218,17 +218,17 @@ Qed.
 
 (* ===== the chained fold: a run integrates contiguously ==================== *)
 
-(** [chained_after xid rid inputs]: each input's left origin is the id of the
+(** [chained_after xid rightOriginId inputs]: each input's left origin is the id of the
     previous input (starting from [xid]) and all inputs share the right origin
-    [rid]. This is the wire shape of a multi-element run seen per-char
+    [rightOriginId]. This is the wire shape of a multi-element run seen per-char
     ([run_wf] on the heap side). *)
-Fixpoint chained_after (xid : YjsId) (rid : option YjsId)
+Fixpoint chained_after (xid : YjsId) (rightOriginId : option YjsId)
     (inputs : list (IntegrateInput (A := A))) : Prop :=
   match inputs with
   | [] => True
   | i :: rest =>
-      i.(in_originId) = Some xid ∧ i.(in_rightOriginId) = rid ∧
-      chained_after i.(in_id) rid rest
+      i.(in_originId) = Some xid ∧ i.(in_rightOriginId) = rightOriginId ∧
+      chained_after i.(in_id) rightOriginId rest
   end.
 
 (** Monadic fold of [integrate]. *)
@@ -411,17 +411,17 @@ Qed.
 (* ----- the splice shifts the right-origin index by one --------------------- *)
 
 Lemma findRightIdx_splice_shift arr (j : nat) (newit : YjsItem A)
-    (rid : option YjsId) (rightIdx : Z) :
+    (rightOriginId : option YjsId) (rightIdx : Z) :
   (j < length arr)%nat ->
   (Z.of_nat j < rightIdx)%Z ->
   uniqueId arr ->
-  findRightIdx rid arr = Some rightIdx ->
+  findRightIdx rightOriginId arr = Some rightIdx ->
   (forall z, z ∈ arr -> item_id z ≠ item_id newit) ->
-  findRightIdx rid (take (S j) arr ++ newit :: drop (S j) arr) = Some (rightIdx + 1)%Z.
+  findRightIdx rightOriginId (take (S j) arr ++ newit :: drop (S j) arr) = Some (rightIdx + 1)%Z.
 Proof.
   move=> Hj Hjr Huniq Hri Hfresh.
   move: Hri. rewrite /findRightIdx.
-  destruct rid as [r_id|]; last first.
+  destruct rightOriginId as [r_id|]; last first.
   { move=> [= <-]. rewrite (splice_length arr j newit Hj). f_equal. lia. }
   destruct (list_find (fun it => item_id it = r_id) arr) as [[k R]|] eqn:Hfind; last done.
   move=> [= HrIdx].
@@ -500,13 +500,13 @@ Qed.
     its anchor. This is what lets the heap integrate a multi-element node in a
     single splice while the model steps per char (issue #28 M4). *)
 Lemma integrate_chain (inputs : list (IntegrateInput (A := A))) :
-  forall arr (j : nat) (x : YjsItem A) (rid : option YjsId) (rightIdx : Z) (rptr : YjsPtr A),
+  forall arr (j : nat) (x : YjsItem A) (rightOriginId : option YjsId) (rightIdx : Z) (rptr : YjsPtr A),
   YjsArrInvariant arr ->
   arr !! j = Some x ->
-  chained_after (item_id x) rid inputs ->
+  chained_after (item_id x) rightOriginId inputs ->
   ids_fresh arr inputs ->
   (forall i inp, inputs !! i = Some inp -> item_id x ≠ inp.(in_id)) ->
-  findRightIdx rid arr = Some rightIdx ->
+  findRightIdx rightOriginId arr = Some rightIdx ->
   (Z.of_nat j < rightIdx)%Z ->
   getPtrExcept arr rightIdx = Some rptr ->
   (forall z, z ∈ arr -> origin z ≠ itemPtr x) ->
@@ -529,7 +529,7 @@ Lemma integrate_chain (inputs : list (IntegrateInput (A := A))) :
        (forall k' itp, k = S k' -> news !! k' = Some itp -> origin it = itemPtr itp)).
 Proof.
   induction inputs as [|input rest IH];
-    intros arr j x rid rightIdx rptr
+    intros arr j x rightOriginId rightIdx rptr
       Hinv Hj Hchain Hfresh Hxid Hri Hjr Hrptr Hnosucc Hvalid0 Hmaxs Hchainclk.
   - (* empty chain *)
     exists []. simpl. rewrite take_drop.
@@ -577,8 +577,8 @@ Proof.
       - exact (Hfresh z Hz' (S i) inp Hinp). }
     have Hxid1 : forall i inp, rest !! i = Some inp -> item_id newit ≠ inp.(in_id).
     { move=> i inp Hi. rewrite Hidnew. exact (Hidtail i inp Hi). }
-    have Hri1 : findRightIdx rid arr1 = Some (rightIdx + 1)%Z
-      := findRightIdx_splice_shift arr j newit rid rightIdx Hjlen Hjr
+    have Hri1 : findRightIdx rightOriginId arr1 = Some (rightIdx + 1)%Z
+      := findRightIdx_splice_shift arr j newit rightOriginId rightIdx Hjlen Hjr
            (yai_unique _ Hinv) Hri Hheadfresh.
     have Hjr1 : (Z.of_nat (S j) < rightIdx + 1)%Z by lia.
     have Hrptr1 : getPtrExcept arr1 (rightIdx + 1) = Some rptr
@@ -621,9 +621,9 @@ Proof.
         (clock inpi.(in_id) < clock inpk.(in_id))%nat.
     { move=> i k inpi inpk Hik Hi Hk.
       exact (Hchainclk (S i) (S k) inpi inpk ltac:(lia) Hi Hk). }
-    have Hchain1 : chained_after (item_id newit) rid rest by rewrite Hidnew.
+    have Hchain1 : chained_after (item_id newit) rightOriginId rest by rewrite Hidnew.
     (* the tail integrates contiguously after [newit] *)
-    destruct (IH arr1 (S j) newit rid (rightIdx + 1)%Z rptr
+    destruct (IH arr1 (S j) newit rightOriginId (rightIdx + 1)%Z rptr
                 Hinv1 Hj1 Hchain1 Hfresh1 Hxid1 Hri1 Hjr1 Hrptr1 Hnosucc1 Hvalid1
                 Hmaxs1 Hchainclk1)
       as (news' & Hint' & Hlen' & Hinv' & Hfacts').
@@ -665,12 +665,12 @@ Proof.
 Qed.
 
 (* ===== the run-block scan bridge (issue #28 M4, part 3) ===================
-   The heap scan steps NODE by node while [setfii_loop] steps char by char.
+   The heap scan steps NODE by node while [set_find_integration_loop] steps char by char.
    A [run_wf] block behaves as one unit inside the scan: the head char decides
    the outcome exactly as the node-level Go does, and the tail chars cascade
    deterministically (their origin is always the previous char, which was just
-   scanned). [setfii_block_step] below packages one whole block as a single
-   rewrite, so a node-stepping WP loop invariant can couple to [setfii_loop]
+   scanned). [set_find_integration_block_step] below packages one whole block as a single
+   rewrite, so a node-stepping WP loop invariant can couple to [set_find_integration_loop]
    at block boundaries only. *)
 
 Definition char_ids (r : list (YjsItem A)) : gset YjsId :=
@@ -714,30 +714,30 @@ Qed.
 (** Tail cascade, STAY flavor: with the previous char's id in both
     accumulators, every tail char takes the continue-unchanged branch and the
     accumulators absorb the block. *)
-Lemma setfii_tail_stay (tail : list (YjsItem A)) :
+Lemma set_find_integration_tail_stay (tail : list (YjsItem A)) :
   forall (prev : YjsItem A) (restfuel offset : nat) (leftIdx rightIdx : Z)
     (oLeftId oRightId : option YjsId) (newId : YjsId)
-    (arr : list (YjsItem A)) (ibo ci : gset YjsId) (destIdx : Z),
+    (arr : list (YjsItem A)) (idsBeforeOrigin ci : gset YjsId) (destIdx : Z),
   run_step (prev :: tail) ->
   (forall k c, tail !! k = Some c ->
      arr !! (Z.to_nat (leftIdx + Z.of_nat (offset + k))) = Some c) ->
   (forall c, c ∈ prev :: tail -> Some (item_id c) ≠ oLeftId) ->
-  item_id prev ∈ ibo ->
+  item_id prev ∈ idsBeforeOrigin ->
   item_id prev ∈ ci ->
-  setfii_loop (length tail + restfuel) offset leftIdx rightIdx oLeftId oRightId newId arr ibo ci destIdx
-  = setfii_loop restfuel (offset + length tail)%nat leftIdx rightIdx oLeftId oRightId newId arr
-      (char_ids tail ∪ ibo) (char_ids tail ∪ ci) destIdx.
+  set_find_integration_loop (length tail + restfuel) offset leftIdx rightIdx oLeftId oRightId newId arr idsBeforeOrigin ci destIdx
+  = set_find_integration_loop restfuel (offset + length tail)%nat leftIdx rightIdx oLeftId oRightId newId arr
+      (char_ids tail ∪ idsBeforeOrigin) (char_ids tail ∪ ci) destIdx.
 Proof.
   induction tail as [|c tail' IH];
-    intros prev restfuel offset leftIdx rightIdx oLeftId oRightId newId arr ibo ci destIdx
+    intros prev restfuel offset leftIdx rightIdx oLeftId oRightId newId arr idsBeforeOrigin ci destIdx
       Hstep Hlook Hnotleft Hpibo Hpici.
   - simpl. rewrite Nat.add_0_r.
-    have -> : char_ids [] ∪ ibo = ibo by set_solver.
+    have -> : char_ids [] ∪ idsBeforeOrigin = idsBeforeOrigin by set_solver.
     have -> : char_ids [] ∪ ci = ci by set_solver.
     done.
   - simpl length. simpl plus.
     (* unfold one loop step for [c] *)
-    simpl setfii_loop.
+    simpl set_find_integration_loop.
     have Hc0 : arr !! Z.to_nat (leftIdx + Z.of_nat offset) = Some c.
     { have := Hlook 0%nat c eq_refl. rewrite Nat.add_0_r //. }
     rewrite Hc0 /=.
@@ -761,13 +761,13 @@ Proof.
       done. }
     have Hnl' : forall c0, c0 ∈ c :: tail' -> Some (item_id c0) ≠ oLeftId.
     { move=> c0 Hc0'. apply Hnotleft. apply elem_of_cons. right. exact Hc0'. }
-    have Hin1 : item_id c ∈ ({[item_id c]} ∪ ibo) by set_solver.
+    have Hin1 : item_id c ∈ ({[item_id c]} ∪ idsBeforeOrigin) by set_solver.
     have Hin2 : item_id c ∈ ({[item_id c]} ∪ ci) by set_solver.
     rewrite (IH c restfuel (S offset) leftIdx rightIdx oLeftId oRightId newId arr
-               ({[item_id c]} ∪ ibo) ({[item_id c]} ∪ ci) destIdx
+               ({[item_id c]} ∪ idsBeforeOrigin) ({[item_id c]} ∪ ci) destIdx
                Hstep' Hlook' Hnl' Hin1 Hin2).
     have -> : (S offset + length tail')%nat = (offset + S (length tail'))%nat by lia.
-    have -> : char_ids tail' ∪ ({[item_id c]} ∪ ibo) = char_ids (c :: tail') ∪ ibo
+    have -> : char_ids tail' ∪ ({[item_id c]} ∪ idsBeforeOrigin) = char_ids (c :: tail') ∪ idsBeforeOrigin
       by (rewrite char_ids_cons; set_solver).
     have -> : char_ids tail' ∪ ({[item_id c]} ∪ ci) = char_ids (c :: tail') ∪ ci
       by (rewrite char_ids_cons; set_solver).
@@ -777,29 +777,29 @@ Qed.
 (** Tail cascade, MOVE flavor: with an empty conflicting set, every tail char
     repositions the destination one past itself. The destination tracks the
     cursor ([destIdx = leftIdx + offset]). *)
-Lemma setfii_tail_move (tail : list (YjsItem A)) :
+Lemma set_find_integration_tail_move (tail : list (YjsItem A)) :
   forall (prev : YjsItem A) (restfuel offset : nat) (leftIdx rightIdx : Z)
     (oLeftId oRightId : option YjsId) (newId : YjsId)
-    (arr : list (YjsItem A)) (ibo : gset YjsId),
+    (arr : list (YjsItem A)) (idsBeforeOrigin : gset YjsId),
   run_step (prev :: tail) ->
   (forall k c, tail !! k = Some c ->
      arr !! (Z.to_nat (leftIdx + Z.of_nat (offset + k))) = Some c) ->
   (forall c, c ∈ prev :: tail -> Some (item_id c) ≠ oLeftId) ->
-  item_id prev ∈ ibo ->
+  item_id prev ∈ idsBeforeOrigin ->
   (0 <= leftIdx + Z.of_nat offset)%Z ->
-  setfii_loop (length tail + restfuel) offset leftIdx rightIdx oLeftId oRightId newId arr
-    ibo ∅ (leftIdx + Z.of_nat offset)%Z
-  = setfii_loop restfuel (offset + length tail)%nat leftIdx rightIdx oLeftId oRightId newId arr
-      (char_ids tail ∪ ibo) ∅ (leftIdx + Z.of_nat (offset + length tail))%Z.
+  set_find_integration_loop (length tail + restfuel) offset leftIdx rightIdx oLeftId oRightId newId arr
+    idsBeforeOrigin ∅ (leftIdx + Z.of_nat offset)%Z
+  = set_find_integration_loop restfuel (offset + length tail)%nat leftIdx rightIdx oLeftId oRightId newId arr
+      (char_ids tail ∪ idsBeforeOrigin) ∅ (leftIdx + Z.of_nat (offset + length tail))%Z.
 Proof.
   induction tail as [|c tail' IH];
-    intros prev restfuel offset leftIdx rightIdx oLeftId oRightId newId arr ibo
+    intros prev restfuel offset leftIdx rightIdx oLeftId oRightId newId arr idsBeforeOrigin
       Hstep Hlook Hnotleft Hpibo Hpos.
   - simpl. rewrite Nat.add_0_r.
-    have -> : char_ids [] ∪ ibo = ibo by set_solver.
+    have -> : char_ids [] ∪ idsBeforeOrigin = idsBeforeOrigin by set_solver.
     done.
   - simpl length. simpl plus.
-    simpl setfii_loop.
+    simpl set_find_integration_loop.
     have Hc0 : arr !! Z.to_nat (leftIdx + Z.of_nat offset) = Some c.
     { have := Hlook 0%nat c eq_refl. rewrite Nat.add_0_r //. }
     rewrite Hc0 /=.
@@ -829,12 +829,12 @@ Proof.
       done. }
     have Hnl' : forall c0, c0 ∈ c :: tail' -> Some (item_id c0) ≠ oLeftId.
     { move=> c0 Hc0'. apply Hnotleft. apply elem_of_cons. right. exact Hc0'. }
-    have Hin1 : item_id c ∈ ({[item_id c]} ∪ ibo) by set_solver.
+    have Hin1 : item_id c ∈ ({[item_id c]} ∪ idsBeforeOrigin) by set_solver.
     have Hpos' : (0 <= leftIdx + Z.of_nat (S offset))%Z by lia.
     rewrite (IH c restfuel (S offset) leftIdx rightIdx oLeftId oRightId newId arr
-               ({[item_id c]} ∪ ibo) Hstep' Hlook' Hnl' Hin1 Hpos').
+               ({[item_id c]} ∪ idsBeforeOrigin) Hstep' Hlook' Hnl' Hin1 Hpos').
     have -> : (S offset + length tail')%nat = (offset + S (length tail'))%nat by lia.
-    have -> : char_ids tail' ∪ ({[item_id c]} ∪ ibo) = char_ids (c :: tail') ∪ ibo
+    have -> : char_ids tail' ∪ ({[item_id c]} ∪ idsBeforeOrigin) = char_ids (c :: tail') ∪ idsBeforeOrigin
       by (rewrite char_ids_cons; set_solver).
     done.
 Qed.
@@ -846,41 +846,41 @@ Qed.
     conflict's origin scanned but not conflicting), break (same integration
     points, or an origin before the window), or scan on (accumulators absorb
     the block). *)
-Lemma setfii_block_step (h : YjsItem A) (tail : list (YjsItem A))
+Lemma set_find_integration_block_step (h : YjsItem A) (tail : list (YjsItem A))
     (restfuel offset : nat) (leftIdx rightIdx : Z)
     (oLeftId oRightId : option YjsId) (newId : YjsId)
-    (arr : list (YjsItem A)) (ibo ci : gset YjsId) (destIdx : Z) :
+    (arr : list (YjsItem A)) (idsBeforeOrigin ci : gset YjsId) (destIdx : Z) :
   run_step (h :: tail) ->
   (forall k c, (h :: tail) !! k = Some c ->
      arr !! (Z.to_nat (leftIdx + Z.of_nat (offset + k))) = Some c) ->
   (forall c, c ∈ h :: tail -> Some (item_id c) ≠ oLeftId) ->
   (0 <= leftIdx + Z.of_nat offset)%Z ->
-  setfii_loop (length (h :: tail) + restfuel) offset leftIdx rightIdx
-    oLeftId oRightId newId arr ibo ci destIdx
+  set_find_integration_loop (length (h :: tail) + restfuel) offset leftIdx rightIdx
+    oLeftId oRightId newId arr idsBeforeOrigin ci destIdx
   = (if decide (origin_id (origin h) = oLeftId) then
        if decide (clientId (item_id h) < clientId newId)%nat then
-         setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+         set_find_integration_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
            oLeftId oRightId newId arr
-           (char_ids (h :: tail) ∪ ibo) ∅
+           (char_ids (h :: tail) ∪ idsBeforeOrigin) ∅
            (leftIdx + Z.of_nat (offset + length (h :: tail)))%Z
        else if decide (origin_id (rightOrigin h) = oRightId) then Some destIdx
        else
-         setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+         set_find_integration_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
            oLeftId oRightId newId arr
-           (char_ids (h :: tail) ∪ ibo) (char_ids (h :: tail) ∪ ci) destIdx
+           (char_ids (h :: tail) ∪ idsBeforeOrigin) (char_ids (h :: tail) ∪ ci) destIdx
      else
        match origin_id (origin h) with
        | Some col =>
-         if decide (col ∈ ({[item_id h]} ∪ ibo)) then
+         if decide (col ∈ ({[item_id h]} ∪ idsBeforeOrigin)) then
            if decide (col ∉ ({[item_id h]} ∪ ci)) then
-             setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+             set_find_integration_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
                oLeftId oRightId newId arr
-               (char_ids (h :: tail) ∪ ibo) ∅
+               (char_ids (h :: tail) ∪ idsBeforeOrigin) ∅
                (leftIdx + Z.of_nat (offset + length (h :: tail)))%Z
            else
-             setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+             set_find_integration_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
                oLeftId oRightId newId arr
-               (char_ids (h :: tail) ∪ ibo) (char_ids (h :: tail) ∪ ci) destIdx
+               (char_ids (h :: tail) ∪ idsBeforeOrigin) (char_ids (h :: tail) ∪ ci) destIdx
          else Some destIdx
        | None => Some destIdx
        end).
@@ -895,52 +895,52 @@ Proof.
     done. }
   have Hidx1 : Z.of_nat (Z.to_nat (leftIdx + Z.of_nat offset) + 1)
              = (leftIdx + Z.of_nat (S offset))%Z by lia.
-  have Hin_ibo : item_id h ∈ ({[item_id h]} ∪ ibo) by set_solver.
+  have Hin_ibo : item_id h ∈ ({[item_id h]} ∪ idsBeforeOrigin) by set_solver.
   have Hin_ci : item_id h ∈ ({[item_id h]} ∪ ci) by set_solver.
   have Hpos' : (0 <= leftIdx + Z.of_nat (S offset))%Z by lia.
   have Hlen : length (h :: tail) = S (length tail) by done.
   (* unfold the head step *)
-  simpl setfii_loop. rewrite Hh0 /=.
+  simpl set_find_integration_loop. rewrite Hh0 /=.
   destruct (decide (origin_id (origin h) = oLeftId)) as [Hc1 | Hc1].
   - destruct (decide (clientId (item_id h) < clientId newId)%nat) as [Hcl | Hcl].
     + (* case 1, smaller client: move past the head, then the MOVE cascade *)
       rewrite Hidx1.
-      rewrite (setfii_tail_move tail h restfuel (S offset) leftIdx rightIdx
-                 oLeftId oRightId newId arr ({[item_id h]} ∪ ibo)
+      rewrite (set_find_integration_tail_move tail h restfuel (S offset) leftIdx rightIdx
+                 oLeftId oRightId newId arr ({[item_id h]} ∪ idsBeforeOrigin)
                  Hstep Hlook' Hnotleft Hin_ibo Hpos').
       have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
-      have -> : char_ids tail ∪ ({[item_id h]} ∪ ibo) = char_ids (h :: tail) ∪ ibo
+      have -> : char_ids tail ∪ ({[item_id h]} ∪ idsBeforeOrigin) = char_ids (h :: tail) ∪ idsBeforeOrigin
         by (rewrite char_ids_cons; set_solver).
       done.
     + destruct (decide (origin_id (rightOrigin h) = oRightId)) as [Hro | Hro]; first done.
       (* case 1, scan on: the STAY cascade *)
-      rewrite (setfii_tail_stay tail h restfuel (S offset) leftIdx rightIdx
-                 oLeftId oRightId newId arr ({[item_id h]} ∪ ibo) ({[item_id h]} ∪ ci) destIdx
+      rewrite (set_find_integration_tail_stay tail h restfuel (S offset) leftIdx rightIdx
+                 oLeftId oRightId newId arr ({[item_id h]} ∪ idsBeforeOrigin) ({[item_id h]} ∪ ci) destIdx
                  Hstep Hlook' Hnotleft Hin_ibo Hin_ci).
       have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
-      have -> : char_ids tail ∪ ({[item_id h]} ∪ ibo) = char_ids (h :: tail) ∪ ibo
+      have -> : char_ids tail ∪ ({[item_id h]} ∪ idsBeforeOrigin) = char_ids (h :: tail) ∪ idsBeforeOrigin
         by (rewrite char_ids_cons; set_solver).
       have -> : char_ids tail ∪ ({[item_id h]} ∪ ci) = char_ids (h :: tail) ∪ ci
         by (rewrite char_ids_cons; set_solver).
       done.
   - destruct (origin_id (origin h)) as [col|] eqn:Hcol; last done.
-    destruct (decide (col ∈ ({[item_id h]} ∪ ibo))) as [Hmem | Hmem]; last done.
+    destruct (decide (col ∈ ({[item_id h]} ∪ idsBeforeOrigin))) as [Hmem | Hmem]; last done.
     destruct (decide (col ∉ ({[item_id h]} ∪ ci))) as [Hnot | Hnot].
     + (* case 2, move: MOVE cascade *)
       rewrite Hidx1.
-      rewrite (setfii_tail_move tail h restfuel (S offset) leftIdx rightIdx
-                 oLeftId oRightId newId arr ({[item_id h]} ∪ ibo)
+      rewrite (set_find_integration_tail_move tail h restfuel (S offset) leftIdx rightIdx
+                 oLeftId oRightId newId arr ({[item_id h]} ∪ idsBeforeOrigin)
                  Hstep Hlook' Hnotleft Hin_ibo Hpos').
       have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
-      have -> : char_ids tail ∪ ({[item_id h]} ∪ ibo) = char_ids (h :: tail) ∪ ibo
+      have -> : char_ids tail ∪ ({[item_id h]} ∪ idsBeforeOrigin) = char_ids (h :: tail) ∪ idsBeforeOrigin
         by (rewrite char_ids_cons; set_solver).
       done.
     + (* case 2, stay: STAY cascade *)
-      rewrite (setfii_tail_stay tail h restfuel (S offset) leftIdx rightIdx
-                 oLeftId oRightId newId arr ({[item_id h]} ∪ ibo) ({[item_id h]} ∪ ci) destIdx
+      rewrite (set_find_integration_tail_stay tail h restfuel (S offset) leftIdx rightIdx
+                 oLeftId oRightId newId arr ({[item_id h]} ∪ idsBeforeOrigin) ({[item_id h]} ∪ ci) destIdx
                  Hstep Hlook' Hnotleft Hin_ibo Hin_ci).
       have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
-      have -> : char_ids tail ∪ ({[item_id h]} ∪ ibo) = char_ids (h :: tail) ∪ ibo
+      have -> : char_ids tail ∪ ({[item_id h]} ∪ idsBeforeOrigin) = char_ids (h :: tail) ∪ idsBeforeOrigin
         by (rewrite char_ids_cons; set_solver).
       have -> : char_ids tail ∪ ({[item_id h]} ∪ ci) = char_ids (h :: tail) ∪ ci
         by (rewrite char_ids_cons; set_solver).
@@ -950,7 +950,7 @@ Qed.
 (* ===== block-query bridging (issue #28 M4, stage C1a) =====================
    The Go scan appends the WHOLE scanned run's id span to its sets before
    querying the conflict's left origin, so the heap test runs against
-   [char_ids (h :: tail) ∪ X] while [setfii_block_step]'s decisions read
+   [char_ids (h :: tail) ∪ X] while [set_find_integration_block_step]'s decisions read
    [{[item_id h]} ∪ X] (the char-level accumulator at the head). The two
    agree because the queried id can never be a TAIL char of the very run
    being scanned: tail ids share the head's client with strictly larger
@@ -1003,18 +1003,18 @@ Qed.
 
 (* ===== the per-char ops of a multi-element wire item (issue #28 U7) ====== *)
 
-(** [ops_from cl ck oid rid chars]: the per-char ops of a run of [chars]
-    minted by client [cl] from clock [ck]: char [k] gets id [(cl, ck + k)],
-    the first op keeps the wire left origin [oid], each later op chains off
-    the previous char, and every op shares the wire right origin [rid]
+(** [ops_from client clock originId rightOriginId chars]: the per-char ops of a run of [chars]
+    minted by client [client] from clock [clock]: char [k] gets id [(client, clock + k)],
+    the first op keeps the wire left origin [originId], each later op chains off
+    the previous char, and every op shares the wire right origin [rightOriginId]
     (y-octo run semantics, the same shape [Text.Insert]'s loop mints). *)
-Fixpoint ops_from (cl ck : nat) (oid rid : option YjsId) (chars : list A) :
+Fixpoint ops_from (client clock : nat) (originId rightOriginId : option YjsId) (chars : list A) :
     list (IntegrateInput (A := A)) :=
   match chars with
   | [] => []
   | ch :: rest =>
-      MkIntegrateInput oid rid ch (MkYjsId cl ck)
-        :: ops_from cl (S ck) (Some (MkYjsId cl ck)) rid rest
+      MkIntegrateInput originId rightOriginId ch (MkYjsId client clock)
+        :: ops_from client (S clock) (Some (MkYjsId client clock)) rightOriginId rest
   end.
 
 (** The ops a wire item [input] denotes when its content splits into
@@ -1024,30 +1024,30 @@ Definition ops_of_input (input : IntegrateInput (A := A)) (chars : list A) :
   ops_from (clientId (in_id input)) (clock (in_id input))
            (in_originId input) (in_rightOriginId input) chars.
 
-Lemma ops_from_length cl ck oid rid (chars : list A) :
-  length (ops_from cl ck oid rid chars) = length chars.
+Lemma ops_from_length client clock originId rightOriginId (chars : list A) :
+  length (ops_from client clock originId rightOriginId chars) = length chars.
 Proof.
-  elim: chars cl ck oid rid => [| ch chars IH] cl ck oid rid; simpl; [done |].
+  elim: chars client clock originId rightOriginId => [| ch chars IH] client clock originId rightOriginId; simpl; [done |].
   rewrite IH //.
 Qed.
 
 (** Per-op field facts, by position. *)
-Lemma ops_from_lookup cl ck oid rid (chars : list A) (k : nat)
+Lemma ops_from_lookup client clock originId rightOriginId (chars : list A) (k : nat)
     (op : IntegrateInput (A := A)) :
-  ops_from cl ck oid rid chars !! k = Some op ->
-  in_id op = MkYjsId cl (ck + k)%nat ∧
-  in_rightOriginId op = rid ∧
+  ops_from client clock originId rightOriginId chars !! k = Some op ->
+  in_id op = MkYjsId client (clock + k)%nat ∧
+  in_rightOriginId op = rightOriginId ∧
   chars !! k = Some (in_content op) ∧
-  (k = 0%nat -> in_originId op = oid) ∧
-  (forall k', k = S k' -> in_originId op = Some (MkYjsId cl (ck + k')%nat)).
+  (k = 0%nat -> in_originId op = originId) ∧
+  (forall k', k = S k' -> in_originId op = Some (MkYjsId client (clock + k')%nat)).
 Proof.
-  elim: chars cl ck oid rid k op => [| ch chars IH] cl ck oid rid k op; simpl;
+  elim: chars client clock originId rightOriginId k op => [| ch chars IH] client clock originId rightOriginId k op; simpl;
     first by rewrite lookup_nil.
   destruct k as [| k].
   - move=> [= <-]. simpl.
     split_and!; [by rewrite Nat.add_0_r | done | done | done | lia].
   - move=> Hk.
-    destruct (IH cl (S ck) (Some (MkYjsId cl ck)) rid k op Hk)
+    destruct (IH client (S clock) (Some (MkYjsId client clock)) rightOriginId k op Hk)
       as (Hid & Hrid & Hch & Ho0 & Hos).
     split_and!.
     + rewrite Hid. f_equal. lia.
@@ -1061,24 +1061,24 @@ Proof.
 Qed.
 
 (** The whole run is [chained_after] whatever the head origin names. *)
-Lemma ops_from_chained cl ck (prev : YjsId) rid (chars : list A) :
-  chained_after prev rid (ops_from cl ck (Some prev) rid chars).
+Lemma ops_from_chained client clock (prev : YjsId) rightOriginId (chars : list A) :
+  chained_after prev rightOriginId (ops_from client clock (Some prev) rightOriginId chars).
 Proof.
-  elim: chars ck prev => [| ch chars IH] ck prev; first done.
-  simpl. split_and!; [done | done | exact (IH (S ck) (MkYjsId cl ck))].
+  elim: chars clock prev => [| ch chars IH] clock prev; first done.
+  simpl. split_and!; [done | done | exact (IH (S clock) (MkYjsId client clock))].
 Qed.
 
 (** The minted ids are pairwise distinct (consecutive clocks). *)
-Lemma ops_from_ids_nodup cl ck oid rid (chars : list A) :
-  NoDup (input_ids (ops_from cl ck oid rid chars)).
+Lemma ops_from_ids_nodup client startClock originId rightOriginId (chars : list A) :
+  NoDup (input_ids (ops_from client startClock originId rightOriginId chars)).
 Proof.
   have Hgen : forall (l : list A) (ck0 : nat) (oid0 : option YjsId),
-      NoDup (input_ids (ops_from cl ck0 oid0 rid l)) ∧
-      (forall idx inp, ops_from cl ck0 oid0 rid l !! idx = Some inp ->
+      NoDup (input_ids (ops_from client ck0 oid0 rightOriginId l)) ∧
+      (forall idx inp, ops_from client ck0 oid0 rightOriginId l !! idx = Some inp ->
          (ck0 <= clock (in_id inp))%nat).
   { elim => [| ch l IHl] ck0 oid0.
     - split; [apply NoDup_nil; done | by move=> idx inp; rewrite lookup_nil].
-    - destruct (IHl (S ck0) (Some (MkYjsId cl ck0))) as [Hnd Hlb].
+    - destruct (IHl (S ck0) (Some (MkYjsId client ck0))) as [Hnd Hlb].
       split.
       + rewrite /input_ids fmap_cons. apply NoDup_cons. split; last exact Hnd.
         move=> Hin. apply list_elem_of_fmap in Hin as (inp & Heq & Hinp).
@@ -1089,7 +1089,7 @@ Proof.
       + move=> idx inp. destruct idx as [| idx].
         * move=> [= <-]. simpl. lia.
         * move=> Hidx. have := Hlb idx inp Hidx. simpl. lia. }
-  exact (proj1 (Hgen chars ck oid)).
+  exact (proj1 (Hgen chars startClock originId)).
 Qed.
 
 (** The 1-char bridge: a single-char wire item denotes exactly itself, and
@@ -1098,7 +1098,7 @@ Lemma ops_of_input_singleton (input : IntegrateInput (A := A)) :
   ops_of_input input [in_content input] = [input].
 Proof.
   rewrite /ops_of_input /=.
-  destruct input as [o r c [cl ck]] => //.
+  destruct input as [o r c [client clock]] => //.
 Qed.
 
 Lemma integrate_all_singleton (i : IntegrateInput (A := A)) (arr : list (YjsItem A)) :
@@ -1138,16 +1138,16 @@ Qed.
     anchor, so the right-origin index and pointer shift under that form
     (issue #28 U7). *)
 Lemma findRightIdx_insert_shift arr (d : nat) (newit : YjsItem A)
-    (rid : option YjsId) (rightIdx : Z) :
+    (rightOriginId : option YjsId) (rightIdx : Z) :
   (d <= length arr)%nat ->
   (Z.of_nat d <= rightIdx)%Z ->
-  findRightIdx rid arr = Some rightIdx ->
+  findRightIdx rightOriginId arr = Some rightIdx ->
   (forall z, z ∈ arr -> item_id z ≠ item_id newit) ->
-  findRightIdx rid (take d arr ++ newit :: drop d arr) = Some (rightIdx + 1)%Z.
+  findRightIdx rightOriginId (take d arr ++ newit :: drop d arr) = Some (rightIdx + 1)%Z.
 Proof.
   move=> Hd Hdr Hri Hfresh.
   move: Hri. rewrite /findRightIdx.
-  destruct rid as [r_id|]; last first.
+  destruct rightOriginId as [r_id|]; last first.
   { move=> [= <-]. rewrite length_app /= length_take length_drop. f_equal. lia. }
   destruct (list_find (fun it => item_id it = r_id) arr) as [[k R]|] eqn:Hfind; last done.
   move=> [= HrIdx].

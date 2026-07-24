@@ -47,7 +47,7 @@ Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation Ev := (@Event Op).
-Local Notation DocM := (gmap TId (list (YjsItem A))).
+Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (** Per-char op expansion of a wire batch (issue #28 U7c), lifted here from
     [yjs_store_node] (which had defined it downstream). The pending-buffer
@@ -58,8 +58,8 @@ Local Notation DocM := (gmap TId (list (YjsItem A))).
     [expand_input] theory (lookup / length / singleton / chunk chaining) stays
     in [yjs_store_node]; only the two definitions live here so [own_store] and
     [store_inv_excl] can name them. *)
-Definition expand_input (ti : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
-  (λ op, (ti.1, op)) <$> ops_of_input ti.2 (explode (in_content ti.2)).
+Definition expand_input (typedInput : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
+  (λ op, (typedInput.1, op)) <$> ops_of_input typedInput.2 (explode (in_content typedInput.2)).
 
 Definition expand_inputs (inputs : list (TId * IntegrateInput (A := A))) : list (TId * IntegrateInput (A := A)) :=
   mjoin (expand_input <$> inputs).
@@ -691,14 +691,14 @@ Qed.
 (** A cell head's same-client left origin strictly precedes it in clock
     (causal creation order, issue #28 stage C1b): the premise of
     [block_query_head], which lets the scan's whole-run span query collapse
-    to [setfii_block_step]'s head-only accumulator test. Only the HEAD's
+    to [set_find_integration_block_step]'s head-only accumulator test. Only the HEAD's
     origin needs the invariant: tail chars' origins are in-run by [run_wf].
     Local inserts satisfy it by the clock counter; remote integrations by
     per-client causal delivery (the update batch's freshness bound). *)
 Definition cell_origin_clk (c : item_cell) : Prop :=
-  ∀ oid, origin_id (origin (run_head c)) = Some oid →
-    clientId oid = clientId (item_id (run_head c)) →
-    (clock oid < clock (item_id (run_head c)))%nat.
+  ∀ originId, origin_id (origin (run_head c)) = Some originId →
+    clientId originId = clientId (item_id (run_head c)) →
+    (clock originId < clock (item_id (run_head c)))%nat.
 
 Lemma originclk_snoc (pool1 pool2 : list item_cell) (c : item_cell) :
   pool2 ≡ₚ pool1 ++ [c] ->
@@ -976,8 +976,8 @@ Proof. rewrite /own_item_map. apply _. Qed.
 
 (* The DLL predicate stack is timeless too (heap points-to + pure + persistent
    origin handles); register the instances so [store_inv] is timeless. *)
-#[global] Instance is_origin_id_timeless p oid : Timeless (is_origin_id p oid).
-Proof. rewrite /is_origin_id. by destruct oid; apply _. Qed.
+#[global] Instance is_origin_id_timeless p originId : Timeless (is_origin_id p originId).
+Proof. rewrite /is_origin_id. by destruct originId; apply _. Qed.
 
 #[global] Instance own_dll_timeless dq l last prev next cells :
   Timeless (own_dll dq l last prev next cells).
@@ -998,10 +998,10 @@ Proof. rewrite /own_ytype_cells. apply _. Qed.
    The read lock hands each reader a fractional share of the read-only part of
    [store_inv] (its DLLs + the item-set auth). These make that share splittable:
    [own_dll] / [own_ytype_cells] are [Fractional] in their [DfracOwn q]. The
-   [⊣⊢]-backward direction needs the existential heap struct ([iv] / [yt]) and
+   [⊣⊢]-backward direction needs the existential heap struct ([itemVal] / [yt]) and
    the DLL tail loc ([tl]) to AGREE across the two shares; [own_dll_last_agree]
    supplies the [tl] agreement (both DLLs over the same cells end at the same
-   node); [iv]/[yt] agree by [pointsto] agreement. *)
+   node); [itemVal]/[yt] agree by [pointsto] agreement. *)
 #[global] Instance own_dll_fractional l last prev next cells :
   Fractional (λ q, own_dll (DfracOwn q) l last prev next cells).
 Proof.
@@ -1014,8 +1014,8 @@ Proof.
       iDestruct "Hval" as "[Hv1 Hv2]".
       iDestruct (IH with "Hrest") as "[Hr1 Hr2]".
       iSplitL "Hv1 Hr1".
-      * iExists iv, olid, orid. iFrame "Hv1 Holeft Horight Hr1". done.
-      * iExists iv, olid, orid. iFrame "Hv2 Holeft Horight Hr2". done.
+      * iExists itemVal, olid, orid. iFrame "Hv1 Holeft Horight Hr1". done.
+      * iExists itemVal, olid, orid. iFrame "Hv2 Holeft Horight Hr2". done.
     + iIntros "[H1 H2]".
       iDestruct "H1" as (iv1 olid1 orid1) "H1". iNamedSuffix "H1" "1".
       iDestruct "H2" as (iv2 olid2 orid2) "H2". iNamedSuffix "H2" "2".
@@ -1184,29 +1184,29 @@ Definition is_parent_name (p : loc) (opn : option go_string) : iProp Σ :=
 Global Instance is_parent_name_persistent p opn : Persistent (is_parent_name p opn).
 Proof. rewrite /is_parent_name. by destruct opn; apply _. Qed.
 
-(** [is_update_item uiv ti]: the decoded heap struct [uiv] (a [updateItem])
-    translates to the model doc-op payload [ti = (tid, input)] -- its id /
+(** [is_update_item updateItemVal typedInput]: the decoded heap struct [updateItemVal] (a [updateItem])
+    translates to the model doc-op payload [typedInput = (tid, input)] -- its id /
     content / both origin pointers map across (origins via [is_origin_id],
     persistent), its content is a nonempty run (issue #28 U7c: the single-char
     [Hulen = 1] restriction is dropped so a wire item can carry a whole run of
     chained per-char ops), and its decoded parent name
     (when present) is the name of the root type [tid] (issue #49; when absent
     the batch-level well-formedness pins [tid] through the origins). *)
-Definition is_update_item (uiv : yjs.updateItem.t)
-    (ti : TId * IntegrateInput (A := A)) : iProp Σ :=
+Definition is_update_item (updateItemVal : yjs.updateItem.t)
+    (typedInput : TId * IntegrateInput (A := A)) : iProp Σ :=
   ∃ (oleft oright : option yjs.id.t) (opn : option go_string),
-    "HisL" ∷ is_origin_id uiv.(yjs.updateItem.originLeftId') oleft ∗
-    "HisR" ∷ is_origin_id uiv.(yjs.updateItem.originRightId') oright ∗
-    "HisPN" ∷ is_parent_name uiv.(yjs.updateItem.parentName') opn ∗
-    "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId ti.2⌝ ∗
-    "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId ti.2⌝ ∗
-    "%Hin_id" ∷ ⌜toYjsId uiv.(yjs.updateItem.id') = in_id ti.2⌝ ∗
-    "%Hin_c" ∷ ⌜uiv.(yjs.updateItem.content') = in_content ti.2⌝ ∗
-    "%Hunonempty" ∷ ⌜(1 <= length uiv.(yjs.updateItem.content'))%nat⌝ ∗
-    "%Htid" ∷ ⌜∀ nm, opn = Some nm -> ti.1 = RootId nm⌝ ∗
-    "%Hborrow" ∷ ⌜opn = None -> in_originId ti.2 ≠ None ∨ in_rightOriginId ti.2 ≠ None⌝.
+    "HisL" ∷ is_origin_id updateItemVal.(yjs.updateItem.originLeftId') oleft ∗
+    "HisR" ∷ is_origin_id updateItemVal.(yjs.updateItem.originRightId') oright ∗
+    "HisPN" ∷ is_parent_name updateItemVal.(yjs.updateItem.parentName') opn ∗
+    "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId typedInput.2⌝ ∗
+    "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId typedInput.2⌝ ∗
+    "%Hin_id" ∷ ⌜toYjsId updateItemVal.(yjs.updateItem.id') = in_id typedInput.2⌝ ∗
+    "%Hin_c" ∷ ⌜updateItemVal.(yjs.updateItem.content') = in_content typedInput.2⌝ ∗
+    "%Hunonempty" ∷ ⌜(1 <= length updateItemVal.(yjs.updateItem.content'))%nat⌝ ∗
+    "%Htid" ∷ ⌜∀ nm, opn = Some nm -> typedInput.1 = RootId nm⌝ ∗
+    "%Hborrow" ∷ ⌜opn = None -> in_originId typedInput.2 ≠ None ∨ in_rightOriginId typedInput.2 ≠ None⌝.
 
-#[global] Instance is_update_item_persistent uiv ti : Persistent (is_update_item uiv ti).
+#[global] Instance is_update_item_persistent updateItemVal typedInput : Persistent (is_update_item updateItemVal typedInput).
 Proof. rewrite /is_update_item. apply _. Qed.
 
 (** [own_update_structs sl dq inputs]: the heap slice of decoded structs at [sl] (Go
@@ -1219,7 +1219,7 @@ Definition own_update_structs (sl : slice.t) (dq : dfrac)
   ∃ (uivs : list yjs.updateItem.t),
     "Hsl" ∷ sl ↦*{dq} uivs ∗
     "Hcap" ∷ own_slice_cap yjs.updateItem.t sl dq ∗
-    "Hitems" ∷ ([∗ list] uiv;ti ∈ uivs;inputs, is_update_item uiv ti).
+    "Hitems" ∷ ([∗ list] updateItemVal;typedInput ∈ uivs;inputs, is_update_item updateItemVal typedInput).
 
 
 (** [is_root γs name]: persistent witness that the root type [name] is
@@ -1243,20 +1243,20 @@ Proof. apply _. Qed.
     what is buffered. Lifted when [getOrCreateYType]'s miss branch enters the
     verified subset. *)
 Definition pending_item_rooted (γs : store_names)
-    (ti : TId * IntegrateInput (A := A)) : iProp Σ :=
-  if decide (in_originId ti.2 = None ∧ in_rightOriginId ti.2 = None)
-  then (∃ nm : P, ⌜ti.1 = RootId nm⌝ ∗ is_root γs nm)%I
+    (typedInput : TId * IntegrateInput (A := A)) : iProp Σ :=
+  if decide (in_originId typedInput.2 = None ∧ in_rightOriginId typedInput.2 = None)
+  then (∃ nm : P, ⌜typedInput.1 = RootId nm⌝ ∗ is_root γs nm)%I
   else True%I.
 
 Definition is_pending_rooted (γs : store_names)
     (pending : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  [∗ list] ti ∈ pending, pending_item_rooted γs ti.
+  [∗ list] typedInput ∈ pending, pending_item_rooted γs typedInput.
 
-#[global] Instance pending_item_rooted_persistent γs ti : Persistent (pending_item_rooted γs ti).
+#[global] Instance pending_item_rooted_persistent γs typedInput : Persistent (pending_item_rooted γs typedInput).
 Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
 #[global] Instance is_pending_rooted_persistent γs pending : Persistent (is_pending_rooted γs pending).
 Proof. apply _. Qed.
-#[global] Instance pending_item_rooted_timeless γs ti : Timeless (pending_item_rooted γs ti).
+#[global] Instance pending_item_rooted_timeless γs typedInput : Timeless (pending_item_rooted γs typedInput).
 Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
 #[global] Instance is_pending_rooted_timeless γs pending : Timeless (is_pending_rooted γs pending).
 Proof. apply _. Qed.
@@ -1283,7 +1283,7 @@ Qed.
 Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names)
     (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
     (pend_sl : slice.t)
-    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocM)
+    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
     "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
@@ -1300,8 +1300,8 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "#Hpendroot" ∷ is_pending_rooted γs pend ∗
-    "%Hpendbnd" ∷ ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ->
-                    (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z⌝ ∗
+    "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
+                    (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
     "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
@@ -1320,8 +1320,8 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "Hhist"   ∷ own_client_history γh (uint.nat client) h ∗
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
     "%Hmtypes" ∷ ⌜∀ name p ts, bind !! name = Some p → types !! p = Some ts →
-                    docm_get m (RootId name) = ty_arr ts⌝ ∗
-    "%Hmdom" ∷ ⌜∀ t, docm_get m t ≠ [] →
+                    doc_model_get m (RootId name) = ty_arr ts⌝ ∗
+    "%Hmdom" ∷ ⌜∀ t, doc_model_get m t ≠ [] →
                   ∃ name p, t = RootId name ∧ bind !! name = Some p⌝.
 
 #[global] Instance store_inv_ro_timeless γs types q : Timeless (store_inv_ro γs types q).
@@ -1352,7 +1352,7 @@ Proof. rewrite /store_inv_excl /own_update_structs /is_update_item. apply _. Qed
     exclusive ghost-history element [own_client_history] for the store's
     client. The history's replayed *doc model* [m] is coherent with the whole
     registry, not a single governed type ([history_state_coh h m], plus
-    [Hmtypes]: each registered type's [ty_arr] equals [docm_get m] at its
+    [Hmtypes]: each registered type's [ty_arr] equals [doc_model_get m] at its
     bound name).
 
     The body is [store_inv_excl] (the mutable-exclusive clauses, documented
@@ -1362,7 +1362,7 @@ Proof. rewrite /store_inv_excl /own_update_structs /is_update_item. apply _. Qed
 Definition store_inv (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
     (pend_sl : slice.t)
-    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocM)
+    (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))),
     "Hexcl" ∷ store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend ∗
     "Hro"   ∷ store_inv_ro γs types 1.
@@ -1520,6 +1520,31 @@ Definition is_root_lb (γs : store_names) (name : P) (S : gset (YjsItem A)) : iP
 #[global] Instance is_root_lb_persistent γs name S : Persistent (is_root_lb γs name S).
 Proof. apply _. Qed.
 
+(** [is_applied_root_lb γs applied m]: one monotone content certificate per
+    applied wire item (issue #97 names the [applyUpdate] postcondition). Each
+    applied tagged input targets a root [RootId name], and [name]'s full item
+    set in the post-delivery model [m] is a lower bound of the store's grow-only
+    content for that root. This is what [applyUpdate] hands back so the caller
+    learns "the store now contains at least this" per delivered root. *)
+Definition is_applied_root_lb (γs : store_names)
+    (applied : list (TId * IntegrateInput (A := A))) (m : DocModel) : iProp Σ :=
+  [∗ list] typedInput ∈ applied, ∃ name : P, ⌜typedInput.1 = RootId name⌝ ∗
+    is_root_lb γs name (list_to_set (doc_model_get m typedInput.1)).
+
+#[global] Instance is_applied_root_lb_persistent γs applied m :
+  Persistent (is_applied_root_lb γs applied m).
+Proof. rewrite /is_applied_root_lb. apply _. Qed.
+
+(** [inputs_rooted_in_bind inputs bind]: every origin-free tagged input targets
+    a root name that is already bound in [bind]. An op with neither a left nor a
+    right origin attaches directly under a registered root, so that root must
+    exist for the op to integrate. *)
+Definition inputs_rooted_in_bind (inputs : list (TId * IntegrateInput (A := A)))
+    (bind : gmap P loc) : Prop :=
+  ∀ typedInput, typedInput ∈ inputs ->
+    in_originId typedInput.2 = None -> in_rightOriginId typedInput.2 = None ->
+    ∃ name, typedInput.1 = RootId name ∧ is_Some (bind !! name).
+
 
 
 (** The store's *registry coherence*: the name->loc bindings [bind], the
@@ -1530,14 +1555,14 @@ Proof. apply _. Qed.
     [store_inv] maintains inline; naming it keeps [own_store] (and through
     it the [applyUpdate] spec) readable instead of a wall of raw quantified
     side conditions. *)
-Definition doc_registry_coh (m : DocM) (bind : gmap P loc)
+Definition doc_registry_coh (m : DocModel) (bind : gmap P loc)
     (types : gmap loc type_state) : Prop :=
   (∀ nm p, bind !! nm = Some p -> is_Some (types !! p)) /\
   (∀ n1 n2 p, bind !! n1 = Some p -> bind !! n2 = Some p -> n1 = n2) /\
   (∀ p, is_Some (types !! p) -> ∃ nm, bind !! nm = Some p) /\
   (∀ nm p ts, bind !! nm = Some p -> types !! p = Some ts ->
-     docm_get m (RootId nm) = ty_arr ts) /\
-  (∀ t, docm_get m t ≠ [] -> ∃ nm p, t = RootId nm /\ bind !! nm = Some p).
+     doc_model_get m (RootId nm) = ty_arr ts) /\
+  (∀ t, doc_model_get m t ≠ [] -> ∃ nm p, t = RootId nm /\ bind !! nm = Some p).
 
 (** [own_store s γs γh c h m]: the WHOLE lock-protected store state, as one
     exclusive predicate over its public model: this replica is client [c]
@@ -1554,7 +1579,7 @@ Definition doc_registry_coh (m : DocM) (bind : gmap P loc)
     carries ([Hcellctr]) is derivable from it plus the DLL id-bound pins
     (see [store_inv_own_store]), not a separate clause here. *)
 Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocM)
+    (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
     (pend_sl : slice.t)
@@ -1571,8 +1596,8 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "#Hpendroot" ∷ is_pending_rooted γs pend ∗
-    "%Hpendbnd" ∷ ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pend ->
-                    (Z.of_nat (clock (in_id ti.2)) + Z.of_nat (length (in_content ti.2)) < 2^64)%Z⌝ ∗
+    "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
+                    (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
     "Htypes"  ∷ ([∗ map] parent ↦ ts ∈ types,
                   own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
@@ -1582,7 +1607,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hhist"   ∷ own_client_history γh c h ∗
     "%Hregcoh" ∷ ⌜doc_registry_coh m bind types⌝ ∗
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
-    "%Hctr"   ∷ ⌜∀ (t : TId) x, x ∈ docm_get m t -> clientId (item_id x) = c ->
+    "%Hctr"   ∷ ⌜∀ (t : TId) x, x ∈ doc_model_get m t -> clientId (item_id x) = c ->
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
     (* part-6 pool invariants (issue #28): heap-level facts the model does not
        determine, so [own_store] carries them (store_inv ⊣⊢ ∃ own_store) *)
@@ -1807,7 +1832,7 @@ Proof.
                 sn_types_agree := γta |}).
   iModIntro. iExists γs.
   iExists client, k, items_mref, types_mref, dset, slice.nil, types, (∅ : gmap P loc),
-    ([] : list Ev), (∅ : DocM), ([] : list (TId * IntegrateInput (A := A))).
+    ([] : list Ev), (∅ : DocModel), ([] : list (TId * IntegrateInput (A := A))).
   iSplitR "Hseq"; last first.
   { (* store_inv_ro over the empty types map *)
     iFrame "Hseq". rewrite /types big_sepM_empty //. }
@@ -1832,7 +1857,7 @@ Proof.
   iSplitR.
   { rewrite /is_pending_rooted big_sepL_nil //. }
   iSplitR.
-  { iPureIntro. move=> ti Hin. by apply elem_of_nil in Hin. }
+  { iPureIntro. move=> typedInput Hin. by apply elem_of_nil in Hin. }
   iSplitR. { iPureIntro. move=> parent' ts' x Hlk. rewrite /types lookup_empty // in Hlk. }
   iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
@@ -1850,7 +1875,7 @@ Proof.
   - move=> p' [ts' Hlk]. rewrite /types lookup_empty // in Hlk.
   - exact history_state_coh_nil.
   - move=> name p' ts' Hlk. rewrite lookup_empty // in Hlk.
-  - move=> t Hne. exfalso. apply Hne. rewrite /docm_get lookup_empty //.
+  - move=> t Hne. exfalso. apply Hne. rewrite /doc_model_get lookup_empty //.
 Qed.
 
 End store.

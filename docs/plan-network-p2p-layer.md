@@ -397,7 +397,7 @@ minimal witness).
 The route: weaken `hwf_causal_delivery` (equivalently the model's
 `causal_delivery` axiom) from hb-past coverage to **`deps`-past coverage**
 (transitive closure of origin/rightOrigin/author-predecessor edges), and
-re-prove the iris-yjs network-level convergence (`effect_list_reorder` and
+re-prove the rocq-yjs network-level convergence (`effect_list_reorder` and
 everything above it) under delivery orders that are `deps`-consistent but not
 hb-consistent. Consequences worth recording now:
 
@@ -419,7 +419,7 @@ hb-consistent. Consequences worth recording now:
   so the exercise has ecosystem value beyond our deployment. It is also where
   a genuinely new counterexample would surface if the folklore is wrong.
 
-Substantial lean-yjs/iris-yjs work — its own upstream project, sequenced
+Substantial lean-yjs/rocq-yjs work — its own upstream project, sequenced
 **after** the star line (the guard toolkit and two-replica demo here, the
 in-process hub in the protocol doc) proves the covered-case system end to end.
 Until then the star deployment needs none of it; after it, the pending-buffer

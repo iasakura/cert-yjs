@@ -8,7 +8,7 @@
       the model);
     - the heap-node record [item_cell] and the cursor helper [node_loc];
     - the persistent origin-pointer predicate [is_origin_id];
-    - the item-pointer helpers [oid_of] / [item_or_null];
+    - the item-pointer helpers [originId_of] / [item_or_null];
     - the id-span-slice abstraction [own_id_set] (a heap [[]idSpan] as a
       [gset YjsId] of char ids, issue #28).
 
@@ -69,7 +69,7 @@ Fixpoint YjsItem_dec (t : gen_tree leaf) : option (YjsItem A) :=
   end
 with YjsPtr_dec (t : gen_tree leaf) : option (YjsPtr A) :=
   match t with
-  | GenNode 1 [ti] => match YjsItem_dec ti with Some i => Some (itemPtr i) | None => None end
+  | GenNode 1 [child] => match YjsItem_dec child with Some i => Some (itemPtr i) | None => None end
   | GenNode 2 [] => Some First
   | GenNode 3 [] => Some Last
   | _ => None
@@ -190,12 +190,12 @@ Qed.
     produces (issue #28 U7): consecutive ids under one (client, clock+·)
     ladder, the tail chaining off the previous element, everything sharing
     the head's right origin. *)
-Lemma run_wf_of_chain (h : YjsItem A) (news : list (YjsItem A)) (cl ck : nat)
+Lemma run_wf_of_chain (h : YjsItem A) (news : list (YjsItem A)) (client clock : nat)
     (rp : YjsPtr A) :
-  item_id h = MkYjsId cl ck ->
+  item_id h = MkYjsId client clock ->
   rightOrigin h = rp ->
   (∀ (k : nat) (it : YjsItem A), news !! k = Some it ->
-     item_id it = MkYjsId cl (ck + S k)%nat ∧ rightOrigin it = rp ∧
+     item_id it = MkYjsId client (clock + S k)%nat ∧ rightOrigin it = rp ∧
      (k = 0%nat -> origin it = itemPtr h) ∧
      (∀ (k' : nat) (itp : YjsItem A), k = S k' -> news !! k' = Some itp ->
         origin it = itemPtr itp)) ->
@@ -247,7 +247,7 @@ Lemma run_wf_lookup_clock (r : list (YjsItem A)) (o : nat) (x y : YjsItem A) :
 Proof.
   move=> [_ Hstep] Hx. revert y. induction o as [|o IH] => y Hy.
   - rewrite Hx in Hy. injection Hy as <-. rewrite Nat.add_0_r.
-    destruct (item_id x) as [cl ck]; done.
+    destruct (item_id x) as [client clock]; done.
   - have [z Hz] : is_Some (r !! o).
     { apply lookup_lt_is_Some. apply lookup_lt_Some in Hy. lia. }
     have [Hidy _] := Hstep o z y Hz Hy.
@@ -317,7 +317,7 @@ Qed.
 
 (** Advancing the cell cursor by one appends that cell's whole run to the
     flattened prefix. The scan steps NODE by node while the model steps CHAR
-    by char, so a cursor over cells couples to a [setfii_loop] offset over
+    by char, so a cursor over cells couples to a [set_find_integration_loop] offset over
     chars via these prefix sums. *)
 Lemma run_flatten_take_S (cells : list item_cell) (cur : nat) (ci : item_cell) :
   cells !! cur = Some ci ->
@@ -328,7 +328,7 @@ Proof.
 Qed.
 
 (** The chars of the cell at the cursor sit at consecutive model indices
-    starting at the flattened-prefix length — [setfii_block_step]'s [Hlook]
+    starting at the flattened-prefix length — [set_find_integration_block_step]'s [Hlook]
     premise, read off [cells_repr]'s [arr = run_flatten cells]. *)
 Lemma run_flatten_take_lookup (cells : list item_cell) (cur : nat) (ci : item_cell)
     (k : nat) (y : YjsItem A) :
@@ -412,20 +412,20 @@ Definition node_loc (cells : list item_cell) (k : Z) : loc :=
 
 (** An origin pointer is either null (no origin) or a read-only [Id] cell.
     Origins are immutable once integrated, hence persistent ([↦□]). *)
-Definition is_origin_id (p : loc) (oid : option yjs.id.t) : iProp Σ :=
-  match oid with
+Definition is_origin_id (p : loc) (originId : option yjs.id.t) : iProp Σ :=
+  match originId with
   | None => ⌜p = null⌝
   | Some idv => ⌜p ≠ null⌝ ∗ p ↦□ idv
   end.
 
 (** Origins are read-only, hence the predicate is persistent. *)
-Global Instance is_origin_id_persistent p oid : Persistent (is_origin_id p oid).
-Proof. rewrite /is_origin_id. by destruct oid; apply _. Qed.
+Global Instance is_origin_id_persistent p originId : Persistent (is_origin_id p originId).
+Proof. rewrite /is_origin_id. by destruct originId; apply _. Qed.
 
 (* ----- item-pointer helpers --------------------------------------------- *)
 
-(** A heap item pointer is null or owns a node; [oid_of] is its model id. *)
-Definition oid_of (ov : option yjs.item.t) : option YjsId :=
+(** A heap item pointer is null or owns a node; [originId_of] is its model id. *)
+Definition originId_of (ov : option yjs.item.t) : option YjsId :=
   (λ v, toYjsId v.(yjs.item.id')) <$> ov.
 
 Definition item_or_null (p : loc) (ov : option yjs.item.t) (dq : dfrac) : iProp Σ :=

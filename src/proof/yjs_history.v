@@ -40,7 +40,7 @@ Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation opid := (DocOp_id (A := A) (P := P)).
 Local Notation Ev := (@Event Op).
 Local Notation RawHistories := (gmap ClientId (list Ev)).
-Local Notation DocM := (gmap TId (list (YjsItem A))).
+Local Notation DocModel := (gmap TId (list (YjsItem A))).
 (** The per-replica history RA: an authoritative map of mono-lists, ONE
     gname for everything history-shaped. The outer [auth] ties the whole map
     [N] to the invariant (membership + agreement); each client's inner
@@ -118,7 +118,7 @@ Definition is_op_cert (γh : history_names) (op : Op) : iProp Σ :=
     freshness, or receiver-relative condition. *)
 Definition is_pending_certified (γh : history_names)
     (pending : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  [∗ list] ti ∈ pending, is_op_cert γh (ti.1, OpInsert ti.2).
+  [∗ list] typedInput ∈ pending, is_op_cert γh (typedInput.1, OpInsert typedInput.2).
 
 #[global] Instance history_inv_timeless γh : Timeless (history_inv γh).
 Proof. apply _. Qed.
@@ -289,16 +289,16 @@ Qed.
     own history and register the op. Preconditions = the broadcast step's
     hypotheses, all available inside [wp_Text__Insert]'s loop at the call
     site; the clock bound is doc-global (all types, issue #49). *)
-Lemma history_broadcast γh (c k : nat) h (m : DocM) (t0 : TId)
+Lemma history_broadcast γh (c k : nat) h (m : DocModel) (t0 : TId)
     (arr' : list (YjsItem A)) (input : IntegrateInput (A := A)) (item : YjsItem A) E :
   ↑histN ⊆ E ->
-  toItem input (docm_get m t0) = Some item ->
+  toItem input (doc_model_get m t0) = Some item ->
   IsItemValid item ->
-  maximalId item (docm_get m t0) ->
+  maximalId item (doc_model_get m t0) ->
   in_id input = MkYjsId c k ->
-  (∀ (t : TId) x, x ∈ docm_get m t -> clientId (item_id x) = c ->
+  (∀ (t : TId) x, x ∈ doc_model_get m t -> clientId (item_id x) = c ->
      (clock (item_id x) < k)%nat) ->
-  integrate input (docm_get m t0) = Some arr' ->
+  integrate input (doc_model_get m t0) = Some arr' ->
   history_state_coh h m ->
   is_history γh -∗ own_client_history γh c h ={E}=∗
     own_client_history γh c
@@ -343,8 +343,8 @@ Qed.
     return the [ValidReplay] the heap-level proof consumes. The ONLY
     obligation on the pending is per-op certification: no ordering, causal
     closure, freshness, or receiver-relative condition. *)
-Lemma history_deliver_pending γh (c : ClientId) h (m : DocM)
-    (pending applied rest : list (TId * IntegrateInput (A := A))) (m' : DocM) E :
+Lemma history_deliver_pending γh (c : ClientId) h (m : DocModel)
+    (pending applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel) E :
   ↑histN ⊆ E ->
   pending_drain m pending = (applied, rest, m') ->
   history_state_coh h m ->
@@ -354,27 +354,26 @@ Lemma history_deliver_pending γh (c : ClientId) h (m : DocM)
     is_history_lb γh c (h ++ (deliver_ev <$> applied)) ∗
     ⌜ValidReplay applied m m'⌝ ∗
     ⌜history_state_coh (h ++ (deliver_ev <$> applied)) m'⌝ ∗
-    ⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
-       clientId (in_id ti.2) ≠ c⌝.
+    ⌜inputs_not_from applied c⌝.
 Proof.
   iIntros (HE Hdrain Hcoh) "#Hinv Hown #Hcertsin".
   iInv "Hinv" as ">H" "Hclose". iNamed "H".
   iDestruct (hist_auth_elem_lookup with "HhistAuth Hown") as %HNc.
-  iAssert (⌜∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
-             ops !! (in_id ti.2) = Some ((ti.1, OpInsert ti.2) : Op)⌝)%I as %Hlk.
-  { iIntros (ti Hin).
+  iAssert (⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pending ->
+             ops !! (in_id typedInput.2) = Some ((typedInput.1, OpInsert typedInput.2) : Op)⌝)%I as %Hlk.
+  { iIntros (typedInput Hin).
     destruct (list_elem_of_lookup_1 _ _ Hin) as (i & Hi).
     iDestruct (big_sepL_lookup _ _ i with "Hcertsin") as "Hc"; [exact Hi |].
     iApply (ghost_map_lookup with "HopsAuth Hc"). }
-  have Hbc : ∀ ti : TId * IntegrateInput (A := A), ti ∈ pending ->
-      op_broadcast N (ti.1, OpInsert ti.2).
-  { move=> ti Hin. destruct Hopscoh as [Hc1 _].
-    have [_ Hreg] := Hc1 _ _ (Hlk ti Hin).
-    exists (clientId (opid ((ti.1, OpInsert ti.2) : Op))). exact Hreg. }
+  have Hbc : ∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pending ->
+      op_broadcast N (typedInput.1, OpInsert typedInput.2).
+  { move=> typedInput Hin. destruct Hopscoh as [Hc1 _].
+    have [_ Hreg] := Hc1 _ _ (Hlk typedInput Hin).
+    exists (clientId (opid ((typedInput.1, OpInsert typedInput.2) : Op))). exact Hreg. }
   have Happsub := proj1 (pending_drain_subset m pending applied rest m' Hdrain).
-  have Hbcapp : ∀ ti : TId * IntegrateInput (A := A), ti ∈ applied ->
-      op_broadcast N (ti.1, OpInsert ti.2).
-  { move=> ti Hin. exact (Hbc ti (Happsub ti Hin)). }
+  have Hbcapp : ∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ applied ->
+      op_broadcast N (typedInput.1, OpInsert typedInput.2).
+  { move=> typedInput Hin. exact (Hbc typedInput (Happsub typedInput Hin)). }
   pose proof (pending_ValidReplay N c h m applied m' Hwf HNc Hcoh Hbcapp
                 (pending_drain_replay m pending applied rest m' Hdrain))
     as (Hvr & Hcoh' & Hwf' & Hnoc).
@@ -385,7 +384,7 @@ Proof.
     iPureIntro. split; [exact Hwf' |].
     apply (ops_coh_deliver_tail N c h ops _ Hwf HNc); [| exact Hopscoh].
     move=> e He. move: He. rewrite list_elem_of_fmap.
-    move=> [ti [Heq _]]. rewrite /deliver_ev in Heq. discriminate.
+    move=> [typedInput [Heq _]]. rewrite /deliver_ev in Heq. discriminate.
   }
   iModIntro. iFrame "Hown Hlb".
   iPureIntro. split_and!; [exact Hvr | exact Hcoh' | exact Hnoc].
@@ -416,9 +415,9 @@ Proof.
   iDestruct "Helems" as "[H1 H2]".
   set (input := MkIntegrateInput (A := A) None None a (MkYjsId c1 0)).
   set (item := Item (A := A) First Last (MkYjsId c1 0) a).
-  have Hnilget : ∀ t' : TId, docm_get (∅ : DocM) t' = []
-    by move=> t'; rewrite /docm_get lookup_empty.
-  have Htoitem : toItem input (docm_get (∅ : DocM) t) = Some item
+  have Hnilget : ∀ t' : TId, doc_model_get (∅ : DocModel) t' = []
+    by move=> t'; rewrite /doc_model_get lookup_empty.
+  have Htoitem : toItem input (doc_model_get (∅ : DocModel) t) = Some item
     by rewrite Hnilget.
   have Hvalid : IsItemValid item.
   { split.
@@ -429,21 +428,21 @@ Proof.
       + inversion Hstep; subst;
           inversion Hreach as [x1 y1 Hstep2 | x1 y1 z1 Hstep2 ?]; subst;
           inversion Hstep2. }
-  have Hmax : maximalId item (docm_get (∅ : DocM) t).
+  have Hmax : maximalId item (doc_model_get (∅ : DocModel) t).
   { rewrite Hnilget. move=> x Hx. exfalso. move: Hx. rewrite /ArrSet /= elem_of_nil //. }
-  have Hint : integrate input (docm_get (∅ : DocM) t) = Some [item]
+  have Hint : integrate input (doc_model_get (∅ : DocModel) t) = Some [item]
     by rewrite Hnilget; vm_compute.
-  have Hbound : ∀ (t' : TId) (x : YjsItem A), x ∈ docm_get (∅ : DocM) t' ->
+  have Hbound : ∀ (t' : TId) (x : YjsItem A), x ∈ doc_model_get (∅ : DocModel) t' ->
       clientId (item_id x) = c1 -> (clock (item_id x) < 0)%nat.
   { move=> t' x Hx. exfalso. move: Hx. rewrite Hnilget elem_of_nil //. }
   iMod (history_broadcast γh c1 0%nat [] ∅ t [item] input item E HE
           Htoitem Hvalid Hmax eq_refl Hbound Hint history_state_coh_nil
           with "Hinv H1") as "(H1 & #Hlb1 & #Hcert & %Hcoh1)".
   (* client 2 receives the op as a one-struct pending: the drain applies it *)
-  have Hdmh : docm_has (∅ : DocM) (in_id input) = false.
-  { rewrite /docm_has map_to_list_empty //. }
-  have Hdrain : pending_drain (∅ : DocM) [(t, input)]
-              = ([(t, input)], [], <[t := [item]]> (∅ : DocM)).
+  have Hdmh : doc_model_has (∅ : DocModel) (in_id input) = false.
+  { rewrite /doc_model_has map_to_list_empty //. }
+  have Hdrain : pending_drain (∅ : DocModel) [(t, input)]
+              = ([(t, input)], [], <[t := [item]]> (∅ : DocModel)).
   { rewrite /pending_drain /= Hdmh /= Hint //=. }
   iMod (history_deliver_pending γh c2 [] ∅ [(t, input)] [(t, input)] []
           (<[t := [item]]> ∅) E HE Hdrain history_state_coh_nil

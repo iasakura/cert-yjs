@@ -112,7 +112,7 @@ Per the paper (§5, p.188:8) and `model.v`, a CRDT instance supplies:
 Steps 1–3 are meta-level Coq; only step 4 is in separation logic. A Yjs instance
 would be one new `examples/yjs/` dir reusing all of `crdt/spec`, `crdt/oplib`,
 and `rcb`, with the single nontrivial obligation being `OpCrdtEffectCoh` for
-`integrate` — which reduces to iris-yjs's `hb_consistent_effect_convergent` plus
+`integrate` — which reduces to rocq-yjs's `hb_consistent_effect_convergent` plus
 the causal-closure bridge.
 
 ---
@@ -136,7 +136,7 @@ the user prove commutativity?".
   already delivered* — the precondition that makes `integrate` well-defined.
 - **The actual mechanical proof** is a lock invariant *"physical state =
   ⟦processed set⟧"* (§5.3, p.188:20), re-established at every effect step.
-- **For Yjs specifically, the hard part is already done in iris-yjs**
+- **For Yjs specifically, the hard part is already done in rocq-yjs**
   (`hb_consistent_effect_convergent`, `integrate_commutative`). cert-yjs reuses
   it; the residual obligation is bridging the generic broadcast `Valid` to Yjs's
   structural well-formedness (origins resolvable / causal closure).

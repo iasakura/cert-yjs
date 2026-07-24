@@ -362,7 +362,7 @@ are needed, both Iris-free, both about the existing `integrate`/`setintegrate`:
 
 Home: develop these next to `yjs_core` in cert-yjs first (fast iteration),
 upstream to rocq-yjs once stable (same flow as the deliver_locally fix).
-Nothing here exists in lean-yjs or iris-yjs; it is the "genuinely novel
+Nothing here exists in lean-yjs or rocq-yjs; it is the "genuinely novel
 formalization" the roadmap anticipated for item ⑤.
 
 ### 3.7 Out of scope, recorded

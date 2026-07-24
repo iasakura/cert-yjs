@@ -101,7 +101,7 @@ ytype → history → store → text` (where `store` is a `Require Export` facad
 over `store_base → store_integrate → store_update`; downstream files import
 only the facade) and reopen the same `Section` boilerplate:
 
-- `yjs_core.v` — re-exports the `rocq-yjs` / `iris-yjs` library (pure
+- `yjs_core.v` — re-exports the `rocq-yjs` library (pure
   `integrate` / `setintegrate` model and its order theory).
 - `yjs_common.v` — shared base: scalar abstractions (`toYjsId` / `toContent`),
   `item_cell` / `node_loc`, `own_id_set`, the package-init instances
