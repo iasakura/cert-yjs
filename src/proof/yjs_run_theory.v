@@ -1003,18 +1003,18 @@ Qed.
 
 (* ===== the per-char ops of a multi-element wire item (issue #28 U7) ====== *)
 
-(** [ops_from cl ck originId rightOriginId chars]: the per-char ops of a run of [chars]
-    minted by client [cl] from clock [ck]: char [k] gets id [(cl, ck + k)],
+(** [ops_from client clock originId rightOriginId chars]: the per-char ops of a run of [chars]
+    minted by client [client] from clock [clock]: char [k] gets id [(client, clock + k)],
     the first op keeps the wire left origin [originId], each later op chains off
     the previous char, and every op shares the wire right origin [rightOriginId]
     (y-octo run semantics, the same shape [Text.Insert]'s loop mints). *)
-Fixpoint ops_from (cl ck : nat) (originId rightOriginId : option YjsId) (chars : list A) :
+Fixpoint ops_from (client clock : nat) (originId rightOriginId : option YjsId) (chars : list A) :
     list (IntegrateInput (A := A)) :=
   match chars with
   | [] => []
   | ch :: rest =>
-      MkIntegrateInput originId rightOriginId ch (MkYjsId cl ck)
-        :: ops_from cl (S ck) (Some (MkYjsId cl ck)) rightOriginId rest
+      MkIntegrateInput originId rightOriginId ch (MkYjsId client clock)
+        :: ops_from client (S clock) (Some (MkYjsId client clock)) rightOriginId rest
   end.
 
 (** The ops a wire item [input] denotes when its content splits into
@@ -1024,30 +1024,30 @@ Definition ops_of_input (input : IntegrateInput (A := A)) (chars : list A) :
   ops_from (clientId (in_id input)) (clock (in_id input))
            (in_originId input) (in_rightOriginId input) chars.
 
-Lemma ops_from_length cl ck originId rightOriginId (chars : list A) :
-  length (ops_from cl ck originId rightOriginId chars) = length chars.
+Lemma ops_from_length client clock originId rightOriginId (chars : list A) :
+  length (ops_from client clock originId rightOriginId chars) = length chars.
 Proof.
-  elim: chars cl ck originId rightOriginId => [| ch chars IH] cl ck originId rightOriginId; simpl; [done |].
+  elim: chars client clock originId rightOriginId => [| ch chars IH] client clock originId rightOriginId; simpl; [done |].
   rewrite IH //.
 Qed.
 
 (** Per-op field facts, by position. *)
-Lemma ops_from_lookup cl ck originId rightOriginId (chars : list A) (k : nat)
+Lemma ops_from_lookup client clock originId rightOriginId (chars : list A) (k : nat)
     (op : IntegrateInput (A := A)) :
-  ops_from cl ck originId rightOriginId chars !! k = Some op ->
-  in_id op = MkYjsId cl (ck + k)%nat ∧
+  ops_from client clock originId rightOriginId chars !! k = Some op ->
+  in_id op = MkYjsId client (clock + k)%nat ∧
   in_rightOriginId op = rightOriginId ∧
   chars !! k = Some (in_content op) ∧
   (k = 0%nat -> in_originId op = originId) ∧
-  (forall k', k = S k' -> in_originId op = Some (MkYjsId cl (ck + k')%nat)).
+  (forall k', k = S k' -> in_originId op = Some (MkYjsId client (clock + k')%nat)).
 Proof.
-  elim: chars cl ck originId rightOriginId k op => [| ch chars IH] cl ck originId rightOriginId k op; simpl;
+  elim: chars client clock originId rightOriginId k op => [| ch chars IH] client clock originId rightOriginId k op; simpl;
     first by rewrite lookup_nil.
   destruct k as [| k].
   - move=> [= <-]. simpl.
     split_and!; [by rewrite Nat.add_0_r | done | done | done | lia].
   - move=> Hk.
-    destruct (IH cl (S ck) (Some (MkYjsId cl ck)) rightOriginId k op Hk)
+    destruct (IH client (S clock) (Some (MkYjsId client clock)) rightOriginId k op Hk)
       as (Hid & Hrid & Hch & Ho0 & Hos).
     split_and!.
     + rewrite Hid. f_equal. lia.
@@ -1061,24 +1061,24 @@ Proof.
 Qed.
 
 (** The whole run is [chained_after] whatever the head origin names. *)
-Lemma ops_from_chained cl ck (prev : YjsId) rightOriginId (chars : list A) :
-  chained_after prev rightOriginId (ops_from cl ck (Some prev) rightOriginId chars).
+Lemma ops_from_chained client clock (prev : YjsId) rightOriginId (chars : list A) :
+  chained_after prev rightOriginId (ops_from client clock (Some prev) rightOriginId chars).
 Proof.
-  elim: chars ck prev => [| ch chars IH] ck prev; first done.
-  simpl. split_and!; [done | done | exact (IH (S ck) (MkYjsId cl ck))].
+  elim: chars clock prev => [| ch chars IH] clock prev; first done.
+  simpl. split_and!; [done | done | exact (IH (S clock) (MkYjsId client clock))].
 Qed.
 
 (** The minted ids are pairwise distinct (consecutive clocks). *)
-Lemma ops_from_ids_nodup cl ck originId rightOriginId (chars : list A) :
-  NoDup (input_ids (ops_from cl ck originId rightOriginId chars)).
+Lemma ops_from_ids_nodup client startClock originId rightOriginId (chars : list A) :
+  NoDup (input_ids (ops_from client startClock originId rightOriginId chars)).
 Proof.
   have Hgen : forall (l : list A) (ck0 : nat) (oid0 : option YjsId),
-      NoDup (input_ids (ops_from cl ck0 oid0 rightOriginId l)) ∧
-      (forall idx inp, ops_from cl ck0 oid0 rightOriginId l !! idx = Some inp ->
+      NoDup (input_ids (ops_from client ck0 oid0 rightOriginId l)) ∧
+      (forall idx inp, ops_from client ck0 oid0 rightOriginId l !! idx = Some inp ->
          (ck0 <= clock (in_id inp))%nat).
   { elim => [| ch l IHl] ck0 oid0.
     - split; [apply NoDup_nil; done | by move=> idx inp; rewrite lookup_nil].
-    - destruct (IHl (S ck0) (Some (MkYjsId cl ck0))) as [Hnd Hlb].
+    - destruct (IHl (S ck0) (Some (MkYjsId client ck0))) as [Hnd Hlb].
       split.
       + rewrite /input_ids fmap_cons. apply NoDup_cons. split; last exact Hnd.
         move=> Hin. apply list_elem_of_fmap in Hin as (inp & Heq & Hinp).
@@ -1089,7 +1089,7 @@ Proof.
       + move=> idx inp. destruct idx as [| idx].
         * move=> [= <-]. simpl. lia.
         * move=> Hidx. have := Hlb idx inp Hidx. simpl. lia. }
-  exact (proj1 (Hgen chars ck originId)).
+  exact (proj1 (Hgen chars startClock originId)).
 Qed.
 
 (** The 1-char bridge: a single-char wire item denotes exactly itself, and
@@ -1098,7 +1098,7 @@ Lemma ops_of_input_singleton (input : IntegrateInput (A := A)) :
   ops_of_input input [in_content input] = [input].
 Proof.
   rewrite /ops_of_input /=.
-  destruct input as [o r c [cl ck]] => //.
+  destruct input as [o r c [client clock]] => //.
 Qed.
 
 Lemma integrate_all_singleton (i : IntegrateInput (A := A)) (arr : list (YjsItem A)) :

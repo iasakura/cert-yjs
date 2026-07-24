@@ -1820,15 +1820,15 @@ Proof.
         first apply lookup_insert_eq.
       rewrite delete_insert_eq.
       iDestruct "Htext" as (yt2 tl2) "(Hparent & Hdll & %Hlen2 & %Hrepr2 & %Hcpar2)".
-      set (cl := split_cell_left cq (uint.nat rem)).
-      have Hcl2 : cells2 !! q = Some cl
+      set (leftCell := split_cell_left cq (uint.nat rem)).
+      have Hcl2 : cells2 !! q = Some leftCell
         := split_cells_lookup_left cells' q (uint.nat rem) rloc cq Hcq.
-      iDestruct (own_dll_update_gen cells2 yt2.(yjs.yType.start') tl2 q cl Hcl2 with "Hdll")
+      iDestruct (own_dll_update_gen cells2 yt2.(yjs.yType.start') tl2 q leftCell Hcl2 with "Hdll")
         as (iv2) "(%Hcloc2 & %Hcr2 & %Hflags2 & %Hrunwf2 & %Hcontq2 & Hcval & Hback)".
-      have Hcllocq : ic_loc cl = ic_loc cq by rewrite /cl //.
-      have Hcldel : ic_deleted cl = false by rewrite /cl /= Hdq //.
-      have Hlenl : length (ic_run cl) = uint.nat rem.
-      { rewrite /cl /= length_take. lia. }
+      have Hcllocq : ic_loc leftCell = ic_loc cq by rewrite /leftCell //.
+      have Hcldel : ic_deleted leftCell = false by rewrite /leftCell /= Hdq //.
+      have Hlenl : length (ic_run leftCell) = uint.nat rem.
+      { rewrite /leftCell /= length_take. lia. }
       have Hlenl2 : length (iv2.(yjs.item.content').(yjs.content.content')) = uint.nat rem.
       { have Hleq := f_equal length Hcontq2.
         rewrite length_fmap explode_length /toContent in Hleq. rewrite -Hlenl. lia. }
@@ -1844,18 +1844,18 @@ Proof.
         by rewrite Hflags2 Hcldel //.
       iDestruct ("Hback" $! (set_deleted iv2) true eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl
                    eq_refl (set_deleted_flags iv2 false Hflagspin2) with "Hcval") as "Hdll".
-      have Hflip2 : MkItemCell cl.(ic_loc) cl.(ic_run) true cl.(ic_parent) = flip_cell cl by reflexivity.
+      have Hflip2 : MkItemCell leftCell.(ic_loc) leftCell.(ic_run) true leftCell.(ic_parent) = flip_cell leftCell by reflexivity.
       rewrite Hflip2.
       wp_for_post.
       (* invariant at S q over the flipped split list *)
-      set (cells3 := <[q := flip_cell cl]> cells2).
+      set (cells3 := <[q := flip_cell leftCell]> cells2).
       have Hnv2 : num_visible cells2 = num_visible cells'
         := split_cells_num_visible cells' q (uint.nat rem) rloc cq Hcq.
       have Hnvge : (uint.nat rem <= num_visible cells2)%nat.
-      { rewrite /num_visible -(take_drop_middle cells2 q cl Hcl2) fmap_app list_sum_app fmap_cons /=.
+      { rewrite /num_visible -(take_drop_middle cells2 q leftCell Hcl2) fmap_app list_sum_app fmap_cons /=.
         rewrite Hcldel Hlenl. lia. }
       have Hnv3 : num_visible cells3 = (num_visible cells2 - uint.nat rem)%nat.
-      { rewrite /cells3 (num_visible_flip_run cells2 q cl Hcl2 Hcldel) Hlenl //. }
+      { rewrite /cells3 (num_visible_flip_run cells2 q leftCell Hcl2 Hcldel) Hlenl //. }
       (* the flip is (loc, run)-invisible: transport the pool facts *)
       have Hlreq3 : (λ c0, (ic_loc c0, ic_run c0)) <$> cells3 = (λ c0, (ic_loc c0, ic_run c0)) <$> cells2.
       { rewrite /cells3 list_fmap_insert /flip_cell /=.
@@ -1890,7 +1890,7 @@ Proof.
         have Hnvle := Hnvge.
         simpl. word.
       * rewrite /cells3.
-        apply (cells_repr_update_run ts.(ty_arr) cells2 ts.(ty_arr) q cl (flip_cell cl) Hcl2 eq_refl).
+        apply (cells_repr_update_run ts.(ty_arr) cells2 ts.(ty_arr) q leftCell (flip_cell leftCell) Hcl2 eq_refl).
         rewrite /cells2 /cells_repr (split_cells_flatten cells' q (uint.nat rem) rloc cq Hcq).
         exact Hrepr'.
       * move=> c0 Hc0.
@@ -1898,7 +1898,7 @@ Proof.
         rewrite /cells3 in Hi0.
         destruct (decide (i0 = q)) as [-> | Hne0].
         { rewrite list_lookup_insert_eq in Hi0; last (apply lookup_lt_Some in Hcl2; exact Hcl2).
-          injection Hi0 as <-. rewrite /flip_cell /cl /= //.
+          injection Hi0 as <-. rewrite /flip_cell /leftCell /= //.
           exact (Hcparj cq (list_elem_of_lookup_2 _ _ _ Hcq)). }
         { rewrite list_lookup_insert_ne in Hi0; last congruence.
           have Hc0mem : c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells2 ts.(ty_arr)]> types).

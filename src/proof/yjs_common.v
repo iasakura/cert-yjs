@@ -190,12 +190,12 @@ Qed.
     produces (issue #28 U7): consecutive ids under one (client, clock+·)
     ladder, the tail chaining off the previous element, everything sharing
     the head's right origin. *)
-Lemma run_wf_of_chain (h : YjsItem A) (news : list (YjsItem A)) (cl ck : nat)
+Lemma run_wf_of_chain (h : YjsItem A) (news : list (YjsItem A)) (client clock : nat)
     (rp : YjsPtr A) :
-  item_id h = MkYjsId cl ck ->
+  item_id h = MkYjsId client clock ->
   rightOrigin h = rp ->
   (∀ (k : nat) (it : YjsItem A), news !! k = Some it ->
-     item_id it = MkYjsId cl (ck + S k)%nat ∧ rightOrigin it = rp ∧
+     item_id it = MkYjsId client (clock + S k)%nat ∧ rightOrigin it = rp ∧
      (k = 0%nat -> origin it = itemPtr h) ∧
      (∀ (k' : nat) (itp : YjsItem A), k = S k' -> news !! k' = Some itp ->
         origin it = itemPtr itp)) ->
@@ -247,7 +247,7 @@ Lemma run_wf_lookup_clock (r : list (YjsItem A)) (o : nat) (x y : YjsItem A) :
 Proof.
   move=> [_ Hstep] Hx. revert y. induction o as [|o IH] => y Hy.
   - rewrite Hx in Hy. injection Hy as <-. rewrite Nat.add_0_r.
-    destruct (item_id x) as [cl ck]; done.
+    destruct (item_id x) as [client clock]; done.
   - have [z Hz] : is_Some (r !! o).
     { apply lookup_lt_is_Some. apply lookup_lt_Some in Hy. lia. }
     have [Hidy _] := Hstep o z y Hz Hy.

@@ -1275,19 +1275,19 @@ Proof using Type*.
     { (* combo 3: left non-null, right null -> compare left.right with right *)
       have HlP' : (1 <= curL)%nat by lia.
       have Hi_lt : (curL - 1 < length cells)%nat by lia.
-      destruct (cells !! (curL - 1)%nat) as [cl|] eqn:Hcl_lookup; last by (apply lookup_ge_None in Hcl_lookup; lia).
-      have Hcl_loc : node_loc cells (Z.of_nat curL - 1) = ic_loc cl.
+      destruct (cells !! (curL - 1)%nat) as [leftCell|] eqn:Hcl_lookup; last by (apply lookup_ge_None in Hcl_lookup; lia).
+      have Hcl_loc : node_loc cells (Z.of_nat curL - 1) = ic_loc leftCell.
       { rewrite /node_loc decide_True; last lia.
         have -> : Z.to_nat (Z.of_nat curL - 1) = (curL - 1)%nat by lia.
         rewrite Hcl_lookup //. }
-      iAssert (⌜ic_loc cl ≠ null⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
+      iAssert (⌜ic_loc leftCell ≠ null⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
       { iDestruct (own_dll_lookup_acc _ _ _ _ _ _ _ _ Hcl_lookup with "Hdll") as (ivx olidx oridx) "Hacc".
         iDestruct "Hacc" as "(_&_&_&_&_&_&Hclval&_&_&Hbk)".
         iDestruct (typed_pointsto_not_null with "Hclval") as %Hnn.
         iDestruct ("Hbk" with "Hclval") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
       have Hlnn : left_loc ≠ null by rewrite Hll Hcl_loc; exact Hclnn.
       rewrite (bool_decide_eq_false_2 (left_loc = null) Hlnn).
-      iDestruct (own_dll_acc _ cells _ _ (curL - 1)%nat cl Hcl_lookup with "Hdll")
+      iDestruct (own_dll_acc _ cells _ _ (curL - 1)%nat leftCell Hcl_lookup with "Hdll")
         as (ivl olidl oridl) "(%Hcloc & %Hcl_l & %Hcr_l & %Hidl & %Hcontl & %Holidl & %Horidl & %Hflagsl & %Hrunl & %Hparl & Hcval & #Hcol_l & #Hcor_l & Hback)".
       iEval (rewrite -Hcl_loc) in "Hcval". iEval (rewrite Hll) in "left". wp_auto.
       have Hcr_l' : ivl.(yjs.item.right') = node_loc cells (Z.of_nat curL).
@@ -1319,7 +1319,7 @@ Proof using Type*.
         rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat curL - 1) = null) Hlnn'). wp_auto.
         rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat curL - 1) = null) Hlnn').
         iDestruct "Htext" as (yt' tl') "(Hparent & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
-        iDestruct (own_dll_acc _ cells _ _ (curL - 1)%nat cl Hcl_lookup with "Hdll") as (ivl2 olidl2 oridl2) "(%Hcloc2 & %Hcl_l2 & %Hcr_l2 & %Hidl2 & %Hcontl2 & %Holidl2 & %Horidl2 & %Hflagsl2 & %Hrunl2 & %Hparl2 & Hcval & #Hcol2 & #Hcor2 & Hback)".
+        iDestruct (own_dll_acc _ cells _ _ (curL - 1)%nat leftCell Hcl_lookup with "Hdll") as (ivl2 olidl2 oridl2) "(%Hcloc2 & %Hcl_l2 & %Hcr_l2 & %Hidl2 & %Hcontl2 & %Holidl2 & %Horidl2 & %Hflagsl2 & %Hrunl2 & %Hparl2 & Hcval & #Hcol2 & #Hcor2 & Hback)".
         have Hcr_l2' : ivl2.(yjs.item.right') = node_loc cells (Z.of_nat curL) by (rewrite Hcr_l2; f_equal; lia).
         iEval (rewrite -Hcl_loc) in "Hcval". wp_auto. rewrite Hcr_l2'.
         iEval (rewrite Hcl_loc) in "Hcval". iDestruct ("Hback" with "Hcval") as "Hdll".
@@ -1332,17 +1332,17 @@ Proof using Type*.
         iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". } } }
   { (* right non-null (curR < length cells): read right.left *)
     have Hr_lt : (curR < length cells)%nat by lia.
-    destruct (cells !! curR) as [cr|] eqn:Hcr_lookup; last by (apply lookup_ge_None in Hcr_lookup; lia).
-    have Hcr_loc : node_loc cells (Z.of_nat curR) = ic_loc cr.
+    destruct (cells !! curR) as [rightCell|] eqn:Hcr_lookup; last by (apply lookup_ge_None in Hcr_lookup; lia).
+    have Hcr_loc : node_loc cells (Z.of_nat curR) = ic_loc rightCell.
     { rewrite /node_loc decide_True; last lia. rewrite Nat2Z.id Hcr_lookup //. }
-    iAssert (⌜ic_loc cr ≠ null⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hcrnn Hdll]".
+    iAssert (⌜ic_loc rightCell ≠ null⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hcrnn Hdll]".
     { iDestruct (own_dll_lookup_acc _ _ _ _ _ _ _ _ Hcr_lookup with "Hdll") as (ivx olidx oridx) "Hacc".
       iDestruct "Hacc" as "(_&_&_&_&_&_&Hcrval&_&_&Hbk)".
       iDestruct (typed_pointsto_not_null with "Hcrval") as %Hnn.
       iDestruct ("Hbk" with "Hcrval") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
     have Hrnn : right_loc ≠ null by rewrite Hrl Hcr_loc; exact Hcrnn.
     rewrite (bool_decide_eq_false_2 (right_loc = null) Hrnn).
-    iDestruct (own_dll_acc _ cells _ _ curR cr Hcr_lookup with "Hdll") as (ivr olidr oridr) "(%Hcloc_r & %Hcl_r & %Hcr_r & %Hidr & %Hcontr & %Holidr & %Horidr & %Hflagsr & %Hrunr & %Hparr & Hcrval & #Hcol_r & #Hcor_r & Hback)".
+    iDestruct (own_dll_acc _ cells _ _ curR rightCell Hcr_lookup with "Hdll") as (ivr olidr oridr) "(%Hcloc_r & %Hcl_r & %Hcr_r & %Hidr & %Hcontr & %Holidr & %Horidr & %Hflagsr & %Hrunr & %Hparr & Hcrval & #Hcol_r & #Hcor_r & Hback)".
     iEval (rewrite -Hcr_loc) in "Hcrval". iEval (rewrite Hrl) in "right". wp_auto.
     iEval (rewrite Hcr_loc) in "Hcrval". iDestruct ("Hback" with "Hcrval") as "Hdll".
     destruct (decide (curL = 0%nat)) as [Hl0 | HlP].
@@ -1407,19 +1407,19 @@ Proof using Type*.
     { (* combo 4: left non-null, right non-null -> compare left.right with right *)
       have HlP' : (1 <= curL)%nat by lia.
       have Hi_lt : (curL - 1 < length cells)%nat by lia.
-      destruct (cells !! (curL - 1)%nat) as [cl|] eqn:Hcl_lookup; last by (apply lookup_ge_None in Hcl_lookup; lia).
-      have Hcl_loc : node_loc cells (Z.of_nat curL - 1) = ic_loc cl.
+      destruct (cells !! (curL - 1)%nat) as [leftCell|] eqn:Hcl_lookup; last by (apply lookup_ge_None in Hcl_lookup; lia).
+      have Hcl_loc : node_loc cells (Z.of_nat curL - 1) = ic_loc leftCell.
       { rewrite /node_loc decide_True; last lia.
         have -> : Z.to_nat (Z.of_nat curL - 1) = (curL - 1)%nat by lia.
         rewrite Hcl_lookup //. }
-      iAssert (⌜ic_loc cl ≠ null⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
+      iAssert (⌜ic_loc leftCell ≠ null⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
       { iDestruct (own_dll_lookup_acc _ _ _ _ _ _ _ _ Hcl_lookup with "Hdll") as (ivx olidx oridx) "Hacc".
         iDestruct "Hacc" as "(_&_&_&_&_&_&Hclval&_&_&Hbk)".
         iDestruct (typed_pointsto_not_null with "Hclval") as %Hnn3.
         iDestruct ("Hbk" with "Hclval") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
       have Hlnn : left_loc ≠ null by rewrite Hll Hcl_loc; exact Hclnn.
       rewrite (bool_decide_eq_false_2 (left_loc = null) Hlnn).
-      iDestruct (own_dll_acc _ cells _ _ (curL - 1)%nat cl Hcl_lookup with "Hdll")
+      iDestruct (own_dll_acc _ cells _ _ (curL - 1)%nat leftCell Hcl_lookup with "Hdll")
         as (ivl olidl oridl) "(%Hcloc & %Hcl_l & %Hcr_l2 & %Hidl & %Hcontl & %Holidl & %Horidl & %Hflagsl & %Hrunl & %Hparl & Hcval & #Hcol_l & #Hcor_l & Hback)".
       iEval (rewrite -Hcl_loc) in "Hcval". iEval (rewrite Hll) in "left". wp_auto.
       have Hcr_l' : ivl.(yjs.item.right') = node_loc cells (Z.of_nat curL).
@@ -1451,7 +1451,7 @@ Proof using Type*.
         rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat curL - 1) = null) Hlnn'). wp_auto.
         rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat curL - 1) = null) Hlnn').
         iDestruct "Htext" as (yt' tl') "(Hparent & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
-        iDestruct (own_dll_acc _ cells _ _ (curL - 1)%nat cl Hcl_lookup with "Hdll") as (ivl2 olidl2 oridl2) "(%Hcloc2 & %Hcl_l2b & %Hcr_l2b & %Hidl2 & %Hcontl2 & %Holidl2 & %Horidl2 & %Hflagsl2 & %Hrunl2 & %Hparl2 & Hcval & #Hcol2 & #Hcor2 & Hback)".
+        iDestruct (own_dll_acc _ cells _ _ (curL - 1)%nat leftCell Hcl_lookup with "Hdll") as (ivl2 olidl2 oridl2) "(%Hcloc2 & %Hcl_l2b & %Hcr_l2b & %Hidl2 & %Hcontl2 & %Holidl2 & %Horidl2 & %Hflagsl2 & %Hrunl2 & %Hparl2 & Hcval & #Hcol2 & #Hcor2 & Hback)".
         have Hcr_l2' : ivl2.(yjs.item.right') = node_loc cells (Z.of_nat curL) by (rewrite Hcr_l2b; f_equal; lia).
         iEval (rewrite -Hcl_loc) in "Hcval". wp_auto. rewrite Hcr_l2'.
         iEval (rewrite Hcl_loc) in "Hcval". iDestruct ("Hback" with "Hcval") as "Hdll".

@@ -934,26 +934,26 @@ Qed.
     [t], provided the head's dependencies are present and every char id is
     fresh. Freshness of char [k>0] follows from the head-freshness plus
     [docm_has_integrate_ne] (the earlier chars only add their own ids). *)
-Lemma ops_from_pending_replay (t : TId) (cl : nat) (rightOriginId : option YjsId) :
-  ∀ (chars : list A) (ck : nat) (originId : option YjsId) (m : DocM) (arr' : list (YjsItem A)),
+Lemma ops_from_pending_replay (t : TId) (client : nat) (rightOriginId : option YjsId) :
+  ∀ (chars : list A) (clock : nat) (originId : option YjsId) (m : DocM) (arr' : list (YjsItem A)),
     is_Some (m !! t) ->
     (∀ o, originId = Some o -> doc_model_has m o = true) ->
     (∀ o, rightOriginId = Some o -> doc_model_has m o = true) ->
-    (∀ j, ck = S j -> doc_model_has m (MkYjsId cl j) = true) ->
-    (∀ j, (j < length chars)%nat -> doc_model_has m (MkYjsId cl (ck + j)) = false) ->
-    integrate_all (ops_from cl ck originId rightOriginId chars) (doc_model_get m t) = Some arr' ->
-    PendingReplay m ((λ op, (t, op)) <$> ops_from cl ck originId rightOriginId chars) (<[t := arr']> m).
+    (∀ j, clock = S j -> doc_model_has m (MkYjsId client j) = true) ->
+    (∀ j, (j < length chars)%nat -> doc_model_has m (MkYjsId client (clock + j)) = false) ->
+    integrate_all (ops_from client clock originId rightOriginId chars) (doc_model_get m t) = Some arr' ->
+    PendingReplay m ((λ op, (t, op)) <$> ops_from client clock originId rightOriginId chars) (<[t := arr']> m).
 Proof.
-  elim => [| ch rest IH] ck originId m arr' Hsome Hoid Hrid Hpred Hfresh Hint /=.
+  elim => [| ch rest IH] clock originId m arr' Hsome Hoid Hrid Hpred Hfresh Hint /=.
   - simpl in Hint. injection Hint as <-.
     destruct Hsome as [v Hv].
     have -> : doc_model_get m t = v by rewrite /doc_model_get Hv.
     rewrite insert_id //. constructor.
   - simpl in Hint.
     apply bind_Some in Hint. destruct Hint as (arr0 & Hint0 & Hintr).
-    set hop := MkIntegrateInput originId rightOriginId ch (MkYjsId cl ck).
-    have Hhid : in_id hop = MkYjsId cl ck by done.
-    have Hfresh0 : doc_model_has m (MkYjsId cl ck) = false.
+    set hop := MkIntegrateInput originId rightOriginId ch (MkYjsId client clock).
+    have Hhid : in_id hop = MkYjsId client clock by done.
+    have Hfresh0 : doc_model_has m (MkYjsId client clock) = false.
     { have := Hfresh 0%nat ltac:(simpl; lia). rewrite Nat.add_0_r //. }
     have Hready : input_ready m hop = true.
     { apply input_ready_true_of.
@@ -962,32 +962,32 @@ Proof.
       - move=> k Hk. exact (Hpred k Hk). }
     set m1 := <[t := arr0]> m.
     have Hsome1 : is_Some (m1 !! t). { exists arr0. rewrite /m1 lookup_insert_eq //. }
-    have Hhead_in : doc_model_has m1 (MkYjsId cl ck) = true.
+    have Hhead_in : doc_model_has m1 (MkYjsId client clock) = true.
     { destruct (integrate_new_mem hop (doc_model_get m t) arr0 Hint0) as (it & Hitid & Hitmem).
       apply docm_has_spec. exists t, it. split.
       - rewrite /m1 docm_get_insert_eq. exact Hitmem.
       - rewrite Hitid /hop //. }
-    have Hoid1 : ∀ o, Some (MkYjsId cl ck) = Some o -> doc_model_has m1 o = true.
+    have Hoid1 : ∀ o, Some (MkYjsId client clock) = Some o -> doc_model_has m1 o = true.
     { move=> o [= <-]. exact Hhead_in. }
     have Hrid1 : ∀ o, rightOriginId = Some o -> doc_model_has m1 o = true.
     { move=> o Ho. rewrite /m1. apply (docm_has_integrate_mono m t hop arr0 o Hint0).
       exact (Hrid o Ho). }
-    have Hpred1 : ∀ j, S ck = S j -> doc_model_has m1 (MkYjsId cl j) = true.
+    have Hpred1 : ∀ j, S clock = S j -> doc_model_has m1 (MkYjsId client j) = true.
     { move=> j [= <-]. exact Hhead_in. }
-    have Hfresh1 : ∀ j, (j < length rest)%nat -> doc_model_has m1 (MkYjsId cl (S ck + j)) = false.
+    have Hfresh1 : ∀ j, (j < length rest)%nat -> doc_model_has m1 (MkYjsId client (S clock + j)) = false.
     { move=> j Hj.
-      have Hfr : doc_model_has m (MkYjsId cl (S ck + j)) = false.
+      have Hfr : doc_model_has m (MkYjsId client (S clock + j)) = false.
       { have := Hfresh (S j) ltac:(simpl; lia). by rewrite -Nat.add_succ_comm. }
       rewrite /m1. apply (docm_has_integrate_ne m t hop arr0 _ Hint0); [| exact Hfr].
       rewrite Hhid. move=> [= Habs]. lia. }
-    have Hint1 : integrate_all (ops_from cl (S ck) (Some (MkYjsId cl ck)) rightOriginId rest)
+    have Hint1 : integrate_all (ops_from client (S clock) (Some (MkYjsId client clock)) rightOriginId rest)
                    (doc_model_get m1 t) = Some arr'.
     { rewrite /m1 docm_get_insert_eq. exact Hintr. }
-    have Hstep := IH (S ck) (Some (MkYjsId cl ck)) m1 arr' Hsome1 Hoid1 Hrid1 Hpred1 Hfresh1 Hint1.
+    have Hstep := IH (S clock) (Some (MkYjsId client clock)) m1 arr' Hsome1 Hoid1 Hrid1 Hpred1 Hfresh1 Hint1.
     have Hrw : <[t := arr']> m1 = <[t := arr']> m by rewrite /m1 insert_insert_eq.
     rewrite Hrw in Hstep.
     apply (PendingReplay_cons m (t, hop) arr0
-             ((λ op, (t, op)) <$> ops_from cl (S ck) (Some (MkYjsId cl ck)) rightOriginId rest)
+             ((λ op, (t, op)) <$> ops_from client (S clock) (Some (MkYjsId client clock)) rightOriginId rest)
              (<[t := arr']> m)).
     + exact Hfresh0.
     + exact Hready.
@@ -1038,8 +1038,8 @@ Lemma expand_input_pending_replay_ne (m : DocM) (taggedInput : TId * IntegrateIn
 Proof.
   move=> Hne Hready Hfresh Hint.
   rewrite /expand_input /wire_integrate /ops_of_input in Hint *.
-  set cl := clientId (in_id taggedInput.2).
-  set ck := clock (in_id taggedInput.2).
+  set client := clientId (in_id taggedInput.2).
+  set idClock := clock (in_id taggedInput.2).
   set originId := in_originId taggedInput.2.
   set rightOriginId := in_rightOriginId taggedInput.2.
   have Hexplen : length (explode (in_content taggedInput.2)) = length (in_content taggedInput.2)
@@ -1047,10 +1047,10 @@ Proof.
   destruct (explode (in_content taggedInput.2)) as [| ch rest'] eqn:Hexp.
   { simpl in Hexplen. lia. }
   simpl in Hint.
-  set hop := MkIntegrateInput originId rightOriginId ch (MkYjsId cl ck).
+  set hop := MkIntegrateInput originId rightOriginId ch (MkYjsId client idClock).
   apply bind_Some in Hint. destruct Hint as (arr0 & Hint0 & Hintr).
-  have Hhid : in_id hop = MkYjsId cl ck by done.
-  have Hfresh0 : doc_model_has m (MkYjsId cl ck) = false.
+  have Hhid : in_id hop = MkYjsId client idClock by done.
+  have Hfresh0 : doc_model_has m (MkYjsId client idClock) = false.
   { have := Hfresh 0%nat ltac:(lia). rewrite Nat.add_0_r //. }
   have Hready0 : input_ready m hop = true.
   { apply input_ready_true_of.
@@ -1064,36 +1064,36 @@ Proof.
       rewrite Hck /=. apply list_elem_of_singleton. done. }
   set m1 := <[taggedInput.1 := arr0]> m.
   have Hsome1 : is_Some (m1 !! taggedInput.1). { exists arr0. rewrite /m1 lookup_insert_eq //. }
-  have Hhead_in : doc_model_has m1 (MkYjsId cl ck) = true.
+  have Hhead_in : doc_model_has m1 (MkYjsId client idClock) = true.
   { destruct (integrate_new_mem hop (doc_model_get m taggedInput.1) arr0 Hint0) as (it & Hitid & Hitmem).
     apply docm_has_spec. exists taggedInput.1, it. split.
     - rewrite /m1 docm_get_insert_eq. exact Hitmem.
     - rewrite Hitid /hop //. }
-  have Hpred1 : ∀ j, S ck = S j -> doc_model_has m1 (MkYjsId cl j) = true.
+  have Hpred1 : ∀ j, S idClock = S j -> doc_model_has m1 (MkYjsId client j) = true.
   { move=> j [= <-]. exact Hhead_in. }
-  have Hoid1 : ∀ o, Some (MkYjsId cl ck) = Some o -> doc_model_has m1 o = true.
+  have Hoid1 : ∀ o, Some (MkYjsId client idClock) = Some o -> doc_model_has m1 o = true.
   { move=> o [= <-]. exact Hhead_in. }
   have Hrid1 : ∀ o, rightOriginId = Some o -> doc_model_has m1 o = true.
   { move=> o Ho. rewrite /m1. apply (docm_has_integrate_mono m taggedInput.1 hop arr0 o Hint0).
     apply (proj1 (input_ready_spec m taggedInput.2) Hready).
     exact (input_deps_originR taggedInput.2 o Ho). }
-  have Hfresh1 : ∀ j, (j < length rest')%nat -> doc_model_has m1 (MkYjsId cl (S ck + j)) = false.
+  have Hfresh1 : ∀ j, (j < length rest')%nat -> doc_model_has m1 (MkYjsId client (S idClock + j)) = false.
   { move=> j Hj.
-    have Hfr : doc_model_has m (MkYjsId cl (S ck + j)) = false.
+    have Hfr : doc_model_has m (MkYjsId client (S idClock + j)) = false.
     { have Hbnd : (S j < length (in_content taggedInput.2))%nat by simpl in Hexplen; lia.
       have := Hfresh (S j) Hbnd. by rewrite -Nat.add_succ_comm. }
     rewrite /m1. apply (docm_has_integrate_ne m taggedInput.1 hop arr0 _ Hint0); [| exact Hfr].
     rewrite Hhid. move=> [= Habs]. lia. }
-  have Hint1 : integrate_all (ops_from cl (S ck) (Some (MkYjsId cl ck)) rightOriginId rest')
+  have Hint1 : integrate_all (ops_from client (S idClock) (Some (MkYjsId client idClock)) rightOriginId rest')
                  (doc_model_get m1 taggedInput.1) = Some arr'.
   { rewrite /m1 docm_get_insert_eq. exact Hintr. }
-  have Hstep := ops_from_pending_replay taggedInput.1 cl rightOriginId rest' (S ck) (Some (MkYjsId cl ck))
+  have Hstep := ops_from_pending_replay taggedInput.1 client rightOriginId rest' (S idClock) (Some (MkYjsId client idClock))
                   m1 arr' Hsome1 Hoid1 Hrid1 Hpred1 Hfresh1 Hint1.
   have Hrw : <[taggedInput.1 := arr']> m1 = <[taggedInput.1 := arr']> m by rewrite /m1 insert_insert_eq.
   rewrite Hrw in Hstep.
   simpl.
   apply (PendingReplay_cons m (taggedInput.1, hop) arr0
-           ((λ op, (taggedInput.1, op)) <$> ops_from cl (S ck) (Some (MkYjsId cl ck)) rightOriginId rest')
+           ((λ op, (taggedInput.1, op)) <$> ops_from client (S idClock) (Some (MkYjsId client idClock)) rightOriginId rest')
            (<[taggedInput.1 := arr']> m) Hfresh0 Hready0 Hint0 Hstep).
 Qed.
 
@@ -1205,22 +1205,22 @@ Qed.
     (same freshness cascade) but PRODUCES [is_Some] of the fold, deriving each
     char's [integrate] via [docm_valid_from_deps] + [delivered_clock_bound] +
     [integrate_some_of_toItem] at the coherence advanced along the chunk. *)
-Lemma ops_from_ready (t : TId) (cl : nat) (rightOriginId : option YjsId) :
-  ∀ (chars : list A) (ck : nat) (originId : option YjsId)
+Lemma ops_from_ready (t : TId) (client : nat) (rightOriginId : option YjsId) :
+  ∀ (chars : list A) (startClock : nat) (originId : option YjsId)
     (N : gmap ClientId (list Ev)) (c : ClientId) (h : list Ev) (m : DocM),
     history_wf N -> N !! c = Some h -> history_state_coh h m ->
     (∀ t' : TId, YjsArrInvariant (doc_model_get m t')) ->
     (∀ o, originId = Some o -> doc_model_has m o = true) ->
     (∀ o, rightOriginId = Some o -> doc_model_has m o = true) ->
-    (∀ j, ck = S j -> doc_model_has m (MkYjsId cl j) = true) ->
-    (∀ j, (j < length chars)%nat -> doc_model_has m (MkYjsId cl (ck + j)) = false) ->
-    (∀ k op, ops_from cl ck originId rightOriginId chars !! k = Some op ->
+    (∀ j, startClock = S j -> doc_model_has m (MkYjsId client j) = true) ->
+    (∀ j, (j < length chars)%nat -> doc_model_has m (MkYjsId client (startClock + j)) = false) ->
+    (∀ k op, ops_from client startClock originId rightOriginId chars !! k = Some op ->
        op_broadcast N (t, OpInsert op)) ->
-    is_Some (integrate_all (ops_from cl ck originId rightOriginId chars) (doc_model_get m t)).
+    is_Some (integrate_all (ops_from client startClock originId rightOriginId chars) (doc_model_get m t)).
 Proof.
-  elim => [| ch rest IH] ck originId N c h m Hwf HNc Hcoh Hinvs Hoid Hrid Hpred Hfresh Hcert /=.
+  elim => [| ch rest IH] startClock originId N c h m Hwf HNc Hcoh Hinvs Hoid Hrid Hpred Hfresh Hcert /=.
   - by eexists.
-  - set hop := MkIntegrateInput originId rightOriginId ch (MkYjsId cl ck).
+  - set hop := MkIntegrateInput originId rightOriginId ch (MkYjsId client startClock).
     have Hbc : op_broadcast N (t, OpInsert hop).
     { apply (Hcert 0%nat hop). done. }
     (* origins arrive as delivered ops *)
@@ -1236,7 +1236,7 @@ Proof.
     have Hval := docm_valid_from_deps N c h m t hop Hwf HNc Hcoh Hbc Harrive.
     destruct Hval as (it0 & Htoit & Hvld).
     (* head fresh -> not delivered -> maximalId *)
-    have Hfresh0 : doc_model_has m (MkYjsId cl ck) = false.
+    have Hfresh0 : doc_model_has m (MkYjsId client startClock) = false.
     { have := Hfresh 0%nat ltac:(simpl; lia). rewrite Nat.add_0_r //. }
     have Hnotdel : in_id hop ∉ delivered_ids h.
     { move=> Hdel. apply elem_of_delivered_ids in Hdel. destruct Hdel as (y & Hyh & Hyid).
@@ -1246,7 +1246,7 @@ Proof.
       have Hdel2 : (ty, OpInsert inputy) ∈ delivered_ops h by apply elem_of_delivered_ops_ev.
       have := delivered_docm_has h m ty inputy Hcoh Hdel2.
       have -> : in_id inputy = in_id hop by exact Hyid.
-      have -> : in_id hop = MkYjsId cl ck by done. rewrite Hfresh0 //. }
+      have -> : in_id hop = MkYjsId client startClock by done. rewrite Hfresh0 //. }
     have Hclk := delivered_clock_bound N c h m ((t, OpInsert hop) : Op) Hwf HNc Hcoh Hbc Hnotdel.
     have Hmax : maximalId it0 (doc_model_get m t).
     { move=> x Hx Hcx.
@@ -1280,29 +1280,29 @@ Proof.
     have Hinvs1 : ∀ t' : TId, YjsArrInvariant (doc_model_get m1 t').
     { move=> t'. exact (ValidReplay_arrinv [(t, hop)] m m1 Hvr1 Hinvs t'). }
     (* head now present *)
-    have Hhead_in : doc_model_has m1 (MkYjsId cl ck) = true.
+    have Hhead_in : doc_model_has m1 (MkYjsId client startClock) = true.
     { destruct (integrate_new_mem hop (doc_model_get m t) arr0 Hint0) as (itn & Hitid & Hitmem).
       apply docm_has_spec. exists t, itn. split.
       - rewrite Hgett. exact Hitmem.
       - rewrite Hitid //. }
-    have Hoid1 : ∀ o, Some (MkYjsId cl ck) = Some o -> doc_model_has m1 o = true.
+    have Hoid1 : ∀ o, Some (MkYjsId client startClock) = Some o -> doc_model_has m1 o = true.
     { move=> o [= <-]. exact Hhead_in. }
     have Hrid1 : ∀ o, rightOriginId = Some o -> doc_model_has m1 o = true.
     { move=> o Ho. rewrite /m1. apply (docm_has_integrate_mono m t hop arr0 o Hint0).
       exact (Hrid o Ho). }
-    have Hpred1 : ∀ j, S ck = S j -> doc_model_has m1 (MkYjsId cl j) = true.
+    have Hpred1 : ∀ j, S startClock = S j -> doc_model_has m1 (MkYjsId client j) = true.
     { move=> j [= <-]. exact Hhead_in. }
-    have Hfresh1 : ∀ j, (j < length rest)%nat -> doc_model_has m1 (MkYjsId cl (S ck + j)) = false.
+    have Hfresh1 : ∀ j, (j < length rest)%nat -> doc_model_has m1 (MkYjsId client (S startClock + j)) = false.
     { move=> j Hj.
-      have Hfr : doc_model_has m (MkYjsId cl (S ck + j)) = false.
+      have Hfr : doc_model_has m (MkYjsId client (S startClock + j)) = false.
       { have := Hfresh (S j) ltac:(simpl; lia). by rewrite -Nat.add_succ_comm. }
       rewrite /m1. apply (docm_has_integrate_ne m t hop arr0 _ Hint0); [| exact Hfr].
-      have -> : in_id hop = MkYjsId cl ck by done. move=> [= Habs]. lia. }
-    have Hcert1 : ∀ k op, ops_from cl (S ck) (Some (MkYjsId cl ck)) rightOriginId rest !! k = Some op ->
+      have -> : in_id hop = MkYjsId client startClock by done. move=> [= Habs]. lia. }
+    have Hcert1 : ∀ k op, ops_from client (S startClock) (Some (MkYjsId client startClock)) rightOriginId rest !! k = Some op ->
         op_broadcast N' (t, OpInsert op).
     { move=> k op Hk. apply (proj2 (op_broadcast_append N c h _ _ HNc)). left.
       apply (Hcert (S k) op). simpl. exact Hk. }
-    have Hrec := IH (S ck) (Some (MkYjsId cl ck)) N' c h' m1
+    have Hrec := IH (S startClock) (Some (MkYjsId client startClock)) N' c h' m1
                    Hwf1 HN'c Hcoh1 Hinvs1 Hoid1 Hrid1 Hpred1 Hfresh1 Hcert1.
     rewrite Hgett in Hrec. destruct Hrec as [arr' Hia].
     exists arr'. rewrite Hint0 /=. exact Hia.
