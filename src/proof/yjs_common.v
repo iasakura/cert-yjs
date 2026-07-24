@@ -317,7 +317,7 @@ Qed.
 
 (** Advancing the cell cursor by one appends that cell's whole run to the
     flattened prefix. The scan steps NODE by node while the model steps CHAR
-    by char, so a cursor over cells couples to a [setfii_loop] offset over
+    by char, so a cursor over cells couples to a [set_find_integration_loop] offset over
     chars via these prefix sums. *)
 Lemma run_flatten_take_S (cells : list item_cell) (cur : nat) (ci : item_cell) :
   cells !! cur = Some ci ->
@@ -328,7 +328,7 @@ Proof.
 Qed.
 
 (** The chars of the cell at the cursor sit at consecutive model indices
-    starting at the flattened-prefix length — [setfii_block_step]'s [Hlook]
+    starting at the flattened-prefix length — [set_find_integration_block_step]'s [Hlook]
     premise, read off [cells_repr]'s [arr = run_flatten cells]. *)
 Lemma run_flatten_take_lookup (cells : list item_cell) (cur : nat) (ci : item_cell)
     (k : nat) (y : YjsItem A) :

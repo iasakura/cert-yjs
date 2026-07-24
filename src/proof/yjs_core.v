@@ -16,7 +16,7 @@
       ArrSet, YjsArrInvariant             yjs.algorithm.invariant_yjsarray
       IsItemValid                         yjs.algorithm.invariant_basic
       YjsArrInvariant_integrateSafe       yjs.algorithm.insert_loop
-      setfii_loop, setintegrate, Couple,  yjs.algorithm.insert_set
+      set_find_integration_loop, setintegrate, Couple,  yjs.algorithm.insert_set
         setintegrate_eq_integrate, ...
       integrate_some (integrate totality) yjs.algorithm.commutativity
 *)

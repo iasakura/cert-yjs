@@ -2312,14 +2312,14 @@ Qed.
 
 (** The set-based scan is total on an in-bounds window: its only bind is the
     array lookup. *)
-Lemma setfii_loop_some (count : nat) :
+Lemma set_find_integration_loop_some (count : nat) :
   ∀ (offset : nat) (leftIdx rightIdx : Z) (oLeftId oRightId : option YjsId)
     (newId : YjsId) (arr : list (YjsItem A)) (idsBeforeOrigin ci : gset YjsId) (destIdx : Z),
   (1 <= offset)%nat ->
   (Z.of_nat offset + Z.of_nat count <= rightIdx - leftIdx)%Z ->
   (-1 <= leftIdx)%Z ->
   (rightIdx <= Z.of_nat (length arr))%Z ->
-  is_Some (setfii_loop count offset leftIdx rightIdx oLeftId oRightId newId arr idsBeforeOrigin ci destIdx).
+  is_Some (set_find_integration_loop count offset leftIdx rightIdx oLeftId oRightId newId arr idsBeforeOrigin ci destIdx).
 Proof.
   elim: count => [| count IH] offset leftIdx rightIdx oLeftId oRightId newId arr idsBeforeOrigin ci destIdx
     Hoff Hwin HleftIdx Hright; first by eexists.
@@ -2385,7 +2385,7 @@ Proof.
   { rewrite /setfindIntegratedIndex.
     destruct (decide (Z.to_nat (rightIdx - leftIdx) - 1 = 0)%nat) as [-> |].
     { by eexists. }
-    have Hs := setfii_loop_some (Z.to_nat (rightIdx - leftIdx) - 1) 1 leftIdx rightIdx
+    have Hs := set_find_integration_loop_some (Z.to_nat (rightIdx - leftIdx) - 1) 1 leftIdx rightIdx
                  (in_originId input) (in_rightOriginId input) (in_id input) arr ∅ ∅
                  (leftIdx + 1) ltac:(lia) ltac:(lia) HLlo HRhi.
     destruct Hs as [d Hd]. rewrite Hd. by eexists. }

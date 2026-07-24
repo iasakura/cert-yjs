@@ -1,6 +1,6 @@
 (** WP proofs for the [store] integration stack: the id-lookup helpers
     ([containsId] / [findById] / [itemPtrEqual]), the conflict scan
-    ([scanConflicts] / [findIntegrationLeft]) refining [setfii_loop] (the
+    ([scanConflicts] / [findIntegrationLeft]) refining [set_find_integration_loop] (the
     splice lands at the pure [setfindIntegratedIndex] and the result inherits
     [YjsArrInvariant] from [YjsArrInvariant_integrate]), the item-validity /
     insertion helper lemmas ([item_valid_*], [insert_*], [toItem_at]), and the
@@ -31,7 +31,7 @@ Local Open Scope Z_scope.
 (** Small-context set rewrites for the conflict-scan accumulators. After a Go
     [append] of the conflict id, an id slice abstracts to [X ∪ ({[a]} ∪ ∅)] (the
     trailing [∅] is [list_to_set []] from the singleton tail); these relate that
-    to the [setfii_loop] accumulator form [{[a]} ∪ X]. Proving them as standalone
+    to the [set_find_integration_loop] accumulator form [{[a]} ∪ X]. Proving them as standalone
     lemmas keeps [set_solver] on a tiny context — calling [set_solver] inside
     [wp_scanConflicts] instead does [set_unfold in *] over the whole proof state
     (including the [list_to_set] slice hypotheses) and is prohibitively slow.
@@ -510,7 +510,7 @@ Qed.
 (** No array item strictly to the right of the resolved left origin can BE that
     left origin: the origin (when present) sits at [leftIdx] with a unique id, so
     any item at an index [> leftIdx] carries a different id. This discharges
-    [setfii_block_step]'s [Hnotleft] for the scanned run block, whose chars all
+    [set_find_integration_block_step]'s [Hnotleft] for the scanned run block, whose chars all
     sit at model indices [> leftIdx] (issue #28 stage C1c). *)
 Lemma findLeftIdx_scanned_ne (arr : list (YjsItem A)) (originId : option YjsId)
     (leftIdx : Z) (i : nat) (c : YjsItem A) :
@@ -534,12 +534,12 @@ Proof.
 Qed.
 
 (** Loop invariant for the conflict scan in [Integrate]. The heap loop refines
-    the pure set-based loop [setfii_loop] *directly*: the heap slices
-    [itemsBeforeOrigin] / [conflictingItems] literally carry the [setfii_loop]
+    the pure set-based loop [set_find_integration_loop] *directly*: the heap slices
+    [itemsBeforeOrigin] / [conflictingItems] literally carry the [set_find_integration_loop]
     accumulators [idsBeforeOrigin] / [conflictIds] (as [gset]s), and the loop's
     progress is tracked by a fuel equation — the remaining run from the current
     state equals the fixed overall result [loopResult]. (The
-    [setfii_loop ↔ fii_loop] equivalence is a separate, already-proved fact used
+    [set_find_integration_loop ↔ fii_loop] equivalence is a separate, already-proved fact used
     only to inherit [YjsArrInvariant].)
 
     - [conflict_l] (Go [conflict]) sits at the cursor CELL [cur], whose run
@@ -552,7 +552,7 @@ Qed.
       the [conflict == right] break compares cell locs, i.e. [cur = curR],
       which the prefix-sum injectivity turns into [leftIdx+offset = rightIdx];
     - [Hloop]: from the current accumulators, the remaining
-      [Z.to_nat (rightIdx - leftIdx) - offset] steps of [setfii_loop] still
+      [Z.to_nat (rightIdx - leftIdx) - offset] steps of [set_find_integration_loop] still
       compute [loopResult]. With [Hbound] / [Hdest] this makes the Go
       [for conflict ≠ nil] test (with the [== right] break) consume exactly the
       loop's fuel.
@@ -579,7 +579,7 @@ Definition integrate_loop_inv
   "%HcurDb" ∷ ⌜(curD <= length cells)%nat⌝ ∗
   "%Hdest" ∷ ⌜(leftIdx + 1 <= destIdx <= leftIdx + Z.of_nat offset)%Z⌝ ∗
   "%Hbound" ∷ ⌜(leftIdx + Z.of_nat offset <= rightIdx)%Z⌝ ∗
-  "%Hloop" ∷ ⌜setfii_loop (Z.to_nat (rightIdx - leftIdx) - offset) offset leftIdx rightIdx
+  "%Hloop" ∷ ⌜set_find_integration_loop (Z.to_nat (rightIdx - leftIdx) - offset) offset leftIdx rightIdx
                  originLeftId originRightId newItemId arr idsBeforeOrigin conflictIds destIdx
                = loopResult⌝.
 
@@ -711,9 +711,9 @@ Qed.
     with the anchor at cell [curL - 1], the scan returns the resolved left
     anchor: the cell just left of a run boundary [curD] whose model index is
     the pure [setfindIntegratedIndex]. This is the WP refinement of the loop
-    onto [setfii_loop]: the loop invariant [integrate_loop_inv] couples the
-    heap loop state to a [setfii_loop] run, and each Go iteration consumes one
-    whole run block via [setfii_block_step] (issue #28 C1c/C1d). *)
+    onto [set_find_integration_loop]: the loop invariant [integrate_loop_inv] couples the
+    heap loop state to a [set_find_integration_loop] run, and each Go iteration consumes one
+    whole run block via [set_find_integration_block_step] (issue #28 C1c/C1d). *)
 Lemma wp_scanConflicts (parent item_l : loc) (dq : dfrac)
     (cells : list item_cell) (arr : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A)
@@ -765,9 +765,9 @@ Proof using Type*.
   wp_apply wp_slice_literal. iSplitR; first done. iIntros "%ibo_sl [Hibo_sl Hibo_cap]". wp_auto.
   (* expose the pure loop result [d] (with [Z.to_nat d = destIdx]) *)
   rewrite /setfindIntegratedIndex in HfindD.
-  destruct (setfii_loop (Z.to_nat (rightIdx - leftIdx) - 1) 1 leftIdx rightIdx
+  destruct (set_find_integration_loop (Z.to_nat (rightIdx - leftIdx) - 1) 1 leftIdx rightIdx
               (in_originId input) (in_rightOriginId input) (in_id input) arr ∅ ∅ (leftIdx + 1))
-    as [d|] eqn:Hsetfii; last by (simpl in HfindD; done).
+    as [d|] eqn:Hset_find_integration; last by (simpl in HfindD; done).
   simpl in HfindD. injection HfindD as Hd_eq.
   (* loop invariant: offset = 1, cursor at the boundary cell [curL],
      accumulators empty, dest = leftIdx + 1 (anchor cursor [curL]) *)
@@ -790,7 +790,7 @@ Proof using Type*.
       { iExists _. iFrame "conflictingItems". iExists ([] : list yjs.idSpan.t). iFrame "Hci_sl Hci_cap".
         iPureIntro. split; [constructor | done]. }
       iPureIntro; split_and!;
-        [lia | by rewrite HcurL | exact HcurLb | exact HcurL | exact HcurLb | lia | lia | lia | exact Hsetfii].
+        [lia | by rewrite HcurL | exact HcurLb | exact HcurL | exact HcurLb | lia | lia | lia | exact Hset_find_integration].
     - iPureIntro; split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent]. }
   wp_for "IH".
   iDestruct "IH" as "[Hinv Hfresh]". iNamed "Hinv". iNamed "Hfresh".
@@ -816,7 +816,7 @@ Proof using Type*.
     iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
     iExists curD. iPureIntro. split_and!;
       [done | rewrite HcurD HdestL -Hd_eq Z2Nat.id; [done | clear -Hdest HdestL HleftLB; lia] | exact HcurDb].
-  - (* cursor in range: run one scan step, matched to a [setfii_block_step] unfold. *)
+  - (* cursor in range: run one scan step, matched to a [set_find_integration_block_step] unfold. *)
     have Hcur_lt : (cur < length cells)%nat by lia.
     destruct (cells !! cur) as [ci|] eqn:Hci;
       last by (apply lookup_ge_None in Hci; lia).
@@ -854,7 +854,7 @@ Proof using Type*.
       iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
       iExists curD. iPureIntro. split_and!;
         [done | rewrite HcurD HdestL -Hd_eq Z2Nat.id; [done | clear -Hdest HdestL HleftLB; lia] | exact HcurDb].
-    + (* conflict ≠ right: scan one run block; match [setfii_block_step]'s branches *)
+    + (* conflict ≠ right: scan one run block; match [set_find_integration_block_step]'s branches *)
       rewrite (bool_decide_eq_false_2 _ Hner).
       have Hcur_lt_R : (cur < curR)%nat by lia.
       have Hlt_pref : (length (run_flatten (take cur cells))
@@ -915,11 +915,11 @@ Proof using Type*.
       { rewrite span_union_snoc Hsp_ids Hibo_set //. }
       have Hci_set2 : ⋃ (span_ids <$> (vs_ci ++ [sp])) = char_ids (ic_run ci) ∪ conflictI.
       { rewrite span_union_snoc Hsp_ids Hci_set //. }
-      (* head-char facts (run head = [hh]) matching [setfii_block_step]'s decisions *)
+      (* head-char facts (run head = [hh]) matching [set_find_integration_block_step]'s decisions *)
       have HcId : item_id hh = toYjsId iv_ci.(yjs.item.id') := Hidhh.
       have HoL : origin_id (origin hh) = toYjsId <$> olid_ci by rewrite -Hrhead; exact Hcolid_ci.
       have HoR : origin_id (rightOrigin hh) = toYjsId <$> orid_ci by rewrite -Hrhead; exact Hcorid_ci.
-      (* rewrite [Hloop] one whole run block via [setfii_block_step]: the block
+      (* rewrite [Hloop] one whole run block via [set_find_integration_block_step]: the block
          fits under [rightIdx] because the NEXT cell boundary is still at most
          the right cell's boundary (prefix-sum monotonicity) *)
       have HlenS : (length (run_flatten (take (S cur) cells))
@@ -952,7 +952,7 @@ Proof using Type*.
         = (length (hh :: tl2) + (Z.to_nat (rightIdx - leftIdx) - (offset + length (hh :: tl2))))%nat
         by (rewrite -Hrun; clear -Hblockfits Hoff; lia).
       rewrite Hfuel_split in Hloop.
-      rewrite (setfii_block_step hh tl2 _ offset leftIdx rightIdx input.(in_originId)
+      rewrite (set_find_integration_block_step hh tl2 _ offset leftIdx rightIdx input.(in_originId)
                  input.(in_rightOriginId) input.(in_id) arr idsB conflictI destL
                  Hrunstep Hlook Hnotleft Hpos_off) in Hloop.
       rewrite -Hrun in Hloop.
@@ -1074,7 +1074,7 @@ Proof using Type*.
            iDestruct "Hcol" as "[%Hcol_nn #Hcol_pt]".
            simpl in Hloop.
            wp_auto. rewrite bool_decide_eq_false_2; last exact Hcol_nn. wp_auto.
-           (* the block-query bridge: the Go queries the whole run's span, [setfii]
+           (* the block-query bridge: the Go queries the whole run's span, [set_find_integration]
               decides the head-only set; they agree by the origin-clock invariant *)
            have Horig_eq : origin_id (origin (run_head ci)) = Some (toYjsId idv)
              by rewrite Hcolid_ci ?Hcoleft.

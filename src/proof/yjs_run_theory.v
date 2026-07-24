@@ -665,12 +665,12 @@ Proof.
 Qed.
 
 (* ===== the run-block scan bridge (issue #28 M4, part 3) ===================
-   The heap scan steps NODE by node while [setfii_loop] steps char by char.
+   The heap scan steps NODE by node while [set_find_integration_loop] steps char by char.
    A [run_wf] block behaves as one unit inside the scan: the head char decides
    the outcome exactly as the node-level Go does, and the tail chars cascade
    deterministically (their origin is always the previous char, which was just
-   scanned). [setfii_block_step] below packages one whole block as a single
-   rewrite, so a node-stepping WP loop invariant can couple to [setfii_loop]
+   scanned). [set_find_integration_block_step] below packages one whole block as a single
+   rewrite, so a node-stepping WP loop invariant can couple to [set_find_integration_loop]
    at block boundaries only. *)
 
 Definition char_ids (r : list (YjsItem A)) : gset YjsId :=
@@ -714,7 +714,7 @@ Qed.
 (** Tail cascade, STAY flavor: with the previous char's id in both
     accumulators, every tail char takes the continue-unchanged branch and the
     accumulators absorb the block. *)
-Lemma setfii_tail_stay (tail : list (YjsItem A)) :
+Lemma set_find_integration_tail_stay (tail : list (YjsItem A)) :
   forall (prev : YjsItem A) (restfuel offset : nat) (leftIdx rightIdx : Z)
     (oLeftId oRightId : option YjsId) (newId : YjsId)
     (arr : list (YjsItem A)) (idsBeforeOrigin ci : gset YjsId) (destIdx : Z),
@@ -724,8 +724,8 @@ Lemma setfii_tail_stay (tail : list (YjsItem A)) :
   (forall c, c ∈ prev :: tail -> Some (item_id c) ≠ oLeftId) ->
   item_id prev ∈ idsBeforeOrigin ->
   item_id prev ∈ ci ->
-  setfii_loop (length tail + restfuel) offset leftIdx rightIdx oLeftId oRightId newId arr idsBeforeOrigin ci destIdx
-  = setfii_loop restfuel (offset + length tail)%nat leftIdx rightIdx oLeftId oRightId newId arr
+  set_find_integration_loop (length tail + restfuel) offset leftIdx rightIdx oLeftId oRightId newId arr idsBeforeOrigin ci destIdx
+  = set_find_integration_loop restfuel (offset + length tail)%nat leftIdx rightIdx oLeftId oRightId newId arr
       (char_ids tail ∪ idsBeforeOrigin) (char_ids tail ∪ ci) destIdx.
 Proof.
   induction tail as [|c tail' IH];
@@ -737,7 +737,7 @@ Proof.
     done.
   - simpl length. simpl plus.
     (* unfold one loop step for [c] *)
-    simpl setfii_loop.
+    simpl set_find_integration_loop.
     have Hc0 : arr !! Z.to_nat (leftIdx + Z.of_nat offset) = Some c.
     { have := Hlook 0%nat c eq_refl. rewrite Nat.add_0_r //. }
     rewrite Hc0 /=.
@@ -777,7 +777,7 @@ Qed.
 (** Tail cascade, MOVE flavor: with an empty conflicting set, every tail char
     repositions the destination one past itself. The destination tracks the
     cursor ([destIdx = leftIdx + offset]). *)
-Lemma setfii_tail_move (tail : list (YjsItem A)) :
+Lemma set_find_integration_tail_move (tail : list (YjsItem A)) :
   forall (prev : YjsItem A) (restfuel offset : nat) (leftIdx rightIdx : Z)
     (oLeftId oRightId : option YjsId) (newId : YjsId)
     (arr : list (YjsItem A)) (idsBeforeOrigin : gset YjsId),
@@ -787,9 +787,9 @@ Lemma setfii_tail_move (tail : list (YjsItem A)) :
   (forall c, c ∈ prev :: tail -> Some (item_id c) ≠ oLeftId) ->
   item_id prev ∈ idsBeforeOrigin ->
   (0 <= leftIdx + Z.of_nat offset)%Z ->
-  setfii_loop (length tail + restfuel) offset leftIdx rightIdx oLeftId oRightId newId arr
+  set_find_integration_loop (length tail + restfuel) offset leftIdx rightIdx oLeftId oRightId newId arr
     idsBeforeOrigin ∅ (leftIdx + Z.of_nat offset)%Z
-  = setfii_loop restfuel (offset + length tail)%nat leftIdx rightIdx oLeftId oRightId newId arr
+  = set_find_integration_loop restfuel (offset + length tail)%nat leftIdx rightIdx oLeftId oRightId newId arr
       (char_ids tail ∪ idsBeforeOrigin) ∅ (leftIdx + Z.of_nat (offset + length tail))%Z.
 Proof.
   induction tail as [|c tail' IH];
@@ -799,7 +799,7 @@ Proof.
     have -> : char_ids [] ∪ idsBeforeOrigin = idsBeforeOrigin by set_solver.
     done.
   - simpl length. simpl plus.
-    simpl setfii_loop.
+    simpl set_find_integration_loop.
     have Hc0 : arr !! Z.to_nat (leftIdx + Z.of_nat offset) = Some c.
     { have := Hlook 0%nat c eq_refl. rewrite Nat.add_0_r //. }
     rewrite Hc0 /=.
@@ -846,7 +846,7 @@ Qed.
     conflict's origin scanned but not conflicting), break (same integration
     points, or an origin before the window), or scan on (accumulators absorb
     the block). *)
-Lemma setfii_block_step (h : YjsItem A) (tail : list (YjsItem A))
+Lemma set_find_integration_block_step (h : YjsItem A) (tail : list (YjsItem A))
     (restfuel offset : nat) (leftIdx rightIdx : Z)
     (oLeftId oRightId : option YjsId) (newId : YjsId)
     (arr : list (YjsItem A)) (idsBeforeOrigin ci : gset YjsId) (destIdx : Z) :
@@ -855,17 +855,17 @@ Lemma setfii_block_step (h : YjsItem A) (tail : list (YjsItem A))
      arr !! (Z.to_nat (leftIdx + Z.of_nat (offset + k))) = Some c) ->
   (forall c, c ∈ h :: tail -> Some (item_id c) ≠ oLeftId) ->
   (0 <= leftIdx + Z.of_nat offset)%Z ->
-  setfii_loop (length (h :: tail) + restfuel) offset leftIdx rightIdx
+  set_find_integration_loop (length (h :: tail) + restfuel) offset leftIdx rightIdx
     oLeftId oRightId newId arr idsBeforeOrigin ci destIdx
   = (if decide (origin_id (origin h) = oLeftId) then
        if decide (clientId (item_id h) < clientId newId)%nat then
-         setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+         set_find_integration_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
            oLeftId oRightId newId arr
            (char_ids (h :: tail) ∪ idsBeforeOrigin) ∅
            (leftIdx + Z.of_nat (offset + length (h :: tail)))%Z
        else if decide (origin_id (rightOrigin h) = oRightId) then Some destIdx
        else
-         setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+         set_find_integration_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
            oLeftId oRightId newId arr
            (char_ids (h :: tail) ∪ idsBeforeOrigin) (char_ids (h :: tail) ∪ ci) destIdx
      else
@@ -873,12 +873,12 @@ Lemma setfii_block_step (h : YjsItem A) (tail : list (YjsItem A))
        | Some col =>
          if decide (col ∈ ({[item_id h]} ∪ idsBeforeOrigin)) then
            if decide (col ∉ ({[item_id h]} ∪ ci)) then
-             setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+             set_find_integration_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
                oLeftId oRightId newId arr
                (char_ids (h :: tail) ∪ idsBeforeOrigin) ∅
                (leftIdx + Z.of_nat (offset + length (h :: tail)))%Z
            else
-             setfii_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
+             set_find_integration_loop restfuel (offset + length (h :: tail))%nat leftIdx rightIdx
                oLeftId oRightId newId arr
                (char_ids (h :: tail) ∪ idsBeforeOrigin) (char_ids (h :: tail) ∪ ci) destIdx
          else Some destIdx
@@ -900,12 +900,12 @@ Proof.
   have Hpos' : (0 <= leftIdx + Z.of_nat (S offset))%Z by lia.
   have Hlen : length (h :: tail) = S (length tail) by done.
   (* unfold the head step *)
-  simpl setfii_loop. rewrite Hh0 /=.
+  simpl set_find_integration_loop. rewrite Hh0 /=.
   destruct (decide (origin_id (origin h) = oLeftId)) as [Hc1 | Hc1].
   - destruct (decide (clientId (item_id h) < clientId newId)%nat) as [Hcl | Hcl].
     + (* case 1, smaller client: move past the head, then the MOVE cascade *)
       rewrite Hidx1.
-      rewrite (setfii_tail_move tail h restfuel (S offset) leftIdx rightIdx
+      rewrite (set_find_integration_tail_move tail h restfuel (S offset) leftIdx rightIdx
                  oLeftId oRightId newId arr ({[item_id h]} ∪ idsBeforeOrigin)
                  Hstep Hlook' Hnotleft Hin_ibo Hpos').
       have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
@@ -914,7 +914,7 @@ Proof.
       done.
     + destruct (decide (origin_id (rightOrigin h) = oRightId)) as [Hro | Hro]; first done.
       (* case 1, scan on: the STAY cascade *)
-      rewrite (setfii_tail_stay tail h restfuel (S offset) leftIdx rightIdx
+      rewrite (set_find_integration_tail_stay tail h restfuel (S offset) leftIdx rightIdx
                  oLeftId oRightId newId arr ({[item_id h]} ∪ idsBeforeOrigin) ({[item_id h]} ∪ ci) destIdx
                  Hstep Hlook' Hnotleft Hin_ibo Hin_ci).
       have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
@@ -928,7 +928,7 @@ Proof.
     destruct (decide (col ∉ ({[item_id h]} ∪ ci))) as [Hnot | Hnot].
     + (* case 2, move: MOVE cascade *)
       rewrite Hidx1.
-      rewrite (setfii_tail_move tail h restfuel (S offset) leftIdx rightIdx
+      rewrite (set_find_integration_tail_move tail h restfuel (S offset) leftIdx rightIdx
                  oLeftId oRightId newId arr ({[item_id h]} ∪ idsBeforeOrigin)
                  Hstep Hlook' Hnotleft Hin_ibo Hpos').
       have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
@@ -936,7 +936,7 @@ Proof.
         by (rewrite char_ids_cons; set_solver).
       done.
     + (* case 2, stay: STAY cascade *)
-      rewrite (setfii_tail_stay tail h restfuel (S offset) leftIdx rightIdx
+      rewrite (set_find_integration_tail_stay tail h restfuel (S offset) leftIdx rightIdx
                  oLeftId oRightId newId arr ({[item_id h]} ∪ idsBeforeOrigin) ({[item_id h]} ∪ ci) destIdx
                  Hstep Hlook' Hnotleft Hin_ibo Hin_ci).
       have -> : (S offset + length tail)%nat = (offset + length (h :: tail))%nat by (rewrite Hlen; lia).
@@ -950,7 +950,7 @@ Qed.
 (* ===== block-query bridging (issue #28 M4, stage C1a) =====================
    The Go scan appends the WHOLE scanned run's id span to its sets before
    querying the conflict's left origin, so the heap test runs against
-   [char_ids (h :: tail) ∪ X] while [setfii_block_step]'s decisions read
+   [char_ids (h :: tail) ∪ X] while [set_find_integration_block_step]'s decisions read
    [{[item_id h]} ∪ X] (the char-level accumulator at the head). The two
    agree because the queried id can never be a TAIL char of the very run
    being scanned: tail ids share the head's client with strictly larger

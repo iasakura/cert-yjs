@@ -691,7 +691,7 @@ Qed.
 (** A cell head's same-client left origin strictly precedes it in clock
     (causal creation order, issue #28 stage C1b): the premise of
     [block_query_head], which lets the scan's whole-run span query collapse
-    to [setfii_block_step]'s head-only accumulator test. Only the HEAD's
+    to [set_find_integration_block_step]'s head-only accumulator test. Only the HEAD's
     origin needs the invariant: tail chars' origins are in-run by [run_wf].
     Local inserts satisfy it by the clock counter; remote integrations by
     per-client causal delivery (the update batch's freshness bound). *)
