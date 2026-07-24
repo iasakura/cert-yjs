@@ -59,7 +59,7 @@ Local Notation O := (DocO (A := A) (P := P)).
 Local Notation Ev := (@Event Op).
 Local Notation RawHistories := (gmap ClientId (list Ev)).
 (** The per-type item-list view of a doc state. *)
-Local Notation DocM := (gmap TId (list (YjsItem A))).
+Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 Implicit Types (N : RawHistories) (h : list Ev) (op : Op) (c i j : ClientId).
 
@@ -74,7 +74,7 @@ Set Default Proof Using "Type*".
     [lia]/[word], which want them in raw form, not behind a definition.) *)
 Definition inputs_not_from (inputs : list (TId * IntegrateInput (A := A)))
     (c : ClientId) : Prop :=
-  ∀ taggedInput, taggedInput ∈ inputs -> clientId (in_id taggedInput.2) ≠ c.
+  ∀ typedInput, typedInput ∈ inputs -> clientId (in_id typedInput.2) ≠ c.
 
 (* ===== raw-history views ================================================== *)
 
@@ -389,21 +389,21 @@ Proof. rewrite /delivered_ops proj_deliver_comm //. Qed.
 
 (* ===== local coherence (lock-side tie) ==================================== *)
 
-(** The per-type item list a [DocM] denotes (absent = empty; a [DocM] with an
+(** The per-type item list a [DocModel] denotes (absent = empty; a [DocModel] with an
     explicit empty entry and one without are the same document). *)
-Definition doc_model_get (m : DocM) (t : TId) : list (YjsItem A) := default [] (m !! t).
+Definition doc_model_get (m : DocModel) (t : TId) : list (YjsItem A) := default [] (m !! t).
 
-Lemma docm_get_insert_eq (m : DocM) t arr : doc_model_get (<[t := arr]> m) t = arr.
+Lemma docm_get_insert_eq (m : DocModel) t arr : doc_model_get (<[t := arr]> m) t = arr.
 Proof. rewrite /doc_model_get lookup_insert_eq //. Qed.
 
-Lemma docm_get_insert_ne (m : DocM) t t' arr :
+Lemma docm_get_insert_ne (m : DocModel) t t' arr :
   t' ≠ t -> doc_model_get (<[t := arr]> m) t' = doc_model_get m t'.
 Proof. move=> Hne. rewrite /doc_model_get lookup_insert_ne //. Qed.
 
 (** The events of [h] replay (delivers only) to a doc state whose per-type item
     lists are [m]. Tombstone flags are NOT tracked by the history (plan §8.4),
     so the per-type deleted sets stay existential inside the doc state. *)
-Definition history_state_coh h (m : DocM) : Prop :=
+Definition history_state_coh h (m : DocModel) : Prop :=
   ∃ s, interpHistory O h (op_init O) s ∧ ∀ t, st_items (doc_get s t) = doc_model_get m t.
 
 Lemma history_state_coh_nil : history_state_coh [] ∅.
@@ -424,7 +424,7 @@ Proof.
 Qed.
 
 (** Coherence projects to a per-type replay of the projected history. *)
-Lemma history_state_coh_proj h (m : DocM) (t : TId) :
+Lemma history_state_coh_proj h (m : DocModel) (t : TId) :
   history_state_coh h m ->
   ∃ st, interpHistory Oy (proj_hist t h) (op_init Oy) st ∧ st_items st = doc_model_get m t.
 Proof.
@@ -515,7 +515,7 @@ Qed.
 
 (** Per-type-list version for the store-side consumers: a duplicate-free
     family of types holds at most [length h] items in total. *)
-Lemma history_state_coh_size_list h (m : DocM) (ts : list TId) :
+Lemma history_state_coh_size_list h (m : DocModel) (ts : list TId) :
   history_state_coh h m -> NoDup ts ->
   (foldr (λ t acc, (length (doc_model_get m t) + acc)%nat) 0%nat ts <= length h)%nat.
 Proof.
@@ -890,7 +890,7 @@ Qed.
     [c] happened at [c] (client-id discipline), was self-delivered into [h],
     so its item is in the replayed document (at its own type) with a smaller
     clock. The bound is doc-global — over every type's items. *)
-Lemma history_fresh_id N c h (m : DocM) (k : nat) :
+Lemma history_fresh_id N c h (m : DocModel) (k : nat) :
   history_wf N -> N !! c = Some h ->
   history_state_coh h m ->
   (∀ (t : TId) x, x ∈ doc_model_get m t -> clientId (item_id x) = c ->
@@ -1235,7 +1235,7 @@ Qed.
     insert into type [t0] preserves [history_wf], advances the coherent state
     by the insert's splice at [t0], and registers the new op. The clock bound
     is doc-global (all types). *)
-Lemma history_wf_broadcast N c h (m : DocM) (t0 : TId) (arr' : list (YjsItem A))
+Lemma history_wf_broadcast N c h (m : DocModel) (t0 : TId) (arr' : list (YjsItem A))
     (input : IntegrateInput (A := A)) (item : YjsItem A) (k : nat) :
   history_wf N -> N !! c = Some h ->
   history_state_coh h m ->
@@ -1600,7 +1600,7 @@ Qed.
     (Moved here from [yjs_store]: it is pure; the pending machinery below
     produces it for the drained applied list, issue #40.) *)
 Inductive ValidReplay :
-    list (TId * IntegrateInput (A := A)) -> DocM -> DocM -> Prop :=
+    list (TId * IntegrateInput (A := A)) -> DocModel -> DocModel -> Prop :=
   | VR_nil m : ValidReplay [] m m
   | VR_cons t input rest m arr2 m' newItem :
       toItem input (doc_model_get m t) = Some newItem ->
@@ -1653,7 +1653,7 @@ Proof.
 Qed.
 
 (** A valid replay only splices items in: membership is preserved, per type. *)
-Lemma ValidReplay_mem (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocM) :
+Lemma ValidReplay_mem (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
   ValidReplay inputs m m' -> ∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m' t.
 Proof.
   elim => [m0 | t0 input rest m0 arr2 m1 newItem Htoit _ _ _ Hint _ IH] t x Hx; first exact Hx.
@@ -1667,17 +1667,17 @@ Qed.
 (** Converse provenance: a replayed item is an original item or carries the
     id of some batch input (the model-level analogue of the heap-level
     [all_cells] provenance clause of [wp_store__applyUpdate]). *)
-Lemma ValidReplay_prov (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocM) :
+Lemma ValidReplay_prov (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
   ValidReplay inputs m m' ->
   ∀ (t : TId) x, x ∈ doc_model_get m' t ->
     x ∈ doc_model_get m t ∨
-    ∃ (i : nat) (taggedInput : TId * IntegrateInput (A := A)),
-      inputs !! i = Some taggedInput ∧ item_id x = in_id taggedInput.2.
+    ∃ (i : nat) (typedInput : TId * IntegrateInput (A := A)),
+      inputs !! i = Some typedInput ∧ item_id x = in_id typedInput.2.
 Proof.
   elim => [m0 | t0 input0 rest m0 arr2 m1 newItem Htoit _ _ _ Hint Hvr IH] t x Hx.
   - by left.
-  - destruct (IH t x Hx) as [Hmid | (i & taggedInput & Hi & Hid)]; last first.
-    { right. by exists (S i), taggedInput. }
+  - destruct (IH t x Hx) as [Hmid | (i & typedInput & Hi & Hid)]; last first.
+    { right. by exists (S i), typedInput. }
     destruct (decide (t = t0)) as [-> | Hne]; last first.
     { left. rewrite docm_get_insert_ne // in Hmid. }
     rewrite docm_get_insert_eq in Hmid.
@@ -1694,13 +1694,13 @@ Qed.
 (** Every batch item's clock strictly exceeds all same-client items already in
     the initial documents — any type (the heap-level freshness side condition
     of [wp_store__applyUpdate], at the model level). *)
-Lemma ValidReplay_arr_fresh (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocM) :
+Lemma ValidReplay_arr_fresh (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
   ValidReplay inputs m m' ->
-  ∀ (i : nat) (taggedInput : TId * IntegrateInput (A := A)), inputs !! i = Some taggedInput ->
-  ∀ (t : TId) x, x ∈ doc_model_get m t -> clientId (item_id x) = clientId (in_id taggedInput.2) ->
-       (clock (item_id x) < clock (in_id taggedInput.2))%nat.
+  ∀ (i : nat) (typedInput : TId * IntegrateInput (A := A)), inputs !! i = Some typedInput ->
+  ∀ (t : TId) x, x ∈ doc_model_get m t -> clientId (item_id x) = clientId (in_id typedInput.2) ->
+       (clock (item_id x) < clock (in_id typedInput.2))%nat.
 Proof.
-  elim => [m0 | t0 input0 rest m0 arr2 m1 newItem Htoit _ _ Hglob Hint Hvr IH] i taggedInput Hi t x Hx Hcc.
+  elim => [m0 | t0 input0 rest m0 arr2 m1 newItem Htoit _ _ Hglob Hint Hvr IH] i typedInput Hi t x Hx Hcc.
   - rewrite lookup_nil in Hi. done.
   - destruct i as [| i'].
     + injection Hi as <-. exact (Hglob t x Hx Hcc).
@@ -1710,20 +1710,20 @@ Proof.
         - rewrite docm_get_insert_eq.
           exact (integrate_preserves_mem input0 (doc_model_get m0 t0) arr2 Hint x Hx).
         - rewrite docm_get_insert_ne //. }
-      exact (IH i' taggedInput Hi t x Hx2 Hcc).
+      exact (IH i' typedInput Hi t x Hx2 Hcc).
 Qed.
 
 (** Earlier same-client batch items have strictly smaller clocks (the
     intra-batch causal-order side condition of [wp_store__applyUpdate]). *)
-Lemma ValidReplay_batch_causal (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocM) :
+Lemma ValidReplay_batch_causal (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
   ValidReplay inputs m m' ->
-  ∀ (i j : nat) (taggedInput taggedInput2 : TId * IntegrateInput (A := A)),
-    inputs !! i = Some taggedInput -> inputs !! j = Some taggedInput2 ->
-    (j < i)%nat -> clientId (in_id taggedInput2.2) = clientId (in_id taggedInput.2) ->
-    (clock (in_id taggedInput2.2) < clock (in_id taggedInput.2))%nat.
+  ∀ (i j : nat) (typedInput typedInput2 : TId * IntegrateInput (A := A)),
+    inputs !! i = Some typedInput -> inputs !! j = Some typedInput2 ->
+    (j < i)%nat -> clientId (in_id typedInput2.2) = clientId (in_id typedInput.2) ->
+    (clock (in_id typedInput2.2) < clock (in_id typedInput.2))%nat.
 Proof.
   elim => [m0 | t0 input0 rest m0 arr2 m1 newItem Htoit _ _ Hglob Hint Hvr IH]
-    i j taggedInput taggedInput2 Hi Hj Hji Hcc.
+    i j typedInput typedInput2 Hi Hj Hji Hcc.
   - rewrite lookup_nil in Hi. done.
   - destruct j as [| j'].
     + (* the head op's item is in its type's new list; the tail's freshness
@@ -1731,16 +1731,16 @@ Proof.
       injection Hj as <-. destruct i as [| i']; [lia |]. simpl in Hi.
       pose proof (integrate_new_mem input0 (doc_model_get m0 t0) arr2 Hint) as (it & Hitid & Hitmem).
       have Hitmem2 : it ∈ doc_model_get (<[t0 := arr2]> m0) t0 by rewrite docm_get_insert_eq.
-      have Hccit : clientId (item_id it) = clientId (in_id taggedInput.2) by rewrite Hitid /=.
-      have := ValidReplay_arr_fresh rest (<[t0 := arr2]> m0) m1 Hvr i' taggedInput Hi t0 it Hitmem2 Hccit.
+      have Hccit : clientId (item_id it) = clientId (in_id typedInput.2) by rewrite Hitid /=.
+      have := ValidReplay_arr_fresh rest (<[t0 := arr2]> m0) m1 Hvr i' typedInput Hi t0 it Hitmem2 Hccit.
       rewrite Hitid //.
     + destruct i as [| i']; [lia |]. simpl in Hi, Hj.
-      exact (IH i' j' taggedInput taggedInput2 Hi Hj ltac:(lia) Hcc).
+      exact (IH i' j' typedInput typedInput2 Hi Hj ltac:(lia) Hcc).
 Qed.
 
 (** The deliver event a decoded, type-tagged input denotes. *)
-Definition deliver_ev (taggedInput : TId * IntegrateInput (A := A)) : Ev :=
-  EvDeliver (taggedInput.1, OpInsert taggedInput.2).
+Definition deliver_ev (typedInput : TId * IntegrateInput (A := A)) : Ev :=
+  EvDeliver (typedInput.1, OpInsert typedInput.2).
 
 (* ===== the pending drain (issue #40) ======================================= *)
 
@@ -1756,10 +1756,10 @@ Definition deliver_ev (taggedInput : TId * IntegrateInput (A := A)) : Ev :=
 
 (** Store-wide id presence in a doc model (the pure mirror of [store.hasNode]:
     the per-client run lists hold every integrated item of every type). *)
-Definition doc_model_has (m : DocM) (i : YjsId) : bool :=
+Definition doc_model_has (m : DocModel) (i : YjsId) : bool :=
   existsb (λ ta, existsb (λ x, bool_decide (item_id x = i)) ta.2) (map_to_list m).
 
-Lemma docm_has_spec (m : DocM) (i : YjsId) :
+Lemma docm_has_spec (m : DocModel) (i : YjsId) :
   doc_model_has m i = true <-> ∃ (t : TId) x, x ∈ doc_model_get m t ∧ item_id x = i.
 Proof.
   rewrite /doc_model_has existsb_exists. split.
@@ -1789,10 +1789,10 @@ Definition input_deps (input : IntegrateInput (A := A)) : list YjsId :=
   | S k => [MkYjsId (clientId (in_id input)) k]
   end.
 
-Definition input_ready (m : DocM) (input : IntegrateInput (A := A)) : bool :=
+Definition input_ready (m : DocModel) (input : IntegrateInput (A := A)) : bool :=
   forallb (doc_model_has m) (input_deps input).
 
-Lemma input_ready_spec (m : DocM) (input : IntegrateInput (A := A)) :
+Lemma input_ready_spec (m : DocModel) (input : IntegrateInput (A := A)) :
   input_ready m input = true <-> ∀ d : YjsId, d ∈ input_deps input -> doc_model_has m d = true.
 Proof.
   rewrite /input_ready forallb_forall. split.
@@ -1803,10 +1803,10 @@ Qed.
 (** Keep a struct for the next pass unless an equal id is already kept
     (store.go: [containsUpdateItemId] -- pending re-deliveries drop by id). *)
 Definition pending_keep (kept : list (TId * IntegrateInput (A := A)))
-    (taggedInput : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
-  if existsb (λ taggedInput2, bool_decide (in_id taggedInput2.2 = in_id taggedInput.2)) kept
+    (typedInput : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
+  if existsb (λ typedInput2, bool_decide (in_id typedInput2.2 = in_id typedInput.2)) kept
   then kept
-  else kept ++ [taggedInput].
+  else kept ++ [typedInput].
 
 (** One pass over the pending, mirroring one iteration of the Go outer loop:
     [pending_pass m pending kept = (applied, kept', m')] where [applied] lists the
@@ -1816,25 +1816,25 @@ Definition pending_keep (kept : list (TId * IntegrateInput (A := A)))
     certificate layer proves this branch dead (a ready certified struct
     always integrates), and the heap-level loop is only ever related to
     passes where it is dead. *)
-Fixpoint pending_pass (m : DocM) (pending kept : list (TId * IntegrateInput (A := A)))
-    : list (TId * IntegrateInput (A := A)) * list (TId * IntegrateInput (A := A)) * DocM :=
+Fixpoint pending_pass (m : DocModel) (pending kept : list (TId * IntegrateInput (A := A)))
+    : list (TId * IntegrateInput (A := A)) * list (TId * IntegrateInput (A := A)) * DocModel :=
   match pending with
   | [] => ([], kept, m)
-  | taggedInput :: tl =>
-      if doc_model_has m (in_id taggedInput.2) then pending_pass m tl kept
-      else if input_ready m taggedInput.2 then
-        match integrate taggedInput.2 (doc_model_get m taggedInput.1) with
+  | typedInput :: tl =>
+      if doc_model_has m (in_id typedInput.2) then pending_pass m tl kept
+      else if input_ready m typedInput.2 then
+        match integrate typedInput.2 (doc_model_get m typedInput.1) with
         | Some arr' =>
-            let '(app, kept', m') := pending_pass (<[taggedInput.1 := arr']> m) tl kept in
-            (taggedInput :: app, kept', m')
-        | None => pending_pass m tl (pending_keep kept taggedInput)
+            let '(app, kept', m') := pending_pass (<[typedInput.1 := arr']> m) tl kept in
+            (typedInput :: app, kept', m')
+        | None => pending_pass m tl (pending_keep kept typedInput)
         end
-      else pending_pass m tl (pending_keep kept taggedInput)
+      else pending_pass m tl (pending_keep kept typedInput)
   end.
 
-Fixpoint pending_drain_aux (fuel : nat) (m : DocM)
+Fixpoint pending_drain_aux (fuel : nat) (m : DocModel)
     (pending : list (TId * IntegrateInput (A := A)))
-    : list (TId * IntegrateInput (A := A)) * list (TId * IntegrateInput (A := A)) * DocM :=
+    : list (TId * IntegrateInput (A := A)) * list (TId * IntegrateInput (A := A)) * DocModel :=
   match fuel with
   | 0%nat => ([], pending, m)
   | S f =>
@@ -1851,19 +1851,19 @@ Fixpoint pending_drain_aux (fuel : nat) (m : DocM)
     integrates nothing). A progressing pass strictly shrinks the pending
     ([pending_pass_kept_lt]), so [length pending] passes always suffice and the
     fuel is irrelevant beyond that ([pending_drain_aux_fuel_ge]). *)
-Definition pending_drain (m : DocM) (pending : list (TId * IntegrateInput (A := A)))
-    : list (TId * IntegrateInput (A := A)) * list (TId * IntegrateInput (A := A)) * DocM :=
+Definition pending_drain (m : DocModel) (pending : list (TId * IntegrateInput (A := A)))
+    : list (TId * IntegrateInput (A := A)) * list (TId * IntegrateInput (A := A)) * DocModel :=
   pending_drain_aux (S (length pending)) m pending.
 
 (* ----- pass structure ----- *)
 
-Lemma pending_keep_length kept taggedInput :
-  (length (pending_keep kept taggedInput) <= S (length kept))%nat.
+Lemma pending_keep_length kept typedInput :
+  (length (pending_keep kept typedInput) <= S (length kept))%nat.
 Proof.
   rewrite /pending_keep. destruct (existsb _ kept); [lia | rewrite length_app /=; lia].
 Qed.
 
-Lemma pending_keep_prefix kept taggedInput : kept `prefix_of` pending_keep kept taggedInput.
+Lemma pending_keep_prefix kept typedInput : kept `prefix_of` pending_keep kept typedInput.
 Proof.
   rewrite /pending_keep. destruct (existsb _ kept); [done | by eexists].
 Qed.
@@ -1875,22 +1875,22 @@ Lemma pending_pass_kept_le (pending : list (TId * IntegrateInput (A := A))) :
     pending_pass m pending kept = (app, kept', m') ->
     (length kept' + length app <= length kept + length pending)%nat.
 Proof.
-  elim: pending => [| taggedInput tl IH] m kept app kept' m' /=.
+  elim: pending => [| typedInput tl IH] m kept app kept' m' /=.
   - move=> [= <- <- _] /=. lia.
-  - destruct (doc_model_has m (in_id taggedInput.2)).
+  - destruct (doc_model_has m (in_id typedInput.2)).
     { move=> /IH. lia. }
-    destruct (input_ready m taggedInput.2); last first.
-    { move=> /IH. move: (pending_keep_length kept taggedInput). lia. }
-    destruct (integrate taggedInput.2 (doc_model_get m taggedInput.1)) as [arr' |]; last first.
-    { move=> /IH. move: (pending_keep_length kept taggedInput). lia. }
-    destruct (pending_pass (<[taggedInput.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    destruct (input_ready m typedInput.2); last first.
+    { move=> /IH. move: (pending_keep_length kept typedInput). lia. }
+    destruct (integrate typedInput.2 (doc_model_get m typedInput.1)) as [arr' |]; last first.
+    { move=> /IH. move: (pending_keep_length kept typedInput). lia. }
+    destruct (pending_pass (<[typedInput.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= <- <- _] /=.
     move: (IH _ _ _ _ _ Hrec). lia.
 Qed.
 
 (** A progressing pass (from an empty kept accumulator) strictly shrinks. *)
 Lemma pending_pass_kept_lt (pending app kept' : list (TId * IntegrateInput (A := A)))
-    (m m' : DocM) :
+    (m m' : DocModel) :
   pending_pass m pending [] = (app, kept', m') ->
   app ≠ [] ->
   (length kept' < length pending)%nat.
@@ -1905,22 +1905,22 @@ Lemma pending_pass_kept_prefix (pending : list (TId * IntegrateInput (A := A))) 
     pending_pass m pending kept = (app, kept', m') ->
     kept `prefix_of` kept'.
 Proof.
-  elim: pending => [| taggedInput tl IH] m kept app kept' m' /=.
+  elim: pending => [| typedInput tl IH] m kept app kept' m' /=.
   - move=> [= _ <- _] //.
-  - destruct (doc_model_has m (in_id taggedInput.2)).
+  - destruct (doc_model_has m (in_id typedInput.2)).
     { move=> /IH //. }
-    destruct (input_ready m taggedInput.2); last first.
+    destruct (input_ready m typedInput.2); last first.
     { move=> /IH Hpre. etrans; [apply pending_keep_prefix | exact Hpre]. }
-    destruct (integrate taggedInput.2 (doc_model_get m taggedInput.1)) as [arr' |]; last first.
+    destruct (integrate typedInput.2 (doc_model_get m typedInput.1)) as [arr' |]; last first.
     { move=> /IH Hpre. etrans; [apply pending_keep_prefix | exact Hpre]. }
-    destruct (pending_pass (<[taggedInput.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    destruct (pending_pass (<[typedInput.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= _ <- _]. exact (IH _ _ _ _ _ Hrec).
 Qed.
 
 (* ----- fuel irrelevance ----- *)
 
 Lemma pending_drain_aux_fuel_agree (f1 : nat) :
-  ∀ (f2 : nat) (m : DocM) (pending : list (TId * IntegrateInput (A := A))),
+  ∀ (f2 : nat) (m : DocModel) (pending : list (TId * IntegrateInput (A := A))),
     (length pending < f1)%nat -> (length pending < f2)%nat ->
     pending_drain_aux f1 m pending = pending_drain_aux f2 m pending.
 Proof.
@@ -1934,7 +1934,7 @@ Proof.
   rewrite (IH f2 m' kept ltac:(lia) ltac:(lia)) //.
 Qed.
 
-Lemma pending_drain_aux_fuel_ge (fuel : nat) (m : DocM)
+Lemma pending_drain_aux_fuel_ge (fuel : nat) (m : DocModel)
     (pending : list (TId * IntegrateInput (A := A))) :
   (length pending < fuel)%nat ->
   pending_drain_aux fuel m pending = pending_drain_aux (S (length pending)) m pending.
@@ -1944,7 +1944,7 @@ Qed.
 
 (** The one-pass unfolding of [pending_drain] (the Go outer loop consumes exactly
     one pass per iteration; the WP loop invariant steps with this equation). *)
-Lemma pending_drain_unfold (m : DocM) (pending : list (TId * IntegrateInput (A := A))) :
+Lemma pending_drain_unfold (m : DocModel) (pending : list (TId * IntegrateInput (A := A))) :
   pending_drain m pending =
     let '(app, kept, m') := pending_pass m pending [] in
     match app with
@@ -1968,22 +1968,22 @@ Qed.
     pure [integrate] advanced its type's list. This is [ValidReplay] minus the
     validity facts ([toItem] / [IsItemValid] / clock maximality), which the
     certificate layer supplies on top. *)
-Inductive PendingReplay : DocM -> list (TId * IntegrateInput (A := A)) -> DocM -> Prop :=
+Inductive PendingReplay : DocModel -> list (TId * IntegrateInput (A := A)) -> DocModel -> Prop :=
   | PendingReplay_nil m : PendingReplay m [] m
-  | PendingReplay_cons m taggedInput arr' rest m' :
-      doc_model_has m (in_id taggedInput.2) = false ->
-      input_ready m taggedInput.2 = true ->
-      integrate taggedInput.2 (doc_model_get m taggedInput.1) = Some arr' ->
-      PendingReplay (<[taggedInput.1 := arr']> m) rest m' ->
-      PendingReplay m (taggedInput :: rest) m'.
+  | PendingReplay_cons m typedInput arr' rest m' :
+      doc_model_has m (in_id typedInput.2) = false ->
+      input_ready m typedInput.2 = true ->
+      integrate typedInput.2 (doc_model_get m typedInput.1) = Some arr' ->
+      PendingReplay (<[typedInput.1 := arr']> m) rest m' ->
+      PendingReplay m (typedInput :: rest) m'.
 
-Lemma PendingReplay_app (m m1 m2 : DocM)
+Lemma PendingReplay_app (m m1 m2 : DocModel)
     (a1 a2 : list (TId * IntegrateInput (A := A))) :
   PendingReplay m a1 m1 -> PendingReplay m1 a2 m2 -> PendingReplay m (a1 ++ a2) m2.
 Proof.
-  move=> H1. elim: H1 a2 m2 => [m0 | m0 taggedInput arr' rest m0' Hdup Hready Hint Hrest IH] a2 m2 H2 /=.
+  move=> H1. elim: H1 a2 m2 => [m0 | m0 typedInput arr' rest m0' Hdup Hready Hint Hrest IH] a2 m2 H2 /=.
   - exact H2.
-  - apply (PendingReplay_cons m0 taggedInput arr' (rest ++ a2) m2 Hdup Hready Hint).
+  - apply (PendingReplay_cons m0 typedInput arr' (rest ++ a2) m2 Hdup Hready Hint).
     exact (IH a2 m2 H2).
 Qed.
 
@@ -1992,17 +1992,17 @@ Lemma pending_pass_replay (pending : list (TId * IntegrateInput (A := A))) :
     pending_pass m pending kept = (app, kept', m') ->
     PendingReplay m app m'.
 Proof.
-  elim: pending => [| taggedInput tl IH] m kept app kept' m' /=.
+  elim: pending => [| typedInput tl IH] m kept app kept' m' /=.
   - move=> [= <- _ <-]. constructor.
-  - destruct (doc_model_has m (in_id taggedInput.2)) eqn:Hdup.
+  - destruct (doc_model_has m (in_id typedInput.2)) eqn:Hdup.
     { move=> /IH //. }
-    destruct (input_ready m taggedInput.2) eqn:Hready; last first.
+    destruct (input_ready m typedInput.2) eqn:Hready; last first.
     { move=> /IH //. }
-    destruct (integrate taggedInput.2 (doc_model_get m taggedInput.1)) as [arr' |] eqn:Hint; last first.
+    destruct (integrate typedInput.2 (doc_model_get m typedInput.1)) as [arr' |] eqn:Hint; last first.
     { move=> /IH //. }
-    destruct (pending_pass (<[taggedInput.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    destruct (pending_pass (<[typedInput.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= <- _ <-].
-    exact (PendingReplay_cons m taggedInput arr' app0 m0 Hdup Hready Hint (IH _ _ _ _ _ Hrec)).
+    exact (PendingReplay_cons m typedInput arr' app0 m0 Hdup Hready Hint (IH _ _ _ _ _ Hrec)).
 Qed.
 
 (** A pass that applies nothing leaves the model unchanged. *)
@@ -2011,20 +2011,20 @@ Lemma pending_pass_no_progress (pending : list (TId * IntegrateInput (A := A))) 
     pending_pass m pending kept = ([], kept', m') ->
     m' = m.
 Proof.
-  elim: pending => [| taggedInput tl IH] m kept kept' m' /=.
+  elim: pending => [| typedInput tl IH] m kept kept' m' /=.
   - move=> [= _ <-] //.
-  - destruct (doc_model_has m (in_id taggedInput.2)).
+  - destruct (doc_model_has m (in_id typedInput.2)).
     { move=> /IH //. }
-    destruct (input_ready m taggedInput.2); last first.
+    destruct (input_ready m typedInput.2); last first.
     { move=> /IH //. }
-    destruct (integrate taggedInput.2 (doc_model_get m taggedInput.1)) as [arr' |]; last first.
+    destruct (integrate typedInput.2 (doc_model_get m typedInput.1)) as [arr' |]; last first.
     { move=> /IH //. }
-    destruct (pending_pass (<[taggedInput.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    destruct (pending_pass (<[typedInput.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= Happ _ _]. discriminate.
 Qed.
 
 Lemma pending_drain_aux_replay (fuel : nat) :
-  ∀ (m : DocM) (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM),
+  ∀ (m : DocModel) (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocModel),
     pending_drain_aux fuel m pending = (app, rest, m') ->
     PendingReplay m app m'.
 Proof.
@@ -2040,15 +2040,15 @@ Proof.
              (IH _ _ _ _ _ Hrec)).
 Qed.
 
-Lemma pending_drain_replay (m : DocM)
-    (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM) :
+Lemma pending_drain_replay (m : DocModel)
+    (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocModel) :
   pending_drain m pending = (app, rest, m') ->
   PendingReplay m app m'.
 Proof. apply pending_drain_aux_replay. Qed.
 
 (* ----- monotonicity: integrated structs stay integrated ----- *)
 
-Lemma docm_has_integrate_mono (m : DocM) (t : TId) (input : IntegrateInput (A := A))
+Lemma docm_has_integrate_mono (m : DocModel) (t : TId) (input : IntegrateInput (A := A))
     (arr' : list (YjsItem A)) (d : YjsId) :
   integrate input (doc_model_get m t) = Some arr' ->
   doc_model_has m d = true ->
@@ -2063,25 +2063,25 @@ Proof.
   - exists t0, x. rewrite docm_get_insert_ne //.
 Qed.
 
-Lemma PendingReplay_docm_has_mono (m m' : DocM)
+Lemma PendingReplay_docm_has_mono (m m' : DocModel)
     (app : list (TId * IntegrateInput (A := A))) (d : YjsId) :
   PendingReplay m app m' ->
   doc_model_has m d = true ->
   doc_model_has m' d = true.
 Proof.
-  move=> H. elim: H => [m0 | m0 taggedInput arr' rest m0' Hdup Hready Hint Hrest IH] Hd; first exact Hd.
-  apply IH. exact (docm_has_integrate_mono m0 taggedInput.1 taggedInput.2 arr' d Hint Hd).
+  move=> H. elim: H => [m0 | m0 typedInput arr' rest m0' Hdup Hready Hint Hrest IH] Hd; first exact Hd.
+  apply IH. exact (docm_has_integrate_mono m0 typedInput.1 typedInput.2 arr' d Hint Hd).
 Qed.
 
 (** An applied struct is integrated from its application point on. *)
-Lemma PendingReplay_applied_present (m m' : DocM)
+Lemma PendingReplay_applied_present (m m' : DocModel)
     (app : list (TId * IntegrateInput (A := A))) :
   PendingReplay m app m' ->
-  ∀ taggedInput, taggedInput ∈ app -> doc_model_has m' (in_id taggedInput.2) = true.
+  ∀ typedInput, typedInput ∈ app -> doc_model_has m' (in_id typedInput.2) = true.
 Proof.
-  move=> H. elim: H => [m0 | m0 ti0 arr' rest m0' Hdup Hready Hint Hrest IH] taggedInput Hin.
+  move=> H. elim: H => [m0 | m0 ti0 arr' rest m0' Hdup Hready Hint Hrest IH] typedInput Hin.
   - by apply elem_of_nil in Hin.
-  - apply elem_of_cons in Hin. destruct Hin as [-> | Hin]; last exact (IH taggedInput Hin).
+  - apply elem_of_cons in Hin. destruct Hin as [-> | Hin]; last exact (IH typedInput Hin).
     apply (PendingReplay_docm_has_mono _ _ _ _ Hrest).
     apply docm_has_spec.
     destruct (integrate_new_mem ti0.2 (doc_model_get m0 ti0.1) arr' Hint) as (it & Hitid & Hitmem).
@@ -2090,20 +2090,20 @@ Qed.
 
 (** Applied ids are pairwise distinct (freshness at each step plus
     monotonicity), the pure dedup fact behind [IdNoDup] downstream. *)
-Lemma PendingReplay_ids_nodup (m m' : DocM)
+Lemma PendingReplay_ids_nodup (m m' : DocModel)
     (app : list (TId * IntegrateInput (A := A))) :
   PendingReplay m app m' ->
-  NoDup ((λ taggedInput, in_id taggedInput.2) <$> app).
+  NoDup ((λ typedInput, in_id typedInput.2) <$> app).
 Proof.
-  move=> H. elim: H => [m0 | m0 taggedInput arr' rest m0' Hdup Hready Hint Hrest IH] /=; first constructor.
+  move=> H. elim: H => [m0 | m0 typedInput arr' rest m0' Hdup Hready Hint Hrest IH] /=; first constructor.
   apply NoDup_cons_2; last exact IH.
-  rewrite list_elem_of_fmap. move=> [taggedInput2 [Hideq Hj]].
-  have Hpres : doc_model_has (<[taggedInput.1 := arr']> m0) (in_id taggedInput.2) = true.
+  rewrite list_elem_of_fmap. move=> [typedInput2 [Hideq Hj]].
+  have Hpres : doc_model_has (<[typedInput.1 := arr']> m0) (in_id typedInput.2) = true.
   { apply docm_has_spec.
-    destruct (integrate_new_mem taggedInput.2 (doc_model_get m0 taggedInput.1) arr' Hint) as (it & Hitid & Hitmem).
-    exists taggedInput.1, it. rewrite docm_get_insert_eq. by split. }
-  (* the later application point still has [in_id taggedInput.2] integrated, yet [taggedInput2]
-     was fresh there: walk the tail replay to [taggedInput2]'s point *)
+    destruct (integrate_new_mem typedInput.2 (doc_model_get m0 typedInput.1) arr' Hint) as (it & Hitid & Hitmem).
+    exists typedInput.1, it. rewrite docm_get_insert_eq. by split. }
+  (* the later application point still has [in_id typedInput.2] integrated, yet [typedInput2]
+     was fresh there: walk the tail replay to [typedInput2]'s point *)
   clear IH. move: Hpres. rewrite Hideq. clear Hideq.
   elim: Hrest Hj => [m1 | m1 tk arr1 rest1 m1' Hdup1 Hready1 Hint1 Hrest1 IH1] Hj Hpres.
   - by apply elem_of_nil in Hj.
@@ -2118,29 +2118,29 @@ Qed.
 (** A struct the drain leaves pending is genuinely blocked in the final model:
     not integrated, and either a dependency is still missing or (for
     uncertified pendings) its [integrate] fails. *)
-Definition pending_blocked (m : DocM) (taggedInput : TId * IntegrateInput (A := A)) : Prop :=
-  doc_model_has m (in_id taggedInput.2) = false ∧
-  (input_ready m taggedInput.2 = false ∨ integrate taggedInput.2 (doc_model_get m taggedInput.1) = None).
+Definition pending_blocked (m : DocModel) (typedInput : TId * IntegrateInput (A := A)) : Prop :=
+  doc_model_has m (in_id typedInput.2) = false ∧
+  (input_ready m typedInput.2 = false ∨ integrate typedInput.2 (doc_model_get m typedInput.1) = None).
 
 Lemma pending_pass_kept_blocked (pending : list (TId * IntegrateInput (A := A))) :
   ∀ m kept kept' m',
     pending_pass m pending kept = ([], kept', m') ->
-    ∀ taggedInput, taggedInput ∈ kept' -> taggedInput ∈ kept ∨ pending_blocked m taggedInput.
+    ∀ typedInput, typedInput ∈ kept' -> typedInput ∈ kept ∨ pending_blocked m typedInput.
 Proof.
   elim: pending => [| ti0 tl IH] m kept kept' m' /=.
-  - move=> [= <- _] taggedInput Hin. by left.
+  - move=> [= <- _] typedInput Hin. by left.
   - destruct (doc_model_has m (in_id ti0.2)) eqn:Hdup.
     { move=> /IH //. }
     destruct (input_ready m ti0.2) eqn:Hready; last first.
-    { move=> Hpass taggedInput Hin.
-      destruct (IH _ _ _ _ Hpass taggedInput Hin) as [Hkept | Hblocked]; last by right.
+    { move=> Hpass typedInput Hin.
+      destruct (IH _ _ _ _ Hpass typedInput Hin) as [Hkept | Hblocked]; last by right.
       move: Hkept. rewrite /pending_keep.
       destruct (existsb _ kept); first by left.
       rewrite elem_of_app list_elem_of_singleton. move=> [Hk | ->]; first by left.
       right. split; [exact Hdup | by left]. }
     destruct (integrate ti0.2 (doc_model_get m ti0.1)) as [arr' |] eqn:Hint; last first.
-    { move=> Hpass taggedInput Hin.
-      destruct (IH _ _ _ _ Hpass taggedInput Hin) as [Hkept | Hblocked]; last by right.
+    { move=> Hpass typedInput Hin.
+      destruct (IH _ _ _ _ Hpass typedInput Hin) as [Hkept | Hblocked]; last by right.
       move: Hkept. rewrite /pending_keep.
       destruct (existsb _ kept); first by left.
       rewrite elem_of_app list_elem_of_singleton. move=> [Hk | ->]; first by left.
@@ -2150,17 +2150,17 @@ Proof.
 Qed.
 
 Lemma pending_drain_aux_rest_blocked (fuel : nat) :
-  ∀ (m : DocM) (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM),
+  ∀ (m : DocModel) (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocModel),
     (length pending < fuel)%nat ->
     pending_drain_aux fuel m pending = (app, rest, m') ->
-    ∀ taggedInput, taggedInput ∈ rest -> pending_blocked m' taggedInput.
+    ∀ typedInput, typedInput ∈ rest -> pending_blocked m' typedInput.
 Proof.
   elim: fuel => [| f IH] m pending app rest m' Hfuel /=; first lia.
   destruct (pending_pass m pending []) as [[app0 kept] m0] eqn:Hpass.
   destruct app0 as [| a app0'].
-  - move=> [= _ <- <-] taggedInput Hin.
+  - move=> [= _ <- <-] typedInput Hin.
     have Hm : m0 = m := pending_pass_no_progress pending m [] kept m0 Hpass.
-    destruct (pending_pass_kept_blocked pending m [] kept m0 Hpass taggedInput Hin) as [Hk | Hb].
+    destruct (pending_pass_kept_blocked pending m [] kept m0 Hpass typedInput Hin) as [Hk | Hb].
     + by apply elem_of_nil in Hk.
     + rewrite Hm //.
   - destruct (pending_drain_aux f m0 kept) as [[app2 rest2] m2] eqn:Hrec.
@@ -2170,18 +2170,18 @@ Proof.
     exact (IH m0 kept app2 rest2 m2 ltac:(lia) Hrec).
 Qed.
 
-Lemma pending_drain_rest_blocked (m : DocM)
-    (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM) :
+Lemma pending_drain_rest_blocked (m : DocModel)
+    (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocModel) :
   pending_drain m pending = (app, rest, m') ->
-  ∀ taggedInput, taggedInput ∈ rest -> pending_blocked m' taggedInput.
+  ∀ typedInput, typedInput ∈ rest -> pending_blocked m' typedInput.
 Proof.
   apply pending_drain_aux_rest_blocked. lia.
 Qed.
 
 (* ----- provenance: everything applied/kept comes from the pending ----- *)
 
-Lemma pending_keep_subset kept taggedInput taggedInput2 :
-  taggedInput2 ∈ pending_keep kept taggedInput -> taggedInput2 ∈ kept ∨ taggedInput2 = taggedInput.
+Lemma pending_keep_subset kept typedInput typedInput2 :
+  typedInput2 ∈ pending_keep kept typedInput -> typedInput2 ∈ kept ∨ typedInput2 = typedInput.
 Proof.
   rewrite /pending_keep. destruct (existsb _ kept); first by left.
   rewrite elem_of_app list_elem_of_singleton. move=> [Hk | ->]; [by left | by right].
@@ -2190,74 +2190,74 @@ Qed.
 Lemma pending_pass_subset (pending : list (TId * IntegrateInput (A := A))) :
   ∀ m kept app kept' m',
     pending_pass m pending kept = (app, kept', m') ->
-    (∀ taggedInput, taggedInput ∈ app -> taggedInput ∈ pending) ∧
-    (∀ taggedInput, taggedInput ∈ kept' -> taggedInput ∈ kept ∨ taggedInput ∈ pending).
+    (∀ typedInput, typedInput ∈ app -> typedInput ∈ pending) ∧
+    (∀ typedInput, typedInput ∈ kept' -> typedInput ∈ kept ∨ typedInput ∈ pending).
 Proof.
   elim: pending => [| ti0 tl IH] m kept app kept' m' /=.
-  - move=> [= <- <- _]. split; [move=> taggedInput Hin; by apply elem_of_nil in Hin |].
-    move=> taggedInput Hin. by left.
+  - move=> [= <- <- _]. split; [move=> typedInput Hin; by apply elem_of_nil in Hin |].
+    move=> typedInput Hin. by left.
   - destruct (doc_model_has m (in_id ti0.2)).
     { move=> /IH [Happ Hkept]. split.
-      - move=> taggedInput Hin. apply elem_of_cons. right. exact (Happ taggedInput Hin).
-      - move=> taggedInput Hin. destruct (Hkept taggedInput Hin) as [Hk | Hp]; [by left |].
+      - move=> typedInput Hin. apply elem_of_cons. right. exact (Happ typedInput Hin).
+      - move=> typedInput Hin. destruct (Hkept typedInput Hin) as [Hk | Hp]; [by left |].
         right. apply elem_of_cons. by right. }
     destruct (input_ready m ti0.2); last first.
     { move=> /IH [Happ Hkept]. split.
-      - move=> taggedInput Hin. apply elem_of_cons. right. exact (Happ taggedInput Hin).
-      - move=> taggedInput Hin. destruct (Hkept taggedInput Hin) as [Hk | Hp].
-        + destruct (pending_keep_subset kept ti0 taggedInput Hk) as [Hk' | ->]; [by left |].
+      - move=> typedInput Hin. apply elem_of_cons. right. exact (Happ typedInput Hin).
+      - move=> typedInput Hin. destruct (Hkept typedInput Hin) as [Hk | Hp].
+        + destruct (pending_keep_subset kept ti0 typedInput Hk) as [Hk' | ->]; [by left |].
           right. apply elem_of_cons. by left.
         + right. apply elem_of_cons. by right. }
     destruct (integrate ti0.2 (doc_model_get m ti0.1)) as [arr' |]; last first.
     { move=> /IH [Happ Hkept]. split.
-      - move=> taggedInput Hin. apply elem_of_cons. right. exact (Happ taggedInput Hin).
-      - move=> taggedInput Hin. destruct (Hkept taggedInput Hin) as [Hk | Hp].
-        + destruct (pending_keep_subset kept ti0 taggedInput Hk) as [Hk' | ->]; [by left |].
+      - move=> typedInput Hin. apply elem_of_cons. right. exact (Happ typedInput Hin).
+      - move=> typedInput Hin. destruct (Hkept typedInput Hin) as [Hk | Hp].
+        + destruct (pending_keep_subset kept ti0 typedInput Hk) as [Hk' | ->]; [by left |].
           right. apply elem_of_cons. by left.
         + right. apply elem_of_cons. by right. }
     destruct (pending_pass (<[ti0.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= <- <- _].
     destruct (IH _ _ _ _ _ Hrec) as [Happ Hkept]. split.
-    + move=> taggedInput Hin. apply elem_of_cons in Hin.
-      destruct Hin as [-> | Hin]; [by left | right; exact (Happ taggedInput Hin)].
-    + move=> taggedInput Hin. destruct (Hkept taggedInput Hin) as [Hk | Hp]; [by left |].
+    + move=> typedInput Hin. apply elem_of_cons in Hin.
+      destruct Hin as [-> | Hin]; [by left | right; exact (Happ typedInput Hin)].
+    + move=> typedInput Hin. destruct (Hkept typedInput Hin) as [Hk | Hp]; [by left |].
       right. apply elem_of_cons. by right.
 Qed.
 
 Lemma pending_drain_aux_subset (fuel : nat) :
-  ∀ (m : DocM) (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM),
+  ∀ (m : DocModel) (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocModel),
     pending_drain_aux fuel m pending = (app, rest, m') ->
-    (∀ taggedInput, taggedInput ∈ app -> taggedInput ∈ pending) ∧ (∀ taggedInput, taggedInput ∈ rest -> taggedInput ∈ pending).
+    (∀ typedInput, typedInput ∈ app -> typedInput ∈ pending) ∧ (∀ typedInput, typedInput ∈ rest -> typedInput ∈ pending).
 Proof.
   elim: fuel => [| f IH] m pending app rest m' /=.
-  - move=> [= <- <- _]. split; [move=> taggedInput Hin; by apply elem_of_nil in Hin | done].
+  - move=> [= <- <- _]. split; [move=> typedInput Hin; by apply elem_of_nil in Hin | done].
   - destruct (pending_pass m pending []) as [[app0 kept] m0] eqn:Hpass.
     destruct (pending_pass_subset pending m [] app0 kept m0 Hpass) as [Happ0 Hkept0].
-    have Hkept0' : ∀ taggedInput, taggedInput ∈ kept -> taggedInput ∈ pending.
-    { move=> taggedInput Hin. destruct (Hkept0 taggedInput Hin) as [Hk | Hp]; [by apply elem_of_nil in Hk | done]. }
+    have Hkept0' : ∀ typedInput, typedInput ∈ kept -> typedInput ∈ pending.
+    { move=> typedInput Hin. destruct (Hkept0 typedInput Hin) as [Hk | Hp]; [by apply elem_of_nil in Hk | done]. }
     destruct app0 as [| a app0'].
-    { move=> [= <- <- _]. split; [move=> taggedInput Hin; by apply elem_of_nil in Hin | done]. }
+    { move=> [= <- <- _]. split; [move=> typedInput Hin; by apply elem_of_nil in Hin | done]. }
     destruct (pending_drain_aux f m0 kept) as [[app2 rest2] m2] eqn:Hrec.
     move=> [= <- <- _].
     destruct (IH _ _ _ _ _ Hrec) as [Happ2 Hrest2]. split.
-    + move=> taggedInput Hin.
+    + move=> typedInput Hin.
       apply elem_of_cons in Hin. destruct Hin as [-> | Hin].
       * apply (Happ0 a). apply elem_of_cons. by left.
       * apply elem_of_app in Hin. destruct Hin as [Hin | Hin].
-        -- apply (Happ0 taggedInput). apply elem_of_cons. by right.
-        -- exact (Hkept0' taggedInput (Happ2 taggedInput Hin)).
-    + move=> taggedInput Hin. exact (Hkept0' taggedInput (Hrest2 taggedInput Hin)).
+        -- apply (Happ0 typedInput). apply elem_of_cons. by right.
+        -- exact (Hkept0' typedInput (Happ2 typedInput Hin)).
+    + move=> typedInput Hin. exact (Hkept0' typedInput (Hrest2 typedInput Hin)).
 Qed.
 
-Lemma pending_drain_subset (m : DocM)
-    (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocM) :
+Lemma pending_drain_subset (m : DocModel)
+    (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocModel) :
   pending_drain m pending = (app, rest, m') ->
-  (∀ taggedInput, taggedInput ∈ app -> taggedInput ∈ pending) ∧ (∀ taggedInput, taggedInput ∈ rest -> taggedInput ∈ pending).
+  (∀ typedInput, typedInput ∈ app -> typedInput ∈ pending) ∧ (∀ typedInput, typedInput ∈ rest -> typedInput ∈ pending).
 Proof. apply pending_drain_aux_subset. Qed.
 (* ===== gate arithmetic and integrate totality (issue #40) ================= *)
 
 (** Pure: one failing dependency falsifies the gate. *)
-Lemma input_ready_false_of_dep (m : DocM) (input : IntegrateInput (A := A)) (d : YjsId) :
+Lemma input_ready_false_of_dep (m : DocModel) (input : IntegrateInput (A := A)) (d : YjsId) :
   d ∈ input_deps input -> doc_model_has m d = false -> input_ready m input = false.
 Proof.
   move=> Hd Hf.
@@ -2267,7 +2267,7 @@ Proof.
 Qed.
 
 (** Pure: the three arrival checks exhaust the dependency list. *)
-Lemma input_ready_true_of (m : DocM) (input : IntegrateInput (A := A)) :
+Lemma input_ready_true_of (m : DocModel) (input : IntegrateInput (A := A)) :
   (∀ originId, in_originId input = Some originId -> doc_model_has m originId = true) ->
   (∀ originId, in_rightOriginId input = Some originId -> doc_model_has m originId = true) ->
   (∀ k, clock (in_id input) = S k ->
@@ -2423,7 +2423,7 @@ Proof.
 Qed.
 
 (** The document invariants survive a valid replay. *)
-Lemma ValidReplay_arrinv (pre : list (TId * IntegrateInput (A := A))) (m mx : DocM) :
+Lemma ValidReplay_arrinv (pre : list (TId * IntegrateInput (A := A))) (m mx : DocModel) :
   ValidReplay pre m mx ->
   (∀ t : TId, YjsArrInvariant (doc_model_get m t)) ->
   (∀ t : TId, YjsArrInvariant (doc_model_get mx t)).
@@ -2442,14 +2442,14 @@ Qed.
 (** [pending_ready_total]: along the drain, a fresh, ready pending struct always
     integrates (the pure exclusion of the ready-but-stuck branch, which the
     heap loop's refinement needs: Go integrates whenever the gate passes). *)
-Definition pending_ready_total (m : DocM)
+Definition pending_ready_total (m : DocModel)
     (pending applied : list (TId * IntegrateInput (A := A))) : Prop :=
-  ∀ pre suf mx (taggedInput : TId * IntegrateInput (A := A)),
+  ∀ pre suf mx (typedInput : TId * IntegrateInput (A := A)),
     applied = pre ++ suf -> PendingReplay m pre mx ->
-    taggedInput ∈ pending ->
-    doc_model_has mx (in_id taggedInput.2) = false ->
-    input_ready mx taggedInput.2 = true ->
-    is_Some (integrate taggedInput.2 (doc_model_get mx taggedInput.1)).
+    typedInput ∈ pending ->
+    doc_model_has mx (in_id typedInput.2) = false ->
+    input_ready mx typedInput.2 = true ->
+    is_Some (integrate typedInput.2 (doc_model_get mx typedInput.1)).
 
 (* ===== validity transport along structural dependencies (issue #40) ======= *)
 
@@ -2557,7 +2557,7 @@ Qed.
 
 (** An item of the coherent document was inserted by a delivered op of its
     type, carrying its id. *)
-Lemma docm_mem_delivered h (m : DocM) (t : TId) (x : YjsItem A) :
+Lemma docm_mem_delivered h (m : DocModel) (t : TId) (x : YjsItem A) :
   history_state_coh h m ->
   x ∈ doc_model_get m t ->
   ∃ input : IntegrateInput (A := A),
@@ -2575,7 +2575,7 @@ Qed.
 
 (** Conversely, a delivered insert's item is in the coherent document (at its
     type), so its id is integrated store-wide. *)
-Lemma delivered_docm_has h (m : DocM) (t : TId) (input : IntegrateInput (A := A)) :
+Lemma delivered_docm_has h (m : DocModel) (t : TId) (input : IntegrateInput (A := A)) :
   history_state_coh h m ->
   (t, OpInsert input) ∈ delivered_ops h ->
   doc_model_has m (in_id input) = true.
@@ -2619,7 +2619,7 @@ Qed.
     coherent state that has integrated its ORIGINS (same type). No causal
     coverage: broadcast-time validity moves along [item_determinism_raw],
     which only needs the shared broadcast universe. *)
-Lemma docm_valid_from_deps N c h (m : DocM) (t0 : TId)
+Lemma docm_valid_from_deps N c h (m : DocModel) (t0 : TId)
     (input : IntegrateInput (A := A)) :
   history_wf N -> N !! c = Some h ->
   history_state_coh h m ->
@@ -2705,7 +2705,7 @@ Qed.
     prefix (FIFO), the op sits at-or-past the prefix boundary, and the log is
     clock-sorted. This is [ValidReplay]'s doc-global clock condition, with no
     causal reasoning. *)
-Lemma delivered_clock_bound N c h (m : DocM) (op0 : Op) :
+Lemma delivered_clock_bound N c h (m : DocModel) (op0 : Op) :
   history_wf N -> N !! c = Some h ->
   history_state_coh h m ->
   op_broadcast N op0 ->
@@ -2758,12 +2758,12 @@ Qed.
     deliveries, and no applied op is authored by the receiver. This replaces
     the retired [certs_ValidReplay]: there is NO ordering, causal-closure, or
     freshness obligation on the pending. *)
-Lemma pending_ValidReplay N c h (m : DocM)
-    (applied : list (TId * IntegrateInput (A := A))) (m' : DocM) :
+Lemma pending_ValidReplay N c h (m : DocModel)
+    (applied : list (TId * IntegrateInput (A := A))) (m' : DocModel) :
   history_wf N -> N !! c = Some h ->
   history_state_coh h m ->
-  (∀ taggedInput : TId * IntegrateInput (A := A), taggedInput ∈ applied ->
-     op_broadcast N (taggedInput.1, OpInsert taggedInput.2)) ->
+  (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ applied ->
+     op_broadcast N (typedInput.1, OpInsert typedInput.2)) ->
   PendingReplay m applied m' ->
   ValidReplay applied m m' ∧
   history_state_coh (h ++ (deliver_ev <$> applied)) m' ∧
@@ -2772,14 +2772,14 @@ Lemma pending_ValidReplay N c h (m : DocM)
 Proof.
   move=> Hwf HNc Hcoh Hcerts Hreplay.
   move: N h Hwf HNc Hcoh Hcerts.
-  elim: Hreplay => [m0 | m0 taggedInput arr' rest m0' Hfresh Hready Hint Hrest IH]
+  elim: Hreplay => [m0 | m0 typedInput arr' rest m0' Hfresh Hready Hint Hrest IH]
     N h Hwf HNc Hcoh Hcerts.
   - split_and!.
     + exact (VR_nil m0).
     + rewrite /= app_nil_r //.
     + rewrite /= app_nil_r (insert_id N c h HNc) //.
-    + move=> taggedInput Hin. by apply elem_of_nil in Hin.
-  - destruct taggedInput as [t0 input]. simpl in *.
+    + move=> typedInput Hin. by apply elem_of_nil in Hin.
+  - destruct typedInput as [t0 input]. simpl in *.
     set op0 : Op := (t0, OpInsert input).
     have Hbc0 : op_broadcast N op0.
     { exact (Hcerts (t0, input) ltac:(apply elem_of_cons; by left)). }
@@ -2872,10 +2872,10 @@ Proof.
     (* recurse on the extended history *)
     have HNc' : (<[c := h ++ [EvDeliver op0]]> N) !! c = Some (h ++ [EvDeliver op0])
       by rewrite lookup_insert_eq.
-    have Hcerts' : ∀ taggedInput : TId * IntegrateInput (A := A), taggedInput ∈ rest ->
-        op_broadcast (<[c := h ++ [EvDeliver op0]]> N) (taggedInput.1, OpInsert taggedInput.2).
-    { move=> taggedInput Hin.
-      have Hb := Hcerts taggedInput (ltac:(apply elem_of_cons; by right)).
+    have Hcerts' : ∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ rest ->
+        op_broadcast (<[c := h ++ [EvDeliver op0]]> N) (typedInput.1, OpInsert typedInput.2).
+    { move=> typedInput Hin.
+      have Hb := Hcerts typedInput (ltac:(apply elem_of_cons; by right)).
       apply (op_broadcast_append N c h [EvDeliver op0] _ HNc). by left. }
     destruct (IH _ _ Hwf' HNc' Hcoh' Hcerts') as (Hvr & Hcoh'' & Hwf'' & Hnoc').
     split_and!.
@@ -2891,36 +2891,36 @@ Proof.
               = h ++ (deliver_ev <$> ((t0, input) :: rest))
         by rewrite fmap_cons -app_assoc //.
       done.
-    + move=> taggedInput Hin. apply elem_of_cons in Hin.
-      destruct Hin as [-> | Hin]; [exact Hnoc | exact (Hnoc' taggedInput Hin)].
+    + move=> typedInput Hin. apply elem_of_cons in Hin.
+      destruct Hin as [-> | Hin]; [exact Hnoc | exact (Hnoc' typedInput Hin)].
 Qed.
 
 (** Certified pendings are ready-total: broadcast-time validity transports to any
     drain intermediate along the structural dependencies alone. *)
-Lemma pending_ready_total_of_certs N c h (m : DocM)
+Lemma pending_ready_total_of_certs N c h (m : DocModel)
     (pending applied : list (TId * IntegrateInput (A := A))) :
   history_wf N -> N !! c = Some h ->
   history_state_coh h m ->
   (∀ t : TId, YjsArrInvariant (doc_model_get m t)) ->
-  (∀ taggedInput : TId * IntegrateInput (A := A), taggedInput ∈ pending ->
-     op_broadcast N (taggedInput.1, OpInsert taggedInput.2)) ->
-  (∀ taggedInput : TId * IntegrateInput (A := A), taggedInput ∈ applied -> taggedInput ∈ pending) ->
+  (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pending ->
+     op_broadcast N (typedInput.1, OpInsert typedInput.2)) ->
+  (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ applied -> typedInput ∈ pending) ->
   pending_ready_total m pending applied.
 Proof.
-  move=> Hwf HNc Hcoh Hinvs Hcerts Happsub pre suf mx taggedInput Heq Hpr Hin Hfresh Hready.
-  have Hcpre : ∀ taggedInput2 : TId * IntegrateInput (A := A), taggedInput2 ∈ pre ->
-      op_broadcast N (taggedInput2.1, OpInsert taggedInput2.2).
-  { move=> taggedInput2 Htj. apply Hcerts, Happsub. rewrite Heq elem_of_app. by left. }
+  move=> Hwf HNc Hcoh Hinvs Hcerts Happsub pre suf mx typedInput Heq Hpr Hin Hfresh Hready.
+  have Hcpre : ∀ typedInput2 : TId * IntegrateInput (A := A), typedInput2 ∈ pre ->
+      op_broadcast N (typedInput2.1, OpInsert typedInput2.2).
+  { move=> typedInput2 Htj. apply Hcerts, Happsub. rewrite Heq elem_of_app. by left. }
   pose proof (pending_ValidReplay N c h m pre mx Hwf HNc Hcoh Hcpre Hpr)
     as (Hvr & Hcoh' & Hwf' & _).
   set N' := <[c := h ++ (deliver_ev <$> pre)]> N.
   set h' := h ++ (deliver_ev <$> pre).
   have HN'c : N' !! c = Some h' by rewrite /N' lookup_insert_eq.
-  have Hbc' : op_broadcast N' (taggedInput.1, OpInsert taggedInput.2).
-  { apply (op_broadcast_append N c h _ _ HNc). left. exact (Hcerts taggedInput Hin). }
+  have Hbc' : op_broadcast N' (typedInput.1, OpInsert typedInput.2).
+  { apply (op_broadcast_append N c h _ _ HNc). left. exact (Hcerts typedInput Hin). }
   (* the gate's arrivals, as delivered ops of [h'] *)
-  have Hready' := proj1 (input_ready_spec mx taggedInput.2) Hready.
-  have Harrive : ∀ d : YjsId, d ∈ input_deps taggedInput.2 ->
+  have Hready' := proj1 (input_ready_spec mx typedInput.2) Hready.
+  have Harrive : ∀ d : YjsId, d ∈ input_deps typedInput.2 ->
       ∃ (t' : TId) (x : IntegrateInput (A := A)),
         (t', OpInsert x) ∈ delivered_ops h' ∧ in_id x = d.
   { move=> d Hd.
@@ -2929,13 +2929,13 @@ Proof.
     destruct (docm_mem_delivered h' mx t' x Hcoh' Hx) as (xin & Hxdel & Hxinid).
     exists t', xin. split; [exact Hxdel | by rewrite Hxinid Hxid]. }
   (* validity at the intermediate *)
-  have Hval : ∃ item0, toItem taggedInput.2 (doc_model_get mx taggedInput.1) = Some item0 ∧ IsItemValid item0.
-  { apply (docm_valid_from_deps N' c h' mx taggedInput.1 taggedInput.2 Hwf' HN'c Hcoh' Hbc').
+  have Hval : ∃ item0, toItem typedInput.2 (doc_model_get mx typedInput.1) = Some item0 ∧ IsItemValid item0.
+  { apply (docm_valid_from_deps N' c h' mx typedInput.1 typedInput.2 Hwf' HN'c Hcoh' Hbc').
     move=> originId Hor. apply Harrive.
     destruct Hor as [Ho | Ho]; [exact (input_deps_originL _ _ Ho) | exact (input_deps_originR _ _ Ho)]. }
   destruct Hval as (item0 & Htoit & Hvld).
   (* freshness at the intermediate *)
-  have Hnotdel : opid ((taggedInput.1, OpInsert taggedInput.2) : Op) ∉ delivered_ids h'.
+  have Hnotdel : opid ((typedInput.1, OpInsert typedInput.2) : Op) ∉ delivered_ids h'.
   { move=> Hdel.
     apply elem_of_delivered_ids in Hdel. destruct Hdel as (y & Hyh & Hyid).
     have Hins : ∃ inputy, y.2 = OpInsert inputy.
@@ -2945,22 +2945,22 @@ Proof.
     have Hdel2 : (ty, OpInsert inputy) ∈ delivered_ops h'
       by apply elem_of_delivered_ops_ev.
     have := delivered_docm_has h' mx ty inputy Hcoh' Hdel2.
-    have -> : in_id inputy = in_id taggedInput.2 by exact Hyid.
+    have -> : in_id inputy = in_id typedInput.2 by exact Hyid.
     rewrite Hfresh //. }
   (* clock maximality at the intermediate *)
-  have Hbnd := delivered_clock_bound N' c h' mx ((taggedInput.1, OpInsert taggedInput.2) : Op)
+  have Hbnd := delivered_clock_bound N' c h' mx ((typedInput.1, OpInsert typedInput.2) : Op)
                  Hwf' HN'c Hcoh' Hbc' Hnotdel.
-  have Hmax : maximalId item0 (doc_model_get mx taggedInput.1).
+  have Hmax : maximalId item0 (doc_model_get mx typedInput.1).
   { move=> x Hx Hcx.
-    rewrite (toItem_id taggedInput.2 (doc_model_get mx taggedInput.1) item0 Htoit).
-    have -> : clock (in_id taggedInput.2) = clock (opid ((taggedInput.1, OpInsert taggedInput.2) : Op)) by done.
-    apply (Hbnd taggedInput.1 x Hx).
-    have -> : clientId (opid ((taggedInput.1, OpInsert taggedInput.2) : Op)) = clientId (in_id taggedInput.2) by done.
-    rewrite -(toItem_id taggedInput.2 (doc_model_get mx taggedInput.1) item0 Htoit) //. }
+    rewrite (toItem_id typedInput.2 (doc_model_get mx typedInput.1) item0 Htoit).
+    have -> : clock (in_id typedInput.2) = clock (opid ((typedInput.1, OpInsert typedInput.2) : Op)) by done.
+    apply (Hbnd typedInput.1 x Hx).
+    have -> : clientId (opid ((typedInput.1, OpInsert typedInput.2) : Op)) = clientId (in_id typedInput.2) by done.
+    rewrite -(toItem_id typedInput.2 (doc_model_get mx typedInput.1) item0 Htoit) //. }
   (* invariant at the intermediate *)
-  have Hinv' : YjsArrInvariant (doc_model_get mx taggedInput.1)
-    := ValidReplay_arrinv pre m mx Hvr Hinvs taggedInput.1.
-  exact (integrate_some_of_toItem taggedInput.2 (doc_model_get mx taggedInput.1) item0 Hinv' Htoit Hvld Hmax).
+  have Hinv' : YjsArrInvariant (doc_model_get mx typedInput.1)
+    := ValidReplay_arrinv pre m mx Hvr Hinvs typedInput.1.
+  exact (integrate_some_of_toItem typedInput.2 (doc_model_get mx typedInput.1) item0 Hinv' Htoit Hvld Hmax).
 Qed.
 
 (* ===== state vectors (max semantics) ====================================== *)
@@ -3000,7 +3000,7 @@ Definition sv_of (h : list Ev) : gmap ClientId nat := svs_of (delivered_ops h).
 
 (** The state vector a decoded batch contributes. *)
 Definition batch_sv (inputs : list (TId * IntegrateInput (A := A))) : gmap ClientId nat :=
-  svs_of ((λ taggedInput, (taggedInput.1, OpInsert taggedInput.2)) <$> inputs).
+  svs_of ((λ typedInput, (typedInput.1, OpInsert typedInput.2)) <$> inputs).
 
 (* ----- the join semilattice ----- *)
 
@@ -3057,9 +3057,9 @@ Lemma sv_of_app (h1 h2 : list Ev) :
 Proof. rewrite /sv_of delivered_ops_app svs_of_app //. Qed.
 
 Lemma delivered_ops_deliver_batch (inputs : list (TId * IntegrateInput (A := A))) :
-  delivered_ops (deliver_ev <$> inputs) = (λ taggedInput, (taggedInput.1, OpInsert taggedInput.2)) <$> inputs.
+  delivered_ops (deliver_ev <$> inputs) = (λ typedInput, (typedInput.1, OpInsert typedInput.2)) <$> inputs.
 Proof.
-  induction inputs as [| taggedInput inputs IH]; [done |].
+  induction inputs as [| typedInput inputs IH]; [done |].
   rewrite /delivered_ops /deliver_ev !fmap_cons /=. f_equal. exact IH.
 Qed.
 

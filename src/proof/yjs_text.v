@@ -46,7 +46,7 @@ Local Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation Ev := (@Event Op).
-Local Notation DocM := (gmap TId (list (YjsItem A))).
+Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (** The item [Text.Insert] builds at the straddle point is valid. Repackages
     [item_valid_at] over the exact origin facts [findPos] yields (a left/right

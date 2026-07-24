@@ -128,7 +128,7 @@ the run tail).
 ## 4. Pure model layer (new, Iris-free)
 
 File: extend `yjs_network_model.v` (or a new `yjs_pending_model.v` imported
-by it) over the doc model `DocM` and pendings `list (TId * IntegrateInput)`.
+by it) over the doc model `DocModel` and pendings `list (TId * IntegrateInput)`.
 
 - `deps_of (input) : list YjsId` = origins + own predecessor (clock > 0).
 - `pending_step m pending = (applied, rest, m')`: one scan, mirroring the Go pass

@@ -14,7 +14,7 @@ The current statement (yjs_store.v, `wp_store__applyUpdate_certs`):
 Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
     (γh : history_names) (c : ClientId) (h : list Ev)
     (inputs : list (TId * IntegrateInput)) (Ds : list (gset YjsId))
-    (m : DocM) (types : gmap loc type_state) (bind : gmap P loc)
+    (m : DocModel) (types : gmap loc type_state) (bind : gmap P loc)
     (mref tref : loc) :
   batch_ok h inputs Ds ->
   history_state_coh h m ->
@@ -72,7 +72,7 @@ Concrete defects, in decreasing order of severity:
 ```coq
 Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
     (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocM)
+    (c : ClientId) (h : list Ev) (m : DocModel)
     (inputs : list (TId * IntegrateInput (A := A))) :
   (∀ t x, x ∈ docm_get m t -> (Z.of_nat (clock (item_id x)) + 1 < 2^64)%Z) ->
   (∀ i ti, inputs !! i = Some ti -> (Z.of_nat (clock (in_id ti.2)) + 1 < 2^64)%Z) ->
@@ -82,7 +82,7 @@ Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
       is_certified_batch γh h inputs ∗
       ([∗ list] ti ∈ inputs, ∃ nm, ⌜ti.1 = RootId nm⌝ ∗ is_root γs nm) }}}
     s @! (go.PointerType yjs.store) @! "applyUpdate" #sl
-  {{{ (m' : DocM), RET #();
+  {{{ (m' : DocModel), RET #();
       own_store s γs γh c (h ++ (deliver_ev <$> inputs)) m' ∗
       own_update sl dq inputs ∗
       ⌜ValidReplay inputs m m'⌝ ∗
@@ -117,7 +117,7 @@ equivalent to) its model-existential closure.
 
 ```coq
 Definition own_store (s : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocM) : iProp Σ :=
+    (c : ClientId) (h : list Ev) (m : DocModel) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
     (types : gmap loc type_state) (bind : gmap P loc),
     "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗

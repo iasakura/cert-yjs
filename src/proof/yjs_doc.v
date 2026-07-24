@@ -26,7 +26,7 @@ Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation Ev := (@Event Op).
-Local Notation DocM := (gmap TId (list (YjsItem A))).
+Local Notation DocModel := (gmap TId (list (YjsItem A))).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Store]. *)
@@ -35,8 +35,8 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 (* [is_pending_rooted]'s instances are [#[local]] in [yjs_store_base] (closed over
    a wider section context); re-declare here so [iNamed] can unpack the
    persistent [#Hpendroot] conjunct of [own_store]. *)
-#[local] Instance pending_item_rooted_persistent'' γs taggedInput :
-  Persistent (pending_item_rooted γs taggedInput).
+#[local] Instance pending_item_rooted_persistent'' γs typedInput :
+  Persistent (pending_item_rooted γs typedInput).
 Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
 #[local] Instance is_pending_rooted_persistent'' γs pending :
   Persistent (is_pending_rooted γs pending).
@@ -62,7 +62,7 @@ Proof. apply _. Qed.
     instantiate the receiver-side obligation of [wp_Doc__ApplySyncUpdate] at
     the history the lock reveals. *)
 Lemma own_store_hist_coh (s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocM)
+    (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) :
   own_store s_loc γs γh c h m pend -∗
   own_store s_loc γs γh c h m pend ∗ ⌜history_state_coh h m⌝.
@@ -98,8 +98,8 @@ Qed.
 Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (sl : slice.t) (dq : dfrac)
     (inputs : list (TId * IntegrateInput (A := A))) :
-  (∀ taggedInput : TId * IntegrateInput (A := A), taggedInput ∈ inputs ->
-     (Z.of_nat (clock (in_id taggedInput.2)) + Z.of_nat (length (in_content taggedInput.2)) < 2^64)%Z) ->
+  (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
+     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
       own_update_structs sl dq inputs ∗
       is_pending_certified γh (expand_inputs inputs) ∗
