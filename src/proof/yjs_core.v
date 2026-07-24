@@ -2,7 +2,7 @@
 
     cert-yjs proves that the goose-translated [Integrate] refines the *pure*
     integration algorithm and inherits order preservation from it. That pure
-    theory lives in iasakura/iris-yjs, packaged as the opam libraries
+    theory lives in iasakura/rocq-yjs, packaged as the opam libraries
     rocq-yjs-core (namespace [yjs.crdt]) and rocq-yjs (namespace [yjs]).
 
     This module re-exports the pieces cert-yjs consumes so the rest of the
