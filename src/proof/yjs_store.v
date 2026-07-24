@@ -14,4 +14,4 @@
 
     Downstream files Require THIS module only; the split is an internal
     build-time concern. *)
-From New.proof Require Export yjs_store_base yjs_store_integrate yjs_store_node yjs_store_update.
+From New.proof Require Export yjs_store_base yjs_store_integrate yjs_store_node yjs_store_split yjs_store_repair yjs_store_update.

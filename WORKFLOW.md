@@ -10,7 +10,7 @@ Step by step when something breaks:
 
     ./build.sh go      # Go type check only (run first after editing Go)
     ./build.sh goose   # translate to Rocq (also runs go build)
-    ./build.sh make    # compile = type check + proof check
+    ./build.sh make    # type check + proof check (parallel vos/vok)
 
 ## Day-to-day loop
 
@@ -25,6 +25,14 @@ Note: after changing Go, always re-run goose. `make` alone keeps the stale
 translation and your change will appear to have no effect. Plain `./build.sh`
 (= all) is the safe default.
 
+`make` runs the proof check as Rocq's vos/vok split (`make -j vos` then
+`make -j vok`): a fast interface pass that skips Qed bodies, then an opaque
+proof pass that runs fully in parallel across cores. It is about 3x faster than
+the old serial `.vo` build and gives the same assurance (a broken Qed still
+fails, in the vok phase). It writes `.vos` / `.vok`, not `.vo`; run
+`./build.sh vo` if you actually need `.vo` files. Cap parallelism with
+`JOBS=N ./build.sh make` (default: nproc).
+
 ## Checking a single proof file (fast)
 
     ARGS=$(sed -E -e '/^#/d' -e "s/'([^']*)'/\1/g" -e 's/-arg //g' _RocqProject)
@@ -33,6 +41,12 @@ translation and your change will appear to have no effect. Plain `./build.sh`
 - The output name must match the source name (`-o .../yjs_proof.vo`),
   otherwise: "Source and target file names must coincide".
 - Insert a temporary `Show.` at the line you want to inspect to dump the goal.
+- For a structure-only check (does it elaborate, are the statements and
+  `Require`s right?) add `-vos` and target `.vos`: it skips every Qed body and
+  returns in seconds. Handy when reorganizing files. Follow with a real
+  `.vo`/`.vok` for the proofs.
+
+      rocq compile $ARGS -vos src/proof/yjs_proof.v -o src/proof/yjs_proof.vos
 
 ## Directory layout
 

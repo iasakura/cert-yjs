@@ -22,7 +22,7 @@ From stdpp Require Import sorting.
    The verified WP proofs write [Z] comparisons (e.g. [sint.Z i < …]) unannotated
    and annotate [nat] ones with [%nat], so restore [Z_scope] as the default. *)
 Local Open Scope Z_scope.
-From New.proof Require Import yjs_store_node.
+From New.proof Require Import yjs_store_node yjs_store_split yjs_store_repair.
 Section store_update.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
