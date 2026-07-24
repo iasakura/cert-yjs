@@ -21,8 +21,8 @@ pin-depends: [
   # same commit (see .github/workflows/ci.yml). Drop the fork once the mapping
   # is upstreamed.
   ["perennial.dev"             "git+https://github.com/iasakura/perennial#e8af799716f3b8963a61975b9e6652f1192f49cb"]
-  ["rocq-yjs.dev"              "git+https://github.com/iasakura/rocq-yjs#4a3627a4ca6579c7d0c0c7a9098164a95b97a3db"]
-  ["rocq-yjs-core.dev"         "git+https://github.com/iasakura/rocq-yjs#4a3627a4ca6579c7d0c0c7a9098164a95b97a3db"]
+  ["rocq-yjs.dev"              "git+https://github.com/iasakura/rocq-yjs#1131b4925b30810ad21ea337ed34b3883731a1a3"]
+  ["rocq-yjs-core.dev"         "git+https://github.com/iasakura/rocq-yjs#1131b4925b30810ad21ea337ed34b3883731a1a3"]
 
   ## begin indirect
   ["coq-coqutil.dev"           "git+https://github.com/mit-plv/coqutil#cfd88cef005cda5ec400108606d27a0d40578a8f"]
