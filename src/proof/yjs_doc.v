@@ -32,15 +32,8 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
    [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Store]. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 
-(* [is_pending_rooted]'s instances are [#[local]] in [yjs_store_base] (closed over
-   a wider section context); re-declare here so [iNamed] can unpack the
-   persistent [#Hpendroot] conjunct of [own_store]. *)
-#[local] Instance pending_item_rooted_persistent'' γs typedInput :
-  Persistent (pending_item_rooted γs typedInput).
-Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
-#[local] Instance is_pending_rooted_persistent'' γs pending :
-  Persistent (is_pending_rooted γs pending).
-Proof. apply _. Qed.
+(* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54), so
+   [own_store]'s [Hpendroot] conjunct is a [⌜..⌝] and needs no instances. *)
 
 (** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
     delegates to [is_Store]. Since [Text] holds the store directly (y-octo: the
@@ -72,7 +65,7 @@ Proof.
   - iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind.
     iFrame "∗#".
     iPureIntro. split_and!;
-      [exact Hclientc | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
+      [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
       | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk].
   - iPureIntro. exact Hhcoh.
 Qed.
@@ -100,18 +93,18 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
     (inputs : list (TId * IntegrateInput (A := A))) :
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
+  is_pending_rooted γs inputs ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
       own_update_structs sl dq inputs ∗
-      is_pending_certified γh (expand_inputs inputs) ∗
-      is_pending_rooted γs inputs }}}
+      is_pending_certified γh (expand_inputs inputs) }}}
     dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl
   {{{ (c : ClientId) (h : list Ev)
       (applied rest : list (TId * IntegrateInput (A := A))), RET #();
       own_update_structs sl dq inputs ∗
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) }}}.
 Proof.
-  move=> Hnowrapb.
-  wp_start as "(#His_doc & #Hishist & Hupd & #Hcerts & #Hroots)".
+  move=> Hnowrapb Hrooted.
+  wp_start as "(#His_doc & #Hishist & Hupd & #Hcerts)".
   iNamed "His_doc". subst s_loc. wp_auto.
   (* take the write lock, reveal the store's current (c, h, m, pend) *)
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
@@ -123,8 +116,8 @@ Proof.
      causal-closure obligation; the pending plus the batch drain to the
      structural fixpoint, delivering only the applied structs (per char) *)
   wp_apply (wp_store__applyUpdate_certs _ sl dq γs γh c h m pend inputs
-              Hnowrapb
-              with "[$Hishist $Hstore $Hupd $Hcerts $Hroots]").
+              Hnowrapb Hrooted
+              with "[$Hishist $Hstore $Hupd $Hcerts]").
   iIntros (applied rest m') "(Hupd & Hstore & #Hlb & %Hdrain & %Hvr & %Hnoc & #Hrootlbs)".
   wp_auto.
   (* rebuild store_inv at the advanced history (delivered = expand_inputs applied)
