@@ -4943,7 +4943,7 @@ Qed.
    [pending_keep] / [docm_has] / [input_ready] (a wire item's readiness is its
    head op's, since [ti.2]'s origins are the head's). *)
 
-Definition wire_intg (m : DocM) (ti : TId * IntegrateInput (A := A))
+Definition wire_integrate (m : DocM) (ti : TId * IntegrateInput (A := A))
     : option (list (YjsItem A)) :=
   integrate_all (ops_of_input ti.2 (explode (in_content ti.2))) (docm_get m ti.1).
 
@@ -4954,7 +4954,7 @@ Fixpoint wire_pass (m : DocM) (pending kept : list (TId * IntegrateInput (A := A
   | ti :: tl =>
       if docm_has m (in_id ti.2) then wire_pass m tl kept
       else if input_ready m ti.2 then
-        match wire_intg m ti with
+        match wire_integrate m ti with
         | Some arr' =>
             let '(app, kept', m') := wire_pass (<[ti.1 := arr']> m) tl kept in
             (ti :: app, kept', m')
@@ -4995,7 +4995,7 @@ Proof.
     destruct (input_ready m ti.2); last first.
     { move=> Hwp. have Hle := IH _ _ _ _ _ Hwp.
       have Hkl : (length (pending_keep kept ti) <= S (length kept))%nat by apply pending_keep_length. lia. }
-    destruct (wire_intg m ti) as [arr' |]; last first.
+    destruct (wire_integrate m ti) as [arr' |]; last first.
     { move=> Hwp. have Hle := IH _ _ _ _ _ Hwp.
       have Hkl : (length (pending_keep kept ti) <= S (length kept))%nat by apply pending_keep_length. lia. }
     destruct (wire_pass (<[ti.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
@@ -5064,7 +5064,7 @@ Proof.
     { move=> /IH //. }
     destruct (input_ready m ti.2); last first.
     { move=> /IH //. }
-    destruct (wire_intg m ti) as [arr' |]; last first.
+    destruct (wire_integrate m ti) as [arr' |]; last first.
     { move=> /IH //. }
     destruct (wire_pass (<[ti.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= Happ _ _]. discriminate.
@@ -5086,14 +5086,14 @@ Lemma wire_drain_step_cons (m : DocM)
 Proof. move=> Hpass Hdrec. rewrite wire_drain_unfold Hpass Hdrec //. Qed.
 
 (** The wire-level replay view of a drain: each applied wire item was fresh and
-    ready and its whole op chunk integrated ([wire_intg]). Mirrors
-    [PendingReplay] with [integrate] replaced by [wire_intg]. *)
+    ready and its whole op chunk integrated ([wire_integrate]). Mirrors
+    [PendingReplay] with [integrate] replaced by [wire_integrate]. *)
 Inductive WireReplay : DocM -> list (TId * IntegrateInput (A := A)) -> DocM -> Prop :=
   | WireReplay_nil m : WireReplay m [] m
   | WireReplay_cons m ti arr' rest m' :
       docm_has m (in_id ti.2) = false ->
       input_ready m ti.2 = true ->
-      wire_intg m ti = Some arr' ->
+      wire_integrate m ti = Some arr' ->
       WireReplay (<[ti.1 := arr']> m) rest m' ->
       WireReplay m (ti :: rest) m'.
 
@@ -5118,7 +5118,7 @@ Proof.
     { move=> /IH //. }
     destruct (input_ready m ti.2) eqn:Hready; last first.
     { move=> /IH //. }
-    destruct (wire_intg m ti) as [arr' |] eqn:Hint; last first.
+    destruct (wire_integrate m ti) as [arr' |] eqn:Hint; last first.
     { move=> /IH //. }
     destruct (wire_pass (<[ti.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
     move=> [= <- _ <-].
@@ -5137,6 +5137,6 @@ Definition wire_ready_total (m : DocM)
     ti ∈ pending ->
     docm_has mx (in_id ti.2) = false ->
     input_ready mx ti.2 = true ->
-    is_Some (wire_intg mx ti).
+    is_Some (wire_integrate mx ti).
 
 End store_update.

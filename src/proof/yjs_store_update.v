@@ -461,7 +461,7 @@ Proof using Type*.
         iIntros "(Hitemsf & Hitemmap & Htypes)".
         destruct (input_ready m_c input) eqn:Hready.
         -- (* ready: certified pendings always integrate the whole chunk *)
-           have Hsome : is_Some (wire_intg m_c (tj, input)).
+           have Hsome : is_Some (wire_integrate m_c (tj, input)).
            { apply (Hrtot (appliedj ++ appacc) (app_rem ++ af2) m_c (tj, input)).
              - rewrite Happdec !app_assoc //.
              - exact Hprc.
@@ -484,7 +484,7 @@ Proof using Type*.
              as (nit & arrp & Htoit & Hvld & Hmax & Hall & Hvrtail).
            simpl in Hvrtail.
            have Harr2 : arrp = arr'.
-           { move: Hint'. rewrite /wire_intg Hall. by move=> [= <-]. }
+           { move: Hint'. rewrite /wire_integrate Hall. by move=> [= <-]. }
            subst arrp.
            (* the target root's binding *)
            have [nm [Htjeq [pl Hbnm]]] : ∃ nm, tj = RootId nm ∧ is_Some (bind !! nm).
@@ -796,7 +796,7 @@ Proof.
         + destruct (pending_keep_subset kept ti0 ti Hk) as [Hk' | ->]; [by left |].
           right. apply elem_of_cons. by left.
         + right. apply elem_of_cons. by right. }
-    destruct (wire_intg m ti0) as [arr' |]; last first.
+    destruct (wire_integrate m ti0) as [arr' |]; last first.
     { move=> /IH [Happ Hkept]. split.
       - move=> ti Hin. apply elem_of_cons. right. exact (Happ ti Hin).
       - move=> ti Hin. destruct (Hkept ti Hin) as [Hk | Hp].
@@ -880,7 +880,7 @@ Proof.
 Qed.
 
 (* ===== wire chunk -> per-char PendingReplay bridge (issue #40 x #28 U7c) ===
-   A WIRE item integrates its whole run atomically ([wire_intg] =
+   A WIRE item integrates its whole run atomically ([wire_integrate] =
    [integrate_all] over [ops_of_input]); the certificate layer needs the
    PER-CHAR view ([PendingReplay] over [expand_input]) to reuse the causal
    validity machinery ([pending_ValidReplay]). These lemmas turn one atomic
@@ -1033,11 +1033,11 @@ Lemma expand_input_pending_replay_ne (m : DocM) (ti : TId * IntegrateInput (A :=
   input_ready m ti.2 = true ->
   (∀ k, (k < length (in_content ti.2))%nat ->
      docm_has m (MkYjsId (clientId (in_id ti.2)) (clock (in_id ti.2) + k)) = false) ->
-  wire_intg m ti = Some arr' ->
+  wire_integrate m ti = Some arr' ->
   PendingReplay m (expand_input ti) (<[ti.1 := arr']> m).
 Proof.
   move=> Hne Hready Hfresh Hint.
-  rewrite /expand_input /wire_intg /ops_of_input in Hint *.
+  rewrite /expand_input /wire_integrate /ops_of_input in Hint *.
   set cl := clientId (in_id ti.2).
   set ck := clock (in_id ti.2).
   set oid := in_originId ti.2.
@@ -1312,7 +1312,7 @@ Qed.
     coherent document (the ready-but-stuck branch never fires). Chunk freshness
     is derived from head freshness ([delivered_clock_bound]); head origins and
     the own-predecessor gate come from [input_ready]. *)
-Lemma wire_intg_some_of_certs
+Lemma wire_integrate_some_of_certs
     (N : gmap ClientId (list Ev)) (c : ClientId) (h : list Ev)
     (m : DocM) (ti : TId * IntegrateInput (A := A)) :
   history_wf N -> N !! c = Some h -> history_state_coh h m ->
@@ -1322,10 +1322,10 @@ Lemma wire_intg_some_of_certs
   (1 <= length (in_content ti.2))%nat ->
   input_ready m ti.2 = true ->
   docm_has m (in_id ti.2) = false ->
-  is_Some (wire_intg m ti).
+  is_Some (wire_integrate m ti).
 Proof.
   move=> Hwf HNc Hcoh Hinvs Hcert Hnonempty Hready Hfreshhead.
-  rewrite /wire_intg /ops_of_input.
+  rewrite /wire_integrate /ops_of_input.
   have Hlen : length (explode (in_content ti.2)) = length (in_content ti.2)
     by rewrite /explode length_fmap.
   have Hfresh := chunk_fresh_of_head N c h m ti Hwf HNc Hcoh Hcert Hnonempty Hfreshhead.
@@ -1349,7 +1349,7 @@ Qed.
 (** [wire_ready_total] from the certificates: mirrors
     [pending_ready_total_of_certs] but for whole chunks. At any wire-drain
     prefix [mx], [WireReplay_to_PendingReplay] + [pending_ValidReplay] give
-    coherence at [mx], and then [wire_intg_some_of_certs] fires. *)
+    coherence at [mx], and then [wire_integrate_some_of_certs] fires. *)
 Lemma wire_ready_total_of_certs
     (N : gmap ClientId (list Ev)) (c : ClientId) (h : list Ev) (m : DocM)
     (pending applied : list (TId * IntegrateInput (A := A))) :
@@ -1387,7 +1387,7 @@ Proof.
       op_broadcast N' (op.1, OpInsert op.2).
   { move=> op Hop. apply (proj2 (op_broadcast_append N c h _ _ HNc)). left.
     exact (Hcharcert ti op Hin Hop). }
-  exact (wire_intg_some_of_certs N' c h' mx ti Hwfmx HN'c Hcohmx Hinvsmx
+  exact (wire_integrate_some_of_certs N' c h' mx ti Hwfmx HN'c Hcohmx Hinvsmx
            Hcertti (Hnonempty ti Hin) Hready Hfresh).
 Qed.
 
