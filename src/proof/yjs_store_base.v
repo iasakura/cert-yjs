@@ -193,10 +193,10 @@ Context {seq_inG : inG Σ seqUR}.
 
 (** Accepted-id RA (this branch): a GROW-ONLY set of ids the store has
     "accepted", i.e. promised not to lose. [authR (gsetUR YjsId)] — the
-    authority [● Acc] sits in [store_inv], and a persistent lower-bound
+    authority [● acc] sits in [store_inv], and a persistent lower-bound
     fragment [◯ {[i]}] (gset elements are core-id) is the [is_accepted]
     receipt every applyUpdate hands back per input. The store invariant ties
-    [Acc ⊆ delivered_ids h ∪ pending ids], so an accepted id is forever
+    [acc ⊆ delivered_ids h ∪ pending ids], so an accepted id is forever
     delivered-or-buffered: this is what makes "no input is lost" an
     ENFORCEABLE guarantee (a discarding implementation could not mint the
     receipt), unlike a bare existential over the pending list. *)
@@ -1316,19 +1316,19 @@ Qed.
 
 (** The store invariant's no-loss coherence: every accepted id is either
     delivered into the history [h] or currently buffered in [pend]. Because
-    [Acc] only grows and the RHS is re-established by every store op, an
+    [acc] only grows and the RHS is re-established by every store op, an
     accepted id is never dropped without being delivered. *)
-Definition accepted_coh (Acc : gset YjsId) (h : list Ev)
+Definition accepted_coh (acc : gset YjsId) (h : list Ev)
     (pend : list (TId * IntegrateInput (A := A))) : Prop :=
-  Acc ⊆ delivered_ids h ∪ pending_id_set pend.
+  acc ⊆ delivered_ids h ∪ pending_id_set pend.
 
 (** History only grows: an op that appends to [h] (delivered ids only grow) and
     leaves [pend] preserves [accepted_coh]. This is the trivial transport that
     Insert/Delete apply at each store_inv rebuild. *)
-Lemma accepted_coh_hist_grow (Acc : gset YjsId) (h h' : list Ev)
+Lemma accepted_coh_hist_grow (acc : gset YjsId) (h h' : list Ev)
     (pend : list (TId * IntegrateInput (A := A))) :
-  accepted_coh Acc h pend -> delivered_ids h ⊆ delivered_ids h' ->
-  accepted_coh Acc h' pend.
+  accepted_coh acc h pend -> delivered_ids h ⊆ delivered_ids h' ->
+  accepted_coh acc h' pend.
 Proof.
   rewrite /accepted_coh => Hcoh Hsub.
   etrans; [exact Hcoh | apply union_mono; [exact Hsub | done]].
@@ -1338,12 +1338,12 @@ Qed.
     delivered_ids h']) and moves each OLD pending id either into the history or
     into the NEW pending [rest]. So the accepted set stays coherent at the new
     (h', rest). *)
-Lemma accepted_coh_applyUpdate (Acc : gset YjsId) (h h' : list Ev)
+Lemma accepted_coh_applyUpdate (acc : gset YjsId) (h h' : list Ev)
     (pend rest : list (TId * IntegrateInput (A := A))) :
-  accepted_coh Acc h pend ->
+  accepted_coh acc h pend ->
   delivered_ids h ⊆ delivered_ids h' ->
   (∀ x, x ∈ pend -> in_id x.2 ∈ delivered_ids h' ∪ pending_id_set rest) ->
-  accepted_coh Acc h' rest.
+  accepted_coh acc h' rest.
 Proof.
   rewrite /accepted_coh. move=> Hcoh Hdsub Hpend i Hi.
   destruct (elem_of_union (delivered_ids h) (pending_id_set pend) i) as [Hsplit _].
@@ -1387,7 +1387,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     (pend_sl : slice.t)
     (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-    ∃ (Acc : gset YjsId),
+    ∃ (acc : gset YjsId),
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
     "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
     "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
@@ -1427,9 +1427,9 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "%Hmdom" ∷ ⌜∀ t, doc_model_get m t ≠ [] →
                   ∃ name p, t = RootId name ∧ bind !! name = Some p⌝ ∗
     (* no-loss accepted-id layer (this branch): the grow-only accepted set and
-       its coherence [Acc ⊆ delivered_ids h ∪ pending ids] *)
-    "Hacc" ∷ own γs.(sn_accepted) (● Acc : accUR) ∗
-    "%Hacccoh" ∷ ⌜accepted_coh Acc h pend⌝.
+       its coherence [acc ⊆ delivered_ids h ∪ pending ids] *)
+    "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
+    "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
 
 #[global] Instance store_inv_ro_timeless γs types q : Timeless (store_inv_ro γs types q).
 Proof. rewrite /store_inv_ro. apply _. Qed.
@@ -1690,7 +1690,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
     (pend_sl : slice.t)
-    (types : gmap loc type_state) (bind : gmap P loc) (Acc : gset YjsId),
+    (types : gmap loc type_state) (bind : gmap P loc) (acc : gset YjsId),
     "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
     "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
@@ -1723,8 +1723,8 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "%Hrunfits" ∷ ⌜∀ c, c ∈ all_cells types → cell_fits c⌝ ∗
     "%Horiginclk" ∷ ⌜∀ c, c ∈ all_cells types → cell_origin_clk c⌝ ∗
     (* no-loss accepted-id layer (this branch): matches [store_inv_excl] *)
-    "Hacc" ∷ own γs.(sn_accepted) (● Acc : accUR) ∗
-    "%Hacccoh" ∷ ⌜accepted_coh Acc h pend⌝.
+    "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
+    "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
 
 (** No-loss SOUNDNESS: a receipt [is_accepted γs i] held together with the
     store proves [i] is delivered-or-buffered right now. A client re-acquires
@@ -1738,10 +1738,10 @@ Lemma own_store_accepted_sound (s_loc : loc) (γs : store_names) (γh : history_
 Proof.
   iIntros "H #Hi". iNamed "H".
   iDestruct (auth_gset_frag_sub with "Hacc Hi") as %Hsub.
-  have Hin : i ∈ Acc.
+  have Hin : i ∈ acc.
   { apply Hsub. by apply elem_of_singleton. }
   iSplitR ""; last (iPureIntro; exact (elem_of_weaken _ _ _ Hin Hacccoh)).
-  iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, Acc.
+  iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
     | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hacccoh].
@@ -1765,16 +1765,16 @@ Proof.
   have HTsub : T ⊆ delivered_ids h ∪ pending_id_set pend.
   { subst T. move=> i. rewrite elem_of_list_to_set list_elem_of_fmap.
     move=> [x [-> Hx]]. exact (HL x Hx). }
-  iMod (auth_gset_grow γs.(sn_accepted) Acc T with "Hacc") as "[Hacc Hfrag]".
+  iMod (auth_gset_grow γs.(sn_accepted) acc T with "Hacc") as "[Hacc Hfrag]".
   iDestruct "Hfrag" as "#Hfrag".
   iAssert ([∗ list] x ∈ L, is_accepted γs (in_id x.2))%I as "#Haccepts".
   { iApply big_sepL_intro. iIntros "!#" (idx x Hx). rewrite /is_accepted.
-    iApply (auth_gset_frag_mono γs.(sn_accepted) (Acc ∪ T) {[in_id x.2]}); [| iApply "Hfrag"].
+    iApply (auth_gset_frag_mono γs.(sn_accepted) (acc ∪ T) {[in_id x.2]}); [| iApply "Hfrag"].
     apply singleton_subseteq_l, elem_of_union_r. subst T.
     rewrite elem_of_list_to_set list_elem_of_fmap.
     exists x. split; [done | exact (list_elem_of_lookup_2 _ _ _ Hx)]. }
   iModIntro. iFrame "Haccepts".
-  iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, (Acc ∪ T).
+  iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, (acc ∪ T).
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
     | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk |].

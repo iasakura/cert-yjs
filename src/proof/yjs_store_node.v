@@ -3563,7 +3563,7 @@ Proof.
   iSplit.
   - iIntros "H". iNamed "H". iNamed "Hexcl". iNamed "Hro".
     iExists (uint.nat client), h, m, pend.
-    iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, Acc.
+    iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, acc.
     iFrame "∗#".
     iPureIntro. split_and!.
     + reflexivity.
@@ -3633,7 +3633,7 @@ Proof.
       rewrite /cell_clock /run_head. clear -Hlt3 Hkb. word. }
     iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
     iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
-    iExists Acc.
+    iExists acc.
     iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpendcert Hpendroot HtypesAuth Hbinds Hhist Hacc".
     iPureIntro. split_and!;
       [exact Hpendbnd | exact Hctrt | exact Hcellctr | exact Hlocdup | exact Hrangedisj

@@ -286,7 +286,7 @@ Proof.
     wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist Hacc]").
     { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
-      iExists Acc.
+      iExists acc.
       iFrame "∗#". iPureIntro.
       split_and!;
         [exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup | exact Hrangedisj
@@ -320,7 +320,7 @@ Proof.
     wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist Hacc]").
     { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
-      iExists Acc.
+      iExists acc.
       iFrame "∗#". iPureIntro.
       split_and!;
         [exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup | exact Hrangedisj
@@ -1213,7 +1213,7 @@ Proof.
     iPureIntro. exact Hinvj. }
   (* transport the accepted-set coherence across the appended history *)
   iDestruct (is_history_lb_prefix with "Hhistj Hlb_h") as %Hpref_hj.
-  have Hacccoh' : accepted_coh Acc hj pend.
+  have Hacccoh' : accepted_coh acc hj pend.
   { eapply accepted_coh_hist_grow; [exact Hacccoh | exact (delivered_ids_prefix _ _ Hpref_hj)]. }
   wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhistj Hacc]").
   { iNext. iExists client, (W64 (uint.Z k + j)), items_mref, types_mref, dset,
@@ -1222,7 +1222,7 @@ Proof.
       (<[RootId name := arr]> m), pend.
     iSplitR "Hseq Htypes"; last first.
     { rewrite /store_inv_ro fmap_insert /=. iFrame "Hseq Htypes". }
-    iExists Acc.
+    iExists acc.
     iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhistj HtypesAuth Hbinds Hacc".
     iFrame "Hpendcert Hpendroot".
     iPureIntro. split_and!.
@@ -1617,7 +1617,7 @@ Proof.
         { rewrite /store_inv_ro fmap_insert /=.
           rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
           iFrame "Hseq Htypes". }
-        iExists Acc.
+        iExists acc.
         iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhist HtypesAuth Hbinds Hacc".
         iFrame "Hpendcert Hpendroot".
         iPureIntro. split_and!.
@@ -1680,7 +1680,7 @@ Proof.
         { rewrite /store_inv_ro fmap_insert /=.
           rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
           iFrame "Hseq Htypes". }
-        iExists Acc.
+        iExists acc.
         iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhist HtypesAuth Hbinds Hacc".
         iFrame "Hpendcert Hpendroot".
         iPureIntro. split_and!.

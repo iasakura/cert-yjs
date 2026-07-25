@@ -70,7 +70,7 @@ Lemma own_store_hist_coh (s_loc : loc) (γs : store_names) (γh : history_names)
 Proof.
   iIntros "H". iNamed "H".
   iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq Htypes HtypesAuth Hhist Hacc".
-  - iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, Acc.
+  - iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, acc.
     iFrame "∗#".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr

@@ -1984,14 +1984,14 @@ Proof using Type*.
   have Hdids : delivered_ids h
              ⊆ delivered_ids (h ++ (deliver_ev <$> expand_inputs applied)).
   { rewrite delivered_ids_app. apply union_subseteq_l. }
-  have Hacccoh' : accepted_coh Acc (h ++ (deliver_ev <$> expand_inputs applied)) rest'.
-  { apply (accepted_coh_applyUpdate Acc h _ pend rest' Hacccoh Hdids).
+  have Hacccoh' : accepted_coh acc (h ++ (deliver_ev <$> expand_inputs applied)) rest'.
+  { apply (accepted_coh_applyUpdate acc h _ pend rest' Hacccoh Hdids).
     move=> x Hx. apply input_accounted_id, Hnoloss, elem_of_app. by left. }
   iModIntro. iApply ("HΦ" $! applied rest' m').
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
   iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hhist Hacc";
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc | exact Hnoloss_in]).
-  iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind, Acc.
+  iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind, acc.
   iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hbinds Hhist Hacc".
   iFrame "Hpendcert' Hpendroot'".
   iPureIntro. split_and!.
