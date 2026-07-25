@@ -28,6 +28,7 @@ Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation Ev := (@Event Op).
 Local Notation DocModel := (gmap TId (list (YjsItem A))).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Store]. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
@@ -68,12 +69,12 @@ Lemma own_store_hist_coh (s_loc : loc) (γs : store_names) (γh : history_names)
   own_store s_loc γs γh c h m pend ∗ ⌜history_state_coh h m⌝.
 Proof.
   iIntros "H". iNamed "H".
-  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq Htypes HtypesAuth Hhist".
-  - iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind.
+  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq Htypes HtypesAuth Hhist Hacc".
+  - iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, Acc.
     iFrame "∗#".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
-      | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk].
+      | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hacccoh].
   - iPureIntro. exact Hhcoh.
 Qed.
 
@@ -84,13 +85,17 @@ Qed.
     change is reported as the persistent history-prefix certificate
     [is_history_lb γh c (h ++ deliver_ev <$> expand_inputs applied)]: the
     document's delivered fragment now contains exactly the applied (drained)
-    per-char ops. Crucially it is ALSO reported that no input is lost:
-    [input_accounted] says each of [inputs] has its id either delivered into
-    that new history (applied now, or already present from a prior delivery) or
-    still buffered by id in the leftover pending [rest]. Interference (the
-    concurrent state revealed only under the lock) means we cannot pin down
-    WHICH of the two an individual input takes, only that one holds -- so the
-    guarantee is at the id level, over the [is_history_lb] history and [rest].
+    per-char ops. Crucially, every input is handed a persistent receipt
+    [is_accepted γs (in_id x.2)]: the store invariant ties the grow-only
+    accepted-id set to [delivered_ids h ∪ pending ids] and every store op
+    preserves that tie, so an accepted id is FOREVER delivered-or-buffered,
+    never silently dropped. This makes no-loss an ENFORCEABLE guarantee: a
+    discarding implementation, which delivers and buffers nothing, could not
+    mint these fragments (unlike a bare existential over the internal [rest],
+    which any implementation can satisfy vacuously). Interference means we
+    still cannot pin down WHICH of delivered/buffered a given input takes (the
+    receipt is at the id level); [own_store_accepted_sound] recovers, under the
+    lock, that an accepted id is currently one or the other.
 
     Because the drain is TOTAL (issue #40: the pending buffer plus the batch
     drain to the structural-dependency fixpoint, in ANY order), there is NO
@@ -115,8 +120,7 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
       (applied rest : list (TId * IntegrateInput (A := A))), RET #();
       own_update_structs sl dq inputs ∗
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
-      ⌜∀ x, x ∈ inputs ->
-         input_accounted (h ++ (deliver_ev <$> expand_inputs applied)) rest x⌝ }}}.
+      ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) }}}.
 Proof.
   move=> Hnowrapb.
   wp_start as "(#His_doc & #Hishist & Hupd & #Hcerts & #Hroots)".
@@ -135,13 +139,19 @@ Proof.
               with "[$Hishist $Hstore $Hupd $Hcerts $Hroots]").
   iIntros (applied rest m') "(Hupd & Hstore & #Hlb & %Hdrain & %Hvr & %Hnoc & %Hnoloss & #Hrootlbs)".
   wp_auto.
+  (* mint the ENFORCEABLE no-loss receipts: every input's id is accepted, hence
+     (by the store invariant) forever delivered-or-buffered; a discarding
+     implementation could not produce these fragments *)
+  iMod (own_store_accept_batch _ _ _ _ _ _ _ inputs
+          ltac:(move=> x Hx; exact (input_accounted_id _ _ _ (Hnoloss x Hx)))
+          with "Hstore") as "[Hstore #Haccepts]".
   (* rebuild store_inv at the advanced history (delivered = expand_inputs applied)
      with the leftover as the new pending, and release the lock *)
   iAssert (▷ store_inv dvv.(yjs.Doc.store') γs γh)%I with "[Hstore]" as "Hinv".
   { iNext. iApply store_inv_own_store.
     iExists c, (h ++ (deliver_ev <$> expand_inputs applied)), m', rest. iFrame "Hstore". }
   wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hinv]").
-  iApply ("HΦ" $! c h applied rest). iFrame "Hupd Hlb". iPureIntro. exact Hnoloss.
+  iApply ("HΦ" $! c h applied rest). iFrame "Hupd Hlb Haccepts".
 Qed.
 
 End doc.

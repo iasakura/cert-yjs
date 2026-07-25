@@ -39,6 +39,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 (* the grow-only item-set RA (the certificate proofs grow the [sn_seq]
    authority and mint [is_type_lb] fragments) *)
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 (* [client_run]'s merge_sort instances are [#[local]] in [yjs_store_base];
    the run-list lemmas here need them again. *)
@@ -3562,7 +3563,7 @@ Proof.
   iSplit.
   - iIntros "H". iNamed "H". iNamed "Hexcl". iNamed "Hro".
     iExists (uint.nat client), h, m, pend.
-    iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind.
+    iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, Acc.
     iFrame "∗#".
     iPureIntro. split_and!.
     + reflexivity.
@@ -3582,6 +3583,7 @@ Proof.
     + exact Hrangedisj.
     + exact Hrunfits.
     + exact Horiginclk.
+    + exact Hacccoh.
   - iIntros "H". iDestruct "H" as (c h m pend) "H". iNamed "H". subst c.
     iDestruct (types_repr_all2 with "Htypes") as %Hreprall.
     iDestruct (types_cells_id_bounds2 with "Htypes") as %Hcellbnd.
@@ -3631,11 +3633,12 @@ Proof.
       rewrite /cell_clock /run_head. clear -Hlt3 Hkb. word. }
     iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
     iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpendcert Hpendroot HtypesAuth Hbinds Hhist".
+    iExists Acc.
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpendcert Hpendroot HtypesAuth Hbinds Hhist Hacc".
     iPureIntro. split_and!;
       [exact Hpendbnd | exact Hctrt | exact Hcellctr | exact Hlocdup | exact Hrangedisj
       | exact Hrunfits | exact Horiginclk | exact Hbindtypes | exact Hbindinj
-      | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom].
+      | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom | exact Hacccoh].
 Qed.
 
 (* ===== #40 gate toolkit (getNodeIndex/GetNode covering-total, hasNode) =====

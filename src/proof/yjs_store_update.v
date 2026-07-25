@@ -39,6 +39,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 (* the grow-only item-set RA (the certificate proofs grow the [sn_seq]
    authority and mint [is_type_lb] fragments) *)
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 (* [client_run]'s merge_sort instances are [#[local]] in [yjs_store_base];
    the run-list lemmas here need them again. *)
@@ -1763,6 +1764,19 @@ Definition input_accounted (h' : list Ev)
      (t, OpInsert input) ∈ delivered_ops h' ∧ in_id input = in_id x.2) ∨
   (∃ y, y ∈ rest ∧ in_id y.2 = in_id x.2).
 
+(** [input_accounted] at the id level: an accounted input's id is either in the
+    delivered-id set of [h'] or in the pending-id set of [rest]. This is what
+    lets [applyUpdate] both re-establish [accepted_coh] and mint the receipts. *)
+Lemma input_accounted_id (h' : list Ev)
+    (rest : list (TId * IntegrateInput (A := A))) (x : TId * IntegrateInput (A := A)) :
+  input_accounted h' rest x -> in_id x.2 ∈ delivered_ids h' ∪ pending_id_set rest.
+Proof.
+  move=> [[t [input [Hdel Hid]]] | [y [Hy Hid]]].
+  - apply elem_of_union_l, elem_of_delivered_ids.
+    exists (t, OpInsert input). split; [by apply elem_of_delivered_ops_ev | by rewrite -Hid].
+  - apply elem_of_union_r, elem_of_pending_id_set. by exists y.
+Qed.
+
 (** [applyUpdate], the PUBLIC certificate spec (issue #40): the whole store
     state is ONE [own_store] before and after. The incoming batch carries its
     persistent certificates and its rooted-head witnesses; there is NO
@@ -1931,10 +1945,9 @@ Proof using Type*.
     - exfalso. apply (Hnoc typedInput (list_elem_of_lookup_2 _ _ _ Hi)). by rewrite -Hid. }
   (* no input is lost: each is delivered into the new history (applied this
      batch, or already present) or buffered by id in the new pending [rest'] *)
-  have Hnoloss : ∀ x, x ∈ inputs ->
+  have Hnoloss : ∀ x, x ∈ pend ++ inputs ->
       input_accounted (h ++ (deliver_ev <$> expand_inputs applied)) rest' x.
-  { move=> x Hxin. rewrite /input_accounted.
-    have Hxin' : x ∈ pend ++ inputs by apply elem_of_app; right.
+  { move=> x Hxin'. rewrite /input_accounted.
     destruct (wire_drain_id_conservation m (pend ++ inputs) applied rest' m' Hdrainc x Hxin')
       as [[y [Hy Hid]] | [[y [Hy Hid]] | Hh]].
     - (* applied by id: the head char of [y] is delivered in the new history *)
@@ -1964,12 +1977,22 @@ Proof using Type*.
       destruct (docm_mem_delivered (h ++ (deliver_ev <$> expand_inputs applied)) m' t xitem Hcoh' Hxit)
         as (input & Hdel & Hinid).
       exists t, input. split; [exact Hdel | rewrite Hinid; exact Hxitid]. }
+  have Hnoloss_in : ∀ x, x ∈ inputs ->
+      input_accounted (h ++ (deliver_ev <$> expand_inputs applied)) rest' x.
+  { move=> x Hx. apply Hnoloss, elem_of_app. by right. }
+  (* transport the accepted-set coherence across the drain to (h', rest') *)
+  have Hdids : delivered_ids h
+             ⊆ delivered_ids (h ++ (deliver_ev <$> expand_inputs applied)).
+  { rewrite delivered_ids_app. apply union_subseteq_l. }
+  have Hacccoh' : accepted_coh Acc (h ++ (deliver_ev <$> expand_inputs applied)) rest'.
+  { apply (accepted_coh_applyUpdate Acc h _ pend rest' Hacccoh Hdids).
+    move=> x Hx. apply input_accounted_id, Hnoloss, elem_of_app. by left. }
   iModIntro. iApply ("HΦ" $! applied rest' m').
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
-  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hhist";
-    last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc | exact Hnoloss]).
-  iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind.
-  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hbinds Hhist".
+  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hhist Hacc";
+    last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc | exact Hnoloss_in]).
+  iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind, Acc.
+  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hbinds Hhist Hacc".
   iFrame "Hpendcert' Hpendroot'".
   iPureIntro. split_and!.
   - exact Hclientc.
@@ -1983,6 +2006,7 @@ Proof using Type*.
   - exact Hrangedisj'.
   - exact Hfits'.
   - exact Horiginclk'.
+  - exact Hacccoh'.
 Qed.
 
 End store_update.
