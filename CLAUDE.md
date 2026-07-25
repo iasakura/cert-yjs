@@ -57,8 +57,18 @@ Write Go → translate with goose → prove, driven by `build.sh`:
 ./build.sh          # everything: go build → goose → make (proof check)
 ./build.sh go       # Go type check only (run first after editing Go)
 ./build.sh goose    # Go → Rocq translation (also runs go build)
-./build.sh make     # proof check only (compile .v → .vo)
+./build.sh make     # proof check only (parallel vos/vok; JOBS=N to cap -j)
+./build.sh vo       # plain .vo full build (escape hatch; only if you need .vo)
 ```
+
+`make` runs the proof check as Rocq's vos/vok split: a fast `-vos` pass
+elaborates every file and emits its interface (skipping Qed bodies, follows the
+dependency chain, ~30s), then a `-vok` pass checks the opaque proofs. Every
+`.vok` needs only the `.vos` interfaces, so proof checking runs fully in
+parallel across cores instead of one file at a time down the store → text
+chain. vos + vok gives the same assurance as a `.vo` build (a broken Qed is
+rejected in vok, verified), roughly 3x faster on this repo. It leaves `.vos` /
+`.vok`, not `.vo`; use `./build.sh vo` when you actually need `.vo` files.
 
 - **After editing any `yjs/*.go`, re-run goose** — `make` alone checks the
   stale translation and the Go change silently has no effect.
@@ -97,9 +107,14 @@ same `build.sh`.
 
 Never hand-edit generated files; change the Go and re-run goose. Proof files
 `Require` each other in order `core → common (∥ network_model) → id → item →
-ytype → history → store → text` (where `store` is a `Require Export` facade
-over `store_base → store_integrate → store_update`; downstream files import
-only the facade) and reopen the same `Section` boilerplate:
+ytype → history → store → text` (both `store` and `text` are `Require Export`
+facades: `store` over `store_base → store_integrate → store_node → store_split
+→ store_repair → store_update`, `text` over `text_base → {text_insert,
+text_delete}`; downstream files import only the facade) and reopen the same
+`Section` boilerplate. The files are split this fine so the proof check
+parallelizes: each split file's `.vok` is an independent job (see the vos/vok
+Workflow note), so no single heavy proof (splitNode, Insert, ...) serializes
+the build:
 
 - `yjs_core.v` — re-exports the `rocq-yjs` library (pure
   `integrate` / `setintegrate` model and its order theory).
@@ -125,9 +140,9 @@ only the facade) and reopen the same `Section` boilerplate:
   per-replica `own_client_history`, the persistent op certificate
   `is_op_cert`, and the fupd API `history_alloc` / `history_broadcast` /
   `history_deliver_batch` (+ a two-client smoke test).
-- `yjs_store.v` — facade over the `store` proofs (one Go file, three
-  internal proof files for build-time isolation; downstream files import
-  only this):
+- `yjs_store.v` — facade over the `store` proofs (one Go file, six
+  internal proof files split for build-time parallelism; downstream files
+  import only this):
   - `yjs_store_base.v` — ghost names and RAs, the item-set layer
     `own_item_map`, the lock body (`store_inv_ro` / `store_inv_excl` /
     `store_inv`, carrying the client's ghost history), the cohesive
@@ -137,14 +152,31 @@ only the facade) and reopen the same `Section` boilerplate:
   - `yjs_store_integrate.v` — the integration stack: id-lookup helpers,
     the conflict scan refining `setfii_loop`, and `wp_Store__Integrate`
     (cells-level and model-level, with the item-map maintenance).
-  - `yjs_store_update.v` — the update path: `GetNode` /
-    `getOrCreateYType` / `store.repair`, `store_inv ⊣⊢ ∃ model,
-    own_store` (`store_inv_own_store`), and the applyUpdate stack up to
-    the `own_store`-level certificate spec `wp_store__applyUpdate_certs`
-    (delivered content comes back as `is_root_lb` fragments).
-- `yjs_text.v` — the `Text` handle `is_Text t γh L` and the top-level
-  `wp_Text__Insert` (which mints one op certificate per inserted item) /
-  `wp_Text__Delete`.
+  - `yjs_store_node.v` — the node lookup path: `wp_getNodeIndex` /
+    `wp_store__GetNode` and the applyUpdate input-expansion helpers
+    (`expand_inputs_*`, `ValidReplay_chunk_extract`, the `types_*`
+    accessors).
+  - `yjs_store_split.v` — `wp_store__splitNode` and the
+    `splitAtAndGetLeft/Right` range and invariant lemmas, plus the
+    split-pool bookkeeping (`pool_invs`, `split_step_facts`, the
+    `split_pool_*` / `split_cells_*` lemmas). The heaviest single proof.
+  - `yjs_store_repair.v` — `getOrCreateYType`, `store.repair`
+    (`wp_store__repair_split`), `integrateDecoded`, `depsArrived`, the
+    `wire_*` drain machinery, and the `store_inv ⊣⊢ ∃ model, own_store`
+    bridge (`store_inv_own_store`).
+  - `yjs_store_update.v` — the top of the update path: the applyUpdate
+    stack up to the `own_store`-level certificate spec
+    `wp_store__applyUpdate_certs` (delivered content comes back as
+    `is_root_lb` fragments). Requires node / split / repair.
+- `yjs_text.v` — facade over the `Text` handle proofs (three files split
+  for build-time parallelism; downstream imports only this):
+  - `yjs_text_base.v` — the `Text` handle `is_Text t γh L`, its
+    `is_Text_root` / `is_Text_root_lb` projections, and the
+    `insert_item_valid` / `insert_maximalId` / `sorted_subseteq_*` helpers.
+  - `yjs_text_insert.v` — the top-level `wp_Text__Insert` (mints one op
+    certificate per inserted item).
+  - `yjs_text_delete.v` — `wp_Text__Delete` and the read-path
+    `wp_Text__Len`.
 
 ## Notes
 
