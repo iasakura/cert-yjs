@@ -84,7 +84,13 @@ Qed.
     change is reported as the persistent history-prefix certificate
     [is_history_lb γh c (h ++ deliver_ev <$> expand_inputs applied)]: the
     document's delivered fragment now contains exactly the applied (drained)
-    per-char ops.
+    per-char ops. Crucially it is ALSO reported that no input is lost:
+    [input_accounted] says each of [inputs] has its id either delivered into
+    that new history (applied now, or already present from a prior delivery) or
+    still buffered by id in the leftover pending [rest]. Interference (the
+    concurrent state revealed only under the lock) means we cannot pin down
+    WHICH of the two an individual input takes, only that one holds -- so the
+    guarantee is at the id level, over the [is_history_lb] history and [rest].
 
     Because the drain is TOTAL (issue #40: the pending buffer plus the batch
     drain to the structural-dependency fixpoint, in ANY order), there is NO
@@ -108,7 +114,9 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
   {{{ (c : ClientId) (h : list Ev)
       (applied rest : list (TId * IntegrateInput (A := A))), RET #();
       own_update_structs sl dq inputs ∗
-      is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) }}}.
+      is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
+      ⌜∀ x, x ∈ inputs ->
+         input_accounted (h ++ (deliver_ev <$> expand_inputs applied)) rest x⌝ }}}.
 Proof.
   move=> Hnowrapb.
   wp_start as "(#His_doc & #Hishist & Hupd & #Hcerts & #Hroots)".
@@ -125,7 +133,7 @@ Proof.
   wp_apply (wp_store__applyUpdate_certs _ sl dq γs γh c h m pend inputs
               Hnowrapb
               with "[$Hishist $Hstore $Hupd $Hcerts $Hroots]").
-  iIntros (applied rest m') "(Hupd & Hstore & #Hlb & %Hdrain & %Hvr & %Hnoc & #Hrootlbs)".
+  iIntros (applied rest m') "(Hupd & Hstore & #Hlb & %Hdrain & %Hvr & %Hnoc & %Hnoloss & #Hrootlbs)".
   wp_auto.
   (* rebuild store_inv at the advanced history (delivered = expand_inputs applied)
      with the leftover as the new pending, and release the lock *)
@@ -133,7 +141,7 @@ Proof.
   { iNext. iApply store_inv_own_store.
     iExists c, (h ++ (deliver_ev <$> expand_inputs applied)), m', rest. iFrame "Hstore". }
   wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hinv]").
-  iApply ("HΦ" $! c h applied rest). iFrame "Hupd Hlb".
+  iApply ("HΦ" $! c h applied rest). iFrame "Hupd Hlb". iPureIntro. exact Hnoloss.
 Qed.
 
 End doc.
