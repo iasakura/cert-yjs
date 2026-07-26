@@ -10,11 +10,11 @@
 #     cert-yjs.opam.
 #   - The perennial checkout supplies goose's source (built by --local); it is
 #     fetched at the SAME commit as the opam perennial pin. That pin is the fork
-#     iasakura/perennial at e8af7997 = upstream mit-pdos f884a505d plus one
-#     goose-only patch (an ffiMapping entry routing the grovenet package to the
-#     grove FFI, issue #45). Single source of truth: bump PERENNIAL_COMMIT and
-#     the cert-yjs.opam pin together. Drop the fork once the mapping is
-#     upstreamed.
+#     iasakura/perennial at a43a6150 = upstream mit-pdos f884a505d plus two
+#     goose-only patches (ffiMapping entries routing the grovenet package to the
+#     grove FFI, issue #45, and the wsnet package to the ws FFI). Single source
+#     of truth: bump PERENNIAL_COMMIT and the cert-yjs.opam pin together. Drop
+#     the fork once goose learns a per-project ffi mapping.
 #
 # The first run (no cache) builds Perennial and takes a few hours. Later runs
 # hit the _opam cache and only do goose + proof checking.
@@ -34,9 +34,10 @@ concurrency:
 
 env:
   # Keep in sync with the perennial pin in cert-yjs.opam (same fork + commit).
-  # Fork = upstream mit-pdos f884a505d + the grovenet ffiMapping patch (#45).
+  # Fork = upstream mit-pdos f884a505d + the grovenet (#45) and wsnet
+  # ffiMapping patches.
   PERENNIAL_REPO: https://github.com/iasakura/perennial
-  PERENNIAL_COMMIT: e8af799716f3b8963a61975b9e6652f1192f49cb
+  PERENNIAL_COMMIT: a43a6150ade627aad30b0b697659c8da451552d8
 
 jobs:
   build:
