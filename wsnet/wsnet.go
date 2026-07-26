@@ -136,12 +136,18 @@ func Listen(host Address) Listener {
 	return l
 }
 
+// There is no send or receive mutex here, deliberately. Serialization comes
+// from two places already: the ws FFI hands out the send and receive cursors
+// exclusively, so verified code cannot interleave two sends (a caller that
+// wants to share a connection puts the cursor in a lock invariant of its own,
+// which is where the lock belongs); and the library serializes both directions
+// internally ("only one writer can be open at a time" for Writer, a blocking
+// readMu in reader). Send and Receive still run concurrently with each other,
+// which is why killConn is guarded by a Once.
 type connection struct {
-	conn   *websocket.Conn
-	sendMu *sync.Mutex   // guards sending on conn
-	recvMu *sync.Mutex   // guards receiving on conn
-	done   chan struct{} // nil on the dialing side (no HTTP handler to release)
-	once   *sync.Once
+	conn *websocket.Conn
+	done chan struct{} // nil on the dialing side (no HTTP handler to release)
+	once *sync.Once
 }
 
 // Connection is an opaque handle for one endpoint of a connection: the send
@@ -150,13 +156,7 @@ type connection struct {
 type Connection *connection
 
 func makeConnection(conn *websocket.Conn, done chan struct{}) Connection {
-	return &connection{
-		conn:   conn,
-		sendMu: new(sync.Mutex),
-		recvMu: new(sync.Mutex),
-		done:   done,
-		once:   new(sync.Once),
-	}
+	return &connection{conn: conn, done: done, once: new(sync.Once)}
 }
 
 // killConn retires a connection after a transport error. The model has no
@@ -201,8 +201,6 @@ func Connect(host Address, path string) (bool, Connection) {
 // error kills the connection and says nothing about delivery (the model's late
 // failure: the frame may or may not have reached the peer).
 func Send(c Connection, data []byte) bool {
-	c.sendMu.Lock()
-	defer c.sendMu.Unlock()
 	if err := c.conn.Write(context.Background(), websocket.MessageBinary, data); err != nil {
 		killConn(c)
 		return true
@@ -215,8 +213,6 @@ func Send(c Connection, data []byte) bool {
 // hung up). Text frames are skipped: the model's messages are byte strings and
 // the Yjs sync protocol is binary.
 func Receive(c Connection) (bool, []byte) {
-	c.recvMu.Lock()
-	defer c.recvMu.Unlock()
 	for {
 		typ, data, err := c.conn.Read(context.Background())
 		if err != nil {
