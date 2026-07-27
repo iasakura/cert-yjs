@@ -15,20 +15,59 @@
 #  - perennial requires go 1.26, so GOTOOLCHAIN is forced.
 #  - goose/proofgen are not registered as tools in go.mod, so make's automatic
 #    goose step does not work; we call the goose bundled with the perennial
-#    checkout via --local (same version as the opam pin).
+#    source via --local.
 #  - .goose-output is touched to tell make the translation is up to date.
 #  - proofgen sometimes emits a bogus src/generatedproof/_ directory; clean it.
 set -euo pipefail
 
 # --- configuration (adjust per machine via env) ---
 export GOTOOLCHAIN=go1.26.0
-PERENNIAL="${PERENNIAL:-/home/ia/ghq/github.com/mit-pdos/perennial}"
+# goose comes from the perennial that opam actually installed into the current
+# switch, so it cannot drift from the pin in cert-yjs.opam: that directory IS
+# the pinned source. (opam keeps it for pinned dev packages.) A separate
+# checkout kept at the same commit by hand is the alternative, and getting it
+# wrong is silent: goose without the ffiMapping entry emits a package with no
+# ffi prelude, which only fails much later as UNDEFINED EVARS in the generated
+# Assumptions class. Hence check_goose below.
+PERENNIAL="${PERENNIAL:-${OPAM_SWITCH_PREFIX:-}/.opam-switch/sources/perennial}"
 GOOSE_SRC="$PERENNIAL/goose"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
 cd "$(dirname "$0")"
 
 step="${1:-all}"
+
+# Packages whose translation depends on an ffiMapping entry in goose. Without
+# the entry goose still succeeds and produces unusable output, so refuse to run
+# rather than translate against the wrong goose.
+FFI_MAPPED_PKGS="grovenet wsnet"
+
+check_goose() {
+  if [ ! -d "$GOOSE_SRC" ]; then
+    echo "error: no goose source at $GOOSE_SRC" >&2
+    if [ -z "${OPAM_SWITCH_PREFIX:-}" ]; then
+      echo "  OPAM_SWITCH_PREFIX is unset: run through opam, e.g." >&2
+      echo "    opam exec --switch=cert-yjs -- ./build.sh" >&2
+    else
+      echo "  the current switch has no pinned perennial source; check that" >&2
+      echo "  perennial is installed from the pin in cert-yjs.opam, or point" >&2
+      echo "  PERENNIAL= at a perennial checkout at that commit." >&2
+    fi
+    exit 1
+  fi
+  local missing=""
+  for pkg in $FFI_MAPPED_PKGS; do
+    grep -qF "github.com/iasakura/cert-yjs/$pkg" "$GOOSE_SRC/util/util.go" ||
+      missing="$missing $pkg"
+  done
+  if [ -n "$missing" ]; then
+    echo "error: goose at $GOOSE_SRC has no ffiMapping entry for:$missing" >&2
+    echo "  cert-yjs needs the iasakura/perennial fork (upstream plus those" >&2
+    echo "  entries); this goose would translate the package with no ffi" >&2
+    echo "  prelude and the generated Assumptions class would not typecheck." >&2
+    exit 1
+  fi
+}
 
 do_go() {
   echo ">>> go build (type check)"
@@ -37,7 +76,9 @@ do_go() {
 }
 
 do_goose() {
+  check_goose
   echo ">>> goose translation (Go -> Rocq, using perennial's bundled goose via --local)"
+  echo "    goose source: $GOOSE_SRC"
   go tool perennial-cli goose --local "$GOOSE_SRC"
   rm -rf src/generatedproof/_   # clean up proofgen artifacts
   echo "    OK -> updated src/code/... and src/generatedproof/..."

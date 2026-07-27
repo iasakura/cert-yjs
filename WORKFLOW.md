@@ -64,27 +64,41 @@ src/proof are committed.
 
 - Go version: perennial requires go 1.26 → GOTOOLCHAIN=go1.26.0 is exported.
 - goose location: not registered as a go.mod tool, so make's automatic goose
-  does not run; perennial's bundled goose is called via --local. This matches
-  the perennial commit pinned in cert-yjs.opam.
+  does not run; perennial's bundled goose is called via --local. Its source is
+  `$OPAM_SWITCH_PREFIX/.opam-switch/sources/perennial`, i.e. the very perennial
+  opam installed, so goose is the pinned commit by construction and cannot
+  drift from the library it was translated against.
+- goose is refused if that source is missing, or if its `ffiMapping` lacks the
+  grovenet / wsnet entries. Translating with the wrong goose is silent: the
+  package comes out with no ffi prelude and only fails much later, as
+  UNDEFINED EVARS in the generated `Assumptions` class.
 - `.goose-output` is touched to tell make the translation already happened.
 - `src/generatedproof/_` is cleaned up (proofgen occasionally emits it).
 
-On a machine with perennial elsewhere:
+To translate with a perennial checkout of your own instead (it must carry the
+ffiMapping entries; see the note above):
 
     env PERENNIAL=/path/to/perennial ./build.sh
 
 ## One-time setup
 
-- An opam switch with Perennial installed (New / Perennial in user-contrib).
-  Either share an existing switch:
+- A **dedicated** opam switch with Perennial installed (New / Perennial in
+  user-contrib). Dedicated because `cert-yjs.opam` pins perennial to the
+  `iasakura` fork, and a switch has one pin: shared with other perennial
+  projects it would either hand them the fork or leave cert-yjs building
+  against something its own opam file does not declare. (The fork's patches
+  touch no `.v`, so today the installed library happens to be identical to
+  upstream's; the pin is still what CI builds, so the local switch should
+  match it.) Named rather than a local `_opam`, because the repo is worked in
+  through several git worktrees that would each get their own copy:
 
-      opam switch link <path-to-switch> .
+      opam switch create cert-yjs ocaml-base-compiler.5.2.0 --no-install --no-switch
+      opam install ./cert-yjs.opam --deps-only --switch=cert-yjs
 
-  (e.g. the perennial-sandbox local switch, which uses the same pins), or
-  build a dedicated one (takes hours):
+  Then either make it current (`opam switch set cert-yjs`) or run the build
+  through it:
 
-      opam switch create . ocaml-base-compiler.5.2.0 --no-install
-      opam install ./cert-yjs.opam --deps-only
+      opam exec --switch=cert-yjs -- ./build.sh
 
-- A local perennial checkout (with bundled goose) at the same commit as the
-  pin in cert-yjs.opam.
+  That is the whole setup: goose comes out of the switch too (see the goose
+  note above), so there is no second perennial checkout to keep in step.

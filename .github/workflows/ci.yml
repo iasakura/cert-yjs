@@ -8,13 +8,14 @@
 #       git ls-remote https://github.com/actions/checkout 'refs/tags/vX.Y.Z^{}'
 #   - opam dependencies are all pinned to git SHAs via pin-depends in
 #     cert-yjs.opam.
-#   - The perennial checkout supplies goose's source (built by --local); it is
-#     fetched at the SAME commit as the opam perennial pin. That pin is the fork
-#     iasakura/perennial at a43a6150 = upstream mit-pdos f884a505d plus two
-#     goose-only patches (ffiMapping entries routing the grovenet package to the
-#     grove FFI, issue #45, and the wsnet package to the ws FFI). Single source
-#     of truth: bump PERENNIAL_COMMIT and the cert-yjs.opam pin together. Drop
-#     the fork once goose learns a per-project ffi mapping.
+#   - goose's source (built by --local) comes from the perennial that opam
+#     installed into the switch, so cert-yjs.opam's pin is the ONLY place a
+#     perennial version is named and goose cannot drift from the library. That
+#     pin is the fork iasakura/perennial at a43a6150 = upstream mit-pdos
+#     f884a505d plus two goose-only patches (ffiMapping entries routing the
+#     grovenet package to the grove FFI, issue #45, and the wsnet package to
+#     the ws FFI). Drop the fork once goose learns a per-project ffi mapping.
+#     build.sh refuses to translate against a goose missing those entries.
 #
 # The first run (no cache) builds Perennial and takes a few hours. Later runs
 # hit the _opam cache and only do goose + proof checking.
@@ -31,13 +32,6 @@ permissions:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  # Keep in sync with the perennial pin in cert-yjs.opam (same fork + commit).
-  # Fork = upstream mit-pdos f884a505d + the grovenet (#45) and wsnet
-  # ffiMapping patches.
-  PERENNIAL_REPO: https://github.com/iasakura/perennial
-  PERENNIAL_COMMIT: a43a6150ade627aad30b0b697659c8da451552d8
 
 jobs:
   build:
@@ -86,12 +80,7 @@ jobs:
             _opam
           key: opam-${{ runner.os }}-ocaml-5.2.0-${{ hashFiles('cert-yjs.opam') }}
 
-      - name: Fetch perennial (goose source; opam-pin commit + grovenet ffiMapping patch)
-        run: |
-          git init "$HOME/perennial"
-          git -C "$HOME/perennial" remote add origin "$PERENNIAL_REPO"
-          git -C "$HOME/perennial" fetch --depth 1 origin "$PERENNIAL_COMMIT"
-          git -C "$HOME/perennial" checkout FETCH_HEAD
-
       - name: Build (go build → goose → proof check)
-        run: opam exec -- env PERENNIAL="$HOME/perennial" ./build.sh
+        # goose comes from _opam/.opam-switch/sources/perennial, the pinned
+        # source opam kept after installing it
+        run: opam exec -- ./build.sh
