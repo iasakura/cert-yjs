@@ -49,23 +49,9 @@ Proof. rewrite /cell_le. move=> x y z. lia. Qed.
 #[local] Instance cell_le_total : Total cell_le.
 Proof. rewrite /cell_le. move=> x y. lia. Qed.
 
-(* [is_pending_rooted]'s instances are declared in [yjs_store_base] under its
-   wider section context ([Proof using Type*] closes them over instances this
-   file's section lacks), so re-declare them here (the [cell_le] pattern
-   above); without them [iNamed] stalls at the persistent [#Hpendroot]
-   conjunct of [store_inv_excl] / [own_store]. *)
-#[local] Instance pending_item_rooted_persistent' γs typedInput :
-  Persistent (pending_item_rooted γs typedInput).
-Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
-#[local] Instance is_pending_rooted_persistent' γs pending :
-  Persistent (is_pending_rooted γs pending).
-Proof. apply _. Qed.
-#[local] Instance pending_item_rooted_timeless' γs typedInput :
-  Timeless (pending_item_rooted γs typedInput).
-Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
-#[local] Instance is_pending_rooted_timeless' γs pending :
-  Timeless (is_pending_rooted γs pending).
-Proof. apply _. Qed.
+(* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54), so
+   [store_inv_excl] / [own_store] carry them as [⌜..⌝] and no Persistent /
+   Timeless instances are needed here. *)
 
 
 (** [store.applyUpdate] (issue #40), the internal total loop: the pending
@@ -94,7 +80,6 @@ Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
   (∀ name p ts, bind !! name = Some p -> types !! p = Some ts ->
      doc_model_get m (RootId name) = ty_arr ts) ->
   (∀ t, doc_model_get m t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
-  inputs_rooted_in_bind (pend0 ++ inputs) bind ->
   (∀ c, c ∈ all_cells types -> cell_fits c) ->
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend0 ++ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
@@ -110,19 +95,23 @@ Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
           own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
     s @! (go.PointerType yjs.store) @! "applyUpdate" #sl
-  {{{ (pend_sl' : slice.t) (types' : gmap loc type_state), RET #();
+  {{{ (pend_sl' : slice.t) (types' : gmap loc type_state) (bind' : gmap P loc), RET #();
       own_update_structs sl dq inputs ∗
       (s .[(yjs.store.t), "pending"]) ↦ pend_sl' ∗
       own_update_structs pend_sl' (DfracOwn 1) rest ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
-      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind' ∗
       ([∗ map] parent ↦ ts ∈ types',
           own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
-      ⌜dom types' = dom types⌝ ∗
-      ⌜∀ name p ts', bind !! name = Some p -> types' !! p = Some ts' ->
+      ⌜bind ⊆ bind'⌝ ∗
+      ⌜dom types ⊆ dom types'⌝ ∗
+      ⌜∀ name p, bind' !! name = Some p -> is_Some (types' !! p)⌝ ∗
+      ⌜∀ n1 n2 p, bind' !! n1 = Some p -> bind' !! n2 = Some p -> n1 = n2⌝ ∗
+      ⌜∀ p, is_Some (types' !! p) -> ∃ name, bind' !! name = Some p⌝ ∗
+      ⌜∀ name p ts', bind' !! name = Some p -> types' !! p = Some ts' ->
          doc_model_get m' (RootId name) = ty_arr ts'⌝ ∗
-      ⌜∀ t, doc_model_get m' t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p⌝ ∗
+      ⌜∀ t, doc_model_get m' t ≠ [] -> ∃ name p, t = RootId name ∧ bind' !! name = Some p⌝ ∗
       ⌜∀ c, c ∈ all_cells types' ->
          (∃ c0, c0 ∈ all_cells types ∧ cell_client c = cell_client c0 ∧
             (uint.Z (cell_clock c0) <= uint.Z (cell_clock c))%Z ∧
@@ -139,7 +128,7 @@ Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
       ⌜∀ c, c ∈ all_cells types' -> cell_origin_clk c⌝ }}}.
 Proof using Type*.
   move=> Hdrain Hvr Hrtot Happliedsub Hnonempty Hbindtypes Hbindinj Htypesbound Hmtypes Hmdom
-         Hrooted Hfits Hkb1 Hlocdup Hrangedisj Horiginclk.
+         Hfits Hkb1 Hlocdup Hrangedisj Horiginclk.
   iIntros (Φ) "(#Hpkg & Hupd & Hpendf & Hpend & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
   (* W64 id bounds of the whole pending, from the two heap slices *)
   iDestruct (own_update_id_bounds with "Hupd") as %Hidbin.
@@ -224,7 +213,7 @@ Proof using Type*.
     (* ----- phase B: the drain loop ----- *)
     iAssert (∃ (pv : bool) (pendingS : slice.t) (uivsP : list yjs.updateItem.t)
                (pendingj appliedj suffix : list (TId * IntegrateInput (A := A)))
-               (typesj : gmap loc type_state) (mj : DocModel),
+               (typesj : gmap loc type_state) (bindj : gmap P loc) (mj : DocModel),
         "Hprog" ∷ progress_ptr ↦ pv ∗
         "Hpendingp" ∷ pending_ptr ↦ pendingS ∗
         "HslP" ∷ pendingS ↦* uivsP ∗
@@ -233,18 +222,22 @@ Proof using Type*.
         "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
         "Hitemmap" ∷ own_item_map mref (DfracOwn 1) typesj ∗
         "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ tref ∗
-        "Htypesmap" ∷ own_map tref (DfracOwn 1) bind ∗
+        "Htypesmap" ∷ own_map tref (DfracOwn 1) bindj ∗
         "Htypes" ∷ ([∗ map] parent ↦ ts ∈ typesj,
             own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
             ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
         "%Hpendingsubj" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A),
             typedInput ∈ pendingj -> typedInput ∈ pend0 ++ inputs⌝ ∗
         "%Hprj" ∷ ⌜WireReplay m appliedj mj⌝ ∗
-        "%Hdomj" ∷ ⌜dom typesj = dom types⌝ ∗
-        "%Hmtypesj" ∷ ⌜∀ name pl ts, bind !! name = Some pl ->
+        "%Hbindsubj" ∷ ⌜bind ⊆ bindj⌝ ∗
+        "%Hdomj" ∷ ⌜dom types ⊆ dom typesj⌝ ∗
+        "%Hbindtypesj" ∷ ⌜∀ name pl, bindj !! name = Some pl -> is_Some (typesj !! pl)⌝ ∗
+        "%Hbindinjj" ∷ ⌜∀ n1 n2 pl, bindj !! n1 = Some pl -> bindj !! n2 = Some pl -> n1 = n2⌝ ∗
+        "%Htypesboundj" ∷ ⌜∀ pl, is_Some (typesj !! pl) -> ∃ name, bindj !! name = Some pl⌝ ∗
+        "%Hmtypesj" ∷ ⌜∀ name pl ts, bindj !! name = Some pl ->
             typesj !! pl = Some ts -> doc_model_get mj (RootId name) = ty_arr ts⌝ ∗
         "%Hmdomj" ∷ ⌜∀ t, doc_model_get mj t ≠ [] ->
-            ∃ name pl, t = RootId name ∧ bind !! name = Some pl⌝ ∗
+            ∃ name pl, t = RootId name ∧ bindj !! name = Some pl⌝ ∗
         "%Hfitsj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> cell_fits c0⌝ ∗
         "%Horiginclkj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj -> cell_origin_clk c0⌝ ∗
         "%Hprovj" ∷ ⌜∀ c0, c0 ∈ all_cells typesj ->
@@ -265,13 +258,17 @@ Proof using Type*.
         "%Hfin" ∷ ⌜pv = false -> pendingj = rest ∧ mj = m' ∧ applied = appliedj⌝)%I
       with "[progress Hpendingp HslA HcapA Hitemsf Hitemmap Htypesf Htypesmap Htypes]"
       as "IH".
-    { iExists true, pslA, uivsA, (pend0 ++ inputs), [], applied, types, m.
+    { iExists true, pslA, uivsA, (pend0 ++ inputs), [], applied, types, bind, m.
       iFrame "progress Hpendingp HslA HcapA Hitemsf Hitemmap Htypesf Htypesmap Htypes".
       iFrame "HitemsA".
       iPureIntro. split_and!.
       - done.
       - constructor.
       - done.
+      - done.
+      - exact Hbindtypes.
+      - exact Hbindinj.
+      - exact Htypesbound.
       - exact Hmtypes.
       - exact Hmdom.
       - exact Hfits.
@@ -316,7 +313,7 @@ Proof using Type*.
       iAssert (∃ (i : nat) (pvi : bool) (restS : slice.t)
                  (uivsR : list yjs.updateItem.t)
                  (keptacc appacc app_rem af2 : list (TId * IntegrateInput (A := A)))
-                 (types_c : gmap loc type_state) (m_c : DocModel),
+                 (types_c : gmap loc type_state) (bind_c : gmap P loc) (m_c : DocModel),
           "Hii" ∷ i_ptr ↦ W64 i ∗
           "Hprog" ∷ progress_ptr ↦ pvi ∗
           "Hrestp" ∷ rest_ptr ↦ restS ∗
@@ -326,7 +323,7 @@ Proof using Type*.
           "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
           "Hitemmap" ∷ own_item_map mref (DfracOwn 1) types_c ∗
           "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ tref ∗
-          "Htypesmap" ∷ own_map tref (DfracOwn 1) bind ∗
+          "Htypesmap" ∷ own_map tref (DfracOwn 1) bind_c ∗
           "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types_c,
               own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
               ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
@@ -340,11 +337,15 @@ Proof using Type*.
           "%Hprc" ∷ ⌜WireReplay m (appliedj ++ appacc) m_c⌝ ∗
           "%Hkeptsub" ∷ ⌜∀ typedInput, typedInput ∈ keptacc -> typedInput ∈ pendingj⌝ ∗
           "%Hpv" ∷ ⌜pvi = false <-> appacc = []⌝ ∗
-          "%Hdomc" ∷ ⌜dom types_c = dom types⌝ ∗
-          "%Hmtypesc" ∷ ⌜∀ name pl ts, bind !! name = Some pl ->
+          "%Hdomc" ∷ ⌜dom types ⊆ dom types_c⌝ ∗
+          "%Hbindsubc" ∷ ⌜bind ⊆ bind_c⌝ ∗
+          "%Hbindtypesc" ∷ ⌜∀ name pl, bind_c !! name = Some pl -> is_Some (types_c !! pl)⌝ ∗
+          "%Hbindinjc" ∷ ⌜∀ n1 n2 pl, bind_c !! n1 = Some pl -> bind_c !! n2 = Some pl -> n1 = n2⌝ ∗
+          "%Htypesboundc" ∷ ⌜∀ pl, is_Some (types_c !! pl) -> ∃ name, bind_c !! name = Some pl⌝ ∗
+          "%Hmtypesc" ∷ ⌜∀ name pl ts, bind_c !! name = Some pl ->
               types_c !! pl = Some ts -> doc_model_get m_c (RootId name) = ty_arr ts⌝ ∗
           "%Hmdomc" ∷ ⌜∀ t, doc_model_get m_c t ≠ [] ->
-              ∃ name pl, t = RootId name ∧ bind !! name = Some pl⌝ ∗
+              ∃ name pl, t = RootId name ∧ bind_c !! name = Some pl⌝ ∗
           "%Hfitsc" ∷ ⌜∀ c0, c0 ∈ all_cells types_c -> cell_fits c0⌝ ∗
           "%Horiginclkc" ∷ ⌜∀ c0, c0 ∈ all_cells types_c -> cell_origin_clk c0⌝ ∗
           "%Hprovc" ∷ ⌜∀ c0, c0 ∈ all_cells types_c ->
@@ -361,7 +362,7 @@ Proof using Type*.
           "%Hrangedisjc" ∷ ⌜cells_range_disjoint (all_cells types_c)⌝)%I
         with "[i Hprog rest Hrsl0 Hrcap0 Hitemsf Hitemmap Htypesf Htypesmap Htypes]"
         as "IHin".
-      { iExists 0%nat, false, _, [], [], [], app_rem0, af, typesj, mj.
+      { iExists 0%nat, false, _, [], [], [], app_rem0, af, typesj, bindj, mj.
         iFrame "i Hprog rest Hrsl0 Hrcap0 Hitemsf Hitemmap Htypesf Htypesmap Htypes".
         iSplit; first by rewrite big_sepL2_nil.
         iPureIntro. split_and!.
@@ -374,6 +375,10 @@ Proof using Type*.
         - move=> typedInput Hti. by apply elem_of_nil in Hti.
         - done.
         - exact Hdomj.
+        - exact Hbindsubj.
+        - exact Hbindtypesj.
+        - exact Hbindinjj.
+        - exact Htypesboundj.
         - exact Hmtypesj.
         - exact Hmdomj.
         - exact Hfitsj.
@@ -399,21 +404,15 @@ Proof using Type*.
           "(#HisL & #HisR & #HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)";
           [exact Huiv | exact Hpi |].
         simpl in Hin_l, Hin_r, Hin_id, Hin_c, Htid, Hborrow.
-        (* registry coherence, transported to the current [types_c] *)
-        have Hbindtypesc : ∀ name pl, bind !! name = Some pl ->
-            is_Some (types_c !! pl).
-        { move=> name pl Hb. apply elem_of_dom. rewrite Hdomc.
-          apply elem_of_dom. exact (Hbindtypes name pl Hb). }
-        have Htypesboundc : ∀ pl, is_Some (types_c !! pl) ->
-            ∃ name, bind !! name = Some pl.
-        { move=> pl Hs0. apply Htypesbound. apply elem_of_dom. rewrite -Hdomc.
-          apply elem_of_dom. exact Hs0. }
+        (* registry coherence for the current [types_c] / [bind_c] is carried by
+           the loop invariant ([Hbindtypesc] / [Htypesboundc]), since the drain
+           grows the registry as it creates fresh root types (issue #54). *)
         iDestruct (types_repr_all2 with "Htypes") as %Hreprallc.
         iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfc.
         have Hagreec : ∀ d : YjsId, doc_model_has m_c d = true <->
             ∃ c0, c0 ∈ all_cells types_c ∧ cell_covers c0 d.
         { move=> d.
-          exact (docm_cells_agree m_c bind types_c d Hmtypesc Hmdomc
+          exact (docm_cells_agree m_c bind_c types_c d Hmtypesc Hmdomc
                    Hbindtypesc Htypesboundc Hreprallc Hrunwfc). }
         have Hpending0in : (targetType, input) ∈ pend0 ++ inputs.
         { apply Hpendingsubj. exact (list_elem_of_lookup_2 _ _ _ Hpi). }
@@ -445,7 +444,7 @@ Proof using Type*.
           wp_auto. wp_for_post.
           iFrame "Hcapin Hpendf HΦ s Hslin Hpendingp HslP HcapP".
           iExists (S i), pvi, restS, uivsR, keptacc, appacc, app_rem, af2,
-            types_c, m_c.
+            types_c, bind_c, m_c.
           replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
           iFrame "Hii Hprog Hrestp HslR HcapR Hitemsf Hitemmap Htypesf Htypesmap Htypes".
           iFrame "HitemsR".
@@ -487,17 +486,19 @@ Proof using Type*.
            { move: Hint'. rewrite /wire_integrate Hall. by move=> [= <-]. }
            subst arrp.
            (* the target root's binding *)
-           have [nm [Htjeq [pl Hbnm]]] : ∃ nm, targetType = RootId nm ∧ is_Some (bind !! nm).
+           have [nm Htjeq] : ∃ nm, targetType = RootId nm.
            { destruct (decide (in_originId input = None ∧
                                in_rightOriginId input = None)) as [[HoN HrN] | Hor].
-             - destruct (Hrooted (targetType, input) Hpending0in HoN HrN) as (nm & Heq & Hsm).
-               by exists nm.
+             - (* origin-free: [is_update_item] pins the root name; issue #54
+                  no longer needs it BOUND (the grow dispatcher creates it) *)
+               destruct opn as [nm'|].
+               + exists nm'. exact (Htid nm' eq_refl).
+               + exfalso. destruct (Hborrow eq_refl) as [Ho | Ho]; [exact (Ho HoN) | exact (Ho HrN)].
              - have Hne : doc_model_get m_c targetType ≠ [].
                { apply (toItem_nonempty_of_origin input _ newItem Htoit).
                  apply not_and_l in Hor.
                  by destruct Hor as [Ho | Ho]; [left | right]. }
-               destruct (Hmdomc targetType Hne) as (nm & pl & Heq & Hb).
-               exists nm. split; [exact Heq | by exists pl]. }
+               destruct (Hmdomc targetType Hne) as (nm & pl & Heq & Hb). by exists nm. }
            have Hnwc : (Z.of_nat (clock (in_id input)) + Z.of_nat (length (in_content input)) < 2^64)%Z
              := Hkb1 (targetType, input) Hpending0in.
            have Hib : uint.Z (W64 (clock (in_id input))) = Z.of_nat (clock (in_id input))
@@ -593,17 +594,17 @@ Proof using Type*.
                  := uint_W64_nat_bound _ _ (Hkb1 typedInput Hti_pi).
                split; move: Hlo1 Hhi1; rewrite !Hib !Hib4; lia. }
            simpl. rewrite Hready. wp_auto.
-           wp_apply (wp_store__integrateDecoded s mref tref updateItemVal (targetType, input)
-                       m_c types_c bind newItem arr' nm pl
-                       Htjeq Hbnm Htoit Hvld Hmax Hall Hgmax0
-                       Hbindtypesc Hbindinj Hmtypesc Hnwc
+           wp_apply (wp_store__integrateDecoded_grow s mref tref updateItemVal (targetType, input)
+                       m_c types_c bind_c newItem arr' nm
+                       Htjeq Htoit Hvld Hmax Hall Hgmax0
+                       Hbindtypesc Hbindinjc Htypesboundc Hmtypesc Hmdomc Hnwc
                        Hlocdupc Hrangedisjc Hfitsc Horiginclkc
                        with "[$Hui $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
-           iIntros (types'') "(Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hdom'' & %Hmtypes'' & %Hprov'' & %Hlocdup'' & %Hrangedisj'' & %Hfits'' & %Horiginclk'')".
+           iIntros (types'' bind'') "(Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hbindsub'' & %Hdom'' & %Hbindtypes'' & %Hbindinj'' & %Htypesbound'' & %Hmtypes'' & %Hmdom'' & %Hprov'' & %Hlocdup'' & %Hrangedisj'' & %Hfits'' & %Horiginclk'')".
            wp_auto. wp_for_post.
            iFrame "Hcapin Hpendf HΦ s Hslin Hpendingp HslP HcapP".
            iExists (S i), true, restS, uivsR, keptacc, (appacc ++ [(targetType, input)]),
-             app2, af2, types'', (<[targetType := arr']> m_c).
+             app2, af2, types'', bind'', (<[targetType := arr']> m_c).
            replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
            iFrame "Hii Hprog Hrestp HslR HcapR Hitemsf Hitemmap Htypesf Htypesmap Htypes".
            iFrame "HitemsR".
@@ -619,13 +620,13 @@ Proof using Type*.
               constructor.
            ++ exact Hkeptsub.
            ++ split; [move=> Hf; discriminate | move=> Habs; by destruct appacc].
-           ++ by rewrite Hdom''.
+           ++ etrans; [exact Hdomc | exact Hdom''].
+           ++ etrans; [exact Hbindsubc | exact Hbindsub''].
+           ++ exact Hbindtypes''.
+           ++ exact Hbindinj''.
+           ++ exact Htypesbound''.
            ++ exact Hmtypes''.
-           ++ move=> t Hne.
-              destruct (decide (t = targetType)) as [-> | Hnet].
-              { exists nm, pl. split; [exact Htjeq | exact Hbnm]. }
-              rewrite docm_get_insert_ne // in Hne.
-              exact (Hmdomc t Hne).
+           ++ exact Hmdom''.
            ++ exact Hfits''.
            ++ exact Horiginclk''.
            ++ move=> c0 Hc0.
@@ -653,7 +654,7 @@ Proof using Type*.
               wp_auto. wp_for_post.
               iFrame "Hcapin Hpendf HΦ s Hslin Hpendingp HslP HcapP".
               iExists (S i), pvi, restS, uivsR2, keptacc, appacc, app_rem, af2,
-                types_c, m_c.
+                types_c, bind_c, m_c.
               replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
               iFrame "Hii Hprog Hrestp HslR HcapR Hitemsf Hitemmap Htypesf Htypesmap Htypes".
               iFrame "HitemsR2".
@@ -669,7 +670,7 @@ Proof using Type*.
               wp_for_post.
               iFrame "Hcapin Hpendf HΦ s Hslin Hpendingp HslP HcapP".
               iExists (S i), pvi, restS', (uivsR2 ++ [updateItemVal]),
-                (keptacc ++ [(targetType, input)]), appacc, app_rem, af2, types_c, m_c.
+                (keptacc ++ [(targetType, input)]), appacc, app_rem, af2, types_c, bind_c, m_c.
               replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
               have H00 : sint.nat (W64 0) = 0%nat by word.
               iEval (rewrite H00 /=) in "HslR'".
@@ -699,13 +700,17 @@ Proof using Type*.
         wp_auto. wp_for_post.
         iFrame "Hcapin Hpendf HΦ s Hslin".
         iExists pvi, restS, uivsR, keptacc, (appliedj ++ appacc), af2,
-          types_c, m_c.
+          types_c, bind_c, m_c.
         iFrame "Hprog Hpendingp HslR HcapR Hitemsf Hitemmap Htypesf Htypesmap Htypes".
         iFrame "HitemsR".
         iPureIntro. split_and!.
         ** move=> typedInput Hti. apply Hpendingsubj. exact (Hkeptsub typedInput Hti).
         ** exact Hprc.
+        ** exact Hbindsubc.
         ** exact Hdomc.
+        ** exact Hbindtypesc.
+        ** exact Hbindinjc.
+        ** exact Htypesboundc.
         ** exact Hmtypesc.
         ** exact Hmdomc.
         ** exact Hfitsc.
@@ -746,14 +751,18 @@ Proof using Type*.
       destruct (Hfin eq_refl) as (Hpendingeq & Hmeq & Happeq).
       subst pendingj mj.
       wp_auto.
-      iApply ("HΦ" $! pendingS typesj).
+      iApply ("HΦ" $! pendingS typesj bindj).
       iFrame "Hpendf Hitemsf Hitemmap Htypesf Htypesmap Htypes".
       iSplitL "Hslin Hcapin".
       { iExists uivs_in. iFrame "Hslin Hcapin Hitemsin". }
       iSplitL "HslP HcapP".
       { iExists uivsP. iFrame "HslP HcapP HitemsPj". }
       iPureIntro. split_and!.
+      * exact Hbindsubj.
       * exact Hdomj.
+      * exact Hbindtypesj.
+      * exact Hbindinjj.
+      * exact Htypesboundj.
       * exact Hmtypesj.
       * exact Hmdomj.
       * move=> c0 Hc0.
@@ -1563,11 +1572,11 @@ Lemma wp_store__applyUpdate_certs (s_loc : loc) (sl : slice.t) (dq : dfrac)
     (pend inputs : list (TId * IntegrateInput (A := A))) :
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
+  is_pending_rooted γs inputs ->
   {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
       own_store s_loc γs γh c h m pend ∗
       own_update_structs sl dq inputs ∗
-      is_pending_certified γh (expand_inputs inputs) ∗
-      is_pending_rooted γs inputs }}}
+      is_pending_certified γh (expand_inputs inputs) }}}
     s_loc @! (go.PointerType yjs.store) @! "applyUpdate" #sl
   {{{ (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel),
       RET #();
@@ -1579,8 +1588,8 @@ Lemma wp_store__applyUpdate_certs (s_loc : loc) (sl : slice.t) (dq : dfrac)
       ⌜inputs_not_from (expand_inputs applied) c⌝ ∗
       is_applied_root_lb γs applied m' }}}.
 Proof using Type*.
-  move=> Hnowrapb.
-  iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertsin & #Hrootsin) HΦ".
+  move=> Hnowrapb Hrooted.
+  iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertsin) HΦ".
   iNamed "Hstore".
   destruct Hregcoh as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
   iDestruct (types_arr_inv2 with "Htypes") as %Htsinv.
@@ -1606,19 +1615,9 @@ Proof using Type*.
   iAssert (is_pending_certified γh (expand_inputs (pend ++ inputs))) as "#Hcertpending".
   { rewrite /is_pending_certified expand_inputs_app big_sepL_app.
     iSplit; [iFrame "Hpendcert" | iFrame "Hcertsin"]. }
-  iAssert (is_pending_rooted γs (pend ++ inputs)) as "#Hrootpending".
-  { rewrite /is_pending_rooted big_sepL_app.
-    iSplit; [iFrame "Hpendroot" | iFrame "Hrootsin"]. }
-  iAssert (⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ++ inputs ->
-      in_originId typedInput.2 = None -> in_rightOriginId typedInput.2 = None ->
-      ∃ nm, typedInput.1 = RootId nm ∧ is_Some (bind !! nm)⌝)%I as %Hrooted0.
-  { iIntros (typedInput Hin HoN HrN).
-    iDestruct (big_sepL_elem_of _ _ typedInput Hin with "Hrootpending") as "Hri".
-    rewrite /pending_item_rooted decide_True; last by split.
-    iDestruct "Hri" as (nm) "[%Htieq Hroot]".
-    iDestruct "Hroot" as (p) "Hbind".
-    iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hb.
-    iPureIntro. exists nm. split; [exact Htieq | by exists p]. }
+  have Hrootpending : is_pending_rooted γs (pend ++ inputs).
+  { move=> typedInput /elem_of_app [Hin | Hin];
+      [exact (Hpendroot typedInput Hin) | exact (Hrooted typedInput Hin)]. }
   destruct (wire_drain m (pend ++ inputs)) as [[applied rest'] m'] eqn:Hdrainc.
   have Happsub := proj1 (wire_drain_subset m (pend ++ inputs) applied rest' m' Hdrainc).
   have Hrestsub := proj2 (wire_drain_subset m (pend ++ inputs) applied rest' m' Hdrainc).
@@ -1635,19 +1634,15 @@ Proof using Type*.
   wp_apply (wp_store__applyUpdate s_loc items_mref types_mref sl pend_sl dq
               inputs pend applied rest' m m' types bind
               Hdrainc Hvr Hrtot Happsub Hnonemptyb Hbindtypes Hbindinj Htypesbound Hmtypes Hmdom
-              Hrooted0 Hrunfits Hkb1c Hlocdup Hrangedisj Horiginclk
+              Hrunfits Hkb1c Hlocdup Hrangedisj Horiginclk
               with "[$Hupd $Hpendf $Hpend $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
-  iIntros (pend_sl' types') "(Hupd & Hpendf & Hpend' & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hdom' & %Hmtypes' & %Hmdom' & %Hprov' & %Hlocdup' & %Hrangedisj' & %Hfits' & %Horiginclk')".
-  have Hbindtypes' : ∀ nm p, bind !! nm = Some p -> is_Some (types' !! p).
-  { move=> nm p Hb. apply elem_of_dom. rewrite Hdom'. apply elem_of_dom.
-    exact (Hbindtypes nm p Hb). }
-  have Htypesbound' : ∀ p, is_Some (types' !! p) -> ∃ nm, bind !! nm = Some p.
-  { move=> p Hs. apply Htypesbound. apply elem_of_dom. rewrite -Hdom'.
-    apply elem_of_dom. exact Hs. }
-  (* grow the item-set authority to the new types and snapshot it *)
-  have Hdomf : dom ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types')
-             = dom ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types)
-    by rewrite !dom_fmap_L Hdom'.
+  iIntros (pend_sl' types' bind') "(Hupd & Hpendf & Hpend' & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hbindsub' & %Hdom' & %Hbindtypes' & %Hbindinj' & %Htypesbound' & %Hmtypes' & %Hmdom' & %Hprov' & %Hlocdup' & %Hrangedisj' & %Hfits' & %Horiginclk')".
+  (* grow the item-set authority to the (possibly larger) types and snapshot it;
+     the registry may have grown by fresh empty root types (issue #54), so the
+     domain only INCREASES (dom types ⊆ dom types'). *)
+  have Hdomf : dom ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types)
+             ⊆ dom ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types')
+    by rewrite !dom_fmap_L; exact Hdom'.
   have Hgrowf : ∀ p S S',
       ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) !! p = Some S ->
       ((λ ts : type_state, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types') !! p = Some S' ->
@@ -1657,16 +1652,21 @@ Proof using Type*.
     destruct (types' !! p) as [ts'|] eqn:Hts'; last done.
     move=> [= <-] [= <-].
     destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
+    have Hbnm' : bind' !! nm = Some p := lookup_weaken _ _ _ _ Hbnm Hbindsub'.
     have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
-    have Hdg' : doc_model_get m' (RootId nm) = ty_arr ts' := Hmtypes' nm p ts' Hbnm Hts'.
+    have Hdg' : doc_model_get m' (RootId nm) = ty_arr ts' := Hmtypes' nm p ts' Hbnm' Hts'.
     move=> x. rewrite !elem_of_list_to_set. move=> Hx.
     rewrite -Hdg'. apply (ValidReplay_mem (expand_inputs applied) m m' Hvr (RootId nm)).
     by rewrite Hdg. }
   iMod (auth_gmap_gset_grow_snap γs.(sn_seq) _ _ Hdomf Hgrowf with "Hseq")
     as "[Hseq #Hsnap]".
+  (* reconcile the registry ghost_map with the grown concrete map (issue #54):
+     mint one persistent [is_type_binding] per newly registered root name *)
+  iMod (ghost_map_grow_persist γs.(sn_types) bind bind' Hbindsub' with "HtypesAuth Hbinds")
+    as "[HtypesAuth #Hbinds']".
   (* per-applied bindings: the applied wire item's first char landed in its root *)
   have Happbnd : ∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ applied ->
-      ∃ nm p, typedInput.1 = RootId nm ∧ bind !! nm = Some p.
+      ∃ nm p, typedInput.1 = RootId nm ∧ bind' !! nm = Some p.
   { move=> typedInput Hin.
     have Hne := applied_root_nonempty applied m m' typedInput Hvr Hin
                  (Hnonemptyb typedInput (Happsub typedInput Hin)).
@@ -1677,7 +1677,7 @@ Proof using Type*.
     destruct (Happbnd typedInput (list_elem_of_lookup_2 _ _ _ Hi)) as (nm & p & Htieq & Hbnm).
     destruct (Hbindtypes' nm p Hbnm) as [ts' Hts'].
     have Hdg' : doc_model_get m' (RootId nm) = ty_arr ts' := Hmtypes' nm p ts' Hbnm Hts'.
-    iDestruct (big_sepM_lookup _ _ nm p Hbnm with "Hbinds") as "#Hbind".
+    iDestruct (big_sepM_lookup _ _ nm p Hbnm with "Hbinds'") as "#Hbind".
     iExists nm. iSplit; [done |].
     iExists p. iFrame "Hbind".
     rewrite /is_type_lb Htieq Hdg'.
@@ -1691,11 +1691,8 @@ Proof using Type*.
               (expand_inputs_subset rest' (pend ++ inputs) Hrestsub typedInput
                  (list_elem_of_lookup_2 _ _ _ Hi))
               with "Hcertpending"). }
-  iAssert (is_pending_rooted γs rest') as "#Hpendroot'".
-  { rewrite /is_pending_rooted. iApply big_sepL_intro.
-    iIntros "!#" (i typedInput Hi).
-    iApply (big_sepL_elem_of _ _ typedInput (Hrestsub typedInput (list_elem_of_lookup_2 _ _ _ Hi))
-              with "Hrootpending"). }
+  have Hpendroot' : is_pending_rooted γs rest'.
+  { move=> typedInput Hin. exact (Hrootpending typedInput (Hrestsub typedInput Hin)). }
   have Hpendbnd' : ∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ rest' ->
       (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z.
   { move=> typedInput Hin. exact (Hkb1c typedInput (Hrestsub typedInput Hin)). }
@@ -1711,14 +1708,15 @@ Proof using Type*.
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
   iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hhist";
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc]).
-  iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind.
-  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hbinds Hhist".
-  iFrame "Hpendcert' Hpendroot'".
+  iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind'.
+  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hbinds' Hhist".
+  iFrame "Hpendcert'".
   iPureIntro. split_and!.
   - exact Hclientc.
+  - exact Hpendroot'.
   - exact Hpendbnd'.
   - rewrite /doc_registry_coh.
-    split_and!; [exact Hbindtypes' | exact Hbindinj | exact Htypesbound'
+    split_and!; [exact Hbindtypes' | exact Hbindinj' | exact Htypesbound'
                  | exact Hmtypes' | exact Hmdom'].
   - exact Hcoh'.
   - exact Hctr'.
