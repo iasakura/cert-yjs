@@ -107,7 +107,7 @@ Proof.
       iExists acc.
       iFrame "∗#". iPureIntro.
       split_and!;
-        [exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup | exact Hrangedisj
+        [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup | exact Hrangedisj
         | exact Hrunfits | exact Horiginclk | exact Hbindtypes | exact Hbindinj
         | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom | exact Hacccoh]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
@@ -141,7 +141,7 @@ Proof.
       iExists acc.
       iFrame "∗#". iPureIntro.
       split_and!;
-        [exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup | exact Hrangedisj
+        [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup | exact Hrangedisj
         | exact Hrunfits | exact Horiginclk | exact Hbindtypes | exact Hbindinj
         | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom | exact Hacccoh]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
@@ -1043,8 +1043,9 @@ Proof.
     { rewrite /store_inv_ro fmap_insert /=. iFrame "Hseq Htypes". }
     iExists acc.
     iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhistj HtypesAuth Hbinds Hacc".
-    iFrame "Hpendcert Hpendroot".
+    iFrame "Hpendcert".
     iPureIntro. split_and!.
+    - exact Hpendroot.
     - exact Hpendbnd.
     - intros parent' ts' x Hlook Hxin Hxc. rewrite Hk'val.
       destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].

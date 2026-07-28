@@ -1,0 +1,20 @@
+# declfilter config for the wsnet package (the ws FFI realization).
+# The API surface is trusted (modeled by
+# src/trusted_code/github_com/iasakura/cert_yjs/wsnet.v against the ws
+# semantics); Address is a plain uint64 alias so it is translated; the runtime
+# helpers (MakeAddress/AddressToStr/makeConnection and the transport bodies)
+# are axiomatized name-only; no imports are modeled (net/fmt/... are runtime
+# only).
+translate = ["!*", "Address"]
+imports = ["!*"]
+trusted = [
+  "Listener",
+  "listener",
+  "Connection",
+  "connection",
+  "Listen",
+  "Accept",
+  "Connect",
+  "Send",
+  "Receive",
+]

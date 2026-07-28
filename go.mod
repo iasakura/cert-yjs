@@ -4,6 +4,8 @@ go 1.25.10
 
 tool github.com/mit-pdos/perennial-cli
 
+require github.com/coder/websocket v1.8.15
+
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect

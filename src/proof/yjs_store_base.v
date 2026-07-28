@@ -33,6 +33,39 @@ From stdpp Require Import sorting.                     (* merge_sort for client_
    and annotate [nat] ones with [%nat], so restore [Z_scope] as the default. *)
 Local Open Scope Z_scope.
 
+(* A generic [ghost_map] grow-and-persist step, in its own section so it depends
+   only on a [ghost_mapG] instance (issue #54): the certificate proof in
+   [yjs_store_update], whose section lacks the store's [seq_inG] / [ftypes_inG],
+   reconciles the registry map with the concrete one after [applyUpdate]'s drain
+   creates fresh root types, minting one persistent binding per new name. *)
+Section ghost_map_grow.
+Context {Σ : gFunctors} {K V : Type} `{Countable K} `{ghost_mapG Σ K V}.
+Lemma ghost_map_grow_persist (γ : gname) (m m' : gmap K V) :
+  m ⊆ m' ->
+  ghost_map_auth γ 1 m -∗
+  ([∗ map] k ↦ v ∈ m, k ↪[γ]□ v) ==∗
+  ghost_map_auth γ 1 m' ∗ ([∗ map] k ↦ v ∈ m', k ↪[γ]□ v).
+Proof.
+  iIntros (Hsub) "Hauth #Hbinds".
+  have Hdisj : (m' ∖ m) ##ₘ m.
+  { apply map_disjoint_difference_l1. reflexivity. }
+  have Hunion : (m' ∖ m) ∪ m = m'.
+  { rewrite map_union_comm; last exact Hdisj. exact (map_difference_union _ _ Hsub). }
+  iMod (ghost_map_insert_persist_big (m' ∖ m) with "Hauth") as "[Hauth #Hd]";
+    first exact Hdisj.
+  iEval (rewrite Hunion) in "Hauth".
+  iModIntro. iFrame "Hauth".
+  iApply big_sepM_intro. iIntros "!#" (k v Hkv).
+  destruct (m !! k) as [v0|] eqn:Hb.
+  - have Hv0 : v0 = v.
+    { have Hw : m' !! k = Some v0 := lookup_weaken _ _ _ _ Hb Hsub.
+      rewrite Hkv in Hw. by injection Hw. }
+    subst v0. iApply (big_sepM_lookup with "Hbinds"). exact Hb.
+  - iApply (big_sepM_lookup with "Hd").
+    apply lookup_difference_Some. split; [exact Hkv | exact Hb].
+Qed.
+End ghost_map_grow.
+
 Section store.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
@@ -127,13 +160,16 @@ Proof.
 Qed.
 
 (** Batch variant of [auth_gmap_gset_grow]: grow EVERY key's set at once
-    (same domain, pointwise [⊆]) and mint a persistent whole-map snapshot
-    fragment, out of which each key's [◯ {[k := S]}] projects
-    ([auth_gmap_gset_frag_lookup]). Used by [applyUpdate], which grows many
-    types in one batch. *)
+    (pointwise [⊆]) and mint a persistent whole-map snapshot fragment, out of
+    which each key's [◯ {[k := S]}] projects ([auth_gmap_gset_frag_lookup]).
+    Used by [applyUpdate], which grows many types in one batch. The domain may
+    also GROW ([dom m ⊆ dom m']): [getOrCreateYType]'s miss branch registers a
+    fresh type mid-batch (issue #54), so [m'] can carry keys absent from [m]
+    (their fresh fragment is minted here); only the surviving keys must not
+    shrink. *)
 Lemma auth_gmap_gset_grow_snap {K V : Type} `{Countable K} `{Countable V}
     `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (m m' : gmap K (gset V)) :
-  dom m' = dom m ->
+  dom m ⊆ dom m' ->
   (∀ k S S', m !! k = Some S -> m' !! k = Some S' -> S ⊆ S') ->
   own γ (● m) ==∗ own γ (● m') ∗ own γ (◯ m').
 Proof.
@@ -148,7 +184,7 @@ Proof.
       + rewrite Hmk Hm'k -Some_op. f_equiv. rewrite gset_op.
         pose proof (Hsub k S S' Hmk Hm'k). set_solver.
       + exfalso. apply (elem_of_dom_2 (D := gset K)) in Hmk.
-        rewrite -Hdom in Hmk. apply elem_of_dom in Hmk.
+        apply Hdom in Hmk. apply elem_of_dom in Hmk.
         rewrite Hm'k in Hmk. exact (is_Some_None Hmk).
       + rewrite Hmk Hm'k right_id //.
       + rewrite Hmk Hm'k //. }
@@ -581,6 +617,23 @@ Proof.
   rewrite (all_cells_lookup types parent (MkTypeState cells arr) Hp).
   simpl. rewrite Hperm.
   rewrite -!app_assoc. apply Permutation_app_head. apply Permutation_app_comm.
+Qed.
+
+(** Registering a fresh EMPTY type (no cells) leaves the document-global cell
+    pool unchanged up to permutation: [getOrCreateYType]'s miss branch (issue
+    #54) adds a [type_state] with [ty_cells = []], contributing nothing to
+    [all_cells]. Every per-cell pool invariant (NoDup / range-disjointness /
+    fits / origin-clk / counter) and [own_item_map] (a function of
+    [cell_kp <$> all_cells] up to permutation) therefore survive the grow. *)
+Lemma all_cells_insert_empty (types : gmap loc type_state) (parent : loc)
+    (arr : list (YjsItem A)) :
+  types !! parent = None ->
+  all_cells (<[parent := MkTypeState [] arr]> types) ≡ₚ all_cells types.
+Proof.
+  move=> Hp. rewrite /all_cells.
+  apply (concat_perm (ty_cells <$> (map_to_list (<[parent := MkTypeState [] arr]> types)).*2)
+                     ([] :: (ty_cells <$> (map_to_list types).*2))).
+  rewrite (map_to_list_insert types parent (MkTypeState [] arr) Hp). simpl. reflexivity.
 Qed.
 
 (** A fully-owned node struct's location is fresh for the whole document cell
@@ -1103,10 +1156,16 @@ Qed.
     leaves every cell's [cell_kp] untouched, so the store's item set is preserved
     verbatim across a delete — this lemma converts the item map from the
     pre-delete [types] to the flipped-cells [types]. *)
+(* [Proof using Type] (statement variables only) instead of the file default
+   [Type*]: this pure heap/list reshuffle uses neither [seq_inG] nor
+   [ftypes_inG], so trimming them makes the lemma usable in the [yjs_store_node]
+   section, which does not carry those instances (issue #54's
+   [integrateDecoded]-fresh path converts the item map across a fresh empty
+   type). *)
 Lemma own_item_map_kp_perm (mref : loc) (dq : dfrac) (M1 M2 : gmap loc type_state) :
   cell_kp <$> all_cells M2 ≡ₚ cell_kp <$> all_cells M1 ->
   own_item_map mref dq M1 -∗ own_item_map mref dq M2.
-Proof.
+Proof using Type.
   iIntros (Hperm) "Hm". iNamed "Hm".
   have Htwin : ∀ x, x ∈ all_cells M2 → ∃ y, y ∈ all_cells M1 ∧ cell_kp x = cell_kp y.
   { move=> x Hx.
@@ -1273,33 +1332,29 @@ Definition is_root (γs : store_names) (name : P) : iProp Σ :=
 #[global] Instance is_root_persistent γs name : Persistent (is_root γs name).
 Proof. apply _. Qed.
 
-(** [pending_item_rooted]/[is_pending_rooted] (issue #40): every HEAD struct of a
-    decoded buffer (both origins absent, so it carries its root's name on the
-    wire) targets a REGISTERED root. This is the #49 pre-bound-roots
-    restriction, kept under the total applyUpdate: structs with an origin
-    derive their binding from the origin's arrival at integration time, so
-    only head structs need a witness; the store carries it for the pending
-    buffer so a later drain can re-discharge it without the caller knowing
-    what is buffered. Lifted when [getOrCreateYType]'s miss branch enters the
-    verified subset. *)
+(** [pending_item_rooted]/[is_pending_rooted] (issue #40, weakened in #54):
+    every HEAD struct of a decoded buffer (both origins absent, so it carries
+    its root's name on the wire) targets a named root [RootId nm]. Issue #49
+    additionally required that root to be ALREADY REGISTERED ([is_root γs nm]);
+    issue #54 LIFTS that pre-bound-roots restriction now that
+    [getOrCreateYType]'s miss branch is verified -- a head struct may target a
+    not-yet-created root, which [applyUpdate]'s drain registers on first use.
+    All that remains is that the target is a root and not an [AnchorId]
+    (Parent::Id / type-as-item is out of the verified subset, #43). With the
+    registration ([is_root], the only resource-bearing conjunct) gone, this is
+    now a pure syntactic fact about the batch, so it is a [Prop] (carried as
+    [⌜..⌝] where an [iProp] is expected); the [γs] argument is retained only for
+    signature stability. Structs WITH an origin derive their binding from the
+    origin's arrival at integration time, so carry no obligation here. *)
 Definition pending_item_rooted (γs : store_names)
-    (typedInput : TId * IntegrateInput (A := A)) : iProp Σ :=
+    (typedInput : TId * IntegrateInput (A := A)) : Prop :=
   if decide (in_originId typedInput.2 = None ∧ in_rightOriginId typedInput.2 = None)
-  then (∃ nm : P, ⌜typedInput.1 = RootId nm⌝ ∗ is_root γs nm)%I
-  else True%I.
+  then (∃ nm : P, typedInput.1 = RootId nm)
+  else True.
 
 Definition is_pending_rooted (γs : store_names)
-    (pending : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  [∗ list] typedInput ∈ pending, pending_item_rooted γs typedInput.
-
-#[global] Instance pending_item_rooted_persistent γs typedInput : Persistent (pending_item_rooted γs typedInput).
-Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
-#[global] Instance is_pending_rooted_persistent γs pending : Persistent (is_pending_rooted γs pending).
-Proof. apply _. Qed.
-#[global] Instance pending_item_rooted_timeless γs typedInput : Timeless (pending_item_rooted γs typedInput).
-Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
-#[global] Instance is_pending_rooted_timeless γs pending : Timeless (is_pending_rooted γs pending).
-Proof. apply _. Qed.
+    (pending : list (TId * IntegrateInput (A := A))) : Prop :=
+  ∀ typedInput, typedInput ∈ pending -> pending_item_rooted γs typedInput.
 
 (* ----- accepted-id no-loss layer (this branch) ---------------------------- *)
 
@@ -1402,7 +1457,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
-    "#Hpendroot" ∷ is_pending_rooted γs pend ∗
+    "%Hpendroot" ∷ ⌜is_pending_rooted γs pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
                     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
     "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
@@ -1702,7 +1757,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
-    "#Hpendroot" ∷ is_pending_rooted γs pend ∗
+    "%Hpendroot" ∷ ⌜is_pending_rooted γs pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
                     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
@@ -1743,7 +1798,7 @@ Proof.
   iSplitR ""; last (iPureIntro; exact (elem_of_weaken _ _ _ Hin Hacccoh)).
   iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
-    [exact Hclientc | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
+    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
     | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hacccoh].
 Qed.
 
@@ -1776,7 +1831,7 @@ Proof.
   iModIntro. iFrame "Haccepts".
   iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, (acc ∪ T).
   iFrame "∗#". iPureIntro. split_and!;
-    [exact Hclientc | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
+    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
     | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk |].
   rewrite /accepted_coh. apply union_least; [exact Hacccoh | exact HTsub].
 Qed.
@@ -2024,7 +2079,7 @@ Proof.
   { have He : expand_inputs [] = [] by done.
     rewrite /is_pending_certified He big_sepL_nil //. }
   iSplitR.
-  { rewrite /is_pending_rooted big_sepL_nil //. }
+  { iPureIntro. move=> typedInput Hin. by apply elem_of_nil in Hin. }
   iSplitR.
   { iPureIntro. move=> typedInput Hin. by apply elem_of_nil in Hin. }
   iSplitR. { iPureIntro. move=> parent' ts' x Hlk. rewrite /types lookup_empty // in Hlk. }

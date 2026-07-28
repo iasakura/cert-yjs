@@ -48,23 +48,10 @@ Proof. rewrite /cell_le. move=> x y z. lia. Qed.
 #[local] Instance cell_le_total : Total cell_le.
 Proof. rewrite /cell_le. move=> x y. lia. Qed.
 
-(* [is_pending_rooted]'s instances are declared in [yjs_store_base] under its
-   wider section context ([Proof using Type*] closes them over instances this
-   file's section lacks), so re-declare them here (the [cell_le] pattern
-   above); without them [iNamed] stalls at the persistent [#Hpendroot]
-   conjunct of [store_inv_excl] / [own_store]. *)
-#[local] Instance pending_item_rooted_persistent' γs typedInput :
-  Persistent (pending_item_rooted γs typedInput).
-Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
-#[local] Instance is_pending_rooted_persistent' γs pending :
-  Persistent (is_pending_rooted γs pending).
-Proof. apply _. Qed.
-#[local] Instance pending_item_rooted_timeless' γs typedInput :
-  Timeless (pending_item_rooted γs typedInput).
-Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
-#[local] Instance is_pending_rooted_timeless' γs pending :
-  Timeless (is_pending_rooted γs pending).
-Proof. apply _. Qed.
+(* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54
+   weakened them off their registration resource), so [store_inv_excl] /
+   [own_store] carry them as [⌜..⌝] and no Persistent/Timeless instances are
+   needed here. *)
 
 (** [word] does not use [0 <= Z.of_nat l] on its own, so a [clock + length <
     2^64] bound needs the length-nonneg fact spelled out to recover the

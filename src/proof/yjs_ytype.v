@@ -105,6 +105,26 @@ Proof.
   iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
 Qed.
 
+(** [newYType] allocates an empty root sequence (issue #54: the storage backing
+    [getOrCreateYType]'s miss branch). The fresh [yType] has [start = nil] and
+    [len = 0]: the cells-level view of an empty type, no cells and an empty
+    model list. *)
+Lemma wp_newYType :
+  {{{ is_pkg_init yjs }}}
+    @! yjs.newYType #()
+  {{{ (p : loc), RET #p; own_ytype_cells p (DfracOwn 1) [] [] }}}.
+Proof.
+  wp_start as "_". wp_alloc p as "Hp". wp_auto.
+  iApply "HΦ".
+  iExists {| yjs.yType.start' := null; yjs.yType.len' := W64 0 |}, null.
+  iFrame "Hp". iPureIntro. split_and!.
+  - reflexivity.
+  - reflexivity.
+  - reflexivity.
+  - by rewrite /cells_repr.
+  - move=> c Hc. by apply elem_of_nil in Hc.
+Qed.
+
 (** General tombstone-aware [findPos]: walk to the visible character index [idx]
     and return the straddling neighbours plus the in-node offset. The Go walks
     two loops: a skip loop that advances past leading tombstones, then a count

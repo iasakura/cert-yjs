@@ -84,15 +84,20 @@ rejected in vok, verified), roughly 3x faster on this repo. It leaves `.vos` /
   rocq compile $ARGS src/proof/yjs_store.v -o src/proof/yjs_store.vo
   ```
 
-Environment: Go 1.26 (`build.sh` exports `GOTOOLCHAIN=go1.26.0`); a local
-Perennial checkout for goose (default
-`/home/ia/ghq/github.com/mit-pdos/perennial`, override with `PERENNIAL=…`, at
-the commit pinned in `cert-yjs.opam`); an opam switch with Perennial installed
-— all deps pinned by SHA in `cert-yjs.opam`'s `pin-depends` (including
-`rocq-yjs`). The pinned Perennial is a fork of `mit-pdos/perennial` carrying one
-goose-only patch that maps the `grovenet` package to the grove FFI, required for
-the network packages (issue #45). One-time setup: see `WORKFLOW.md`. CI runs the
-same `build.sh`.
+Environment: Go 1.26 (`build.sh` exports `GOTOOLCHAIN=go1.26.0`); a dedicated
+`cert-yjs` opam switch with Perennial installed (dedicated because a switch has
+one pin and this one is the fork, not upstream; see `WORKFLOW.md`), all deps
+pinned by SHA in `cert-yjs.opam`'s `pin-depends` (including `rocq-yjs`). goose
+runs from `$OPAM_SWITCH_PREFIX/.opam-switch/sources/perennial`, the pinned
+source opam kept, so it is the pinned commit by construction; `PERENNIAL=…`
+overrides it and `build.sh` refuses a goose whose `ffiMapping` lacks the
+grovenet / wsnet entries, since translating with the wrong goose fails silently.
+The pinned Perennial is a fork of `mit-pdos/perennial` carrying two
+goose-only patches that map the `grovenet` package to the grove FFI (issue #45)
+and the `wsnet` package to the ws FFI; both are required for the network
+packages, since without the mapping the generated `Assumptions` class cannot fix
+its `ffi_syntax` parameter. One-time setup: see `WORKFLOW.md`. CI runs the same
+`build.sh`.
 
 ## Architecture
 
@@ -100,8 +105,10 @@ same `build.sh`.
 |---|---|---|
 | `yjs/*.go` | hand-written Go (port of y-octo) | yes |
 | `grovenet/*.go`, `pingpong/*.go` | hand-written Go: the Grove network FFI realization (TCP) + its N0 feasibility demo (issue #45) | yes |
+| `wsnet/*.go`, `wsecho/*.go` | hand-written Go: the ws (connection-oriented) network FFI realization (WebSocket) + its echo demo | yes |
+| `src/goose_lang/ffi/ws_ffi/*.v` | hand-written ws FFI: operational semantics, Iris lifting lemmas, adequacy | yes |
 | `src/proof/*.v` | hand-written proofs, one per Go file | yes |
-| `src/trusted_code/.../*.v`, `src/manualproof/.../*.v` | hand-written trusted FFI models + their WP wrappers (grovenet ⇒ grove FFI) | yes |
+| `src/trusted_code/.../*.v`, `src/manualproof/.../*.v` | hand-written trusted FFI models + their WP wrappers (grovenet ⇒ grove FFI, wsnet ⇒ ws FFI) | yes |
 | `src/code/.../*.v.toml` | hand-written goose declfilter configs (per-package translate/trusted/imports) | yes |
 | `src/code/`, `src/generatedproof/` | goose / proofgen output | **no — generated, gitignored** |
 

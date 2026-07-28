@@ -48,23 +48,10 @@ Proof. rewrite /cell_le. move=> x y z. lia. Qed.
 #[local] Instance cell_le_total : Total cell_le.
 Proof. rewrite /cell_le. move=> x y. lia. Qed.
 
-(* [is_pending_rooted]'s instances are declared in [yjs_store_base] under its
-   wider section context ([Proof using Type*] closes them over instances this
-   file's section lacks), so re-declare them here (the [cell_le] pattern
-   above); without them [iNamed] stalls at the persistent [#Hpendroot]
-   conjunct of [store_inv_excl] / [own_store]. *)
-#[local] Instance pending_item_rooted_persistent' γs typedInput :
-  Persistent (pending_item_rooted γs typedInput).
-Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
-#[local] Instance is_pending_rooted_persistent' γs pending :
-  Persistent (is_pending_rooted γs pending).
-Proof. apply _. Qed.
-#[local] Instance pending_item_rooted_timeless' γs typedInput :
-  Timeless (pending_item_rooted γs typedInput).
-Proof. rewrite /pending_item_rooted. destruct (decide _); apply _. Qed.
-#[local] Instance is_pending_rooted_timeless' γs pending :
-  Timeless (is_pending_rooted γs pending).
-Proof. apply _. Qed.
+(* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54
+   weakened them off their registration resource), so [store_inv_excl] /
+   [own_store] carry them as [⌜..⌝] and no Persistent/Timeless instances are
+   needed here. *)
 
 (** [word] does not use [0 <= Z.of_nat l] on its own, so a [clock + length <
     2^64] bound needs the length-nonneg fact spelled out to recover the
@@ -84,6 +71,79 @@ Proof using Type*.
   rewrite Hp /=.
   wp_auto.
   iApply "HΦ". iFrame "Htypesf Hmap".
+Qed.
+
+(** A freshly-allocated [yType] location is absent from the registry: its
+    exclusive [p ↦] clashes with any registered type's own [parent ↦]. This is
+    what makes [getOrCreateYType]'s miss branch (issue #54) grow [types] at a
+    genuinely fresh key. Returns the resources so the caller keeps them. *)
+Lemma types_loc_fresh (p : loc) (cells0 : list item_cell) (arr0 : list (YjsItem A))
+    (types : gmap loc type_state) :
+  own_ytype_cells p (DfracOwn 1) cells0 arr0 -∗
+  ([∗ map] parent ↦ ts ∈ types,
+      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  own_ytype_cells p (DfracOwn 1) cells0 arr0 ∗
+  ([∗ map] parent ↦ ts ∈ types,
+      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+  ⌜types !! p = None⌝.
+Proof.
+  iIntros "Hnew Htypes".
+  destruct (types !! p) as [ts|] eqn:Hp0; last by iFrame.
+  iExFalso.
+  iDestruct (big_sepM_lookup_acc _ _ p _ Hp0 with "Htypes") as "[[Hc _] _]".
+  iDestruct "Hnew" as (yt tl) "(Hpp & _)".
+  iDestruct "Hc" as (yt' tl') "(Hpp' & _)".
+  iDestruct (typed_pointsto_split with "Hpp") as "(Hs1 & _)".
+  iDestruct (typed_pointsto_split with "Hpp'") as "(Hs2 & _)".
+  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hs1".
+  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hs2".
+  iDestruct "Hs1" as "[Hs1 _]". iDestruct "Hs2" as "[Hs2 _]".
+  iCombine "Hs1 Hs2" gives %[Hvalid _].
+  by destruct (exclusive_l (DfracOwn 1) (DfracOwn 1) Hvalid).
+Qed.
+
+(** [store.getOrCreateYType], creation (miss) case (issue #54): the name is NOT
+    bound, so the method allocates a fresh empty [yType] via [newYType],
+    registers it under [nm], and returns it. The registry map grows by
+    [nm -> p] and the per-type DLL big-op by a fresh EMPTY type at the
+    genuinely fresh location [p]. The complement of [wp_store__getOrCreateYType]
+    (the lookup-hit case); the ready branch of [applyUpdate] dispatches on the
+    binding to pick between them. *)
+Lemma wp_store__getOrCreateYType_miss (s tref : loc) (bind : gmap P loc)
+    (types : gmap loc type_state) (nm : go_string) :
+  bind !! nm = None ->
+  {{{ is_pkg_init yjs ∗ (s .[(yjs.store.t), "types"]) ↦ tref ∗
+      own_map tref (DfracOwn 1) bind ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
+  {{{ (p : loc), RET #p;
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗
+      own_map tref (DfracOwn 1) (<[nm := p]> bind) ∗
+      ([∗ map] parent ↦ ts ∈ (<[p := MkTypeState [] []]> types),
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      ⌜types !! p = None⌝ }}}.
+Proof using Type*.
+  move=> Hp.
+  iIntros (Φ) "(#Hpkg & Htypesf & Hmap & Htypes) HΦ".
+  wp_method_call. wp_call. wp_call. wp_auto.
+  wp_apply (wp_map_lookup2 with "Hmap"). iIntros "Hmap".
+  rewrite Hp /=.
+  wp_auto.
+  wp_apply wp_newYType. iIntros (p) "Hnew".
+  wp_auto.
+  iDestruct (types_loc_fresh p [] [] types with "Hnew Htypes") as "(Hnew & Htypes & %Hfresh)".
+  wp_apply (wp_map_insert with "Hmap"). iIntros "Hmap".
+  wp_auto.
+  iApply ("HΦ" $! p). iFrame "Htypesf Hmap".
+  iSplitR "".
+  { rewrite big_sepM_insert; last exact Hfresh. iFrame "Htypes Hnew".
+    iPureIntro. exact YjsArrInvariant_empty. }
+  done.
 Qed.
 
 (* ----- the general repair (issue #28 stage D2b) ---------------------------
@@ -552,6 +612,67 @@ Proof using Type*.
       { rewrite HinrN //. }
 Qed.
 
+(** [store.repair], creation form (issue #54): an ORIGIN-FREE decoded item
+    targeting a not-yet-registered root [nm]. Both origin [if]s are skipped
+    (the item has no origins), and the parent branch registers a fresh empty
+    [yType] through [getOrCreateYType]'s miss path; the item comes back linked
+    to null/null under the fresh type [p]. The complement of
+    [wp_store__repair_split], which handles items whose target root is already
+    bound; the per-client item map is untouched (no run is split). *)
+Lemma wp_store__repair_create (s mref tref item_l pname : loc)
+    (input : IntegrateInput (A := A)) (nm : go_string)
+    (types : gmap loc type_state) (bind : gmap P loc) :
+  in_originId input = None ->
+  in_rightOriginId input = None ->
+  bind !! nm = None ->
+  {{{ is_pkg_init yjs ∗
+      own_linked_item_run item_l input null null null ∗
+      is_parent_name pname (Some nm) ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
+      ([∗ map] p ↦ ts ∈ types,
+          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
+  {{{ (p : loc), RET #();
+      own_linked_item_run item_l input p null null ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) (<[nm := p]> bind) ∗
+      ([∗ map] p0 ↦ ts ∈ (<[p := MkTypeState [] []]> types),
+          own_ytype_cells p0 (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      ⌜types !! p = None⌝ }}}.
+Proof using Type*.
+  move=> HoL HoR Hnm.
+  iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
+  iDestruct "Hlinked" as (itemVal oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrunc)".
+  iNamed "Hraw".
+  have HoleftN : oleft = None by (move: Hin_l; rewrite HoL; by destruct oleft).
+  have HorightN : oright = None by (move: Hin_r; rewrite HoR; by destruct oright).
+  subst oleft oright.
+  wp_method_call. wp_call. wp_call. wp_auto.
+  iDestruct "Holeft" as "%HnL".
+  rewrite (bool_decide_eq_true_2 (itemVal.(yjs.item.originLeftId') = null) HnL) /=.
+  wp_auto.
+  iDestruct "Horight" as "%HnR".
+  rewrite (bool_decide_eq_true_2 (itemVal.(yjs.item.originRightId') = null) HnR) /=.
+  wp_auto.
+  iDestruct "HisPN" as "[%HnnP #HpnC]".
+  rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
+  wp_auto.
+  wp_apply (wp_store__getOrCreateYType_miss s tref bind types nm Hnm
+              with "[$Htypesf $Htypesmap $Htypes]").
+  iIntros (p) "(Htypesf & Htypesmap & Htypes & %Hfresh)".
+  wp_auto.
+  iApply ("HΦ" $! p).
+  iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+  iSplitL "Hitem".
+  { iExists _, None, None. rewrite /own_fresh_item_raw. simpl.
+    iFrame "Hitem".
+    iPureIntro. split_and!; try done. }
+  done.
+Qed.
+
 (* ===== applyUpdate (doc-level, #49) ====================================== *)
 
 (** Both origin indices of a successful [integrate], off its bind chain. *)
@@ -800,6 +921,7 @@ Proof.
     iFrame "∗#".
     iPureIntro. split_and!.
     + reflexivity.
+    + exact Hpendroot.
     + exact Hpendbnd.
     + rewrite /doc_registry_coh. split_and!; assumption.
     + exact Hhcoh.
@@ -867,9 +989,9 @@ Proof.
     iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
     iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
     iExists acc.
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpendcert Hpendroot HtypesAuth Hbinds Hhist Hacc".
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpendcert HtypesAuth Hbinds Hhist Hacc".
     iPureIntro. split_and!;
-      [exact Hpendbnd | exact Hctrt | exact Hcellctr | exact Hlocdup | exact Hrangedisj
+      [exact Hpendroot | exact Hpendbnd | exact Hctrt | exact Hcellctr | exact Hlocdup | exact Hrangedisj
       | exact Hrunfits | exact Horiginclk | exact Hbindtypes | exact Hbindinj
       | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom | exact Hacccoh].
 Qed.
@@ -2140,6 +2262,267 @@ Proof using Type*.
   - exact Horiginclk'.
 Qed.
 
+(** [store.integrateDecoded], creation form (issue #54): the ready branch for an
+    ORIGIN-FREE struct whose target root [nm] is not yet registered. The struct
+    is integrated into a freshly created empty type (repair's [getOrCreateYType]
+    miss), so the registry grows by [nm -> p] and the type map by a fresh type
+    at [p] carrying exactly this item's run. The uniform "grown" postcondition
+    matches [wp_store__integrateDecoded_grow]'s (the loop calls that dispatcher).
+    Because the target starts empty, [doc_model_get m typedInput.1 = []]. *)
+Lemma wp_store__integrateDecoded_fresh (s mref tref : loc)
+    (updateItemVal : yjs.updateItem.t) (typedInput : TId * IntegrateInput (A := A))
+    (m : DocModel) (types : gmap loc type_state) (bind : gmap P loc)
+    (newItem : YjsItem A) (arr2 : list (YjsItem A)) (nm : P) :
+  typedInput.1 = RootId nm ->
+  bind !! nm = None ->
+  in_originId typedInput.2 = None ->
+  in_rightOriginId typedInput.2 = None ->
+  doc_model_get m typedInput.1 = [] ->
+  toItem typedInput.2 [] = Some newItem ->
+  IsItemValid newItem ->
+  maximalId newItem [] ->
+  integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) [] = Some arr2 ->
+  (∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (in_id typedInput.2)) ->
+     (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id typedInput.2))))%Z ∧
+     (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (in_id typedInput.2))))%Z) ->
+  (∀ name p', bind !! name = Some p' -> is_Some (types !! p')) ->
+  (∀ n1 n2 p', bind !! n1 = Some p' -> bind !! n2 = Some p' -> n1 = n2) ->
+  (∀ p', is_Some (types !! p') -> ∃ name, bind !! name = Some p') ->
+  (∀ name p' ts, bind !! name = Some p' -> types !! p' = Some ts ->
+     doc_model_get m (RootId name) = ty_arr ts) ->
+  (∀ t, doc_model_get m t ≠ [] -> ∃ name p', t = RootId name ∧ bind !! name = Some p') ->
+  (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z ->
+  NoDup (ic_loc <$> all_cells types) ->
+  cells_range_disjoint (all_cells types) ->
+  (∀ c, c ∈ all_cells types -> cell_fits c) ->
+  (∀ c, c ∈ all_cells types -> cell_origin_clk c) ->
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "integrateDecoded" #updateItemVal
+  {{{ (types' : gmap loc type_state) (bind' : gmap P loc), RET #();
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind' ∗
+      ([∗ map] parent ↦ ts ∈ types',
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      ⌜bind ⊆ bind'⌝ ∗
+      ⌜dom types ⊆ dom types'⌝ ∗
+      ⌜∀ name p', bind' !! name = Some p' -> is_Some (types' !! p')⌝ ∗
+      ⌜∀ n1 n2 p', bind' !! n1 = Some p' -> bind' !! n2 = Some p' -> n1 = n2⌝ ∗
+      ⌜∀ p', is_Some (types' !! p') -> ∃ name, bind' !! name = Some p'⌝ ∗
+      ⌜∀ name p' ts', bind' !! name = Some p' -> types' !! p' = Some ts' ->
+         doc_model_get (<[typedInput.1 := arr2]> m) (RootId name) = ty_arr ts'⌝ ∗
+      ⌜∀ t, doc_model_get (<[typedInput.1 := arr2]> m) t ≠ [] ->
+         ∃ name p', t = RootId name ∧ bind' !! name = Some p'⌝ ∗
+      ⌜∀ c, c ∈ all_cells types' ->
+         (∃ c0, c0 ∈ all_cells types ∧ cell_client c = cell_client c0 ∧
+            (uint.Z (cell_clock c0) <= uint.Z (cell_clock c))%Z ∧
+            (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
+             uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)))%Z) ∨
+         (cell_client c = W64 (clientId (in_id typedInput.2)) ∧
+          (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c))%Z ∧
+          (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
+           uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z)⌝ ∗
+      ⌜NoDup (ic_loc <$> all_cells types')⌝ ∗
+      ⌜cells_range_disjoint (all_cells types')⌝ ∗
+      ⌜∀ c, c ∈ all_cells types' -> cell_fits c⌝ ∗
+      ⌜∀ c, c ∈ all_cells types' -> cell_origin_clk c⌝ }}}.
+Proof using Type*.
+  move=> Htieq Hbnm HoL HoR Hdgnil Htoit Hvld Hmax Hall Hgmax0
+         Hbindtypes Hbindinj Htypesbound Hmtypes Hmdom Hnowrapc Hlocdup Hrangedisj Hfits Horiginclk.
+  iIntros (Φ) "(#Hpkg & #Hui & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
+  iDestruct "Hui" as (oleft oright opn)
+    "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)".
+  destruct typedInput as [typedInput2 input]. simpl in *. subst typedInput2.
+  have HoleftN : oleft = None by (move: Hin_l; rewrite HoL; by destruct oleft).
+  have HorightN : oright = None by (move: Hin_r; rewrite HoR; by destruct oright).
+  subst oleft oright.
+  have Hopn : opn = Some nm.
+  { destruct opn as [nm'|].
+    - have Ht := Htid nm' eq_refl. by injection Ht as ->.
+    - exfalso. destruct (Hborrow eq_refl) as [Hc | Hc]; [exact (Hc HoL) | exact (Hc HoR)]. }
+  subst opn.
+  (* build the item *)
+  wp_method_call. wp_call. wp_call. wp_auto.
+  wp_func_call. wp_call. wp_auto.
+  wp_alloc itv as "Hitv". wp_auto.
+  set (itemVal := {| yjs.item.id' := updateItemVal.(yjs.updateItem.id');
+                yjs.item.originLeftId' := updateItemVal.(yjs.updateItem.originLeftId');
+                yjs.item.originRightId' := updateItemVal.(yjs.updateItem.originRightId');
+                yjs.item.left' := null; yjs.item.right' := null;
+                yjs.item.parent' := null;
+                yjs.item.content' := {| yjs.content.content' := updateItemVal.(yjs.updateItem.content') |};
+                yjs.item.flags' := W8 2 |}).
+  iAssert (own_linked_item_run itv input null null null) with "[Hitv]" as "Hfresh".
+  { iExists itemVal, None, None. rewrite /own_fresh_item_raw.
+    iFrame "Hitv HisL HisR". iPureIntro.
+    split_and!;
+      [exact Hin_l | exact Hin_r | exact Hin_id | exact Hin_c
+      | reflexivity | reflexivity | reflexivity | reflexivity
+      | exact Hunonempty]. }
+  wp_apply (wp_store__repair_create s mref tref itv (updateItemVal.(yjs.updateItem.parentName'))
+              input nm types bind HoL HoR Hbnm
+              with "[$Hfresh $HisPN $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
+  iIntros (p) "(Hlinked & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hfresh)".
+  (* [p] is not in the range of [bind] (it did not exist as a type) *)
+  have Hpnotbound : ∀ name, bind !! name ≠ Some p.
+  { move=> name Hb. have Hs := Hbindtypes name p Hb. rewrite Hfresh in Hs. by destruct Hs. }
+  set types2 := <[p := MkTypeState [] []]> types.
+  have Htsj2 : types2 !! p = Some (MkTypeState [] []) by rewrite /types2 lookup_insert_eq.
+  have Hac_empty : all_cells types2 ≡ₚ all_cells types := all_cells_insert_empty types p [] Hfresh.
+  have Hnodup2 : NoDup (ic_loc <$> all_cells types2) by (rewrite Hac_empty; exact Hlocdup).
+  have Hrangedisj2 : cells_range_disjoint (all_cells types2).
+  { move=> c1 c2 Hc1 Hc2. rewrite Hac_empty in Hc1 Hc2. exact (Hrangedisj c1 c2 Hc1 Hc2). }
+  have Hfits2 : ∀ c, c ∈ all_cells types2 -> cell_fits c
+    by (move=> c Hc; rewrite Hac_empty in Hc; exact (Hfits c Hc)).
+  have Horiginclk2 : ∀ c, c ∈ all_cells types2 -> cell_origin_clk c
+    by (move=> c Hc; rewrite Hac_empty in Hc; exact (Horiginclk c Hc)).
+  (* Integrate premises for the empty type *)
+  have Hidnit : item_id newItem = in_id input
+    by apply (commutativity.toItem_id input (@nil (YjsItem A)) newItem Htoit).
+  have Hinvj : YjsArrInvariant ([] : list (YjsItem A)) := YjsArrInvariant_empty.
+  have HfindL : findLeftIdx (in_originId input) (@nil (YjsItem A)) = Some (-1)%Z by rewrite HoL /findLeftIdx //.
+  have HfindR : findRightIdx (in_rightOriginId input) (@nil (YjsItem A)) = Some 0%Z by rewrite HoR /findRightIdx /=.
+  have Hgmaxj : ∀ c0, c0 ∈ all_cells types2 → cell_client c0 = W64 (clientId (item_id newItem)) →
+                  (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z ∧
+                  (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (item_id newItem))))%Z.
+  { move=> c0 Hc0 Hcc0. rewrite Hac_empty in Hc0. rewrite Hidnit in Hcc0 |- *.
+    exact (Hgmax0 c0 Hc0 Hcc0). }
+  iDestruct (linked_item_run_fresh2 with "Hlinked Htypes") as %Hfreshloc.
+  have Hfreshloc' : itv ∉ ic_loc <$> all_cells types
+    by (move=> Hin; apply Hfreshloc; rewrite Hac_empty; exact Hin).
+  iDestruct (big_sepM_delete _ _ p _ Htsj2 with "Htypes") as "[[Hyt _] Htypesrest]".
+  have Hln1 : (null : loc) = node_loc ([] : list item_cell) (Z.of_nat 0 - 1)%Z
+    by rewrite /node_loc; case_decide; [lia | done].
+  have Hln2 : (null : loc) = node_loc ([] : list item_cell) (Z.of_nat 0)
+    by rewrite /node_loc; case_decide; [rewrite /= // | lia].
+  iEval (rewrite {1}Hln1 {1}Hln2) in "Hlinked".
+  have Hnec0 : Forall (λ c : item_cell, ic_run c ≠ []) [] by constructor.
+  have Hfits0 : ∀ c0 : item_cell, c0 ∈ [] -> cell_fits c0
+    by (move=> ? H; by apply elem_of_nil in H).
+  have Hoclk0 : ∀ c0 : item_cell, c0 ∈ [] -> cell_origin_clk c0
+    by (move=> ? H; by apply elem_of_nil in H).
+  have HcurLeq : (Z.of_nat (length (run_flatten (take 0 ([] : list item_cell)))) = (-1) + 1)%Z
+    by (rewrite take_nil /run_flatten /=; lia).
+  have HcurReq : (Z.of_nat (length (run_flatten (take 0 ([] : list item_cell)))) = 0)%Z
+    by (rewrite take_nil /run_flatten /=; lia).
+  have Hkpperm : cell_kp <$> all_cells types2 ≡ₚ cell_kp <$> all_cells types by rewrite Hac_empty //.
+  iDestruct (own_item_map_kp_perm mref (DfracOwn 1) types types2 Hkpperm with "Hitemmap") as "Hitemmap".
+  wp_auto.
+  wp_apply (wp_Store__Integrate_nil_run s p itv [] arr2 input newItem [] types2 mref (-1)%Z 0%Z
+              0%nat 0%nat
+              Hinvj Htoit Hvld Hmax HfindL HfindR Htsj2 Hgmaxj Hnec0 Hfits0 Hoclk0
+              HcurLeq ltac:(simpl; lia) HcurReq ltac:(simpl; lia) Hall
+              with "[$Hyt $Hlinked $Hitemsf $Hitemmap]").
+  iIntros (idx2 iidx2 cells'' c2)
+    "(%Hinv2 & Htext2 & Hitemsf & Hitemmap & %Hperm2 & %Hsplice2 & %Hidx2b & %Hcoup2 & %Hile2 & %Harrsp2 & %Hc2look & %Hc2loc & %Hc2id & %Hc2del & %Hc2orig & %Hc2rorig & %Hc2len)".
+  have Hac_step : all_cells (<[p := MkTypeState cells'' arr2]> types2)
+                ≡ₚ all_cells types2 ++ [c2]
+    by apply (all_cells_insert_snoc types2 p [] [] cells'' arr2 c2 Htsj2 Hperm2).
+  have Hac_step' : all_cells (<[p := MkTypeState cells'' arr2]> types2) ≡ₚ all_cells types ++ [c2].
+  { rewrite Hac_step Hac_empty //. }
+  have Hcc2 : cell_client c2 = W64 (clientId (in_id input)) by rewrite /cell_client Hc2id //.
+  have Hclk2 : cell_clock c2 = W64 (clock (in_id input)) by rewrite /cell_clock Hc2id //.
+  have Hlen2 : length (ic_run c2) = length (in_content input) by rewrite Hc2len explode_length.
+  have Hlocdup' : NoDup (ic_loc <$> all_cells (<[p := MkTypeState cells'' arr2]> types2)).
+  { apply (nodup_locs_snoc (all_cells types) _ c2 Hac_step');
+      [rewrite Hc2loc; exact Hfreshloc' | exact Hlocdup]. }
+  have Hrangedisj' : cells_range_disjoint (all_cells (<[p := MkTypeState cells'' arr2]> types2)).
+  { apply (rangedisj_snoc (all_cells types) _ c2 Hac_step'); [| exact Hrangedisj].
+    move=> c0 Hc0 Hcc0.
+    have Hle := proj2 (Hgmax0 c0 Hc0 ltac:(rewrite Hcc0 Hcc2 //)).
+    rewrite Hclk2. clear -Hle. lia. }
+  have Hoc2 : cell_origin_clk c2.
+  { rewrite /cell_origin_clk. move=> originId Hoid _.
+    rewrite Hc2orig (in_originId_origin_id [] newItem input Htoit) HoL in Hoid. discriminate. }
+  have Horiginclk' : ∀ c0, c0 ∈ all_cells (<[p := MkTypeState cells'' arr2]> types2) ->
+      cell_origin_clk c0
+    by (apply (originclk_snoc (all_cells types) _ c2 Hac_step'); [exact Hoc2 | exact Horiginclk]).
+  have Hfits' : ∀ c0, c0 ∈ all_cells (<[p := MkTypeState cells'' arr2]> types2) -> cell_fits c0.
+  { move=> c0 Hc0. rewrite Hac_step' in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew].
+    - exact (Hfits c0 Hold).
+    - apply list_elem_of_singleton in Hnew as ->.
+      rewrite /cell_fits Hclk2 Hlen2.
+      exact (uint_W64_nat_add_bound (clock (in_id input)) (length (in_content input)) Hnowrapc). }
+  iAssert ([∗ map] p0 ↦ ts ∈ <[p := MkTypeState cells'' arr2]> types2,
+      own_ytype_cells p0 (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝)%I
+    with "[Htext2 Htypesrest]" as "Htypes".
+  { rewrite -insert_delete_eq.
+    rewrite big_sepM_insert; last apply lookup_delete_eq.
+    iFrame "Htypesrest". simpl. iFrame "Htext2". iPureIntro. exact Hinv2. }
+  wp_auto.
+  iApply ("HΦ" $! (<[p := MkTypeState cells'' arr2]> types2) (<[nm := p]> bind)).
+  iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+  (* [types'] as a map is [<[p := ..]> types] (overwrites the fresh empty entry) *)
+  have Htypes'eq : <[p := MkTypeState cells'' arr2]> types2 = <[p := MkTypeState cells'' arr2]> types
+    by rewrite /types2 insert_insert_eq.
+  iPureIntro. split_and!.
+  - (* bind ⊆ <[nm:=p]>bind *)
+    exact (insert_subseteq bind nm p Hbnm).
+  - (* dom types ⊆ dom types' *)
+    rewrite Htypes'eq dom_insert_L. set_solver.
+  - (* bindtypes' *)
+    move=> name pl. destruct (decide (name = nm)) as [-> | Hne].
+    + rewrite lookup_insert_eq. move=> [= <-]. rewrite Htypes'eq lookup_insert_eq. by eauto.
+    + rewrite lookup_insert_ne // Htypes'eq. move=> Hb.
+      have Hs := Hbindtypes name pl Hb.
+      destruct (decide (pl = p)) as [-> | Hnep]; first by (exfalso; exact (Hpnotbound name Hb)).
+      rewrite lookup_insert_ne //.
+  - (* bindinj' *)
+    move=> n1 n2 pl H1 H2.
+    destruct (decide (n1 = nm)) as [-> | Hn1]; destruct (decide (n2 = nm)) as [-> | Hn2].
+    + done.
+    + exfalso. rewrite lookup_insert_eq in H1. rewrite lookup_insert_ne // in H2.
+      injection H1 as <-. exact (Hpnotbound n2 H2).
+    + exfalso. rewrite lookup_insert_ne // in H1. rewrite lookup_insert_eq in H2.
+      injection H2 as <-. exact (Hpnotbound n1 H1).
+    + rewrite lookup_insert_ne // in H1. rewrite lookup_insert_ne // in H2.
+      exact (Hbindinj n1 n2 pl H1 H2).
+  - (* typesbound' *)
+    move=> pl. rewrite Htypes'eq. destruct (decide (pl = p)) as [-> | Hnep].
+    + move=> _. exists nm. by rewrite lookup_insert_eq.
+    + rewrite lookup_insert_ne //. move=> Hs.
+      destruct (Htypesbound pl Hs) as [name Hb]. exists name.
+      rewrite lookup_insert_ne //. move=> ?; subst name. by rewrite Hbnm in Hb.
+  - (* mtypes' at <[RootId nm := arr2]> m *)
+    move=> name pl ts' Hb Hts'.
+    rewrite Htypes'eq in Hts'.
+    destruct (decide (name = nm)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Hb. injection Hb as <-.
+      rewrite lookup_insert_eq in Hts'. injection Hts' as <-. simpl.
+      rewrite docm_get_insert_eq //.
+    + rewrite lookup_insert_ne // in Hb.
+      have Hnenm : RootId name ≠ RootId nm by (move=> [= ?]; congruence).
+      rewrite docm_get_insert_ne //.
+      destruct (decide (pl = p)) as [-> | Hnep]; first by (exfalso; exact (Hpnotbound name Hb)).
+      rewrite lookup_insert_ne // in Hts'.
+      exact (Hmtypes name pl ts' Hb Hts').
+  - (* mdom' at <[RootId nm := arr2]> m *)
+    move=> t Hne.
+    destruct (decide (t = RootId nm)) as [-> | Hnet].
+    + exists nm, p. split; [done | by rewrite lookup_insert_eq].
+    + rewrite docm_get_insert_ne // in Hne.
+      destruct (Hmdom t Hne) as (name & pl & Heqt & Hb).
+      exists name, pl. split; [exact Heqt |].
+      rewrite lookup_insert_ne //. move=> ?; subst name. by rewrite Hbnm in Hb.
+  - (* provenance *)
+    move=> c0 Hc0. rewrite Hac_step' in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew].
+    + left. exists c0. split_and!; [exact Hold | done | lia | lia].
+    + apply list_elem_of_singleton in Hnew as ->. right. split_and!.
+      * exact Hcc2.
+      * rewrite Hclk2. lia.
+      * rewrite Hclk2 Hlen2. lia.
+  - exact Hlocdup'.
+  - exact Hrangedisj'.
+  - exact Hfits'.
+  - exact Horiginclk'.
+Qed.
+
 (* ===== the total applyUpdate loop (issue #40) ============================= *)
 
 (** A [toItem] success with a present origin resolved that origin inside the
@@ -2165,6 +2548,131 @@ Proof.
     rewrite /find_by_id /= in Hf. discriminate.
 Qed.
 
+
+(** [store.integrateDecoded], grown/dispatching form (issue #54): the drain
+    loop's uniform per-item entry point. It does NOT require the target root to
+    be already bound; it dispatches on the registry -- a HIT reuses
+    [wp_store__integrateDecoded] (registry unchanged), a MISS reuses
+    [wp_store__integrateDecoded_fresh] (registry grows by one fresh type). A
+    miss is necessarily an origin-free struct: an origin would resolve inside a
+    nonempty -- hence, by [Hmdom], registered -- target root. Either way the
+    postcondition is the same "grown" shape ([bind ⊆ bind'],
+    [dom types ⊆ dom types'], coherence over the grown maps), so the loop
+    threads a single monotone registry. *)
+Lemma wp_store__integrateDecoded_grow (s mref tref : loc)
+    (updateItemVal : yjs.updateItem.t) (typedInput : TId * IntegrateInput (A := A))
+    (m : DocModel) (types : gmap loc type_state) (bind : gmap P loc)
+    (newItem : YjsItem A) (arr2 : list (YjsItem A)) (nm : P) :
+  typedInput.1 = RootId nm ->
+  toItem typedInput.2 (doc_model_get m typedInput.1) = Some newItem ->
+  IsItemValid newItem ->
+  maximalId newItem (doc_model_get m typedInput.1) ->
+  integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) (doc_model_get m typedInput.1) = Some arr2 ->
+  (∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (in_id typedInput.2)) ->
+     (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id typedInput.2))))%Z ∧
+     (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (in_id typedInput.2))))%Z) ->
+  (∀ name p', bind !! name = Some p' -> is_Some (types !! p')) ->
+  (∀ n1 n2 p', bind !! n1 = Some p' -> bind !! n2 = Some p' -> n1 = n2) ->
+  (∀ p', is_Some (types !! p') -> ∃ name, bind !! name = Some p') ->
+  (∀ name p' ts, bind !! name = Some p' -> types !! p' = Some ts ->
+     doc_model_get m (RootId name) = ty_arr ts) ->
+  (∀ t, doc_model_get m t ≠ [] -> ∃ name p', t = RootId name ∧ bind !! name = Some p') ->
+  (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z ->
+  NoDup (ic_loc <$> all_cells types) ->
+  cells_range_disjoint (all_cells types) ->
+  (∀ c, c ∈ all_cells types -> cell_fits c) ->
+  (∀ c, c ∈ all_cells types -> cell_origin_clk c) ->
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
+      ([∗ map] parent ↦ ts ∈ types,
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+    s @! (go.PointerType yjs.store) @! "integrateDecoded" #updateItemVal
+  {{{ (types' : gmap loc type_state) (bind' : gmap P loc), RET #();
+      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
+      (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind' ∗
+      ([∗ map] parent ↦ ts ∈ types',
+          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      ⌜bind ⊆ bind'⌝ ∗
+      ⌜dom types ⊆ dom types'⌝ ∗
+      ⌜∀ name p', bind' !! name = Some p' -> is_Some (types' !! p')⌝ ∗
+      ⌜∀ n1 n2 p', bind' !! n1 = Some p' -> bind' !! n2 = Some p' -> n1 = n2⌝ ∗
+      ⌜∀ p', is_Some (types' !! p') -> ∃ name, bind' !! name = Some p'⌝ ∗
+      ⌜∀ name p' ts', bind' !! name = Some p' -> types' !! p' = Some ts' ->
+         doc_model_get (<[typedInput.1 := arr2]> m) (RootId name) = ty_arr ts'⌝ ∗
+      ⌜∀ t, doc_model_get (<[typedInput.1 := arr2]> m) t ≠ [] ->
+         ∃ name p', t = RootId name ∧ bind' !! name = Some p'⌝ ∗
+      ⌜∀ c, c ∈ all_cells types' ->
+         (∃ c0, c0 ∈ all_cells types ∧ cell_client c = cell_client c0 ∧
+            (uint.Z (cell_clock c0) <= uint.Z (cell_clock c))%Z ∧
+            (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
+             uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)))%Z) ∨
+         (cell_client c = W64 (clientId (in_id typedInput.2)) ∧
+          (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c))%Z ∧
+          (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
+           uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z)⌝ ∗
+      ⌜NoDup (ic_loc <$> all_cells types')⌝ ∗
+      ⌜cells_range_disjoint (all_cells types')⌝ ∗
+      ⌜∀ c, c ∈ all_cells types' -> cell_fits c⌝ ∗
+      ⌜∀ c, c ∈ all_cells types' -> cell_origin_clk c⌝ }}}.
+Proof using Type*.
+  move=> Htieq Htoit Hvld Hmax Hall Hgmax0
+         Hbindtypes Hbindinj Htypesbound Hmtypes Hmdom Hnowrapc Hlocdup Hrangedisj Hfits Horiginclk.
+  iIntros (Φ) "(#Hpkg & #Hui & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
+  destruct (bind !! nm) as [p|] eqn:Hbnm.
+  - (* HIT: reuse the bound-root integrateDecoded; registry unchanged *)
+    wp_apply (wp_store__integrateDecoded s mref tref updateItemVal typedInput m types bind
+                newItem arr2 nm p Htieq Hbnm Htoit Hvld Hmax Hall Hgmax0
+                Hbindtypes Hbindinj Hmtypes Hnowrapc Hlocdup Hrangedisj Hfits Horiginclk
+                with "[$Hui $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
+    iIntros (types') "(Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hdom' & %Hmtypes' & %Hprov' & %Hlocdup' & %Hrangedisj' & %Hfits' & %Horiginclk')".
+    iApply ("HΦ" $! types' bind).
+    iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+    iPureIntro. split_and!.
+    + done.
+    + rewrite Hdom'. done.
+    + move=> name pl Hb. apply elem_of_dom. rewrite Hdom'. apply elem_of_dom.
+      exact (Hbindtypes name pl Hb).
+    + exact Hbindinj.
+    + move=> pl Hs. apply Htypesbound. apply elem_of_dom. rewrite -Hdom'.
+      apply elem_of_dom. exact Hs.
+    + exact Hmtypes'.
+    + move=> t Hne. destruct (decide (t = typedInput.1)) as [-> | Hnet].
+      * exists nm, p. split; [exact Htieq | exact Hbnm].
+      * rewrite docm_get_insert_ne // in Hne.
+        exact (Hmdom t Hne).
+    + exact Hprov'.
+    + exact Hlocdup'.
+    + exact Hrangedisj'.
+    + exact Hfits'.
+    + exact Horiginclk'.
+  - (* MISS: the target root is unbound, so origin-free; grow the registry *)
+    have HoL : in_originId typedInput.2 = None.
+    { destruct (in_originId typedInput.2) as [o|] eqn:Ho; [| done]. exfalso.
+      have Hne : doc_model_get m typedInput.1 ≠ [].
+      { apply (toItem_nonempty_of_origin _ _ newItem Htoit). left. by rewrite Ho. }
+      destruct (Hmdom typedInput.1 Hne) as (name & pl & Heq & Hb).
+      rewrite Htieq in Heq. injection Heq as ->. by rewrite Hb in Hbnm. }
+    have HoR : in_rightOriginId typedInput.2 = None.
+    { destruct (in_rightOriginId typedInput.2) as [o|] eqn:Ho; [| done]. exfalso.
+      have Hne : doc_model_get m typedInput.1 ≠ [].
+      { apply (toItem_nonempty_of_origin _ _ newItem Htoit). right. by rewrite Ho. }
+      destruct (Hmdom typedInput.1 Hne) as (name & pl & Heq & Hb).
+      rewrite Htieq in Heq. injection Heq as ->. by rewrite Hb in Hbnm. }
+    have Hdgnil : doc_model_get m typedInput.1 = [].
+    { destruct (doc_model_get m typedInput.1) as [|x l] eqn:Hdg; [done |]. exfalso.
+      destruct (Hmdom typedInput.1 ltac:(rewrite Hdg //)) as (name & pl & Heq & Hb).
+      rewrite Htieq in Heq. injection Heq as ->. by rewrite Hb in Hbnm. }
+    rewrite Hdgnil in Htoit Hmax Hall.
+    wp_apply (wp_store__integrateDecoded_fresh s mref tref updateItemVal typedInput m types bind
+                newItem arr2 nm Htieq Hbnm HoL HoR Hdgnil Htoit Hvld Hmax Hall Hgmax0
+                Hbindtypes Hbindinj Htypesbound Hmtypes Hmdom Hnowrapc Hlocdup Hrangedisj Hfits Horiginclk
+                with "[$Hui $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
+    iIntros (types' bind') "Hpost".
+    iApply ("HΦ" $! types' bind' with "Hpost").
+Qed.
 
 (* ===== wire-level drain (issue #40 x issue #28 U7c) =======================
    The Go [applyUpdate] loop drains WIRE items (whole [updateItem] structs),

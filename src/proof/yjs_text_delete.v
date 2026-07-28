@@ -351,8 +351,9 @@ Proof.
           iFrame "Hseq Htypes". }
         iExists acc.
         iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhist HtypesAuth Hbinds Hacc".
-        iFrame "Hpendcert Hpendroot".
+        iFrame "Hpendcert".
         iPureIntro. split_and!.
+        - exact Hpendroot.
         - exact Hpendbnd.
         - intros parent' ts' x Hlook Hxin Hxc.
           destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
@@ -414,8 +415,9 @@ Proof.
           iFrame "Hseq Htypes". }
         iExists acc.
         iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhist HtypesAuth Hbinds Hacc".
-        iFrame "Hpendcert Hpendroot".
+        iFrame "Hpendcert".
         iPureIntro. split_and!.
+        - exact Hpendroot.
         - exact Hpendbnd.
         - intros parent' ts' x Hlook Hxin Hxc.
           destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
