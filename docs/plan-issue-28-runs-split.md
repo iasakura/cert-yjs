@@ -1,5 +1,10 @@
 # Plan: relax the `Len() = 1` pin (issue #28): multi-element runs, offset, split
 
+> Historical: written before the `src/proof` reorganization (issue #101).
+> Module names below were updated to the current tree, but the `file:line`
+> citations predate the store / text splits and no longer resolve; grep the
+> symbol instead.
+
 Status: design study (2026-07-12). Scope: the remaining half of issue #28
 (the `Hcontlen` pin in `is_dll`), which is the prerequisite for Array
 `Content::Any` (#25) and for wire interop with real y-octo peers.
@@ -12,7 +17,7 @@ Reference sources surveyed for this plan (exact commits):
 
 ## 1. Where the pin lives today
 
-`is_dll` (src/proof/yjs_item.v:184) pins every heap node to
+`is_dll` (src/proof/item/item.v:184) pins every heap node to
 
 ```
 "%Hcontlen" ∷ ⌜length (iv.(yjs.item.content').(yjs.content.content')) = 1%nat⌝
@@ -20,14 +25,14 @@ Reference sources surveyed for this plan (exact commits):
 
 so one `item_cell` = one model `YjsItem A` = one clock. Consumers:
 
-- `wp_yType__findPos`'s count loop (src/proof/yjs_ytype.v:217, 279) rewrites
+- `wp_yType__findPos`'s count loop (src/proof/ytype/ytype.v:217, 279) rewrites
   `wp_item__Len`'s result to `1` so each visible node costs exactly one unit of
   the index budget; positions never fall inside a node.
-- `wp_Store__Integrate`'s fresh-item hypothesis (yjs_store.v:2274) and
-  `own_fresh_item_raw`, `types_cell_acc` (yjs_store.v:3498), `is_update_item`'s
-  `Hclen` (yjs_store.v:3405), plus every `own_dll` destructuring tuple
-  (roughly 40 sites across yjs_item.v / yjs_store.v / yjs_text.v).
-- `Hcellctr` (yjs_store.v:774) states the per-cell clock bound as
+- `wp_Store__Integrate`'s fresh-item hypothesis (store/store.v:2274) and
+  `own_fresh_item_raw`, `types_cell_acc` (store/store.v:3498), `is_update_item`'s
+  `Hclen` (store/store.v:3405), plus every `own_dll` destructuring tuple
+  (roughly 40 sites across item/item.v / store/store.v / text/text.v).
+- `Hcellctr` (store/store.v:774) states the per-cell clock bound as
   `cell_clock c < k`, which is the run bound only because runs have length 1.
 
 The Go is already half general: `item.Len()` returns the content byte length,
@@ -307,12 +312,12 @@ whole issue.
 
 ### 3.5 Proof-layer re-threading (wide but mechanical)
 
-- yjs_item.v: `own_dll` conjunct swap (3.2); all structural lemmas
+- item/item.v: `own_dll` conjunct swap (3.2); all structural lemmas
   (`own_dll_app`, `_acc`, `_insert_middle`, `_update_gen`, head/last) keep
   their skeletons, tuples gain `Hrun` and lose `Hcontlen`. `cell_repr` /
   `cells_repr` become the flatten versions. `wp_item__Len` returns
   `length (ic_run c)` via `Hcontent`.
-- yjs_ytype.v: `own_ytype_cells` (`num_visible`, flatten), `own_ytype`
+- ytype/ytype.v: `own_ytype_cells` (`num_visible`, flatten), `own_ytype`
   (flatten with tombstone tags), `wp_yType__findPos` re-proved against the
   new Go: the count loop invariant tracks the remaining budget against
   `run_flatten` positions, and the exit either sits on a node boundary
@@ -320,13 +325,13 @@ whole issue.
   `0 < off < run_len p`. As today, the spec returns the straddle/offset
   facts; it does not relate `p` to `idx` (position faithfulness stays out of
   the public specs).
-- yjs_store.v: `types_cell_acc`, `own_fresh_item*`, `is_update_item` (drop
+- store/store.v: `types_cell_acc`, `own_fresh_item*`, `is_update_item` (drop
   `Hclen`; one struct now denotes `ops_of_updateItem : list Op`, its per-char
   decomposition), `Hcellctr` new bound, `client_run` sortedness under the
   `idx+1` insert, `wp_store__GetNode` spec ("the node whose run covers the
   clock"), and new `wp_store__splitNode` / `wp_store__splitAtAndGet{Left,Right}`
   with the 3.3 no-op postcondition.
-- yjs_text.v: Insert/Delete re-threading; Delete gains the boundary-split
+- text/text.v: Insert/Delete re-threading; Delete gains the boundary-split
   steps (each a no-op on `ty_arr`, so the `is_Text L` unchanged statement
   survives verbatim).
 
@@ -360,7 +365,7 @@ are needed, both Iris-free, both about the existing `integrate`/`setintegrate`:
    node granularity because scans cover whole blocks (window boundaries are
    node-aligned after repair).
 
-Home: develop these next to `yjs_core` in cert-yjs first (fast iteration),
+Home: develop these next to `core` in cert-yjs first (fast iteration),
 upstream to rocq-yjs once stable (same flow as the deliver_locally fix).
 Nothing here exists in lean-yjs or rocq-yjs; it is the "genuinely novel
 formalization" the roadmap anticipated for item ⑤.

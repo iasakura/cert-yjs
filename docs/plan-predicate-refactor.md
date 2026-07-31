@@ -1,6 +1,11 @@
 # Plan: cohesive predicates for the applyUpdate certificate spec
 
-Target: `wp_store__applyUpdate_certs` (src/proof/yjs_store.v). It is the
+> Historical: written before the `src/proof` reorganization (issue #101).
+> Module names below were updated to the current tree, but the `file:line`
+> citations predate the store / text splits and no longer resolve; grep the
+> symbol instead.
+
+Target: `wp_store__applyUpdate_certs` (src/proof/store/store.v). It is the
 top-level verified entry point of the update path (Doc.ApplyUpdate in
 codec.go is a thin unverified decode+lock+call wrapper over it), so it should
 follow the public-spec rule of CLAUDE.md: no internal data, stated over
@@ -8,7 +13,7 @@ follow the public-spec rule of CLAUDE.md: no internal data, stated over
 
 ## 1. Problems with the current spec
 
-The current statement (yjs_store.v, `wp_store__applyUpdate_certs`):
+The current statement (store/store.v, `wp_store__applyUpdate_certs`):
 
 ```coq
 Lemma wp_store__applyUpdate_certs (s : loc) (sl : slice.t) (dq : dfrac)
@@ -109,7 +114,7 @@ This is exactly the house shape `{{{ own_X … m ∗ ⌜Pre m⌝ }}} f {{{ own_X
 
 ## 3. New predicates
 
-All in yjs_store.v unless noted.
+All in store/store.v unless noted.
 
 **(a) `own_store`, the cohesive store-state predicate.** Everything the
 write lock protects, at model `(c, h, m)`; `store_inv` becomes (or is proved
@@ -195,7 +200,7 @@ Definition is_root_lb (γs : store_names) (name : P) (S : gset (YjsItem A)) : iP
 `is_Text`'s `#Hbind ∗ His_lb` pair is literally `is_root_lb name
 (list_to_set L)`; adopting it there is an optional cohesion follow-up.
 
-**(e) `is_certified_batch` (yjs_history.v, next to `is_op_cert`).** Bundles
+**(e) `is_certified_batch` (history.v, next to `is_op_cert`).** Bundles
 the certificates with their coverage fact and hides `Ds` (pure noise for
 callers; `big_sepL2` carries the length agreement for free).
 
@@ -237,7 +242,7 @@ proof is glue:
    model lemma:
 
 ```coq
-(* yjs_network_model.v: a certified, batch_ok batch contains no op authored
+(* network_model.v: a certified, batch_ok batch contains no op authored
    by the receiving client: own broadcasts are self-delivered, so freshness
    against delivered_ids h excludes them. *)
 Lemma batch_not_own_client N c h inputs Ds :
@@ -327,7 +332,7 @@ a local postcondition extension):
 
 1. Pure sv toolkit: `sv_of`, `batch_sv`, `sv_of_deliver_batch` (max
    semantics). No new ghost. SHIPPED (PR 3): the state-vector section of
-   `yjs_network_model.v` (join semilattice, `sv_of_app` /
+   `network_model.v` (join semilattice, `sv_of_app` /
    `sv_of_deliver_batch` / `sv_of_broadcast`, `delivered_ids_lt_sv` +
    `sv_of_attained`). The "extra pure conjunct in the applyUpdate post"
    turned out redundant: the post's history is `h ++ (deliver_ev <$>

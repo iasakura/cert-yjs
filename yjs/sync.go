@@ -7,7 +7,7 @@ package yjs
 // (store.applyUpdate). There is NO shadow item list: the structs go through the
 // real CRDT integration against the real store, so the replica's history
 // advances for real. The verified spec (wp_Doc__ApplySyncUpdate, in
-// src/proof/yjs_doc.v) reports that change as growth of the ghost history
+// src/proof/doc/doc.v) reports that change as growth of the ghost history
 // certificate is_history_lb -- i.e. the document's delivered-history fragment
 // now contains exactly this batch.
 //

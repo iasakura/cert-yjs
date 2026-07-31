@@ -9,7 +9,7 @@ drifted; that is exactly the failure mode to avoid).
 
 | Trivia (avoid) | Essence (prefer) |
 |---|---|
-| "`own_dll` appears how many times in `yjs_item.v`?" | "Why does `own_dll` carry a `dfrac` while `is_Store` does not?" |
+| "`own_dll` appears how many times in `item/heap.v`?" | "Why does `own_dll` carry a `dfrac` while `is_Store` does not?" |
 | "What line is `cell_repr` defined on?" | "`cell_repr` used to pin `flags'=W8 2` and `Len()=1` and now is just `yi = ic_item c`. What changed in the model to let it shrink?" |
 | "Name the fields of `DocStore`." | "Why does the store keep BOTH a `map[Client][]Node` and a linked list, when both hold the same items?" |
 | "How many args does `wp_Store__Integrate` take?" | "Why must `wp_Store__Integrate`'s spec be stated over `own_ytype` and never mention heap cells?" |
@@ -211,4 +211,4 @@ Illustrative only. Regenerate from live sources; do not just replay these.
   Expected: thread `own_store` through two applyUpdate calls, collect the
   `is_root_lb` cert fragments, and argue the resulting document is independent of
   order via `integrate_commutative` / `setintegrate_eq_integrate` (name the one
-  that fits how the model states convergence; verify in `yjs_core.v`).
+  that fits how the model states convergence; verify in `core.v`).

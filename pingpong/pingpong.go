@@ -3,7 +3,7 @@
 // smallest programs exercising Listen/Accept/Connect/Send/Receive, verified
 // against the Grove network model via the WP wrappers in
 // src/manualproof/github_com/iasakura/cert_yjs/grovenet.v (specs in
-// src/proof/grove_pingpong.v).
+// src/proof/demo/pingpong.v).
 //
 // The two halves are verified with explicit mailbox ownership, so each is a
 // single-owner spec: ServeOnce owns the server endpoint's mailbox, Ping owns

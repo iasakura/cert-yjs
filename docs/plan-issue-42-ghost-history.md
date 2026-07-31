@@ -1,5 +1,10 @@
 # Design: ghost-tracked global operation history (issue #42)
 
+> Historical: written before the `src/proof` reorganization (issue #101).
+> Module names below were updated to the current tree, but the `file:line`
+> citations predate the store / text splits and no longer resolve; grep the
+> symbol instead.
+
 Implementation plan for
 [#42 — core: ghost-tracked global operation history](https://github.com/iasakura/cert-yjs/issues/42):
 a shared Perennial ghost resource for the global operation history, so that the
@@ -69,12 +74,12 @@ comparison that motivated several choices here).
 
 Current verified surface (all axiom-clean; keep them that way):
 
-- `wp_Store__Integrate` — `src/proof/yjs_store.v:1985`.
-- `wp_store__applyUpdate` — `src/proof/yjs_store.v:2093`, with the
-  receiver-side `ValidReplay` (`yjs_store.v:2076`).
-- `wp_Text__Insert` — `src/proof/yjs_text.v:185`; `wp_Text__Delete` —
-  `yjs_text.v:653`; both go through the lock layer `store_inv` / `is_Store`
-  (`yjs_store.v:192/210`) and `is_Text` (`yjs_text.v:150`).
+- `wp_Store__Integrate` — `src/proof/store/store.v:1985`.
+- `wp_store__applyUpdate` — `src/proof/store/store.v:2093`, with the
+  receiver-side `ValidReplay` (`store/store.v:2076`).
+- `wp_Text__Insert` — `src/proof/text/text.v:185`; `wp_Text__Delete` —
+  `text/text.v:653`; both go through the lock layer `store_inv` / `is_Store`
+  (`store/store.v:192/210`) and `is_Text` (`text/text.v:150`).
 
 Contract changes proposed by this design (maintainer sign-off required per
 CLAUDE.md; this document is the sign-off artifact):
@@ -202,11 +207,11 @@ build and expect no fallout (the insert_set API did not change shape).
   `interpHistory`, `toDeliverMessages`, the network records, happens-before,
   and the endgame theorems (`isValidState_insert_from_source`,
   `yjs_strong_convergence`, `YjsOperationNetwork_converge_final`).
-- The **pure bridge** (`yjs_network_model.v`, new) re-states the network records
+- The **pure bridge** (`network_model.v`, new) re-states the network records
   over a raw `gmap ClientId (list Event)` and proves the append-preservation and
   certificate-to-`ValidReplay` lemmas. Zero Iris — iterate on it with rocq-mcp
   without touching goose.
-- The **ghost layer** (`yjs_history.v`, new) wraps the bridge in `ghost_map` +
+- The **ghost layer** (`history.v`, new) wraps the bridge in `ghost_map` +
   `inv` and exports three fupd lemmas (`alloc` / `broadcast` / `deliver`).
 - The **WP layer** threads the new conjuncts through `store_inv` / `is_Text`
   and re-proves `Insert` (minting), `Delete` (frame), and states the
@@ -272,7 +277,7 @@ state.** A local edit and a remote apply are the only two writers.
 
 ---
 
-## 4. The pure bridge: `src/proof/yjs_network_model.v` (new)
+## 4. The pure bridge: `src/proof/network_model.v` (new)
 
 No Iris. Section context: `Context {A : Type} `{Countable A} `{EqDecision A}.`
 (instantiated at `A := go_string` downstream). Abbreviations used below:
@@ -287,7 +292,7 @@ Notation RawHistories := (gmap ClientId (list Ev)).
 
 First task: `Countable YjsId` (needed for `gset YjsId` keys of the ops map) —
 derive via the pair encoding `(clientId, clock)`; one `Instance` next to
-`YjsItem_countable` in `yjs_common.v:82` or at the top of this file.
+`YjsItem_countable` in `prelude.v:82` or at the top of this file.
 `EqDecision Op` / `EqDecision Ev` already exist upstream
 (`yjs_network.v:27`, `causal_network.v` `Event_eq_dec`).
 
@@ -381,7 +386,7 @@ determinism** lemma below.
 The lemmas are named, not numbered, and cross-referenced by name (in prose and
 in each other's proof sketches). Difficulty scale: (E)asy < (M)edium <
 (H)ard. "Home": `up` = belongs upstream in rocq-yjs (mentions only model
-types), `here` = `yjs_network_model.v`.
+types), `here` = `network_model.v`.
 
 | lemma | statement (sketch) | proof sketch | diff | home |
 |---|---|---|---|---|
@@ -426,12 +431,12 @@ Lemma certs_ValidReplay (N : RawHistories) (c : ClientId) (h : list Ev)
     history_wf (<[c := h ++ (EvDeliver ∘ OpInsert <$> inputs)]> N).
 ```
 
-(`ValidReplay` is `yjs_store.v:2076`; note `certs_ValidReplay` *produces* the
+(`ValidReplay` is `store/store.v:2076`; note `certs_ValidReplay` *produces* the
 existential `arr'`, so the WP spec no longer needs the caller to supply it.)
 
 ### 4.5 How to build this file
 
-Standalone: it only `Require`s `yjs_core` (extend `yjs_core.v` to also
+Standalone: it only `Require`s `core` (extend `core.v` to also
 re-export `yjs.crdt.network.causal_network`, `yjs.crdt.network.operation_network`,
 `yjs.network.yjs_network`, `yjs.network.yjs_operation_network`,
 `yjs.network.yjs_replay_validity`). Iterate with `rocq_start`/`rocq_check` on
@@ -448,9 +453,9 @@ kernel; if receiver clock safety stalls, everything else can still land
 
 ---
 
-## 5. The ghost layer: `src/proof/yjs_history.v` (new)
+## 5. The ghost layer: `src/proof/history.v` (new)
 
-Iris but no goose. `Require`s `yjs_network_model`, `yjs_common`.
+Iris but no goose. `Require`s `network_model`, `prelude`.
 
 ### 5.1 Typeclass context and gnames
 
@@ -486,7 +491,7 @@ Definition histN : namespace := nroot .@ "cert_yjs" .@ "history".
 (* ops registry coherence: every registered op is broadcast (at its author),
    its D covers its causal past, and every broadcast op is registered.
    ops_coh / op_registered are pure Props — define them in
-   yjs_network_model.v (they are hypotheses of certs ⇒ ValidReplay) and only
+   network_model.v (they are hypotheses of certs ⇒ ValidReplay) and only
    USE them here. *)
 Definition ops_coh (N : RawHistories) (ops : gmap YjsId (Op * gset YjsId)) : Prop :=
   (forall id op D, ops !! id = Some (op, D) ->
@@ -625,7 +630,7 @@ Freshness for `ghost_map_insert` on `hn_ops` comes from freshness + `ops_coh`
 
 ## 6. WP-layer changes
 
-### 6.1 `store_inv` / `is_Store` (`yjs_store.v:192/210`)
+### 6.1 `store_inv` / `is_Store` (`store/store.v:192/210`)
 
 New section context: `Context `{!historyG Σ}.` New parameters `γh` and a
 per-store `γgov : gname`. Bundle `γgov` next to the existing `γ` (either as a
@@ -659,7 +664,7 @@ with one registered empty text (`ts_arr = []`, `history_state_coh [] []` holds
 by `interpHistory [] init init`). This guards against an accidentally-false
 invariant and is the seam where a future `wp_NewDoc`/`wp_Doc__GetText` plugs in.
 
-### 6.2 `is_Text` (`yjs_text.v:150`)
+### 6.2 `is_Text` (`text/text.v:150`)
 
 ```rocq
 Definition is_Text (t : loc) (γh : history_names) (L : list (YjsItem A)) : iProp Σ :=
@@ -678,7 +683,7 @@ deliberate single-root-text scope (§8.3). Under the lock, `Hgov` (handle) +
 replaces nothing but *adds* the governed-text extraction to the existing
 `auth_gmap_gset_lookup` prologue.
 
-### 6.3 `wp_Text__Insert` (`yjs_text.v:185`)
+### 6.3 `wp_Text__Insert` (`text/text.v:185`)
 
 Statement: same shape, plus certificates. Sketch of the post delta:
 
@@ -714,13 +719,13 @@ inside the loop needs the mask on the WP (`↑histN ⊆ ⊤` — the triples are
 `⊤`, fine); persistent big-ops across `wp_for` want `iClear`/re-intro care
 (see the `#Horigins` note in `iris-big-sep-origin-refactor-gotchas`).
 
-### 6.4 `wp_Text__Delete` (`yjs_text.v:653`)
+### 6.4 `wp_Text__Delete` (`text/text.v:653`)
 
 `ts_arr` is untouched by Delete (tombstone-only), so `history_state_coh` is
 *frame-stable*: the proof only destructs and re-frames the new conjuncts.
 No minting (§8.1). Estimated: mechanical pass, no new lemmas.
 
-### 6.5 `wp_store__applyUpdate_certs` (new, next to `yjs_store.v:2093`)
+### 6.5 `wp_store__applyUpdate_certs` (new, next to `store/store.v:2093`)
 
 ```rocq
 Lemma wp_store__applyUpdate_certs (s parent : loc) (sl : slice.t)
@@ -784,7 +789,7 @@ per *released* op, which under the arbitrary-arrival spec may happen in a later
 replaced by the weakened model's deps-coverage, which the release gate
 discharges directly.
 
-### 6.6 `yjs_doc.v`
+### 6.6 `doc/doc.v`
 
 `is_Doc` gains `γh` and mirrors the `is_Store` arity change. Nothing else (no
 verified Doc methods yet).
@@ -803,8 +808,8 @@ Named, not numbered.
 | milestone | contents | deliverables / acceptance | risk |
 |---|---|---|---|
 | **Upstream fix** | rocq-yjs: `deliver_locally` fix (§2) — **merged, rocq-yjs#24 / lean-yjs#31**; remaining: upstream the lemmas replay determinism through fresh-broadcast past, and receiver clock safety if stated model-side; bump `pin-depends` in `cert-yjs.opam` to `b95e6da`+; full rebuild | rocq-yjs CI green ✓; cert-yjs `./build.sh` green on the new pin | low (fix landed; hb append-stability / fresh-broadcast past / receiver clock safety are the real work and can trail in a second upstream PR — the pure bridge can start against local pins) |
-| **Pure bridge** | `yjs_network_model.v`: §4 defs + freshness, broadcast step through certs ⇒ ValidReplay (+ any of replay determinism through receiver clock safety not yet upstream, proved here first and upstreamed later) | file compiles standalone; `certs_ValidReplay` Qed | **highest** — receiver clock safety is the one genuinely hard theorem; do it early to de-risk |
-| **Ghost layer** | `yjs_history.v`: §5 classes, predicates, the ghost API (`history_alloc`/`history_broadcast`/`history_deliver_batch`/read) | compiles; history_broadcast / history_deliver_batch Qed; a smoke lemma: alloc + one broadcast + one remote deliver composed end-to-end (two ghost clients, no WP) proving the ghost story is consistent | low — mechanical given the pure bridge |
+| **Pure bridge** | `network_model.v`: §4 defs + freshness, broadcast step through certs ⇒ ValidReplay (+ any of replay determinism through receiver clock safety not yet upstream, proved here first and upstreamed later) | file compiles standalone; `certs_ValidReplay` Qed | **highest** — receiver clock safety is the one genuinely hard theorem; do it early to de-risk |
+| **Ghost layer** | `history.v`: §5 classes, predicates, the ghost API (`history_alloc`/`history_broadcast`/`history_deliver_batch`/read) | compiles; history_broadcast / history_deliver_batch Qed; a smoke lemma: alloc + one broadcast + one remote deliver composed end-to-end (two ghost clients, no WP) proving the ghost story is consistent | low — mechanical given the pure bridge |
 | **WP rethreading** | `store_inv`/`is_Store`/`is_Text` extension + `store_inv_init` + **Insert minting** + Delete/other call-site rethreading | `wp_Text__Insert` (new post) and `wp_Text__Delete` Qed, axiom-clean | medium — big mechanical rethreading (cf. #29: ~7 call sites then; grep `store_inv`/`is_Store`/`is_Text` uses first and list them in the PR) |
 | **applyUpdate-certs spec** | `wp_store__applyUpdate_certs` (§6.5) + doc comments + CLAUDE.md "verified so far" update | Qed, axiom-clean; issue #42 acceptance boxes checkable | low given the ghost layer (thin wrapper) |
 | **Stretch** (coordinate with #40/#43) | OpDelete minting + delete_range receiver; dynamic client registration; multi-text; delivered-set lower-bound ghost for #40 | — | out of #42 scope; see §8 |
@@ -935,7 +940,7 @@ rest of the delete story (#43).
   constant from before, `./build.sh make` will flag it — expected clean,
   verify.
 - **Arity churn** (WP rethreading): `store_inv`/`is_Store`/`is_Text` signature
-  changes touch every proof in `yjs_text.v`/`yjs_doc.v`; do a grep inventory
+  changes touch every proof in `text/text.v`/`doc/doc.v`; do a grep inventory
   first and land as one mechanical commit separate from the minting logic.
 
 ---

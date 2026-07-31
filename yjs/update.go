@@ -4,7 +4,7 @@ package yjs
 // Update + codec/item.rs Item): the Update batch and its updateItem structs.
 // The application loop itself lives in store.applyUpdate (store.go) -- the
 // *verified core* of apply_update, proved by wp_store__applyUpdate in
-// src/proof/yjs_store.v. Since issue #40 that loop is TOTAL: the batch needs
+// src/proof/store/store.v. Since issue #40 that loop is TOTAL: the batch needs
 // no ordering or causal closure, and structs whose dependencies (origins /
 // own predecessor) have not arrived are buffered in store.pending and drained
 // by later calls, mirroring y-octo's UpdateIterator + DocStore.pending.

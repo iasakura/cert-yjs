@@ -181,7 +181,7 @@ them, since the APIs drift.
 - `Print Assumptions` over a big dependency closure floods thousands of
   "Fetching opaque proofs from disk" lines before the axiom list, overrunning the
   query output buffer. Capture the result via `coqc` on a one-line `.v`
-  (`From New.proof Require Import yjs_invariant. Print Assumptions <thm>.`) piped
+  (`From New.proof.text Require Import text. Print Assumptions <thm>.`) piped
   through `grep -v "Fetching opaque" | tail`, not the interactive query.
 - **`Require` vs `Import` and notation scopes**: `Import`ing `iris.algebra.{auth,
   gmap,gset}` (or `iris.algebra.lib.mra`) at a file's top retunes the `<` scope so
@@ -195,7 +195,7 @@ them, since the APIs drift.
   `src/code/*.v` but not its `.vo`; a bare `rocq compile X.v` then links the OLD
   `yjs.vo`. Tell-tale: a proof goal shows a Go call you already deleted, or a field
   that no longer exists. Rebuild the model in dep order with `make
-  src/proof/X.vo` (or `./build.sh make`), not `rocq compile` alone.
+  src/proof/<type>/X.vo` (or `./build.sh make`), not `rocq compile` alone.
 - **Developing one big proof inside a big file** with rocq-mcp: position-start does
   NOT land *inside* an `Admitted` proof (returns empty goals / `proof_finished`).
   Instead open a scratch context: `rocq_start(preamble=<all the file's imports>,

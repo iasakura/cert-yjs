@@ -6,7 +6,7 @@ package yjs
 // These ops are goose-translated (part of the verified model): Insert is a loop
 // over the proven store.Integrate and Delete tombstones a visible run, so both
 // preserve the document invariant is_ytype (see wp_Text__Insert / wp_Text__Delete
-// in src/proof/yjs_text.v). The byte-level v1 codec and the delete-set cache stay
+// in src/proof/text/text.v). The byte-level v1 codec and the delete-set cache stay
 // behind //go:build !goose (codec.go, delete.go).
 //
 // Simplifications vs y-octo:

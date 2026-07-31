@@ -15,8 +15,12 @@ but its cert-yjs-specific facts drift, verify against code).
   findPos), `yjs/store.go` (DocStore, per-client `map[Client][]Node`, clock),
   `yjs/id.go`, `yjs/content.go`, `yjs/doc.go`, `yjs/text.go`, `yjs/range.go`,
   `yjs/refs.go`, `yjs/update.go`, `yjs/codec.go` (v1 codec, `//go:build !goose`).
-- Proof reps: `src/proof/yjs_item.v` (`item_cell`, `own_dll`, `cell_repr`,
-  `num_visible`), `src/proof/yjs_ytype.v` (`own_ytype`), `src/proof/yjs_store_base.v`.
+- Proof reps: each type is four layers, `model.v` (rocq-yjs only) ->
+  `runtime.v` (goose values, no Iris) -> `heap.v` (Iris) -> the WP files.
+  `item_cell` / `cell_repr` / `num_visible` are in `src/proof/item/runtime.v`,
+  `cells_model` in `src/proof/ytype/runtime.v`, `own_dll` in
+  `src/proof/item/heap.v`, `own_ytype` in `src/proof/ytype/heap.v`,
+  `store_inv` / `own_store` in `src/proof/store/heap.v`.
 - Memory: `port-faithful-data-structures.md`, `item-cell-origin-existential.md`,
   `is-dll-existential-refactor-gotchas.md`, `ytype-module-split.md`,
   `store-lock-item-plan.md`.
@@ -28,14 +32,14 @@ but its cert-yjs-specific facts drift, verify against code).
 ## 不変量・表現述語 (invariants / representation predicates)
 
 - `CLAUDE.md` "Predicate naming" rule (`is_X` persistent vs `own_X` ownership).
-- `src/proof/yjs_store_base.v`: `store_inv` / `store_inv_ro` / `store_inv_excl`,
+- `src/proof/store/heap.v`: `store_inv` / `store_inv_ro` / `store_inv_excl`,
   `own_store`, `own_item_map`, `is_Store` / `is_type_lb` / `is_root` /
   `is_root_lb`, RWMutex wrappers.
-- `src/proof/yjs_item.v`: `own_dll`, `cell_repr` / `cells_repr`, `num_visible`,
-  `flip_cell`.
-- `src/proof/yjs_ytype.v`: `own_ytype` (model = items + tombstone bits) over
+- `src/proof/item/`: `own_dll` (`heap.v`); `cell_repr` / `cells_repr`,
+  `num_visible`, `flip_cell` (`runtime.v`).
+- `src/proof/ytype/heap.v`: `own_ytype` (model = items + tombstone bits) over
   `own_ytype_cells`.
-- `src/proof/yjs_history.v`: `is_history`, `own_client_history`, `is_op_cert`.
+- `src/proof/history.v`: `is_history`, `own_client_history`, `is_op_cert`.
 - Memory: `issue-47-predicate-model-refactor.md` (NAME MAP),
   `predicate-refactor-own-store.md`, `item-cell-origin-existential.md`,
   `is-dll-existential-refactor-gotchas.md`, `store-lock-item-plan.md`.
@@ -45,12 +49,13 @@ but its cert-yjs-specific facts drift, verify against code).
 
 ## 仕様 (public WP specs)
 
-- `src/proof/yjs_store_integrate.v`: `wp_Store__Integrate` (cells-level and
+- `src/proof/store/Integrate.v`: `wp_Store__Integrate` (cells-level and
   model-level).
-- `src/proof/yjs_text.v`: `wp_Text__Insert` (mints op certs), `wp_Text__Delete`,
-  `wp_Text__Len` (read-API, RWMutex read share).
-- `src/proof/yjs_store_update.v`: `wp_store__applyUpdate_certs` (`own_store`-level).
-- `src/proof/yjs_doc.v`: doc-level applyUpdate wrapper.
+- `src/proof/text/`: `wp_Text__Insert` (mints op certs, `Insert.v`),
+  `wp_Text__Delete` (`Delete.v`), `wp_Text__Len` (read-API, RWMutex read
+  share, `Len.v`).
+- `src/proof/store/applyUpdate.v`: `wp_store__applyUpdate_certs` (`own_store`-level).
+- `src/proof/doc/ApplySyncUpdate.v`: doc-level applyUpdate wrapper.
 - `CLAUDE.md` "Public specs" rule (the `{{{ own_X o dq m ∗ ⌜Pre⌝ }}} … {{{ ⌜Post⌝ }}}`
   shape; persistent `is_X` as duplicable monotone-knowledge hypotheses).
 - Memory: `insert-proof-done.md`, `general-insert-progress.md`,
@@ -64,8 +69,8 @@ but its cert-yjs-specific facts drift, verify against code).
 
 - YATA integrate: `yjs/store.go` `Integrate` + extracted cores (`scanConflicts`
   / `findIntegrationLeft`); pure model `integrate` / `setintegrate` from the
-  rocq-yjs library re-exported in `src/proof/yjs_core.v`.
-- `findPos`: `yjs/ytype.go` + `wp_yType__findPos` in `src/proof/yjs_ytype.v`.
+  rocq-yjs library re-exported in `src/proof/core.v`.
+- `findPos`: `yjs/ytype.go` + `wp_yType__findPos` in `src/proof/ytype/findPos.v`.
 - Binary-search `GetNode` / `AddNode`: `yjs/store.go`.
 - Sync protocol: state-vector + diff (`computeStateVector` / `computeDiff`).
   Note: the sync Go/proof files (`protocol.go`, `yjs_sync.v`) are NOT on every
@@ -110,7 +115,7 @@ but its cert-yjs-specific facts drift, verify against code).
   `docs/proof-engineering.md` §B (Iris proof mode), §C (Perennial/goose WP),
   §D (interactive workflow), §F (ghost state).
 - Model lemmas to name in convergence arguments (from rocq-yjs, re-exported in
-  `src/proof/yjs_core.v`): `setintegrate_eq_integrate`, `integrate_commutative`,
+  `src/proof/core.v`): `setintegrate_eq_integrate`, `integrate_commutative`,
   `YjsArrInvariant_integrate`, `yjs_strong_convergence`.
 - Checking: `ToolSearch` query
   `select:mcp__rocq-mcp__rocq_start,mcp__rocq-mcp__rocq_check`, then follow
