@@ -39,6 +39,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 (* the grow-only item-set RA (the certificate proofs grow the [sn_seq]
    authority and mint [is_type_lb] fragments) *)
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 (* [client_run]'s merge_sort instances are [#[local]] in [yjs_store_base];
    the run-list lemmas here need them again. *)
@@ -888,6 +889,208 @@ Proof.
   apply list_elem_of_fmap. exists x. split; [done | exact (Hsub x Hx)].
 Qed.
 
+(* ===== no-loss id conservation of the drain (this branch) =================
+   The [wire_drain] loop can retire a pending wire item three ways: integrate
+   it (into [applied]), keep it for a later pass (into [rest], possibly deduped
+   by id via [pending_keep]), or skip it because its id is already in the doc
+   model ([doc_model_has], a re-delivered struct). These lemmas prove none of
+   the three loses the item: EVERY pending item is accounted for at the id
+   level -- some applied item shares its id, some kept item shares its id, or
+   the final model already carries its id. [wp_store__applyUpdate_certs] turns
+   this into the per-input guarantee that each input is either delivered into
+   the history or buffered in the new pending: no input silently vanishes. *)
+
+(** [doc_model_has] is monotone under a doc model that only grows per type. *)
+Lemma docm_has_mono (m m' : DocModel) (i : YjsId) :
+  (∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m' t) ->
+  doc_model_has m i = true -> doc_model_has m' i = true.
+Proof.
+  move=> Hmono Hh. apply docm_has_spec in Hh. apply docm_has_spec.
+  destruct Hh as (t & x & Hx & Hid). exists t, x. split; [exact (Hmono t x Hx) | exact Hid].
+Qed.
+
+(** [integrate_all] only splices: it preserves membership of its base list. *)
+Lemma integrate_all_preserves_mem (ops : list (IntegrateInput (A := A)))
+    (arr arr' : list (YjsItem A)) :
+  integrate_all ops arr = Some arr' -> ∀ x, x ∈ arr -> x ∈ arr'.
+Proof.
+  elim: ops arr => [| op ops IH] arr /=.
+  - move=> [= <-] x Hx //.
+  - move=> Hbind x Hx.
+    destruct (integrate op arr) as [arr0 |] eqn:Hint; simpl in Hbind; last done.
+    exact (IH arr0 Hbind x (integrate_preserves_mem op arr arr0 Hint x Hx)).
+Qed.
+
+(** [wire_integrate] preserves membership of the target type's item list. *)
+Lemma wire_integrate_preserves_mem (m : DocModel)
+    (typedInput : TId * IntegrateInput (A := A)) (arr' : list (YjsItem A)) :
+  wire_integrate m typedInput = Some arr' ->
+  ∀ x, x ∈ doc_model_get m typedInput.1 -> x ∈ arr'.
+Proof. rewrite /wire_integrate. apply integrate_all_preserves_mem. Qed.
+
+(** A wire replay only grows the doc model, per type. *)
+Lemma WireReplay_mem (m m' : DocModel) (applied : list (TId * IntegrateInput (A := A))) :
+  WireReplay m applied m' -> ∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m' t.
+Proof.
+  elim => [m0 | m0 typedInput arr' rest0 m0' _ _ Hint _ IH] t x Hx; first exact Hx.
+  apply IH.
+  destruct (decide (t = typedInput.1)) as [-> | Hne].
+  - rewrite docm_get_insert_eq. exact (wire_integrate_preserves_mem m0 typedInput arr' Hint x Hx).
+  - rewrite (docm_get_insert_ne m0 typedInput.1 t arr' Hne) //.
+Qed.
+
+(** A single pass grows the doc model (per type). *)
+Lemma wire_pass_model_grows (pending : list (TId * IntegrateInput (A := A))) :
+  ∀ m kept app kept' m',
+    wire_pass m pending kept = (app, kept', m') ->
+    ∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m' t.
+Proof.
+  move=> m kept app kept' m' Hpass.
+  exact (WireReplay_mem m m' app (wire_pass_replay pending m kept app kept' m' Hpass)).
+Qed.
+
+(** A drain (fuelled) grows the doc model (per type). *)
+Lemma wire_drain_aux_model_grows (fuel : nat) (m : DocModel)
+    (pending app rest : list (TId * IntegrateInput (A := A))) (m' : DocModel) :
+  wire_drain_aux fuel m pending = (app, rest, m') ->
+  ∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m' t.
+Proof.
+  move=> Hdr.
+  exact (WireReplay_mem m m' app (wire_drain_aux_replay fuel m pending app rest m' Hdr)).
+Qed.
+
+(** [pending_keep] never drops a kept item. *)
+Lemma pending_keep_incl_l (kept : list (TId * IntegrateInput (A := A)))
+    (typedInput : TId * IntegrateInput (A := A)) :
+  ∀ y, y ∈ kept -> y ∈ pending_keep kept typedInput.
+Proof.
+  move=> y Hy. rewrite /pending_keep.
+  destruct (existsb (λ typedInput2, bool_decide (in_id typedInput2.2 = in_id typedInput.2)) kept);
+    [exact Hy | apply elem_of_app; by left].
+Qed.
+
+(** [pending_keep kept ti] always contains an item with [ti]'s id: either the
+    pre-existing duplicate it dedups against, or [ti] itself appended. *)
+Lemma pending_keep_has_id (kept : list (TId * IntegrateInput (A := A)))
+    (typedInput : TId * IntegrateInput (A := A)) :
+  ∃ y, y ∈ pending_keep kept typedInput ∧ in_id y.2 = in_id typedInput.2.
+Proof.
+  rewrite /pending_keep.
+  destruct (existsb (λ typedInput2, bool_decide (in_id typedInput2.2 = in_id typedInput.2)) kept) eqn:Hex.
+  - apply existsb_exists in Hex. destruct Hex as [y [Hy Hid]].
+    apply bool_decide_eq_true in Hid. exists y.
+    split; [apply list_elem_of_In; exact Hy | exact Hid].
+  - exists typedInput.
+    split; [apply elem_of_app; right; apply elem_of_cons; by left | done].
+Qed.
+
+(** A pass keeps every item it started with. *)
+Lemma wire_pass_kept_incl (pending : list (TId * IntegrateInput (A := A))) :
+  ∀ m kept app kept' m',
+    wire_pass m pending kept = (app, kept', m') ->
+    ∀ y, y ∈ kept -> y ∈ kept'.
+Proof.
+  elim: pending => [| ti0 tl IH] m kept app kept' m' /=.
+  - move=> [= _ <- _] y Hy //.
+  - destruct (doc_model_has m (in_id ti0.2)).
+    { move=> Hpass y Hy. exact (IH m kept app kept' m' Hpass y Hy). }
+    destruct (input_ready m ti0.2); last first.
+    { move=> Hpass y Hy.
+      exact (IH m (pending_keep kept ti0) app kept' m' Hpass y (pending_keep_incl_l kept ti0 y Hy)). }
+    destruct (wire_integrate m ti0) as [arr' |]; last first.
+    { move=> Hpass y Hy.
+      exact (IH m (pending_keep kept ti0) app kept' m' Hpass y (pending_keep_incl_l kept ti0 y Hy)). }
+    destruct (wire_pass (<[ti0.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    move=> [= _ <- _] y Hy. exact (IH (<[ti0.1 := arr']> m) kept app0 kept0 m0 Hrec y Hy).
+Qed.
+
+(** Single-pass id conservation: every item in [pending] is applied (by id) in
+    [app], kept (by id) in [kept'], or its id is already in the pass's final
+    model [m']. *)
+Lemma wire_pass_id_conservation (pending : list (TId * IntegrateInput (A := A))) :
+  ∀ m kept app kept' m',
+    wire_pass m pending kept = (app, kept', m') ->
+    ∀ x, x ∈ pending ->
+      (∃ y, y ∈ app ∧ in_id y.2 = in_id x.2) ∨
+      (∃ y, y ∈ kept' ∧ in_id y.2 = in_id x.2) ∨
+      doc_model_has m' (in_id x.2) = true.
+Proof.
+  elim: pending => [| ti0 tl IH] m kept app kept' m' /=.
+  - move=> [= <- <- <-] x Hx. by apply elem_of_nil in Hx.
+  - destruct (doc_model_has m (in_id ti0.2)) eqn:Hdup.
+    { move=> Hpass x Hx. apply elem_of_cons in Hx. destruct Hx as [-> | Hx].
+      - right; right.
+        exact (docm_has_mono m m' (in_id ti0.2)
+                 (wire_pass_model_grows tl m kept app kept' m' Hpass) Hdup).
+      - exact (IH m kept app kept' m' Hpass x Hx). }
+    destruct (input_ready m ti0.2) eqn:Hready; last first.
+    { move=> Hpass x Hx. apply elem_of_cons in Hx. destruct Hx as [-> | Hx].
+      - right; left. destruct (pending_keep_has_id kept ti0) as [y [Hy Hid]].
+        exists y. split;
+          [exact (wire_pass_kept_incl tl m (pending_keep kept ti0) app kept' m' Hpass y Hy) | exact Hid].
+      - exact (IH m (pending_keep kept ti0) app kept' m' Hpass x Hx). }
+    destruct (wire_integrate m ti0) as [arr' |] eqn:Hint; last first.
+    { move=> Hpass x Hx. apply elem_of_cons in Hx. destruct Hx as [-> | Hx].
+      - right; left. destruct (pending_keep_has_id kept ti0) as [y [Hy Hid]].
+        exists y. split;
+          [exact (wire_pass_kept_incl tl m (pending_keep kept ti0) app kept' m' Hpass y Hy) | exact Hid].
+      - exact (IH m (pending_keep kept ti0) app kept' m' Hpass x Hx). }
+    destruct (wire_pass (<[ti0.1 := arr']> m) tl kept) as [[app0 kept0] m0] eqn:Hrec.
+    move=> [= <- <- <-] x Hx. apply elem_of_cons in Hx. destruct Hx as [-> | Hx].
+    + left. exists ti0. split; [apply elem_of_cons; by left | done].
+    + destruct (IH (<[ti0.1 := arr']> m) kept app0 kept0 m0 Hrec x Hx)
+        as [[y [Hy Hid]] | [[y [Hy Hid]] | Hh]].
+      * left. exists y. split; [apply elem_of_cons; by right | exact Hid].
+      * right; left. exists y. by split.
+      * right; right. exact Hh.
+Qed.
+
+(** Fuelled-drain id conservation. *)
+Lemma wire_drain_aux_id_conservation (fuel : nat) :
+  ∀ (m : DocModel) (pending applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel),
+    wire_drain_aux fuel m pending = (applied, rest, m') ->
+    ∀ x, x ∈ pending ->
+      (∃ y, y ∈ applied ∧ in_id y.2 = in_id x.2) ∨
+      (∃ y, y ∈ rest ∧ in_id y.2 = in_id x.2) ∨
+      doc_model_has m' (in_id x.2) = true.
+Proof.
+  elim: fuel => [| f IH] m pending applied rest m' /=.
+  - move=> [= <- <- <-] x Hx. right; left. exists x. by split.
+  - destruct (wire_pass m pending []) as [[app kept] m0] eqn:Hpass.
+    destruct app as [| a app0].
+    { move=> [= <- <- <-] x Hx.
+      destruct (wire_pass_id_conservation pending m [] [] kept m0 Hpass x Hx)
+        as [[y [Hy _]] | Hrest]; [by apply elem_of_nil in Hy | by right]. }
+    destruct (wire_drain_aux f m0 kept) as [[app2 rest2] m2] eqn:Hrec.
+    move=> [= <- <- <-] x Hx.
+    destruct (wire_pass_id_conservation pending m [] (a :: app0) kept m0 Hpass x Hx)
+      as [[y [Hy Hid]] | [[y [Hy Hid]] | Hh]].
+    + (* [applied = (a :: app0) ++ app2] normalises to the cons [a :: _], so go
+         via [elem_of_cons] rather than [elem_of_app] *)
+      left. exists y. split; [| exact Hid].
+      apply elem_of_cons in Hy. apply elem_of_cons.
+      destruct Hy as [-> | Hy]; [by left | right; apply elem_of_app; by left].
+    + destruct (IH m0 kept app2 rest2 m2 Hrec y Hy)
+        as [[z [Hz Hzid]] | [[z [Hz Hzid]] | Hzh]].
+      * left. exists z. split; [| by rewrite Hzid].
+        apply elem_of_cons; right; apply elem_of_app; by right.
+      * right; left. exists z. split; [exact Hz | by rewrite Hzid].
+      * right; right. by rewrite -Hid.
+    + right; right.
+      exact (docm_has_mono m0 m2 (in_id x.2)
+               (wire_drain_aux_model_grows f m0 kept app2 rest2 m2 Hrec) Hh).
+Qed.
+
+(** THE no-loss lemma: draining [pending] loses no item's id. *)
+Lemma wire_drain_id_conservation (m : DocModel)
+    (pending applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel) :
+  wire_drain m pending = (applied, rest, m') ->
+  ∀ x, x ∈ pending ->
+    (∃ y, y ∈ applied ∧ in_id y.2 = in_id x.2) ∨
+    (∃ y, y ∈ rest ∧ in_id y.2 = in_id x.2) ∨
+    doc_model_has m' (in_id x.2) = true.
+Proof. rewrite /wire_drain. apply wire_drain_aux_id_conservation. Qed.
+
 (* ===== wire chunk -> per-char PendingReplay bridge (issue #40 x #28 U7c) ===
    A WIRE item integrates its whole run atomically ([wire_integrate] =
    [integrate_all] over [ops_of_input]); the certificate layer needs the
@@ -1554,6 +1757,35 @@ Proof.
   exact (ValidReplay_applied_nonempty (expand_inputs applied) m m' Hvr (typedInput.1, fop) Hmem).
 Qed.
 
+(** No-loss accounting for one input [x] after a drain, over the resulting
+    delivered history [h'] and the leftover pending buffer [rest]: either [x]'s
+    id was DELIVERED into [h'] (registered as some op there, whether freshly
+    applied by this batch or already present from a prior delivery) or it is
+    BUFFERED by id in [rest]. This is the per-input guarantee that no update is
+    silently dropped. (Interference means we cannot pin down WHICH of the two
+    happens, nor the exact op, only that one of them does: [wire_drain] dedups
+    by id and skips already-integrated ids, so the guarantee is at the id
+    level.) *)
+Definition input_accounted (h' : list Ev)
+    (rest : list (TId * IntegrateInput (A := A)))
+    (x : TId * IntegrateInput (A := A)) : Prop :=
+  (∃ (t : TId) (input : IntegrateInput (A := A)),
+     (t, OpInsert input) ∈ delivered_ops h' ∧ in_id input = in_id x.2) ∨
+  (∃ y, y ∈ rest ∧ in_id y.2 = in_id x.2).
+
+(** [input_accounted] at the id level: an accounted input's id is either in the
+    delivered-id set of [h'] or in the pending-id set of [rest]. This is what
+    lets [applyUpdate] both re-establish [accepted_coh] and mint the receipts. *)
+Lemma input_accounted_id (h' : list Ev)
+    (rest : list (TId * IntegrateInput (A := A))) (x : TId * IntegrateInput (A := A)) :
+  input_accounted h' rest x -> in_id x.2 ∈ delivered_ids h' ∪ pending_id_set rest.
+Proof.
+  move=> [[t [input [Hdel Hid]]] | [y [Hy Hid]]].
+  - apply elem_of_union_l, elem_of_delivered_ids.
+    exists (t, OpInsert input). split; [by apply elem_of_delivered_ops_ev | by rewrite -Hid].
+  - apply elem_of_union_r, elem_of_pending_id_set. by exists y.
+Qed.
+
 (** [applyUpdate], the PUBLIC certificate spec (issue #40): the whole store
     state is ONE [own_store] before and after. The incoming batch carries its
     persistent certificates and its rooted-head witnesses; there is NO
@@ -1565,7 +1797,9 @@ Qed.
     is foreign (a replica never receives its own insert back before minting
     the next one: per-author FIFO), and each applied struct yields one
     monotone content certificate [is_root_lb] at its root's full
-    post-delivery item set. *)
+    post-delivery item set. Finally, the batch is not lost: every input is
+    accounted for ([input_accounted]) -- delivered into the new history or
+    buffered by id in the new pending [rest] -- so nothing silently vanishes. *)
 Lemma wp_store__applyUpdate_certs (s_loc : loc) (sl : slice.t) (dq : dfrac)
     (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
@@ -1586,6 +1820,8 @@ Lemma wp_store__applyUpdate_certs (s_loc : loc) (sl : slice.t) (dq : dfrac)
       ⌜wire_drain m (pend ++ inputs) = (applied, rest, m')⌝ ∗
       ⌜ValidReplay (expand_inputs applied) m m'⌝ ∗
       ⌜inputs_not_from (expand_inputs applied) c⌝ ∗
+      ⌜∀ x, x ∈ inputs ->
+         input_accounted (h ++ (deliver_ev <$> expand_inputs applied)) rest x⌝ ∗
       is_applied_root_lb γs applied m' }}}.
 Proof using Type*.
   move=> Hnowrapb Hrooted.
@@ -1704,12 +1940,56 @@ Proof using Type*.
       as [Hold | (i & typedInput & Hi & Hid)].
     - exact (Hctr t x Hold Hcx).
     - exfalso. apply (Hnoc typedInput (list_elem_of_lookup_2 _ _ _ Hi)). by rewrite -Hid. }
+  (* no input is lost: each is delivered into the new history (applied this
+     batch, or already present) or buffered by id in the new pending [rest'] *)
+  have Hnoloss : ∀ x, x ∈ pend ++ inputs ->
+      input_accounted (h ++ (deliver_ev <$> expand_inputs applied)) rest' x.
+  { move=> x Hxin'. rewrite /input_accounted.
+    destruct (wire_drain_id_conservation m (pend ++ inputs) applied rest' m' Hdrainc x Hxin')
+      as [[y [Hy Hid]] | [[y [Hy Hid]] | Hh]].
+    - (* applied by id: the head char of [y] is delivered in the new history *)
+      left.
+      have Hyne : (1 <= length (in_content y.2))%nat := Hnonemptyb y (Happsub y Hy).
+      have [fop Hfop] : is_Some (ops_of_input y.2 (explode (in_content y.2)) !! 0%nat).
+      { apply lookup_lt_is_Some_2. rewrite /ops_of_input ops_from_length explode_length. lia. }
+      have Hidfop : in_id fop = in_id y.2.
+      { destruct (ops_from_lookup (clientId (in_id y.2)) (clock (in_id y.2))
+                    (in_originId y.2) (in_rightOriginId y.2) (explode (in_content y.2)) 0%nat fop Hfop)
+          as [Hidop _].
+        rewrite Hidop Nat.add_0_r. by destruct (in_id y.2). }
+      have Hmemexp : (y.1, fop) ∈ expand_inputs applied.
+      { rewrite /expand_inputs. apply list_elem_of_join. exists (expand_input y).
+        split; [| by apply list_elem_of_fmap_2].
+        apply (list_elem_of_lookup_2 _ 0%nat). by apply expand_input_lookup. }
+      exists y.1, fop. split.
+      + rewrite delivered_ops_app. apply elem_of_app. right.
+        rewrite delivered_ops_deliver_batch. apply list_elem_of_fmap.
+        exists (y.1, fop). split; [done | exact Hmemexp].
+      + rewrite Hidfop. exact Hid.
+    - (* kept by id in the leftover pending *)
+      right. exists y. split; [exact Hy | exact Hid].
+    - (* already present in the final model: delivered by [docm_mem_delivered] *)
+      left.
+      apply docm_has_spec in Hh. destruct Hh as (t & xitem & Hxit & Hxitid).
+      destruct (docm_mem_delivered (h ++ (deliver_ev <$> expand_inputs applied)) m' t xitem Hcoh' Hxit)
+        as (input & Hdel & Hinid).
+      exists t, input. split; [exact Hdel | rewrite Hinid; exact Hxitid]. }
+  have Hnoloss_in : ∀ x, x ∈ inputs ->
+      input_accounted (h ++ (deliver_ev <$> expand_inputs applied)) rest' x.
+  { move=> x Hx. apply Hnoloss, elem_of_app. by right. }
+  (* transport the accepted-set coherence across the drain to (h', rest') *)
+  have Hdids : delivered_ids h
+             ⊆ delivered_ids (h ++ (deliver_ev <$> expand_inputs applied)).
+  { rewrite delivered_ids_app. apply union_subseteq_l. }
+  have Hacccoh' : accepted_coh acc (h ++ (deliver_ev <$> expand_inputs applied)) rest'.
+  { apply (accepted_coh_applyUpdate acc h _ pend rest' Hacccoh Hdids).
+    move=> x Hx. apply input_accounted_id, Hnoloss, elem_of_app. by left. }
   iModIntro. iApply ("HΦ" $! applied rest' m').
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
-  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hhist";
-    last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc]).
-  iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind'.
-  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hbinds' Hhist".
+  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hhist Hacc";
+    last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc | exact Hnoloss_in]).
+  iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind', acc.
+  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hbinds' Hhist Hacc".
   iFrame "Hpendcert'".
   iPureIntro. split_and!.
   - exact Hclientc.
@@ -1724,6 +2004,7 @@ Proof using Type*.
   - exact Hrangedisj'.
   - exact Hfits'.
   - exact Horiginclk'.
+  - exact Hacccoh'.
 Qed.
 
 End store_update.

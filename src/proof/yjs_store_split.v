@@ -37,6 +37,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 (* the grow-only item-set RA (the certificate proofs grow the [sn_seq]
    authority and mint [is_type_lb] fragments) *)
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 (* [client_run]'s merge_sort instances are [#[local]] in [yjs_store_base];
    the run-list lemmas here need them again. *)

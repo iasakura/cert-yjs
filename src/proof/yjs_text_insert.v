@@ -32,6 +32,7 @@ Set Default Proof Using "Type*".
 
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
@@ -74,6 +75,9 @@ Proof.
   subst s_loc.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
   iNamed "Hinv". iNamed "Hexcl". iNamed "Hro".
+  (* snapshot the lock-time history: only appends happen under the lock, so at
+     Unlock the accepted-set coherence transports across the (grown) history *)
+  iDestruct (own_client_history_lb with "Hhist") as "[Hhist #Hlb_h]".
   iDestruct (auth_gmap_gset_lookup with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS.
   apply fmap_Some in HmS as (ts & Htsp & ->).
@@ -97,14 +101,15 @@ Proof.
       iFrame "Hrest". iSplitL "Hparent Hdll".
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. exact Hinvarr. }
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist]").
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist Hacc]").
     { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
+      iExists acc.
       iFrame "∗#". iPureIntro.
       split_and!;
         [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup | exact Hrangedisj
         | exact Hrunfits | exact Horiginclk | exact Hbindtypes | exact Hbindinj
-        | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom]. }
+        | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom | exact Hacccoh]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
@@ -130,14 +135,15 @@ Proof.
       iFrame "Hrest". iSplitL "Hparent Hdll".
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. exact Hinvarr. }
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist]").
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist Hacc]").
     { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
+      iExists acc.
       iFrame "∗#". iPureIntro.
       split_and!;
         [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup | exact Hrangedisj
         | exact Hrunfits | exact Horiginclk | exact Hbindtypes | exact Hbindinj
-        | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom]. }
+        | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom | exact Hacccoh]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
@@ -853,7 +859,7 @@ Proof.
       simpl in Hh. by rewrite /= Hh. }
     wp_for_post.
     (* re-establish the loop invariant for [S j] with [ins ++ [newItem]] *)
-    iFrame "Ht His_lb HΦ HisRp Hpendf Hpend".
+    iFrame "Ht His_lb HΦ HisRp Hpendf Hpend Hacc".
     iExists (S j), arr', cells', oL2, (ins ++ [newItem]),
       (hj ++ [EvBroadcast (RootId name, OpInsert input);
               EvDeliver (RootId name, OpInsert input)]).
@@ -1022,14 +1028,21 @@ Proof.
     rewrite big_sepM_insert; last apply lookup_delete_eq.
     iFrame "Hrest". simpl. iFrame "Htextj".
     iPureIntro. exact Hinvj. }
-  wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhistj]").
+  (* transport the accepted-set coherence across the history the loop grew:
+     only appends happened under the lock ([h] is a prefix of [hj]), so
+     [delivered_ids] only grew and [accepted_coh] still holds at [hj] *)
+  iDestruct (is_history_lb_prefix with "Hhistj Hlb_h") as %Hpref_hj.
+  have Hacccoh' : accepted_coh acc hj pend.
+  { eapply accepted_coh_hist_grow; [exact Hacccoh | exact (delivered_ids_prefix _ _ Hpref_hj)]. }
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhistj Hacc]").
   { iNext. iExists client, (W64 (uint.Z k + j)), items_mref, types_mref, dset,
       pend_sl,
       (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types), bind, hj,
       (<[RootId name := arr]> m), pend.
     iSplitR "Hseq Htypes"; last first.
     { rewrite /store_inv_ro fmap_insert /=. iFrame "Hseq Htypes". }
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhistj HtypesAuth Hbinds".
+    iExists acc.
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhistj HtypesAuth Hbinds Hacc".
     iFrame "Hpendcert".
     iPureIntro. split_and!.
     - exact Hpendroot.
@@ -1070,7 +1083,8 @@ Proof.
     - move=> t' Hne'.
       destruct (decide (t' = RootId name)) as [-> | Hnr].
       + exists name, (tv.(yjs.Text.inner')). split; [reflexivity | exact Hbindlk].
-      + rewrite docm_get_insert_ne // in Hne'. exact (Hmdom t' Hne'). }
+      + rewrite docm_get_insert_ne // in Hne'. exact (Hmdom t' Hne').
+    - exact Hacccoh'. }
   iApply ("HΦ" $! arr ins (uint.nat client) (uint.nat k) originLeft originRight).
   iSplitL "Hfrag Ht".
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'). iFrame "Ht His_store His_hist Hbind Hfrag". iPureIntro. split_and!; [reflexivity | reflexivity | exact (yai_sorted _ Hinvj)]. }
