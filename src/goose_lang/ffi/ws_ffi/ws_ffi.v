@@ -66,7 +66,13 @@ Section ws.
           ghost_map_auth ws_recvd_name 1 g.(ws_recvd) ∗
           (* a copy of every message fact, so a receiver can extract one
              without holding anything of the sender's *)
-          ([∗ map] k ↦ d ∈ g.(ws_msgs), k ↪[ws_msgs_name]□ d))%I;
+          ([∗ map] k ↦ d ∈ g.(ws_msgs), k ↪[ws_msgs_name]□ d) ∗
+          (* the physical well-formedness of impl.v, carried here so the Iris
+             layer can read one fact off it: a message index on a channel with
+             a modeled sender is below that sender's cursor. A receiver needs
+             exactly that to tie the message it consumed to what the sender
+             recorded about it. *)
+          ⌜ws_wf g⌝)%I;
        ffi_local_start _ _ _ := True%I;
        ffi_global_start _ _ g :=
          (([∗ map] c ↦ n ∈ g.(ws_sent), c ↪[ws_sent_name] n) ∗
@@ -203,8 +209,11 @@ Section lifting.
     {{{ RET listen_socket e; True }}}.
   Proof.
     iIntros (Φ) "_ HΦ". iApply (wp_WsOp with "[-]").
-    iIntros "!> * Hl Hg". iModIntro. inv_base_step.
-    iFrame "∗#". iApply wp_value. iFrame. by iApply "HΦ".
+    iIntros "!> * Hl Hg".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & %Hwf)".
+    assert (ws_wf g2) by (eapply ws_wf_step_listen; [exact Hstep | exact Hwf]).
+    iModIntro. inv_base_step.
+    iFrame "∗#%". iApply wp_value. iFrame. by iApply "HΦ".
   Qed.
 
   (** [Connect] allocates the connecting side's two cursors. *)
@@ -216,15 +225,17 @@ Section lifting.
         if err then True else own_send_cursor sc 0 ∗ own_recv_cursor rc 0 }}}.
   Proof.
     iIntros (Φ) "_ HΦ". iApply (wp_WsOp with "[-]").
-    iIntros "!> * Hl Hg". inv_base_step.
-    destruct H0 as [[-> ->] | (sc & rc & Hne & Hfs & Hfr & -> & ->)].
-    - iModIntro. iFrame "∗#". iApply wp_value.
+    iIntros "!> * Hl Hg".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & %Hwf)".
+    assert (ws_wf g2) by (eapply ws_wf_step_connect; [exact Hstep | exact Hwf]).
+    inv_base_step.
+    destruct H1 as [[-> ->] | (sc & rc & Hne & Hfs & Hfr & -> & ->)].
+    - iModIntro. iFrame "∗#%". iApply wp_value.
       iApply ("HΦ" $! true (W64 0) (W64 0)). done.
-    - iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts)".
-      destruct Hfs as (Hfs1 & _ & _). destruct Hfr as (_ & Hfr2 & _).
+    - destruct Hfs as (Hfs1 & _ & _). destruct Hfr as (_ & Hfr2 & _).
       iMod (@ghost_map_insert with "Hsent") as "[Hsent Hsc]"; first done.
       iMod (@ghost_map_insert with "Hrecvd") as "[Hrecvd Hrc]"; first done.
-      iModIntro. iFrame "∗#". iApply wp_value.
+      iModIntro. iFrame "∗#%". iApply wp_value.
       iApply ("HΦ" $! false sc rc). iFrame.
   Qed.
 
@@ -240,8 +251,10 @@ Section lifting.
         own_send_cursor sc 0 ∗ own_recv_cursor rc 0 }}}.
   Proof.
     iIntros (Φ) "_ HΦ". iApply (wp_WsOp with "[-]").
-    iIntros "!> * Hl Hg". inv_base_step.
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts)".
+    iIntros "!> * Hl Hg".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & %Hwf)".
+    assert (ws_wf g2) by (eapply ws_wf_step_accept; [exact Hstep | exact Hwf]).
+    inv_base_step.
     (* both branches allocate the same two cursors; they differ only in the
        accept backlog, which carries no ghost state *)
     (* match on the shape rather than on an auto-generated name, so that adding
@@ -251,7 +264,7 @@ Section lifting.
     end; simpl;
       (iMod (@ghost_map_insert with "Hsent") as "[Hsent Hsc]"; first done);
       (iMod (@ghost_map_insert with "Hrecvd") as "[Hrecvd Hrc]"; first done);
-      iModIntro; iFrame "∗#"; iApply wp_value; iApply ("HΦ" $! x0 x x1); iFrame.
+      iModIntro; iFrame "∗#%"; iApply wp_value; iApply ("HΦ" $! x0 x x1); iFrame.
   Qed.
 
   (** [Send] appends at the cursor. As in grove, an error tells the caller
@@ -265,17 +278,19 @@ Section lifting.
         else own_send_cursor sc (S n) ∗ is_chan_msg sc n data }}}.
   Proof.
     iIntros (Φ) "Hsc HΦ". iApply (wp_WsOp with "[-]").
-    iIntros "!> * Hl Hg". inv_base_step.
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts)".
+    iIntros "!> * Hl Hg".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & %Hwf)".
+    assert (ws_wf g2) by (eapply ws_wf_step_send; [exact Hstep | exact Hwf]).
+    inv_base_step.
     iDestruct (@ghost_map_lookup with "Hsent Hsc") as %Hn.
-    rewrite Hn in H0.
-    destruct H0 as [[-> ->] | (Hfresh & -> & (err_late & ->))].
-    - iModIntro. iFrame "∗#". iApply wp_value.
+    rewrite Hn in H1.
+    destruct H1 as [[-> ->] | (Hfresh & -> & (err_late & ->))].
+    - iModIntro. iFrame "∗#%". iApply wp_value.
       iApply ("HΦ" $! true false). iFrame.
     - iMod (@ghost_map_insert_persist with "Hmsgs") as "[Hmsgs #Hmsg]".
       { done. }
       iMod (@ghost_map_update with "Hsent Hsc") as "[Hsent Hsc]".
-      iModIntro. iFrame "∗#". iSplitR.
+      iModIntro. iFrame "∗#%". iSplitR.
       { iApply big_sepM_insert; [done|]. iFrame "#". }
       iApply wp_value. iApply ("HΦ" $! false err_late). iFrame "∗#".
   Qed.
@@ -290,23 +305,144 @@ Section lifting.
         else own_recv_cursor rc (S n) ∗ is_chan_msg rc n data }}}.
   Proof.
     iIntros (Φ) "Hrc HΦ". iApply (wp_WsOp with "[-]").
-    iIntros "!> * Hl Hg". inv_base_step.
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts)".
+    iIntros "!> * Hl Hg".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & %Hwf)".
+    assert (ws_wf g2) by (eapply ws_wf_step_recv; [exact Hstep | exact Hwf]).
+    inv_base_step.
     iDestruct (@ghost_map_lookup with "Hrecvd Hrc") as %Hn.
-    rewrite Hn in H0.
-    destruct H0 as [[-> ->] | [(data & Hlookup & -> & ->) | (Hext & Hfresh & (data & -> & ->))]].
-    - iModIntro. iFrame "∗#". iApply wp_value.
+    rewrite Hn in H1.
+    destruct H1 as [[-> ->] | [(data & Hlookup & -> & ->) | (Hext & Hfresh & (data & -> & ->))]].
+    - iModIntro. iFrame "∗#%". iApply wp_value.
       iApply ("HΦ" $! true []). iFrame.
     - iDestruct (big_sepM_lookup with "Hmsgfacts") as "#Hmsg"; first exact Hlookup.
       iMod (@ghost_map_update with "Hrecvd Hrc") as "[Hrecvd Hrc]".
-      iModIntro. iFrame "∗#". iApply wp_value.
+      iModIntro. iFrame "∗#%". iApply wp_value.
       iApply ("HΦ" $! false data). iFrame "∗#".
     - iMod (@ghost_map_insert_persist with "Hmsgs") as "[Hmsgs #Hmsg]".
       { done. }
       iMod (@ghost_map_update with "Hrecvd Hrc") as "[Hrecvd Hrc]".
-      iModIntro. iFrame "∗#". iSplitR.
+      iModIntro. iFrame "∗#%". iSplitR.
       { iApply big_sepM_insert; [done|]. iFrame "#". }
       iApply wp_value. iApply ("HΦ" $! false data). iFrame "∗#".
+  Qed.
+
+
+  (** The fact a wire-protocol layer needs, and the reason [ws_wf] is carried in
+      the state interpretation: a message the receiver consumed sits BELOW the
+      sender's cursor, so it is one the sender has already recorded something
+      about. It cannot be stated as a standalone entailment because it is read
+      off the physical state, so it comes as a strengthened receive that also
+      takes the sender's cursor.
+
+      Holding that cursor additionally rules out the environment branch: an
+      environment-fed channel has no modeled sender ([wswf_ext_nosend]), so a
+      channel someone owns the send cursor of never has bytes fabricated on
+      it. *)
+  Lemma wp_WsRecvOp_bounded (sc rc : chan_id) (n m : nat) s E :
+    {{{ own_recv_cursor rc n ∗ own_send_cursor rc m }}}
+      ExternalOp WsRecvOp (connection sc rc) @ s; E
+    {{{ (err : bool) (data : list u8), RET (#err, #data);
+        own_send_cursor rc m ∗
+        (if err then own_recv_cursor rc n
+         else own_recv_cursor rc (S n) ∗ is_chan_msg rc n data ∗ ⌜(n < m)%nat⌝) }}}.
+  Proof.
+    iIntros (Φ) "[Hrc Hsc] HΦ". iApply (wp_WsOp with "[-]").
+    iIntros "!> * Hl Hg".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & %Hwf)".
+    assert (ws_wf g2) by (eapply ws_wf_step_recv; [exact Hstep | exact Hwf]).
+    inv_base_step.
+    iDestruct (@ghost_map_lookup with "Hrecvd Hrc") as %Hn.
+    iDestruct (@ghost_map_lookup with "Hsent Hsc") as %Hm.
+    rewrite Hn in H1.
+    destruct H1 as [[-> ->] | [(data & Hlookup & -> & ->) | (Hext & Hfresh & (data & -> & ->))]].
+    - iModIntro. iFrame "∗#%". iApply wp_value.
+      iApply ("HΦ" $! true []). iFrame.
+    - iDestruct (big_sepM_lookup with "Hmsgfacts") as "#Hmsg"; first exact Hlookup.
+      assert (n < m)%nat as Hlt.
+      { destruct (wswf_sent_seg _ Hwf rc m Hm n) as [Hto _].
+        apply Hto. rewrite Hlookup. eauto. }
+      iMod (@ghost_map_update with "Hrecvd Hrc") as "[Hrecvd Hrc]".
+      iModIntro. iFrame "∗#%". iApply wp_value.
+      iApply ("HΦ" $! false data). iFrame "∗#%".
+    - (* impossible: an environment-fed channel has no send cursor *)
+      exfalso. rewrite (wswf_ext_nosend _ Hwf rc Hext) in Hm. done.
+  Qed.
+
+  (** * Rules for a cursor that lives in an invariant
+
+      [ExternalOp] is not [Atomic]: [ffi_step] carries a stuttering disjunct (a
+      step to itself), which is what makes every operation unconditionally
+      reducible but also means it does not reduce to a value in one step. So a
+      caller cannot open an invariant AROUND the operation. These variants take
+      the cursor through a mask-changing update instead and open it HERE,
+      inside the one place that knows the stuttering branch changes nothing:
+      [wp_WsOp] handles that branch itself and never runs the continuation.
+
+      They stay FFI-generic: no protocol, no application predicate. *)
+
+  Lemma wp_WsSendOp_inv (sc rc : chan_id) (data : list u8) s E1 E2 (Φ : val -> iProp Σ) :
+    E2 ⊆ E1 ->
+    (|={E1,E2}=> ∃ n : nat, own_send_cursor sc n ∗
+       (∀ (err_early err_late : bool),
+          (if err_early then own_send_cursor sc n
+           else own_send_cursor sc (S n) ∗ is_chan_msg sc n data)
+          ={E2,E1}=∗ Φ #(err_early || err_late)))
+    -∗ WP ExternalOp WsSendOp (connection sc rc, #data)%V @ s; E1 {{ Φ }}.
+  Proof.
+    iIntros (HE) "Hau". iApply (wp_WsOp with "[-]").
+    iIntros "!> * Hl Hg".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & %Hwf)".
+    assert (ws_wf g2) by (eapply ws_wf_step_send; [exact Hstep | exact Hwf]).
+    inv_base_step.
+    iMod "Hau" as (n) "[Hsc Hclose]".
+    iDestruct (@ghost_map_lookup with "Hsent Hsc") as %Hn.
+    rewrite Hn in H1.
+    destruct H1 as [[-> ->] | (Hfresh & -> & (err_late & ->))].
+    - iMod ("Hclose" $! true false with "Hsc") as "HΦ".
+      iModIntro. iFrame "∗#%". iApply wp_value. iFrame.
+    - iMod (@ghost_map_insert_persist with "Hmsgs") as "[Hmsgs #Hmsg]".
+      { done. }
+      iMod (@ghost_map_update with "Hsent Hsc") as "[Hsent Hsc]".
+      iMod ("Hclose" $! false err_late with "[$Hsc]") as "HΦ".
+      { iFrame "#". }
+      iModIntro. iFrame "∗#%". iSplitR.
+      { iApply big_sepM_insert; [done|]. iFrame "#". }
+      iApply wp_value. iFrame.
+  Qed.
+
+  Lemma wp_WsRecvOp_bounded_inv (sc rc : chan_id) (n : nat) s E1 E2 (Φ : val -> iProp Σ) :
+    E2 ⊆ E1 ->
+    own_recv_cursor rc n -∗
+    (|={E1,E2}=> ∃ m : nat, own_send_cursor rc m ∗
+       (∀ (err : bool) (data : list u8),
+          own_send_cursor rc m ∗
+          (if err then own_recv_cursor rc n
+           else own_recv_cursor rc (S n) ∗ is_chan_msg rc n data ∗ ⌜(n < m)%nat⌝)
+          ={E2,E1}=∗ Φ (#err, #data)%V))
+    -∗ WP ExternalOp WsRecvOp (connection sc rc) @ s; E1 {{ Φ }}.
+  Proof.
+    iIntros (HE) "Hrc Hau". iApply (wp_WsOp with "[-]").
+    iIntros "!> * Hl Hg".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & %Hwf)".
+    assert (ws_wf g2) by (eapply ws_wf_step_recv; [exact Hstep | exact Hwf]).
+    inv_base_step.
+    iMod "Hau" as (m) "[Hsc Hclose]".
+    iDestruct (@ghost_map_lookup with "Hrecvd Hrc") as %Hn.
+    iDestruct (@ghost_map_lookup with "Hsent Hsc") as %Hm.
+    rewrite Hn in H1.
+    destruct H1 as [[-> ->] | [(data & Hlookup & -> & ->) | (Hext & Hfresh & (data & -> & ->))]].
+    - iMod ("Hclose" $! true [] with "[$Hsc $Hrc]") as "HΦ".
+      iModIntro. iFrame "∗#%". iApply wp_value. iFrame.
+    - iDestruct (big_sepM_lookup with "Hmsgfacts") as "#Hmsg"; first exact Hlookup.
+      assert (n < m)%nat as Hlt.
+      { destruct (wswf_sent_seg _ Hwf rc m Hm n) as [Hto _].
+        apply Hto. rewrite Hlookup. eauto. }
+      iMod (@ghost_map_update with "Hrecvd Hrc") as "[Hrecvd Hrc]".
+      iMod ("Hclose" $! false data with "[$Hsc $Hrc]") as "HΦ".
+      { iFrame "#%". }
+      iModIntro. iFrame "∗#%". iApply wp_value. iFrame.
+    - (* impossible: an environment-fed channel has no send cursor *)
+      exfalso. rewrite (wswf_ext_nosend _ Hwf rc Hext) in Hm. done.
   Qed.
 
 End lifting.
@@ -320,11 +456,11 @@ Program Instance ws_interp_adequacy {go_gctx : GoGlobalContext} :
   {| ffiGpreS := wsGpreS;
      ffiΣ := wsΣ;
      subG_ffiPreG := subG_wsGpreS;
-     ffi_initgP := λ g, True;
+     ffi_initgP := λ g, ws_wf g;
      ffi_initP := λ σ g, True;
   |}.
 Next Obligation.
-  rewrite //=. iIntros (_ Σ hPre g _).
+  rewrite //=. iIntros (_ Σ hPre g Hinit).
   iMod (ghost_map_alloc g.(ws_msgs)) as (γm) "[Hm Hmelems]".
   iMod (ghost_map_alloc g.(ws_sent)) as (γs) "[Hs Hselems]".
   iMod (ghost_map_alloc g.(ws_recvd)) as (γr) "[Hr Hrelems]".
@@ -333,7 +469,7 @@ Next Obligation.
     with "[Hmelems]" as ">#Hmfacts".
   { iApply big_sepM_bupd. iApply (big_sepM_mono with "Hmelems").
     iIntros (k d Hk) "H". by iApply ghost_map_elem_persist. }
-  iModIntro. iExists (WsGS _ _ _ γm γs γr). iFrame "∗#".
+  iModIntro. iExists (WsGS _ _ _ γm γs γr). iFrame "∗#%".
 Qed.
 Next Obligation.
   rewrite //=. iIntros (_ Σ hPre σ ??). iExists tt. eauto.

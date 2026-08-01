@@ -26,12 +26,20 @@ From New.proof Require Import proof_prelude.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import wsrelay.
 From New.proof.sync_proof Require Import base mutex.
 From New.goose_lang.ffi.ws_ffi Require Import ws_ffi.
+From New.proof Require Import ws_wire.
 
 Section proof.
 Context {Σ : gFunctors} {hG : heapGS Σ}.
 Context {sem : go.Semantics}.
 Context {sync_pkg : sync.Assumptions}.
 Context {wsnet_pkg : wsnet.Assumptions} {wsrelay_pkg : wsrelay.Assumptions}.
+
+(** The protocol every packet in the room satisfies. The room is generic in it;
+    the Yjs server instantiates it with "decodes to a batch of ops registered in
+    the history". *)
+Context (Φw : list w8 -> iProp Σ).
+Context `{!∀ data, Persistent (Φw data)}.
+Context `{!∀ data, Timeless (Φw data)}.
 
 #[global] Instance : IsPkgInit (iProp Σ) wsnet := define_is_pkg_init True%I.
 #[global] Instance : GetIsPkgInitWf (iProp Σ) wsnet := build_get_is_pkg_init_wf.
@@ -40,12 +48,16 @@ Context {wsnet_pkg : wsnet.Assumptions} {wsrelay_pkg : wsrelay.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-(** The right to answer one connection: its handle plus its send cursor,
-    wherever that cursor has reached. Sending advances the cursor but keeps this
-    shape, which is what makes it a loop invariant for the fan-out. *)
-Definition own_conn_send (c : loc) : iProp Σ :=
-  ∃ (sc rc : chan_id) (n : nat),
-    is_Connection c sc rc ∗ own_send_cursor sc n.
+(** The right to answer one connection. The send cursor itself now lives in the
+    channel's wire invariant, so what the room holds per connection is
+    PERSISTENT: the handle and the fact that the channel carries the protocol.
+    Sending is no longer a matter of owning a cursor, it is a matter of
+    discharging [Φw data]. *)
+Definition is_conn_send (c : loc) : iProp Σ :=
+  ∃ (sc rc : chan_id), is_Connection c sc rc ∗ is_chan_wire Φw sc.
+
+#[global] Instance is_conn_send_persistent c : Persistent (is_conn_send c).
+Proof. apply _. Qed.
 
 (** The room's lock body: the connection table, and the send side of every
     connection in it. A slice rather than a map: Perennial's [wp_map_for_range]
@@ -57,7 +69,7 @@ Definition room_inv (r : loc) : iProp Σ :=
     "Hconnsf" ∷ (r .[(wsrelay.Room.t), "conns"]) ↦ sl ∗
     "Hconns"  ∷ sl ↦* cs ∗
     "Hcap"    ∷ own_slice_cap wsnet.Connection.t sl (DfracOwn 1) ∗
-    "Hsends"  ∷ ([∗ list] c ∈ cs, own_conn_send c).
+    "Hsends"  ∷ ([∗ list] c ∈ cs, is_conn_send c).
 
 (** Room handle (persistent): the [sync.Mutex] embedded at [&Room.mu] guarding
     [room_inv]. Persistent, so every connection's goroutine holds a copy. *)
@@ -83,16 +95,18 @@ Proof.
   by iApply big_sepL_nil.
 Qed.
 
-(** [Join] HANDS OVER the connection's send side to the room. After it the
-    caller can no longer answer its own peer; any goroutine in the room can,
-    which is the whole point of collecting the cursors under one lock. *)
-Lemma wp_Room__Join (r c : loc) (sc rc : chan_id) (n : nat) :
+(** [Join] hands the room the right to answer this connection, and in doing so
+    puts the connection under the protocol: the send cursor is consumed into the
+    channel's wire invariant, after which sending is no longer a matter of
+    owning a cursor but of discharging [Φw]. *)
+Lemma wp_Room__Join (r c : loc) (sc rc : chan_id) :
   {{{ is_pkg_init wsrelay ∗ is_Room r ∗
-      is_Connection c sc rc ∗ own_send_cursor sc n }}}
+      is_Connection c sc rc ∗ own_send_cursor sc 0 }}}
     r @! (go.PointerType wsrelay.Room) @! "Join" #c
   {{{ RET #(); True }}}.
 Proof.
   wp_start as "(#Hroom & #Hconn & Hsend)".
+  iMod (chan_wire_alloc Φw sc ⊤ with "Hsend") as "#Hwire".
   wp_auto.
   wp_apply (wp_Mutex__Lock with "[$Hroom]").
   iIntros "[Hlocked Hinv]". iNamed "Hinv".
@@ -102,29 +116,30 @@ Proof.
   wp_apply (wp_slice_append with "[$Hconns $Hcap $Hsl0]").
   iIntros (sl') "(Hconns & Hcap & _)".
   wp_auto.
-  wp_apply (wp_Mutex__Unlock with "[$Hroom $Hlocked Hconnsf Hconns Hcap Hsends Hsend]").
+  wp_apply (wp_Mutex__Unlock with "[$Hroom $Hlocked Hconnsf Hconns Hcap Hsends]").
   { iNext. iExists sl', (cs ++ [c]).
     iFrame "Hconnsf Hconns Hcap".
     rewrite big_sepL_snoc. iFrame "Hsends".
-    iExists sc, rc, n. iFrame "#∗". }
+    iExists sc, rc. iFrame "#". }
   by iApply "HΦ".
 Qed.
 
-(** [Broadcast] relays to every connection in the room but [self]. The loop
-    borrows one connection's send side per iteration and gives it straight
-    back: sending advances that cursor, but [own_conn_send] existentially
-    quantifies where the cursor is, so the room invariant is unchanged across
-    the whole fan-out.
+(** [Broadcast] relays to every connection in the room but [self]. The caller
+    must supply [Φw data]: sending is an obligation. It is discharged once and
+    reused for the whole fan-out, since the protocol is persistent.
+
+    What the room holds per connection is persistent too, so the loop only reads
+    the table; nothing is borrowed and given back.
 
     The postcondition is only the payload slice. Nothing stronger is available,
     and deliberately so: [Send]'s error is ignored here, as in y-websocket, and
     an error says nothing about delivery either way. *)
 Lemma wp_Room__Broadcast (r self : loc) (s : slice.t) (dq : dfrac) (data : list w8) :
-  {{{ is_pkg_init wsrelay ∗ is_Room r ∗ s ↦*{dq} data }}}
+  {{{ is_pkg_init wsrelay ∗ is_Room r ∗ s ↦*{dq} data ∗ Φw data }}}
     r @! (go.PointerType wsrelay.Room) @! "Broadcast" #self #s
   {{{ RET #(); s ↦*{dq} data }}}.
 Proof.
-  wp_start as "(#Hroom & Hs)".
+  wp_start as "(#Hroom & Hs & #HΦw)".
   wp_auto.
   wp_apply (wp_Mutex__Lock with "[$Hroom]").
   iIntros "[Hlocked Hinv]". iNamed "Hinv".
@@ -136,14 +151,13 @@ Proof.
     "Hself" ∷ self_ptr ↦ self ∗
     "Hdata" ∷ data_ptr ↦ s ∗
     "Hconns" ∷ sl ↦* cs ∗
-    "Hsends" ∷ ([∗ list] c ∈ cs, own_conn_send c) ∗
+    "Hsends" ∷ ([∗ list] c ∈ cs, is_conn_send c) ∗
     "Hs" ∷ s ↦*{dq} data)%I
     with "[$i $c $self $data $Hconns $Hsends $Hs]" as "IH".
   { iPureIntro. word. }
   wp_for "IH".
   wp_if_destruct.
-  - (* relay to connection number [i], borrowing its send side and giving it
-       straight back *)
+  - (* relay to connection number [i] *)
     iDestruct (own_slice_len with "Hconns") as %[Hlen Hlen0].
     destruct (cs !! uint.nat i) as [c|] eqn:Hc; last first.
     { exfalso. apply lookup_ge_None in Hc. word. }
@@ -159,18 +173,15 @@ Proof.
     wp_if_destruct.
     + (* the message came from this connection: skip it *)
       wp_for_post. iFrame. iPureIntro. word.
-    + (* relay to it, borrowing its send side and giving it straight back *)
-      iDestruct (big_sepL_lookup_acc _ _ _ _ Hc with "Hsends") as "[Hone Hback]".
-      iDestruct "Hone" as (sc' rc' n') "[#Hconn' Hsend']".
+    + iDestruct (big_sepL_lookup with "Hsends") as "#Hone"; first exact Hc.
+      iDestruct "Hone" as (sc' rc') "[#Hconn' #Hwire']".
       wp_func_call.
-      wp_apply (wp_Send with "[$Hconn' $Hs $Hsend']").
-      iIntros (err) "(Hs & Hres)".
-      iAssert (own_conn_send c) with "[Hres]" as "Hone".
-      { iDestruct "Hres" as "[[_ H] | [H _]]"; iExists sc', rc', _; iFrame "#∗". }
-      iDestruct ("Hback" with "Hone") as "Hsends".
+      wp_apply (wp_wire_Send with "[$Hconn' $Hwire' $Hs]").
+      { iFrame "#". }
+      iIntros (err) "Hs".
       wp_auto.
       wp_for_post. iFrame. iPureIntro. word.
-- (* every connection has been offered the message: release the lock *)
+  - (* every connection has been offered the message: release the lock *)
     wp_apply (wp_Mutex__Unlock with "[$Hroom $Hlocked Hconnsf Hconns Hcap Hsends]").
     { iNext. iExists sl, cs. iFrame. }
     by iApply "HΦ".
@@ -181,20 +192,23 @@ Qed.
     peer's stream arrive in order and exactly once with no lock on the read
     path. Its SEND side is not here: [Join] gave it to the room.
 
-    It returns when the peer stops delivering, handing the cursor back at
-    whatever point it reached. *)
+    [is_chan_wire Φw rc] is the peer's side of the protocol. For a verified peer
+    it was established when that peer joined; for a peer we do not run it is the
+    one assumption of the deployment, and this is where it appears. Everything
+    the relay itself puts back on the wire is an obligation, discharged below
+    from the very fact this hypothesis supplies. *)
 Lemma wp_Room__Serve (r c : loc) (sc rc : chan_id) (n : nat) :
-  {{{ is_pkg_init wsrelay ∗ is_Room r ∗
-      is_Connection c sc rc ∗ own_recv_cursor rc n }}}
+  {{{ is_pkg_init wsrelay ∗ is_Room r ∗ is_Connection c sc rc ∗
+      is_chan_wire Φw rc ∗ own_recv_cursor rc n }}}
     r @! (go.PointerType wsrelay.Room) @! "Serve" #c
   {{{ RET #(); ∃ n', own_recv_cursor rc n' }}}.
 Proof.
-  wp_start as "(#Hroom & #Hconn & Hrecv)".
+  wp_start as "(#Hroom & #Hconn & #Hwire & Hrecv)".
   wp_auto.
   iAssert (∃ (n' : nat), "Hrecv" ∷ own_recv_cursor rc n')%I with "[$Hrecv]" as "IH".
   wp_for "IH".
   wp_func_call.
-  wp_apply (wp_Receive with "[$Hconn $Hrecv]").
+  wp_apply (wp_wire_Receive with "[$Hconn $Hwire $Hrecv]").
   iIntros (err sl0 dta) "(Hsl & Hcap & Hcur)".
   wp_auto.
   destruct err.
@@ -202,9 +216,10 @@ Proof.
     wp_auto.
     wp_for_post.
     iApply "HΦ". iFrame.
-  - iDestruct "Hcur" as "(Hrecv & #Hmsg)".
+  - iDestruct "Hcur" as "(Hrecv & #Hmsg & #HΦw)".
     wp_auto.
     wp_apply (wp_Room__Broadcast with "[$Hroom $Hsl]").
+    { iFrame "#". }
     iIntros "Hsl".
     wp_auto.
     wp_for_post. iFrame.
