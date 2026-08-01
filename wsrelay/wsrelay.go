@@ -61,6 +61,28 @@ func (r *Room) Broadcast(self wsnet.Connection, data []byte) {
 	r.mu.Unlock()
 }
 
+// Run accepts connections forever, joining each to the room and running its
+// receive loop. This is the composition Join and Serve are meant to be used in,
+// and the reason they are separate calls rather than one: the order matters.
+//
+// Join has to come first. A connection that is serving but not yet in the table
+// does not receive what the others send in that window. y-websocket has the
+// same race and absorbs it with the pending buffer; here the order rules it
+// out. Between the two is where the sync handshake goes: a real client sends
+// Step1 on connect and expects Step2 before the stream of updates, and that
+// exchange belongs after joining and before the loop.
+//
+// Serve never returns, so it runs on its own goroutine. That is also the
+// ownership split: Join hands the room this connection's send side, while the
+// goroutine keeps its receive side and shares it with nobody.
+func (r *Room) Run(l wsnet.Listener) {
+	for {
+		c, _ := wsnet.Accept(l)
+		r.Join(c)
+		go r.Serve(c)
+	}
+}
+
 // Serve runs one connection's receive loop until the peer goes away, relaying
 // every message it receives to the room's other connections. This is where the
 // sync-protocol handling and the document go next: instead of relaying the

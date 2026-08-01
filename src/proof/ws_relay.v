@@ -225,4 +225,47 @@ Proof.
     wp_for_post. iFrame.
 Qed.
 
+(** The peer's side of the protocol, for a connection we have just accepted.
+
+    This is the one assumption of the deployment, and [Run] is where it belongs:
+    the accept loop creates connections, so no per-connection precondition can
+    reach them. For a peer running verified code it is discharged (that peer
+    established the invariant when it took its own send cursor); for a peer we
+    do not run it is assumed.
+
+    Note what assuming it actually says. [is_chan_wire] parks a SEND CURSOR for
+    the peer's channel in an invariant, and a channel someone owns the send
+    cursor of never has bytes fabricated on it ([wp_WsRecvOp_bounded]). So
+    "we trust this peer" is not a vague wish: it is exactly the claim that the
+    peer's side of the wire is driven by something that follows the protocol
+    rather than by the environment. *)
+Definition peer_follows_protocol : iProp Σ :=
+  □ (∀ rc : chan_id,
+       own_recv_cursor rc 0 ={⊤}=∗ is_chan_wire Φw rc ∗ own_recv_cursor rc 0).
+
+(** [Run] is the accept loop: the composition [Join] and [Serve] are meant to be
+    used in. Keeping them separate calls is what leaves room for the sync
+    handshake between joining and looping, but nothing should have to remember
+    the order, so it is fixed here. *)
+Lemma wp_Room__Run (r l : loc) (e : ws_endpoint) :
+  {{{ is_pkg_init wsrelay ∗ is_Room r ∗ is_Listener l e ∗ peer_follows_protocol }}}
+    r @! (go.PointerType wsrelay.Room) @! "Run" #l
+  {{{ RET #(); True }}}.
+Proof.
+  wp_start as "(#Hroom & #Hl & #Hpeer)".
+  wp_auto.
+  iAssert (True)%I as "IH"; first done.
+  wp_for "IH".
+  wp_func_call.
+  wp_apply (wp_Accept with "[$Hl]").
+  iIntros (c sc rc path) "(#Hconn & Hsend & Hrecv)".
+  wp_auto.
+  wp_apply (wp_Room__Join with "[$Hroom $Hconn $Hsend]").
+  (* the one assumption, taken for this connection *)
+  iMod ("Hpeer" with "Hrecv") as "[#Hwire Hrecv]".
+  wp_apply (wp_fork with "[Hrecv]").
+  { wp_apply (wp_Room__Serve with "[$Hroom $Hconn $Hwire $Hrecv]"). auto. }
+  wp_for_post. iFrame.
+Qed.
+
 End proof.

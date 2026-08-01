@@ -34,24 +34,13 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// serveRoom accepts connections forever, joining each to the room and running
-// its receive loop. This is the accept loop the verified server will have; it
-// is written here so the relay can be exercised end to end.
-func serveRoom(l wsnet.Listener, r *Room) {
-	for {
-		c, _ := wsnet.Accept(l)
-		r.Join(c)
-		go r.Serve(c)
-	}
-}
-
 // TestRelayReachesTheOtherConnection is the property the room exists for: what
 // one connection sends comes out on the others, and not back on itself.
 func TestRelayReachesTheOtherConnection(t *testing.T) {
 	addr := freeAddr(t)
 	l := wsnet.Listen(addr)
 	room := NewRoom()
-	go serveRoom(l, room)
+	go room.Run(l)
 
 	errA, a := wsnet.Connect(addr, "/room")
 	if errA {
@@ -102,7 +91,7 @@ func TestRelayToThreeConnections(t *testing.T) {
 	addr := freeAddr(t)
 	l := wsnet.Listen(addr)
 	room := NewRoom()
-	go serveRoom(l, room)
+	go room.Run(l)
 
 	errA, a := wsnet.Connect(addr, "/room")
 	if errA {
