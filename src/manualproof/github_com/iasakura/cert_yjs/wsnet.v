@@ -58,7 +58,7 @@ Proof.
 Qed.
 
 (** [Accept]: hands out BOTH cursors of the accepted connection, plus the path
-    the peer connected to (the y-websocket room name). Nothing is required of
+    the peer connected to, out of the opening handshake. Nothing is required of
     the peer. *)
 Lemma wp_Accept (l : loc) (e : ws_endpoint) :
   {{{ is_Listener l e }}}

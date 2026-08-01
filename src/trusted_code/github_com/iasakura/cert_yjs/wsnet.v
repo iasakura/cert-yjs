@@ -10,8 +10,7 @@
     [go_string] literal, so the slice payload is marshalled with [Convert] (WP
     lemmas: [wp_bytes_to_string] / [wp_string_to_bytes] in
     New.golang.theory.string). [WsAcceptOp] additionally returns the
-    connection's path, which the y-websocket deployment uses as the room
-    name. *)
+    connection's request path, which the opening handshake carries. *)
 From New.golang Require Import defn.
 From New.goose_lang.ffi.ws_ffi Require Import impl.
 
