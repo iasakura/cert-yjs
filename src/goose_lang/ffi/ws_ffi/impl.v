@@ -102,8 +102,12 @@ Defined.
       the environment must not be able to forge messages on it.
     - [ws_backlog]: per listening endpoint, the connections awaiting accept.
       Each entry is (the connecting side's send channel, its receive channel,
-      the connection's metadata) where the metadata is the request path, i.e.
-      the y-websocket room name. *)
+      the request target the connecting side asked for). That target is
+      transport data, not application data: WebSocket carries it in the opening
+      handshake, so it arrives before any message and there is no way for a
+      peer to convey it in-band. It is handed to the acceptor once, at
+      [WsAcceptOp], and the model keeps nothing about it afterwards. What an
+      application reads into it is not this file's business. *)
 Record ws_global_state : Type := {
   ws_msgs : gmap (chan_id * nat) (list u8);
   ws_sent : gmap chan_id nat;
