@@ -33,7 +33,7 @@ great question.
 
 Example of why this matters: `docs/proof-engineering.md` still says `cell_repr`
 "pins `flags' = W8 2` and `Len() = 1`", but the current definition in
-`src/proof/yjs_item.v` is just `yi = ic_item c` (the deletion bit moved to
+`src/proof/item/model.v` is just `yi = ic_item c` (the deletion bit moved to
 `ic_deleted` / `num_visible`). A quiz built from the doc alone would teach a
 wrong answer. Read the code.
 

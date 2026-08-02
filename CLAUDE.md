@@ -81,7 +81,7 @@ rejected in vok, verified), roughly 3x faster on this repo. It leaves `.vos` /
 
   ```sh
   ARGS=$(sed -E -e '/^#/d' -e "s/'([^']*)'/\1/g" -e 's/-arg //g' _RocqProject)
-  rocq compile $ARGS src/proof/yjs_store.v -o src/proof/yjs_store.vo
+  rocq compile $ARGS src/proof/store/heap.v -o src/proof/store/heap.vo
   ```
 
 Environment: Go 1.26 (`build.sh` exports `GOTOOLCHAIN=go1.26.0`); a dedicated
@@ -107,83 +107,70 @@ its `ffi_syntax` parameter. One-time setup: see `WORKFLOW.md`. CI runs the same
 | `grovenet/*.go`, `pingpong/*.go` | hand-written Go: the Grove network FFI realization (TCP) + its N0 feasibility demo (issue #45) | yes |
 | `wsnet/*.go`, `wsecho/*.go` | hand-written Go: the ws (connection-oriented) network FFI realization (WebSocket) + its echo demo | yes |
 | `src/goose_lang/ffi/ws_ffi/*.v` | hand-written ws FFI: operational semantics, Iris lifting lemmas, adequacy | yes |
-| `src/proof/*.v` | hand-written proofs, one per Go file | yes |
+| `src/proof/<type>/*.v` | hand-written proofs, one directory per Go type | yes |
 | `src/trusted_code/.../*.v`, `src/manualproof/.../*.v` | hand-written trusted FFI models + their WP wrappers (grovenet ⇒ grove FFI, wsnet ⇒ ws FFI) | yes |
 | `src/code/.../*.v.toml` | hand-written goose declfilter configs (per-package translate/trusted/imports) | yes |
 | `src/code/`, `src/generatedproof/` | goose / proofgen output | **no — generated, gitignored** |
 
-Never hand-edit generated files; change the Go and re-run goose. Proof files
-`Require` each other in order `core → common (∥ network_model) → id → item →
-ytype → history → store → text` (both `store` and `text` are `Require Export`
-facades: `store` over `store_base → store_integrate → store_node → store_split
-→ store_repair → store_update`, `text` over `text_base → {text_insert,
-text_delete}`; downstream files import only the facade) and reopen the same
-`Section` boilerplate. The files are split this fine so the proof check
-parallelizes: each split file's `.vok` is an independent job (see the vos/vok
-Workflow note), so no single heavy proof (splitNode, Insert, ...) serializes
-the build:
+Never hand-edit generated files; change the Go and re-run goose.
 
-- `yjs_core.v` — re-exports the `rocq-yjs` library (pure
-  `integrate` / `setintegrate` model and its order theory).
-- `yjs_common.v` — shared base: scalar abstractions (`toYjsId` / `toContent`),
-  `item_cell` / `node_loc`, `own_id_set`, the package-init instances
-  (declared once here, inherited via `Require`).
-- `yjs_network_model.v` — the Iris-free bridge to the rocq-yjs *network*
-  model (issue #42): `history_wf` over a raw `gmap ClientId (list Event)`,
-  the packaging `to_network : … → YjsOperationNetwork`, `history_state_coh`,
-  happens-before append-stability, freshness, receiver clock safety, the
-  broadcast/deliver steps, `ValidReplay`, and `certs_ValidReplay`. No goose —
-  iterate on it standalone.
-- `yjs_id.v` — the `id` type: arithmetic round-trip, injectivity, equality
-  specs.
-- `yjs_item.v` — the `item` type: method specs, the DLL spine `own_dll` and
-  its structural lemmas, `cell_repr` / `cells_repr`, the deletion-flag layer
-  (`num_visible`, `flip_cell`, …).
-- `yjs_ytype.v` — the `yType` container: public `own_ytype parent dq m`
-  (model = items with tombstone bits) over cells-level `own_ytype_cells`,
-  and `wp_yType__findPos`.
-- `yjs_history.v` — the ghost op history (issue #42): the global invariant
-  `is_history γh` (two `ghost_map`s + `history_wf`/`ops_coh`), the exclusive
-  per-replica `own_client_history`, the persistent op certificate
-  `is_op_cert`, and the fupd API `history_alloc` / `history_broadcast` /
-  `history_deliver_batch` (+ a two-client smoke test).
-- `yjs_store.v` — facade over the `store` proofs (one Go file, six
-  internal proof files split for build-time parallelism; downstream files
-  import only this):
-  - `yjs_store_base.v` — ghost names and RAs, the item-set layer
-    `own_item_map`, the lock body (`store_inv_ro` / `store_inv_excl` /
-    `store_inv`, carrying the client's ghost history), the cohesive
-    store-state predicate `own_store` over the model `(client, history,
-    doc)`, the persistent witnesses `is_Store` / `is_type_lb` / `is_root`
-    / `is_root_lb`, the RWMutex lock wrappers, and `store_inv_init`.
-  - `yjs_store_integrate.v` — the integration stack: id-lookup helpers,
-    the conflict scan refining `setfii_loop`, and `wp_Store__Integrate`
-    (cells-level and model-level, with the item-map maintenance).
-  - `yjs_store_node.v` — the node lookup path: `wp_getNodeIndex` /
-    `wp_store__GetNode` and the applyUpdate input-expansion helpers
-    (`expand_inputs_*`, `ValidReplay_chunk_extract`, the `types_*`
-    accessors).
-  - `yjs_store_split.v` — `wp_store__splitNode` and the
-    `splitAtAndGetLeft/Right` range and invariant lemmas, plus the
-    split-pool bookkeeping (`pool_invs`, `split_step_facts`, the
-    `split_pool_*` / `split_cells_*` lemmas). The heaviest single proof.
-  - `yjs_store_repair.v` — `getOrCreateYType`, `store.repair`
-    (`wp_store__repair_split`), `integrateDecoded`, `depsArrived`, the
-    `wire_*` drain machinery, and the `store_inv ⊣⊢ ∃ model, own_store`
-    bridge (`store_inv_own_store`).
-  - `yjs_store_update.v` — the top of the update path: the applyUpdate
-    stack up to the `own_store`-level certificate spec
-    `wp_store__applyUpdate_certs` (delivered content comes back as
-    `is_root_lb` fragments). Requires node / split / repair.
-- `yjs_text.v` — facade over the `Text` handle proofs (three files split
-  for build-time parallelism; downstream imports only this):
-  - `yjs_text_base.v` — the `Text` handle `is_Text t γh L`, its
-    `is_Text_root` / `is_Text_root_lb` projections, and the
-    `insert_item_valid` / `insert_maximalId` / `sorted_subseteq_*` helpers.
-  - `yjs_text_insert.v` — the top-level `wp_Text__Insert` (mints one op
-    certificate per inserted item).
-  - `yjs_text_delete.v` — `wp_Text__Delete` and the read-path
-    `wp_Text__Len`.
+`src/proof/` is one directory per Go type; inside a type the proofs are four
+layers, each depending only on the ones below it.
+
+| layer | file | holds | may mention |
+|---|---|---|---|
+| model | `model.v` | the pure model and its theory | rocq-yjs only |
+| value | `value.v` | Go-level values and what they denote | + `yjs.*`, `loc`, `w64` |
+| heap | `heap.v` | representation predicates, invariants, ghost state | + Iris |
+| wp | `<Method>.v`, `wp_private.v` | the WP proofs | + the code |
+
+```
+src/proof/
+  core.v  prelude.v  algebra.v  network_model.v  history.v
+  ws_prelude.v  ws_relay.v
+  id/     value.v  heap.v  wp_private.v  Add.v  Sub.v  Equal.v       id.v
+  item/   model.v  run_theory.v  value.v  heap.v  wp_private.v
+          Indexable.v  Len.v  Deleted.v                              item.v
+  ytype/  model.v  value.v  heap.v  newYType.v  findPos.v            ytype.v
+  store/  model.v  value.v  heap.v  wp_private.v
+          Integrate.v GetNode.v splitNode.v repair.v applyUpdate.v   store.v
+  text/   heap.v  Insert.v  Delete.v  Len.v                          text.v
+  doc/    model.v  heap.v  ApplySyncUpdate.v                         doc.v
+  demo/   pingpong.v  ws_echo.v
+```
+
+- **Files.** `<Method>.v` is one exported Go method's `wp_`; `wp_private.v` the
+  unexported helpers' specs; `<type>.v` a `Require Export` facade, the only
+  name downstream files Require. A layer a type does not need is absent (`id`
+  has no model of its own; `Text` is a handle over a store type, so it starts
+  at `heap.v`). Type-less files stay at the top level: `core.v` (rocq-yjs
+  re-export + `YjsItem_countable`), `prelude.v` (the goose package-init
+  instances, no definitions), `algebra.v` (generic Iris RA laws),
+  `network_model.v` (pure op-history model), `history.v` (its ghost layer),
+  `ws_prelude.v` (staged for perennial's `new/proof/`) and `ws_relay.v` (the
+  WebSocket server's connection management, issue #107; left flat while that
+  work is in flight).
+- **Shape.** Section boilerplate first, then every definition, then every
+  lemma, under `(* ===== definitions ===== *)` / `(* ===== lemmas ===== *)`.
+  Never declare a `Context` mid-section: under `Set Default Proof Using "Type*"`
+  it silently changes what the lemmas below are generalized over. Never
+  annotate a `Require` line with a comment.
+- **Definitions** live in `model.v` / `value.v` / `heap.v`, never in a WP file.
+- **Lemmas.** A layer holds only what a caller must know: laws of its
+  predicates, relations between predicates (coherence, projection,
+  observation), state-transition laws. Everything else belongs in the WP file
+  that needs it; "the WP proof uses it" is not a reason. A fact mentioning no
+  cert-yjs definition goes to `algebra.v`.
+- **Headers.** Each layer file opens with its API: the definitions it
+  introduces and its laws, one line each. A lemma that does not earn that line
+  does not belong in the layer. Read the header, not this file, for what is in
+  a given file.
+
+Require order is `core -> prelude -> algebra -> id -> item -> ytype ->
+doc/model -> network_model -> history -> store -> text -> doc`. The pure layers
+form their own sub-DAG below the Iris one, and each file's `.vok` is an
+independent job (see the vos/vok Workflow note), so no single heavy proof
+(splitNode, Insert, ...) serializes the build.
 
 ## Notes
 

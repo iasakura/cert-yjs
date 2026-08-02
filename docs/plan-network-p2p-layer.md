@@ -279,7 +279,7 @@ clocks are consecutive. Density is a property of the minting discipline, so it
 becomes a `history_wf` field (`hwf_dense_clocks`), established by
 `history_broadcast` (the store counter advances one unit per single-char op,
 single governed text) and consumed here. *Difficulty: M. Home:
-`yjs_network_model.v`.* Under trusted peers this is sound; an author that
+`network_model.v`.* Under trusted peers this is sound; an author that
 skipped clocks would only make sv-dedup over-approximate (drop a genuinely-new
 op — a completeness, not safety, failure).
 
@@ -290,7 +290,7 @@ with `clock < sv[author]` (its current sv), then the remaining subsequence
 satisfies `batch_ok h · ·`: dropped ops are delivered (by the state-vector
 characterization above), so any later `D`-reference to them is still covered;
 retained ops are fresh (same lemma again).
-*Difficulty: M. Home: `yjs_network_model.v`.*
+*Difficulty: M. Home: `network_model.v`.*
 
 (`batch_coh` — certificates + ghost floor `F`, never on the wire — is defined
 with the transport-facing predicates in the protocol document §5.2; it is
@@ -332,7 +332,7 @@ covered: an op `y` minted by `A` has causal past ⊆ (A's own earlier ops —
 arrive FIFO-before `y`) ∪ (ops A had delivered from `B` — which are `B`'s own
 ops, so `B` has them). *Difficulty: M (a two-node instance of the hub
 argument; good warm-up for the stream-induction lemma). Home:
-`yjs_network_model.v` or the wire file.*
+`network_model.v` or the wire file.*
 
 **Mesh counterexample (why N > 2 needs more).** `B` mints `x`, sends to `A`
 and `C`. `A` delivers `x`, then mints `y` **at an unrelated position**, so

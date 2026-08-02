@@ -9,7 +9,7 @@ package yjs
 // These methods are goose-translated (part of the verified model): findPos feeds
 // the proven store.Integrate loop (and Text.Delete), so Text.Insert / Text.Delete
 // preserve the document invariant is_ytype (see wp_yType__findPos / is_ytype in
-// src/proof/yjs_ytype.v).
+// src/proof/ytype/ytype.v).
 //
 // Simplifications vs y-octo:
 //   - the Phase-1 content is fixed to a single string type with no parent_sub,

@@ -23,3 +23,5 @@
 !.claude/skills/quiz/
 .vscode/
 .idea/
+# rocq-mcp scratch buffers (one per session, named by pid)
+rocq_mcp_cache_*.v

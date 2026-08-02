@@ -3,7 +3,7 @@
 // grove FFI cannot express (see wsnet/wsnet.go's header). Verified against the
 // ws network model via the WP wrappers in
 // src/manualproof/github_com/iasakura/cert_yjs/wsnet.v (specs in
-// src/proof/ws_echo.v).
+// src/proof/demo/ws_echo.v).
 //
 // Unlike the grovenet ping-pong demo, no mailbox ownership has to be escrowed
 // from the peer: Accept hands the server both cursors of the connection, so

@@ -32,7 +32,7 @@ func freeAddr(t *testing.T) (wsnet.Address, string) {
 }
 
 // TestEchoRoundTrip runs the verified ServeEcho against a wsnet client: the
-// message comes back unchanged, which is what src/proof/ws_echo.v proves about
+// message comes back unchanged, which is what src/proof/demo/ws_echo.v proves about
 // the model.
 func TestEchoRoundTrip(t *testing.T) {
 	addr, _ := freeAddr(t)

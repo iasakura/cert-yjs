@@ -18,7 +18,7 @@ Step by step when something breaks:
 2. `./build.sh go` to check it compiles
 3. `./build.sh goose` to translate; this updates src/code/.../*.v (the model)
    and src/generatedproof/.../*.v (struct lemmas)
-4. Write/fix proofs in src/proof/*.v
+4. Write/fix proofs in src/proof/<type>/*.v
 5. `./build.sh make`; exit 0 means type check + proof check passed
 
 Note: after changing Go, always re-run goose. `make` alone keeps the stale
@@ -36,9 +36,9 @@ fails, in the vok phase). It writes `.vos` / `.vok`, not `.vo`; run
 ## Checking a single proof file (fast)
 
     ARGS=$(sed -E -e '/^#/d' -e "s/'([^']*)'/\1/g" -e 's/-arg //g' _RocqProject)
-    rocq compile $ARGS src/proof/yjs_proof.v -o src/proof/yjs_proof.vo
+    rocq compile $ARGS src/proof/store/heap.v -o src/proof/store/heap.vo
 
-- The output name must match the source name (`-o .../yjs_proof.vo`),
+- The output name must match the source name (`-o .../repr.vo`),
   otherwise: "Source and target file names must coincide".
 - Insert a temporary `Show.` at the line you want to inspect to dump the goal.
 - For a structure-only check (does it elaborate, are the statements and
@@ -46,14 +46,14 @@ fails, in the vok phase). It writes `.vos` / `.vok`, not `.vo`; run
   returns in seconds. Handy when reorganizing files. Follow with a real
   `.vo`/`.vok` for the proofs.
 
-      rocq compile $ARGS -vos src/proof/yjs_proof.v -o src/proof/yjs_proof.vos
+      rocq compile $ARGS -vos src/proof/store/heap.v -o src/proof/store/heap.vos
 
 ## Directory layout
 
 | path | contents | edit? |
 |---|---|---|
 | yjs/ | hand-written Go | yes |
-| src/proof/*.v | hand-written proofs | yes |
+| src/proof/<type>/*.v | hand-written proofs, one directory per Go type | yes |
 | src/code/.../*.v | goose translation (GooseLang model) | no, generated |
 | src/generatedproof/.../*.v | proofgen (struct points-to lemmas) | no, generated |
 
