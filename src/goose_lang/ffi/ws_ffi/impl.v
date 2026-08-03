@@ -102,12 +102,17 @@ Defined.
       state too, between its [WsConnectOp] and the server's [WsAcceptOp], and
       the environment must not be able to forge messages on it.
     - [ws_env_may]: constant, never changed by a step. [ws_env_may M c data]
-      reads "a peer we do not run, having already put [M] on the wire, may put
+      reads "with [M] the messages on the wire, a peer we do not run may put
       [data] on channel [c]". [WsRecvOp]'s environment branch is guarded by it,
       so an unmodeled peer is not a source of arbitrary bytes: it is a
       transition system, and this is its send relation. [fun _ _ _ => False]
       closes the network to modeled code, and a Yjs instance lets a peer send
       exactly the encodings of the operations the protocol permits it next.
+
+      It reads the whole of [ws_msgs] and not just the environment's own
+      sends, because what a peer may say next depends on what was said TO it:
+      a Yjs client's next operation is anchored at operations the server
+      relayed to it. Those are on the wire, so they are in [M].
     - [ws_backlog]: per listening endpoint, the connections awaiting accept.
       Each entry is (the connecting side's send channel, its receive channel,
       the request target the connecting side asked for). That target is
@@ -260,7 +265,7 @@ Section ws.
                         g' = set ws_recvd <[ r := S n ]> g ∧
                         e' = Val ((*err*) #false, #data)%V) ∨
                (r ∈ g.(ws_ext) ∧ g.(ws_msgs) !! (r, n) = None ∧
-                ∃ data, g.(ws_env_may) (env_msgs g) r data ∧
+                ∃ data, g.(ws_env_may) g.(ws_msgs) r data ∧
                         g' = (set ws_recvd <[ r := S n ]>
                              (set ws_msgs <[ (r, n) := data ]> g)) ∧
                         e' = Val ((*err*) #false, #data)%V)

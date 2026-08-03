@@ -197,16 +197,25 @@ Section lifting.
       produces does not exist yet: the ghost history has to be extended to
       record what the environment did, and that extension is where the
       freshness and integration conditions get checked. An implication would
-      instead claim the extension had already happened, which nothing did.
-      [env_mask] is where the instance says which invariant the extension
-      opens: it is the mask [E] this is stated at, which is also the mask the
-      receive that uses it runs at.
+      instead claim the extension had already happened, which nothing did. The
+      mask [E] it is stated at is the mask the receive that uses it runs at,
+      and is where the instance's own invariant gets opened.
+
+      The protocol facts about everything already on the wire come along as a
+      hypothesis. They cost the state interpretation nothing, [ws_prot] being
+      persistent, and they are what makes the obligation dischargeable at all:
+      a Yjs peer's next operation is anchored at operations the server relayed
+      to it, so proving it integrates means first delivering those into that
+      peer's ghost history, which needs their certificates. Delivering them at
+      that point rather than tracking each arrival is what
+      [history_deliver_pending] is for.
 
       A network closed to modeled code takes [ws_env_may] to be empty, which
       makes this hold vacuously. *)
   Definition ws_env_preserves (E : coPset) : iProp Σ :=
     □ (∀ (g : ws_global_state) (r : chan_id) (n : nat) (data : list u8),
-         ⌜g.(ws_env_may) (env_msgs g) r data⌝ -∗ ⌜r ∈ g.(ws_ext)⌝ -∗
+         ⌜g.(ws_env_may) g.(ws_msgs) r data⌝ -∗ ⌜r ∈ g.(ws_ext)⌝ -∗
+         ([∗ map] k ↦ d ∈ g.(ws_msgs), ws_prot d) -∗
          ws_env_coh (env_msgs g) ={E}=∗
            ws_env_coh (<[ (r, n) := data ]> (env_msgs g)) ∗ ws_prot data).
 
@@ -438,7 +447,7 @@ Section lifting.
           assert (Hem : env_msgs gpost = <[ (rc, n) := data ]> (env_msgs g1));
           [ apply (env_msgs_insert_ext g1 gpost rc n data); done | rewrite Hem ]
       end.
-      iMod ("Henv" $! g1 rc n data with "[//] [//] Hcoh") as "[Hcoh #Hpd]".
+      iMod ("Henv" $! g1 rc n data with "[//] [//] Hprot Hcoh") as "[Hcoh #Hpd]".
       iMod (@ghost_map_insert_persist with "Hmsgs") as "[Hmsgs #Hmsg]".
       { done. }
       iMod (@ghost_map_update with "Hrecvd Hrc") as "[Hrecvd Hrc]".
