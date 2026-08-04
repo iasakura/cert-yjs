@@ -496,6 +496,49 @@ End lifting.
 (** * Adequacy: initializing the ghost state from an arbitrary initial network *)
 From Perennial.goose_lang Require Import adequacy.
 
+(** Initialization with a protocol of the caller's choosing.
+
+    [ffi_global_init], the hook [goose_dist_adequacy] calls, takes no input
+    beyond the initial network and a [Prop], so the [wsGS] it builds can only
+    carry the trivial protocol. This is the same construction with the protocol
+    handed in, which is what a deployment needs: an execution whose [ws_prot]
+    is the real one. A deployment theorem uses it in place of
+    [ffi_global_init]; everything else in the adequacy chain is unchanged.
+
+    The caller owes the two things the state interpretation asks about the
+    initial network, namely the protocol of whatever is already on the wire
+    (nothing, for an empty one) and the environment's coherence at that
+    point. *)
+Section init.
+Existing Instances ws_op ws_model ws_interp.
+
+Lemma ws_global_init_prot {go_gctx : GoGlobalContext} Σ (hPre : wsGpreS Σ)
+    (g : ws_global_state)
+    (prot : list u8 -> iProp Σ) (Hpers : forall d, Persistent (prot d))
+    (coh : gmap (chan_id * nat) (list u8) -> iProp Σ) :
+  ws_wf g ->
+  ([∗ map] k ↦ d ∈ g.(ws_msgs), prot d) -∗
+  coh (env_msgs g) -∗
+  |==> ∃ hG : wsGS Σ,
+    ⌜hG.(ws_prot) = prot⌝ ∗ ⌜hG.(ws_env_coh) = coh⌝ ∗
+    ⌜hG.(ws_may) = g.(ws_env_may)⌝ ∗
+    @ffi_global_ctx _ ws_interp Σ hG g ∗ @ffi_global_start _ ws_interp Σ hG g.
+Proof.
+  iIntros (Hwf) "#Hprot Hcoh".
+  iMod (ghost_map_alloc g.(ws_msgs)) as (γm) "[Hm Hmelems]".
+  iMod (ghost_map_alloc g.(ws_sent)) as (γs) "[Hs Hselems]".
+  iMod (ghost_map_alloc g.(ws_recvd)) as (γr) "[Hr Hrelems]".
+  iAssert (|==> [∗ map] k ↦ d ∈ g.(ws_msgs), k ↪[γm]□ d)%I
+    with "[Hmelems]" as ">#Hmfacts".
+  { iApply big_sepM_bupd. iApply (big_sepM_mono with "Hmelems").
+    iIntros (k d Hk) "H". by iApply ghost_map_elem_persist. }
+  iModIntro.
+  iExists (WsGS Σ _ _ γm γs γr prot Hpers coh g.(ws_env_may)).
+  by iFrame "∗#%".
+Qed.
+
+End init.
+
 (** The generic initializer has no input beyond the initial network, so the
     [wsGS] it builds carries the trivial protocol: [ws_prot] holds of anything
     and [ws_env_coh] asks nothing of the environment. That is all this hook can
