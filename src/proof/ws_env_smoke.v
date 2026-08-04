@@ -11,8 +11,10 @@
     is that the three pieces fit together at all:
 
     - [ws_may] is inhabited: there is data the environment is permitted to send;
-    - [ws_prot] of that data is a real [is_op_cert], so a receiver learns the
-      operation is registered in the ghost history;
+    - [ws_prot] of that data is the real thing a receiver needs, one point of
+      the global history per character ([is_pending_certified] over
+      [expand_inputs]), which is exactly what
+      [wp_store__applyUpdate_certs] consumes;
     - [ws_env_preserves] holds, by the same [history_broadcast] a modeled sender
       would use at [wp_WsSendOp].
 
@@ -37,15 +39,20 @@ From New.golang Require Import theory.
 From New.proof Require Export core.
 From New.proof Require Export network_model.
 From New.proof Require Export history.
+From New.proof.item Require Import run_theory model.
+From New.proof.store Require Import model.
 From New.goose_lang.ffi.ws_ffi Require Import ws_ffi.
 
 Section smoke.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
-Context {A : Type} `{EqDA : EqDecision A}.
-Context {P : Type} `{EqDP : !EqDecision P} `{CntP : !Countable P}.
 Context `{!wsGS Σ}.
 
 Set Default Proof Using "Type*".
+
+(** The content type is the store's, since the protocol has to be the one
+    [wp_store__applyUpdate_certs] consumes. *)
+Notation A := go_string.
+Notation P := go_string.
 
 Local Notation TId := (TypeId P).
 Local Notation Input := (TId * IntegrateInput (A := A))%type.
@@ -55,32 +62,43 @@ Local Notation DocM := (gmap TId (list (YjsItem A))).
 (** The codec is a parameter: which bytes stand for which operation is the
     application's business, and nothing here depends on the choice beyond
     being able to read one back. *)
-Context (encode : Input -> list u8).
-Context (decode : list u8 -> option Input).
+Context (encode : list Input -> list u8).
+Context (decode : list u8 -> option (list Input)).
 Hypothesis decode_encode : forall x, decode (encode x) = Some x.
 
-(** The protocol: these bytes decode to an operation that is registered in the
-    ghost history. Persistent, as [ws_prot] must be. *)
+(** The protocol: these bytes decode to operations every one of which is a
+    point of the global history [γh]. Per character, via [expand_inputs],
+    because that is what the ghost history holds and what
+    [wp_store__applyUpdate_certs] consumes: a multi-character wire item's
+    head-id operation is not itself in the log, only its per-character ones
+    are. Persistent, as [ws_prot] must be. *)
 Definition smoke_prot (γh : history_names) (d : list u8) : iProp Σ :=
-  ∃ ti : Input, ⌜decode d = Some ti⌝ ∗ is_op_cert γh (ti.1, OpInsert ti.2).
+  ∃ inputs : list Input, ⌜decode d = Some inputs⌝ ∗
+    is_pending_certified γh (expand_inputs inputs).
 
 #[local] Instance smoke_prot_persistent γh d : Persistent (smoke_prot γh d).
 Proof. apply _. Qed.
 
 (** The one operation this peer ever performs: insert [a] into the empty
     document of type [t], as client [cl]'s clock-zero operation. *)
-Definition smoke_input (cl : ClientId) (a : A) : IntegrateInput (A := A) :=
-  MkIntegrateInput (A := A) None None a (MkYjsId cl 0).
+Definition smoke_input (cl : ClientId) (b : w8) : IntegrateInput (A := A) :=
+  MkIntegrateInput (A := A) None None [b] (MkYjsId cl 0).
 
-Definition smoke_item (cl : ClientId) (a : A) : YjsItem A :=
-  Item (A := A) First Last (MkYjsId cl 0) a.
+Definition smoke_item (cl : ClientId) (b : w8) : YjsItem A :=
+  Item (A := A) First Last (MkYjsId cl 0) [b].
+
+(** One character, so the per-character expansion is the operation itself.
+    This is what lets a one-operation message's protocol be one certificate. *)
+Lemma expand_inputs_smoke (t : TId) (cl : ClientId) (b : w8) :
+  expand_inputs [(t, smoke_input cl b)] = [(t, smoke_input cl b)].
+Proof. rewrite /expand_inputs /expand_input /ops_of_input /explode //=. Qed.
 
 (** The send relation: that one message, and only onto an empty network. The
     emptiness condition is what makes the peer's operation anchor-free, so no
     delivery has to happen before it can be minted. *)
-Definition smoke_may (cl : ClientId) (t : TId) (a : A)
+Definition smoke_may (cl : ClientId) (t : TId) (a : w8)
     (M : gmap (chan_id * nat) (list u8)) (c : chan_id) (d : list u8) : Prop :=
-  M = ∅ /\ d = encode (t, smoke_input cl a).
+  M = ∅ /\ d = encode [(t, smoke_input cl a)].
 
 (** Coherence: before the peer has said anything its history is empty, which is
     what lets [history_broadcast] apply against the empty document. Afterwards
@@ -95,7 +113,7 @@ Definition smoke_coh (γh : history_names) (cl : ClientId)
     names are whatever the network layer allocated; only the last four fields
     are this file's business. *)
 Definition smoke_wsGS (γm γs γr : gname) (γh : history_names)
-    (cl : ClientId) (t : TId) (a : A) : wsGS Σ :=
+    (cl : ClientId) (t : TId) (a : w8) : wsGS Σ :=
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
        (smoke_coh γh cl) (smoke_may cl t a).
 
@@ -104,7 +122,7 @@ Definition smoke_wsGS (γm γs γr : gname) (γh : history_names)
     array is valid, maximal, and integrates. Stated over the array rather than
     over the empty document, because the peer below broadcasts into a document
     that is not empty, only empty at the type it is inserting into. *)
-Lemma smoke_premises_nil (cl : ClientId) (a : A) :
+Lemma smoke_premises_nil (cl : ClientId) (a : w8) :
   toItem (smoke_input cl a) [] = Some (smoke_item cl a) /\
   IsItemValid (smoke_item cl a) /\
   maximalId (smoke_item cl a) [] /\
@@ -127,7 +145,7 @@ Qed.
 Lemma smoke_nilget (t' : TId) : doc_model_get (∅ : DocM) t' = [].
 Proof. rewrite /doc_model_get lookup_empty //. Qed.
 
-Lemma smoke_broadcast_premises (cl : ClientId) (t : TId) (a : A) :
+Lemma smoke_broadcast_premises (cl : ClientId) (t : TId) (a : w8) :
   toItem (smoke_input cl a) (doc_model_get (∅ : DocM) t)
     = Some (smoke_item cl a) /\
   IsItemValid (smoke_item cl a) /\
@@ -144,7 +162,7 @@ Qed.
 
 (** The obligation holds for this peer. *)
 Lemma smoke_ws_env_preserves (γm γs γr : gname) (γh : history_names)
-    (cl : ClientId) (t : TId) (a : A) (E : coPset) :
+    (cl : ClientId) (t : TId) (a : w8) (E : coPset) :
   ↑histN ⊆ E ->
   is_history (A := A) (P := P) γh -∗
     @ws_env_preserves Σ (smoke_wsGS γm γs γr γh cl t a) _ E.
@@ -166,19 +184,21 @@ Proof.
   - (* the wire is no longer empty, so the weaker branch is what is owed *)
     rewrite /smoke_coh bool_decide_eq_false_2; last by apply insert_non_empty.
     by iExists _.
-  - rewrite /smoke_prot. iExists (t, smoke_input cl a).
-    rewrite decode_encode. by iFrame "Hcert".
+  - rewrite /smoke_prot. iExists [(t, smoke_input cl a)].
+    iSplitR; first by rewrite decode_encode.
+    rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
+    by iFrame "Hcert".
 Qed.
 
 (** Non-vacuity, in one statement: a history exists, the obligation holds over
     it, and the send relation permits something. *)
 Lemma smoke_env_nonvacuous (γm γs γr : gname)
-    (cl : ClientId) (t : TId) (a : A) (c : chan_id) (E : coPset) :
+    (cl : ClientId) (t : TId) (a : w8) (c : chan_id) (E : coPset) :
   ↑histN ⊆ E ->
   ⊢ |={E}=> ∃ γh : history_names,
       is_history (A := A) (P := P) γh ∗
       @ws_env_preserves Σ (smoke_wsGS γm γs γr γh cl t a) _ E ∗
-      ⌜smoke_may cl t a ∅ c (encode (t, smoke_input cl a))⌝.
+      ⌜smoke_may cl t a ∅ c (encode [(t, smoke_input cl a)])⌝.
 Proof.
   iIntros (HE).
   iMod (history_alloc (A := A) (P := P) {[ cl ]} E) as (γh) "[#Hinv _]".
@@ -202,11 +222,11 @@ Qed.
     operation it received is the next step, and that one needs the theory of
     [toItem] and [integrate] at a non-empty array. *)
 
-Definition relay_may (cl clX : ClientId) (t t2 : TId) (aX aY : A)
+Definition relay_may (cl clX : ClientId) (t t2 : TId) (aX aY : w8)
     (k : chan_id * nat)
     (M : gmap (chan_id * nat) (list u8)) (c : chan_id) (d : list u8) : Prop :=
-  M = {[ k := encode (t, smoke_input clX aX) ]} /\
-  d = encode (t2, smoke_input cl aY).
+  M = {[ k := encode [(t, smoke_input clX aX)] ]} /\
+  d = encode [(t2, smoke_input cl aY)].
 
 Definition relay_coh (γh : history_names) (cl : ClientId)
     (k : chan_id * nat) (msg : list u8)
@@ -229,14 +249,14 @@ Proof.
 Qed.
 
 Definition relay_wsGS (γm γs γr : gname) (γh : history_names)
-    (cl clX : ClientId) (t t2 : TId) (aX aY : A) (k : chan_id * nat) : wsGS Σ :=
+    (cl clX : ClientId) (t t2 : TId) (aX aY : w8) (k : chan_id * nat) : wsGS Σ :=
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
-       (relay_coh γh cl k (encode (t, smoke_input clX aX)))
+       (relay_coh γh cl k (encode [(t, smoke_input clX aX)]))
        (relay_may cl clX t t2 aX aY k).
 
 (** Draining the one operation the wire carries into an empty document. Same
     computation as [history_smoke]'s. *)
-Lemma relay_deliver_drain (clX : ClientId) (t : TId) (aX : A) :
+Lemma relay_deliver_drain (clX : ClientId) (t : TId) (aX : w8) :
   pending_drain (∅ : DocM) [(t, smoke_input clX aX)]
     = ([(t, smoke_input clX aX)], [],
        <[t := [smoke_item clX aX]]> (∅ : DocM)).
@@ -248,7 +268,7 @@ Proof.
 Qed.
 
 Lemma relay_ws_env_preserves (γm γs γr : gname) (γh : history_names)
-    (cl clX : ClientId) (t t2 : TId) (aX aY : A) (k : chan_id * nat)
+    (cl clX : ClientId) (t t2 : TId) (aX aY : w8) (k : chan_id * nat)
     (E : coPset) :
   ↑histN ⊆ E ->
   cl ≠ clX ->
@@ -262,15 +282,17 @@ Proof.
   rewrite /relay_wsGS /=.
   (* the environment's view is a sub-map of the one message on the wire *)
   have Henv : env_msgs g = ∅ \/
-              env_msgs g = {[ k := encode (t, smoke_input clX aX) ]}.
+              env_msgs g = {[ k := encode [(t, smoke_input clX aX)] ]}.
   { rewrite /env_msgs Hw map_filter_singleton.
     case_decide; [by right | by left]. }
   iDestruct (relay_coh_open with "Hcoh") as "Hcoh"; first exact Henv.
   (* the certificate for what is on the wire comes from the hypothesis *)
   iAssert (is_op_cert γh (t, OpInsert (smoke_input clX aX))) as "#HcertX".
   { rewrite Hw big_sepM_singleton.
-    iDestruct "Hwire" as (ti) "[%Hd Hc]".
-    rewrite decode_encode in Hd. by injection Hd as <-. }
+    iDestruct "Hwire" as (inputs) "[%Hd Hc]".
+    rewrite decode_encode in Hd. injection Hd as <-.
+    rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
+    iApply "Hc". }
   (* deliver it, then mint *)
   iMod (history_deliver_pending γh cl [] ∅ [(t, smoke_input clX aX)]
           [(t, smoke_input clX aX)] [] (<[t := [smoke_item clX aX]]> (∅ : DocM))
@@ -300,8 +322,8 @@ Proof.
     move=> [Hc | Hc].
     + apply (f_equal (lookup (r, n))) in Hc.
       rewrite lookup_insert_eq lookup_empty in Hc. discriminate.
-    + have Hd : encode (t2, smoke_input cl aY)
-                  = encode (t, smoke_input clX aX).
+    + have Hd : encode [(t2, smoke_input cl aY)]
+                  = encode [(t, smoke_input clX aX)].
       { apply (f_equal (lookup (r, n))) in Hc.
         rewrite lookup_insert_eq in Hc.
         destruct (decide ((r, n) = k)) as [Heq|Hk].
@@ -310,8 +332,10 @@ Proof.
       (* the peer inserts into a different type than the message it took in *)
       have := f_equal decode Hd. rewrite !decode_encode.
       move=> [=] Ht *. exact (Hnt Ht).
-  - rewrite /smoke_prot. iExists (t2, smoke_input cl aY).
-    rewrite decode_encode. by iFrame "Hcert".
+  - rewrite /smoke_prot. iExists [(t2, smoke_input cl aY)].
+    iSplitR; first by rewrite decode_encode.
+    rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
+    by iFrame "Hcert".
 Qed.
 
 End smoke.
