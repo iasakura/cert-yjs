@@ -20,11 +20,18 @@
     [history_smoke] in history.v, and it reuses that lemma's side conditions
     verbatim.
 
-    What it does NOT show is that a full Yjs client discharges the obligation.
-    That peer's operations are anchored at operations the server relayed to it,
-    so the argument goes through [history_deliver_pending] first, and its pure
-    side conditions are about the model reached by draining the wire. Those are
-    the next step; see the PR discussion. *)
+    There are two peers here. The first never looks at what is already on the
+    wire, so it exercises only [history_broadcast]. The second
+    ([relay_ws_env_preserves]) takes in an operation another client put on the
+    wire, using the certificate the obligation's hypothesis carries, and runs
+    [history_deliver_pending] before minting its own. That is the two-step
+    argument a real peer needs, on the smallest instance where it can be
+    checked.
+
+    What is still not shown is a peer whose operation is ANCHORED at one it
+    took in. The second peer inserts into a different type, so it still
+    broadcasts against an empty array; anchoring means [toItem] and [integrate]
+    at a non-empty one, and that is pure theory this file does not have. *)
 From New.proof Require Import proof_prelude.
 From New.golang Require Import theory.
 From New.proof Require Export core.
@@ -92,9 +99,34 @@ Definition smoke_wsGS (γm γs γr : gname) (γh : history_names)
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
        (smoke_coh γh cl) (smoke_may cl t a).
 
-(** The pure premises of [history_broadcast] at the empty document. Lifted
+(** The pure premises of [history_broadcast] against an empty array. Lifted
     verbatim from [history_smoke]: an insert with no origins into an empty
-    array is valid, maximal, and integrates. *)
+    array is valid, maximal, and integrates. Stated over the array rather than
+    over the empty document, because the peer below broadcasts into a document
+    that is not empty, only empty at the type it is inserting into. *)
+Lemma smoke_premises_nil (cl : ClientId) (a : A) :
+  toItem (smoke_input cl a) [] = Some (smoke_item cl a) /\
+  IsItemValid (smoke_item cl a) /\
+  maximalId (smoke_item cl a) [] /\
+  integrate (smoke_input cl a) [] = Some [smoke_item cl a].
+Proof.
+  split_and!.
+  - done.
+  - split.
+    + apply YjsLt'_ltOriginOrder. exact lt_first_last.
+    + move=> x Hx.
+      inversion Hx as [x0 y0 Hstep | x0 y0 z0 Hstep Hreach]; subst.
+      * inversion Hstep; subst; [left | right]; exists 0%nat; exact (leqSame _ _).
+      * inversion Hstep; subst;
+          inversion Hreach as [x1 y1 Hstep2 | x1 y1 z1 Hstep2 ?]; subst;
+          inversion Hstep2.
+  - move=> x Hx. exfalso. move: Hx. rewrite /ArrSet /= elem_of_nil //.
+  - vm_compute. done.
+Qed.
+
+Lemma smoke_nilget (t' : TId) : doc_model_get (∅ : DocM) t' = [].
+Proof. rewrite /doc_model_get lookup_empty //. Qed.
+
 Lemma smoke_broadcast_premises (cl : ClientId) (t : TId) (a : A) :
   toItem (smoke_input cl a) (doc_model_get (∅ : DocM) t)
     = Some (smoke_item cl a) /\
@@ -106,23 +138,8 @@ Lemma smoke_broadcast_premises (cl : ClientId) (t : TId) (a : A) :
      x ∈ doc_model_get (∅ : DocM) t' ->
      clientId (item_id x) = cl -> (clock (item_id x) < 0)%nat).
 Proof.
-  have Hnilget : forall t' : TId,
-      doc_model_get (∅ : DocM) t' = []
-    by move=> t'; rewrite /doc_model_get lookup_empty.
-  split_and!.
-  - rewrite Hnilget //.
-  - split.
-    + apply YjsLt'_ltOriginOrder. exact lt_first_last.
-    + move=> x Hx.
-      inversion Hx as [x0 y0 Hstep | x0 y0 z0 Hstep Hreach]; subst.
-      * inversion Hstep; subst; [left | right]; exists 0%nat; exact (leqSame _ _).
-      * inversion Hstep; subst;
-          inversion Hreach as [x1 y1 Hstep2 | x1 y1 z1 Hstep2 ?]; subst;
-          inversion Hstep2.
-  - rewrite Hnilget. move=> x Hx. exfalso.
-    move: Hx. rewrite /ArrSet /= elem_of_nil //.
-  - rewrite Hnilget. vm_compute. done.
-  - move=> t' x Hx. exfalso. move: Hx. rewrite Hnilget elem_of_nil //.
+  have [H1 [H2 [H3 H4]]] := smoke_premises_nil cl a.
+  rewrite !smoke_nilget. split_and!; try done.
 Qed.
 
 (** The obligation holds for this peer. *)
@@ -168,6 +185,133 @@ Proof.
   iModIntro. iExists γh. iFrame "Hinv".
   iSplitL; last done.
   by iApply smoke_ws_env_preserves.
+Qed.
+
+(** ** A peer that takes something in before it speaks
+
+    The peer above never looks at what is already on the wire, so it never runs
+    [history_deliver_pending] and never touches the protocol facts
+    [ws_env_preserves] hands it. This one does. The wire carries one operation
+    of another client; the peer delivers that into its own ghost history, using
+    the certificate the hypothesis carries, and only then mints its own.
+
+    Two choices keep the pure side conditions the same as above. The operation
+    the peer takes in belongs to a different client, which makes [maximalId]
+    and the freshness bound vacuous. And the peer inserts into a different
+    type, so it still broadcasts against an empty array. Anchoring at an
+    operation it received is the next step, and that one needs the theory of
+    [toItem] and [integrate] at a non-empty array. *)
+
+Definition relay_may (cl clX : ClientId) (t t2 : TId) (aX aY : A)
+    (k : chan_id * nat)
+    (M : gmap (chan_id * nat) (list u8)) (c : chan_id) (d : list u8) : Prop :=
+  M = {[ k := encode (t, smoke_input clX aX) ]} /\
+  d = encode (t2, smoke_input cl aY).
+
+Definition relay_coh (γh : history_names) (cl : ClientId)
+    (k : chan_id * nat) (msg : list u8)
+    (M : gmap (chan_id * nat) (list u8)) : iProp Σ :=
+  (if bool_decide (M = ∅ \/ M = {[ k := msg ]})
+   then own_client_history γh cl ([] : list Ev)
+   else ∃ h : list Ev, own_client_history γh cl h)%I.
+
+Lemma relay_coh_open γh cl k msg M :
+  M = ∅ \/ M = {[ k := msg ]} ->
+  relay_coh γh cl k msg M -∗ own_client_history γh cl ([] : list Ev).
+Proof. intros HM. rewrite /relay_coh bool_decide_eq_true_2 //. by iIntros "$". Qed.
+
+Lemma relay_coh_close γh cl k msg M (h : list Ev) :
+  ¬ (M = ∅ \/ M = {[ k := msg ]}) ->
+  own_client_history γh cl h -∗ relay_coh γh cl k msg M.
+Proof.
+  intros HM. rewrite /relay_coh bool_decide_eq_false_2 //.
+  iIntros "H". by iExists h.
+Qed.
+
+Definition relay_wsGS (γm γs γr : gname) (γh : history_names)
+    (cl clX : ClientId) (t t2 : TId) (aX aY : A) (k : chan_id * nat) : wsGS Σ :=
+  WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+       (relay_coh γh cl k (encode (t, smoke_input clX aX)))
+       (relay_may cl clX t t2 aX aY k).
+
+(** Draining the one operation the wire carries into an empty document. Same
+    computation as [history_smoke]'s. *)
+Lemma relay_deliver_drain (clX : ClientId) (t : TId) (aX : A) :
+  pending_drain (∅ : DocM) [(t, smoke_input clX aX)]
+    = ([(t, smoke_input clX aX)], [],
+       <[t := [smoke_item clX aX]]> (∅ : DocM)).
+Proof.
+  have [_ [_ [_ Hint]]] := smoke_premises_nil clX aX.
+  have Hdmh : doc_model_has (∅ : DocM) (in_id (smoke_input clX aX)) = false.
+  { rewrite /doc_model_has map_to_list_empty //. }
+  rewrite /pending_drain /= Hdmh /= smoke_nilget Hint //=.
+Qed.
+
+Lemma relay_ws_env_preserves (γm γs γr : gname) (γh : history_names)
+    (cl clX : ClientId) (t t2 : TId) (aX aY : A) (k : chan_id * nat)
+    (E : coPset) :
+  ↑histN ⊆ E ->
+  cl ≠ clX ->
+  t2 ≠ t ->
+  is_history (A := A) (P := P) γh -∗
+    @ws_env_preserves Σ (relay_wsGS γm γs γr γh cl clX t t2 aX aY k) _ E.
+Proof.
+  iIntros (HE Hne Hnt) "#Hinv".
+  iModIntro. iIntros (g r n data) "%Hmay %Hext #Hwire Hcoh".
+  destruct Hmay as [Hw ->].
+  rewrite /relay_wsGS /=.
+  (* the environment's view is a sub-map of the one message on the wire *)
+  have Henv : env_msgs g = ∅ \/
+              env_msgs g = {[ k := encode (t, smoke_input clX aX) ]}.
+  { rewrite /env_msgs Hw map_filter_singleton.
+    case_decide; [by right | by left]. }
+  iDestruct (relay_coh_open with "Hcoh") as "Hcoh"; first exact Henv.
+  (* the certificate for what is on the wire comes from the hypothesis *)
+  iAssert (is_op_cert γh (t, OpInsert (smoke_input clX aX))) as "#HcertX".
+  { rewrite Hw big_sepM_singleton.
+    iDestruct "Hwire" as (ti) "[%Hd Hc]".
+    rewrite decode_encode in Hd. by injection Hd as <-. }
+  (* deliver it, then mint *)
+  iMod (history_deliver_pending γh cl [] ∅ [(t, smoke_input clX aX)]
+          [(t, smoke_input clX aX)] [] (<[t := [smoke_item clX aX]]> (∅ : DocM))
+          E HE (relay_deliver_drain clX t aX) history_state_coh_nil
+          with "Hinv Hcoh []") as "(Hcoh & _ & _ & %Hcoh2 & _)".
+  { rewrite /is_pending_certified big_sepL_singleton. iApply "HcertX". }
+  have Hget2 : doc_model_get (<[t := [smoke_item clX aX]]> (∅ : DocM)) t2 = [].
+  { rewrite docm_get_insert_ne // smoke_nilget //. }
+  have [Htoitem [Hvalid [Hmax Hint]]] := smoke_premises_nil cl aY.
+  rewrite -Hget2 in Htoitem Hmax Hint.
+  have Hbound : forall (t' : TId) (x : YjsItem A),
+      x ∈ doc_model_get (<[t := [smoke_item clX aX]]> (∅ : DocM)) t' ->
+      clientId (item_id x) = cl -> (clock (item_id x) < 0)%nat.
+  { move=> t' x Hx Hcid. exfalso.
+    destruct (decide (t' = t)) as [->|Hne'].
+    - move: Hx. rewrite docm_get_insert_eq list_elem_of_singleton => Hxeq.
+      subst x. rewrite /smoke_item /= in Hcid. by apply Hne.
+    - move: Hx. rewrite docm_get_insert_ne // smoke_nilget elem_of_nil //. }
+  iMod (history_broadcast γh cl 0%nat _ _ t2 _
+          (smoke_input cl aY) (smoke_item cl aY) E HE
+          Htoitem Hvalid Hmax eq_refl Hbound Hint Hcoh2
+          with "Hinv Hcoh") as "(Hown & _ & #Hcert & _)".
+  iModIntro. iSplitL "Hown".
+  - iApply (relay_coh_close with "Hown").
+    (* the peer's own message is now on the wire, and it is not the other
+       client's, so neither branch of the strong case applies *)
+    move=> [Hc | Hc].
+    + apply (f_equal (lookup (r, n))) in Hc.
+      rewrite lookup_insert_eq lookup_empty in Hc. discriminate.
+    + have Hd : encode (t2, smoke_input cl aY)
+                  = encode (t, smoke_input clX aX).
+      { apply (f_equal (lookup (r, n))) in Hc.
+        rewrite lookup_insert_eq in Hc.
+        destruct (decide ((r, n) = k)) as [Heq|Hk].
+        - rewrite Heq lookup_singleton_eq in Hc. by injection Hc.
+        - rewrite lookup_singleton_ne in Hc; [ discriminate | done ]. }
+      (* the peer inserts into a different type than the message it took in *)
+      have := f_equal decode Hd. rewrite !decode_encode.
+      move=> [=] Ht *. exact (Hnt Ht).
+  - rewrite /smoke_prot. iExists (t2, smoke_input cl aY).
+    rewrite decode_encode. by iFrame "Hcert".
 Qed.
 
 End smoke.

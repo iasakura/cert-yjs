@@ -492,7 +492,7 @@ Section lifting.
   Qed.
 
 End lifting.
-
+Check wp_WsRecvOp.
 (** * Adequacy: initializing the ghost state from an arbitrary initial network *)
 From Perennial.goose_lang Require Import adequacy.
 
