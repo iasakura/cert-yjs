@@ -423,6 +423,16 @@ Proof.
   rewrite -(Hm t) -(Hm' t) Heq //.
 Qed.
 
+(** Coherence sees a doc model only through [doc_model_get], so two models
+    that denote the same document are interchangeable in it. *)
+Lemma history_state_coh_get_eq h (m m' : DocModel) :
+  (∀ t, doc_model_get m t = doc_model_get m' t) ->
+  history_state_coh h m -> history_state_coh h m'.
+Proof.
+  move=> Heq [s [Hs Hm]]. exists s. split; first exact Hs.
+  move=> t. rewrite (Hm t) Heq //.
+Qed.
+
 (** Coherence projects to a per-type replay of the projected history. *)
 Lemma history_state_coh_proj h (m : DocModel) (t : TId) :
   history_state_coh h m ->

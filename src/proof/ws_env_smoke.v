@@ -22,7 +22,7 @@
     [history_smoke] in history.v, and it reuses that lemma's side conditions
     verbatim.
 
-    Four peers, each doing one more of what a real one does.
+    Five peers, each doing one more of what a real one does.
 
     - [smoke_ws_env_preserves] speaks into an empty network and never looks at
       what is on the wire, so it exercises [history_broadcast] alone.
@@ -40,13 +40,16 @@
       [k-1]. Its [ws_env_coh] is no longer a token recording whether the peer
       has spoken but the whole document it has built, related to its ghost
       history by [history_state_coh].
+    - [full_ws_env_preserves] does both: it delivers what another client put
+      on the wire into its own history, and then types without end. That is
+      the shape a Yjs client on a relayed connection has.
 
-    What the last one still does not do is read the wire, so it types into a
-    document that holds only its own characters. A peer that takes in what the
-    server relays and goes on typing is those two constructions at once:
-    [history_deliver_pending] and then [history_broadcast], over a
-    [ws_env_coh] that names the received part of the document as well as the
-    typed part. *)
+    What is still small about the last one is where its characters go: into a
+    different type than the operation it took in, which is what keeps the
+    array it types into the empty-based one [stream_step] describes. A peer
+    typing into the same list it received into is
+    [anchor_ws_env_preserves]'s document with a stream on top of it, and that
+    wants [stream_ok] over a base array rather than over the empty one. *)
 From New.proof Require Import proof_prelude.
 From New.golang Require Import theory.
 From New.proof Require Export core.
@@ -915,6 +918,170 @@ Proof.
   iSplitL; last by iPureIntro; move=> M b; split; [done | by exists b].
   iApply stream_coh_init.
   by iDestruct (big_sepS_elem_of _ _ cl with "Hown") as "$"; first apply elem_of_singleton.
+Qed.
+
+(** ** A peer that takes something in and keeps typing
+
+    The three before it read the wire but speak once; the one above speaks
+    without end but never reads the wire. This one does both: it delivers the
+    operation another client put on the wire into its own ghost history, and
+    then types for as long as someone types into it. The delivery happens
+    inside the same step as the peer's first character, since a send is the
+    only step the obligation gives, and after that there is nothing left to
+    deliver.
+
+    Which of the two the peer is at is a function of the wire, like everything
+    else its state depends on: it has delivered exactly when it has said
+    something, that is when [stream_pos] is not zero.
+
+    What it still shares with [relay_ws_env_preserves] is where its own
+    characters go: into a different type than the operation it took in, which
+    is what keeps the array it types into the one [stream_step] describes. A
+    peer typing into the same list as the operation it received is
+    [anchor_ws_env_preserves]'s document with a stream on top, and that wants
+    [stream_ok] over a base array rather than over the empty one. *)
+
+(** What the peer holds once it has done both: the operation it took in, at
+    [t], and the characters it typed, at [t2]. *)
+Definition full_model (cl clX : ClientId) (t t2 : TId) (aX : w8)
+    (bs : list w8) : DocM :=
+  <[t := [smoke_item clX aX]]> (<[t2 := stream_doc cl bs]> (∅ : DocM)).
+
+Lemma full_model_typed (cl clX : ClientId) (t t2 : TId) (aX : w8) (bs : list w8) :
+  t2 ≠ t ->
+  doc_model_get (full_model cl clX t t2 aX bs) t2 = stream_doc cl bs.
+Proof. move=> Hnt. rewrite /full_model docm_get_insert_ne // docm_get_insert_eq //. Qed.
+
+(** Delivering the relayed operation lands on a model with no entry at [t2] at
+    all; the peer's, before it has typed, has an empty one. As documents those
+    are the same, which is all [history_state_coh] looks at. *)
+Lemma full_model_nil_get (cl clX : ClientId) (t t2 : TId) (aX : w8) (t'' : TId) :
+  doc_model_get (<[t := [smoke_item clX aX]]> (∅ : DocM)) t''
+    = doc_model_get (full_model cl clX t t2 aX []) t''.
+Proof.
+  rewrite /full_model.
+  destruct (decide (t'' = t)) as [-> | H1]; first by rewrite !docm_get_insert_eq.
+  rewrite (docm_get_insert_ne (∅ : DocM) t t'' _ H1).
+  rewrite (docm_get_insert_ne _ t t'' _ H1).
+  destruct (decide (t'' = t2)) as [-> | H2].
+  - rewrite docm_get_insert_eq smoke_nilget //.
+  - rewrite (docm_get_insert_ne (∅ : DocM) t2 t'' _ H2) //.
+Qed.
+
+Lemma full_model_bound (cl clX : ClientId) (t t2 : TId) (aX : w8) (bs : list w8) :
+  cl ≠ clX -> t2 ≠ t ->
+  forall (t' : TId) (x : YjsItem A),
+    x ∈ doc_model_get (full_model cl clX t t2 aX bs) t' ->
+    clientId (item_id x) = cl -> (clock (item_id x) < length bs)%nat.
+Proof.
+  move=> Hne Hnt t' x. rewrite /full_model.
+  destruct (decide (t' = t)) as [-> | H1].
+  - (* the operation the peer took in is another client's *)
+    rewrite docm_get_insert_eq list_elem_of_singleton => -> /=.
+    move=> Hcid. exfalso. by apply Hne.
+  - rewrite docm_get_insert_ne //.
+    destruct (decide (t' = t2)) as [-> | H2].
+    + rewrite docm_get_insert_eq => Hx _.
+      have [i [Hi Hid]] := stream_ok_id_elem cl bs x (stream_ok_all cl bs) Hx.
+      rewrite Hid /=. lia.
+    + rewrite docm_get_insert_ne // smoke_nilget. by move=> /elem_of_nil.
+Qed.
+
+(** The send relation: the wire carries the other client's operation at [kX],
+    and the peer may put the next character of its stream on the channel it
+    owns. *)
+Definition full_may (cl clX : ClientId) (t t2 : TId) (aX : w8)
+    (kX : chan_id * nat) (c0 : chan_id)
+    (M : gmap (chan_id * nat) (list u8)) (c : chan_id) (d : list u8) : Prop :=
+  M !! kX = Some (encode [(t, smoke_input clX aX)]) /\
+  c = c0 /\ ∃ b : w8, d = encode [(t2, stream_input cl (stream_pos c0 M) b)].
+
+(** Coherence: as for the typing peer, with the delivery folded in. Before the
+    first character the peer's history is empty of everything, including what
+    was relayed to it; afterwards it replays to both halves of its document. *)
+Definition full_coh (γh : history_names) (cl clX : ClientId) (t t2 : TId)
+    (aX : w8) (c0 : chan_id) (M : gmap (chan_id * nat) (list u8)) : iProp Σ :=
+  ∃ (bs : list w8) (h : list Ev),
+    ⌜length bs = stream_pos c0 M⌝ ∗
+    ⌜history_state_coh h
+       (if decide (bs = []) then (∅ : DocM) else full_model cl clX t t2 aX bs)⌝ ∗
+    own_client_history γh cl h.
+
+Definition full_wsGS (γm γs γr : gname) (γh : history_names)
+    (cl clX : ClientId) (t t2 : TId) (aX : w8) (kX : chan_id * nat)
+    (c0 : chan_id) : wsGS Σ :=
+  WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+       (full_coh γh cl clX t t2 aX c0) (full_may cl clX t t2 aX kX c0).
+
+Lemma full_coh_init (γh : history_names) (cl clX : ClientId) (t t2 : TId)
+    (aX : w8) (c0 : chan_id) :
+  own_client_history γh cl ([] : list Ev) -∗ full_coh γh cl clX t t2 aX c0 ∅.
+Proof.
+  iIntros "Hown". iExists [], []. iFrame "Hown". iPureIntro.
+  split; first by rewrite stream_pos_empty.
+  exact (history_state_coh_nil (A := A) (P := P)).
+Qed.
+
+Lemma full_ws_env_preserves (γm γs γr : gname) (γh : history_names)
+    (cl clX : ClientId) (t t2 : TId) (aX : w8) (kX : chan_id * nat)
+    (c0 : chan_id) (E : coPset) :
+  ↑histN ⊆ E ->
+  cl ≠ clX ->
+  t2 ≠ t ->
+  is_history (A := A) (P := P) γh -∗
+    @ws_env_preserves Σ (full_wsGS γm γs γr γh cl clX t t2 aX kX c0) _ E.
+Proof.
+  iIntros (HE Hne Hnt) "#Hinv".
+  iModIntro. iIntros (g r n data) "%Hmay %Hext %Hwf %Hfresh #Hwire Hcoh".
+  destruct Hmay as (HkX & -> & [b ->]).
+  rewrite /full_wsGS /=.
+  iDestruct "Hcoh" as (bs h) "(%Hlen & %Hcohst & Hown)".
+  (* the certificate for what the peer took in comes off the wire *)
+  iAssert (is_op_cert γh (t, OpInsert (smoke_input clX aX))) as "#HcertX".
+  { iDestruct (big_sepM_lookup _ _ kX with "Hwire") as (inputs) "[%Hd Hc]";
+      first exact HkX.
+    rewrite decode_encode in Hd. injection Hd as <-.
+    rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
+    iApply "Hc". }
+  have Hpos : stream_pos c0 g.(ws_msgs) = length bs.
+  { rewrite Hlen /stream_pos (chan_msgs_env g c0 Hext) //. }
+  rewrite Hpos.
+  have Hnone : env_msgs g !! (c0, n) = None.
+  { apply map_lookup_filter_None. by left. }
+  (* deliver what the peer took in, unless it already has *)
+  iAssert (|={E}=> ∃ h' : list Ev, own_client_history γh cl h' ∗
+             ⌜history_state_coh h' (full_model cl clX t t2 aX bs)⌝)%I
+    with "[Hown]" as ">(%h' & Hown & %Hcoh1)".
+  { move: Hcohst. case_decide as Hbs; last first.
+    - move=> Hcohst. iModIntro. iExists h. by iFrame "Hown".
+    - subst bs => Hcohst.
+      iMod (history_deliver_pending γh cl h ∅ [(t, smoke_input clX aX)]
+              [(t, smoke_input clX aX)] [] (<[t := [smoke_item clX aX]]> (∅ : DocM))
+              E HE (relay_deliver_drain clX t aX) Hcohst
+              with "Hinv Hown []") as "(Hown & _ & _ & %Hcoh2 & _)".
+      { rewrite /is_pending_certified big_sepL_singleton. iApply "HcertX". }
+      iModIntro. iExists _. iFrame "Hown". iPureIntro.
+      apply (history_state_coh_get_eq _ (<[t := [smoke_item clX aX]]> (∅ : DocM)));
+        [exact (full_model_nil_get cl clX t t2 aX) | exact Hcoh2]. }
+  (* from here the typing peer's step, at the type the peer types into *)
+  have Hok := stream_ok_all cl bs.
+  have [Htoitem [Hvalid [Hmax Hint]]] := stream_step cl bs b Hok.
+  have Hgt2 := full_model_typed cl clX t t2 aX bs Hnt.
+  rewrite -Hgt2 in Htoitem Hmax Hint.
+  iMod (history_broadcast γh cl (length bs) h' (full_model cl clX t t2 aX bs) t2
+          (stream_doc cl (bs ++ [b])) (stream_input cl (length bs) b)
+          (stream_item cl bs b) E HE
+          Htoitem Hvalid Hmax eq_refl (full_model_bound cl clX t t2 aX bs Hne Hnt)
+          Hint Hcoh1 with "Hinv Hown") as "(Hown & _ & #Hcert & %Hcoh3)".
+  iModIntro. iSplitL "Hown".
+  - iExists (bs ++ [b]), _. iFrame "Hown". iPureIntro. split.
+    + rewrite length_app /= (stream_pos_insert c0 (env_msgs g) n) // -Hlen. lia.
+    + rewrite decide_False; last by destruct bs.
+      move: Hcoh3. rewrite /full_model insert_insert_ne // insert_insert_eq //.
+  - rewrite /smoke_prot. iExists [(t2, stream_input cl (length bs) b)].
+    iSplitR; first by rewrite decode_encode.
+    rewrite expand_inputs_stream /is_pending_certified big_sepL_singleton.
+    by iFrame "Hcert".
 Qed.
 
 End smoke.
