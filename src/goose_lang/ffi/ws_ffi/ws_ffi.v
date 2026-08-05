@@ -212,9 +212,13 @@ Section env.
     mask [E] it is stated at is the mask the receive that uses it runs at,
     and is where the instance's own invariant gets opened.
 
-    The protocol facts about everything already on the wire come along as a
-    hypothesis. They cost the state interpretation nothing, [ws_prot] being
-    persistent, and they are what makes the obligation dischargeable at all:
+    The state of the wire comes along as hypotheses, all free at the one place
+    this is used: the network is well formed, the slot being filled is empty,
+    and everything already on the wire satisfies the protocol. A peer whose
+    next message depends on what it has already said reads its own position in
+    its stream off the first two. The third costs the state interpretation
+    nothing, [ws_prot] being persistent, and is what makes the obligation
+    dischargeable at all:
     a Yjs peer's next operation is anchored at operations the server relayed
     to it, so proving it integrates means first delivering those into that
     peer's ghost history, which needs their certificates. Delivering them at
@@ -226,6 +230,7 @@ Section env.
 Definition ws_env_preserves (E : coPset) : iProp Σ :=
   □ (∀ (g : ws_global_state) (r : chan_id) (n : nat) (data : list u8),
        ⌜ws_may g.(ws_msgs) r data⌝ -∗ ⌜r ∈ g.(ws_ext)⌝ -∗
+       ⌜ws_wf g⌝ -∗ ⌜g.(ws_msgs) !! (r, n) = None⌝ -∗
        ([∗ map] k ↦ d ∈ g.(ws_msgs), ws_prot d) -∗
        ws_env_coh (env_msgs g) ={E}=∗
          ws_env_coh (<[ (r, n) := data ]> (env_msgs g)) ∗ ws_prot data).
@@ -477,7 +482,8 @@ Section lifting.
           [ apply (env_msgs_insert_ext g1 gpost rc n data); done | rewrite Hem ]
       end.
       rewrite Hmay in Hpermit.
-      iMod ("Henv" $! g1 rc n data with "[//] [//] Hprot Hcoh") as "[Hcoh #Hpd]".
+      iMod ("Henv" $! g1 rc n data with "[//] [//] [//] [//] Hprot Hcoh")
+        as "[Hcoh #Hpd]".
       iMod (@ghost_map_insert_persist with "Hmsgs") as "[Hmsgs #Hmsg]".
       { done. }
       iMod (@ghost_map_update with "Hrecvd Hrc") as "[Hrecvd Hrc]".

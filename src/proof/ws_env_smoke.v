@@ -174,7 +174,7 @@ Lemma smoke_ws_env_preserves (γm γs γr : gname) (γh : history_names)
     @ws_env_preserves Σ (smoke_wsGS γm γs γr γh cl t a) _ E.
 Proof.
   iIntros (HE) "#Hinv".
-  iModIntro. iIntros (g r n data) "%Hmay %Hext _ Hcoh".
+  iModIntro. iIntros (g r n data) "%Hmay %Hext %Hwf %Hfresh _ Hcoh".
   destruct Hmay as [Hempty ->].
   (* nothing on the wire at all, so nothing from the environment either *)
   have Henv : env_msgs g = ∅.
@@ -283,7 +283,7 @@ Lemma relay_ws_env_preserves (γm γs γr : gname) (γh : history_names)
     @ws_env_preserves Σ (relay_wsGS γm γs γr γh cl clX t t2 aX aY k) _ E.
 Proof.
   iIntros (HE Hne Hnt) "#Hinv".
-  iModIntro. iIntros (g r n data) "%Hmay %Hext #Hwire Hcoh".
+  iModIntro. iIntros (g r n data) "%Hmay %Hext %Hwf %Hfresh #Hwire Hcoh".
   destruct Hmay as [Hw ->].
   rewrite /relay_wsGS /=.
   (* the environment's view is a sub-map of the one message on the wire *)
@@ -428,7 +428,7 @@ Lemma anchor_ws_env_preserves (γm γs γr : gname) (γh : history_names)
     @ws_env_preserves Σ (anchor_wsGS γm γs γr γh cl clX t bX bY k) _ E.
 Proof.
   iIntros (HE Hne) "#Hinv".
-  iModIntro. iIntros (g r n data) "%Hmay %Hext #Hwire Hcoh".
+  iModIntro. iIntros (g r n data) "%Hmay %Hext %Hwf %Hfresh #Hwire Hcoh".
   destruct Hmay as [Hw ->].
   rewrite /anchor_wsGS /=.
   have Henv : env_msgs g = ∅ \/
@@ -487,6 +487,105 @@ Proof.
     iSplitR; first by rewrite decode_encode.
     rewrite expand_inputs_anchor /is_pending_certified big_sepL_singleton.
     by iFrame "Hcert".
+Qed.
+
+(** ** A peer that keeps typing
+
+    The three above each send once. This one sends a stream: character [k] is
+    anchored at character [k-1], which is what a Yjs client does when someone
+    types into it. Its state is no longer a token but its whole document, and
+    [ws_env_coh] is the refinement relation between that document and its
+    ghost history.
+
+    The peer's state has to be a function of what it has put on the wire, since
+    the wire is the only thing [ws_may] and [ws_env_coh] both see. That is why
+    [ws_env_coh] is indexed by [env_msgs] and why the obligation hands over the
+    network's well-formedness and the emptiness of the slot being filled: they
+    are what say where in its own stream the peer is. *)
+
+Fixpoint stream_items (cl : ClientId) (prev : YjsPtr A) (k : nat) (bs : list w8)
+    : list (YjsItem A) :=
+  match bs with
+  | [] => []
+  | b :: rest =>
+      let it := Item (A := A) prev Last (MkYjsId cl k) [b] in
+      it :: stream_items cl (itemPtr it) (S k) rest
+  end.
+
+Definition stream_input (cl : ClientId) (k : nat) (b : w8)
+    : IntegrateInput (A := A) :=
+  MkIntegrateInput (A := A)
+    (match k with O => None | S k' => Some (MkYjsId cl k') end)
+    None [b] (MkYjsId cl k).
+
+Lemma stream_items_length cl prev k bs :
+  length (stream_items cl prev k bs) = length bs.
+Proof. elim: bs prev k => [| b bs IH] prev k //=. by rewrite IH. Qed.
+
+(** Growing at the end: the new character hangs off the last one, or off
+    [prev] when there is none yet. *)
+Fixpoint stream_last (cl : ClientId) (prev : YjsPtr A) (k : nat) (bs : list w8)
+    : YjsPtr A :=
+  match bs with
+  | [] => prev
+  | b :: rest =>
+      stream_last cl (itemPtr (Item (A := A) prev Last (MkYjsId cl k) [b]))
+        (S k) rest
+  end.
+
+Lemma stream_items_snoc cl prev k bs b :
+  stream_items cl prev k (bs ++ [b])
+    = stream_items cl prev k bs
+      ++ [Item (A := A) (stream_last cl prev k bs) Last
+            (MkYjsId cl (k + length bs)) [b]].
+Proof.
+  elim: bs prev k => [| b0 bs IH] prev k /=.
+  - rewrite Nat.add_0_r //.
+  - rewrite IH Nat.add_succ_r //.
+Qed.
+
+Notation stream_doc cl bs := (stream_items cl First 0 bs).
+Notation stream_tail cl bs := (stream_last cl First 0 bs).
+
+Lemma stream_last_snoc cl prev k bs b :
+  stream_last cl prev k (bs ++ [b])
+    = itemPtr (Item (A := A) (stream_last cl prev k bs) Last
+                 (MkYjsId cl (k + length bs)) [b]).
+Proof.
+  elim: bs prev k => [| b0 bs IH] prev k /=.
+  - rewrite Nat.add_0_r //.
+  - rewrite IH Nat.add_succ_r //.
+Qed.
+
+(** What the peer's document satisfies at every point of the stream. Enough to
+    take the next step and re-establish itself. *)
+Record stream_ok (cl : ClientId) (bs : list w8) : Prop := {
+  so_inv : YjsArrInvariant (stream_doc cl bs);
+  so_ids : forall i it, stream_doc cl bs !! i = Some it ->
+             item_id it = MkYjsId cl i;
+  so_valid : forall z, z ∈ stream_doc cl bs -> IsItemValid z;
+  so_nosucc : forall z, z ∈ stream_doc cl bs -> origin z ≠ stream_tail cl bs;
+}.
+
+Lemma YjsArrInvariant_nil : YjsArrInvariant ([] : list (YjsItem A)).
+Proof.
+  split.
+  - split => //=; move=> o r id c; rewrite /ArrSet /= => /elem_of_nil [].
+  - split; move=> *;
+      match goal with
+      | H : ArrSet [] _ |- _ => move: H; rewrite /ArrSet /= => /elem_of_nil []
+      end.
+  - by constructor.
+  - by constructor.
+Qed.
+
+Lemma stream_ok_nil cl : stream_ok cl [].
+Proof.
+  split; simpl.
+  - exact YjsArrInvariant_nil.
+  - by move=> [|i] it.
+  - by move=> z /elem_of_nil.
+  - by move=> z /elem_of_nil.
 Qed.
 
 End smoke.
