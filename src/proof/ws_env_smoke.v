@@ -22,18 +22,24 @@
     [history_smoke] in history.v, and it reuses that lemma's side conditions
     verbatim.
 
-    There are two peers here. The first never looks at what is already on the
-    wire, so it exercises only [history_broadcast]. The second
-    ([relay_ws_env_preserves]) takes in an operation another client put on the
-    wire, using the certificate the obligation's hypothesis carries, and runs
-    [history_deliver_pending] before minting its own. That is the two-step
-    argument a real peer needs, on the smallest instance where it can be
-    checked.
+    Three peers, each doing one more of what a real one does.
 
-    What is still not shown is a peer whose operation is ANCHORED at one it
-    took in. The second peer inserts into a different type, so it still
-    broadcasts against an empty array; anchoring means [toItem] and [integrate]
-    at a non-empty one, and that is pure theory this file does not have. *)
+    - [smoke_ws_env_preserves] speaks into an empty network and never looks at
+      what is on the wire, so it exercises [history_broadcast] alone.
+    - [relay_ws_env_preserves] takes in an operation another client put on the
+      wire, reading its certificate out of the obligation's hypothesis, and
+      runs [history_deliver_pending] before minting its own. That is the
+      two-step argument. Its own operation is still anchor-free, and it inserts
+      into another type, so it still broadcasts against an empty array.
+    - [anchor_ws_env_preserves] anchors its operation at the one it took in,
+      and so integrates against a document that holds it. This is the shape a
+      Yjs client actually has: what it says next points at what was said to
+      it.
+
+    What is still small about all three is the size of [ws_may]: each peer may
+    send one message, once. A realistic client is the same construction with a
+    send relation that admits a stream, and [ws_env_coh] carrying its whole
+    document rather than a token. *)
 From New.proof Require Import proof_prelude.
 From New.golang Require Import theory.
 From New.proof Require Export core.
@@ -335,6 +341,151 @@ Proof.
   - rewrite /smoke_prot. iExists [(t2, smoke_input cl aY)].
     iSplitR; first by rewrite decode_encode.
     rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
+    by iFrame "Hcert".
+Qed.
+
+(** ** A peer whose operation is anchored at one it took in
+
+    The last thing the two peers above avoid: their own operation has no
+    origins, so it integrates against an empty array whatever the document
+    holds. A real Yjs client's next operation points at one the server relayed
+    to it. Here it does. *)
+
+Definition anchor_input (cl clX : ClientId) (b : w8) : IntegrateInput (A := A) :=
+  MkIntegrateInput (A := A) (Some (MkYjsId clX 0)) None [b] (MkYjsId cl 0).
+
+Definition anchor_item (cl clX : ClientId) (bX b : w8) : YjsItem A :=
+  Item (A := A) (itemPtr (smoke_item clX bX)) Last (MkYjsId cl 0) [b].
+
+Lemma expand_inputs_anchor (t : TId) (cl clX : ClientId) (b : w8) :
+  expand_inputs [(t, anchor_input cl clX b)] = [(t, anchor_input cl clX b)].
+Proof. rewrite /expand_inputs /expand_input /ops_of_input /explode //=. Qed.
+
+Lemma anchor_toItem (cl clX : ClientId) (bX b : w8) :
+  toItem (anchor_input cl clX b) [smoke_item clX bX]
+    = Some (anchor_item cl clX bX b).
+Proof.
+  rewrite /toItem /anchor_input /anchor_item /find_by_id /smoke_item /=.
+  rewrite decide_True //.
+Qed.
+
+Lemma anchor_integrate (cl clX : ClientId) (bX b : w8) :
+  integrate (anchor_input cl clX b) [smoke_item clX bX]
+    = Some [smoke_item clX bX; anchor_item cl clX bX b].
+Proof.
+  rewrite /integrate /anchor_input /anchor_item /smoke_item /=.
+  rewrite decide_True //.
+Qed.
+
+Lemma anchor_valid (cl clX : ClientId) (bX b : w8) :
+  IsItemValid (anchor_item cl clX bX b).
+Proof.
+  split.
+  - apply YjsLt'_ltOriginOrder. apply lt_last.
+  - move=> x Hx.
+    inversion Hx as [x0 y0 Hstep | x0 y0 z0 Hstep Hreach]; subst.
+    + (* one step out of the new item: its own two origins *)
+      inversion Hstep; subst; [left | right]; exists 0%nat; exact (leqSame _ _).
+    + inversion Hstep; subst.
+      * (* through the item it is anchored at, whose origins are First and Last *)
+        inversion Hreach as [x1 y1 Hstep2 | x1 y1 z1 Hstep2 Hreach2]; subst.
+        -- inversion Hstep2; subst.
+           ++ left. apply YjsLeq'_leqLt, YjsLt'_ltOriginOrder, lt_first.
+           ++ right. exists 0%nat. exact (leqSame _ _).
+        -- inversion Hstep2; subst;
+             inversion Hreach2 as [? ? Hs3 | ? ? ? Hs3 ?]; subst; inversion Hs3.
+      * (* nothing is reachable out of [Last] *)
+        inversion Hreach as [? ? Hs2 | ? ? ? Hs2 ?]; subst; inversion Hs2.
+Qed.
+
+Lemma anchor_maximal (cl clX : ClientId) (bX b : w8) :
+  cl ≠ clX ->
+  maximalId (anchor_item cl clX bX b) [smoke_item clX bX].
+Proof.
+  move=> Hne x Hx Hcid. exfalso.
+  move: Hx. rewrite /ArrSet /= list_elem_of_singleton => Hxeq.
+  subst x. rewrite /smoke_item /anchor_item /= in Hcid. by apply Hne.
+Qed.
+
+Definition anchor_may (cl clX : ClientId) (t : TId) (bX bY : w8)
+    (k : chan_id * nat)
+    (M : gmap (chan_id * nat) (list u8)) (c : chan_id) (d : list u8) : Prop :=
+  M = {[ k := encode [(t, smoke_input clX bX)] ]} /\
+  d = encode [(t, anchor_input cl clX bY)].
+
+Definition anchor_wsGS (γm γs γr : gname) (γh : history_names)
+    (cl clX : ClientId) (t : TId) (bX bY : w8) (k : chan_id * nat) : wsGS Σ :=
+  WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+       (relay_coh γh cl k (encode [(t, smoke_input clX bX)]))
+       (anchor_may cl clX t bX bY k).
+
+Lemma anchor_ws_env_preserves (γm γs γr : gname) (γh : history_names)
+    (cl clX : ClientId) (t : TId) (bX bY : w8) (k : chan_id * nat)
+    (E : coPset) :
+  ↑histN ⊆ E ->
+  cl ≠ clX ->
+  is_history (A := A) (P := P) γh -∗
+    @ws_env_preserves Σ (anchor_wsGS γm γs γr γh cl clX t bX bY k) _ E.
+Proof.
+  iIntros (HE Hne) "#Hinv".
+  iModIntro. iIntros (g r n data) "%Hmay %Hext #Hwire Hcoh".
+  destruct Hmay as [Hw ->].
+  rewrite /anchor_wsGS /=.
+  have Henv : env_msgs g = ∅ \/
+              env_msgs g = {[ k := encode [(t, smoke_input clX bX)] ]}.
+  { rewrite /env_msgs Hw map_filter_singleton.
+    case_decide; [by right | by left]. }
+  iDestruct (relay_coh_open with "Hcoh") as "Hcoh"; first exact Henv.
+  iAssert (is_op_cert γh (t, OpInsert (smoke_input clX bX))) as "#HcertX".
+  { rewrite Hw big_sepM_singleton.
+    iDestruct "Hwire" as (inputs) "[%Hd Hc]".
+    rewrite decode_encode in Hd. injection Hd as <-.
+    rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
+    iApply "Hc". }
+  iMod (history_deliver_pending γh cl [] ∅ [(t, smoke_input clX bX)]
+          [(t, smoke_input clX bX)] [] (<[t := [smoke_item clX bX]]> (∅ : DocM))
+          E HE (relay_deliver_drain clX t bX) history_state_coh_nil
+          with "Hinv Hcoh []") as "(Hcoh & _ & _ & %Hcoh2 & _)".
+  { rewrite /is_pending_certified big_sepL_singleton. iApply "HcertX". }
+  (* now the peer's document at [t] holds the operation it took in, and its own
+     operation points at it *)
+  have Hgett : doc_model_get (<[t := [smoke_item clX bX]]> (∅ : DocM)) t
+                 = [smoke_item clX bX] by rewrite docm_get_insert_eq.
+  have Htoitem := anchor_toItem cl clX bX bY.
+  have Hvalid := anchor_valid cl clX bX bY.
+  have Hmax := anchor_maximal cl clX bX bY Hne.
+  have Hint := anchor_integrate cl clX bX bY.
+  rewrite -Hgett in Htoitem Hmax Hint.
+  have Hbound : forall (t' : TId) (x : YjsItem A),
+      x ∈ doc_model_get (<[t := [smoke_item clX bX]]> (∅ : DocM)) t' ->
+      clientId (item_id x) = cl -> (clock (item_id x) < 0)%nat.
+  { move=> t' x Hx Hcid. exfalso.
+    destruct (decide (t' = t)) as [->|Hne'].
+    - move: Hx. rewrite Hgett list_elem_of_singleton => Hxeq.
+      subst x. rewrite /smoke_item /= in Hcid. by apply Hne.
+    - move: Hx. rewrite docm_get_insert_ne // smoke_nilget elem_of_nil //. }
+  iMod (history_broadcast γh cl 0%nat _ _ t _
+          (anchor_input cl clX bY) (anchor_item cl clX bX bY) E HE
+          Htoitem Hvalid Hmax eq_refl Hbound Hint Hcoh2
+          with "Hinv Hcoh") as "(Hown & _ & #Hcert & _)".
+  iModIntro. iSplitL "Hown".
+  - iApply (relay_coh_close with "Hown").
+    move=> [Hc | Hc].
+    + apply (f_equal (lookup (r, n))) in Hc.
+      rewrite lookup_insert_eq lookup_empty in Hc. discriminate.
+    + have Hd : encode [(t, anchor_input cl clX bY)]
+                  = encode [(t, smoke_input clX bX)].
+      { apply (f_equal (lookup (r, n))) in Hc.
+        rewrite lookup_insert_eq in Hc.
+        destruct (decide ((r, n) = k)) as [Heq|Hk].
+        - rewrite Heq lookup_singleton_eq in Hc. by injection Hc.
+        - rewrite lookup_singleton_ne in Hc; [ discriminate | done ]. }
+      (* the two differ in whether the operation has an origin at all *)
+      have := f_equal decode Hd. rewrite !decode_encode.
+      rewrite /anchor_input /smoke_input. move=> [=] *. by [].
+  - rewrite /smoke_prot. iExists [(t, anchor_input cl clX bY)].
+    iSplitR; first by rewrite decode_encode.
+    rewrite expand_inputs_anchor /is_pending_certified big_sepL_singleton.
     by iFrame "Hcert".
 Qed.
 
