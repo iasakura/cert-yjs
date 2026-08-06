@@ -69,6 +69,13 @@ Class wsGS Σ : Type := WsGS {
       the wire, so that by construction nothing modeled code does can disturb
       it. See [ws_env_preserves]. *)
   ws_env_coh : gmap (chan_id * nat) (list u8) -> iProp Σ;
+  (** The send relation the run is actually being carried out under. It is
+      [ws_global_state]'s [ws_env_may] field, pinned here because
+      [ws_env_preserves] quantifies over states and would otherwise be asked to
+      hold for a state whose field permits everything, which nothing can
+      discharge. No step changes the field, so the state interpretation carries
+      the equation for free. *)
+  ws_may : gmap (chan_id * nat) (list u8) -> chan_id -> list u8 -> Prop;
 }.
 
 Class wsGpreS Σ : Set := {
@@ -113,8 +120,9 @@ Section ws.
              an invariant needs a fancy update and this record has no [invGS]. *)
           ws_env_coh (env_msgs g) ∗
           (* physical well-formedness, needed here to know that a modeled send
-             lands outside [ws_ext] and so leaves [env_msgs] alone *)
-          ⌜ws_wf g⌝)%I;
+             lands outside [ws_ext] and so leaves [env_msgs] alone, and the
+             pinned send relation *)
+          ⌜ws_wf g⌝ ∗ ⌜g.(ws_env_may) = ws_may⌝)%I;
        ffi_local_start _ _ _ := True%I;
        ffi_global_start _ _ g :=
          (([∗ map] c ↦ n ∈ g.(ws_sent), c ↪[ws_sent_name] n) ∗
@@ -173,55 +181,71 @@ Section resources.
   Qed.
 End resources.
 
+(** * The environment's obligation
+
+    Stated over a bare [wsGS] rather than inside the lifting section, so that a
+    development can build its own [wsGS] with a real [ws_prot] and show this
+    holds for it. That is what says the assumption is not vacuous, and it needs
+    no goose and no program. [invGS] is here for the fancy update and nothing
+    else. *)
+Section env.
+  Existing Instances ws_op ws_model.
+  Context `{!wsGS Σ} `{!invGS Σ}.
+
+(** The environment's step, at the Iris level.
+
+    [ws_may], the run's copy of [ws_global_state]'s [ws_env_may] field (impl.v),
+    says which bytes a peer we do not run may put on the wire. This says what that costs in ghost state: the coherence between that
+    peer and whatever ghost structure describes it survives the step, and the
+    bytes satisfy the protocol.
+
+    This is the one assumption in the development about a system we do not
+    verify, and discharging it is a simulation argument: [ws_env_coh] is the
+    refinement relation, [ws_env_may] is the abstract peer's send relation, and
+    this is its one-step obligation.
+
+    It is an update and not an implication because the certificate it
+    produces does not exist yet: the ghost history has to be extended to
+    record what the environment did, and that extension is where the
+    freshness and integration conditions get checked. An implication would
+    instead claim the extension had already happened, which nothing did. The
+    mask [E] it is stated at is the mask the receive that uses it runs at,
+    and is where the instance's own invariant gets opened.
+
+    The state of the wire comes along as hypotheses, all free at the one place
+    this is used: the network is well formed, the slot being filled is empty,
+    and everything already on the wire satisfies the protocol. A peer whose
+    next message depends on what it has already said reads its own position in
+    its stream off the first two. The third costs the state interpretation
+    nothing, [ws_prot] being persistent, and is what makes the obligation
+    dischargeable at all:
+    a Yjs peer's next operation is anchored at operations the server relayed
+    to it, so proving it integrates means first delivering those into that
+    peer's ghost history, which needs their certificates. Delivering them at
+    that point rather than tracking each arrival is what
+    [history_deliver_pending] is for.
+
+    A network closed to modeled code takes [ws_env_may] to be empty, which
+    makes this hold vacuously. *)
+Definition ws_env_preserves (E : coPset) : iProp Σ :=
+  □ (∀ (g : ws_global_state) (r : chan_id) (n : nat) (data : list u8),
+       ⌜ws_may g.(ws_msgs) r data⌝ -∗ ⌜r ∈ g.(ws_ext)⌝ -∗
+       ⌜ws_wf g⌝ -∗ ⌜g.(ws_msgs) !! (r, n) = None⌝ -∗
+       ([∗ map] k ↦ d ∈ g.(ws_msgs), ws_prot d) -∗
+       ws_env_coh (env_msgs g) ={E}=∗
+         ws_env_coh (<[ (r, n) := data ]> (env_msgs g)) ∗ ws_prot data).
+
+#[global] Instance ws_env_preserves_persistent E :
+  Persistent (ws_env_preserves E).
+Proof. apply _. Qed.
+End env.
+
 (** * Lifting lemmas *)
 Section lifting.
   Existing Instances ws_op ws_model ws_semantics ws_interp.
   Context `{!gooseGlobalGS Σ, !gooseLocalGS Σ} {go_gctx : GoGlobalContext}.
   Local Instance goose_wsGS : wsGS Σ := goose_ffiGlobalGS.
 
-  (** The environment's step, at the Iris level.
-
-      [env_may_send] (impl.v) says which bytes a peer we do not run may put on
-      the wire. This says what that costs in ghost state: the coherence
-      between that peer and whatever ghost structure describes it survives the
-      step, and the bytes satisfy the protocol.
-
-      This is the one assumption in the development about a system we do not
-      verify, and discharging it is a simulation argument: [ws_env_coh] is the
-      refinement relation, [env_may_send] is the abstract peer's send
-      relation, and this is its one-step obligation. For a Yjs peer,
-      [ws_env_coh] holds that peer's [own_client_history] and the proof is one
-      [history_broadcast].
-
-      It is an update and not an implication because the certificate it
-      produces does not exist yet: the ghost history has to be extended to
-      record what the environment did, and that extension is where the
-      freshness and integration conditions get checked. An implication would
-      instead claim the extension had already happened, which nothing did. The
-      mask [E] it is stated at is the mask the receive that uses it runs at,
-      and is where the instance's own invariant gets opened.
-
-      The protocol facts about everything already on the wire come along as a
-      hypothesis. They cost the state interpretation nothing, [ws_prot] being
-      persistent, and they are what makes the obligation dischargeable at all:
-      a Yjs peer's next operation is anchored at operations the server relayed
-      to it, so proving it integrates means first delivering those into that
-      peer's ghost history, which needs their certificates. Delivering them at
-      that point rather than tracking each arrival is what
-      [history_deliver_pending] is for.
-
-      A network closed to modeled code takes [ws_env_may] to be empty, which
-      makes this hold vacuously. *)
-  Definition ws_env_preserves (E : coPset) : iProp Σ :=
-    □ (∀ (g : ws_global_state) (r : chan_id) (n : nat) (data : list u8),
-         ⌜g.(ws_env_may) g.(ws_msgs) r data⌝ -∗ ⌜r ∈ g.(ws_ext)⌝ -∗
-         ([∗ map] k ↦ d ∈ g.(ws_msgs), ws_prot d) -∗
-         ws_env_coh (env_msgs g) ={E}=∗
-           ws_env_coh (<[ (r, n) := data ]> (env_msgs g)) ∗ ws_prot data).
-
-  #[global] Instance ws_env_preserves_persistent E :
-    Persistent (ws_env_preserves E).
-  Proof. apply _. Qed.
 
   Definition connection (send recv : chan_id) : val :=
     ExtV (ConnectionV send recv).
@@ -296,8 +320,10 @@ Section lifting.
   Proof.
     iIntros (Φ) "_ HΦ". iApply (wp_WsOp with "[-]").
     iIntros "!> * Hl Hg".
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf)".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf & %Hmay)".
     assert (Hwf2 : ws_wf g2) by (eapply ws_wf_step_listen; [exact Hstep | exact Hwf]).
+    assert (Hmay2 : g2.(ws_env_may) = ws_may)
+      by (erewrite ws_env_may_step_listen; [exact Hmay | exact Hstep]).
     iModIntro. inv_base_step.
     iFrame "∗#%". iApply wp_value. iFrame. by iApply "HΦ".
   Qed.
@@ -312,8 +338,10 @@ Section lifting.
   Proof.
     iIntros (Φ) "_ HΦ". iApply (wp_WsOp with "[-]").
     iIntros "!> * Hl Hg".
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf)".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf & %Hmay)".
     assert (Hwf2 : ws_wf g2) by (eapply ws_wf_step_connect; [exact Hstep | exact Hwf]).
+    assert (Hmay2 : g2.(ws_env_may) = ws_may)
+      by (erewrite ws_env_may_step_connect; [exact Hmay | exact Hstep]).
     inv_base_step.
     destruct H0 as [[-> ->] | (sc & rc & Hne & Hfs & Hfr & -> & ->)].
     - iModIntro. iFrame "∗#%". iApply wp_value.
@@ -341,8 +369,10 @@ Section lifting.
   Proof.
     iIntros (Φ) "_ HΦ". iApply (wp_WsOp with "[-]").
     iIntros "!> * Hl Hg".
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf)".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf & %Hmay)".
     assert (Hwf2 : ws_wf g2) by (eapply ws_wf_step_accept; [exact Hstep | exact Hwf]).
+    assert (Hmay2 : g2.(ws_env_may) = ws_may)
+      by (erewrite ws_env_may_step_accept; [exact Hmay | exact Hstep]).
     inv_base_step.
     (* both branches allocate the same two cursors; they differ only in the
        accept backlog, which carries no ghost state, and in whether the peer's
@@ -377,8 +407,10 @@ Section lifting.
   Proof.
     iIntros (Φ) "[Hsc #Hpd] HΦ". iApply (wp_WsOp with "[-]").
     iIntros "!> * Hl Hg".
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf)".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf & %Hmay)".
     assert (Hwf2 : ws_wf g2) by (eapply ws_wf_step_send; [exact Hstep | exact Hwf]).
+    assert (Hmay2 : g2.(ws_env_may) = ws_may)
+      by (erewrite ws_env_may_step_send; [exact Hmay | exact Hstep]).
     inv_base_step.
     iDestruct (@ghost_map_lookup with "Hsent Hsc") as %Hn.
     rewrite Hn in H0.
@@ -424,13 +456,15 @@ Section lifting.
   Proof.
     iIntros (Φ) "[Hrc #Henv] HΦ". iApply (wp_WsOp with "[-]").
     iIntros "!> * Hl Hg".
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf)".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf & %Hmay)".
     assert (Hwf2 : ws_wf g2) by (eapply ws_wf_step_recv; [exact Hstep | exact Hwf]).
+    assert (Hmay2 : g2.(ws_env_may) = ws_may)
+      by (erewrite ws_env_may_step_recv; [exact Hmay | exact Hstep]).
     inv_base_step.
     iDestruct (@ghost_map_lookup with "Hrecvd Hrc") as %Hn.
     rewrite Hn in H0.
     destruct H0 as [[-> ->] | [(data & Hlookup & -> & ->)
-                              | (Hext & Hfresh & (data & Hmay & -> & ->))]].
+                              | (Hext & Hfresh & (data & Hpermit & -> & ->))]].
     - iModIntro. iFrame "∗#%". iApply wp_value.
       iApply ("HΦ" $! true []). iFrame.
     - (* a modeled sender put it there: read the protocol off the interpretation *)
@@ -447,7 +481,9 @@ Section lifting.
           assert (Hem : env_msgs gpost = <[ (rc, n) := data ]> (env_msgs g1));
           [ apply (env_msgs_insert_ext g1 gpost rc n data); done | rewrite Hem ]
       end.
-      iMod ("Henv" $! g1 rc n data with "[//] [//] Hprot Hcoh") as "[Hcoh #Hpd]".
+      rewrite Hmay in Hpermit.
+      iMod ("Henv" $! g1 rc n data with "[//] [//] [//] [//] Hprot Hcoh")
+        as "[Hcoh #Hpd]".
       iMod (@ghost_map_insert_persist with "Hmsgs") as "[Hmsgs #Hmsg]".
       { done. }
       iMod (@ghost_map_update with "Hrecvd Hrc") as "[Hrecvd Hrc]".
@@ -462,9 +498,52 @@ Section lifting.
   Qed.
 
 End lifting.
-
+Check wp_WsRecvOp.
 (** * Adequacy: initializing the ghost state from an arbitrary initial network *)
 From Perennial.goose_lang Require Import adequacy.
+
+(** Initialization with a protocol of the caller's choosing.
+
+    [ffi_global_init], the hook [goose_dist_adequacy] calls, takes no input
+    beyond the initial network and a [Prop], so the [wsGS] it builds can only
+    carry the trivial protocol. This is the same construction with the protocol
+    handed in, which is what a deployment needs: an execution whose [ws_prot]
+    is the real one. A deployment theorem uses it in place of
+    [ffi_global_init]; everything else in the adequacy chain is unchanged.
+
+    The caller owes the two things the state interpretation asks about the
+    initial network, namely the protocol of whatever is already on the wire
+    (nothing, for an empty one) and the environment's coherence at that
+    point. *)
+Section init.
+Existing Instances ws_op ws_model ws_interp.
+
+Lemma ws_global_init_prot {go_gctx : GoGlobalContext} Σ (hPre : wsGpreS Σ)
+    (g : ws_global_state)
+    (prot : list u8 -> iProp Σ) (Hpers : forall d, Persistent (prot d))
+    (coh : gmap (chan_id * nat) (list u8) -> iProp Σ) :
+  ws_wf g ->
+  ([∗ map] k ↦ d ∈ g.(ws_msgs), prot d) -∗
+  coh (env_msgs g) -∗
+  |==> ∃ hG : wsGS Σ,
+    ⌜hG.(ws_prot) = prot⌝ ∗ ⌜hG.(ws_env_coh) = coh⌝ ∗
+    ⌜hG.(ws_may) = g.(ws_env_may)⌝ ∗
+    @ffi_global_ctx _ ws_interp Σ hG g ∗ @ffi_global_start _ ws_interp Σ hG g.
+Proof.
+  iIntros (Hwf) "#Hprot Hcoh".
+  iMod (ghost_map_alloc g.(ws_msgs)) as (γm) "[Hm Hmelems]".
+  iMod (ghost_map_alloc g.(ws_sent)) as (γs) "[Hs Hselems]".
+  iMod (ghost_map_alloc g.(ws_recvd)) as (γr) "[Hr Hrelems]".
+  iAssert (|==> [∗ map] k ↦ d ∈ g.(ws_msgs), k ↪[γm]□ d)%I
+    with "[Hmelems]" as ">#Hmfacts".
+  { iApply big_sepM_bupd. iApply (big_sepM_mono with "Hmelems").
+    iIntros (k d Hk) "H". by iApply ghost_map_elem_persist. }
+  iModIntro.
+  iExists (WsGS Σ _ _ γm γs γr prot Hpers coh g.(ws_env_may)).
+  by iFrame "∗#%".
+Qed.
+
+End init.
 
 (** The generic initializer has no input beyond the initial network, so the
     [wsGS] it builds carries the trivial protocol: [ws_prot] holds of anything
@@ -493,8 +572,9 @@ Next Obligation.
   { iApply big_sepM_bupd. iApply (big_sepM_mono with "Hmelems").
     iIntros (k d Hk) "H". by iApply ghost_map_elem_persist. }
   iModIntro.
-  iExists (WsGS _ _ _ γm γs γr (λ _, True)%I (λ _, _) (λ _, True)%I).
-  iFrame "∗#%". by iApply big_sepM_intro.
+  iExists (WsGS _ _ _ γm γs γr (λ _, True)%I (λ _, _) (λ _, True)%I
+                 g.(ws_env_may)).
+  iFrame "∗#%"; try (by iApply big_sepM_intro); done.
 Qed.
 Next Obligation.
   rewrite //=. iIntros (? Σ hPre σ ??). iExists tt. eauto.

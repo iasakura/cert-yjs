@@ -369,6 +369,56 @@ Section ws.
     lia.
   Qed.
 
+  (** ** The environment's send relation is a constant of the run
+
+      No step touches [ws_env_may]. The Iris layer pins it in the state
+      interpretation, because [ws_env_preserves] quantifies over states and
+      would otherwise be asked to hold for a state whose field permits
+      everything, which nothing can discharge. Carrying the equation across a
+      step needs these. *)
+  Lemma ws_env_may_step_listen (a : ws_endpoint) e' sigma sigma' g g' :
+    is_ws_ffi_step WsListenOp #a e' sigma sigma' g g' ->
+    g'.(ws_env_may) = g.(ws_env_may).
+  Proof. intros [_ [<- _]]. done. Qed.
+
+  Lemma ws_env_may_step_connect (a : ws_endpoint) (path : go_string) e' sigma sigma' g g' :
+    is_ws_ffi_step WsConnectOp (#a, #path)%V e' sigma sigma' g g' ->
+    g'.(ws_env_may) = g.(ws_env_may).
+  Proof.
+    intros [_ Hstep]. specialize (Hstep a path eq_refl).
+    destruct Hstep as [[<- _] | (sc & rc & _ & _ & _ & -> & _)]; done.
+  Qed.
+
+  Lemma ws_env_may_step_accept (a : ws_endpoint) e' sigma sigma' g g' :
+    is_ws_ffi_step WsAcceptOp (ExtV (ListenSocketV a)) e' sigma sigma' g g' ->
+    g'.(ws_env_may) = g.(ws_env_may).
+  Proof.
+    intros [_ Hstep]. specialize (Hstep a eq_refl).
+    destruct Hstep as (s' & r' & path' & _ & _ & _ & _ & Hbr & _).
+    destruct Hbr as [(rest & _ & ->) | (_ & _ & _ & ->)]; done.
+  Qed.
+
+  Lemma ws_env_may_step_send (s r : chan_id) (data : list u8) e' sigma sigma' g g' :
+    is_ws_ffi_step WsSendOp (ExtV (ConnectionV s r), #data)%V e' sigma sigma' g g' ->
+    g'.(ws_env_may) = g.(ws_env_may).
+  Proof.
+    intros [_ Hstep]. specialize (Hstep s r data eq_refl).
+    destruct (g.(ws_sent) !! s) as [n|]; last first.
+    { destruct Hstep as [<- _]. done. }
+    destruct Hstep as [[<- _] | (_ & -> & _)]; done.
+  Qed.
+
+  Lemma ws_env_may_step_recv (s r : chan_id) e' sigma sigma' g g' :
+    is_ws_ffi_step WsRecvOp (ExtV (ConnectionV s r)) e' sigma sigma' g g' ->
+    g'.(ws_env_may) = g.(ws_env_may).
+  Proof.
+    intros [_ Hstep]. specialize (Hstep s r eq_refl).
+    destruct (g.(ws_recvd) !! r) as [n|]; last first.
+    { destruct Hstep as [<- _]. done. }
+    destruct Hstep
+      as [[<- _] | [(d & _ & -> & _) | (_ & _ & (d & _ & -> & _))]]; done.
+  Qed.
+
   Lemma ws_wf_step_listen (a : ws_endpoint) e' sigma sigma' g g' :
     is_ws_ffi_step WsListenOp #a e' sigma sigma' g g' -> ws_wf g -> ws_wf g'.
   Proof. intros (_ & <- & _) Hwf. exact Hwf. Qed.
