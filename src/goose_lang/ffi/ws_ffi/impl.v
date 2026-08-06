@@ -95,29 +95,49 @@ Defined.
       the channel is handed to modeled code.
     - [ws_recvd]: the receiver's read cursor.
     - [ws_ext]: channels whose sending side is the environment, i.e. a peer we
-      do not run. [WsRecvOp] fabricates arbitrary bytes on exactly these. The
+      do not run. [WsRecvOp] produces bytes at receive time on exactly these,
+      as permitted by [ws_env_may]. The
       set is explicit rather than derived from "[ws_sent] has no entry",
       because a channel that a connecting peer created is momentarily in that
       state too, between its [WsConnectOp] and the server's [WsAcceptOp], and
       the environment must not be able to forge messages on it.
+    - [ws_env_may]: constant, never changed by a step. [ws_env_may M c data]
+      reads "with [M] the messages on the wire, a peer we do not run may put
+      [data] on channel [c]". [WsRecvOp]'s environment branch is guarded by it,
+      so an unmodeled peer is not a source of arbitrary bytes: it is a
+      transition system, and this is its send relation. [fun _ _ _ => False]
+      closes the network to modeled code, and a Yjs instance lets a peer send
+      exactly the encodings of the operations the protocol permits it next.
+
+      It reads the whole of [ws_msgs] and not just the environment's own
+      sends, because what a peer may say next depends on what was said TO it:
+      a Yjs client's next operation is anchored at operations the server
+      relayed to it. Those are on the wire, so they are in [M].
     - [ws_backlog]: per listening endpoint, the connections awaiting accept.
       Each entry is (the connecting side's send channel, its receive channel,
-      the connection's metadata) where the metadata is the request path, i.e.
-      the y-websocket room name. *)
+      the request target the connecting side asked for). That target is
+      transport data, not application data: WebSocket carries it in the opening
+      handshake, so it arrives before any message and there is no way for a
+      peer to convey it in-band. It is handed to the acceptor once, at
+      [WsAcceptOp], and the model keeps nothing about it afterwards. What an
+      application reads into it is not this file's business. *)
 Record ws_global_state : Type := {
   ws_msgs : gmap (chan_id * nat) (list u8);
   ws_sent : gmap chan_id nat;
   ws_recvd : gmap chan_id nat;
   ws_ext : gset chan_id;
   ws_backlog : gmap ws_endpoint (list (chan_id * chan_id * go_string));
+  ws_env_may : gmap (chan_id * nat) (list u8) -> chan_id -> list u8 -> Prop;
 }.
 
 Global Instance ws_global_state_settable : Settable _ :=
-  settable! Build_ws_global_state <ws_msgs; ws_sent; ws_recvd; ws_ext; ws_backlog>.
+  settable! Build_ws_global_state
+    <ws_msgs; ws_sent; ws_recvd; ws_ext; ws_backlog; ws_env_may>.
 
 Global Instance ws_global_state_inhabited : Inhabited ws_global_state :=
   populate {| ws_msgs := ∅; ws_sent := ∅; ws_recvd := ∅;
-              ws_ext := ∅; ws_backlog := ∅ |}.
+              ws_ext := ∅; ws_backlog := ∅;
+              ws_env_may := fun _ _ _ => False |}.
 
 (** There is no per-node state: this FFI is the network and nothing else. *)
 Definition ws_node_state : Type := unit.
@@ -146,6 +166,14 @@ Section ws.
   Definition backlog_of (g : ffi_global_state) (e : ws_endpoint) :
       list (chan_id * chan_id * go_string) :=
     default [] (g.(ws_backlog) !! e).
+
+  (** Everything the environment has put on the wire: the messages on channels
+      whose sending side is a peer we do not run. This is the environment's
+      whole observable state, so [ws_env_may] is a relation over it, and the
+      Iris layer indexes its environment coherence predicate by it. *)
+  Definition env_msgs (g : ffi_global_state) : gmap (chan_id * nat) (list u8) :=
+    filter (fun kv => kv.1.1 ∈ g.(ws_ext)) g.(ws_msgs).
+
 
   Definition is_ws_ffi_step (op : WsOp) (v : val) (e' : expr)
     (σ σ' : ffi_state) (g g' : ffi_global_state) : Prop :=
@@ -218,10 +246,11 @@ Section ws.
 
     (** [Recv(c)]: consume the message at the read cursor and advance it, or
         report that nothing arrived. The third branch is the environment: on a
-        channel in [ws_ext], arbitrary bytes may show up. That is the honest
-        treatment of a peer we do not run, and it is recorded in [ws_msgs] like
-        any other message, so the receiver still gets the persistent "message
-        [n] here was [data]" fact.
+        channel in [ws_ext], whatever [env_may_send] permits in the current
+        state may show up. It is recorded in [ws_msgs] like any other message,
+        so the receiver still gets the persistent "message [n] here was [data]"
+        fact, and the peer we do not run is described by a send relation rather
+        than by unrestricted nondeterminism.
 
         Loss, connection death and a slow peer are all the "nothing arrived"
         branch; nothing here ever makes a delivered message un-delivered. *)
@@ -236,7 +265,8 @@ Section ws.
                         g' = set ws_recvd <[ r := S n ]> g ∧
                         e' = Val ((*err*) #false, #data)%V) ∨
                (r ∈ g.(ws_ext) ∧ g.(ws_msgs) !! (r, n) = None ∧
-                ∃ data, g' = (set ws_recvd <[ r := S n ]>
+                ∃ data, g.(ws_env_may) g.(ws_msgs) r data ∧
+                        g' = (set ws_recvd <[ r := S n ]>
                              (set ws_msgs <[ (r, n) := data ]> g)) ∧
                         e' = Val ((*err*) #false, #data)%V)
            | None => g = g' ∧ e' = Panic "invalid"
@@ -270,8 +300,55 @@ Section ws.
       ∀ n, g.(ws_msgs) !! (c, n) = None;
   }.
 
-  Lemma ws_wf_empty : ws_wf {| ws_msgs := ∅; ws_sent := ∅; ws_recvd := ∅;
-                               ws_ext := ∅; ws_backlog := ∅ |}.
+  (** ** How a step moves the environment's view
+
+      The four ways: not at all (most steps), or by one entry (an environment
+      receive). Modeled code never moves it, which is what makes the Iris
+      layer's [ws_env_coh] stable across everything but that one step. *)
+  Lemma env_msgs_same g g' :
+    g'.(ws_msgs) = g.(ws_msgs) -> g'.(ws_ext) = g.(ws_ext) ->
+    env_msgs g' = env_msgs g.
+  Proof. rewrite /env_msgs => -> ->. done. Qed.
+
+  (** Accepting from an unmodeled peer puts a channel into [ws_ext]. It carries
+      no message yet, so the environment's view does not move. *)
+  Lemma env_msgs_add_ext g g' s :
+    g'.(ws_msgs) = g.(ws_msgs) -> g'.(ws_ext) = {[ s ]} ∪ g.(ws_ext) ->
+    (forall n, g.(ws_msgs) !! (s, n) = None) ->
+    env_msgs g' = env_msgs g.
+  Proof.
+    rewrite /env_msgs => -> -> Hfresh.
+    apply map_filter_ext => [[c n]] d Hd /=.
+    split; last set_solver.
+    move => /elem_of_union [/elem_of_singleton Hcs|//].
+    by rewrite Hcs Hfresh in Hd.
+  Qed.
+
+  (** A modeled send lands on a channel the environment does not own. *)
+  Lemma env_msgs_insert_nonext g g' c n data :
+    c ∉ g.(ws_ext) ->
+    g'.(ws_msgs) = <[ (c, n) := data ]> g.(ws_msgs) ->
+    g'.(ws_ext) = g.(ws_ext) ->
+    env_msgs g' = env_msgs g.
+  Proof.
+    rewrite /env_msgs => Hc -> ->.
+    by rewrite map_filter_insert_not' //= => ?.
+  Qed.
+
+  (** An environment receive is the one step that grows it. *)
+  Lemma env_msgs_insert_ext g g' c n data :
+    c ∈ g.(ws_ext) ->
+    g'.(ws_msgs) = <[ (c, n) := data ]> g.(ws_msgs) ->
+    g'.(ws_ext) = g.(ws_ext) ->
+    env_msgs g' = <[ (c, n) := data ]> (env_msgs g).
+  Proof.
+    rewrite /env_msgs => Hc -> ->.
+    by rewrite map_filter_insert_True.
+  Qed.
+
+  Lemma ws_wf_empty envmay :
+    ws_wf {| ws_msgs := ∅; ws_sent := ∅; ws_recvd := ∅;
+             ws_ext := ∅; ws_backlog := ∅; ws_env_may := envmay |}.
   Proof.
     split; simpl.
     - set_solver.
@@ -408,7 +485,7 @@ Section ws.
     remember (g.(ws_recvd) !! r) as orc eqn:Hr. symmetry in Hr.
     destruct orc as [k|]; last (destruct Hstep as (<- & _); exact Hwf).
     destruct Hstep
-      as [(<- & _) | [(d & Hd & -> & _) | (Hrext & Hfresh & (d & -> & _))]];
+      as [(<- & _) | [(d & Hd & -> & _) | (Hrext & Hfresh & (d & _ & -> & _))]];
       first exact Hwf.
     - (* a queued message is consumed: only the read cursor moves *)
       split; simpl; try by apply Hwf.

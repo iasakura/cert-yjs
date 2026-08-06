@@ -58,7 +58,7 @@ Proof.
 Qed.
 
 (** [Accept]: hands out BOTH cursors of the accepted connection, plus the path
-    the peer connected to (the y-websocket room name). Nothing is required of
+    the peer connected to, out of the opening handshake. Nothing is required of
     the peer. *)
 Lemma wp_Accept (l : loc) (e : ws_endpoint) :
   {{{ is_Listener l e }}}
@@ -115,14 +115,15 @@ Qed.
     model's late failure), which the disjunction reflects. *)
 Lemma wp_Send (c : loc) (sc rc : chan_id) (n : nat) (s : slice.t) (dq : dfrac)
     (data : list w8) :
-  {{{ is_Connection c sc rc ∗ s ↦*{dq} data ∗ own_send_cursor sc n }}}
+  {{{ is_Connection c sc rc ∗ s ↦*{dq} data ∗ own_send_cursor sc n ∗
+      ws_prot data }}}
     wsnet.Sendⁱᵐᵖˡ #c #s
   {{{ (err : bool), RET #err;
       s ↦*{dq} data ∗
       ((⌜err = true⌝ ∗ own_send_cursor sc n) ∨
        (own_send_cursor sc (S n) ∗ is_chan_msg sc n data)) }}}.
 Proof.
-  wp_start as "(#Hc & Hs & Hcur)".
+  wp_start as "(#Hc & Hs & Hcur & #Hpd)".
   iEval (rewrite /is_Connection) in "Hc".
   wp_pures.
   wp_apply (wp_bytes_to_string with "[$Hs]").
@@ -131,7 +132,7 @@ Proof.
   wp_apply (Perennial.goose_lang.lifting.wp_load _ _ _ DfracDiscarded (connection sc rc) with "[$Hc]").
   iIntros "_".
   wp_pures.
-  wp_apply (wp_WsSendOp with "[$Hcur]").
+  wp_apply (wp_WsSendOp with "[$Hcur $Hpd]").
   iIntros (err_early err_late) "Hcur".
   iApply "HΦ". iFrame "Hs".
   destruct err_early; simpl.
@@ -143,19 +144,19 @@ Qed.
     fresh and holds message [n] of [rc]; the cursor advances, so the caller
     processes the peer's stream in order and exactly once. *)
 Lemma wp_Receive (c : loc) (sc rc : chan_id) (n : nat) :
-  {{{ is_Connection c sc rc ∗ own_recv_cursor rc n }}}
+  {{{ is_Connection c sc rc ∗ own_recv_cursor rc n ∗ ws_env_preserves ⊤ }}}
     wsnet.Receiveⁱᵐᵖˡ #c
   {{{ (err : bool) (s : slice.t) (data : list w8), RET (#err, #s);
       s ↦* data ∗ own_slice_cap w8 s (DfracOwn 1) ∗
       (if err then own_recv_cursor rc n
-       else own_recv_cursor rc (S n) ∗ is_chan_msg rc n data) }}}.
+       else own_recv_cursor rc (S n) ∗ is_chan_msg rc n data ∗ ws_prot data) }}}.
 Proof.
-  wp_start as "(#Hc & Hcur)".
+  wp_start as "(#Hc & Hcur & #Henv)".
   iEval (rewrite /is_Connection) in "Hc".
   wp_pures.
   wp_apply (Perennial.goose_lang.lifting.wp_load _ _ _ DfracDiscarded (connection sc rc) with "[$Hc]").
   iIntros "_".
-  wp_apply (wp_WsRecvOp with "[$Hcur]").
+  wp_apply (wp_WsRecvOp with "[$Hcur $Henv]").
   iIntros (err data) "Hcur".
   wp_pures.
   wp_apply wp_string_to_bytes.

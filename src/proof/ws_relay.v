@@ -21,7 +21,14 @@
 
     Under the grove FFI none of this is expressible: accepting a connection
     grants no right to answer it, so there would be no send cursor to collect.
-    See src/goose_lang/ffi/ws_ffi/impl.v's header. *)
+    See src/goose_lang/ffi/ws_ffi/impl.v's header.
+
+    The protocol side is the other half. [ws_prot] is what every message on the
+    wire satisfies; sending owes it and receiving is owed it. A relay is both,
+    and what it forwards is exactly what it received, so [Serve] discharges
+    [Broadcast]'s obligation from the right the receive handed over. Nothing is
+    assumed per connection, and no proof here depends on whether the peer at
+    the other end is modeled code or a browser. *)
 From New.proof Require Import proof_prelude.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import wsrelay.
 From New.proof.sync_proof Require Import base mutex.
@@ -118,13 +125,17 @@ Qed.
 
     The postcondition is only the payload slice. Nothing stronger is available,
     and deliberately so: [Send]'s error is ignored here, as in y-websocket, and
-    an error says nothing about delivery either way. *)
+    an error says nothing about delivery either way.
+
+    [ws_prot data] is the relay's obligation to every connection it forwards
+    to, one per [Send]. It is persistent, so one copy covers the whole
+    fan-out. *)
 Lemma wp_Room__Broadcast (r self : loc) (s : slice.t) (dq : dfrac) (data : list w8) :
-  {{{ is_pkg_init wsrelay ∗ is_Room r ∗ s ↦*{dq} data }}}
+  {{{ is_pkg_init wsrelay ∗ is_Room r ∗ s ↦*{dq} data ∗ ws_prot data }}}
     r @! (go.PointerType wsrelay.Room) @! "Broadcast" #self #s
   {{{ RET #(); s ↦*{dq} data }}}.
 Proof.
-  wp_start as "(#Hroom & Hs)".
+  wp_start as "(#Hroom & Hs & #Hpd)".
   wp_auto.
   wp_apply (wp_Mutex__Lock with "[$Hroom]").
   iIntros "[Hlocked Hinv]". iNamed "Hinv".
@@ -163,7 +174,7 @@ Proof.
       iDestruct (big_sepL_lookup_acc _ _ _ _ Hc with "Hsends") as "[Hone Hback]".
       iDestruct "Hone" as (sc' rc' n') "[#Hconn' Hsend']".
       wp_func_call.
-      wp_apply (wp_Send with "[$Hconn' $Hs $Hsend']").
+      wp_apply (wp_Send with "[$Hconn' $Hs $Hsend' $Hpd]").
       iIntros (err) "(Hs & Hres)".
       iAssert (own_conn_send c) with "[Hres]" as "Hone".
       { iDestruct "Hres" as "[[_ H] | [H _]]"; iExists sc', rc', _; iFrame "#∗". }
@@ -182,19 +193,25 @@ Qed.
     path. Its SEND side is not here: [Join] gave it to the room.
 
     It returns when the peer stops delivering, handing the cursor back at
-    whatever point it reached. *)
+    whatever point it reached.
+
+    This is where the relay preserves the protocol without assuming anything of
+    its own: what it forwards is exactly what it received, so the [ws_prot]
+    obligation [Broadcast] owes is discharged by the [ws_prot] the receive
+    handed over. Nothing is assumed per connection, and it does not matter
+    whether the peer on the other end is modeled code or not. *)
 Lemma wp_Room__Serve (r c : loc) (sc rc : chan_id) (n : nat) :
-  {{{ is_pkg_init wsrelay ∗ is_Room r ∗
+  {{{ is_pkg_init wsrelay ∗ is_Room r ∗ ws_env_preserves ⊤ ∗
       is_Connection c sc rc ∗ own_recv_cursor rc n }}}
     r @! (go.PointerType wsrelay.Room) @! "Serve" #c
   {{{ RET #(); ∃ n', own_recv_cursor rc n' }}}.
 Proof.
-  wp_start as "(#Hroom & #Hconn & Hrecv)".
+  wp_start as "(#Hroom & #Henv & #Hconn & Hrecv)".
   wp_auto.
   iAssert (∃ (n' : nat), "Hrecv" ∷ own_recv_cursor rc n')%I with "[$Hrecv]" as "IH".
   wp_for "IH".
   wp_func_call.
-  wp_apply (wp_Receive with "[$Hconn $Hrecv]").
+  wp_apply (wp_Receive with "[$Hconn $Hrecv $Henv]").
   iIntros (err sl0 dta) "(Hsl & Hcap & Hcur)".
   wp_auto.
   destruct err.
@@ -202,9 +219,9 @@ Proof.
     wp_auto.
     wp_for_post.
     iApply "HΦ". iFrame.
-  - iDestruct "Hcur" as "(Hrecv & #Hmsg)".
+  - iDestruct "Hcur" as "(Hrecv & #Hmsg & #Hpd)".
     wp_auto.
-    wp_apply (wp_Room__Broadcast with "[$Hroom $Hsl]").
+    wp_apply (wp_Room__Broadcast with "[$Hroom $Hsl $Hpd]").
     iIntros "Hsl".
     wp_auto.
     wp_for_post. iFrame.

@@ -30,33 +30,37 @@ Set Default Proof Using "Type*".
 (** [ServeEcho] accepts a connection and echoes its first message back. On
     success ([err = false]) the two persistent message facts say precisely
     that: the bytes sent as message 0 of the reply channel are the bytes
-    received as message 0 of the peer's channel. *)
+    received as message 0 of the peer's channel.
+
+    Echoing preserves the protocol for the same reason a relay does: what goes
+    back out is what came in, so [Send]'s [ws_prot] obligation is discharged by
+    the [ws_prot] the receive handed over. *)
 Lemma wp_ServeEcho (l : loc) (e : ws_endpoint) :
-  {{{ is_pkg_init wsecho ∗ is_Listener l e }}}
+  {{{ is_pkg_init wsecho ∗ is_Listener l e ∗ ws_env_preserves ⊤ }}}
     @! wsecho.ServeEcho #l
   {{{ (err : bool), RET #err;
       ⌜err = true⌝ ∨
       (∃ (sc rc : chan_id) (data : list w8),
          is_chan_msg rc 0 data ∗ is_chan_msg sc 0 data) }}}.
 Proof.
-  wp_start as "#Hl".
+  wp_start as "(#Hl & #Henv)".
   wp_auto.
   wp_func_call.
   wp_apply (wp_Accept with "[$Hl]").
   iIntros (c sc rc path) "(#Hc & Hsc & Hrc)".
   wp_auto.
   wp_func_call.
-  wp_apply (wp_Receive with "[$Hc $Hrc]").
+  wp_apply (wp_Receive with "[$Hc $Hrc $Henv]").
   iIntros (err s data) "(Hs & Hcap & Hcur)".
   destruct err.
   - (* nothing arrived: give up, no echo claimed *)
     wp_auto.
     iApply ("HΦ" $! true). by iLeft.
   - (* echo the received message back on the accepted connection *)
-    iDestruct "Hcur" as "(Hrc & #Hmsgin)".
+    iDestruct "Hcur" as "(Hrc & #Hmsgin & #Hpd)".
     wp_auto.
     wp_func_call.
-    wp_apply (wp_Send with "[$Hc $Hs $Hsc]").
+    wp_apply (wp_Send with "[$Hc $Hs $Hsc $Hpd]").
     iIntros (errs) "(Hs & Hsend)".
     wp_auto.
     iApply ("HΦ" $! errs).
