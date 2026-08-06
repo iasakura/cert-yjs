@@ -425,7 +425,7 @@ Qed.
 
 (** Coherence sees a doc model only through [doc_model_get], so two models
     that denote the same document are interchangeable in it. *)
-Lemma history_state_coh_get_eq h (m m' : DocModel) :
+Lemma history_state_coh_get_eq (h : list Ev) (m m' : DocModel) :
   (∀ t, doc_model_get m t = doc_model_get m' t) ->
   history_state_coh h m -> history_state_coh h m'.
 Proof.

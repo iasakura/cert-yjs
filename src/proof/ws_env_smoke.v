@@ -92,7 +92,8 @@ Definition smoke_prot (γh : history_names) (d : list u8) : iProp Σ :=
   ∃ inputs : list Input, ⌜decode d = Some inputs⌝ ∗
     is_pending_certified γh (expand_inputs inputs).
 
-#[local] Instance smoke_prot_persistent γh d : Persistent (smoke_prot γh d).
+#[local] Instance smoke_prot_persistent (γh : history_names) (d : list u8) :
+  Persistent (smoke_prot γh d).
 Proof. apply _. Qed.
 
 (** The one operation this peer ever performs: insert [a] into the empty
@@ -251,12 +252,14 @@ Definition relay_coh (γh : history_names) (cl : ClientId)
    then own_client_history γh cl ([] : list Ev)
    else ∃ h : list Ev, own_client_history γh cl h)%I.
 
-Lemma relay_coh_open γh cl k msg M :
+Lemma relay_coh_open (γh : history_names) (cl : ClientId) (k : chan_id * nat)
+    (msg : list u8) (M : gmap (chan_id * nat) (list u8)) :
   M = ∅ \/ M = {[ k := msg ]} ->
   relay_coh γh cl k msg M -∗ own_client_history γh cl ([] : list Ev).
 Proof. intros HM. rewrite /relay_coh bool_decide_eq_true_2 //. by iIntros "$". Qed.
 
-Lemma relay_coh_close γh cl k msg M (h : list Ev) :
+Lemma relay_coh_close (γh : history_names) (cl : ClientId) (k : chan_id * nat)
+    (msg : list u8) (M : gmap (chan_id * nat) (list u8)) (h : list Ev) :
   ¬ (M = ∅ \/ M = {[ k := msg ]}) ->
   own_client_history γh cl h -∗ relay_coh γh cl k msg M.
 Proof.
@@ -530,7 +533,8 @@ Definition stream_input (cl : ClientId) (k : nat) (b : w8)
     (match k with O => None | S k' => Some (MkYjsId cl k') end)
     None [b] (MkYjsId cl k).
 
-Lemma stream_items_length cl prev k bs :
+Lemma stream_items_length (cl : ClientId) (prev : YjsPtr A) (k : nat)
+    (bs : list w8) :
   length (stream_items cl prev k bs) = length bs.
 Proof. elim: bs prev k => [| b bs IH] prev k //=. by rewrite IH. Qed.
 
@@ -545,7 +549,8 @@ Fixpoint stream_last (cl : ClientId) (prev : YjsPtr A) (k : nat) (bs : list w8)
         (S k) rest
   end.
 
-Lemma stream_items_snoc cl prev k bs b :
+Lemma stream_items_snoc (cl : ClientId) (prev : YjsPtr A) (k : nat)
+    (bs : list w8) (b : w8) :
   stream_items cl prev k (bs ++ [b])
     = stream_items cl prev k bs
       ++ [Item (A := A) (stream_last cl prev k bs) Last
@@ -559,7 +564,8 @@ Qed.
 Notation stream_doc cl bs := (stream_items cl First 0 bs).
 Notation stream_tail cl bs := (stream_last cl First 0 bs).
 
-Lemma stream_last_snoc cl prev k bs b :
+Lemma stream_last_snoc (cl : ClientId) (prev : YjsPtr A) (k : nat)
+    (bs : list w8) (b : w8) :
   stream_last cl prev k (bs ++ [b])
     = itemPtr (Item (A := A) (stream_last cl prev k bs) Last
                  (MkYjsId cl (k + length bs)) [b]).
@@ -591,7 +597,7 @@ Proof.
   - by constructor.
 Qed.
 
-Lemma stream_ok_nil cl : stream_ok cl [].
+Lemma stream_ok_nil (cl : ClientId) : stream_ok cl [].
 Proof.
   split; simpl.
   - exact YjsArrInvariant_nil.
@@ -605,16 +611,16 @@ Qed.
 Definition stream_item (cl : ClientId) (bs : list w8) (b : w8) : YjsItem A :=
   Item (A := A) (stream_tail cl bs) Last (MkYjsId cl (length bs)) [b].
 
-Lemma stream_doc_snoc cl bs b :
+Lemma stream_doc_snoc (cl : ClientId) (bs : list w8) (b : w8) :
   stream_doc cl (bs ++ [b]) = stream_doc cl bs ++ [stream_item cl bs b].
 Proof. rewrite stream_items_snoc //. Qed.
 
-Lemma stream_tail_snoc cl bs b :
+Lemma stream_tail_snoc (cl : ClientId) (bs : list w8) (b : w8) :
   stream_tail cl (bs ++ [b]) = itemPtr (stream_item cl bs b).
 Proof. rewrite stream_last_snoc //. Qed.
 
 (** Where the tail points: at nothing, or at an item of the document. *)
-Lemma stream_tail_elem cl bs :
+Lemma stream_tail_elem (cl : ClientId) (bs : list w8) :
   stream_tail cl bs = First \/
   ∃ y, y ∈ stream_doc cl bs /\ stream_tail cl bs = itemPtr y.
 Proof.
@@ -624,7 +630,7 @@ Proof.
 Qed.
 
 (** Ids read off membership rather than off a position. *)
-Lemma stream_ok_id_elem cl bs y :
+Lemma stream_ok_id_elem (cl : ClientId) (bs : list w8) (y : YjsItem A) :
   stream_ok cl bs -> y ∈ stream_doc cl bs ->
   ∃ i, (i < length bs)%nat /\ item_id y = MkYjsId cl i.
 Proof.
@@ -778,7 +784,8 @@ Definition stream_pos (c0 : chan_id) (M : gmap (chan_id * nat) (list u8)) : nat 
 Lemma stream_pos_empty (c0 : chan_id) : stream_pos c0 ∅ = 0%nat.
 Proof. rewrite /stream_pos /chan_msgs map_filter_empty map_size_empty //. Qed.
 
-Lemma stream_pos_insert (c0 : chan_id) M (n : nat) (d : list u8) :
+Lemma stream_pos_insert (c0 : chan_id) (M : gmap (chan_id * nat) (list u8))
+    (n : nat) (d : list u8) :
   M !! (c0, n) = None ->
   stream_pos c0 (<[(c0, n) := d]> M) = S (stream_pos c0 M).
 Proof.
