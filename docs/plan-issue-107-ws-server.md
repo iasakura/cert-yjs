@@ -411,6 +411,32 @@ recorded while implementing M4's remaining half:
   instead of `store_inv_init`'s dummies) these are the two remaining
   pieces of M4.
 
+Second status note: both pieces above are now done (`wp_NewDoc` via
+`store_tie_init`; `ws_dist_adequacy_prot_fupd`). What remains of M4 is
+the closed boot theorem itself, whose path is now mapped:
+
+- the node boot expression is `wsrelay.initialize' #()` followed by
+  `Listen` / `NewDoc` / `NewRoom` / `Run`, with the codec value `f` and
+  a `codec_spec` premise quantified at the theorem level;
+- package init at boot: `go_init` turns the node's initial
+  `own_go_state` (empty `package_state`) into `own_initializing`, and
+  `wp_package_init` chains discharge the `initialize'` calls, with
+  `iPkgInit` solving the per-package predicates (all `True`-shaped
+  here). No in-repo precedent yet, but the API surface is identified;
+- crash-restart CANNOT re-run the server: the server's history element
+  `own_client_history` lives in the store lock invariant and dies with
+  the heap, which is semantically right (a restarted y-websocket server
+  has lost its document). The node's `init_restart` is therefore a
+  diverging no-op (`(rec: "f" <> := "f" #()) #()`), whose recovery WP is
+  trivial: a crashed server is dead but safe;
+- the environment premise is parametric: for the `wsGS` the run builds
+  (protocol `yjs_prot decode γh`, the caller's `coh` at `γh`, the
+  initial world's `ws_env_may`), `is_history γh` implies
+  `ws_env_preserves ⊤`; the `ws_env_smoke.v` instances have exactly this
+  shape;
+- the export is protocol totality: every message in `ws_msgs` satisfies
+  `yjs_prot`, read straight off `ffi_global_ctx`'s protocol big-op.
+
 ## 10. Decisions requested
 
 1. Scope W3b as sections 1-3 (update apply + relay; no handshake): OK?
