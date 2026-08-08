@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/iasakura/cert-yjs/wsnet"
+	"github.com/iasakura/cert-yjs/yjs"
 )
 
 // freeAddr picks a port the kernel says is free and returns it as an Address.
@@ -34,24 +35,23 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// serveRoom accepts connections forever, joining each to the room and running
-// its receive loop. This is the accept loop the verified server will have; it
-// is written here so the relay can be exercised end to end.
-func serveRoom(l wsnet.Listener, r *Room) {
-	for {
-		c, _ := wsnet.Accept(l)
-		r.Join(c)
-		go r.Serve(c)
-	}
-}
-
-// TestRelayReachesTheOtherConnection is the property the room exists for: what
-// one connection sends comes out on the others, and not back on itself.
-func TestRelayReachesTheOtherConnection(t *testing.T) {
+// startRoom brings up a server room around a fresh document and returns it
+// with its address.
+func startRoom(t *testing.T) (wsnet.Address, *Room, *yjs.Doc) {
+	t.Helper()
 	addr := freeAddr(t)
 	l := wsnet.Listen(addr)
-	room := NewRoom()
-	go serveRoom(l, room)
+	doc := yjs.NewDoc(1)
+	room := NewRoom(doc, yjs.WireCodec())
+	go Run(l, room)
+	return addr, room, doc
+}
+
+// TestUpdateReachesTheOtherClientAndTheServer is the property the server
+// exists for: an update one client sends is applied to the server's own
+// document and comes out on the other connections, and not back on itself.
+func TestUpdateReachesTheOtherClientAndTheServer(t *testing.T) {
+	addr, room, serverDoc := startRoom(t)
 
 	errA, a := wsnet.Connect(addr, "/room")
 	if errA {
@@ -65,44 +65,39 @@ func TestRelayReachesTheOtherConnection(t *testing.T) {
 	// legitimately has nobody to forward to.
 	waitForRoomSize(t, room, 2)
 
-	payload := []byte("hello from A")
-	if wsnet.Send(a, payload) {
+	docA := yjs.NewDoc(2)
+	docA.GetText("root").Insert(0, "hello")
+	update := docA.EncodeUpdate()
+	if wsnet.Send(a, update) {
 		t.Fatal("A could not send")
 	}
 
+	// B receives the relay and applies it to its own replica.
 	errB2, got := wsnet.Receive(b)
 	if errB2 {
 		t.Fatal("B received nothing")
 	}
-	if string(got) != string(payload) {
-		t.Fatalf("B got %q, want %q", got, payload)
+	docB := yjs.NewDoc(3)
+	docB.ApplyUpdate(got)
+	if s := docB.GetText("root").String(); s != "hello" {
+		t.Fatalf("B's replica reads %q, want %q", s, "hello")
 	}
 
-	// A must not receive its own message back. There is no negative-receive
-	// primitive, so give the relay a window and check nothing shows up.
-	done := make(chan []byte, 1)
-	go func() {
-		err, echo := wsnet.Receive(a)
-		if err {
-			done <- nil
-			return
-		}
-		done <- echo
-	}()
-	select {
-	case echo := <-done:
-		t.Fatalf("A received its own message back: %q", echo)
-	case <-time.After(200 * time.Millisecond):
+	// process applies before it relays, so B having received the relay means
+	// the server's own document took the update in already.
+	if s := serverDoc.GetText("root").String(); s != "hello" {
+		t.Fatalf("server document reads %q, want %q", s, "hello")
 	}
+
+	// A must not receive its own update back. There is no negative-receive
+	// primitive, so give the relay a window and check nothing shows up.
+	assertNothingArrives(t, a, "A received its own update back")
 }
 
-// TestRelayToThreeConnections checks the fan-out reaches every other member,
-// not just one.
-func TestRelayToThreeConnections(t *testing.T) {
-	addr := freeAddr(t)
-	l := wsnet.Listen(addr)
-	room := NewRoom()
-	go serveRoom(l, room)
+// TestFanOutReachesEveryOtherConnection checks the fan-out reaches every
+// other member, not just one, and that every receiver converges.
+func TestFanOutReachesEveryOtherConnection(t *testing.T) {
+	addr, room, _ := startRoom(t)
 
 	errA, a := wsnet.Connect(addr, "/room")
 	if errA {
@@ -118,8 +113,10 @@ func TestRelayToThreeConnections(t *testing.T) {
 	}
 	waitForRoomSize(t, room, 4)
 
-	payload := []byte("to everyone")
-	if wsnet.Send(a, payload) {
+	docA := yjs.NewDoc(2)
+	docA.GetText("root").Insert(0, "to everyone")
+	update := docA.EncodeUpdate()
+	if wsnet.Send(a, update) {
 		t.Fatal("A could not send")
 	}
 	for i, c := range readers {
@@ -127,15 +124,111 @@ func TestRelayToThreeConnections(t *testing.T) {
 		if err {
 			t.Fatalf("reader %d received nothing", i)
 		}
-		if string(got) != string(payload) {
-			t.Fatalf("reader %d got %q, want %q", i, got, payload)
+		replica := yjs.NewDoc(uint64(10 + i))
+		replica.ApplyUpdate(got)
+		if s := replica.GetText("root").String(); s != "to everyone" {
+			t.Fatalf("reader %d's replica reads %q, want %q", i, s, "to everyone")
 		}
 	}
 }
 
+// TestCrossEditsConverge sends edits from two clients and checks both
+// replicas and the server converge to the same text.
+func TestCrossEditsConverge(t *testing.T) {
+	addr, room, serverDoc := startRoom(t)
+
+	errA, a := wsnet.Connect(addr, "/room")
+	if errA {
+		t.Fatal("client A could not connect")
+	}
+	errB, b := wsnet.Connect(addr, "/room")
+	if errB {
+		t.Fatal("client B could not connect")
+	}
+	waitForRoomSize(t, room, 2)
+
+	docA := yjs.NewDoc(2)
+	docA.GetText("root").Insert(0, "ab")
+	if wsnet.Send(a, docA.EncodeUpdate()) {
+		t.Fatal("A could not send")
+	}
+	errRecvB, fromA := wsnet.Receive(b)
+	if errRecvB {
+		t.Fatal("B did not receive A's update")
+	}
+
+	docB := yjs.NewDoc(3)
+	docB.ApplyUpdate(fromA)
+	docB.GetText("root").Insert(2, "cd")
+	if wsnet.Send(b, docB.EncodeUpdate()) {
+		t.Fatal("B could not send")
+	}
+	errRecvA, fromB := wsnet.Receive(a)
+	if errRecvA {
+		t.Fatal("A did not receive B's update")
+	}
+	docA.ApplyUpdate(fromB)
+
+	want := "abcd"
+	if s := docA.GetText("root").String(); s != want {
+		t.Fatalf("A's replica reads %q, want %q", s, want)
+	}
+	if s := docB.GetText("root").String(); s != want {
+		t.Fatalf("B's replica reads %q, want %q", s, want)
+	}
+	if s := serverDoc.GetText("root").String(); s != want {
+		t.Fatalf("server document reads %q, want %q", s, want)
+	}
+}
+
+// TestMalformedUpdateIsNotRelayed: a message that does not decode is neither
+// applied nor forwarded, matching y-websocket (only applied updates reach
+// the broadcast).
+func TestMalformedUpdateIsNotRelayed(t *testing.T) {
+	addr, room, serverDoc := startRoom(t)
+
+	errA, a := wsnet.Connect(addr, "/room")
+	if errA {
+		t.Fatal("client A could not connect")
+	}
+	errB, b := wsnet.Connect(addr, "/room")
+	if errB {
+		t.Fatal("client B could not connect")
+	}
+	waitForRoomSize(t, room, 2)
+
+	if wsnet.Send(a, []byte{0xff, 0xff, 0xff}) {
+		t.Fatal("A could not send")
+	}
+	assertNothingArrives(t, b, "B received a relay of a malformed update")
+	if s := serverDoc.GetText("root").String(); s != "" {
+		t.Fatalf("server document reads %q after a malformed update, want empty", s)
+	}
+}
+
+// assertNothingArrives fails if a message shows up on c within a short
+// window.
+func assertNothingArrives(t *testing.T, c wsnet.Connection, msg string) {
+	t.Helper()
+	done := make(chan []byte, 1)
+	go func() {
+		err, data := wsnet.Receive(c)
+		if err {
+			done <- nil
+			return
+		}
+		done <- data
+	}()
+	select {
+	case data := <-done:
+		t.Fatalf("%s: %q", msg, data)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
 // waitForRoomSize blocks until the room's table has reached n entries. Join
-// happens on the server's accept loop, so a client returning from Connect does
-// not yet mean it is in the table.
+// happens on the server's accept loop, so a client returning from Connect
+// does not yet mean it is in the table.
 func waitForRoomSize(t *testing.T, r *Room, n int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
