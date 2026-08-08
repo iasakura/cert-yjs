@@ -1799,7 +1799,7 @@ Lemma wp_store__applyUpdate_certs (s_loc : loc) (sl : slice.t) (dq : dfrac)
     (pend inputs : list (TId * IntegrateInput (A := A))) :
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
-  is_pending_rooted γs inputs ->
+  is_pending_rooted inputs ->
   {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
       own_store s_loc γs γh c h m pend ∗
       own_update_structs sl dq inputs ∗
@@ -1844,7 +1844,7 @@ Proof using Type*.
   iAssert (is_pending_certified γh (expand_inputs (pend ++ inputs))) as "#Hcertpending".
   { rewrite /is_pending_certified expand_inputs_app big_sepL_app.
     iSplit; [iFrame "Hpendcert" | iFrame "Hcertsin"]. }
-  have Hrootpending : is_pending_rooted γs (pend ++ inputs).
+  have Hrootpending : is_pending_rooted (pend ++ inputs).
   { move=> typedInput /elem_of_app [Hin | Hin];
       [exact (Hpendroot typedInput Hin) | exact (Hrooted typedInput Hin)]. }
   destruct (wire_drain m (pend ++ inputs)) as [[applied rest'] m'] eqn:Hdrainc.
@@ -1920,7 +1920,7 @@ Proof using Type*.
               (expand_inputs_subset rest' (pend ++ inputs) Hrestsub typedInput
                  (list_elem_of_lookup_2 _ _ _ Hi))
               with "Hcertpending"). }
-  have Hpendroot' : is_pending_rooted γs rest'.
+  have Hpendroot' : is_pending_rooted rest'.
   { move=> typedInput Hin. exact (Hrootpending typedInput (Hrestsub typedInput Hin)). }
   have Hpendbnd' : ∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ rest' ->
       (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z.
@@ -1983,7 +1983,7 @@ Proof using Type*.
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc | exact Hnoloss_in]).
   iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind', acc.
   iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hbinds' Hhist Hacc".
-  iFrame "Hpendcert'".
+  iFrame "Hpendcert' Hclientpin".
   iPureIntro. split_and!.
   - exact Hclientc.
   - exact Hpendroot'.

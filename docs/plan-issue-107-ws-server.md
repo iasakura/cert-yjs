@@ -81,7 +81,7 @@ Context (decode : list u8 -> option (list Input)).
 Definition update_wf (inputs : list Input) : Prop :=
   (forall x, x ∈ inputs ->
      (Z.of_nat (clock (in_id x.2)) + Z.of_nat (length (in_content x.2)) < 2^64)%Z) /\
-  (forall x, x ∈ inputs -> pending_item_rooted_pure x).
+  (forall x, x ∈ inputs -> pending_item_rooted x).
 
 Definition yjs_prot (γh : history_names) (d : list u8) : iProp Σ :=
   ∃ inputs, ⌜decode d = Some inputs⌝ ∗ ⌜update_wf inputs⌝ ∗
@@ -93,9 +93,9 @@ apply path needs (`update_wf`): the 2^64 no-wrap seam and rootedness of
 head structs. Both are facts about an honest peer's output, so they belong
 in the protocol, not in the server's hypotheses. Notes:
 
-- `pending_item_rooted` (store/heap.v) is already pure; it takes a `γs`
-  only for signature stability. Hoist a `γs`-free alias
-  (`pending_item_rooted_pure`) so the protocol does not name a store.
+- `pending_item_rooted` / `is_pending_rooted` (store/heap.v) are already
+  pure; the `γs` argument was kept in #54 only for signature stability.
+  Drop it, so the protocol states rootedness without naming a store.
 - Adopting `yjs_prot` costs the smoke instances their arbitrary `t : TId`:
   their inserts have no origins, so their type must be a `RootId nm`.
   A parameter change in `ws_env_smoke.v`, nothing structural.
@@ -344,9 +344,9 @@ channels, so they compose with a server run unchanged).
 
 ## 7. Optional small amendments (ask before taking)
 
-- **7a `pending_item_rooted_pure`**: the `γs`-free alias of
-  `pending_item_rooted` (store/heap.v), so `yjs_prot` does not name a
-  store. Pure refactor, signature-compatible.
+- **7a rootedness without `γs`**: drop the dead `γs` argument from
+  `pending_item_rooted` / `is_pending_rooted` (store/heap.v), so
+  `yjs_prot` does not name a store. Pure refactor.
 - **7b `is_store_client`**: a tiny persistent witness pinning a store's
   `ClientId` (the field is set once at `newStore` and never written), so
   `wp_Doc__ApplySyncUpdate` can return `is_history_lb γh c_srv …` with

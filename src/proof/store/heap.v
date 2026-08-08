@@ -293,6 +293,7 @@ Record store_names := StoreNames {
   sn_rrlocked : gname; (* own_tok_auth: the active reader count                 *)
   sn_types_agree : gname; (* dfrac_agree on the types map (reader/inv agreement) *)
   sn_accepted : gname; (* authR (gsetUR YjsId): grow-only accepted-id set (no-loss) *)
+  sn_client : gname; (* agreeR (leibnizO ClientId): the store's client pin, [is_store_client] *)
 }.
 
 (** The root-type binding: [name] is bound to the type at [p], forever
@@ -392,19 +393,20 @@ Proof. apply _. Qed.
     All that remains is that the target is a root and not an [AnchorId]
     (Parent::Id / type-as-item is out of the verified subset, #43). With the
     registration ([is_root], the only resource-bearing conjunct) gone, this is
-    now a pure syntactic fact about the batch, so it is a [Prop] (carried as
-    [⌜..⌝] where an [iProp] is expected); the [γs] argument is retained only for
-    signature stability. Structs WITH an origin derive their binding from the
-    origin's arrival at integration time, so carry no obligation here. *)
-Definition pending_item_rooted (γs : store_names)
+    a pure syntactic fact about the batch, so it is a [Prop] (carried as
+    [⌜..⌝] where an [iProp] is expected) and mentions no store; the wire
+    protocol ([yjs_prot], issue #107) states rootedness over it directly.
+    Structs WITH an origin derive their binding from the origin's arrival at
+    integration time, so carry no obligation here. *)
+Definition pending_item_rooted
     (typedInput : TId * IntegrateInput (A := A)) : Prop :=
   if decide (in_originId typedInput.2 = None ∧ in_rightOriginId typedInput.2 = None)
   then (∃ nm : P, typedInput.1 = RootId nm)
   else True.
 
-Definition is_pending_rooted (γs : store_names)
+Definition is_pending_rooted
     (pending : list (TId * IntegrateInput (A := A))) : Prop :=
-  ∀ typedInput, typedInput ∈ pending -> pending_item_rooted γs typedInput.
+  ∀ typedInput, typedInput ∈ pending -> pending_item_rooted typedInput.
 
 (** [is_accepted γs i]: the persistent receipt that id [i] has been accepted by
     the store (a lower bound on the grow-only accepted set). Combined with the
@@ -417,6 +419,28 @@ Proof. rewrite /is_accepted. apply _. Qed.
 
 #[global] Instance is_accepted_timeless γs i : Timeless (is_accepted γs i).
 Proof. rewrite /is_accepted. apply _. Qed.
+
+(** [is_store_client γs c]: the persistent witness that this store IS client
+    [c] (the [store.client] field, set once at [newStore] and never written).
+    An [agree] ghost: any two witnesses agree, and [own_store] carries one, so
+    a spec over a store it only holds handles to can name the store's client
+    instead of leaving it existential (the server proofs pin the server
+    replica's [ClientId] this way, issue #107). *)
+Definition is_store_client (γs : store_names) (c : ClientId) : iProp Σ :=
+  own γs.(sn_client) (to_agree (c : leibnizO ClientId)).
+
+#[global] Instance is_store_client_persistent γs c : Persistent (is_store_client γs c).
+Proof. rewrite /is_store_client. apply _. Qed.
+
+#[global] Instance is_store_client_timeless γs c : Timeless (is_store_client γs c).
+Proof. rewrite /is_store_client. apply _. Qed.
+
+Lemma is_store_client_agree γs c1 c2 :
+  is_store_client γs c1 -∗ is_store_client γs c2 -∗ ⌜c1 = c2⌝.
+Proof.
+  iIntros "H1 H2". iCombine "H1 H2" gives %Hv.
+  iPureIntro. by apply to_agree_op_valid_L in Hv.
+Qed.
 
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
@@ -444,6 +468,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
     ∃ (acc : gset YjsId),
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
+    "#Hclientpin" ∷ is_store_client γs (uint.nat client) ∗
     "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
     "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
     "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types ∗
@@ -457,7 +482,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
-    "%Hpendroot" ∷ ⌜is_pending_rooted γs pend⌝ ∗
+    "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
                     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
     "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
@@ -663,6 +688,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (pend_sl : slice.t)
     (types : gmap loc type_state) (bind : gmap P loc) (acc : gset YjsId),
     "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗
+    "#Hclientpin" ∷ is_store_client γs c ∗
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
     "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
     "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
@@ -673,7 +699,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
-    "%Hpendroot" ∷ ⌜is_pending_rooted γs pend⌝ ∗
+    "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
                     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
@@ -965,6 +991,23 @@ Proof.
     | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hacccoh].
 Qed.
 
+(** The client pin comes out of the store without consuming it (the clause is
+    persistent): how a caller that reveals a store state learns the client it
+    already holds a pin for is THIS store's. *)
+Lemma own_store_client_pin (s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A))) :
+  own_store s_loc γs γh c h m pend -∗
+  own_store s_loc γs γh c h m pend ∗ is_store_client γs c.
+Proof.
+  iIntros "H". iNamed "H".
+  iSplitR ""; last by iFrame "Hclientpin".
+  iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, acc.
+  iFrame "∗#". iPureIntro. split_and!;
+    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
+    | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hacccoh].
+Qed.
+
 (** No-loss MINT: given the store and a proof that each id in [L] is already
     delivered-or-buffered, grow the accepted set and hand back a receipt per
     element. This is what [applyUpdate] calls (with [L = inputs]) so a
@@ -1014,7 +1057,7 @@ Lemma store_inv_init (s_loc : loc) (γh : history_names) (client k : w64)
   "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset -∗
   "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ slice.nil -∗
   "Hhist"   ∷ own_client_history γh (uint.nat client) ([] : list Ev) ==∗
-  ∃ γs : store_names, store_inv s_loc γs γh.
+  ∃ γs : store_names, store_inv s_loc γs γh ∗ is_store_client γs (uint.nat client).
 Proof.
   iIntros "Hclient Hclock Hitemsf Hmap Htypesf Htypesmap Hdset Hpendf Hhist".
   set (types := ∅ : gmap loc type_state).
@@ -1039,13 +1082,17 @@ Proof.
   (* the grow-only accepted-id set starts empty *)
   iMod (own_alloc (● (∅ : gset YjsId) : accUR)) as (γacc) "Hacc0".
   { apply auth_auth_valid. done. }
+  (* the client pin (issue #107): one agree, fixed at birth *)
+  iMod (own_alloc (to_agree ((uint.nat client) : leibnizO ClientId))) as (γcl) "#Hclpin".
+  { done. }
   set (γrw := {| prot_gn := {| read_wait_gn := γd; rlock_overflow_gn := γd;
                                wlock_gn := γd; writer_sem_tok_gn := γd; state_gn := γd |};
                  reader_sem_gn := γd; writer_sem_gn := γd |} : RWMutex_names).
   set (γs := {| sn_seq := γseq; sn_types := γtypes; sn_wl := γwl;
                 sn_rw := γrw; sn_rmax := γrmax; sn_rrlocked := γrrlocked;
-                sn_types_agree := γta; sn_accepted := γacc |}).
+                sn_types_agree := γta; sn_accepted := γacc; sn_client := γcl |}).
   iModIntro. iExists γs.
+  iSplitL; last by iFrame "Hclpin".
   iExists client, k, items_mref, types_mref, dset, slice.nil, types, (∅ : gmap P loc),
     ([] : list Ev), (∅ : DocModel), ([] : list (TId * IntegrateInput (A := A))).
   iSplitR "Hseq"; last first.
@@ -1054,6 +1101,7 @@ Proof.
   (* store_inv_excl *)
   iExists (∅ : gset YjsId).
   iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap Hdset Hpendf Hhist HtypesAuth Hacc0".
+  iSplitR; first by iFrame "Hclpin".
   iSplitL "Hmap".
   { (* own_item_map over the empty run map *)
     iExists (∅ : gmap w64 slice.t). iFrame "Hmap".

@@ -353,7 +353,7 @@ Proof.
           iFrame "Hseq Htypes". }
         iExists acc.
         iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhist HtypesAuth Hbinds Hacc".
-        iFrame "Hpendcert".
+        iFrame "Hpendcert Hclientpin".
         iPureIntro. split_and!.
         - exact Hpendroot.
         - exact Hpendbnd.
@@ -417,7 +417,7 @@ Proof.
           iFrame "Hseq Htypes". }
         iExists acc.
         iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhist HtypesAuth Hbinds Hacc".
-        iFrame "Hpendcert".
+        iFrame "Hpendcert Hclientpin".
         iPureIntro. split_and!.
         - exact Hpendroot.
         - exact Hpendbnd.
