@@ -1042,12 +1042,18 @@ Proof.
   rewrite /accepted_coh. apply union_least; [exact Hacccoh | exact HTsub].
 Qed.
 
-(** Non-vacuity witness / the [wp_NewDoc] seam: a fresh store's heap fields, a
-    fresh empty registered type, and this client's (empty) history element
-    assemble into [store_inv] — allocating the store's ghost names and handing
-    back the governed-type binding and the empty item-set lower bound. *)
-Lemma store_inv_init (s_loc : loc) (γh : history_names) (client k : w64)
-    (items_mref types_mref : loc) (dset : yjs.deletedSet.t) :
+(** The [wp_NewDoc] seam: a fresh store's heap fields and this client's
+    (empty) history element assemble into the lock layer's tie payload at
+    [RLocked 0], over caller-provided RWMutex names (the physical lock is set
+    up by [init_RWMutex] at the call site), allocating the store's ghost
+    names for real: the write-lock witness, the reader count at zero, the
+    DISCARDED reader-bound authority ([is_Store]'s [Hmax]) and the types
+    agreement all go into the payload rather than being dropped. The caller
+    wraps the result in the tie invariant next to [own_RWMutex (RLocked 0)]
+    and has [is_Store]. *)
+Lemma store_tie_init (s_loc : loc) (γh : history_names) (client k : w64)
+    (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
+    (γrw : RWMutex_names) :
   "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client -∗
   "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k -∗
   "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref -∗
@@ -1057,7 +1063,12 @@ Lemma store_inv_init (s_loc : loc) (γh : history_names) (client k : w64)
   "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset -∗
   "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ slice.nil -∗
   "Hhist"   ∷ own_client_history γh (uint.nat client) ([] : list Ev) ==∗
-  ∃ γs : store_names, store_inv s_loc γs γh ∗ is_store_client γs (uint.nat client).
+  ∃ γs : store_names,
+    "%Hrw"        ∷ ⌜γs.(sn_rw) = γrw⌝ ∗
+    "#Hmax"       ∷ own_tok_auth_dfrac γs.(sn_rmax) DfracDiscarded
+                      (Z.to_nat rwmutex.actualMaxReaders) ∗
+    "Htie"        ∷ tie_body s_loc γs γh (RLocked 0) ∗
+    "#Hclientpin" ∷ is_store_client γs (uint.nat client).
 Proof.
   iIntros "Hclient Hclock Hitemsf Hmap Htypesf Htypesmap Hdset Hpendf Hhist".
   set (types := ∅ : gmap loc type_state).
@@ -1065,36 +1076,39 @@ Proof.
     as (γseq) "Hseq".
   { apply auth_auth_valid. rewrite /types fmap_empty //. }
   iMod (ghost_map_alloc_empty (K := P) (V := loc)) as (γtypes) "HtypesAuth".
-  (* [sn_wl] names the write-lock witness [own_wlock]; it belongs to the lock
-     layer ([is_Store]'s tie invariant), not to [store_inv], so allocate the
-     name and drop the token here. *)
-  iMod (ghost_var_alloc ()) as (γwl) "Hwl". iClear "Hwl".
-  (* The RWMutex-lock-layer ghosts (reader accounting + types agreement) also
-     belong to [is_Store]'s tie invariant, not to [store_inv]; allocate the names
-     and drop the tokens here (a future [wp_NewDoc] wires the physical lock). The
-     RWMutex names are a placeholder record over a fresh dummy gname. *)
-  iMod (ghost_var_alloc ()) as (γd) "Hd". iClear "Hd".
-  iMod (own_tok_auth_alloc) as (γrmax) "Hrmax". iClear "Hrmax".
-  iMod (own_tok_auth_alloc) as (γrrlocked) "Hrrlocked". iClear "Hrrlocked".
+  (* the lock-layer ghosts, for real: the write-lock witness, the reader
+     count at zero, the reader bound (discarded, so it can sit in [is_Store]
+     persistently; its tokens are the read capabilities, not needed here),
+     and the types agreement at the empty map *)
+  iMod (ghost_var_alloc ()) as (γwl) "Hwl".
+  iMod (own_tok_auth_alloc) as (γrrlocked) "Hrrlocked".
+  iMod (own_tok_auth_alloc) as (γrmax) "Hrmax".
+  iMod (own_tok_auth_add (Z.to_nat rwmutex.actualMaxReaders) with "Hrmax")
+    as "[Hrmax Hrtoks]".
+  iClear "Hrtoks".
+  iPersist "Hrmax".
+  iMod (own_toks_0 γrmax) as "Hrtoks0".
   iMod (own_alloc (to_frac_agree 1 (∅ : leibnizO (gmap loc type_state)))) as (γta) "Hta".
   { done. }
-  iClear "Hta".
   (* the grow-only accepted-id set starts empty *)
   iMod (own_alloc (● (∅ : gset YjsId) : accUR)) as (γacc) "Hacc0".
   { apply auth_auth_valid. done. }
   (* the client pin (issue #107): one agree, fixed at birth *)
   iMod (own_alloc (to_agree ((uint.nat client) : leibnizO ClientId))) as (γcl) "#Hclpin".
   { done. }
-  set (γrw := {| prot_gn := {| read_wait_gn := γd; rlock_overflow_gn := γd;
-                               wlock_gn := γd; writer_sem_tok_gn := γd; state_gn := γd |};
-                 reader_sem_gn := γd; writer_sem_gn := γd |} : RWMutex_names).
   set (γs := {| sn_seq := γseq; sn_types := γtypes; sn_wl := γwl;
                 sn_rw := γrw; sn_rmax := γrmax; sn_rrlocked := γrrlocked;
                 sn_types_agree := γta; sn_accepted := γacc; sn_client := γcl |}).
   iModIntro. iExists γs.
+  iSplitR; first done.
+  iFrame "Hrmax".
   iSplitL; last by iFrame "Hclpin".
+  rewrite /tie_body.
+  iFrame "Hrrlocked Hrtoks0 Hwl".
   iExists client, k, items_mref, types_mref, dset, slice.nil, types, (∅ : gmap P loc),
     ([] : list Ev), (∅ : DocModel), ([] : list (TId * IntegrateInput (A := A))).
+  rewrite frac_of_0.
+  iSplitL "Hta"; first by iFrame "Hta".
   iSplitR "Hseq"; last first.
   { (* store_inv_ro over the empty types map *)
     iFrame "Hseq". rewrite /types big_sepM_empty //. }
