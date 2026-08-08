@@ -393,28 +393,20 @@ Proof. apply _. Qed.
     All that remains is that the target is a root and not an [AnchorId]
     (Parent::Id / type-as-item is out of the verified subset, #43). With the
     registration ([is_root], the only resource-bearing conjunct) gone, this is
-    now a pure syntactic fact about the batch, so it is a [Prop] (carried as
-    [⌜..⌝] where an [iProp] is expected); the [γs] argument is retained only for
-    signature stability. Structs WITH an origin derive their binding from the
-    origin's arrival at integration time, so carry no obligation here.
-
-    The [γs]-free [pending_item_rooted_pure] is the definition; the wire
-    protocol ([yjs_prot], issue #107) states rootedness over it without naming
-    a store, and [pending_item_rooted] keeps the [γs]-taking signature for the
-    existing store specs. *)
-Definition pending_item_rooted_pure
+    a pure syntactic fact about the batch, so it is a [Prop] (carried as
+    [⌜..⌝] where an [iProp] is expected) and mentions no store; the wire
+    protocol ([yjs_prot], issue #107) states rootedness over it directly.
+    Structs WITH an origin derive their binding from the origin's arrival at
+    integration time, so carry no obligation here. *)
+Definition pending_item_rooted
     (typedInput : TId * IntegrateInput (A := A)) : Prop :=
   if decide (in_originId typedInput.2 = None ∧ in_rightOriginId typedInput.2 = None)
   then (∃ nm : P, typedInput.1 = RootId nm)
   else True.
 
-Definition pending_item_rooted (γs : store_names)
-    (typedInput : TId * IntegrateInput (A := A)) : Prop :=
-  pending_item_rooted_pure typedInput.
-
-Definition is_pending_rooted (γs : store_names)
+Definition is_pending_rooted
     (pending : list (TId * IntegrateInput (A := A))) : Prop :=
-  ∀ typedInput, typedInput ∈ pending -> pending_item_rooted γs typedInput.
+  ∀ typedInput, typedInput ∈ pending -> pending_item_rooted typedInput.
 
 (** [is_accepted γs i]: the persistent receipt that id [i] has been accepted by
     the store (a lower bound on the grow-only accepted set). Combined with the
@@ -490,7 +482,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
-    "%Hpendroot" ∷ ⌜is_pending_rooted γs pend⌝ ∗
+    "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
                     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
     "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts → x ∈ ty_arr ts →
@@ -707,7 +699,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
-    "%Hpendroot" ∷ ⌜is_pending_rooted γs pend⌝ ∗
+    "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
                     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗

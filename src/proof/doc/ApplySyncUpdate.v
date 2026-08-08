@@ -83,7 +83,7 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
     (inputs : list (TId * IntegrateInput (A := A))) :
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
-  is_pending_rooted γs inputs ->
+  is_pending_rooted inputs ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
       is_store_client γs c ∗
       own_update_structs sl dq inputs ∗
