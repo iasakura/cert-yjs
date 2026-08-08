@@ -262,18 +262,7 @@ func (doc *Doc) ApplyUpdate(data []byte) {
 	d := &decoder{buf: data}
 
 	// structs
-	var structs []decodedStruct
-	numClients := d.readVarUint()
-	for c := uint64(0); c < numClients; c++ {
-		numStructs := d.readVarUint()
-		client := d.readVarUint()
-		clock := d.readVarUint()
-		for s := uint64(0); s < numStructs; s++ {
-			ds := readStruct(d, client, clock)
-			clock += ds.length
-			structs = append(structs, ds)
-		}
-	}
+	structs := readStructSection(d)
 
 	// delete set
 	var deletes []pendingDelete
@@ -292,6 +281,48 @@ func (doc *Doc) ApplyUpdate(data []byte) {
 	doc.store.mu.Lock()
 	doc.applyDeletes(deletes)
 	doc.store.mu.Unlock()
+}
+
+// readStructSection parses the structs section of an update (the client
+// runs and their structs), leaving the decoder at the delete set.
+func readStructSection(d *decoder) []decodedStruct {
+	var structs []decodedStruct
+	numClients := d.readVarUint()
+	for c := uint64(0); c < numClients; c++ {
+		numStructs := d.readVarUint()
+		client := d.readVarUint()
+		clock := d.readVarUint()
+		for s := uint64(0); s < numStructs; s++ {
+			ds := readStruct(d, client, clock)
+			clock += ds.length
+			structs = append(structs, ds)
+		}
+	}
+	return structs
+}
+
+// WireCodec is the deployment's Codec (wire.go): the v1 decode of an
+// update's structs section, split into 1-char items exactly as ApplyUpdate
+// splits them. The delete-set section is outside the verified subset and is
+// ignored here; a relayed update still carries it verbatim. Malformed input
+// reports ok=false (the wire protocol makes that branch dead for the
+// verified server, but the codec is total either way).
+func WireCodec() Codec {
+	return decodeUpdateItems
+}
+
+func decodeUpdateItems(data []byte) (ok bool, items []updateItem) {
+	// The low-level reader indexes without bounds checks (it is only ever fed
+	// self-produced updates elsewhere); at this trust boundary a malformed
+	// update must come back as ok=false instead.
+	defer func() {
+		if recover() != nil {
+			ok, items = false, nil
+		}
+	}()
+	d := &decoder{buf: data}
+	structs := readStructSection(d)
+	return true, splitStructs(structs)
 }
 
 func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
@@ -344,12 +375,17 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 	}
 }
 
-// integrateStructs splits each item struct into 1-char updateItems (chained
-// left origins, shared right origin) and hands the whole batch to the
-// verified total update path in one locked call: Doc.applyUpdate buffers
-// structs whose dependencies are missing in the store's pending, so no
-// ordering or self-containedness is assumed here (issue #40).
+// integrateStructs hands the split batch to the verified total update path
+// in one locked call: Doc.applyUpdate buffers structs whose dependencies are
+// missing in the store's pending, so no ordering or self-containedness is
+// assumed here (issue #40).
 func (doc *Doc) integrateStructs(structs []decodedStruct) {
+	doc.applyUpdate(splitStructs(structs))
+}
+
+// splitStructs splits each item struct into 1-char updateItems (chained left
+// origins, shared right origin).
+func splitStructs(structs []decodedStruct) []updateItem {
 	var items []updateItem
 	for _, ds := range structs {
 		if !ds.isItem {
@@ -381,7 +417,7 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 		}
 	}
 
-	doc.applyUpdate(items)
+	return items
 }
 
 // applyDeletes records each range in the delete set and tombstones the matching
