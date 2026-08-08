@@ -119,7 +119,7 @@ Lemma smoke_input_wf (nm : P) (cl : ClientId) (b : w8) :
 Proof.
   split; move=> x Hx; apply list_elem_of_singleton in Hx; subst x; simpl.
   - word.
-  - rewrite /pending_item_rooted_pure /=. by exists nm.
+  - rewrite /pending_item_rooted /=. by exists nm.
 Qed.
 
 (** The send relation: that one message, and only onto an empty network. The
@@ -393,7 +393,7 @@ Lemma anchor_input_wf (t : TId) (cl clX : ClientId) (b : w8) :
 Proof.
   split; move=> x Hx; apply list_elem_of_singleton in Hx; subst x; simpl.
   - word.
-  - rewrite /pending_item_rooted_pure /=. done.
+  - rewrite /pending_item_rooted /=. done.
 Qed.
 
 
@@ -569,7 +569,7 @@ Proof.
   move=> Hk.
   split; move=> x Hx; apply list_elem_of_singleton in Hx; subst x; simpl.
   - word.
-  - rewrite /pending_item_rooted_pure.
+  - rewrite /pending_item_rooted.
     destruct k; simpl; [by exists nm | done].
 Qed.
 
