@@ -8,7 +8,7 @@
     API
     - [relay_entry] / [member]: one processed packet (who sent it, its stream
       index, its bytes) and one joined connection (its channels, its join
-      point in the log, its position ghost).
+      point in the log, its processed cursor).
     - [is_room_member γ j mb]: persistent, member [j] of the room is [mb].
     - [entry_receipts γs γh c e]: the S1 safety receipts of one processed
       packet: it decodes, every input is [is_accepted] by the server's store
@@ -16,8 +16,8 @@
       by the applied portion.
     - [room_inv] ties the ghost log to the wire: per member the log's entries
       are exactly the received prefix of that member's channel (S2, via
-      [log_coh] + the per-entry [is_chan_msg] facts + the member's position
-      ghost), and everything the room has sent to a member embeds, in order,
+      [log_coh] + the per-entry [is_chan_msg] facts + the member's processed
+      cursor), and everything the room has sent to a member embeds, in order,
       into the relay view of the log after its join point (S3,
       [own_member_send]).
     - [wp_NewRoom] / [wp_Room__Join] / [wp_Room__process] / [wp_Room__Serve].
@@ -87,15 +87,37 @@ Record relay_entry := RelayEntry {
 
 (** One joined connection: its handle and channels, the log length at its
     join (relays reach it from there on; no backfill until the W3c
-    handshake), and its position ghost (a [ghost_var] whose halves tie the
-    member's receive progress to the log). *)
+    handshake), and the name of its processed cursor. *)
 Record member := Member {
   mb_conn : loc;
   mb_send : chan_id;
   mb_recv : chan_id;
   mb_join : nat;
-  mb_pos  : gname;
+  mb_processed : gname;
 }.
+
+(** The member's processed cursor: [n] of its messages have been processed
+    into the room's log. Two halves of a [ghost_var]: one rides in
+    [room_inv], pinned to the member's entry count in the log; the other is
+    its [Serve] loop's, kept equal to the FFI receive cursor (received =
+    processed). Their agreement at the log-append step is what makes the
+    per-member entry indices dense (S2). *)
+Definition own_processed (mb : member) (n : nat) : iProp Σ :=
+  ghost_var mb.(mb_processed) (1/2) n.
+
+#[global] Instance own_processed_timeless mb n : Timeless (own_processed mb n).
+Proof. rewrite /own_processed. apply _. Qed.
+
+Lemma own_processed_agree mb n m :
+  own_processed mb n -∗ own_processed mb m -∗ ⌜n = m⌝.
+Proof. iApply ghost_var_agree. Qed.
+
+Lemma own_processed_update (k : nat) mb n m :
+  own_processed mb n -∗ own_processed mb m ==∗
+  own_processed mb k ∗ own_processed mb k.
+Proof.
+  iIntros "H1 H2". iMod (ghost_var_update_halves k with "H1 H2") as "[$ $]". done.
+Qed.
 
 (** The log entries member [j] contributed, in order. *)
 Definition entries_of (j : nat) (L : list relay_entry) : list relay_entry :=
@@ -178,7 +200,7 @@ Definition room_inv (r : loc) (γ : room_names) (γs : store_names)
     "#Hlogmsgs" ∷ ([∗ list] e ∈ L, is_chan_msg e.(re_src) e.(re_idx) e.(re_data)) ∗
     "#Hrcpts"   ∷ ([∗ list] e ∈ L, entry_receipts γs γh c e) ∗
     "Hposvs"    ∷ ([∗ list] j ↦ mb ∈ MS,
-                     ghost_var mb.(mb_pos) (1/2) (length (entries_of j L))) ∗
+                     own_processed mb (length (entries_of j L))) ∗
     "Hsends"    ∷ ([∗ list] j ↦ mb ∈ MS, own_member_send L j mb) ∗
     "%Hcoh"     ∷ ⌜log_coh MS L⌝.
 
@@ -354,7 +376,7 @@ Qed.
 
 (** [Join] hands over the connection's send side and mints the membership:
     the caller gets back the persistent member witness and its half of the
-    position ghost, at 0 (a fresh member has contributed nothing). The send
+    processed cursor, at 0 (a fresh member has contributed nothing). The send
     cursor must be fresh: the room's S3 bookkeeping says everything on the
     send channel was relayed by the room. *)
 Lemma wp_Room__Join (r cn : loc) (γ : room_names) (γs : store_names)
@@ -364,7 +386,7 @@ Lemma wp_Room__Join (r cn : loc) (γ : room_names) (γs : store_names)
     r @! (go.PointerType wsrelay.Room) @! "Join" #cn
   {{{ (j : nat) (mb : member), RET #();
       ⌜mb.(mb_conn) = cn ∧ mb.(mb_send) = sc ∧ mb.(mb_recv) = rc⌝ ∗
-      is_room_member γ j mb ∗ ghost_var mb.(mb_pos) (1/2) 0%nat }}}.
+      is_room_member γ j mb ∗ own_processed mb 0%nat }}}.
 Proof.
   wp_start as "(#Hroom & #Hconn & Hsend)".
   iNamed "Hroom".
@@ -377,9 +399,12 @@ Proof.
   wp_apply (wp_slice_append with "[$Hconns $Hcap $Hsl0]").
   iIntros (sl') "(Hconns & Hcap & _)".
   wp_auto.
-  (* mint the member: fresh position ghost, join point = current log length *)
+  (* mint the member: fresh processed cursor, join point = current log length *)
   iMod (ghost_var_alloc 0%nat) as (γp) "[Hpos1 Hpos2]".
   set (mb := Member cn sc rc (length L) γp).
+  iAssert (own_processed mb 0 ∗ own_processed mb 0)%I
+    with "[Hpos1 Hpos2]" as "[Hpos1 Hpos2]".
+  { rewrite /own_processed /mb /=. iFrame. }
   iMod (mono_list_auth_own_update_app [mb] with "Hmem") as "[Hmem #Hmemlb]".
   iDestruct (mono_list_idx_own_get (length MS) with "Hmemlb") as "#Hmidx".
   { rewrite lookup_app_r; last lia. rewrite Nat.sub_diag //. }
@@ -409,24 +434,23 @@ Proof.
   iApply ("HΦ" $! (length MS) mb).
   iSplitR; first by iPureIntro.
   iFrame "Hmember".
-  iEval (rewrite /mb /=).
   iExact "Hpos2".
 Qed.
 
 (** [process] handles ONE received message end to end: apply to the room's
     document, log it, fan out. The caller (the member's [Serve] goroutine)
     presents the wire fact for message [n] of its channel, the protocol that
-    came with it, and its half of the position ghost at [n]; it gets the half
+    came with it, and its processed cursor at [n]; it gets the cursor
     back at [S n], the log witness that THIS message is now entry-processed,
     and the S1 receipts. *)
 Lemma wp_Room__process (r : loc) (γ : room_names) (γs : store_names)
     (γh : history_names) (c : ClientId) (j : nat) (mb : member) (n : nat)
     (s : slice.t) (dq : dfrac) (data : list u8) :
   {{{ is_pkg_init wsrelay ∗ is_Room r γ γs γh c ∗
-      is_room_member γ j mb ∗ ghost_var mb.(mb_pos) (1/2) n ∗
+      is_room_member γ j mb ∗ own_processed mb n ∗
       is_chan_msg mb.(mb_recv) n data ∗ ws_prot data ∗ s ↦*{dq} data }}}
     r @! (go.PointerType wsrelay.Room) @! "process" #(mb.(mb_conn)) #s
-  {{{ RET #(); s ↦*{dq} data ∗ ghost_var mb.(mb_pos) (1/2) (S n) ∗
+  {{{ RET #(); s ↦*{dq} data ∗ own_processed mb (S n) ∗
       (∃ i : nat, is_room_log_entry γ i (RelayEntry j mb.(mb_recv) n data)) ∗
       entry_receipts γs γh c (RelayEntry j mb.(mb_recv) n data) }}}.
 Proof.
@@ -450,16 +474,16 @@ Proof.
   (* the position halves agree: n is exactly member j's entry count *)
   iDestruct (big_sepL_delete _ _ j mb with "Hposvs") as "[Hposj Hposvs]";
     first exact HMSj.
-  iDestruct (ghost_var_agree with "Hposj Hpos") as %Hn.
+  iDestruct (own_processed_agree with "Hposj Hpos") as %Hn.
   (* log the packet *)
   set (e := RelayEntry j mb.(mb_recv) n data).
   iMod (mono_list_auth_own_update_app [e] with "Hlog") as "[Hlog #Hloglb]".
   iDestruct (mono_list_idx_own_get (length L) with "Hloglb") as "#Hlogentry".
   { rewrite lookup_app_r; last lia. rewrite Nat.sub_diag //. }
   (* advance the position: both halves move to S n together *)
-  iMod (ghost_var_update_halves (S n) with "Hposj Hpos") as "[Hposj Hpos]".
+  iMod (own_processed_update (S n) with "Hposj Hpos") as "[Hposj Hpos]".
   iAssert ([∗ list] j' ↦ mb' ∈ MS,
-             ghost_var mb'.(mb_pos) (1/2) (length (entries_of j' (L ++ [e]))))%I
+             own_processed mb' (length (entries_of j' (L ++ [e]))))%I
     with "[Hposvs Hposj]" as "Hposvs".
   { iEval (rewrite (big_sepL_delete _ MS j mb HMSj)).
     iSplitL "Hposj".
@@ -602,25 +626,26 @@ Proof.
 Qed.
 
 (** [Serve]: one member's receive loop. It owns the member's receive cursor
-    and position half for the whole run: the cursor makes the stream arrive
-    in order and exactly once, the position half ties every received message
+    and processed cursor for the whole run: the receive cursor makes the
+    stream arrive in order and exactly once, the processed cursor ties every
+    received message
     to its log entry (S2). It returns them, in step, when the peer stops
     delivering. *)
 Lemma wp_Room__Serve (r : loc) (γ : room_names) (γs : store_names)
     (γh : history_names) (c : ClientId) (j : nat) (mb : member) :
   {{{ is_pkg_init wsrelay ∗ is_Room r γ γs γh c ∗ ws_env_preserves ⊤ ∗
       is_room_member γ j mb ∗
-      own_recv_cursor mb.(mb_recv) 0 ∗ ghost_var mb.(mb_pos) (1/2) 0%nat }}}
+      own_recv_cursor mb.(mb_recv) 0 ∗ own_processed mb 0%nat }}}
     r @! (go.PointerType wsrelay.Room) @! "Serve" #(mb.(mb_conn))
   {{{ RET #(); ∃ n : nat,
-      own_recv_cursor mb.(mb_recv) n ∗ ghost_var mb.(mb_pos) (1/2) n }}}.
+      own_recv_cursor mb.(mb_recv) n ∗ own_processed mb n }}}.
 Proof.
   wp_start as "(#Hroom & #Henv & #Hmember & Hrecv & Hpos)".
   iDestruct "Hmember" as "[Hmidx Hmconn]".
   wp_auto.
   iAssert (∃ n : nat,
     "Hrecv" ∷ own_recv_cursor mb.(mb_recv) n ∗
-    "Hpos" ∷ ghost_var mb.(mb_pos) (1/2) n)%I with "[$Hrecv $Hpos]" as "IH".
+    "Hpos" ∷ own_processed mb n)%I with "[$Hrecv $Hpos]" as "IH".
   wp_for "IH".
   wp_func_call.
   wp_apply (wp_Receive with "[$Hmconn $Hrecv $Henv]").
