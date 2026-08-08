@@ -79,7 +79,7 @@ Proof.
   rewrite Hdec in Hdec'. injection Hdec' as <-.
   wp_auto.
   wp_apply (wp_Doc__ApplySyncUpdate _ _ _ _ c _ _ inputs
-              (proj1 Hwf) (update_wf_rooted γs inputs Hwf)
+              (proj1 Hwf) (proj2 Hwf)
               with "[$His_doc $Hishist $Hpin $Hupd $Hcerts]").
   iIntros (h applied rest) "(Hupd & #Hlb & #Haccepts)".
   wp_auto.

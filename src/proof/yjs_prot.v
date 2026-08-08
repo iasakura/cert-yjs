@@ -2,9 +2,9 @@
     satisfies, and the codec specification the server is verified against.
 
     API
-    - [update_wf inputs]: the pure honesty facts of a batch (2^64 no-wrap per
-      struct, head structs target a named root); [update_wf_rooted] converts
-      the second half to any store's [is_pending_rooted].
+    - [update_wf inputs]: the pure honesty facts of a batch (the 2^64
+      no-wrap seam per struct, and [is_pending_rooted]: head structs target
+      a named root).
     - [yjs_prot decode γh d]: the deployment's [ws_prot]. The bytes decode
       (under the abstract [decode] the deployment is parameterized by) to an
       honest batch whose per-char expansion is certified against the global
@@ -60,11 +60,7 @@ Context (decode : list u8 -> option (list Input)).
 Definition update_wf (inputs : list Input) : Prop :=
   (∀ x : Input, x ∈ inputs ->
      (Z.of_nat (clock (in_id x.2)) + Z.of_nat (length (in_content x.2)) < 2^64)%Z) /\
-  (∀ x : Input, x ∈ inputs -> pending_item_rooted_pure x).
-
-Lemma update_wf_rooted (γs : store_names) (inputs : list Input) :
-  update_wf inputs -> is_pending_rooted γs inputs.
-Proof. move=> [_ Hr] x Hx. rewrite /pending_item_rooted. exact (Hr x Hx). Qed.
+  is_pending_rooted inputs.
 
 (** The wire protocol: these bytes decode to an honest batch every per-char
     operation of which is a point of the global history [γh]. Per character,
