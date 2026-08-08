@@ -979,7 +979,7 @@ Proof.
     iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
     iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
     iExists acc.
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpendcert HtypesAuth Hbinds Hhist Hacc".
+    iFrame "Hclient Hclientpin Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpendcert HtypesAuth Hbinds Hhist Hacc".
     iPureIntro. split_and!;
       [exact Hpendroot | exact Hpendbnd | exact Hctrt | exact Hcellctr | exact Hlocdup | exact Hrangedisj
       | exact Hrunfits | exact Horiginclk | exact Hbindtypes | exact Hbindinj

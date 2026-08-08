@@ -79,28 +79,32 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
     per-char op certificates over [expand_inputs inputs] and the root witnesses)
     is supplied up front and is [h]-independent. *)
 Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : history_names)
-    (sl : slice.t) (dq : dfrac)
+    (c : ClientId) (sl : slice.t) (dq : dfrac)
     (inputs : list (TId * IntegrateInput (A := A))) :
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
   is_pending_rooted γs inputs ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
+      is_store_client γs c ∗
       own_update_structs sl dq inputs ∗
       is_pending_certified γh (expand_inputs inputs) }}}
     dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl
-  {{{ (c : ClientId) (h : list Ev)
+  {{{ (h : list Ev)
       (applied rest : list (TId * IntegrateInput (A := A))), RET #();
       own_update_structs sl dq inputs ∗
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
       ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) }}}.
 Proof.
   move=> Hnowrapb Hrooted.
-  wp_start as "(#His_doc & #Hishist & Hupd & #Hcerts)".
+  wp_start as "(#His_doc & #Hishist & #Hpin & Hupd & #Hcerts)".
   iNamed "His_doc". subst s_loc. wp_auto.
-  (* take the write lock, reveal the store's current (c, h, m, pend) *)
+  (* take the write lock, reveal the store's current (c0, h, m, pend); the
+     client pin identifies c0 with the caller's c *)
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
   iEval (rewrite store_inv_own_store) in "Hinv".
-  iDestruct "Hinv" as (c h m pend) "Hstore".
+  iDestruct "Hinv" as (c0 h m pend) "Hstore".
+  iDestruct (own_store_client_pin with "Hstore") as "[Hstore #Hpin0]".
+  iDestruct (is_store_client_agree with "Hpin0 Hpin") as %->.
   iDestruct (own_store_hist_coh with "Hstore") as "[Hstore %Hhcoh]".
   wp_auto.
   (* run the total certificate-based applyUpdate on the real store: no
@@ -123,7 +127,7 @@ Proof.
   { iNext. iApply store_inv_own_store.
     iExists c, (h ++ (deliver_ev <$> expand_inputs applied)), m', rest. iFrame "Hstore". }
   wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hinv]").
-  iApply ("HΦ" $! c h applied rest). iFrame "Hupd Hlb Haccepts".
+  iApply ("HΦ" $! h applied rest). iFrame "Hupd Hlb Haccepts".
 Qed.
 
 End doc_ApplySyncUpdate.

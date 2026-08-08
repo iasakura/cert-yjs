@@ -1046,7 +1046,7 @@ Proof.
     { rewrite /store_inv_ro fmap_insert /=. iFrame "Hseq Htypes". }
     iExists acc.
     iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhistj HtypesAuth Hbinds Hacc".
-    iFrame "Hpendcert".
+    iFrame "Hpendcert Hclientpin".
     iPureIntro. split_and!.
     - exact Hpendroot.
     - exact Hpendbnd.

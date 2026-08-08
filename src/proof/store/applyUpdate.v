@@ -1983,7 +1983,7 @@ Proof using Type*.
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc | exact Hnoloss_in]).
   iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind', acc.
   iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hbinds' Hhist Hacc".
-  iFrame "Hpendcert'".
+  iFrame "Hpendcert' Hclientpin".
   iPureIntro. split_and!.
   - exact Hclientc.
   - exact Hpendroot'.
