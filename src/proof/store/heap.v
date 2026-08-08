@@ -1063,10 +1063,12 @@ Lemma store_tie_init (s_loc : loc) (γh : history_names) (client k : w64)
   "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset -∗
   "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ slice.nil -∗
   "Hhist"   ∷ own_client_history γh (uint.nat client) ([] : list Ev) ==∗
-  ∃ γs : store_names, ⌜γs.(sn_rw) = γrw⌝ ∗
-    own_tok_auth_dfrac γs.(sn_rmax) DfracDiscarded (Z.to_nat rwmutex.actualMaxReaders) ∗
-    tie_body s_loc γs γh (RLocked 0) ∗
-    is_store_client γs (uint.nat client).
+  ∃ γs : store_names,
+    "%Hrw"        ∷ ⌜γs.(sn_rw) = γrw⌝ ∗
+    "#Hmax"       ∷ own_tok_auth_dfrac γs.(sn_rmax) DfracDiscarded
+                      (Z.to_nat rwmutex.actualMaxReaders) ∗
+    "Htie"        ∷ tie_body s_loc γs γh (RLocked 0) ∗
+    "#Hclientpin" ∷ is_store_client γs (uint.nat client).
 Proof.
   iIntros "Hclient Hclock Hitemsf Hmap Htypesf Htypesmap Hdset Hpendf Hhist".
   set (types := ∅ : gmap loc type_state).

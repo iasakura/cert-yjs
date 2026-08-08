@@ -72,25 +72,26 @@ Proof.
   wp_auto.
   (* the physical lock: the mu field starts at the RWMutex zero value *)
   iStructNamed "Hs". simpl.
-  iMod (init_RWMutex (storeN .@ "rw") with "mu") as (γrw) "(#Hrw & Hst & Hrtoks)".
+  iMod (init_RWMutex (storeN .@ "rw") with "mu") as (γrw) "(#Hrw0 & Hst & Hrtoks)".
   iClear "Hrtoks".
   (* the ghost layer, at the real lock names *)
   iMod (store_tie_init s_loc γh client (W64 0) items_mref types_mref _ γrw
           with "client clock items [Hitemsmap] types [Htypesmap] deletedSet
-                pending Hhist") as (γs) "(%Hγrw & #Hmax & Htie & #Hpin)".
+                pending Hhist") as (γs) "Hst0".
   { iFrame "Hitemsmap". }
   { iFrame "Htypesmap". }
+  iNamed "Hst0".
   (* the tie invariant, at RLocked 0 *)
   iMod (inv_alloc (storeN .@ "tie") _
           (∃ st, rwmutex.own_RWMutex γs.(sn_rw) st ∗ tie_body s_loc γs γh st)
           with "[Hst Htie]") as "#Htieinv".
-  { iNext. iExists (RLocked 0). rewrite Hγrw. iFrame "Hst Htie". }
+  { iNext. iExists (RLocked 0). rewrite Hrw. iFrame "Hst Htie". }
   iModIntro.
   iApply ("HΦ" $! dv s_loc γs).
-  iFrame "Hpin".
+  iFrame "Hclientpin".
   iExists _. iFrame "Hd".
   iSplitR; first done.
-  rewrite /is_Store Hγrw. iFrame "Hrw Hmax Htieinv".
+  rewrite /is_Store Hrw. iFrame "Hrw0 Hmax Htieinv".
 Qed.
 
 End doc_NewDoc.
