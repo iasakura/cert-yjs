@@ -23,9 +23,11 @@
       into the relay view of the log after its join point (S3,
       [own_member_send]).
     - [wp_NewRoom] / [wp_Room__Join] / [wp_Room__process] / [wp_Room__Serve].
-    - [wp_ReadText]: the goal theorem of issue #125: a concurrent
-      [GetText] + [String] against a processed packet's [entry_receipts]
-      observes a snapshot containing the packet's applied items.
+    - [wp_ReadText_hist] / [wp_ReadText]: the goal theorem of issue #125: a
+      concurrent [GetText] + [String] against a history prefix certificate
+      [is_history_lb] observes a snapshot containing every insert the prefix
+      delivered; the receipt corollary instantiates it with a processed
+      packet's [entry_receipts], giving the packet's applied items.
 
     One [room.mu] critical section spans the apply and the fan-out
     ([process]), matching y-websocket's serialized handler; the store's write
@@ -727,31 +729,65 @@ Proof.
 Qed.
 
 (** [ReadText]: the server's concurrent read, and the goal theorem of issue
-    #125: readers see the received updates. Any goroutine holding a
-    processed packet's [entry_receipts] that runs [GetText(name)] followed by
-    [String] observes an array snapshot [marr] whose ITEM SET contains, for
-    every applied per-char op of that packet targeting root [name], an item
-    with that op's id; the returned string spells the snapshot's visible
-    characters. It runs while [Serve] runs: [GetText] takes the write lock
-    only to look up (or first-register) the root, and [String] reads under
-    the RWMutex read lock ([own_read_cap], from [wp_NewDoc]).
+    #125: readers see the received updates. The guarantee is stated in the
+    network stack's own currency, a history prefix certificate
+    [is_history_lb γh c h0]: any goroutine holding one that runs
+    [GetText(name)] followed by [String] observes an array snapshot [marr]
+    whose ITEM SET contains, for every insert delivered by [h0] targeting
+    root [name], an item with that op's id; the returned string spells the
+    snapshot's visible characters. Whoever observed the server's history
+    grow (an [ApplySyncUpdate] postcondition, a processed packet's
+    [entry_receipts] via the corollary below, a sync-protocol certificate)
+    can replay that knowledge against a concurrent read. It runs while
+    [Serve] runs: [GetText] takes the write lock only to look up (or
+    first-register) the root, and [String] reads under the RWMutex read
+    lock ([own_read_cap], from [wp_NewDoc]).
 
-    Honest caveats, carried by the statement itself:
-    - only the APPLIED portion of the packet reaches content ([applied] is
-      the receipt's drained list); its buffered remainder is covered by the
-      [is_accepted] receipts alone until later deliveries drain it. Under a
-      causally complete stream (the relay discipline) applied = everything,
-      but that is a peer-side property, not proved here;
-    - the bound is at the ITEM-SET level: a later [Delete] tombstones an
-      item out of the STRING ([visible_string]) but never out of [marr.*1]. *)
+    The item-set caveat is inherited from [wp_Text__String_hist]: a later
+    [Delete] tombstones an item out of the STRING ([visible_string]) but
+    never out of [marr.*1]. *)
+Lemma wp_ReadText_hist (dv s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h0 : list Ev) (name : go_string) :
+  {{{ is_pkg_init wsrelay ∗ is_Doc dv s_loc γs γh ∗
+      is_history (A := A) (P := P) γh ∗ is_store_client γs c ∗
+      is_history_lb γh c h0 ∗ own_read_cap γs }}}
+    @! wsrelay.ReadText #dv #name
+  {{{ (str : go_string) (marr : list (YjsItem A * bool)), RET #str;
+      own_read_cap γs ∗
+      "%Hrstr" ∷ ⌜str = visible_string marr⌝ ∗
+      "%Hrinv" ∷ ⌜YjsArrInvariant marr.*1⌝ ∗
+      "%Hrsees" ∷ ⌜∀ input : IntegrateInput (A := A),
+                     (RootId name, OpInsert input) ∈ delivered_ops h0 ->
+                     ∃ it, item_id it = in_id input ∧ it ∈ marr.*1⌝ }}}.
+Proof.
+  wp_start as "(#Hdoc & #Hishist & #Hpin & #Hlb & Hcap)".
+  wp_auto.
+  wp_apply (wp_Doc__GetText with "[$Hdoc $Hishist]").
+  iIntros (t) "#Htext".
+  wp_auto.
+  wp_apply (wp_Text__String_hist _ _ _ c _ [] h0 with "[$Htext $Hpin $Hlb $Hcap]").
+  iIntros (str marr) "(#Htext' & Hcap & %Hstr & %Hsub & %Hinvarr & %Hsees)".
+  wp_auto.
+  iApply ("HΦ" $! str marr).
+  iFrame "Hcap". iPureIntro. split_and!;
+    [exact Hstr | exact Hinvarr | exact Hsees].
+Qed.
+
+(** The room-receipt corollary, the issue's literal goal statement: a
+    processed packet's [entry_receipts] carries the history certificate of
+    its apply, so a concurrent read sees the packet's APPLIED portion. The
+    honest caveat is unchanged: the buffered remainder is covered by the
+    [is_accepted] receipts alone until later deliveries drain it (under a
+    causally complete stream, the relay discipline, applied = everything,
+    but that is a peer-side property, not proved here). *)
 Lemma wp_ReadText (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (e : relay_entry) (name : go_string) :
   {{{ is_pkg_init wsrelay ∗ is_Doc dv s_loc γs γh ∗
-      is_history (A := A) (P := P) γh ∗
+      is_history (A := A) (P := P) γh ∗ is_store_client γs c ∗
       own_read_cap γs ∗ entry_receipts γs γh c e }}}
     @! wsrelay.ReadText #dv #name
   {{{ (str : go_string) (marr : list (YjsItem A * bool))
-      (inputs applied : list Input) (h : list Ev) (m' : DocModel), RET #str;
+      (inputs applied : list Input) (h : list Ev), RET #str;
       own_read_cap γs ∗
       "%Hrdec" ∷ ⌜decode e.(re_data) = Some inputs⌝ ∗
       "#Hracc" ∷ ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
@@ -761,53 +797,24 @@ Lemma wp_ReadText (dv s_loc : loc) (γs : store_names) (γh : history_names)
       "%Hrsees" ∷ ⌜∀ x, x ∈ expand_inputs applied -> x.1 = RootId name ->
                      ∃ it, item_id it = in_id x.2 ∧ it ∈ marr.*1⌝ }}}.
 Proof.
-  wp_start as "(#Hdoc & #Hishist & Hcap & #Hrcpt)".
+  iIntros (Φ) "(#Hpkg & #Hdoc & #Hishist & #Hpin & Hcap & #Hrcpt) HΦ".
   iEval (rewrite /entry_receipts) in "Hrcpt".
   iDestruct "Hrcpt" as (inputs h applied m') "Hrc". iNamed "Hrc".
-  wp_auto.
-  wp_apply (wp_Doc__GetText with "[$Hdoc $Hishist]").
-  iIntros (t) "#Htext".
-  wp_auto.
-  destruct (decide (Exists (λ x', x'.1 = RootId name) applied)) as [Hex | Hnex].
-  - (* some applied wire item targets [name]: its receipt bounds the read *)
-    apply Exists_exists in Hex. destruct Hex as (x0 & Hx0 & Hx0t).
-    iDestruct (big_sepL_elem_of _ _ x0 Hx0 with "Herroots") as (name0) "[%Hname0 Hrootlb]".
-    rewrite Hx0t in Hname0. injection Hname0 as <-.
-    iEval (rewrite Hx0t) in "Hrootlb".
-    wp_apply (wp_Text__String t γs γh name []
-                (list_to_set (doc_model_get m' (RootId name)))
-                with "[$Htext $Hrootlb $Hcap]").
-    iIntros (str marr) "(#Htext' & Hcap & %Hstr & %Hsub & %Hinvarr)".
-    wp_auto.
-    iApply ("HΦ" $! str marr inputs applied h m').
-    iFrame "Hcap Heracc Herlb". iPureIntro. split_and!.
-    + exact Herdec.
-    + exact Hstr.
-    + exact Hinvarr.
-    + move=> x Hx Hxt.
-      destruct (Herin x Hx) as (it & Hitid & Hitmem).
-      exists it. split; first exact Hitid.
-      have Hin1 : it ∈ (list_to_set ([] : list (YjsItem A))
-                        ∪ list_to_set (doc_model_get m' (RootId name)) : gset (YjsItem A)).
-      { apply elem_of_union_r. rewrite elem_of_list_to_set. rewrite -Hxt //. }
-      have Hin2 := Hsub it Hin1.
-      rewrite elem_of_list_to_set in Hin2. exact Hin2.
-  - (* no applied wire item targets [name]: the guarantee is vacuous, read
-       with the handle's own (empty) bound *)
-    iDestruct (is_Text_root_lb with "Htext") as "#Hrootlb0".
-    wp_apply (wp_Text__String t γs γh name [] (list_to_set ([] : list (YjsItem A)))
-                with "[$Htext $Hrootlb0 $Hcap]").
-    iIntros (str marr) "(#Htext' & Hcap & %Hstr & %Hsub & %Hinvarr)".
-    wp_auto.
-    iApply ("HΦ" $! str marr inputs applied h m').
-    iFrame "Hcap Heracc Herlb". iPureIntro. split_and!.
-    + exact Herdec.
-    + exact Hstr.
-    + exact Hinvarr.
-    + move=> x Hx Hxt. exfalso. apply Hnex.
-      destruct (expand_inputs_tid applied x Hx) as (x' & Hx' & Htid).
-      apply Exists_exists. exists x'. split; first exact Hx'.
-      rewrite -Htid //.
+  wp_apply (wp_ReadText_hist _ _ _ _ c (h ++ (deliver_ev <$> expand_inputs applied)) name
+              with "[$Hpkg $Hdoc $Hishist $Hpin $Herlb $Hcap]").
+  iIntros (str marr) "(Hcap & %Hstr & %Hinvarr & %Hsees)".
+  iApply ("HΦ" $! str marr inputs applied h).
+  iFrame "Hcap Heracc Herlb". iPureIntro. split_and!.
+  - exact Herdec.
+  - exact Hstr.
+  - exact Hinvarr.
+  - move=> x Hx Hxt.
+    apply Hsees.
+    rewrite delivered_ops_app elem_of_app. right.
+    rewrite delivered_ops_deliver_batch.
+    rewrite -Hxt.
+    exact (list_elem_of_fmap_2 (λ typedInput : Input, (typedInput.1, OpInsert typedInput.2))
+             (expand_inputs applied) x Hx).
 Qed.
 
 End proof.

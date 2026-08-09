@@ -105,4 +105,66 @@ Proof.
   iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted].
 Qed.
 
+(** [Text.String], history-certificate form (issue #125): the caller brings a
+    prefix certificate [is_history_lb γh c h0] of THIS replica's op history
+    (with the client pin identifying it) instead of an [is_root_lb] set
+    bound, and the snapshot is guaranteed to contain one item per delivered
+    insert of [h0] targeting this root. This is the read guarantee in the
+    network stack's own currency: whoever observed the history grow (an
+    applyUpdate postcondition, a server receipt, a sync-protocol
+    certificate) can replay that knowledge against a concurrent read. *)
+Lemma wp_Text__String_hist (t : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (name : P) (L : list (YjsItem A)) (h0 : list Ev) :
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗
+      is_store_client γs c ∗ is_history_lb γh c h0 ∗ own_read_cap γs }}}
+    t @! (go.PointerType yjs.Text) @! "String" #()
+  {{{ (str : go_string) (marr : list (YjsItem A * bool)), RET #str;
+      is_Text t γs γh name L ∗ own_read_cap γs ∗
+      ⌜str = visible_string marr⌝ ∗
+      ⌜list_to_set L ⊆ (list_to_set marr.*1 : gset (YjsItem A))⌝ ∗
+      ⌜YjsArrInvariant marr.*1⌝ ∗
+      ⌜∀ input : IntegrateInput (A := A),
+         (RootId name, OpInsert input) ∈ delivered_ops h0 ->
+         ∃ it, item_id it = in_id input ∧ it ∈ marr.*1⌝ }}}.
+Proof.
+  wp_start as "(Hpre & #Hpin & #Hlb & Hcap)". iNamed "Hpre".
+  iDestruct "His_store" as "#His_store".
+  wp_auto. subst s_loc. subst parent.
+  wp_apply (wp_Store__rlock_hist _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
+  iIntros (types) "(Hrlo & Hro & %Hfact)".
+  iNamed "Hro".
+  iDestruct (auth_gmap_gset_lookup_dq with "Hseq His_lb") as %(S' & HmS & HLsub).
+  rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (ts & Htsp & ->).
+  (* borrow the type's DLL and run the verified walk *)
+  iDestruct (big_sepM_lookup_acc _ _ _ _ Htsp with "Htypes") as "[Hbody Hclose]".
+  iDestruct "Hbody" as "(Htext & %Hinvarr)".
+  iDestruct (own_ytype_cells_flatten with "Htext") as "[Htext %Hflat]".
+  wp_auto.
+  wp_apply (wp_yType__Text (tv.(yjs.Text.inner')) (DfracOwn rwmutex_guard.rfrac)
+              (ty_cells ts) (ty_arr ts) with "[$Htext]").
+  iIntros "Htext".
+  iDestruct ("Hclose" with "[Htext]") as "Htypes".
+  { iFrame "Htext". iPureIntro. exact Hinvarr. }
+  wp_auto.
+  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Htypes]").
+  { iFrame "Hseq Htypes". }
+  iIntros "Hcap".
+  wp_auto.
+  have Hfst : (cells_model (ty_cells ts)).*1 = ty_arr ts.
+  { rewrite cells_model_fst -Hflat //. }
+  iApply ("HΦ" $! _ (cells_model (ty_cells ts))).
+  iSplitR "Hcap"; last first.
+  { iFrame "Hcap". iPureIntro. split_and!.
+    - reflexivity.
+    - rewrite Hfst. exact HLsub.
+    - rewrite Hfst. exact Hinvarr.
+    - move=> input Hin.
+      destruct (Hfact input Hin) as (ts' & it & Hts' & Hitid & Hitmem).
+      rewrite Htsp in Hts'. injection Hts' as <-.
+      exists it. split; [exact Hitid | rewrite Hfst //]. }
+  iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
+  iFrame "Ht His_store His_hist Hbind His_lb".
+  iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted].
+Qed.
+
 End text.

@@ -2621,6 +2621,29 @@ Proof.
   exact (@find_by_id_mem _ EqDA (in_id input) (st_items st) it Hfind).
 Qed.
 
+(** Type-precise form of [delivered_docm_has]: the delivered insert's ITEM
+    sits in its own type's list of the coherent document. This is what a
+    concurrent reader must find in its snapshot (issue #125): combined with
+    a history prefix certificate ([delivered_ops_prefix]) it turns
+    "the op was delivered by the time of my certificate" into "an item with
+    that op's id is in the root I am reading". *)
+Lemma delivered_docm_mem h (m : DocModel) (t : TId) (input : IntegrateInput (A := A)) :
+  history_state_coh h m ->
+  (t, OpInsert input) ∈ delivered_ops h ->
+  ∃ it, item_id it = in_id input ∧ it ∈ doc_model_get m t.
+Proof.
+  move=> Hcoh Hin.
+  destruct (history_state_coh_proj h m t Hcoh) as (st & Hinterp & Hitems).
+  have Hmem : OpInsert input ∈ omap deliverP (proj_hist t h).
+  { rewrite -(delivered_ops_proj t h) elem_of_proj_ops //. }
+  pose proof (effect_list_uniqueId_init (omap deliverP (proj_hist t h)) st Hinterp) as Huniq.
+  pose proof (effect_list_insert_mem (omap deliverP (proj_hist t h)) (op_init Oy) st input
+                Hinterp Huniq Hmem) as (it & Hitid & Hfind).
+  exists it. split; [exact Hitid |].
+  rewrite -Hitems.
+  exact (@find_by_id_mem _ EqDA (in_id input) (st_items st) it Hfind).
+Qed.
+
 (** The uniqueness backbone for [item_determinism_raw] at type [t0]: two
     broadcast ops of type [t0] with equal ids are equal. *)
 Lemma broadcast_type_uniq N (t0 : TId) :

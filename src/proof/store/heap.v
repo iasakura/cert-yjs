@@ -20,8 +20,8 @@
 
     Laws
     - [store_inv_init]: how to build the invariant from the raw points-tos, and
-      [store_inv_bridge] / [own_store_hist_coh] / [own_store_accepted_sound]:
-      what you may read back out of it.
+      [store_inv_bridge] / [own_store_hist_coh] / [own_store_accepted_sound] /
+      [store_inv_excl_hist_root]: what you may read back out of it.
     - [own_store_accept_batch]: the state-transition law for accepting a
       delivered batch.
     - the reader fractions form a chain: [frac_of_0] and [frac_of_split].
@@ -959,6 +959,54 @@ Lemma store_inv_bridge (s_loc : loc) (γs : store_names) (γh : history_names) :
     store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend ∗
     store_inv_ro γs types 1.
 Proof. rewrite /store_inv /named //. Qed.
+
+(** What a reader's certificates read back out of the exclusive slice at a
+    lock transition (issue #125): the client pin identifies the caller's
+    history certificate with THIS replica's history, the registry binding
+    routes a root name to its type slot, and [history_state_coh] turns every
+    delivered insert of the certified prefix into an item of that type's
+    CURRENT list ([delivered_ops_prefix] + [delivered_docm_mem]). The slice
+    comes back untouched; [wp_Store__rlock_hist] applies this at the read
+    lock's linearization point, which is the only moment a reader sees the
+    exclusive slice. *)
+Lemma store_inv_excl_hist_root (s_loc : loc) (γs : store_names) (γh : history_names)
+    (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
+    (pend_sl : slice.t) (types : gmap loc type_state) (bind : gmap P loc)
+    (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
+    (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
+  store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend -∗
+  is_store_client γs c -∗
+  is_history_lb γh c h0 -∗
+  is_type_binding γs.(sn_types) name parent -∗
+  store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend ∗
+  ⌜∀ input : IntegrateInput (A := A),
+     (RootId name, OpInsert input) ∈ delivered_ops h0 ->
+     ∃ ts it, types !! parent = Some ts ∧ item_id it = in_id input ∧ it ∈ ty_arr ts⌝.
+Proof.
+  iIntros "Hexcl #Hpin #Hlb #Hbind". iNamed "Hexcl".
+  iDestruct (is_store_client_agree with "Hclientpin Hpin") as %Heqc. subst c.
+  iDestruct (is_history_lb_prefix with "Hhist Hlb") as %Hpref.
+  iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
+  have Hfact : ∀ input : IntegrateInput (A := A),
+      (RootId name, OpInsert input) ∈ delivered_ops h0 ->
+      ∃ ts it, types !! parent = Some ts ∧ item_id it = in_id input ∧ it ∈ ty_arr ts.
+  { move=> input Hin.
+    destruct (Hbindtypes name parent Hbindlk) as [ts Hts].
+    have Hdg : doc_model_get m (RootId name) = ty_arr ts := Hmtypes name parent ts Hbindlk Hts.
+    have Hin' : (RootId name, OpInsert input) ∈ delivered_ops h.
+    { destruct (delivered_ops_prefix h0 h Hpref) as [rest ->].
+      rewrite elem_of_app. by left. }
+    destruct (delivered_docm_mem h m (RootId name) input Hhcoh Hin') as (it & Hitid & Hitmem).
+    exists ts, it. rewrite Hdg in Hitmem.
+    split_and!; [exact Hts | exact Hitid | exact Hitmem]. }
+  iSplitR ""; last (iPureIntro; exact Hfact).
+  iExists acc.
+  iFrame "∗#". iPureIntro. split_and!;
+    [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup
+    | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hbindtypes
+    | exact Hbindinj | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom
+    | exact Hacccoh].
+Qed.
 
 Lemma tf_split γs q1 q2 types :
   types_frag γs (q1 + q2) types ⊣⊢ types_frag γs q1 types ∗ types_frag γs q2 types.

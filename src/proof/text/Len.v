@@ -114,4 +114,58 @@ Proof.
   iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted].
 Qed.
 
+(** [Text.Len], history-certificate form (issue #125): like
+    [wp_Text__String_hist], the caller brings a prefix certificate of this
+    replica's op history and the counted snapshot contains one item per
+    delivered insert of the prefix targeting this root. *)
+Lemma wp_Text__Len_hist (t : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (name : P) (L : list (YjsItem A)) (h0 : list Ev) :
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗
+      is_store_client γs c ∗ is_history_lb γh c h0 ∗ own_read_cap γs }}}
+    t @! (go.PointerType yjs.Text) @! "Len" #()
+  {{{ (n : w64) (marr : list (YjsItem A * bool)), RET #n;
+      is_Text t γs γh name L ∗ own_read_cap γs ∗
+      ⌜n = W64 (length (visible_items marr))⌝ ∗
+      ⌜list_to_set L ⊆ (list_to_set marr.*1 : gset (YjsItem A))⌝ ∗
+      ⌜YjsArrInvariant marr.*1⌝ ∗
+      ⌜∀ input : IntegrateInput (A := A),
+         (RootId name, OpInsert input) ∈ delivered_ops h0 ->
+         ∃ it, item_id it = in_id input ∧ it ∈ marr.*1⌝ }}}.
+Proof.
+  wp_start as "(Hpre & #Hpin & #Hlb & Hcap)". iNamed "Hpre".
+  iDestruct "His_store" as "#His_store".
+  wp_auto. subst s_loc.
+  wp_apply (wp_Store__rlock_hist _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
+  iIntros (types) "(Hrlo & Hro & %Hfact)".
+  iNamed "Hro".
+  iDestruct (auth_gmap_gset_lookup_dq with "Hseq His_lb") as %(S' & HmS & HLsub).
+  rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (ts & Htsp & ->).
+  iDestruct (big_sepM_lookup_acc _ _ _ _ Htsp with "Htypes") as "[Hbody Hclose]".
+  iDestruct "Hbody" as "(Htext & %Hinvarr)".
+  iDestruct "Htext" as (yt0 tl0) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
+  subst parent.
+  wp_auto.
+  iDestruct ("Hclose" with "[Hparent Hdll]") as "Htypes".
+  { iSplitL "Hparent Hdll"; [ iExists yt0, tl0; iFrame "Hparent Hdll"; iPureIntro; done | iPureIntro; exact Hinvarr ]. }
+  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Htypes]").
+  { iFrame "Hseq Htypes". }
+  iIntros "Hcap".
+  wp_auto.
+  have Hfst : (cells_model (ty_cells ts)).*1 = ty_arr ts.
+  { rewrite cells_model_fst. rewrite /cells_repr in Hrepr. rewrite -Hrepr //. }
+  iApply ("HΦ" $! _ (cells_model (ty_cells ts))).
+  iSplitR "Hcap"; last first.
+  { iFrame "Hcap". iPureIntro. split_and!.
+    - rewrite Hlen num_visible_model //.
+    - rewrite Hfst. exact HLsub.
+    - rewrite Hfst. exact Hinvarr.
+    - move=> input Hin.
+      destruct (Hfact input Hin) as (ts' & it & Hts' & Hitid & Hitmem).
+      rewrite Htsp in Hts'. injection Hts' as <-.
+      exists it. split; [exact Hitid | rewrite Hfst //]. }
+  iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
+  iFrame "Ht His_store His_hist Hbind His_lb".
+  iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted].
+Qed.
+
 End text.
