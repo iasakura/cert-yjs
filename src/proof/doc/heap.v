@@ -61,9 +61,9 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 (** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
     delegates to [is_Store]. Since [Text] holds the store directly (y-octo: the
     YTypeRef carries the store ref), [is_Text] does NOT go through [is_Doc]; this
-    predicate is the Doc-level handle used by the eventual [wp_NewDoc] /
-    [wp_Doc__GetText] specs (GetText: consume [is_Doc dv s_loc γ], create a YType
-    under the lock, return [is_Text t []]). *)
+    predicate is the Doc-level handle the [wp_NewDoc] / [wp_Doc__GetText] specs
+    are stated over (GetText: consume [is_Doc dv s_loc γ], look up or create the
+    YType under the write lock, return [is_Text t γs γh name []]). *)
 Definition is_Doc (dv s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
   ∃ (dvv : yjs.Doc.t),
     "Hdoc" ∷ dv ↦□ dvv ∗

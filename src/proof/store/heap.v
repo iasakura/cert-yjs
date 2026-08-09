@@ -1050,7 +1050,9 @@ Qed.
     DISCARDED reader-bound authority ([is_Store]'s [Hmax]) and the types
     agreement all go into the payload rather than being dropped. The caller
     wraps the result in the tie invariant next to [own_RWMutex (RLocked 0)]
-    and has [is_Store]. *)
+    and has [is_Store]. The reader-bound TOKENS come back too (issue #125):
+    zipped with [init_RWMutex]'s RLock tokens they are the document's
+    [own_read_cap] read capabilities, one per reader slot. *)
 Lemma store_tie_init (s_loc : loc) (γh : history_names) (client k : w64)
     (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
     (γrw : RWMutex_names) :
@@ -1067,6 +1069,7 @@ Lemma store_tie_init (s_loc : loc) (γh : history_names) (client k : w64)
     "%Hrw"        ∷ ⌜γs.(sn_rw) = γrw⌝ ∗
     "#Hmax"       ∷ own_tok_auth_dfrac γs.(sn_rmax) DfracDiscarded
                       (Z.to_nat rwmutex.actualMaxReaders) ∗
+    "Hrtoks"      ∷ own_toks γs.(sn_rmax) (Z.to_nat rwmutex.actualMaxReaders) ∗
     "Htie"        ∷ tie_body s_loc γs γh (RLocked 0) ∗
     "#Hclientpin" ∷ is_store_client γs (uint.nat client).
 Proof.
@@ -1078,14 +1081,13 @@ Proof.
   iMod (ghost_map_alloc_empty (K := P) (V := loc)) as (γtypes) "HtypesAuth".
   (* the lock-layer ghosts, for real: the write-lock witness, the reader
      count at zero, the reader bound (discarded, so it can sit in [is_Store]
-     persistently; its tokens are the read capabilities, not needed here),
-     and the types agreement at the empty map *)
+     persistently; its tokens are the read capabilities, handed back to the
+     caller) and the types agreement at the empty map *)
   iMod (ghost_var_alloc ()) as (γwl) "Hwl".
   iMod (own_tok_auth_alloc) as (γrrlocked) "Hrrlocked".
   iMod (own_tok_auth_alloc) as (γrmax) "Hrmax".
   iMod (own_tok_auth_add (Z.to_nat rwmutex.actualMaxReaders) with "Hrmax")
     as "[Hrmax Hrtoks]".
-  iClear "Hrtoks".
   iPersist "Hrmax".
   iMod (own_toks_0 γrmax) as "Hrtoks0".
   iMod (own_alloc (to_frac_agree 1 (∅ : leibnizO (gmap loc type_state)))) as (γta) "Hta".
@@ -1101,7 +1103,7 @@ Proof.
                 sn_types_agree := γta; sn_accepted := γacc; sn_client := γcl |}).
   iModIntro. iExists γs.
   iSplitR; first done.
-  iFrame "Hrmax".
+  iFrame "Hrmax". iFrame "Hrtoks".
   iSplitL; last by iFrame "Hclpin".
   rewrite /tie_body.
   iFrame "Hrrlocked Hrtoks0 Hwl".
