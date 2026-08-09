@@ -187,6 +187,21 @@ Definition entry_receipts (γs : store_names) (γh : history_names)
   Persistent (entry_receipts γs γh c e).
 Proof. apply _. Qed.
 
+(* [room_inv] carries one [entry_receipts] per log entry, and every lock
+   acquisition ([iNamed] on the invariant) moves that big-op into the
+   persistent context. With [entry_receipts] transparent that Persistent /
+   IntoPersistent search unfolds each element's body, and the [∃ m' :
+   DocModel] binder makes the nested gmap typeclass unification quadratic:
+   the one [iNamed "Hinv"] in [wp_Room__Join] costs ~2 minutes (measured;
+   same for process/Serve). Sealing the predicate for typeclass resolution
+   makes the move a single [entry_receipts_persistent] lookup, sub-second.
+   Nothing [iNamed]s into the predicate through the invariant; the one
+   consumer that opens it ([wp_ReadText]) unfolds explicitly with [iEval
+   (rewrite /entry_receipts)], and the producer ([wp_Room__process]) builds
+   it under [iAssert] where the unfolding is local. Same trick and rationale
+   as [tie_body] in store/heap.v. *)
+#[global] Typeclasses Opaque entry_receipts.
+
 (** The send side of one member (S3): the room has sent [sent] to it, that IS
     the wire content of its send channel (cursor + per-index message facts),
     and [sent] embeds, in order, into the relay view of the log after the
@@ -747,6 +762,7 @@ Lemma wp_ReadText (dv s_loc : loc) (γs : store_names) (γh : history_names)
                      ∃ it, item_id it = in_id x.2 ∧ it ∈ marr.*1⌝ }}}.
 Proof.
   wp_start as "(#Hdoc & #Hishist & Hcap & #Hrcpt)".
+  iEval (rewrite /entry_receipts) in "Hrcpt".
   iDestruct "Hrcpt" as (inputs h applied m') "Hrc". iNamed "Hrc".
   wp_auto.
   wp_apply (wp_Doc__GetText with "[$Hdoc $Hishist]").
