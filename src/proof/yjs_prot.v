@@ -30,9 +30,10 @@ From New.proof.store Require Import store.
 
 Section yjs_prot.
 
-Context `{hG: heapGS Σ, !ffi_semantics _ _}.
-
-Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
+(* [allG] only (no [heapGS]): the protocol must be nameable inside an
+   adequacy theorem's initial fancy update, before any node exists.
+   [codec_spec], which contains a WP, lives in the second section below. *)
+Context {Σ : gFunctors} `{!allG Σ}.
 
 Set Default Proof Using "Type*".
 
@@ -75,6 +76,26 @@ Definition yjs_prot (γh : history_names) (d : list u8) : iProp Σ :=
 #[global] Instance yjs_prot_persistent γh d : Persistent (yjs_prot γh d).
 Proof. apply _. Qed.
 
+End yjs_prot.
+
+Section codec_spec.
+
+Context `{hG: heapGS Σ, !ffi_semantics _ _}.
+
+Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
+
+Set Default Proof Using "Type*".
+
+Notation A := go_string.
+
+Notation P := go_string.
+
+Local Notation TId := (TypeId P).
+
+Local Notation Input := (TId * IntegrateInput (A := A))%type.
+
+Context (decode : list u8 -> option (list Input)).
+
 (** The Go codec value [f] meets the abstract [decode]: on any byte slice it
     reports exactly whether [decode] succeeds, and on success returns a
     struct slice denoting the decoded batch. *)
@@ -92,4 +113,4 @@ Definition codec_spec (f : func.t) : iProp Σ :=
 #[global] Instance codec_spec_persistent f : Persistent (codec_spec f).
 Proof. apply _. Qed.
 
-End yjs_prot.
+End codec_spec.

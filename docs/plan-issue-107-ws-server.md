@@ -437,6 +437,32 @@ the closed boot theorem itself, whose path is now mapped:
 - the export is protocol totality: every message in `ws_msgs` satisfies
   `yjs_prot`, read straight off `ffi_global_ctx`'s protocol big-op.
 
+Third status note (2026-08-09): M4 is done. The closed theorem
+`ws_server_dist_adequate` (src/proof/demo/ws_server.v) is Qed and the
+full build is green. Deltas against the mapped path, all interface-level:
+
+- `history.v` and `yjs_prot.v`'s protocol section now assume only
+  `allG` + `invGS` (no `heapGS`), which is what lets `history_alloc`
+  and `yjs_prot decode γh` run inside the adequacy theorem's initial
+  fancy update, before any node exists. `codec_spec` (a WP) stays in
+  its own `heapGS` section.
+- `ws_dist_adequacy_prot_fupd` promises two more facts that are true at
+  its instantiation site and indispensable to the caller: the built
+  `gooseGlobalGS`'s `goose_invGS` is the fupd's `invGS` (transports the
+  fupd-allocated `is_history` to the node's instances), and, via the
+  strengthened per-node obligation `ws_wpd`, the node's `gooseLocalGS`
+  carries the initial state's own `GoLocalContext` (without it the
+  obligation quantifies over ghost state for arbitrary Go semantics
+  contexts, where no `go.Semantics` hypothesis applies and no wp about
+  translated code can be used). `ws_wpd` is FFI-generic and a candidate
+  for `dist_lifting` upstream.
+- `init_restart` is `halt := #()` rather than a diverging loop: a
+  halted node satisfies the trivial recovery obligation directly
+  (`wpc_value'`), no divergence argument needed.
+- The theorem takes `σ0.(go_state).(go_lctx) = go_lctx` and the three
+  store-layer `inG` hypotheses; the boot expression pins `go_fns :=
+  sem.(go.sem_fn)`.
+
 ## 10. Decisions requested
 
 1. Scope W3b as sections 1-3 (update apply + relay; no handshake): OK?
