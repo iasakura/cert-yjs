@@ -114,3 +114,15 @@ func Run(l wsnet.Listener, r *Room) {
 		go r.Serve(c)
 	}
 }
+
+// ReadText reads the current content of the root text type name of a served
+// document. It runs concurrently with the server loop: GetText takes the
+// store's write lock only long enough to look up (or first-register) the
+// root, and String reads under the RWMutex read lock, alongside other
+// readers. This is the server's read API; the verified spec (wp_ReadText,
+// src/proof/ws_relay.v) says the returned string is a snapshot whose item
+// set contains every update the room has processed into that root
+// (issue #125).
+func ReadText(d *yjs.Doc, name string) string {
+	return d.GetText(name).String()
+}

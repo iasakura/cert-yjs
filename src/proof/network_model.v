@@ -1701,6 +1701,25 @@ Proof.
     + rewrite /insertIdxIfInBounds decide_False // in Hmid. by left.
 Qed.
 
+(** Delivery: a valid replay places, for EVERY input, an item carrying that
+    input's id into the input's own type's FINAL list. This is the pure
+    companion of [is_applied_root_lb] (issue #125): the applyUpdate receipt
+    bounds each touched root's content from below by its post-apply model
+    list, and this lemma names WHICH items a reader must find there, one per
+    applied (per-char) input. *)
+Lemma ValidReplay_input_mem (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
+  ValidReplay inputs m m' ->
+  ∀ x, x ∈ inputs -> ∃ it, item_id it = in_id x.2 ∧ it ∈ doc_model_get m' x.1.
+Proof.
+  elim => [m0 | t0 input0 rest m0 arr2 m1 newItem Htoit _ _ _ Hint Hvr IH] x Hx.
+  - by apply elem_of_nil in Hx.
+  - apply elem_of_cons in Hx. destruct Hx as [-> | Hx]; last exact (IH x Hx).
+    destruct (integrate_new_mem input0 (doc_model_get m0 t0) arr2 Hint) as (it & Hid & Hmem).
+    exists it. split; first exact Hid.
+    apply (ValidReplay_mem rest (<[t0 := arr2]> m0) m1 Hvr t0).
+    rewrite docm_get_insert_eq //.
+Qed.
+
 (** Every batch item's clock strictly exceeds all same-client items already in
     the initial documents — any type (the heap-level freshness side condition
     of [wp_store__applyUpdate], at the model level). *)

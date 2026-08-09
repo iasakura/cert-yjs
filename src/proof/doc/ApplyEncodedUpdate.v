@@ -61,11 +61,14 @@ Lemma wp_Doc__ApplyEncodedUpdate (dv s_loc : loc) (γs : store_names)
       is_store_client γs c ∗ codec_spec decode f ∗
       s ↦*{dq} data ∗ yjs_prot decode γh data }}}
     dv @! (go.PointerType yjs.Doc) @! "ApplyEncodedUpdate" #f #s
-  {{{ (h : list Ev) (inputs applied rest : list Input), RET #true;
+  {{{ (h : list Ev) (inputs applied rest : list Input) (m' : gmap TId (list (YjsItem A))), RET #true;
       s ↦*{dq} data ∗
       ⌜decode data = Some inputs⌝ ∗
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
-      ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) }}}.
+      ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
+      is_applied_root_lb γs applied m' ∗
+      ⌜∀ x, x ∈ expand_inputs applied ->
+         ∃ it, item_id it = in_id x.2 ∧ it ∈ doc_model_get m' x.1⌝ }}}.
 Proof.
   wp_start as "(#His_doc & #Hishist & #Hpin & #Hcodec & Hs & #Hprot)".
   iDestruct "Hprot" as (inputs) "(%Hdec & %Hwf & #Hcerts)".
@@ -81,10 +84,10 @@ Proof.
   wp_apply (wp_Doc__ApplySyncUpdate _ _ _ _ c _ _ inputs
               (proj1 Hwf) (proj2 Hwf)
               with "[$His_doc $Hishist $Hpin $Hupd $Hcerts]").
-  iIntros (h applied rest) "(Hupd & #Hlb & #Haccepts)".
+  iIntros (h applied rest m') "(Hupd & #Hlb & #Haccepts & #Hrootlbs & %Happmem)".
   wp_auto.
-  iApply ("HΦ" $! h inputs applied rest).
-  iFrame "Hs Hlb Haccepts". done.
+  iApply ("HΦ" $! h inputs applied rest m').
+  iFrame "Hs Hlb Haccepts Hrootlbs". done.
 Qed.
 
 End doc_ApplyEncodedUpdate.
