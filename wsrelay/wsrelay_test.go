@@ -243,3 +243,61 @@ func waitForRoomSize(t *testing.T, r *Room, n int) {
 	}
 	t.Fatalf("room did not reach %d connections in time", n)
 }
+
+// TestListenAndServeRelays boots the server through ListenAndServe, the
+// exact composition the closed-system theorem verifies, and checks an
+// update still relays end to end. The tests above keep handles to the room
+// and the server document; this one has none, so it retries Connect until
+// the goroutine's Listen is up, and A resends the (idempotent) update until
+// B, whose Join may land after the first send, sees a relay.
+func TestListenAndServeRelays(t *testing.T) {
+	addr := freeAddr(t)
+	go ListenAndServe(addr, 1, yjs.WireCodec())
+
+	connect := func(who string) wsnet.Connection {
+		for i := 0; ; i++ {
+			err, c := wsnet.Connect(addr, "/room")
+			if !err {
+				return c
+			}
+			if i > 200 {
+				t.Fatalf("client %s could not connect", who)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	b := connect("B")
+	a := connect("A")
+
+	docA := yjs.NewDoc(2)
+	docA.GetText("root").Insert(0, "hello")
+	update := docA.EncodeUpdate()
+
+	got := make(chan []byte, 1)
+	go func() {
+		err, d := wsnet.Receive(b)
+		if !err {
+			got <- d
+		}
+	}()
+	var data []byte
+	for i := 0; ; i++ {
+		if wsnet.Send(a, update) {
+			t.Fatal("A could not send")
+		}
+		select {
+		case data = <-got:
+		case <-time.After(20 * time.Millisecond):
+			if i > 200 {
+				t.Fatal("no relay arrived at B")
+			}
+			continue
+		}
+		break
+	}
+	docB := yjs.NewDoc(3)
+	docB.ApplyUpdate(data)
+	if s := docB.GetText("root").String(); s != "hello" {
+		t.Fatalf("B's replica reads %q, want %q", s, "hello")
+	}
+}

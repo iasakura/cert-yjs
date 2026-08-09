@@ -114,3 +114,15 @@ func Run(l wsnet.Listener, r *Room) {
 		go r.Serve(c)
 	}
 }
+
+// ListenAndServe listens on host, creates the server document as client,
+// and serves a room around it forever, decoding wire updates with decode
+// (the deployment passes yjs.WireCodec()). This is the whole server; the
+// closed-system theorem (src/proof/demo/ws_server.v) is about booting
+// exactly this function.
+func ListenAndServe(host wsnet.Address, client yjs.Client, decode yjs.Codec) {
+	l := wsnet.Listen(host)
+	dv := yjs.NewDoc(client)
+	r := NewRoom(dv, decode)
+	Run(l, r)
+}

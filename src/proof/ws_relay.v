@@ -694,4 +694,37 @@ Proof.
   wp_for_post. by iFrame.
 Qed.
 
+(** The whole server: listen on [host], create the server document as client
+    [client], wrap it in a room decoding with [f], and serve forever. The
+    closed-system theorem (src/proof/demo/ws_server.v) boots exactly this
+    function. *)
+Lemma wp_ListenAndServe (host client : w64) (f : func.t) (γh : history_names) :
+  (∀ d, ws_prot d = yjs_prot decode γh d) ->
+  {{{ is_pkg_init wsrelay ∗
+      is_history (A := A) (P := P) γh ∗
+      own_client_history γh (uint.nat client) ([] : list Ev) ∗
+      codec_spec decode f ∗
+      ws_env_preserves ⊤ }}}
+    @! wsrelay.ListenAndServe #host #client #f
+  {{{ RET #(); False }}}.
+Proof.
+  intros Hprot.
+  wp_start as "(#Hhist & Hcl & #Hcodec & #Henv)".
+  wp_auto.
+  wp_func_call.
+  wp_apply wp_Listen.
+  iIntros (l) "#Hl".
+  wp_auto.
+  wp_apply (wp_NewDoc γh client with "[$Hcl]").
+  iIntros (dv s_loc γs) "[#Hdoc #Hpin]".
+  wp_auto.
+  wp_apply (wp_NewRoom dv s_loc γs γh (uint.nat client) f Hprot
+             with "[$Hdoc $Hhist $Hpin $Hcodec]").
+  iIntros (r γ) "#Hroom".
+  wp_auto.
+  wp_apply (wp_Run l host r γ γs γh (uint.nat client)
+             with "[$Hl $Hroom $Henv]").
+  iIntros "[]".
+Qed.
+
 End proof.

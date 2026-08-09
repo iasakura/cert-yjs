@@ -44,18 +44,18 @@ Local Open Scope Z_scope.
     trivial one. *)
 Definition halt {ext : ffi_syntax} {go_gctx : GoGlobalContext} : expr := #().
 
-(** Initialize the packages, listen on [host], create the server document as
-    client [client], wrap it in a room decoding with [f], and serve forever.
-    Defined outside any [heapGS] section so a closed theorem can name it
-    before any node exists. *)
+(** Initialize the packages, then run the translated whole-server function
+    [wsrelay.ListenAndServe] (listen on [host], create the server document
+    as client [client], serve a room decoding with [f], forever). Everything
+    but this canonical initialize-then-call idiom is generated from the Go;
+    a real deployment is [func main() { wsrelay.ListenAndServe(host, client,
+    yjs.WireCodec()) }]. Defined outside any [heapGS] section so a closed
+    theorem can name it before any node exists. *)
 Definition server_boot {go_gctx : GoGlobalContext}
     {go_lctx : GoLocalContext} {go_fns : GoSemanticsFunctions}
     (host client : w64) (f : func.t) : expr :=
   wsrelay.initialize' #();;
-  (let: "l" := wsnet.Listenⁱᵐᵖˡ #host in
-   let: "dv" := (@! yjs.NewDoc) #client in
-   let: "r" := (@! wsrelay.NewRoom) "dv" #f in
-   (@! wsrelay.Run) "l" "r").
+  (@! wsrelay.ListenAndServe) #host #client #f.
 
 Section boot.
 Context {Σ : gFunctors} {hG : heapGS Σ}.
@@ -143,18 +143,8 @@ Proof.
   rewrite /server_boot.
   wp_apply (wp_wsrelay_initialize' with "[$Hown]") as "(Hown & #Hinit)";
     first exact Hget.
-  wp_apply wp_Listen.
-  iIntros (l) "#Hl".
-  wp_auto.
-  wp_apply (wp_NewDoc γh client with "[$Hcl]").
-  iIntros (dv s_loc γs) "[#Hdoc #Hpin]".
-  wp_auto.
-  wp_apply (wp_NewRoom decode dv s_loc γs γh (uint.nat client) f Hprot
-             with "[$Hdoc $Hhist $Hpin $Hcodec]").
-  iIntros (r γ) "#Hroom".
-  wp_auto.
-  wp_apply (wp_Run decode l host r γ γs γh (uint.nat client)
-             with "[$Hl $Hroom $Henv]").
+  wp_apply (wp_ListenAndServe decode host client f γh Hprot
+             with "[$Hhist $Hcl $Hcodec $Henv]").
   iIntros "[]".
 Qed.
 

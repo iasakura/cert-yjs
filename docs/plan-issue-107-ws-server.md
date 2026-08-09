@@ -462,6 +462,14 @@ full build is green. Deltas against the mapped path, all interface-level:
 - The theorem takes `σ0.(go_state).(go_lctx) = go_lctx` and the three
   store-layer `inG` hypotheses; the boot expression pins `go_fns :=
   sem.(go.sem_fn)`.
+- The server composition is generated from Go, not hand-assembled:
+  `wsrelay.ListenAndServe(host, client, decode)` (Listen, NewDoc, NewRoom,
+  Run) is a Go function with `wp_ListenAndServe` in ws_relay.v, and the
+  boot expression is just the canonical initialize-then-call idiom
+  `wsrelay.initialize' #();; (@! wsrelay.ListenAndServe) #host #client #f`.
+  A real deployment is `func main() { wsrelay.ListenAndServe(host, client,
+  yjs.WireCodec()) }`, and `TestListenAndServeRelays` exercises exactly
+  this entry end to end over real websockets.
 
 ## 10. Decisions requested
 
