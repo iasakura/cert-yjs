@@ -81,7 +81,7 @@ Proof.
   (* the ghost layer, at the real lock names *)
   iMod (store_tie_init s_loc γh client (W64 0) items_mref types_mref _ γrw
           with "client clock items [Hitemsmap] types [Htypesmap] deletedSet
-                pending Hhist") as (γs) "Hst0".
+                pending pendingDeletes Hhist") as (γs) "Hst0".
   { iFrame "Hitemsmap". }
   { iFrame "Htypesmap". }
   iNamed "Hst0".

@@ -104,8 +104,8 @@ Proof.
       iFrame "Hrest". iSplitL "Hparent Hdll".
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. exact Hinvarr. }
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist Hacc Hds]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hds]").
+    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iExists acc.
       iFrame "∗#". iPureIntro.
@@ -138,8 +138,8 @@ Proof.
       iFrame "Hrest". iSplitL "Hparent Hdll".
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. exact Hinvarr. }
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist Hacc Hds]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hds]").
+    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iExists acc.
       iFrame "∗#". iPureIntro.
@@ -491,6 +491,8 @@ Proof.
     "Hdset" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "deletedSet"] ↦ dset ∗
     "Hpendf" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "pending"] ↦ pend_sl ∗
     "Hpend" ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
+    "Hpddelf" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "pendingDeletes"] ↦ pdel_sl ∗
+    "Hpddel" ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel ∗
     "Hlk" ∷ own_wlock γs ∗
     "Hseq" ∷ own γs.(sn_seq) (● ((λ ts0 : type_state, (list_to_set ts0.(ty_arr) : gset (YjsItem A))) <$> types) : authR (gmapUR loc (gsetUR (YjsItem A)))) ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
@@ -535,12 +537,12 @@ Proof.
     "%Hhcohj" ∷ ⌜history_state_coh hj (<[RootId name := arr]> m)⌝ ∗
     "Hcertsj" ∷ ([∗ list] it ∈ ins,
                    is_op_cert γh (RootId name, OpInsert (input_of_item it)))
-    )%I with "[i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hpendf Hpend Hlk Hseq HtypesAuth Htypesmap Hright Hrest Htext Hhist]" as "IH".
+    )%I with "[i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hpendf Hpend Hpddelf Hpddel Hlk Hseq HtypesAuth Htypesmap Hright Hrest Htext Hhist]" as "IH".
   { iExists 0%nat, ts.(ty_arr), ts.(ty_cells), lft, [], h.
     replace (W64 (uint.Z k + Z.of_nat 0)) with k by word.
     have Hts_eta : MkTypeState ts.(ty_cells) ts.(ty_arr) = ts by (destruct ts; reflexivity).
     rewrite Hts_eta (insert_id types (tv.(yjs.Text.inner')) ts Htsp).
-    iFrame "i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hpendf Hpend Hlk Hseq HtypesAuth Htypesmap Hright Hrest Htext Hhist".
+    iFrame "i t content client HoR left s Hclient Hclock Hitemsf Hitemmap Htypesf Hdset Hpendf Hpend Hpddelf Hpddel Hlk Hseq HtypesAuth Htypesmap Hright Hrest Htext Hhist".
     rewrite big_sepL_nil sep_emp.
     iPureIntro. split_and!.
     - exact Hinvarr.
@@ -862,7 +864,7 @@ Proof.
       simpl in Hh. by rewrite /= Hh. }
     wp_for_post.
     (* re-establish the loop invariant for [S j] with [ins ++ [newItem]] *)
-    iFrame "Ht His_lb HΦ HisRp Hpendf Hpend Hacc Hds".
+    iFrame "Ht His_lb HΦ HisRp Hpendf Hpend Hpddelf Hpddel Hacc Hds".
     iExists (S j), arr', cells', oL2, (ins ++ [newItem]),
       (hj ++ [EvBroadcast (RootId name, OpInsert input);
               EvDeliver (RootId name, OpInsert input)]).
@@ -1047,15 +1049,15 @@ Proof.
     have Hxg : x ∈ (list_to_set arr : gset (YjsItem A)).
     { apply Hsubarr. rewrite elem_of_list_to_set. exact Hx. }
     rewrite elem_of_list_to_set in Hxg. exact Hxg. }
-  wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhistj Hacc Hds]").
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhistj Hacc Hds]").
   { iNext. iExists client, (W64 (uint.Z k + j)), items_mref, types_mref, dset,
-      pend_sl,
+      pend_sl, pdel_sl,
       (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types), bind, hj,
-      (<[RootId name := arr]> m), pend.
+      (<[RootId name := arr]> m), pend, pdel.
     iSplitR "Hseq Htypes"; last first.
     { rewrite /store_inv_ro fmap_insert /=. iFrame "Hseq Htypes". }
     iExists acc.
-    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hhistj HtypesAuth Hbinds Hacc Hds".
+    iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hhistj HtypesAuth Hbinds Hacc Hds".
     iFrame "Hpendcert Hclientpin".
     iPureIntro. split_and!.
     - exact Hpendroot.

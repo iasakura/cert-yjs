@@ -80,8 +80,8 @@ Proof.
     iMod (auth_gmap_gset_frag_alloc γs.(sn_seq) (DfracOwn 1) _ p ∅ _
             Hmk (empty_subseteq _) with "Hseq") as "[Hseq #Hlb0]".
     wp_auto.
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist Hacc Hds]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, h, m, pend.
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hds]").
+    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iExists acc.
       iFrame "∗#". iPureIntro.
@@ -209,8 +209,8 @@ Proof.
     have Horiginclk' : ∀ c, c ∈ all_cells types' → cell_origin_clk c.
     { move=> c Hc. rewrite Hperm in Hc. exact (Horiginclk c Hc). }
     wp_auto.
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq HtypesAuth Htypes Hhist Hacc Hds]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, types', bind', h, m, pend.
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hds]").
+    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types', bind', h, m, pend, pdel.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iExists acc.
       iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds'". iPureIntro.
