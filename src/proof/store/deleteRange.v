@@ -223,7 +223,7 @@ Lemma wp_store__deleteRange (s mref : loc) (types : gmap loc type_state)
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
     s @! (go.PointerType yjs.store) @! "deleteRange" #client #clock #dlen
-  {{{ (types' : gmap loc type_state), RET #();
+  {{{ (types' : gmap loc type_state) (covered : bool), RET #covered;
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
       ([∗ map] p ↦ ts ∈ types',
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
@@ -233,8 +233,9 @@ Proof using Type*.
   move=> Hpool0.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
   wp_method_call. wp_call. wp_call. wp_auto.
-  iAssert (∃ (cur : w64) (types_i : gmap loc type_state),
+  iAssert (∃ (cur : w64) (cov : bool) (types_i : gmap loc type_state),
     "Hcur" ∷ cur_ptr ↦ cur ∗
+    "Hcov" ∷ covered_ptr ↦ cov ∗
     "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
     "Hitemmap" ∷ own_item_map mref (DfracOwn 1) types_i ∗
     "Htypes" ∷ ([∗ map] p ↦ ts ∈ types_i,
@@ -242,13 +243,13 @@ Proof using Type*.
         ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
     "%Hpool" ∷ ⌜pool_invs types_i⌝ ∗
     "%Hfacts" ∷ ⌜delete_types_facts types types_i⌝)%I
-    with "[cur Hitemsf Hitemmap Htypes]" as "IH".
-  { iExists clock, types. iFrame "cur Hitemsf Hitemmap Htypes". iPureIntro.
+    with "[cur covered Hitemsf Hitemmap Htypes]" as "IH".
+  { iExists clock, true, types. iFrame "cur covered Hitemsf Hitemmap Htypes". iPureIntro.
     split; [exact Hpool0 | exact (delete_types_facts_refl types)]. }
   wp_for "IH".
   wp_if_destruct; last first.
   { (* the range is exhausted: hand back the current pool *)
-    iApply "HΦ". iFrame "Hitemsf Hitemmap Htypes". iPureIntro.
+    iApply ("HΦ" $! types_i cov). iFrame "Hitemsf Hitemmap Htypes". iPureIntro.
     split; [exact Hpool | exact Hfacts]. }
   wp_apply wp_NewId.
   destruct Hpool as (Hfits & Hnodup & Hrangedisj & Horiginclk).
@@ -260,8 +261,8 @@ Proof using Type*.
   { (* no node covers this char: skip it *)
     wp_auto. wp_for_post.
     iFrame "HΦ s client end".
-    iExists (w64_word_instance.(word.add) cur (W64 1)), types_i.
-    iFrame "Hcur Hitemsf Hitemmap Htypes". iPureIntro.
+    iExists (w64_word_instance.(word.add) cur (W64 1)), false, types_i.
+    iFrame "Hcur Hcov Hitemsf Hitemmap Htypes". iPureIntro.
     split; [split_and!; assumption | exact Hfacts]. }
   (* the covering cell, from the lookup *)
   destruct Hres as (cw & Hcwmem & Hcwcc & Hcwle & Hcwlt & Hcwloc).
@@ -340,8 +341,8 @@ Proof using Type*.
                  with "Hitemmap") as "Hitemmap".
     wp_auto. wp_for_post.
     iFrame "HΦ s client end".
-    iExists (w64_word_instance.(word.add) clock dlen), types3.
-    iFrame "Hcur Hitemsf Hitemmap Htypes". iPureIntro. split.
+    iExists (w64_word_instance.(word.add) clock dlen), cov, types3.
+    iFrame "Hcur Hcov Hitemsf Hitemmap Htypes". iPureIntro. split.
     + exact (pool_invs_flip types2 pL tsL kL cL HpL HkL Hpool2).
     + eapply delete_types_facts_trans; first exact Hfacts.
       eapply delete_types_facts_trans;
@@ -359,8 +360,8 @@ Proof using Type*.
     wp_auto. wp_for_post.
     iFrame "HΦ s client end".
     iExists (w64_word_instance.(word.add) (ivR.(yjs.item.id').(yjs.id.clock'))
-               (W64 (length (ivR.(yjs.item.content').(yjs.content.content'))))), types3.
-    iFrame "Hcur Hitemsf Hitemmap Htypes". iPureIntro. split.
+               (W64 (length (ivR.(yjs.item.content').(yjs.content.content'))))), cov, types3.
+    iFrame "Hcur Hcov Hitemsf Hitemmap Htypes". iPureIntro. split.
     + exact (pool_invs_flip types1 pR tsR kR cR HpR HkR Hpool1).
     + eapply delete_types_facts_trans; first exact Hfacts.
       eapply delete_types_facts_trans;

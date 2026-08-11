@@ -43,6 +43,13 @@ type store struct {
 	// store.applyUpdate already consumes; the flattening preserves each
 	// client's clock order (see docs/plan-issue-40-pending.md, section 3).
 	pending []updateItem
+	// pendingDeletes buffers delete spans that were not fully covered when
+	// they arrived: their target structs have not been integrated yet
+	// (y-octo keeps the whole delete set and re-checks it; ours keeps only
+	// the uncovered remainder, mirroring the pending-struct discipline of
+	// issue #40). Every later applyDeleteSpans re-drains it, which is sound
+	// because tombstoning is idempotent.
+	pendingDeletes []deleteSpan
 }
 
 // newStore creates an empty store owned by the given client.
@@ -50,10 +57,11 @@ func newStore(client Client) *store {
 	return &store{
 		client:     client,
 		clock:      0,
-		items:      make(map[Client][]*item),
-		types:      make(map[string]*yType),
-		deletedSet: deletedSet{deletedSet: make(map[Client]orderRange)},
-		pending:    nil,
+		items:          make(map[Client][]*item),
+		types:          make(map[string]*yType),
+		deletedSet:     deletedSet{deletedSet: make(map[Client]orderRange)},
+		pending:        nil,
+		pendingDeletes: nil,
 	}
 }
 
@@ -117,7 +125,8 @@ func (s *store) GetNode(id id) (*item, bool) {
 // the caller re-applies the span later (the pending discipline of issue #40).
 // An already-tombstoned node is skipped too, which is what makes
 // re-application harmless. Callers hold s.mu.
-func (s *store) deleteRange(client Client, clock uint64, length uint64) {
+func (s *store) deleteRange(client Client, clock uint64, length uint64) bool {
+	covered := true
 	end := clock + length
 	cur := clock
 	for cur < end {
@@ -127,6 +136,7 @@ func (s *store) deleteRange(client Client, clock uint64, length uint64) {
 		_, found := s.GetNode(newId(client, cur))
 		if !found {
 			// not integrated yet: leave it for a later re-application.
+			covered = false
 			cur = cur + 1
 		} else {
 			// clean start: after this, [it] begins exactly at [cur].
@@ -143,6 +153,27 @@ func (s *store) deleteRange(client Client, clock uint64, length uint64) {
 			cur = next
 		}
 	}
+	return covered
+}
+
+// applyDeleteSpans applies a batch of decoded delete spans on top of the
+// buffered ones, keeping the spans that did not land in full because their
+// target structs have not arrived (y-octo: the pending half of
+// Update::delete_set). Re-applying a span that already landed is harmless:
+// deleteRange skips tombstoned nodes. Callers hold s.mu.
+func (s *store) applyDeleteSpans(spans []deleteSpan) {
+	all := s.pendingDeletes
+	for i := 0; i < len(spans); i++ {
+		all = append(all, spans[i])
+	}
+	rest := []deleteSpan{}
+	for i := 0; i < len(all); i++ {
+		sp := all[i]
+		if !s.deleteRange(sp.client, sp.clock, sp.length) {
+			rest = append(rest, sp)
+		}
+	}
+	s.pendingDeletes = rest
 }
 
 // deleteNode tombstones one whole node: sets its Deleted flag and shrinks its
