@@ -15,7 +15,7 @@
 //	store.go     store + Integrate          (y-octo: doc/store.rs DocStore)
 //	ytype.go     yType (lock-guarded inner) (y-octo: doc/types YType)
 //	text.go      Text API (unlocked handle) (y-octo: doc/types/text.rs)
-//	doc.go       Doc handle + GetText       (y-octo: doc/document.rs)
+//	doc.go       Doc handle + GetOrCreateText       (y-octo: doc/document.rs)
 //	refs.go      node / GC / Skip tombstones (y-octo: codec/refs.rs)     [not translated]
 //	delete.go    Delete                     (y-octo: doc/types/text.rs)  [not translated]
 //	codec.go     v1 update encode/decode    (y-octo: codec/{update,...}) [not translated]

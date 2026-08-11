@@ -10,17 +10,24 @@
       index, its bytes) and one joined connection (its channels, its join
       point in the log, its processed cursor).
     - [is_room_member γ j mb]: persistent, member [j] of the room is [mb].
-    - [entry_receipts γs γh c e]: the S1 safety receipts of one processed
-      packet: it decodes, every input is [is_accepted] by the server's store
-      (forever delivered-or-buffered), and the server's history visibly grew
-      by the applied portion.
-    - [room_inv] ties the ghost log to the wire: per member the log's entries
-      are exactly the received prefix of that member's channel (S2, via
-      [log_coh] + the per-entry [is_chan_msg] facts + the member's processed
-      cursor), and everything the room has sent to a member embeds, in order,
-      into the relay view of the log after its join point (S3,
-      [own_member_send]).
-    - [wp_NewRoom] / [wp_Room__Join] / [wp_Room__process] / [wp_Room__Serve].
+    - [room_inv] ties the ghost log to the wire: per entry the S1 receipts
+      ([entry_receipts], internal: the packet decodes, every input is
+      [is_accepted] by the server's store, and the server's history visibly
+      grew by the applied portion); per member the log's entries are exactly
+      the received prefix of that member's channel (S2, via [log_coh] + the
+      per-entry [is_chan_msg] facts + the member's processed cursor), and
+      everything the room has sent to a member embeds, in order, into the
+      relay view of the log after its join point (S3, [own_member_send]).
+    - [wp_NewRoom] / [wp_Room__Join] / [wp_Room__process] / [wp_Room__Serve] /
+      [wp_Run] / [wp_ListenAndServe] (the whole server, which the
+      closed-system theorem in src/proof/demo/ws_server.v boots).
+
+    Concurrent reads (issue #125) need no lemma of this file: the [text]
+    layer's [wp_Text__String_hist] / [wp_Text__Len_hist] guarantee that a
+    read's snapshot contains every insert delivered by whatever
+    [is_history_lb] certificate the reader holds, and code co-verified with
+    the room (holding its [room_inv]) can extract exactly such certificates
+    from the internal receipts.
 
     One [room.mu] critical section spans the apply and the fan-out
     ([process]), matching y-websocket's serialized handler; the store's write
@@ -64,6 +71,7 @@ Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Input := (TId * IntegrateInput (A := A))%type.
 Local Notation Ev := (@Event (TId * @YjsOperation A)).
+Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (* [is_Doc] / [wp_Doc__ApplyEncodedUpdate] are generalized over the store
    lock + item-set RAs; mirror their Context here to apply them. *)
@@ -155,10 +163,16 @@ Definition is_room_member (γ : room_names) (j : nat) (mb : member) : iProp Σ :
 Definition is_room_log_entry (γ : room_names) (i : nat) (e : relay_entry) : iProp Σ :=
   mono_list_idx_own γ.(rn_log) i e.
 
-(** The S1 receipts of one processed packet: it decodes, the server's store
-    accepted every input (forever delivered-or-buffered,
+(** The S1 safety receipts of one processed packet: it decodes, the server's
+    store accepted every input (forever delivered-or-buffered,
     [own_store_accepted_sound]), and the server's history visibly grew by the
-    applied portion, in processing order. *)
+    applied portion, in processing order. The history certificate [Herlb] is
+    also the CONTENT route (issue #125): fed to [wp_Text__Len_hist] /
+    [wp_Text__String_hist] it guarantees a concurrent read's snapshot
+    contains the applied portion's items, so no separate content certificate
+    is carried here. Buffered inputs (dependencies not yet arrived) appear
+    in no root's content until drained; [is_accepted] is their exact
+    bound. *)
 Definition entry_receipts (γs : store_names) (γh : history_names)
     (c : ClientId) (e : relay_entry) : iProp Σ :=
   ∃ (inputs : list Input) (h : list Ev) (applied : list Input),
@@ -169,6 +183,19 @@ Definition entry_receipts (γs : store_names) (γh : history_names)
 #[global] Instance entry_receipts_persistent γs γh c e :
   Persistent (entry_receipts γs γh c e).
 Proof. apply _. Qed.
+
+(* [room_inv] carries one [entry_receipts] per log entry, and every lock
+   acquisition ([iNamed] on the invariant) moves that big-op into the
+   persistent context; with the predicate transparent that Persistent /
+   IntoPersistent search unfolds each element's body. Sealed for typeclass
+   resolution so the move is a single [entry_receipts_persistent] lookup
+   (the [tie_body] trick, store/heap.v): a development version carrying a
+   [gmap]-typed existential here made the one [iNamed "Hinv"] in
+   [wp_Room__Join] cost ~2 minutes (measured), and the seal is what keeps
+   any future binder from reintroducing that. Nothing [iNamed]s into the
+   predicate through the invariant; the producer ([wp_Room__process])
+   builds it under [iAssert] where the unfolding is local. *)
+#[global] Typeclasses Opaque entry_receipts.
 
 (** The send side of one member (S3): the room has sent [sent] to it, that IS
     the wire content of its send channel (cursor + per-index message facts),
@@ -440,9 +467,10 @@ Qed.
 (** [process] handles ONE received message end to end: apply to the room's
     document, log it, fan out. The caller (the member's [Serve] goroutine)
     presents the wire fact for message [n] of its channel, the protocol that
-    came with it, and its processed cursor at [n]; it gets the cursor
-    back at [S n], the log witness that THIS message is now entry-processed,
-    and the S1 receipts. *)
+    came with it, and its processed cursor at [n]; it gets the cursor back
+    at [S n] and the log witness that THIS message is now entry-processed.
+    The S1 receipts stay internal: they are minted here and recorded in
+    [room_inv]'s per-entry [Hrcpts], not returned. *)
 Lemma wp_Room__process (r : loc) (γ : room_names) (γs : store_names)
     (γh : history_names) (c : ClientId) (j : nat) (mb : member) (n : nat)
     (s : slice.t) (dq : dfrac) (data : list u8) :
@@ -451,8 +479,7 @@ Lemma wp_Room__process (r : loc) (γ : room_names) (γs : store_names)
       is_chan_msg mb.(mb_recv) n data ∗ ws_prot data ∗ s ↦*{dq} data }}}
     r @! (go.PointerType wsrelay.Room) @! "process" #(mb.(mb_conn)) #s
   {{{ RET #(); s ↦*{dq} data ∗ own_processed mb (S n) ∗
-      (∃ i : nat, is_room_log_entry γ i (RelayEntry j mb.(mb_recv) n data)) ∗
-      entry_receipts γs γh c (RelayEntry j mb.(mb_recv) n data) }}}.
+      (∃ i : nat, is_room_log_entry γ i (RelayEntry j mb.(mb_recv) n data)) }}}.
 Proof.
   wp_start as "(#Hroom & #Hmember & Hpos & #Hmsg & #Hprotd & Hs)".
   iNamed "Hroom".
@@ -469,7 +496,7 @@ Proof.
   (* apply the batch to the room's document (store lock nested inside) *)
   wp_apply (wp_Doc__ApplyEncodedUpdate _ dv s_loc γs γh c f s dq data
              with "[$Hdoc $Hishist $Hpin $Hcodec $Hs $Hyprot]").
-  iIntros (h inputs applied rest) "(Hs & %Hdec & #Hlb & #Haccepts)".
+  iIntros (h inputs applied rest m') "(Hs & %Hdec & #Hlb & #Haccepts & #Hrootlbs & %Happmem)".
   wp_auto.
   (* the position halves agree: n is exactly member j's entry count *)
   iDestruct (big_sepL_delete _ _ j mb with "Hposvs") as "[Hposj Hposvs]";
@@ -621,7 +648,7 @@ Proof.
       { rewrite big_sepL_snoc. iFrame "Hrcpts". iFrame "Hrcpt". }
       iFrame "Hposvs Hsends".
       iPureIntro. apply (log_coh_snoc MS L j mb _ data Hcoh HMSj eq_refl). }
-    iApply "HΦ". iFrame "Hs Hpos Hrcpt".
+    iApply "HΦ". iFrame "Hs Hpos".
     iExists (length L). iFrame "Hlogentry".
 Qed.
 
@@ -656,7 +683,7 @@ Proof.
   - iDestruct "Hcur" as "(Hrecv & #Hmsg & #Hpd)".
     wp_auto.
     wp_apply (wp_Room__process with "[$Hroom $Hmidx $Hmconn $Hpos $Hmsg $Hpd $Hsl]").
-    iIntros "(Hsl & Hpos & _ & _)".
+    iIntros "(Hsl & Hpos & _)".
     wp_auto.
     wp_for_post. iFrame.
 Qed.
@@ -716,7 +743,10 @@ Proof.
   iIntros (l) "#Hl".
   wp_auto.
   wp_apply (wp_NewDoc γh client with "[$Hcl]").
-  iIntros (dv s_loc γs) "[#Hdoc #Hpin]".
+  (* the read capabilities come back with the document (issue #125); the
+     boot composition has no reader to hand them to yet, so they are simply
+     kept unused here *)
+  iIntros (dv s_loc γs) "(#Hdoc & #Hpin & Hrcaps)".
   wp_auto.
   wp_apply (wp_NewRoom dv s_loc γs γh (uint.nat client) f Hprot
              with "[$Hdoc $Hhist $Hpin $Hcodec]").

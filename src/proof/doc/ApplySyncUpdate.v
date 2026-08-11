@@ -77,7 +77,18 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
     buffered. The only side condition is the honest [2^64] no-wrap seam on the
     inputs (per char: [clock + length(content) < 2^64]). Everything else (the
     per-char op certificates over [expand_inputs inputs] and the root witnesses)
-    is supplied up front and is [h]-independent. *)
+    is supplied up front and is [h]-independent.
+
+    The CONTENT receipts (issue #125): [is_applied_root_lb] bounds each
+    applied root's grow-only item set from below by its post-apply model
+    list [doc_model_get m' _], and the pure companion names which items sit
+    in that bound, one item per applied per-char op, carrying the op's id
+    ([ValidReplay_input_mem]). A concurrent reader intersects the bound with
+    its snapshot ([wp_Text__Len_hist] / [wp_Text__String_hist], via the history
+    certificate below), so the applied portion
+    of the batch is guaranteed VISIBLE-as-items to every later read. The
+    buffered portion is covered only by [is_accepted] (delivered-or-buffered):
+    it reaches no root's content until its dependencies arrive. *)
 Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (sl : slice.t) (dq : dfrac)
     (inputs : list (TId * IntegrateInput (A := A))) :
@@ -90,10 +101,13 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
       is_pending_certified γh (expand_inputs inputs) }}}
     dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl
   {{{ (h : list Ev)
-      (applied rest : list (TId * IntegrateInput (A := A))), RET #();
+      (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel), RET #();
       own_update_structs sl dq inputs ∗
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
-      ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) }}}.
+      ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
+      is_applied_root_lb γs applied m' ∗
+      ⌜∀ x, x ∈ expand_inputs applied ->
+         ∃ it, item_id it = in_id x.2 ∧ it ∈ doc_model_get m' x.1⌝ }}}.
 Proof.
   move=> Hnowrapb Hrooted.
   wp_start as "(#His_doc & #Hishist & #Hpin & Hupd & #Hcerts)".
@@ -127,7 +141,8 @@ Proof.
   { iNext. iApply store_inv_own_store.
     iExists c, (h ++ (deliver_ev <$> expand_inputs applied)), m', rest. iFrame "Hstore". }
   wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hinv]").
-  iApply ("HΦ" $! h applied rest). iFrame "Hupd Hlb Haccepts".
+  iApply ("HΦ" $! h applied rest m'). iFrame "Hupd Hlb Haccepts Hrootlbs".
+  iPureIntro. exact (ValidReplay_input_mem (expand_inputs applied) m m' Hvr).
 Qed.
 
 End doc_ApplySyncUpdate.

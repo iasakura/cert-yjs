@@ -19,7 +19,7 @@ package yjs
 
 // Text is the public handle for a root text type (y-octo: Text is a YTypeRef
 // newtype). It carries the store (for the lock / client / clock) and the inner
-// YType it edits; the type name is only needed at GetText time, so it is not
+// YType it edits; the type name is only needed at GetOrCreateText time, so it is not
 // stored in the handle.
 type Text struct {
 	store *store

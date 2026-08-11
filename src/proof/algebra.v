@@ -1,13 +1,15 @@
 (** General Iris resource-algebra laws the cert-yjs proofs use.
 
     They live here rather than in a type's [heap.v] because they say nothing
-    about any of our definitions: growth and lookup for an
+    about any of our definitions: growth, lookup and fragment minting for an
     [auth (gmap K (gset V))] (the per-type item sets), the same for an
-    [auth (gset YjsId)] (the accepted-id set), and a grow-and-persist step for a
-    [ghost_map] (the root-type registry). *)
+    [auth (gset YjsId)] (the accepted-id set), a grow-and-persist step for a
+    [ghost_map] (the root-type registry), and replication laws for [tok_set]
+    token bundles (the reader capabilities). *)
 From New.proof Require Import proof_prelude.
 From New.golang Require Import theory.
 From New.proof Require Import core.
+From New.proof Require Import tok_set.
 From iris.algebra Require Import auth gmap gset.
 
 (* A generic [ghost_map] grow-and-persist step, in its own section so it depends
@@ -159,7 +161,54 @@ Proof.
   split; [by rewrite Hk | apply/Some_included; by left].
 Qed.
 
+
+(** Mint a fragment below the CURRENT set at a key, under ANY authority
+    fraction (a [gset] fragment is core-id, so nothing is transferred): how a
+    holder of a [●{dq}] share (a reader's [store_inv_ro], or the write-lock
+    holder) mints an [is_type_lb] at (a subset of) the current item set
+    without growing anything. *)
+Lemma auth_gmap_gset_frag_alloc {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (dq : dfrac)
+    (m : gmap K (gset V)) (k : K) (S S' : gset V) :
+  m !! k = Some S' -> S ⊆ S' ->
+  own γ (●{dq} m) ==∗ own γ (●{dq} m) ∗ own γ (◯ {[k := S]}).
+Proof.
+  iIntros (Hk Hsub) "Ha".
+  iMod (own_update _ _ (●{dq} m ⋅ ◯ {[k := S]}) with "Ha") as "H".
+  { apply auth_update_dfrac_alloc; first apply _.
+    apply singleton_included_l. exists S'.
+    split; [by rewrite Hk |].
+    apply Some_included_total. by apply gset_included. }
+  iModIntro. iDestruct "H" as "[$ $]".
+Qed.
+
 End auth_gmap_gset.
+
+(* Splitting a token bundle into single read capabilities ([wp_NewDoc] hands
+   the store's [actualMaxReaders] reader slots to the caller this way). *)
+Section tok_replicate.
+Context `{hG: heapGS Σ, !ffi_semantics _ _}.
+
+(** A [tok_set] token bundle is the iterated single token. *)
+Lemma own_toks_replicate (γ : gname) (n : nat) :
+  own_toks γ n -∗ [∗] replicate n (own_toks γ 1).
+Proof.
+  iInduction n as [| n IH]; iIntros "H"; simpl; first done.
+  replace (S n) with (1 + n)%nat by lia.
+  iDestruct (own_toks_add_1 n 1 with "H") as "[H1 Hn]".
+  iFrame "H1". by iApply "IH".
+Qed.
+
+(** Zip two replicated bundles into a replicated bundle of pairs. *)
+Lemma big_sep_replicate_sep (n : nat) (P Q : iProp Σ) :
+  ([∗] replicate n P) ∗ ([∗] replicate n Q) -∗ [∗] replicate n (P ∗ Q).
+Proof.
+  iInduction n as [| n IH]; iIntros "[HP HQ]"; simpl; first done.
+  iDestruct "HP" as "[HP HPs]". iDestruct "HQ" as "[HQ HQs]".
+  iFrame "HP HQ". iApply "IH". iFrame.
+Qed.
+
+End tok_replicate.
 
 Section auth_gset.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.

@@ -5,12 +5,16 @@
     discarded reader bound, types agreement, content authorities, client
     pin), and the tie invariant is allocated at [RLocked 0]. The caller
     supplies the client's (empty) history element, which the lock body owns
-    from then on; back come the persistent [is_Doc] handle and the client
-    pin. *)
+    from then on; back come the persistent [is_Doc] handle, the client pin,
+    and the document's read capabilities (issue #125): one [own_read_cap]
+    per RWMutex reader slot, each an RLock token zipped with a reader-bound
+    token, which is what a concurrent [Text.Len] / [Text.String] reader
+    presents. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core.
+From New.proof Require Import algebra.
 From New.proof Require Import prelude.
 From New.proof Require Import history.
 From New.proof.id Require Import id.
@@ -51,7 +55,8 @@ Lemma wp_NewDoc (γh : history_names) (client : w64) :
       own_client_history γh (uint.nat client) ([] : list Ev) }}}
     @! yjs.NewDoc #client
   {{{ (dv s_loc : loc) (γs : store_names), RET #dv;
-      is_Doc dv s_loc γs γh ∗ is_store_client γs (uint.nat client) }}}.
+      is_Doc dv s_loc γs γh ∗ is_store_client γs (uint.nat client) ∗
+      [∗] replicate (Z.to_nat rwmutex.actualMaxReaders) (own_read_cap γs) }}}.
 Proof.
   wp_start as "Hhist".
   wp_auto.
@@ -72,8 +77,7 @@ Proof.
   wp_auto.
   (* the physical lock: the mu field starts at the RWMutex zero value *)
   iStructNamed "Hs". simpl.
-  iMod (init_RWMutex (storeN .@ "rw") with "mu") as (γrw) "(#Hrw0 & Hst & Hrtoks)".
-  iClear "Hrtoks".
+  iMod (init_RWMutex (storeN .@ "rw") with "mu") as (γrw) "(#Hrw0 & Hst & Hltoks)".
   (* the ghost layer, at the real lock names *)
   iMod (store_tie_init s_loc γh client (W64 0) items_mref types_mref _ γrw
           with "client clock items [Hitemsmap] types [Htypesmap] deletedSet
@@ -89,6 +93,11 @@ Proof.
   iModIntro.
   iApply ("HΦ" $! dv s_loc γs).
   iFrame "Hclientpin".
+  iSplitR "Hltoks Hrtoks"; last first.
+  { (* the read capabilities: one RLock token + one reader-bound token per slot *)
+    iApply big_sep_replicate_sep.
+    iSplitL "Hltoks"; [rewrite Hrw; iFrame "Hltoks" |].
+    iApply own_toks_replicate. iFrame "Hrtoks". }
   iExists _. iFrame "Hd".
   iSplitR; first done.
   rewrite /is_Store Hrw. iFrame "Hrw0 Hmax Htieinv".

@@ -1,17 +1,16 @@
-(** [wp_Text__Len]: the [Text] handle's visible-length read, a concurrent read
-    under the store's RWMutex read lock (issues #22 / #125). Shares [is_Text]
-    etc. via [text/heap.v].
+(** [wp_Text__String]: the [Text] handle's visible-string read, a concurrent
+    read under the store's RWMutex read lock (issues #22 / #125). Shares
+    [is_Text] etc. via [text/heap.v].
 
-    The postcondition is a SNAPSHOT (issue #125): the returned counter is the
-    visible length of some tombstone-tagged array [marr] that satisfies the
-    document invariant and contains everything the handle already knows
+    The postcondition is a SNAPSHOT: the returned string spells exactly the
+    visible characters of some tombstone-tagged array [marr] that satisfies
+    the document invariant and contains everything the handle already knows
     ([L], the handle's grow-only lower bound). A caller whose knowledge came
     from elsewhere (an applyUpdate certificate) uses the history form
-    [wp_Text__Len_hist] below instead. The bound is at the ITEM-SET level: a
-    tombstoned item is in [marr] but not counted. The length comes back as
-    the [W64] image of the model count: the heap counter is a [w64] and
-    nothing bounds a document's size, so the spec does not invent a no-wrap
-    fact. *)
+    [wp_Text__String_hist] below instead. The bound is at the ITEM-SET
+    level: a tombstoned item is in [marr] but not in the string, so "the
+    characters are visible" needs a no-delete side condition on top; the
+    set-level statement is unconditional. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -37,9 +36,6 @@ Local Open Scope Z_scope.
 Section text.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
-(** Store lock = a [sync.RWMutex] (write path here, via [wp_Store__wlock] /
-    [wp_Store__wunlock]); the per-text item set lives in a grow-only auth
-    (the same RA as [store/store], used by [is_type_lb]). *)
 Context {sync_pkg : sync.Assumptions}.
 
 Set Default Proof Using "Type*".
@@ -47,59 +43,55 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-(* [is_Store]'s reader-count accounting ties the readers' share to the store's
-   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
-   in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 
-(* The ghost op-history types at the document content type; type names are Go
-   strings (issue #49). *)
 Local Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation Ev := (@Event Op).
 Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
-(** [Text.Len]: a CONCURRENT read (issue #22). Takes the RWMutex read lock,
-    reads the type's visible length off its DLL through a fractional
-    [store_inv_ro] share (so it runs alongside other readers), then releases.
-    The read capability [own_read_cap] (one reader slot) is threaded and
-    returned; [is_Text] is preserved. Functional since issue #125: the length
-    counts the visible items of a snapshot [marr] bounded below by [L]. *)
-Lemma wp_Text__Len (t : loc) (γs : store_names) (γh : history_names) (name : P)
+(** [Text.String]: a CONCURRENT functional read (issue #125). Takes the
+    RWMutex read lock, walks the type's DLL through a fractional
+    [store_inv_ro] share ([wp_yType__Text]), then releases. *)
+Lemma wp_Text__String (t : loc) (γs : store_names) (γh : history_names) (name : P)
     (L : list (YjsItem A)) :
   {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗ own_read_cap γs }}}
-    t @! (go.PointerType yjs.Text) @! "Len" #()
-  {{{ (n : w64) (marr : list (YjsItem A * bool)), RET #n;
+    t @! (go.PointerType yjs.Text) @! "String" #()
+  {{{ (str : go_string) (marr : list (YjsItem A * bool)), RET #str;
       is_Text t γs γh name L ∗ own_read_cap γs ∗
-      ⌜n = W64 (length (visible_items marr))⌝ ∗
+      ⌜str = visible_string marr⌝ ∗
       ⌜list_to_set L ⊆ (list_to_set marr.*1 : gset (YjsItem A))⌝ ∗
       ⌜YjsArrInvariant marr.*1⌝ }}}.
 Proof.
   wp_start as "(Hpre & Hcap)". iNamed "Hpre".
   iDestruct "His_store" as "#His_store".
-  wp_auto. subst s_loc.
+  wp_auto. subst s_loc. subst parent.
   wp_apply (wp_Store__rlock with "[$His_store $Hcap]"). iIntros (types) "[Hrlo Hro]".
   iNamed "Hro".
   iDestruct (auth_gmap_gset_lookup_dq with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (ts & Htsp & ->).
+  (* borrow the type's DLL and run the verified walk *)
   iDestruct (big_sepM_lookup_acc _ _ _ _ Htsp with "Htypes") as "[Hbody Hclose]".
   iDestruct "Hbody" as "(Htext & %Hinvarr)".
-  iDestruct "Htext" as (yt0 tl0) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  subst parent.
+  iDestruct (own_ytype_cells_flatten with "Htext") as "[Htext %Hflat]".
   wp_auto.
-  iDestruct ("Hclose" with "[Hparent Hdll]") as "Htypes".
-  { iSplitL "Hparent Hdll"; [ iExists yt0, tl0; iFrame "Hparent Hdll"; iPureIntro; done | iPureIntro; exact Hinvarr ]. }
+  wp_apply (wp_yType__Text (tv.(yjs.Text.inner')) (DfracOwn rwmutex_guard.rfrac)
+              (ty_cells ts) (ty_arr ts) with "[$Htext]").
+  iIntros "Htext".
+  iDestruct ("Hclose" with "[Htext]") as "Htypes".
+  { iFrame "Htext". iPureIntro. exact Hinvarr. }
+  wp_auto.
   wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Htypes]").
   { iFrame "Hseq Htypes". }
   iIntros "Hcap".
   wp_auto.
   have Hfst : (cells_model (ty_cells ts)).*1 = ty_arr ts.
-  { rewrite cells_model_fst. rewrite /cells_repr in Hrepr. rewrite -Hrepr //. }
+  { rewrite cells_model_fst -Hflat //. }
   iApply ("HΦ" $! _ (cells_model (ty_cells ts))).
   iSplitR "Hcap"; last first.
   { iFrame "Hcap". iPureIntro. split_and!.
-    - rewrite Hlen num_visible_model //.
+    - reflexivity.
     - rewrite Hfst. exact HLsub.
     - rewrite Hfst. exact Hinvarr. }
   iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
@@ -107,18 +99,22 @@ Proof.
   iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted].
 Qed.
 
-(** [Text.Len], history-certificate form (issue #125): like
-    [wp_Text__String_hist], the caller brings a prefix certificate of this
-    replica's op history and the counted snapshot contains one item per
-    delivered insert of the prefix targeting this root. *)
-Lemma wp_Text__Len_hist (t : loc) (γs : store_names) (γh : history_names)
+(** [Text.String], history-certificate form (issue #125): the caller brings a
+    prefix certificate [is_history_lb γh c h0] of THIS replica's op history
+    (with the client pin identifying it) instead of an [is_root_lb] set
+    bound, and the snapshot is guaranteed to contain one item per delivered
+    insert of [h0] targeting this root. This is the read guarantee in the
+    network stack's own currency: whoever observed the history grow (an
+    applyUpdate postcondition, a server receipt, a sync-protocol
+    certificate) can replay that knowledge against a concurrent read. *)
+Lemma wp_Text__String_hist (t : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (name : P) (L : list (YjsItem A)) (h0 : list Ev) :
   {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗ own_read_cap γs }}}
-    t @! (go.PointerType yjs.Text) @! "Len" #()
-  {{{ (n : w64) (marr : list (YjsItem A * bool)), RET #n;
+    t @! (go.PointerType yjs.Text) @! "String" #()
+  {{{ (str : go_string) (marr : list (YjsItem A * bool)), RET #str;
       is_Text t γs γh name L ∗ own_read_cap γs ∗
-      ⌜n = W64 (length (visible_items marr))⌝ ∗
+      ⌜str = visible_string marr⌝ ∗
       ⌜list_to_set L ⊆ (list_to_set marr.*1 : gset (YjsItem A))⌝ ∗
       ⌜YjsArrInvariant marr.*1⌝ ∗
       ⌜∀ input : IntegrateInput (A := A),
@@ -127,29 +123,33 @@ Lemma wp_Text__Len_hist (t : loc) (γs : store_names) (γh : history_names)
 Proof.
   wp_start as "(Hpre & #Hpin & #Hlb & Hcap)". iNamed "Hpre".
   iDestruct "His_store" as "#His_store".
-  wp_auto. subst s_loc.
+  wp_auto. subst s_loc. subst parent.
   wp_apply (wp_Store__rlock_hist _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
   iIntros (types) "(Hrlo & Hro & %Hfact)".
   iNamed "Hro".
   iDestruct (auth_gmap_gset_lookup_dq with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (ts & Htsp & ->).
+  (* borrow the type's DLL and run the verified walk *)
   iDestruct (big_sepM_lookup_acc _ _ _ _ Htsp with "Htypes") as "[Hbody Hclose]".
   iDestruct "Hbody" as "(Htext & %Hinvarr)".
-  iDestruct "Htext" as (yt0 tl0) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  subst parent.
+  iDestruct (own_ytype_cells_flatten with "Htext") as "[Htext %Hflat]".
   wp_auto.
-  iDestruct ("Hclose" with "[Hparent Hdll]") as "Htypes".
-  { iSplitL "Hparent Hdll"; [ iExists yt0, tl0; iFrame "Hparent Hdll"; iPureIntro; done | iPureIntro; exact Hinvarr ]. }
+  wp_apply (wp_yType__Text (tv.(yjs.Text.inner')) (DfracOwn rwmutex_guard.rfrac)
+              (ty_cells ts) (ty_arr ts) with "[$Htext]").
+  iIntros "Htext".
+  iDestruct ("Hclose" with "[Htext]") as "Htypes".
+  { iFrame "Htext". iPureIntro. exact Hinvarr. }
+  wp_auto.
   wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Htypes]").
   { iFrame "Hseq Htypes". }
   iIntros "Hcap".
   wp_auto.
   have Hfst : (cells_model (ty_cells ts)).*1 = ty_arr ts.
-  { rewrite cells_model_fst. rewrite /cells_repr in Hrepr. rewrite -Hrepr //. }
+  { rewrite cells_model_fst -Hflat //. }
   iApply ("HΦ" $! _ (cells_model (ty_cells ts))).
   iSplitR "Hcap"; last first.
   { iFrame "Hcap". iPureIntro. split_and!.
-    - rewrite Hlen num_visible_model //.
+    - reflexivity.
     - rewrite Hfst. exact HLsub.
     - rewrite Hfst. exact Hinvarr.
     - move=> input Hin.

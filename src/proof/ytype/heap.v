@@ -18,8 +18,12 @@
     Laws
     - [own_ytype_intro]: any cells-level view is the public view at its cell
       model, which is the only way the two levels are ever connected.
+    - [own_ytype_cells_flatten]: the model list is the flatten of the cells
+      (the internal [cells_repr] fact, projected without opening the
+      predicate).
 
-    The method proofs are [ytype/newYType.v] and [ytype/findPos.v]. *)
+    The method proofs are [ytype/newYType.v], [ytype/findPos.v] and
+    [ytype/Text.v]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -81,6 +85,19 @@ Proof.
   { rewrite cells_model_fst. rewrite /cells_repr in Hrepr. rewrite Hrepr //. }
   iSplitL; last (iPureIntro; exact Harr).
   iExists cells. rewrite Harr. iSplitL; last done.
+  iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
+Qed.
+
+(** Projection: the model list is the flatten of the cells (the [cells_repr]
+    conjunct, extracted without opening the predicate; the read API relates
+    a borrowed type's [cells_model] snapshot to its item list this way). *)
+Lemma own_ytype_cells_flatten (parent : loc) (dq : dfrac)
+    (cells : list item_cell) (arr : list (YjsItem A)) :
+  own_ytype_cells parent dq cells arr -∗
+  own_ytype_cells parent dq cells arr ∗ ⌜arr = run_flatten cells⌝.
+Proof.
+  iIntros "H". iDestruct "H" as (yt tl) "(Hp & Hdll & %Hlen & %Hrepr & %Hcpar)".
+  iSplitL; last (iPureIntro; exact Hrepr).
   iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
 Qed.
 

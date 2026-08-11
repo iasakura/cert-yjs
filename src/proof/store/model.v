@@ -168,6 +168,21 @@ Proof.
   split; [move=> [x [-> Hx]] | move=> [x [Hx <-]]]; by exists x.
 Qed.
 
+(** Expansion preserves the target type: every per-char op of a wire batch
+    carries the type id of the wire item it came from (issue #125: this is
+    how a reader routes an applied input's item to the root it reads). *)
+Lemma expand_inputs_tid (inputs : list (TId * IntegrateInput (A := A)))
+    (x : TId * IntegrateInput (A := A)) :
+  x ∈ expand_inputs inputs -> ∃ x', x' ∈ inputs ∧ x.1 = x'.1.
+Proof.
+  rewrite /expand_inputs list_elem_of_join.
+  move=> [l [Hx Hl]].
+  apply list_elem_of_fmap in Hl as (x' & -> & Hx').
+  exists x'. split; first exact Hx'.
+  move: Hx. rewrite /expand_input list_elem_of_fmap.
+  move=> [op [-> _]] //.
+Qed.
+
 (** History only grows: an op that appends to [h] (delivered ids only grow) and
     leaves [pend] preserves [accepted_coh]. This is the trivial transport that
     Insert/Delete apply at each store_inv rebuild. *)

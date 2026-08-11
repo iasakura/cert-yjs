@@ -19,7 +19,7 @@ import "sync"
 // root-type registry, and the delete set. The Doc is just a handle around it.
 type store struct {
 	// mu guards every other field (and the YTypes' DLLs reached via types):
-	// y-octo's RwLock<DocStore>. Writers (Insert/Delete/GetText/apply_update)
+	// y-octo's RwLock<DocStore>. Writers (Insert/Delete/GetOrCreateText/apply_update)
 	// take the write lock (Lock); pure readers (String/Len) take the read lock
 	// (RLock) so concurrent reads are allowed, matching Arc<RwLock<DocStore>>.
 	mu sync.RWMutex

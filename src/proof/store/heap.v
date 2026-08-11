@@ -20,8 +20,8 @@
 
     Laws
     - [store_inv_init]: how to build the invariant from the raw points-tos, and
-      [store_inv_bridge] / [own_store_hist_coh] / [own_store_accepted_sound]:
-      what you may read back out of it.
+      [store_inv_bridge] / [own_store_hist_coh] / [own_store_accepted_sound] /
+      [store_inv_excl_hist_root]: what you may read back out of it.
     - [own_store_accept_batch]: the state-transition law for accepting a
       delivered batch.
     - the reader fractions form a chain: [frac_of_0] and [frac_of_split].
@@ -565,7 +565,7 @@ Proof. rewrite /store_inv. apply _. Qed.
 (** ---------------------------------------------------------------------------
     Store lock = a [sync.RWMutex] (y-octo's [Arc<RwLock<DocStore>>]).
 
-    Writers (Insert/Delete/GetText/applyUpdate) take the write lock; the pure
+    Writers (Insert/Delete/GetOrCreateText/applyUpdate) take the write lock; the pure
     readers (String/Len) take the read lock, so concurrent reads are allowed.
     [is_Store] is a PERSISTENT handle built over Perennial's logically-atomic
     RWMutex ([New.proof.sync_proof.rwmutex]): a tying [inv] relates the RWMutex's
@@ -960,6 +960,54 @@ Lemma store_inv_bridge (s_loc : loc) (γs : store_names) (γh : history_names) :
     store_inv_ro γs types 1.
 Proof. rewrite /store_inv /named //. Qed.
 
+(** What a reader's certificates read back out of the exclusive slice at a
+    lock transition (issue #125): the client pin identifies the caller's
+    history certificate with THIS replica's history, the registry binding
+    routes a root name to its type slot, and [history_state_coh] turns every
+    delivered insert of the certified prefix into an item of that type's
+    CURRENT list ([delivered_ops_prefix] + [delivered_docm_mem]). The slice
+    comes back untouched; [wp_Store__rlock_hist] applies this at the read
+    lock's linearization point, which is the only moment a reader sees the
+    exclusive slice. *)
+Lemma store_inv_excl_hist_root (s_loc : loc) (γs : store_names) (γh : history_names)
+    (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
+    (pend_sl : slice.t) (types : gmap loc type_state) (bind : gmap P loc)
+    (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
+    (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
+  store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend -∗
+  is_store_client γs c -∗
+  is_history_lb γh c h0 -∗
+  is_type_binding γs.(sn_types) name parent -∗
+  store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend ∗
+  ⌜∀ input : IntegrateInput (A := A),
+     (RootId name, OpInsert input) ∈ delivered_ops h0 ->
+     ∃ ts it, types !! parent = Some ts ∧ item_id it = in_id input ∧ it ∈ ty_arr ts⌝.
+Proof.
+  iIntros "Hexcl #Hpin #Hlb #Hbind". iNamed "Hexcl".
+  iDestruct (is_store_client_agree with "Hclientpin Hpin") as %Heqc. subst c.
+  iDestruct (is_history_lb_prefix with "Hhist Hlb") as %Hpref.
+  iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
+  have Hfact : ∀ input : IntegrateInput (A := A),
+      (RootId name, OpInsert input) ∈ delivered_ops h0 ->
+      ∃ ts it, types !! parent = Some ts ∧ item_id it = in_id input ∧ it ∈ ty_arr ts.
+  { move=> input Hin.
+    destruct (Hbindtypes name parent Hbindlk) as [ts Hts].
+    have Hdg : doc_model_get m (RootId name) = ty_arr ts := Hmtypes name parent ts Hbindlk Hts.
+    have Hin' : (RootId name, OpInsert input) ∈ delivered_ops h.
+    { destruct (delivered_ops_prefix h0 h Hpref) as [rest ->].
+      rewrite elem_of_app. by left. }
+    destruct (delivered_docm_mem h m (RootId name) input Hhcoh Hin') as (it & Hitid & Hitmem).
+    exists ts, it. rewrite Hdg in Hitmem.
+    split_and!; [exact Hts | exact Hitid | exact Hitmem]. }
+  iSplitR ""; last (iPureIntro; exact Hfact).
+  iExists acc.
+  iFrame "∗#". iPureIntro. split_and!;
+    [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup
+    | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hbindtypes
+    | exact Hbindinj | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom
+    | exact Hacccoh].
+Qed.
+
 Lemma tf_split γs q1 q2 types :
   types_frag γs (q1 + q2) types ⊣⊢ types_frag γs q1 types ∗ types_frag γs q2 types.
 Proof. rewrite /types_frag -own_op -frac_agree_op //. Qed.
@@ -1050,7 +1098,9 @@ Qed.
     DISCARDED reader-bound authority ([is_Store]'s [Hmax]) and the types
     agreement all go into the payload rather than being dropped. The caller
     wraps the result in the tie invariant next to [own_RWMutex (RLocked 0)]
-    and has [is_Store]. *)
+    and has [is_Store]. The reader-bound TOKENS come back too (issue #125):
+    zipped with [init_RWMutex]'s RLock tokens they are the document's
+    [own_read_cap] read capabilities, one per reader slot. *)
 Lemma store_tie_init (s_loc : loc) (γh : history_names) (client k : w64)
     (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
     (γrw : RWMutex_names) :
@@ -1067,6 +1117,7 @@ Lemma store_tie_init (s_loc : loc) (γh : history_names) (client k : w64)
     "%Hrw"        ∷ ⌜γs.(sn_rw) = γrw⌝ ∗
     "#Hmax"       ∷ own_tok_auth_dfrac γs.(sn_rmax) DfracDiscarded
                       (Z.to_nat rwmutex.actualMaxReaders) ∗
+    "Hrtoks"      ∷ own_toks γs.(sn_rmax) (Z.to_nat rwmutex.actualMaxReaders) ∗
     "Htie"        ∷ tie_body s_loc γs γh (RLocked 0) ∗
     "#Hclientpin" ∷ is_store_client γs (uint.nat client).
 Proof.
@@ -1078,14 +1129,13 @@ Proof.
   iMod (ghost_map_alloc_empty (K := P) (V := loc)) as (γtypes) "HtypesAuth".
   (* the lock-layer ghosts, for real: the write-lock witness, the reader
      count at zero, the reader bound (discarded, so it can sit in [is_Store]
-     persistently; its tokens are the read capabilities, not needed here),
-     and the types agreement at the empty map *)
+     persistently; its tokens are the read capabilities, handed back to the
+     caller) and the types agreement at the empty map *)
   iMod (ghost_var_alloc ()) as (γwl) "Hwl".
   iMod (own_tok_auth_alloc) as (γrrlocked) "Hrrlocked".
   iMod (own_tok_auth_alloc) as (γrmax) "Hrmax".
   iMod (own_tok_auth_add (Z.to_nat rwmutex.actualMaxReaders) with "Hrmax")
     as "[Hrmax Hrtoks]".
-  iClear "Hrtoks".
   iPersist "Hrmax".
   iMod (own_toks_0 γrmax) as "Hrtoks0".
   iMod (own_alloc (to_frac_agree 1 (∅ : leibnizO (gmap loc type_state)))) as (γta) "Hta".
@@ -1101,7 +1151,7 @@ Proof.
                 sn_types_agree := γta; sn_accepted := γacc; sn_client := γcl |}).
   iModIntro. iExists γs.
   iSplitR; first done.
-  iFrame "Hrmax".
+  iFrame "Hrmax". iFrame "Hrtoks".
   iSplitL; last by iFrame "Hclpin".
   rewrite /tie_body.
   iFrame "Hrrlocked Hrtoks0 Hwl".
