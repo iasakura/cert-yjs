@@ -133,12 +133,21 @@ func (s *store) deleteRange(client Client, clock uint64, length uint64) {
 				// it now covers exactly [cur, end).
 				s.splitAtAndGetLeft(newId(client, end-1))
 			}
-			if it.Indexable() {
-				it.flags = it.flags | itemDeleted
-				it.parent.len = it.parent.len - it.Len()
-			}
+			s.deleteNode(it)
 			cur = it.id.clock + it.Len()
 		}
+	}
+}
+
+// deleteNode tombstones one whole node: sets its Deleted flag and shrinks its
+// type's visible length (y-octo: DocStore::delete_item_inner). A node that is
+// already tombstoned is left alone, which is what makes a re-delivered delete
+// idempotent. The node must be integrated (reached through the store's run
+// lists); callers hold s.mu.
+func (s *store) deleteNode(it *item) {
+	if it.Indexable() {
+		it.flags = it.flags | itemDeleted
+		it.parent.len = it.parent.len - it.Len()
 	}
 }
 

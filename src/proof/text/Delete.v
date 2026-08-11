@@ -460,7 +460,7 @@ Proof.
   rewrite decide_True; [| done].
   destruct (cells' !! q) as [cq|] eqn:Hcq; [| apply lookup_ge_None in Hcq; lia].
   iDestruct (own_dll_update_gen cells' yt'.(yjs.yType.start') tl' q cq Hcq with "Hdll")
-    as (itemVal) "(%Hcloc & %Hcr & %Hflags & %Hrunwf & %Hcontq & Hcval & Hback)".
+    as (itemVal) "(%Hcloc & %Hcr & %Hcparfield & %Hflags & %Hrunwf & %Hcontq & Hcval & Hback)".
   have Hcountq : is_countable_flag itemVal = true := flags_if_countable itemVal (ic_deleted cq) Hflags.
   have Hdelq : is_deleted_flag itemVal = ic_deleted cq := flags_if_deleted itemVal (ic_deleted cq) Hflags.
   iEval (rewrite -Hcloc) in "Hcur".
@@ -581,7 +581,7 @@ Proof.
       have Hcl2 : cells2 !! q = Some leftCell
         := split_cells_lookup_left cells' q (uint.nat rem) rloc cq Hcq.
       iDestruct (own_dll_update_gen cells2 yt2.(yjs.yType.start') tl2 q leftCell Hcl2 with "Hdll")
-        as (iv2) "(%Hcloc2 & %Hcr2 & %Hflags2 & %Hrunwf2 & %Hcontq2 & Hcval & Hback)".
+        as (iv2) "(%Hcloc2 & %Hcr2 & %Hcparfield2 & %Hflags2 & %Hrunwf2 & %Hcontq2 & Hcval & Hback)".
       have Hcllocq : ic_loc leftCell = ic_loc cq by rewrite /leftCell //.
       have Hcldel : ic_deleted leftCell = false by rewrite /leftCell /= Hdq //.
       have Hlenl : length (ic_run leftCell) = uint.nat rem.

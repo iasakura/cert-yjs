@@ -416,6 +416,7 @@ Lemma own_dll_update_gen (cells : list item_cell) (hd tl : loc) (k : nat) (c : i
     ∃ (itemVal : yjs.item.t),
       "%Hcloc" ∷ ⌜ic_loc c = node_loc cells (Z.of_nat k)⌝ ∗
       "%Hcr" ∷ ⌜itemVal.(yjs.item.right') = node_loc cells (Z.of_nat k + 1)⌝ ∗
+      "%Hcpar" ∷ ⌜itemVal.(yjs.item.parent') = ic_parent c⌝ ∗
       "%Hflags" ∷ ⌜itemVal.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
       "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
       "%Hcontent" ∷ ⌜content <$> ic_run c = explode (toContent itemVal.(yjs.item.content'))⌝ ∗
@@ -452,6 +453,7 @@ Proof.
   iExists itemVal. iFrame "Hval".
   iSplit; [iPureIntro; exact Hcloc|].
   iSplit; [iPureIntro; exact Hcr|].
+  iSplit; [iPureIntro; exact Hparc|].
   iSplit; [iPureIntro; exact Hflagsc|].
   iSplit; [iPureIntro; exact Hrunc|].
   iSplit; [iPureIntro; exact Hcontentc|].
