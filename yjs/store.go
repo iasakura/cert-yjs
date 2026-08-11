@@ -103,6 +103,47 @@ func (s *store) GetNode(id id) (*item, bool) {
 	return nodes[index], true
 }
 
+// deleteRange tombstones every integrated char of the half-open clock range
+// [clock, clock+length) in client's clock space (y-octo:
+// DocStore::delete_range, store.rs). Walking the range char by char, the
+// covering node is located with GetNode; when the range starts or ends inside
+// that node's run the node is split at the boundary (splitNode), so the
+// tombstone covers exactly the requested chars and never spills over. A char
+// with no integrated node is skipped: its struct has not arrived, and the
+// caller re-applies the span later (the pending discipline of issue #40).
+// Already-tombstoned nodes are skipped, which is what makes re-application
+// harmless. Callers hold s.mu.
+func (s *store) deleteRange(client Client, clock uint64, length uint64) {
+	end := clock + length
+	cur := clock
+	for cur < end {
+		it, ok := s.GetNode(newId(client, cur))
+		if !ok {
+			// not integrated yet: leave it for a later re-application.
+			cur = cur + 1
+		} else {
+			start := it.id.clock
+			if start < cur {
+				// the range starts inside this run: split so its tail is a
+				// node of its own and delete that.
+				_, right := s.splitNode(it, cur-start)
+				it = right
+				start = cur
+			}
+			if end < start+it.Len() {
+				// the range ends inside this run: truncate in place, so the
+				// node now covers exactly [start, end).
+				s.splitNode(it, end-start)
+			}
+			if it.Indexable() {
+				it.flags = it.flags | itemDeleted
+				it.parent.len = it.parent.len - it.Len()
+			}
+			cur = start + it.Len()
+		}
+	}
+}
+
 // AddNode appends an item to the run list of its owning client (y-octo:
 // store::add_item), so the store holds the full item set.
 func (s *store) AddNode(it *item) {

@@ -167,12 +167,26 @@ covered by the M2 no-op cell surgery (`split_cells_flatten` etc.).
   where `deleteRange`'s idempotence actually consumes it. Growth-only
   tracking needs no uniqueness: the domain bound is monotone in the pool and
   Delete only ever adds ids of chars it just tombstoned. No Go changes.
-- **D2 (wire deletes, issue #133)**: `deleteSpan`/`deletes` +
-  `store.deleteRange` + `applyUpdate` phase 2 with pending-buffered
-  uncovered spans (section 5), with the WP specs above. The issue #28 M2
-  split machinery is merged, so this is unblocked; the wire format change
-  ripples through `Codec` (now returns structs AND spans), `yjs_prot`'s
-  `update_wf`, and the server proofs, all mechanical.
+- **D2 (wire deletes, issue #133)**, split into two steps so the tree stays
+  green and the proof work is isolated from the API churn:
+  - **D2a**: the `deleteSpan` type and `store.deleteRange` (Go + goose +
+    behaviour tests: exact coverage, idempotence, skipping unintegrated
+    chars, remote convergence), plus its WP `wp_store__deleteRange`. Touches
+    no store field and no public signature, so nothing downstream moves.
+    The WP is the substantial half: a loop over the clock range where each
+    step is [wp_store__GetNode_total] (covering or absent) + up to two
+    [splitNode] calls at the range boundaries (the M2/stage-D transport
+    records) + the flag flip and [yType.len] bookkeeping of [Text.Delete]'s
+    loop. Postcondition: the pool invariants and every type's [ty_arr]
+    survive (tombstoning and splitting are both model no-ops), and the
+    covered chars of the range are now tombstoned.
+  - **D2b**: the wiring. `Update.deletes`, a `pendingDeletes` store field
+    with its `store_inv` conjunct, `store.applyDeleteSpans` (apply + buffer
+    the uncovered remainder, re-drained by later applies), the certificates
+    ([is_ds_lb] out of [Text.Delete] and the wire path), and the wire-format
+    ripple: `Codec` returns structs AND spans, `yjs_prot`'s `update_wf`
+    covers spans, and `ApplySyncUpdate` / `ApplyEncodedUpdate` / the server
+    proofs thread them (mechanical).
 - **D3 (with #40)**: the visible-document view and the composed convergence
   statement; optionally #37's full functional-correctness strengthening
   (findPos position pinning, Insert-at-idx, Delete-exact-segment), which is
