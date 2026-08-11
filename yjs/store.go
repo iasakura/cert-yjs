@@ -121,20 +121,26 @@ func (s *store) deleteRange(client Client, clock uint64, length uint64) {
 	end := clock + length
 	cur := clock
 	for cur < end {
-		// clean start: after this, [it] begins exactly at [cur].
-		it, ok := s.splitAtAndGetRight(newId(client, cur))
-		if !ok {
+		// The lookup and the clean-start split search the run list twice
+		// (y-octo searches once and keeps the index); the redundant lookup
+		// is what lets the two steps be verified independently.
+		_, found := s.GetNode(newId(client, cur))
+		if !found {
 			// not integrated yet: leave it for a later re-application.
 			cur = cur + 1
 		} else {
-			if end < it.id.clock+it.Len() {
+			// clean start: after this, [it] begins exactly at [cur].
+			it, _ := s.splitAtAndGetRight(newId(client, cur))
+			next := it.id.clock + it.Len()
+			if end < next {
 				// clean end: the range stops inside [it], so truncate it in
 				// place at the range's last char. [it] is the left half, so
 				// it now covers exactly [cur, end).
 				s.splitAtAndGetLeft(newId(client, end-1))
+				next = end
 			}
 			s.deleteNode(it)
-			cur = it.id.clock + it.Len()
+			cur = next
 		}
 	}
 }
