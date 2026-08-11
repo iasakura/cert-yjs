@@ -245,4 +245,20 @@ Lemma auth_gset_frag_mono (γ : gname) (S T : gset YjsId) :
   T ⊆ S -> own γ (◯ S : accUR) ⊢ own γ (◯ T : accUR).
 Proof. intros Hsub. apply own_mono, auth_frag_mono. by apply gset_included. Qed.
 
+
+(** Two lower bounds join into their union ([◯] fragments of a [gset]
+    authority compose by union). *)
+Lemma auth_gset_frag_union (γ : gname) (S T : gset YjsId) :
+  own γ (◯ S : accUR) -∗ own γ (◯ T : accUR) -∗ own γ (◯ (S ∪ T) : accUR).
+Proof.
+  iIntros "H1 H2". iCombine "H1 H2" as "H".
+  rewrite -gset_op auth_frag_op. iExact "H".
+Qed.
+
+
+(** The empty lower bound, out of thin air (the unit of the fragment). *)
+Lemma auth_gset_frag_empty (γ : gname) :
+  ⊢ |==> own γ (◯ (∅ : gset YjsId) : accUR).
+Proof. iApply own_unit. Qed.
+
 End auth_gset.
