@@ -3,15 +3,15 @@
     etc. via [text/heap.v].
 
     The postcondition is a SNAPSHOT (issue #125): the returned counter is the
-    visible length of some tombstone-tagged array [marr] that (a) satisfies
-    the document invariant, (b) contains everything the handle already knew
-    ([L]), and (c) contains any content lower bound [S] the caller brings as
-    an [is_root_lb] certificate (e.g. the applyUpdate receipts threaded
-    through the ws server's [entry_receipts]). The bound is at the ITEM-SET
-    level: a tombstoned item is in [marr] but not counted. The length comes
-    back as the [W64] image of the model count: the heap counter is a [w64]
-    and nothing bounds a document's size, so the spec does not invent a
-    no-wrap fact. *)
+    visible length of some tombstone-tagged array [marr] that satisfies the
+    document invariant and contains everything the handle already knows
+    ([L], the handle's grow-only lower bound). A caller whose knowledge came
+    from elsewhere (an applyUpdate certificate) uses the history form
+    [wp_Text__Len_hist] below instead. The bound is at the ITEM-SET level: a
+    tombstoned item is in [marr] but not counted. The length comes back as
+    the [W64] image of the model count: the heap counter is a [w64] and
+    nothing bounds a document's size, so the spec does not invent a no-wrap
+    fact. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -65,31 +65,24 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     [store_inv_ro] share (so it runs alongside other readers), then releases.
     The read capability [own_read_cap] (one reader slot) is threaded and
     returned; [is_Text] is preserved. Functional since issue #125: the length
-    counts the visible items of a snapshot [marr] bounded below by [L] and by
-    the caller's [is_root_lb] certificate [S]. *)
+    counts the visible items of a snapshot [marr] bounded below by [L]. *)
 Lemma wp_Text__Len (t : loc) (γs : store_names) (γh : history_names) (name : P)
-    (L : list (YjsItem A)) (S : gset (YjsItem A)) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗ is_root_lb γs name S ∗ own_read_cap γs }}}
+    (L : list (YjsItem A)) :
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗ own_read_cap γs }}}
     t @! (go.PointerType yjs.Text) @! "Len" #()
   {{{ (n : w64) (marr : list (YjsItem A * bool)), RET #n;
       is_Text t γs γh name L ∗ own_read_cap γs ∗
       ⌜n = W64 (length (visible_items marr))⌝ ∗
-      ⌜list_to_set L ∪ S ⊆ (list_to_set marr.*1 : gset (YjsItem A))⌝ ∗
+      ⌜list_to_set L ⊆ (list_to_set marr.*1 : gset (YjsItem A))⌝ ∗
       ⌜YjsArrInvariant marr.*1⌝ }}}.
 Proof.
-  wp_start as "(Hpre & #Hrootlb & Hcap)". iNamed "Hpre".
+  wp_start as "(Hpre & Hcap)". iNamed "Hpre".
   iDestruct "His_store" as "#His_store".
   wp_auto. subst s_loc.
   wp_apply (wp_Store__rlock with "[$His_store $Hcap]"). iIntros (types) "[Hrlo Hro]".
   iNamed "Hro".
   iDestruct (auth_gmap_gset_lookup_dq with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (ts & Htsp & ->).
-  (* the caller's certificate names the same root: its hidden binding agrees
-     with the handle's, so its bound lands in the same item set *)
-  iDestruct "Hrootlb" as (p') "[Hbind' Hlb']".
-  iDestruct (is_type_binding_agree with "Hbind Hbind'") as %<-.
-  iDestruct (auth_gmap_gset_lookup_dq with "Hseq Hlb'") as %(S'' & HmS' & HSsub).
-  rewrite lookup_fmap Htsp /= in HmS'. injection HmS' as <-.
   iDestruct (big_sepM_lookup_acc _ _ _ _ Htsp with "Htypes") as "[Hbody Hclose]".
   iDestruct "Hbody" as "(Htext & %Hinvarr)".
   iDestruct "Htext" as (yt0 tl0) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
@@ -107,7 +100,7 @@ Proof.
   iSplitR "Hcap"; last first.
   { iFrame "Hcap". iPureIntro. split_and!.
     - rewrite Hlen num_visible_model //.
-    - rewrite Hfst. apply union_least; [exact HLsub | exact HSsub].
+    - rewrite Hfst. exact HLsub.
     - rewrite Hfst. exact Hinvarr. }
   iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
   iFrame "Ht His_store His_hist Hbind His_lb".

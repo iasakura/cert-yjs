@@ -21,7 +21,10 @@
       (THE refinement obligation), and close — all inside one mask-preserving
       fancy update, no program step in between (plan §5.3).
 
-    No goose here; [Σ] enters only through [heapGS] (for [allG] + invariants). *)
+    No goose here, and no [heapGS] either: everything is universal ghost
+    state plus one invariant, so [allG] + [invGS] suffice. That is what lets
+    a deployment allocate the history INSIDE an adequacy theorem's initial
+    fancy update, before any node (and hence any [heapGS]) exists. *)
 From New.proof Require Import proof_prelude.
 From New.golang Require Import theory.
 From New.proof Require Export core.
@@ -30,7 +33,7 @@ From iris.algebra Require Import auth gmap max_prefix_list.
 From iris.algebra.lib Require Import mono_list.
 
 Section history.
-Context `{hG: heapGS Σ, !ffi_semantics _ _}.
+Context {Σ : gFunctors} `{!allG Σ, !invGS Σ}.
 Context {A : Type} `{EqDA : EqDecision A}.
 Context {P : Type} `{EqDP : !EqDecision P} `{CntP : !Countable P}.
 

@@ -84,7 +84,8 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
     list [doc_model_get m' _], and the pure companion names which items sit
     in that bound, one item per applied per-char op, carrying the op's id
     ([ValidReplay_input_mem]). A concurrent reader intersects the bound with
-    its snapshot ([wp_Text__Len] / [wp_Text__String]), so the applied portion
+    its snapshot ([wp_Text__Len_hist] / [wp_Text__String_hist], via the history
+    certificate below), so the applied portion
     of the batch is guaranteed VISIBLE-as-items to every later read. The
     buffered portion is covered only by [is_accepted] (delivered-or-buffered):
     it reaches no root's content until its dependencies arrive. *)

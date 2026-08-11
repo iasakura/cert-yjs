@@ -3,14 +3,14 @@
     [is_Text] etc. via [text/heap.v].
 
     The postcondition is a SNAPSHOT: the returned string spells exactly the
-    visible characters of some tombstone-tagged array [marr] that (a)
-    satisfies the document invariant, (b) contains everything the handle
-    already knew ([L]), and (c) contains any content lower bound [S] the
-    caller brings as an [is_root_lb] certificate (e.g. the applyUpdate
-    receipts threaded through the ws server's [entry_receipts], issue #125).
-    The bound is at the ITEM-SET level: a tombstoned item is in [marr] but
-    not in the string, so "the characters are visible" needs a no-delete
-    side condition on top; the set-level statement is unconditional. *)
+    visible characters of some tombstone-tagged array [marr] that satisfies
+    the document invariant and contains everything the handle already knows
+    ([L], the handle's grow-only lower bound). A caller whose knowledge came
+    from elsewhere (an applyUpdate certificate) uses the history form
+    [wp_Text__String_hist] below instead. The bound is at the ITEM-SET
+    level: a tombstoned item is in [marr] but not in the string, so "the
+    characters are visible" needs a no-delete side condition on top; the
+    set-level statement is unconditional. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -55,28 +55,22 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     RWMutex read lock, walks the type's DLL through a fractional
     [store_inv_ro] share ([wp_yType__Text]), then releases. *)
 Lemma wp_Text__String (t : loc) (γs : store_names) (γh : history_names) (name : P)
-    (L : list (YjsItem A)) (S : gset (YjsItem A)) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗ is_root_lb γs name S ∗ own_read_cap γs }}}
+    (L : list (YjsItem A)) :
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗ own_read_cap γs }}}
     t @! (go.PointerType yjs.Text) @! "String" #()
   {{{ (str : go_string) (marr : list (YjsItem A * bool)), RET #str;
       is_Text t γs γh name L ∗ own_read_cap γs ∗
       ⌜str = visible_string marr⌝ ∗
-      ⌜list_to_set L ∪ S ⊆ (list_to_set marr.*1 : gset (YjsItem A))⌝ ∗
+      ⌜list_to_set L ⊆ (list_to_set marr.*1 : gset (YjsItem A))⌝ ∗
       ⌜YjsArrInvariant marr.*1⌝ }}}.
 Proof.
-  wp_start as "(Hpre & #Hrootlb & Hcap)". iNamed "Hpre".
+  wp_start as "(Hpre & Hcap)". iNamed "Hpre".
   iDestruct "His_store" as "#His_store".
   wp_auto. subst s_loc. subst parent.
   wp_apply (wp_Store__rlock with "[$His_store $Hcap]"). iIntros (types) "[Hrlo Hro]".
   iNamed "Hro".
   iDestruct (auth_gmap_gset_lookup_dq with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (ts & Htsp & ->).
-  (* the caller's certificate names the same root: its hidden binding agrees
-     with the handle's, so its bound lands in the same item set *)
-  iDestruct "Hrootlb" as (p') "[Hbind' Hlb']".
-  iDestruct (is_type_binding_agree with "Hbind Hbind'") as %<-.
-  iDestruct (auth_gmap_gset_lookup_dq with "Hseq Hlb'") as %(S'' & HmS' & HSsub).
-  rewrite lookup_fmap Htsp /= in HmS'. injection HmS' as <-.
   (* borrow the type's DLL and run the verified walk *)
   iDestruct (big_sepM_lookup_acc _ _ _ _ Htsp with "Htypes") as "[Hbody Hclose]".
   iDestruct "Hbody" as "(Htext & %Hinvarr)".
@@ -98,7 +92,7 @@ Proof.
   iSplitR "Hcap"; last first.
   { iFrame "Hcap". iPureIntro. split_and!.
     - reflexivity.
-    - rewrite Hfst. apply union_least; [exact HLsub | exact HSsub].
+    - rewrite Hfst. exact HLsub.
     - rewrite Hfst. exact Hinvarr. }
   iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
   iFrame "Ht His_store His_hist Hbind His_lb".

@@ -10,24 +10,24 @@
       index, its bytes) and one joined connection (its channels, its join
       point in the log, its processed cursor).
     - [is_room_member γ j mb]: persistent, member [j] of the room is [mb].
-    - [entry_receipts γs γh c e]: the receipts of one processed packet: it
-      decodes, every input is [is_accepted] by the server's store (forever
-      delivered-or-buffered), the server's history visibly grew by the
-      applied portion (S1), and the applied portion's roots carry their
-      content lower bounds ([is_applied_root_lb] + the per-op item facts,
-      issue #125).
-    - [room_inv] ties the ghost log to the wire: per member the log's entries
-      are exactly the received prefix of that member's channel (S2, via
-      [log_coh] + the per-entry [is_chan_msg] facts + the member's processed
-      cursor), and everything the room has sent to a member embeds, in order,
-      into the relay view of the log after its join point (S3,
-      [own_member_send]).
-    - [wp_NewRoom] / [wp_Room__Join] / [wp_Room__process] / [wp_Room__Serve].
-    - [wp_Text__String_receipt]: the goal theorem of issue #125: a
-      concurrent read against a processed packet's [entry_receipts] observes
-      a snapshot containing the packet's applied items. A corollary of the
-      history-currency read specs in the [text] layer
-      ([wp_Text__String_hist] / [wp_Text__Len_hist]).
+    - [room_inv] ties the ghost log to the wire: per entry the S1 receipts
+      ([entry_receipts], internal: the packet decodes, every input is
+      [is_accepted] by the server's store, and the server's history visibly
+      grew by the applied portion); per member the log's entries are exactly
+      the received prefix of that member's channel (S2, via [log_coh] + the
+      per-entry [is_chan_msg] facts + the member's processed cursor), and
+      everything the room has sent to a member embeds, in order, into the
+      relay view of the log after its join point (S3, [own_member_send]).
+    - [wp_NewRoom] / [wp_Room__Join] / [wp_Room__process] / [wp_Room__Serve] /
+      [wp_Run] / [wp_ListenAndServe] (the whole server, which the
+      closed-system theorem in src/proof/demo/ws_server.v boots).
+
+    Concurrent reads (issue #125) need no lemma of this file: the [text]
+    layer's [wp_Text__String_hist] / [wp_Text__Len_hist] guarantee that a
+    read's snapshot contains every insert delivered by whatever
+    [is_history_lb] certificate the reader holds, and code co-verified with
+    the room (holding its [room_inv]) can extract exactly such certificates
+    from the internal receipts.
 
     One [room.mu] critical section spans the apply and the fan-out
     ([process]), matching y-websocket's serialized handler; the store's write
@@ -43,9 +43,7 @@ From New.goose_lang.ffi.ws_ffi Require Import ws_ffi.
 From New.proof Require Import core.
 From New.proof Require Import history.
 From New.proof Require Import yjs_prot.
-From New.proof.ytype Require Import ytype.
 From New.proof.store Require Import store.
-From New.proof.text Require Import text.
 From New.proof.doc Require Import doc.
 From New.ghost Require Import mono_list ghost_var.
 From iris.algebra Require Import auth gmap gset.
@@ -165,25 +163,22 @@ Definition is_room_member (γ : room_names) (j : nat) (mb : member) : iProp Σ :
 Definition is_room_log_entry (γ : room_names) (i : nat) (e : relay_entry) : iProp Σ :=
   mono_list_idx_own γ.(rn_log) i e.
 
-(** The receipts of one processed packet: it decodes, the server's store
-    accepted every input (forever delivered-or-buffered,
+(** The S1 safety receipts of one processed packet: it decodes, the server's
+    store accepted every input (forever delivered-or-buffered,
     [own_store_accepted_sound]), and the server's history visibly grew by the
-    applied portion, in processing order (S1). Since issue #125 the applied
-    portion also carries its CONTENT certificate: each applied wire item's
-    root has the post-apply model list [doc_model_get m' _] as a monotone
-    item-set lower bound ([is_applied_root_lb]), and [Herin] names the items
-    a reader must find in it, one per applied per-char op. Buffered inputs
-    (dependencies not yet arrived) appear in no root's content until drained;
-    [is_accepted] is their exact bound. *)
+    applied portion, in processing order. The history certificate [Herlb] is
+    also the CONTENT route (issue #125): fed to [wp_Text__Len_hist] /
+    [wp_Text__String_hist] it guarantees a concurrent read's snapshot
+    contains the applied portion's items, so no separate content certificate
+    is carried here. Buffered inputs (dependencies not yet arrived) appear
+    in no root's content until drained; [is_accepted] is their exact
+    bound. *)
 Definition entry_receipts (γs : store_names) (γh : history_names)
     (c : ClientId) (e : relay_entry) : iProp Σ :=
-  ∃ (inputs : list Input) (h : list Ev) (applied : list Input) (m' : DocModel),
+  ∃ (inputs : list Input) (h : list Ev) (applied : list Input),
     "%Herdec" ∷ ⌜decode e.(re_data) = Some inputs⌝ ∗
     "#Heracc" ∷ ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
-    "#Herlb"  ∷ is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
-    "#Herroots" ∷ is_applied_root_lb γs applied m' ∗
-    "%Herin" ∷ ⌜∀ x, x ∈ expand_inputs applied ->
-                  ∃ it, item_id it = in_id x.2 ∧ it ∈ doc_model_get m' x.1⌝.
+    "#Herlb"  ∷ is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)).
 
 #[global] Instance entry_receipts_persistent γs γh c e :
   Persistent (entry_receipts γs γh c e).
@@ -191,17 +186,15 @@ Proof. apply _. Qed.
 
 (* [room_inv] carries one [entry_receipts] per log entry, and every lock
    acquisition ([iNamed] on the invariant) moves that big-op into the
-   persistent context. With [entry_receipts] transparent that Persistent /
-   IntoPersistent search unfolds each element's body, and the [∃ m' :
-   DocModel] binder makes the nested gmap typeclass unification quadratic:
-   the one [iNamed "Hinv"] in [wp_Room__Join] costs ~2 minutes (measured;
-   same for process/Serve). Sealing the predicate for typeclass resolution
-   makes the move a single [entry_receipts_persistent] lookup, sub-second.
-   Nothing [iNamed]s into the predicate through the invariant; the one
-   consumer that opens it ([wp_Text__String_receipt]) unfolds explicitly
-   with [iEval (rewrite /entry_receipts)], and the producer
-   ([wp_Room__process]) builds it under [iAssert] where the unfolding is
-   local. Same trick and rationale as [tie_body] in store/heap.v. *)
+   persistent context; with the predicate transparent that Persistent /
+   IntoPersistent search unfolds each element's body. Sealed for typeclass
+   resolution so the move is a single [entry_receipts_persistent] lookup
+   (the [tie_body] trick, store/heap.v): a development version carrying a
+   [gmap]-typed existential here made the one [iNamed "Hinv"] in
+   [wp_Room__Join] cost ~2 minutes (measured), and the seal is what keeps
+   any future binder from reintroducing that. Nothing [iNamed]s into the
+   predicate through the invariant; the producer ([wp_Room__process])
+   builds it under [iAssert] where the unfolding is local. *)
 #[global] Typeclasses Opaque entry_receipts.
 
 (** The send side of one member (S3): the room has sent [sent] to it, that IS
@@ -474,9 +467,10 @@ Qed.
 (** [process] handles ONE received message end to end: apply to the room's
     document, log it, fan out. The caller (the member's [Serve] goroutine)
     presents the wire fact for message [n] of its channel, the protocol that
-    came with it, and its processed cursor at [n]; it gets the cursor
-    back at [S n], the log witness that THIS message is now entry-processed,
-    and the S1 receipts. *)
+    came with it, and its processed cursor at [n]; it gets the cursor back
+    at [S n] and the log witness that THIS message is now entry-processed.
+    The S1 receipts stay internal: they are minted here and recorded in
+    [room_inv]'s per-entry [Hrcpts], not returned. *)
 Lemma wp_Room__process (r : loc) (γ : room_names) (γs : store_names)
     (γh : history_names) (c : ClientId) (j : nat) (mb : member) (n : nat)
     (s : slice.t) (dq : dfrac) (data : list u8) :
@@ -485,8 +479,7 @@ Lemma wp_Room__process (r : loc) (γ : room_names) (γs : store_names)
       is_chan_msg mb.(mb_recv) n data ∗ ws_prot data ∗ s ↦*{dq} data }}}
     r @! (go.PointerType wsrelay.Room) @! "process" #(mb.(mb_conn)) #s
   {{{ RET #(); s ↦*{dq} data ∗ own_processed mb (S n) ∗
-      (∃ i : nat, is_room_log_entry γ i (RelayEntry j mb.(mb_recv) n data)) ∗
-      entry_receipts γs γh c (RelayEntry j mb.(mb_recv) n data) }}}.
+      (∃ i : nat, is_room_log_entry γ i (RelayEntry j mb.(mb_recv) n data)) }}}.
 Proof.
   wp_start as "(#Hroom & #Hmember & Hpos & #Hmsg & #Hprotd & Hs)".
   iNamed "Hroom".
@@ -530,7 +523,7 @@ Proof.
     rewrite (entries_of_snoc_other j' L e Hne'). iExact "H". }
   (* the receipts of the new entry *)
   iAssert (entry_receipts γs γh c e) as "#Hrcpt".
-  { iExists inputs, h, applied, m'. iFrame "Haccepts Hlb Hrootlbs". done. }
+  { iExists inputs, h, applied. iFrame "Haccepts Hlb". done. }
   (* fan out under the same critical section, iterating the table. Members
      below the loop cursor have been offered the new entry (their bundle is
      at L ++ [e]); the rest are still at L, which is what lets a successful
@@ -655,7 +648,7 @@ Proof.
       { rewrite big_sepL_snoc. iFrame "Hrcpts". iFrame "Hrcpt". }
       iFrame "Hposvs Hsends".
       iPureIntro. apply (log_coh_snoc MS L j mb _ data Hcoh HMSj eq_refl). }
-    iApply "HΦ". iFrame "Hs Hpos Hrcpt".
+    iApply "HΦ". iFrame "Hs Hpos".
     iExists (length L). iFrame "Hlogentry".
 Qed.
 
@@ -690,7 +683,7 @@ Proof.
   - iDestruct "Hcur" as "(Hrecv & #Hmsg & #Hpd)".
     wp_auto.
     wp_apply (wp_Room__process with "[$Hroom $Hmidx $Hmconn $Hpos $Hmsg $Hpd $Hsl]").
-    iIntros "(Hsl & Hpos & _ & _)".
+    iIntros "(Hsl & Hpos & _)".
     wp_auto.
     wp_for_post. iFrame.
 Qed.
@@ -728,60 +721,40 @@ Proof.
   wp_for_post. by iFrame.
 Qed.
 
-(** The goal theorem of issue #125: readers see the received updates. A
-    processed packet's [entry_receipts] carries the history certificate of
-    its apply, so a goroutine that runs the ordinary read API concurrently
-    with [Serve] ([Doc.GetText] for the handle, then [Text.String] here; the
-    [Text.Len] form is symmetric via [wp_Text__Len_hist]) observes a
-    snapshot whose ITEM SET contains, per applied per-char op of the packet
-    targeting the root being read, an item with that op's id. This is a
-    corollary of [wp_Text__String_hist], the history-currency statement in
-    the [text] layer: it lives here only because it speaks about
-    [entry_receipts].
-
-    Honest caveats, carried by the statement itself:
-    - only the APPLIED portion of the packet reaches content ([applied] is
-      the receipt's drained list); its buffered remainder is covered by the
-      [is_accepted] receipts alone until later deliveries drain it. Under a
-      causally complete stream (the relay discipline) applied = everything,
-      but that is a peer-side property, not proved here;
-    - the bound is at the ITEM-SET level: a later [Delete] tombstones an
-      item out of the STRING ([visible_string]) but never out of
-      [marr.*1]. *)
-Lemma wp_Text__String_receipt (t : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (e : relay_entry) (name : go_string) (L : list (YjsItem A)) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗ is_store_client γs c ∗
-      own_read_cap γs ∗ entry_receipts γs γh c e }}}
-    t @! (go.PointerType yjs.Text) @! "String" #()
-  {{{ (str : go_string) (marr : list (YjsItem A * bool))
-      (inputs applied : list Input) (h : list Ev), RET #str;
-      is_Text t γs γh name L ∗ own_read_cap γs ∗
-      "%Hrdec" ∷ ⌜decode e.(re_data) = Some inputs⌝ ∗
-      "#Hracc" ∷ ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
-      "#Hrlb"  ∷ is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
-      "%Hrstr" ∷ ⌜str = visible_string marr⌝ ∗
-      "%Hrinv" ∷ ⌜YjsArrInvariant marr.*1⌝ ∗
-      "%Hrsees" ∷ ⌜∀ x, x ∈ expand_inputs applied -> x.1 = RootId name ->
-                     ∃ it, item_id it = in_id x.2 ∧ it ∈ marr.*1⌝ }}}.
+(** The whole server: listen on [host], create the server document as client
+    [client], wrap it in a room decoding with [f], and serve forever. The
+    closed-system theorem (src/proof/demo/ws_server.v) boots exactly this
+    function. *)
+Lemma wp_ListenAndServe (host client : w64) (f : func.t) (γh : history_names) :
+  (∀ d, ws_prot d = yjs_prot decode γh d) ->
+  {{{ is_pkg_init wsrelay ∗
+      is_history (A := A) (P := P) γh ∗
+      own_client_history γh (uint.nat client) ([] : list Ev) ∗
+      codec_spec decode f ∗
+      ws_env_preserves ⊤ }}}
+    @! wsrelay.ListenAndServe #host #client #f
+  {{{ RET #(); False }}}.
 Proof.
-  iIntros (Φ) "(#Hpkg & #Htext & #Hpin & Hcap & #Hrcpt) HΦ".
-  iEval (rewrite /entry_receipts) in "Hrcpt".
-  iDestruct "Hrcpt" as (inputs h applied m') "Hrc". iNamed "Hrc".
-  wp_apply (wp_Text__String_hist _ _ _ c _ L (h ++ (deliver_ev <$> expand_inputs applied))
-              with "[$Hpkg $Htext $Hpin $Herlb $Hcap]").
-  iIntros (str marr) "(#Htext' & Hcap & %Hstr & %Hsub & %Hinvarr & %Hsees)".
-  iApply ("HΦ" $! str marr inputs applied h).
-  iFrame "Htext' Hcap Heracc Herlb". iPureIntro. split_and!.
-  - exact Herdec.
-  - exact Hstr.
-  - exact Hinvarr.
-  - move=> x Hx Hxt.
-    apply Hsees.
-    rewrite delivered_ops_app elem_of_app. right.
-    rewrite delivered_ops_deliver_batch.
-    rewrite -Hxt.
-    exact (list_elem_of_fmap_2 (λ typedInput : Input, (typedInput.1, OpInsert typedInput.2))
-             (expand_inputs applied) x Hx).
+  intros Hprot.
+  wp_start as "(#Hhist & Hcl & #Hcodec & #Henv)".
+  wp_auto.
+  wp_func_call.
+  wp_apply wp_Listen.
+  iIntros (l) "#Hl".
+  wp_auto.
+  wp_apply (wp_NewDoc γh client with "[$Hcl]").
+  (* the read capabilities come back with the document (issue #125); the
+     boot composition has no reader to hand them to yet, so they are simply
+     kept unused here *)
+  iIntros (dv s_loc γs) "(#Hdoc & #Hpin & Hrcaps)".
+  wp_auto.
+  wp_apply (wp_NewRoom dv s_loc γs γh (uint.nat client) f Hprot
+             with "[$Hdoc $Hhist $Hpin $Hcodec]").
+  iIntros (r γ) "#Hroom".
+  wp_auto.
+  wp_apply (wp_Run l host r γ γs γh (uint.nat client)
+             with "[$Hl $Hroom $Henv]").
+  iIntros "[]".
 Qed.
 
 End proof.

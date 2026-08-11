@@ -113,8 +113,23 @@ Qed.
 (* The [coh] binder below sits inside an [iProp] context, where a different
    [EqDecision nat] instance is in scope than the one [wsGS]'s field was
    elaborated under; a top-level alias pins the intended type. *)
-Local Definition ws_coh_ty Σ : Type :=
+Definition ws_coh_ty Σ : Type :=
   gmap (chan_id * nat) (list u8) -> iProp Σ.
+
+(** [dist_lifting.wpd] with the per-node obligation strengthened by the fact,
+    true at the adequacy theorem's instantiation site, that the node's
+    [gooseLocalGS] carries the initial state's own [GoLocalContext]. Without
+    it the obligation quantifies over ghost state for arbitrary Go semantics
+    contexts, where no [go.Semantics] hypothesis is available and no wp about
+    translated code can be applied. FFI-generic; a candidate for
+    [dist_lifting] upstream. *)
+Definition ws_wpd {go_gctx : GoGlobalContext} `{!all.allG Σ}
+    `{hG: !gooseGlobalGS Σ} (E: coPset) (ers: list node_init_cfg) : iProp Σ :=
+  ([∗ list] i↦σ ∈ ers, ∀ hL : gooseLocalGS Σ,
+    ⌜hL.(@goose_go_local_context _ _ _ _) = σ.(init_local_state).(go_state).(go_lctx)⌝ -∗
+    ffi_local_start (goose_ffiLocalGS) σ.(init_local_state).(world) -∗
+    own_go_state σ.(init_local_state).(go_state).(package_state) ={E}=∗
+    ∃ Φ Φrx Φinv, wpr NotStuck E σ.(init_thread) σ.(init_restart) Φ Φinv Φrx)%I.
 
 Theorem ws_dist_adequacy_prot_fupd {go_gctx : GoGlobalContext}
     Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ} (ebσs : list node_init_cfg)
@@ -131,8 +146,9 @@ Theorem ws_dist_adequacy_prot_fupd {go_gctx : GoGlobalContext}
           ⌜goose_ffiGlobalGS.(ws_prot) = prot⌝ -∗
           ⌜goose_ffiGlobalGS.(ws_env_coh) = coh⌝ -∗
           ⌜goose_ffiGlobalGS.(ws_may) = g.(global_world).(ws_env_may)⌝ -∗
+          ⌜HG.(@goose_invGS _ _ _ _) = Hinv⌝ -∗
           ffi_global_start goose_ffiGlobalGS g.(global_world) ={⊤}=∗
-            wpd ⊤ ebσs ∗
+            ws_wpd ⊤ ebσs ∗
             (∀ g', ffi_global_ctx goose_ffiGlobalGS g'.(global_world) -∗
                      |={⊤, ∅}=> ⌜ φinv g' ⌝))) ->
   dist_adequate (CS := goose_crash_lang) ebσs g (λ g, φinv g).
@@ -158,7 +174,7 @@ Proof.
   iExists global_state_interp, fork_post.
   iExists _, _.
 
-  iMod ("Hcont" $! hG with "[//] [//] [//] [$]") as "(Hwp&Hφ)".
+  iMod ("Hcont" $! hG with "[//] [//] [//] [//] [$]") as "(Hwp&Hφ)".
 
   iAssert (|={⊤}=> crash_borrow_ginv)%I with "[Hcred]" as ">Hinv".
   { rewrite /crash_borrow_ginv. iApply (inv_alloc _). iNext. eauto. }
@@ -170,7 +186,7 @@ Proof.
     iApply ("Hφ" with "[Hσ]").
     iDestruct "Hσ" as "($&_)".
   }
-  rewrite /wpd/dist_weakestpre.wpd.
+  rewrite /ws_wpd /dist_weakestpre.wpd.
   iApply (big_sepL_mono with "Hwp").
   iIntros (k' σ Hin) "H %Hc'".
 
@@ -184,7 +200,7 @@ Proof.
                (na_heapGS_update_pre _ name_na_heap)
                (go_stateGS_update_pre Σ _ globals_name)).
 
-  iMod ("H" $! hL with "[$] [$]") as (Φ Φrx Φinv) "Hwpr".
+  iMod ("H" $! hL with "[//] [$] [$]") as (Φ Φrx Φinv) "Hwpr".
   iModIntro. iExists state_interp, _, _, _.
   iSplitR "Hwpr"; first by iFrame.
   rewrite /wpr//=.
