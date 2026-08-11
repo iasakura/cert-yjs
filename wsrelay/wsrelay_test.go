@@ -66,7 +66,7 @@ func TestUpdateReachesTheOtherClientAndTheServer(t *testing.T) {
 	waitForRoomSize(t, room, 2)
 
 	docA := yjs.NewDoc(2)
-	docA.GetText("root").Insert(0, "hello")
+	docA.GetOrCreateText("root").Insert(0, "hello")
 	update := docA.EncodeUpdate()
 	if wsnet.Send(a, update) {
 		t.Fatal("A could not send")
@@ -79,13 +79,13 @@ func TestUpdateReachesTheOtherClientAndTheServer(t *testing.T) {
 	}
 	docB := yjs.NewDoc(3)
 	docB.ApplyUpdate(got)
-	if s := docB.GetText("root").String(); s != "hello" {
+	if s := docB.GetOrCreateText("root").String(); s != "hello" {
 		t.Fatalf("B's replica reads %q, want %q", s, "hello")
 	}
 
 	// process applies before it relays, so B having received the relay means
 	// the server's own document took the update in already.
-	if s := serverDoc.GetText("root").String(); s != "hello" {
+	if s := serverDoc.GetOrCreateText("root").String(); s != "hello" {
 		t.Fatalf("server document reads %q, want %q", s, "hello")
 	}
 
@@ -114,7 +114,7 @@ func TestFanOutReachesEveryOtherConnection(t *testing.T) {
 	waitForRoomSize(t, room, 4)
 
 	docA := yjs.NewDoc(2)
-	docA.GetText("root").Insert(0, "to everyone")
+	docA.GetOrCreateText("root").Insert(0, "to everyone")
 	update := docA.EncodeUpdate()
 	if wsnet.Send(a, update) {
 		t.Fatal("A could not send")
@@ -126,7 +126,7 @@ func TestFanOutReachesEveryOtherConnection(t *testing.T) {
 		}
 		replica := yjs.NewDoc(uint64(10 + i))
 		replica.ApplyUpdate(got)
-		if s := replica.GetText("root").String(); s != "to everyone" {
+		if s := replica.GetOrCreateText("root").String(); s != "to everyone" {
 			t.Fatalf("reader %d's replica reads %q, want %q", i, s, "to everyone")
 		}
 	}
@@ -148,7 +148,7 @@ func TestCrossEditsConverge(t *testing.T) {
 	waitForRoomSize(t, room, 2)
 
 	docA := yjs.NewDoc(2)
-	docA.GetText("root").Insert(0, "ab")
+	docA.GetOrCreateText("root").Insert(0, "ab")
 	if wsnet.Send(a, docA.EncodeUpdate()) {
 		t.Fatal("A could not send")
 	}
@@ -159,7 +159,7 @@ func TestCrossEditsConverge(t *testing.T) {
 
 	docB := yjs.NewDoc(3)
 	docB.ApplyUpdate(fromA)
-	docB.GetText("root").Insert(2, "cd")
+	docB.GetOrCreateText("root").Insert(2, "cd")
 	if wsnet.Send(b, docB.EncodeUpdate()) {
 		t.Fatal("B could not send")
 	}
@@ -170,13 +170,13 @@ func TestCrossEditsConverge(t *testing.T) {
 	docA.ApplyUpdate(fromB)
 
 	want := "abcd"
-	if s := docA.GetText("root").String(); s != want {
+	if s := docA.GetOrCreateText("root").String(); s != want {
 		t.Fatalf("A's replica reads %q, want %q", s, want)
 	}
-	if s := docB.GetText("root").String(); s != want {
+	if s := docB.GetOrCreateText("root").String(); s != want {
 		t.Fatalf("B's replica reads %q, want %q", s, want)
 	}
-	if s := serverDoc.GetText("root").String(); s != want {
+	if s := serverDoc.GetOrCreateText("root").String(); s != want {
 		t.Fatalf("server document reads %q, want %q", s, want)
 	}
 }
@@ -201,7 +201,7 @@ func TestMalformedUpdateIsNotRelayed(t *testing.T) {
 		t.Fatal("A could not send")
 	}
 	assertNothingArrives(t, b, "B received a relay of a malformed update")
-	if s := serverDoc.GetText("root").String(); s != "" {
+	if s := serverDoc.GetOrCreateText("root").String(); s != "" {
 		t.Fatalf("server document reads %q after a malformed update, want empty", s)
 	}
 }
@@ -270,7 +270,7 @@ func TestListenAndServeRelays(t *testing.T) {
 	a := connect("A")
 
 	docA := yjs.NewDoc(2)
-	docA.GetText("root").Insert(0, "hello")
+	docA.GetOrCreateText("root").Insert(0, "hello")
 	update := docA.EncodeUpdate()
 
 	got := make(chan []byte, 1)
@@ -297,7 +297,7 @@ func TestListenAndServeRelays(t *testing.T) {
 	}
 	docB := yjs.NewDoc(3)
 	docB.ApplyUpdate(data)
-	if s := docB.GetText("root").String(); s != "hello" {
+	if s := docB.GetOrCreateText("root").String(); s != "hello" {
 		t.Fatalf("B's replica reads %q, want %q", s, "hello")
 	}
 }

@@ -565,7 +565,7 @@ Proof. rewrite /store_inv. apply _. Qed.
 (** ---------------------------------------------------------------------------
     Store lock = a [sync.RWMutex] (y-octo's [Arc<RwLock<DocStore>>]).
 
-    Writers (Insert/Delete/GetText/applyUpdate) take the write lock; the pure
+    Writers (Insert/Delete/GetOrCreateText/applyUpdate) take the write lock; the pure
     readers (String/Len) take the read lock, so concurrent reads are allowed.
     [is_Store] is a PERSISTENT handle built over Perennial's logically-atomic
     RWMutex ([New.proof.sync_proof.rwmutex]): a tying [inv] relates the RWMutex's

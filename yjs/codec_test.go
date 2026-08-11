@@ -5,7 +5,7 @@ import "testing"
 // Basic editing: insert at head, in the middle, and delete a span.
 func TestTextInsertDelete(t *testing.T) {
 	doc := NewDoc(1)
-	txt := doc.GetText("root")
+	txt := doc.GetOrCreateText("root")
 
 	txt.Insert(0, "hello")
 	if got := txt.String(); got != "hello" {
@@ -30,7 +30,7 @@ func TestTextInsertDelete(t *testing.T) {
 // and the delete set must survive the round trip exactly.
 func TestUpdateRoundTrip(t *testing.T) {
 	doc := NewDoc(7)
-	txt := doc.GetText("root")
+	txt := doc.GetOrCreateText("root")
 	txt.Insert(0, "hello world")
 	txt.Delete(5, 6) // drop " world"
 	if got := txt.String(); got != "hello" {
@@ -41,7 +41,7 @@ func TestUpdateRoundTrip(t *testing.T) {
 
 	clone := NewDoc(99) // a different local client; only receives
 	clone.ApplyUpdate(update)
-	ct := clone.GetText("root")
+	ct := clone.GetOrCreateText("root")
 	if got := ct.String(); got != "hello" {
 		t.Fatalf("round-trip text: got %q, want %q", got, "hello")
 	}
@@ -52,7 +52,7 @@ func TestUpdateRoundTrip(t *testing.T) {
 	// re-encoding the clone yields a document with the same observable text.
 	again := NewDoc(1)
 	again.ApplyUpdate(clone.EncodeUpdate())
-	if got := again.GetText("root").String(); got != "hello" {
+	if got := again.GetOrCreateText("root").String(); got != "hello" {
 		t.Fatalf("re-encode text: got %q, want %q", got, "hello")
 	}
 }
@@ -61,15 +61,15 @@ func TestUpdateRoundTrip(t *testing.T) {
 // each struct resolves its own parent on apply (issue #49).
 func TestUpdateRoundTripMultipleRoots(t *testing.T) {
 	doc := NewDoc(7)
-	doc.GetText("title").Insert(0, "hi")
-	doc.GetText("body").Insert(0, "yo")
+	doc.GetOrCreateText("title").Insert(0, "hi")
+	doc.GetOrCreateText("body").Insert(0, "yo")
 
 	clone := NewDoc(9)
 	clone.ApplyUpdate(doc.EncodeUpdate())
-	if got := clone.GetText("title").String(); got != "hi" {
+	if got := clone.GetOrCreateText("title").String(); got != "hi" {
 		t.Fatalf("title: got %q, want %q", got, "hi")
 	}
-	if got := clone.GetText("body").String(); got != "yo" {
+	if got := clone.GetOrCreateText("body").String(); got != "yo" {
 		t.Fatalf("body: got %q, want %q", got, "yo")
 	}
 }
@@ -78,11 +78,11 @@ func TestUpdateRoundTripMultipleRoots(t *testing.T) {
 // Applying the two updates in either order must converge to the same string.
 func TestConcurrentMergeConverges(t *testing.T) {
 	docA := NewDoc(1)
-	docA.GetText("root").Insert(0, "abc")
+	docA.GetOrCreateText("root").Insert(0, "abc")
 	updA := docA.EncodeUpdate()
 
 	docB := NewDoc(2)
-	docB.GetText("root").Insert(0, "xyz")
+	docB.GetOrCreateText("root").Insert(0, "xyz")
 	updB := docB.EncodeUpdate()
 
 	// A learns B; B learns A.
@@ -98,10 +98,10 @@ func TestConcurrentMergeConverges(t *testing.T) {
 	docD.ApplyUpdate(updB)
 	docD.ApplyUpdate(updA)
 
-	a := docA.GetText("root").String()
-	b := docB.GetText("root").String()
-	c := docC.GetText("root").String()
-	d := docD.GetText("root").String()
+	a := docA.GetOrCreateText("root").String()
+	b := docB.GetOrCreateText("root").String()
+	c := docC.GetOrCreateText("root").String()
+	d := docD.GetOrCreateText("root").String()
 
 	if a != b || a != c || a != d {
 		t.Fatalf("divergence: A=%q B=%q C=%q D=%q", a, b, c, d)

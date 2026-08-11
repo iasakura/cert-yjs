@@ -17,10 +17,10 @@ func NewDoc(client Client) *Doc {
 	return &Doc{store: newStore(client)}
 }
 
-// GetText returns the root text type named name, creating it on first use
+// GetOrCreateText returns the root text type named name, creating it on first use
 // (y-octo: Doc::get_or_create_text). Registering the type mutates the store, so
 // it is done under the store lock.
-func (d *Doc) GetText(name string) *Text {
+func (d *Doc) GetOrCreateText(name string) *Text {
 	s := d.store
 	s.mu.Lock()
 	inner := s.getOrCreateYType(name)

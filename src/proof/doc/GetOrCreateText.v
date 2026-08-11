@@ -1,5 +1,6 @@
-(** [wp_Doc__GetText]: the public root-type accessor (y-octo:
-    Doc::get_or_create_text). Takes the store's WRITE lock (first use
+(** [wp_Doc__GetOrCreateText]: the public root-type accessor (y-octo:
+    Doc::get_or_create_text; Yjs doc.getText has the same get-or-create
+    semantics under the shorter name). Takes the store's WRITE lock (first use
     registers the type), runs the verified [getOrCreateYType] (issue #54
     proved the miss branch), and hands back the persistent [Text] handle for
     [name] with the empty content lower bound; a caller grows the bound by
@@ -56,10 +57,10 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 
-Lemma wp_Doc__GetText (dv s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma wp_Doc__GetOrCreateText (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (name : P) :
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh }}}
-    dv @! (go.PointerType yjs.Doc) @! "GetText" #name
+    dv @! (go.PointerType yjs.Doc) @! "GetOrCreateText" #name
   {{{ (t : loc), RET #t; is_Text t γs γh name [] }}}.
 Proof.
   wp_start as "(#His_doc & #Hishist)".
