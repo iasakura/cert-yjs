@@ -34,14 +34,29 @@ type updateItem struct {
 	content    string
 }
 
+// deleteSpan is one decoded delete range: the half-open clock interval
+// [clock, clock+length) of client's per-client clock space (y-octo: the
+// per-client OrderRange of codec/update.rs Update.delete_set, which drives
+// DocStore::delete_range). A delete carries no id and consumes no clock, which
+// is why the model treats the delete set as state, not as an operation
+// (docs/plan-delete-set.md).
+type deleteSpan struct {
+	client Client
+	clock  uint64
+	length uint64
+}
+
 // Update is the decoded, in-memory update of the verified subset: a batch of
-// insert structs in ARBITRARY order, with no causal-closure requirement
-// (y-octo: codec/update.rs Update, restricted to its structs field). Each
-// struct carries its own parent info, so one update may touch several root
-// types (issue #49). Structs whose dependencies are missing are buffered by
-// store.applyUpdate in store.pending (issue #40); y-octo's in-update
-// pending_structs / missing_state staging fields and delete_set (which drives
-// delete_range) are out of the verified subset.
+// insert structs in ARBITRARY order, with no causal-closure requirement, plus
+// the delete spans that tombstone already-integrated chars (y-octo:
+// codec/update.rs Update.structs + Update.delete_set). Each struct carries its
+// own parent info, so one update may touch several root types (issue #49).
+// Structs whose dependencies are missing are buffered by store.applyUpdate in
+// store.pending, and spans whose targets have not arrived are buffered in
+// store.pendingDeletes by store.applyDeleteSpans (issue #40 discipline,
+// issue #133); y-octo's in-update pending_structs / missing_state staging
+// fields are out of the verified subset.
 type Update struct {
 	structs []updateItem
+	deletes []deleteSpan
 }

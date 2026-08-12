@@ -103,6 +103,60 @@ func (s *store) GetNode(id id) (*item, bool) {
 	return nodes[index], true
 }
 
+// deleteRange tombstones every integrated char of the half-open clock range
+// [clock, clock+length) in client's clock space (y-octo:
+// DocStore::delete_range, store.rs). Each step resolves the current char to
+// the node STARTING at it (splitAtAndGetRight, splitting when the range starts
+// inside a run), truncates that node at the range end when it would overrun
+// (splitAtAndGetLeft on the range's last char), and tombstones it whole, so
+// the deletion covers exactly the requested chars and never spills over. Both
+// splits are the same clean-start / clean-end helpers store.repair resolves
+// origins with.
+//
+// A char with no integrated node is skipped: its struct has not arrived, and
+// the caller re-applies the span later (the pending discipline of issue #40).
+// An already-tombstoned node is skipped too, which is what makes
+// re-application harmless. Callers hold s.mu.
+func (s *store) deleteRange(client Client, clock uint64, length uint64) {
+	end := clock + length
+	cur := clock
+	for cur < end {
+		// The lookup and the clean-start split search the run list twice
+		// (y-octo searches once and keeps the index); the redundant lookup
+		// is what lets the two steps be verified independently.
+		_, found := s.GetNode(newId(client, cur))
+		if !found {
+			// not integrated yet: leave it for a later re-application.
+			cur = cur + 1
+		} else {
+			// clean start: after this, [it] begins exactly at [cur].
+			it, _ := s.splitAtAndGetRight(newId(client, cur))
+			next := it.id.clock + it.Len()
+			if end < next {
+				// clean end: the range stops inside [it], so truncate it in
+				// place at the range's last char. [it] is the left half, so
+				// it now covers exactly [cur, end).
+				s.splitAtAndGetLeft(newId(client, end-1))
+				next = end
+			}
+			s.deleteNode(it)
+			cur = next
+		}
+	}
+}
+
+// deleteNode tombstones one whole node: sets its Deleted flag and shrinks its
+// type's visible length (y-octo: DocStore::delete_item_inner). A node that is
+// already tombstoned is left alone, which is what makes a re-delivered delete
+// idempotent. The node must be integrated (reached through the store's run
+// lists); callers hold s.mu.
+func (s *store) deleteNode(it *item) {
+	if it.Indexable() {
+		it.flags = it.flags | itemDeleted
+		it.parent.len = it.parent.len - it.Len()
+	}
+}
+
 // AddNode appends an item to the run list of its owning client (y-octo:
 // store::add_item), so the store holds the full item set.
 func (s *store) AddNode(it *item) {

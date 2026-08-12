@@ -80,6 +80,51 @@ Definition accepted_coh (acc : gset YjsId) (h : list Ev)
     (pend : list (TId * IntegrateInput (A := A))) : Prop :=
   acc ⊆ delivered_ids h ∪ pending_id_set pend.
 
+(** Delete-set domain (docs/plan-delete-set.md, D1): every deleted id names
+    an integrated item of the current doc model. Stated over the MODEL, so
+    the store ops transport it with the model lemmas they already produce
+    ([docm_has_integrate_mono], [ValidReplay_mem]); the cells-level tombstone
+    mirror ([deleted_match]) is the D2 half. *)
+Definition ds_dom (ds : gset YjsId) (m : DocModel) : Prop :=
+  ∀ i, i ∈ ds -> doc_model_has m i = true.
+
+(** The two transport laws of [ds_dom]: pointwise model growth, and the
+    applyUpdate batch step. *)
+Lemma ds_dom_mono (ds : gset YjsId) (m m' : DocModel) :
+  (∀ i, doc_model_has m i = true -> doc_model_has m' i = true) ->
+  ds_dom ds m -> ds_dom ds m'.
+Proof. move=> Hmono Hdom i Hi. exact (Hmono i (Hdom i Hi)). Qed.
+
+Lemma ds_dom_grow (ds S : gset YjsId) (m : DocModel) :
+  ds_dom ds m -> (∀ i, i ∈ S -> doc_model_has m i = true) ->
+  ds_dom (ds ∪ S) m.
+Proof.
+  move=> Hdom HS i /elem_of_union [Hi | Hi]; [exact (Hdom i Hi) | exact (HS i Hi)].
+Qed.
+
+(** Growing ONE type's list (the [Text.Insert] step): ids present before are
+    present after. *)
+Lemma ds_dom_insert (ds : gset YjsId) (m : DocModel) (t : TId)
+    (arr' : list (YjsItem A)) :
+  (∀ x, x ∈ doc_model_get m t -> x ∈ arr') ->
+  ds_dom ds m -> ds_dom ds (<[t := arr']> m).
+Proof.
+  move=> Hgrow. apply ds_dom_mono => i /docm_has_spec [t0 [x [Hx Hid]]].
+  apply docm_has_spec.
+  destruct (decide (t0 = t)) as [-> | Hne].
+  - exists t, x. rewrite docm_get_insert_eq. split; [exact (Hgrow x Hx) | exact Hid].
+  - exists t0, x. rewrite docm_get_insert_ne //.
+Qed.
+
+Lemma ds_dom_ValidReplay (ds : gset YjsId)
+    (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
+  ValidReplay inputs m m' -> ds_dom ds m -> ds_dom ds m'.
+Proof.
+  move=> Hvr. apply ds_dom_mono => i /docm_has_spec [t [x [Hx Hid]]].
+  apply docm_has_spec. exists t, x.
+  split; [exact (ValidReplay_mem inputs m m' Hvr t x Hx) | exact Hid].
+Qed.
+
 Definition wire_integrate (m : DocModel) (typedInput : TId * IntegrateInput (A := A))
     : option (list (YjsItem A)) :=
   integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) (doc_model_get m typedInput.1).

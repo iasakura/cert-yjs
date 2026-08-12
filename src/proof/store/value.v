@@ -308,6 +308,60 @@ Definition split_step_facts (types types' : gmap loc type_state) (w : item_cell)
 (** What [repair] guarantees about the type map: per-type model documents and
     the domain survive, and each client's run list grows by at most the two
     possible splits. *)
+(** What the wire delete path guarantees about the type map (issue #133): the
+    per-type MODEL documents are untouched (both surgeries it performs, a
+    split and a tombstone, are model no-ops) and no type disappears. Unlike
+    [repair_types_facts] this carries no run-length bound, because the delete
+    loop splits an unbounded number of times; that is also what makes it
+    transitive, so the loop can compose one record per step. *)
+Definition delete_types_facts (types types' : gmap loc type_state) : Prop :=
+  (∀ p ts', types' !! p = Some ts' ->
+     ∃ ts, types !! p = Some ts ∧ ty_arr ts' = ty_arr ts) ∧
+  (∀ p, is_Some (types !! p) -> is_Some (types' !! p)).
+
+Lemma delete_types_facts_refl (types : gmap loc type_state) :
+  delete_types_facts types types.
+Proof. split; [move=> p ts' Hp; by exists ts' | done]. Qed.
+
+Lemma delete_types_facts_trans (t1 t2 t3 : gmap loc type_state) :
+  delete_types_facts t1 t2 -> delete_types_facts t2 t3 -> delete_types_facts t1 t3.
+Proof.
+  move=> [Harr1 Hdom1] [Harr2 Hdom2]. split.
+  - move=> p ts3 Hp3.
+    destruct (Harr2 p ts3 Hp3) as (ts2 & Hp2 & Heq2).
+    destruct (Harr1 p ts2 Hp2) as (ts1 & Hp1 & Heq1).
+    exists ts1. split; [exact Hp1 | congruence].
+  - move=> p Hp. exact (Hdom2 p (Hdom1 p Hp)).
+Qed.
+
+(** A split step is a delete step: [split_step_facts]'s first two clauses. *)
+Lemma delete_types_facts_of_split (types types' : gmap loc type_state) (w : item_cell) :
+  split_step_facts types types' w -> delete_types_facts types types'.
+Proof.
+  move=> [Harr [Hdom _]]. split; last exact Hdom.
+  move=> p ts' Hp'. destruct (Harr p ts' Hp') as (ts & Hp & Heq & _).
+  exists ts. split; [exact Hp | exact Heq].
+Qed.
+
+(** A tombstone step is a delete step: one type is replaced by one whose
+    cells changed but whose model list did not. *)
+Lemma delete_types_facts_of_flip (types : gmap loc type_state) (p : loc)
+    (ts : type_state) (cells' : list item_cell) :
+  types !! p = Some ts ->
+  delete_types_facts types (<[p := MkTypeState cells' (ty_arr ts)]> types).
+Proof.
+  move=> Hp. split.
+  - move=> q tq Hq.
+    destruct (decide (q = p)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Hq. injection Hq as <-.
+      exists ts. split; [exact Hp | reflexivity].
+    + rewrite lookup_insert_ne // in Hq. by exists tq.
+  - move=> q Hq.
+    destruct (decide (q = p)) as [-> | Hne].
+    + rewrite lookup_insert_eq. by eexists.
+    + rewrite lookup_insert_ne //.
+Qed.
+
 Definition repair_types_facts (types types2 : gmap loc type_state) : Prop :=
   (∀ p ts', types2 !! p = Some ts' ->
      ∃ ts, types !! p = Some ts ∧ ty_arr ts' = ty_arr ts ∧
@@ -692,6 +746,56 @@ Proof.
   have Hf := Hfits c' Hc'.
   rewrite /cell_fits /cell_clock /run_head Hr. exact Hf.
 Qed.
+
+(** The [(loc, run)] projection of the pool is what all four pool invariants
+    read, and tombstoning changes neither: [flip_cell] only sets the Deleted
+    bit. So a flip transports [pool_invs] wholesale. *)
+Lemma flip_locs_run_perm (types : gmap loc type_state) (p : loc)
+    (ts : type_state) (k : nat) (c : item_cell) :
+  types !! p = Some ts -> ty_cells ts !! k = Some c ->
+  (λ c0, (ic_loc c0, ic_run c0))
+    <$> all_cells (<[p := MkTypeState (<[k := flip_cell c]> (ty_cells ts)) (ty_arr ts)]> types)
+  ≡ₚ (λ c0, (ic_loc c0, ic_run c0)) <$> all_cells types.
+Proof.
+  move=> Hp Hck.
+  rewrite (all_cells_insert types p ts _ Hp) (all_cells_lookup types p ts Hp).
+  rewrite !fmap_app. apply Permutation_app_tail.
+  simpl. rewrite list_fmap_insert /flip_cell /=.
+  rewrite list_insert_id; first reflexivity.
+  rewrite list_lookup_fmap Hck //.
+Qed.
+
+(** [cell_kp] is a function of the [(loc, run)] projection, so the [own_item_map]
+    side of a flip transports on the same permutation. *)
+Lemma locs_run_perm_kp (pool1 pool2 : list item_cell) :
+  (λ c, (ic_loc c, ic_run c)) <$> pool2 ≡ₚ (λ c, (ic_loc c, ic_run c)) <$> pool1 ->
+  cell_kp <$> pool2 ≡ₚ cell_kp <$> pool1.
+Proof.
+  move=> Hperm.
+  have Hfac : ∀ l : list item_cell, cell_kp <$> l
+      = (λ pr : loc * list (YjsItem A),
+           (W64 (clientId (item_id (hd inhabitant pr.2))),
+            (uint.Z (W64 (clock (item_id (hd inhabitant pr.2)))), pr.1)))
+        <$> ((λ c, (ic_loc c, ic_run c)) <$> l).
+  { move=> l. rewrite -list_fmap_compose //. }
+  rewrite !Hfac Hperm //.
+Qed.
+
+Lemma pool_invs_flip (types : gmap loc type_state) (p : loc)
+    (ts : type_state) (k : nat) (c : item_cell) :
+  types !! p = Some ts -> ty_cells ts !! k = Some c ->
+  pool_invs types ->
+  pool_invs (<[p := MkTypeState (<[k := flip_cell c]> (ty_cells ts)) (ty_arr ts)]> types).
+Proof.
+  move=> Hp Hck [Hfits [Hnodup [Hdisj Horig]]].
+  have Hlr := flip_locs_run_perm types p ts k c Hp Hck.
+  split_and!.
+  - exact (locs_run_perm_fits _ _ Hlr Hfits).
+  - exact (locs_run_perm_nodup _ _ Hlr Hnodup).
+  - exact (locs_run_perm_rangedisj _ _ Hlr Hdisj).
+  - exact (locs_run_perm_originclk _ _ Hlr Horig).
+Qed.
+
 
 (** [cell_fits] survives an integrate splice: membership transport over the
     snoc permutation. *)

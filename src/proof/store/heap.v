@@ -294,6 +294,7 @@ Record store_names := StoreNames {
   sn_types_agree : gname; (* dfrac_agree on the types map (reader/inv agreement) *)
   sn_accepted : gname; (* authR (gsetUR YjsId): grow-only accepted-id set (no-loss) *)
   sn_client : gname; (* agreeR (leibnizO ClientId): the store's client pin, [is_store_client] *)
+  sn_ds : gname;     (* authR (gsetUR YjsId): the monotone delete set (plan-delete-set.md D1) *)
 }.
 
 (** The root-type binding: [name] is bound to the type at [p], forever
@@ -420,6 +421,82 @@ Proof. rewrite /is_accepted. apply _. Qed.
 #[global] Instance is_accepted_timeless γs i : Timeless (is_accepted γs i).
 Proof. rewrite /is_accepted. apply _. Qed.
 
+(** [is_ds_lb γs S]: the persistent lower bound on the store-global monotone
+    delete set (docs/plan-delete-set.md, D1): the ids in [S] are (and stay)
+    tombstoned. Same RA and idiom as [is_accepted]; [Text.Delete] mints these,
+    and (with D2) the wire delete path will too. *)
+Definition is_ds_lb (γs : store_names) (S : gset YjsId) : iProp Σ :=
+  own γs.(sn_ds) (◯ S : accUR).
+
+#[global] Instance is_ds_lb_persistent γs S : Persistent (is_ds_lb γs S).
+Proof. rewrite /is_ds_lb. apply _. Qed.
+
+#[global] Instance is_ds_lb_timeless γs S : Timeless (is_ds_lb γs S).
+Proof. rewrite /is_ds_lb. apply _. Qed.
+
+Lemma is_ds_lb_union (γs : store_names) (S T : gset YjsId) :
+  is_ds_lb γs S -∗ is_ds_lb γs T -∗ is_ds_lb γs (S ∪ T).
+Proof. iApply auth_gset_frag_union. Qed.
+
+Lemma is_ds_lb_empty (γs : store_names) : ⊢ |==> is_ds_lb γs ∅.
+Proof. iApply auth_gset_frag_empty. Qed.
+
+(** [own_ds γs m]: the delete-set authority with its model-level domain bound
+    (every deleted id names an integrated item of [m], [ds_dom]); the current
+    set stays existential, observable only through [is_ds_lb] certificates.
+    Carried by [store_inv_excl] / [own_store] next to their model [m]. *)
+Definition own_ds (γs : store_names) (m : DocModel) : iProp Σ :=
+  ∃ ds : gset YjsId,
+    "Hdsauth" ∷ own γs.(sn_ds) (● ds : accUR) ∗
+    "%Hdsdom" ∷ ⌜ds_dom ds m⌝.
+
+#[global] Instance own_ds_timeless γs m : Timeless (own_ds γs m).
+Proof. rewrite /own_ds. apply _. Qed.
+
+(** Transport along model growth: any map that preserves id presence
+    ([Text.Insert] uses [docm_has_integrate_mono] pointwise, [applyUpdate]
+    uses [ds_dom_ValidReplay]'s premise via [ds_dom_mono]). *)
+Lemma own_ds_mono (γs : store_names) (m m' : DocModel) :
+  (∀ i, doc_model_has m i = true -> doc_model_has m' i = true) ->
+  own_ds γs m -∗ own_ds γs m'.
+Proof.
+  iIntros (Hmono) "H". iNamed "H". iExists ds. iFrame "Hdsauth".
+  iPureIntro. exact (ds_dom_mono ds m m' Hmono Hdsdom).
+Qed.
+
+(** Tombstone: grow the set by ids of integrated items, minting their lower
+    bound. The model is unchanged ([Text.Delete] flips flags only). *)
+Lemma own_ds_grow (γs : store_names) (m : DocModel) (S : gset YjsId) :
+  (∀ i, i ∈ S -> doc_model_has m i = true) ->
+  own_ds γs m ==∗ own_ds γs m ∗ is_ds_lb γs S.
+Proof.
+  iIntros (HS) "H". iNamed "H".
+  iMod (auth_gset_grow γs.(sn_ds) ds S with "Hdsauth") as "[Hdsauth Hfrag]".
+  iModIntro. iSplitL "Hdsauth".
+  { iExists (ds ∪ S). iFrame "Hdsauth". iPureIntro. exact (ds_dom_grow ds S m Hdsdom HS). }
+  rewrite /is_ds_lb.
+  iApply (auth_gset_frag_mono with "Hfrag"). set_solver.
+Qed.
+
+(** The two model-transition forms the store ops need: one type's list grows
+    ([Text.Insert]), and a whole valid replay ([store.applyUpdate]). *)
+Lemma own_ds_insert (γs : store_names) (m : DocModel) (t : TId)
+    (arr' : list (YjsItem A)) :
+  (∀ x, x ∈ doc_model_get m t -> x ∈ arr') ->
+  own_ds γs m -∗ own_ds γs (<[t := arr']> m).
+Proof.
+  iIntros (Hgrow) "H". iNamed "H". iExists ds. iFrame "Hdsauth".
+  iPureIntro. exact (ds_dom_insert ds m t arr' Hgrow Hdsdom).
+Qed.
+
+Lemma own_ds_ValidReplay (γs : store_names)
+    (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
+  ValidReplay inputs m m' -> own_ds γs m -∗ own_ds γs m'.
+Proof.
+  iIntros (Hvr) "H". iNamed "H". iExists ds. iFrame "Hdsauth".
+  iPureIntro. exact (ds_dom_ValidReplay ds inputs m m' Hvr Hdsdom).
+Qed.
+
 (** [is_store_client γs c]: the persistent witness that this store IS client
     [c] (the [store.client] field, set once at [newStore] and never written).
     An [agree] ghost: any two witnesses agree, and [own_store] carries one, so
@@ -509,6 +586,8 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     (* no-loss accepted-id layer (this branch): the grow-only accepted set and
        its coherence [acc ⊆ delivered_ids h ∪ pending ids] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
+    (* the monotone delete set with its model-domain bound (plan-delete-set D1) *)
+    "Hds" ∷ own_ds γs m ∗
     "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
 
 #[global] Instance store_inv_ro_timeless γs types q : Timeless (store_inv_ro γs types q).
@@ -721,6 +800,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "%Horiginclk" ∷ ⌜∀ c, c ∈ all_cells types → cell_origin_clk c⌝ ∗
     (* no-loss accepted-id layer (this branch): matches [store_inv_excl] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
+    "Hds" ∷ own_ds γs m ∗
     "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
@@ -1143,12 +1223,16 @@ Proof.
   (* the grow-only accepted-id set starts empty *)
   iMod (own_alloc (● (∅ : gset YjsId) : accUR)) as (γacc) "Hacc0".
   { apply auth_auth_valid. done. }
+  (* the monotone delete set starts empty (plan-delete-set D1) *)
+  iMod (own_alloc (● (∅ : gset YjsId) : accUR)) as (γds) "Hds0".
+  { apply auth_auth_valid. done. }
   (* the client pin (issue #107): one agree, fixed at birth *)
   iMod (own_alloc (to_agree ((uint.nat client) : leibnizO ClientId))) as (γcl) "#Hclpin".
   { done. }
   set (γs := {| sn_seq := γseq; sn_types := γtypes; sn_wl := γwl;
                 sn_rw := γrw; sn_rmax := γrmax; sn_rrlocked := γrrlocked;
-                sn_types_agree := γta; sn_accepted := γacc; sn_client := γcl |}).
+                sn_types_agree := γta; sn_accepted := γacc; sn_client := γcl;
+                sn_ds := γds |}).
   iModIntro. iExists γs.
   iSplitR; first done.
   iFrame "Hrmax". iFrame "Hrtoks".
@@ -1163,8 +1247,11 @@ Proof.
   { (* store_inv_ro over the empty types map *)
     iFrame "Hseq". rewrite /types big_sepM_empty //. }
   (* store_inv_excl *)
+  iAssert (own_ds γs (∅ : DocModel)) with "[Hds0]" as "Hds".
+  { iExists (∅ : gset YjsId). iFrame "Hds0". iPureIntro.
+    move=> i Hi. exfalso. set_solver. }
   iExists (∅ : gset YjsId).
-  iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap Hdset Hpendf Hhist HtypesAuth Hacc0".
+  iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap Hdset Hpendf Hhist HtypesAuth Hacc0 Hds".
   iSplitR; first by iFrame "Hclpin".
   iSplitL "Hmap".
   { (* own_item_map over the empty run map *)
@@ -1218,7 +1305,7 @@ Lemma own_store_hist_coh (s_loc : loc) (γs : store_names) (γh : history_names)
   own_store s_loc γs γh c h m pend ∗ ⌜history_state_coh h m⌝.
 Proof.
   iIntros "H". iNamed "H".
-  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq Htypes HtypesAuth Hhist Hacc".
+  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq Htypes HtypesAuth Hhist Hacc Hds".
   - iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, acc.
     iFrame "∗#".
     iPureIntro. split_and!;
