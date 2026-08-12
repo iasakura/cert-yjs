@@ -266,6 +266,21 @@ func (doc *Doc) ApplyUpdate(data []byte) {
 
 	// delete set
 	var deletes []pendingDelete
+	for _, sp := range readDeleteSection(d) {
+		deletes = append(deletes, pendingDelete{client: sp.client, clock: sp.clock, length: sp.length})
+	}
+
+	doc.integrateStructs(structs)
+	doc.store.mu.Lock()
+	doc.applyDeletes(deletes)
+	doc.store.mu.Unlock()
+}
+
+// readDeleteSection parses the delete set of an update into the decoded
+// spans the verified store.applyDeleteSpans consumes (y-octo:
+// DeleteSet::read). The decoder must be positioned right after the structs.
+func readDeleteSection(d *decoder) []deleteSpan {
+	var spans []deleteSpan
 	numDelClients := d.readVarUint()
 	for c := uint64(0); c < numDelClients; c++ {
 		client := d.readVarUint()
@@ -273,14 +288,10 @@ func (doc *Doc) ApplyUpdate(data []byte) {
 		for r := uint64(0); r < numRanges; r++ {
 			clock := d.readVarUint()
 			length := d.readVarUint()
-			deletes = append(deletes, pendingDelete{client: client, clock: clock, length: length})
+			spans = append(spans, deleteSpan{client: client, clock: clock, length: length})
 		}
 	}
-
-	doc.integrateStructs(structs)
-	doc.store.mu.Lock()
-	doc.applyDeletes(deletes)
-	doc.store.mu.Unlock()
+	return spans
 }
 
 // readStructSection parses the structs section of an update (the client
@@ -311,18 +322,19 @@ func WireCodec() Codec {
 	return decodeUpdateItems
 }
 
-func decodeUpdateItems(data []byte) (ok bool, items []updateItem) {
+func decodeUpdateItems(data []byte) (ok bool, items []updateItem, deletes []deleteSpan) {
 	// The low-level reader indexes without bounds checks (it is only ever fed
 	// self-produced updates elsewhere); at this trust boundary a malformed
 	// update must come back as ok=false instead.
 	defer func() {
 		if recover() != nil {
-			ok, items = false, nil
+			ok, items, deletes = false, nil, nil
 		}
 	}()
 	d := &decoder{buf: data}
 	structs := readStructSection(d)
-	return true, splitStructs(structs)
+	items = splitStructs(structs)
+	return true, items, readDeleteSection(d)
 }
 
 func readStruct(d *decoder, client Client, clock uint64) decodedStruct {

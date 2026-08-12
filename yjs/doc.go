@@ -50,7 +50,7 @@ func (d *Doc) applyUpdate(structs []updateItem) {
 // src/proof/yjs_prot.v) against the abstract decode the wire protocol
 // [yjs_prot] is defined over; the real codec is trusted to meet it, the same
 // trust boundary codec.go already is.
-type Codec = func(data []byte) (ok bool, structs []updateItem)
+type Codec = func(data []byte) (ok bool, structs []updateItem, deletes []deleteSpan)
 
 // ApplyEncodedUpdate decodes one wire update with decode and applies the
 // batch with the verified total apply path (ApplySyncUpdate, under the
@@ -58,10 +58,10 @@ type Codec = func(data []byte) (ok bool, structs []updateItem)
 // update is one the caller may relay (y-websocket relays exactly what it
 // applied).
 func (d *Doc) ApplyEncodedUpdate(decode Codec, data []byte) bool {
-	ok, structs := decode(data)
+	ok, structs, deletes := decode(data)
 	if !ok {
 		return false
 	}
-	d.ApplySyncUpdate(structs)
+	d.ApplySyncUpdate(structs, deletes)
 	return true
 }

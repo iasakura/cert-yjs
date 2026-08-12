@@ -90,19 +90,22 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
     buffered portion is covered only by [is_accepted] (delivered-or-buffered):
     it reaches no root's content until its dependencies arrive. *)
 Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (sl : slice.t) (dq : dfrac)
-    (inputs : list (TId * IntegrateInput (A := A))) :
+    (c : ClientId) (sl sldel : slice.t) (dq dqd : dfrac)
+    (inputs : list (TId * IntegrateInput (A := A)))
+    (spans : list yjs.deleteSpan.t) :
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
   is_pending_rooted inputs ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
       is_store_client γs c ∗
       own_update_structs sl dq inputs ∗
+      own_delete_spans sldel dqd spans ∗
       is_pending_certified γh (expand_inputs inputs) }}}
-    dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl
+    dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl #sldel
   {{{ (h : list Ev)
       (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel), RET #();
       own_update_structs sl dq inputs ∗
+      own_delete_spans sldel dqd spans ∗
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
       ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
       is_applied_root_lb γs applied m' ∗
@@ -110,7 +113,7 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
          ∃ it, item_id it = in_id x.2 ∧ it ∈ doc_model_get m' x.1⌝ }}}.
 Proof.
   move=> Hnowrapb Hrooted.
-  wp_start as "(#His_doc & #Hishist & #Hpin & Hupd & #Hcerts)".
+  wp_start as "(#His_doc & #Hishist & #Hpin & Hupd & Hspans & #Hcerts)".
   iNamed "His_doc". subst s_loc. wp_auto.
   (* take the write lock, reveal the store's current (c0, h, m, pend); the
      client pin identifies c0 with the caller's c *)
@@ -129,6 +132,15 @@ Proof.
               with "[$Hishist $Hstore $Hupd $Hcerts]").
   iIntros (applied rest m') "(Hupd & Hstore & #Hlb & %Hdrain & %Hvr & %Hnoc & %Hnoloss & #Hrootlbs)".
   wp_auto.
+  (* the delete spans, second: a span may target a struct that just arrived
+     in this very batch. Deletes are model no-ops, so the store's model,
+     history and pending buffer come back unchanged (the tombstones and the
+     splits live under the [types] existential). *)
+  wp_apply (wp_store__applyDeleteSpans_store (dvv.(yjs.Doc.store')) γs γh c
+              (h ++ (deliver_ev <$> expand_inputs applied)) m' rest sldel dqd spans
+              with "[$Hstore $Hspans]").
+  iIntros "[Hstore Hspans]".
+  wp_auto.
   (* mint the ENFORCEABLE no-loss receipts: every input's id is accepted, hence
      (by the store invariant) forever delivered-or-buffered; a discarding
      implementation could not produce these fragments *)
@@ -141,7 +153,7 @@ Proof.
   { iNext. iApply store_inv_own_store.
     iExists c, (h ++ (deliver_ev <$> expand_inputs applied)), m', rest. iFrame "Hstore". }
   wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hinv]").
-  iApply ("HΦ" $! h applied rest m'). iFrame "Hupd Hlb Haccepts Hrootlbs".
+  iApply ("HΦ" $! h applied rest m'). iFrame "Hupd Hspans Hlb Haccepts Hrootlbs".
   iPureIntro. exact (ValidReplay_input_mem (expand_inputs applied) m m' Hvr).
 Qed.
 

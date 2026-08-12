@@ -72,7 +72,7 @@ func TestDeleteRangeRemoteConverges(t *testing.T) {
 
 	docB := NewDoc(2)
 	txtB := docB.GetOrCreateText("root")
-	docB.ApplySyncUpdate(structsOf(docA, "root"))
+	docB.ApplySyncUpdate(structsOf(docA, "root"), nil)
 
 	docA.store.mu.Lock()
 	docA.store.deleteRange(1, 5, 6) // " world"

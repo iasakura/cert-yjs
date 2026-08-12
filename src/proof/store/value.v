@@ -308,60 +308,6 @@ Definition split_step_facts (types types' : gmap loc type_state) (w : item_cell)
 (** What [repair] guarantees about the type map: per-type model documents and
     the domain survive, and each client's run list grows by at most the two
     possible splits. *)
-(** What the wire delete path guarantees about the type map (issue #133): the
-    per-type MODEL documents are untouched (both surgeries it performs, a
-    split and a tombstone, are model no-ops) and no type disappears. Unlike
-    [repair_types_facts] this carries no run-length bound, because the delete
-    loop splits an unbounded number of times; that is also what makes it
-    transitive, so the loop can compose one record per step. *)
-Definition delete_types_facts (types types' : gmap loc type_state) : Prop :=
-  (∀ p ts', types' !! p = Some ts' ->
-     ∃ ts, types !! p = Some ts ∧ ty_arr ts' = ty_arr ts) ∧
-  (∀ p, is_Some (types !! p) -> is_Some (types' !! p)).
-
-Lemma delete_types_facts_refl (types : gmap loc type_state) :
-  delete_types_facts types types.
-Proof. split; [move=> p ts' Hp; by exists ts' | done]. Qed.
-
-Lemma delete_types_facts_trans (t1 t2 t3 : gmap loc type_state) :
-  delete_types_facts t1 t2 -> delete_types_facts t2 t3 -> delete_types_facts t1 t3.
-Proof.
-  move=> [Harr1 Hdom1] [Harr2 Hdom2]. split.
-  - move=> p ts3 Hp3.
-    destruct (Harr2 p ts3 Hp3) as (ts2 & Hp2 & Heq2).
-    destruct (Harr1 p ts2 Hp2) as (ts1 & Hp1 & Heq1).
-    exists ts1. split; [exact Hp1 | congruence].
-  - move=> p Hp. exact (Hdom2 p (Hdom1 p Hp)).
-Qed.
-
-(** A split step is a delete step: [split_step_facts]'s first two clauses. *)
-Lemma delete_types_facts_of_split (types types' : gmap loc type_state) (w : item_cell) :
-  split_step_facts types types' w -> delete_types_facts types types'.
-Proof.
-  move=> [Harr [Hdom _]]. split; last exact Hdom.
-  move=> p ts' Hp'. destruct (Harr p ts' Hp') as (ts & Hp & Heq & _).
-  exists ts. split; [exact Hp | exact Heq].
-Qed.
-
-(** A tombstone step is a delete step: one type is replaced by one whose
-    cells changed but whose model list did not. *)
-Lemma delete_types_facts_of_flip (types : gmap loc type_state) (p : loc)
-    (ts : type_state) (cells' : list item_cell) :
-  types !! p = Some ts ->
-  delete_types_facts types (<[p := MkTypeState cells' (ty_arr ts)]> types).
-Proof.
-  move=> Hp. split.
-  - move=> q tq Hq.
-    destruct (decide (q = p)) as [-> | Hne].
-    + rewrite lookup_insert_eq in Hq. injection Hq as <-.
-      exists ts. split; [exact Hp | reflexivity].
-    + rewrite lookup_insert_ne // in Hq. by exists tq.
-  - move=> q Hq.
-    destruct (decide (q = p)) as [-> | Hne].
-    + rewrite lookup_insert_eq. by eexists.
-    + rewrite lookup_insert_ne //.
-Qed.
-
 Definition repair_types_facts (types types2 : gmap loc type_state) : Prop :=
   (∀ p ts', types2 !! p = Some ts' ->
      ∃ ts, types !! p = Some ts ∧ ty_arr ts' = ty_arr ts ∧
@@ -795,6 +741,87 @@ Proof.
   - exact (locs_run_perm_rangedisj _ _ Hlr Hdisj).
   - exact (locs_run_perm_originclk _ _ Hlr Horig).
 Qed.
+
+(** What the wire delete path guarantees about the type map (issue #133): the
+    per-type MODEL documents are untouched (both surgeries it performs, a
+    split and a tombstone, are model no-ops) and no type disappears. Unlike
+    [repair_types_facts] this carries no run-length bound, because the delete
+    loop splits an unbounded number of times; that is also what makes it
+    transitive, so the loop can compose one record per step. *)
+Definition delete_types_facts (types types' : gmap loc type_state) : Prop :=
+  (∀ p ts', types' !! p = Some ts' ->
+     ∃ ts, types !! p = Some ts ∧ ty_arr ts' = ty_arr ts) ∧
+  (∀ p, is_Some (types !! p) -> is_Some (types' !! p)) ∧
+  (∀ c', c' ∈ all_cells types' -> ∃ c, c ∈ all_cells types ∧
+     cell_client c' = cell_client c ∧
+     (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
+     (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c'))
+      <= uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z).
+
+Lemma delete_types_facts_refl (types : gmap loc type_state) :
+  delete_types_facts types types.
+Proof.
+  split_and!; [move=> p ts' Hp; by exists ts' | done |].
+  move=> c' Hc'. exists c'. split_and!; [exact Hc' | done | lia | lia].
+Qed.
+
+Lemma delete_types_facts_trans (t1 t2 t3 : gmap loc type_state) :
+  delete_types_facts t1 t2 -> delete_types_facts t2 t3 -> delete_types_facts t1 t3.
+Proof.
+  move=> [Harr1 [Hdom1 Hco1]] [Harr2 [Hdom2 Hco2]]. split_and!.
+  - move=> p ts3 Hp3.
+    destruct (Harr2 p ts3 Hp3) as (ts2 & Hp2 & Heq2).
+    destruct (Harr1 p ts2 Hp2) as (ts1 & Hp1 & Heq1).
+    exists ts1. split; [exact Hp1 | congruence].
+  - move=> p Hp. exact (Hdom2 p (Hdom1 p Hp)).
+  - move=> c3 Hc3.
+    destruct (Hco2 c3 Hc3) as (c2 & Hc2 & Hcc2 & Hlo2 & Hhi2).
+    destruct (Hco1 c2 Hc2) as (c1 & Hc1 & Hcc1 & Hlo1 & Hhi1).
+    exists c1. split_and!; [exact Hc1 | congruence | lia | lia].
+Qed.
+
+(** A split step is a delete step: [split_step_facts]'s model and coordinate
+    clauses. *)
+Lemma delete_types_facts_of_split (types types' : gmap loc type_state) (w : item_cell) :
+  split_step_facts types types' w -> delete_types_facts types types'.
+Proof.
+  move=> [Harr [Hdom [_ [_ [_ [_ Hco]]]]]]. split_and!; [| exact Hdom | exact Hco].
+  move=> p ts' Hp'. destruct (Harr p ts' Hp') as (ts & Hp & Heq & _).
+  exists ts. split; [exact Hp | exact Heq].
+Qed.
+
+(** A tombstone step is a delete step: one type is replaced by one whose
+    cells changed but whose model list did not, and (in the only use,
+    [flip_cell] at one index) whose cells keep their coordinates. *)
+Lemma delete_types_facts_of_flip (types : gmap loc type_state) (p : loc)
+    (ts : type_state) (k : nat) (c : item_cell) :
+  types !! p = Some ts -> ty_cells ts !! k = Some c ->
+  delete_types_facts types
+    (<[p := MkTypeState (<[k := flip_cell c]> (ty_cells ts)) (ty_arr ts)]> types).
+Proof.
+  move=> Hp Hck. split_and!.
+  - move=> q tq Hq.
+    destruct (decide (q = p)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Hq. injection Hq as <-.
+      exists ts. split; [exact Hp | reflexivity].
+    + rewrite lookup_insert_ne // in Hq. by exists tq.
+  - move=> q Hq.
+    destruct (decide (q = p)) as [-> | Hne].
+    + rewrite lookup_insert_eq. by eexists.
+    + rewrite lookup_insert_ne //.
+  - (* the pool is the same up to the flipped cell, which keeps its run and
+       hence its coordinates *)
+    move=> c' Hc'.
+    have Hlr := flip_locs_run_perm types p ts k c Hp Hck.
+    have Hin : (ic_loc c', ic_run c') ∈ ((λ c0, (ic_loc c0, ic_run c0)) <$> all_cells types).
+    { rewrite -Hlr. apply list_elem_of_fmap.
+      exists c'. split; [reflexivity | exact Hc']. }
+    apply list_elem_of_fmap in Hin as (cw0 & Heq & Hcw0).
+    have Hrun : ic_run c' = ic_run cw0 := f_equal snd Heq.
+    exists cw0. rewrite /cell_client /cell_clock /run_head Hrun.
+    split_and!; [exact Hcw0 | done | lia | lia].
+Qed.
+
 
 
 (** [cell_fits] survives an integrate splice: membership transport over the

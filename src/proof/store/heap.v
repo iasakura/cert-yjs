@@ -387,6 +387,7 @@ Definition own_delete_spans (sl : slice.t) (dq : dfrac)
   Timeless (own_delete_spans sl dq spans).
 Proof. rewrite /own_delete_spans. apply _. Qed.
 
+
 (** [is_root γs name]: persistent witness that the root type [name] is
     registered in the store (bound in the registry to SOME type loc, which
     stays hidden). This is what the [applyUpdate] certificate spec asks for

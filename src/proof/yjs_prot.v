@@ -99,15 +99,25 @@ Context (decode : list u8 -> option (list Input)).
 (** The Go codec value [f] meets the abstract [decode]: on any byte slice it
     reports exactly whether [decode] succeeds, and on success returns a
     struct slice denoting the decoded batch. *)
+(** The decoded delete spans are NOT constrained: deletes are state, not
+    operations (docs/plan-delete-set.md), so they carry no history
+    certificates and the protocol has nothing to say about them. That is
+    faithful rather than lax: a peer's spans can only tombstone ids that are
+    already integrated, and tombstoning is idempotent and commutative, so a
+    dishonest span costs content but cannot corrupt the CRDT. Yjs has no
+    Byzantine tolerance at all, and peer conformance is an assumption of the
+    whole stack ([yjs_prot] itself is that assumption for the struct half). *)
 Definition codec_spec (f : func.t) : iProp Σ :=
   □ (∀ (s : slice.t) (dq : dfrac) (data : list u8),
       {{{ s ↦*{dq} data }}}
         #f #s
-      {{{ (ok : bool) (sl : slice.t), RET (#ok, #sl);
+      {{{ (ok : bool) (sl sldel : slice.t), RET (#ok, #sl, #sldel);
           s ↦*{dq} data ∗
           if ok
-          then ∃ inputs : list Input, ⌜decode data = Some inputs⌝ ∗
-               own_update_structs sl (DfracOwn 1) inputs
+          then ∃ (inputs : list Input) (spans : list yjs.deleteSpan.t),
+               ⌜decode data = Some inputs⌝ ∗
+               own_update_structs sl (DfracOwn 1) inputs ∗
+               own_delete_spans sldel (DfracOwn 1) spans
           else ⌜decode data = None⌝ }}}).
 
 #[global] Instance codec_spec_persistent f : Persistent (codec_spec f).

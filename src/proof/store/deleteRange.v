@@ -349,7 +349,7 @@ Proof using Type*.
         first exact (delete_types_facts_of_split _ _ _ Hstep1).
       eapply delete_types_facts_trans;
         first exact (delete_types_facts_of_split _ _ _ Hstep2).
-      exact (delete_types_facts_of_flip types2 pL tsL _ HpL).
+      exact (delete_types_facts_of_flip types2 pL tsL kL cL HpL HkL).
   - (* the node ends inside the range: tombstone it whole *)
     wp_apply (wp_store__deleteNode s types1 pR tsR kR cR HpR HkR with "[$Htypes]").
     iIntros "Htypes".
@@ -366,7 +366,7 @@ Proof using Type*.
     + eapply delete_types_facts_trans; first exact Hfacts.
       eapply delete_types_facts_trans;
         first exact (delete_types_facts_of_split _ _ _ Hstep1).
-      exact (delete_types_facts_of_flip types1 pR tsR _ HpR).
+      exact (delete_types_facts_of_flip types1 pR tsR kR cR HpR HkR).
 Qed.
 
 (** [store.applyDeleteSpans]: apply a batch of decoded spans on top of the
@@ -512,6 +512,76 @@ Proof using Type*.
              = S (uint.nat i)); last word.
   rewrite (take_S_r spans (uint.nat i) sp Hsp) app_assoc.
   iFrame "Hall". iPureIntro. word.
+Qed.
+
+(** The public form of the wire delete step: [own_store] in, [own_store] out
+    at the SAME model, history and pending buffer. Deletes are model no-ops in
+    the insert-only document model (they only flip tombstone bits and split
+    runs), which is exactly why the whole store predicate is preserved: the
+    per-type item lists [ty_arr] do not move, so the registry coherence, the
+    item-set authority and the counter clause all transfer verbatim, and the
+    pool invariants come back from the loop.
+
+    The delete SET is what will record the content change (D3); at this
+    milestone the statement is that a delete disturbs nothing else. *)
+Lemma wp_store__applyDeleteSpans_store (s_loc : loc) (γs : store_names)
+    (γh : history_names) (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A)))
+    (sp_sl : slice.t) (dq : dfrac) (spans : list yjs.deleteSpan.t) :
+  {{{ is_pkg_init yjs ∗ own_store s_loc γs γh c h m pend ∗
+      own_delete_spans sp_sl dq spans }}}
+    s_loc @! (go.PointerType yjs.store) @! "applyDeleteSpans" #sp_sl
+  {{{ RET #(); own_store s_loc γs γh c h m pend ∗ own_delete_spans sp_sl dq spans }}}.
+Proof using Type*.
+  iIntros (Φ) "(#Hpkg & Hstore & Hsp) HΦ".
+  iNamed "Hstore".
+  destruct Hregcoh as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
+  have Hpool : pool_invs types by split_and!; assumption.
+  wp_apply (wp_store__applyDeleteSpans s_loc items_mref types pdel_sl sp_sl dq pdel spans
+              Hpool with "[$Hitemsf $Hitemmap $Htypes $Hpddelf $Hpddel $Hsp]").
+  iIntros (types' pdel_sl' rest)
+    "(Hitemsf & Hitemmap & Htypes & Hpddelf & Hpddel & Hsp & %Hpool' & %Hfacts)".
+  destruct Hfacts as (Harr & Hdom & Hcoord).
+  (* equal domains and equal model lists, so the item-set authority is
+     literally the same map *)
+  have Hdomeq : ∀ q, is_Some (types !! q) <-> is_Some (types' !! q).
+  { move=> q. split; first exact (Hdom q).
+    move=> [ts' Hts']. destruct (Harr q ts' Hts') as (ts & Hts & _). by exists ts. }
+  have Hfmapeq : ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types')
+               = ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types).
+  { apply map_eq => q. rewrite !lookup_fmap.
+    destruct (types' !! q) as [ts'|] eqn:Hts'.
+    - destruct (Harr q ts' Hts') as (ts & Hts & Heq). rewrite Hts /= Heq //.
+    - destruct (types !! q) as [ts|] eqn:Hts; last done.
+      exfalso. destruct (Hdom q (mk_is_Some _ _ Hts)) as [ts0 Hts0].
+      rewrite Hts0 in Hts'. done. }
+  iEval (rewrite -Hfmapeq) in "Hseq".
+  destruct Hpool' as (Hrunfits' & Hlocdup' & Hrangedisj' & Horiginclk').
+  iApply "HΦ". iFrame "Hsp".
+  iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl', rest, types', bind, acc.
+  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend
+          Hpddelf Hpddel Hseq Htypes HtypesAuth Hhist Hacc Hds".
+  iFrame "Hclientpin Hpendcert Hbinds".
+  iPureIntro. split_and!.
+  - exact Hclientc.
+  - exact Hpendroot.
+  - exact Hpendbnd.
+  - (* the registry still describes the same documents *)
+    rewrite /doc_registry_coh. split_and!.
+    + move=> name p Hb. apply Hdom. exact (Hbindtypes name p Hb).
+    + exact Hbindinj.
+    + move=> p Hp. apply Htypesbound. by apply Hdomeq.
+    + move=> name p ts' Hb Hts'.
+      destruct (Harr p ts' Hts') as (ts & Hts & Heq).
+      rewrite Heq. exact (Hmtypes name p ts Hb Hts).
+    + exact Hmdom.
+  - exact Hhcoh.
+  - exact Hctr.
+  - exact Hlocdup'.
+  - exact Hrangedisj'.
+  - exact Hrunfits'.
+  - exact Horiginclk'.
+  - exact Hacccoh.
 Qed.
 
 End store_deleteRange.
