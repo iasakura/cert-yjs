@@ -208,6 +208,10 @@ Proof.
     { move=> c Hc. rewrite Hperm in Hc. exact (Hrunfits c Hc). }
     have Horiginclk' : ∀ c, c ∈ all_cells types' → cell_origin_clk c.
     { move=> c Hc. rewrite Hperm in Hc. exact (Horiginclk c Hc). }
+    (* registering an empty type moves no cells, so the tombstone-set
+       invariant transports over the same permutation *)
+    iDestruct (own_ds_perm γs m (all_cells types) (all_cells types') Hperm with "Hds")
+      as "Hds".
     wp_auto.
     wp_apply (wp_Store__wunlock with "[$His_store $Hwl Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hds]").
     { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types', bind', h, m, pend, pdel.

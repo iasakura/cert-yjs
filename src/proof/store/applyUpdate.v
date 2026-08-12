@@ -74,6 +74,45 @@ Proof. rewrite /cell_le. move=> x y. lia. Qed.
     model scan. Origin-less pending structs must target registered roots (the
     issue #49 pre-bound-roots restriction); origin-carrying structs derive
     their binding from the origin's arrival at integration time. *)
+(** [doc_model_has] is monotone under a doc model that only grows per type. *)
+Lemma docm_has_mono (m m' : DocModel) (i : YjsId) :
+  (∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m' t) ->
+  doc_model_has m i = true -> doc_model_has m' i = true.
+Proof.
+  move=> Hmono Hh. apply docm_has_spec in Hh. apply docm_has_spec.
+  destruct Hh as (t & x & Hx & Hid). exists t, x. split; [exact (Hmono t x Hx) | exact Hid].
+Qed.
+
+(** [integrate_all] only splices: it preserves membership of its base list. *)
+Lemma integrate_all_preserves_mem (ops : list (IntegrateInput (A := A)))
+    (arr arr' : list (YjsItem A)) :
+  integrate_all ops arr = Some arr' -> ∀ x, x ∈ arr -> x ∈ arr'.
+Proof.
+  elim: ops arr => [| op ops IH] arr /=.
+  - move=> [= <-] x Hx //.
+  - move=> Hbind x Hx.
+    destruct (integrate op arr) as [arr0 |] eqn:Hint; simpl in Hbind; last done.
+    exact (IH arr0 Hbind x (integrate_preserves_mem op arr arr0 Hint x Hx)).
+Qed.
+
+(** [wire_integrate] preserves membership of the target type's item list. *)
+Lemma wire_integrate_preserves_mem (m : DocModel)
+    (typedInput : TId * IntegrateInput (A := A)) (arr' : list (YjsItem A)) :
+  wire_integrate m typedInput = Some arr' ->
+  ∀ x, x ∈ doc_model_get m typedInput.1 -> x ∈ arr'.
+Proof. rewrite /wire_integrate. apply integrate_all_preserves_mem. Qed.
+
+(** A wire replay only grows the doc model, per type. *)
+Lemma WireReplay_mem (m m' : DocModel) (applied : list (TId * IntegrateInput (A := A))) :
+  WireReplay m applied m' -> ∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m' t.
+Proof.
+  elim => [m0 | m0 typedInput arr' rest0 m0' _ _ Hint _ IH] t x Hx; first exact Hx.
+  apply IH.
+  destruct (decide (t = typedInput.1)) as [-> | Hne].
+  - rewrite docm_get_insert_eq. exact (wire_integrate_preserves_mem m0 typedInput arr' Hint x Hx).
+  - rewrite (docm_get_insert_ne m0 typedInput.1 t arr' Hne) //.
+Qed.
+
 Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
     (dq : dfrac)
     (inputs pend0 applied rest : list (TId * IntegrateInput (A := A)))
@@ -132,6 +171,7 @@ Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
             (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c))%Z ∧
             (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
              uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z⌝ ∗
+      ⌜apply_live_refine m (all_cells types) (all_cells types')⌝ ∗
       ⌜NoDup (ic_loc <$> all_cells types')⌝ ∗
       ⌜cells_range_disjoint (all_cells types')⌝ ∗
       ⌜∀ c, c ∈ all_cells types' -> cell_fits c⌝ ∗
@@ -260,6 +300,7 @@ Proof using Type*.
                (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c0))%Z ∧
                (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <=
                 uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z)⌝ ∗
+        "%Halrj" ∷ ⌜apply_live_refine m (all_cells types) (all_cells typesj)⌝ ∗
         "%Hlocdupj" ∷ ⌜NoDup (ic_loc <$> all_cells typesj)⌝ ∗
         "%Hrangedisjj" ∷ ⌜cells_range_disjoint (all_cells typesj)⌝ ∗
         "%Hmid" ∷ ⌜pv = true ->
@@ -284,6 +325,7 @@ Proof using Type*.
       - exact Hfits.
       - exact Horiginclk.
       - move=> c0 Hc0. left. exists c0. split_and!; [exact Hc0 | done | lia | lia].
+      - exact (apply_live_refine_refl m (all_cells types)).
       - exact Hlocdup.
       - exact Hrangedisj.
       - move=> _. split_and!; [exact Hdrain | done | exact Hvr].
@@ -368,6 +410,8 @@ Proof using Type*.
                  (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c0))%Z ∧
                  (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <=
                   uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z)⌝ ∗
+          "%Hgrowc" ∷ ⌜∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m_c t⌝ ∗
+          "%Halrc" ∷ ⌜apply_live_refine m (all_cells types) (all_cells types_c)⌝ ∗
           "%Hlocdupc" ∷ ⌜NoDup (ic_loc <$> all_cells types_c)⌝ ∗
           "%Hrangedisjc" ∷ ⌜cells_range_disjoint (all_cells types_c)⌝)%I
         with "[i Hprog rest Hrsl0 Hrcap0 Hitemsf Hitemmap Htypesf Htypesmap Htypes]"
@@ -396,6 +440,8 @@ Proof using Type*.
         - move=> c0 Hc0. destruct (Hprovj c0 Hc0) as [Ho | Ho]; [by left | right].
           destruct Ho as (typedInput & Hti & Hcc & Hlo & Hhi). exists typedInput.
           rewrite app_nil_r. split_and!; [exact Hti | exact Hcc | exact Hlo | exact Hhi].
+        - exact (WireReplay_mem m mj appliedj Hprj).
+        - exact Halrj.
         - exact Hlocdupj.
         - exact Hrangedisjj. }
       wp_for "IHin".
@@ -490,7 +536,7 @@ Proof using Type*.
            have Hlk0 : ((targetType, input) :: app2 ++ af2) !! 0%nat = Some (targetType, input) by done.
            destruct (applyUpdate_peel_step ((targetType, input) :: app2 ++ af2) 0%nat targetType input
                        m_c m' (doc_model_get m_c targetType) Hlk0 Hne1 eq_refl Hvrc)
-             as (newItem & arrp & Htoit & Hvld & Hmax & Hall & Hvrtail).
+             as (newItem & arrp & Htoit & Hvld & Hmax & Hall & Hvrtail & Hclkbound).
            simpl in Hvrtail.
            have Harr2 : arrp = arr'.
            { move: Hint'. rewrite /wire_integrate Hall. by move=> [= <-]. }
@@ -610,7 +656,13 @@ Proof using Type*.
                        Hbindtypesc Hbindinjc Htypesboundc Hmtypesc Hmdomc Hnwc
                        Hlocdupc Hrangedisjc Hfitsc Horiginclkc
                        with "[$Hui $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
-           iIntros (types'' bind'') "(Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hbindsub'' & %Hdom'' & %Hbindtypes'' & %Hbindinj'' & %Htypesbound'' & %Hmtypes'' & %Hmdom'' & %Hprov'' & %Hlocdup'' & %Hrangedisj'' & %Hfits'' & %Horiginclk'')".
+           iIntros (types'' bind'') "(Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hbindsub'' & %Hdom'' & %Hbindtypes'' & %Hbindinj'' & %Htypesbound'' & %Hmtypes'' & %Hmdom'' & %Hprov'' & %Hilr'' & %Hlocdup'' & %Hrangedisj'' & %Hfits'' & %Horiginclk'')".
+           have Hstep1 : WireReplay m_c [(targetType, input)] (<[targetType := arr']> m_c)
+             := WireReplay_cons m_c (targetType, input) arr' [] _ Hd Hready Hint'
+                  (WireReplay_nil _).
+           have Hgrow_step := WireReplay_mem m_c _ _ Hstep1.
+           have Hgrowc_has : ∀ i0, doc_model_has m i0 = true -> doc_model_has m_c i0 = true
+             := λ i0, docm_has_mono m m_c i0 Hgrowc.
            wp_auto. wp_for_post.
            iFrame "Hcapin Hpendf HΦ s Hslin Hpendingp HslP HcapP".
            iExists (S i), true, restS, uivsR, keptacc, (appacc ++ [(targetType, input)]),
@@ -648,6 +700,15 @@ Proof using Type*.
               ** right. exists (targetType, input). rewrite app_assoc. split_and!;
                    [apply elem_of_app; right; apply elem_of_cons; by left
                    | exact Hcc | exact Hlo | exact Hhi].
+           ++ (* the model grows by this one integrate step *)
+              move=> t x Hx. exact (Hgrow_step t x (Hgrowc t x Hx)).
+           ++ (* the tombstone-set refinement: the repaired/spliced pool's live
+                 chars are old live chars or chars this step just integrated,
+                 which the replay's client bound puts outside the old model *)
+              apply (apply_live_refine_trans m m_c (all_cells types)
+                       (all_cells types_c) (all_cells types'') Hgrowc_has Halrc).
+              exact (apply_live_refine_of_integrate input m_c
+                       (all_cells types_c) (all_cells types'') Hclkbound Hilr'').
            ++ exact Hlocdup''.
            ++ exact Hrangedisj''.
         -- (* blocked: keep (deduplicated by id) *)
@@ -726,6 +787,7 @@ Proof using Type*.
         ** exact Hfitsc.
         ** exact Horiginclkc.
         ** exact Hprovc.
+        ** exact Halrc.
         ** exact Hlocdupc.
         ** exact Hrangedisjc.
         ** (* progress: one more drain iteration remains *)
@@ -778,6 +840,7 @@ Proof using Type*.
       * move=> c0 Hc0.
         destruct (Hprovj c0 Hc0) as [Hold | (typedInput & Hti & Hcc & Hlo & Hhi)]; [by left |].
         right. exists typedInput. rewrite Happeq. split_and!; [exact Hti | exact Hcc | exact Hlo | exact Hhi].
+      * exact Halrj.
       * exact Hlocdupj.
       * exact Hrangedisjj.
       * exact Hfitsj.
@@ -908,45 +971,6 @@ Qed.
    the final model already carries its id. [wp_store__applyUpdate_certs] turns
    this into the per-input guarantee that each input is either delivered into
    the history or buffered in the new pending: no input silently vanishes. *)
-
-(** [doc_model_has] is monotone under a doc model that only grows per type. *)
-Lemma docm_has_mono (m m' : DocModel) (i : YjsId) :
-  (∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m' t) ->
-  doc_model_has m i = true -> doc_model_has m' i = true.
-Proof.
-  move=> Hmono Hh. apply docm_has_spec in Hh. apply docm_has_spec.
-  destruct Hh as (t & x & Hx & Hid). exists t, x. split; [exact (Hmono t x Hx) | exact Hid].
-Qed.
-
-(** [integrate_all] only splices: it preserves membership of its base list. *)
-Lemma integrate_all_preserves_mem (ops : list (IntegrateInput (A := A)))
-    (arr arr' : list (YjsItem A)) :
-  integrate_all ops arr = Some arr' -> ∀ x, x ∈ arr -> x ∈ arr'.
-Proof.
-  elim: ops arr => [| op ops IH] arr /=.
-  - move=> [= <-] x Hx //.
-  - move=> Hbind x Hx.
-    destruct (integrate op arr) as [arr0 |] eqn:Hint; simpl in Hbind; last done.
-    exact (IH arr0 Hbind x (integrate_preserves_mem op arr arr0 Hint x Hx)).
-Qed.
-
-(** [wire_integrate] preserves membership of the target type's item list. *)
-Lemma wire_integrate_preserves_mem (m : DocModel)
-    (typedInput : TId * IntegrateInput (A := A)) (arr' : list (YjsItem A)) :
-  wire_integrate m typedInput = Some arr' ->
-  ∀ x, x ∈ doc_model_get m typedInput.1 -> x ∈ arr'.
-Proof. rewrite /wire_integrate. apply integrate_all_preserves_mem. Qed.
-
-(** A wire replay only grows the doc model, per type. *)
-Lemma WireReplay_mem (m m' : DocModel) (applied : list (TId * IntegrateInput (A := A))) :
-  WireReplay m applied m' -> ∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m' t.
-Proof.
-  elim => [m0 | m0 typedInput arr' rest0 m0' _ _ Hint _ IH] t x Hx; first exact Hx.
-  apply IH.
-  destruct (decide (t = typedInput.1)) as [-> | Hne].
-  - rewrite docm_get_insert_eq. exact (wire_integrate_preserves_mem m0 typedInput arr' Hint x Hx).
-  - rewrite (docm_get_insert_ne m0 typedInput.1 t arr' Hne) //.
-Qed.
 
 (** A single pass grows the doc model (per type). *)
 Lemma wire_pass_model_grows (pending : list (TId * IntegrateInput (A := A))) :
@@ -1865,7 +1889,7 @@ Proof using Type*.
               Hdrainc Hvr Hrtot Happsub Hnonemptyb Hbindtypes Hbindinj Htypesbound Hmtypes Hmdom
               Hrunfits Hkb1c Hlocdup Hrangedisj Horiginclk
               with "[$Hupd $Hpendf $Hpend $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
-  iIntros (pend_sl' types' bind') "(Hupd & Hpendf & Hpend' & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hbindsub' & %Hdom' & %Hbindtypes' & %Hbindinj' & %Htypesbound' & %Hmtypes' & %Hmdom' & %Hprov' & %Hlocdup' & %Hrangedisj' & %Hfits' & %Horiginclk')".
+  iIntros (pend_sl' types' bind') "(Hupd & Hpendf & Hpend' & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hbindsub' & %Hdom' & %Hbindtypes' & %Hbindinj' & %Htypesbound' & %Hmtypes' & %Hmdom' & %Hprov' & %Hilr' & %Hlocdup' & %Hrangedisj' & %Hfits' & %Horiginclk')".
   (* grow the item-set authority to the (possibly larger) types and snapshot it;
      the registry may have grown by fresh empty root types (issue #54), so the
      domain only INCREASES (dom types ⊆ dom types'). *)
@@ -1977,8 +2001,13 @@ Proof using Type*.
   have Hacccoh' : accepted_coh acc (h ++ (deliver_ev <$> expand_inputs applied)) rest'.
   { apply (accepted_coh_applyUpdate acc h _ pend rest' Hacccoh Hdids).
     move=> x Hx. apply input_accounted_id, Hnoloss, elem_of_app. by left. }
-  (* the delete set's model-domain bound transports across the replay *)
-  iDestruct (own_ds_ValidReplay γs (expand_inputs applied) m m' Hvr with "Hds") as "Hds".
+  (* the delete set transports across the apply: the domain bound follows the
+     replay, and the tombstone coherence follows the pool refinement the store
+     op reports (old live chars, or chars this apply just integrated) *)
+  have Hmono' : ∀ i, doc_model_has m i = true -> doc_model_has m' i = true
+    := λ i, docm_has_mono m m' i (ValidReplay_mem (expand_inputs applied) m m' Hvr).
+  iDestruct (own_ds_apply γs m m' (all_cells types) (all_cells types')
+               Hmono' Hilr' with "Hds") as "Hds".
   iModIntro. iApply ("HΦ" $! applied rest' m').
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
   iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hpddelf Hpddel Hseq Htypes HtypesAuth Hhist Hacc Hds";

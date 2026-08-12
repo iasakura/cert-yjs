@@ -103,7 +103,8 @@ Proof.
       "%Hlocdup1" ∷ ⌜NoDup (ic_loc <$> all_cells types1)⌝ ∗
       "%Hrangedisj1" ∷ ⌜cells_range_disjoint (all_cells types1)⌝ ∗
       "%Hrunfits1" ∷ ⌜∀ c0, c0 ∈ all_cells types1 → cell_fits c0⌝ ∗
-      "%Horiginclk1" ∷ ⌜∀ c0, c0 ∈ all_cells types1 → cell_origin_clk c0⌝)%I
+      "%Horiginclk1" ∷ ⌜∀ c0, c0 ∈ all_cells types1 → cell_origin_clk c0⌝ ∗
+      "%Hlr1" ∷ ⌜live_refine types types1⌝)%I
       with "[s left right offset Htext Hrest Hitemsf Hitemmap]".
   { (* offset > 0: split [left] at the offset *)
     destruct Hoff as [Hoffeq | (Hoffpos & Hpge1 & (cw & Hcw & Hcwdel & Hofflen))];
@@ -206,7 +207,9 @@ Proof.
     - exact Hlocdup1.
     - exact Hrangedisj1.
     - exact Hrunfits1.
-    - exact Horiginclk1. }
+    - exact Horiginclk1.
+    - exact (split_pool_live_refine types (tv.(yjs.Text.inner')) ts.(ty_cells) ts.(ty_arr)
+               (p - 1)%nat (uint.nat off) rloc cw Htspm Hcw). }
   { (* offset = 0: the index already sits on a boundary *)
     have Hoffeq : off = W64 0.
     { destruct Hoff as [-> | (Hoffpos & _)]; [done | exfalso; apply n; word]. }
@@ -216,7 +219,8 @@ Proof.
     iFrame "s Hitemsf Hitemmap Hrest Htext left right".
     iPureIntro. split_and!;
       [exact Htsp | reflexivity | move=> p' _; reflexivity | exact Hpbound
-      | exact Hcellctr | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk]. }
+      | exact Hcellctr | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk
+      | exact (live_refine_refl types)]. }
   iIntros (v) "[%Hv HQ]". subst v. iNamed "HQ".
   (* rebind the normalized state under the boundary-form names: everything
      the remaining proof consumes is restated at (types1, ts1, p1), the old
@@ -252,10 +256,13 @@ Proof.
     - rewrite !lookup_fmap Htsp1 Htsp /= Harr1 //.
     - rewrite !lookup_fmap (Hdomeq1 _ Hne) //. }
   iEval (rewrite -Hseqeq1) in "Hseq".
+  (* the tombstone-set invariant follows the normalization: a split only
+     refines the live cells (plan-delete-set.md section 3) *)
+  iDestruct (own_ds_refine γs m types types1 Hlr1 with "Hds") as "Hds".
   clear Hctr Hbindtypes Htypesbound Hmtypes HLsub Hmt Hinvarr Htsp Hpbound
         Hcellctr Hlocdup Hrangedisj Hrunfits Horiginclk Hoff Hlftloc Hrgtloc
         Hlen Hrepr Hcpar.
-  clear Harr1 Hdomeq1 Hseqeq1.
+  clear Harr1 Hdomeq1 Hseqeq1 Hlr1.
   clear off lft rgt yt0 tl0.
   clear p ts types.
   rename types1 into types. rename ts1 into ts. rename p1 into p.
@@ -306,6 +313,7 @@ Proof.
     "Hpddel" ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel ∗
     "Hseq" ∷ own γs.(sn_seq) (● ((λ ts0 : type_state, (list_to_set ts0.(ty_arr) : gset (YjsItem A))) <$> types) : authR (gmapUR loc (gsetUR (YjsItem A)))) ∗
     "Hhist" ∷ own_client_history γh (uint.nat client) h ∗
+    "Hds" ∷ own_ds γs m (all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)) ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
     "Hrest" ∷ ([∗ map] kk↦y ∈ delete (tv.(yjs.Text.inner')) types,
@@ -321,11 +329,11 @@ Proof.
     "%Hrangedisjj" ∷ ⌜cells_range_disjoint (all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types))⌝ ∗
     "%Hrunfitsj" ∷ ⌜∀ c0, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) → cell_fits c0⌝ ∗
     "%Horiginclkj" ∷ ⌜∀ c0, c0 ∈ all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) → cell_origin_clk c0⌝)%I
-    with "[t s cur remaining Hparent Hdll Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq Hhist HtypesAuth Hrest]" as "IH".
+    with "[t s cur remaining Hparent Hdll Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq Hhist Hds HtypesAuth Hrest]" as "IH".
   { iExists p, len, ts.(ty_cells), yt0', tl0'.
     have Hts_eta : MkTypeState ts.(ty_cells) ts.(ty_arr) = ts by (destruct ts; reflexivity).
     rewrite Hts_eta (insert_id types (tv.(yjs.Text.inner')) ts Htsp).
-    iFrame "t s Hparent Hdll remaining Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq Hhist HtypesAuth Hrest".
+    iFrame "t s Hparent Hdll remaining Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq Hhist Hds HtypesAuth Hrest".
     iEval (rewrite Hrgtloc) in "cur". iFrame "cur".
     iPureIntro. split_and!;
       [exact Hpbound | exact Hlen0 | exact Hrepr0 | exact Hcpar0
@@ -479,9 +487,9 @@ Proof.
       apply list_insert_id; exact Hcq. }
     rewrite Hins0.
     wp_for_post.
-    iFrame "Hacc Hds".
+    iFrame "Hacc".
     iFrame "Ht His_lb HΦ". iExists (S q), rem, cells', yt', tl'.
-    iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq Hhist HtypesAuth Hrest".
+    iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq Hhist Hds HtypesAuth Hrest".
     rewrite Hcr. replace (Z.of_nat (S q)) with (Z.of_nat q + 1)%Z by lia. iFrame "Hcur".
     iPureIntro. split_and!;
       [lia | exact Hytlen | exact Hrepr' | exact Hcparj
@@ -632,10 +640,30 @@ Proof.
       { rewrite (all_cells_insert types _ ts _ Htsp) (all_cells_insert types _ ts _ Htsp) /=.
         rewrite !fmap_app Hkpeq3 //. }
       iDestruct (own_item_map_kp_perm items_mref (DfracOwn 1) _ _ Hkpperm3 with "Hitemmap") as "Hitemmap".
-      iFrame "Ht His_lb HΦ Hds".
+      (* the tombstone-set invariant across this step: the range-end split
+         refines the live cells, and so does the flip that follows it *)
+      have Hii3 : <[tv.(yjs.Text.inner') := MkTypeState cells3 ts.(ty_arr)]>
+                    (<[tv.(yjs.Text.inner') := MkTypeState cells2 ts.(ty_arr)]> types)
+                = <[tv.(yjs.Text.inner') := MkTypeState cells3 ts.(ty_arr)]> types.
+      { rewrite insert_insert. case_decide as Hd; [reflexivity | congruence]. }
+      have Hlrsp3 : live_refine (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
+                                (<[tv.(yjs.Text.inner') := MkTypeState cells2 ts.(ty_arr)]> types).
+      { rewrite -Hii.
+        exact (split_pool_live_refine _ (tv.(yjs.Text.inner')) cells' ts.(ty_arr)
+                 q (uint.nat rem) rloc cq (lookup_insert_eq _ _ _) Hcq). }
+      have Hlrfl3 : live_refine (<[tv.(yjs.Text.inner') := MkTypeState cells2 ts.(ty_arr)]> types)
+                                (<[tv.(yjs.Text.inner') := MkTypeState cells3 ts.(ty_arr)]> types).
+      { rewrite -Hii3.
+        exact (live_refine_flip _ (tv.(yjs.Text.inner')) (MkTypeState cells2 ts.(ty_arr))
+                 q leftCell (lookup_insert_eq _ _ _) Hcl2). }
+      iDestruct (own_ds_refine γs m
+                   (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
+                   (<[tv.(yjs.Text.inner') := MkTypeState cells3 ts.(ty_arr)]> types)
+                   (live_refine_trans _ _ _ Hlrsp3 Hlrfl3) with "Hds") as "Hds".
+      iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (uint.nat rem))), cells3,
         (yt2 <| yjs.yType.len' := w64_word_instance.(word.sub) yt2.(yjs.yType.len') (W64 (uint.nat rem)) |>), tl2.
-      iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq Hhist HtypesAuth Hrest".
+      iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq Hhist Hds HtypesAuth Hrest".
       have Hcurloc3 : node_loc cells3 (Z.of_nat (S q)) = iv2.(yjs.item.right').
       { rewrite Hcr2 /cells3 /node_loc.
         replace (Z.of_nat (S q)) with (Z.of_nat q + 1)%Z by lia.
@@ -713,10 +741,25 @@ Proof.
       { rewrite (all_cells_insert types _ ts _ Htsp) (all_cells_insert types _ ts _ Htsp) /=.
         rewrite !fmap_app Hkpeq3 //. }
       iDestruct (own_item_map_kp_perm items_mref (DfracOwn 1) _ _ Hkpperm3 with "Hitemmap") as "Hitemmap".
-      iFrame "Ht His_lb HΦ Hds".
+      (* the tombstone-set invariant across this step: a flip only turns bits
+         ON, so the live cells refine *)
+      have Hii3 : <[tv.(yjs.Text.inner') := MkTypeState cells3 ts.(ty_arr)]>
+                    (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
+                = <[tv.(yjs.Text.inner') := MkTypeState cells3 ts.(ty_arr)]> types.
+      { rewrite insert_insert. case_decide as Hd; [reflexivity | congruence]. }
+      have Hlrfl3 : live_refine (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
+                                (<[tv.(yjs.Text.inner') := MkTypeState cells3 ts.(ty_arr)]> types).
+      { rewrite -Hii3.
+        exact (live_refine_flip _ (tv.(yjs.Text.inner')) (MkTypeState cells' ts.(ty_arr))
+                 q cq (lookup_insert_eq _ _ _) Hcq). }
+      iDestruct (own_ds_refine γs m
+                   (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
+                   (<[tv.(yjs.Text.inner') := MkTypeState cells3 ts.(ty_arr)]> types)
+                   Hlrfl3 with "Hds") as "Hds".
+      iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (length (ic_run cq)))), cells3,
         (yt' <| yjs.yType.len' := w64_word_instance.(word.sub) yt'.(yjs.yType.len') (W64 (length (ic_run cq))) |>), tl'.
-      iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq Hhist HtypesAuth Hrest".
+      iFrame "Htptr Hsp Hparent Hdll Hrem Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq Hhist Hds HtypesAuth Hrest".
       have Hcurloc : node_loc cells3 (Z.of_nat (S q)) = itemVal.(yjs.item.right').
       { rewrite Hcr /cells3 /node_loc.
         replace (Z.of_nat (S q)) with (Z.of_nat q + 1)%Z by lia.

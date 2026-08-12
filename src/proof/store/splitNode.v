@@ -1691,6 +1691,31 @@ Proof.
   rewrite Hnew. apply elem_of_cons; right. apply elem_of_cons; by right.
 Qed.
 
+(** A split refines the live cells: both halves inherit the node's
+    [ic_deleted] bit and share out its run ([split_cell_left] takes a prefix,
+    [split_cell_right] the matching suffix), so a live cell after the split is
+    covered, chars and all, by a live cell before it. This is what carries the
+    tombstone-set invariant [ds_tombstoned] across a split. *)
+Lemma split_pool_live_refine (types : gmap loc type_state) (parent : loc)
+    (cells : list item_cell) (arr : list (YjsItem A)) (k o : nat) (rloc : loc)
+    (cw : item_cell) :
+  types !! parent = Some (MkTypeState cells arr) ->
+  cells !! k = Some cw ->
+  live_refine types (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types).
+Proof.
+  move=> Htypes Hck.
+  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck) as (rest & Hold & Hnew).
+  have Hcw : cw ∈ all_cells types by rewrite Hold; apply list_elem_of_here.
+  move=> c' Hc' Hlive. rewrite Hnew in Hc'.
+  apply elem_of_cons in Hc' as [-> | Hc'].
+  { exists cw. split_and!; [exact Hcw | exact Hlive |].
+    move=> y Hy. rewrite -(take_drop o (ic_run cw)). apply elem_of_app. by left. }
+  apply elem_of_cons in Hc' as [-> | Hc'].
+  { exists cw. split_and!; [exact Hcw | exact Hlive |].
+    move=> y Hy. rewrite -(take_drop o (ic_run cw)). apply elem_of_app. by right. }
+  exists c'. split_and!; [rewrite Hold; apply elem_of_cons; by right | exact Hlive | done].
+Qed.
+
 (** A split grows only the split client's run list, by one. *)
 Lemma split_pool_client_run_len (types : gmap loc type_state) (parent : loc)
     (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
@@ -1832,6 +1857,7 @@ Proof using Type*.
       * move=> ccl clkZ c Hc Hccl Hle2 Hlt2. exists c. split_and!; try done. by left.
       * move=> p ts0 ts0' Hp Hp' _. congruence.
       * move=> c1 Hc1. exists c1. split_and!; [exact Hc1 | done | lia | lia].
+      * exact (live_refine_refl types).
     + exists cw. split_and!; [exact Hcwmem | done | exact Hcwcc | | done].
       clear -Hoeq Hcwle Hcwlt Hlenpos. word.
   - (* split just after the id *)
@@ -1865,6 +1891,7 @@ Proof using Type*.
           rewrite /cell_unit in Hu. lia. }
         { rewrite lookup_insert_ne in Hp'; last congruence. congruence. }
       * exact (split_pool_subrange types parent cells arr k cw _ rloc Htypes0 Hck Hrunwf Ho2 Hckbnd Hfitscw).
+      * exact (split_pool_live_refine types parent cells arr k _ rloc cw Htypes0 Hck).
     + destruct (split_pool_perm types parent cells arr k cw
                   ((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) + 1) rloc Htypes0 Hck)
         as (rest & Hold & Hnew).
@@ -1938,6 +1965,7 @@ Proof using Type*.
       * move=> ccl clkZ c Hc Hccl Hle2 Hlt2. exists c. split_and!; try done. by left.
       * move=> p ts0 ts0' Hp Hp' _. congruence.
       * move=> c1 Hc1. exists c1. split_and!; [exact Hc1 | done | lia | lia].
+      * exact (live_refine_refl types).
     + exists cw. split_and!; [exact Hcwmem | done | exact Hcwcc | | done].
       clear -Hoeq Hcwle. word.
   - (* split at the offset: the fresh right half starts at the id *)
@@ -1972,6 +2000,7 @@ Proof using Type*.
           rewrite /cell_unit in Hu. lia. }
         { rewrite lookup_insert_ne in Hp'; last congruence. congruence. }
       * exact (split_pool_subrange types parent cells arr k cw _ rl Htypes0 Hck Hrunwf Ho2 Hckbnd Hfitscw).
+      * exact (split_pool_live_refine types parent cells arr k _ rl cw Htypes0 Hck).
     + destruct (split_pool_perm types parent cells arr k cw
                   (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) rl Htypes0 Hck)
         as (rest & Hold & Hnew).

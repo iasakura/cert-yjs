@@ -10,7 +10,17 @@
       cells that shadows [store.items].
     - the pool invariants: location [NoDup], clock-range disjointness
       ([cells_range_disjoint]), [cell_fits], [cell_origin_clk], bundled as
-      [pool_invs] / [split_step_facts] / [repair_types_facts].
+      [pool_invs] / [split_step_facts] / [repair_types_facts] /
+      [delete_types_facts].
+    - [live_refine]: every live cell of the new pool is covered, chars and
+      all, by a live cell of the old one, and [ds_tombstoned]: no live cell
+      holds an id of the delete set. The pair is what gives the ghost delete
+      set its meaning (plan-delete-set.md section 3). Integration breaks
+      [live_refine] (it adds a live cell with no ancestor), so it reports the
+      weaker [integrate_live_refine] (the escape is "this char is the wire
+      item's own"), which the apply loop turns into [apply_live_refine] (the
+      escape is "the model did not have this id") with the replay's client
+      bound.
     - the split surgery [split_cell_left] / [split_cell_right] / [split_cells].
     - the id-span abstraction [span_ids] / [span_wf] (a span denotes its whole
       clock interval, since an id addresses any char of a run), and
@@ -32,6 +42,11 @@
     - [span_ids] is exactly the clock-interval test ([span_ids_elem]), is the
       singleton on a length-1 span, distributes over [snoc], and matches a
       run's char ids ([span_ids_char_ids]).
+    - [live_refine] is reflexive, transitive, and holds of a tombstone flip
+      ([live_refine_flip], over the cell-level [flip_pool_perm]) and of a
+      cell-preserving permutation; [ds_tombstoned] travels along it
+      ([ds_tombstoned_refine]) and along an integrate splice whose fresh run
+      misses the set ([ds_tombstoned_snoc]).
 
     The Iris layer over all of this is [store/heap.v]. *)
 From New.proof Require Import proof_prelude.
@@ -295,6 +310,87 @@ Definition pool_invs (types : gmap loc type_state) : Prop :=
   cells_range_disjoint (all_cells types) ∧
   (∀ c, c ∈ all_cells types -> cell_origin_clk c).
 
+(* ----- the live-cell refinement and the tombstone-set invariant --------- *)
+
+(** [live_refine types types']: every LIVE (untombstoned) cell of the new pool
+    has a LIVE cell of the old pool holding all of its chars. Three of the
+    four surgeries the store performs satisfy it: a split's halves inherit the
+    node's [ic_deleted] bit and share out its run, a tombstone flip only turns
+    bits ON, and registering a type adds no cells. Integration does NOT (it
+    adds a live cell with no ancestor); that step re-establishes
+    [ds_tombstoned] from the new id's freshness instead ([ds_tombstoned_snoc]).
+
+    Stated over chars, not coordinates, because the tombstone set is a set of
+    [YjsId]s: the coordinate clause of the records below is about where a cell
+    sits in its client's clock space, which is the wrong currency here. *)
+Definition live_refine (types types' : gmap loc type_state) : Prop :=
+  ∀ c', c' ∈ all_cells types' -> ic_deleted c' = false ->
+    ∃ c, c ∈ all_cells types ∧ ic_deleted c = false ∧
+         (∀ y, y ∈ ic_run c' -> y ∈ ic_run c).
+
+(** [apply_live_refine m pool pool']: the growth-tolerant form of
+    [live_refine], which the remote apply path needs because integration adds
+    a LIVE cell with no ancestor. Every char of every live cell of the new
+    pool either sat in a live cell of the old one, or is an id the model [m]
+    did not have at all, i.e. a char this apply just integrated. Both
+    disjuncts keep the char out of the delete set: the first by the invariant
+    itself, the second by the domain bound (the set only holds ids of [m]).
+
+    Composable across steps against a FIXED [m], the model the apply started
+    from: the second disjunct only gets easier as the model grows, so a char
+    fresh to a later model is fresh to [m] too. *)
+Definition apply_live_refine (m : DocModel) (pool pool' : list item_cell) : Prop :=
+  ∀ c', c' ∈ pool' -> ic_deleted c' = false -> ∀ y, y ∈ ic_run c' ->
+    (∃ c, c ∈ pool ∧ ic_deleted c = false ∧ y ∈ ic_run c)
+    ∨ doc_model_has m (item_id y) = false.
+
+(** A well-formed run's chars all carry the head's client and a clock at or
+    above the head's: [run_wf] makes the run one client's consecutive clocks
+    starting at the head ([run_wf_lookup_clock]). This is what turns a cell's
+    coordinates into a statement about its chars' ids. *)
+Lemma run_wf_char_id_bound (c : item_cell) (y : YjsItem A) :
+  run_wf (ic_run c) -> y ∈ ic_run c ->
+  clientId (item_id y) = clientId (item_id (run_head c)) ∧
+  (clock (item_id (run_head c)) <= clock (item_id y))%nat.
+Proof.
+  move=> Hwf Hy.
+  have Hne : ic_run c ≠ [] by (move: Hwf => [Hne _]; exact Hne).
+  have Hhd : ic_run c !! 0%nat = Some (run_head c).
+  { rewrite /run_head. by destruct (ic_run c). }
+  apply list_elem_of_lookup_1 in Hy as [o Ho].
+  rewrite (run_wf_lookup_clock (ic_run c) o (run_head c) y Hwf Hhd Ho) /=.
+  split; [reflexivity | lia].
+Qed.
+
+(** [integrate_live_refine input pool pool']: what one integrate step gives,
+    stated without a model so the step itself stays model-agnostic (like the
+    coordinate provenance clause next to it). A char of a live cell of the new
+    pool either sat in a live cell of the old one, or is one of the integrated
+    wire item's own chars, recognised by its client and a clock at or above
+    the item's. The caller turns the second disjunct into "the model did not
+    have this id" with the replay's client bound, which is the form
+    [apply_live_refine] wants. *)
+Definition integrate_live_refine (input : IntegrateInput (A := A))
+    (pool pool' : list item_cell) : Prop :=
+  ∀ c', c' ∈ pool' -> ic_deleted c' = false -> ∀ y, y ∈ ic_run c' ->
+    (∃ c, c ∈ pool ∧ ic_deleted c = false ∧ y ∈ ic_run c)
+    ∨ (clientId (item_id y) = clientId (in_id input) ∧
+       (clock (in_id input) <= clock (item_id y))%nat).
+
+(** [ds_tombstoned ds pool]: no LIVE cell of the pool holds a char whose id is
+    in [ds]. This is the direction of #37's [deleted_match] that gives the
+    delete set its MEANING: without it an [is_ds_lb] certificate is a receipt
+    any implementation could mint, including one whose [Delete] does nothing.
+    With it, the certificate says the ids are gone from every live node, hence
+    from the visible document a reader observes (issue #125).
+
+    The converse (every tombstoned char is recorded in [ds]) is deliberately
+    NOT carried: nothing consumes it, and it would force every delete to grow
+    the ghost set eagerly, which is exactly the bookkeeping y-octo's
+    [delete_item_inner] does and ours does not. *)
+Definition ds_tombstoned (ds : gset YjsId) (pool : list item_cell) : Prop :=
+  ∀ c, c ∈ pool -> ic_deleted c = false -> ∀ y, y ∈ ic_run c -> item_id y ∉ ds.
+
 Definition split_step_facts (types types' : gmap loc type_state) (w : item_cell) : Prop :=
   (∀ p ts', types' !! p = Some ts' ->
      ∃ ts, types !! p = Some ts ∧ ty_arr ts' = ty_arr ts ∧
@@ -318,7 +414,8 @@ Definition split_step_facts (types types' : gmap loc type_state) (w : item_cell)
      cell_client c' = cell_client c ∧
      (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
      (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')) <=
-      uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z).
+      uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z) ∧
+  live_refine types types'.
 
 (** What [repair] guarantees about the type map: per-type model documents and
     the domain survive, and each client's run list grows by at most the two
@@ -335,7 +432,8 @@ Definition repair_types_facts (types types2 : gmap loc type_state) : Prop :=
      cell_client c' = cell_client c ∧
      (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
      (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')) <=
-      uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z).
+      uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z) ∧
+  live_refine types types2.
 
 (** [NoDup] of the pool's locations survives an integrate splice: the pool
     grows by exactly one cell at a fresh location ([all_cells_fresh]). *)
@@ -757,38 +855,244 @@ Proof.
   - exact (locs_run_perm_originclk _ _ Hlr Horig).
 Qed.
 
+(** The cell-level form of the flip: the pool is the same list with the
+    tombstoned cell in place of the live one. [flip_locs_run_perm] above is
+    the (location, run) projection of this and cannot see the flipped bit,
+    which is precisely what [live_refine_flip] needs. *)
+Lemma flip_pool_perm (types : gmap loc type_state) (p : loc)
+    (ts : type_state) (k : nat) (c : item_cell) :
+  types !! p = Some ts -> ty_cells ts !! k = Some c ->
+  ∃ rest : list item_cell,
+    all_cells types ≡ₚ c :: rest ∧
+    all_cells (<[p := MkTypeState (<[k := flip_cell c]> (ty_cells ts)) (ty_arr ts)]> types)
+      ≡ₚ flip_cell c :: rest.
+Proof.
+  move=> Hp Hck.
+  exists (take k (ty_cells ts) ++ drop (S k) (ty_cells ts) ++ all_cells (delete p types)).
+  split.
+  - rewrite (all_cells_lookup types p ts Hp).
+    rewrite -{1}(take_drop_middle (ty_cells ts) k c Hck).
+    rewrite -app_assoc /=. rewrite -Permutation_middle //.
+  - rewrite (all_cells_insert types p ts _ Hp) /=.
+    rewrite (insert_take_drop (ty_cells ts) k (flip_cell c)
+               (lookup_lt_Some _ _ _ Hck)).
+    rewrite -app_assoc /=. rewrite -Permutation_middle //.
+Qed.
+
+Lemma live_refine_flip (types : gmap loc type_state) (p : loc)
+    (ts : type_state) (k : nat) (c : item_cell) :
+  types !! p = Some ts -> ty_cells ts !! k = Some c ->
+  live_refine types
+    (<[p := MkTypeState (<[k := flip_cell c]> (ty_cells ts)) (ty_arr ts)]> types).
+Proof.
+  move=> Hp Hck.
+  destruct (flip_pool_perm types p ts k c Hp Hck) as (rest & Hold & Hnew).
+  move=> c' Hc' Hlive. rewrite Hnew in Hc'.
+  apply elem_of_cons in Hc' as [-> | Hc'].
+  { by rewrite /flip_cell /= in Hlive. }
+  exists c'. split_and!; [rewrite Hold; by apply elem_of_cons; right | exact Hlive | done].
+Qed.
+
 (** What the wire delete path guarantees about the type map (issue #133): the
     per-type MODEL documents are untouched (both surgeries it performs, a
-    split and a tombstone, are model no-ops) and no type disappears. Unlike
-    [repair_types_facts] this carries no run-length bound, because the delete
-    loop splits an unbounded number of times; that is also what makes it
-    transitive, so the loop can compose one record per step. *)
+    split and a tombstone, are model no-ops), no type disappears, and the live
+    cells only shrink. Unlike [repair_types_facts] this carries no run-length
+    bound, because the delete loop splits an unbounded number of times; that
+    is also what makes it transitive, so the loop can compose one record per
+    step. *)
 Definition delete_types_facts (types types' : gmap loc type_state) : Prop :=
   (∀ p ts', types' !! p = Some ts' ->
      ∃ ts, types !! p = Some ts ∧ ty_arr ts' = ty_arr ts) ∧
   (∀ p, is_Some (types !! p) -> is_Some (types' !! p)) ∧
+  live_refine types types' ∧
   (∀ c', c' ∈ all_cells types' -> ∃ c, c ∈ all_cells types ∧
      cell_client c' = cell_client c ∧
      (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
      (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c'))
       <= uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z).
 
+Lemma live_refine_refl (types : gmap loc type_state) : live_refine types types.
+Proof. move=> c' Hc' Hlive. exists c'. split_and!; [exact Hc' | exact Hlive | done]. Qed.
+
+Lemma live_refine_trans (t1 t2 t3 : gmap loc type_state) :
+  live_refine t1 t2 -> live_refine t2 t3 -> live_refine t1 t3.
+Proof.
+  move=> H12 H23 c3 Hc3 Hlive3.
+  destruct (H23 c3 Hc3 Hlive3) as (c2 & Hc2 & Hlive2 & Hrun2).
+  destruct (H12 c2 Hc2 Hlive2) as (c1 & Hc1 & Hlive1 & Hrun1).
+  exists c1. split_and!; [exact Hc1 | exact Hlive1 |].
+  move=> y Hy. exact (Hrun1 y (Hrun2 y Hy)).
+Qed.
+
+(** Registering a fresh empty type moves no cells. *)
+Lemma live_refine_perm (types types' : gmap loc type_state) :
+  all_cells types' ≡ₚ all_cells types -> live_refine types types'.
+Proof.
+  move=> Hperm c' Hc' Hlive. exists c'.
+  split_and!; [by rewrite -Hperm | exact Hlive | done].
+Qed.
+
+(** The tombstone-set invariant travels forward along any of the three
+    surgeries, since each of them only ever shrinks the live chars. *)
+Lemma ds_tombstoned_refine (ds : gset YjsId) (types types' : gmap loc type_state) :
+  live_refine types types' ->
+  ds_tombstoned ds (all_cells types) -> ds_tombstoned ds (all_cells types').
+Proof.
+  move=> Hlr Hds c' Hc' Hlive y Hy.
+  destruct (Hlr c' Hc' Hlive) as (c & Hc & Hlivec & Hrun).
+  exact (Hds c Hc Hlivec y (Hrun y Hy)).
+Qed.
+
+Lemma ds_tombstoned_perm (ds : gset YjsId) (pool pool' : list item_cell) :
+  pool' ≡ₚ pool -> ds_tombstoned ds pool -> ds_tombstoned ds pool'.
+Proof. move=> Hperm Hds c Hc. apply Hds. by rewrite -Hperm. Qed.
+
+(** Integration is the one step with no live ancestor for its new cell: the
+    fresh run's ids must be outside the set, which is where the domain bound
+    [ds_dom] plus the id's freshness comes in (see [store/heap.v]). *)
+Lemma ds_tombstoned_snoc (ds : gset YjsId) (pool pool' : list item_cell)
+    (c : item_cell) :
+  pool' ≡ₚ pool ++ [c] ->
+  ds_tombstoned ds pool ->
+  (∀ y, y ∈ ic_run c -> item_id y ∉ ds) ->
+  ds_tombstoned ds pool'.
+Proof.
+  move=> Hperm Hds Hfresh c0 Hc0. rewrite Hperm in Hc0.
+  apply elem_of_app in Hc0 as [Hc0 | Hc0].
+  - exact (Hds c0 Hc0).
+  - apply list_elem_of_singleton in Hc0 as ->. move=> _. exact Hfresh.
+Qed.
+
+(** Growing the set: the new ids must miss every live cell. This is the
+    obligation a delete discharges to mint its [is_ds_lb] certificate. *)
+Lemma ds_tombstoned_union (ds S : gset YjsId) (pool : list item_cell) :
+  ds_tombstoned ds pool -> ds_tombstoned S pool -> ds_tombstoned (ds ∪ S) pool.
+Proof.
+  move=> Hds HS c Hc Hlive y Hy.
+  apply not_elem_of_union. split; [exact (Hds c Hc Hlive y Hy) | exact (HS c Hc Hlive y Hy)].
+Qed.
+
+Lemma ds_tombstoned_mono (ds ds' : gset YjsId) (pool : list item_cell) :
+  ds' ⊆ ds -> ds_tombstoned ds pool -> ds_tombstoned ds' pool.
+Proof. move=> Hsub Hds c Hc Hlive y Hy Hin. exact (Hds c Hc Hlive y Hy (Hsub _ Hin)). Qed.
+
+Lemma apply_live_refine_refl (m : DocModel) (pool : list item_cell) :
+  apply_live_refine m pool pool.
+Proof. move=> c' Hc' Hlive y Hy. left. by exists c'. Qed.
+
+Lemma apply_live_refine_of_live_refine (m : DocModel) (types types' : gmap loc type_state) :
+  live_refine types types' ->
+  apply_live_refine m (all_cells types) (all_cells types').
+Proof.
+  move=> Hlr c' Hc' Hlive y Hy. left.
+  destruct (Hlr c' Hc' Hlive) as (c & Hc & Hlivec & Hrun).
+  exists c. split_and!; [exact Hc | exact Hlivec | exact (Hrun y Hy)].
+Qed.
+
+(** Composition: the middle step is stated against the LATER model, and its
+    freshness disjunct transfers to [m] because the model only grew. *)
+Lemma apply_live_refine_trans (m m1 : DocModel) (pool pool1 pool2 : list item_cell) :
+  (∀ i, doc_model_has m i = true -> doc_model_has m1 i = true) ->
+  apply_live_refine m pool pool1 ->
+  apply_live_refine m1 pool1 pool2 ->
+  apply_live_refine m pool pool2.
+Proof.
+  move=> Hmono H01 H12 c2 Hc2 Hlive2 y Hy.
+  destruct (H12 c2 Hc2 Hlive2 y Hy) as [(c1 & Hc1 & Hlive1 & Hy1) | Hfresh1].
+  - exact (H01 c1 Hc1 Hlive1 y Hy1).
+  - right. destruct (doc_model_has m (item_id y)) eqn:Hh; last done.
+    by rewrite (Hmono _ Hh) in Hfresh1.
+Qed.
+
+(** The integrate splice: the pool grows by one live cell whose chars the
+    model does not have yet. *)
+Lemma apply_live_refine_snoc (m : DocModel) (pool pool' : list item_cell)
+    (c : item_cell) :
+  pool' ≡ₚ pool ++ [c] ->
+  (∀ y, y ∈ ic_run c -> doc_model_has m (item_id y) = false) ->
+  apply_live_refine m pool pool'.
+Proof.
+  move=> Hperm Hfresh c' Hc' Hlive y Hy. rewrite Hperm in Hc'.
+  apply elem_of_app in Hc' as [Hc' | Hc'].
+  - left. by exists c'.
+  - apply list_elem_of_singleton in Hc' as ->. right. exact (Hfresh y Hy).
+Qed.
+
+Lemma integrate_live_refine_of_live_refine (input : IntegrateInput (A := A))
+    (types types' : gmap loc type_state) :
+  live_refine types types' ->
+  integrate_live_refine input (all_cells types) (all_cells types').
+Proof.
+  move=> Hlr c' Hc' Hlive y Hy. left.
+  destruct (Hlr c' Hc' Hlive) as (c & Hc & Hlivec & Hrun).
+  exists c. split_and!; [exact Hc | exact Hlivec | exact (Hrun y Hy)].
+Qed.
+
+Lemma integrate_live_refine_trans (input : IntegrateInput (A := A))
+    (pool pool1 pool2 : list item_cell) :
+  integrate_live_refine input pool pool1 ->
+  integrate_live_refine input pool1 pool2 ->
+  integrate_live_refine input pool pool2.
+Proof.
+  move=> H01 H12 c2 Hc2 Hlive2 y Hy.
+  destruct (H12 c2 Hc2 Hlive2 y Hy) as [(c1 & Hc1 & Hlive1 & Hy1) | Hnew]; last by right.
+  exact (H01 c1 Hc1 Hlive1 y Hy1).
+Qed.
+
+(** The splice itself: the pool grows by one cell all of whose chars carry the
+    integrated item's client and a clock at or above its own. That is read off
+    the cell's coordinates ([cell_client] / [cell_clock]) plus the run's own
+    well-formedness, which is why the caller passes [run_wf]. *)
+Lemma integrate_live_refine_snoc (input : IntegrateInput (A := A))
+    (pool pool' : list item_cell) (c : item_cell) :
+  pool' ≡ₚ pool ++ [c] ->
+  (∀ y, y ∈ ic_run c -> clientId (item_id y) = clientId (in_id input) ∧
+     (clock (in_id input) <= clock (item_id y))%nat) ->
+  integrate_live_refine input pool pool'.
+Proof.
+  move=> Hperm Hnew c' Hc' Hlive y Hy. rewrite Hperm in Hc'.
+  apply elem_of_app in Hc' as [Hc' | Hc'].
+  - left. by exists c'.
+  - apply list_elem_of_singleton in Hc' as ->. right. exact (Hnew y Hy).
+Qed.
+
+(** The bridge the apply loop uses: an integrate step's second disjunct (the
+    char carries the wire item's client and a clock at or above its own) is
+    exactly freshness against the model, because the replay's [VR_cons] bound
+    puts every same-client item of the model strictly below the item's clock. *)
+Lemma apply_live_refine_of_integrate (input : IntegrateInput (A := A))
+    (mc : DocModel) (pool pool' : list item_cell) :
+  (∀ (t' : TId) x, x ∈ doc_model_get mc t' ->
+     clientId (item_id x) = clientId (in_id input) ->
+     (clock (item_id x) < clock (in_id input))%nat) ->
+  integrate_live_refine input pool pool' ->
+  apply_live_refine mc pool pool'.
+Proof.
+  move=> Hbound Hilr c' Hc' Hlive y Hy.
+  destruct (Hilr c' Hc' Hlive y Hy) as [Hold | [Hcl Hlo]]; first by left.
+  right. destruct (doc_model_has mc (item_id y)) eqn:Hh; last done.
+  exfalso. apply docm_has_spec in Hh as (t' & x & Hx & Hid).
+  have Hcx : clientId (item_id x) = clientId (in_id input) by rewrite Hid.
+  have := Hbound t' x Hx Hcx. rewrite Hid. lia.
+Qed.
+
 Lemma delete_types_facts_refl (types : gmap loc type_state) :
   delete_types_facts types types.
 Proof.
-  split_and!; [move=> p ts' Hp; by exists ts' | done |].
+  split_and!; [move=> p ts' Hp; by exists ts' | done | exact (live_refine_refl types) |].
   move=> c' Hc'. exists c'. split_and!; [exact Hc' | done | lia | lia].
 Qed.
 
 Lemma delete_types_facts_trans (t1 t2 t3 : gmap loc type_state) :
   delete_types_facts t1 t2 -> delete_types_facts t2 t3 -> delete_types_facts t1 t3.
 Proof.
-  move=> [Harr1 [Hdom1 Hco1]] [Harr2 [Hdom2 Hco2]]. split_and!.
+  move=> [Harr1 [Hdom1 [Hlr1 Hco1]]] [Harr2 [Hdom2 [Hlr2 Hco2]]]. split_and!.
   - move=> p ts3 Hp3.
     destruct (Harr2 p ts3 Hp3) as (ts2 & Hp2 & Heq2).
     destruct (Harr1 p ts2 Hp2) as (ts1 & Hp1 & Heq1).
     exists ts1. split; [exact Hp1 | congruence].
   - move=> p Hp. exact (Hdom2 p (Hdom1 p Hp)).
+  - exact (live_refine_trans t1 t2 t3 Hlr1 Hlr2).
   - move=> c3 Hc3.
     destruct (Hco2 c3 Hc3) as (c2 & Hc2 & Hcc2 & Hlo2 & Hhi2).
     destruct (Hco1 c2 Hc2) as (c1 & Hc1 & Hcc1 & Hlo1 & Hhi1).
@@ -800,7 +1104,8 @@ Qed.
 Lemma delete_types_facts_of_split (types types' : gmap loc type_state) (w : item_cell) :
   split_step_facts types types' w -> delete_types_facts types types'.
 Proof.
-  move=> [Harr [Hdom [_ [_ [_ [_ Hco]]]]]]. split_and!; [| exact Hdom | exact Hco].
+  move=> [Harr [Hdom [_ [_ [_ [_ [Hco Hlr]]]]]]].
+  split_and!; [| exact Hdom | exact Hlr | exact Hco].
   move=> p ts' Hp'. destruct (Harr p ts' Hp') as (ts & Hp & Heq & _).
   exists ts. split; [exact Hp | exact Heq].
 Qed.
@@ -824,6 +1129,7 @@ Proof.
     destruct (decide (q = p)) as [-> | Hne].
     + rewrite lookup_insert_eq. by eexists.
     + rewrite lookup_insert_ne //.
+  - exact (live_refine_flip types p ts k c Hp Hck).
   - (* the pool is the same up to the flipped cell, which keeps its run and
        hence its coordinates *)
     move=> c' Hc'.
