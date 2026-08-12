@@ -138,13 +138,13 @@ Proof.
   iIntros "%Hst Hlocked". subst st.
   iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(Hrauth & Htoks0 & Hwl & Hrest)".
-  iDestruct "Hrest" as (client k items_mref types_mref dset pend_sl pdel_sl types bind h m pend pdel) "(Hfrag & Hexcl & Hro)".
+  iDestruct "Hrest" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl types bind h m pend pdel) "(Hfrag & Hexcl & Hro)".
   rewrite frac_of_0.
   iMod "Hmask" as "_".
   iMod ("Hclose" with "[Hlocked Hrauth Hfrag]") as "_".
   { iExists Locked. iFrame "Hlocked". iExists types. iFrame "Hrauth Hfrag". }
   iModIntro. iApply "HΦ". iFrame "Hwl".
-  iApply store_inv_bridge. iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types, bind, h, m, pend, pdel. iFrame "Hexcl Hro".
+  iApply store_inv_bridge. iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types, bind, h, m, pend, pdel. iFrame "Hexcl Hro".
 Qed.
 
 
@@ -174,12 +174,12 @@ Proof.
     iMod "Hmask" as "_".
     iMod (own_toks_0 γs.(sn_rmax)) as "Htoks0".
     iEval (rewrite store_inv_bridge) in "HR".
-    iDestruct "HR" as (client k items_mref types_mref dset pend_sl pdel_sl types' bind h m pend pdel) "[Hexcl Hro]".
+    iDestruct "HR" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl types' bind h m pend pdel) "[Hexcl Hro]".
     iMod (own_update _ _ (to_frac_agree 1 (types' : leibnizO _)) with "Hfrag") as "Hfrag".
     { apply cmra_update_exclusive. done. }
     iMod ("Hclose" with "[Hrl0 Hrauth Htoks0 Hwl Hfrag Hexcl Hro]") as "_".
     { iExists (RLocked 0). iFrame "Hrl0". iEval (cbn [tie_body]). iFrame "Hrauth Htoks0 Hwl".
-      iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types', bind, h, m, pend, pdel.
+      iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types', bind, h, m, pend, pdel.
       rewrite frac_of_0. iFrame "Hfrag Hexcl Hro". }
     iModIntro. by iApply "HΦ".
 Qed.
@@ -202,7 +202,7 @@ Proof.
   iIntros (n) "%Hst Hrl". subst st.
   iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(Hrauth & Hmaxn & Hwl & Hrest)".
-  iDestruct "Hrest" as (client k items_mref types_mref dset pend_sl pdel_sl types bind h m pend pdel) "(Hfrag & Hexcl & Hro)".
+  iDestruct "Hrest" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl types bind h m pend pdel) "(Hfrag & Hexcl & Hro)".
   iCombine "Hmaxn Hmaxtok" as "Hmaxn1".
   iCombine "Hmax Hmaxn1" gives %Hbound.
   iMod (own_tok_auth_S with "Hrauth") as "[Hrauth Hrtok]".
@@ -215,7 +215,7 @@ Proof.
   { iExists (RLocked (S n)). iFrame "Hrl". iEval (cbn [tie_body]).
     replace (S n) with (n + 1)%nat by lia.
     iFrame "Hrauth Hmaxn1 Hwl".
-    iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
+    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
     iFrame "Hfrag_i Hexcl Hro_i". }
   iModIntro. iApply ("HΦ" $! types). iFrame "Hrtok Hfrag_r Hro_r".
 Qed.
@@ -249,7 +249,7 @@ Proof.
   iIntros (n) "%Hst Hrl". subst st.
   iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(Hrauth & Hmaxn & Hwl & Hrest)".
-  iDestruct "Hrest" as (client k items_mref types_mref dset pend_sl pdel_sl types bind h m pend pdel) "(Hfrag & Hexcl & Hro)".
+  iDestruct "Hrest" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl types bind h m pend pdel) "(Hfrag & Hexcl & Hro)".
   (* the conversion, at the one moment the exclusive slice is visible *)
   iDestruct (store_inv_excl_hist_root with "Hexcl Hpin Hlb Hbind") as "[Hexcl %Hfact]".
   iCombine "Hmaxn Hmaxtok" as "Hmaxn1".
@@ -264,7 +264,7 @@ Proof.
   { iExists (RLocked (S n)). iFrame "Hrl". iEval (cbn [tie_body]).
     replace (S n) with (n + 1)%nat by lia.
     iFrame "Hrauth Hmaxn1 Hwl".
-    iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
+    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
     iFrame "Hfrag_i Hexcl Hro_i". }
   iModIntro. iApply ("HΦ" $! types). iFrame "Hrtok Hfrag_r Hro_r".
   iPureIntro. exact Hfact.
@@ -293,7 +293,7 @@ Proof.
     iCombine "Hrauth Hrtok" gives %Hbad. exfalso. lia. }
   iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(Hrauth & Hmaxsn & Hwl & Hrest)".
-  iDestruct "Hrest" as (client k items_mref types_mref dset pend_sl pdel_sl types_i bind h m pend pdel) "(Hfrag_i & Hexcl & Hro_i)".
+  iDestruct "Hrest" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl types_i bind h m pend pdel) "(Hfrag_i & Hexcl & Hro_i)".
   iDestruct (tf_agree with "Hfrag_r Hfrag_i") as %->.
   iCombine "Hmax Hmaxsn" gives %Hbound.
   assert (Z.of_nat n < rwmutex.actualMaxReaders)%Z as Hlt by (rewrite rwmutex.actualMaxReaders_unseal in Hbound |- *; lia).
@@ -309,7 +309,7 @@ Proof.
   rewrite -(frac_of_split n Hlt).
   iMod ("Hclose" with "[Hrln Hrauth Hmaxn Hwl Hfrag Hexcl Hro]") as "_".
   { iExists (RLocked n). iFrame "Hrln". iEval (cbn [tie_body]). iFrame "Hrauth Hmaxn Hwl".
-    iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types_i, bind, h, m, pend, pdel.
+    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types_i, bind, h, m, pend, pdel.
     iFrame "Hfrag Hexcl Hro". }
   iModIntro. iApply "HΦ". iFrame "Htok Hmaxtok".
 Qed.

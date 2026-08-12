@@ -2006,14 +2006,14 @@ Proof using Type*.
      op reports (old live chars, or chars this apply just integrated) *)
   have Hmono' : ∀ i, doc_model_has m i = true -> doc_model_has m' i = true
     := λ i, docm_has_mono m m' i (ValidReplay_mem (expand_inputs applied) m m' Hvr).
-  iDestruct (own_ds_apply γs m m' (all_cells types) (all_cells types')
-               Hmono' Hilr' with "Hds") as "Hds".
+  iDestruct (own_delete_set_apply γs m m' (all_cells types) (all_cells types')
+               Hmono' Hilr' with "Hdelete_set") as "Hdelete_set".
   iModIntro. iApply ("HΦ" $! applied rest' m').
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
-  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hpddelf Hpddel Hseq Htypes HtypesAuth Hhist Hacc Hds";
+  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend' Hpddelf Hpddel Hseq Htypes HtypesAuth Hhist Hacc Hdelete_set";
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc | exact Hnoloss_in]).
-  iExists client, k, items_mref, types_mref, dset, pend_sl', pdel_sl, pdel, types', bind', acc.
-  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hpddelf Hpddel Hseq Htypes HtypesAuth Hbinds' Hhist Hacc Hds".
+  iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl', pdel_sl, pdel, types', bind', acc.
+  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend' Hpddelf Hpddel Hseq Htypes HtypesAuth Hbinds' Hhist Hacc Hdelete_set".
   iFrame "Hpendcert' Hclientpin".
   iPureIntro. split_and!.
   - exact Hclientc.

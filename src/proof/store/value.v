@@ -13,7 +13,7 @@
       [pool_invs] / [split_step_facts] / [repair_types_facts] /
       [delete_types_facts].
     - [live_refine]: every live cell of the new pool is covered, chars and
-      all, by a live cell of the old one, and [ds_tombstoned]: no live cell
+      all, by a live cell of the old one, and [delete_set_tombstoned]: no live cell
       holds an id of the delete set. The pair is what gives the ghost delete
       set its meaning (plan-delete-set.md section 3). Integration breaks
       [live_refine] (it adds a live cell with no ancestor), so it reports the
@@ -48,12 +48,12 @@
       ([run_wf_char_id_bound] and its converse [run_wf_char_id_mem]), which
       gives store-global id uniqueness out of the pool invariants alone
       ([cells_char_id_unique], via [pool_loc_inj]) and hence the obligation a
-      delete must discharge to mint a certificate ([ds_tombstoned_char_ids]).
+      delete must discharge to mint a certificate ([delete_set_tombstoned_char_ids]).
     - [live_refine] is reflexive, transitive, and holds of a tombstone flip
       ([live_refine_flip], over the cell-level [flip_pool_perm]) and of a
-      cell-preserving permutation; [ds_tombstoned] travels along it
-      ([ds_tombstoned_refine]) and along an integrate splice whose fresh run
-      misses the set ([ds_tombstoned_snoc]).
+      cell-preserving permutation; [delete_set_tombstoned] travels along it
+      ([delete_set_tombstoned_refine]) and along an integrate splice whose fresh run
+      misses the set ([delete_set_tombstoned_snoc]).
 
     The Iris layer over all of this is [store/heap.v]. *)
 From New.proof Require Import proof_prelude.
@@ -355,15 +355,15 @@ Definition pool_invs (types : gmap loc type_state) : Prop :=
     node's [ic_deleted] bit and share out its run, a tombstone flip only turns
     bits ON, and registering a type adds no cells. Integration does NOT (it
     adds a live cell with no ancestor); that step re-establishes
-    [ds_tombstoned] from the new id's freshness instead ([ds_tombstoned_snoc]).
+    [delete_set_tombstoned] from the new id's freshness instead ([delete_set_tombstoned_snoc]).
 
     Stated over chars, not coordinates, because the tombstone set is a set of
     [YjsId]s: the coordinate clause of the records below is about where a cell
     sits in its client's clock space, which is the wrong currency here.
 
     Used as: a conjunct of [split_step_facts], [repair_types_facts] and
-    [delete_types_facts], consumed by [ds_tombstoned_refine] and its Iris
-    wrapper [own_ds_refine] to carry the tombstone-set invariant across a
+    [delete_types_facts], consumed by [delete_set_tombstoned_refine] and its Iris
+    wrapper [own_delete_set_refine] to carry the tombstone-set invariant across a
     surgery. Discharged by [split_pool_live_refine], [live_refine_flip] and
     [live_refine_perm]. *)
 Definition live_refine (types types' : gmap loc type_state) : Prop :=
@@ -384,7 +384,7 @@ Definition live_refine (types types' : gmap loc type_state) : Prop :=
     fresh to a later model is fresh to [m] too.
 
     Used as: the pool-refinement clause of [wp_store__applyUpdate] and of both
-    loops inside it, consumed by [own_ds_apply] to carry the tombstone-set
+    loops inside it, consumed by [own_delete_set_apply] to carry the tombstone-set
     invariant across a remote apply. Built from
     [apply_live_refine_of_live_refine] on the repair steps and
     [apply_live_refine_of_integrate] on the integrate steps. *)
@@ -518,34 +518,34 @@ Definition dead_chars_kept (types types' : gmap loc type_state) : Prop :=
   ∀ c, c ∈ all_cells types -> ic_deleted c = true -> ∀ y, y ∈ ic_run c ->
     ∃ c', c' ∈ all_cells types' ∧ ic_deleted c' = true ∧ y ∈ ic_run c'.
 
-(** [ds_tombstoned ds pool]: no LIVE cell of the pool holds a char whose id is
-    in [ds]. This is the direction of #37's [deleted_match] that gives the
-    delete set its MEANING: without it an [is_ds_lb] certificate is a receipt
+(** [delete_set_tombstoned delete_set pool]: no LIVE cell of the pool holds a char whose id is
+    in [delete_set]. This is the direction of #37's [deleted_match] that gives the
+    delete set its MEANING: without it an [is_delete_set_lb] certificate is a receipt
     any implementation could mint, including one whose [Delete] does nothing.
     With it, the certificate says the ids are gone from every live node, hence
     from the visible document a reader observes (issue #125).
 
-    The converse (every tombstoned char is recorded in [ds]) is deliberately
+    The converse (every tombstoned char is recorded in [delete_set]) is deliberately
     NOT carried: nothing consumes it, and it would force every delete to grow
     the ghost set eagerly, which is exactly the bookkeeping y-octo's
     [delete_item_inner] does and ours does not. *)
 (** [ids_tombstoned ids pool]: every id of [ids] is held by a cell of [pool]
     that is tombstoned. It WITNESSES the ids as present and dead, which is
-    strictly more than [ds_tombstoned], which only forbids them from being
-    present and alive; store-global id uniqueness turns this into that
-    ([ds_tombstoned_of_witnesses]).
+    strictly more than [delete_set_tombstoned], which only forbids them from
+    being present and alive; store-global id uniqueness turns this into that
+    ([delete_set_tombstoned_of_witnesses]).
 
     Used as: what a delete reports about what it just did. It is the
     postcondition of [wp_store__deleteRange] (over the range it was asked to
     cover) and of [wp_store__applyDeleteSpans] (over the union of the spans
     that landed), it is carried through the latter's loop, and it is the
-    premise a caller discharges to mint an [is_ds_lb] certificate through
-    [own_ds_grow]. *)
+    premise a caller discharges to mint an [is_delete_set_lb] certificate
+    through [own_delete_set_grow]. *)
 Definition ids_tombstoned (ids : gset YjsId) (pool : list item_cell) : Prop :=
   ∀ i, i ∈ ids -> ∃ c, c ∈ pool ∧ ic_deleted c = true ∧ i ∈ char_ids (ic_run c).
 
-Definition ds_tombstoned (ds : gset YjsId) (pool : list item_cell) : Prop :=
-  ∀ c, c ∈ pool -> ic_deleted c = false -> ∀ y, y ∈ ic_run c -> item_id y ∉ ds.
+Definition delete_set_tombstoned (delete_set : gset YjsId) (pool : list item_cell) : Prop :=
+  ∀ c, c ∈ pool -> ic_deleted c = false -> ∀ y, y ∈ ic_run c -> item_id y ∉ delete_set.
 
 Definition split_step_facts (types types' : gmap loc type_state) (w : item_cell) : Prop :=
   (∀ p ts', types' !! p = Some ts' ->
@@ -1108,60 +1108,60 @@ Qed.
 
 (** The tombstone-set invariant travels forward along any of the three
     surgeries, since each of them only ever shrinks the live chars. *)
-Lemma ds_tombstoned_refine (ds : gset YjsId) (types types' : gmap loc type_state) :
+Lemma delete_set_tombstoned_refine (delete_set : gset YjsId) (types types' : gmap loc type_state) :
   live_refine types types' ->
-  ds_tombstoned ds (all_cells types) -> ds_tombstoned ds (all_cells types').
+  delete_set_tombstoned delete_set (all_cells types) -> delete_set_tombstoned delete_set (all_cells types').
 Proof.
-  move=> Hlr Hds c' Hc' Hlive y Hy.
+  move=> Hlr Hdelete_set c' Hc' Hlive y Hy.
   destruct (Hlr c' Hc' Hlive) as (c & Hc & Hlivec & Hrun).
-  exact (Hds c Hc Hlivec y (Hrun y Hy)).
+  exact (Hdelete_set c Hc Hlivec y (Hrun y Hy)).
 Qed.
 
-Lemma ds_tombstoned_perm (ds : gset YjsId) (pool pool' : list item_cell) :
-  pool' ≡ₚ pool -> ds_tombstoned ds pool -> ds_tombstoned ds pool'.
-Proof. move=> Hperm Hds c Hc. apply Hds. by rewrite -Hperm. Qed.
+Lemma delete_set_tombstoned_perm (delete_set : gset YjsId) (pool pool' : list item_cell) :
+  pool' ≡ₚ pool -> delete_set_tombstoned delete_set pool -> delete_set_tombstoned delete_set pool'.
+Proof. move=> Hperm Hdelete_set c Hc. apply Hdelete_set. by rewrite -Hperm. Qed.
 
 (** Integration is the one step with no live ancestor for its new cell: the
     fresh run's ids must be outside the set, which is where the domain bound
-    [ds_dom] plus the id's freshness comes in (see [store/heap.v]). *)
-Lemma ds_tombstoned_snoc (ds : gset YjsId) (pool pool' : list item_cell)
+    [delete_set_dom] plus the id's freshness comes in (see [store/heap.v]). *)
+Lemma delete_set_tombstoned_snoc (delete_set : gset YjsId) (pool pool' : list item_cell)
     (c : item_cell) :
   pool' ≡ₚ pool ++ [c] ->
-  ds_tombstoned ds pool ->
-  (∀ y, y ∈ ic_run c -> item_id y ∉ ds) ->
-  ds_tombstoned ds pool'.
+  delete_set_tombstoned delete_set pool ->
+  (∀ y, y ∈ ic_run c -> item_id y ∉ delete_set) ->
+  delete_set_tombstoned delete_set pool'.
 Proof.
-  move=> Hperm Hds Hfresh c0 Hc0. rewrite Hperm in Hc0.
+  move=> Hperm Hdelete_set Hfresh c0 Hc0. rewrite Hperm in Hc0.
   apply elem_of_app in Hc0 as [Hc0 | Hc0].
-  - exact (Hds c0 Hc0).
+  - exact (Hdelete_set c0 Hc0).
   - apply list_elem_of_singleton in Hc0 as ->. move=> _. exact Hfresh.
 Qed.
 
 (** Growing the set: the new ids must miss every live cell. This is the
-    obligation a delete discharges to mint its [is_ds_lb] certificate. *)
-Lemma ds_tombstoned_union (ds S : gset YjsId) (pool : list item_cell) :
-  ds_tombstoned ds pool -> ds_tombstoned S pool -> ds_tombstoned (ds ∪ S) pool.
+    obligation a delete discharges to mint its [is_delete_set_lb] certificate. *)
+Lemma delete_set_tombstoned_union (delete_set S : gset YjsId) (pool : list item_cell) :
+  delete_set_tombstoned delete_set pool -> delete_set_tombstoned S pool -> delete_set_tombstoned (delete_set ∪ S) pool.
 Proof.
-  move=> Hds HS c Hc Hlive y Hy.
-  apply not_elem_of_union. split; [exact (Hds c Hc Hlive y Hy) | exact (HS c Hc Hlive y Hy)].
+  move=> Hdelete_set HS c Hc Hlive y Hy.
+  apply not_elem_of_union. split; [exact (Hdelete_set c Hc Hlive y Hy) | exact (HS c Hc Hlive y Hy)].
 Qed.
 
 (** A tombstoned cell's chars are gone from every LIVE cell of the pool: they
     are gone from every OTHER cell by id uniqueness, and the cell itself is
-    not live. This is the obligation [own_ds_grow] puts on a delete before it
-    hands out an [is_ds_lb] certificate. *)
+    not live. This is the obligation [own_delete_set_grow] puts on a delete before it
+    hands out an [is_delete_set_lb] certificate. *)
 (** The general form: a set every one of whose ids is witnessed by SOME
     tombstoned cell of the pool is absent from every live cell, by
-    [cells_char_id_unique]. This is the obligation [own_ds_grow] puts on a
+    [cells_char_id_unique]. This is the obligation [own_delete_set_grow] puts on a
     delete, discharged from the pool invariants and the delete's own record of
     what it tombstoned. *)
-Lemma ds_tombstoned_of_witnesses (pool : list item_cell) (D : gset YjsId) :
+Lemma delete_set_tombstoned_of_witnesses (pool : list item_cell) (D : gset YjsId) :
   cells_range_disjoint pool ->
   (∀ c0, c0 ∈ pool -> run_wf (ic_run c0)) ->
   (∀ c0, c0 ∈ pool -> (Z.of_nat (clock (item_id (run_head c0))) < 2^64)%Z) ->
   NoDup (ic_loc <$> pool) ->
   ids_tombstoned D pool ->
-  ds_tombstoned D pool.
+  delete_set_tombstoned D pool.
 Proof.
   move=> Hdisj Hwf Hclkb Hnd Hwit c0 Hc0 Hlive y Hy Hin.
   destruct (Hwit (item_id y) Hin) as (c & Hc & Hdel & Hz).
@@ -1173,13 +1173,13 @@ Proof.
   exact (cells_char_id_unique pool c0 c y z Hdisj Hwf Hclkb Hc0 Hc Hne Hy Hz Hidz).
 Qed.
 
-Lemma ds_tombstoned_char_ids (pool : list item_cell) (c : item_cell) :
+Lemma delete_set_tombstoned_char_ids (pool : list item_cell) (c : item_cell) :
   cells_range_disjoint pool ->
   (∀ c0, c0 ∈ pool -> run_wf (ic_run c0)) ->
   (∀ c0, c0 ∈ pool -> (Z.of_nat (clock (item_id (run_head c0))) < 2^64)%Z) ->
   NoDup (ic_loc <$> pool) ->
   c ∈ pool -> ic_deleted c = true ->
-  ds_tombstoned (char_ids (ic_run c)) pool.
+  delete_set_tombstoned (char_ids (ic_run c)) pool.
 Proof.
   move=> Hdisj Hwf Hclkb Hnd Hc Hdel c0 Hc0 Hlive y Hy Hin.
   rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hin.
@@ -1191,9 +1191,9 @@ Proof.
            Hidz).
 Qed.
 
-Lemma ds_tombstoned_mono (ds ds' : gset YjsId) (pool : list item_cell) :
-  ds' ⊆ ds -> ds_tombstoned ds pool -> ds_tombstoned ds' pool.
-Proof. move=> Hsub Hds c Hc Hlive y Hy Hin. exact (Hds c Hc Hlive y Hy (Hsub _ Hin)). Qed.
+Lemma delete_set_tombstoned_mono (delete_set delete_set' : gset YjsId) (pool : list item_cell) :
+  delete_set' ⊆ delete_set -> delete_set_tombstoned delete_set pool -> delete_set_tombstoned delete_set' pool.
+Proof. move=> Hsub Hdelete_set c Hc Hlive y Hy Hin. exact (Hdelete_set c Hc Hlive y Hy (Hsub _ Hin)). Qed.
 
 Lemma apply_live_refine_refl (m : DocModel) (pool : list item_cell) :
   apply_live_refine m pool pool.

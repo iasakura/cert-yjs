@@ -1614,7 +1614,7 @@ Qed.
 (** Every char a pooled cell holds is an item of its type's model list: the
     cell list flattens to exactly that list ([cells_repr], carried by
     [own_ytype_cells]). This is how a delete turns "these ids sit in cells" into
-    "these ids are integrated items", the domain half of [own_ds_grow]. *)
+    "these ids are integrated items", the domain half of [own_delete_set_grow]. *)
 Lemma types_cells_in_arr (types : gmap loc type_state) :
   ([∗ map] parent ↦ ts ∈ types,
       own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
@@ -1723,7 +1723,7 @@ Qed.
     [ic_deleted] bit and share out its run ([split_cell_left] takes a prefix,
     [split_cell_right] the matching suffix), so a live cell after the split is
     covered, chars and all, by a live cell before it. This is what carries the
-    tombstone-set invariant [ds_tombstoned] across a split. *)
+    tombstone-set invariant [delete_set_tombstoned] across a split. *)
 Lemma split_pool_live_refine (types : gmap loc type_state) (parent : loc)
     (cells : list item_cell) (arr : list (YjsItem A)) (k o : nat) (rloc : loc)
     (cw : item_cell) :

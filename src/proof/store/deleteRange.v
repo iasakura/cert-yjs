@@ -211,8 +211,8 @@ Qed.
     invariant back together. On top of that the loop REPORTS its coverage:
     when it returns [true], every id of the span sits in a cell that is now
     tombstoned. That is the content half, and it is what lets the caller mint
-    an [is_ds_lb] certificate through [own_ds_grow], whose obligation
-    [ds_tombstoned_char_ids] discharges from the pool invariants.
+    an [is_delete_set_lb] certificate through [own_delete_set_grow], whose obligation
+    [delete_set_tombstoned_char_ids] discharges from the pool invariants.
 
     Nothing is claimed about a span whose clock range WRAPS. Spans come off
     the wire, so a peer can send one; the Go loop's [cur < clock + length]
@@ -690,7 +690,7 @@ Qed.
     pool invariants come back from the loop.
 
     The inner loop's coverage record ([Hdels] below) is DROPPED here rather
-    than turned into an [is_ds_lb] certificate, deliberately. At the inner
+    than turned into an [is_delete_set_lb] certificate, deliberately. At the inner
     level the record is worth something because the leftover buffer is a
     return value, so "this span is not in the leftover" pins which spans
     landed. [own_store] hides that buffer, so the same statement out here
@@ -722,7 +722,7 @@ Proof using Type*.
   destruct Hfacts as (Harr & Hdom & Hlr & _ & Hcoord).
   (* the tombstone-set invariant follows the delete: both surgeries the loop
      performs (a split and a flip) only refine the live cells *)
-  iDestruct (own_ds_refine γs m types types' Hlr with "Hds") as "Hds".
+  iDestruct (own_delete_set_refine γs m types types' Hlr with "Hdelete_set") as "Hdelete_set".
   (* equal domains and equal model lists, so the item-set authority is
      literally the same map *)
   have Hdomeq : ∀ q, is_Some (types !! q) <-> is_Some (types' !! q).
@@ -739,9 +739,9 @@ Proof using Type*.
   iEval (rewrite -Hfmapeq) in "Hseq".
   destruct Hpool' as (Hrunfits' & Hlocdup' & Hrangedisj' & Horiginclk').
   iApply "HΦ". iFrame "Hsp".
-  iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl', rest, types', bind, acc.
-  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend
-          Hpddelf Hpddel Hseq Htypes HtypesAuth Hhist Hacc Hds".
+  iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl', rest, types', bind, acc.
+  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend
+          Hpddelf Hpddel Hseq Htypes HtypesAuth Hhist Hacc Hdelete_set".
   iFrame "Hclientpin Hpendcert Hbinds".
   iPureIntro. split_and!.
   - exact Hclientc.
