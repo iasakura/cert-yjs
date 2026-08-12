@@ -281,6 +281,17 @@ Definition delete_span_ids (sp : yjs.deleteSpan.t) : gset YjsId :=
 Definition delete_batch_ids (spans : list yjs.deleteSpan.t) : gset YjsId :=
   ⋃ (delete_span_ids <$> spans).
 
+(** The condition under which a span actually denotes that interval on the
+    heap: its clock range must not wrap, since the Go loop's [cur < clock +
+    length] test is [w64] arithmetic. A wrapping span makes that test fail at
+    once, so the implementation tombstones nothing and the specs claim
+    nothing. *)
+Definition delete_span_nowrap (sp : yjs.deleteSpan.t) : Prop :=
+  (uint.Z sp.(yjs.deleteSpan.clock') + uint.Z sp.(yjs.deleteSpan.length') < 2^64)%Z.
+
+#[global] Instance delete_span_nowrap_dec sp : Decision (delete_span_nowrap sp).
+Proof. rewrite /delete_span_nowrap. apply _. Defined.
+
 (** A span's clock interval does not wrap: [containsId]'s Go range test
     computes [clock + len] in [w64], so this is what makes the test decide
     [span_ids] membership. Sourced from the store's run-fits pool invariant. *)
@@ -1085,6 +1096,29 @@ Qed.
     are gone from every OTHER cell by id uniqueness, and the cell itself is
     not live. This is the obligation [own_ds_grow] puts on a delete before it
     hands out an [is_ds_lb] certificate. *)
+(** The general form: a set every one of whose ids is witnessed by SOME
+    tombstoned cell of the pool is absent from every live cell, by
+    [cells_char_id_unique]. This is the obligation [own_ds_grow] puts on a
+    delete, discharged from the pool invariants and the delete's own record of
+    what it tombstoned. *)
+Lemma ds_tombstoned_of_witnesses (pool : list item_cell) (D : gset YjsId) :
+  cells_range_disjoint pool ->
+  (∀ c0, c0 ∈ pool -> run_wf (ic_run c0)) ->
+  (∀ c0, c0 ∈ pool -> (Z.of_nat (clock (item_id (run_head c0))) < 2^64)%Z) ->
+  NoDup (ic_loc <$> pool) ->
+  (∀ i, i ∈ D -> ∃ c, c ∈ pool ∧ ic_deleted c = true ∧ i ∈ char_ids (ic_run c)) ->
+  ds_tombstoned D pool.
+Proof.
+  move=> Hdisj Hwf Hclkb Hnd Hwit c0 Hc0 Hlive y Hy Hin.
+  destruct (Hwit (item_id y) Hin) as (c & Hc & Hdel & Hz).
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hz.
+  destruct Hz as (z & Hidz & Hz).
+  have Hne : ic_loc c0 ≠ ic_loc c.
+  { move=> Hloc. have Heqc := pool_loc_inj pool c0 c Hnd Hc0 Hc Hloc.
+    subst c0. by rewrite Hdel in Hlive. }
+  exact (cells_char_id_unique pool c0 c y z Hdisj Hwf Hclkb Hc0 Hc Hne Hy Hz Hidz).
+Qed.
+
 Lemma ds_tombstoned_char_ids (pool : list item_cell) (c : item_cell) :
   cells_range_disjoint pool ->
   (∀ c0, c0 ∈ pool -> run_wf (ic_run c0)) ->

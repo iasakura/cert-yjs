@@ -1611,6 +1611,34 @@ Proof.
   exact (Hall p ts Hp c Hcts).
 Qed.
 
+(** Every char a pooled cell holds is an item of its type's model list: the
+    cell list flattens to exactly that list ([cells_repr], carried by
+    [own_ytype_cells]). This is how a delete turns "these ids sit in cells" into
+    "these ids are integrated items", the domain half of [own_ds_grow]. *)
+Lemma types_cells_in_arr (types : gmap loc type_state) :
+  ([∗ map] parent ↦ ts ∈ types,
+      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  ⌜∀ c, c ∈ all_cells types -> ∀ y, y ∈ ic_run c ->
+     ∃ p ts, types !! p = Some ts ∧ y ∈ ty_arr ts⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types,
+      ⌜∀ c, c ∈ ty_cells ts -> ∀ y, y ∈ ic_run c -> y ∈ ty_arr ts⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "[Hyt _]".
+    iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    iPureIntro. move=> c Hc y Hy.
+    rewrite /cells_repr in Hrepr. rewrite Hrepr /run_flatten.
+    apply list_elem_of_join. exists (ic_run c). split; first exact Hy.
+    apply list_elem_of_fmap. exists c. split; [reflexivity | exact Hc]. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> c Hc y Hy.
+  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
+  exists p, ts. split; [exact Hp | exact (Hall p ts Hp c Hcts y Hy)].
+Qed.
+
 (** A split preserves each type's model document, and the map's domain. *)
 Lemma split_types_preserve (types : gmap loc type_state) (parent : loc)
     (cells : list item_cell) (arr : list (YjsItem A)) (k o : nat) (rloc : loc)
