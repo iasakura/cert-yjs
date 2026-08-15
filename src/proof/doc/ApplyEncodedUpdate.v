@@ -74,17 +74,17 @@ Proof.
   iDestruct "Hprot" as (inputs) "(%Hdec & %Hwf & #Hcerts)".
   wp_auto.
   wp_apply ("Hcodec" with "[$Hs]").
-  iIntros (ok sl) "[Hs Hres]".
+  iIntros (ok sl sldel) "[Hs Hres]".
   destruct ok; last first.
   { (* dead under the protocol: the message decodes *)
     iDestruct "Hres" as %Hnone. rewrite Hdec in Hnone. discriminate. }
-  iDestruct "Hres" as (inputs') "[%Hdec' Hupd]".
+  iDestruct "Hres" as (inputs' deleted) "(%Hdec' & Hupd & Hdel)".
   rewrite Hdec in Hdec'. injection Hdec' as <-.
   wp_auto.
-  wp_apply (wp_Doc__ApplySyncUpdate _ _ _ _ c _ _ inputs
+  wp_apply (wp_Doc__ApplySyncUpdate _ _ _ _ c _ _ _ _ inputs deleted
               (proj1 Hwf) (proj2 Hwf)
-              with "[$His_doc $Hishist $Hpin $Hupd $Hcerts]").
-  iIntros (h applied rest m') "(Hupd & #Hlb & #Haccepts & #Hrootlbs & %Happmem)".
+              with "[$His_doc $Hishist $Hpin $Hupd $Hdel $Hcerts]").
+  iIntros (h applied rest m') "(Hupd & Hdel & #Hlb & #Haccepts & #Hrootlbs & %Happmem)".
   wp_auto.
   iApply ("HΦ" $! h inputs applied rest m').
   iFrame "Hs Hlb Haccepts Hrootlbs". done.

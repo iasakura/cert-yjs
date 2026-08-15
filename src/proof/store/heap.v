@@ -373,6 +373,41 @@ Definition own_update_structs (sl : slice.t) (dq : dfrac)
     "Hcap" ∷ own_slice_cap yjs.updateItem.t sl dq ∗
     "Hitems" ∷ ([∗ list] updateItemVal;typedInput ∈ uivs;inputs, is_update_item updateItemVal typedInput).
 
+(** [own_delete_spans sl dq spans]: the heap slice of decoded delete spans at
+    [sl] (the store's [pendingDeletes] buffer, and the batch [applyDeleteSpans]
+    is handed). A span is a plain triple of machine words with no heap
+    references, so unlike [own_update_structs] the model IS the value list;
+    the capacity comes along because the buffer is appended to. *)
+Definition own_delete_spans (sl : slice.t) (dq : dfrac)
+    (spans : list yjs.deleteSpan.t) : iProp Σ :=
+  "Hspsl" ∷ sl ↦*{dq} spans ∗
+  "Hspcap" ∷ own_slice_cap yjs.deleteSpan.t sl dq.
+
+#[global] Instance own_delete_spans_timeless sl dq spans :
+  Timeless (own_delete_spans sl dq spans).
+Proof. rewrite /own_delete_spans. apply _. Qed.
+
+(** [own_delete_ids sl dq D]: the same slice over its PURE model, the set of
+    ids the batch denotes ([delete_batch_ids]). This is the form public specs
+    take: [own_delete_spans] exposes the wire records, which are internal
+    data, and a caller of [Doc.ApplySyncUpdate] has no business reasoning
+    about the layout of a [deleteSpan]. It is also the form the eventual
+    certificate will line up with, since [is_ds_lb] speaks about a set of ids
+    too. *)
+Definition own_delete_ids (sl : slice.t) (dq : dfrac) (D : gset YjsId) : iProp Σ :=
+  ∃ spans : list yjs.deleteSpan.t,
+    own_delete_spans sl dq spans ∗ ⌜delete_batch_ids spans = D⌝.
+
+#[global] Instance own_delete_ids_timeless sl dq D :
+  Timeless (own_delete_ids sl dq D).
+Proof. rewrite /own_delete_ids. apply _. Qed.
+
+Lemma own_delete_ids_intro (sl : slice.t) (dq : dfrac)
+    (spans : list yjs.deleteSpan.t) :
+  own_delete_spans sl dq spans -∗ own_delete_ids sl dq (delete_batch_ids spans).
+Proof. iIntros "H". iExists spans. by iFrame "H". Qed.
+
+
 (** [is_root γs name]: persistent witness that the root type [name] is
     registered in the store (bound in the registry to SOME type loc, which
     stays hidden). This is what the [applyUpdate] certificate spec asks for
@@ -540,9 +575,10 @@ Qed.
     invariant while readers hold fractional shares of [store_inv_ro]. *)
 Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names)
     (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
-    (pend_sl : slice.t)
+    (pend_sl pdel_sl : slice.t)
     (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
+    (pend : list (TId * IntegrateInput (A := A)))
+    (pdel : list yjs.deleteSpan.t) : iProp Σ :=
     ∃ (acc : gset YjsId),
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
     "#Hclientpin" ∷ is_store_client γs (uint.nat client) ∗
@@ -558,6 +594,8 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
        knowing what is buffered. *)
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
+    "Hpddelf" ∷ (s_loc .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗
+    "Hpddel"  ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
@@ -593,9 +631,9 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
 #[global] Instance store_inv_ro_timeless γs types q : Timeless (store_inv_ro γs types q).
 Proof. rewrite /store_inv_ro. apply _. Qed.
 
-#[global] Instance store_inv_excl_timeless s_loc γs γh client k im tm dset psl types bind h m pend :
-  Timeless (store_inv_excl s_loc γs γh client k im tm dset psl types bind h m pend).
-Proof. rewrite /store_inv_excl /own_update_structs /is_update_item. apply _. Qed.
+#[global] Instance store_inv_excl_timeless s_loc γs γh client k im tm dset psl pdsl types bind h m pend pdel :
+  Timeless (store_inv_excl s_loc γs γh client k im tm dset psl pdsl types bind h m pend pdel).
+Proof. rewrite /store_inv_excl /own_update_structs /own_delete_spans /is_update_item. apply _. Qed.
 
 (** [store_inv s_loc γs γh]: everything the store lock protects.
     - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
@@ -628,10 +666,10 @@ Proof. rewrite /store_inv_excl /own_update_structs /is_update_item. apply _. Qed
     so [store_inv_bridge] is definitional. *)
 Definition store_inv (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
-    (pend_sl : slice.t)
+    (pend_sl pdel_sl : slice.t)
     (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))),
-    "Hexcl" ∷ store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend ∗
+    (pend : list (TId * IntegrateInput (A := A))) (pdel : list yjs.deleteSpan.t),
+    "Hexcl" ∷ store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl pdel_sl types bind h m pend pdel ∗
     "Hro"   ∷ store_inv_ro γs types 1.
 
 (** [store_inv] is timeless (heap points-to + ghost state over discrete cameras +
@@ -677,9 +715,9 @@ Definition tie_body (s_loc : loc) (γs : store_names) (γh : history_names) (st 
   | Locked => ∃ types, own_tok_auth γs.(sn_rrlocked) 0 ∗ types_frag γs 1 types
   | RLocked n =>
       own_tok_auth γs.(sn_rrlocked) n ∗ own_toks γs.(sn_rmax) n ∗ own_wlock γs ∗
-      (∃ client k items_mref types_mref dset pend_sl types bind h m pend,
+      (∃ client k items_mref types_mref dset pend_sl pdel_sl types bind h m pend pdel,
          types_frag γs (frac_of n) types ∗
-         store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend ∗
+         store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl pdel_sl types bind h m pend pdel ∗
          store_inv_ro γs types (frac_of n))
   end.
 
@@ -764,7 +802,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
-    (pend_sl : slice.t)
+    (pend_sl pdel_sl : slice.t) (pdel : list yjs.deleteSpan.t)
     (types : gmap loc type_state) (bind : gmap P loc) (acc : gset YjsId),
     "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗
     "#Hclientpin" ∷ is_store_client γs c ∗
@@ -777,6 +815,8 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset ∗
     "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
+    "Hpddelf" ∷ (s_loc .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗
+    "Hpddel"  ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
@@ -1035,8 +1075,8 @@ Qed.
     (kept as a lemma for the lock-layer proofs that rewrite with it). *)
 Lemma store_inv_bridge (s_loc : loc) (γs : store_names) (γh : history_names) :
   store_inv s_loc γs γh ⊣⊢
-  ∃ client k items_mref types_mref dset pend_sl types bind h m pend,
-    store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend ∗
+  ∃ client k items_mref types_mref dset pend_sl pdel_sl types bind h m pend pdel,
+    store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl pdel_sl types bind h m pend pdel ∗
     store_inv_ro γs types 1.
 Proof. rewrite /store_inv /named //. Qed.
 
@@ -1051,14 +1091,15 @@ Proof. rewrite /store_inv /named //. Qed.
     exclusive slice. *)
 Lemma store_inv_excl_hist_root (s_loc : loc) (γs : store_names) (γh : history_names)
     (client k : w64) (items_mref types_mref : loc) (dset : yjs.deletedSet.t)
-    (pend_sl : slice.t) (types : gmap loc type_state) (bind : gmap P loc)
+    (pend_sl pdel_sl : slice.t) (types : gmap loc type_state) (bind : gmap P loc)
     (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
+    (pdel : list yjs.deleteSpan.t)
     (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
-  store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend -∗
+  store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl pdel_sl types bind h m pend pdel -∗
   is_store_client γs c -∗
   is_history_lb γh c h0 -∗
   is_type_binding γs.(sn_types) name parent -∗
-  store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl types bind h m pend ∗
+  store_inv_excl s_loc γs γh client k items_mref types_mref dset pend_sl pdel_sl types bind h m pend pdel ∗
   ⌜∀ input : IntegrateInput (A := A),
      (RootId name, OpInsert input) ∈ delivered_ops h0 ->
      ∃ ts it, types !! parent = Some ts ∧ item_id it = in_id input ∧ it ∈ ty_arr ts⌝.
@@ -1113,7 +1154,7 @@ Proof.
   have Hin : i ∈ acc.
   { apply Hsub. by apply elem_of_singleton. }
   iSplitR ""; last (iPureIntro; exact (elem_of_weaken _ _ _ Hin Hacccoh)).
-  iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, acc.
+  iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, pdel, types, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
     | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hacccoh].
@@ -1130,7 +1171,7 @@ Lemma own_store_client_pin (s_loc : loc) (γs : store_names) (γh : history_name
 Proof.
   iIntros "H". iNamed "H".
   iSplitR ""; last by iFrame "Hclientpin".
-  iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, acc.
+  iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, pdel, types, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
     | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hacccoh].
@@ -1163,7 +1204,7 @@ Proof.
     rewrite elem_of_list_to_set list_elem_of_fmap.
     exists x. split; [done | exact (list_elem_of_lookup_2 _ _ _ Hx)]. }
   iModIntro. iFrame "Haccepts".
-  iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, (acc ∪ T).
+  iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, pdel, types, bind, (acc ∪ T).
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
     | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk |].
@@ -1192,6 +1233,7 @@ Lemma store_tie_init (s_loc : loc) (γh : history_names) (client k : w64)
   "Htypesmap" ∷ own_map types_mref (DfracOwn 1) (∅ : gmap P loc) -∗
   "Hdset"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ dset -∗
   "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ slice.nil -∗
+  "Hpddelf" ∷ (s_loc .[(yjs.store.t), "pendingDeletes"]) ↦ slice.nil -∗
   "Hhist"   ∷ own_client_history γh (uint.nat client) ([] : list Ev) ==∗
   ∃ γs : store_names,
     "%Hrw"        ∷ ⌜γs.(sn_rw) = γrw⌝ ∗
@@ -1201,7 +1243,7 @@ Lemma store_tie_init (s_loc : loc) (γh : history_names) (client k : w64)
     "Htie"        ∷ tie_body s_loc γs γh (RLocked 0) ∗
     "#Hclientpin" ∷ is_store_client γs (uint.nat client).
 Proof.
-  iIntros "Hclient Hclock Hitemsf Hmap Htypesf Htypesmap Hdset Hpendf Hhist".
+  iIntros "Hclient Hclock Hitemsf Hmap Htypesf Htypesmap Hdset Hpendf Hpddelf Hhist".
   set (types := ∅ : gmap loc type_state).
   iMod (own_alloc (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR))
     as (γseq) "Hseq".
@@ -1239,8 +1281,9 @@ Proof.
   iSplitL; last by iFrame "Hclpin".
   rewrite /tie_body.
   iFrame "Hrrlocked Hrtoks0 Hwl".
-  iExists client, k, items_mref, types_mref, dset, slice.nil, types, (∅ : gmap P loc),
-    ([] : list Ev), (∅ : DocModel), ([] : list (TId * IntegrateInput (A := A))).
+  iExists client, k, items_mref, types_mref, dset, slice.nil, slice.nil, types,
+    (∅ : gmap P loc), ([] : list Ev), (∅ : DocModel),
+    ([] : list (TId * IntegrateInput (A := A))), ([] : list yjs.deleteSpan.t).
   rewrite frac_of_0.
   iSplitL "Hta"; first by iFrame "Hta".
   iSplitR "Hseq"; last first.
@@ -1251,7 +1294,7 @@ Proof.
   { iExists (∅ : gset YjsId). iFrame "Hds0". iPureIntro.
     move=> i Hi. exfalso. set_solver. }
   iExists (∅ : gset YjsId).
-  iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap Hdset Hpendf Hhist HtypesAuth Hacc0 Hds".
+  iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap Hdset Hpendf Hpddelf Hhist HtypesAuth Hacc0 Hds".
   iSplitR; first by iFrame "Hclpin".
   iSplitL "Hmap".
   { (* own_item_map over the empty run map *)
@@ -1266,6 +1309,9 @@ Proof.
   { (* the empty pending buffer over the nil slice *)
     iExists []. iSplitR; [iApply own_slice_nil |].
     iSplitR; [iApply own_slice_cap_nil |]. rewrite big_sepL2_nil //. }
+  iSplitR.
+  { (* the empty delete-span buffer over the nil slice *)
+    iSplitR; [iApply own_slice_nil | iApply own_slice_cap_nil]. }
   iSplitR.
   { have He : expand_inputs [] = [] by done.
     rewrite /is_pending_certified He big_sepL_nil //. }
@@ -1305,8 +1351,8 @@ Lemma own_store_hist_coh (s_loc : loc) (γs : store_names) (γh : history_names)
   own_store s_loc γs γh c h m pend ∗ ⌜history_state_coh h m⌝.
 Proof.
   iIntros "H". iNamed "H".
-  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hseq Htypes HtypesAuth Hhist Hacc Hds".
-  - iExists client, k, items_mref, types_mref, dset, pend_sl, types, bind, acc.
+  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq Htypes HtypesAuth Hhist Hacc Hds".
+  - iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, pdel, types, bind, acc.
     iFrame "∗#".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr

@@ -1981,10 +1981,10 @@ Proof using Type*.
   iDestruct (own_ds_ValidReplay γs (expand_inputs applied) m m' Hvr with "Hds") as "Hds".
   iModIntro. iApply ("HΦ" $! applied rest' m').
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
-  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hhist Hacc Hds";
+  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hpddelf Hpddel Hseq Htypes HtypesAuth Hhist Hacc Hds";
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc | exact Hnoloss_in]).
-  iExists client, k, items_mref, types_mref, dset, pend_sl', types', bind', acc.
-  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hseq Htypes HtypesAuth Hbinds' Hhist Hacc Hds".
+  iExists client, k, items_mref, types_mref, dset, pend_sl', pdel_sl, pdel, types', bind', acc.
+  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend' Hpddelf Hpddel Hseq Htypes HtypesAuth Hbinds' Hhist Hacc Hds".
   iFrame "Hpendcert' Hclientpin".
   iPureIntro. split_and!.
   - exact Hclientc.
