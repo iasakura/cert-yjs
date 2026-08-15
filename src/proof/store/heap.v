@@ -387,6 +387,26 @@ Definition own_delete_spans (sl : slice.t) (dq : dfrac)
   Timeless (own_delete_spans sl dq spans).
 Proof. rewrite /own_delete_spans. apply _. Qed.
 
+(** [own_delete_ids sl dq D]: the same slice over its PURE model, the set of
+    ids the batch denotes ([delete_batch_ids]). This is the form public specs
+    take: [own_delete_spans] exposes the wire records, which are internal
+    data, and a caller of [Doc.ApplySyncUpdate] has no business reasoning
+    about the layout of a [deleteSpan]. It is also the form the eventual
+    certificate will line up with, since [is_ds_lb] speaks about a set of ids
+    too. *)
+Definition own_delete_ids (sl : slice.t) (dq : dfrac) (D : gset YjsId) : iProp Σ :=
+  ∃ spans : list yjs.deleteSpan.t,
+    own_delete_spans sl dq spans ∗ ⌜delete_batch_ids spans = D⌝.
+
+#[global] Instance own_delete_ids_timeless sl dq D :
+  Timeless (own_delete_ids sl dq D).
+Proof. rewrite /own_delete_ids. apply _. Qed.
+
+Lemma own_delete_ids_intro (sl : slice.t) (dq : dfrac)
+    (spans : list yjs.deleteSpan.t) :
+  own_delete_spans sl dq spans -∗ own_delete_ids sl dq (delete_batch_ids spans).
+Proof. iIntros "H". iExists spans. by iFrame "H". Qed.
+
 
 (** [is_root γs name]: persistent witness that the root type [name] is
     registered in the store (bound in the registry to SOME type loc, which

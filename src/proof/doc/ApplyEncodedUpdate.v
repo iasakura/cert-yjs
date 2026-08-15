@@ -78,13 +78,13 @@ Proof.
   destruct ok; last first.
   { (* dead under the protocol: the message decodes *)
     iDestruct "Hres" as %Hnone. rewrite Hdec in Hnone. discriminate. }
-  iDestruct "Hres" as (inputs' spans) "(%Hdec' & Hupd & Hspans)".
+  iDestruct "Hres" as (inputs' deleted) "(%Hdec' & Hupd & Hdel)".
   rewrite Hdec in Hdec'. injection Hdec' as <-.
   wp_auto.
-  wp_apply (wp_Doc__ApplySyncUpdate _ _ _ _ c _ _ _ _ inputs spans
+  wp_apply (wp_Doc__ApplySyncUpdate _ _ _ _ c _ _ _ _ inputs deleted
               (proj1 Hwf) (proj2 Hwf)
-              with "[$His_doc $Hishist $Hpin $Hupd $Hspans $Hcerts]").
-  iIntros (h applied rest m') "(Hupd & Hspans & #Hlb & #Haccepts & #Hrootlbs & %Happmem)".
+              with "[$His_doc $Hishist $Hpin $Hupd $Hdel $Hcerts]").
+  iIntros (h applied rest m') "(Hupd & Hdel & #Hlb & #Haccepts & #Hrootlbs & %Happmem)".
   wp_auto.
   iApply ("HΦ" $! h inputs applied rest m').
   iFrame "Hs Hlb Haccepts Hrootlbs". done.

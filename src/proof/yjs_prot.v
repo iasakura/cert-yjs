@@ -99,9 +99,12 @@ Context (decode : list u8 -> option (list Input)).
 (** The Go codec value [f] meets the abstract [decode]: on any byte slice it
     reports exactly whether [decode] succeeds, and on success returns a
     struct slice denoting the decoded batch. *)
-(** The decoded delete spans are NOT constrained: deletes are state, not
+(** The decoded delete set is NOT constrained: deletes are state, not
     operations (docs/plan-delete-set.md), so they carry no history
-    certificates and the protocol has nothing to say about them. That is
+    certificates and the protocol has nothing to say about them. It appears
+    as the set of ids the batch denotes rather than as the wire records
+    themselves, which are internal data a caller has no business reading.
+    That is
     faithful rather than lax: a peer's spans can only tombstone ids that are
     already integrated, and tombstoning is idempotent and commutative, so a
     dishonest span costs content but cannot corrupt the CRDT. Yjs has no
@@ -114,10 +117,10 @@ Definition codec_spec (f : func.t) : iProp Σ :=
       {{{ (ok : bool) (sl sldel : slice.t), RET (#ok, #sl, #sldel);
           s ↦*{dq} data ∗
           if ok
-          then ∃ (inputs : list Input) (spans : list yjs.deleteSpan.t),
+          then ∃ (inputs : list Input) (deleted : gset YjsId),
                ⌜decode data = Some inputs⌝ ∗
                own_update_structs sl (DfracOwn 1) inputs ∗
-               own_delete_spans sldel (DfracOwn 1) spans
+               own_delete_ids sldel (DfracOwn 1) deleted
           else ⌜decode data = None⌝ }}}).
 
 #[global] Instance codec_spec_persistent f : Persistent (codec_spec f).

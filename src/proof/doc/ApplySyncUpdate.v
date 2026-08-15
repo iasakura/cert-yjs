@@ -92,20 +92,20 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (sl sldel : slice.t) (dq dqd : dfrac)
     (inputs : list (TId * IntegrateInput (A := A)))
-    (spans : list yjs.deleteSpan.t) :
+    (deleted : gset YjsId) :
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
   is_pending_rooted inputs ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
       is_store_client γs c ∗
       own_update_structs sl dq inputs ∗
-      own_delete_spans sldel dqd spans ∗
+      own_delete_ids sldel dqd deleted ∗
       is_pending_certified γh (expand_inputs inputs) }}}
     dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl #sldel
   {{{ (h : list Ev)
       (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel), RET #();
       own_update_structs sl dq inputs ∗
-      own_delete_spans sldel dqd spans ∗
+      own_delete_ids sldel dqd deleted ∗
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
       ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
       is_applied_root_lb γs applied m' ∗
@@ -113,7 +113,9 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
          ∃ it, item_id it = in_id x.2 ∧ it ∈ doc_model_get m' x.1⌝ }}}.
 Proof.
   move=> Hnowrapb Hrooted.
-  wp_start as "(#His_doc & #Hishist & #Hpin & Hupd & Hspans & #Hcerts)".
+  wp_start as "(#His_doc & #Hishist & #Hpin & Hupd & Hdel & #Hcerts)".
+  (* open the pure model: the wire records live only inside this proof *)
+  iDestruct "Hdel" as (spans) "[Hspans %Hdeleted]".
   iNamed "His_doc". subst s_loc. wp_auto.
   (* take the write lock, reveal the store's current (c0, h, m, pend); the
      client pin identifies c0 with the caller's c *)
@@ -153,7 +155,8 @@ Proof.
   { iNext. iApply store_inv_own_store.
     iExists c, (h ++ (deliver_ev <$> expand_inputs applied)), m', rest. iFrame "Hstore". }
   wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hinv]").
-  iApply ("HΦ" $! h applied rest m'). iFrame "Hupd Hspans Hlb Haccepts Hrootlbs".
+  iApply ("HΦ" $! h applied rest m'). iFrame "Hupd Hlb Haccepts Hrootlbs".
+  iSplitL "Hspans"; first (iExists spans; by iFrame "Hspans").
   iPureIntro. exact (ValidReplay_input_mem (expand_inputs applied) m m' Hvr).
 Qed.
 

@@ -244,6 +244,21 @@ Definition span_ids (v : yjs.idSpan.t) : gset YjsId :=
                    (uint.nat v.(yjs.idSpan.id').(yjs.id.clock') + o)%nat)
        <$> seq 0 (uint.nat v.(yjs.idSpan.len'))).
 
+(** The ids a WIRE delete batch denotes: a span is its whole clock interval,
+    and the batch is their union. This is the PURE model of the [deleteSpan]
+    slice, and it is the right one because deletes are STATE, not operations:
+    a batch means exactly the set of ids it tombstones, with no order and no
+    multiplicity, which is why two batches with the same union are the same
+    request. A public spec speaks about this set and never about the heap
+    records behind it. *)
+Definition delete_span_ids (sp : yjs.deleteSpan.t) : gset YjsId :=
+  span_ids (yjs.idSpan.mk (yjs.id.mk sp.(yjs.deleteSpan.client')
+                                     sp.(yjs.deleteSpan.clock'))
+                          sp.(yjs.deleteSpan.length')).
+
+Definition delete_batch_ids (spans : list yjs.deleteSpan.t) : gset YjsId :=
+  ⋃ (delete_span_ids <$> spans).
+
 (** A span's clock interval does not wrap: [containsId]'s Go range test
     computes [clock + len] in [w64], so this is what makes the test decide
     [span_ids] membership. Sourced from the store's run-fits pool invariant. *)
