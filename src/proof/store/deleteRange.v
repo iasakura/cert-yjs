@@ -541,7 +541,10 @@ Proof using Type*.
               Hpool with "[$Hitemsf $Hitemmap $Htypes $Hpddelf $Hpddel $Hsp]").
   iIntros (types' pdel_sl' rest)
     "(Hitemsf & Hitemmap & Htypes & Hpddelf & Hpddel & Hsp & %Hpool' & %Hfacts)".
-  destruct Hfacts as (Harr & Hdom & Hcoord).
+  destruct Hfacts as (Harr & Hdom & Hlr & Hcoord).
+  (* the tombstone-set invariant follows the delete: both surgeries the loop
+     performs (a split and a flip) only refine the live cells *)
+  iDestruct (own_ds_refine γs m types types' Hlr with "Hds") as "Hds".
   (* equal domains and equal model lists, so the item-set authority is
      literally the same map *)
   have Hdomeq : ∀ q, is_Some (types !! q) <-> is_Some (types' !! q).

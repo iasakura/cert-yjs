@@ -6,6 +6,9 @@
       registry, write-lock witness, the RWMutex reader accounting, the accepted
       set).
     - [own_item_map]: the heap [map[Client][]*item] at the cell level.
+    - the ghost delete set: [is_ds_lb] (the persistent lower bound a delete
+      hands out) and [own_ds] (its authority, with the domain bound and the
+      tombstone-bit coherence that make the bound mean something).
     - the lock body: [store_inv_ro] (the fractional, reader-visible part),
       [store_inv_excl] (the exclusive part) and [store_inv], carrying the
       client's ghost history; [tie_body] and [types_frag] / [frac_of] are the
@@ -476,60 +479,157 @@ Proof. iApply auth_gset_frag_union. Qed.
 Lemma is_ds_lb_empty (γs : store_names) : ⊢ |==> is_ds_lb γs ∅.
 Proof. iApply auth_gset_frag_empty. Qed.
 
-(** [own_ds γs m]: the delete-set authority with its model-level domain bound
-    (every deleted id names an integrated item of [m], [ds_dom]); the current
-    set stays existential, observable only through [is_ds_lb] certificates.
-    Carried by [store_inv_excl] / [own_store] next to their model [m]. *)
-Definition own_ds (γs : store_names) (m : DocModel) : iProp Σ :=
+(** [own_ds γs m pool]: the delete-set authority with the two facts that give
+    the set its meaning.
+    - [ds_dom]: every deleted id names an integrated item of the model [m], so
+      a freshly minted insert id can never already be in the set.
+    - [ds_tombstoned]: no LIVE cell of the pool holds a char whose id is in
+      the set. Without this an [is_ds_lb] certificate would be a receipt that
+      an implementation whose [Delete] does nothing could still mint; with it
+      the certificate says the ids are gone from every live node, hence from
+      the visible document a reader observes (issue #125).
+    The set itself stays existential, observable only through [is_ds_lb].
+    Carried by [store_inv_excl] / [own_store] next to their [m] and their
+    [types]. *)
+Definition own_ds (γs : store_names) (m : DocModel) (pool : list item_cell) : iProp Σ :=
   ∃ ds : gset YjsId,
     "Hdsauth" ∷ own γs.(sn_ds) (● ds : accUR) ∗
-    "%Hdsdom" ∷ ⌜ds_dom ds m⌝.
+    "%Hdsdom" ∷ ⌜ds_dom ds m⌝ ∗
+    "%Hdstomb" ∷ ⌜ds_tombstoned ds pool⌝.
 
-#[global] Instance own_ds_timeless γs m : Timeless (own_ds γs m).
+#[global] Instance own_ds_timeless γs m pool : Timeless (own_ds γs m pool).
 Proof. rewrite /own_ds. apply _. Qed.
 
 (** Transport along model growth: any map that preserves id presence
     ([Text.Insert] uses [docm_has_integrate_mono] pointwise, [applyUpdate]
     uses [ds_dom_ValidReplay]'s premise via [ds_dom_mono]). *)
-Lemma own_ds_mono (γs : store_names) (m m' : DocModel) :
+Lemma own_ds_mono (γs : store_names) (m m' : DocModel) (pool : list item_cell) :
   (∀ i, doc_model_has m i = true -> doc_model_has m' i = true) ->
-  own_ds γs m -∗ own_ds γs m'.
+  own_ds γs m pool -∗ own_ds γs m' pool.
 Proof.
   iIntros (Hmono) "H". iNamed "H". iExists ds. iFrame "Hdsauth".
-  iPureIntro. exact (ds_dom_mono ds m m' Hmono Hdsdom).
+  iPureIntro. split; [exact (ds_dom_mono ds m m' Hmono Hdsdom) | exact Hdstomb].
+Qed.
+
+(** Transport along the pool surgeries: a split, a tombstone flip and a
+    registry insert all refine the live cells ([live_refine]), which is
+    exactly what [ds_tombstoned] travels along. *)
+Lemma own_ds_refine (γs : store_names) (m : DocModel)
+    (types types' : gmap loc type_state) :
+  live_refine types types' ->
+  own_ds γs m (all_cells types) -∗ own_ds γs m (all_cells types').
+Proof.
+  iIntros (Hlr) "H". iNamed "H". iExists ds. iFrame "Hdsauth".
+  iPureIntro. split; [exact Hdsdom | exact (ds_tombstoned_refine ds types types' Hlr Hdstomb)].
+Qed.
+
+Lemma own_ds_perm (γs : store_names) (m : DocModel) (pool pool' : list item_cell) :
+  pool' ≡ₚ pool -> own_ds γs m pool -∗ own_ds γs m pool'.
+Proof.
+  iIntros (Hperm) "H". iNamed "H". iExists ds. iFrame "Hdsauth".
+  iPureIntro. split; [exact Hdsdom | exact (ds_tombstoned_perm ds pool pool' Hperm Hdstomb)].
+Qed.
+
+(** The registry bridge the growth steps need: an id absent from every
+    REGISTERED type's model list is absent from the model [m] altogether.
+    [store_inv_excl]'s registry coherence is what makes this true (a non-empty
+    model entry is a bound root, and a bound root's list is its type's
+    [ty_arr]), so a caller that knows its fresh id beats every type's items,
+    typically by the store's clock counter, gets [doc_model_has m i = false]
+    and hence, with [ds_dom], that the id is not in the delete set. *)
+Lemma docm_has_registry_false (bind : gmap P loc) (types : gmap loc type_state)
+    (m : DocModel) (i : YjsId) :
+  (∀ name p ts, bind !! name = Some p -> types !! p = Some ts ->
+     doc_model_get m (RootId name) = ty_arr ts) ->
+  (∀ t, doc_model_get m t ≠ [] ->
+     ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
+  (∀ name p, bind !! name = Some p -> is_Some (types !! p)) ->
+  (∀ p ts x, types !! p = Some ts -> x ∈ ty_arr ts -> item_id x ≠ i) ->
+  doc_model_has m i = false.
+Proof.
+  move=> Hmtypes Hmdom Hbindtypes Hbeats.
+  destruct (doc_model_has m i) eqn:Hhas; last done.
+  exfalso. apply docm_has_spec in Hhas as (t & x & Hx & Hid).
+  have Hne : doc_model_get m t ≠ [].
+  { move=> Hnil. rewrite Hnil in Hx. by rewrite elem_of_nil in Hx. }
+  destruct (Hmdom t Hne) as (nm & p & -> & Hb).
+  destruct (Hbindtypes nm p Hb) as [ts Hts].
+  rewrite (Hmtypes nm p ts Hb Hts) in Hx.
+  exact (Hbeats p ts x Hts Hx Hid).
+Qed.
+
+(** Integration: the pool grows by one LIVE cell, so the invariant needs the
+    new run's ids to be outside the set. That follows from [ds_dom] plus the
+    caller's freshness fact, which is how [Text.Insert] and the integrate loop
+    discharge it (the new id is not yet in the model). *)
+Lemma own_ds_snoc (γs : store_names) (m : DocModel) (pool pool' : list item_cell)
+    (c : item_cell) :
+  pool' ≡ₚ pool ++ [c] ->
+  (∀ y, y ∈ ic_run c -> doc_model_has m (item_id y) = false) ->
+  own_ds γs m pool -∗ own_ds γs m pool'.
+Proof.
+  iIntros (Hperm Hfresh) "H". iNamed "H". iExists ds. iFrame "Hdsauth".
+  iPureIntro. split; [exact Hdsdom |].
+  apply (ds_tombstoned_snoc ds pool pool' c Hperm Hdstomb).
+  move=> y Hy Hin. have Ht := Hdsdom _ Hin. have Hf := Hfresh y Hy. congruence.
+Qed.
+
+(** The remote apply's transport: the model grows by the replay and the pool
+    grows by the integrated cells, so neither [live_refine] nor a plain model
+    map covers it. [apply_live_refine] is exactly the pair of escapes a char
+    of a new live cell can take, and the domain bound closes the second one. *)
+Lemma own_ds_apply (γs : store_names) (m m' : DocModel) (pool pool' : list item_cell) :
+  (∀ i, doc_model_has m i = true -> doc_model_has m' i = true) ->
+  apply_live_refine m pool pool' ->
+  own_ds γs m pool -∗ own_ds γs m' pool'.
+Proof.
+  iIntros (Hmono Halr) "H". iNamed "H". iExists ds. iFrame "Hdsauth".
+  iPureIntro. split; [exact (ds_dom_mono ds m m' Hmono Hdsdom) |].
+  move=> c' Hc' Hlive y Hy.
+  destruct (Halr c' Hc' Hlive y Hy) as [(c & Hc & Hlivec & Hy') | Hfresh].
+  - exact (Hdstomb c Hc Hlivec y Hy').
+  - move=> Hin. by rewrite (Hdsdom _ Hin) in Hfresh.
 Qed.
 
 (** Tombstone: grow the set by ids of integrated items, minting their lower
-    bound. The model is unchanged ([Text.Delete] flips flags only). *)
-Lemma own_ds_grow (γs : store_names) (m : DocModel) (S : gset YjsId) :
+    bound. The model is unchanged ([Text.Delete] flips flags only), and the
+    caller must show the new ids miss every live cell, which is the whole
+    point: the certificate is only obtainable by an implementation that
+    actually tombstoned them. *)
+Lemma own_ds_grow (γs : store_names) (m : DocModel) (pool : list item_cell)
+    (S : gset YjsId) :
   (∀ i, i ∈ S -> doc_model_has m i = true) ->
-  own_ds γs m ==∗ own_ds γs m ∗ is_ds_lb γs S.
+  ds_tombstoned S pool ->
+  own_ds γs m pool ==∗ own_ds γs m pool ∗ is_ds_lb γs S.
 Proof.
-  iIntros (HS) "H". iNamed "H".
+  iIntros (HS Htomb) "H". iNamed "H".
   iMod (auth_gset_grow γs.(sn_ds) ds S with "Hdsauth") as "[Hdsauth Hfrag]".
   iModIntro. iSplitL "Hdsauth".
-  { iExists (ds ∪ S). iFrame "Hdsauth". iPureIntro. exact (ds_dom_grow ds S m Hdsdom HS). }
+  { iExists (ds ∪ S). iFrame "Hdsauth". iPureIntro.
+    split; [exact (ds_dom_grow ds S m Hdsdom HS)
+           | exact (ds_tombstoned_union ds S pool Hdstomb Htomb)]. }
   rewrite /is_ds_lb.
   iApply (auth_gset_frag_mono with "Hfrag"). set_solver.
 Qed.
 
 (** The two model-transition forms the store ops need: one type's list grows
     ([Text.Insert]), and a whole valid replay ([store.applyUpdate]). *)
-Lemma own_ds_insert (γs : store_names) (m : DocModel) (t : TId)
-    (arr' : list (YjsItem A)) :
+Lemma own_ds_insert (γs : store_names) (m : DocModel) (pool : list item_cell)
+    (t : TId) (arr' : list (YjsItem A)) :
   (∀ x, x ∈ doc_model_get m t -> x ∈ arr') ->
-  own_ds γs m -∗ own_ds γs (<[t := arr']> m).
+  own_ds γs m pool -∗ own_ds γs (<[t := arr']> m) pool.
 Proof.
   iIntros (Hgrow) "H". iNamed "H". iExists ds. iFrame "Hdsauth".
-  iPureIntro. exact (ds_dom_insert ds m t arr' Hgrow Hdsdom).
+  iPureIntro. split; [exact (ds_dom_insert ds m t arr' Hgrow Hdsdom) | exact Hdstomb].
 Qed.
 
 Lemma own_ds_ValidReplay (γs : store_names)
-    (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
-  ValidReplay inputs m m' -> own_ds γs m -∗ own_ds γs m'.
+    (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel)
+    (pool : list item_cell) :
+  ValidReplay inputs m m' -> own_ds γs m pool -∗ own_ds γs m' pool.
 Proof.
   iIntros (Hvr) "H". iNamed "H". iExists ds. iFrame "Hdsauth".
-  iPureIntro. exact (ds_dom_ValidReplay ds inputs m m' Hvr Hdsdom).
+  iPureIntro. split; [exact (ds_dom_ValidReplay ds inputs m m' Hvr Hdsdom) | exact Hdstomb].
 Qed.
 
 (** [is_store_client γs c]: the persistent witness that this store IS client
@@ -625,7 +725,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
        its coherence [acc ⊆ delivered_ids h ∪ pending ids] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
     (* the monotone delete set with its model-domain bound (plan-delete-set D1) *)
-    "Hds" ∷ own_ds γs m ∗
+    "Hds" ∷ own_ds γs m (all_cells types) ∗
     "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
 
 #[global] Instance store_inv_ro_timeless γs types q : Timeless (store_inv_ro γs types q).
@@ -840,7 +940,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "%Horiginclk" ∷ ⌜∀ c, c ∈ all_cells types → cell_origin_clk c⌝ ∗
     (* no-loss accepted-id layer (this branch): matches [store_inv_excl] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
-    "Hds" ∷ own_ds γs m ∗
+    "Hds" ∷ own_ds γs m (all_cells types) ∗
     "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
@@ -1290,9 +1390,11 @@ Proof.
   { (* store_inv_ro over the empty types map *)
     iFrame "Hseq". rewrite /types big_sepM_empty //. }
   (* store_inv_excl *)
-  iAssert (own_ds γs (∅ : DocModel)) with "[Hds0]" as "Hds".
-  { iExists (∅ : gset YjsId). iFrame "Hds0". iPureIntro.
-    move=> i Hi. exfalso. set_solver. }
+  iAssert (own_ds γs (∅ : DocModel) (all_cells (∅ : gmap loc type_state)))
+    with "[Hds0]" as "Hds".
+  { iExists (∅ : gset YjsId). iFrame "Hds0". iPureIntro. split.
+    - move=> i Hi. exfalso. set_solver.
+    - move=> c Hc _ y _. set_solver. }
   iExists (∅ : gset YjsId).
   iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap Hdset Hpendf Hpddelf Hhist HtypesAuth Hacc0 Hds".
   iSplitR; first by iFrame "Hclpin".

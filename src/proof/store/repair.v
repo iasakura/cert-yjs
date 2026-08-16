@@ -182,13 +182,15 @@ Proof.
   - move=> kc. lia.
   - move=> p ts ts' Hp Hp' _. congruence.
   - move=> c' Hc'. exists c'. split_and!; [exact Hc' | done | lia | lia].
+  - exact (live_refine_refl types).
 Qed.
 
 Lemma split_step_facts_single (types types1 : gmap loc type_state) (w : item_cell) :
   split_step_facts types types1 w -> repair_types_facts types types1.
 Proof.
-  move=> H. destruct H as (Hp & Hd & Hr & _ & _ & Hu & Hsub).
-  split_and!; [exact Hp | exact Hd | move=> kc; have := Hr kc; lia | exact Hu | exact Hsub].
+  move=> H. destruct H as (Hp & Hd & Hr & _ & _ & Hu & Hsub & Hlr).
+  split_and!;
+    [exact Hp | exact Hd | move=> kc; have := Hr kc; lia | exact Hu | exact Hsub | exact Hlr].
 Qed.
 
 Lemma split_step_facts_compose (types types1 types2 : gmap loc type_state) (w1 w2 : item_cell) :
@@ -196,8 +198,8 @@ Lemma split_step_facts_compose (types types1 types2 : gmap loc type_state) (w1 w
   repair_types_facts types types2.
 Proof.
   move=> H1 H2.
-  destruct H1 as (Hp1 & Hd1 & Hr1 & _ & _ & Hu1 & Hsub1).
-  destruct H2 as (Hp2 & Hd2 & Hr2 & _ & _ & Hu2 & Hsub2).
+  destruct H1 as (Hp1 & Hd1 & Hr1 & _ & _ & Hu1 & Hsub1 & Hlr1).
+  destruct H2 as (Hp2 & Hd2 & Hr2 & _ & _ & Hu2 & Hsub2 & Hlr2).
   split_and!.
   - move=> p ts2 Hp.
     destruct (Hp2 p ts2 Hp) as (ts1 & Hp1' & Ha2 & Hf2).
@@ -214,6 +216,7 @@ Proof.
     destruct (Hsub2 c2 Hc2) as (c1 & Hc1 & Hcl2 & Hlo2 & Hhi2).
     destruct (Hsub1 c1 Hc1) as (c0 & Hc0 & Hcl1 & Hlo1 & Hhi1).
     exists c0. split_and!; [exact Hc0 | congruence | lia | lia].
+  - exact (live_refine_trans types types1 types2 Hlr1 Hlr2).
 Qed.
 
 (** [store.repair], general splitting form (issue #28 stage D2b): the origin
@@ -346,7 +349,7 @@ Proof using Type*.
       have HcRltZ : (uint.Z idvR.(yjs.id.clock') < uint.Z (cell_clock cR) + Z.of_nat (length (ic_run cR)))%Z.
       { move: HcRlt. rewrite /toYjsId /= /cell_clock. move=> H. word. }
       have Hstep1' := Hstep1.
-      destruct Hstep1' as (Hpres1 & Hdom1 & Hrl1 & Hstable1 & Hcover1 & Hunitp1).
+      destruct Hstep1' as (Hpres1 & Hdom1 & Hrl1 & Hstable1 & Hcover1 & Hunitp1 & Hsubc1 & Hlrc1).
       destruct (Hcover1 idvR.(yjs.id.clientId') (uint.Z idvR.(yjs.id.clock')) cR HcRmem HcRccw HcRleZ HcRltZ)
         as (cR1 & HcR1mem & HcR1cc & HcR1le & HcR1lt & HcR1parw & Hprov).
       destruct Hpinvs1 as (Hfits1 & Hnodup1 & Hrangedisj1 & Horiginclk1).
@@ -371,7 +374,7 @@ Proof using Type*.
       destruct HbdR as (cR2 & HcR2mem & HcR2loc & HcR2cl & HcR2clk & HcR2par).
       wp_auto.
       have Hstep2' := Hstep2.
-      destruct Hstep2' as (Hpres2 & Hdom2 & Hrl2 & Hstable2 & Hcover2 & Hunitp2).
+      destruct Hstep2' as (Hpres2 & Hdom2 & Hrl2 & Hstable2 & Hcover2 & Hunitp2 & Hsubc2 & Hlrc2).
       have HcL2mem : cL1 ∈ all_cells types2 := Hstable2 cL1 HcL1mem Hlocne.
       have HparR : ic_parent cR2 = ic_parent cR by rewrite HcR2par HcR1parw //.
       destruct opn as [nm|].
@@ -1738,6 +1741,7 @@ Lemma wp_store__integrateDecoded (s mref tref : loc)
           (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c))%Z ∧
           (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
            uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z)⌝ ∗
+      ⌜integrate_live_refine typedInput.2 (all_cells types) (all_cells types')⌝ ∗
       ⌜NoDup (ic_loc <$> all_cells types')⌝ ∗
       ⌜cells_range_disjoint (all_cells types')⌝ ∗
       ⌜∀ c, c ∈ all_cells types' -> cell_fits c⌝ ∗
@@ -1938,7 +1942,7 @@ Proof using Type*.
               with "[$Hfresh $HisPN $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
   iIntros (lft rgt types2) "(Hlinked & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hpinv2 & %Hrtf & %HbdL & %HbdR)".
   destruct Hpinv2 as (Hfits2 & Hnodup2 & Hrangedisj2 & Horiginclk2).
-  destruct Hrtf as (Hpres2 & Hdom2 & Hrl2 & Hunitpres2 & Hsub2).
+  destruct Hrtf as (Hpres2 & Hdom2 & Hrl2 & Hunitpres2 & Hsub2 & Hlrep2).
   destruct (Hdom2 p (mk_is_Some _ _ Htsj)) as [ts2e Htsj2].
   destruct (Hpres2 p ts2e Htsj2) as (ts0e & Htsj0e & Harr2p & Hflat2p).
   have Hts0eq2 : ts0e = MkTypeState cellsj arrj by congruence.
@@ -2192,6 +2196,7 @@ Proof using Type*.
     rewrite big_sepM_insert; last apply lookup_delete_eq.
     iFrame "Htypesrest". simpl. iFrame "Htext2".
     iPureIntro. exact Hinv2. }
+  iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfpost.
   wp_auto.
   iApply ("HΦ" $! (<[p := MkTypeState cells'' arr2]> types2)).
   iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
@@ -2229,6 +2234,18 @@ Proof using Type*.
       * exact Hcc2.
       * rewrite Hclk2. lia.
       * rewrite Hclk2 Hlen2. lia.
+  - (* the live-cell refinement: a repaired cell's chars come from a live cell
+       of the entry pool, and the spliced cell's chars are the wire item's own
+       (its run starts at the item's id and runs up its clock space) *)
+    apply (integrate_live_refine_trans input _ (all_cells types2) _).
+    { exact (integrate_live_refine_of_live_refine input types types2 Hlrep2). }
+    apply (integrate_live_refine_snoc input (all_cells types2) _ c2 Hac_step).
+    move=> y Hy.
+    have Hc2mem : c2 ∈ all_cells (<[p := MkTypeState cells'' arr2]> types2)
+      by (rewrite Hac_step; apply elem_of_app; right; apply list_elem_of_here).
+    have Hwf2 : run_wf (ic_run c2) := Hrunwfpost c2 Hc2mem.
+    have [Hcl Hlo] := run_wf_char_id_bound c2 y Hwf2 Hy.
+    rewrite Hc2id in Hcl Hlo. split; [exact Hcl | exact Hlo].
   - exact Hlocdup'.
   - exact Hrangedisj'.
   - (* fits for the grown pool *)
@@ -2307,6 +2324,7 @@ Lemma wp_store__integrateDecoded_fresh (s mref tref : loc)
           (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c))%Z ∧
           (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
            uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z)⌝ ∗
+      ⌜integrate_live_refine typedInput.2 (all_cells types) (all_cells types')⌝ ∗
       ⌜NoDup (ic_loc <$> all_cells types')⌝ ∗
       ⌜cells_range_disjoint (all_cells types')⌝ ∗
       ⌜∀ c, c ∈ all_cells types' -> cell_fits c⌝ ∗
@@ -2435,6 +2453,7 @@ Proof using Type*.
   { rewrite -insert_delete_eq.
     rewrite big_sepM_insert; last apply lookup_delete_eq.
     iFrame "Htypesrest". simpl. iFrame "Htext2". iPureIntro. exact Hinv2. }
+  iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfpost.
   wp_auto.
   iApply ("HΦ" $! (<[p := MkTypeState cells'' arr2]> types2) (<[nm := p]> bind)).
   iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
@@ -2497,6 +2516,16 @@ Proof using Type*.
       * exact Hcc2.
       * rewrite Hclk2. lia.
       * rewrite Hclk2 Hlen2. lia.
+  - (* the live-cell refinement: this branch registers a fresh empty type, so
+       every old cell survives verbatim and the only new one is the spliced
+       cell, whose chars are the wire item's own *)
+    apply (integrate_live_refine_snoc input _ _ c2 Hac_step').
+    move=> y Hy.
+    have Hc2mem' : c2 ∈ all_cells (<[p := MkTypeState cells'' arr2]> types2)
+      by (rewrite Hac_step'; apply elem_of_app; right; apply list_elem_of_here).
+    have Hwf2 : run_wf (ic_run c2) := Hrunwfpost c2 Hc2mem'.
+    have [Hcl Hlo] := run_wf_char_id_bound c2 y Hwf2 Hy.
+    rewrite Hc2id in Hcl Hlo. split; [exact Hcl | exact Hlo].
   - exact Hlocdup'.
   - exact Hrangedisj'.
   - exact Hfits'.
@@ -2593,6 +2622,7 @@ Lemma wp_store__integrateDecoded_grow (s mref tref : loc)
           (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c))%Z ∧
           (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
            uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z)⌝ ∗
+      ⌜integrate_live_refine typedInput.2 (all_cells types) (all_cells types')⌝ ∗
       ⌜NoDup (ic_loc <$> all_cells types')⌝ ∗
       ⌜cells_range_disjoint (all_cells types')⌝ ∗
       ⌜∀ c, c ∈ all_cells types' -> cell_fits c⌝ ∗
@@ -2607,7 +2637,7 @@ Proof using Type*.
                 newItem arr2 nm p Htieq Hbnm Htoit Hvld Hmax Hall Hgmax0
                 Hbindtypes Hbindinj Hmtypes Hnowrapc Hlocdup Hrangedisj Hfits Horiginclk
                 with "[$Hui $Hitemsf $Hitemmap $Htypesf $Htypesmap $Htypes]").
-    iIntros (types') "(Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hdom' & %Hmtypes' & %Hprov' & %Hlocdup' & %Hrangedisj' & %Hfits' & %Horiginclk')".
+    iIntros (types') "(Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes & %Hdom' & %Hmtypes' & %Hprov' & %Hilr' & %Hlocdup' & %Hrangedisj' & %Hfits' & %Horiginclk')".
     iApply ("HΦ" $! types' bind).
     iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
     iPureIntro. split_and!.
@@ -2624,6 +2654,7 @@ Proof using Type*.
       * rewrite docm_get_insert_ne // in Hne.
         exact (Hmdom t Hne).
     + exact Hprov'.
+    + exact Hilr'.
     + exact Hlocdup'.
     + exact Hrangedisj'.
     + exact Hfits'.

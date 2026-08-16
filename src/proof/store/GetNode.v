@@ -295,7 +295,10 @@ Lemma applyUpdate_peel_step (inputs : list (TId * IntegrateInput (A := A))) (j :
     IsItemValid newItem /\
     maximalId newItem arrj /\
     integrate_all (ops_of_input input (explode (in_content input))) arrj = Some arr' /\
-    ValidReplay (expand_inputs (drop (S j) inputs)) (<[t := arr']> mj) m'.
+    ValidReplay (expand_inputs (drop (S j) inputs)) (<[t := arr']> mj) m' /\
+    (∀ (t' : TId) x, x ∈ doc_model_get mj t' ->
+       clientId (item_id x) = clientId (in_id input) ->
+       (clock (item_id x) < clock (in_id input))%nat).
 Proof.
   move=> Hj Hne Hdg Hvr.
   rewrite (expand_inputs_drop_cons inputs j (t, input) Hj) in Hvr.
@@ -344,6 +347,11 @@ Proof.
   - have Hii : <[t := arr']> (<[t := arr1]> mj) = <[t := arr']> mj.
     { rewrite insert_insert. case_decide; [reflexivity | congruence]. }
     rewrite Hii in Hvrrest. exact Hvrrest.
+  - (* the [VR_cons] client bound of the chunk's HEAD char, which carries the
+       wire item's own id: every item of [mj] from this client sits strictly
+       below it, so none of the chunk's chars (all at clocks at or above it)
+       is already in the model *)
+    move=> t' x Hx Hcx. exact (Hglob t' x Hx Hcx).
 Qed.
 
 (* ===== applyUpdate (doc-level, #49): store-wide node lookup ==============
