@@ -983,14 +983,14 @@ Qed.
     char ids is exactly [gs]. The Go set ops are [containsId] / [append] /
     reset to [[]]; the union makes membership (not order/duplicates) the
     observable, matching the pure [gset] with [∪] / [∈]. The representation
-    carries [span_wf] for every span so [containsId]'s [w64] range test is
+    carries [span_no_overflow] for every span so [containsId]'s [w64] range test is
     exact. Owning heap data, it takes a [dfrac] (appending needs
     [DfracOwn 1]). *)
 Definition own_id_set (s : slice.t) (dq : dfrac) (gs : gset YjsId) : iProp Σ :=
   ∃ (vs : list yjs.idSpan.t),
     "Hsl" ∷ s ↦*{dq} vs ∗
     "Hcap" ∷ own_slice_cap yjs.idSpan.t s dq ∗
-    "%Hwf" ∷ ⌜Forall span_wf vs⌝ ∗
+    "%Hwf" ∷ ⌜Forall span_no_overflow vs⌝ ∗
     "%Hset" ∷ ⌜⋃ (span_ids <$> vs) = gs⌝.
 
 (** Loop invariant for the conflict scan in [Integrate]. The heap loop refines

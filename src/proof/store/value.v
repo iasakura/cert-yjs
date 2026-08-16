@@ -23,7 +23,7 @@
       bound. [dead_chars_kept] is the dual, carrying a delete loop's record of
       what it has already tombstoned across the next iteration's surgeries.
     - the split surgery [split_cell_left] / [split_cell_right] / [split_cells].
-    - the id-span abstraction [span_ids] / [span_wf] (a span denotes its whole
+    - the id-span abstraction [span_ids] / [span_no_overflow] (a span denotes its whole
       clock interval, since an id addresses any char of a run), and
       [cell_has_id] / [findById_res], the by-id search.
     - [cell_covers]: the model id [d] addresses a char of cell [c]'s run.
@@ -270,19 +270,24 @@ Definition range_ids (client start len : w64) : gset YjsId :=
     ((λ o, MkYjsId (uint.nat client) (uint.nat start + o)%nat)
        <$> seq 0 (uint.nat len)).
 
-(** The range does not wrap in [w64].
+(** The range's end [start + len] does not OVERFLOW [w64].
 
     Used as: the side condition under which the Go tests agree with
-    [range_ids], since they compute [start + len] in machine arithmetic
-    ([containsId]'s range test, [deleteRange]'s loop bound). [span_wf] and
-    [delete_span_nowrap] are its two runtime-record forms; a wire span that
-    fails it makes [deleteRange]'s loop exit at once, which is why the
-    coverage postconditions are guarded by it. *)
-Definition range_nowrap (start len : w64) : Prop :=
+    [range_ids], since they compute that sum in machine arithmetic
+    ([containsId]'s range test, [deleteRange]'s loop bound). [span_no_overflow]
+    and [delete_span_no_overflow] are its two runtime-record forms.
+
+    A range that overflows is a broken request, not a smaller one: the wire
+    carries the three words unchecked, so a peer can send one, and the Go
+    tests then read the wrapped sum and agree with nothing. Rather than
+    pretend, every statement about what a delete covered is GUARDED by this,
+    so an overflowing span is claimed to do nothing, which is also what the
+    loop does (its bound fails on the first iteration). *)
+Definition range_no_overflow (start len : w64) : Prop :=
   (uint.Z start + uint.Z len < 2^64)%Z.
 
-#[global] Instance range_nowrap_dec start len : Decision (range_nowrap start len).
-Proof. rewrite /range_nowrap. apply _. Defined.
+#[global] Instance range_no_overflow_dec start len : Decision (range_no_overflow start len).
+Proof. rewrite /range_no_overflow. apply _. Defined.
 
 (** The two runtime carriers, as the ranges they denote. *)
 Definition span_ids (v : yjs.idSpan.t) : gset YjsId :=
@@ -305,17 +310,17 @@ Definition delete_span_ids (sp : yjs.deleteSpan.t) : gset YjsId :=
 Definition delete_batch_ids (spans : list yjs.deleteSpan.t) : gset YjsId :=
   ⋃ (delete_span_ids <$> spans).
 
-Definition delete_span_nowrap (sp : yjs.deleteSpan.t) : Prop :=
-  range_nowrap sp.(yjs.deleteSpan.clock') sp.(yjs.deleteSpan.length').
+Definition delete_span_no_overflow (sp : yjs.deleteSpan.t) : Prop :=
+  range_no_overflow sp.(yjs.deleteSpan.clock') sp.(yjs.deleteSpan.length').
 
-#[global] Instance delete_span_nowrap_dec sp : Decision (delete_span_nowrap sp).
-Proof. rewrite /delete_span_nowrap. apply _. Defined.
+#[global] Instance delete_span_no_overflow_dec sp : Decision (delete_span_no_overflow sp).
+Proof. rewrite /delete_span_no_overflow. apply _. Defined.
 
-(** A span's clock interval does not wrap: [containsId]'s Go range test
+(** The [idSpan] form of [range_no_overflow]: [containsId]'s Go range test
     computes [clock + len] in [w64], so this is what makes the test decide
     [span_ids] membership. Sourced from the store's run-fits pool invariant. *)
-Definition span_wf (v : yjs.idSpan.t) : Prop :=
-  range_nowrap v.(yjs.idSpan.id').(yjs.id.clock') v.(yjs.idSpan.len').
+Definition span_no_overflow (v : yjs.idSpan.t) : Prop :=
+  range_no_overflow v.(yjs.idSpan.id').(yjs.id.clock') v.(yjs.idSpan.len').
 
 (* ----- findById: locate a node by id in the DLL ------------------------- *)
 

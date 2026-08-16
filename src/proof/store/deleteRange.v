@@ -237,7 +237,7 @@ Lemma wp_store__deleteRange (s mref : loc) (types : gmap loc type_state)
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
       ⌜pool_invs types'⌝ ∗ ⌜delete_types_facts types types'⌝ ∗
-      ⌜range_nowrap dclock dlen -> covered = true ->
+      ⌜range_no_overflow dclock dlen -> covered = true ->
          ids_tombstoned (range_ids client dclock dlen) (all_cells types')⌝ }}}.
 Proof using Type*.
   move=> Hpool0.
@@ -253,7 +253,7 @@ Proof using Type*.
         ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
     "%Hpool" ∷ ⌜pool_invs types_i⌝ ∗
     "%Hcurb" ∷ ⌜(uint.Z dclock <= uint.Z cur)%Z⌝ ∗
-    "%Hcovj" ∷ ⌜range_nowrap dclock dlen -> cov = true ->
+    "%Hcovj" ∷ ⌜range_no_overflow dclock dlen -> cov = true ->
         ids_tombstoned (range_ids client dclock (w64_word_instance.(word.sub) cur dclock))
                        (all_cells types_i)⌝ ∗
     "%Hfacts" ∷ ⌜delete_types_facts types types_i⌝)%I
@@ -275,7 +275,7 @@ Proof using Type*.
     move: Hi. rewrite !range_ids_elem.
     have -> : uint.nat (w64_word_instance.(word.sub) cur dclock)
             = (uint.nat cur - uint.nat dclock)%nat by word.
-    move: n Hnw. rewrite /range_nowrap /= => Hstop Hnw2. word. }
+    move: n Hnw. rewrite /range_no_overflow /= => Hstop Hnw2. word. }
   wp_apply wp_NewId.
   destruct Hpool as (Hfits & Hnodup & Hrangedisj & Horiginclk).
   wp_apply (wp_store__GetNode_total s mref (DfracOwn 1) _ types_i
@@ -522,7 +522,7 @@ Lemma wp_store__applyDeleteSpans (s mref : loc) (types : gmap loc type_state)
       ⌜pool_invs types'⌝ ∗ ⌜delete_types_facts types types'⌝ ∗
       ⌜∃ D : gset YjsId,
          ids_tombstoned D (all_cells types') ∧
-         (∀ sp, sp ∈ pdel ++ spans -> sp ∉ rest -> delete_span_nowrap sp ->
+         (∀ sp, sp ∈ pdel ++ spans -> sp ∉ rest -> delete_span_no_overflow sp ->
             delete_span_ids sp ⊆ D)⌝ }}}.
 Proof using Type*.
   move=> Hpool0.
@@ -567,7 +567,7 @@ Proof using Type*.
       "%Hpoolj" ∷ ⌜pool_invs types_j⌝ ∗
       "%HdelDj" ∷ ⌜ids_tombstoned Dj (all_cells types_j)⌝ ∗
       "%HspanDj" ∷ ⌜∀ sp, sp ∈ take (uint.nat j) (pdel ++ spans) -> sp ∉ rest ->
-          delete_span_nowrap sp -> delete_span_ids sp ⊆ Dj⌝ ∗
+          delete_span_no_overflow sp -> delete_span_ids sp ⊆ Dj⌝ ∗
       "%Hfactsj" ∷ ⌜delete_types_facts types types_j⌝)%I
       with "[i rest Hrest Hrestcap Hall Hitemsf Hitemmap Htypes]" as "IH".
     { iExists (W64 0), _, [], types, (∅ : gset YjsId).
@@ -627,11 +627,11 @@ Proof using Type*.
       wp_auto. wp_for_post.
       iFrame "HΦ s Hpddelf Hspsl2 Hspcap2 Hallp Hallcap".
       iExists (w64_word_instance.(word.add) j (W64 1)), rest_sl, rest, types_j',
-        (Dj ∪ (if decide (delete_span_nowrap sp) then delete_span_ids sp else ∅)).
+        (Dj ∪ (if decide (delete_span_no_overflow sp) then delete_span_ids sp else ∅)).
       iFrame "Hj Hrestp Hrest Hrestcap Hall Hitemsf Hitemmap Htypes".
       iPureIntro. split_and!; [word | exact Hpoolj' | | | exact Hfactsj''].
       + move=> i0 /elem_of_union [Hi0 | Hi0]; first exact (Hmove Dj HdelDj i0 Hi0).
-        destruct (decide (delete_span_nowrap sp)) as [Hnw | _]; last set_solver.
+        destruct (decide (delete_span_no_overflow sp)) as [Hnw | _]; last set_solver.
         exact (Hcovj' Hnw eq_refl i0 Hi0).
       + move=> sp' Hsp' Hnotrest Hnw'.
         rewrite Htakestep in Hsp'. apply elem_of_app in Hsp' as [Hsp' | Hsp'].

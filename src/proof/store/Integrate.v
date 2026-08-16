@@ -70,9 +70,9 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (** [containsId] decides membership of the span slice's char-id set (issue #28:
     an id addresses any char of a scanned run, so the Go test is a clock-range
-    test; [span_wf] makes its [w64] [clock + len] exact). *)
+    test; [span_no_overflow] makes its [w64] [clock + len] exact). *)
 Lemma wp_containsId (s : slice.t) (vs : list yjs.idSpan.t) (id : yjs.id.t) (dq : dfrac) :
-  Forall span_wf vs ->
+  Forall span_no_overflow vs ->
   {{{ is_pkg_init yjs ∗ s ↦*{dq} vs }}}
     @! yjs.containsId #s #id
   {{{ RET #(bool_decide (toYjsId id ∈ ⋃ (span_ids <$> vs)));
@@ -100,11 +100,11 @@ Proof.
     { word. }
     { replace (Z.to_nat (sint.Z i)) with (uint.nat i) by word. exact Hv. }
     wp_auto.
-    have Hwfv : span_wf v := Forall_lookup_1 _ _ _ _ Hwfs Hv.
-    (* under [span_wf] the Go [w64] range test is the mathematical one *)
+    have Hwfv : span_no_overflow v := Forall_lookup_1 _ _ _ _ Hwfs Hv.
+    (* under [span_no_overflow] the Go [w64] range test is the mathematical one *)
     have Hadd : uint.Z (word.add v.(yjs.idSpan.id').(yjs.id.clock') v.(yjs.idSpan.len'))
               = (uint.Z v.(yjs.idSpan.id').(yjs.id.clock') + uint.Z v.(yjs.idSpan.len'))%Z.
-    { rewrite /span_wf /range_nowrap in Hwfv. word. }
+    { rewrite /span_no_overflow /range_no_overflow in Hwfv. word. }
     have Hv' : vs !! sint.nat i = Some v.
     { replace (sint.nat i) with (uint.nat i) by word. exact Hv. }
     have Hstep : toYjsId id ∉ span_ids v ->
@@ -785,8 +785,8 @@ Proof using Type*.
       iEval (rewrite H0 /=) in "Hibo_sl".
       iEval (rewrite H0 /=) in "Hci_sl".
       set sp := yjs.idSpan.mk iv_ci.(yjs.item.id') (W64 (length (ic_run ci))).
-      have Hwf_sp : span_wf sp.
-      { rewrite /sp /span_wf /range_nowrap /=.
+      have Hwf_sp : span_no_overflow sp.
+      { rewrite /sp /span_no_overflow /range_no_overflow /=.
         have H := Hfits_ci. rewrite /cell_fits /cell_clock Hclk_ci in H.
         clear -H Hrunfits. word. }
       have Hidhh : item_id hh = toYjsId iv_ci.(yjs.item.id') by rewrite -Hrhead; exact Hcid_ci.
@@ -794,9 +794,9 @@ Proof using Type*.
       { rewrite /sp Hrun.
         apply (span_ids_char_ids iv_ci.(yjs.item.id') (W64 (length (hh :: tl2))) hh tl2 Hidhh Hrunstep).
         rewrite -Hrun. exact Hlen_w. }
-      have Hibo_wf2 : Forall span_wf (vs_ibo ++ [sp]).
+      have Hibo_wf2 : Forall span_no_overflow (vs_ibo ++ [sp]).
       { apply Forall_app. split; [exact Hibo_wf | by apply Forall_singleton]. }
-      have Hci_wf2 : Forall span_wf (vs_ci ++ [sp]).
+      have Hci_wf2 : Forall span_no_overflow (vs_ci ++ [sp]).
       { apply Forall_app. split; [exact Hci_wf | by apply Forall_singleton]. }
       have Hibo_set2 : ⋃ (span_ids <$> (vs_ibo ++ [sp])) = char_ids (ic_run ci) ∪ idsB.
       { rewrite span_union_snoc Hsp_ids Hibo_set //. }
