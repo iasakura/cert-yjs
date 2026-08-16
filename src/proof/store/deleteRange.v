@@ -522,8 +522,8 @@ Lemma wp_store__applyDeleteSpans (s mref : loc) (types : gmap loc type_state)
       ⌜pool_invs types'⌝ ∗ ⌜delete_types_facts types types'⌝ ∗
       ⌜∃ D : gset YjsId,
          ids_tombstoned D (all_cells types') ∧
-         (∀ sp, sp ∈ pdel ++ spans -> sp ∉ rest -> delete_span_no_overflow sp ->
-            delete_span_ids sp ⊆ D)⌝ }}}.
+         (∀ sp, sp ∈ pdel ++ spans -> delete_span_no_overflow sp ->
+            delete_span_ids sp ⊆ D ∪ delete_batch_ids rest)⌝ }}}.
 Proof using Type*.
   move=> Hpool0.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes & Hpddelf & Hpddel & Hsp) HΦ".
@@ -572,8 +572,10 @@ Proof using Type*.
       "%Hjb" ∷ ⌜(uint.nat j <= length (pdel_vs ++ spans_vs))%nat⌝ ∗
       "%Hpoolj" ∷ ⌜pool_invs types_j⌝ ∗
       "%HdelDj" ∷ ⌜ids_tombstoned Dj (all_cells types_j)⌝ ∗
-      "%HspanDj" ∷ ⌜∀ sp, sp ∈ take (uint.nat j) (pdel_vs ++ spans_vs) -> sp ∉ rest_vs ->
-          delete_span_no_overflow (delete_span_of_val sp) -> delete_span_ids (delete_span_of_val sp) ⊆ Dj⌝ ∗
+      "%HspanDj" ∷ ⌜∀ sp, sp ∈ take (uint.nat j) (pdel_vs ++ spans_vs) ->
+          delete_span_no_overflow (delete_span_of_val sp) ->
+          delete_span_ids (delete_span_of_val sp)
+            ⊆ Dj ∪ delete_batch_ids (delete_span_of_val <$> rest_vs)⌝ ∗
       "%Hfactsj" ∷ ⌜delete_types_facts types types_j⌝)%I
       with "[i rest Hrest Hrestcap Hall Hitemsf Hitemmap Htypes]" as "IH".
     { iExists (W64 0), _, [], types, (∅ : gset YjsId).
@@ -595,13 +597,11 @@ Proof using Type*.
       iPureIntro. split_and!; [exact Hpoolj | exact Hfactsj |].
       exists Dj. split; first exact HdelDj.
       (* transport the record from the decoded structs to the spans they
-         denote: the denotation is injective, so "not among the leftover"
-         survives it *)
-      move=> sp Hsp Hnotrest Hnw.
+         denote *)
+      move=> sp Hsp Hnw.
       rewrite -fmap_app in Hsp.
       apply list_elem_of_fmap in Hsp as (v & -> & Hv).
-      apply (HspanDj v); [by rewrite take_ge; last word | | exact Hnw].
-      move=> Hin. apply Hnotrest. apply list_elem_of_fmap. by exists v. }
+      apply (HspanDj v); [by rewrite take_ge; last word | exact Hnw]. }
     (* retry one span *)
     destruct ((pdel_vs ++ spans_vs) !! uint.nat j) as [sp|] eqn:Hsp; last first.
     { exfalso. apply lookup_ge_None in Hsp. word. }
@@ -649,9 +649,9 @@ Proof using Type*.
       + move=> i0 /elem_of_union [Hi0 | Hi0]; first exact (Hmove Dj HdelDj i0 Hi0).
         destruct (decide (delete_span_no_overflow (delete_span_of_val sp))) as [Hnw | _]; last set_solver.
         exact (Hcovj' Hnw eq_refl i0 Hi0).
-      + move=> sp' Hsp' Hnotrest Hnw'.
+      + move=> sp' Hsp' Hnw'.
         rewrite Htakestep in Hsp'. apply elem_of_app in Hsp' as [Hsp' | Hsp'].
-        * have := HspanDj sp' Hsp' Hnotrest Hnw'. set_solver.
+        * have := HspanDj sp' Hsp' Hnw'. set_solver.
         * apply list_elem_of_singleton in Hsp' as ->.
           rewrite decide_True //. set_solver.
     - (* not covered yet: keep it buffered *)
@@ -666,12 +666,19 @@ Proof using Type*.
         Dj.
       iFrame "Hj Hrestp Hrest Hrestcap Hall Hitemsf Hitemmap Htypes".
       iPureIntro. split_and!; [word | exact Hpoolj' | exact (Hmove Dj HdelDj) | | exact Hfactsj''].
-      move=> sp' Hsp' Hnotrest Hnw'.
+      have Hgrow : delete_batch_ids (delete_span_of_val <$> rest_vs)
+                 ⊆ delete_batch_ids (delete_span_of_val <$> (rest_vs ++ [sp])).
+      { apply delete_batch_ids_mono => x Hx. rewrite fmap_app.
+        apply elem_of_app. by left. }
+      move=> sp' Hsp' Hnw'.
       rewrite Htakestep in Hsp'. apply elem_of_app in Hsp' as [Hsp' | Hsp'].
-      + apply (HspanDj sp' Hsp'); last exact Hnw'.
-        move=> Hin. apply Hnotrest. apply elem_of_app. by left.
-      + apply list_elem_of_singleton in Hsp' as ->. exfalso. apply Hnotrest.
-        apply elem_of_app. right. apply list_elem_of_here. }
+      + have := HspanDj sp' Hsp' Hnw'. set_solver.
+      + (* the span just buffered: its ids are in the new leftover *)
+        apply list_elem_of_singleton in Hsp' as ->.
+        have Hin : delete_span_of_val sp ∈ delete_span_of_val <$> (rest_vs ++ [sp]).
+        { apply list_elem_of_fmap. exists sp. split; first done.
+          apply elem_of_app. right. apply list_elem_of_here. }
+        have := delete_span_ids_subseteq_batch _ _ Hin. set_solver. }
   (* copy one span into [all] *)
   destruct (spans_vs !! uint.nat i) as [sp|] eqn:Hsp; last first.
   { exfalso. apply lookup_ge_None in Hsp. word. }

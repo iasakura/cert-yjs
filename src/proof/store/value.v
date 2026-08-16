@@ -340,6 +340,23 @@ Definition delete_span_ids (sp : delete_span) : gset YjsId :=
 Definition delete_batch_ids (spans : list delete_span) : gset YjsId :=
   ⋃ (delete_span_ids <$> spans).
 
+Lemma delete_span_ids_subseteq_batch (sp : delete_span) (spans : list delete_span) :
+  sp ∈ spans -> delete_span_ids sp ⊆ delete_batch_ids spans.
+Proof.
+  move=> Hsp i Hi. rewrite /delete_batch_ids elem_of_union_list.
+  exists (delete_span_ids sp). split; last exact Hi.
+  apply list_elem_of_fmap. by exists sp.
+Qed.
+
+Lemma delete_batch_ids_mono (l1 l2 : list delete_span) :
+  (∀ sp, sp ∈ l1 -> sp ∈ l2) -> delete_batch_ids l1 ⊆ delete_batch_ids l2.
+Proof.
+  move=> Hsub i. rewrite /delete_batch_ids !elem_of_union_list.
+  move=> [X [HX Hi]]. apply list_elem_of_fmap in HX as (sp & -> & Hsp).
+  exists (delete_span_ids sp). split; last exact Hi.
+  apply list_elem_of_fmap. exists sp. split; [done | exact (Hsub sp Hsp)].
+Qed.
+
 (** The [delete_span] form of [range_no_overflow]. *)
 Definition delete_span_no_overflow (sp : delete_span) : Prop :=
   range_no_overflow sp.(delete_span_start) sp.(delete_span_length).
