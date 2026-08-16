@@ -518,17 +518,25 @@ Definition dead_chars_kept (types types' : gmap loc type_state) : Prop :=
   ∀ c, c ∈ all_cells types -> ic_deleted c = true -> ∀ y, y ∈ ic_run c ->
     ∃ c', c' ∈ all_cells types' ∧ ic_deleted c' = true ∧ y ∈ ic_run c'.
 
-(** [delete_set_tombstoned delete_set pool]: no LIVE cell of the pool holds a char whose id is
-    in [delete_set]. This is the direction of #37's [deleted_match] that gives the
-    delete set its MEANING: without it an [is_delete_set_lb] certificate is a receipt
-    any implementation could mint, including one whose [Delete] does nothing.
-    With it, the certificate says the ids are gone from every live node, hence
-    from the visible document a reader observes (issue #125).
+(** [delete_set_tombstoned delete_set pool]: the pool conforms to the set. An
+    id in [delete_set] that a pool cell holds forces that cell tombstoned.
 
-    The converse (every tombstoned char is recorded in [delete_set]) is deliberately
-    NOT carried: nothing consumes it, and it would force every delete to grow
-    the ghost set eagerly, which is exactly the bookkeeping y-octo's
-    [delete_item_inner] does and ours does not. *)
+    This is the direction of #37's [deleted_match] that gives the delete set
+    its MEANING: without it an [is_delete_set_lb] certificate is a receipt any
+    implementation could mint, including one whose [Delete] does nothing. With
+    it, the certificate says the ids are gone from every live node, hence from
+    the visible document a reader observes (issue #125).
+
+    Note the premise "that a pool cell holds": this says nothing about an id
+    that occurs in NO cell, so it is not a domain bound and does not subsume
+    [delete_set_dom]. The two clauses face opposite ways, and [own_delete_set]
+    carries both for that reason.
+
+    The converse (every tombstoned char is recorded in [delete_set]) is
+    deliberately NOT carried: nothing consumes it, and it would force every
+    delete to grow the ghost set eagerly, which is exactly the bookkeeping
+    y-octo's [delete_item_inner] does and ours does not. *)
+
 (** [ids_tombstoned ids pool]: every id of [ids] is held by a cell of [pool]
     that is tombstoned. It WITNESSES the ids as present and dead, which is
     strictly more than [delete_set_tombstoned], which only forbids them from
@@ -545,7 +553,7 @@ Definition ids_tombstoned (ids : gset YjsId) (pool : list item_cell) : Prop :=
   ∀ i, i ∈ ids -> ∃ c, c ∈ pool ∧ ic_deleted c = true ∧ i ∈ char_ids (ic_run c).
 
 Definition delete_set_tombstoned (delete_set : gset YjsId) (pool : list item_cell) : Prop :=
-  ∀ c, c ∈ pool -> ic_deleted c = false -> ∀ y, y ∈ ic_run c -> item_id y ∉ delete_set.
+  ∀ c, c ∈ pool -> ∀ y, y ∈ ic_run c -> item_id y ∈ delete_set -> ic_deleted c = true.
 
 Definition split_step_facts (types types' : gmap loc type_state) (w : item_cell) : Prop :=
   (∀ p ts', types' !! p = Some ts' ->
@@ -1112,14 +1120,15 @@ Lemma delete_set_tombstoned_refine (delete_set : gset YjsId) (types types' : gma
   live_refine types types' ->
   delete_set_tombstoned delete_set (all_cells types) -> delete_set_tombstoned delete_set (all_cells types').
 Proof.
-  move=> Hlr Hdelete_set c' Hc' Hlive y Hy.
+  move=> Hlr Htomb c' Hc' y Hy Hin.
+  destruct (ic_deleted c') eqn:Hlive; first done.
   destruct (Hlr c' Hc' Hlive) as (c & Hc & Hlivec & Hrun).
-  exact (Hdelete_set c Hc Hlivec y (Hrun y Hy)).
+  by rewrite (Htomb c Hc y (Hrun y Hy) Hin) in Hlivec.
 Qed.
 
 Lemma delete_set_tombstoned_perm (delete_set : gset YjsId) (pool pool' : list item_cell) :
   pool' ≡ₚ pool -> delete_set_tombstoned delete_set pool -> delete_set_tombstoned delete_set pool'.
-Proof. move=> Hperm Hdelete_set c Hc. apply Hdelete_set. by rewrite -Hperm. Qed.
+Proof. move=> Hperm Htomb c Hc. apply Htomb. by rewrite -Hperm. Qed.
 
 (** Integration is the one step with no live ancestor for its new cell: the
     fresh run's ids must be outside the set, which is where the domain bound
@@ -1131,10 +1140,11 @@ Lemma delete_set_tombstoned_snoc (delete_set : gset YjsId) (pool pool' : list it
   (∀ y, y ∈ ic_run c -> item_id y ∉ delete_set) ->
   delete_set_tombstoned delete_set pool'.
 Proof.
-  move=> Hperm Hdelete_set Hfresh c0 Hc0. rewrite Hperm in Hc0.
+  move=> Hperm Htomb Hfresh c0 Hc0. rewrite Hperm in Hc0.
   apply elem_of_app in Hc0 as [Hc0 | Hc0].
-  - exact (Hdelete_set c0 Hc0).
-  - apply list_elem_of_singleton in Hc0 as ->. move=> _. exact Hfresh.
+  - exact (Htomb c0 Hc0).
+  - apply list_elem_of_singleton in Hc0 as ->.
+    move=> y Hy Hin. exfalso. exact (Hfresh y Hy Hin).
 Qed.
 
 (** Growing the set: the new ids must miss every live cell. This is the
@@ -1142,8 +1152,8 @@ Qed.
 Lemma delete_set_tombstoned_union (delete_set S : gset YjsId) (pool : list item_cell) :
   delete_set_tombstoned delete_set pool -> delete_set_tombstoned S pool -> delete_set_tombstoned (delete_set ∪ S) pool.
 Proof.
-  move=> Hdelete_set HS c Hc Hlive y Hy.
-  apply not_elem_of_union. split; [exact (Hdelete_set c Hc Hlive y Hy) | exact (HS c Hc Hlive y Hy)].
+  move=> Htomb HS c Hc y Hy /elem_of_union [Hin | Hin];
+    [exact (Htomb c Hc y Hy Hin) | exact (HS c Hc y Hy Hin)].
 Qed.
 
 (** A tombstoned cell's chars are gone from every LIVE cell of the pool: they
@@ -1163,7 +1173,8 @@ Lemma delete_set_tombstoned_of_witnesses (pool : list item_cell) (D : gset YjsId
   ids_tombstoned D pool ->
   delete_set_tombstoned D pool.
 Proof.
-  move=> Hdisj Hwf Hclkb Hnd Hwit c0 Hc0 Hlive y Hy Hin.
+  move=> Hdisj Hwf Hclkb Hnd Hwit c0 Hc0 y Hy Hin.
+  destruct (ic_deleted c0) eqn:Hlive; first done. exfalso.
   destruct (Hwit (item_id y) Hin) as (c & Hc & Hdel & Hz).
   rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hz.
   destruct Hz as (z & Hidz & Hz).
@@ -1181,7 +1192,8 @@ Lemma delete_set_tombstoned_char_ids (pool : list item_cell) (c : item_cell) :
   c ∈ pool -> ic_deleted c = true ->
   delete_set_tombstoned (char_ids (ic_run c)) pool.
 Proof.
-  move=> Hdisj Hwf Hclkb Hnd Hc Hdel c0 Hc0 Hlive y Hy Hin.
+  move=> Hdisj Hwf Hclkb Hnd Hc Hdel c0 Hc0 y Hy Hin.
+  destruct (ic_deleted c0) eqn:Hlive; first done. exfalso.
   rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hin.
   destruct Hin as (z & Hidz & Hz).
   have Hne : ic_loc c0 ≠ ic_loc c.
@@ -1193,7 +1205,7 @@ Qed.
 
 Lemma delete_set_tombstoned_mono (delete_set delete_set' : gset YjsId) (pool : list item_cell) :
   delete_set' ⊆ delete_set -> delete_set_tombstoned delete_set pool -> delete_set_tombstoned delete_set' pool.
-Proof. move=> Hsub Hdelete_set c Hc Hlive y Hy Hin. exact (Hdelete_set c Hc Hlive y Hy (Hsub _ Hin)). Qed.
+Proof. move=> Hsub Htomb c Hc y Hy Hin. exact (Htomb c Hc y Hy (Hsub _ Hin)). Qed.
 
 Lemma apply_live_refine_refl (m : DocModel) (pool : list item_cell) :
   apply_live_refine m pool pool.

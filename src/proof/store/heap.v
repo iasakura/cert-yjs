@@ -479,15 +479,19 @@ Proof. iApply auth_gset_frag_union. Qed.
 Lemma is_delete_set_lb_empty (γs : store_names) : ⊢ |==> is_delete_set_lb γs ∅.
 Proof. iApply auth_gset_frag_empty. Qed.
 
-(** [own_delete_set γs m pool]: the delete-set authority with the two facts that give
-    the set its meaning.
-    - [delete_set_dom]: every deleted id names an integrated item of the model [m], so
-      a freshly minted insert id can never already be in the set.
-    - [delete_set_tombstoned]: no LIVE cell of the pool holds a char whose id is in
-      the set. Without this an [is_delete_set_lb] certificate would be a receipt that
-      an implementation whose [Delete] does nothing could still mint; with it
-      the certificate says the ids are gone from every live node, hence from
-      the visible document a reader observes (issue #125).
+(** [own_delete_set γs m pool]: the delete-set authority with the two facts
+    that give the set its meaning. They constrain opposite things, which is
+    why neither replaces the other:
+    - [delete_set_dom] constrains the SET against the model: an id in the set
+      names an integrated item of [m]. So a freshly minted insert id can never
+      already be in the set, which is how integration re-establishes the
+      second clause when it splices a live cell ([own_delete_set_snoc]).
+    - [delete_set_tombstoned] constrains the POOL against the set: an id in
+      the set that a pool cell holds forces that cell tombstoned. Without it an [is_delete_set_lb] certificate would be a receipt that an
+      implementation whose [Delete] does nothing could still mint; with it the
+      certificate says the ids are gone from every live node, hence from the
+      visible document a reader observes (issue #125). It says nothing about
+      an id held by no cell, so it is not a domain bound.
     The set itself stays existential, observable only through [is_delete_set_lb].
     Carried by [store_inv_excl] / [own_store] next to their [m] and their
     [types]. *)
@@ -585,10 +589,11 @@ Lemma own_delete_set_apply (γs : store_names) (m m' : DocModel) (pool pool' : l
 Proof.
   iIntros (Hmono Halr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
   iPureIntro. split; [exact (delete_set_dom_mono delete_set m m' Hmono Hdelete_set_dom) |].
-  move=> c' Hc' Hlive y Hy.
+  move=> c' Hc' y Hy Hin.
+  destruct (ic_deleted c') eqn:Hlive; first done. exfalso.
   destruct (Halr c' Hc' Hlive y Hy) as [(c & Hc & Hlivec & Hy') | Hfresh].
-  - exact (Hdelete_set_tomb c Hc Hlivec y Hy').
-  - move=> Hin. by rewrite (Hdelete_set_dom _ Hin) in Hfresh.
+  - by rewrite (Hdelete_set_tomb c Hc y Hy' Hin) in Hlivec.
+  - by rewrite (Hdelete_set_dom _ Hin) in Hfresh.
 Qed.
 
 (** Tombstone: grow the set by ids of integrated items, minting their lower
@@ -1394,7 +1399,7 @@ Proof.
     with "[Hdelete_set0]" as "Hdelete_set".
   { iExists (∅ : gset YjsId). iFrame "Hdelete_set0". iPureIntro. split.
     - move=> i Hi. exfalso. set_solver.
-    - move=> c Hc _ y _. set_solver. }
+    - move=> c Hc y _ Hin. exfalso. set_solver. }
   iExists (∅ : gset YjsId).
   iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap HdeletedSet Hpendf Hpddelf Hhist HtypesAuth Hacc0 Hdelete_set".
   iSplitR; first by iFrame "Hclpin".
