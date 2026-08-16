@@ -237,10 +237,8 @@ Lemma wp_store__deleteRange (s mref : loc) (types : gmap loc type_state)
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
       ⌜pool_invs types'⌝ ∗ ⌜delete_types_facts types types'⌝ ∗
-      ⌜(uint.Z dclock + uint.Z dlen < 2^64)%Z -> covered = true ->
-         ∀ i, i ∈ span_ids (yjs.idSpan.mk (yjs.id.mk client dclock) dlen) ->
-           ∃ c, c ∈ all_cells types' ∧ ic_deleted c = true ∧
-                i ∈ char_ids (ic_run c)⌝ }}}.
+      ⌜range_nowrap dclock dlen -> covered = true ->
+         ids_tombstoned (range_ids client dclock dlen) (all_cells types')⌝ }}}.
 Proof using Type*.
   move=> Hpool0.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
@@ -255,16 +253,16 @@ Proof using Type*.
         ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
     "%Hpool" ∷ ⌜pool_invs types_i⌝ ∗
     "%Hcurb" ∷ ⌜(uint.Z dclock <= uint.Z cur)%Z⌝ ∗
-    "%Hcovj" ∷ ⌜(uint.Z dclock + uint.Z dlen < 2^64)%Z -> cov = true ->
-        ∀ i, i ∈ span_ids (yjs.idSpan.mk (yjs.id.mk client dclock) (w64_word_instance.(word.sub) cur dclock)) ->
-          ∃ c, c ∈ all_cells types_i ∧ ic_deleted c = true ∧ i ∈ char_ids (ic_run c)⌝ ∗
+    "%Hcovj" ∷ ⌜range_nowrap dclock dlen -> cov = true ->
+        ids_tombstoned (range_ids client dclock (w64_word_instance.(word.sub) cur dclock))
+                       (all_cells types_i)⌝ ∗
     "%Hfacts" ∷ ⌜delete_types_facts types types_i⌝)%I
     with "[cur covered Hitemsf Hitemmap Htypes]" as "IH".
   { iExists dclock, true, types. iFrame "cur covered Hitemsf Hitemmap Htypes". iPureIntro.
     split_and!; [exact Hpool0 | lia | | exact (delete_types_facts_refl types)].
     (* nothing is covered yet: the span from [dclock] to [dclock] is empty *)
     move=> _ _ i Hi. exfalso. move: Hi.
-    rewrite span_ids_elem_nat /=.
+    rewrite range_ids_elem /=.
     have -> : uint.nat (w64_word_instance.(word.sub) dclock dclock) = 0%nat by word.
     lia. }
   wp_for "IH".
@@ -274,10 +272,10 @@ Proof using Type*.
     split_and!; [exact Hpool | exact Hfacts |].
     (* the loop stopped at [dclock + dlen], so its record covers the whole span *)
     move=> Hnw Hcov i Hi. apply (Hcovj Hnw Hcov i).
-    move: Hi. rewrite !span_ids_elem_nat /=.
+    move: Hi. rewrite !range_ids_elem.
     have -> : uint.nat (w64_word_instance.(word.sub) cur dclock)
             = (uint.nat cur - uint.nat dclock)%nat by word.
-    move: n. rewrite /= => Hstop. word. }
+    move: n Hnw. rewrite /range_nowrap /= => Hstop Hnw2. word. }
   wp_apply wp_NewId.
   destruct Hpool as (Hfits & Hnodup & Hrangedisj & Horiginclk).
   wp_apply (wp_store__GetNode_total s mref (DfracOwn 1) _ types_i
@@ -388,11 +386,11 @@ Proof using Type*.
     + (* the record grows by the truncated node's chars, which reach exactly
          the end of the requested range *)
       move=> Hnw Hcov i Hi.
-      move: Hi. rewrite span_ids_elem_nat /=.
+      move: Hi. rewrite range_ids_elem /=.
       move=> [Hcid [Hlo Hhi]].
       destruct (decide (clock i < uint.nat cur)%nat) as [Hold | Hnew].
       * destruct (Hcovj Hnw Hcov i) as (c0 & Hc0 & Hdel0 & Hy0).
-        { rewrite span_ids_elem_nat /=. split_and!; [exact Hcid | | ].
+        { rewrite range_ids_elem /=. split_and!; [exact Hcid | | ].
           - move: Hlo. rewrite /=. word.
           - word. }
         rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hy0.
@@ -449,7 +447,7 @@ Proof using Type*.
     + move: Hcurb HivRclk HivRlen Hfits1. rewrite /cell_fits. word.
     + (* the record grows by exactly this node's chars *)
       move=> Hnw Hcov i Hi.
-      move: Hi. rewrite span_ids_elem_nat /=.
+      move: Hi. rewrite range_ids_elem /=.
       have Hcurstep : uint.nat (w64_word_instance.(word.add)
             (ivR.(yjs.item.id').(yjs.id.clock'))
             (W64 (length (ivR.(yjs.item.content').(yjs.content.content'))))) 
@@ -459,7 +457,7 @@ Proof using Type*.
       destruct (decide (clock i < uint.nat cur)%nat) as [Hold | Hnew].
       * (* already recorded: transported across this iteration's surgeries *)
         destruct (Hcovj Hnw Hcov i) as (c0 & Hc0 & Hdel0 & Hy0).
-        { rewrite span_ids_elem_nat /=. split_and!; [exact Hcid | | ].
+        { rewrite range_ids_elem /=. split_and!; [exact Hcid | | ].
           - move: Hlo. rewrite /=. word.
           - word. }
         rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hy0.
@@ -523,8 +521,7 @@ Lemma wp_store__applyDeleteSpans (s mref : loc) (types : gmap loc type_state)
       own_delete_spans sp_sl dq spans ∗
       ⌜pool_invs types'⌝ ∗ ⌜delete_types_facts types types'⌝ ∗
       ⌜∃ D : gset YjsId,
-         (∀ i, i ∈ D -> ∃ c, c ∈ all_cells types' ∧
-            ic_deleted c = true ∧ i ∈ char_ids (ic_run c)) ∧
+         ids_tombstoned D (all_cells types') ∧
          (∀ sp, sp ∈ pdel ++ spans -> sp ∉ rest -> delete_span_nowrap sp ->
             delete_span_ids sp ⊆ D)⌝ }}}.
 Proof using Type*.
@@ -568,8 +565,7 @@ Proof using Type*.
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
       "%Hjb" ∷ ⌜(uint.nat j <= length (pdel ++ spans))%nat⌝ ∗
       "%Hpoolj" ∷ ⌜pool_invs types_j⌝ ∗
-      "%HdelDj" ∷ ⌜∀ i, i ∈ Dj -> ∃ c, c ∈ all_cells types_j ∧
-          ic_deleted c = true ∧ i ∈ char_ids (ic_run c)⌝ ∗
+      "%HdelDj" ∷ ⌜ids_tombstoned Dj (all_cells types_j)⌝ ∗
       "%HspanDj" ∷ ⌜∀ sp, sp ∈ take (uint.nat j) (pdel ++ spans) -> sp ∉ rest ->
           delete_span_nowrap sp -> delete_span_ids sp ⊆ Dj⌝ ∗
       "%Hfactsj" ∷ ⌜delete_types_facts types types_j⌝)%I
@@ -611,10 +607,7 @@ Proof using Type*.
     have Hdkj' : dead_chars_kept types_j types_j'
       := proj1 (proj2 (proj2 (proj2 Hfactsj'))).
     have Hmove : ∀ D : gset YjsId,
-        (∀ i0, i0 ∈ D -> ∃ c, c ∈ all_cells types_j ∧
-           ic_deleted c = true ∧ i0 ∈ char_ids (ic_run c)) ->
-        ∀ i0, i0 ∈ D -> ∃ c, c ∈ all_cells types_j' ∧
-           ic_deleted c = true ∧ i0 ∈ char_ids (ic_run c).
+        ids_tombstoned D (all_cells types_j) -> ids_tombstoned D (all_cells types_j').
     { move=> D HD i0 Hi0.
       destruct (HD i0 Hi0) as (c0 & Hc0 & Hdel0 & Hy0).
       rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hy0.
