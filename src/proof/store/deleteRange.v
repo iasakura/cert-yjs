@@ -499,7 +499,7 @@ Qed.
     and the new buffer is a fresh slice. *)
 Lemma wp_store__applyDeleteSpans (s mref : loc) (types : gmap loc type_state)
     (pdel_sl sp_sl : slice.t) (dq : dfrac)
-    (pdel spans : list yjs.deleteSpan.t) :
+    (pdel spans : list delete_span) :
   pool_invs types ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
@@ -511,7 +511,7 @@ Lemma wp_store__applyDeleteSpans (s mref : loc) (types : gmap loc type_state)
       own_delete_spans sp_sl dq spans }}}
     s @! (go.PointerType yjs.store) @! "applyDeleteSpans" #sp_sl
   {{{ (types' : gmap loc type_state) (pdel_sl' : slice.t)
-      (rest : list yjs.deleteSpan.t), RET #();
+      (rest : list delete_span), RET #();
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
       ([∗ map] p ↦ ts ∈ types',
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
@@ -527,16 +527,22 @@ Lemma wp_store__applyDeleteSpans (s mref : loc) (types : gmap loc type_state)
 Proof using Type*.
   move=> Hpool0.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes & Hpddelf & Hpddel & Hsp) HΦ".
-  iNamed "Hpddel". iDestruct "Hsp" as "[Hspsl2 Hspcap2]".
+  (* open the pure model: the decoded structs live only inside this proof *)
+  iNamed "Hpddel".
+  iDestruct "Hsp" as (spans_vs) "(Hspsl2 & Hspcap2 & %Hspansmodel)".
+  rename vs into pdel_vs. rename Hspmodel into Hpdelmodel.
+  (* the pure lists ARE the denotations of the concrete ones; substituting
+     them away keeps the rest of the proof over the structs the loop walks *)
+  subst pdel spans.
   wp_method_call. wp_call. wp_call. wp_auto.
   (* ---- loop 1: [all] accumulates the buffer plus the batch ---- *)
   iAssert (∃ (i : w64) (all_sl : slice.t),
     "Hi" ∷ i_ptr ↦ i ∗
     "Hallp" ∷ all_ptr ↦ all_sl ∗
-    "Hall" ∷ all_sl ↦* (pdel ++ take (uint.nat i) spans) ∗
+    "Hall" ∷ all_sl ↦* (pdel_vs ++ take (uint.nat i) spans_vs) ∗
     "Hallcap" ∷ own_slice_cap yjs.deleteSpan.t all_sl (DfracOwn 1) ∗
-    "Hspsl2" ∷ sp_sl ↦*{dq} spans ∗
-    "%Hib" ∷ ⌜(uint.nat i <= length spans)%nat⌝)%I
+    "Hspsl2" ∷ sp_sl ↦*{dq} spans_vs ∗
+    "%Hib" ∷ ⌜(uint.nat i <= length spans_vs)%nat⌝)%I
     with "[i all Hspsl Hspcap Hspsl2]" as "IH".
   { iExists (W64 0), pdel_sl.
     rewrite (_ : uint.nat (W64 0) = 0%nat); last word.
@@ -547,27 +553,27 @@ Proof using Type*.
   wp_if_destruct; last first.
   { (* the batch is copied: [all] is the buffer plus the batch. Loop 2
        applies each span and keeps the ones that did not land. *)
-    have Hiend : uint.nat i = length spans by word.
+    have Hiend : uint.nat i = length spans_vs by word.
     rewrite Hiend take_ge; last lia.
     wp_apply wp_slice_literal. iSplitR; first done.
     iIntros "%rsl0 [Hrest Hrestcap]". wp_auto.
-    iAssert (∃ (j : w64) (rest_sl : slice.t) (rest : list yjs.deleteSpan.t)
+    iAssert (∃ (j : w64) (rest_sl : slice.t) (rest_vs : list yjs.deleteSpan.t)
                (types_j : gmap loc type_state) (Dj : gset YjsId),
       "Hj" ∷ i_ptr ↦ j ∗
       "Hrestp" ∷ rest_ptr ↦ rest_sl ∗
-      "Hrest" ∷ rest_sl ↦* rest ∗
+      "Hrest" ∷ rest_sl ↦* rest_vs ∗
       "Hrestcap" ∷ own_slice_cap yjs.deleteSpan.t rest_sl (DfracOwn 1) ∗
-      "Hall" ∷ all_sl ↦* (pdel ++ spans) ∗
+      "Hall" ∷ all_sl ↦* (pdel_vs ++ spans_vs) ∗
       "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
       "Hitemmap" ∷ own_item_map mref (DfracOwn 1) types_j ∗
       "Htypes" ∷ ([∗ map] p ↦ ts ∈ types_j,
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
-      "%Hjb" ∷ ⌜(uint.nat j <= length (pdel ++ spans))%nat⌝ ∗
+      "%Hjb" ∷ ⌜(uint.nat j <= length (pdel_vs ++ spans_vs))%nat⌝ ∗
       "%Hpoolj" ∷ ⌜pool_invs types_j⌝ ∗
       "%HdelDj" ∷ ⌜ids_tombstoned Dj (all_cells types_j)⌝ ∗
-      "%HspanDj" ∷ ⌜∀ sp, sp ∈ take (uint.nat j) (pdel ++ spans) -> sp ∉ rest ->
-          delete_span_no_overflow sp -> delete_span_ids sp ⊆ Dj⌝ ∗
+      "%HspanDj" ∷ ⌜∀ sp, sp ∈ take (uint.nat j) (pdel_vs ++ spans_vs) -> sp ∉ rest_vs ->
+          delete_span_no_overflow (delete_span_of_val sp) -> delete_span_ids (delete_span_of_val sp) ⊆ Dj⌝ ∗
       "%Hfactsj" ∷ ⌜delete_types_facts types types_j⌝)%I
       with "[i rest Hrest Hrestcap Hall Hitemsf Hitemmap Htypes]" as "IH".
     { iExists (W64 0), _, [], types, (∅ : gset YjsId).
@@ -580,14 +586,24 @@ Proof using Type*.
     wp_for "IH".
     iDestruct (own_slice_len with "Hall") as %[Halllen _].
     wp_if_destruct; last first.
-    { (* every span has been retried: install the leftover as the new buffer *)
-      iApply ("HΦ" $! types_j rest_sl rest).
-      iFrame "Hitemsf Hitemmap Htypes Hpddelf Hrest Hrestcap Hspsl2 Hspcap2".
+    { (* every span has been retried: install the leftover as the new buffer,
+         and hand the whole thing back over the PURE model *)
+      iApply ("HΦ" $! types_j rest_sl (delete_span_of_val <$> rest_vs)).
+      iFrame "Hitemsf Hitemmap Htypes Hpddelf".
+      iSplitL "Hrest Hrestcap"; first (iExists rest_vs; by iFrame "Hrest Hrestcap").
+      iSplitL "Hspsl2 Hspcap2"; first (iExists spans_vs; by iFrame "Hspsl2 Hspcap2").
       iPureIntro. split_and!; [exact Hpoolj | exact Hfactsj |].
       exists Dj. split; first exact HdelDj.
-      move=> sp Hsp. apply HspanDj. rewrite take_ge //. word. }
+      (* transport the record from the decoded structs to the spans they
+         denote: the denotation is injective, so "not among the leftover"
+         survives it *)
+      move=> sp Hsp Hnotrest Hnw.
+      rewrite -fmap_app in Hsp.
+      apply list_elem_of_fmap in Hsp as (v & -> & Hv).
+      apply (HspanDj v); [by rewrite take_ge; last word | | exact Hnw].
+      move=> Hin. apply Hnotrest. apply list_elem_of_fmap. by exists v. }
     (* retry one span *)
-    destruct ((pdel ++ spans) !! uint.nat j) as [sp|] eqn:Hsp; last first.
+    destruct ((pdel_vs ++ spans_vs) !! uint.nat j) as [sp|] eqn:Hsp; last first.
     { exfalso. apply lookup_ge_None in Hsp. word. }
     iDestruct (own_slice_elem_acc (sint.Z j) sp all_sl (DfracOwn 1) _ with "Hall")
       as "[Hel Hgive]".
@@ -617,8 +633,8 @@ Proof using Type*.
       rewrite /char_ids elem_of_list_to_set list_elem_of_fmap.
       exists y. split; [exact Hidy | exact Hy1]. }
     have Htakestep : take (uint.nat (w64_word_instance.(word.add) j (W64 1)))
-                          (pdel ++ spans)
-                   = take (uint.nat j) (pdel ++ spans) ++ [sp].
+                          (pdel_vs ++ spans_vs)
+                   = take (uint.nat j) (pdel_vs ++ spans_vs) ++ [sp].
     { rewrite (_ : uint.nat (w64_word_instance.(word.add) j (W64 1))
                  = S (uint.nat j)); last word.
       apply (take_S_r _ _ sp). exact Hsp. }
@@ -626,12 +642,12 @@ Proof using Type*.
     - (* the span landed in full: drop it, and record its ids *)
       wp_auto. wp_for_post.
       iFrame "HΦ s Hpddelf Hspsl2 Hspcap2 Hallp Hallcap".
-      iExists (w64_word_instance.(word.add) j (W64 1)), rest_sl, rest, types_j',
-        (Dj ∪ (if decide (delete_span_no_overflow sp) then delete_span_ids sp else ∅)).
+      iExists (w64_word_instance.(word.add) j (W64 1)), rest_sl, rest_vs, types_j',
+        (Dj ∪ (if decide (delete_span_no_overflow (delete_span_of_val sp)) then delete_span_ids (delete_span_of_val sp) else ∅)).
       iFrame "Hj Hrestp Hrest Hrestcap Hall Hitemsf Hitemmap Htypes".
       iPureIntro. split_and!; [word | exact Hpoolj' | | | exact Hfactsj''].
       + move=> i0 /elem_of_union [Hi0 | Hi0]; first exact (Hmove Dj HdelDj i0 Hi0).
-        destruct (decide (delete_span_no_overflow sp)) as [Hnw | _]; last set_solver.
+        destruct (decide (delete_span_no_overflow (delete_span_of_val sp))) as [Hnw | _]; last set_solver.
         exact (Hcovj' Hnw eq_refl i0 Hi0).
       + move=> sp' Hsp' Hnotrest Hnw'.
         rewrite Htakestep in Hsp'. apply elem_of_app in Hsp' as [Hsp' | Hsp'].
@@ -646,7 +662,7 @@ Proof using Type*.
       iIntros (rest_sl') "(Hrest & Hrestcap & _)".
       wp_auto. wp_for_post.
       iFrame "HΦ s Hpddelf Hspsl2 Hspcap2 Hallp Hallcap".
-      iExists (w64_word_instance.(word.add) j (W64 1)), rest_sl', (rest ++ [sp]), types_j',
+      iExists (w64_word_instance.(word.add) j (W64 1)), rest_sl', (rest_vs ++ [sp]), types_j',
         Dj.
       iFrame "Hj Hrestp Hrest Hrestcap Hall Hitemsf Hitemmap Htypes".
       iPureIntro. split_and!; [word | exact Hpoolj' | exact (Hmove Dj HdelDj) | | exact Hfactsj''].
@@ -657,7 +673,7 @@ Proof using Type*.
       + apply list_elem_of_singleton in Hsp' as ->. exfalso. apply Hnotrest.
         apply elem_of_app. right. apply list_elem_of_here. }
   (* copy one span into [all] *)
-  destruct (spans !! uint.nat i) as [sp|] eqn:Hsp; last first.
+  destruct (spans_vs !! uint.nat i) as [sp|] eqn:Hsp; last first.
   { exfalso. apply lookup_ge_None in Hsp. word. }
   iDestruct (own_slice_elem_acc (sint.Z i) sp sp_sl dq _ with "Hspsl2") as "[Hel Hgive]".
   { word. }
@@ -677,7 +693,7 @@ Proof using Type*.
   iFrame "Hi Hallp Hallcap Hspsl2".
   rewrite (_ : uint.nat (w64_word_instance.(word.add) i (W64 1))
              = S (uint.nat i)); last word.
-  rewrite (take_S_r spans (uint.nat i) sp Hsp) app_assoc.
+  rewrite (take_S_r spans_vs (uint.nat i) sp Hsp) app_assoc.
   iFrame "Hall". iPureIntro. word.
 Qed.
 
@@ -705,7 +721,7 @@ Qed.
 Lemma wp_store__applyDeleteSpans_store (s_loc : loc) (γs : store_names)
     (γh : history_names) (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
-    (sp_sl : slice.t) (dq : dfrac) (spans : list yjs.deleteSpan.t) :
+    (sp_sl : slice.t) (dq : dfrac) (spans : list delete_span) :
   {{{ is_pkg_init yjs ∗ own_store s_loc γs γh c h m pend ∗
       own_delete_spans sp_sl dq spans }}}
     s_loc @! (go.PointerType yjs.store) @! "applyDeleteSpans" #sp_sl

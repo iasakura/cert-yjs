@@ -295,23 +295,54 @@ Definition span_ids (v : yjs.idSpan.t) : gset YjsId :=
             v.(yjs.idSpan.id').(yjs.id.clock')
             v.(yjs.idSpan.len').
 
-(** The ids a WIRE delete batch denotes: a span is its whole clock interval,
-    and the batch is their union. This is the PURE model of the [deleteSpan]
-    slice, and it is the right one because deletes are STATE, not operations:
-    a batch means exactly the set of ids it tombstones, with no order and no
-    multiplicity, which is why two batches with the same union are the same
-    request. A public spec speaks about this set and never about the heap
-    records behind it. *)
-Definition delete_span_ids (sp : yjs.deleteSpan.t) : gset YjsId :=
-  range_ids sp.(yjs.deleteSpan.client')
-            sp.(yjs.deleteSpan.clock')
-            sp.(yjs.deleteSpan.length').
+(** A WIRE delete span, as a PURE value: the three machine words the format
+    carries, with no goose record in sight. Specs quantify over this, never
+    over [yjs.deleteSpan.t], so that a caller reasoning about a delete batch
+    never has to know the layout of a decoded struct.
 
-Definition delete_batch_ids (spans : list yjs.deleteSpan.t) : gset YjsId :=
+    The fields stay [w64] rather than [nat] on purpose: overflow is a property
+    of the 64-bit encoding, and [delete_span_no_overflow] is exactly what
+    guards every statement about what a delete covered. Widening to [nat]
+    would push that condition back onto the runtime records and undo the
+    separation. *)
+Record delete_span := MkDeleteSpan {
+  delete_span_client : w64;
+  delete_span_start : w64;
+  delete_span_length : w64;
+}.
+
+#[global] Instance delete_span_eq_dec : EqDecision delete_span.
+Proof. solve_decision. Defined.
+
+(** What a decoded struct denotes. Injective, since it only renames fields,
+    which is what lets a statement about the pure spans transport to the
+    records the loop actually walks. *)
+Definition delete_span_of_val (v : yjs.deleteSpan.t) : delete_span :=
+  MkDeleteSpan v.(yjs.deleteSpan.client') v.(yjs.deleteSpan.clock')
+               v.(yjs.deleteSpan.length').
+
+#[global] Instance delete_span_of_val_inj : Inj (=) (=) delete_span_of_val.
+Proof.
+  move=> [c1 k1 l1] [c2 k2 l2] [= -> -> ->]. reflexivity.
+Qed.
+
+(** The ids a span denotes: its whole clock interval. The batch is their
+    union, which is the right model because deletes are STATE, not operations:
+    a batch means exactly the set of ids it tombstones, with no order and no
+    multiplicity, so two batches with the same union are the same request.
+
+    Used as: the pure model a public spec speaks about ([own_delete_ids],
+    [codec_spec], [wp_Doc__ApplySyncUpdate]) and the currency of
+    [wp_store__applyDeleteSpans]'s coverage report. *)
+Definition delete_span_ids (sp : delete_span) : gset YjsId :=
+  range_ids sp.(delete_span_client) sp.(delete_span_start) sp.(delete_span_length).
+
+Definition delete_batch_ids (spans : list delete_span) : gset YjsId :=
   ⋃ (delete_span_ids <$> spans).
 
-Definition delete_span_no_overflow (sp : yjs.deleteSpan.t) : Prop :=
-  range_no_overflow sp.(yjs.deleteSpan.clock') sp.(yjs.deleteSpan.length').
+(** The [delete_span] form of [range_no_overflow]. *)
+Definition delete_span_no_overflow (sp : delete_span) : Prop :=
+  range_no_overflow sp.(delete_span_start) sp.(delete_span_length).
 
 #[global] Instance delete_span_no_overflow_dec sp : Decision (delete_span_no_overflow sp).
 Proof. rewrite /delete_span_no_overflow. apply _. Defined.

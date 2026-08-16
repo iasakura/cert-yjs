@@ -381,10 +381,22 @@ Definition own_update_structs (sl : slice.t) (dq : dfrac)
     is handed). A span is a plain triple of machine words with no heap
     references, so unlike [own_update_structs] the model IS the value list;
     the capacity comes along because the buffer is appended to. *)
+(** [own_delete_spans sl dq spans]: the delete-span slice over its PURE model,
+    a list of [delete_span]. The decoded structs the slice actually holds are
+    existentially quantified: nothing outside this proof file needs to know
+    that a span is a goose record, and a spec that mentioned one would be
+    mixing the model with the representation.
+
+    Used as: the store's [pendingDeletes] buffer in [store_inv_excl], the
+    argument and the leftover of [wp_store__applyDeleteSpans], and (through
+    [own_delete_ids], which forgets down to the union of the ids) every public
+    spec that takes a delete batch. *)
 Definition own_delete_spans (sl : slice.t) (dq : dfrac)
-    (spans : list yjs.deleteSpan.t) : iProp Σ :=
-  "Hspsl" ∷ sl ↦*{dq} spans ∗
-  "Hspcap" ∷ own_slice_cap yjs.deleteSpan.t sl dq.
+    (spans : list delete_span) : iProp Σ :=
+  ∃ vs : list yjs.deleteSpan.t,
+    "Hspsl" ∷ sl ↦*{dq} vs ∗
+    "Hspcap" ∷ own_slice_cap yjs.deleteSpan.t sl dq ∗
+    "%Hspmodel" ∷ ⌜delete_span_of_val <$> vs = spans⌝.
 
 #[global] Instance own_delete_spans_timeless sl dq spans :
   Timeless (own_delete_spans sl dq spans).
@@ -398,7 +410,7 @@ Proof. rewrite /own_delete_spans. apply _. Qed.
     certificate will line up with, since [is_delete_set_lb] speaks about a set of ids
     too. *)
 Definition own_delete_ids (sl : slice.t) (dq : dfrac) (D : gset YjsId) : iProp Σ :=
-  ∃ spans : list yjs.deleteSpan.t,
+  ∃ spans : list delete_span,
     own_delete_spans sl dq spans ∗ ⌜delete_batch_ids spans = D⌝.
 
 #[global] Instance own_delete_ids_timeless sl dq D :
@@ -406,7 +418,7 @@ Definition own_delete_ids (sl : slice.t) (dq : dfrac) (D : gset YjsId) : iProp �
 Proof. rewrite /own_delete_ids. apply _. Qed.
 
 Lemma own_delete_ids_intro (sl : slice.t) (dq : dfrac)
-    (spans : list yjs.deleteSpan.t) :
+    (spans : list delete_span) :
   own_delete_spans sl dq spans -∗ own_delete_ids sl dq (delete_batch_ids spans).
 Proof. iIntros "H". iExists spans. by iFrame "H". Qed.
 
@@ -683,7 +695,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     (pend_sl pdel_sl : slice.t)
     (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
-    (pdel : list yjs.deleteSpan.t) : iProp Σ :=
+    (pdel : list delete_span) : iProp Σ :=
     ∃ (acc : gset YjsId),
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
     "#Hclientpin" ∷ is_store_client γs (uint.nat client) ∗
@@ -773,7 +785,7 @@ Definition store_inv (s_loc : loc) (γs : store_names) (γh : history_names) : i
   ∃ (client k : w64) (items_mref types_mref : loc) (deletedSetVal : yjs.deletedSet.t)
     (pend_sl pdel_sl : slice.t)
     (types : gmap loc type_state) (bind : gmap P loc) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) (pdel : list yjs.deleteSpan.t),
+    (pend : list (TId * IntegrateInput (A := A))) (pdel : list delete_span),
     "Hexcl" ∷ store_inv_excl s_loc γs γh client k items_mref types_mref deletedSetVal pend_sl pdel_sl types bind h m pend pdel ∗
     "Hro"   ∷ store_inv_ro γs types 1.
 
@@ -907,7 +919,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
   ∃ (client k : w64) (items_mref types_mref : loc) (deletedSetVal : yjs.deletedSet.t)
-    (pend_sl pdel_sl : slice.t) (pdel : list yjs.deleteSpan.t)
+    (pend_sl pdel_sl : slice.t) (pdel : list delete_span)
     (types : gmap loc type_state) (bind : gmap P loc) (acc : gset YjsId),
     "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗
     "#Hclientpin" ∷ is_store_client γs c ∗
@@ -1198,7 +1210,7 @@ Lemma store_inv_excl_hist_root (s_loc : loc) (γs : store_names) (γh : history_
     (client k : w64) (items_mref types_mref : loc) (deletedSetVal : yjs.deletedSet.t)
     (pend_sl pdel_sl : slice.t) (types : gmap loc type_state) (bind : gmap P loc)
     (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
-    (pdel : list yjs.deleteSpan.t)
+    (pdel : list delete_span)
     (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
   store_inv_excl s_loc γs γh client k items_mref types_mref deletedSetVal pend_sl pdel_sl types bind h m pend pdel -∗
   is_store_client γs c -∗
@@ -1388,7 +1400,7 @@ Proof.
   iFrame "Hrrlocked Hrtoks0 Hwl".
   iExists client, k, items_mref, types_mref, deletedSetVal, slice.nil, slice.nil, types,
     (∅ : gmap P loc), ([] : list Ev), (∅ : DocModel),
-    ([] : list (TId * IntegrateInput (A := A))), ([] : list yjs.deleteSpan.t).
+    ([] : list (TId * IntegrateInput (A := A))), ([] : list delete_span).
   rewrite frac_of_0.
   iSplitL "Hta"; first by iFrame "Hta".
   iSplitR "Hseq"; last first.
@@ -1418,7 +1430,8 @@ Proof.
     iSplitR; [iApply own_slice_cap_nil |]. rewrite big_sepL2_nil //. }
   iSplitR.
   { (* the empty delete-span buffer over the nil slice *)
-    iSplitR; [iApply own_slice_nil | iApply own_slice_cap_nil]. }
+    iExists []. iSplitR; [iApply own_slice_nil |].
+    iSplitR; [iApply own_slice_cap_nil | done]. }
   iSplitR.
   { have He : expand_inputs [] = [] by done.
     rewrite /is_pending_certified He big_sepL_nil //. }
