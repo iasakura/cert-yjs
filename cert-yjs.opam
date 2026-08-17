@@ -22,8 +22,8 @@ pin-depends: [
   # .github/workflows/ci.yml). Drop the fork once goose learns a per-project
   # ffi mapping.
   ["perennial.dev"             "git+https://github.com/iasakura/perennial#a43a6150ade627aad30b0b697659c8da451552d8"]
-  ["rocq-yjs.dev"              "git+https://github.com/iasakura/rocq-yjs#1131b4925b30810ad21ea337ed34b3883731a1a3"]
-  ["rocq-yjs-core.dev"         "git+https://github.com/iasakura/rocq-yjs#1131b4925b30810ad21ea337ed34b3883731a1a3"]
+  ["rocq-yjs.dev"              "git+https://github.com/iasakura/rocq-yjs#5f8a77ae0a3032cdf98cc6e0d52588a7b106d327"]
+  ["rocq-yjs-core.dev"         "git+https://github.com/iasakura/rocq-yjs#5f8a77ae0a3032cdf98cc6e0d52588a7b106d327"]
 
   ## begin indirect
   ["coq-coqutil.dev"           "git+https://github.com/mit-plv/coqutil#cfd88cef005cda5ec400108606d27a0d40578a8f"]
