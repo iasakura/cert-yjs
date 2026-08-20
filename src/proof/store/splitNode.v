@@ -1,6 +1,6 @@
 (** store update path, split layer: [wp_store__splitNode] and the
     [splitAtAndGetLeft/Right] range and invariant lemmas, plus the
-    split-pool bookkeeping ([pool_invs], [split_step_facts], the
+    split-pool bookkeeping ([pool_invs], [split_types_update_rel], the
     [split_pool_*] / [split_cells_*] lemmas). Split out of
     [store/GetNode] so it proof-checks in parallel; same [Section]
     boilerplate and [#[local]] instances. *)
@@ -1872,7 +1872,7 @@ Lemma wp_store__splitAtAndGetLeft_inv (s mref : loc) (idv : yjs.id.t)
       ([∗ map] p ↦ ts ∈ types',
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
-      ⌜pool_invs types'⌝ ∗ ⌜split_step_facts types types' cw⌝ ∗
+      ⌜pool_invs types'⌝ ∗ ⌜split_types_update_rel types types' cw⌝ ∗
       ⌜∃ cL, cL ∈ all_cells types' ∧ ic_loc cL = ic_loc cw ∧
              cell_client cL = idv.(yjs.id.clientId') ∧
              (uint.Z (cell_clock cL) + Z.of_nat (length (ic_run cL))
@@ -1985,7 +1985,7 @@ Lemma wp_store__splitAtAndGetRight_inv (s mref : loc) (idv : yjs.id.t)
       ([∗ map] p ↦ ts ∈ types',
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
-      ⌜pool_invs types'⌝ ∗ ⌜split_step_facts types types' cw⌝ ∗
+      ⌜pool_invs types'⌝ ∗ ⌜split_types_update_rel types types' cw⌝ ∗
       ⌜∃ cR, cR ∈ all_cells types' ∧ ic_loc cR = rl ∧
              cell_client cR = idv.(yjs.id.clientId') ∧
              (uint.Z (cell_clock cR) = uint.Z idv.(yjs.id.clock'))%Z ∧

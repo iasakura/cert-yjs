@@ -4,8 +4,8 @@
     and the pool invariants), the live-cell refinement and the tombstone set
     ([value_live]: [live_refine] / [delete_set_tombstoned] / [ids_tombstoned]),
     the split surgery and the per-step transport records ([value_split]:
-    [split_cells] / [split_step_facts] / [repair_types_facts] /
-    [delete_types_facts]), and id ranges with their wire carriers
+    [split_cells] / [split_types_update_rel] / [repair_types_update_rel] /
+    [delete_types_update_rel]), and id ranges with their wire carriers
     ([value_span]: [range_ids] / [span_ids] / [delete_span], plus the by-id
     search). [value_span] is independent of the other three.
 

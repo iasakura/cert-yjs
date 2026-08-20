@@ -207,7 +207,7 @@ Qed.
     origins with, and tombstoned whole ([wp_store__deleteNode]).
 
     The pool invariants survive and no type's model list moves
-    ([delete_types_facts]), which is what the caller needs to put the store
+    ([delete_types_update_rel]), which is what the caller needs to put the store
     invariant back together. On top of that the loop REPORTS its coverage:
     when it returns [true], every id of the span sits in a cell that is now
     tombstoned. That is the content half, and it is what lets the caller mint
@@ -236,7 +236,7 @@ Lemma wp_store__deleteRange (s mref : loc) (types : gmap loc type_state)
       ([∗ map] p ↦ ts ∈ types',
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
-      ⌜pool_invs types'⌝ ∗ ⌜delete_types_facts types types'⌝ ∗
+      ⌜pool_invs types'⌝ ∗ ⌜delete_types_update_rel types types'⌝ ∗
       ⌜range_no_overflow dclock dlen -> covered = true ->
          ids_tombstoned (range_ids client dclock dlen) (all_cells types')⌝ }}}.
 Proof using Type*.
@@ -256,10 +256,10 @@ Proof using Type*.
     "%Hcovj" ∷ ⌜range_no_overflow dclock dlen -> cov = true ->
         ids_tombstoned (range_ids client dclock (w64_word_instance.(word.sub) cur dclock))
                        (all_cells types_i)⌝ ∗
-    "%Hfacts" ∷ ⌜delete_types_facts types types_i⌝)%I
+    "%Hfacts" ∷ ⌜delete_types_update_rel types types_i⌝)%I
     with "[cur covered Hitemsf Hitemmap Htypes]" as "IH".
   { iExists dclock, true, types. iFrame "cur covered Hitemsf Hitemmap Htypes". iPureIntro.
-    split_and!; [exact Hpool0 | lia | | exact (delete_types_facts_refl types)].
+    split_and!; [exact Hpool0 | lia | | exact (delete_types_update_rel_refl types)].
     (* nothing is covered yet: the span from [dclock] to [dclock] is empty *)
     move=> _ _ i Hi. exfalso. move: Hi.
     rewrite range_ids_elem /=.
@@ -375,9 +375,9 @@ Proof using Type*.
     iFrame "Hcur Hcov Hitemsf Hitemmap Htypes".
     have Hdk3 : dead_chars_kept types_i types3.
     { eapply dead_chars_kept_trans;
-        first exact (proj1 (proj2 (proj2 (proj2 (delete_types_facts_of_split _ _ _ Hstep1))))).
+        first exact (proj1 (proj2 (proj2 (proj2 (delete_types_update_rel_of_split _ _ _ Hstep1))))).
       eapply dead_chars_kept_trans;
-        first exact (proj1 (proj2 (proj2 (proj2 (delete_types_facts_of_split _ _ _ Hstep2))))).
+        first exact (proj1 (proj2 (proj2 (proj2 (delete_types_update_rel_of_split _ _ _ Hstep2))))).
       exact (dead_chars_kept_flip types2 pL tsL kL cL HpL HkL). }
     have HcLwf : run_wf (ic_run cL) := Hrunwf2 cL HcLmem1.
     iPureIntro. split_and!.
@@ -418,12 +418,12 @@ Proof using Type*.
            ++ rewrite Hheadcl Hcid //.
            ++ rewrite Hheadclk. split; first lia.
               move: HcLend HcLclkZ Hhi Hnw. rewrite /cell_clock /=. word.
-    + eapply delete_types_facts_trans; first exact Hfacts.
-      eapply delete_types_facts_trans;
-        first exact (delete_types_facts_of_split _ _ _ Hstep1).
-      eapply delete_types_facts_trans;
-        first exact (delete_types_facts_of_split _ _ _ Hstep2).
-      exact (delete_types_facts_of_flip types2 pL tsL kL cL HpL HkL).
+    + eapply delete_types_update_rel_trans; first exact Hfacts.
+      eapply delete_types_update_rel_trans;
+        first exact (delete_types_update_rel_of_split _ _ _ Hstep1).
+      eapply delete_types_update_rel_trans;
+        first exact (delete_types_update_rel_of_split _ _ _ Hstep2).
+      exact (delete_types_update_rel_of_flip types2 pL tsL kL cL HpL HkL).
   - (* the node ends inside the range: tombstone it whole *)
     wp_apply (wp_store__deleteNode s types1 pR tsR kR cR HpR HkR with "[$Htypes]").
     iIntros "Htypes".
@@ -438,7 +438,7 @@ Proof using Type*.
     iFrame "Hcur Hcov Hitemsf Hitemmap Htypes".
     have Hdk3 : dead_chars_kept types_i types3.
     { eapply dead_chars_kept_trans;
-        first exact (proj1 (proj2 (proj2 (proj2 (delete_types_facts_of_split _ _ _ Hstep1))))).
+        first exact (proj1 (proj2 (proj2 (proj2 (delete_types_update_rel_of_split _ _ _ Hstep1))))).
       exact (dead_chars_kept_flip types1 pR tsR kR cR HpR HkR). }
     have Hcrun : run_wf (ic_run cR) := Hrunwf1 cR HcRmem1.
     have Hfits1 : cell_fits cR := proj1 Hpool1 cR HcRmem1.
@@ -482,10 +482,10 @@ Proof using Type*.
            ++ rewrite Hheadcl Hcid //.
            ++ rewrite Hheadclk. split; first lia.
               move: Hhi Hcurstep Hcurb Hnw. word.
-    + eapply delete_types_facts_trans; first exact Hfacts.
-      eapply delete_types_facts_trans;
-        first exact (delete_types_facts_of_split _ _ _ Hstep1).
-      exact (delete_types_facts_of_flip types1 pR tsR kR cR HpR HkR).
+    + eapply delete_types_update_rel_trans; first exact Hfacts.
+      eapply delete_types_update_rel_trans;
+        first exact (delete_types_update_rel_of_split _ _ _ Hstep1).
+      exact (delete_types_update_rel_of_flip types1 pR tsR kR cR HpR HkR).
 Qed.
 
 (** [store.applyDeleteSpans]: apply a batch of decoded spans on top of the
@@ -519,7 +519,7 @@ Lemma wp_store__applyDeleteSpans (s mref : loc) (types : gmap loc type_state)
       (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl' ∗
       own_delete_spans pdel_sl' (DfracOwn 1) rest ∗
       own_delete_spans sp_sl dq spans ∗
-      ⌜pool_invs types'⌝ ∗ ⌜delete_types_facts types types'⌝ ∗
+      ⌜pool_invs types'⌝ ∗ ⌜delete_types_update_rel types types'⌝ ∗
       ⌜∃ D : gset YjsId,
          ids_tombstoned D (all_cells types') ∧
          (∀ sp, sp ∈ pdel ++ spans -> delete_span_no_overflow sp ->
@@ -576,11 +576,11 @@ Proof using Type*.
           delete_span_no_overflow (delete_span_of_val sp) ->
           delete_span_ids (delete_span_of_val sp)
             ⊆ Dj ∪ delete_batch_ids (delete_span_of_val <$> rest_vs)⌝ ∗
-      "%Hfactsj" ∷ ⌜delete_types_facts types types_j⌝)%I
+      "%Hfactsj" ∷ ⌜delete_types_update_rel types types_j⌝)%I
       with "[i rest Hrest Hrestcap Hall Hitemsf Hitemmap Htypes]" as "IH".
     { iExists (W64 0), _, [], types, (∅ : gset YjsId).
       iFrame "i rest Hrest Hrestcap Hall Hitemsf Hitemmap Htypes". iPureIntro.
-      split_and!; [word | exact Hpool0 | | | exact (delete_types_facts_refl types)].
+      split_and!; [word | exact Hpool0 | | | exact (delete_types_update_rel_refl types)].
       - move=> i0 Hi0. exfalso. set_solver.
       - move=> sp0 Hsp0. exfalso. move: Hsp0.
         rewrite (_ : uint.nat (W64 0) = 0%nat); last word.
@@ -617,8 +617,8 @@ Proof using Type*.
     wp_apply (wp_store__deleteRange s mref types_j _ _ _ Hpoolj
                 with "[$Hitemsf $Hitemmap $Htypes]").
     iIntros (types_j' cov) "(Hitemsf & Hitemmap & Htypes & %Hpoolj' & %Hfactsj' & %Hcovj')".
-    have Hfactsj'' : delete_types_facts types types_j'
-      := delete_types_facts_trans _ _ _ Hfactsj Hfactsj'.
+    have Hfactsj'' : delete_types_update_rel types types_j'
+      := delete_types_update_rel_trans _ _ _ Hfactsj Hfactsj'.
     (* the tombstone record of everything applied so far moves to the new pool *)
     have Hdkj' : dead_chars_kept types_j types_j'
       := proj1 (proj2 (proj2 (proj2 Hfactsj'))).

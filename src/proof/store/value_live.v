@@ -78,8 +78,8 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     [YjsId]s: the coordinate clause of the records below is about where a cell
     sits in its client's clock space, which is the wrong currency here.
 
-    Used as: a conjunct of [split_step_facts], [repair_types_facts] and
-    [delete_types_facts], consumed by [delete_set_tombstoned_refine] and its Iris
+    Used as: a conjunct of [split_types_update_rel], [repair_types_update_rel] and
+    [delete_types_update_rel], consumed by [delete_set_tombstoned_refine] and its Iris
     wrapper [own_delete_set_refine] to carry the tombstone-set invariant across a
     surgery. Discharged by [split_pool_live_refine], [live_refine_flip] and
     [live_refine_perm]. *)
@@ -133,7 +133,7 @@ Definition integrate_live_refine (input : IntegrateInput (A := A))
     pool is still held by a tombstoned cell of the new one. The dual of
     [live_refine], which says the same about live cells.
 
-    Used as: a conjunct of [split_step_facts] and [delete_types_facts], so a
+    Used as: a conjunct of [split_types_update_rel] and [delete_types_update_rel], so a
     delete loop can carry its "everything covered so far is tombstoned"
     record ([ids_tombstoned]) across the split and flip the next iteration
     performs. Discharged by [split_pool_dead_chars_kept] and
