@@ -161,6 +161,8 @@ Definition dead_chars_kept (types types' : gmap loc type_state) : Prop :=
     deliberately NOT carried: nothing consumes it, and it would force every
     delete to grow the ghost set eagerly, which is exactly the bookkeeping
     y-octo's [delete_item_inner] does and ours does not. *)
+Definition delete_set_tombstoned (delete_set : gset YjsId) (pool : list item_cell) : Prop :=
+  ∀ c, c ∈ pool -> ∀ y, y ∈ ic_run c -> item_id y ∈ delete_set -> ic_deleted c = true.
 
 (** [ids_tombstoned ids pool]: every id of [ids] is held by a cell of [pool]
     that is tombstoned. It WITNESSES the ids as present and dead, which is
@@ -176,9 +178,6 @@ Definition dead_chars_kept (types types' : gmap loc type_state) : Prop :=
     through [own_delete_set_grow]. *)
 Definition ids_tombstoned (ids : gset YjsId) (pool : list item_cell) : Prop :=
   ∀ i, i ∈ ids -> ∃ c, c ∈ pool ∧ ic_deleted c = true ∧ i ∈ char_ids (ic_run c).
-
-Definition delete_set_tombstoned (delete_set : gset YjsId) (pool : list item_cell) : Prop :=
-  ∀ c, c ∈ pool -> ∀ y, y ∈ ic_run c -> item_id y ∈ delete_set -> ic_deleted c = true.
 
 (* ===== lemmas ============================================================= *)
 
