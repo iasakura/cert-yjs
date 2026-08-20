@@ -47,7 +47,7 @@ Notation A := go_string.
     An item whose origin / right-origin are two *adjacent* elements of a valid
     document array is [IsItemValid]. [iiv_origin_lt] is immediate from the array
     being sorted ([yai_sorted]); [iiv_reachable] follows from
-    [origin_nearest_reachable] plus the fact that nothing in a sorted array lies
+    [origins_adjacent_in_reachable] plus the fact that nothing in a sorted array lies
     strictly between adjacent elements (the index lemmas). This isolates the only
     hard obligation of an insert into the order theory, so the WP side only has
     to maintain that the chosen left/right neighbours are adjacent. *)
@@ -91,13 +91,13 @@ Proof.
     + inversion Hstep; subst; [ left | right ]; apply YjsLeq'_leqSame.
     + inversion Hstep; subst.
       * pose proof (reachable_in arr (Item oa ra ida ca) Hclosed x Hrest HaIn) as HxIn.
-        pose proof (origin_nearest_reachable (ArrSet arr) Hisi oa ra ca ida x HaIn Hrest) as [Hxoa | Hrax].
+        pose proof (origins_adjacent_in_reachable (ArrSet arr) Hisi oa ra ca ida x HaIn Hrest) as [Hxoa | Hrax].
         -- left. apply YjsLeq'_leqLt.
            exact (transitivity.yjs_leq'_p_trans1 Hisi x oa (Item oa ra ida ca) HxIn (closedLeft _ Hclosed oa ra ida ca HaIn) HaIn Hclosed Hxoa (item_origin_lt (Item oa ra ida ca))).
         -- right.
            exact (transitivity.yjs_leq'_p_trans Hisi (Item ob rb idb cb) ra x HbIn (closedRight _ Hclosed oa ra ida ca HaIn) HxIn Hclosed HF1 Hrax).
       * pose proof (reachable_in arr (Item ob rb idb cb) Hclosed x Hrest HbIn) as HxIn.
-        pose proof (origin_nearest_reachable (ArrSet arr) Hisi ob rb cb idb x HbIn Hrest) as [Hxob | Hrbx].
+        pose proof (origins_adjacent_in_reachable (ArrSet arr) Hisi ob rb cb idb x HbIn Hrest) as [Hxob | Hrbx].
         -- left.
            exact (transitivity.yjs_leq'_p_trans Hisi x ob (Item oa ra ida ca) HxIn (closedLeft _ Hclosed ob rb idb cb HbIn) HaIn Hclosed Hxob HF2).
         -- right.
@@ -141,7 +141,7 @@ Proof.
     + inversion Hstep; subst; [left|right]; apply YjsLeq'_leqSame.
     + inversion Hstep; subst.
       * exfalso. inversion Hrest as [u v Hs | u v w Hs Hr]; inversion Hs.
-      * pose proof (origin_nearest_reachable (ArrSet arr) Hisi First rb cb idb x HbIn Hrest) as [Hxob | Hrbx].
+      * pose proof (origins_adjacent_in_reachable (ArrSet arr) Hisi First rb cb idb x HbIn Hrest) as [Hxob | Hrbx].
         -- left. exact Hxob.
         -- right.
            pose proof (reachable_in arr (Item First rb idb cb) Hclosed x Hrest HbIn) as HxIn.
@@ -172,7 +172,7 @@ Proof.
     inversion Hreach as [p1 q1 Hstep | p1 q1 r1 Hstep Hrest]; subst.
     + inversion Hstep; subst; [left|right]; apply YjsLeq'_leqSame.
     + inversion Hstep; subst.
-      * pose proof (origin_nearest_reachable (ArrSet arr) Hisi oa Last ca ida x HaIn Hrest) as [Hxoa | Hrax].
+      * pose proof (origins_adjacent_in_reachable (ArrSet arr) Hisi oa Last ca ida x HaIn Hrest) as [Hxoa | Hrax].
         -- left.
            pose proof (reachable_in arr (Item oa Last ida ca) Hclosed x Hrest HaIn) as HxIn.
            apply YjsLeq'_leqLt.
