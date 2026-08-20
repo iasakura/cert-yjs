@@ -173,8 +173,8 @@ Proof.
   congruence.
 Qed.
 
-Lemma repair_types_facts_refl (types : gmap loc type_state) :
-  repair_types_facts types types.
+Lemma repair_types_update_rel_refl (types : gmap loc type_state) :
+  repair_types_update_rel types types.
 Proof.
   split_and!.
   - move=> p ts' Hp. exists ts'. split_and!; done.
@@ -185,17 +185,17 @@ Proof.
   - exact (live_refine_refl types).
 Qed.
 
-Lemma split_step_facts_single (types types1 : gmap loc type_state) (w : item_cell) :
-  split_step_facts types types1 w -> repair_types_facts types types1.
+Lemma split_types_update_rel_single (types types1 : gmap loc type_state) (w : item_cell) :
+  split_types_update_rel types types1 w -> repair_types_update_rel types types1.
 Proof.
   move=> H. destruct H as (Hp & Hd & Hr & _ & _ & Hu & Hsub & Hlr & _).
   split_and!;
     [exact Hp | exact Hd | move=> kc; have := Hr kc; lia | exact Hu | exact Hsub | exact Hlr].
 Qed.
 
-Lemma split_step_facts_compose (types types1 types2 : gmap loc type_state) (w1 w2 : item_cell) :
-  split_step_facts types types1 w1 -> split_step_facts types1 types2 w2 ->
-  repair_types_facts types types2.
+Lemma split_types_update_rel_compose (types types1 types2 : gmap loc type_state) (w1 w2 : item_cell) :
+  split_types_update_rel types types1 w1 -> split_types_update_rel types1 types2 w2 ->
+  repair_types_update_rel types types2.
 Proof.
   move=> H1 H2.
   destruct H1 as (Hp1 & Hd1 & Hr1 & _ & _ & Hu1 & Hsub1 & Hlr1 & _).
@@ -281,7 +281,7 @@ Lemma wp_store__repair_split (s mref tref item_l pname : loc)
           own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
           ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
       ⌜pool_invs types2⌝ ∗
-      ⌜repair_types_facts types types2⌝ ∗
+      ⌜repair_types_update_rel types types2⌝ ∗
       ⌜match in_originId input, ocL with
        | Some originId, Some c0 => lft = ic_loc c0 ∧
            ∃ cL', cL' ∈ all_cells types2 ∧ ic_loc cL' = lft ∧
@@ -394,7 +394,7 @@ Proof using Type*.
           iPureIntro. split_and!; try done. }
         iPureIntro. split_and!.
         { destruct Hpinvs2 as (?&?&?&?). split_and!; assumption. }
-        { exact (split_step_facts_compose types types1 types2 cL cR1 Hstep1 Hstep2). }
+        { exact (split_types_update_rel_compose types types1 types2 cL cR1 Hstep1 Hstep2). }
         { rewrite HinlS /=. split; [done |].
           exists cL1. split_and!;
             [exact HcL2mem | rewrite HcL1loc // | | | rewrite HcL1par //].
@@ -426,7 +426,7 @@ Proof using Type*.
           iPureIntro. split_and!; try done. }
         iPureIntro. split_and!.
         { destruct Hpinvs2 as (?&?&?&?). split_and!; assumption. }
-        { exact (split_step_facts_compose types types1 types2 cL cR1 Hstep1 Hstep2). }
+        { exact (split_types_update_rel_compose types types1 types2 cL cR1 Hstep1 Hstep2). }
         { rewrite HinlS /=. split; [done |].
           exists cL1. split_and!;
             [exact HcL2mem | rewrite HcL1loc // | | | rewrite HcL1par //].
@@ -460,7 +460,7 @@ Proof using Type*.
           iPureIntro. split_and!; try done. }
         iPureIntro. split_and!.
         { destruct Hpinvs1 as (?&?&?&?). split_and!; assumption. }
-        { exact (split_step_facts_single types types1 cL Hstep1). }
+        { exact (split_types_update_rel_single types types1 cL Hstep1). }
         { rewrite HinlS /=. split; [done |].
           exists cL1. split_and!;
             [exact HcL1mem | rewrite HcL1loc // | | | rewrite HcL1par //].
@@ -488,7 +488,7 @@ Proof using Type*.
           iPureIntro. split_and!; try done. }
         iPureIntro. split_and!.
         { destruct Hpinvs1 as (?&?&?&?). split_and!; assumption. }
-        { exact (split_step_facts_single types types1 cL Hstep1). }
+        { exact (split_types_update_rel_single types types1 cL Hstep1). }
         { rewrite HinlS /=. split; [done |].
           exists cL1. split_and!;
             [exact HcL1mem | rewrite HcL1loc // | | | rewrite HcL1par //].
@@ -539,7 +539,7 @@ Proof using Type*.
           iPureIntro. split_and!; try done. }
         iPureIntro. split_and!.
         { destruct Hpinvs2 as (?&?&?&?). split_and!; assumption. }
-        { exact (split_step_facts_single types types2 cR Hstep2). }
+        { exact (split_types_update_rel_single types types2 cR Hstep2). }
         { rewrite HinlN //. }
         { rewrite HinrS /=.
           exists cR2. split_and!;
@@ -571,7 +571,7 @@ Proof using Type*.
           iPureIntro. split_and!; try done. }
         iPureIntro. split_and!.
         { destruct Hpinvs2 as (?&?&?&?). split_and!; assumption. }
-        { exact (split_step_facts_single types types2 cR Hstep2). }
+        { exact (split_types_update_rel_single types types2 cR Hstep2). }
         { rewrite HinlN //. }
         { rewrite HinrS /=.
           exists cR2. split_and!;
@@ -600,7 +600,7 @@ Proof using Type*.
         iPureIntro. split_and!; try done. }
       iPureIntro. split_and!.
       { split_and!; assumption. }
-      { exact (repair_types_facts_refl types). }
+      { exact (repair_types_update_rel_refl types). }
       { rewrite HinlN //. }
       { rewrite HinrN //. }
 Qed.
