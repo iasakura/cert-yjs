@@ -188,7 +188,7 @@ Qed.
 Lemma split_step_facts_single (types types1 : gmap loc type_state) (w : item_cell) :
   split_step_facts types types1 w -> repair_types_facts types types1.
 Proof.
-  move=> H. destruct H as (Hp & Hd & Hr & _ & _ & Hu & Hsub & Hlr).
+  move=> H. destruct H as (Hp & Hd & Hr & _ & _ & Hu & Hsub & Hlr & _).
   split_and!;
     [exact Hp | exact Hd | move=> kc; have := Hr kc; lia | exact Hu | exact Hsub | exact Hlr].
 Qed.
@@ -198,8 +198,8 @@ Lemma split_step_facts_compose (types types1 types2 : gmap loc type_state) (w1 w
   repair_types_facts types types2.
 Proof.
   move=> H1 H2.
-  destruct H1 as (Hp1 & Hd1 & Hr1 & _ & _ & Hu1 & Hsub1 & Hlr1).
-  destruct H2 as (Hp2 & Hd2 & Hr2 & _ & _ & Hu2 & Hsub2 & Hlr2).
+  destruct H1 as (Hp1 & Hd1 & Hr1 & _ & _ & Hu1 & Hsub1 & Hlr1 & _).
+  destruct H2 as (Hp2 & Hd2 & Hr2 & _ & _ & Hu2 & Hsub2 & Hlr2 & _).
   split_and!.
   - move=> p ts2 Hp.
     destruct (Hp2 p ts2 Hp) as (ts1 & Hp1' & Ha2 & Hf2).
@@ -329,7 +329,7 @@ Proof using Type*.
                 HcLmem HcLccw HcLleZ HcLltZ Hpinvs
                 with "[$Hpkg $Hitemsf $Hitemmap $Htypes]").
     iIntros (types1) "(Hitemsf & Hitemmap & Htypes & %Hpinvs1 & %Hstep1 & %HbdL)".
-    destruct HbdL as (cL1 & HcL1mem & HcL1loc & HcL1cl & HcL1end & HcL1par).
+    destruct HbdL as (cL1 & HcL1mem & HcL1loc & HcL1cl & HcL1end & HcL1par & HcL1start).
     wp_auto.
     destruct oright as [idvR|].
     + (* right origin present: relocate the witness, clean-start split *)
@@ -349,7 +349,7 @@ Proof using Type*.
       have HcRltZ : (uint.Z idvR.(yjs.id.clock') < uint.Z (cell_clock cR) + Z.of_nat (length (ic_run cR)))%Z.
       { move: HcRlt. rewrite /toYjsId /= /cell_clock. move=> H. word. }
       have Hstep1' := Hstep1.
-      destruct Hstep1' as (Hpres1 & Hdom1 & Hrl1 & Hstable1 & Hcover1 & Hunitp1 & Hsubc1 & Hlrc1).
+      destruct Hstep1' as (Hpres1 & Hdom1 & Hrl1 & Hstable1 & Hcover1 & Hunitp1 & Hsubc1 & Hlrc1 & Hdkc1).
       destruct (Hcover1 idvR.(yjs.id.clientId') (uint.Z idvR.(yjs.id.clock')) cR HcRmem HcRccw HcRleZ HcRltZ)
         as (cR1 & HcR1mem & HcR1cc & HcR1le & HcR1lt & HcR1parw & Hprov).
       destruct Hpinvs1 as (Hfits1 & Hnodup1 & Hrangedisj1 & Horiginclk1).
@@ -374,7 +374,7 @@ Proof using Type*.
       destruct HbdR as (cR2 & HcR2mem & HcR2loc & HcR2cl & HcR2clk & HcR2par).
       wp_auto.
       have Hstep2' := Hstep2.
-      destruct Hstep2' as (Hpres2 & Hdom2 & Hrl2 & Hstable2 & Hcover2 & Hunitp2 & Hsubc2 & Hlrc2).
+      destruct Hstep2' as (Hpres2 & Hdom2 & Hrl2 & Hstable2 & Hcover2 & Hunitp2 & Hsubc2 & Hlrc2 & Hdkc2).
       have HcL2mem : cL1 ∈ all_cells types2 := Hstable2 cL1 HcL1mem Hlocne.
       have HparR : ic_parent cR2 = ic_parent cR by rewrite HcR2par HcR1parw //.
       destruct opn as [nm|].
@@ -2244,7 +2244,7 @@ Proof using Type*.
     have Hc2mem : c2 ∈ all_cells (<[p := MkTypeState cells'' arr2]> types2)
       by (rewrite Hac_step; apply elem_of_app; right; apply list_elem_of_here).
     have Hwf2 : run_wf (ic_run c2) := Hrunwfpost c2 Hc2mem.
-    have [Hcl Hlo] := run_wf_char_id_bound c2 y Hwf2 Hy.
+    have [Hcl [Hlo _]] := run_wf_char_id_bound c2 y Hwf2 Hy.
     rewrite Hc2id in Hcl Hlo. split; [exact Hcl | exact Hlo].
   - exact Hlocdup'.
   - exact Hrangedisj'.
@@ -2524,7 +2524,7 @@ Proof using Type*.
     have Hc2mem' : c2 ∈ all_cells (<[p := MkTypeState cells'' arr2]> types2)
       by (rewrite Hac_step'; apply elem_of_app; right; apply list_elem_of_here).
     have Hwf2 : run_wf (ic_run c2) := Hrunwfpost c2 Hc2mem'.
-    have [Hcl Hlo] := run_wf_char_id_bound c2 y Hwf2 Hy.
+    have [Hcl [Hlo _]] := run_wf_char_id_bound c2 y Hwf2 Hy.
     rewrite Hc2id in Hcl Hlo. split; [exact Hcl | exact Hlo].
   - exact Hlocdup'.
   - exact Hrangedisj'.

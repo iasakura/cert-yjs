@@ -104,7 +104,7 @@ Proof.
     (* under [span_wf] the Go [w64] range test is the mathematical one *)
     have Hadd : uint.Z (word.add v.(yjs.idSpan.id').(yjs.id.clock') v.(yjs.idSpan.len'))
               = (uint.Z v.(yjs.idSpan.id').(yjs.id.clock') + uint.Z v.(yjs.idSpan.len'))%Z.
-    { rewrite /span_wf in Hwfv. word. }
+    { rewrite /span_wf /range_nowrap in Hwfv. word. }
     have Hv' : vs !! sint.nat i = Some v.
     { replace (sint.nat i) with (uint.nat i) by word. exact Hv. }
     have Hstep : toYjsId id ∉ span_ids v ->
@@ -786,7 +786,7 @@ Proof using Type*.
       iEval (rewrite H0 /=) in "Hci_sl".
       set sp := yjs.idSpan.mk iv_ci.(yjs.item.id') (W64 (length (ic_run ci))).
       have Hwf_sp : span_wf sp.
-      { rewrite /sp /span_wf /=.
+      { rewrite /sp /span_wf /range_nowrap /=.
         have H := Hfits_ci. rewrite /cell_fits /cell_clock Hclk_ci in H.
         clear -H Hrunfits. word. }
       have Hidhh : item_id hh = toYjsId iv_ci.(yjs.item.id') by rewrite -Hrhead; exact Hcid_ci.

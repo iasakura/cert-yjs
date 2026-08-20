@@ -1611,6 +1611,34 @@ Proof.
   exact (Hall p ts Hp c Hcts).
 Qed.
 
+(** Every char a pooled cell holds is an item of its type's model list: the
+    cell list flattens to exactly that list ([cells_repr], carried by
+    [own_ytype_cells]). This is how a delete turns "these ids sit in cells" into
+    "these ids are integrated items", the domain half of [own_ds_grow]. *)
+Lemma types_cells_in_arr (types : gmap loc type_state) :
+  ([∗ map] parent ↦ ts ∈ types,
+      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
+      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  ⌜∀ c, c ∈ all_cells types -> ∀ y, y ∈ ic_run c ->
+     ∃ p ts, types !! p = Some ts ∧ y ∈ ty_arr ts⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types,
+      ⌜∀ c, c ∈ ty_cells ts -> ∀ y, y ∈ ic_run c -> y ∈ ty_arr ts⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "[Hyt _]".
+    iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    iPureIntro. move=> c Hc y Hy.
+    rewrite /cells_repr in Hrepr. rewrite Hrepr /run_flatten.
+    apply list_elem_of_join. exists (ic_run c). split; first exact Hy.
+    apply list_elem_of_fmap. exists c. split; [reflexivity | exact Hc]. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> c Hc y Hy.
+  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
+  exists p, ts. split; [exact Hp | exact (Hall p ts Hp c Hcts y Hy)].
+Qed.
+
 (** A split preserves each type's model document, and the map's domain. *)
 Lemma split_types_preserve (types : gmap loc type_state) (parent : loc)
     (cells : list item_cell) (arr : list (YjsItem A)) (k o : nat) (rloc : loc)
@@ -1714,6 +1742,34 @@ Proof.
   { exists cw. split_and!; [exact Hcw | exact Hlive |].
     move=> y Hy. rewrite -(take_drop o (ic_run cw)). apply elem_of_app. by right. }
   exists c'. split_and!; [rewrite Hold; apply elem_of_cons; by right | exact Hlive | done].
+Qed.
+
+(** Dually, a split keeps every tombstoned char tombstoned: the halves inherit
+    the node's bit and partition its run, so a dead char lands in one of them.
+    This is what carries a delete loop's "covered so far" record across the
+    splits the next iteration performs. *)
+Lemma split_pool_dead_chars_kept (types : gmap loc type_state) (parent : loc)
+    (cells : list item_cell) (arr : list (YjsItem A)) (k o : nat) (rloc : loc)
+    (cw : item_cell) :
+  types !! parent = Some (MkTypeState cells arr) ->
+  cells !! k = Some cw ->
+  dead_chars_kept types (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types).
+Proof.
+  move=> Htypes Hck.
+  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck) as (rest & Hold & Hnew).
+  move=> c Hc Hdel y Hy. rewrite Hold in Hc.
+  apply elem_of_cons in Hc as [-> | Hc]; last first.
+  { exists c. split_and!;
+      [rewrite Hnew; apply elem_of_cons; right; apply elem_of_cons; by right
+      | exact Hdel | exact Hy]. }
+  (* the split node: the char sits in the prefix or in the suffix *)
+  rewrite -(take_drop o (ic_run cw)) in Hy.
+  apply elem_of_app in Hy as [Hy | Hy].
+  - exists (split_cell_left cw o). split_and!;
+      [rewrite Hnew; apply list_elem_of_here | exact Hdel | exact Hy].
+  - exists (split_cell_right cw o rloc). split_and!;
+      [rewrite Hnew; apply elem_of_cons; right; apply list_elem_of_here
+      | exact Hdel | exact Hy].
 Qed.
 
 (** A split grows only the split client's run list, by one. *)
@@ -1821,7 +1877,8 @@ Lemma wp_store__splitAtAndGetLeft_inv (s mref : loc) (idv : yjs.id.t)
              cell_client cL = idv.(yjs.id.clientId') ∧
              (uint.Z (cell_clock cL) + Z.of_nat (length (ic_run cL))
               = uint.Z idv.(yjs.id.clock') + 1)%Z ∧
-             ic_parent cL = ic_parent cw⌝ }}}.
+             ic_parent cL = ic_parent cw ∧
+             cell_clock cL = cell_clock cw⌝ }}}.
 Proof using Type*.
   move=> Hcwmem Hcwcc Hcwle Hcwlt [Hfits [Hnodup [Hrangedisj Horiginclk]]].
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
@@ -1858,7 +1915,8 @@ Proof using Type*.
       * move=> p ts0 ts0' Hp Hp' _. congruence.
       * move=> c1 Hc1. exists c1. split_and!; [exact Hc1 | done | lia | lia].
       * exact (live_refine_refl types).
-    + exists cw. split_and!; [exact Hcwmem | done | exact Hcwcc | | done].
+      * exact (dead_chars_kept_refl types).
+    + exists cw. split_and!; [exact Hcwmem | done | exact Hcwcc | | done | done].
       clear -Hoeq Hcwle Hcwlt Hlenpos. word.
   - (* split just after the id *)
     have Ho2 : (0 < (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) + 1
@@ -1892,6 +1950,7 @@ Proof using Type*.
         { rewrite lookup_insert_ne in Hp'; last congruence. congruence. }
       * exact (split_pool_subrange types parent cells arr k cw _ rloc Htypes0 Hck Hrunwf Ho2 Hckbnd Hfitscw).
       * exact (split_pool_live_refine types parent cells arr k _ rloc cw Htypes0 Hck).
+      * exact (split_pool_dead_chars_kept types parent cells arr k _ rloc cw Htypes0 Hck).
     + destruct (split_pool_perm types parent cells arr k cw
                   ((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) + 1) rloc Htypes0 Hck)
         as (rest & Hold & Hnew).
@@ -1905,6 +1964,7 @@ Proof using Type*.
       * rewrite Hclientl. exact Hcwcc.
       * rewrite Hclockl Hlenl. clear -Hcwle Hcwlt Hlenpos. word.
       * done.
+      * exact Hclockl.
 Qed.
 
 Lemma wp_store__splitAtAndGetRight_inv (s mref : loc) (idv : yjs.id.t)
@@ -1966,6 +2026,7 @@ Proof using Type*.
       * move=> p ts0 ts0' Hp Hp' _. congruence.
       * move=> c1 Hc1. exists c1. split_and!; [exact Hc1 | done | lia | lia].
       * exact (live_refine_refl types).
+      * exact (dead_chars_kept_refl types).
     + exists cw. split_and!; [exact Hcwmem | done | exact Hcwcc | | done].
       clear -Hoeq Hcwle. word.
   - (* split at the offset: the fresh right half starts at the id *)
@@ -2001,6 +2062,7 @@ Proof using Type*.
         { rewrite lookup_insert_ne in Hp'; last congruence. congruence. }
       * exact (split_pool_subrange types parent cells arr k cw _ rl Htypes0 Hck Hrunwf Ho2 Hckbnd Hfitscw).
       * exact (split_pool_live_refine types parent cells arr k _ rl cw Htypes0 Hck).
+      * exact (split_pool_dead_chars_kept types parent cells arr k _ rl cw Htypes0 Hck).
     + destruct (split_pool_perm types parent cells arr k cw
                   (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) rl Htypes0 Hck)
         as (rest & Hold & Hnew).

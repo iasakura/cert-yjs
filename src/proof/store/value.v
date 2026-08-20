@@ -20,7 +20,8 @@
       weaker [integrate_live_refine] (the escape is "this char is the wire
       item's own"), which the apply loop turns into [apply_live_refine] (the
       escape is "the model did not have this id") with the replay's client
-      bound.
+      bound. [dead_chars_kept] is the dual, carrying a delete loop's record of
+      what it has already tombstoned across the next iteration's surgeries.
     - the split surgery [split_cell_left] / [split_cell_right] / [split_cells].
     - the id-span abstraction [span_ids] / [span_wf] (a span denotes its whole
       clock interval, since an id addresses any char of a run), and
@@ -39,9 +40,15 @@
     - [client_run] is stable under the same steps ([merge_sort_loc_*],
       [client_run_loc_tail] / [_insert] / [_other], [cellctr_locs_run_perm]),
       and [cell_kp] determines client, clock, location and [cell_pr].
-    - [span_ids] is exactly the clock-interval test ([span_ids_elem]), is the
-      singleton on a length-1 span, distributes over [snoc], and matches a
-      run's char ids ([span_ids_char_ids]).
+    - [span_ids] is exactly the clock-interval test ([span_ids_elem] at the
+      heap level, [span_ids_elem_nat] at the model level), is the singleton on
+      a length-1 span, splits at any interior point ([span_ids_split]), and
+      matches a run's char ids ([span_ids_char_ids]).
+    - a well-formed run denotes exactly its cell's coordinate window
+      ([run_wf_char_id_bound] and its converse [run_wf_char_id_mem]), which
+      gives store-global id uniqueness out of the pool invariants alone
+      ([cells_char_id_unique], via [pool_loc_inj]) and hence the obligation a
+      delete must discharge to mint a certificate ([ds_tombstoned_char_ids]).
     - [live_refine] is reflexive, transitive, and holds of a tombstone flip
       ([live_refine_flip], over the cell-level [flip_pool_perm]) and of a
       cell-preserving permutation; [ds_tombstoned] travels along it
@@ -249,15 +256,39 @@ Definition doc_registry_coh (m : DocModel) (bind : gmap P loc)
 
 (* ----- id-span-slice abstraction to a gset ------------------------------ *)
 
-(** The char ids one [idSpan] covers: the [len] consecutive clocks from the
-    head id, at the span's client. An id addresses ANY char of a scanned run
-    (yjs getItem semantics, issue #28), so the scan's id sets are CHAR-id sets
-    and a span denotes its whole clock interval. *)
-Definition span_ids (v : yjs.idSpan.t) : gset YjsId :=
+(** The ids a CLOCK RANGE denotes: [len] consecutive clocks of [client]'s
+    space starting at [start].
+
+    Used as: the one notion of "a range of ids" in the store. Every runtime
+    record that carries such a range is a thin layer over it ([span_ids] for
+    the conflict scan's [idSpan], [delete_span_ids] for the wire's
+    [deleteSpan]), and a spec that has the three words in hand states itself
+    over this directly rather than assembling a heap record just to name a
+    set ([wp_store__deleteRange], whose arguments are the three words). *)
+Definition range_ids (client start len : w64) : gset YjsId :=
   list_to_set
-    ((λ o, MkYjsId (uint.nat v.(yjs.idSpan.id').(yjs.id.clientId'))
-                   (uint.nat v.(yjs.idSpan.id').(yjs.id.clock') + o)%nat)
-       <$> seq 0 (uint.nat v.(yjs.idSpan.len'))).
+    ((λ o, MkYjsId (uint.nat client) (uint.nat start + o)%nat)
+       <$> seq 0 (uint.nat len)).
+
+(** The range does not wrap in [w64].
+
+    Used as: the side condition under which the Go tests agree with
+    [range_ids], since they compute [start + len] in machine arithmetic
+    ([containsId]'s range test, [deleteRange]'s loop bound). [span_wf] and
+    [delete_span_nowrap] are its two runtime-record forms; a wire span that
+    fails it makes [deleteRange]'s loop exit at once, which is why the
+    coverage postconditions are guarded by it. *)
+Definition range_nowrap (start len : w64) : Prop :=
+  (uint.Z start + uint.Z len < 2^64)%Z.
+
+#[global] Instance range_nowrap_dec start len : Decision (range_nowrap start len).
+Proof. rewrite /range_nowrap. apply _. Defined.
+
+(** The two runtime carriers, as the ranges they denote. *)
+Definition span_ids (v : yjs.idSpan.t) : gset YjsId :=
+  range_ids v.(yjs.idSpan.id').(yjs.id.clientId')
+            v.(yjs.idSpan.id').(yjs.id.clock')
+            v.(yjs.idSpan.len').
 
 (** The ids a WIRE delete batch denotes: a span is its whole clock interval,
     and the batch is their union. This is the PURE model of the [deleteSpan]
@@ -267,18 +298,24 @@ Definition span_ids (v : yjs.idSpan.t) : gset YjsId :=
     request. A public spec speaks about this set and never about the heap
     records behind it. *)
 Definition delete_span_ids (sp : yjs.deleteSpan.t) : gset YjsId :=
-  span_ids (yjs.idSpan.mk (yjs.id.mk sp.(yjs.deleteSpan.client')
-                                     sp.(yjs.deleteSpan.clock'))
-                          sp.(yjs.deleteSpan.length')).
+  range_ids sp.(yjs.deleteSpan.client')
+            sp.(yjs.deleteSpan.clock')
+            sp.(yjs.deleteSpan.length').
 
 Definition delete_batch_ids (spans : list yjs.deleteSpan.t) : gset YjsId :=
   ⋃ (delete_span_ids <$> spans).
+
+Definition delete_span_nowrap (sp : yjs.deleteSpan.t) : Prop :=
+  range_nowrap sp.(yjs.deleteSpan.clock') sp.(yjs.deleteSpan.length').
+
+#[global] Instance delete_span_nowrap_dec sp : Decision (delete_span_nowrap sp).
+Proof. rewrite /delete_span_nowrap. apply _. Defined.
 
 (** A span's clock interval does not wrap: [containsId]'s Go range test
     computes [clock + len] in [w64], so this is what makes the test decide
     [span_ids] membership. Sourced from the store's run-fits pool invariant. *)
 Definition span_wf (v : yjs.idSpan.t) : Prop :=
-  (uint.Z v.(yjs.idSpan.id').(yjs.id.clock') + uint.Z v.(yjs.idSpan.len') < 2^64)%Z.
+  range_nowrap v.(yjs.idSpan.id').(yjs.id.clock') v.(yjs.idSpan.len').
 
 (* ----- findById: locate a node by id in the DLL ------------------------- *)
 
@@ -322,7 +359,13 @@ Definition pool_invs (types : gmap loc type_state) : Prop :=
 
     Stated over chars, not coordinates, because the tombstone set is a set of
     [YjsId]s: the coordinate clause of the records below is about where a cell
-    sits in its client's clock space, which is the wrong currency here. *)
+    sits in its client's clock space, which is the wrong currency here.
+
+    Used as: a conjunct of [split_step_facts], [repair_types_facts] and
+    [delete_types_facts], consumed by [ds_tombstoned_refine] and its Iris
+    wrapper [own_ds_refine] to carry the tombstone-set invariant across a
+    surgery. Discharged by [split_pool_live_refine], [live_refine_flip] and
+    [live_refine_perm]. *)
 Definition live_refine (types types' : gmap loc type_state) : Prop :=
   ∀ c', c' ∈ all_cells types' -> ic_deleted c' = false ->
     ∃ c, c ∈ all_cells types ∧ ic_deleted c = false ∧
@@ -338,7 +381,13 @@ Definition live_refine (types types' : gmap loc type_state) : Prop :=
 
     Composable across steps against a FIXED [m], the model the apply started
     from: the second disjunct only gets easier as the model grows, so a char
-    fresh to a later model is fresh to [m] too. *)
+    fresh to a later model is fresh to [m] too.
+
+    Used as: the pool-refinement clause of [wp_store__applyUpdate] and of both
+    loops inside it, consumed by [own_ds_apply] to carry the tombstone-set
+    invariant across a remote apply. Built from
+    [apply_live_refine_of_live_refine] on the repair steps and
+    [apply_live_refine_of_integrate] on the integrate steps. *)
 Definition apply_live_refine (m : DocModel) (pool pool' : list item_cell) : Prop :=
   ∀ c', c' ∈ pool' -> ic_deleted c' = false -> ∀ y, y ∈ ic_run c' ->
     (∃ c, c ∈ pool ∧ ic_deleted c = false ∧ y ∈ ic_run c)
@@ -351,15 +400,89 @@ Definition apply_live_refine (m : DocModel) (pool pool' : list item_cell) : Prop
 Lemma run_wf_char_id_bound (c : item_cell) (y : YjsItem A) :
   run_wf (ic_run c) -> y ∈ ic_run c ->
   clientId (item_id y) = clientId (item_id (run_head c)) ∧
-  (clock (item_id (run_head c)) <= clock (item_id y))%nat.
+  (clock (item_id (run_head c)) <= clock (item_id y) <
+     clock (item_id (run_head c)) + length (ic_run c))%nat.
 Proof.
   move=> Hwf Hy.
   have Hne : ic_run c ≠ [] by (move: Hwf => [Hne _]; exact Hne).
   have Hhd : ic_run c !! 0%nat = Some (run_head c).
   { rewrite /run_head. by destruct (ic_run c). }
   apply list_elem_of_lookup_1 in Hy as [o Ho].
+  have Holt : (o < length (ic_run c))%nat := lookup_lt_Some _ _ _ Ho.
   rewrite (run_wf_lookup_clock (ic_run c) o (run_head c) y Hwf Hhd Ho) /=.
   split; [reflexivity | lia].
+Qed.
+
+(** The converse: every id in a run's client/clock window IS one of its chars.
+    Together with [run_wf_char_id_bound] this says a run denotes exactly its
+    coordinate window, which is what lets a delete loop turn "this node is
+    tombstoned" into "these span ids are tombstoned". *)
+Lemma run_wf_char_id_mem (c : item_cell) (i : YjsId) :
+  run_wf (ic_run c) ->
+  clientId i = clientId (item_id (run_head c)) ->
+  (clock (item_id (run_head c)) <= clock i <
+     clock (item_id (run_head c)) + length (ic_run c))%nat ->
+  i ∈ char_ids (ic_run c).
+Proof.
+  move=> Hwf Hcl [Hlo Hhi].
+  have Hhd : ic_run c !! 0%nat = Some (run_head c).
+  { rewrite /run_head. move: Hwf => [Hne _]. by destruct (ic_run c). }
+  set (o := (clock i - clock (item_id (run_head c)))%nat).
+  have [y Hy] : is_Some (ic_run c !! o).
+  { apply lookup_lt_is_Some. rewrite /o. lia. }
+  have Hid := run_wf_lookup_clock (ic_run c) o (run_head c) y Hwf Hhd Hy.
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap.
+  exists y. split; last exact (list_elem_of_lookup_2 _ _ _ Hy).
+  rewrite Hid. destruct i as [ci ki]. simpl in *. rewrite /o. f_equal; lia.
+Qed.
+
+(** Locations identify pooled cells ([NoDup] of the pool's locations is one of
+    the pool invariants), which is what lets a cell-level disjointness
+    hypothesis be applied to two cells known to differ. *)
+Lemma pool_loc_inj (pool : list item_cell) (c1 c2 : item_cell) :
+  NoDup (ic_loc <$> pool) -> c1 ∈ pool -> c2 ∈ pool ->
+  ic_loc c1 = ic_loc c2 -> c1 = c2.
+Proof.
+  move=> Hnd Hc1 Hc2 Heq.
+  apply list_elem_of_lookup_1 in Hc1 as [i Hi].
+  apply list_elem_of_lookup_1 in Hc2 as [j Hj].
+  have Hij : i = j.
+  { apply (NoDup_lookup (ic_loc <$> pool) i j (ic_loc c1) Hnd).
+    - rewrite list_lookup_fmap Hi //.
+    - rewrite list_lookup_fmap Hj /= Heq //. }
+  subst j. rewrite Hi in Hj. by injection Hj.
+Qed.
+
+(** Store-global id uniqueness, out of the pool invariants alone: two cells at
+    different locations never share a char id. Same client puts their clock
+    ranges apart ([cells_range_disjoint]) and a run's chars sit exactly inside
+    its own cell's range, with [cell_fits] keeping the [w64] coordinates
+    honest; different clients differ in the id's client field outright.
+
+    This is the fact docs/plan-delete-set.md expected to need real plumbing
+    ("store-global id uniqueness"): the pool invariants already carry it. *)
+Lemma cells_char_id_unique (pool : list item_cell) (c1 c2 : item_cell)
+    (y1 y2 : YjsItem A) :
+  cells_range_disjoint pool ->
+  (∀ c, c ∈ pool -> run_wf (ic_run c)) ->
+  (∀ c, c ∈ pool -> (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z) ->
+  c1 ∈ pool -> c2 ∈ pool -> ic_loc c1 ≠ ic_loc c2 ->
+  y1 ∈ ic_run c1 -> y2 ∈ ic_run c2 -> item_id y1 ≠ item_id y2.
+Proof.
+  move=> Hdisj Hwf Hclkb Hc1 Hc2 Hloc Hy1 Hy2 Hideq.
+  have [Hcl1 Hrg1] := run_wf_char_id_bound c1 y1 (Hwf c1 Hc1) Hy1.
+  have [Hcl2 Hrg2] := run_wf_char_id_bound c2 y2 (Hwf c2 Hc2) Hy2.
+  have Hclheads : clientId (item_id (run_head c1)) = clientId (item_id (run_head c2)).
+  { rewrite -Hcl1 -Hcl2 Hideq //. }
+  have Hccells : cell_client c1 = cell_client c2
+    by rewrite /cell_client Hclheads.
+  have Hb1 := Hclkb c1 Hc1. have Hb2 := Hclkb c2 Hc2.
+  have Hz1 : uint.Z (cell_clock c1) = Z.of_nat (clock (item_id (run_head c1)))
+    by (rewrite /cell_clock; word).
+  have Hz2 : uint.Z (cell_clock c2) = Z.of_nat (clock (item_id (run_head c2)))
+    by (rewrite /cell_clock; word).
+  have Hclk : clock (item_id y1) = clock (item_id y2) by rewrite Hideq.
+  destruct (Hdisj c1 c2 Hc1 Hc2 Hccells Hloc) as [Hle | Hle]; lia.
 Qed.
 
 (** [integrate_live_refine input pool pool']: what one integrate step gives,
@@ -367,15 +490,33 @@ Qed.
     coordinate provenance clause next to it). A char of a live cell of the new
     pool either sat in a live cell of the old one, or is one of the integrated
     wire item's own chars, recognised by its client and a clock at or above
-    the item's. The caller turns the second disjunct into "the model did not
-    have this id" with the replay's client bound, which is the form
-    [apply_live_refine] wants. *)
+    the item's.
+
+    Used as: the pool-refinement clause of [wp_store__integrateDecoded] and
+    [wp_store__integrateDecoded_grow], which have no model of their own to
+    speak about. Their caller, the apply loop in [store/applyUpdate], turns
+    the second disjunct into "the model did not have this id" with the
+    replay's client bound ([apply_live_refine_of_integrate]). *)
 Definition integrate_live_refine (input : IntegrateInput (A := A))
     (pool pool' : list item_cell) : Prop :=
   ∀ c', c' ∈ pool' -> ic_deleted c' = false -> ∀ y, y ∈ ic_run c' ->
     (∃ c, c ∈ pool ∧ ic_deleted c = false ∧ y ∈ ic_run c)
     ∨ (clientId (item_id y) = clientId (in_id input) ∧
        (clock (in_id input) <= clock (item_id y))%nat).
+
+(** [dead_chars_kept types types']: every char of a TOMBSTONED cell of the old
+    pool is still held by a tombstoned cell of the new one. The dual of
+    [live_refine], which says the same about live cells.
+
+    Used as: a conjunct of [split_step_facts] and [delete_types_facts], so a
+    delete loop can carry its "everything covered so far is tombstoned"
+    record ([ids_tombstoned]) across the split and flip the next iteration
+    performs. Discharged by [split_pool_dead_chars_kept] and
+    [dead_chars_kept_flip], since a split's halves inherit the bit and
+    partition the run, and a flip only turns bits on. *)
+Definition dead_chars_kept (types types' : gmap loc type_state) : Prop :=
+  ∀ c, c ∈ all_cells types -> ic_deleted c = true -> ∀ y, y ∈ ic_run c ->
+    ∃ c', c' ∈ all_cells types' ∧ ic_deleted c' = true ∧ y ∈ ic_run c'.
 
 (** [ds_tombstoned ds pool]: no LIVE cell of the pool holds a char whose id is
     in [ds]. This is the direction of #37's [deleted_match] that gives the
@@ -388,6 +529,21 @@ Definition integrate_live_refine (input : IntegrateInput (A := A))
     NOT carried: nothing consumes it, and it would force every delete to grow
     the ghost set eagerly, which is exactly the bookkeeping y-octo's
     [delete_item_inner] does and ours does not. *)
+(** [ids_tombstoned ids pool]: every id of [ids] is held by a cell of [pool]
+    that is tombstoned. It WITNESSES the ids as present and dead, which is
+    strictly more than [ds_tombstoned], which only forbids them from being
+    present and alive; store-global id uniqueness turns this into that
+    ([ds_tombstoned_of_witnesses]).
+
+    Used as: what a delete reports about what it just did. It is the
+    postcondition of [wp_store__deleteRange] (over the range it was asked to
+    cover) and of [wp_store__applyDeleteSpans] (over the union of the spans
+    that landed), it is carried through the latter's loop, and it is the
+    premise a caller discharges to mint an [is_ds_lb] certificate through
+    [own_ds_grow]. *)
+Definition ids_tombstoned (ids : gset YjsId) (pool : list item_cell) : Prop :=
+  ∀ i, i ∈ ids -> ∃ c, c ∈ pool ∧ ic_deleted c = true ∧ i ∈ char_ids (ic_run c).
+
 Definition ds_tombstoned (ds : gset YjsId) (pool : list item_cell) : Prop :=
   ∀ c, c ∈ pool -> ic_deleted c = false -> ∀ y, y ∈ ic_run c -> item_id y ∉ ds.
 
@@ -415,7 +571,8 @@ Definition split_step_facts (types types' : gmap loc type_state) (w : item_cell)
      (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
      (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')) <=
       uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z) ∧
-  live_refine types types'.
+  live_refine types types' ∧
+  dead_chars_kept types types'.
 
 (** What [repair] guarantees about the type map: per-type model documents and
     the domain survive, and each client's run list grows by at most the two
@@ -879,6 +1036,22 @@ Proof.
     rewrite -app_assoc /=. rewrite -Permutation_middle //.
 Qed.
 
+Lemma dead_chars_kept_flip (types : gmap loc type_state) (p : loc)
+    (ts : type_state) (k : nat) (c : item_cell) :
+  types !! p = Some ts -> ty_cells ts !! k = Some c ->
+  dead_chars_kept types
+    (<[p := MkTypeState (<[k := flip_cell c]> (ty_cells ts)) (ty_arr ts)]> types).
+Proof.
+  move=> Hp Hck.
+  destruct (flip_pool_perm types p ts k c Hp Hck) as (rest & Hold & Hnew).
+  move=> c0 Hc0 Hdel y Hy. rewrite Hold in Hc0.
+  apply elem_of_cons in Hc0 as [-> | Hc0].
+  - exists (flip_cell c). split_and!;
+      [rewrite Hnew; apply list_elem_of_here | done | exact Hy].
+  - exists c0. split_and!;
+      [rewrite Hnew; apply elem_of_cons; by right | exact Hdel | exact Hy].
+Qed.
+
 Lemma live_refine_flip (types : gmap loc type_state) (p : loc)
     (ts : type_state) (k : nat) (c : item_cell) :
   types !! p = Some ts -> ty_cells ts !! k = Some c ->
@@ -905,6 +1078,7 @@ Definition delete_types_facts (types types' : gmap loc type_state) : Prop :=
      ∃ ts, types !! p = Some ts ∧ ty_arr ts' = ty_arr ts) ∧
   (∀ p, is_Some (types !! p) -> is_Some (types' !! p)) ∧
   live_refine types types' ∧
+  dead_chars_kept types types' ∧
   (∀ c', c' ∈ all_cells types' -> ∃ c, c ∈ all_cells types ∧
      cell_client c' = cell_client c ∧
      (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
@@ -970,6 +1144,51 @@ Lemma ds_tombstoned_union (ds S : gset YjsId) (pool : list item_cell) :
 Proof.
   move=> Hds HS c Hc Hlive y Hy.
   apply not_elem_of_union. split; [exact (Hds c Hc Hlive y Hy) | exact (HS c Hc Hlive y Hy)].
+Qed.
+
+(** A tombstoned cell's chars are gone from every LIVE cell of the pool: they
+    are gone from every OTHER cell by id uniqueness, and the cell itself is
+    not live. This is the obligation [own_ds_grow] puts on a delete before it
+    hands out an [is_ds_lb] certificate. *)
+(** The general form: a set every one of whose ids is witnessed by SOME
+    tombstoned cell of the pool is absent from every live cell, by
+    [cells_char_id_unique]. This is the obligation [own_ds_grow] puts on a
+    delete, discharged from the pool invariants and the delete's own record of
+    what it tombstoned. *)
+Lemma ds_tombstoned_of_witnesses (pool : list item_cell) (D : gset YjsId) :
+  cells_range_disjoint pool ->
+  (∀ c0, c0 ∈ pool -> run_wf (ic_run c0)) ->
+  (∀ c0, c0 ∈ pool -> (Z.of_nat (clock (item_id (run_head c0))) < 2^64)%Z) ->
+  NoDup (ic_loc <$> pool) ->
+  ids_tombstoned D pool ->
+  ds_tombstoned D pool.
+Proof.
+  move=> Hdisj Hwf Hclkb Hnd Hwit c0 Hc0 Hlive y Hy Hin.
+  destruct (Hwit (item_id y) Hin) as (c & Hc & Hdel & Hz).
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hz.
+  destruct Hz as (z & Hidz & Hz).
+  have Hne : ic_loc c0 ≠ ic_loc c.
+  { move=> Hloc. have Heqc := pool_loc_inj pool c0 c Hnd Hc0 Hc Hloc.
+    subst c0. by rewrite Hdel in Hlive. }
+  exact (cells_char_id_unique pool c0 c y z Hdisj Hwf Hclkb Hc0 Hc Hne Hy Hz Hidz).
+Qed.
+
+Lemma ds_tombstoned_char_ids (pool : list item_cell) (c : item_cell) :
+  cells_range_disjoint pool ->
+  (∀ c0, c0 ∈ pool -> run_wf (ic_run c0)) ->
+  (∀ c0, c0 ∈ pool -> (Z.of_nat (clock (item_id (run_head c0))) < 2^64)%Z) ->
+  NoDup (ic_loc <$> pool) ->
+  c ∈ pool -> ic_deleted c = true ->
+  ds_tombstoned (char_ids (ic_run c)) pool.
+Proof.
+  move=> Hdisj Hwf Hclkb Hnd Hc Hdel c0 Hc0 Hlive y Hy Hin.
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hin.
+  destruct Hin as (z & Hidz & Hz).
+  have Hne : ic_loc c0 ≠ ic_loc c.
+  { move=> Hloc. have Heqc := pool_loc_inj pool c0 c Hnd Hc0 Hc Hloc.
+    subst c0. by rewrite Hdel in Hlive. }
+  exact (cells_char_id_unique pool c0 c y z Hdisj Hwf Hclkb Hc0 Hc Hne Hy Hz
+           Hidz).
 Qed.
 
 Lemma ds_tombstoned_mono (ds ds' : gset YjsId) (pool : list item_cell) :
@@ -1076,23 +1295,42 @@ Proof.
   have := Hbound t' x Hx Hcx. rewrite Hid. lia.
 Qed.
 
+Lemma dead_chars_kept_refl (types : gmap loc type_state) : dead_chars_kept types types.
+Proof. move=> c Hc Hdel y Hy. exists c. split_and!; done. Qed.
+
+Lemma dead_chars_kept_trans (t1 t2 t3 : gmap loc type_state) :
+  dead_chars_kept t1 t2 -> dead_chars_kept t2 t3 -> dead_chars_kept t1 t3.
+Proof.
+  move=> H12 H23 c1 Hc1 Hdel1 y Hy.
+  destruct (H12 c1 Hc1 Hdel1 y Hy) as (c2 & Hc2 & Hdel2 & Hy2).
+  exact (H23 c2 Hc2 Hdel2 y Hy2).
+Qed.
+
+Lemma dead_chars_kept_perm (types types' : gmap loc type_state) :
+  all_cells types' ≡ₚ all_cells types -> dead_chars_kept types types'.
+Proof.
+  move=> Hperm c Hc Hdel y Hy. exists c. split_and!; [by rewrite Hperm | exact Hdel | exact Hy].
+Qed.
+
 Lemma delete_types_facts_refl (types : gmap loc type_state) :
   delete_types_facts types types.
 Proof.
-  split_and!; [move=> p ts' Hp; by exists ts' | done | exact (live_refine_refl types) |].
+  split_and!; [move=> p ts' Hp; by exists ts' | done | exact (live_refine_refl types)
+              | exact (dead_chars_kept_refl types) |].
   move=> c' Hc'. exists c'. split_and!; [exact Hc' | done | lia | lia].
 Qed.
 
 Lemma delete_types_facts_trans (t1 t2 t3 : gmap loc type_state) :
   delete_types_facts t1 t2 -> delete_types_facts t2 t3 -> delete_types_facts t1 t3.
 Proof.
-  move=> [Harr1 [Hdom1 [Hlr1 Hco1]]] [Harr2 [Hdom2 [Hlr2 Hco2]]]. split_and!.
+  move=> [Harr1 [Hdom1 [Hlr1 [Hdk1 Hco1]]]] [Harr2 [Hdom2 [Hlr2 [Hdk2 Hco2]]]]. split_and!.
   - move=> p ts3 Hp3.
     destruct (Harr2 p ts3 Hp3) as (ts2 & Hp2 & Heq2).
     destruct (Harr1 p ts2 Hp2) as (ts1 & Hp1 & Heq1).
     exists ts1. split; [exact Hp1 | congruence].
   - move=> p Hp. exact (Hdom2 p (Hdom1 p Hp)).
   - exact (live_refine_trans t1 t2 t3 Hlr1 Hlr2).
+  - exact (dead_chars_kept_trans t1 t2 t3 Hdk1 Hdk2).
   - move=> c3 Hc3.
     destruct (Hco2 c3 Hc3) as (c2 & Hc2 & Hcc2 & Hlo2 & Hhi2).
     destruct (Hco1 c2 Hc2) as (c1 & Hc1 & Hcc1 & Hlo1 & Hhi1).
@@ -1104,8 +1342,8 @@ Qed.
 Lemma delete_types_facts_of_split (types types' : gmap loc type_state) (w : item_cell) :
   split_step_facts types types' w -> delete_types_facts types types'.
 Proof.
-  move=> [Harr [Hdom [_ [_ [_ [_ [Hco Hlr]]]]]]].
-  split_and!; [| exact Hdom | exact Hlr | exact Hco].
+  move=> [Harr [Hdom [_ [_ [_ [_ [Hco [Hlr Hdk]]]]]]]].
+  split_and!; [| exact Hdom | exact Hlr | exact Hdk | exact Hco].
   move=> p ts' Hp'. destruct (Harr p ts' Hp') as (ts & Hp & Heq & _).
   exists ts. split; [exact Hp | exact Heq].
 Qed.
@@ -1130,6 +1368,7 @@ Proof.
     + rewrite lookup_insert_eq. by eexists.
     + rewrite lookup_insert_ne //.
   - exact (live_refine_flip types p ts k c Hp Hck).
+  - exact (dead_chars_kept_flip types p ts k c Hp Hck).
   - (* the pool is the same up to the flipped cell, which keeps its run and
        hence its coordinates *)
     move=> c' Hc'.
@@ -1396,7 +1635,7 @@ Lemma span_ids_elem (v : yjs.idSpan.t) (idv : yjs.id.t) :
         uint.Z v.(yjs.idSpan.id').(yjs.id.clock') + uint.Z v.(yjs.idSpan.len'))%Z).
 Proof.
   have HZn : ∀ w : w64, Z.of_nat (uint.nat w) = uint.Z w by move=> w; word.
-  rewrite /span_ids elem_of_list_to_set list_elem_of_fmap /toYjsId.
+  rewrite /span_ids /range_ids elem_of_list_to_set list_elem_of_fmap /toYjsId.
   split.
   - move=> [o [Hid Ho]]. apply elem_of_seq in Ho.
     injection Hid => Hclk Hcid.
@@ -1419,12 +1658,68 @@ Proof.
     + apply elem_of_seq. lia.
 Qed.
 
+(** Membership in a range, at the [nat] level the model ids live at. *)
+Lemma range_ids_elem (client start len : w64) (i : YjsId) :
+  i ∈ range_ids client start len ↔
+    (clientId i = uint.nat client ∧
+     (uint.nat start <= clock i)%nat ∧
+     (clock i < uint.nat start + uint.nat len)%nat).
+Proof.
+  rewrite /range_ids elem_of_list_to_set list_elem_of_fmap. split.
+  - move=> [o [-> Ho]]. apply elem_of_seq in Ho. simpl. split_and!; [done | lia | lia].
+  - move=> [Hcid [Hle Hlt]].
+    exists (clock i - uint.nat start)%nat. split.
+    + destruct i as [ci ki]. simpl in *. f_equal; [done | lia].
+    + apply elem_of_seq. lia.
+Qed.
+
+(** The same test on the runtime carrier, for callers that hold a model id
+    rather than a heap one. *)
+Lemma span_ids_elem_nat (v : yjs.idSpan.t) (i : YjsId) :
+  i ∈ span_ids v ↔
+    (clientId i = uint.nat v.(yjs.idSpan.id').(yjs.id.clientId') ∧
+     (uint.nat v.(yjs.idSpan.id').(yjs.id.clock') <= clock i)%nat ∧
+     (clock i < uint.nat v.(yjs.idSpan.id').(yjs.id.clock')
+                + uint.nat v.(yjs.idSpan.len'))%nat).
+Proof. rewrite /span_ids range_ids_elem //. Qed.
+
+(** A span splits at any interior point, which is how a delete loop grows its
+    "covered so far" record one node at a time. The no-wrap premise is the
+    same [w64] honesty the store's [cell_fits] provides. *)
+Lemma span_ids_split (cl clk l1 l2 : w64) :
+  (uint.Z clk + uint.Z l1 + uint.Z l2 < 2^64)%Z ->
+  span_ids (yjs.idSpan.mk (yjs.id.mk cl clk) (word.add l1 l2))
+  = span_ids (yjs.idSpan.mk (yjs.id.mk cl clk) l1)
+    ∪ span_ids (yjs.idSpan.mk (yjs.id.mk cl (word.add clk l1)) l2).
+Proof.
+  move=> Hnw. apply set_eq => i.
+  rewrite elem_of_union !span_ids_elem_nat /=.
+  have Hs : uint.Z (word.add l1 l2) = uint.Z l1 + uint.Z l2 by word.
+  have Hc : uint.Z (word.add clk l1) = uint.Z clk + uint.Z l1 by word.
+  have Hn : ∀ w : w64, Z.of_nat (uint.nat w) = uint.Z w by move=> w; word.
+  split.
+  - move=> [Hcid [Hle Hlt]].
+    destruct (decide (clock i < uint.nat clk + uint.nat l1)%nat) as [Hin | Hin].
+    + left. split_and!; [exact Hcid | exact Hle | exact Hin].
+    + right. split_and!; [exact Hcid | | ].
+      * have := Hn clk. have := Hn l1. lia.
+      * have := Hn clk. have := Hn l1. have := Hn l2. have := Hn (word.add l1 l2).
+        have := Hn (word.add clk l1). lia.
+  - move=> [[Hcid [Hle Hlt]] | [Hcid [Hle Hlt]]].
+    + split_and!; [exact Hcid | exact Hle |].
+      have := Hn clk. have := Hn l1. have := Hn l2. have := Hn (word.add l1 l2). lia.
+    + split_and!; [exact Hcid | |].
+      * have := Hn clk. have := Hn l1. have := Hn (word.add clk l1). lia.
+      * have := Hn clk. have := Hn l1. have := Hn l2. have := Hn (word.add l1 l2).
+        have := Hn (word.add clk l1). lia.
+Qed.
+
 (** A length-1 span denotes exactly its head id (the pre-#28 singleton case). *)
 Lemma span_ids_singleton (v : yjs.idSpan.t) :
   v.(yjs.idSpan.len') = W64 1 ->
   span_ids v = {[ toYjsId v.(yjs.idSpan.id') ]}.
 Proof.
-  move=> Hlen. rewrite /span_ids Hlen.
+  move=> Hlen. rewrite /span_ids /range_ids Hlen.
   have -> : uint.nat (W64 1) = 1%nat by word.
   rewrite /= Nat.add_0_r /toYjsId.
   by rewrite (right_id_L ∅ (∪)).
@@ -1455,7 +1750,7 @@ Proof.
   move=> Hid Hstep Hlen.
   have Heta : forall i : YjsId, i = MkYjsId (clientId i) (clock i) by move=> [] //.
   apply set_eq => x.
-  rewrite /span_ids /char_ids !elem_of_list_to_set !list_elem_of_fmap.
+  rewrite /span_ids /range_ids /char_ids !elem_of_list_to_set !list_elem_of_fmap.
   split.
   - move=> [o [-> Ho]]. apply elem_of_seq in Ho. simpl in Ho.
     destruct o as [|k].
