@@ -80,8 +80,8 @@ Proof.
     iMod (auth_gmap_gset_frag_alloc γs.(sn_seq) (DfracOwn 1) _ p ∅ _
             Hmk (empty_subseteq _) with "Hseq") as "[Hseq #Hlb0]".
     wp_auto.
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hds]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hdelete_set]").
+    { iNext. iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iExists acc.
       iFrame "∗#". iPureIntro.
@@ -210,11 +210,11 @@ Proof.
     { move=> c Hc. rewrite Hperm in Hc. exact (Horiginclk c Hc). }
     (* registering an empty type moves no cells, so the tombstone-set
        invariant transports over the same permutation *)
-    iDestruct (own_ds_perm γs m (all_cells types) (all_cells types') Hperm with "Hds")
-      as "Hds".
+    iDestruct (own_delete_set_perm γs m (all_cells types) (all_cells types') Hperm with "Hdelete_set")
+      as "Hdelete_set".
     wp_auto.
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hds]").
-    { iNext. iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types', bind', h, m, pend, pdel.
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hdelete_set]").
+    { iNext. iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types', bind', h, m, pend, pdel.
       iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
       iExists acc.
       iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds'". iPureIntro.

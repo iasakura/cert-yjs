@@ -26,32 +26,32 @@ semilattice composed with the insert-only op history.
 - Composition is cleaner: the insert-only op history (issue #42's machinery)
   stays untouched; the delete set is a join-semilattice (set union) whose
   application is idempotent and commutative BY CONSTRUCTION. The visible
-  document is a view: `visible = filter (id ∉ ds) items`. Convergence then
+  document is a view: `visible = filter (id ∉ delete_set) items`. Convergence then
   composes componentwise (op-based items × lattice-join deletes), which is
   exactly the shape #40 wants to state.
 
 ## 2. The ghost: one store-global monotone delete set
 
-`store_names` gains `sn_ds : gname` holding `auth (gset YjsId)` -- the SAME
+`store_names` gains `sn_delete_set : gname` holding `auth (gset YjsId)` -- the SAME
 RA as the accepted-id set (`accUR`, store/heap.v), so no new `inG` Context
 anywhere and `algebra.v`'s `auth_gset_*` lemmas apply as is:
 
-- `store_inv_excl` / `own_store` own the auth (bundled as `own_ds`, which
+- `store_inv_excl` / `own_store` own the auth (bundled as `own_delete_set`, which
   also carries the domain bound of section 3);
-- `is_ds_lb γs S := own γs.(sn_ds) (◯ S)` is the persistent, duplicable
+- `is_delete_set_lb γs S := own γs.(sn_delete_set) (◯ S)` is the persistent, duplicable
   lower bound (the same idiom as the grow-only item-set `sn_seq` and the
   accepted set `sn_accepted`).
 
 Store-GLOBAL, not per-type: wire delete ranges are `(client, clock-range)`
 pairs and mention no parent (roadmap note), and ids are globally unique, so
 one set serves all root types. The per-type model view is a projection:
-`st_deleted(t) = ds ∩ ids(docm_get m t)`. (Issue #37's `ts_del : gset YjsId`
+`st_deleted(t) = delete_set ∩ ids(docm_get m t)`. (Issue #37's `ts_del : gset YjsId`
 per `text_state` predates #49 multi-parent; the global set is its natural
 generalization.)
 
 REVISED at the re-port: the domain bound is stated over the DOC MODEL, not
-the cell pool -- `ds_dom ds m := ∀ i ∈ ds, doc_model_has m i = true`
-(store/model.v), with `own_ds γs m` carried by `store_inv_excl`/`own_store`
+the cell pool -- `delete_set_dom delete_set m := ∀ i ∈ delete_set, doc_model_has m i = true`
+(store/model.v), with `own_delete_set γs m` carried by `store_inv_excl`/`own_store`
 next to their existing `m`. The original cells-level bound needed bespoke
 pool-transfer lemmas per surgery (snoc, flip, split); the model-level bound
 transports through the lemmas the proofs already produce: `Text.Insert`
@@ -65,10 +65,10 @@ mirror (`deleted_match`, section 3) stays a D2 concern.
 earlier draft):
 
 ```
-deleted_match ds cells :=
+deleted_match delete_set cells :=
   ∀ c ∈ cells, ∀ y ∈ ic_run c,
-    (ic_deleted c = true  → item_id y ∈ ds) ∧
-    (ic_deleted c = false → item_id y ∉ ds)
+    (ic_deleted c = true  → item_id y ∈ delete_set) ∧
+    (ic_deleted c = false → item_id y ∉ delete_set)
 ```
 
 Run-uniform by construction: a split's halves inherit the deleted bit
@@ -76,20 +76,20 @@ Run-uniform by construction: a split's halves inherit the deleted bit
 node's bit speaks for all its chars. Additionally the domain invariant
 
 ```
-ds ⊆ ids of the integrated items (all types)
+delete_set ⊆ ids of the integrated items (all types)
 ```
 
-keeps freshly minted insert ids out of `ds`, so `Insert`/`Integrate`
+keeps freshly minted insert ids out of `delete_set`, so `Insert`/`Integrate`
 re-establish `deleted_match` for the new visible cell for free (its fresh id
-cannot be in `ds`).
+cannot be in `delete_set`).
 
 ## 4. Who updates what
 
 | operation | heap effect (today) | ghost effect (new) |
 |---|---|---|
-| `Text.Delete` | flips `itemDeleted` bits, shrinks `yType.len` | auth grows: `ds' = ds ∪ (ids of the tombstoned chars)`; post returns `is_ds_lb dels` |
-| `store.applyUpdate` phase 2 (new) | `deleteRange` per wire span: split at range boundaries, tombstone whole nodes, shrink `len` | auth grows by the span's ids; post returns `is_ds_lb` certificates |
-| `Text.Insert` / integrate | unchanged | none (fresh ids ∉ ds; `deleted_match` extends) |
+| `Text.Delete` | flips `itemDeleted` bits, shrinks `yType.len` | auth grows: `delete_set' = delete_set ∪ (ids of the tombstoned chars)`; post returns `is_delete_set_lb dels` |
+| `store.applyUpdate` phase 2 (new) | `deleteRange` per wire span: split at range boundaries, tombstone whole nodes, shrink `len` | auth grows by the span's ids; post returns `is_delete_set_lb` certificates |
+| `Text.Insert` / integrate | unchanged | none (fresh ids ∉ delete_set; `deleted_match` extends) |
 | encode (unverified codec) | `generateDeleteSet` derives the wire set from flags | none (stays `//go:build !goose`) |
 
 The heap `store.deletedSet` field REMAINS a codec-only cache (documented
@@ -100,14 +100,14 @@ which `deleted_match` proves agrees with the ghost.
 ## 5. Go deltas (D2)
 
 File-name map for the re-port (the D1 commit predates the module split):
-`yjs_store_base.v` -> `store/value.v` (pure: `deleted_match`, `ds_dom`,
-`all_cells_pointwise`) + `store/heap.v` (ghost: `sn_ds`, `is_ds_lb`,
-`own_ds`, laws; `store_inv_excl`/`own_store` conjunct; `store_tie_init`);
+`yjs_store_base.v` -> `store/value.v` (pure: `deleted_match`, `delete_set_dom`,
+`all_cells_pointwise`) + `store/heap.v` (ghost: `sn_delete_set`, `is_delete_set_lb`,
+`own_delete_set`, laws; `store_inv_excl`/`own_store` conjunct; `store_tie_init`);
 `yjs_store_integrate.v` -> `store/Integrate.v`; `yjs_store_update.v` ->
 `store/applyUpdate.v` + `store/repair.v`; `yjs_text.v` ->
-`text/Insert.v` + `text/Delete.v` (reads untouched: `own_ds` sits in the
+`text/Insert.v` + `text/Delete.v` (reads untouched: `own_delete_set` sits in the
 exclusive slice, not `store_inv_ro`). `doc/GetOrCreateText.v`'s miss branch
-transports `own_ds` over `all_cells_insert_empty`.
+transports `own_delete_set` over `all_cells_insert_empty`.
 
 - `updateItem`-style decoded form for deletes: `Update` gains
   `deletes []deleteSpan` with `deleteSpan{client Client; start, end uint64}`
@@ -139,27 +139,27 @@ covered by the M2 no-op cell surgery (`split_cells_flatten` etc.).
 
 - `wp_Text__Delete` (D1): keeps `is_Text t L` preservation and additionally
   returns
-  `∃ dels S, is_ds_lb γs dels ∗ is_root_lb γs name S ∧ size dels ≤ uint.nat
+  `∃ dels S, is_delete_set_lb γs dels ∗ is_root_lb γs name S ∧ size dels ≤ uint.nat
    len ∧ dels ⊆ item ids of S` (the ids stay existential because the spec
   does not pin positions, see §8; the domain clause is witnessed by a content
   lower bound `is_root_lb` minted at entry, so "the doc's items" is itself a
   certificate, not a raw internal set).
 - `wp_store__applyUpdate(_certs)` (D2): precondition gains the decoded
-  spans + their covered-ness; postcondition returns `is_ds_lb` for the union
+  spans + their covered-ness; postcondition returns `is_delete_set_lb` for the union
   of the spans and re-establishes `deleted_match` and the length bookkeeping.
 - `is_Store` / `is_Text` arities grow by the ghost name only (threading,
   like #42's history plumbing).
 - Reads: the #125 read API is flag-driven (`visible_items`/`visible_string`
   over the tombstone bits of the snapshot); `deleted_match` is what turns
-  those into functions of `(items, ds)` -- e.g. `wp_Text__String_hist` can
+  those into functions of `(items, delete_set)` -- e.g. `wp_Text__String_hist` can
   then say "the visible string is the delivered items MINUS a set that is at
-  least your `is_ds_lb` certificate", the delete-aware strengthening of the
+  least your `is_delete_set_lb` certificate", the delete-aware strengthening of the
   issue #125 guarantee.
 
 ## 7. Milestones
 
-- **D1 (local tracking, trimmed)**: `sn_ds` ghost + the DOMAIN invariant
-  only (`ds ⊆ integrated ids`) in `store_inv`; `wp_Text__Delete` mints the
+- **D1 (local tracking, trimmed)**: `sn_delete_set` ghost + the DOMAIN invariant
+  only (`delete_set ⊆ integrated ids`) in `store_inv`; `wp_Text__Delete` mints the
   lower bound. The bit-mirror `deleted_match` is NOT yet carried: its
   visible-side direction needs store-global id uniqueness (same id in two
   cells would break the mirror under a flip), which is derivable from the
@@ -183,7 +183,7 @@ covered by the M2 no-op cell surgery (`split_cells_flatten` etc.).
   - **D2b**: the wiring. `Update.deletes`, a `pendingDeletes` store field
     with its `store_inv` conjunct, `store.applyDeleteSpans` (apply + buffer
     the uncovered remainder, re-drained by later applies), the certificates
-    ([is_ds_lb] out of [Text.Delete] and the wire path), and the wire-format
+    ([is_delete_set_lb] out of [Text.Delete] and the wire path), and the wire-format
     ripple: `Codec` returns structs AND spans, `yjs_prot`'s `update_wf`
     covers spans, and `ApplySyncUpdate` / `ApplyEncodedUpdate` / the server
     proofs thread them (mechanical).

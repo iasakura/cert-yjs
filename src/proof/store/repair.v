@@ -910,7 +910,7 @@ Proof.
   iSplit.
   - iIntros "H". iNamed "H". iNamed "Hexcl". iNamed "Hro".
     iExists (uint.nat client), h, m, pend.
-    iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, pdel, types, bind, acc.
+    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, pdel, types, bind, acc.
     iFrame "∗#".
     iPureIntro. split_and!.
     + reflexivity.
@@ -979,10 +979,10 @@ Proof.
                    <= uint.nat k)%nat.
       { clear -Hlt2 Hlen1. lia. }
       rewrite /cell_clock /run_head. clear -Hlt3 Hkb. word. }
-    iExists client, k, items_mref, types_mref, dset, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
+    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
     iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
     iExists acc.
-    iFrame "Hclient Hclientpin Hclock Hitemsf Hitemmap Htypesf Htypesmap Hdset Hpendf Hpend Hpddelf Hpddel Hpendcert HtypesAuth Hbinds Hhist Hacc Hds".
+    iFrame "Hclient Hclientpin Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hpendcert HtypesAuth Hbinds Hhist Hacc Hdelete_set".
     iPureIntro. split_and!;
       [exact Hpendroot | exact Hpendbnd | exact Hctrt | exact Hcellctr | exact Hlocdup | exact Hrangedisj
       | exact Hrunfits | exact Horiginclk | exact Hbindtypes | exact Hbindinj

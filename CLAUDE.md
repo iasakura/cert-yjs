@@ -20,6 +20,14 @@ verification of a *realistic* Yjs implementation, not a toy.
   ownership, `dfrac`-parameterized when it is plain heap state (`own_ytype`,
   `own_dll`, `own_id_set`, `own_item_map`, …; `own_fresh_item` is exclusive and
   consumed by Integrate).
+- **Predicates carry their meaning**: a predicate must be understandable from
+  its name alone. When the name cannot carry it, the comment above the
+  definition owes the reader BOTH the meaning and the places it is used. A
+  qualifier that encodes which proof step produces or consumes the predicate
+  (`apply_live_refine`, `integrate_live_refine`) is not self-explanatory, so
+  name the call sites in the comment; restating the formula in prose adds
+  nothing the `Definition` line does not already say. Names are spelled out,
+  never contracted (`delete_set`, not `ds`).
 - **Public specs**: one `.v` proof file per Go file. Specs of public functions
   must not mention internal data (heap cells, node locations, flags) — state
   them over the public `is_X` / `own_X` predicates and their model parameters:

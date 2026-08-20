@@ -67,7 +67,7 @@ Proof.
   wp_auto.
   wp_apply wp_map_make1. iIntros (types_mref) "Htypesmap".
   wp_auto.
-  wp_apply wp_map_make1. iIntros (ds_mref) "Hdsmap".
+  wp_apply wp_map_make1. iIntros (deletedSet_mref) "HdeletedSetMap".
   wp_auto.
   wp_alloc s_loc as "Hs".
   wp_auto.
