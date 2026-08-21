@@ -103,14 +103,13 @@ Lemma wp_store__splitNode (s mref : loc) (types : gmap loc type_state)
      (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z (cell_clock cw))%Z ∨
      (uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)) <= uint.Z (cell_clock c))%Z) ->
   {{{ is_pkg_init yjs ∗ (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
-      ([∗ map] p ↦ ts ∈ types, own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗ ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+      (own_type_pool (DfracOwn 1) types) }}}
     s @! (go.PointerType yjs.store) @! "splitNode" #(ic_loc cw) #diff
   {{{ (rloc : loc), RET (#(ic_loc cw), #rloc);
       ⌜rloc ≠ null⌝ ∗ ⌜rloc ∉ ic_loc <$> all_cells types⌝ ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗
       own_item_map mref (DfracOwn 1) (<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types) ∗
-      ([∗ map] p ↦ ts ∈ (<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types),
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗ ⌜YjsArrInvariant (ty_arr ts)⌝) }}}.
+      (own_type_pool (DfracOwn 1) ((<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types))) }}}.
 Proof using Type*.
   move=> Htypes Hcellk Hdiff Hrunfits Hnodup Hdisj.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
@@ -165,10 +164,8 @@ Proof using Type*.
     iDestruct (item_pointsto_conflict with "Hrs Hval") as %[]. }
   iDestruct (big_sepM_sep with "Hrestmap") as "[Hrestown Hrestinv]".
   iDestruct (all_cells_fresh rs _ (DfracOwn 1) (delete parent types) with "Hrs Hrestown") as %Hfr_rest.
-  iAssert ([∗ map] p0 ↦ ts0 ∈ delete parent types,
-      own_ytype_cells p0 (DfracOwn 1) (ty_cells ts0) (ty_arr ts0) ∗
-      ⌜YjsArrInvariant (ty_arr ts0)⌝)%I with "[Hrestown Hrestinv]" as "Hrestmap".
-  { rewrite big_sepM_sep. iFrame "Hrestown Hrestinv". }
+  iAssert (own_type_pool (DfracOwn 1) (delete parent types))%I with "[Hrestown Hrestinv]" as "Hrestmap".
+  { rewrite /own_type_pool big_sepM_sep. iFrame "Hrestown Hrestinv". }
   have Hrsfresh : rs ∉ ic_loc <$> all_cells types.
   { move=> Hin.
     rewrite (all_cells_lookup types parent _ Htypes) /= in Hin.
@@ -322,10 +319,8 @@ Proof using Type*.
       - rewrite (split_cells_num_visible cells k o rs cw Hcellk). exact Hlen0.
       - rewrite /cells_repr (split_cells_flatten cells k o rs cw Hcellk). exact Hrepr0.
       - exact Hcpar_split. }
-    iAssert ([∗ map] p0 ↦ ts0 ∈ <[parent := {| ty_cells := split_cells cells k o rs; ty_arr := arr |}]> types,
-        own_ytype_cells p0 (DfracOwn 1) (ty_cells ts0) (ty_arr ts0) ∗
-        ⌜YjsArrInvariant (ty_arr ts0)⌝)%I with "[Hyt2 Hrestmap]" as "Htypes2".
-    { rewrite -insert_delete_eq big_sepM_insert_delete delete_delete_eq.
+    iAssert (own_type_pool (DfracOwn 1) (<[parent := {| ty_cells := split_cells cells k o rs; ty_arr := arr |}]> types))%I with "[Hyt2 Hrestmap]" as "Htypes2".
+    { rewrite /own_type_pool -insert_delete_eq big_sepM_insert_delete delete_delete_eq.
       iFrame "Hrestmap". simpl. iFrame "Hyt2". iPureIntro. exact Harrinv. }
     (* ----- getNodeIndex over the split run [run_half] = client_run with cw -> leftCell ----- *)
     have Hss_replace : ∀ (ll : list item_cell) (i : nat) (a b : item_cell),
@@ -739,10 +734,8 @@ Proof using Type*.
       - rewrite (split_cells_num_visible cells k o rs cw Hcellk). exact Hlen0.
       - rewrite /cells_repr (split_cells_flatten cells k o rs cw Hcellk). exact Hrepr0.
       - exact Hcpar_split. }
-    iAssert ([∗ map] p0 ↦ ts0 ∈ <[parent := {| ty_cells := split_cells cells k o rs; ty_arr := arr |}]> types,
-        own_ytype_cells p0 (DfracOwn 1) (ty_cells ts0) (ty_arr ts0) ∗
-        ⌜YjsArrInvariant (ty_arr ts0)⌝)%I with "[Hyt2 Hrestmap]" as "Htypes2".
-    { rewrite -insert_delete_eq big_sepM_insert_delete delete_delete_eq.
+    iAssert (own_type_pool (DfracOwn 1) (<[parent := {| ty_cells := split_cells cells k o rs; ty_arr := arr |}]> types))%I with "[Hyt2 Hrestmap]" as "Htypes2".
+    { rewrite /own_type_pool -insert_delete_eq big_sepM_insert_delete delete_delete_eq.
       iFrame "Hrestmap". simpl. iFrame "Hyt2". iPureIntro. exact Harrinv. }
     (* ----- getNodeIndex over the split run [run_half] = client_run with cw -> leftCell ----- *)
     have Hss_replace : ∀ (ll : list item_cell) (i : nat) (a b : item_cell),
@@ -1047,15 +1040,11 @@ Lemma wp_store__splitAtAndGetLeft_range (s mref : loc) (idv : yjs.id.t)
   cells_range_disjoint (all_cells types) ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
-      ([∗ map] p ↦ ts ∈ types,
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+      (own_type_pool (DfracOwn 1) types) }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
   {{{ (types' : gmap loc type_state), RET (#(ic_loc cw), #true);
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
-      ([∗ map] p ↦ ts ∈ types',
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      (own_type_pool (DfracOwn 1) types') ∗
       ⌜((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))%nat = (length (ic_run cw) - 1)%nat ∧
         types' = types)
        ∨ (((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) < length (ic_run cw) - 1)%nat ∧
@@ -1155,15 +1144,11 @@ Lemma wp_store__splitAtAndGetRight_range (s mref : loc) (idv : yjs.id.t)
   cells_range_disjoint (all_cells types) ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
-      ([∗ map] p ↦ ts ∈ types,
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+      (own_type_pool (DfracOwn 1) types) }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
   {{{ (rl : loc) (types' : gmap loc type_state), RET (#rl, #true);
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
-      ([∗ map] p ↦ ts ∈ types',
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      (own_type_pool (DfracOwn 1) types') ∗
       ⌜((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))%nat = 0%nat ∧
         rl = ic_loc cw ∧ types' = types)
        ∨ ((0 < (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)))%nat ∧
@@ -1588,9 +1573,7 @@ Qed.
     ([own_dll_id_bounds], lifted over the big-sep): the glue from nat-level
     replay facts to W64 comparisons (issue #28 stage D). *)
 Lemma types_cells_id_bounds2 (types : gmap loc type_state) :
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  (own_type_pool (DfracOwn 1) types) -∗
   ⌜∀ c, c ∈ all_cells types ->
      (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
      (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝.
@@ -1616,9 +1599,7 @@ Qed.
     [own_ytype_cells]). This is how a delete turns "these ids sit in cells" into
     "these ids are integrated items", the domain half of [own_delete_set_grow]. *)
 Lemma types_cells_in_arr (types : gmap loc type_state) :
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  (own_type_pool (DfracOwn 1) types) -∗
   ⌜∀ c, c ∈ all_cells types -> ∀ y, y ∈ ic_run c ->
      ∃ p ts, types !! p = Some ts ∧ y ∈ ty_arr ts⌝.
 Proof.
@@ -1863,15 +1844,11 @@ Lemma wp_store__splitAtAndGetLeft_inv (s mref : loc) (idv : yjs.id.t)
   pool_invs types ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
-      ([∗ map] p ↦ ts ∈ types,
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+      (own_type_pool (DfracOwn 1) types) }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
   {{{ (types' : gmap loc type_state), RET (#(ic_loc cw), #true);
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
-      ([∗ map] p ↦ ts ∈ types',
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      (own_type_pool (DfracOwn 1) types') ∗
       ⌜pool_invs types'⌝ ∗ ⌜split_types_update_rel types types' cw⌝ ∗
       ⌜∃ cL, cL ∈ all_cells types' ∧ ic_loc cL = ic_loc cw ∧
              cell_client cL = idv.(yjs.id.clientId') ∧
@@ -1976,15 +1953,11 @@ Lemma wp_store__splitAtAndGetRight_inv (s mref : loc) (idv : yjs.id.t)
   pool_invs types ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
-      ([∗ map] p ↦ ts ∈ types,
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+      (own_type_pool (DfracOwn 1) types) }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
   {{{ (rl : loc) (types' : gmap loc type_state), RET (#rl, #true);
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
-      ([∗ map] p ↦ ts ∈ types',
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      (own_type_pool (DfracOwn 1) types') ∗
       ⌜pool_invs types'⌝ ∗ ⌜split_types_update_rel types types' cw⌝ ∗
       ⌜∃ cR, cR ∈ all_cells types' ∧ ic_loc cR = rl ∧
              cell_client cR = idv.(yjs.id.clientId') ∧
@@ -2079,7 +2052,7 @@ Proof using Type*.
       * rewrite Hclockr.
         have Hbo : (Z.of_nat (clock (item_id (run_head cw))
                     + (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))) < 2^64)%Z.
-        { clear -HclkZ Hfitscw Hcwlt Hcwle. lia. }
+        { rewrite /cell_fits in Hfitscw. clear -HclkZ Hfitscw Hcwlt Hcwle. lia. }
         clear -HclkZ Hbo Hcwle. word.
       * done.
 Qed.

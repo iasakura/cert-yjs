@@ -6,6 +6,8 @@
       registry, write-lock witness, the RWMutex reader accounting, the accepted
       set).
     - [own_item_map]: the heap [map[Client][]*item] at the cell level.
+    - [own_type_pool]: every registered type's DLL at its cell model, the
+      store's whole item pool, [dfrac]-parameterized for the read path.
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
       hands out) and [own_delete_set] (its authority, with the domain bound and the
       tombstone-bit coherence that make the bound mean something).
@@ -671,18 +673,34 @@ Proof.
   iPureIntro. by apply to_agree_op_valid_L in Hv.
 Qed.
 
+(** [own_type_pool dq types]: every registered type's DLL at its cell model
+    ([own_ytype_cells], keyed by the type's [parent] loc), each satisfying the
+    document invariant. This is the store's whole item pool: the write path
+    owns it at [DfracOwn 1] (through the lock invariant), the read path holds
+    a fraction of it ([store_inv_ro]). Owning heap data, it takes a [dfrac]. *)
+Definition own_type_pool (dq : dfrac) (types : gmap loc type_state) : iProp Σ :=
+  [∗ map] parent ↦ ts ∈ types,
+    own_ytype_cells parent dq (ty_cells ts) (ty_arr ts) ∗ ⌜YjsArrInvariant (ty_arr ts)⌝.
+
+#[global] Instance own_type_pool_fractional types :
+  Fractional (λ q, own_type_pool (DfracOwn q) types).
+Proof.
+  rewrite /own_type_pool. apply fractional_big_sepM. intros parent ts.
+  apply fractional_sep; [ apply own_ytype_cells_fractional | apply _ ].
+Qed.
+
+#[global] Instance own_type_pool_timeless dq types : Timeless (own_type_pool dq types).
+Proof. rewrite /own_type_pool. apply _. Qed.
+
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
-  "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
-                own_ytype_cells parent (DfracOwn q) (ty_cells ts) (ty_arr ts) ∗
-                ⌜YjsArrInvariant (ty_arr ts)⌝).
+  "Htypes" ∷ own_type_pool (DfracOwn q) types.
 
 #[global] Instance store_inv_ro_fractional γs types : Fractional (store_inv_ro γs types).
 Proof.
   rewrite /store_inv_ro /named. apply fractional_sep.
   - intros q1 q2. rewrite -own_op -auth_auth_dfrac_op dfrac_op_own //.
-  - apply fractional_big_sepM. intros parent ts.
-    apply fractional_sep; [ apply own_ytype_cells_fractional | apply _ ].
+  - apply own_type_pool_fractional.
 Qed.
 
 (** [store_inv_excl]: the complement of [store_inv_ro] within [store_inv], the
@@ -722,22 +740,15 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
     "%Hcellctr" ∷ ⌜∀ c, c ∈ all_cells types → cell_client c = client →
                    (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z k)%Z⌝ ∗
-    (* part-6 pool invariants (issue #28): the split branches' index pin *)
-    "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
-    "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝ ∗
-    "%Hrunfits" ∷ ⌜∀ c, c ∈ all_cells types → cell_fits c⌝ ∗
-    "%Horiginclk" ∷ ⌜∀ c, c ∈ all_cells types → cell_origin_clk c⌝ ∗
+    (* the pool invariants (issue #28): loc [NoDup], clock-range disjointness,
+       [cell_fits], [cell_origin_clk] *)
+    "%Hpool" ∷ ⌜pool_invs types⌝ ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
-    "%Hbindtypes" ∷ ⌜∀ name p, bind !! name = Some p → is_Some (types !! p)⌝ ∗
-    "%Hbindinj" ∷ ⌜∀ n1 n2 p, bind !! n1 = Some p → bind !! n2 = Some p → n1 = n2⌝ ∗
-    "%Htypesbound" ∷ ⌜∀ p, is_Some (types !! p) → ∃ name, bind !! name = Some p⌝ ∗
     "Hhist"   ∷ own_client_history γh (uint.nat client) h ∗
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
-    "%Hmtypes" ∷ ⌜∀ name p ts, bind !! name = Some p → types !! p = Some ts →
-                    doc_model_get m (RootId name) = ty_arr ts⌝ ∗
-    "%Hmdom" ∷ ⌜∀ t, doc_model_get m t ≠ [] →
-                  ∃ name p, t = RootId name ∧ bind !! name = Some p⌝ ∗
+    (* the registry coherence: [bind] / [types] / the replayed model [m] fit *)
+    "%Hregcoh" ∷ ⌜doc_registry_coh m bind types⌝ ∗
     (* no-loss accepted-id layer (this branch): the grow-only accepted set and
        its coherence [acc ⊆ delivered_ids h ∪ pending ids] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
@@ -939,9 +950,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
                     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
-    "Htypes"  ∷ ([∗ map] parent ↦ ts ∈ types,
-                  own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-                  ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+    "Htypes"  ∷ own_type_pool (DfracOwn 1) types ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
     "Hhist"   ∷ own_client_history γh c h ∗
@@ -949,12 +958,9 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
     "%Hctr"   ∷ ⌜∀ (t : TId) x, x ∈ doc_model_get m t -> clientId (item_id x) = c ->
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
-    (* part-6 pool invariants (issue #28): heap-level facts the model does not
+    (* the pool invariants (issue #28): heap-level facts the model does not
        determine, so [own_store] carries them (store_inv ⊣⊢ ∃ own_store) *)
-    "%Hlocdup" ∷ ⌜NoDup (ic_loc <$> all_cells types)⌝ ∗
-    "%Hrangedisj" ∷ ⌜cells_range_disjoint (all_cells types)⌝ ∗
-    "%Hrunfits" ∷ ⌜∀ c, c ∈ all_cells types → cell_fits c⌝ ∗
-    "%Horiginclk" ∷ ⌜∀ c, c ∈ all_cells types → cell_origin_clk c⌝ ∗
+    "%Hpool" ∷ ⌜pool_invs types⌝ ∗
     (* no-loss accepted-id layer (this branch): matches [store_inv_excl] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
     "Hdelete_set" ∷ own_delete_set γs m (all_cells types) ∗
@@ -1229,6 +1235,7 @@ Proof.
       (RootId name, OpInsert input) ∈ delivered_ops h0 ->
       ∃ ts it, types !! parent = Some ts ∧ item_id it = in_id input ∧ it ∈ ty_arr ts.
   { move=> input Hin.
+    destruct Hregcoh as (Hbindtypes & _ & _ & Hmtypes & _).
     destruct (Hbindtypes name parent Hbindlk) as [ts Hts].
     have Hdg : doc_model_get m (RootId name) = ty_arr ts := Hmtypes name parent ts Hbindlk Hts.
     have Hin' : (RootId name, OpInsert input) ∈ delivered_ops h.
@@ -1240,10 +1247,8 @@ Proof.
   iSplitR ""; last (iPureIntro; exact Hfact).
   iExists acc.
   iFrame "∗#". iPureIntro. split_and!;
-    [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup
-    | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hbindtypes
-    | exact Hbindinj | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom
-    | exact Hacccoh].
+    [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hpool
+    | exact Hhcoh | exact Hregcoh | exact Hacccoh].
 Qed.
 
 Lemma tf_split γs q1 q2 types :
@@ -1274,7 +1279,7 @@ Proof.
   iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, pdel, types, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
-    | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hacccoh].
+    | exact Hpool | exact Hacccoh].
 Qed.
 
 (** The client pin comes out of the store without consuming it (the clause is
@@ -1291,7 +1296,7 @@ Proof.
   iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, pdel, types, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
-    | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hacccoh].
+    | exact Hpool | exact Hacccoh].
 Qed.
 
 (** No-loss MINT: given the store and a proof that each id in [L] is already
@@ -1324,7 +1329,7 @@ Proof.
   iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, pdel, types, bind, (acc ∪ T).
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
-    | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk |].
+    | exact Hpool |].
   rewrite /accepted_coh. apply union_least; [exact Hacccoh | exact HTsub].
 Qed.
 
@@ -1405,7 +1410,7 @@ Proof.
   iSplitL "Hta"; first by iFrame "Hta".
   iSplitR "Hseq"; last first.
   { (* store_inv_ro over the empty types map *)
-    iFrame "Hseq". rewrite /types big_sepM_empty //. }
+    iFrame "Hseq". rewrite /own_type_pool /types big_sepM_empty //. }
   (* store_inv_excl *)
   iAssert (own_delete_set γs (∅ : DocModel) (all_cells (∅ : gmap loc type_state)))
     with "[Hdelete_set0]" as "Hdelete_set".
@@ -1442,21 +1447,19 @@ Proof.
   iSplitR. { iPureIntro. move=> parent' ts' x Hlk. rewrite /types lookup_empty // in Hlk. }
   iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
     rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
-  iSplitR. { iPureIntro. rewrite /types /all_cells map_to_list_empty /=. constructor. }
-  iSplitR. { iPureIntro. move=> c1 c2 Hc1. exfalso. move: Hc1.
-    rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
-  iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
-    rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
-  iSplitR. { iPureIntro. move=> c Hc. exfalso. move: Hc.
-    rewrite /types /all_cells map_to_list_empty /= elem_of_nil //. }
+  iSplitR.
+  { iPureIntro. rewrite /pool_invs /types /all_cells map_to_list_empty /=.
+    split_and!; [ by move=> c /elem_of_nil | constructor
+                | by move=> c1 c2 /elem_of_nil | by move=> c /elem_of_nil ]. }
   iSplitR. { rewrite big_sepM_empty //. }
   iPureIntro. split_and!.
-  - move=> name p' Hlk. rewrite lookup_empty // in Hlk.
-  - move=> n1 n2 p' Hlk. rewrite lookup_empty // in Hlk.
-  - move=> p' [ts' Hlk]. rewrite /types lookup_empty // in Hlk.
   - exact history_state_coh_nil.
-  - move=> name p' ts' Hlk. rewrite lookup_empty // in Hlk.
-  - move=> t Hne. exfalso. apply Hne. rewrite /doc_model_get lookup_empty //.
+  - rewrite /doc_registry_coh. split_and!.
+    + move=> name p' Hlk. rewrite lookup_empty // in Hlk.
+    + move=> n1 n2 p' Hlk. rewrite lookup_empty // in Hlk.
+    + move=> p' [ts' Hlk]. rewrite /types lookup_empty // in Hlk.
+    + move=> name p' ts' Hlk. rewrite lookup_empty // in Hlk.
+    + move=> t Hne. exfalso. apply Hne. rewrite /doc_model_get lookup_empty //.
   - rewrite /accepted_coh. apply empty_subseteq.
 Qed.
 
@@ -1476,7 +1479,7 @@ Proof.
     iFrame "∗#".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
-      | exact Hlocdup | exact Hrangedisj | exact Hrunfits | exact Horiginclk | exact Hacccoh].
+      | exact Hpool | exact Hacccoh].
   - iPureIntro. exact Hhcoh.
 Qed.
 
