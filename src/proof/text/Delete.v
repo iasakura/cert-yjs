@@ -61,6 +61,8 @@ Proof.
   subst s_loc.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
   iNamed "Hinv". iNamed "Hexcl". iNamed "Hro".
+  have [Hrunfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
+  have [Hbindtypes [Hbindinj [Htypesbound [Hmtypes Hmdom]]]] := Hregcoh.
   iDestruct (auth_gmap_gset_lookup with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS.
   apply fmap_Some in HmS as (ts & Htsp & ->).
@@ -264,6 +266,7 @@ Proof.
         Hlen Hrepr Hcpar.
   clear Harr1 Hdomeq1 Hseqeq1 Hlr1.
   clear off lft rgt yt0 tl0.
+  clear Hpool Hregcoh.
   clear p ts types.
   rename types1 into types. rename ts1 into ts. rename p1 into p.
   rename Htsp1 into Htsp. rename Hpb1 into Hpbound.
@@ -373,29 +376,27 @@ Proof.
           + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
             exact (Hctr parent' ts' x Hlook Hxin Hxc).
         - exact Hcellctrj.
-        - exact Hlocdupj.
-        - exact Hrangedisjj.
-        - exact Hrunfitsj.
-        - exact Horiginclkj.
-        - move=> name' p' Hb'. destruct (Hbindtypes name' p' Hb') as [ts' Hts'].
+        - rewrite /pool_invs. split_and!; [exact Hrunfitsj | exact Hlocdupj | exact Hrangedisjj | exact Horiginclkj].
+        - exact Hhcoh.
+        - rewrite /doc_registry_coh. split_and!.
+          { move=> name' p' Hb'. destruct (Hbindtypes name' p' Hb') as [ts' Hts'].
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne];
             [rewrite lookup_insert_eq; by eexists
-            | rewrite lookup_insert_ne; [by eexists | congruence]].
-        - exact Hbindinj.
-        - move=> p' [ts' Hts'].
+            | rewrite lookup_insert_ne; [by eexists | congruence]]. }
+          { exact Hbindinj. }
+          { move=> p' [ts' Hts'].
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne].
           + exact (Htypesbound (tv.(yjs.Text.inner')) (ex_intro _ ts Htsp)).
           + rewrite lookup_insert_ne in Hts'; [| congruence].
-            exact (Htypesbound p' (ex_intro _ ts' Hts')).
-        - exact Hhcoh.
-        - move=> name' p' ts' Hb' Hts'.
+            exact (Htypesbound p' (ex_intro _ ts' Hts')). }
+          { move=> name' p' ts' Hb' Hts'.
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne].
           + have Heqn : name' = name := Hbindinj name' name _ Hb' Hbindlk.
             subst name'. rewrite lookup_insert_eq in Hts'. injection Hts' as <-.
             simpl. exact Hmt.
           + rewrite lookup_insert_ne in Hts'; [| congruence].
-            exact (Hmtypes name' p' ts' Hb' Hts').
-        - exact Hmdom.
+            exact (Hmtypes name' p' ts' Hb' Hts'). }
+          { exact Hmdom. }
         - exact Hacccoh. }
       iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
       iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
@@ -437,29 +438,27 @@ Proof.
           + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
             exact (Hctr parent' ts' x Hlook Hxin Hxc).
         - exact Hcellctrj.
-        - exact Hlocdupj.
-        - exact Hrangedisjj.
-        - exact Hrunfitsj.
-        - exact Horiginclkj.
-        - move=> name' p' Hb'. destruct (Hbindtypes name' p' Hb') as [ts' Hts'].
+        - rewrite /pool_invs. split_and!; [exact Hrunfitsj | exact Hlocdupj | exact Hrangedisjj | exact Horiginclkj].
+        - exact Hhcoh.
+        - rewrite /doc_registry_coh. split_and!.
+          { move=> name' p' Hb'. destruct (Hbindtypes name' p' Hb') as [ts' Hts'].
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne];
             [rewrite lookup_insert_eq; by eexists
-            | rewrite lookup_insert_ne; [by eexists | congruence]].
-        - exact Hbindinj.
-        - move=> p' [ts' Hts'].
+            | rewrite lookup_insert_ne; [by eexists | congruence]]. }
+          { exact Hbindinj. }
+          { move=> p' [ts' Hts'].
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne].
           + exact (Htypesbound (tv.(yjs.Text.inner')) (ex_intro _ ts Htsp)).
           + rewrite lookup_insert_ne in Hts'; [| congruence].
-            exact (Htypesbound p' (ex_intro _ ts' Hts')).
-        - exact Hhcoh.
-        - move=> name' p' ts' Hb' Hts'.
+            exact (Htypesbound p' (ex_intro _ ts' Hts')). }
+          { move=> name' p' ts' Hb' Hts'.
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne].
           + have Heqn : name' = name := Hbindinj name' name _ Hb' Hbindlk.
             subst name'. rewrite lookup_insert_eq in Hts'. injection Hts' as <-.
             simpl. exact Hmt.
           + rewrite lookup_insert_ne in Hts'; [| congruence].
-            exact (Hmtypes name' p' ts' Hb' Hts').
-        - exact Hmdom.
+            exact (Hmtypes name' p' ts' Hb' Hts'). }
+          { exact Hmdom. }
         - exact Hacccoh. }
       iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
       iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }

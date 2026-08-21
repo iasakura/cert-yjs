@@ -67,6 +67,8 @@ Proof.
   iNamed "His_doc". subst s_loc. wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
   iNamed "Hinv". iNamed "Hexcl". iNamed "Hro".
+  have [Hrunfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
+  have [Hbindtypes [Hbindinj [Htypesbound [Hmtypes Hmdom]]]] := Hregcoh.
   wp_auto.
   destruct (bind !! name) as [p|] eqn:Hbnd.
   - (* ---- hit: the root is registered; nothing changes ---- *)
@@ -86,9 +88,8 @@ Proof.
       iExists acc.
       iFrame "∗#". iPureIntro.
       split_and!;
-        [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hlocdup | exact Hrangedisj
-        | exact Hrunfits | exact Horiginclk | exact Hbindtypes | exact Hbindinj
-        | exact Htypesbound | exact Hhcoh | exact Hmtypes | exact Hmdom | exact Hacccoh]. }
+        [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hpool
+        | exact Hhcoh | exact Hregcoh | exact Hacccoh]. }
     wp_alloc t as "Ht".
     iPersist "Ht".
     wp_auto.
@@ -219,9 +220,11 @@ Proof.
       iExists acc.
       iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds'". iPureIntro.
       split_and!;
-        [exact Hpendroot | exact Hpendbnd | exact Hctr' | exact Hcellctr' | exact Hlocdup' | exact Hrangedisj'
-        | exact Hrunfits' | exact Horiginclk' | exact Hbindtypes' | exact Hbindinj'
-        | exact Htypesbound' | exact Hhcoh | exact Hmtypes' | exact Hmdom' | exact Hacccoh]. }
+        [exact Hpendroot | exact Hpendbnd | exact Hctr' | exact Hcellctr'
+        | (rewrite /pool_invs; split_and!; [exact Hrunfits' | exact Hlocdup' | exact Hrangedisj' | exact Horiginclk'])
+        | exact Hhcoh
+        | (rewrite /doc_registry_coh; split_and!; [exact Hbindtypes' | exact Hbindinj' | exact Htypesbound' | exact Hmtypes' | exact Hmdom'])
+        | exact Hacccoh]. }
     wp_alloc t as "Ht".
     iPersist "Ht".
     wp_auto.

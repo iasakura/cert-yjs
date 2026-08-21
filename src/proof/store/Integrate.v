@@ -530,9 +530,7 @@ Qed.
 Lemma linked_item_fresh2 (item_l parent lft rgt : loc)
     (input : IntegrateInput (A := A)) (dq : dfrac) (types : gmap loc type_state) :
   own_linked_item item_l input parent lft rgt -∗
-  ([∗ map] p ↦ ts ∈ types,
-      own_ytype_cells p dq (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  (own_type_pool dq types) -∗
   ⌜item_l ∉ ic_loc <$> all_cells types⌝.
 Proof.
   iIntros "Hlinked Htypes".
@@ -565,9 +563,7 @@ Qed.
 Lemma linked_item_run_fresh2 (item_l parent lft rgt : loc)
     (input : IntegrateInput (A := A)) (dq : dfrac) (types : gmap loc type_state) :
   own_linked_item_run item_l input parent lft rgt -∗
-  ([∗ map] p ↦ ts ∈ types,
-      own_ytype_cells p dq (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  (own_type_pool dq types) -∗
   ⌜item_l ∉ ic_loc <$> all_cells types⌝.
 Proof.
   iIntros "Hlinked Htypes".
