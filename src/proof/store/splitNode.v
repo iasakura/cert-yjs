@@ -1064,7 +1064,7 @@ Proof using Type*.
               with "[$Hitemsf $Hitemmap $Htypes]").
   iIntros "(Hitemsf & Hitemmap & Htypes)".
   wp_auto.
-  iDestruct (types_cell_acc_gen types cw Hcwmem with "Htypes") as "Hacc".
+  iDestruct (own_type_pool_acc types cw Hcwmem with "Htypes") as "Hacc".
   iNamed "Hacc".
   have Hnwcw := Hrunfits cw Hcwmem.
   have Hcwck : cell_clock cw = itemVal.(yjs.item.id').(yjs.id.clock')
@@ -1168,7 +1168,7 @@ Proof using Type*.
               with "[$Hitemsf $Hitemmap $Htypes]").
   iIntros "(Hitemsf & Hitemmap & Htypes)".
   wp_auto.
-  iDestruct (types_cell_acc_gen types cw Hcwmem with "Htypes") as "Hacc".
+  iDestruct (own_type_pool_acc types cw Hcwmem with "Htypes") as "Hacc".
   iNamed "Hacc".
   have Hnwcw := Hrunfits cw Hcwmem.
   have Hcwck : cell_clock cw = itemVal.(yjs.item.id').(yjs.id.clock')
@@ -1284,7 +1284,7 @@ Proof.
 Qed.
 
 (** Run-fits survives a split: each half's range is a sub-range of [cw]'s.
-    [Hckbnd] (the head clock fits as a NAT, from [types_cells_id_bounds2])
+    [Hckbnd] (the head clock fits as a NAT, from [own_type_pool_id_bounds])
     makes the right half's [W64] clock exact. *)
 Lemma split_pool_fits (types : gmap loc type_state) (parent : loc)
     (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
@@ -1569,57 +1569,6 @@ Proof.
   - right. rewrite HclkrZ Hlenr. split_and!; lia.
 Qed.
 
-(** Every pool cell's id components round-trip through [w64] heap fields
-    ([own_dll_id_bounds], lifted over the big-sep): the glue from nat-level
-    replay facts to W64 comparisons (issue #28 stage D). *)
-Lemma types_cells_id_bounds2 (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ c, c ∈ all_cells types ->
-     (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
-     (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types,
-      ⌜∀ c, c ∈ ty_cells ts ->
-         (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
-         (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "[Hyt _]".
-    iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    iApply (own_dll_id_bounds with "Hdll"). }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> c Hc.
-  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
-  exact (Hall p ts Hp c Hcts).
-Qed.
-
-(** Every char a pooled cell holds is an item of its type's model list: the
-    cell list flattens to exactly that list ([cells_repr], carried by
-    [own_ytype_cells]). This is how a delete turns "these ids sit in cells" into
-    "these ids are integrated items", the domain half of [own_delete_set_grow]. *)
-Lemma types_cells_in_arr (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ c, c ∈ all_cells types -> ∀ y, y ∈ ic_run c ->
-     ∃ p ts, types !! p = Some ts ∧ y ∈ ty_arr ts⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types,
-      ⌜∀ c, c ∈ ty_cells ts -> ∀ y, y ∈ ic_run c -> y ∈ ty_arr ts⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "[Hyt _]".
-    iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    iPureIntro. move=> c Hc y Hy.
-    rewrite /cells_repr in Hrepr. rewrite Hrepr /run_flatten.
-    apply list_elem_of_join. exists (ic_run c). split; first exact Hy.
-    apply list_elem_of_fmap. exists c. split; [reflexivity | exact Hc]. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> c Hc y Hy.
-  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
-  exists p, ts. split; [exact Hp | exact (Hall p ts Hp c Hcts y Hy)].
-Qed.
-
 (** A split preserves each type's model document, and the map's domain. *)
 Lemma split_types_preserve (types : gmap loc type_state) (parent : loc)
     (cells : list item_cell) (arr : list (YjsItem A)) (k o : nat) (rloc : loc)
@@ -1864,9 +1813,9 @@ Proof using Type*.
   destruct Hcoords as (parent & ts & Htypes0 & Hcts).
   destruct ts as [cells arr]. simpl in Hcts.
   apply list_elem_of_lookup_1 in Hcts as [k Hck].
-  iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds.
   have Hckbnd : (Z.of_nat (clock (item_id (run_head cw))) < 2^64)%Z := proj2 (Hbnds cw Hcwmem).
-  iDestruct (types_cell_acc_gen types cw Hcwmem with "Htypes") as "Hacc".
+  iDestruct (own_type_pool_acc types cw Hcwmem with "Htypes") as "Hacc".
   iNamed "Hacc".
   iDestruct ("Hback" with "Hval") as "Htypes".
   have Hrunwf := Hrun.
@@ -1971,9 +1920,9 @@ Proof using Type*.
   destruct Hcoords as (parent & ts & Htypes0 & Hcts).
   destruct ts as [cells arr]. simpl in Hcts.
   apply list_elem_of_lookup_1 in Hcts as [k Hck].
-  iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds.
   have Hckbnd : (Z.of_nat (clock (item_id (run_head cw))) < 2^64)%Z := proj2 (Hbnds cw Hcwmem).
-  iDestruct (types_cell_acc_gen types cw Hcwmem with "Htypes") as "Hacc".
+  iDestruct (own_type_pool_acc types cw Hcwmem with "Htypes") as "Hacc".
   iNamed "Hacc".
   iDestruct ("Hback" with "Hval") as "Htypes".
   have Hrunwf := Hrun.

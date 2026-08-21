@@ -285,8 +285,8 @@ Proof using Type*.
               ltac:(split_and!; assumption)
               with "[$Hitemsf $Hitemmap $Htypes]").
   iIntros (rl types1) "(Hitemsf & Hitemmap & Htypes & %Hpool1 & %Hstep1 & %HcR)".
-  iDestruct (types_runs_wf2 with "Htypes") as %Hrunwf1.
-  iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds1.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwf1.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds1.
   destruct HcR as (cR & HcRmem & HcRloc & HcRcc & HcRclk & HcRpar).
   have HcRmem1 := HcRmem.
   have HcRccl : cell_client cR = client := HcRcc.
@@ -340,10 +340,10 @@ Proof using Type*.
                 types1 cR HcRmem1 eq_refl HcLle HcLlt Hpool1
                 with "[$Hitemsf $Hitemmap $Htypes]").
     iIntros (types2) "(Hitemsf & Hitemmap & Htypes & %Hpool2 & %Hstep2 & %HcL)".
-    iDestruct (types_runs_wf2 with "Htypes") as %Hrunwf2.
+    iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwf2.
     destruct HcL as (cL & HcLmem & HcLloc & HcLcc & HcLend & HcLpar & HcLstart).
     have HcLmem1 := HcLmem.
-    iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds2.
+    iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds2.
     wp_auto.
     (* tombstone the truncated node *)
     apply all_cells_elem_of in HcLmem as (pL & tsL & HpL & HcLts).
@@ -715,9 +715,10 @@ Lemma wp_store__applyDeleteSpans_store (s_loc : loc) (γs : store_names)
   {{{ RET #(); own_store s_loc γs γh c h m pend ∗ own_delete_spans sp_sl dq spans }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hstore & Hsp) HΦ".
-  iNamed "Hstore".
+  iNamed "Hstore". iNamed "Hheap".
   have [Hrunfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
-  have [Hbindtypes [Hbindinj [Htypesbound [Hmtypes Hmdom]]]] := Hregcoh.
+  have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
+  have [Hmtypes Hmdom] := Hregmodel.
   wp_apply (wp_store__applyDeleteSpans s_loc items_mref types pdel_sl sp_sl dq pdel spans
               Hpool with "[$Hitemsf $Hitemmap $Htypes $Hpddelf $Hpddel $Hsp]").
   iIntros (types' pdel_sl' rest)
@@ -740,28 +741,32 @@ Proof using Type*.
       exfalso. destruct (Hdom q (mk_is_Some _ _ Hts)) as [ts0 Hts0].
       rewrite Hts0 in Hts'. done. }
   iEval (rewrite -Hfmapeq) in "Hseq".
-  iApply "HΦ". iFrame "Hsp".
-  iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl', rest, types', bind, acc.
-  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend
-          Hpddelf Hpddel Hseq Htypes HtypesAuth Hhist Hacc Hdelete_set".
-  iFrame "Hclientpin Hpendcert Hbinds".
-  iPureIntro. split_and!.
-  - exact Hclientc.
-  - exact Hpendroot.
-  - exact Hpendbnd.
-  - (* the registry still describes the same documents *)
-    rewrite /doc_registry_coh. split_and!.
-    + move=> name p Hb. apply Hdom. exact (Hbindtypes name p Hb).
-    + exact Hbindinj.
-    + move=> p Hp. apply Htypesbound. by apply Hdomeq.
-    + move=> name p ts' Hb Hts'.
+  (* the registry still describes the same documents *)
+  have Hreg' : registry_coh bind types'.
+  { rewrite /registry_coh. split_and!.
+    - move=> name p Hb. apply Hdom. exact (Hbindtypes name p Hb).
+    - exact Hbindinj.
+    - move=> p Hp. apply Htypesbound. by apply Hdomeq. }
+  have Hregmodel' : registry_models m bind types'.
+  { rewrite /registry_models. split.
+    - move=> name p ts' Hb Hts'.
       destruct (Harr p ts' Hts') as (ts & Hts & Heq).
       rewrite Heq. exact (Hmtypes name p ts Hb Hts).
-    + exact Hmdom.
-  - exact Hhcoh.
-  - exact Hctr.
-  - exact Hpool'.
-  - exact Hacccoh.
+    - exact Hmdom. }
+  have Hctr' : ∀ parent ts' x, types' !! parent = Some ts' -> x ∈ ty_arr ts' ->
+      clientId (item_id x) = c -> (clock (item_id x) < uint.nat k)%nat.
+  { move=> parent ts' x Hts' Hx.
+    destruct (Harr parent ts' Hts') as (ts & Hts & Heq).
+    rewrite Heq in Hx. exact (Hctr parent ts x Hts Hx). }
+  iDestruct (own_store_heap_intro _ _ _ _ _ _ _ _ _ Hpool' Hreg'
+              with "Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes") as "Hheap".
+  iApply "HΦ". iFrame "Hsp".
+  iExists client, k, deletedSetVal, rest, types', bind, acc.
+  iFrame "Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hhist Hacc Hdelete_set".
+  iFrame "Hclientpin Hpendcert Hbinds".
+  iPureIntro. split_and!;
+    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh
+    | exact Hctr' | exact Hacccoh].
 Qed.
 
 End store_deleteRange.

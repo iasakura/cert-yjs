@@ -19,8 +19,9 @@
       and collapses to [run_head <$> cells] on unit cells.
     - the cell-cursor prefix sums: [run_flatten (take k cells)] grows by one
       cell at a time, is strictly monotone and injective in [k]
-      ([run_flatten_take_S], [_length_lt], [_length_inj]). This is what makes a
-      cell index and a character index interchangeable.
+      ([run_flatten_take_S], [_length_lt], [_length_inj]), and a cell's
+      [off]-th char sits at prefix-sum + [off] ([run_flatten_lookup_of_cell]).
+      This is what makes a cell index and a character index interchangeable.
     - [cells_repr] is closed under [cons] / [app] / [take] / [drop] / [insert],
       determines lengths and lookups, and is insensitive to its model
       parameter.
@@ -481,6 +482,25 @@ Lemma Forall_cell_unit_splice (cells : list item_cell) (k : nat) (c : item_cell)
 Proof.
   intros H Hc. apply Forall_app_2; [by apply Forall_take |].
   constructor; [exact Hc | by apply Forall_drop].
+Qed.
+
+(** Converse: the [off]-th char of cell [ci] sits at prefix-sum + [off]. *)
+Lemma run_flatten_lookup_of_cell (cells : list item_cell) (ci off : nat)
+    (c : item_cell) (it : YjsItem A) :
+  cells !! ci = Some c -> ic_run c !! off = Some it ->
+  run_flatten cells !! (length (run_flatten (take ci cells)) + off)%nat = Some it.
+Proof.
+  move=> Hci Hoff.
+  have Hsplit := take_drop_middle cells ci c Hci.
+  have Hdec : run_flatten cells
+            = run_flatten (take ci cells) ++ ic_run c ++ run_flatten (drop (S ci) cells).
+  { transitivity (run_flatten (take ci cells ++ c :: drop (S ci) cells)).
+    - by rewrite Hsplit.
+    - by rewrite run_flatten_app run_flatten_cons. }
+  rewrite Hdec lookup_app_r; last lia.
+  replace (length (run_flatten (take ci cells)) + off -
+           length (run_flatten (take ci cells)))%nat with off by lia.
+  rewrite lookup_app_l; [exact Hoff | by apply lookup_lt_Some in Hoff].
 Qed.
 
 End item_value.

@@ -60,9 +60,11 @@ Proof.
   wp_auto.
   subst s_loc.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
-  iNamed "Hinv". iNamed "Hexcl". iNamed "Hro".
+  iDestruct "Hinv" as (c0 h m pend) "Hown". iNamed "Hown". iNamed "Hheap". subst c0.
   have [Hrunfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
-  have [Hbindtypes [Hbindinj [Htypesbound [Hmtypes Hmdom]]]] := Hregcoh.
+  have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
+  have [Hmtypes Hmdom] := Hregmodel.
+  iDestruct (own_type_pool_client_clock_bound types client k Hctr with "Htypes") as %Hcellctr.
   iDestruct (auth_gmap_gset_lookup with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS.
   apply fmap_Some in HmS as (ts & Htsp & ->).
@@ -134,9 +136,9 @@ Proof.
     { rewrite -{2}(insert_id types (tv.(yjs.Text.inner')) ts Htsp) -insert_delete_eq.
       rewrite big_sepM_insert; last apply lookup_delete_eq.
       iFrame "Hrest". iSplitL "Htext"; [iExact "Htext" | iPureIntro; exact Hinvarr]. }
-    iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds.
+    iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds.
     have Hckbnd : (Z.of_nat (clock (item_id (run_head cw))) < 2^64)%Z := proj2 (Hbnds cw Hcwmem).
-    iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfall.
+    iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwfall.
     have Hrunwfcw : run_wf (ic_run cw) := Hrunwfall cw Hcwmem.
     have Hndl : node_loc ts.(ty_cells) (Z.of_nat p - 1) = ic_loc cw.
     { rewrite /node_loc decide_True; last lia.
@@ -266,7 +268,7 @@ Proof.
         Hlen Hrepr Hcpar.
   clear Harr1 Hdomeq1 Hseqeq1 Hlr1.
   clear off lft rgt yt0 tl0.
-  clear Hpool Hregcoh.
+  clear Hpool Hreg Hregmodel.
   clear p ts types.
   rename types1 into types. rename ts1 into ts. rename p1 into p.
   rename Htsp1 into Htsp. rename Hpb1 into Hpbound.
@@ -356,48 +358,48 @@ Proof.
         - iPureIntro. exact Hinvarr. }
       have Hmk : ((λ ts0 : type_state, (list_to_set (ty_arr ts0) : gset (YjsItem A))) <$> types) !! (tv.(yjs.Text.inner')) = Some (list_to_set ts.(ty_arr)).
       { rewrite lookup_fmap Htsp //. }
-      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hdelete_set]").
-      { iNext. iExists client, k, items_mref, types_mref, deletedSetVal,
-          pend_sl, pdel_sl,
-          (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m, pend, pdel.
-        iSplitR "Hseq Htypes"; last first.
-        { rewrite /store_inv_ro fmap_insert /=.
-          rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
-          iFrame "Hseq Htypes". }
-        iExists acc.
-        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hhist HtypesAuth Hbinds Hacc Hdelete_set".
-        iFrame "Hpendcert Hclientpin".
-        iPureIntro. split_and!.
-        - exact Hpendroot.
-        - exact Hpendbnd.
-        - intros parent' ts' x Hlook Hxin Hxc.
-          destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
-          + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
-          + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
-            exact (Hctr parent' ts' x Hlook Hxin Hxc).
-        - exact Hcellctrj.
-        - rewrite /pool_invs. split_and!; [exact Hrunfitsj | exact Hlocdupj | exact Hrangedisjj | exact Horiginclkj].
-        - exact Hhcoh.
-        - rewrite /doc_registry_coh. split_and!.
-          { move=> name' p' Hb'. destruct (Hbindtypes name' p' Hb') as [ts' Hts'].
+      have Hpool_close : pool_invs (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types).
+      { rewrite /pool_invs. split_and!; [exact Hrunfitsj | exact Hlocdupj | exact Hrangedisjj | exact Horiginclkj]. }
+      have Hreg_close : registry_coh bind (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types).
+      { rewrite /registry_coh. split_and!.
+        { move=> name' p' Hb'. destruct (Hbindtypes name' p' Hb') as [ts' Hts'].
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne];
             [rewrite lookup_insert_eq; by eexists
             | rewrite lookup_insert_ne; [by eexists | congruence]]. }
-          { exact Hbindinj. }
-          { move=> p' [ts' Hts'].
+        { exact Hbindinj. }
+        { move=> p' [ts' Hts'].
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne].
           + exact (Htypesbound (tv.(yjs.Text.inner')) (ex_intro _ ts Htsp)).
           + rewrite lookup_insert_ne in Hts'; [| congruence].
             exact (Htypesbound p' (ex_intro _ ts' Hts')). }
-          { move=> name' p' ts' Hb' Hts'.
+      }
+      have Hregmodel_close : registry_models m bind (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types).
+      { rewrite /registry_models. split.
+        { move=> name' p' ts' Hb' Hts'.
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne].
           + have Heqn : name' = name := Hbindinj name' name _ Hb' Hbindlk.
             subst name'. rewrite lookup_insert_eq in Hts'. injection Hts' as <-.
             simpl. exact Hmt.
           + rewrite lookup_insert_ne in Hts'; [| congruence].
             exact (Hmtypes name' p' ts' Hb' Hts'). }
-          { exact Hmdom. }
-        - exact Hacccoh. }
+        { exact Hmdom. }
+      }
+      have Hctr_close : ∀ parent' ts' x, (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) !! parent' = Some ts' → x ∈ ty_arr ts' →
+          clientId (item_id x) = uint.nat client → (clock (item_id x) < uint.nat k)%nat.
+      { intros parent' ts' x Hlook Hxin Hxc.
+          destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
+          + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
+          + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
+            exact (Hctr parent' ts' x Hlook Hxin Hxc). }
+      iDestruct (own_store_heap_intro _ _ _ _ _ _ _ _ _ Hpool_close Hreg_close
+                  with "Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes") as "Hheap".
+      wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
+                  with "[$His_store $Hlk Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+      { iExists client, k, deletedSetVal, pdel, (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, acc.
+        rewrite fmap_insert /= (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
+        iFrame "∗#". iPureIntro. split_and!;
+          [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close
+          | exact Hhcoh | exact Hctr_close | exact Hacccoh]. }
       iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
       iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
   wp_auto.
@@ -418,48 +420,48 @@ Proof.
         - iPureIntro. exact Hinvarr. }
       have Hmk : ((λ ts0 : type_state, (list_to_set (ty_arr ts0) : gset (YjsItem A))) <$> types) !! (tv.(yjs.Text.inner')) = Some (list_to_set ts.(ty_arr)).
       { rewrite lookup_fmap Htsp //. }
-      wp_apply (wp_Store__wunlock with "[$His_store $Hlk Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hdelete_set]").
-      { iNext. iExists client, k, items_mref, types_mref, deletedSetVal,
-          pend_sl, pdel_sl,
-          (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, h, m, pend, pdel.
-        iSplitR "Hseq Htypes"; last first.
-        { rewrite /store_inv_ro fmap_insert /=.
-          rewrite (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
-          iFrame "Hseq Htypes". }
-        iExists acc.
-        iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hhist HtypesAuth Hbinds Hacc Hdelete_set".
-        iFrame "Hpendcert Hclientpin".
-        iPureIntro. split_and!.
-        - exact Hpendroot.
-        - exact Hpendbnd.
-        - intros parent' ts' x Hlook Hxin Hxc.
-          destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
-          + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
-          + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
-            exact (Hctr parent' ts' x Hlook Hxin Hxc).
-        - exact Hcellctrj.
-        - rewrite /pool_invs. split_and!; [exact Hrunfitsj | exact Hlocdupj | exact Hrangedisjj | exact Horiginclkj].
-        - exact Hhcoh.
-        - rewrite /doc_registry_coh. split_and!.
-          { move=> name' p' Hb'. destruct (Hbindtypes name' p' Hb') as [ts' Hts'].
+      have Hpool_close : pool_invs (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types).
+      { rewrite /pool_invs. split_and!; [exact Hrunfitsj | exact Hlocdupj | exact Hrangedisjj | exact Horiginclkj]. }
+      have Hreg_close : registry_coh bind (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types).
+      { rewrite /registry_coh. split_and!.
+        { move=> name' p' Hb'. destruct (Hbindtypes name' p' Hb') as [ts' Hts'].
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne];
             [rewrite lookup_insert_eq; by eexists
             | rewrite lookup_insert_ne; [by eexists | congruence]]. }
-          { exact Hbindinj. }
-          { move=> p' [ts' Hts'].
+        { exact Hbindinj. }
+        { move=> p' [ts' Hts'].
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne].
           + exact (Htypesbound (tv.(yjs.Text.inner')) (ex_intro _ ts Htsp)).
           + rewrite lookup_insert_ne in Hts'; [| congruence].
             exact (Htypesbound p' (ex_intro _ ts' Hts')). }
-          { move=> name' p' ts' Hb' Hts'.
+      }
+      have Hregmodel_close : registry_models m bind (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types).
+      { rewrite /registry_models. split.
+        { move=> name' p' ts' Hb' Hts'.
           destruct (decide (p' = tv.(yjs.Text.inner'))) as [-> | Hne].
           + have Heqn : name' = name := Hbindinj name' name _ Hb' Hbindlk.
             subst name'. rewrite lookup_insert_eq in Hts'. injection Hts' as <-.
             simpl. exact Hmt.
           + rewrite lookup_insert_ne in Hts'; [| congruence].
             exact (Hmtypes name' p' ts' Hb' Hts'). }
-          { exact Hmdom. }
-        - exact Hacccoh. }
+        { exact Hmdom. }
+      }
+      have Hctr_close : ∀ parent' ts' x, (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) !! parent' = Some ts' → x ∈ ty_arr ts' →
+          clientId (item_id x) = uint.nat client → (clock (item_id x) < uint.nat k)%nat.
+      { intros parent' ts' x Hlook Hxin Hxc.
+          destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
+          + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
+          + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
+            exact (Hctr parent' ts' x Hlook Hxin Hxc). }
+      iDestruct (own_store_heap_intro _ _ _ _ _ _ _ _ _ Hpool_close Hreg_close
+                  with "Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes") as "Hheap".
+      wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
+                  with "[$His_store $Hlk Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+      { iExists client, k, deletedSetVal, pdel, (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types), bind, acc.
+        rewrite fmap_insert /= (insert_id _ (tv.(yjs.Text.inner')) (list_to_set ts.(ty_arr)) Hmk).
+        iFrame "∗#". iPureIntro. split_and!;
+          [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close
+          | exact Hhcoh | exact Hctr_close | exact Hacccoh]. }
       iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
       iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
   (* cursor in range: read node [q] (single borrow exposing [itemVal] + the update
@@ -527,7 +529,7 @@ Proof.
         - iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro.
           split_and!; [exact Hytlen | exact Hrepr' | exact Hcparj].
         - iPureIntro. exact Hinvarr. }
-      iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds.
+      iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds.
       have Hckbnd : (Z.of_nat (clock (item_id (run_head cq))) < 2^64)%Z := proj2 (Hbnds cq Hcqmem).
       have Htspj : (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) !! tv.(yjs.Text.inner')
                  = Some (MkTypeState cells' ts.(ty_arr)) by apply lookup_insert_eq.

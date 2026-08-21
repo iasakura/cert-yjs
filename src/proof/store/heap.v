@@ -8,6 +8,9 @@
     - [own_item_map]: the heap [map[Client][]*item] at the cell level.
     - [own_type_pool]: every registered type's DLL at its cell model, the
       store's whole item pool, [dfrac]-parameterized for the read path.
+    - [own_store_heap]: the store's heap state under the write lock as one
+      resource (item index, registry, pending buffers, pool, [pool_invs],
+      [registry_coh]); what every store-internal method is specified over.
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
       hands out) and [own_delete_set] (its authority, with the domain bound and the
       tombstone-bit coherence that make the bound mean something).
@@ -25,8 +28,14 @@
 
     Laws
     - [store_inv_init]: how to build the invariant from the raw points-tos, and
-      [store_inv_bridge] / [own_store_hist_coh] / [own_store_accepted_sound] /
-      [store_inv_excl_hist_root]: what you may read back out of it.
+      [store_inv_bridge] / [store_inv_own_store] / [own_store_hist_coh] /
+      [own_store_accepted_sound] / [store_inv_excl_hist_root]: what you may
+      read back out of it.
+    - the pool's laws: borrow one cell ([own_type_pool_acc]), read its pure
+      content off ([own_type_pool_runs_wf] / [_parents] / [_arr_inv] /
+      [_repr] / [_entry] / [_id_bounds] / [_cells_in_arr]), a fresh type is
+      absent from it ([own_type_pool_fresh_type]), and the per-client clock
+      bound in machine words ([own_type_pool_client_clock_bound]).
     - [own_store_accept_batch]: the state-transition law for accepting a
       delivered batch.
     - the reader fractions form a chain: [frac_of_0] and [frac_of_split].
@@ -692,6 +701,312 @@ Qed.
 #[global] Instance own_type_pool_timeless dq types : Timeless (own_type_pool dq types).
 Proof. rewrite /own_type_pool. apply _. Qed.
 
+(* ----- laws of the type pool --------------------------------------------- *)
+
+(** Borrow one pool cell's heap struct out of the pool, exposing the full
+    [own_dll_acc] translation facts (id / parent / content coupling / origins /
+    flags / [run_wf]) and a wand restoring the pool. What [GetNode] /
+    [getNodeIndex] / [splitNode] / [repair] read through. *)
+Lemma own_type_pool_acc (types : gmap loc type_state) (c : item_cell) :
+  c ∈ all_cells types ->
+  (own_type_pool (DfracOwn 1) types) -∗
+    ∃ (itemVal : yjs.item.t) (olid orid : option yjs.id.t),
+      "%Hid" ∷ ⌜item_id (run_head c) = toYjsId itemVal.(yjs.item.id')⌝ ∗
+      "%Hpar" ∷ ⌜itemVal.(yjs.item.parent') = ic_parent c⌝ ∗
+      "%Hcontent" ∷ ⌜content <$> ic_run c = explode (toContent itemVal.(yjs.item.content'))⌝ ∗
+      "%Holid" ∷ ⌜origin_id (origin (run_head c)) = toYjsId <$> olid⌝ ∗
+      "%Horid" ∷ ⌜origin_id (rightOrigin (run_head c)) = toYjsId <$> orid⌝ ∗
+      "%Hflags" ∷ ⌜itemVal.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
+      "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
+      "Hval" ∷ ic_loc c ↦ itemVal ∗
+      "Hcol" ∷ is_origin_id itemVal.(yjs.item.originLeftId') olid ∗
+      "Hcor" ∷ is_origin_id itemVal.(yjs.item.originRightId') orid ∗
+      "Hback" ∷ (ic_loc c ↦ itemVal -∗
+        (own_type_pool (DfracOwn 1) types)).
+Proof using Type*.
+  move=> Hc. iIntros "Htypes".
+  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
+  apply list_elem_of_lookup_1 in Hcts. destruct Hcts as [k Hk].
+  iDestruct (big_sepM_lookup_acc _ _ p ts Hp with "Htypes") as "[(Hyt & %Hinvp) Hrest]".
+  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
+  iDestruct (own_dll_acc (DfracOwn 1) (ty_cells ts) yt.(yjs.yType.start') tl k c Hk with "Hdll") as "Hacc".
+  iNamed "Hacc".
+  iExists itemVal, olid, orid.
+  iSplitR; [iPureIntro; exact Hid |].
+  iSplitR; [iPureIntro; exact Hpar |].
+  iSplitR; [iPureIntro; exact Hcontent |].
+  iSplitR; [iPureIntro; exact Holid |].
+  iSplitR; [iPureIntro; exact Horid |].
+  iSplitR; [iPureIntro; exact Hflags |].
+  iSplitR; [iPureIntro; exact Hrun |].
+  iFrame "Hcval Hcol Hcor".
+  iIntros "Hval".
+  iDestruct ("Hback" with "Hval") as "Hdll".
+  iApply "Hrest". iSplitL; [| iPureIntro; exact Hinvp].
+  iExists yt, tl. iFrame "Hparent Hdll". iPureIntro.
+  split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
+Qed.
+
+(** A freshly-allocated [yType] location is absent from the registry: its
+    exclusive [p ↦] clashes with any registered type's own [parent ↦]. This is
+    what makes [getOrCreateYType]'s miss branch (issue #54) grow [types] at a
+    genuinely fresh key. Returns the resources so the caller keeps them. *)
+Lemma own_type_pool_fresh_type (p : loc) (cells0 : list item_cell) (arr0 : list (YjsItem A))
+    (types : gmap loc type_state) :
+  own_ytype_cells p (DfracOwn 1) cells0 arr0 -∗
+  (own_type_pool (DfracOwn 1) types) -∗
+  own_ytype_cells p (DfracOwn 1) cells0 arr0 ∗
+  (own_type_pool (DfracOwn 1) types) ∗
+  ⌜types !! p = None⌝.
+Proof.
+  iIntros "Hnew Htypes".
+  destruct (types !! p) as [ts|] eqn:Hp0; last by iFrame.
+  iExFalso.
+  iDestruct (big_sepM_lookup_acc _ _ p _ Hp0 with "Htypes") as "[[Hc _] _]".
+  iDestruct "Hnew" as (yt tl) "(Hpp & _)".
+  iDestruct "Hc" as (yt' tl') "(Hpp' & _)".
+  iDestruct (typed_pointsto_split with "Hpp") as "(Hs1 & _)".
+  iDestruct (typed_pointsto_split with "Hpp'") as "(Hs2 & _)".
+  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hs1".
+  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hs2".
+  iDestruct "Hs1" as "[Hs1 _]". iDestruct "Hs2" as "[Hs2 _]".
+  iCombine "Hs1 Hs2" gives %[Hvalid _].
+  by destruct (exclusive_l (DfracOwn 1) (DfracOwn 1) Hvalid).
+Qed.
+
+(** Pure extractions read off the pool: pool-wide run well-formedness,
+    parent discipline, the per-entry document invariant, and the cells/model
+    isomorphism. *)
+Lemma own_type_pool_runs_wf (types : gmap loc type_state) :
+  (own_type_pool (DfracOwn 1) types) -∗
+  ⌜∀ c, c ∈ all_cells types → run_wf (ic_run c)⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types, ⌜∀ c, c ∈ ty_cells ts → run_wf (ic_run c)⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "(Hyt & _)".
+    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    iApply (own_dll_runs_wf with "Hdll"). }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> c Hc.
+  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
+  exact (Hall p ts Hp c Hcts).
+Qed.
+
+Lemma own_type_pool_parents (types : gmap loc type_state) :
+  (own_type_pool (DfracOwn 1) types) -∗
+  ⌜∀ p ts c, types !! p = Some ts → c ∈ ty_cells ts → ic_parent c = p⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types, ⌜∀ c, c ∈ ty_cells ts → ic_parent c = p⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "(Hyt & _)".
+    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    by iPureIntro. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> p ts c Hp Hc. exact (Hall p ts Hp c Hc).
+Qed.
+
+Lemma own_type_pool_arr_inv (types : gmap loc type_state) :
+  (own_type_pool (DfracOwn 1) types) -∗
+  ⌜∀ p ts, types !! p = Some ts -> YjsArrInvariant (ty_arr ts)⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types, ⌜YjsArrInvariant (ty_arr ts)⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "(_ & %Hi)". by iPureIntro. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
+Qed.
+
+Lemma own_type_pool_repr (types : gmap loc type_state) :
+  (own_type_pool (DfracOwn 1) types) -∗
+  ⌜∀ p ts, types !! p = Some ts -> cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types,
+      ⌜cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "(Hyt & _)".
+    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    by iPureIntro. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
+Qed.
+
+Lemma own_type_pool_entry (types : gmap loc type_state) (p : loc) (ts : type_state) :
+  types !! p = Some ts ->
+  (own_type_pool (DfracOwn 1) types) -∗
+  ⌜cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts) ∧
+   (∀ c, c ∈ ty_cells ts -> ic_parent c = p)⌝.
+Proof.
+  move=> Hp. iIntros "Htypes".
+  iDestruct (big_sepM_lookup_acc _ _ p ts Hp with "Htypes") as "[(Hyt & _) _]".
+  iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
+  iPureIntro. split; [exact Hrepr | exact Hcpar].
+Qed.
+
+(** Every pool cell's id components round-trip through [w64] heap fields
+    ([own_dll_id_bounds], lifted over the big-sep): the glue from nat-level
+    replay facts to W64 comparisons (issue #28 stage D). *)
+Lemma own_type_pool_id_bounds (types : gmap loc type_state) :
+  (own_type_pool (DfracOwn 1) types) -∗
+  ⌜∀ c, c ∈ all_cells types ->
+     (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
+     (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types,
+      ⌜∀ c, c ∈ ty_cells ts ->
+         (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
+         (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "[Hyt _]".
+    iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    iApply (own_dll_id_bounds with "Hdll"). }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> c Hc.
+  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
+  exact (Hall p ts Hp c Hcts).
+Qed.
+
+(** Every char a pooled cell holds is an item of its type's model list: the
+    cell list flattens to exactly that list ([cells_repr], carried by
+    [own_ytype_cells]). This is how a delete turns "these ids sit in cells" into
+    "these ids are integrated items", the domain half of [own_delete_set_grow]. *)
+Lemma own_type_pool_cells_in_arr (types : gmap loc type_state) :
+  (own_type_pool (DfracOwn 1) types) -∗
+  ⌜∀ c, c ∈ all_cells types -> ∀ y, y ∈ ic_run c ->
+     ∃ p ts, types !! p = Some ts ∧ y ∈ ty_arr ts⌝.
+Proof.
+  iIntros "Htypes".
+  iAssert ([∗ map] p ↦ ts ∈ types,
+      ⌜∀ c, c ∈ ty_cells ts -> ∀ y, y ∈ ic_run c -> y ∈ ty_arr ts⌝)%I
+    with "[Htypes]" as "H".
+  { iApply (big_sepM_impl with "Htypes").
+    iIntros "!#" (p ts Hp) "[Hyt _]".
+    iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
+    iPureIntro. move=> c Hc y Hy.
+    rewrite /cells_repr in Hrepr. rewrite Hrepr /run_flatten.
+    apply list_elem_of_join. exists (ic_run c). split; first exact Hy.
+    apply list_elem_of_fmap. exists c. split; [reflexivity | exact Hc]. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> c Hc y Hy.
+  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
+  exists p, ts. split; [exact Hp | exact (Hall p ts Hp c Hcts y Hy)].
+Qed.
+
+(** The [w64] cell-level shadow of the per-client clock counter: if every
+    item of this client in the pool's model lists has clock below [k], then
+    every cell of this client ends at or before [k] in machine arithmetic
+    (its chars are consecutive clocks from the head, [run_wf], and the head's
+    coordinates round-trip through [w64], [own_type_pool_id_bounds]). This is
+    the [Hcellctr] clause of [store_inv_excl], derived rather than carried by
+    [own_store]. *)
+Lemma own_type_pool_client_clock_bound (types : gmap loc type_state) (client k : w64) :
+  (∀ parent ts x, types !! parent = Some ts -> x ∈ ty_arr ts ->
+     clientId (item_id x) = uint.nat client -> (clock (item_id x) < uint.nat k)%nat) ->
+  own_type_pool (DfracOwn 1) types -∗
+  ⌜∀ c0, c0 ∈ all_cells types -> cell_client c0 = client ->
+     (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z k)%Z⌝.
+Proof.
+  move=> Hctrt. iIntros "Htypes".
+  iDestruct (own_type_pool_repr with "Htypes") as %Hreprall.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hcellbnd.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwfall0.
+  iPureIntro. move=> c0 Hc0 Hcc.
+  have Hc0m := Hc0. apply all_cells_elem_of in Hc0m.
+  destruct Hc0m as (p & ts & Hts & Hcts).
+  have Hwf : run_wf (ic_run c0) := Hrunwfall0 c0 Hc0.
+  have Hlen1 : (1 <= length (ic_run c0))%nat.
+  { destruct (ic_run c0) eqn:Hrc; [exact (False_ind _ (proj1 Hwf eq_refl)) | simpl; lia]. }
+  destruct (lookup_lt_is_Some_2 (ic_run c0) (length (ic_run c0) - 1)%nat ltac:(lia)) as [xl Hxl].
+  have Hxlid := run_wf_char_id _ _ _ Hwf Hxl.
+  apply list_elem_of_lookup_1 in Hcts as [ci Hci].
+  have Hxlmem : xl ∈ ty_arr ts.
+  { rewrite (Hreprall p ts Hts).
+    apply (list_elem_of_lookup_2 _
+             (length (run_flatten (take ci (ty_cells ts))) + (length (ic_run c0) - 1))%nat).
+    exact (run_flatten_lookup_of_cell (ty_cells ts) ci _ c0 xl Hci Hxl). }
+  have [Hcb Hkb] := Hcellbnd c0 Hc0.
+  have Hceq : clientId (item_id xl) = uint.nat client.
+  { move: Hcc. rewrite /cell_client /run_head. move=> Hcc.
+    have Hz : uint.Z (W64 (clientId (item_id (hd inhabitant (ic_run c0))))) = uint.Z client
+      by rewrite Hcc.
+    have Hcb' : (Z.of_nat (clientId (item_id (hd inhabitant (ic_run c0)))) < 2^64)%Z := Hcb.
+    have Hcl2 : clientId (item_id (hd inhabitant (ic_run c0))) = uint.nat client.
+    { clear -Hz Hcb'. word. }
+    rewrite Hxlid. exact Hcl2. }
+  have Hlt := Hctrt p ts xl Hts Hxlmem Hceq.
+  rewrite Hxlid in Hlt.
+  have Hlt2 : (clock (item_id (hd inhabitant (ic_run c0))) + (length (ic_run c0) - 1)
+               < uint.nat k)%nat := Hlt.
+  rewrite /run_head in Hkb.
+  have Hlt3 : (clock (item_id (hd inhabitant (ic_run c0))) + length (ic_run c0)
+               <= uint.nat k)%nat.
+  { clear -Hlt2 Hlen1. lia. }
+  rewrite /cell_clock /run_head. clear -Hlt3 Hkb. word.
+Qed.
+
+(* ----- the store's heap state --------------------------------------------- *)
+
+(** [own_store_heap s types bind pend pdel]: the store's heap state under the
+    write lock as ONE resource over its cell-level model: the item index
+    ([store.items], [own_item_map]), the root registry ([store.types],
+    [bind]), the two pending buffers ([store.pending] / [store.pendingDeletes])
+    and the type pool, plus the two invariants every store method preserves
+    ([pool_invs], [registry_coh]). Every store-internal method is specified
+    over it; the lock layer ([own_store]) adds the ghost state and the model
+    on top. The struct field pointers and the buffer slices are existential:
+    no spec names them. *)
+Definition own_store_heap (s : loc) (types : gmap loc type_state) (bind : gmap P loc)
+    (pend : list (TId * IntegrateInput (A := A))) (pdel : list delete_span) : iProp Σ :=
+  ∃ (items_mref types_mref : loc) (pend_sl pdel_sl : slice.t),
+    "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗
+    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types ∗
+    "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ types_mref ∗
+    "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
+    "Hpendf"  ∷ (s .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
+    "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
+    "Hpddelf" ∷ (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗
+    "Hpddel"  ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel ∗
+    "Htypes"  ∷ own_type_pool (DfracOwn 1) types ∗
+    "%Hpool"  ∷ ⌜pool_invs types⌝ ∗
+    "%Hreg"   ∷ ⌜registry_coh bind types⌝.
+
+#[global] Instance own_store_heap_timeless s types bind pend pdel :
+  Timeless (own_store_heap s types bind pend pdel).
+Proof. rewrite /own_store_heap /own_update_structs /own_delete_spans /is_update_item. apply _. Qed.
+
+(** Assembling [own_store_heap] from its parts: what a method proof does once it
+    has re-established the two invariants. *)
+Lemma own_store_heap_intro (s items_mref types_mref : loc) (pend_sl pdel_sl : slice.t)
+    (types : gmap loc type_state) (bind : gmap P loc)
+    (pend : list (TId * IntegrateInput (A := A))) (pdel : list delete_span) :
+  pool_invs types ->
+  registry_coh bind types ->
+  (s .[(yjs.store.t), "items"]) ↦ items_mref -∗
+  own_item_map items_mref (DfracOwn 1) types -∗
+  (s .[(yjs.store.t), "types"]) ↦ types_mref -∗
+  own_map types_mref (DfracOwn 1) bind -∗
+  (s .[(yjs.store.t), "pending"]) ↦ pend_sl -∗
+  own_update_structs pend_sl (DfracOwn 1) pend -∗
+  (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl -∗
+  own_delete_spans pdel_sl (DfracOwn 1) pdel -∗
+  own_type_pool (DfracOwn 1) types -∗
+  own_store_heap s types bind pend pdel.
+Proof.
+  move=> Hpool Hreg.
+  iIntros "Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes".
+  iExists items_mref, types_mref, pend_sl, pdel_sl. iFrame.
+  iPureIntro. split; [exact Hpool | exact Hreg].
+Qed.
+
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
   "Htypes" ∷ own_type_pool (DfracOwn q) types.
@@ -912,56 +1227,43 @@ Definition is_applied_root_lb (γs : store_names)
   Persistent (is_applied_root_lb γs applied m).
 Proof. rewrite /is_applied_root_lb. apply _. Qed.
 
-(** [own_store s γs γh c h m]: the WHOLE lock-protected store state, as one
-    exclusive predicate over its public model: this replica is client [c]
-    with ghost op history [h], whose replayed doc model is [m]. Everything
-    else ([types], [bind], the field locs, the local clock) is existential.
-    [store_inv] is exactly its model-existential closure
-    ([store_inv_own_store] below), so a lock-holding caller can trade the
-    lock body for [own_store] and back; top-level specs over store state
-    ([wp_store__applyUpdate]) are stated [own_store] in, [own_store]
-    out, per the public-spec rule (no fields, no raw registry maps).
+(** [own_store s γs γh c h m pend]: the WHOLE lock-protected store state, as
+    one exclusive predicate over its public model: this replica is client
+    [c] with ghost op history [h], whose replayed doc model is [m], and
+    [pend] buffered wire items. Everything else (the heap state
+    [own_store_heap] with its [types] / [bind] / [pdel], the local clock) is
+    existential. [store_inv] is exactly its model-existential closure
+    ([store_inv_own_store] below), so the write lock hands out [own_store]
+    ([wp_Store__wlock]) and takes it back ([wp_Store__wunlock]); every spec
+    over store state is stated [own_store] in, [own_store] out.
 
-    The per-client counter clause [Hctr] is stated over the MODEL [m] (all
-    items of the replayed doc); the W64 cell-level shadow that [store_inv]
-    carries ([Hcellctr]) is derivable from it plus the DLL id-bound pins
-    (see [store_inv_own_store]), not a separate clause here. *)
+    The W64 cell-level shadow of the per-client counter that [store_inv_excl]
+    carries ([Hcellctr]) is derivable from [Hctr] and the pool
+    ([own_type_pool_client_clock_bound]), not a separate clause here. *)
 Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  ∃ (client k : w64) (items_mref types_mref : loc) (deletedSetVal : yjs.deletedSet.t)
-    (pend_sl pdel_sl : slice.t) (pdel : list delete_span)
+  ∃ (client k : w64) (deletedSetVal : yjs.deletedSet.t) (pdel : list delete_span)
     (types : gmap loc type_state) (bind : gmap P loc) (acc : gset YjsId),
     "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗
     "#Hclientpin" ∷ is_store_client γs c ∗
     "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
     "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
-    "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
-    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types ∗
-    "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
-    "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
     "HdeletedSet"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal ∗
-    "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
-    "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
-    "Hpddelf" ∷ (s_loc .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗
-    "Hpddel"  ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel ∗
+    "Hheap"   ∷ own_store_heap s_loc types bind pend pdel ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
                     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
     "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
-    "Htypes"  ∷ own_type_pool (DfracOwn 1) types ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
     "Hhist"   ∷ own_client_history γh c h ∗
-    "%Hregcoh" ∷ ⌜doc_registry_coh m bind types⌝ ∗
+    "%Hregmodel" ∷ ⌜registry_models m bind types⌝ ∗
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
-    "%Hctr"   ∷ ⌜∀ (t : TId) x, x ∈ doc_model_get m t -> clientId (item_id x) = c ->
-                   (clock (item_id x) < uint.nat k)%nat⌝ ∗
-    (* the pool invariants (issue #28): heap-level facts the model does not
-       determine, so [own_store] carries them (store_inv ⊣⊢ ∃ own_store) *)
-    "%Hpool" ∷ ⌜pool_invs types⌝ ∗
-    (* no-loss accepted-id layer (this branch): matches [store_inv_excl] *)
+    "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts -> x ∈ ty_arr ts ->
+                   clientId (item_id x) = c -> (clock (item_id x) < uint.nat k)%nat⌝ ∗
+    (* no-loss accepted-id layer: matches [store_inv_excl] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
     "Hdelete_set" ∷ own_delete_set γs m (all_cells types) ∗
     "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
@@ -1235,7 +1537,7 @@ Proof.
       (RootId name, OpInsert input) ∈ delivered_ops h0 ->
       ∃ ts it, types !! parent = Some ts ∧ item_id it = in_id input ∧ it ∈ ty_arr ts.
   { move=> input Hin.
-    destruct Hregcoh as (Hbindtypes & _ & _ & Hmtypes & _).
+    destruct Hregcoh as ((Hbindtypes & _ & _) & Hmtypes & _).
     destruct (Hbindtypes name parent Hbindlk) as [ts Hts].
     have Hdg : doc_model_get m (RootId name) = ty_arr ts := Hmtypes name parent ts Hbindlk Hts.
     have Hin' : (RootId name, OpInsert input) ∈ delivered_ops h.
@@ -1276,10 +1578,10 @@ Proof.
   have Hin : i ∈ acc.
   { apply Hsub. by apply elem_of_singleton. }
   iSplitR ""; last (iPureIntro; exact (elem_of_weaken _ _ _ Hin Hacccoh)).
-  iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, pdel, types, bind, acc.
+  iExists client, k, deletedSetVal, pdel, types, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
-    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
-    | exact Hpool | exact Hacccoh].
+    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
+    | exact Hacccoh].
 Qed.
 
 (** The client pin comes out of the store without consuming it (the clause is
@@ -1293,10 +1595,10 @@ Lemma own_store_client_pin (s_loc : loc) (γs : store_names) (γh : history_name
 Proof.
   iIntros "H". iNamed "H".
   iSplitR ""; last by iFrame "Hclientpin".
-  iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, pdel, types, bind, acc.
+  iExists client, k, deletedSetVal, pdel, types, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
-    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
-    | exact Hpool | exact Hacccoh].
+    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
+    | exact Hacccoh].
 Qed.
 
 (** No-loss MINT: given the store and a proof that each id in [L] is already
@@ -1326,10 +1628,9 @@ Proof.
     rewrite elem_of_list_to_set list_elem_of_fmap.
     exists x. split; [done | exact (list_elem_of_lookup_2 _ _ _ Hx)]. }
   iModIntro. iFrame "Haccepts".
-  iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, pdel, types, bind, (acc ∪ T).
+  iExists client, k, deletedSetVal, pdel, types, bind, (acc ∪ T).
   iFrame "∗#". iPureIntro. split_and!;
-    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
-    | exact Hpool |].
+    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr |].
   rewrite /accepted_coh. apply union_least; [exact Hacccoh | exact HTsub].
 Qed.
 
@@ -1454,7 +1755,7 @@ Proof.
   iSplitR. { rewrite big_sepM_empty //. }
   iPureIntro. split_and!.
   - exact history_state_coh_nil.
-  - rewrite /doc_registry_coh. split_and!.
+  - rewrite /doc_registry_coh /registry_coh /registry_models. split_and!.
     + move=> name p' Hlk. rewrite lookup_empty // in Hlk.
     + move=> n1 n2 p' Hlk. rewrite lookup_empty // in Hlk.
     + move=> p' [ts' Hlk]. rewrite /types lookup_empty // in Hlk.
@@ -1474,13 +1775,47 @@ Lemma own_store_hist_coh (s_loc : loc) (γs : store_names) (γh : history_names)
   own_store s_loc γs γh c h m pend ∗ ⌜history_state_coh h m⌝.
 Proof.
   iIntros "H". iNamed "H".
-  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hseq Htypes HtypesAuth Hhist Hacc Hdelete_set".
-  - iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, pdel, types, bind, acc.
+  iSplitL "Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hhist Hacc Hdelete_set".
+  - iExists client, k, deletedSetVal, pdel, types, bind, acc.
     iFrame "∗#".
     iPureIntro. split_and!;
-      [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregcoh | exact Hhcoh | exact Hctr
-      | exact Hpool | exact Hacccoh].
+      [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
+      | exact Hacccoh].
   - iPureIntro. exact Hhcoh.
+Qed.
+
+(** [store_inv] is exactly [own_store] with the model existentially closed.
+    The forward direction assembles [own_store_heap] from the exclusive
+    slice's fields and the read-shareable pool; the backward direction
+    re-derives the W64 cell-level counter bound from the per-type one
+    ([own_type_pool_client_clock_bound]). The write lock uses this to hand
+    out [own_store] ([wp_Store__wlock]) and to take it back. *)
+Lemma store_inv_own_store (s_loc : loc) (γs : store_names) (γh : history_names) :
+  store_inv s_loc γs γh ⊣⊢
+  ∃ (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A))),
+    own_store s_loc γs γh c h m pend.
+Proof.
+  iSplit.
+  - iIntros "H". iNamed "H". iNamed "Hexcl". iNamed "Hro".
+    have [Hreg Hregmodel] := Hregcoh.
+    iDestruct (own_store_heap_intro _ _ _ _ _ _ _ _ _ Hpool Hreg
+                with "Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes") as "Hheap".
+    iExists (uint.nat client), h, m, pend.
+    iExists client, k, deletedSetVal, pdel, types, bind, acc.
+    iFrame "∗#".
+    iPureIntro. split_and!;
+      [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
+      | exact Hctr | exact Hacccoh].
+  - iIntros "H". iDestruct "H" as (c h m pend) "H". iNamed "H". subst c. iNamed "Hheap".
+    iDestruct (own_type_pool_client_clock_bound types client k Hctr with "Htypes") as %Hcellctr.
+    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
+    iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
+    iExists acc.
+    iFrame "Hclient Hclientpin Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hpendcert HtypesAuth Hbinds Hhist Hacc Hdelete_set".
+    iPureIntro. split_and!;
+      [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hpool
+      | exact Hhcoh | (split; [exact Hreg | exact Hregmodel]) | exact Hacccoh].
 Qed.
 
 End store_heap.

@@ -34,7 +34,7 @@
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
-From New.proof Require Import core prelude network_model.
+From New.proof Require Import core prelude algebra network_model.
 From iris.algebra Require Import auth gmap gset.
 From stdpp Require Import sorting.
 Local Open Scope Z_scope.
@@ -169,22 +169,33 @@ Definition inputs_rooted_in_bind (inputs : list (TId * IntegrateInput (A := A)))
     in_originId typedInput.2 = None -> in_rightOriginId typedInput.2 = None ->
     ∃ name, typedInput.1 = RootId name ∧ is_Some (bind !! name).
 
-(** The store's *registry coherence*: the name->loc bindings [bind], the
-    per-type heap state [types], and the replayed doc model [m] fit together:
-    every bound name has a live type and vice versa, [bind] is injective, the
-    model agrees with each bound type's item list, and the model is populated
-    only at bound names. This is exactly the [bind]/[types]/[m] invariant
-    [store_inv] maintains inline; naming it keeps [own_store] (and through
-    it the [applyUpdate] spec) readable instead of a wall of raw quantified
-    side conditions. *)
-Definition doc_registry_coh (m : DocModel) (bind : gmap P loc)
-    (types : gmap loc type_state) : Prop :=
+(** [registry_coh bind types]: the root registry [bind] (name -> type loc)
+    and the type pool [types] fit together: every bound name has a live type,
+    [bind] is injective, and every live type is bound under some name. A
+    heap-level fact: every store method preserves it, so [own_store_heap]
+    carries it. *)
+Definition registry_coh (bind : gmap P loc) (types : gmap loc type_state) : Prop :=
   (∀ nm p, bind !! nm = Some p -> is_Some (types !! p)) /\
   (∀ n1 n2 p, bind !! n1 = Some p -> bind !! n2 = Some p -> n1 = n2) /\
-  (∀ p, is_Some (types !! p) -> ∃ nm, bind !! nm = Some p) /\
+  (∀ p, is_Some (types !! p) -> ∃ nm, bind !! nm = Some p).
+
+(** [registry_models m bind types]: the replayed doc model [m] is what the
+    registry holds: it agrees with each bound type's item list at that
+    type's root name, and it is populated only at bound root names. The
+    model-level half of the store's registry invariant, next to the
+    heap-level [registry_coh]. *)
+Definition registry_models (m : DocModel) (bind : gmap P loc)
+    (types : gmap loc type_state) : Prop :=
   (∀ nm p ts, bind !! nm = Some p -> types !! p = Some ts ->
      doc_model_get m (RootId nm) = ty_arr ts) /\
   (∀ t, doc_model_get m t ≠ [] -> ∃ nm p, t = RootId nm /\ bind !! nm = Some p).
+
+(** The store's whole *registry coherence*: the name->loc bindings [bind], the
+    per-type heap state [types], and the replayed doc model [m] fit together,
+    [registry_coh] and [registry_models] at once. *)
+Definition doc_registry_coh (m : DocModel) (bind : gmap P loc)
+    (types : gmap loc type_state) : Prop :=
+  registry_coh bind types /\ registry_models m bind types.
 
 (** [pool_invs types]: the invariants of the document cell pool that the model
     does not determine: every cell's clock range fits in [w64] ([cell_fits]),
@@ -200,6 +211,24 @@ Definition pool_invs (types : gmap loc type_state) : Prop :=
   (∀ c, c ∈ all_cells types -> cell_origin_clk c).
 
 (* ===== lemmas ============================================================= *)
+
+(** Pool membership, decomposed to the owning type. *)
+Lemma all_cells_elem_of (types : gmap loc type_state) (c : item_cell) :
+  c ∈ all_cells types <-> ∃ p ts, types !! p = Some ts /\ c ∈ ty_cells ts.
+Proof.
+  rewrite /all_cells list_elem_of_concat.
+  split.
+  - move=> [l [Hcl Hl]].
+    apply list_elem_of_fmap in Hl. destruct Hl as (ts & -> & Hts).
+    apply list_elem_of_fmap in Hts. destruct Hts as ([p ts'] & -> & Hpts).
+    simpl in *. exists p, ts'. split; [| exact Hcl].
+    by apply elem_of_map_to_list.
+  - move=> [p [ts [Hp Hcts]]].
+    exists (ty_cells ts). split; [exact Hcts |].
+    apply list_elem_of_fmap. exists ts. split; [done |].
+    apply list_elem_of_fmap. exists (p, ts). split; [done |].
+    by apply elem_of_map_to_list.
+Qed.
 
 (** [NoDup] of the pool's locations survives an integrate splice: the pool
     grows by exactly one cell at a fresh location ([all_cells_fresh]). *)

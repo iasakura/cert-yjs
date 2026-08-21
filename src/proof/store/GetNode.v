@@ -360,37 +360,7 @@ Qed.
    walking one type's DLL. The heap cells backing the probes live in the
    per-type DLLs, so the lookup specs borrow single cells out of the
    document-wide big-sep (what [store_inv] holds as [Htypes]) via
-   [types_cell_acc_gen]. *)
-
-Lemma list_elem_of_concat {D : Type} (x : D) (ls : list (list D)) :
-  x ∈ concat ls <-> ∃ l, x ∈ l ∧ l ∈ ls.
-Proof.
-  induction ls as [| l0 ls IH]; simpl.
-  - rewrite elem_of_nil. split; [done | move=> [l [_ Hl]]; by rewrite elem_of_nil in Hl].
-  - rewrite elem_of_app IH. split.
-    + move=> [Hx | [l [Hx Hl]]].
-      * exists l0. split; [exact Hx | apply elem_of_cons; by left].
-      * exists l. split; [exact Hx | apply elem_of_cons; by right].
-    + move=> [l [Hx Hl]]. apply elem_of_cons in Hl as [-> | Hl]; [by left | right; by exists l].
-Qed.
-
-(** Pool membership, decomposed to the owning type. *)
-Lemma all_cells_elem_of (types : gmap loc type_state) (c : item_cell) :
-  c ∈ all_cells types <-> ∃ p ts, types !! p = Some ts /\ c ∈ ty_cells ts.
-Proof.
-  rewrite /all_cells list_elem_of_concat.
-  split.
-  - move=> [l [Hcl Hl]].
-    apply list_elem_of_fmap in Hl. destruct Hl as (ts & -> & Hts).
-    apply list_elem_of_fmap in Hts. destruct Hts as ([p ts'] & -> & Hpts).
-    simpl in *. exists p, ts'. split; [| exact Hcl].
-    by apply elem_of_map_to_list.
-  - move=> [p [ts [Hp Hcts]]].
-    exists (ty_cells ts). split; [exact Hcts |].
-    apply list_elem_of_fmap. exists ts. split; [done |].
-    apply list_elem_of_fmap. exists (p, ts). split; [done |].
-    by apply elem_of_map_to_list.
-Qed.
+   [own_type_pool_acc]. *)
 
 (** A client run holds exactly the pool's cells with that client tag. *)
 Lemma client_run_mem (types : gmap loc type_state) (kc : w64) (c : item_cell) :
@@ -417,55 +387,11 @@ Proof.
     have -> : (S i + (j - S i))%nat = j by lia. exact Hj.
 Qed.
 
-(** Borrow one pool cell's heap struct out of the per-type DLL big-sep,
-    exposing the full [own_dll_acc] translation facts (id / parent / content
-    coupling / origins / flags / [run_wf]) and a wand restoring the big-sep.
-    What [GetNode] / [getNodeIndex] / [splitNode] / [repair] read through. *)
-Lemma types_cell_acc_gen (types : gmap loc type_state) (c : item_cell) :
-  c ∈ all_cells types ->
-  (own_type_pool (DfracOwn 1) types) -∗
-    ∃ (itemVal : yjs.item.t) (olid orid : option yjs.id.t),
-      "%Hid" ∷ ⌜item_id (run_head c) = toYjsId itemVal.(yjs.item.id')⌝ ∗
-      "%Hpar" ∷ ⌜itemVal.(yjs.item.parent') = ic_parent c⌝ ∗
-      "%Hcontent" ∷ ⌜content <$> ic_run c = explode (toContent itemVal.(yjs.item.content'))⌝ ∗
-      "%Holid" ∷ ⌜origin_id (origin (run_head c)) = toYjsId <$> olid⌝ ∗
-      "%Horid" ∷ ⌜origin_id (rightOrigin (run_head c)) = toYjsId <$> orid⌝ ∗
-      "%Hflags" ∷ ⌜itemVal.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
-      "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
-      "Hval" ∷ ic_loc c ↦ itemVal ∗
-      "Hcol" ∷ is_origin_id itemVal.(yjs.item.originLeftId') olid ∗
-      "Hcor" ∷ is_origin_id itemVal.(yjs.item.originRightId') orid ∗
-      "Hback" ∷ (ic_loc c ↦ itemVal -∗
-        (own_type_pool (DfracOwn 1) types)).
-Proof using Type*.
-  move=> Hc. iIntros "Htypes".
-  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
-  apply list_elem_of_lookup_1 in Hcts. destruct Hcts as [k Hk].
-  iDestruct (big_sepM_lookup_acc _ _ p ts Hp with "Htypes") as "[(Hyt & %Hinvp) Hrest]".
-  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  iDestruct (own_dll_acc (DfracOwn 1) (ty_cells ts) yt.(yjs.yType.start') tl k c Hk with "Hdll") as "Hacc".
-  iNamed "Hacc".
-  iExists itemVal, olid, orid.
-  iSplitR; [iPureIntro; exact Hid |].
-  iSplitR; [iPureIntro; exact Hpar |].
-  iSplitR; [iPureIntro; exact Hcontent |].
-  iSplitR; [iPureIntro; exact Holid |].
-  iSplitR; [iPureIntro; exact Horid |].
-  iSplitR; [iPureIntro; exact Hflags |].
-  iSplitR; [iPureIntro; exact Hrun |].
-  iFrame "Hcval Hcol Hcor".
-  iIntros "Hval".
-  iDestruct ("Hback" with "Hval") as "Hdll".
-  iApply "Hrest". iSplitL; [| iPureIntro; exact Hinvp].
-  iExists yt, tl. iFrame "Hparent Hdll". iPureIntro.
-  split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
-Qed.
-
 (** [getNodeIndex] (binary search over a clock-sorted run), specified for the
     hit path only: the verified update path always resolves (a [ValidReplay]
     input's origins exist), witnessed by [k0]/[c0], so the not-found return is
     dead code (the loop cannot exhaust a window that provably contains a hit).
-    The probed cells are read through the per-type DLL big-sep ([types_cell_acc_gen]);
+    The probed cells are read through the per-type DLL big-sep ([own_type_pool_acc]);
     their 1-char pin makes [Len() = 1], so a run covers [clk] iff some cell's
     clock IS [clk]. [Hnowrap] rules out [middleClock + 1] wrap-around (the
     [middleEnd] compare would otherwise skip a max-clock hit). *)
@@ -529,7 +455,7 @@ Proof using Type*.
     iEval (rewrite Hinsid) in "Hsl".
     have Hcmemall : cmid ∈ all_cells types
       by (apply Hmem; exact (list_elem_of_lookup_2 _ _ _ Hcmid)).
-    iDestruct (types_cell_acc_gen types cmid Hcmemall with "Htypes") as "Hacc".
+    iDestruct (own_type_pool_acc types cmid Hcmemall with "Htypes") as "Hacc".
     iNamed "Hacc".
     wp_auto.
     have Hmcv : cell_clock cmid = itemVal.(yjs.item.id').(yjs.id.clock')
@@ -670,7 +596,7 @@ Proof using Type*.
     iEval (rewrite Hinsid) in "Hsl".
     have Hcmemall : cmid ∈ all_cells types
       by (apply Hmem; exact (list_elem_of_lookup_2 _ _ _ Hcmid)).
-    iDestruct (types_cell_acc_gen types cmid Hcmemall with "Htypes") as "Hacc".
+    iDestruct (own_type_pool_acc types cmid Hcmemall with "Htypes") as "Hacc".
     iNamed "Hacc".
     wp_auto.
     have Hmcv : cell_clock cmid = itemVal.(yjs.item.id').(yjs.id.clock')
@@ -945,7 +871,7 @@ Proof using Type*.
     iEval (rewrite Hinsid) in "Hsl".
     have Hcmemall : cmid ∈ all_cells types
       by (apply Hmem; exact (list_elem_of_lookup_2 _ _ _ Hcmid)).
-    iDestruct (types_cell_acc_gen types cmid Hcmemall with "Htypes") as "Hacc".
+    iDestruct (own_type_pool_acc types cmid Hcmemall with "Htypes") as "Hacc".
     iNamed "Hacc".
     wp_auto.
     have Hmcv : cell_clock cmid = itemVal.(yjs.item.id').(yjs.id.clock')

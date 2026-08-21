@@ -66,9 +66,11 @@ Proof.
   wp_start as "(#His_doc & #Hishist)".
   iNamed "His_doc". subst s_loc. wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
-  iNamed "Hinv". iNamed "Hexcl". iNamed "Hro".
+  iDestruct "Hinv" as (c0 h m pend) "Hown". iNamed "Hown". iNamed "Hheap". subst c0.
   have [Hrunfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
-  have [Hbindtypes [Hbindinj [Htypesbound [Hmtypes Hmdom]]]] := Hregcoh.
+  have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
+  have [Hmtypes Hmdom] := Hregmodel.
+  iDestruct (own_type_pool_client_clock_bound types client k Hctr with "Htypes") as %Hcellctr.
   wp_auto.
   destruct (bind !! name) as [p|] eqn:Hbnd.
   - (* ---- hit: the root is registered; nothing changes ---- *)
@@ -82,14 +84,15 @@ Proof.
     iMod (auth_gmap_gset_frag_alloc γs.(sn_seq) (DfracOwn 1) _ p ∅ _
             Hmk (empty_subseteq _) with "Hseq") as "[Hseq #Hlb0]".
     wp_auto.
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hdelete_set]").
-    { iNext. iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
-      iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
-      iExists acc.
+    iDestruct (own_store_heap_intro _ _ _ _ _ _ _ _ _ Hpool Hreg
+                with "Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes") as "Hheap".
+    wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
+                with "[$His_store $Hwl Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+    { iExists client, k, deletedSetVal, pdel, types, bind, acc.
       iFrame "∗#". iPureIntro.
       split_and!;
-        [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hcellctr | exact Hpool
-        | exact Hhcoh | exact Hregcoh | exact Hacccoh]. }
+        [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
+        | exact Hctr | exact Hacccoh]. }
     wp_alloc t as "Ht".
     iPersist "Ht".
     wp_auto.
@@ -214,17 +217,21 @@ Proof.
     iDestruct (own_delete_set_perm γs m (all_cells types) (all_cells types') Hperm with "Hdelete_set")
       as "Hdelete_set".
     wp_auto.
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hseq HtypesAuth Htypes Hhist Hacc Hdelete_set]").
-    { iNext. iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types', bind', h, m, pend, pdel.
-      iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
-      iExists acc.
+    have Hpool' : pool_invs types'.
+    { rewrite /pool_invs. split_and!; [exact Hrunfits' | exact Hlocdup' | exact Hrangedisj' | exact Horiginclk']. }
+    have Hreg' : registry_coh bind' types'.
+    { rewrite /registry_coh. split_and!; [exact Hbindtypes' | exact Hbindinj' | exact Htypesbound']. }
+    have Hregmodel' : registry_models m bind' types'.
+    { rewrite /registry_models. split; [exact Hmtypes' | exact Hmdom']. }
+    iDestruct (own_store_heap_intro _ _ _ _ _ _ _ _ _ Hpool' Hreg'
+                with "Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes") as "Hheap".
+    wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
+                with "[$His_store $Hwl Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+    { iExists client, k, deletedSetVal, pdel, types', bind', acc.
       iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds'". iPureIntro.
       split_and!;
-        [exact Hpendroot | exact Hpendbnd | exact Hctr' | exact Hcellctr'
-        | (rewrite /pool_invs; split_and!; [exact Hrunfits' | exact Hlocdup' | exact Hrangedisj' | exact Horiginclk'])
-        | exact Hhcoh
-        | (rewrite /doc_registry_coh; split_and!; [exact Hbindtypes' | exact Hbindinj' | exact Htypesbound' | exact Hmtypes' | exact Hmdom'])
-        | exact Hacccoh]. }
+        [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh
+        | exact Hctr' | exact Hacccoh]. }
     wp_alloc t as "Ht".
     iPersist "Ht".
     wp_auto.

@@ -120,7 +120,6 @@ Proof.
   (* take the write lock, reveal the store's current (c0, h, m, pend); the
      client pin identifies c0 with the caller's c *)
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
-  iEval (rewrite store_inv_own_store) in "Hinv".
   iDestruct "Hinv" as (c0 h m pend) "Hstore".
   iDestruct (own_store_client_pin with "Hstore") as "[Hstore #Hpin0]".
   iDestruct (is_store_client_agree with "Hpin0 Hpin") as %->.
@@ -149,12 +148,9 @@ Proof.
   iMod (own_store_accept_batch _ _ _ _ _ _ _ inputs
           ltac:(move=> x Hx; exact (input_accounted_id _ _ _ (Hnoloss x Hx)))
           with "Hstore") as "[Hstore #Haccepts]".
-  (* rebuild store_inv at the advanced history (delivered = expand_inputs applied)
-     with the leftover as the new pending, and release the lock *)
-  iAssert (▷ store_inv dvv.(yjs.Doc.store') γs γh)%I with "[Hstore]" as "Hinv".
-  { iNext. iApply store_inv_own_store.
-    iExists c, (h ++ (deliver_ev <$> expand_inputs applied)), m', rest. iFrame "Hstore". }
-  wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hinv]").
+  (* release the lock at the advanced history (delivered = expand_inputs applied)
+     with the leftover as the new pending *)
+  wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hstore]").
   iApply ("HΦ" $! h applied rest m'). iFrame "Hupd Hlb Haccepts Hrootlbs".
   iSplitL "Hspans"; first (iExists spans; by iFrame "Hspans").
   iPureIntro. exact (ValidReplay_input_mem (expand_inputs applied) m m' Hvr).

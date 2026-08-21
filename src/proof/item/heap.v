@@ -21,7 +21,8 @@
     - freshness: a fully owned node is fresh for any segment
       ([own_dll_fresh], via [item_pointsto_conflict]), which is where the
       [NoDup] of locations comes from.
-    - ids in a segment are bounded ([own_dll_id_bounds]).
+    - ids in a segment are bounded ([own_dll_id_bounds]), and every cell's run
+      is well-formed ([own_dll_runs_wf]).
 
     The per-node method specs are [item/wp_private.v]. *)
 From New.proof Require Import proof_prelude.
@@ -531,6 +532,21 @@ Proof.
     iDestruct "H2" as (iv2 ol2 or2) "H2". iNamedSuffix "H2" "2".
     iCombine "Hval1 Hval2" gives %->.
     iApply (IH with "Hrest1 Hrest2").
+Qed.
+
+(** Every cell of a DLL segment carries a well-formed run (pure extraction;
+    the run-aware counterpart of the unit scaffold's per-cell length pin). *)
+Lemma own_dll_runs_wf (dq : dfrac) (l last prev next : loc) (cells : list item_cell) :
+  own_dll dq l last prev next cells -∗
+  ⌜∀ c, c ∈ cells → run_wf (ic_run c)⌝.
+Proof.
+  iInduction cells as [|c0 cells] "IH" forall (l prev).
+  - iIntros "_". iPureIntro. move=> c Hc. rewrite elem_of_nil in Hc. done.
+  - iIntros "H". iNamed "H".
+    iDestruct ("IH" with "Hrest") as %Hrest.
+    iPureIntro. move=> c Hc.
+    apply elem_of_cons in Hc as [-> | Hc]; last exact (Hrest c Hc).
+    exact Hrun.
 Qed.
 
 End item_heap.
