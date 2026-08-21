@@ -185,50 +185,18 @@ Proof.
 Qed.
 
 
+
+
 (** Read-lock acquire: peels one [rfrac] share of [store_inv_ro] off the lock
     invariant (bumping the reader count), returning the reader's slot witness
-    [own_read_locked] and that share for the specific current [types]. *)
-Lemma wp_Store__rlock (s_loc : loc) (γs : store_names) (γh : history_names) :
-  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_read_cap γs }}}
-    (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "RLock" #()
-  {{{ types, RET #(); own_read_locked γs types ∗ store_inv_ro γs types rwmutex_guard.rfrac }}}.
-Proof.
-  wp_start_folded as "(His & Hcap)". iNamed "His".
-  iDestruct "Hcap" as "[Htok Hmaxtok]".
-  wp_apply (rwmutex.wp_RWMutex__RLock with "[$Hrw $Htok]").
-  iInv "Htie" as "Hi" "Hclose".
-  iDestruct "Hi" as (st) "[>Hown Hbody]".
-  iFrame "Hown". iApply fupd_mask_intro; first solve_ndisj. iIntros "Hmask".
-  iIntros (n) "%Hst Hrl". subst st.
-  iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
-  iDestruct "Hbody" as "(Hrauth & Hmaxn & Hwl & Hrest)".
-  iDestruct "Hrest" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl types bind h m pend pdel) "(Hfrag & Hexcl & Hro)".
-  iCombine "Hmaxn Hmaxtok" as "Hmaxn1".
-  iCombine "Hmax Hmaxn1" gives %Hbound.
-  iMod (own_tok_auth_S with "Hrauth") as "[Hrauth Hrtok]".
-  assert (Z.of_nat n < rwmutex.actualMaxReaders)%Z as Hlt by (rewrite rwmutex.actualMaxReaders_unseal in Hbound |- *; lia).
-  rewrite (frac_of_split n Hlt).
-  iDestruct (tf_split with "Hfrag") as "[Hfrag_r Hfrag_i]".
-  iDestruct (store_inv_ro_fractional γs types with "Hro") as "[Hro_r Hro_i]".
-  iMod "Hmask" as "_".
-  iMod ("Hclose" with "[Hrl Hrauth Hmaxn1 Hwl Hfrag_i Hexcl Hro_i]") as "_".
-  { iExists (RLocked (S n)). iFrame "Hrl". iEval (cbn [tie_body]).
-    replace (S n) with (n + 1)%nat by lia.
-    iFrame "Hrauth Hmaxn1 Hwl".
-    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
-    iFrame "Hfrag_i Hexcl Hro_i". }
-  iModIntro. iApply ("HΦ" $! types). iFrame "Hrtok Hfrag_r Hro_r".
-Qed.
-
-
-(** [wp_Store__rlock], history-certificate form (issue #125): the reader
-    brings a prefix certificate of THIS replica's op history (plus the client
-    pin identifying it) and a root binding; the read lock's linearization
-    point is the one moment the reader sees the exclusive slice, and
-    [store_inv_excl_hist_root] converts there: the [types] snapshot handed
-    out already contains, at the bound root, one item per delivered insert
-    of the certified prefix. *)
-Lemma wp_Store__rlock_hist (s_loc : loc) (γs : store_names) (γh : history_names)
+    [own_read_locked] and that share for the specific current [types]. The
+    reader brings a prefix certificate of THIS replica's op history (plus the
+    client pin identifying it) and a root binding (issue #125); the read
+    lock's linearization point is the one moment the reader sees the
+    exclusive slice, and [store_inv_excl_hist_root] converts there: the
+    [types] snapshot handed out already contains, at the bound root, one item
+    per delivered insert of the certified prefix. *)
+Lemma wp_Store__rlock (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
   {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_read_cap γs ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗

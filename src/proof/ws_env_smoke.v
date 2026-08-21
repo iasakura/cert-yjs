@@ -14,7 +14,7 @@
     - [ws_prot] of that data is the real thing a receiver needs, one point of
       the global history per character ([is_pending_certified] over
       [expand_inputs]), which is exactly what
-      [wp_store__applyUpdate_certs] consumes;
+      [wp_store__applyUpdate] consumes;
     - [ws_env_preserves] holds, by the same [history_broadcast] a modeled sender
       would use at [wp_WsSendOp].
 
@@ -68,7 +68,7 @@ Context `{!wsGS Σ}.
 Set Default Proof Using "Type*".
 
 (** The content type is the store's, since the protocol has to be the one
-    [wp_store__applyUpdate_certs] consumes. *)
+    [wp_store__applyUpdate] consumes. *)
 Notation A := go_string.
 Notation P := go_string.
 

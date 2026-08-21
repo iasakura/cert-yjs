@@ -1,7 +1,7 @@
 (** The top of the [store] update path: the [applyUpdate] stack, from the
     [ValidReplay] refinement [wp_store__applyUpdate] through the wire-drain
     subset / replay lemmas and the certificate machinery up to the public
-    [own_store]-level spec [wp_store__applyUpdate_certs] (delivered content
+    [own_store]-level spec [wp_store__applyUpdate] (delivered content
     comes back as [is_root_lb] fragments).
 
     The layers it stands on are [store/GetNode] (node lookup, input expansion),
@@ -113,7 +113,10 @@ Proof.
   - rewrite (docm_get_insert_ne m0 typedInput.1 t arr' Hne) //.
 Qed.
 
-Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
+(** [store.applyUpdate] over the unlocked store fields: the drain loop's
+    contract stated on the raw registry / type map / pending buffer. Local:
+    the stepping stone of [wp_store__applyUpdate] below, which is the spec. *)
+#[local] Lemma wp_store__applyUpdate_unlocked (s mref tref : loc) (sl pend_sl0 : slice.t)
     (dq : dfrac)
     (inputs pend0 applied rest : list (TId * IntegrateInput (A := A)))
     (m m' : DocModel) (types : gmap loc type_state) (bind : gmap P loc) :
@@ -642,7 +645,7 @@ Proof using Type*.
                  := uint_W64_nat_bound _ _ (Hkb1 typedInput Hti_pi).
                split; move: Hlo1 Hhi1; rewrite !Hib !Hib4; lia. }
            simpl. rewrite Hready. wp_auto.
-           wp_apply (wp_store__integrateDecoded_grow s mref tref updateItemVal (targetType, input)
+           wp_apply (wp_store__integrateDecoded s mref tref updateItemVal (targetType, input)
                        m_c types_c bind_c newItem arr' nm
                        Htjeq Htoit Hvld Hmax Hall Hgmax0
                        Hbindtypesc Hbindinjc Htypesboundc Hmtypesc Hmdomc Hnwc
@@ -960,7 +963,7 @@ Qed.
    model ([doc_model_has], a re-delivered struct). These lemmas prove none of
    the three loses the item: EVERY pending item is accounted for at the id
    level -- some applied item shares its id, some kept item shares its id, or
-   the final model already carries its id. [wp_store__applyUpdate_certs] turns
+   the final model already carries its id. [wp_store__applyUpdate] turns
    this into the per-input guarantee that each input is either delivered into
    the history or buffered in the new pending: no input silently vanishes. *)
 
@@ -1809,7 +1812,7 @@ Qed.
     post-delivery item set. Finally, the batch is not lost: every input is
     accounted for ([input_accounted]) -- delivered into the new history or
     buffered by id in the new pending [rest] -- so nothing silently vanishes. *)
-Lemma wp_store__applyUpdate_certs (s_loc : loc) (sl : slice.t) (dq : dfrac)
+Lemma wp_store__applyUpdate (s_loc : loc) (sl : slice.t) (dq : dfrac)
     (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend inputs : list (TId * IntegrateInput (A := A))) :
@@ -1877,7 +1880,7 @@ Proof using Type*.
           Hdrainc Hhcoh Harrinv Hnonemptyb with "Hishist Hhist Hcertpending")
     as "(Hhist & #Hlbnew & %Hvr & %Hcoh' & %Hnoc)".
   iModIntro.
-  wp_apply (wp_store__applyUpdate s_loc items_mref types_mref sl pend_sl dq
+  wp_apply (wp_store__applyUpdate_unlocked s_loc items_mref types_mref sl pend_sl dq
               inputs pend applied rest' m m' types bind
               Hdrainc Hvr Hrtot Happsub Hnonemptyb Hbindtypes Hbindinj Htypesbound Hmtypes Hmdom
               Hrunfits Hkb1c Hlocdup Hrangedisj Horiginclk

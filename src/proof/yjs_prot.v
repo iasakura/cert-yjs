@@ -66,7 +66,7 @@ Definition update_wf (inputs : list Input) : Prop :=
 (** The wire protocol: these bytes decode to an honest batch every per-char
     operation of which is a point of the global history [γh]. Per character,
     via [expand_inputs], because that is what the ghost history holds and
-    what [wp_store__applyUpdate_certs] consumes. Persistent, as [ws_prot]
+    what [wp_store__applyUpdate] consumes. Persistent, as [ws_prot]
     must be (one message is delivered to every member of a room). *)
 Definition yjs_prot (γh : history_names) (d : list u8) : iProp Σ :=
   ∃ inputs : list Input,

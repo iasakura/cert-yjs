@@ -23,7 +23,7 @@
       closed-system theorem in src/proof/demo/ws_server.v boots).
 
     Concurrent reads (issue #125) need no lemma of this file: the [text]
-    layer's [wp_Text__String_hist] / [wp_Text__Len_hist] guarantee that a
+    layer's [wp_Text__String] / [wp_Text__Len] guarantee that a
     read's snapshot contains every insert delivered by whatever
     [is_history_lb] certificate the reader holds, and code co-verified with
     the room (holding its [room_inv]) can extract exactly such certificates
@@ -167,8 +167,8 @@ Definition is_room_log_entry (γ : room_names) (i : nat) (e : relay_entry) : iPr
     store accepted every input (forever delivered-or-buffered,
     [own_store_accepted_sound]), and the server's history visibly grew by the
     applied portion, in processing order. The history certificate [Herlb] is
-    also the CONTENT route (issue #125): fed to [wp_Text__Len_hist] /
-    [wp_Text__String_hist] it guarantees a concurrent read's snapshot
+    also the CONTENT route (issue #125): fed to [wp_Text__Len] /
+    [wp_Text__String] it guarantees a concurrent read's snapshot
     contains the applied portion's items, so no separate content certificate
     is carried here. Buffered inputs (dependencies not yet arrived) appear
     in no root's content until drained; [is_accepted] is their exact
