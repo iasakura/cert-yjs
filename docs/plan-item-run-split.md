@@ -1,0 +1,206 @@
+# Plan: split `item_cell` into a pure `ItemRun` and a location list
+
+Status: proposal (2026-08-22), written after the spec refactor
+(`docs/plan-spec-refactor.md`, PRs #143 to #151). Nothing here is
+implemented.
+
+## 1. The problem
+
+`item_cell` (`src/proof/item/value.v`) is
+
+```coq
+Record item_cell := MkItemCell {
+  ic_loc : loc;                 (* runtime: the node's address *)
+  ic_run : list (YjsItem A);    (* model: the run of chars the node holds *)
+  ic_deleted : bool;            (* model: the tombstone bit *)
+  ic_parent : loc;              (* runtime: the address of the node's yType *)
+}.
+```
+
+It mixes two kinds of data. Reasoning about runs (their flatten, their
+clock ranges, what a split or a tombstone does to them) is pure and never
+needs an address; reasoning about which heap node holds which run is a
+heap fact. Because the one record carries both, every pure definition over
+cells sees locations, and every spec about a node's run drags the
+location along:
+
+- `cells_range_disjoint` identifies distinct cells by `ic_loc c1 ≠ ic_loc c2`,
+  so a statement about clock ranges depends on addresses;
+- `pool_invs` holds `NoDup (ic_loc <$> all_cells types)`, a heap fact, next
+  to three pure facts;
+- `node_loc cells k`, `ic_loc <$> client_run types client`, `fresh_loc`,
+  `cell_pr` (the clock-then-location sort key), `split_cells cells k o r_loc`
+  (the split takes the new node's address as a pure argument) all thread
+  addresses through the value layer;
+- `ic_parent` duplicates information the pool already has (a cell is in
+  exactly one type's list) and has to be kept coherent
+  (`own_ytype_cells`'s `Hcpar`, `cell_ends_at types parent l d`, the
+  `ic_parent` clauses of `repair_parent` / `origins_split`);
+- the model of a type (`type_state`) and the pool (`gmap loc type_state`)
+  are keyed by the yType's address, although the registry already names
+  every type (`registry_coh`: `dom types` is the range of `bind`).
+
+Footprint today: `item_cell` / `ic_*` appear in 21 files; the heavy ones are
+`splitNode.v` (250 field uses), `value_cells.v` (90), `Integrate.v` (75),
+`repair.v` (80), `text/Delete.v` (73), `item/heap.v` (85).
+
+## 2. The target
+
+### 2.1 Pure layer (no `loc` anywhere)
+
+```coq
+(* item/model.v *)
+Record ItemRun := MkItemRun {
+  run_items : list (YjsItem A);   (* nonempty, consecutive clocks: run_wf *)
+  run_deleted : bool;
+}.
+
+(* ytype/model.v: a type's model is its list of runs and its item list *)
+Record type_model := MkTypeModel {
+  tm_runs : list ItemRun;
+  tm_arr : list (YjsItem A);      (* = runs_flatten tm_runs, the document *)
+}.
+
+(* store/model.v: the pool, keyed by ROOT NAME, not by the yType's address *)
+Definition pool := gmap P type_model.
+```
+
+Everything that is pure today is restated over `ItemRun` and indices:
+
+| today (over `item_cell`) | target (over `ItemRun`) | note |
+|---|---|---|
+| `run_head`, `run_flatten`, `num_visible`, `cell_unit`, `cells_model`, `cells_repr` | same names over `list ItemRun` | drop `ic_loc` / `ic_parent` |
+| `cell_covers c d`, `cell_covers_clock`, `cell_fits`, `cell_origin_clk`, `cell_client` / `cell_clock` / `cell_le` | same over `ItemRun` | unchanged bodies |
+| `cells_range_disjoint pool` (distinct cells by `ic_loc ≠`) | `runs_disjoint runs`: `∀ i j, i ≠ j → runs !! i = Some r → runs !! j = Some r' → same client → ranges disjoint` | index-based, which is what `wp_getNodeIndex_raw` already assumes |
+| `pool_invs types` = fits ∧ `NoDup locs` ∧ disjoint ∧ origin_clk | `pool_invs p` = fits ∧ `runs_disjoint (all_runs p)` ∧ origin_clk | `NoDup` of locations moves to the heap layer |
+| `all_cells types : list item_cell` | `all_runs p : list ItemRun` | |
+| `client_run types client` (sorted by `cell_pr` = (clock, loc)) | `client_runs p client : list ItemRun` sorted by clock | with `runs_disjoint` the clocks are distinct per client, so the location tie-break is unnecessary |
+| `split_cells cells k o r_loc`, `split_cell_left / right` | `split_runs runs k o` | the new node's address is a heap matter |
+| `flip_cell`, `set_deleted` | `flip_run` | |
+| `node_loc cells k` | gone from the pure layer; see `ls !! k` below | |
+| `cell_starts_at types parent l d`, `cell_ends_at` | `run_starts_at p nm k d`, `run_ends_at p nm k d`: the `k`-th run of root `nm` | the type is named, the node is indexed |
+| `fresh_loc l types` | heap layer only | |
+| `pool_cell_covers types c d` | `pool_run_covers p nm k d` | |
+| `origins_linked cells arr input lft rgt` | `origins_resolved runs arr input kL kR` (cursor indices only) | the locs `lft` / `rgt` come from `ls !! kL`, `ls !! kR` in the spec |
+| `integrate_splice cells arr item_l run parent cells' arr'` | `integrate_splice runs arr run runs' arr'` | the address of the new node is a heap fact |
+| `repair_parent bind opn ocL ocR p_t`, `origins_split`, `origins_covered` | over root names and run indices | |
+| `split_types_update_rel`, `repair_types_update_rel`, `delete_types_update_rel`, `cells_within`, `live_refine`, `dead_chars_kept`, `ids_tombstoned`, `delete_set_tombstoned` | same over `pool` / `list ItemRun` | bodies lose the `ic_loc ≠ ic_loc w` clauses, which become "index ≠ k" |
+
+### 2.2 Heap layer: the location list
+
+One predicate relates a type's heap nodes to its runs, in the form the
+user proposed:
+
+```coq
+(* item/heap.v: the DLL, as a list of node addresses paired with the runs they hold *)
+Fixpoint own_dll (dq : dfrac) (l last prev next : loc)
+    (ls : list loc) (runs : list ItemRun) : iProp Σ :=
+  match ls, runs with
+  | [], [] => ⌜l = next ∧ last = prev⌝
+  | lc :: ls', r :: runs' =>
+      ⌜l = lc ∧ lc ≠ null⌝ ∗
+      own_item_node lc dq (input_of_run r) (run_deleted r) prev ∗   (* F2a of the spec refactor *)
+      own_dll dq (next of lc) last lc next ls' runs'
+  | _, _ => False
+  end.
+
+(* ytype/heap.v *)
+Definition own_ytype (parent : loc) (dq : dfrac) (ls : list loc) (tm : type_model) : iProp Σ := …
+
+(* store/heap.v: the pool's heap side, keyed like the pure pool *)
+Definition own_type_pool (dq : dfrac) (bind : gmap P loc) (locs : gmap P (list loc)) (p : pool) : iProp Σ :=
+  [∗ map] nm ↦ tm ∈ p, ∃ parent ls, ⌜bind !! nm = Some parent⌝ ∗ ⌜locs !! nm = Some ls⌝ ∗ own_ytype parent dq ls tm.
+```
+
+`own_item_node l dq input deleted prev` is the item-node predicate of the
+spec refactor's F2a (the struct value and the `yjs.id.t` origin cells are
+existential inside it; `is_origin_id` is stated over `option YjsId`). This
+is where step 3 of `docs/plan-spec-refactor.md` lands: both changes rewrite
+the same per-node payload of `own_dll`, so they are done together.
+
+The heap-only facts: `NoDup (concat (map_to_list locs).*2)` (one node is in
+one type at one index) and `length ls = length (tm_runs tm)` per type,
+bundled as `locs_wf locs p`, living in `own_type_pool`, not in `pool_invs`.
+
+### 2.3 Specs
+
+A helper that returns a node names it through the location list:
+
+```coq
+Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (bind locs) (p : pool) :
+  pool_invs p ->
+  {{{ own_store_items s locs p ∗ own_type_pool (DfracOwn 1) bind locs p }}}
+    s @! (go.PointerType yjs.store) @! "GetNode" #idv
+  {{{ (l : loc) (ok : bool), RET (#l, #ok);
+      own_store_items s locs p ∗ own_type_pool (DfracOwn 1) bind locs p ∗
+      ⌜if ok then ∃ nm k, pool_run_covers p nm k (toYjsId idv) ∧ locs !! nm ≫= (.!! k) = Some l
+       else ∀ nm k, ¬ pool_run_covers p nm k (toYjsId idv)⌝ }}}.
+```
+
+The pure part (`pool_run_covers`, `pool_invs`, `split_runs`, …) never
+mentions `locs`; the heap part relates indices to addresses only through
+`locs`. `wp_store__splitNode` returns `rloc` with `locs' = insert_at nm (k+1) rloc locs`
+and `p' = split at (nm, k, o)`; `wp_Store__Integrate` takes the two cursor
+indices and the item's address, and returns `locs'` / `p'`.
+
+The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
+`is_Doc`) is unchanged: it already hides cells.
+
+## 3. Migration, in compiling stages
+
+1. **Pure theory first, as a projection.** Add `ItemRun`, `cell_run : item_cell → ItemRun`,
+   and the loc-free definitions (`runs_flatten`, `runs_disjoint`, `split_runs`,
+   `flip_run`, `run_starts_at`, …) next to the existing ones, with projection
+   lemmas (`run_flatten cells = runs_flatten (cell_run <$> cells)`,
+   `cells_range_disjoint (all_cells types) ↔ runs_disjoint (all_runs types)` given
+   `NoDup` of locations, `split_cells cells k o r = …` projects to `split_runs`).
+   Nothing else changes; the new theory is checked in isolation.
+   Files: `item/model.v`, `item/value.v`, `store/value_cells.v`, `store/value_split.v`.
+2. **The pool keyed by name.** Replace `types : gmap loc type_state` by
+   `p : pool` plus `bind` (already there) and `locs`; `own_type_pool`,
+   `own_item_map` (`ic_loc <$> client_run` becomes the client's sublist of `locs`),
+   `own_store_items`, `own_store_core` take `(bind, locs, p)`. Specs of the
+   internal helpers are restated in the 2.3 shape; proofs keep their cell
+   lists through `cell_run` / `ic_loc` projections until stage 3.
+   Files: `store/heap.v`, every `store/*.v` WP file, `text/Insert.v`,
+   `text/Delete.v`, `doc/GetOrCreateText.v`.
+3. **The node payload.** `own_dll` over `(ls, runs)` with `own_item_node`;
+   `is_origin_id` over `option YjsId`; the three `item` method specs over
+   `own_item_node` (spec refactor step 3). The borrow lemmas
+   (`own_dll_acc`, `own_dll_lookup_acc`, `own_dll_update_gen`, `own_dll_split`)
+   hand out `own_item_node` instead of `itemVal` plus ten equations.
+   Files: `item/heap.v`, `item/*.v`, `ytype/heap.v`, `ytype/findPos.v`,
+   and every proof that opens a borrow (`Integrate.v`, `splitNode.v`,
+   `deleteRange.v`, `repair.v`, `text/Insert.v`, `text/Delete.v`).
+4. **Delete `item_cell`.** Remove the projections and the old definitions.
+
+Stages 1 and 2 are where the user-visible improvement is (loc-free pure
+lemmas, specs over `(p, locs)`); stage 3 is the part shared with the spec
+refactor's step 3 and is the most expensive (it touches every DLL borrow).
+
+## 4. Cost
+
+Rough size, from the footprint above: stage 1 ~600 lines of new pure theory
+(mostly restatements with projection proofs); stage 2 rewrites every store
+spec statement and the pool plumbing of ~12 WP files (the proofs mostly
+survive through the projections); stage 3 touches ~40 borrow sites and the
+three item method proofs. Comparable to the whole spec refactor (steps 1 to
+7, PRs #143 to #151), and best done after those PRs are merged so it does
+not stack on eight unmerged branches.
+
+## 5. Open questions for the owner
+
+- Keying the pool by root name (section 2.1) is a bigger step than the
+  `ItemRun` split itself; it is what removes the last `loc` from the pure
+  pool (`gmap loc type_state`). If the key should stay the yType address,
+  `pool := gmap loc type_model` still works, and only `run_starts_at` /
+  `cell_ends_at` keep a `parent : loc` argument.
+- `own_item_map`'s per-client slices store node addresses in clock order,
+  so its model is naturally a list of addresses; with `locs` keyed by root
+  and `client_runs` by client, the slice's model is `client_locs locs p client`
+  (a derived list), which is fine but means the item map's model is
+  computed, not stored.
+- Whether to fold `ty_arr` away: `tm_arr = runs_flatten tm_runs` always
+  holds (`cells_repr`), so `type_model` could be just the run list with the
+  document list derived. The specs would then say `runs_flatten` where they
+  say `ty_arr` today.

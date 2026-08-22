@@ -496,3 +496,50 @@ each other; 5 to 7 depend on 4.
   that sentence contradicted the Architecture section (one directory per
   type, one `<Method>.v` per exported method) and was dropped with the
   rewrite.
+
+## 6. What was done (2026-08-22)
+
+Steps 1, 2, 4, 5, 6 and 7 are implemented as the stacked PRs #143 to #151
+(main <- #143 <- #144 <- #145 <- #146 <- #147 <- #148 <- #149 <- #150 <- #151),
+each green under `./build.sh`. Where the realized design differs from the
+sections above:
+
+- **F1 footprint.** Instead of one `own_store_heap s st` with a
+  `store_state` record, the internal specs have a two-level footprint:
+  cell surgeries (`Integrate`, `GetNode`, `splitNode`, `splitAtAndGet*`,
+  `deleteRange`) run over `own_store_items s types ∗ own_type_pool dq types`
+  with `pool_invs types` as premise and post; the registry-touching helpers
+  (`repair`, `integrateDecoded`, `hasNode` family, `getOrCreateYType`) over
+  `own_store_core s types bind` (items, registry, pool, `pool_invs`,
+  `registry_coh`); `applyUpdate` adds `own_store_pending`, `applyDeleteSpans`
+  adds `own_store_pending_deletes`; `own_store_heap` is the conjunction and
+  `own_store` is restated on top of it. A record would have forced every
+  cell surgery to mention the registry and the pending buffer it does not
+  touch.
+- **F6 / F7 names.** `integrate_ready`, `origins_linked`, `integrate_splice`,
+  `run_denotes`, `pool_clock_below` (Integrate); `pool_cell_covers`,
+  `cell_covers_clock`, `sorted_client_run`, `cell_starts_at`, `cell_ends_at`,
+  `fresh_loc`, `origins_covered`, `repair_parent`, `origins_split`,
+  `find_pos` (lookups, splits, repair); `registry_models`,
+  `registry_lookup_or_create`, `cells_within`, `cells_within_or_from`
+  (update path); `update_wf` (moved from `yjs_prot`, the `batch_wf` of F6),
+  `is_applied_certs`, `inserted_run`, `text_snapshot`, `history_reflected`
+  (public layer). `cell_ends_at` carries the parent (the split helpers'
+  callers need the node's type); the transport records keep their shape and
+  only their last clause is `cells_within`.
+- **Kept as they were.** `wp_yType__Text` stays at the cell model: its one
+  caller (`Text.String`) must get the same cells back to close the pool, which
+  `own_ytype`'s existential would hide. `wp_store__applyUpdate` keeps
+  `ValidReplay` next to `wire_drain` (it is the fact the doc layer uses and
+  is not derivable by the caller from `wire_drain` alone); `inputs_not_from`
+  is dropped (no caller used it). `wp_store__repair` (the former `_split`) is
+  the spec of `repair`; the fresh-root form stays local, since a merged
+  lemma would have no user.
+- **Variants.** `getNodeIndex` 3 -> 1, `GetNode` 2 -> 1, `integrateCore`
+  3 -> 1 local, `Integrate` 3 -> 1, `getOrCreateYType` 2 -> 1,
+  `integrateDecoded` 3 -> 1 (two local), `splitAtAndGet*` `_inv` renamed
+  with `_range` local; `own_linked_item` unit form deleted.
+- **Step 3 (F2a, `is_origin_id` over `option YjsId`, `own_item_node`)** is
+  not done. It rewrites the per-node payload of `own_dll`, which is exactly
+  what the `item_cell` split (`docs/plan-item-run-split.md`) rewrites too, so
+  it is folded into that plan's stage 3.
