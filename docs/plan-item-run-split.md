@@ -192,10 +192,12 @@ not stack on eight unmerged branches.
 
 ## 5. Open questions for the owner
 
-- The pool keeps the yType address as its key (decided 2026-08-22: the key
-  only names the type, no pure lemma computes with it). Keying it by root
-  name instead would remove the last `loc` from the pure pool but costs a
-  registry rewrite for no proof benefit.
+- The pool keeps the yType address as its key (decided 2026-08-22). The
+  key is only an index for the pure theory; it is the address because the
+  heap side (`own_type_pool`'s big-sep, `item.parent` in Go) identifies a
+  type by its pointer, so sharing the identifier saves a second map. Keying
+  by root name would remove the last `loc` from the pure pool at the cost of
+  a registry indirection, for no proof benefit.
 - `own_item_map`'s per-client slices store node addresses in clock order,
   so its model is naturally a list of addresses; with `locs` keyed by type
   and `client_runs` by client, the slice's model is `client_locs locs p client`
