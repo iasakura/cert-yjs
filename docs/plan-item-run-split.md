@@ -36,9 +36,10 @@ location along:
   exactly one type's list) and has to be kept coherent
   (`own_ytype_cells`'s `Hcpar`, `cell_ends_at types parent l d`, the
   `ic_parent` clauses of `repair_parent` / `origins_split`);
-- the model of a type (`type_state`) and the pool (`gmap loc type_state`)
-  are keyed by the yType's address, although the registry already names
-  every type (`registry_coh`: `dom types` is the range of `bind`).
+The pool's key (the yType's address in `gmap loc type_state`) is a
+different matter: it is only a name for the type, no pure lemma computes
+with it (`all_cells` reads the values, `registry_coh` relates keys to root
+names), so it stays.
 
 Footprint today: `item_cell` / `ic_*` appear in 21 files; the heavy ones are
 `splitNode.v` (250 field uses), `value_cells.v` (90), `Integrate.v` (75),
@@ -61,8 +62,9 @@ Record type_model := MkTypeModel {
   tm_arr : list (YjsItem A);      (* = runs_flatten tm_runs, the document *)
 }.
 
-(* store/model.v: the pool, keyed by ROOT NAME, not by the yType's address *)
-Definition pool := gmap P type_model.
+(* store/model.v: the pool, keyed by the yType's address as today; the key
+   names the type and is never computed with *)
+Definition pool := gmap loc type_model.
 ```
 
 Everything that is pure today is restated over `ItemRun` and indices:
@@ -78,12 +80,12 @@ Everything that is pure today is restated over `ItemRun` and indices:
 | `split_cells cells k o r_loc`, `split_cell_left / right` | `split_runs runs k o` | the new node's address is a heap matter |
 | `flip_cell`, `set_deleted` | `flip_run` | |
 | `node_loc cells k` | gone from the pure layer; see `ls !! k` below | |
-| `cell_starts_at types parent l d`, `cell_ends_at` | `run_starts_at p nm k d`, `run_ends_at p nm k d`: the `k`-th run of root `nm` | the type is named, the node is indexed |
+| `cell_starts_at types parent l d`, `cell_ends_at` | `run_starts_at p parent k d`, `run_ends_at p parent k d`: the `k`-th run of the type at `parent` | the node is indexed, not addressed |
 | `fresh_loc l types` | heap layer only | |
-| `pool_cell_covers types c d` | `pool_run_covers p nm k d` | |
+| `pool_cell_covers types c d` | `pool_run_covers p parent k d` | |
 | `origins_linked cells arr input lft rgt` | `origins_resolved runs arr input kL kR` (cursor indices only) | the locs `lft` / `rgt` come from `ls !! kL`, `ls !! kR` in the spec |
 | `integrate_splice cells arr item_l run parent cells' arr'` | `integrate_splice runs arr run runs' arr'` | the address of the new node is a heap fact |
-| `repair_parent bind opn ocL ocR p_t`, `origins_split`, `origins_covered` | over root names and run indices | |
+| `repair_parent bind opn ocL ocR p_t`, `origins_split`, `origins_covered` | over the type's address and run indices (`ic_parent c` becomes "the type whose list holds the run") | |
 | `split_types_update_rel`, `repair_types_update_rel`, `delete_types_update_rel`, `cells_within`, `live_refine`, `dead_chars_kept`, `ids_tombstoned`, `delete_set_tombstoned` | same over `pool` / `list ItemRun` | bodies lose the `ic_loc ≠ ic_loc w` clauses, which become "index ≠ k" |
 
 ### 2.2 Heap layer: the location list
@@ -107,9 +109,9 @@ Fixpoint own_dll (dq : dfrac) (l last prev next : loc)
 (* ytype/heap.v *)
 Definition own_ytype (parent : loc) (dq : dfrac) (ls : list loc) (tm : type_model) : iProp Σ := …
 
-(* store/heap.v: the pool's heap side, keyed like the pure pool *)
-Definition own_type_pool (dq : dfrac) (bind : gmap P loc) (locs : gmap P (list loc)) (p : pool) : iProp Σ :=
-  [∗ map] nm ↦ tm ∈ p, ∃ parent ls, ⌜bind !! nm = Some parent⌝ ∗ ⌜locs !! nm = Some ls⌝ ∗ own_ytype parent dq ls tm.
+(* store/heap.v: the pool's heap side; [locs] holds each type's node addresses *)
+Definition own_type_pool (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
+  [∗ map] parent ↦ tm ∈ p, ∃ ls, ⌜locs !! parent = Some ls⌝ ∗ own_ytype parent dq ls tm.
 ```
 
 `own_item_node l dq input deleted prev` is the item-node predicate of the
@@ -127,20 +129,20 @@ bundled as `locs_wf locs p`, living in `own_type_pool`, not in `pool_invs`.
 A helper that returns a node names it through the location list:
 
 ```coq
-Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (bind locs) (p : pool) :
+Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (locs) (p : pool) :
   pool_invs p ->
-  {{{ own_store_items s locs p ∗ own_type_pool (DfracOwn 1) bind locs p }}}
+  {{{ own_store_items s locs p ∗ own_type_pool (DfracOwn 1) locs p }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store_items s locs p ∗ own_type_pool (DfracOwn 1) bind locs p ∗
-      ⌜if ok then ∃ nm k, pool_run_covers p nm k (toYjsId idv) ∧ locs !! nm ≫= (.!! k) = Some l
-       else ∀ nm k, ¬ pool_run_covers p nm k (toYjsId idv)⌝ }}}.
+      own_store_items s locs p ∗ own_type_pool (DfracOwn 1) locs p ∗
+      ⌜if ok then ∃ parent k, pool_run_covers p parent k (toYjsId idv) ∧ locs !! parent ≫= (.!! k) = Some l
+       else ∀ parent k, ¬ pool_run_covers p parent k (toYjsId idv)⌝ }}}.
 ```
 
 The pure part (`pool_run_covers`, `pool_invs`, `split_runs`, …) never
 mentions `locs`; the heap part relates indices to addresses only through
-`locs`. `wp_store__splitNode` returns `rloc` with `locs' = insert_at nm (k+1) rloc locs`
-and `p' = split at (nm, k, o)`; `wp_Store__Integrate` takes the two cursor
+`locs`. `wp_store__splitNode` returns `rloc` with `locs' = insert_at parent (k+1) rloc locs`
+and `p' = split at (parent, k, o)`; `wp_Store__Integrate` takes the two cursor
 indices and the item's address, and returns `locs'` / `p'`.
 
 The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
@@ -156,10 +158,10 @@ The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
    `NoDup` of locations, `split_cells cells k o r = …` projects to `split_runs`).
    Nothing else changes; the new theory is checked in isolation.
    Files: `item/model.v`, `item/value.v`, `store/value_cells.v`, `store/value_split.v`.
-2. **The pool keyed by name.** Replace `types : gmap loc type_state` by
-   `p : pool` plus `bind` (already there) and `locs`; `own_type_pool`,
+2. **The location map.** Replace `types : gmap loc type_state` by
+   `p : pool` (same keys, loc-free values) plus `locs`; `own_type_pool`,
    `own_item_map` (`ic_loc <$> client_run` becomes the client's sublist of `locs`),
-   `own_store_items`, `own_store_core` take `(bind, locs, p)`. Specs of the
+   `own_store_items`, `own_store_core` take `(locs, p)`. Specs of the
    internal helpers are restated in the 2.3 shape; proofs keep their cell
    lists through `cell_run` / `ic_loc` projections until stage 3.
    Files: `store/heap.v`, every `store/*.v` WP file, `text/Insert.v`,
@@ -190,13 +192,12 @@ not stack on eight unmerged branches.
 
 ## 5. Open questions for the owner
 
-- Keying the pool by root name (section 2.1) is a bigger step than the
-  `ItemRun` split itself; it is what removes the last `loc` from the pure
-  pool (`gmap loc type_state`). If the key should stay the yType address,
-  `pool := gmap loc type_model` still works, and only `run_starts_at` /
-  `cell_ends_at` keep a `parent : loc` argument.
+- The pool keeps the yType address as its key (decided 2026-08-22: the key
+  only names the type, no pure lemma computes with it). Keying it by root
+  name instead would remove the last `loc` from the pure pool but costs a
+  registry rewrite for no proof benefit.
 - `own_item_map`'s per-client slices store node addresses in clock order,
-  so its model is naturally a list of addresses; with `locs` keyed by root
+  so its model is naturally a list of addresses; with `locs` keyed by type
   and `client_runs` by client, the slice's model is `client_locs locs p client`
   (a derived list), which is fine but means the item map's model is
   computed, not stored.
