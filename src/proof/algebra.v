@@ -12,6 +12,19 @@ From New.proof Require Import core.
 From New.proof Require Import tok_set.
 From iris.algebra Require Import auth gmap gset.
 
+(** Membership in a concatenation: some member list holds the element. *)
+Lemma list_elem_of_concat {D : Type} (x : D) (ls : list (list D)) :
+  x ∈ concat ls <-> ∃ l, x ∈ l ∧ l ∈ ls.
+Proof.
+  induction ls as [| l0 ls IH]; simpl.
+  - rewrite elem_of_nil. split; [done | move=> [l [_ Hl]]; by rewrite elem_of_nil in Hl].
+  - rewrite elem_of_app IH. split.
+    + move=> [Hx | [l [Hx Hl]]].
+      * exists l0. split; [exact Hx | apply elem_of_cons; by left].
+      * exists l. split; [exact Hx | apply elem_of_cons; by right].
+    + move=> [l [Hx Hl]]. apply elem_of_cons in Hl as [-> | Hl]; [by left | right; by exists l].
+Qed.
+
 (* A generic [ghost_map] grow-and-persist step, in its own section so it depends
    only on a [ghost_mapG] instance (issue #54): the certificate proof in
    [store/applyUpdate], whose section lacks the store's [seq_inG] / [ftypes_inG],

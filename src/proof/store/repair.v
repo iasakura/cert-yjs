@@ -80,33 +80,6 @@ Proof using Type*.
   iApply "HΦ". iFrame "Htypesf Hmap".
 Qed.
 
-(** A freshly-allocated [yType] location is absent from the registry: its
-    exclusive [p ↦] clashes with any registered type's own [parent ↦]. This is
-    what makes [getOrCreateYType]'s miss branch (issue #54) grow [types] at a
-    genuinely fresh key. Returns the resources so the caller keeps them. *)
-Lemma types_loc_fresh (p : loc) (cells0 : list item_cell) (arr0 : list (YjsItem A))
-    (types : gmap loc type_state) :
-  own_ytype_cells p (DfracOwn 1) cells0 arr0 -∗
-  (own_type_pool (DfracOwn 1) types) -∗
-  own_ytype_cells p (DfracOwn 1) cells0 arr0 ∗
-  (own_type_pool (DfracOwn 1) types) ∗
-  ⌜types !! p = None⌝.
-Proof.
-  iIntros "Hnew Htypes".
-  destruct (types !! p) as [ts|] eqn:Hp0; last by iFrame.
-  iExFalso.
-  iDestruct (big_sepM_lookup_acc _ _ p _ Hp0 with "Htypes") as "[[Hc _] _]".
-  iDestruct "Hnew" as (yt tl) "(Hpp & _)".
-  iDestruct "Hc" as (yt' tl') "(Hpp' & _)".
-  iDestruct (typed_pointsto_split with "Hpp") as "(Hs1 & _)".
-  iDestruct (typed_pointsto_split with "Hpp'") as "(Hs2 & _)".
-  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hs1".
-  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hs2".
-  iDestruct "Hs1" as "[Hs1 _]". iDestruct "Hs2" as "[Hs2 _]".
-  iCombine "Hs1 Hs2" gives %[Hvalid _].
-  by destruct (exclusive_l (DfracOwn 1) (DfracOwn 1) Hvalid).
-Qed.
-
 (** [store.getOrCreateYType], creation (miss) case (issue #54): the name is NOT
     bound, so the method allocates a fresh empty [yType] via [newYType],
     registers it under [nm], and returns it. The registry map grows by
@@ -135,7 +108,7 @@ Proof using Type*.
   wp_auto.
   wp_apply wp_newYType. iIntros (p) "Hnew".
   wp_auto.
-  iDestruct (types_loc_fresh p [] [] types with "Hnew Htypes") as "(Hnew & Htypes & %Hfresh)".
+  iDestruct (own_type_pool_fresh_type p [] [] types with "Hnew Htypes") as "(Hnew & Htypes & %Hfresh)".
   wp_apply (wp_map_insert with "Hmap"). iIntros "Hmap".
   wp_auto.
   iApply ("HΦ" $! p). iFrame "Htypesf Hmap".
@@ -150,20 +123,6 @@ Qed.
    may address ANY char of their covering cells' runs; the clean-end /
    clean-start splits put them on run boundaries. The two splits are
    sequenced by the wrappers' transport records. *)
-
-(** Loc-NoDup makes the location injective on the pool. *)
-Lemma pool_loc_inj (pool : list item_cell) :
-  NoDup (ic_loc <$> pool) ->
-  ∀ x y, x ∈ pool → y ∈ pool → ic_loc x = ic_loc y → x = y.
-Proof.
-  move=> Hnd x y Hx Hy Hxy.
-  apply list_elem_of_lookup_1 in Hx as [ix Hix].
-  apply list_elem_of_lookup_1 in Hy as [iy Hiy].
-  have Hlix : (ic_loc <$> pool) !! ix = Some (ic_loc y) by (rewrite list_lookup_fmap Hix /= Hxy //).
-  have Hliy : (ic_loc <$> pool) !! iy = Some (ic_loc y) by (rewrite list_lookup_fmap Hiy //).
-  have Hijeq : ix = iy := NoDup_lookup _ _ _ _ Hnd Hlix Hliy.
-  congruence.
-Qed.
 
 Lemma repair_types_update_rel_refl (types : gmap loc type_state) :
   repair_types_update_rel types types.
@@ -294,7 +253,7 @@ Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hitemsf & Hitemmap & Htypesf & Htypesmap & Htypes) HΦ".
   iDestruct "Hlinked" as (itemVal oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrunc)".
   iNamed "Hraw".
-  iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds0.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds0.
   have Hpinvs : pool_invs types by (split_and!; assumption).
 
   wp_method_call. wp_call. wp_call. wp_auto.
@@ -343,7 +302,7 @@ Proof using Type*.
       destruct Hpinvs1 as (Hfits1 & Hnodup1 & Hrangedisj1 & Horiginclk1).
       have Hlocne : ic_loc cL1 ≠ ic_loc cR1.
       { move=> Heqloc.
-        have Hceq : cL1 = cR1 := pool_loc_inj (all_cells types1) Hnodup1 _ _ HcL1mem HcR1mem Heqloc.
+        have Hceq : cL1 = cR1 := pool_loc_inj (all_cells types1) _ _ Hnodup1 HcL1mem HcR1mem Heqloc.
         have HleRL : (uint.Z idvR.(yjs.id.clock') <= uint.Z idvL.(yjs.id.clock'))%Z.
         { rewrite -Hceq in HcR1lt. clear -HcR1lt HcL1end. lia. }
         have Hfire : cL = cR -> False.
@@ -352,7 +311,7 @@ Proof using Type*.
         destruct Hprov as [Hc'c | [HcRcw _]].
         - have HlocRL : ic_loc cR = ic_loc cL.
           { rewrite -Hc'c -Hceq HcL1loc //. }
-          exact (Hfire (eq_sym (pool_loc_inj (all_cells types) Hnodup _ _ HcRmem HcLmem HlocRL))).
+          exact (Hfire (eq_sym (pool_loc_inj (all_cells types) _ _ Hnodup HcRmem HcLmem HlocRL))).
         - exact (Hfire (eq_sym HcRcw)). }
       have Hpinvs1' : pool_invs types1 by (split_and!; assumption).
       wp_apply (wp_store__splitAtAndGetRight_inv s mref idvR types1 cR1
@@ -396,7 +355,7 @@ Proof using Type*.
       * (* Parent::None: borrow from the resolved left neighbour *)
         iDestruct "HisPN" as "%HpN".
         rewrite (bool_decide_eq_true_2 (pname = null) HpN) /=.
-        iDestruct (types_cell_acc_gen types2 cL1 HcL2mem with "Htypes") as "Hacc".
+        iDestruct (own_type_pool_acc types2 cL1 HcL2mem with "Htypes") as "Hacc".
         iNamed "Hacc".
         iDestruct (typed_pointsto_not_null with "Hval") as %HnnCL.
         iEval (rewrite HcL1loc) in "Hval".
@@ -458,7 +417,7 @@ Proof using Type*.
       * (* Parent::None: borrow from the resolved left neighbour *)
         iDestruct "HisPN" as "%HpN".
         rewrite (bool_decide_eq_true_2 (pname = null) HpN) /=.
-        iDestruct (types_cell_acc_gen types1 cL1 HcL1mem with "Htypes") as "Hacc".
+        iDestruct (own_type_pool_acc types1 cL1 HcL1mem with "Htypes") as "Hacc".
         iNamed "Hacc".
         iDestruct (typed_pointsto_not_null with "Hval") as %HnnCL.
         iEval (rewrite HcL1loc) in "Hval".
@@ -539,7 +498,7 @@ Proof using Type*.
         rewrite (bool_decide_eq_true_2 (pname = null) HpN) /=.
         have Hfl' : (itemVal <| yjs.item.right' := rl |>).(yjs.item.left') = null
           by simpl; exact Hfl.
-        iDestruct (types_cell_acc_gen types2 cR2 HcR2mem with "Htypes") as "Hacc".
+        iDestruct (own_type_pool_acc types2 cR2 HcR2mem with "Htypes") as "Hacc".
         iNamed "Hacc".
         iDestruct (typed_pointsto_not_null with "Hval") as %HnnCR.
         iEval (rewrite HcR2loc) in "Hval".
@@ -691,23 +650,6 @@ Qed.
     These replace the unit-scaffold identifications (cell index = model
     index) once runs can be longer than one char. ---- *)
 
-(** The id of the [o]-th char of a chained run: same client, head clock + o. *)
-Lemma run_wf_char_id (r : list (YjsItem A)) (o : nat) (x : YjsItem A) :
-  run_wf r -> r !! o = Some x ->
-  item_id x = MkYjsId (clientId (item_id (hd inhabitant r)))
-                      (clock (item_id (hd inhabitant r)) + o).
-Proof.
-  move=> [Hne Hstep].
-  elim: o x => [| o IH] x Hx.
-  - destruct r as [| h t]; first done.
-    move: Hx => /= [= <-]. rewrite Nat.add_0_r. by destruct (item_id h).
-  - have Hprev : is_Some (r !! o).
-    { apply lookup_lt_is_Some. apply lookup_lt_Some in Hx. lia. }
-    destruct Hprev as [y Hy].
-    have [Hid _] := Hstep o y x Hy Hx.
-    rewrite Hid (IH y Hy) /=. f_equal. lia.
-Qed.
-
 (** The char of a chained run carrying a covered id: at offset
     clock originId - head clock. *)
 Lemma run_wf_char_at_clock (r : list (YjsItem A)) (originId : YjsId) :
@@ -742,25 +684,6 @@ Proof.
     rewrite /= run_flatten_cons length_app. lia.
 Qed.
 
-(** Converse: the [off]-th char of cell [ci] sits at prefix-sum + [off]. *)
-Lemma run_flatten_lookup_of_cell (cells : list item_cell) (ci off : nat)
-    (c : item_cell) (it : YjsItem A) :
-  cells !! ci = Some c -> ic_run c !! off = Some it ->
-  run_flatten cells !! (length (run_flatten (take ci cells)) + off)%nat = Some it.
-Proof.
-  move=> Hci Hoff.
-  have Hsplit := take_drop_middle cells ci c Hci.
-  have Hdec : run_flatten cells
-            = run_flatten (take ci cells) ++ ic_run c ++ run_flatten (drop (S ci) cells).
-  { transitivity (run_flatten (take ci cells ++ c :: drop (S ci) cells)).
-    - by rewrite Hsplit.
-    - by rewrite run_flatten_app run_flatten_cons. }
-  rewrite Hdec lookup_app_r; last lia.
-  replace (length (run_flatten (take ci cells)) + off -
-           length (run_flatten (take ci cells)))%nat with off by lia.
-  rewrite lookup_app_l; [exact Hoff | by apply lookup_lt_Some in Hoff].
-Qed.
-
 (** Under [uniqueId] the flattened position of a char is unique: any index
     holding the [off]-th char of cell [ci] IS prefix-sum + [off]. *)
 Lemma uniqueId_flatten_char_index (cells : list item_cell)
@@ -776,190 +699,6 @@ Proof.
   destruct (Nat.lt_trichotomy kn pos) as [Hlt | [Heq | Hgt]]; [| exact Heq |].
   - exact (False_ind _ (uniqueId_lookup_ne _ kn pos x x Huniq Hkn Hpos Hlt eq_refl)).
   - exact (False_ind _ (uniqueId_lookup_ne _ pos kn x x Huniq Hpos Hkn Hgt eq_refl)).
-Qed.
-
-(** Every cell of a DLL segment carries a well-formed run (pure extraction;
-    the run-aware counterpart of the unit scaffold's per-cell length pin). *)
-Lemma own_dll_runs_wf (dq : dfrac) (l last prev next : loc) (cells : list item_cell) :
-  own_dll dq l last prev next cells -∗
-  ⌜∀ c, c ∈ cells → run_wf (ic_run c)⌝.
-Proof.
-  iInduction cells as [|c0 cells] "IH" forall (l prev).
-  - iIntros "_". iPureIntro. move=> c Hc. rewrite elem_of_nil in Hc. done.
-  - iIntros "H". iNamed "H".
-    iDestruct ("IH" with "Hrest") as %Hrest.
-    iPureIntro. move=> c Hc.
-    apply elem_of_cons in Hc as [-> | Hc]; last exact (Hrest c Hc).
-    exact Hrun.
-Qed.
-
-(** Pure extractions read off the types big-sep: pool-wide run
-    well-formedness, parent discipline, the per-entry document invariant,
-    and the cells/model isomorphism. *)
-Lemma types_runs_wf2 (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ c, c ∈ all_cells types → run_wf (ic_run c)⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types, ⌜∀ c, c ∈ ty_cells ts → run_wf (ic_run c)⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(Hyt & _)".
-    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    iApply (own_dll_runs_wf with "Hdll"). }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> c Hc.
-  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
-  exact (Hall p ts Hp c Hcts).
-Qed.
-
-Lemma types_parents_all2 (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ p ts c, types !! p = Some ts → c ∈ ty_cells ts → ic_parent c = p⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types, ⌜∀ c, c ∈ ty_cells ts → ic_parent c = p⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(Hyt & _)".
-    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    by iPureIntro. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> p ts c Hp Hc. exact (Hall p ts Hp c Hc).
-Qed.
-
-Lemma types_arr_inv2 (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ p ts, types !! p = Some ts -> YjsArrInvariant (ty_arr ts)⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types, ⌜YjsArrInvariant (ty_arr ts)⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(_ & %Hi)". by iPureIntro. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
-Qed.
-
-Lemma types_repr_all2 (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ p ts, types !! p = Some ts -> cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types,
-      ⌜cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(Hyt & _)".
-    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    by iPureIntro. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
-Qed.
-
-Lemma types_entry_pures2 (types : gmap loc type_state) (p : loc) (ts : type_state) :
-  types !! p = Some ts ->
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts) ∧
-   (∀ c, c ∈ ty_cells ts -> ic_parent c = p)⌝.
-Proof.
-  move=> Hp. iIntros "Htypes".
-  iDestruct (big_sepM_lookup_acc _ _ p ts Hp with "Htypes") as "[(Hyt & _) _]".
-  iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  iPureIntro. split; [exact Hrepr | exact Hcpar].
-Qed.
-(** [store_inv] is exactly [own_store] with the model existentially closed.
-    The forward direction restates the per-client counter clause at the
-    model; the backward direction re-derives the [types]-level and the W64
-    cell-level counter bounds from the model-level one, via the registry
-    coherence and the DLL id-bound pins. A lock-holding caller uses this to
-    trade the lock body for [own_store] (feeding a store-state spec such as
-    [wp_store__applyUpdate]) and back. The pending buffer (issue #40) is
-    threaded through unchanged. *)
-Lemma store_inv_own_store (s_loc : loc) (γs : store_names) (γh : history_names) :
-  store_inv s_loc γs γh ⊣⊢
-  ∃ (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))),
-    own_store s_loc γs γh c h m pend.
-Proof.
-  iSplit.
-  - iIntros "H". iNamed "H". iNamed "Hexcl". iNamed "Hro".
-    have [Hbindtypes [Hbindinj [Htypesbound [Hmtypes Hmdom]]]] := Hregcoh.
-    iExists (uint.nat client), h, m, pend.
-    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, pdel, types, bind, acc.
-    iFrame "∗#".
-    iPureIntro. split_and!.
-    + reflexivity.
-    + exact Hpendroot.
-    + exact Hpendbnd.
-    + exact Hregcoh.
-    + exact Hhcoh.
-    + (* the model-level counter from the [types]-level one *)
-      move=> t x Hx Hcx.
-      have Hne : doc_model_get m t ≠ [].
-      { move=> Heq. move: Hx. rewrite Heq elem_of_nil. done. }
-      destruct (Hmdom t Hne) as (nm & p & -> & Hbnm).
-      destruct (Hbindtypes nm p Hbnm) as [ts Hts].
-      have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
-      rewrite Hdg in Hx.
-      exact (Hctr p ts x Hts Hx Hcx).
-    + exact Hpool.
-    + exact Hacccoh.
-  - iIntros "H". iDestruct "H" as (c h m pend) "H". iNamed "H". subst c.
-    iDestruct (types_repr_all2 with "Htypes") as %Hreprall.
-    iDestruct (types_cells_id_bounds2 with "Htypes") as %Hcellbnd.
-    have [Hbindtypes [Hbindinj [Htypesbound [Hmtypes Hmdom]]]] := Hregcoh.
-    have [Hrunfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
-    (* the [types]-level counter from the model-level one *)
-    have Hctrt : ∀ parent ts x, types !! parent = Some ts -> x ∈ ty_arr ts ->
-        clientId (item_id x) = uint.nat client -> (clock (item_id x) < uint.nat k)%nat.
-    { move=> parent ts x Hts Hx Hcx.
-      destruct (Htypesbound parent (ex_intro _ ts Hts)) as [nm Hbnm].
-      have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm parent ts Hbnm Hts.
-      apply (Hctr (RootId nm) x); [by rewrite Hdg | exact Hcx]. }
-    (* the W64 cell-level shadow, via the id-bound pins *)
-    iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfall0.
-    have Hcellctr : ∀ c0, c0 ∈ all_cells types -> cell_client c0 = client ->
-        (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z k)%Z.
-    { move=> c0 Hc0 Hcc.
-      have Hc0m := Hc0. apply all_cells_elem_of in Hc0m.
-      destruct Hc0m as (p & ts & Hts & Hcts).
-      have Hwf : run_wf (ic_run c0) := Hrunwfall0 c0 Hc0.
-      have Hlen1 : (1 <= length (ic_run c0))%nat.
-      { destruct (ic_run c0) eqn:Hrc; [exact (False_ind _ (proj1 Hwf eq_refl)) | simpl; lia]. }
-      destruct (lookup_lt_is_Some_2 (ic_run c0) (length (ic_run c0) - 1)%nat ltac:(lia)) as [xl Hxl].
-      have Hxlid := run_wf_char_id _ _ _ Hwf Hxl.
-      apply list_elem_of_lookup_1 in Hcts as [ci Hci].
-      have Hxlmem : xl ∈ ty_arr ts.
-      { rewrite (Hreprall p ts Hts).
-        apply (list_elem_of_lookup_2 _
-                 (length (run_flatten (take ci (ty_cells ts))) + (length (ic_run c0) - 1))%nat).
-        exact (run_flatten_lookup_of_cell (ty_cells ts) ci _ c0 xl Hci Hxl). }
-      have [Hcb Hkb] := Hcellbnd c0 Hc0.
-      have Hceq : clientId (item_id xl) = uint.nat client.
-      { move: Hcc. rewrite /cell_client /run_head. move=> Hcc.
-        have Hz : uint.Z (W64 (clientId (item_id (hd inhabitant (ic_run c0))))) = uint.Z client
-          by rewrite Hcc.
-        have Hcb' : (Z.of_nat (clientId (item_id (hd inhabitant (ic_run c0)))) < 2^64)%Z := Hcb.
-        have Hcl2 : clientId (item_id (hd inhabitant (ic_run c0))) = uint.nat client.
-        { clear -Hz Hcb'. word. }
-        rewrite Hxlid. exact Hcl2. }
-      have Hlt := Hctrt p ts xl Hts Hxlmem Hceq.
-      rewrite Hxlid in Hlt.
-      have Hlt2 : (clock (item_id (hd inhabitant (ic_run c0))) + (length (ic_run c0) - 1)
-                   < uint.nat k)%nat := Hlt.
-      rewrite /run_head in Hkb.
-      have Hlt3 : (clock (item_id (hd inhabitant (ic_run c0))) + length (ic_run c0)
-                   <= uint.nat k)%nat.
-      { clear -Hlt2 Hlen1. lia. }
-      rewrite /cell_clock /run_head. clear -Hlt3 Hkb. word. }
-    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
-    iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".
-    iExists acc.
-    iFrame "Hclient Hclientpin Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hpendcert HtypesAuth Hbinds Hhist Hacc Hdelete_set".
-    iPureIntro. split_and!;
-      [exact Hpendroot | exact Hpendbnd | exact Hctrt | exact Hcellctr | exact Hpool
-      | exact Hhcoh | exact Hregcoh | exact Hacccoh].
 Qed.
 
 
@@ -985,7 +724,7 @@ Lemma wp_store__hasNode (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
 Proof using Type*.
   move=> Hagree Hrunfits Hnodup Hrangedisj.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
-  iDestruct (types_cells_id_bounds2 with "Htypes") as %Hcellbnd.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hcellbnd.
   (* the per-cell W64 <-> nat covering bridge *)
   have Hbridge : ∀ c, c ∈ all_cells types ->
       ((cell_client c = idv.(yjs.id.clientId') ∧
@@ -1430,14 +1169,14 @@ Proof using Type*.
   have Hdgj : doc_model_get m (RootId nm) = arrj0 := Hmtypes nm p _ Hbnm Htsj.
   set (arrj := doc_model_get m (RootId nm)) in *.
   rewrite -Hdgj in Htsj.
-  iDestruct (types_arr_inv2 with "Htypes") as %Harrinvs.
+  iDestruct (own_type_pool_arr_inv with "Htypes") as %Harrinvs.
   have Hinvj : YjsArrInvariant arrj := Harrinvs p _ Htsj.
   destruct (integrate_some input arrj newItem Hinvj Htoit) as [arrinput Hintginput].
   destruct (integrate_finds input arrj arrinput Hintginput) as (leftIdx & rightIdx & HfindL & HfindR).
-  iDestruct (types_entry_pures2 types p _ Htsj with "Htypes") as %(Hreprj & Hcparj).
+  iDestruct (own_type_pool_entry types p _ Htsj with "Htypes") as %(Hreprj & Hcparj).
   simpl in Hreprj, Hcparj.
-  iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfall.
-  iDestruct (types_parents_all2 with "Htypes") as %Hparall.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwfall.
+  iDestruct (own_type_pool_parents with "Htypes") as %Hparall.
   (* uniform repair witnesses: present origins resolve to the covering cell in
      this type's own cells (that is where [toItem]'s find landed) *)
   have Hwits : ∃ (ocL ocR : option item_cell),
@@ -1559,7 +1298,7 @@ Proof using Type*.
       | reflexivity | reflexivity | reflexivity | reflexivity
       | exact Hunonempty]. }
   (* general-repair premises (issue #28 U1) *)
-  iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds0.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds0.
   have Huniqj := yai_unique _ Hinvj.
   have HfLpj : findPtrIdx (origin newItem) arrj = Some leftIdx.
   { rewrite -(toitem_lemmas.findLeftIdx_findPtrIdx_eq input newItem arrj Huniqj Htoit). exact HfindL. }
@@ -1620,9 +1359,9 @@ Proof using Type*.
   have Hts0eq2 : ts0e = MkTypeState cellsj arrj by congruence.
   rewrite Hts0eq2 /= in Harr2p Hflat2p.
   destruct ts2e as [cellsj2 arrj2]. simpl in Harr2p, Hflat2p. subst arrj2.
-  iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfall2.
-  iDestruct (types_parents_all2 with "Htypes") as %Hparall2.
-  iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds2.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwfall2.
+  iDestruct (own_type_pool_parents with "Htypes") as %Hparall2.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds2.
   have Hcparj2 : ∀ c, c ∈ cellsj2 -> ic_parent c = p.
   { move=> c Hc. exact (Hparall2 p _ c Htsj2 Hc). }
   (* the range-form freshness transports through sub-range provenance *)
@@ -1772,7 +1511,7 @@ Proof using Type*.
       + rewrite Hrgtnull /node_loc. case_decide; [| lia].
         rewrite Nat2Z.id lookup_ge_None_2 //. }
   iDestruct (linked_item_run_fresh2 with "Hlinked Htypes") as %Hfreshloc.
-  iDestruct (types_repr_all2 with "Htypes") as %Hreprallj.
+  iDestruct (own_type_pool_repr with "Htypes") as %Hreprallj.
   wp_auto.
   have Hidnit : item_id newItem = in_id input := commutativity.toItem_id input arrj newItem Htoit.
   have Hgmaxj : ∀ c0, c0 ∈ all_cells types2 → cell_client c0 = W64 (clientId (item_id newItem)) →
@@ -1866,7 +1605,7 @@ Proof using Type*.
     rewrite big_sepM_insert; last apply lookup_delete_eq.
     iFrame "Htypesrest". simpl. iFrame "Htext2".
     iPureIntro. exact Hinv2. }
-  iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfpost.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwfpost.
   wp_auto.
   iApply ("HΦ" $! (<[p := MkTypeState cells'' arr2]> types2)).
   iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
@@ -2118,7 +1857,7 @@ Proof using Type*.
   { rewrite /own_type_pool -insert_delete_eq.
     rewrite big_sepM_insert; last apply lookup_delete_eq.
     iFrame "Htypesrest". simpl. iFrame "Htext2". iPureIntro. exact Hinv2. }
-  iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfpost.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwfpost.
   wp_auto.
   iApply ("HΦ" $! (<[p := MkTypeState cells'' arr2]> types2) (<[nm := p]> bind)).
   iFrame "Hitemsf Hitemmap Htypesf Htypesmap Htypes".

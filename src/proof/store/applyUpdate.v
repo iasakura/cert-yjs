@@ -195,9 +195,9 @@ Proof using Type*.
   (* the INITIAL types' run structure, extracted while [Htypes] is over [types]
      (pure, non-consuming): needed in the ready branch to bound an original
      cell's clock range below a fresh batch item via [expand_inputs_arr_fresh]. *)
-  iDestruct (types_repr_all2 with "Htypes") as %Hreprall_init.
-  iDestruct (types_runs_wf2 with "Htypes") as %Hrunwf_init.
-  iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbnds_init.
+  iDestruct (own_type_pool_repr with "Htypes") as %Hreprall_init.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwf_init.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds_init.
   wp_method_call. wp_call. wp_call. wp_auto.
   (* ----- phase A: pending := pending ++ structs ----- *)
   iDestruct (own_slice_len with "Hslin") as %[Hinlen Hinlen0].
@@ -458,8 +458,8 @@ Proof using Type*.
         (* registry coherence for the current [types_c] / [bind_c] is carried by
            the loop invariant ([Hbindtypesc] / [Htypesboundc]), since the drain
            grows the registry as it creates fresh root types (issue #54). *)
-        iDestruct (types_repr_all2 with "Htypes") as %Hreprallc.
-        iDestruct (types_runs_wf2 with "Htypes") as %Hrunwfc.
+        iDestruct (own_type_pool_repr with "Htypes") as %Hreprallc.
+        iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwfc.
         have Hagreec : ∀ d : YjsId, doc_model_has m_c d = true <->
             ∃ c0, c0 ∈ all_cells types_c ∧ cell_covers c0 d.
         { move=> d.
@@ -554,7 +554,7 @@ Proof using Type*.
              := Hkb1 (targetType, input) Hpending0in.
            have Hib : uint.Z (W64 (clock (in_id input))) = Z.of_nat (clock (in_id input))
              := uint_W64_nat_bound (clock (in_id input)) (length (in_content input)) Hnwc.
-           iDestruct (types_cells_id_bounds2 with "Htypes") as %Hbndsc.
+           iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbndsc.
            (* the current item's flat position in [applied] *)
            have HKlk : applied !! (length (appliedj ++ appacc)) = Some (targetType, input).
            { rewrite Happdec (app_assoc appliedj appacc) lookup_app_r; last done.
@@ -1838,10 +1838,11 @@ Lemma wp_store__applyUpdate (s_loc : loc) (sl : slice.t) (dq : dfrac)
 Proof using Type*.
   move=> Hnowrapb Hrooted.
   iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertsin) HΦ".
-  iNamed "Hstore".
+  iNamed "Hstore". iNamed "Hheap".
   have [Hrunfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
-  have [Hbindtypes [Hbindinj [Htypesbound [Hmtypes Hmdom]]]] := Hregcoh.
-  iDestruct (types_arr_inv2 with "Htypes") as %Htsinv.
+  have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
+  have [Hmtypes Hmdom] := Hregmodel.
+  iDestruct (own_type_pool_arr_inv with "Htypes") as %Htsinv.
   have Harrinv : ∀ t : TId, YjsArrInvariant (doc_model_get m t).
   { move=> t. destruct (doc_model_get m t) as [|x l] eqn:Hdg.
     - exact YjsArrInvariant_empty.
@@ -1946,13 +1947,28 @@ Proof using Type*.
       (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z.
   { move=> typedInput Hin. exact (Hkb1c typedInput (Hrestsub typedInput Hin)). }
   (* the counter clause survives: nothing applied is ours *)
-  have Hctr' : ∀ (t : TId) x, x ∈ doc_model_get m' t -> clientId (item_id x) = c ->
+  have Hctrm : ∀ (t : TId) x, x ∈ doc_model_get m t -> clientId (item_id x) = c ->
+      (clock (item_id x) < uint.nat k)%nat.
+  { move=> t x Hx Hcx.
+    have Hne : doc_model_get m t ≠ [].
+    { move=> Heq. move: Hx. rewrite Heq elem_of_nil. done. }
+    destruct (Hmdom t Hne) as (nm & p & -> & Hbnm).
+    destruct (Hbindtypes nm p Hbnm) as [ts Hts].
+    rewrite (Hmtypes nm p ts Hbnm Hts) in Hx.
+    exact (Hctr p ts x Hts Hx Hcx). }
+  have Hctrm' : ∀ (t : TId) x, x ∈ doc_model_get m' t -> clientId (item_id x) = c ->
       (clock (item_id x) < uint.nat k)%nat.
   { move=> t x Hx Hcx.
     destruct (ValidReplay_prov (expand_inputs applied) m m' Hvr t x Hx)
       as [Hold | (i & typedInput & Hi & Hid)].
-    - exact (Hctr t x Hold Hcx).
+    - exact (Hctrm t x Hold Hcx).
     - exfalso. apply (Hnoc typedInput (list_elem_of_lookup_2 _ _ _ Hi)). by rewrite -Hid. }
+  have Hctr' : ∀ parent ts x, types' !! parent = Some ts -> x ∈ ty_arr ts ->
+      clientId (item_id x) = c -> (clock (item_id x) < uint.nat k)%nat.
+  { move=> parent ts x Hts Hx Hcx.
+    destruct (Htypesbound' parent (ex_intro _ ts Hts)) as [nm Hbnm].
+    rewrite -(Hmtypes' nm parent ts Hbnm Hts) in Hx.
+    exact (Hctrm' (RootId nm) x Hx Hcx). }
   (* no input is lost: each is delivered into the new history (applied this
      batch, or already present) or buffered by id in the new pending [rest'] *)
   have Hnoloss : ∀ x, x ∈ pend ++ inputs ->
@@ -2006,22 +2022,22 @@ Proof using Type*.
                Hmono' Hilr' with "Hdelete_set") as "Hdelete_set".
   iModIntro. iApply ("HΦ" $! applied rest' m').
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
-  iSplitL "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend' Hpddelf Hpddel Hseq Htypes HtypesAuth Hhist Hacc Hdelete_set";
+  have Hpool' : pool_invs types'.
+  { rewrite /pool_invs. split_and!; [exact Hfits' | exact Hlocdup' | exact Hrangedisj' | exact Horiginclk']. }
+  have Hreg' : registry_coh bind' types'.
+  { rewrite /registry_coh. split_and!; [exact Hbindtypes' | exact Hbindinj' | exact Htypesbound']. }
+  have Hregmodel' : registry_models m' bind' types'.
+  { rewrite /registry_models. split; [exact Hmtypes' | exact Hmdom']. }
+  iDestruct (own_store_heap_intro _ _ _ _ _ _ _ _ _ Hpool' Hreg'
+              with "Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend' Hpddelf Hpddel Htypes") as "Hheap".
+  iSplitL "Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hhist Hacc Hdelete_set";
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc | exact Hnoloss_in]).
-  iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl', pdel_sl, pdel, types', bind', acc.
-  iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend' Hpddelf Hpddel Hseq Htypes HtypesAuth Hbinds' Hhist Hacc Hdelete_set".
+  iExists client, k, deletedSetVal, pdel, types', bind', acc.
+  iFrame "Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set".
   iFrame "Hpendcert' Hclientpin".
-  iPureIntro. split_and!.
-  - exact Hclientc.
-  - exact Hpendroot'.
-  - exact Hpendbnd'.
-  - rewrite /doc_registry_coh.
-    split_and!; [exact Hbindtypes' | exact Hbindinj' | exact Htypesbound'
-                 | exact Hmtypes' | exact Hmdom'].
-  - exact Hcoh'.
-  - exact Hctr'.
-  - rewrite /pool_invs. split_and!; [exact Hfits' | exact Hlocdup' | exact Hrangedisj' | exact Horiginclk'].
-  - exact Hacccoh'.
+  iPureIntro. split_and!;
+    [exact Hclientc | exact Hpendroot' | exact Hpendbnd' | exact Hregmodel' | exact Hcoh'
+    | exact Hctr' | exact Hacccoh'].
 Qed.
 
 End store_update.

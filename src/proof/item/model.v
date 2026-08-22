@@ -14,7 +14,7 @@
     - [run_wf] is preserved by [take] and [drop] ([run_wf_take],
       [run_wf_drop]): splitting a node leaves two runs.
     - inside a run the [o]-th item's clock is the head's plus [o] and its right
-      origin is the head's ([run_wf_lookup_clock],
+      origin is the head's ([run_wf_lookup_clock], [run_wf_char_id],
       [run_wf_lookup_rightOrigin]).
     - [run_wf] implies [item/run_theory]'s [run_step] ([run_wf_run_step]).
     - [explode] preserves length and is the singleton list on a one-char
@@ -174,6 +174,23 @@ Proof.
     rewrite lookup_drop in Hx. rewrite lookup_drop in Hy.
     replace (o + S k)%nat with (S (o + k))%nat in Hy by lia.
     exact (Hstep (o + k)%nat x y Hx Hy).
+Qed.
+
+(** The id of the [o]-th char of a chained run: same client, head clock + o. *)
+Lemma run_wf_char_id (r : list (YjsItem A)) (o : nat) (x : YjsItem A) :
+  run_wf r -> r !! o = Some x ->
+  item_id x = MkYjsId (clientId (item_id (hd inhabitant r)))
+                      (clock (item_id (hd inhabitant r)) + o).
+Proof.
+  move=> [Hne Hstep].
+  elim: o x => [| o IH] x Hx.
+  - destruct r as [| h t]; first done.
+    move: Hx => /= [= <-]. rewrite Nat.add_0_r. by destruct (item_id h).
+  - have Hprev : is_Some (r !! o).
+    { apply lookup_lt_is_Some. apply lookup_lt_Some in Hx. lia. }
+    destruct Hprev as [y Hy].
+    have [Hid _] := Hstep o y x Hy Hx.
+    rewrite Hid (IH y Hy) /=. f_equal. lia.
 Qed.
 
 End item_model.
