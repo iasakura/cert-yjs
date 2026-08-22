@@ -221,12 +221,12 @@ Lemma wp_store__repair_split (s item_l pname : loc)
             end
   end ->
   {{{ is_pkg_init yjs ∗
-      own_linked_item_run item_l input null null null ∗
+      own_linked_item item_l input null null null ∗
       is_parent_name pname opn ∗
       own_store_core s types bind }}}
     s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
   {{{ (lft rgt : loc) (types2 : gmap loc type_state), RET #();
-      own_linked_item_run item_l input p_t lft rgt ∗
+      own_linked_item item_l input p_t lft rgt ∗
       own_store_core s types2 bind ∗
       ⌜repair_types_update_rel types types2⌝ ∗
       ⌜match in_originId input, ocL with
@@ -567,12 +567,12 @@ Qed.
   in_rightOriginId input = None ->
   bind !! nm = None ->
   {{{ is_pkg_init yjs ∗
-      own_linked_item_run item_l input null null null ∗
+      own_linked_item item_l input null null null ∗
       is_parent_name pname (Some nm) ∗
       own_store_core s types bind }}}
     s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
   {{{ (p : loc), RET #();
-      own_linked_item_run item_l input p null null ∗
+      own_linked_item item_l input p null null ∗
       own_store_core s (<[p := MkTypeState [] []]> types) (<[nm := p]> bind) ∗
       ⌜types !! p = None⌝ }}}.
 Proof using Type*.
@@ -1250,7 +1250,7 @@ Proof using Type*.
                 yjs.item.parent' := null;
                 yjs.item.content' := {| yjs.content.content' := updateItemVal.(yjs.updateItem.content') |};
                 yjs.item.flags' := W8 2 |}).
-  iAssert (own_linked_item_run itv input null null null) with "[Hitv]" as "Hfresh".
+  iAssert (own_linked_item itv input null null null) with "[Hitv]" as "Hfresh".
   { iExists itemVal, oleft, oright. rewrite /own_fresh_item_raw.
     iFrame "Hitv HisL HisR". iPureIntro.
     split_and!;
@@ -1473,7 +1473,7 @@ Proof using Type*.
       + rewrite take_ge; last lia. rewrite -Hreprj'. lia.
       + rewrite Hrgtnull /node_loc. case_decide; [| lia].
         rewrite Nat2Z.id lookup_ge_None_2 //. }
-  iDestruct (linked_item_run_fresh2 with "Hlinked Htypes") as %Hfreshloc.
+  iDestruct (linked_item_fresh2 with "Hlinked Htypes") as %Hfreshloc.
   iDestruct (own_type_pool_repr with "Htypes") as %Hreprallj.
   wp_auto.
   have Hidnit : item_id newItem = in_id input := commutativity.toItem_id input arrj newItem Htoit.
@@ -1498,13 +1498,33 @@ Proof using Type*.
   destruct HcurLpack as (curL2 & HcurL2b & HcurL2 & HlftND).
   destruct HcurRpack as (curR2 & HcurR2b & HcurR2 & HrgtND).
   iEval (rewrite HlftND HrgtND) in "Hlinked".
-  wp_apply (wp_Store__Integrate_nil_run s p itv arrj arr2 input newItem cellsj2 types2 leftIdx rightIdx
-              curL2 curR2
-              Hinvj Htoit Hvld Hmax HfindL HfindR Htsj2 Hgmaxj Hnecj2 Hfitscj Hoclkcj
-              HcurL2 HcurL2b HcurR2 HcurR2b Hall
+  have Hidnew_in : item_id newItem = in_id input := commutativity.toItem_id input arrj newItem Htoit.
+  have Hgmaxj' : pool_clock_below types2 (in_id input) by rewrite -Hidnew_in; exact Hgmaxj.
+  wp_apply (wp_Store__Integrate s p null itv cellsj2 arrj arr2 input newItem types2
+              (node_loc cellsj2 (Z.of_nat curL2 - 1)) (node_loc cellsj2 (Z.of_nat curR2))
+              (or_intror eq_refl) (conj Hinvj (conj Htoit (conj Hvld Hmax))) Hall
+              (ex_intro _ _ (ex_intro _ _ (ex_intro _ curL2 (ex_intro _ curR2
+                 (conj HfindL (conj HfindR (conj eq_refl (conj eq_refl
+                   (conj HcurL2 (conj HcurL2b (conj HcurR2 HcurR2b)))))))))))
+              Htsj2 Hpinvs2 Hgmaxj'
               with "[$Hyt $Hlinked $Hitems]").
-  iIntros (idx2 iidx2 cells'' c2)
-    "(%Hinv2 & Htext2 & Hitems & %Hperm2 & %Hsplice2 & %Hidx2b & %Hcoup2 & %Hile2 & %Harrsp2 & %Hc2look & %Hc2loc & %Hc2id & %Hc2del & %Hc2orig & %Hc2rorig & %Hc2len)".
+  iIntros (cells'' run2) "(Htext2 & Hitems & %Hinv2 & %Hsplice2' & %Hrun2)".
+  set (c2 := MkItemCell itv run2 false p).
+  destruct Hsplice2' as (idx2 & Hidx2b & Hile2 & Hsplice2 & Harrsp2).
+  set (iidx2 := length (run_flatten (take idx2 cellsj2))) in Hile2, Harrsp2.
+  have Hcoup2 : length (run_flatten (take idx2 cellsj2)) = iidx2 := eq_refl.
+  have Hperm2 : cells'' ≡ₚ cellsj2 ++ [c2]
+    := integrate_splice_perm _ _ _ _ _ _ _
+         (ex_intro _ idx2 (conj Hidx2b (conj Hile2 (conj Hsplice2 Harrsp2)))).
+  have Hc2look : cells'' !! idx2 = Some c2 := integrate_splice_lookup _ _ _ _ _ idx2 Hidx2b Hsplice2.
+  have Hc2loc : ic_loc c2 = itv := eq_refl.
+  have Hc2del : ic_deleted c2 = false := eq_refl.
+  destruct Hrun2 as (Hc2id0 & Hc2orig0 & Hc2rorig0 & Hc2len0).
+  have Hc2id : item_id (run_head c2) = in_id input := Hc2id0.
+  have Hc2orig : origin (run_head c2) = origin newItem := Hc2orig0.
+  have Hc2rorig : rightOrigin (run_head c2) = rightOrigin newItem := Hc2rorig0.
+  have Hc2len : length (ic_run c2) = length (explode (in_content input))
+    by rewrite explode_length; exact Hc2len0.
   have Hac_step : all_cells (<[p := MkTypeState cells'' arr2]> types2)
                 ≡ₚ all_cells types2 ++ [c2]
     by apply (all_cells_insert_snoc types2 p cellsj2 arrj cells'' arr2 c2 Htsj2 Hperm2).
@@ -1711,7 +1731,7 @@ Proof using Type*.
                 yjs.item.parent' := null;
                 yjs.item.content' := {| yjs.content.content' := updateItemVal.(yjs.updateItem.content') |};
                 yjs.item.flags' := W8 2 |}).
-  iAssert (own_linked_item_run itv input null null null) with "[Hitv]" as "Hfresh".
+  iAssert (own_linked_item itv input null null null) with "[Hitv]" as "Hfresh".
   { iExists itemVal, None, None. rewrite /own_fresh_item_raw.
     iFrame "Hitv HisL HisR". iPureIntro.
     split_and!;
@@ -1748,7 +1768,7 @@ Proof using Type*.
                   (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (item_id newItem))))%Z.
   { move=> c0 Hc0 Hcc0. rewrite Hac_empty in Hc0. rewrite Hidnit in Hcc0 |- *.
     exact (Hgmax0 c0 Hc0 Hcc0). }
-  iDestruct (linked_item_run_fresh2 with "Hlinked Htypes") as %Hfreshloc.
+  iDestruct (linked_item_fresh2 with "Hlinked Htypes") as %Hfreshloc.
   have Hfreshloc' : itv ∉ ic_loc <$> all_cells types
     by (move=> Hin; apply Hfreshloc; rewrite Hac_empty; exact Hin).
   iDestruct (big_sepM_delete _ _ p _ Htsj2 with "Htypes") as "[[Hyt _] Htypesrest]".
@@ -1767,13 +1787,37 @@ Proof using Type*.
   have HcurReq : (Z.of_nat (length (run_flatten (take 0 ([] : list item_cell)))) = 0)%Z
     by (rewrite take_nil /run_flatten /=; lia).
   wp_auto.
-  wp_apply (wp_Store__Integrate_nil_run s p itv [] arr2 input newItem [] types2 (-1)%Z 0%Z
-              0%nat 0%nat
-              Hinvj Htoit Hvld Hmax HfindL HfindR Htsj2 Hgmaxj Hnec0 Hfits0 Hoclk0
-              HcurLeq ltac:(simpl; lia) HcurReq ltac:(simpl; lia) Hall
+  have Hidnew_in : item_id newItem = in_id input := commutativity.toItem_id input [] newItem Htoit.
+  have Hgmaxj' : pool_clock_below types2 (in_id input) by rewrite -Hidnew_in; exact Hgmaxj.
+  have HlinkL : null = node_loc [] (Z.of_nat 0 - 1).
+  { rewrite /node_loc. case_decide as Hd; [exfalso; lia | reflexivity]. }
+  have HlinkR : null = node_loc [] (Z.of_nat 0).
+  { rewrite /node_loc. case_decide as Hd; [reflexivity | exfalso; lia]. }
+  have HcurLb0 : (0 <= length ([] : list item_cell))%nat by simpl; lia.
+  wp_apply (wp_Store__Integrate s p null itv [] [] arr2 input newItem types2 null null
+              (or_intror eq_refl) (conj Hinvj (conj Htoit (conj Hvld Hmax))) Hall
+              (ex_intro _ _ (ex_intro _ _ (ex_intro _ 0%nat (ex_intro _ 0%nat
+                 (conj HfindL (conj HfindR (conj HlinkL (conj HlinkR
+                   (conj HcurLeq (conj HcurLb0 (conj HcurReq HcurLb0)))))))))))
+              Htsj2 Hpinvs2 Hgmaxj'
               with "[$Hyt $Hlinked $Hitems]").
-  iIntros (idx2 iidx2 cells'' c2)
-    "(%Hinv2 & Htext2 & Hitems & %Hperm2 & %Hsplice2 & %Hidx2b & %Hcoup2 & %Hile2 & %Harrsp2 & %Hc2look & %Hc2loc & %Hc2id & %Hc2del & %Hc2orig & %Hc2rorig & %Hc2len)".
+  iIntros (cells'' run2) "(Htext2 & Hitems & %Hinv2 & %Hsplice2' & %Hrun2)".
+  set (c2 := MkItemCell itv run2 false p).
+  destruct Hsplice2' as (idx2 & Hidx2b & Hile2 & Hsplice2 & Harrsp2).
+  set (iidx2 := length (run_flatten (take idx2 ([] : list item_cell)))) in Hile2, Harrsp2.
+  have Hcoup2 : length (run_flatten (take idx2 ([] : list item_cell))) = iidx2 := eq_refl.
+  have Hperm2 : cells'' ≡ₚ [] ++ [c2]
+    := integrate_splice_perm _ _ _ _ _ _ _
+         (ex_intro _ idx2 (conj Hidx2b (conj Hile2 (conj Hsplice2 Harrsp2)))).
+  have Hc2look : cells'' !! idx2 = Some c2 := integrate_splice_lookup _ _ _ _ _ idx2 Hidx2b Hsplice2.
+  have Hc2loc : ic_loc c2 = itv := eq_refl.
+  have Hc2del : ic_deleted c2 = false := eq_refl.
+  destruct Hrun2 as (Hc2id0 & Hc2orig0 & Hc2rorig0 & Hc2len0).
+  have Hc2id : item_id (run_head c2) = in_id input := Hc2id0.
+  have Hc2orig : origin (run_head c2) = origin newItem := Hc2orig0.
+  have Hc2rorig : rightOrigin (run_head c2) = rightOrigin newItem := Hc2rorig0.
+  have Hc2len : length (ic_run c2) = length (explode (in_content input))
+    by rewrite explode_length; exact Hc2len0.
   have Hac_step : all_cells (<[p := MkTypeState cells'' arr2]> types2)
                 ≡ₚ all_cells types2 ++ [c2]
     by apply (all_cells_insert_snoc types2 p [] [] cells'' arr2 c2 Htsj2 Hperm2).

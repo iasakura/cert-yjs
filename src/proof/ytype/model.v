@@ -15,6 +15,7 @@
       boundary), so a WP proof discharges [IsItemValid] in one application.
     - [insert_maximalId]: inserting a fresh item keeps the per-client clock
       bound.
+    - [integrate_ready]: the premises of an integrate, as one predicate.
     - [sorted_subseteq_sublist]: set inclusion between two sorted document
       lists is a [sublist]. *)
 From New.proof Require Import proof_prelude.
@@ -42,6 +43,16 @@ Notation A := go_string.
     bridges to [setintegrate] ([setintegrate_eq_integrate]); the insertion
     position and the post-state's validity come from the rocq-yjs preservation
     theorem [YjsArrInvariant_integrate]. *)
+
+(** [integrate_ready arr input newItem]: the document [arr] is valid and the
+    wire item [input] resolves in it to the valid, clock-maximal item
+    [newItem]: exactly the premises under which rocq-yjs's set integrate and
+    scanning integrate agree ([setintegrate_eq_integrate]). What every
+    Integrate spec asks of its input. *)
+Definition integrate_ready (arr : list (YjsItem A)) (input : IntegrateInput (A := A))
+    (newItem : YjsItem A) : Prop :=
+  YjsArrInvariant arr ∧ toItem input arr = Some newItem ∧
+  IsItemValid newItem ∧ maximalId newItem arr.
 
 (** [item_valid_adjacent]: the pure (model-level) heart of the Text.Insert proof.
     An item whose origin / right-origin are two *adjacent* elements of a valid

@@ -728,7 +728,7 @@ Proof.
     { iExists _, olo, in_rO. rewrite /own_fresh_item_raw /=. iFrame "HoL2 HisL HisRp".
       iPureIntro. split_and!;
         [reflexivity | reflexivity | reflexivity | reflexivity
-        | rewrite -Hleftloc_eq // | rewrite -Hrgtj // | reflexivity | reflexivity | reflexivity]. }
+        | rewrite -Hleftloc_eq // | rewrite -Hrgtj // | reflexivity | reflexivity | simpl; lia]. }
     iDestruct (linked_item_fresh_ytype with "Hfresh Htextj") as %Hfr1.
     iDestruct (linked_item_fresh2 with "Hfresh Hrest") as %Hfr2.
     have Hfr : oL2 ∉ ic_loc <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types).
@@ -785,13 +785,50 @@ Proof.
     { rewrite Hcoupj. lia. }
     have HcurRj : (Z.of_nat (length (run_flatten (take (p + j)%nat cells))) = Z.of_nat (mp + j))%Z.
     { rewrite Hcoupj. lia. }
-    wp_apply (wp_Store__Integrate (tv.(yjs.Text.store')) (tv.(yjs.Text.inner')) oL2 arr input newItem cells
-                (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types)
-                (Z.of_nat (mp + j) - 1) (Z.of_nat (mp + j)) (p + j)%nat (p + j)%nat
-                Hinvj Htoitem Hvalid Hmax' HfindLj HfindRj Hlookj Hgmaxj Hnecj Hfitsj Hoclkj
-                HcurLj HpjLb HcurRj HpjLb
+    (* the one-char input's model step, and its run form *)
+    destruct (integrate_some input arr newItem Hinvj Htoitem) as [arr' Hintegrate].
+    have Hsi : setintegrate input arr = Some arr'.
+    { rewrite (setintegrate_eq_integrate input arr newItem Hinvj Htoitem Hvalid Hmax'). exact Hintegrate. }
+    have Hlen1 : length (in_content input) = 1%nat := eq_refl.
+    have Hall : integrate_all (ops_of_input input (explode (in_content input))) arr = Some arr'.
+    { rewrite (explode_singleton _ Hlen1) ops_of_input_singleton integrate_all_singleton. exact Hintegrate. }
+    have Hpoolj : pool_invs (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types).
+    { split_and!; [exact Hrunfitsj | exact Hlocdupj | exact Hrangedisjj | exact Horiginclkj]. }
+    have Hidnew_in : item_id newItem = in_id input := commutativity.toItem_id input arr newItem Htoitem.
+    have Hgmaxj' : pool_clock_below (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) (in_id input)
+      by rewrite -Hidnew_in; exact Hgmaxj.
+    wp_apply (wp_Store__Integrate (tv.(yjs.Text.store')) (tv.(yjs.Text.inner')) (tv.(yjs.Text.inner')) oL2
+                cells arr arr' input newItem (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types)
+                (node_loc cells (Z.of_nat (p + j) - 1)) (node_loc cells (Z.of_nat (p + j)))
+                (or_introl eq_refl) (conj Hinvj (conj Htoitem (conj Hvalid Hmax'))) Hall
+                (ex_intro _ _ (ex_intro _ _ (ex_intro _ (p + j)%nat (ex_intro _ (p + j)%nat
+                 (conj HfindLj (conj HfindRj (conj eq_refl (conj eq_refl
+                   (conj HcurLj (conj HpjLb (conj HcurRj HpjLb)))))))))))
+                Hlookj Hpoolj Hgmaxj'
                 with "[$Hfresh $Htextj $Hitems]").
-    iIntros (arr' nx iidx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & Hitems & %Hpermc & %Hsi & %Hcellsp & %Hnxb & %Hcoupx & %Harrsp2 & %Hclook & %Hcloc2 & %Hchead & %Hcdel2 & %Hcunit)".
+    iIntros (cells' run) "(Htext' & Hitems & %Hinv' & %Hsplice' & %Hrun)".
+    have Hrunsub : ∀ x, x ∈ run -> x ∈ arr'.
+    { destruct Hsplice' as (idx0 & _ & _ & _ & ->). move=> x Hx.
+      apply elem_of_app. right. apply elem_of_app. by left. }
+    have Hruneq : run = [newItem]
+      := integrate_unit_run arr arr' input newItem run (conj Hinvj (conj Htoitem (conj Hvalid Hmax')))
+           Hintegrate Hinv' Hrun Hlen1 Hrunsub.
+    subst run.
+    set (c := MkItemCell oL2 [newItem] false (tv.(yjs.Text.inner'))).
+    destruct Hsplice' as (nx & Hnxb & Hile & Hcellsp & Harrsp2').
+    set (iidx := length (run_flatten (take nx cells))) in Hile, Harrsp2'.
+    have Hcoupx : length (run_flatten (take nx cells)) = iidx := eq_refl.
+    have Harrsp2 : arr' = take iidx arr ++ newItem :: drop iidx arr := Harrsp2'.
+    have Harr'eq : arr' = insertIdxIfInBounds iidx newItem arr.
+    { rewrite /insertIdxIfInBounds decide_True; [exact Harrsp2 | exact Hile]. }
+    have Hpermc : cells' ≡ₚ cells ++ [c]
+      := integrate_splice_perm _ _ _ _ _ _ _
+           (ex_intro _ nx (conj Hnxb (conj Hile (conj Hcellsp Harrsp2')))).
+    have Hclook : cells' !! nx = Some c := integrate_splice_lookup _ _ _ _ _ nx Hnxb Hcellsp.
+    have Hcloc2 : ic_loc c = oL2 := eq_refl.
+    have Hchead : run_head c = newItem := eq_refl.
+    have Hcdel2 : ic_deleted c = false := eq_refl.
+    have Hcunit : cell_unit c := eq_refl.
     have Hinsins : <[tv.(yjs.Text.inner') := MkTypeState cells' arr']>
                  (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types)
              = <[tv.(yjs.Text.inner') := MkTypeState cells' arr']> types.
@@ -868,12 +905,7 @@ Proof.
     have Hcx : cells' !! (p + j)%nat = Some c by (rewrite -Hnxpos0; exact Hclook).
     have Hcloc : ic_loc c = oL2 := Hcloc2.
     have Hcid : run_head c = newItem := Hchead.
-    have Hlast_c : ic_run c !! (length (ic_run c) - 1)%nat = Some newItem.
-    { have Hcu : length (ic_run c) = 1%nat := Hcunit.
-      have Hh := Hcid. rewrite /run_head in Hh.
-      rewrite Hcu /=.
-      destruct (ic_run c) as [|hc tc]; [simpl in Hcu; discriminate |].
-      simpl in Hh. by rewrite /= Hh. }
+    have Hlast_c : ic_run c !! (length (ic_run c) - 1)%nat = Some newItem by rewrite /c //=.
     (* the tombstone-set invariant across the splice: the pool grows by the
        one fresh LIVE cell, whose single char cannot be in the delete set
        because the set only holds ids already in [m] and this id's clock sits
@@ -886,11 +918,7 @@ Proof.
     { move=> y Hy.
       have Hcu1 : length (ic_run c) = 1%nat := Hcunit.
       have Hyn : y = newItem.
-      { have Hh := Hcid. rewrite /run_head in Hh.
-        destruct (ic_run c) as [|hc tc]; [by rewrite elem_of_nil in Hy |].
-        simpl in Hh. subst hc.
-        destruct tc as [|? ?]; [| simpl in Hcu1; lia].
-        by apply list_elem_of_singleton in Hy. }
+      { move: Hy. rewrite /c /=. move=> Hy'. by apply list_elem_of_singleton in Hy'. }
       subst y.
       apply (docm_has_registry_false bind types m (item_id newItem)
                Hmtypes Hmdom Hbindtypes).

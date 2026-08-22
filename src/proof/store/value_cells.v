@@ -13,6 +13,11 @@
       [pool_invs].
     - the registry coherence side conditions [doc_registry_coh] and
       [inputs_rooted_in_bind].
+    - what one integrate asks and does, at the cell level: [pool_clock_below]
+      (the new item is its client's newest), [origins_linked] (the item's
+      links are the cells its resolved origins designate), [integrate_splice]
+      (the new cell and its run are spliced at matching indices) and
+      [run_denotes] (the run is the input's).
 
     Laws
     - the pool invariants are preserved by appending a fresh cell ([*_snoc])
@@ -159,6 +164,58 @@ Definition cell_fits (c : item_cell) : Prop :=
     [fmap]. *)
 Definition cell_kp (c : item_cell) : w64 * (Z * loc) := (cell_client c, cell_pr c).
 
+(** [pool_clock_below types id]: every cell of [id]'s client in the pool ends
+    strictly below [id]'s clock, in machine words: the item about to be
+    integrated is its client's newest ([maximalId] at the cell level), which
+    is what keeps [AddNode]'s appended run list clock-sorted. *)
+Definition pool_clock_below (types : gmap loc type_state) (id : YjsId) : Prop :=
+  ∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId id) ->
+    (uint.Z (cell_clock c0) < uint.Z (W64 (clock id)))%Z ∧
+    (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock id)))%Z.
+
+(** [origins_linked cells arr input lft rgt]: [lft] and [rgt] are the cells
+    the resolved origins of [input] in [arr] designate: [lft] ends at the
+    model index of the left origin and [rgt] starts at that of the right
+    origin ([findLeftIdx] / [findRightIdx]), each named by the cell cursor
+    whose prefix sum is that index, and [null] at a document boundary. What
+    [store.repair] (or the local-edit creator) wrote into the item's [left]
+    and [right] links before [Store.Integrate] runs. *)
+Definition origins_linked (cells : list item_cell) (arr : list (YjsItem A))
+    (input : IntegrateInput (A := A)) (lft rgt : loc) : Prop :=
+  ∃ (leftIdx rightIdx : Z) (curL curR : nat),
+    findLeftIdx (in_originId input) arr = Some leftIdx ∧
+    findRightIdx (in_rightOriginId input) arr = Some rightIdx ∧
+    lft = node_loc cells (Z.of_nat curL - 1) ∧
+    rgt = node_loc cells (Z.of_nat curR) ∧
+    (Z.of_nat (length (run_flatten (take curL cells))) = leftIdx + 1)%Z ∧
+    (curL <= length cells)%nat ∧
+    (Z.of_nat (length (run_flatten (take curR cells))) = rightIdx)%Z ∧
+    (curR <= length cells)%nat.
+
+(** [integrate_splice cells arr item_l run parent cells' arr']: what one
+    integrate does to a type: a fresh live cell at [item_l] carrying [run] is
+    spliced into [cells] at some cell index, and [run] into [arr] at the
+    matching model index (the prefix sum of the cells before it). *)
+Definition integrate_splice (cells : list item_cell) (arr : list (YjsItem A))
+    (item_l : loc) (run : list (YjsItem A)) (parent : loc)
+    (cells' : list item_cell) (arr' : list (YjsItem A)) : Prop :=
+  ∃ idx : nat,
+    (idx <= length cells)%nat ∧
+    (length (run_flatten (take idx cells)) <= length arr)%nat ∧
+    cells' = take idx cells ++ MkItemCell item_l run false parent :: drop idx cells ∧
+    arr' = take (length (run_flatten (take idx cells))) arr ++ run ++
+           drop (length (run_flatten (take idx cells))) arr.
+
+(** [run_denotes input newItem run]: the run a wire item lands as: its head is
+    the item the input resolves to (same id and origins) and it has one char
+    per byte of the input's content. *)
+Definition run_denotes (input : IntegrateInput (A := A)) (newItem : YjsItem A)
+    (run : list (YjsItem A)) : Prop :=
+  item_id (hd inhabitant run) = in_id input ∧
+  origin (hd inhabitant run) = origin newItem ∧
+  rightOrigin (hd inhabitant run) = rightOrigin newItem ∧
+  length run = length (in_content input).
+
 (** [inputs_rooted_in_bind inputs bind]: every origin-free tagged input targets
     a root name that is already bound in [bind]. An op with neither a left nor a
     right origin attaches directly under a registered root, so that root must
@@ -211,6 +268,59 @@ Definition pool_invs (types : gmap loc type_state) : Prop :=
   (∀ c, c ∈ all_cells types -> cell_origin_clk c).
 
 (* ===== lemmas ============================================================= *)
+
+(** The spliced cell list is the old one plus the new cell, as a multiset. *)
+Lemma integrate_splice_perm (cells : list item_cell) (arr : list (YjsItem A))
+    (item_l : loc) (run : list (YjsItem A)) (parent : loc)
+    (cells' : list item_cell) (arr' : list (YjsItem A)) :
+  integrate_splice cells arr item_l run parent cells' arr' ->
+  cells' ≡ₚ cells ++ [MkItemCell item_l run false parent].
+Proof.
+  move=> [idx [Hidx [_ [-> _]]]].
+  have -> : cells ++ [MkItemCell item_l run false parent]
+          = take idx cells ++ (drop idx cells ++ [MkItemCell item_l run false parent])
+    by rewrite app_assoc take_drop.
+  apply Permutation_app_head. apply Permutation_cons_append.
+Qed.
+
+(** The new cell sits at its splice index. *)
+Lemma integrate_splice_lookup (cells : list item_cell)
+    (item_l : loc) (run : list (YjsItem A)) (parent : loc)
+    (cells' : list item_cell) (idx : nat) :
+  (idx <= length cells)%nat ->
+  cells' = take idx cells ++ MkItemCell item_l run false parent :: drop idx cells ->
+  cells' !! idx = Some (MkItemCell item_l run false parent).
+Proof.
+  move=> Hidx ->. rewrite lookup_app_r; last (rewrite length_take; lia).
+  rewrite length_take_le; last exact Hidx. rewrite Nat.sub_diag //.
+Qed.
+
+(** A one-char input lands as exactly the item it resolves to: the run has
+    one char, whose id is the new item's, and ids are unique in the valid
+    result ([id_unique]). *)
+Lemma integrate_unit_run (arr arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
+    (newItem : YjsItem A) (run : list (YjsItem A)) :
+  integrate_ready arr input newItem ->
+  integrate input arr = Some arr' ->
+  YjsArrInvariant arr' ->
+  run_denotes input newItem run ->
+  length (in_content input) = 1%nat ->
+  (∀ x, x ∈ run -> x ∈ arr') ->
+  run = [newItem].
+Proof.
+  move=> [Hinv [Htoitem [Hvalid Hmax]]] Hintegrate Hinv' [Hid [_ [_ Hlen]]] Hlen1 Hsub.
+  rewrite Hlen1 in Hlen.
+  destruct run as [| x [| y tl]]; simpl in Hlen; [done | | done].
+  have Hxin : x ∈ arr' := Hsub x (list_elem_of_here x []).
+  have HnewIn : newItem ∈ arr'.
+  { destruct (YjsArrInvariant_integrate input arr arr' newItem Hinv Htoitem Hvalid Hmax Hintegrate)
+      as [i [Hile' [Harr'eq _]]].
+    rewrite Harr'eq. apply (proj2 (mem_insertIdxIfInBounds _ _ _ _ Hile')). left. reflexivity. }
+  have Hidnew : item_id newItem = in_id input := commutativity.toItem_id input arr newItem Htoitem.
+  f_equal.
+  apply (id_unique (ArrSet arr') (yai_item_set_inv _ Hinv') x newItem);
+    [simpl in Hid; rewrite Hid Hidnew // | exact Hxin | exact HnewIn].
+Qed.
 
 (** Replacing a registered type's state keeps the registry coherent: the
     pool's domain is unchanged. *)
