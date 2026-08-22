@@ -243,7 +243,7 @@ clause `own_store` adds.
   `delete_types_update_rel`: name it `cells_within before after` (and
   `cells_within_or_from input before after` for the integrate step) in
   `value_cells.v`, then the three transport records share it.
-- `wp_store__repair_split`: four `match` premises on `in_originId input,
+- `wp_store__repair`: four `match` premises on `in_originId input,
   ocL` etc. and two `match` postconditions with 6-conjunct existentials.
   Meaning: "the origin ids of `input` that exist are covered by `ocL` /
   `ocR`; afterwards the item's `left` is the cell ENDING at the left origin
@@ -412,7 +412,7 @@ D = delete, K = keep. "F" columns are the findings that apply.
 | `store/deleteRange.v` | `wp_store__applyDeleteSpans` | R | F1 F6 (`deletes_accounted`) |
 | `store/deleteRange.v` | `wp_store__applyDeleteSpans_store` | K | |
 | `store/repair.v` | `wp_store__getOrCreateYType`, `_miss` | M → one | F1 |
-| `store/repair.v` | `wp_store__repair_split`, `_create` | M → `wp_store__repair` | F1 F3 F4 F6 |
+| `store/repair.v` | `wp_store__repair`, `_create` | M → `wp_store__repair` | F1 F3 F4 F6 |
 | `store/repair.v` | `wp_store__hasNode`, `originArrived`, `depsArrived` | R | F1 F4 F6 (model premise is a lemma) |
 | `store/repair.v` | `wp_containsUpdateItemId` | R (`pending_id_set`) | F2 |
 | `store/repair.v` | `wp_store__integrateDecoded`, `_fresh`, `_grow` | M → `wp_store__integrateDecoded` | F1 F3 F4 F5 F6 F7 |

@@ -12,7 +12,10 @@
       ([cells_range_disjoint]), [cell_fits], [cell_origin_clk], bundled as
       [pool_invs].
     - the registry coherence side conditions [doc_registry_coh] and
-      [inputs_rooted_in_bind].
+      [inputs_rooted_in_bind]; what [getOrCreateYType] does to the registry,
+      [registry_lookup_or_create].
+    - where a step's cells come from: [cells_within] (inside an old cell) and
+      [cells_within_or_from] (inside an old cell or an integrated input).
     - what one integrate asks and does, at the cell level: [pool_clock_below]
       (the new item is its client's newest), [origins_linked] (the item's
       links are the cells its resolved origins designate), [integrate_splice]
@@ -26,7 +29,8 @@
       [flip_pool_perm] for the tombstone flip). These are the two shapes every
       store operation takes.
     - [all_cells] under a registry insert ([all_cells_insert(_snoc/_empty)],
-      [all_cells_lookup]).
+      [all_cells_lookup]); a coherent registry's type domain grows with its
+      bindings ([registry_coh_dom_mono]).
     - [client_run] is stable under the same steps ([merge_sort_loc_*],
       [client_run_loc_tail] / [_insert] / [_other], [cellctr_locs_run_perm]),
       and [cell_kp] determines client, clock, location and [cell_pr].
@@ -261,6 +265,40 @@ Definition doc_registry_coh (m : DocModel) (bind : gmap P loc)
     strictly older ([cell_origin_clk]). Carried by [store_inv] / [own_store]
     and preserved by every store method; the splice ([*_snoc]) and the
     tombstone flip ([pool_invs_flip]) are its two transition laws. *)
+(** [cells_within before after]: every cell of [after] sits, as one client's
+    clock range, inside a cell of [before]: splits and tombstones narrow or keep
+    ranges, never invent chars. The last clause of the three transport records. *)
+Definition cells_within (before after : list item_cell) : Prop :=
+  ∀ c, c ∈ after -> ∃ c0, c0 ∈ before ∧ cell_client c = cell_client c0 ∧
+     (uint.Z (cell_clock c0) <= uint.Z (cell_clock c))%Z ∧
+     (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
+      uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)))%Z.
+
+(** [cells_within_or_from inputs before after]: every cell of [after] sits
+    inside a cell of [before] or inside the clock range of one of the
+    integrated [inputs] (what applying a batch adds). *)
+Definition cells_within_or_from (inputs : list (TId * IntegrateInput (A := A)))
+    (before after : list item_cell) : Prop :=
+  ∀ c, c ∈ after ->
+    (∃ c0, c0 ∈ before ∧ cell_client c = cell_client c0 ∧
+       (uint.Z (cell_clock c0) <= uint.Z (cell_clock c))%Z ∧
+       (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
+        uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)))%Z) ∨
+    (∃ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ∧
+       cell_client c = W64 (clientId (in_id typedInput.2)) ∧
+       (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c))%Z ∧
+       (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
+        uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z).
+
+(** [registry_lookup_or_create types bind nm p types' bind']: what
+    [getOrCreateYType nm] does to the registry: hands back the root bound to
+    [nm] unchanged, or binds [nm] to a fresh empty type at [p]. *)
+Definition registry_lookup_or_create (types : gmap loc type_state) (bind : gmap P loc)
+    (nm : P) (p : loc) (types' : gmap loc type_state) (bind' : gmap P loc) : Prop :=
+  (bind !! nm = Some p ∧ types' = types ∧ bind' = bind) ∨
+  (bind !! nm = None ∧ types !! p = None ∧
+   types' = <[p := MkTypeState [] []]> types ∧ bind' = <[nm := p]> bind).
+
 Definition pool_invs (types : gmap loc type_state) : Prop :=
   (∀ c, c ∈ all_cells types -> cell_fits c) ∧
   NoDup (ic_loc <$> all_cells types) ∧
@@ -772,6 +810,15 @@ Proof.
 Qed.
 
 (** A step that keeps the pool's domain keeps the registry coherent. *)
+(** A coherent registry's type domain grows with its bindings. *)
+Lemma registry_coh_dom_mono (bind bind' : gmap P loc) (types types' : gmap loc type_state) :
+  registry_coh bind types -> registry_coh bind' types' -> bind ⊆ bind' ->
+  dom types ⊆ dom types'.
+Proof.
+  move=> [_ [_ Htb]] [Hbt' _] Hsub p. rewrite !elem_of_dom. move=> Hp.
+  destruct (Htb p Hp) as [nm Hnm]. exact (Hbt' nm p (lookup_weaken _ _ _ _ Hnm Hsub)).
+Qed.
+
 Lemma registry_coh_dom_eq (bind : gmap P loc) (types types' : gmap loc type_state) :
   (∀ p, is_Some (types !! p) -> is_Some (types' !! p)) ->
   (∀ p, is_Some (types' !! p) -> is_Some (types !! p)) ->
