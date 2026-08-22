@@ -31,7 +31,7 @@
     - the persistent witnesses [is_Store], [is_type_binding], [is_root],
       [is_type_lb], [is_root_lb], [is_applied_root_lb], [is_accepted],
       [is_update_item], and the read capability [own_read_cap].
-    - the Integrate-side predicates [own_fresh_item_raw], [own_linked_item(_run)]
+    - the Integrate-side predicates [own_fresh_item_raw], [own_linked_item]
       and the loop invariant [integrate_loop_inv].
 
     Laws
@@ -1479,32 +1479,16 @@ Definition own_fresh_item_raw (item_l : loc) (input : IntegrateInput (A := A))
   "%Hcontent" ∷ ⌜toContent itemVal.(yjs.item.content') = in_content input⌝.
 
 (** [own_linked_item item_l input parent lft rgt]: the not-yet-integrated heap
-    [Item] that [Store.Integrate] is about to splice in — everything about the
-    caller's item is encapsulated here (its model value [itemVal] and origin
-    pointers are existentially hidden). On top of [own_fresh_item_raw] it
-    records that the item is already linked to its resolved origin neighbours
-    ([left'] = [lft], [right'] = [rgt] — set by [store.repair] on the update
-    path or by the local-edit creator, issue #49), carries its parent, and is
-    a countable, single-char insert ([flags'] = ItemCountable, content length
-    1) — exactly what [newItem] + linking produces. This is the item-side half
-    of the Integrate spec. *)
+    [Item] that [Store.Integrate] is about to splice in; everything about the
+    caller's item is encapsulated here (its struct value and origin pointers
+    are existentially hidden). On top of [own_fresh_item_raw] it records that
+    the item is already linked to its resolved origin neighbours ([left'] =
+    [lft], [right'] = [rgt], set by [store.repair] on the update path or by
+    the local-edit creator, issue #49), carries its parent, and is a countable
+    insert of a nonempty run ([flags'] = ItemCountable; an [n]-char wire item
+    denotes [n] chained per-char model ops, issue #28 U7). This is the
+    item-side half of the Integrate spec. *)
 Definition own_linked_item (item_l : loc) (input : IntegrateInput (A := A))
-    (parent lft rgt : loc) : iProp Σ :=
-  ∃ (itemVal : yjs.item.t) (oleft oright : option yjs.id.t),
-    own_fresh_item_raw item_l input itemVal oleft oright ∗
-    ⌜itemVal.(yjs.item.left') = lft⌝ ∗
-    ⌜itemVal.(yjs.item.right') = rgt⌝ ∗
-    ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
-    ⌜itemVal.(yjs.item.flags') = W8 2⌝ ∗
-    ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = 1%nat⌝.
-
-(** [own_linked_item_run]: the multi-char (run) variant of [own_linked_item]
-    (issue #28 U7). Identical except the content is a nonempty run
-    ([1 <= length], not [= 1]) — an [n]-char wire item denoting [n] chained
-    per-char model ops. Used by the update path ([applyUpdate]), where a decoded
-    wire struct can carry a whole run; the single-char [own_linked_item] stays
-    for the local-edit [Text.Insert] path. *)
-Definition own_linked_item_run (item_l : loc) (input : IntegrateInput (A := A))
     (parent lft rgt : loc) : iProp Σ :=
   ∃ (itemVal : yjs.item.t) (oleft oright : option yjs.id.t),
     own_fresh_item_raw item_l input itemVal oleft oright ∗
