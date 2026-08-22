@@ -44,15 +44,15 @@ Notation A := go_string.
     position and the post-state's validity come from the rocq-yjs preservation
     theorem [YjsArrInvariant_integrate]. *)
 
-(** [integrate_ready arr input newItem]: the document [arr] is valid and the
-    wire item [input] resolves in it to the valid, clock-maximal item
-    [newItem]: exactly the premises under which rocq-yjs's set integrate and
+(** [integrate_ready arr input newItem]: the wire item [input] resolves in
+    the document [arr] to the valid, clock-maximal item [newItem]: with
+    [YjsArrInvariant arr] (a fact about the document alone, carried by the
+    type pool), exactly the premises under which rocq-yjs's set integrate and
     scanning integrate agree ([setintegrate_eq_integrate]). What every
     Integrate spec asks of its input. *)
 Definition integrate_ready (arr : list (YjsItem A)) (input : IntegrateInput (A := A))
     (newItem : YjsItem A) : Prop :=
-  YjsArrInvariant arr ∧ toItem input arr = Some newItem ∧
-  IsItemValid newItem ∧ maximalId newItem arr.
+  toItem input arr = Some newItem ∧ IsItemValid newItem ∧ maximalId newItem arr.
 
 (** [item_valid_adjacent]: the pure (model-level) heart of the Text.Insert proof.
     An item whose origin / right-origin are two *adjacent* elements of a valid
@@ -81,6 +81,26 @@ Definition inserted_run (L L' ins : list (YjsItem A)) (cs : A) (client k0 : nat)
        (i = 0%nat → origin it = originLeft) ∧
        (∀ (j : nat) (itj : YjsItem A),
           i = S j → ins !! j = Some itj → origin it = itemPtr itj)).
+
+(** A ready item's same-client origin is older than it: the origin resolves
+    to a document item ([toItem]) and the item is its client's newest
+    ([maximalId]). What [cell_origin_clk] asks of the cell it lands in. *)
+Lemma integrate_ready_origin_clk (arr : list (YjsItem A)) (input : IntegrateInput (A := A))
+    (newItem : YjsItem A) :
+  integrate_ready arr input newItem ->
+  ∀ originId, origin_id (origin newItem) = Some originId ->
+    clientId originId = clientId (item_id newItem) ->
+    (clock originId < clock (item_id newItem))%nat.
+Proof.
+  move=> [Htoit [_ Hmax]] originId Hoid Hcl.
+  rewrite (insert_set.in_originId_origin_id arr newItem input Htoit) in Hoid.
+  have [o [r [id [c [Hdef [HoL _]]]]]] := proj1 (toitem_lemmas.toItem_ok_iff input arr newItem) Htoit.
+  rewrite Hoid /toitem_lemmas.isLeftIdPtr in HoL.
+  destruct HoL as (x & Ho & Hfind).
+  have Hxid : item_id x = originId by apply (toitem_lemmas.find_by_id_id originId arr x Hfind).
+  have Hxmem : x ∈ arr by apply (toitem_lemmas.find_by_id_mem originId arr x Hfind).
+  have Hlt := Hmax x Hxmem. rewrite Hxid in Hlt. exact (Hlt Hcl).
+Qed.
 
 Lemma item_valid_adjacent (arr : list (YjsItem A)) (i : nat) (a b : YjsItem A)
     (newid : YjsId) (c : A) :

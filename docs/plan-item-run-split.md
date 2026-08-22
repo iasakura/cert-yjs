@@ -129,15 +129,19 @@ bundled as `locs_wf locs p`, living in `own_type_pool`, not in `pool_invs`.
 A helper that returns a node names it through the location list:
 
 ```coq
-Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (locs) (p : pool) :
-  pool_invs p ->
-  {{{ own_store_items s locs p ∗ own_type_pool (DfracOwn 1) locs p }}}
+Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (st : store_state) :
+  {{{ own_store_cells s st }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store_items s locs p ∗ own_type_pool (DfracOwn 1) locs p ∗
-      ⌜if ok then ∃ parent k, pool_run_covers p parent k (toYjsId idv) ∧ locs !! parent ≫= (.!! k) = Some l
-       else ∀ parent k, ¬ pool_run_covers p parent k (toYjsId idv)⌝ }}}.
+      own_store_cells s st ∗
+      ⌜if ok then ∃ parent k, pool_run_covers (ss_pool st) parent k (toYjsId idv) ∧
+                              ss_locs st !! parent ≫= (.!! k) = Some l
+       else ∀ parent k, ¬ pool_run_covers (ss_pool st) parent k (toYjsId idv)⌝ }}}.
 ```
+
+(`store_state` carries `ss_locs : gmap loc (list loc)` and `ss_pool : pool`
+in place of today's `ss_types`; the whole-store shape of the specs is
+unchanged.)
 
 The pure part (`pool_run_covers`, `pool_invs`, `split_runs`, …) never
 mentions `locs`; the heap part relates indices to addresses only through
@@ -161,8 +165,9 @@ The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
 2. **The location map.** Replace `types : gmap loc type_state` by
    `p : pool` (same keys, loc-free values) plus `locs`; `own_type_pool`,
    `own_item_map` (`ic_loc <$> client_run` becomes the client's sublist of `locs`),
-   `own_store_items`, `own_store_core` take `(locs, p)`. Specs of the
-   internal helpers are restated in the 2.3 shape; proofs keep their cell
+   `own_store_items` take `(locs, p)` and `store_state` carries them as
+   `ss_locs` / `ss_pool`. Specs of the internal helpers are restated in the
+   2.3 shape; proofs keep their cell
    lists through `cell_run` / `ic_loc` projections until stage 3.
    Files: `store/heap.v`, every `store/*.v` WP file, `text/Insert.v`,
    `text/Delete.v`, `doc/GetOrCreateText.v`.
@@ -175,10 +180,32 @@ The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
    and every proof that opens a borrow (`Integrate.v`, `splitNode.v`,
    `deleteRange.v`, `repair.v`, `text/Insert.v`, `text/Delete.v`).
 4. **Delete `item_cell`.** Remove the projections and the old definitions.
+   Fold `ty_arr` away at the same time: `tm_arr = runs_flatten tm_runs`
+   always holds (`cells_repr`), so `type_model` becomes the run list and the
+   document list is derived. Every spec that says `ty_arr` says
+   `runs_flatten` instead, and `integrate_splice` loses its second splice
+   (`arr' = take … ++ run ++ drop …`) and both length bounds: it is
+   `runs' = insert_at idx run runs`, the location of the new run living in
+   the heap layer.
+5. **Run-granular model (issue #105).** The remaining awkwardness of the
+   Integrate spec is rocq-yjs's one-char `YjsItem`: a wire item explodes into
+   `length (in_content input)` items, `toItem` resolves only the head, and
+   `run_denotes input newItem run` (head id and origins, length) plus the
+   premise `integrate_all (ops_of_input input (explode …)) arr = Some arr'`
+   restate the rest. With a run-level item (`id`, `origin`, `rightOrigin`,
+   `content : list A`) and a run-level `integrate_run`, the premise is one
+   `toItem input runs = Some newRun`, the post is
+   `runs' = integrate_run newRun runs` (no `∃ idx`, no `run_denotes`), and
+   the store post is `own_store_cells s (st <| ss_types := <[parent :=
+   store_integrate …]> … |>)`. Upstream work in rocq-yjs: define the run
+   model, prove `runs_flatten (integrate_run r runs) = integrate_all
+   (explode r) (runs_flatten runs)` so the per-char convergence theorems
+   transfer. Done after stage 4, when there is one run list to refine.
 
 Stages 1 and 2 are where the user-visible improvement is (loc-free pure
 lemmas, specs over `(p, locs)`); stage 3 is the part shared with the spec
-refactor's step 3 and is the most expensive (it touches every DLL borrow).
+refactor's step 3 and is the most expensive (it touches every DLL borrow);
+stage 5 is the only one that changes rocq-yjs.
 
 ## 4. Cost
 
@@ -203,7 +230,6 @@ not stack on eight unmerged branches.
   and `client_runs` by client, the slice's model is `client_locs locs p client`
   (a derived list), which is fine but means the item map's model is
   computed, not stored.
-- Whether to fold `ty_arr` away: `tm_arr = runs_flatten tm_runs` always
-  holds (`cells_repr`), so `type_model` could be just the run list with the
-  document list derived. The specs would then say `runs_flatten` where they
-  say `ty_arr` today.
+- `ty_arr` is folded away in stage 4 (decided 2026-08-23): the double
+  bookkeeping of cells and their flattened document is what makes
+  `integrate_splice` state the same splice twice.

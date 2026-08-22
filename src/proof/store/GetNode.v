@@ -584,13 +584,13 @@ Proof using Type*.
     apply (Hres kx c Hkx); rewrite /cell_clock; word.
 Qed.
 
-(** [store.GetNode]: look the node holding the char [idv] up. The id may
-    address any char of a run cell and may be absent (the pending gate probes
-    origins that have not arrived, issue #40), so both miss paths (unknown
-    client, clock not covered by any of its cells) are live: [ok = true] returns
-    the location of a pool cell whose run has the char ([pool_cell_covers]),
-    [ok = false] certifies no pool cell does. *)
-Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (types : gmap loc type_state) :
+(** [store.GetNode] over the item index and the pool alone: the stepping
+    stone of [wp_store__GetNode], and the form the split helpers' own
+    stepping stones ([wp_store__splitAtAndGetLeft_range] / [_Right_range] in
+    [store/splitNode]) call while they hold the pool apart from the rest of
+    the store. Not derivable from the whole-store spec, which is why it stays
+    next to it. *)
+Lemma wp_store__GetNode_parts (s : loc) (idv : yjs.id.t) (types : gmap loc type_state) :
   pool_invs types ->
   {{{ is_pkg_init yjs ∗ own_store_items s types ∗ own_type_pool (DfracOwn 1) types }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
@@ -683,6 +683,29 @@ Proof using Type*.
     { rewrite -Hcc. apply list_elem_of_fmap_2. exact Hc. }
     destruct (Hcomplete kc Hkcin) as [slk Hslk'].
     rewrite Hslk in Hslk'. discriminate.
+Qed.
+
+(** [store.GetNode]: look the node holding the char [idv] up. The id may
+    address any char of a run cell and may be absent (the pending gate probes
+    origins that have not arrived, issue #40), so both miss paths (unknown
+    client, clock not covered by any of its cells) are live: [ok = true] returns
+    the location of a pool cell whose run has the char ([pool_cell_covers]),
+    [ok = false] certifies no pool cell does. *)
+Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (st : store_state) :
+  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
+    s @! (go.PointerType yjs.store) @! "GetNode" #idv
+  {{{ (l : loc) (ok : bool), RET (#l, #ok);
+      own_store_cells s st ∗
+      ⌜if ok then ∃ c, pool_cell_covers (ss_types st) c (toYjsId idv) ∧ ic_loc c = l
+       else ∀ c, ¬ pool_cell_covers (ss_types st) c (toYjsId idv)⌝ }}}.
+Proof using Type*.
+  iIntros (Φ) "(#Hpkg & Hcells) HΦ". iNamed "Hcells". iNamed "Hfields".
+  wp_apply (wp_store__GetNode_parts s idv (ss_types st) (proj1 Hinvs) with "[$Hpkg $Hitems $Htypes]").
+  iIntros (l ok) "(Hitems & Htypes & %Hres)".
+  iApply ("HΦ" $! l ok).
+  iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes"; last by iPureIntro.
+  iApply (own_store_cells_intro _ _ Hinvs
+            with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes").
 Qed.
 
 End store_update.
