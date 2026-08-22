@@ -4,6 +4,9 @@
     - [is_Text t γs γh name L]: the handle is a [Text] on the store [γs] whose
       root type is called [name] and whose item list contains at least [L].
       Persistent, and grow-only in [L].
+    - what a read ([Text.Len] / [Text.String]) sees: [text_snapshot L marr]
+      (a valid document holding [L]) and [history_reflected h0 name marr]
+      (every insert a history prefix delivered is in it).
 
     Laws
     - [is_Text_root] / [is_Text_root_lb]: the root witnesses a reader may
@@ -105,6 +108,20 @@ Definition is_Text (t : loc) (γs : store_names) (γh : history_names) (name : P
 
 #[global] Instance is_Text_persistent t γs γh name L : Persistent (is_Text t γs γh name L).
 Proof. apply _. Qed.
+
+(** [text_snapshot L marr]: the list a reader walked, with tombstones
+    ([marr]), is a valid document holding every item of the handle's model
+    [L] (the handle's list is a lower bound of what the reader sees). *)
+Definition text_snapshot (L : list (YjsItem A)) (marr : list (YjsItem A * bool)) : Prop :=
+  list_to_set L ⊆ (list_to_set marr.*1 : gset (YjsItem A)) ∧
+  YjsArrInvariant marr.*1.
+
+(** [history_reflected h0 name marr]: every insert into the root [name] that
+    the history prefix [h0] delivered has its item in the walked list. *)
+Definition history_reflected (h0 : list Ev) (name : P) (marr : list (YjsItem A * bool)) : Prop :=
+  ∀ input : IntegrateInput (A := A),
+    (RootId name, OpInsert input) ∈ delivered_ops h0 ->
+    ∃ it, item_id it = in_id input ∧ it ∈ marr.*1.
 
 (* ===== lemmas ============================================================= *)
 

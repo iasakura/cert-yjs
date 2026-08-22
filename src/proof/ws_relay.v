@@ -496,7 +496,7 @@ Proof.
   (* apply the batch to the room's document (store lock nested inside) *)
   wp_apply (wp_Doc__ApplyEncodedUpdate _ dv s_loc γs γh c f s dq data
              with "[$Hdoc $Hishist $Hpin $Hcodec $Hs $Hyprot]").
-  iIntros (h inputs applied rest m') "(Hs & %Hdec & #Hlb & #Haccepts & #Hrootlbs & %Happmem)".
+  iIntros (h inputs applied m') "(Hs & %Hdec & #Hlb & #Haccepts & #Happlied)".
   wp_auto.
   (* the position halves agree: n is exactly member j's entry count *)
   iDestruct (big_sepL_delete _ _ j mb with "Hposvs") as "[Hposj Hposvs]";

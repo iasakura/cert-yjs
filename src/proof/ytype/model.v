@@ -62,6 +62,26 @@ Definition integrate_ready (arr : list (YjsItem A)) (input : IntegrateInput (A :
     strictly between adjacent elements (the index lemmas). This isolates the only
     hard obligation of an insert into the order theory, so the WP side only has
     to maintain that the chosen left/right neighbours are adjacent. *)
+(** [inserted_run L L' ins cs client k0 originLeft originRight]: what one
+    [Text.Insert] of the bytes [cs] did to the list: it grew from [L] to [L']
+    (a sublist), and [ins] lists the new items, one per byte unless nothing was
+    inserted: the [i]-th carries byte [cs !! i], id [(client, k0 + i)] and right
+    origin [originRight]; its left origin is [originLeft] for the first item and
+    the previous new item for the others (the chain of one insert). *)
+Definition inserted_run (L L' ins : list (YjsItem A)) (cs : A) (client k0 : nat)
+    (originLeft originRight : YjsPtr A) : Prop :=
+  sublist L L' ∧
+  (ins = [] ∨ length ins = length cs) ∧
+  (∀ (i : nat) (it : YjsItem A) (b : w8),
+     ins !! i = Some it → cs !! i = Some b →
+       it ∈ L' ∧ it ∉ L ∧
+       content it = [b] ∧
+       item_id it = MkYjsId client (k0 + i)%nat ∧
+       rightOrigin it = originRight ∧
+       (i = 0%nat → origin it = originLeft) ∧
+       (∀ (j : nat) (itj : YjsItem A),
+          i = S j → ins !! j = Some itj → origin it = itemPtr itj)).
+
 Lemma item_valid_adjacent (arr : list (YjsItem A)) (i : nat) (a b : YjsItem A)
     (newid : YjsId) (c : A) :
   YjsArrInvariant arr ->

@@ -1700,9 +1700,7 @@ Lemma wp_store__applyUpdate (s_loc : loc) (sl : slice.t) (dq : dfrac)
     (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend inputs : list (TId * IntegrateInput (A := A))) :
-  (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
-     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
-  is_pending_rooted inputs ->
+  update_wf inputs ->
   {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
       own_store s_loc γs γh c h m pend ∗
       own_update_structs sl dq inputs ∗
@@ -1715,12 +1713,11 @@ Lemma wp_store__applyUpdate (s_loc : loc) (sl : slice.t) (dq : dfrac)
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
       ⌜wire_drain m (pend ++ inputs) = (applied, rest, m')⌝ ∗
       ⌜ValidReplay (expand_inputs applied) m m'⌝ ∗
-      ⌜inputs_not_from (expand_inputs applied) c⌝ ∗
       ⌜∀ x, x ∈ inputs ->
          input_accounted (h ++ (deliver_ev <$> expand_inputs applied)) rest x⌝ ∗
-      is_applied_root_lb γs applied m' }}}.
+      is_applied_certs γs applied m' }}}.
 Proof using Type*.
-  move=> Hnowrapb Hrooted.
+  move=> [Hnowrapb Hrooted].
   iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertsin) HΦ".
   iNamed "Hstore". iNamed "Hheap".
   iDestruct "Hcore" as "(Hitems & Hregistry & Htypes & %Hpool & %Hreg)".
@@ -1914,14 +1911,16 @@ Proof using Type*.
   iDestruct (own_delete_set_apply γs m m' (all_cells types) (all_cells types')
                Hmono' Hilr' with "Hdelete_set") as "Hdelete_set".
   iModIntro. iApply ("HΦ" $! applied rest' m').
-  iFrame "Hupd". iFrame "Hlbnew". iFrame "Hlbs".
+  iAssert (is_applied_certs γs applied m') with "[Hlbs]" as "#Hcerts".
+  { iFrame "Hlbs". iPureIntro. exact (ValidReplay_input_mem (expand_inputs applied) m m' Hvr). }
+  iFrame "Hupd". iFrame "Hlbnew". iFrame "Hcerts".
   have Hregmodel' : registry_models m' bind' types'.
   { rewrite /registry_models. split; [exact Hmtypes' | exact Hmdom']. }
   iDestruct (own_store_core_intro _ _ _ Hpool' Hreg' with "Hitems Hregistry Htypes") as "Hcore".
   iAssert (own_store_heap s_loc types' bind' rest' pdel) with "[Hcore Hpending Hpdeletes]" as "Hheap".
   { iFrame "Hcore Hpending Hpdeletes". }
   iSplitL "Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hhist Hacc Hdelete_set";
-    last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoc | exact Hnoloss_in]).
+    last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoloss_in]).
   iExists client, k, deletedSetVal, pdel, types', bind', acc.
   iFrame "Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set".
   iFrame "Hpendcert' Hclientpin".
