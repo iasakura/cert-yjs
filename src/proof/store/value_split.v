@@ -161,6 +161,37 @@ Definition delete_types_update_rel (before after : gmap loc type_state) : Prop :
 
 (* ===== lemmas ============================================================= *)
 
+(** A split step keeps the registry coherent: no type appears or disappears. *)
+Lemma registry_coh_split_step (bind : gmap P loc) (before after : gmap loc type_state)
+    (w : item_cell) :
+  split_types_update_rel before after w ->
+  registry_coh bind before -> registry_coh bind after.
+Proof.
+  move=> [Hpres [Hdom _]] Hreg.
+  apply (registry_coh_dom_eq bind before after); [exact Hdom | | exact Hreg].
+  move=> p [ts' Hts']. destruct (Hpres p ts' Hts') as (ts & Hts & _). by exists ts.
+Qed.
+
+(** The same along a repair, which is at most two splits. *)
+Lemma registry_coh_repair_step (bind : gmap P loc) (before after : gmap loc type_state) :
+  repair_types_update_rel before after ->
+  registry_coh bind before -> registry_coh bind after.
+Proof.
+  move=> [Hpres [Hdom _]] Hreg.
+  apply (registry_coh_dom_eq bind before after); [exact Hdom | | exact Hreg].
+  move=> p [ts' Hts']. destruct (Hpres p ts' Hts') as (ts & Hts & _). by exists ts.
+Qed.
+
+(** And along the wire delete path. *)
+Lemma registry_coh_delete_step (bind : gmap P loc) (before after : gmap loc type_state) :
+  delete_types_update_rel before after ->
+  registry_coh bind before -> registry_coh bind after.
+Proof.
+  move=> [Hpres [Hdom _]] Hreg.
+  apply (registry_coh_dom_eq bind before after); [exact Hdom | | exact Hreg].
+  move=> p [ts' Hts']. destruct (Hpres p ts' Hts') as (ts & Hts & _). by exists ts.
+Qed.
+
 (** The split is invisible to the per-char document: the flatten is unchanged. *)
 Lemma split_cells_flatten (cells : list item_cell) (k o : nat) (r_loc : loc) (c : item_cell) :
   cells !! k = Some c ->

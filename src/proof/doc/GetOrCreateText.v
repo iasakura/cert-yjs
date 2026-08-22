@@ -67,6 +67,7 @@ Proof.
   iNamed "His_doc". subst s_loc. wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
   iDestruct "Hinv" as (c0 h m pend) "Hown". iNamed "Hown". iNamed "Hheap". subst c0.
+  iNamed "Hcore". iNamed "Hregistry". iNamed "Hpending". iNamed "Hpdeletes".
   have [Hrunfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
   have [Hmtypes Hmdom] := Hregmodel.
@@ -74,9 +75,13 @@ Proof.
   wp_auto.
   destruct (bind !! name) as [p|] eqn:Hbnd.
   - (* ---- hit: the root is registered; nothing changes ---- *)
-    wp_apply (wp_store__getOrCreateYType _ _ _ bind name p Hbnd
-                with "[$Htypesf $Htypesmap]").
-    iIntros "[Htypesf Htypesmap]".
+    iAssert (own_store_registry (dvv.(yjs.Doc.store')) bind) with "[Htypesf Htypesmap]" as "Hregistry".
+    { iExists types_mref. iFrame "Htypesf Htypesmap". }
+    iDestruct (own_store_core_intro _ _ _ Hpool Hreg with "Hitems Hregistry Htypes") as "Hcore".
+    wp_apply (wp_store__getOrCreateYType _ types bind name p Hbnd with "[$Hcore]").
+    iIntros "Hcore".
+    iDestruct "Hcore" as "(Hitems & Hregistry & Htypes & %Hpool0 & %Hreg0)".
+    iDestruct "Hregistry" as (types_mref') "(Htypesf & Htypesmap)".
     iDestruct (big_sepM_lookup _ _ name p Hbnd with "Hbinds") as "#Hbindname".
     destruct (Hbindtypes name p Hbnd) as [ts Hts].
     have Hmk : ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) !! p
@@ -84,8 +89,8 @@ Proof.
     iMod (auth_gmap_gset_frag_alloc γs.(sn_seq) (DfracOwn 1) _ p ∅ _
             Hmk (empty_subseteq _) with "Hseq") as "[Hseq #Hlb0]".
     wp_auto.
-    iDestruct (own_store_heap_intro _ _ _ _ _ _ _ _ _ Hpool Hreg
-                with "Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes") as "Hheap".
+    iDestruct (own_store_heap_intro_items _ _ _ _ _ _ _ _ Hpool Hreg
+                with "Hitems Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes") as "Hheap".
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
                 with "[$His_store $Hwl Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hhist Hacc Hdelete_set]").
     { iExists client, k, deletedSetVal, pdel, types, bind, acc.
@@ -103,9 +108,13 @@ Proof.
     iSplitL; last (iPureIntro; constructor).
     iExact "Hlb0".
   - (* ---- miss: register a fresh empty root type ---- *)
-    wp_apply (wp_store__getOrCreateYType_miss _ _ bind types name Hbnd
-                with "[$Htypesf $Htypesmap $Htypes]").
-    iIntros (p) "(Htypesf & Htypesmap & Htypes & %Hfresh)".
+    iAssert (own_store_registry (dvv.(yjs.Doc.store')) bind) with "[Htypesf Htypesmap]" as "Hregistry".
+    { iExists types_mref. iFrame "Htypesf Htypesmap". }
+    iDestruct (own_store_core_intro _ _ _ Hpool Hreg with "Hitems Hregistry Htypes") as "Hcore".
+    wp_apply (wp_store__getOrCreateYType_miss _ types bind name Hbnd with "[$Hcore]").
+    iIntros (p) "(Hcore & %Hfresh)".
+    iDestruct "Hcore" as "(Hitems & Hregistry & Htypes & %Hpool0 & %Hreg0)".
+    iDestruct "Hregistry" as (types_mref') "(Htypesf & Htypesmap)".
     set (types' := <[p := MkTypeState [] []]> types).
     set (bind' := <[name := p]> bind).
     (* registry ghost map: mint the persistent binding *)
@@ -140,8 +149,6 @@ Proof.
       := all_cells_insert_empty types p [] Hfresh.
     have Hkp : cell_kp <$> all_cells types' ≡ₚ cell_kp <$> all_cells types
       by rewrite Hperm.
-    iDestruct (own_item_map_kp_perm items_mref (DfracOwn 1) types types' Hkp
-                 with "Hitemmap") as "Hitemmap".
     (* the registry / model coherence survives the fresh binding *)
     have Hbindtypes' : ∀ nm q, bind' !! nm = Some q → is_Some (types' !! q).
     { move=> nm q. rewrite /bind' /types'.
@@ -223,8 +230,8 @@ Proof.
     { rewrite /registry_coh. split_and!; [exact Hbindtypes' | exact Hbindinj' | exact Htypesbound']. }
     have Hregmodel' : registry_models m bind' types'.
     { rewrite /registry_models. split; [exact Hmtypes' | exact Hmdom']. }
-    iDestruct (own_store_heap_intro _ _ _ _ _ _ _ _ _ Hpool' Hreg'
-                with "Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes") as "Hheap".
+    iDestruct (own_store_heap_intro_items _ _ _ _ _ _ _ _ Hpool' Hreg'
+                with "Hitems Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes") as "Hheap".
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
                 with "[$His_store $Hwl Hclient Hclock HdeletedSet Hheap Hseq HtypesAuth Hhist Hacc Hdelete_set]").
     { iExists client, k, deletedSetVal, pdel, types', bind', acc.

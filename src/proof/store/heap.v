@@ -8,9 +8,17 @@
     - [own_item_map]: the heap [map[Client][]*item] at the cell level.
     - [own_type_pool]: every registered type's DLL at its cell model, the
       store's whole item pool, [dfrac]-parameterized for the read path.
-    - [own_store_heap]: the store's heap state under the write lock as one
-      resource (item index, registry, pending buffers, pool, [pool_invs],
-      [registry_coh]); what every store-internal method is specified over.
+    - the four pieces of store state, each a struct field with what it points
+      to: [own_store_items] (the item index, what the cell surgeries
+      [Integrate] / [splitNode] / [GetNode] / [deleteRange] are specified
+      over next to the pool), [own_store_registry] (the root registry,
+      [getOrCreateYType]), [own_store_pending] and
+      [own_store_pending_deletes] (the two buffers).
+    - [own_store_core]: the item index, the registry and the pool with
+      [pool_invs] and [registry_coh], the document state proper ([repair],
+      [integrateDecoded], the arrival checks, [getOrCreateYType]); and
+      [own_store_heap], the core next to the two buffers, the whole heap state
+      under the write lock ([applyUpdate], [applyDeleteSpans], [own_store]).
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
       hands out) and [own_delete_set] (its authority, with the domain bound and the
       tombstone-bit coherence that make the bound mean something).
@@ -955,6 +963,39 @@ Qed.
 
 (* ----- the store's heap state --------------------------------------------- *)
 
+(** [own_store_items s types]: the store's item index, the [store.items] field
+    and the per-client run map it points to ([own_item_map]), over the pool's
+    cell model. The one piece of store state [Store.Integrate] touches besides
+    the type it inserts into; [own_store_heap] holds it next to the rest. *)
+Definition own_store_items (s : loc) (types : gmap loc type_state) : iProp Σ :=
+  ∃ items_mref : loc,
+    "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗
+    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types.
+
+(** [own_store_registry s bind]: the root registry, the [store.types] field and
+    the name -> type-loc map it points to. What [getOrCreateYType] is specified
+    over. *)
+Definition own_store_registry (s : loc) (bind : gmap P loc) : iProp Σ :=
+  ∃ types_mref : loc,
+    "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ types_mref ∗
+    "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind.
+
+(** [own_store_pending s pend]: the buffered wire items whose dependencies
+    have not arrived ([store.pending]), over their model list. *)
+Definition own_store_pending (s : loc)
+    (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
+  ∃ pend_sl : slice.t,
+    "Hpendf" ∷ (s .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
+    "Hpend"  ∷ own_update_structs pend_sl (DfracOwn 1) pend.
+
+(** [own_store_pending_deletes s pdel]: the buffered delete spans
+    ([store.pendingDeletes]), over their model list. *)
+Definition own_store_pending_deletes (s : loc) (pdel : list delete_span) : iProp Σ :=
+  ∃ pdel_sl : slice.t,
+    "Hpddelf" ∷ (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗
+    "Hpddel"  ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel.
+
+
 (** [own_store_heap s types bind pend pdel]: the store's heap state under the
     write lock as ONE resource over its cell-level model: the item index
     ([store.items], [own_item_map]), the root registry ([store.types],
@@ -964,24 +1005,74 @@ Qed.
     over it; the lock layer ([own_store]) adds the ghost state and the model
     on top. The struct field pointers and the buffer slices are existential:
     no spec names them. *)
+(** [own_store_core s types bind]: the document state proper, the item index,
+    the root registry and the type pool, with the two invariants every store
+    method preserves ([pool_invs], [registry_coh]). What the methods that
+    resolve and integrate items ([repair], [integrateDecoded], the arrival
+    checks, [getOrCreateYType]) are specified over; the two pending buffers
+    sit next to it in [own_store_heap]. *)
+Definition own_store_core (s : loc) (types : gmap loc type_state) (bind : gmap P loc) : iProp Σ :=
+  "Hitems"    ∷ own_store_items s types ∗
+  "Hregistry" ∷ own_store_registry s bind ∗
+  "Htypes"    ∷ own_type_pool (DfracOwn 1) types ∗
+  "%Hpool"    ∷ ⌜pool_invs types⌝ ∗
+  "%Hreg"     ∷ ⌜registry_coh bind types⌝.
+
 Definition own_store_heap (s : loc) (types : gmap loc type_state) (bind : gmap P loc)
     (pend : list (TId * IntegrateInput (A := A))) (pdel : list delete_span) : iProp Σ :=
-  ∃ (items_mref types_mref : loc) (pend_sl pdel_sl : slice.t),
-    "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗
-    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types ∗
-    "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ types_mref ∗
-    "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
-    "Hpendf"  ∷ (s .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
-    "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
-    "Hpddelf" ∷ (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗
-    "Hpddel"  ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel ∗
-    "Htypes"  ∷ own_type_pool (DfracOwn 1) types ∗
-    "%Hpool"  ∷ ⌜pool_invs types⌝ ∗
-    "%Hreg"   ∷ ⌜registry_coh bind types⌝.
+  "Hcore"     ∷ own_store_core s types bind ∗
+  "Hpending"  ∷ own_store_pending s pend ∗
+  "Hpdeletes" ∷ own_store_pending_deletes s pdel.
+
+#[global] Instance own_store_core_timeless s types bind : Timeless (own_store_core s types bind).
+Proof. rewrite /own_store_core /own_store_items /own_store_registry. apply _. Qed.
 
 #[global] Instance own_store_heap_timeless s types bind pend pdel :
   Timeless (own_store_heap s types bind pend pdel).
-Proof. rewrite /own_store_heap /own_update_structs /own_delete_spans /is_update_item. apply _. Qed.
+Proof.
+  rewrite /own_store_heap /own_store_pending /own_store_pending_deletes
+    /own_update_structs /own_delete_spans /is_update_item.
+  apply _.
+Qed.
+
+(** [own_store_heap_intro] with the item index already assembled. *)
+Lemma own_store_heap_intro_items (s types_mref : loc) (pend_sl pdel_sl : slice.t)
+    (types : gmap loc type_state) (bind : gmap P loc)
+    (pend : list (TId * IntegrateInput (A := A))) (pdel : list delete_span) :
+  pool_invs types ->
+  registry_coh bind types ->
+  own_store_items s types -∗
+  (s .[(yjs.store.t), "types"]) ↦ types_mref -∗
+  own_map types_mref (DfracOwn 1) bind -∗
+  (s .[(yjs.store.t), "pending"]) ↦ pend_sl -∗
+  own_update_structs pend_sl (DfracOwn 1) pend -∗
+  (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl -∗
+  own_delete_spans pdel_sl (DfracOwn 1) pdel -∗
+  own_type_pool (DfracOwn 1) types -∗
+  own_store_heap s types bind pend pdel.
+Proof.
+  move=> Hpool Hreg.
+  iIntros "Hitems Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes".
+  iSplitL "Hitems Htypesf Htypesmap Htypes".
+  { iFrame "Htypes Hitems".
+    iSplitL "Htypesf Htypesmap"; first (iExists types_mref; iFrame).
+    iPureIntro. split; [exact Hpool | exact Hreg]. }
+  iSplitL "Hpendf Hpend"; first (iExists pend_sl; iFrame).
+  iExists pdel_sl. iFrame.
+Qed.
+
+(** Assembling [own_store_core] from its three resources. *)
+Lemma own_store_core_intro (s : loc) (types : gmap loc type_state) (bind : gmap P loc) :
+  pool_invs types ->
+  registry_coh bind types ->
+  own_store_items s types -∗
+  own_store_registry s bind -∗
+  own_type_pool (DfracOwn 1) types -∗
+  own_store_core s types bind.
+Proof.
+  move=> Hpool Hreg. iIntros "Hitems Hregistry Htypes". iFrame.
+  iPureIntro. split; [exact Hpool | exact Hreg].
+Qed.
 
 (** Assembling [own_store_heap] from its parts: what a method proof does once it
     has re-established the two invariants. *)
@@ -1003,8 +1094,13 @@ Lemma own_store_heap_intro (s items_mref types_mref : loc) (pend_sl pdel_sl : sl
 Proof.
   move=> Hpool Hreg.
   iIntros "Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes".
-  iExists items_mref, types_mref, pend_sl, pdel_sl. iFrame.
-  iPureIntro. split; [exact Hpool | exact Hreg].
+  iSplitL "Hitemsf Hitemmap Htypesf Htypesmap Htypes".
+  { iFrame "Htypes".
+    iSplitL "Hitemsf Hitemmap"; first (iExists items_mref; iFrame).
+    iSplitL "Htypesf Htypesmap"; first (iExists types_mref; iFrame).
+    iPureIntro. split; [exact Hpool | exact Hreg]. }
+  iSplitL "Hpendf Hpend"; first (iExists pend_sl; iFrame).
+  iExists pdel_sl. iFrame.
 Qed.
 
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
@@ -1488,6 +1584,17 @@ Proof using Type.
       * rewrite -(cell_kp_pr c1 y1 Hkp1) -(cell_kp_pr c2 y2 Hkp2). exact Hpr.
 Qed.
 
+(** The item index only sees the pool's (client, clock, loc) projection, so
+    it transports along any step that keeps it ([own_item_map_kp_perm] at the
+    field level). *)
+Lemma own_store_items_kp_perm (s : loc) (M1 M2 : gmap loc type_state) :
+  cell_kp <$> all_cells M2 ≡ₚ cell_kp <$> all_cells M1 ->
+  own_store_items s M1 -∗ own_store_items s M2.
+Proof.
+  move=> Hperm. iIntros "H". iNamed "H". iExists items_mref. iFrame "Hitemsf".
+  iApply (own_item_map_kp_perm with "Hitemmap"). exact Hperm.
+Qed.
+
 Lemma is_type_binding_agree (γ : gname) (name : P) (p q : loc) :
   is_type_binding γ name p -∗ is_type_binding γ name q -∗ ⌜p = q⌝.
 Proof.
@@ -1808,6 +1915,7 @@ Proof.
       [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
       | exact Hctr | exact Hacccoh].
   - iIntros "H". iDestruct "H" as (c h m pend) "H". iNamed "H". subst c. iNamed "Hheap".
+    iNamed "Hcore". iNamed "Hitems". iNamed "Hregistry". iNamed "Hpending". iNamed "Hpdeletes".
     iDestruct (own_type_pool_client_clock_bound types client k Hctr with "Htypes") as %Hcellctr.
     iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, types, bind, h, m, pend, pdel.
     iSplitR "Hseq Htypes"; last by iFrame "Hseq Htypes".

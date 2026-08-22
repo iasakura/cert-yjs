@@ -2359,7 +2359,7 @@ Qed.
     puts the new loc at the tail. *)
 Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A)
-    (cells : list item_cell) (types : gmap loc type_state) (mref : loc)
+    (cells : list item_cell) (types : gmap loc type_state)
     (leftIdx rightIdx : Z) (curL curR : nat) :
   YjsArrInvariant arr ->
   toItem input arr = Some newItem ->
@@ -2380,13 +2380,12 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
   (curR <= length cells)%nat ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
       own_linked_item item_l input parent (node_loc cells (Z.of_nat curL - 1)) (node_loc cells (Z.of_nat curR)) ∗
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types }}}
+      own_store_items s types }}}
     s @! (go.PointerType yjs.store) @! "Integrate" #parent #item_l
   {{{ (arr' : list (YjsItem A)) (idx midx : nat) (cells' : list item_cell) (c : item_cell), RET #();
       ⌜(midx <= length arr)%nat⌝ ∗ ⌜arr' = insertIdxIfInBounds midx newItem arr⌝ ∗
       ⌜YjsArrInvariant arr'⌝ ∗ own_ytype_cells parent (DfracOwn 1) cells' arr' ∗
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗
-      own_item_map mref (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types) ∗
+      own_store_items s (<[parent := MkTypeState cells' arr']> types) ∗
       ⌜cells' ≡ₚ cells ++ [c]⌝ ∗ ⌜setintegrate input arr = Some arr'⌝ ∗
       ⌜cells' = take idx cells ++ c :: drop idx cells⌝ ∗
       ⌜(idx <= length cells)%nat⌝ ∗
@@ -2396,7 +2395,7 @@ Lemma wp_Store__Integrate (s parent item_l : loc) (arr : list (YjsItem A))
       ⌜ic_deleted c = false⌝ ∗ ⌜cell_unit c⌝ }}}.
 Proof using Type*.
   move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb.
-  iIntros (Φ) "(Hpkg & Htext & Hfresh & Hitemsf & Hitemmap) HΦ".
+  iIntros (Φ) "(Hpkg & Htext & Hfresh & Hitems) HΦ". iNamed "Hitems".
   (* The explicit-parent fast path: [parent ≠ nil], so the resolution branch is
      skipped (y-octo's Option<&mut YType> Some case, issue #49). *)
   iDestruct "Htext" as (yt0 tl0) "(Hparent0 & Hdll0 & %Hlen0 & %Hrepr0 & %Hcpar0)".
@@ -2501,7 +2500,7 @@ Proof using Type*.
   iEval (rewrite -Hloc) in "Hcval".
   iDestruct ("Hback" with "Hcval") as "Hdll".
   iNamed "Hpar".
-  iAssert (own_item_map mref (DfracOwn 1) types2) with "[Hmap Hsnew Hsnewcap Hrunsrest]" as "Hitemmap'".
+  iAssert (own_item_map items_mref (DfracOwn 1) types2) with "[Hmap Hsnew Hsnewcap Hrunsrest]" as "Hitemmap'".
   { iExists (<[kc:=snew]> gm). iFrame "Hmap".
     iSplitL "Hsnew Hsnewcap Hrunsrest".
     - rewrite big_sepM_insert_delete. iSplitL "Hsnew Hsnewcap"; [iFrame "Hsnew Hsnewcap"|].
@@ -2512,8 +2511,10 @@ Proof using Type*.
       rewrite (client_run_loc_other types types2 c client Hkp Hclkloc Hne).
       iFrame "Hslice Hcap".
     - iPureIntro. split; [exact Hcomplete' | exact Hclkloc']. }
+  iAssert (own_store_items s types2) with "[Hitemsf Hitemmap']" as "Hitems'".
+  { iExists items_mref. iFrame "Hitemsf Hitemmap'". }
   iApply ("HΦ" $! arr' idx midx cells' c).
-  iFrame "Hitemsf Hitemmap'".
+  iFrame "Hitems'".
   iSplitR; [iPureIntro; exact Hile|].
   iSplitR; [iPureIntro; exact Harr'eq|].
   iSplitR; [iPureIntro; exact Hinv'|].
@@ -2543,7 +2544,7 @@ Qed.
     replay / certificates). *)
 Lemma wp_Store__Integrate_nil_run (s parent item_l : loc) (arr arr' : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A)
-    (cells : list item_cell) (types : gmap loc type_state) (mref : loc)
+    (cells : list item_cell) (types : gmap loc type_state)
     (leftIdx rightIdx : Z) (curL curR : nat) :
   YjsArrInvariant arr ->
   toItem input arr = Some newItem ->
@@ -2565,12 +2566,11 @@ Lemma wp_Store__Integrate_nil_run (s parent item_l : loc) (arr arr' : list (YjsI
   integrate_all (ops_of_input input (explode (in_content input))) arr = Some arr' ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
       own_linked_item_run item_l input parent (node_loc cells (Z.of_nat curL - 1)) (node_loc cells (Z.of_nat curR)) ∗
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types }}}
+      own_store_items s types }}}
     s @! (go.PointerType yjs.store) @! "Integrate" #null #item_l
   {{{ (idx midx : nat) (cells' : list item_cell) (c : item_cell), RET #();
       ⌜YjsArrInvariant arr'⌝ ∗ own_ytype_cells parent (DfracOwn 1) cells' arr' ∗
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗
-      own_item_map mref (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types) ∗
+      own_store_items s (<[parent := MkTypeState cells' arr']> types) ∗
       ⌜cells' ≡ₚ cells ++ [c]⌝ ∗
       ⌜cells' = take idx cells ++ c :: drop idx cells⌝ ∗
       ⌜(idx <= length cells)%nat⌝ ∗
@@ -2583,7 +2583,7 @@ Lemma wp_Store__Integrate_nil_run (s parent item_l : loc) (arr arr' : list (YjsI
       ⌜length (ic_run c) = length (explode (in_content input))⌝ }}}.
 Proof using Type*.
   move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb Hall.
-  iIntros (Φ) "(Hpkg & Htext & Hfresh & Hitemsf & Hitemmap) HΦ".
+  iIntros (Φ) "(Hpkg & Htext & Hfresh & Hitems) HΦ". iNamed "Hitems".
   have Hidnew : item_id newItem = in_id input := commutativity.toItem_id input arr newItem Htoitem.
   iDestruct "Htext" as (yt0 tl0) "(Hparent0 & Hdll0 & %Hlen0 & %Hrepr0 & %Hcpar0)".
   iDestruct (typed_pointsto_not_null with "Hparent0") as %Hpnn.
@@ -2686,7 +2686,7 @@ Proof using Type*.
   iEval (rewrite -Hloc) in "Hcval".
   iDestruct ("Hback" with "Hcval") as "Hdll".
   iNamed "Hpar".
-  iAssert (own_item_map mref (DfracOwn 1) types2) with "[Hmap Hsnew Hsnewcap Hrunsrest]" as "Hitemmap'".
+  iAssert (own_item_map items_mref (DfracOwn 1) types2) with "[Hmap Hsnew Hsnewcap Hrunsrest]" as "Hitemmap'".
   { iExists (<[kc:=snew]> gm). iFrame "Hmap".
     iSplitL "Hsnew Hsnewcap Hrunsrest".
     - rewrite big_sepM_insert_delete. iSplitL "Hsnew Hsnewcap"; [iFrame "Hsnew Hsnewcap"|].
@@ -2697,8 +2697,10 @@ Proof using Type*.
       rewrite (client_run_loc_other types types2 c client Hkp Hclkloc Hne).
       iFrame "Hslice Hcap".
     - iPureIntro. split; [exact Hcomplete' | exact Hclkloc']. }
+  iAssert (own_store_items s types2) with "[Hitemsf Hitemmap']" as "Hitems'".
+  { iExists items_mref. iFrame "Hitemsf Hitemmap'". }
   iApply ("HΦ" $! idx midx cells' c).
-  iFrame "Hitemsf Hitemmap'".
+  iFrame "Hitems'".
   iSplitR; [iPureIntro; exact Hinv'|].
   iSplitL "Hparent Hdll".
   { iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
