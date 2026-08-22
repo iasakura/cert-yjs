@@ -140,9 +140,7 @@ Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
       own_update_structs pend_sl0 (DfracOwn 1) pend0 ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
       (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind ∗
-      ([∗ map] parent ↦ ts ∈ types,
-          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+      (own_type_pool (DfracOwn 1) types) }}}
     s @! (go.PointerType yjs.store) @! "applyUpdate" #sl
   {{{ (pend_sl' : slice.t) (types' : gmap loc type_state) (bind' : gmap P loc), RET #();
       own_update_structs sl dq inputs ∗
@@ -150,9 +148,7 @@ Lemma wp_store__applyUpdate (s mref tref : loc) (sl pend_sl0 : slice.t)
       own_update_structs pend_sl' (DfracOwn 1) rest ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
       (s .[(yjs.store.t), "types"]) ↦ tref ∗ own_map tref (DfracOwn 1) bind' ∗
-      ([∗ map] parent ↦ ts ∈ types',
-          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      (own_type_pool (DfracOwn 1) types') ∗
       ⌜bind ⊆ bind'⌝ ∗
       ⌜dom types ⊆ dom types'⌝ ∗
       ⌜∀ name p, bind' !! name = Some p -> is_Some (types' !! p)⌝ ∗
@@ -273,9 +269,7 @@ Proof using Type*.
         "Hitemmap" ∷ own_item_map mref (DfracOwn 1) typesj ∗
         "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ tref ∗
         "Htypesmap" ∷ own_map tref (DfracOwn 1) bindj ∗
-        "Htypes" ∷ ([∗ map] parent ↦ ts ∈ typesj,
-            own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-            ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+        "Htypes" ∷ (own_type_pool (DfracOwn 1) typesj) ∗
         "%Hpendingsubj" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A),
             typedInput ∈ pendingj -> typedInput ∈ pend0 ++ inputs⌝ ∗
         "%Hprj" ∷ ⌜WireReplay m appliedj mj⌝ ∗
@@ -376,9 +370,7 @@ Proof using Type*.
           "Hitemmap" ∷ own_item_map mref (DfracOwn 1) types_c ∗
           "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ tref ∗
           "Htypesmap" ∷ own_map tref (DfracOwn 1) bind_c ∗
-          "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types_c,
-              own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-              ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+          "Htypes" ∷ (own_type_pool (DfracOwn 1) types_c) ∗
           "%Hilen" ∷ ⌜(i <= length pendingj)%nat⌝ ∗
           "%Hpassa" ∷ ⌜wire_pass m_c (drop i pendingj) keptacc =
               (app_rem, keptfin0, m_pend0)⌝ ∗
@@ -1844,7 +1836,8 @@ Proof using Type*.
   move=> Hnowrapb Hrooted.
   iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertsin) HΦ".
   iNamed "Hstore".
-  destruct Hregcoh as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
+  have [Hrunfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
+  have [Hbindtypes [Hbindinj [Htypesbound [Hmtypes Hmdom]]]] := Hregcoh.
   iDestruct (types_arr_inv2 with "Htypes") as %Htsinv.
   have Harrinv : ∀ t : TId, YjsArrInvariant (doc_model_get m t).
   { move=> t. destruct (doc_model_get m t) as [|x l] eqn:Hdg.
@@ -2024,10 +2017,7 @@ Proof using Type*.
                  | exact Hmtypes' | exact Hmdom'].
   - exact Hcoh'.
   - exact Hctr'.
-  - exact Hlocdup'.
-  - exact Hrangedisj'.
-  - exact Hfits'.
-  - exact Horiginclk'.
+  - rewrite /pool_invs. split_and!; [exact Hfits' | exact Hlocdup' | exact Hrangedisj' | exact Horiginclk'].
   - exact Hacccoh'.
 Qed.
 

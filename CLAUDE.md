@@ -28,12 +28,37 @@ verification of a *realistic* Yjs implementation, not a toy.
   name the call sites in the comment; restating the formula in prose adds
   nothing the `Definition` line does not already say. Names are spelled out,
   never contracted (`delete_set`, not `ds`).
-- **Public specs**: one `.v` proof file per Go file. Specs of public functions
-  must not mention internal data (heap cells, node locations, flags) — state
-  them over the public `is_X` / `own_X` predicates and their model parameters:
+- **Spec shape, for every function (exported or not)**: a WP spec is
   `{{{ own_X o dq m ∗ ⌜Pre m⌝ }}} … {{{ own_X o dq m' ∗ ⌜Post m m' ret⌝ }}}`,
-  with persistent `is_X` handles as duplicable hypotheses carrying monotone
-  knowledge (e.g. `is_Text`'s grow-only `L`).
+  with persistent `is_X o m` handles as duplicable hypotheses carrying
+  monotone knowledge (e.g. `is_Text`'s grow-only `L`). Everything the spec
+  says about a value goes through a predicate's model parameter. Forbidden
+  in a spec: struct field points-tos (`s .[store, "items"] ↦ …`), raw
+  slices or maps of internal records, goose struct values and their fields
+  (`yjs.item.t`, `itemVal.(left')`, `idv.(clock')`), flag bytes (`W8 2`),
+  and `w64` / `uint.Z` arithmetic where the model already has the fact
+  (`cell_covers`, `cell_fits`). Public predicates have the public model
+  (`YjsItem` lists, `DocModel`, `gset YjsId`); store-internal helpers have
+  the cell model (`item_cell` / `type_state`), and a node pointer appears
+  only as the `ic_loc` / `node_loc` of a model cell. The return value is
+  related to the model the same way (`RET #(f m)` or `⌜ret = f m⌝`).
+- **Specs stay intuitive**: the developer's idea of a function is a few
+  sentences, so its spec is a few conjuncts, never ten. Conditions are
+  grouped by the data structure or the semantic unit they are about into one
+  named predicate (`pool_invs`, `doc_registry_coh`, `cell_covers`, …), not
+  listed as loose clauses. When a proof needs a new fact, first find the
+  predicate it belongs to and add it there; a new top-level conjunct is the
+  last resort, for a fact no existing predicate is about.
+- **No over-specification**: a postcondition states each fact once (not
+  `setintegrate input arr = Some arr'` next to its unfolding
+  `arr' = take midx arr ++ …`) and states only what the function means. A
+  fact that follows from the others, or that a caller merely finds
+  convenient, is a lemma over the model or the predicates in the layer
+  file, not a conjunct.
+- **One spec per function**: a second spec exists only if it is used and
+  cannot be derived from the first. Specs that are unused, or that are a
+  stepping stone of one proof, are deleted or made `#[local]` in that
+  proof's file.
 - **Report unrequested changes**: any change to the implementation
   (`yjs/*.go` behavior), a public function's spec/signature, or a proof-layer
   contract (rep predicates, invariants, WP specs) that was not explicitly

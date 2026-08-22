@@ -423,9 +423,7 @@ Qed.
     What [GetNode] / [getNodeIndex] / [splitNode] / [repair] read through. *)
 Lemma types_cell_acc_gen (types : gmap loc type_state) (c : item_cell) :
   c ∈ all_cells types ->
-  ([∗ map] parent ↦ ts ∈ types,
-      own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-      ⌜YjsArrInvariant (ty_arr ts)⌝) -∗
+  (own_type_pool (DfracOwn 1) types) -∗
     ∃ (itemVal : yjs.item.t) (olid orid : option yjs.id.t),
       "%Hid" ∷ ⌜item_id (run_head c) = toYjsId itemVal.(yjs.item.id')⌝ ∗
       "%Hpar" ∷ ⌜itemVal.(yjs.item.parent') = ic_parent c⌝ ∗
@@ -438,9 +436,7 @@ Lemma types_cell_acc_gen (types : gmap loc type_state) (c : item_cell) :
       "Hcol" ∷ is_origin_id itemVal.(yjs.item.originLeftId') olid ∗
       "Hcor" ∷ is_origin_id itemVal.(yjs.item.originRightId') orid ∗
       "Hback" ∷ (ic_loc c ↦ itemVal -∗
-        ([∗ map] parent ↦ ts ∈ types,
-            own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-            ⌜YjsArrInvariant (ty_arr ts)⌝)).
+        (own_type_pool (DfracOwn 1) types)).
 Proof using Type*.
   move=> Hc. iIntros "Htypes".
   apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
@@ -481,15 +477,11 @@ Lemma wp_getNodeIndex (sl : slice.t) (dq : dfrac) (types : gmap loc type_state)
   run !! k0 = Some c0 ->
   cell_clock c0 = clk ->
   {{{ is_pkg_init yjs ∗ sl ↦*{dq} (ic_loc <$> run) ∗
-      ([∗ map] parent ↦ ts ∈ types,
-          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+      (own_type_pool (DfracOwn 1) types) }}}
     @! yjs.getNodeIndex #sl #clk
   {{{ (i : w64), RET (#i, #true);
       sl ↦*{dq} (ic_loc <$> run) ∗
-      ([∗ map] parent ↦ ts ∈ types,
-          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      (own_type_pool (DfracOwn 1) types) ∗
       ∃ c, ⌜run !! uint.nat i = Some c ∧
              (uint.Z (cell_clock c) <= uint.Z clk)%Z ∧
              (uint.Z clk < uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z⌝ }}}.
@@ -505,9 +497,7 @@ Proof using Type*.
     "Hleft" ∷ left_ptr ↦ lo ∗ "Hright" ∷ right_ptr ↦ hi ∗
     "Hnodes" ∷ nodes_ptr ↦ sl ∗ "Hclock" ∷ clock_ptr ↦ clk ∗
     "Hsl" ∷ sl ↦*{dq} (ic_loc <$> run) ∗
-    "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
-        own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-        ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+    "Htypes" ∷ (own_type_pool (DfracOwn 1) types) ∗
     "%Hbnd" ∷ ⌜(0 <= uint.Z lo /\ uint.Z hi <= Z.of_nat (length run))%Z⌝ ∗
     "%Hwin" ∷ ⌜∀ (k : nat) (c : item_cell), run !! k = Some c -> cell_clock c = clk ->
                 (uint.Z lo <= Z.of_nat k < uint.Z hi)%Z⌝)%I
@@ -627,15 +617,11 @@ Lemma wp_getNodeIndex_range (sl : slice.t) (dq : dfrac) (types : gmap loc type_s
   (uint.Z (cell_clock c0) <= uint.Z clk)%Z ->
   (uint.Z clk < uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)))%Z ->
   {{{ is_pkg_init yjs ∗ sl ↦*{dq} (ic_loc <$> run) ∗
-      ([∗ map] parent ↦ ts ∈ types,
-          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+      (own_type_pool (DfracOwn 1) types) }}}
     @! yjs.getNodeIndex #sl #clk
   {{{ (i : w64), RET (#i, #true);
       sl ↦*{dq} (ic_loc <$> run) ∗
-      ([∗ map] parent ↦ ts ∈ types,
-          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      (own_type_pool (DfracOwn 1) types) ∗
       ∃ c, ⌜run !! uint.nat i = Some c ∧
              (uint.Z (cell_clock c) <= uint.Z clk)%Z ∧
              (uint.Z clk < uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z⌝ }}}.
@@ -650,9 +636,7 @@ Proof using Type*.
     "Hleft" ∷ left_ptr ↦ lo ∗ "Hright" ∷ right_ptr ↦ hi ∗
     "Hnodes" ∷ nodes_ptr ↦ sl ∗ "Hclock" ∷ clock_ptr ↦ clk ∗
     "Hsl" ∷ sl ↦*{dq} (ic_loc <$> run) ∗
-    "Htypes" ∷ ([∗ map] parent ↦ ts ∈ types,
-        own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-        ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+    "Htypes" ∷ (own_type_pool (DfracOwn 1) types) ∗
     "%Hbnd" ∷ ⌜(0 <= uint.Z lo /\ uint.Z hi <= Z.of_nat (length run))%Z⌝ ∗
     "%Hwin" ∷ ⌜∀ (k : nat) (c : item_cell), run !! k = Some c ->
                 (uint.Z (cell_clock c) <= uint.Z clk)%Z ->
@@ -772,15 +756,11 @@ Lemma wp_store__GetNode_range (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
   cells_range_disjoint (all_cells types) ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
-      ([∗ map] parent ↦ ts ∈ types,
-          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+      (own_type_pool (DfracOwn 1) types) }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ RET (#(ic_loc cw), #true);
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
-      ([∗ map] parent ↦ ts ∈ types,
-          own_ytype_cells parent (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}.
+      (own_type_pool (DfracOwn 1) types) }}}.
 Proof using Type*.
   move=> Hcw Hcwcc Hcwle Hcwlt Hrunfits Hnodup Hrangedisj.
   iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".

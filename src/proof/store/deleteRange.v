@@ -73,17 +73,13 @@ Lemma types_cell_acc (types : gmap loc type_state) (p : loc) (ts : type_state)
     (k : nat) (c : item_cell) :
   types !! p = Some ts ->
   ty_cells ts !! k = Some c ->
-  ([∗ map] q ↦ tq ∈ types,
-      own_ytype_cells q (DfracOwn 1) (ty_cells tq) (ty_arr tq) ∗
-      ⌜YjsArrInvariant (ty_arr tq)⌝) -∗
+  (own_type_pool (DfracOwn 1) types) -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head c) = toYjsId itemVal.(yjs.item.id')⌝ ∗
     "%Hacccontent" ∷ ⌜content <$> ic_run c = explode (toContent itemVal.(yjs.item.content'))⌝ ∗
     "Haccval" ∷ ic_loc c ↦ itemVal ∗
     "Haccback" ∷ (ic_loc c ↦ itemVal -∗
-       ([∗ map] q ↦ tq ∈ types,
-          own_ytype_cells q (DfracOwn 1) (ty_cells tq) (ty_arr tq) ∗
-          ⌜YjsArrInvariant (ty_arr tq)⌝)).
+       (own_type_pool (DfracOwn 1) types)).
 Proof.
   move=> Hp Hck. iIntros "Htypes".
   iDestruct (big_sepM_delete _ _ p _ Hp with "Htypes") as "[[Hpc %Harrinv] Hrest]".
@@ -113,14 +109,10 @@ Lemma wp_store__deleteNode (s : loc) (types : gmap loc type_state)
   types !! p = Some ts ->
   ty_cells ts !! k = Some c ->
   {{{ is_pkg_init yjs ∗
-      ([∗ map] q ↦ tq ∈ types,
-          own_ytype_cells q (DfracOwn 1) (ty_cells tq) (ty_arr tq) ∗
-          ⌜YjsArrInvariant (ty_arr tq)⌝) }}}
+      (own_type_pool (DfracOwn 1) types) }}}
     s @! (go.PointerType yjs.store) @! "deleteNode" #(ic_loc c)
   {{{ RET #();
-      ([∗ map] q ↦ tq ∈ (<[p := MkTypeState (<[k := flip_cell c]> (ty_cells ts)) (ty_arr ts)]> types),
-          own_ytype_cells q (DfracOwn 1) (ty_cells tq) (ty_arr tq) ∗
-          ⌜YjsArrInvariant (ty_arr tq)⌝) }}}.
+      (own_type_pool (DfracOwn 1) ((<[p := MkTypeState (<[k := flip_cell c]> (ty_cells ts)) (ty_arr ts)]> types))) }}}.
 Proof using Type*.
   move=> Hp Hck.
   iIntros (Φ) "(#Hpkg & Htypes) HΦ".
@@ -148,7 +140,7 @@ Proof using Type*.
       { rewrite /flip_cell -Hd. by destruct c. }
       apply list_insert_id; exact Hck. }
     iApply "HΦ".
-    iEval (rewrite big_sepM_insert_delete).
+    rewrite /own_type_pool. iEval (rewrite big_sepM_insert_delete).
     iSplitR "Hrest"; last iExact "Hrest".
     simpl. rewrite Hins. iSplitL; last (iPureIntro; exact Harrinv).
     iExists yt, tl. iFrame "Hparent Hdll". iPureIntro.
@@ -179,7 +171,7 @@ Proof using Type*.
     { rewrite /num_visible -(take_drop_middle (ty_cells ts) k c Hck) fmap_app list_sum_app
         fmap_cons /=. rewrite Hd. lia. }
     iApply "HΦ".
-    iEval (rewrite big_sepM_insert_delete).
+    rewrite /own_type_pool. iEval (rewrite big_sepM_insert_delete).
     iSplitR "Hrest"; last iExact "Hrest".
     simpl. iSplitL; last (iPureIntro; exact Harrinv).
     iExists (yt <| yjs.yType.len' := w64_word_instance.(word.sub) yt.(yjs.yType.len')
@@ -227,15 +219,11 @@ Lemma wp_store__deleteRange (s mref : loc) (types : gmap loc type_state)
   pool_invs types ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
-      ([∗ map] p ↦ ts ∈ types,
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) }}}
+      (own_type_pool (DfracOwn 1) types) }}}
     s @! (go.PointerType yjs.store) @! "deleteRange" #client #dclock #dlen
   {{{ (types' : gmap loc type_state) (covered : bool), RET #covered;
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
-      ([∗ map] p ↦ ts ∈ types',
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      (own_type_pool (DfracOwn 1) types') ∗
       ⌜pool_invs types'⌝ ∗ ⌜delete_types_update_rel types types'⌝ ∗
       ⌜range_no_overflow dclock dlen -> covered = true ->
          ids_tombstoned (range_ids client dclock dlen) (all_cells types')⌝ }}}.
@@ -248,9 +236,7 @@ Proof using Type*.
     "Hcov" ∷ covered_ptr ↦ cov ∗
     "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
     "Hitemmap" ∷ own_item_map mref (DfracOwn 1) types_i ∗
-    "Htypes" ∷ ([∗ map] p ↦ ts ∈ types_i,
-        own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-        ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+    "Htypes" ∷ (own_type_pool (DfracOwn 1) types_i) ∗
     "%Hpool" ∷ ⌜pool_invs types_i⌝ ∗
     "%Hcurb" ∷ ⌜(uint.Z dclock <= uint.Z cur)%Z⌝ ∗
     "%Hcovj" ∷ ⌜range_no_overflow dclock dlen -> cov = true ->
@@ -503,9 +489,7 @@ Lemma wp_store__applyDeleteSpans (s mref : loc) (types : gmap loc type_state)
   pool_invs types ->
   {{{ is_pkg_init yjs ∗
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types ∗
-      ([∗ map] p ↦ ts ∈ types,
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      (own_type_pool (DfracOwn 1) types) ∗
       (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗
       own_delete_spans pdel_sl (DfracOwn 1) pdel ∗
       own_delete_spans sp_sl dq spans }}}
@@ -513,9 +497,7 @@ Lemma wp_store__applyDeleteSpans (s mref : loc) (types : gmap loc type_state)
   {{{ (types' : gmap loc type_state) (pdel_sl' : slice.t)
       (rest : list delete_span), RET #();
       (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types' ∗
-      ([∗ map] p ↦ ts ∈ types',
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      (own_type_pool (DfracOwn 1) types') ∗
       (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl' ∗
       own_delete_spans pdel_sl' (DfracOwn 1) rest ∗
       own_delete_spans sp_sl dq spans ∗
@@ -566,9 +548,7 @@ Proof using Type*.
       "Hall" ∷ all_sl ↦* (pdel_vs ++ spans_vs) ∗
       "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ mref ∗
       "Hitemmap" ∷ own_item_map mref (DfracOwn 1) types_j ∗
-      "Htypes" ∷ ([∗ map] p ↦ ts ∈ types_j,
-          own_ytype_cells p (DfracOwn 1) (ty_cells ts) (ty_arr ts) ∗
-          ⌜YjsArrInvariant (ty_arr ts)⌝) ∗
+      "Htypes" ∷ (own_type_pool (DfracOwn 1) types_j) ∗
       "%Hjb" ∷ ⌜(uint.nat j <= length (pdel_vs ++ spans_vs))%nat⌝ ∗
       "%Hpoolj" ∷ ⌜pool_invs types_j⌝ ∗
       "%HdelDj" ∷ ⌜ids_tombstoned Dj (all_cells types_j)⌝ ∗
@@ -736,8 +716,8 @@ Lemma wp_store__applyDeleteSpans_store (s_loc : loc) (γs : store_names)
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hstore & Hsp) HΦ".
   iNamed "Hstore".
-  destruct Hregcoh as (Hbindtypes & Hbindinj & Htypesbound & Hmtypes & Hmdom).
-  have Hpool : pool_invs types by split_and!; assumption.
+  have [Hrunfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
+  have [Hbindtypes [Hbindinj [Htypesbound [Hmtypes Hmdom]]]] := Hregcoh.
   wp_apply (wp_store__applyDeleteSpans s_loc items_mref types pdel_sl sp_sl dq pdel spans
               Hpool with "[$Hitemsf $Hitemmap $Htypes $Hpddelf $Hpddel $Hsp]").
   iIntros (types' pdel_sl' rest)
@@ -760,7 +740,6 @@ Proof using Type*.
       exfalso. destruct (Hdom q (mk_is_Some _ _ Hts)) as [ts0 Hts0].
       rewrite Hts0 in Hts'. done. }
   iEval (rewrite -Hfmapeq) in "Hseq".
-  destruct Hpool' as (Hrunfits' & Hlocdup' & Hrangedisj' & Horiginclk').
   iApply "HΦ". iFrame "Hsp".
   iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl', rest, types', bind, acc.
   iFrame "Hclient Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend
@@ -781,10 +760,7 @@ Proof using Type*.
     + exact Hmdom.
   - exact Hhcoh.
   - exact Hctr.
-  - exact Hlocdup'.
-  - exact Hrangedisj'.
-  - exact Hrunfits'.
-  - exact Horiginclk'.
+  - exact Hpool'.
   - exact Hacccoh.
 Qed.
 

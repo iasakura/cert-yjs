@@ -186,8 +186,15 @@ Definition doc_registry_coh (m : DocModel) (bind : gmap P loc)
      doc_model_get m (RootId nm) = ty_arr ts) /\
   (∀ t, doc_model_get m t ≠ [] -> ∃ nm p, t = RootId nm /\ bind !! nm = Some p).
 
+(** [pool_invs types]: the invariants of the document cell pool that the model
+    does not determine: every cell's clock range fits in [w64] ([cell_fits]),
+    node locations are distinct, same-client cells occupy disjoint clock
+    ranges ([cells_range_disjoint]) and every head's same-client origin is
+    strictly older ([cell_origin_clk]). Carried by [store_inv] / [own_store]
+    and preserved by every store method; the splice ([*_snoc]) and the
+    tombstone flip ([pool_invs_flip]) are its two transition laws. *)
 Definition pool_invs (types : gmap loc type_state) : Prop :=
-  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ∧
+  (∀ c, c ∈ all_cells types -> cell_fits c) ∧
   NoDup (ic_loc <$> all_cells types) ∧
   cells_range_disjoint (all_cells types) ∧
   (∀ c, c ∈ all_cells types -> cell_origin_clk c).
