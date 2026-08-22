@@ -919,7 +919,7 @@ Proof. rewrite /is_applied_root_lb. apply _. Qed.
     [store_inv] is exactly its model-existential closure
     ([store_inv_own_store] below), so a lock-holding caller can trade the
     lock body for [own_store] and back; top-level specs over store state
-    ([wp_store__applyUpdate_certs]) are stated [own_store] in, [own_store]
+    ([wp_store__applyUpdate]) are stated [own_store] in, [own_store]
     out, per the public-spec rule (no fields, no raw registry maps).
 
     The per-client counter clause [Hctr] is stated over the MODEL [m] (all
@@ -1209,7 +1209,7 @@ Proof. rewrite /store_inv /named //. Qed.
     routes a root name to its type slot, and [history_state_coh] turns every
     delivered insert of the certified prefix into an item of that type's
     CURRENT list ([delivered_ops_prefix] + [delivered_docm_mem]). The slice
-    comes back untouched; [wp_Store__rlock_hist] applies this at the read
+    comes back untouched; [wp_Store__rlock] applies this at the read
     lock's linearization point, which is the only moment a reader sees the
     exclusive slice. *)
 Lemma store_inv_excl_hist_root (s_loc : loc) (γs : store_names) (γh : history_names)

@@ -84,7 +84,7 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
     list [doc_model_get m' _], and the pure companion names which items sit
     in that bound, one item per applied per-char op, carrying the op's id
     ([ValidReplay_input_mem]). A concurrent reader intersects the bound with
-    its snapshot ([wp_Text__Len_hist] / [wp_Text__String_hist], via the history
+    its snapshot ([wp_Text__Len] / [wp_Text__String], via the history
     certificate below), so the applied portion
     of the batch is guaranteed VISIBLE-as-items to every later read. The
     buffered portion is covered only by [is_accepted] (delivered-or-buffered):
@@ -129,7 +129,7 @@ Proof.
   (* run the total certificate-based applyUpdate on the real store: no
      causal-closure obligation; the pending plus the batch drain to the
      structural fixpoint, delivering only the applied structs (per char) *)
-  wp_apply (wp_store__applyUpdate_certs _ sl dq γs γh c h m pend inputs
+  wp_apply (wp_store__applyUpdate _ sl dq γs γh c h m pend inputs
               Hnowrapb Hrooted
               with "[$Hishist $Hstore $Hupd $Hcerts]").
   iIntros (applied rest m') "(Hupd & Hstore & #Hlb & %Hdrain & %Hvr & %Hnoc & %Hnoloss & #Hrootlbs)".

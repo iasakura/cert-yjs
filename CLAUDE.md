@@ -161,7 +161,7 @@ layers, each depending only on the ones below it.
 src/proof/
   core.v  prelude.v  algebra.v  network_model.v  history.v
   ws_prelude.v  ws_relay.v
-  id/     value.v  heap.v  wp_private.v  Add.v  Sub.v  Equal.v       id.v
+  id/     value.v  heap.v  wp_private.v  Equal.v                     id.v
   item/   model.v  run_theory.v  value.v  heap.v  wp_private.v
           Indexable.v  Len.v  Deleted.v                              item.v
   ytype/  model.v  value.v  heap.v  newYType.v  findPos.v            ytype.v

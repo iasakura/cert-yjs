@@ -382,8 +382,9 @@ Proof.
   rewrite Nat.add_0_r //.
 Qed.
 
-(** Comparing a node pointer with itself is always [true] (it has its own id). *)
-Lemma wp_itemPtrEqual_self (p : loc) (v : yjs.item.t) (dq : dfrac) :
+(** Comparing a node pointer with itself is always [true] (it has its own id).
+    A stepping stone of [wp_itemPtrEqual_node]. *)
+#[local] Lemma wp_itemPtrEqual_self (p : loc) (v : yjs.item.t) (dq : dfrac) :
   {{{ is_pkg_init yjs ∗ p ↦{dq} v }}}
     @! yjs.itemPtrEqual #p #p
   {{{ RET #true; p ↦{dq} v }}}.
@@ -1369,9 +1370,10 @@ Qed.
     ([integrate_all] of [ops_of_input], issue #28 U7): the HEAD op scans
     exactly like the wire input (same origins/id) and lands the run's head;
     the tail chains off it adjacently ([integrate_chain]). Kept as the
-    detailed functional characterisation (exposes the fold/[itemVal]); the public
-    [wp_Store__Integrate] below repackages it. *)
-Lemma wp_Store__integrateCore_aux (s parent item_l : loc) (arr arr' : list (YjsItem A))
+    detailed functional characterisation (exposes the fold/[itemVal]); the
+    [wp_Store__Integrate] specs below repackage it. Local: a stepping stone of
+    the two [integrateCore_cells] forms. *)
+#[local] Lemma wp_Store__integrateCore_aux (s parent item_l : loc) (arr arr' : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A) (cells : list item_cell)
     (itemVal : yjs.item.t) (oleft oright : option yjs.id.t) (leftIdx rightIdx : Z)
     (curL curR : nat) :
@@ -2181,11 +2183,11 @@ Qed.
     cells — the fresh cell [c] (located at the argument [item_l], carrying
     [newItem], visible) is spliced into [cells] at the resolved position [idx]
     (equivalently, appended as a multiset: [cells' ≡ₚ cells ++ [c]], the form
-    the [AddNode] bookkeeping consumes). The [Text.Insert] loop and the
-    [Store.Integrate] wrapper compose with this; the public model-level
-    [wp_Store__integrateCore] below hides the cells. The inserted cell is
-    identified with [newItem] by id-uniqueness of the valid result. *)
-Lemma wp_Store__integrateCore_cells (s parent item_l : loc) (arr : list (YjsItem A))
+    the [AddNode] bookkeeping consumes). The [Store.Integrate] wrapper
+    composes with this. The inserted cell is identified with [newItem] by
+    id-uniqueness of the valid result. Local: a stepping stone of
+    [wp_Store__Integrate]. *)
+#[local] Lemma wp_Store__integrateCore_cells (s parent item_l : loc) (arr : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A) (cells : list item_cell)
     (leftIdx rightIdx : Z) (curL curR : nat) :
   YjsArrInvariant arr ->
@@ -2277,8 +2279,8 @@ Qed.
     [length = length (explode (in_content input))]. Unlike the single-char
     version, the model fold's success ([Hall]) is not derived from single
     integrate totality but supplied by the caller (the update path's replay /
-    certificates). *)
-Lemma wp_Store__integrateCore_cells_run (s parent item_l : loc)
+    certificates). Local: a stepping stone of [wp_Store__Integrate_nil_run]. *)
+#[local] Lemma wp_Store__integrateCore_cells_run (s parent item_l : loc)
     (arr arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
     (newItem : YjsItem A) (cells : list item_cell)
     (leftIdx rightIdx : Z) (curL curR : nat) :
@@ -2526,191 +2528,19 @@ Proof using Type*.
 Qed.
 
 
-(** [Store.Integrate] with a nil parent argument (the update path, issue #49):
-    the resolution branch reads the parent off the item itself (set by
-    [store.repair]) — y-octo's Option<&mut YType> None case. The item's parent
-    is [own_linked_item]'s [parent], pinned non-null by the type's heap struct,
-    so the drop branch is dead and the spec coincides with
-    [wp_Store__Integrate]. After the guard the code paths coincide; so do the
-    proofs (kept in sync by hand — the guard stepping is the only delta). *)
-Lemma wp_Store__Integrate_nil (s parent item_l : loc) (arr : list (YjsItem A))
-    (input : IntegrateInput (A := A)) (newItem : YjsItem A)
-    (cells : list item_cell) (types : gmap loc type_state) (mref : loc)
-    (leftIdx rightIdx : Z) (curL curR : nat) :
-  YjsArrInvariant arr ->
-  toItem input arr = Some newItem ->
-  IsItemValid newItem ->
-  maximalId newItem arr ->
-  findLeftIdx (in_originId input) arr = Some leftIdx ->
-  findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
-  types !! parent = Some (MkTypeState cells arr) ->
-  (∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (item_id newItem)) ->
-     (uint.Z (cell_clock c0) < uint.Z (W64 (clock (item_id newItem))))%Z /\
-     (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (item_id newItem))))%Z) ->
-  Forall (λ c, ic_run c ≠ []) cells ->
-  (∀ c0, c0 ∈ cells -> cell_fits c0) ->
-  (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->
-  (Z.of_nat (length (run_flatten (take curL cells))) = leftIdx + 1)%Z ->
-  (curL <= length cells)%nat ->
-  (Z.of_nat (length (run_flatten (take curR cells))) = rightIdx)%Z ->
-  (curR <= length cells)%nat ->
-  {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
-      own_linked_item item_l input parent (node_loc cells (Z.of_nat curL - 1)) (node_loc cells (Z.of_nat curR)) ∗
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref (DfracOwn 1) types }}}
-    s @! (go.PointerType yjs.store) @! "Integrate" #null #item_l
-  {{{ (arr' : list (YjsItem A)) (idx midx : nat) (cells' : list item_cell) (c : item_cell), RET #();
-      ⌜(midx <= length arr)%nat⌝ ∗ ⌜arr' = insertIdxIfInBounds midx newItem arr⌝ ∗
-      ⌜YjsArrInvariant arr'⌝ ∗ own_ytype_cells parent (DfracOwn 1) cells' arr' ∗
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗
-      own_item_map mref (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types) ∗
-      ⌜cells' ≡ₚ cells ++ [c]⌝ ∗ ⌜setintegrate input arr = Some arr'⌝ ∗
-      ⌜cells' = take idx cells ++ c :: drop idx cells⌝ ∗
-      ⌜(idx <= length cells)%nat⌝ ∗
-      ⌜length (run_flatten (take idx cells)) = midx⌝ ∗
-      ⌜arr' = take midx arr ++ newItem :: drop midx arr⌝ ∗
-      ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗ ⌜run_head c = newItem⌝ ∗
-      ⌜ic_deleted c = false⌝ ∗ ⌜cell_unit c⌝ }}}.
-Proof using Type*.
-  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Htypes Hgmax Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb.
-  iIntros (Φ) "(Hpkg & Htext & Hfresh & Hitemsf & Hitemmap) HΦ".
-  iDestruct "Htext" as (yt0 tl0) "(Hparent0 & Hdll0 & %Hlen0 & %Hrepr0 & %Hcpar0)".
-  iDestruct (typed_pointsto_not_null with "Hparent0") as %Hpnn.
-  iAssert (own_ytype_cells parent (DfracOwn 1) cells arr) with "[Hparent0 Hdll0]" as "Htext".
-  { iExists yt0, tl0. iFrame "Hparent0 Hdll0". iPureIntro.
-    split_and!; [exact Hlen0 | exact Hrepr0 | exact Hcpar0]. }
-  (* [parent == nil]: take the resolution branch and read the item's own
-     parent (set by [store.repair]) — y-octo's Option::None case, issue #49. *)
-  iDestruct "Hfresh" as (iv2 oleft2 oright2) "(Hraw & %Hfl2 & %Hfr2 & %Hfpar2 & %Hflags2 & %Hrun2)".
-  iNamed "Hraw".
-  wp_method_call. wp_call. wp_call. wp_auto.
-  rewrite Hfpar2 (bool_decide_eq_false_2 (parent = null) Hpnn).
-  wp_auto.
-  iAssert (own_linked_item item_l input parent (node_loc cells (Z.of_nat curL - 1)) (node_loc cells (Z.of_nat curR)))
-    with "[Hitem Holeft Horight]" as "Hfresh".
-  { iExists iv2, oleft2, oright2. rewrite /own_fresh_item_raw.
-    iFrame "Hitem Holeft Horight". iPureIntro.
-    split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
-                | exact Hfl2 | exact Hfr2 | exact Hfpar2 | exact Hflags2 | exact Hrun2]. }
-  rewrite Hfpar2.
-  wp_apply (wp_Store__integrateCore_cells s parent item_l arr input newItem cells
-              leftIdx rightIdx curL curR
-              Hinv Htoitem Hvalid Hmax HfindL HfindR Hnec Hfits Hoclk
-              HcurL HcurLb HcurR HcurRb with "[$Hpkg $Htext $Hfresh]").
-  iIntros (arr' idx midx cells' c) "(%Hile & %Harr'eq & %Hinv' & Htext' & %Hsplice & %Hidxb & %Hcoup & %Hperm & %Hsi & %Hlook & %Hloc & %Hcid & %Hcdel & %Hcunit)".
-  wp_auto.
-  (* AddNode — identical to [wp_Store__Integrate] from here on. *)
-  wp_method_call. wp_call. wp_call. wp_auto.
-  iDestruct "Htext'" as (yt tl) "(Hpar & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
-  iDestruct (own_dll_acc (DfracOwn 1) cells' yt.(yjs.yType.start') tl idx c Hlook with "Hdll") as "Hacc".
-  iNamed "Hacc".
-  iEval (rewrite Hloc) in "Hcval".
-  wp_auto.
-  iNamed "Hitemmap".
-  have Hcc : cell_client c = itemVal.(yjs.item.id').(yjs.id.clientId')
-    by (rewrite /cell_client Hid0 /toYjsId /=; word).
-  wp_apply (wp_map_lookup1 with "Hmap"). iIntros "Hmap". wp_auto.
-  have Hac2 : all_cells (<[parent := {| ty_cells := cells'; ty_arr := arr' |}]> types)
-              ≡ₚ all_cells types ++ [c]
-    by apply (all_cells_insert_snoc types parent cells arr cells' arr' c Htypes Hperm).
-  have Hkp : cell_kp <$> all_cells (<[parent := {| ty_cells := cells'; ty_arr := arr' |}]> types)
-             ≡ₚ (cell_kp <$> all_cells types) ++ [cell_kp c]
-    by rewrite Hac2 fmap_app.
-  have Hmax_arg : ∀ c0, c0 ∈ all_cells types → cell_client c0 = cell_client c →
-                    ((cell_pr c0).1 < (cell_pr c).1)%Z.
-  { intros c0 Hc0 Hcce. rewrite /cell_pr /=.
-    have Hclkc : cell_clock c = W64 (clock (item_id newItem)) by rewrite /cell_clock Hcid.
-    have Hcc' : cell_client c0 = W64 (clientId (item_id newItem))
-      by rewrite Hcce /cell_client Hcid //.
-    rewrite Hclkc. exact (proj1 (Hgmax c0 Hc0 Hcc')). }
-  have Hrun_eq := client_run_loc_tail types
-                    (<[parent := {| ty_cells := cells'; ty_arr := arr' |}]> types) c Hkp Hclkloc Hmax_arg.
-  set (kc := itemVal.(yjs.item.id').(yjs.id.clientId')) in *.
-  rewrite Hcc in Hrun_eq.
-  iAssert ((default slice.nil (gm !! kc)) ↦* (ic_loc <$> client_run types kc) ∗
-           own_slice_cap loc (default slice.nil (gm !! kc)) (DfracOwn 1) ∗
-           ([∗ map] client↦s0 ∈ delete kc gm,
-              "Hslice" ∷ s0 ↦* (ic_loc <$> client_run types client) ∗
-              "Hcap" ∷ own_slice_cap loc s0 (DfracOwn 1)))%I
-    with "[Hruns]" as "(Hlk_slice & Hlk_cap & Hrunsrest)".
-  { destruct (gm !! kc) as [s_old|] eqn:Hgmk.
-    - iDestruct (big_sepM_delete _ _ _ _ Hgmk with "Hruns") as "[Hkey Hrest]".
-      iNamed "Hkey". simpl. iFrame "Hslice Hcap Hrest".
-    - have Hempty : client_run types kc = [].
-      { rewrite /client_run.
-        destruct (filter (λ c0 : item_cell, cell_client c0 = kc) (all_cells types)) as [|a l'] eqn:Ef.
-        - reflexivity.
-        - exfalso.
-          have Ha : a ∈ filter (λ c0 : item_cell, cell_client c0 = kc) (all_cells types)
-            by (rewrite Ef; left).
-          rewrite list_elem_of_filter in Ha. destruct Ha as [Hcck Hain].
-          have Hin : kc ∈ cell_client <$> all_cells types
-            by (rewrite -Hcck; apply list_elem_of_fmap_2; exact Hain).
-          destruct (Hcomplete kc Hin) as [sx Hsome]. rewrite Hgmk in Hsome. discriminate. }
-      simpl. rewrite Hempty /= (delete_id gm kc Hgmk).
-      iFrame "Hruns". iSplitR; [iApply own_slice_nil | iApply own_slice_cap_nil]. }
-  wp_apply wp_slice_literal. iSplitR; first done. iIntros "%s2 [Hs2 _]". wp_auto.
-  wp_apply (wp_slice_append with "[$Hlk_slice $Hlk_cap $Hs2]").
-  iIntros (snew) "(Hsnew & Hsnewcap & _)". wp_auto.
-  have Heq : (ic_loc <$> client_run types kc) ++ <[sint.nat (W64 0):=item_l]> ([null] : list loc)
-           = ic_loc <$> client_run (<[parent:={| ty_cells := cells'; ty_arr := arr' |}]> types) kc.
-  { rewrite Hrun_eq. f_equal. rewrite Hloc. have H0 : sint.nat (W64 0) = 0%nat by word. rewrite H0 //. }
-  iEval (rewrite Heq) in "Hsnew".
-  wp_apply (wp_map_insert with "Hmap"). iIntros "Hmap". wp_auto.
-  set (types2 := <[parent := {| ty_cells := cells'; ty_arr := arr' |}]> types).
-  have Hdecomp : ∀ c0, c0 ∈ all_cells types2 → c0 ∈ all_cells types ∨ c0 = c.
-  { intros c0 Hc0. rewrite Hac2 in Hc0.
-    apply elem_of_app in Hc0 as [H|H]; [left; exact H | right; by apply list_elem_of_singleton]. }
-  have Hcomplete' : ∀ c0 : w64, c0 ∈ cell_client <$> all_cells types2 → is_Some (<[kc:=snew]> gm !! c0).
-  { intros c0 Hc0. apply list_elem_of_fmap in Hc0 as (cc & -> & Hcc0).
-    destruct (Hdecomp cc Hcc0) as [Hin | ->].
-    - destruct (decide (cell_client cc = kc)) as [Hek|Hne]; [rewrite Hek lookup_insert_eq; eauto |].
-      rewrite lookup_insert_ne; [| congruence]. apply Hcomplete. apply list_elem_of_fmap_2. exact Hin.
-    - rewrite Hcc lookup_insert_eq; eauto. }
-  have Hclkloc' : ∀ c1 c2, c1 ∈ all_cells types2 → c2 ∈ all_cells types2 →
-                    cell_client c1 = cell_client c2 → (cell_pr c1).1 = (cell_pr c2).1 → ic_loc c1 = ic_loc c2.
-  { intros c1 c2 Hc1 Hc2 Hcce Hpre.
-    destruct (Hdecomp c1 Hc1) as [Hin1 | ->]; destruct (Hdecomp c2 Hc2) as [Hin2 | ->];
-      [exact (Hclkloc c1 c2 Hin1 Hin2 Hcce Hpre)
-      | exfalso; have := Hmax_arg c1 Hin1 Hcce; lia
-      | exfalso; have := Hmax_arg c2 Hin2 (eq_sym Hcce); lia
-      | reflexivity]. }
-  iEval (rewrite -Hloc) in "Hcval".
-  iDestruct ("Hback" with "Hcval") as "Hdll".
-  iNamed "Hpar".
-  iAssert (own_item_map mref (DfracOwn 1) types2) with "[Hmap Hsnew Hsnewcap Hrunsrest]" as "Hitemmap'".
-  { iExists (<[kc:=snew]> gm). iFrame "Hmap".
-    iSplitL "Hsnew Hsnewcap Hrunsrest".
-    - rewrite big_sepM_insert_delete. iSplitL "Hsnew Hsnewcap"; [iFrame "Hsnew Hsnewcap"|].
-      iApply (big_sepM_impl with "Hrunsrest").
-      iIntros "!#" (client s0 Hcs) "H". iNamed "H".
-      have Hne : client ≠ cell_client c.
-      { rewrite Hcc. intros ->. rewrite lookup_delete_eq in Hcs. discriminate. }
-      rewrite (client_run_loc_other types types2 c client Hkp Hclkloc Hne).
-      iFrame "Hslice Hcap".
-    - iPureIntro. split; [exact Hcomplete' | exact Hclkloc']. }
-  iApply ("HΦ" $! arr' idx midx cells' c).
-  iFrame "Hitemsf Hitemmap'".
-  iSplitR; [iPureIntro; exact Hile|].
-  iSplitR; [iPureIntro; exact Harr'eq|].
-  iSplitR; [iPureIntro; exact Hinv'|].
-  iSplitL "Hparent Hdll".
-  { iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
-  iSplitR; [iPureIntro; exact Hperm|].
-  iSplitR; [iPureIntro; exact Hsi|].
-  have Harrsp : arr' = take midx arr ++ newItem :: drop midx arr
-    by rewrite Harr'eq /insertIdxIfInBounds decide_True //.
-  iPureIntro.
-  split_and!; [exact Hsplice | exact Hidxb | exact Hcoup | exact Harrsp | exact Hlook | exact Hloc | exact Hcid | exact Hcdel | exact Hcunit].
-Qed.
 
-(** [wp_Store__Integrate_nil_run]: the multi-char (run) variant of
-    [wp_Store__Integrate_nil] (issue #28 U7). The nil-parent update path
-    integrating an [n]-char wire item: it lands as a run cell of [n] chained
-    per-char ops. Same guard stepping and same [AddNode] item-map maintenance as
-    the single-char version (both key the item map on the run HEAD's clock, so
-    the run length is irrelevant to the bookkeeping); the delta is calling
-    [integrateCore_cells_run] and exposing the whole [ic_run c]. The model fold
-    success [Hall] is supplied by the caller (the replay / certificates). *)
+(** [wp_Store__Integrate_nil_run]: [Store.Integrate] with a nil parent
+    argument (the update path, issue #49) integrating an [n]-char wire item
+    (issue #28 U7). The resolution branch reads the parent off the item itself
+    (set by [store.repair]), y-octo's [Option<&mut YType>] None case; the
+    item's parent is [own_linked_item_run]'s [parent], pinned non-null by the
+    type's heap struct, so the drop branch is dead. The item lands as a run
+    cell of [n] chained per-char ops. Same [AddNode] item-map maintenance as
+    [wp_Store__Integrate] (both key the item map on the run HEAD's clock, so
+    the run length is irrelevant to the bookkeeping); the delta is the guard
+    stepping, calling [integrateCore_cells_run] and exposing the whole
+    [ic_run c]. The model fold success [Hall] is supplied by the caller (the
+    replay / certificates). *)
 Lemma wp_Store__Integrate_nil_run (s parent item_l : loc) (arr arr' : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A)
     (cells : list item_cell) (types : gmap loc type_state) (mref : loc)

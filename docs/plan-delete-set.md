@@ -151,7 +151,7 @@ covered by the M2 no-op cell surgery (`split_cells_flatten` etc.).
   like #42's history plumbing).
 - Reads: the #125 read API is flag-driven (`visible_items`/`visible_string`
   over the tombstone bits of the snapshot); `deleted_match` is what turns
-  those into functions of `(items, delete_set)` -- e.g. `wp_Text__String_hist` can
+  those into functions of `(items, delete_set)` -- e.g. `wp_Text__String` can
   then say "the visible string is the delivered items MINUS a set that is at
   least your `is_delete_set_lb` certificate", the delete-aware strengthening of the
   issue #125 guarantee.

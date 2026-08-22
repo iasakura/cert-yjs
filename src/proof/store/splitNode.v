@@ -1027,7 +1027,7 @@ Qed.
     boundary the C2 flip feeds to Integrate as the left cursor. Mutates the
     item map, hence [DfracOwn 1]; needs the pool invariants (run-fits,
     loc-NoDup, range disjointness). *)
-Lemma wp_store__splitAtAndGetLeft_range (s mref : loc) (idv : yjs.id.t)
+#[local] Lemma wp_store__splitAtAndGetLeft_range (s mref : loc) (idv : yjs.id.t)
     (types : gmap loc type_state) (parent : loc)
     (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell) :
   types !! parent = Some (MkTypeState cells arr) ->
@@ -1131,7 +1131,7 @@ Qed.
     the id's offset and the fresh right half comes back. Either way the
     returned node's run STARTS exactly at [idv]: the clean-start boundary
     the C2 flip feeds to Integrate as the right cursor. *)
-Lemma wp_store__splitAtAndGetRight_range (s mref : loc) (idv : yjs.id.t)
+#[local] Lemma wp_store__splitAtAndGetRight_range (s mref : loc) (idv : yjs.id.t)
     (types : gmap loc type_state) (parent : loc)
     (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell) :
   types !! parent = Some (MkTypeState cells arr) ->

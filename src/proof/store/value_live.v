@@ -117,8 +117,8 @@ Definition apply_live_refine (m : DocModel) (pool pool' : list item_cell) : Prop
     wire item's own chars, recognised by its client and a clock at or above
     the item's.
 
-    Used as: the pool-refinement clause of [wp_store__integrateDecoded] and
-    [wp_store__integrateDecoded_grow], which have no model of their own to
+    Used as: the pool-refinement clause of [wp_store__integrateDecoded] (and
+    its two local cases), which have no model of their own to
     speak about. Their caller, the apply loop in [store/applyUpdate], turns
     the second disjunct into "the model did not have this id" with the
     replay's client bound ([apply_live_refine_of_integrate]). *)
