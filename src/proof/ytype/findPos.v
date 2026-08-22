@@ -1,7 +1,7 @@
 (** [wp_yType__findPos]: the tombstone-aware walk to a visible character index,
-    returning the straddling neighbours (an existential list position [p]). Feeds
-    the [Store.Integrate] loop in [Text.Insert] and [Text.Delete]; read-only, so
-    stated at a generic [dq].
+    returning the straddling neighbours and the in-node offset ([find_pos], over
+    an existential list position [p]). Feeds the [Store.Integrate] loop in
+    [Text.Insert] and [Text.Delete]; read-only, so stated at a generic [dq].
 
     Stated over the representation predicates of [ytype/heap.v]. *)
 From New.proof Require Import proof_prelude.
@@ -43,14 +43,7 @@ Lemma wp_yType__findPos (parent : loc) (dq : dfrac) (cells : list item_cell)
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent dq cells arr }}}
     parent @! (go.PointerType yjs.yType) @! "findPos" #idx
   {{{ (lft rgt : loc) (p : nat) (off : w64), RET (#lft, #rgt, #off);
-      own_ytype_cells parent dq cells arr ∗
-      ⌜(p <= length cells)%nat⌝ ∗
-      ⌜lft = node_loc cells (Z.of_nat p - 1)⌝ ∗
-      ⌜rgt = node_loc cells (Z.of_nat p)⌝ ∗
-      ⌜off = W64 0 ∨
-       (0 < uint.Z off)%Z ∧ (1 <= p)%nat ∧
-       (∃ c, cells !! (p - 1)%nat = Some c ∧ ic_deleted c = false ∧
-             (uint.nat off < length (ic_run c))%nat)⌝ }}}.
+      own_ytype_cells parent dq cells arr ∗ ⌜find_pos cells p lft rgt off⌝ }}}.
 Proof.
   wp_start as "Hyt". iNamed "Hyt".
   iDestruct (own_dll_head_node dq cells _ tl with "Hdll") as %Hhead.

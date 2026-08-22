@@ -69,6 +69,21 @@ Definition items_string (l : list (YjsItem A)) : A :=
 Definition visible_string (m : list (YjsItem A * bool)) : A :=
   items_string (visible_items m).
 
+(** [find_pos cells p lft rgt off]: what [yType.findPos] resolves a visible
+    index to: the cell cursor [p] (the cells before index [p] lie before the
+    position), the nodes around it ([lft] the cell before the cursor, [rgt] the
+    cell at it, [null] out of range) and the offset [off] of the position
+    inside [lft]: 0 on a cell boundary, otherwise strictly inside the live cell
+    before the cursor. *)
+Definition find_pos (cells : list item_cell) (p : nat) (lft rgt : loc) (off : w64) : Prop :=
+  (p <= length cells)%nat ∧
+  lft = node_loc cells (Z.of_nat p - 1) ∧
+  rgt = node_loc cells (Z.of_nat p) ∧
+  (off = W64 0 ∨
+   (0 < uint.Z off)%Z ∧ (1 <= p)%nat ∧
+   (∃ c, cells !! (p - 1)%nat = Some c ∧ ic_deleted c = false ∧
+         (uint.nat off < length (ic_run c))%nat)).
+
 (* ===== lemmas ============================================================= *)
 
 Lemma fmap_pair_fst (d : bool) (r : list (YjsItem A)) :
