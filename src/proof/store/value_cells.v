@@ -212,6 +212,24 @@ Definition pool_invs (types : gmap loc type_state) : Prop :=
 
 (* ===== lemmas ============================================================= *)
 
+(** Replacing a registered type's state keeps the registry coherent: the
+    pool's domain is unchanged. *)
+Lemma registry_coh_insert (bind : gmap P loc) (types : gmap loc type_state)
+    (p : loc) (ts ts' : type_state) :
+  types !! p = Some ts ->
+  registry_coh bind types ->
+  registry_coh bind (<[p := ts']> types).
+Proof.
+  move=> Hp [Hbt [Hinj Htb]]. split_and!.
+  - move=> nm q Hq. destruct (decide (q = p)) as [-> | Hne].
+    + rewrite lookup_insert_eq. by eexists.
+    + rewrite lookup_insert_ne //. exact (Hbt nm q Hq).
+  - exact Hinj.
+  - move=> q [ts0 Hq]. destruct (decide (q = p)) as [-> | Hne].
+    + exact (Htb p (ex_intro _ ts Hp)).
+    + rewrite lookup_insert_ne in Hq; last done. exact (Htb q (ex_intro _ ts0 Hq)).
+Qed.
+
 (** Pool membership, decomposed to the owning type. *)
 Lemma all_cells_elem_of (types : gmap loc type_state) (c : item_cell) :
   c ∈ all_cells types <-> ∃ p ts, types !! p = Some ts /\ c ∈ ty_cells ts.
@@ -589,6 +607,70 @@ Proof.
   simpl. rewrite list_fmap_insert /flip_cell /=.
   rewrite list_insert_id; first reflexivity.
   rewrite list_lookup_fmap Hck //.
+Qed.
+
+(** The pool invariants only look at the cells as a multiset: they transport
+    along any permutation of [all_cells]. *)
+Lemma pool_invs_perm (types types' : gmap loc type_state) :
+  all_cells types' ≡ₚ all_cells types ->
+  pool_invs types -> pool_invs types'.
+Proof.
+  move=> Hperm [Hfits [Hnodup [Hdisj Horigin]]]. split_and!.
+  - move=> c Hc. rewrite Hperm in Hc. exact (Hfits c Hc).
+  - rewrite Hperm //.
+  - move=> c1 c2 Hc1 Hc2. rewrite Hperm in Hc1 Hc2. exact (Hdisj c1 c2 Hc1 Hc2).
+  - move=> c Hc. rewrite Hperm in Hc. exact (Horigin c Hc).
+Qed.
+
+(** Registering a fresh EMPTY type adds no cell. *)
+Lemma pool_invs_insert_empty (types : gmap loc type_state) (p : loc) :
+  types !! p = None ->
+  pool_invs types -> pool_invs (<[p := MkTypeState [] []]> types).
+Proof. move=> Hp. apply pool_invs_perm. exact (all_cells_insert_empty types p [] Hp). Qed.
+
+(** Registering a fresh name at a fresh type keeps the registry coherent. *)
+Lemma registry_coh_bind_fresh (bind : gmap P loc) (types : gmap loc type_state)
+    (nm : P) (p : loc) (ts : type_state) :
+  bind !! nm = None ->
+  types !! p = None ->
+  registry_coh bind types ->
+  registry_coh (<[nm := p]> bind) (<[p := ts]> types).
+Proof.
+  move=> Hnm Hp [Hbt [Hinj Htb]].
+  have Hpnotbound : ∀ name, bind !! name = Some p -> False.
+  { move=> name Hb. destruct (Hbt name p Hb) as [ts0 Hts0]. rewrite Hp in Hts0. done. }
+  split_and!.
+  - move=> name q. destruct (decide (name = nm)) as [-> | Hne].
+    + rewrite lookup_insert_eq. move=> [= <-]. rewrite lookup_insert_eq. by eexists.
+    + rewrite lookup_insert_ne //. move=> Hb.
+      destruct (decide (q = p)) as [-> | Hnep]; first by (exfalso; exact (Hpnotbound name Hb)).
+      rewrite lookup_insert_ne //. exact (Hbt name q Hb).
+  - move=> n1 n2 q H1 H2.
+    destruct (decide (n1 = nm)) as [-> | Hn1]; destruct (decide (n2 = nm)) as [-> | Hn2].
+    + done.
+    + exfalso. rewrite lookup_insert_eq in H1. rewrite lookup_insert_ne // in H2.
+      injection H1 as <-. exact (Hpnotbound n2 H2).
+    + exfalso. rewrite lookup_insert_ne // in H1. rewrite lookup_insert_eq in H2.
+      injection H2 as <-. exact (Hpnotbound n1 H1).
+    + rewrite lookup_insert_ne // in H1. rewrite lookup_insert_ne // in H2.
+      exact (Hinj n1 n2 q H1 H2).
+  - move=> q. destruct (decide (q = p)) as [-> | Hnep].
+    + move=> _. exists nm. by rewrite lookup_insert_eq.
+    + rewrite lookup_insert_ne //. move=> Hs.
+      destruct (Htb q Hs) as [name Hb]. exists name.
+      rewrite lookup_insert_ne //. move=> ?; subst name. by rewrite Hnm in Hb.
+Qed.
+
+(** A step that keeps the pool's domain keeps the registry coherent. *)
+Lemma registry_coh_dom_eq (bind : gmap P loc) (types types' : gmap loc type_state) :
+  (∀ p, is_Some (types !! p) -> is_Some (types' !! p)) ->
+  (∀ p, is_Some (types' !! p) -> is_Some (types !! p)) ->
+  registry_coh bind types -> registry_coh bind types'.
+Proof.
+  move=> Hfwd Hbwd [Hbt [Hinj Htb]]. split_and!.
+  - move=> nm q Hq. exact (Hfwd q (Hbt nm q Hq)).
+  - exact Hinj.
+  - move=> q Hq. exact (Htb q (Hbwd q Hq)).
 Qed.
 
 (** [cell_kp] is a function of the [(loc, run)] projection, so the [own_item_map]

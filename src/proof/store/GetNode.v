@@ -671,25 +671,19 @@ Qed.
     to [cw] by per-client clock-range disjointness (two same-client cells
     whose ranges both cover the id must share a location) instead of the
     all-singleton identification. *)
-Lemma wp_store__GetNode_range (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
+Lemma wp_store__GetNode_range (s : loc) (idv : yjs.id.t)
     (types : gmap loc type_state) (cw : item_cell) :
   cw ∈ all_cells types ->
   cell_client cw = idv.(yjs.id.clientId') ->
   (uint.Z (cell_clock cw) <= uint.Z idv.(yjs.id.clock'))%Z ->
   (uint.Z idv.(yjs.id.clock') < uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)))%Z ->
-  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
-  NoDup (ic_loc <$> all_cells types) ->
-  cells_range_disjoint (all_cells types) ->
-  {{{ is_pkg_init yjs ∗
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
-      (own_type_pool (DfracOwn 1) types) }}}
+  pool_invs types ->
+  {{{ is_pkg_init yjs ∗ own_store_items s types ∗ own_type_pool (DfracOwn 1) types }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
-  {{{ RET (#(ic_loc cw), #true);
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
-      (own_type_pool (DfracOwn 1) types) }}}.
+  {{{ RET (#(ic_loc cw), #true); own_store_items s types ∗ own_type_pool (DfracOwn 1) types }}}.
 Proof using Type*.
-  move=> Hcw Hcwcc Hcwle Hcwlt Hrunfits Hnodup Hrangedisj.
-  iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
+  move=> Hcw Hcwcc Hcwle Hcwlt [Hrunfits [Hnodup [Hrangedisj Horiginclk]]].
+  iIntros (Φ) "(#Hpkg & Hitems & Htypes) HΦ". iNamed "Hitems".
   set (kc := idv.(yjs.id.clientId')).
   have Hcwkc : cell_client cw = kc := Hcwcc.
   iNamed "Hitemmap".
@@ -736,7 +730,7 @@ Proof using Type*.
       [| exact Hlocne].
     rewrite (proj2 (proj1 (client_run_mem types kc c1) Hc1r))
             (proj2 (proj1 (client_run_mem types kc c2) Hc2r)) //. }
-  wp_apply (wp_getNodeIndex_range slk dq types (client_run types kc) idv.(yjs.id.clock') kw cw
+  wp_apply (wp_getNodeIndex_range slk (DfracOwn 1) types (client_run types kc) idv.(yjs.id.clock') kw cw
               (client_run_sorted types kc)
               (fun c Hc => proj1 (proj1 (client_run_mem types kc c) Hc))
               Hrunfits' Hidisj Hkw Hcwle Hcwlt
@@ -750,7 +744,7 @@ Proof using Type*.
   rewrite decide_True; last word.
   have Hlocres : (ic_loc <$> client_run types kc) !! uint.nat i = Some cres.(ic_loc)
     by rewrite list_lookup_fmap Hcres //.
-  iDestruct (own_slice_elem_acc (sint.Z i) (ic_loc cres) slk dq (ic_loc <$> client_run types kc) with "Hslice") as "[Hel Hgive]".
+  iDestruct (own_slice_elem_acc (sint.Z i) (ic_loc cres) slk (DfracOwn 1) (ic_loc <$> client_run types kc) with "Hslice") as "[Hel Hgive]".
   { word. }
   { replace (Z.to_nat (sint.Z i)) with (uint.nat i) by word. exact Hlocres. }
   wp_auto.
@@ -767,12 +761,9 @@ Proof using Type*.
     destruct (Hrangedisj cres cw (proj1 Hcresmem) Hcw
                 ltac:(rewrite (proj2 Hcresmem) Hcwcc //) Hne) as [Hd | Hd]; lia. }
   rewrite Hloceq.
-  iApply "HΦ".
-  iFrame "Hitemsf".
   iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
-  iSplitL "Hmap Hruns".
-  { iExists gm. iFrame "Hmap Hruns". iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
-  iFrame "Htypes".
+  iApply "HΦ". iFrame "Htypes". iExists items_mref. iFrame "Hitemsf".
+  iExists gm. iFrame "Hmap Hruns". iPureIntro. split; [exact Hcomplete | exact Hclkloc].
 Qed.
 
 (** [store.splitNode n diff] (issue #28 M4): split the run cell [cw] (at DLL
@@ -948,18 +939,13 @@ Qed.
     are live. [ok = true] pins the returned loc to a store cell whose run
     covers the probed id; [ok = false] certifies no store cell's run covers it.
     Range-disjointness + loc-NoDup make the covering cell unique. *)
-Lemma wp_store__GetNode_total (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
+Lemma wp_store__GetNode_total (s : loc) (idv : yjs.id.t)
     (types : gmap loc type_state) :
-  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
-  NoDup (ic_loc <$> all_cells types) ->
-  cells_range_disjoint (all_cells types) ->
-  {{{ is_pkg_init yjs ∗
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
-      (own_type_pool (DfracOwn 1) types) }}}
+  pool_invs types ->
+  {{{ is_pkg_init yjs ∗ own_store_items s types ∗ own_type_pool (DfracOwn 1) types }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      (s .[(yjs.store.t), "items"]) ↦ mref ∗ own_item_map mref dq types ∗
-      (own_type_pool (DfracOwn 1) types) ∗
+      own_store_items s types ∗ own_type_pool (DfracOwn 1) types ∗
       ⌜if ok
        then ∃ c, c ∈ all_cells types ∧ cell_client c = idv.(yjs.id.clientId') ∧
                  (uint.Z (cell_clock c) <= uint.Z idv.(yjs.id.clock'))%Z ∧
@@ -969,8 +955,8 @@ Lemma wp_store__GetNode_total (s mref : loc) (dq : dfrac) (idv : yjs.id.t)
                  (uint.Z (cell_clock c) <= uint.Z idv.(yjs.id.clock'))%Z ->
                  (uint.Z idv.(yjs.id.clock') < uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z -> False⌝ }}}.
 Proof using Type*.
-  move=> Hrunfits Hnodup Hrangedisj.
-  iIntros (Φ) "(#Hpkg & Hitemsf & Hitemmap & Htypes) HΦ".
+  move=> [Hrunfits [Hnodup [Hrangedisj Horiginclk]]].
+  iIntros (Φ) "(#Hpkg & Hitems & Htypes) HΦ". iNamed "Hitems".
   set (kc := idv.(yjs.id.clientId')).
   iNamed "Hitemmap".
   wp_method_call. wp_call. wp_call. wp_auto.
@@ -1012,7 +998,7 @@ Proof using Type*.
         [| exact Hlocne].
       rewrite (proj2 (proj1 (client_run_mem types kc c1) Hc1r))
               (proj2 (proj1 (client_run_mem types kc c2) Hc2r)) //. }
-    wp_apply (wp_getNodeIndex_total slk dq types (client_run types kc) idv.(yjs.id.clock')
+    wp_apply (wp_getNodeIndex_total slk (DfracOwn 1) types (client_run types kc) idv.(yjs.id.clock')
                 (client_run_sorted types kc)
                 (fun c Hc => proj1 (proj1 (client_run_mem types kc c) Hc))
                 Hrunfits' Hidisj
@@ -1029,7 +1015,7 @@ Proof using Type*.
       rewrite decide_True; last word.
       have Hlocres : (ic_loc <$> client_run types kc) !! uint.nat i = Some cres.(ic_loc)
         by rewrite list_lookup_fmap Hcres //.
-      iDestruct (own_slice_elem_acc (sint.Z i) (ic_loc cres) slk dq (ic_loc <$> client_run types kc) with "Hslice") as "[Hel Hgive]".
+      iDestruct (own_slice_elem_acc (sint.Z i) (ic_loc cres) slk (DfracOwn 1) (ic_loc <$> client_run types kc) with "Hslice") as "[Hel Hgive]".
       { word. }
       { replace (Z.to_nat (sint.Z i)) with (uint.nat i) by word. exact Hlocres. }
       wp_auto.
@@ -1039,33 +1025,30 @@ Proof using Type*.
       iEval (rewrite Hinsid) in "Hslice".
       have Hcresmem : cres ∈ all_cells types /\ cell_client cres = kc.
       { apply client_run_mem. exact (list_elem_of_lookup_2 _ _ _ Hcres). }
-      iApply ("HΦ" $! (ic_loc cres) true).
-      iFrame "Hitemsf".
       iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
-      iSplitL "Hmap Hruns".
-      { iExists gm. iFrame "Hmap Hruns". iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
-      iFrame "Htypes".
+      iApply ("HΦ" $! (ic_loc cres) true). iFrame "Htypes".
+      iSplitL "Hitemsf Hmap Hruns".
+      { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
+        iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
       iPureIntro. exists cres.
       split_and!; [exact (proj1 Hcresmem) | exact (proj2 Hcresmem) | exact Hcresle | exact Hcreslt | done].
     + (* clock miss within a known client: no run of this client covers the id *)
       wp_auto.
-      iApply ("HΦ" $! null false).
-      iFrame "Hitemsf".
       iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
-      iSplitL "Hmap Hruns".
-      { iExists gm. iFrame "Hmap Hruns". iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
-      iFrame "Htypes".
+      iApply ("HΦ" $! null false). iFrame "Htypes".
+      iSplitL "Hitemsf Hmap Hruns".
+      { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
+        iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
       iPureIntro. move=> c Hc Hcc Hcov1 Hcov2.
       have Hcrun : c ∈ client_run types kc by (apply client_run_mem; split; [exact Hc | exact Hcc]).
       apply list_elem_of_lookup_1 in Hcrun. destruct Hcrun as [kx Hkx].
       exact (Hires kx c Hkx Hcov1 Hcov2).
   - (* unknown client: no cell of this author at all *)
     wp_auto.
-    iApply ("HΦ" $! null false).
-    iFrame "Hitemsf".
-    iSplitL "Hmap Hruns".
-    { iExists gm. iFrame "Hmap Hruns". iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
-    iFrame "Htypes".
+    iApply ("HΦ" $! null false). iFrame "Htypes".
+    iSplitL "Hitemsf Hmap Hruns".
+    { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
+      iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
     iPureIntro. move=> c Hc Hcc Hcov1 Hcov2.
     have Hkcin : kc ∈ (cell_client <$> all_cells types).
     { rewrite -Hcc. apply list_elem_of_fmap_2. exact Hc. }
