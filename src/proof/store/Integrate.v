@@ -2353,7 +2353,12 @@ Qed.
     The [parent] argument is the type itself (the local edit path) or [null]
     (the update path), in which case the method reads the parent off the
     item, which [store.repair] set; the drop branch for an unresolved parent
-    is dead because the item's parent is the type's own non-null location. *)
+    is dead because the item's parent is the type's own non-null location.
+    Local: the stepping stone of [wp_Store__Integrate], and with
+    [wp_store__AddNode] the one place a store method is stated while the
+    store is open (the type's cells borrowed out of the pool, the item index
+    as its raw field); the whole-store lemma below re-establishes
+    [own_store_cells]. *)
 #[local] Lemma wp_Store__Integrate_parts (s parent parent_arg item_l : loc) (cells : list item_cell)
     (arr arr' : list (YjsItem A)) (input : IntegrateInput (A := A)) (newItem : YjsItem A)
     (types : gmap loc type_state) (lft rgt : loc) :

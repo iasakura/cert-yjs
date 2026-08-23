@@ -517,9 +517,15 @@ sections above:
   (`own_store_items s types ∗ own_type_pool dq types` for cell surgeries,
   `own_store_core s types bind` for the registry-touching helpers), rejected
   because a method on `s` must take `s`'s predicate whole (CLAUDE.md "Spec
-  shape"). The partial footprints survive only as `#[local]` stepping stones
-  of one proof (`_parts`, `_range`, `_raw`) and in `wp_store__GetNode_parts`,
-  which `splitNode.v`'s stepping stones need.
+  shape"). No field of the store has a predicate of its own (the former
+  `own_store_items` / `own_store_registry` / `own_store_pending` /
+  `own_store_pending_deletes` / `own_store_deleted_set` are gone:
+  `own_store_fields` spells each field as an anonymous existential), so the
+  only store predicate a spec can name is `own_store_cells`. The partial
+  footprints survive only in three `#[local]` stepping stones that run while
+  the store is open: `wp_Store__Integrate_parts` / `wp_store__AddNode` (the
+  parent's cells borrowed out of the pool, the item index raw) and
+  `wp_store__deleteNode` (the pool alone).
 - **F6 / F7 names.** `integrate_ready`, `origins_linked`, `integrate_splice`,
   `run_denotes`, `pool_clock_below` (Integrate); `pool_cell_covers`,
   `cell_covers_clock`, `sorted_client_run`, `cell_starts_at`, `cell_ends_at`,

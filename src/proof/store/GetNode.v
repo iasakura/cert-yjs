@@ -579,27 +579,30 @@ Proof using Type*.
     apply (Hres kx c Hkx); rewrite /cell_clock; word.
 Qed.
 
-(** [store.GetNode] over the item index and the pool alone: the stepping
-    stone of [wp_store__GetNode], and the form the split helpers' own
-    stepping stones ([wp_store__splitAtAndGetLeft_range] / [_Right_range] in
-    [store/splitNode]) call while they hold the pool apart from the rest of
-    the store. Not derivable from the whole-store spec, which is why it stays
-    next to it. *)
-Lemma wp_store__GetNode_parts (s : loc) (idv : yjs.id.t) (types : gmap loc type_state) :
-  pool_invs types ->
-  {{{ is_pkg_init yjs ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) ∗ own_type_pool (DfracOwn 1) types }}}
+(** [store.GetNode]: look the node holding the char [idv] up. The id may
+    address any char of a run cell and may be absent (the pending gate probes
+    origins that have not arrived, issue #40), so both miss paths (unknown
+    client, clock not covered by any of its cells) are live: [ok = true] returns
+    the location of a pool cell whose run has the char ([pool_cell_covers]),
+    [ok = false] certifies no pool cell does. *)
+Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (st : store_state) :
+  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) ∗ own_type_pool (DfracOwn 1) types ∗
-      ⌜if ok then ∃ c, pool_cell_covers types c (toYjsId idv) ∧ ic_loc c = l
-       else ∀ c, ¬ pool_cell_covers types c (toYjsId idv)⌝ }}}.
+      own_store_cells s st ∗
+      ⌜if ok then ∃ c, pool_cell_covers (ss_types st) c (toYjsId idv) ∧ ic_loc c = l
+       else ∀ c, ¬ pool_cell_covers (ss_types st) c (toYjsId idv)⌝ }}}.
 Proof using Type*.
-  move=> Hpool.
+  iIntros (Φ) "(#Hpkg & Hcells) HΦ".
+  destruct st as [client0 k0 types bind pend pdel]. simpl in *.
+  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
+  have Hpool : pool_invs types := proj1 Hinvs0.
   have [Hrunfits [Hnodup [Hrangedisj Horiginclk]]] := Hpool.
-  iIntros (Φ) "(#Hpkg & Hitems & Htypes) HΦ". iNamed "Hitems".
+  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
   iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds.
   set (kc := idv.(yjs.id.clientId')).
-  iNamed "Hitemmap".
+  iDestruct "Hitemmap" as (gm) "(Hmap & Hruns & %Hcomplete & %Hclkloc)".
   wp_method_call. wp_call. wp_call. wp_auto.
   wp_apply (wp_map_lookup2 with "Hmap"). iIntros "Hmap".
   destruct (gm !! kc) as [slk |] eqn:Hslk; rewrite Hslk /=.
@@ -647,10 +650,13 @@ Proof using Type*.
       have Hcresmem : cres ∈ all_cells types /\ cell_client cres = kc.
       { apply client_run_mem. exact (list_elem_of_lookup_2 _ _ _ Hcres). }
       iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
-      iApply ("HΦ" $! (ic_loc cres) true). iFrame "Htypes".
-      iSplitL "Hitemsf Hmap Hruns".
+      iAssert (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
       { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
         iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+      iApply ("HΦ" $! (ic_loc cres) true).
+      iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
+        first (iApply (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
+                  with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes")).
       iPureIntro. exists cres. split; [| done]. split; [exact (proj1 Hcresmem) |].
       have Hb := proj1 (Hbnds cres (proj1 Hcresmem)).
       rewrite /cell_covers /toYjsId /=. split; [| exact Hcov].
@@ -658,20 +664,26 @@ Proof using Type*.
     + (* clock miss within a known client: no run of this client covers the id *)
       wp_auto.
       iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
-      iApply ("HΦ" $! null false). iFrame "Htypes".
-      iSplitL "Hitemsf Hmap Hruns".
+      iAssert (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
       { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
         iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+      iApply ("HΦ" $! null false).
+      iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
+        first (iApply (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
+                  with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes")).
       iPureIntro. move=> c [Hc [Hcl Hcov]].
       have Hcc : cell_client c = kc by (rewrite /cell_client Hcl /kc /toYjsId /=; word).
       have Hcrun : c ∈ client_run types kc by (apply client_run_mem; split; [exact Hc | exact Hcc]).
       exact (Hires c Hcrun Hcov).
   - (* unknown client: no cell of this author at all *)
     wp_auto.
-    iApply ("HΦ" $! null false). iFrame "Htypes".
-    iSplitL "Hitemsf Hmap Hruns".
+    iAssert (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
     { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
       iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+    iApply ("HΦ" $! null false).
+    iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
+      first (iApply (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
+                with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes")).
     iPureIntro. move=> c [Hc [Hcl _]].
     have Hcc : cell_client c = kc by (rewrite /cell_client Hcl /kc /toYjsId /=; word).
     have Hkcin : kc ∈ (cell_client <$> all_cells types).
@@ -680,27 +692,5 @@ Proof using Type*.
     rewrite Hslk in Hslk'. discriminate.
 Qed.
 
-(** [store.GetNode]: look the node holding the char [idv] up. The id may
-    address any char of a run cell and may be absent (the pending gate probes
-    origins that have not arrived, issue #40), so both miss paths (unknown
-    client, clock not covered by any of its cells) are live: [ok = true] returns
-    the location of a pool cell whose run has the char ([pool_cell_covers]),
-    [ok = false] certifies no pool cell does. *)
-Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (st : store_state) :
-  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
-    s @! (go.PointerType yjs.store) @! "GetNode" #idv
-  {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store_cells s st ∗
-      ⌜if ok then ∃ c, pool_cell_covers (ss_types st) c (toYjsId idv) ∧ ic_loc c = l
-       else ∀ c, ¬ pool_cell_covers (ss_types st) c (toYjsId idv)⌝ }}}.
-Proof using Type*.
-  iIntros (Φ) "(#Hpkg & Hcells) HΦ". iNamed "Hcells". iNamed "Hfields".
-  wp_apply (wp_store__GetNode_parts s idv (ss_types st) (proj1 Hinvs) with "[$Hpkg $Hitems $Htypes]").
-  iIntros (l ok) "(Hitems & Htypes & %Hres)".
-  iApply ("HΦ" $! l ok).
-  iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes"; last by iPureIntro.
-  iApply (own_store_cells_intro _ _ Hinvs
-            with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes").
-Qed.
 
 End store_update.
