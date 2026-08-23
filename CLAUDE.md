@@ -31,7 +31,16 @@ verification of a *realistic* Yjs implementation, not a toy.
 - **Spec shape, for every function (exported or not)**: a WP spec is
   `{{{ own_X o dq m ∗ ⌜Pre m⌝ }}} … {{{ own_X o dq m' ∗ ⌜Post m m' ret⌝ }}}`,
   with persistent `is_X o m` handles as duplicable hypotheses carrying
-  monotone knowledge (e.g. `is_Text`'s grow-only `L`). Everything the spec
+  monotone knowledge (e.g. `is_Text`'s grow-only `L`). `own_X` / `is_X` is
+  THE predicate of the receiver's type `X` (the one that owns every field of
+  an `X`), not any predicate with an `own_` name: a method `s.Method()` on an
+  `X` takes `own_X s` whole and gives `own_X s` back, never a selection of
+  its fields (`own_store_items s types ∗ own_type_pool dq types`) or a part
+  borrowed out of it. If a proof only needs a part, the Go must say so
+  (`s.fld.Method()`, `Method(s.fld, …)`), so that the footprint is visible
+  in the program and not only deep in the spec; and re-establishing `X`'s
+  invariant is the callee's job, not something a postcondition hands to the
+  caller. Everything the spec
   says about a value goes through a predicate's model parameter. Forbidden
   in a spec: struct field points-tos (`s .[store, "items"] ↦ …`), raw
   slices or maps of internal records, goose struct values and their fields
