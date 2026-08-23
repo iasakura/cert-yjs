@@ -29,7 +29,8 @@
     - the public state predicate [own_store s c h m pend]: the WHOLE
       lock-protected state as one exclusive predicate over its model.
     - the persistent witnesses [is_Store], [is_type_binding], [is_root],
-      [is_type_lb], [is_root_lb], [is_applied_root_lb], [is_accepted],
+      [is_type_lb], [is_root_lb], [is_applied_root_lb] / [is_applied_certs],
+      [update_wf], [is_accepted],
       [is_update_item], and the read capability [own_read_cap].
     - the Integrate-side predicates [own_fresh_item_raw], [own_linked_item]
       and the loop invariant [integrate_loop_inv].
@@ -477,6 +478,16 @@ Definition pending_item_rooted
 Definition is_pending_rooted
     (pending : list (TId * IntegrateInput (A := A))) : Prop :=
   ∀ typedInput, typedInput ∈ pending -> pending_item_rooted typedInput.
+
+(** [update_wf inputs]: what a batch must satisfy to be applied: per struct
+    the clock plus the content length fits a word (the 2^64 no-wrap seam), and
+    origin-free structs name a root type ([is_pending_rooted]). Facts about the
+    sender's output, so the wire protocol ([yjs_prot]) states them and
+    [applyUpdate] / [Doc.ApplySyncUpdate] assume them. *)
+Definition update_wf (inputs : list (TId * IntegrateInput (A := A))) : Prop :=
+  (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
+     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ∧
+  is_pending_rooted inputs.
 
 (** [is_accepted γs i]: the persistent receipt that id [i] has been accepted by
     the store (a lower bound on the grow-only accepted set). Combined with the
@@ -1322,6 +1333,20 @@ Definition is_applied_root_lb (γs : store_names)
 #[global] Instance is_applied_root_lb_persistent γs applied m :
   Persistent (is_applied_root_lb γs applied m).
 Proof. rewrite /is_applied_root_lb. apply _. Qed.
+
+(** [is_applied_certs γs applied m]: what applying a batch leaves behind for
+    the applied wire items: the root content certificates
+    ([is_applied_root_lb]) and the fact that every applied char is in the
+    model [m] under its root. The postcondition of [applyUpdate],
+    [Doc.ApplySyncUpdate] and [Doc.ApplyEncodedUpdate]. *)
+Definition is_applied_certs (γs : store_names)
+    (applied : list (TId * IntegrateInput (A := A))) (m : DocModel) : iProp Σ :=
+  is_applied_root_lb γs applied m ∗
+  ⌜∀ x, x ∈ expand_inputs applied -> ∃ it, item_id it = in_id x.2 ∧ it ∈ doc_model_get m x.1⌝.
+
+#[global] Instance is_applied_certs_persistent γs applied m :
+  Persistent (is_applied_certs γs applied m).
+Proof. rewrite /is_applied_certs. apply _. Qed.
 
 (** [own_store s γs γh c h m pend]: the WHOLE lock-protected store state, as
     one exclusive predicate over its public model: this replica is client

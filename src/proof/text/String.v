@@ -71,11 +71,7 @@ Lemma wp_Text__String (t : loc) (γs : store_names) (γh : history_names)
   {{{ (str : go_string) (marr : list (YjsItem A * bool)), RET #str;
       is_Text t γs γh name L ∗ own_read_cap γs ∗
       ⌜str = visible_string marr⌝ ∗
-      ⌜list_to_set L ⊆ (list_to_set marr.*1 : gset (YjsItem A))⌝ ∗
-      ⌜YjsArrInvariant marr.*1⌝ ∗
-      ⌜∀ input : IntegrateInput (A := A),
-         (RootId name, OpInsert input) ∈ delivered_ops h0 ->
-         ∃ it, item_id it = in_id input ∧ it ∈ marr.*1⌝ }}}.
+      ⌜text_snapshot L marr⌝ ∗ ⌜history_reflected h0 name marr⌝ }}}.
 Proof.
   wp_start as "(Hpre & #Hpin & #Hlb & Hcap)". iNamed "Hpre".
   iDestruct "His_store" as "#His_store".
@@ -106,8 +102,7 @@ Proof.
   iSplitR "Hcap"; last first.
   { iFrame "Hcap". iPureIntro. split_and!.
     - reflexivity.
-    - rewrite Hfst. exact HLsub.
-    - rewrite Hfst. exact Hinvarr.
+    - split; rewrite Hfst; [exact HLsub | exact Hinvarr].
     - move=> input Hin.
       destruct (Hfact input Hin) as (ts' & it & Hts' & Hitid & Hitmem).
       rewrite Htsp in Hts'. injection Hts' as <-.

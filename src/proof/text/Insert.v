@@ -54,17 +54,8 @@ Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (γs : store_names)
   {{{ is_pkg_init yjs ∗ is_Text t γs γh name L }}}
     t @! (go.PointerType yjs.Text) @! "Insert" #idx #cs
   {{{ (L' ins : list (YjsItem A)) (client k0 : nat) (originLeft originRight : YjsPtr A), RET #();
-      is_Text t γs γh name L' ∗ ⌜sublist L L'⌝ ∗
-      ⌜ins = [] ∨ length ins = length cs⌝ ∗
-      ⌜∀ (i : nat) (it : YjsItem A) (b : w8),
-         ins !! i = Some it → cs !! i = Some b →
-           it ∈ L' ∧ it ∉ L ∧
-           content it = [b] ∧
-           item_id it = MkYjsId client (k0 + i)%nat ∧
-           rightOrigin it = originRight ∧
-           (i = 0%nat → origin it = originLeft) ∧
-           (∀ (j : nat) (itj : YjsItem A),
-              i = S j → ins !! j = Some itj → origin it = itemPtr itj)⌝ ∗
+      is_Text t γs γh name L' ∗
+      ⌜inserted_run L L' ins cs client k0 originLeft originRight⌝ ∗
       (* the op certificates: one broadcast fragment per inserted item
          (issues #42/#49; the doc-level op an item denotes is
          [(RootId name, OpInsert (input_of_item it))]) *)
@@ -122,9 +113,9 @@ Proof.
     iSplit.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
       iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
-    iSplit; [iPureIntro; reflexivity |].
-    iSplit; [iPureIntro; left; reflexivity |].
-    iSplit; [iPureIntro; intros i it b Hii; rewrite lookup_nil in Hii; inversion Hii |].
+    iSplit.
+    { iPureIntro. split_and!; [reflexivity | left; reflexivity |].
+      intros i it b Hii. rewrite lookup_nil in Hii. inversion Hii. }
     rewrite big_sepL_nil. done. }
   (* ---- in-range: insert one 1-char item per byte. ---- *)
   rewrite Hlen in Hbound.
@@ -156,9 +147,9 @@ Proof.
     iSplit.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
       iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
-    iSplit; [iPureIntro; reflexivity |].
-    iSplit; [iPureIntro; left; reflexivity |].
-    iSplit; [iPureIntro; intros i it b Hii; rewrite lookup_nil in Hii; inversion Hii |].
+    iSplit.
+    { iPureIntro. split_and!; [reflexivity | left; reflexivity |].
+      intros i it b Hii. rewrite lookup_nil in Hii. inversion Hii. }
     rewrite big_sepL_nil. done. }
   (* no overflow: the run fits. *)
   have Hnoof : (uint.Z k + Z.of_nat (length cs) < 2^64)%Z by word.
@@ -1173,27 +1164,26 @@ Proof.
   iSplitL "Hfrag Ht".
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'). iFrame "Ht His_store His_hist Hbind Hfrag". iPureIntro. split_and!; [reflexivity | reflexivity | exact (yai_sorted _ Hinvj)]. }
   iSplit.
-  { iPureIntro. apply (sorted_subseteq_sublist L arr Hinvj Hsorted (yai_sorted _ Hinvj)).
-    intros x Hx. have Hxg : x ∈ (list_to_set arr : gset (YjsItem A)).
-    { apply Hsubarr. apply HLsub. rewrite elem_of_list_to_set. exact Hx. }
-    rewrite elem_of_list_to_set in Hxg. exact Hxg. }
-  iSplit.
-  { iPureIntro. right. rewrite Hinslen. exact Hjend. }
-  iSplit.
-  { iPureIntro. intros i it b Hii Hcsb.
-    have [Hitin [Hcont [Hid [Hror [Horg Hchain]]]]] := Hins i it Hii.
-    split_and!.
-    - exact Hitin.
-    - intros HinL. have HitTs : it ∈ ts.(ty_arr).
-      { have Htg : it ∈ (list_to_set ts.(ty_arr) : gset (YjsItem A)).
-        { apply HLsub. rewrite elem_of_list_to_set. exact HinL. }
-        rewrite elem_of_list_to_set in Htg. exact Htg. }
-      have Hclk := Hctr (tv.(yjs.Text.inner')) ts it Htsp HitTs. rewrite Hid in Hclk. simpl in Hclk. specialize (Hclk eq_refl). lia.
-    - exact (Hcont b Hcsb).
-    - exact Hid.
-    - exact Hror.
-    - exact Horg.
-    - exact Hchain. }
+  { iPureIntro. split_and!.
+    - apply (sorted_subseteq_sublist L arr Hinvj Hsorted (yai_sorted _ Hinvj)).
+      intros x Hx. have Hxg : x ∈ (list_to_set arr : gset (YjsItem A)).
+      { apply Hsubarr. apply HLsub. rewrite elem_of_list_to_set. exact Hx. }
+      rewrite elem_of_list_to_set in Hxg. exact Hxg.
+    - right. rewrite Hinslen. exact Hjend.
+    - intros i it b Hii Hcsb.
+      have [Hitin [Hcont [Hid [Hror [Horg Hchain]]]]] := Hins i it Hii.
+      split_and!.
+      + exact Hitin.
+      + intros HinL. have HitTs : it ∈ ts.(ty_arr).
+        { have Htg : it ∈ (list_to_set ts.(ty_arr) : gset (YjsItem A)).
+          { apply HLsub. rewrite elem_of_list_to_set. exact HinL. }
+          rewrite elem_of_list_to_set in Htg. exact Htg. }
+        have Hclk := Hctr (tv.(yjs.Text.inner')) ts it Htsp HitTs. rewrite Hid in Hclk. simpl in Hclk. specialize (Hclk eq_refl). lia.
+      + exact (Hcont b Hcsb).
+      + exact Hid.
+      + exact Hror.
+      + exact Horg.
+      + exact Hchain. }
   iFrame "Hcertsj".
 Qed.
 

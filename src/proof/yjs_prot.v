@@ -2,9 +2,10 @@
     satisfies, and the codec specification the server is verified against.
 
     API
-    - [update_wf inputs]: the pure honesty facts of a batch (the 2^64
-      no-wrap seam per struct, and [is_pending_rooted]: head structs target
-      a named root).
+    - [update_wf inputs] (from [store/heap]): the pure honesty facts of a
+      batch (the 2^64 no-wrap seam per struct, and [is_pending_rooted]: head
+      structs target a named root); they ride the wire protocol rather than
+      the server's hypotheses.
     - [yjs_prot decode γh d]: the deployment's [ws_prot]. The bytes decode
       (under the abstract [decode] the deployment is parameterized by) to an
       honest batch whose per-char expansion is certified against the global
@@ -53,15 +54,6 @@ Local Notation Input := (TId * IntegrateInput (A := A))%type.
 Context (decode : list u8 -> option (list Input)).
 
 (* ===== definitions ======================================================== *)
-
-(** What an HONEST batch satisfies beyond certification: the 2^64 no-wrap
-    seam (per struct, clock plus content length fits a word) and rootedness
-    (a head struct names a root type). Facts about the peer's output, so they
-    ride the wire protocol rather than the server's hypotheses. *)
-Definition update_wf (inputs : list Input) : Prop :=
-  (∀ x : Input, x ∈ inputs ->
-     (Z.of_nat (clock (in_id x.2)) + Z.of_nat (length (in_content x.2)) < 2^64)%Z) /\
-  is_pending_rooted inputs.
 
 (** The wire protocol: these bytes decode to an honest batch every per-char
     operation of which is a point of the global history [γh]. Per character,

@@ -93,26 +93,21 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
     (c : ClientId) (sl sldel : slice.t) (dq dqd : dfrac)
     (inputs : list (TId * IntegrateInput (A := A)))
     (deleted : gset YjsId) :
-  (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
-     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
-  is_pending_rooted inputs ->
+  update_wf inputs ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
       is_store_client γs c ∗
       own_update_structs sl dq inputs ∗
       own_delete_ids sldel dqd deleted ∗
       is_pending_certified γh (expand_inputs inputs) }}}
     dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl #sldel
-  {{{ (h : list Ev)
-      (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel), RET #();
+  {{{ (h : list Ev) (applied : list (TId * IntegrateInput (A := A))) (m' : DocModel), RET #();
       own_update_structs sl dq inputs ∗
       own_delete_ids sldel dqd deleted ∗
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
       ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
-      is_applied_root_lb γs applied m' ∗
-      ⌜∀ x, x ∈ expand_inputs applied ->
-         ∃ it, item_id it = in_id x.2 ∧ it ∈ doc_model_get m' x.1⌝ }}}.
+      is_applied_certs γs applied m' }}}.
 Proof.
-  move=> Hnowrapb Hrooted.
+  move=> Hwf.
   wp_start as "(#His_doc & #Hishist & #Hpin & Hupd & Hdel & #Hcerts)".
   (* open the pure model: the wire records live only inside this proof *)
   iDestruct "Hdel" as (spans) "[Hspans %Hdeleted]".
@@ -128,10 +123,9 @@ Proof.
   (* run the total certificate-based applyUpdate on the real store: no
      causal-closure obligation; the pending plus the batch drain to the
      structural fixpoint, delivering only the applied structs (per char) *)
-  wp_apply (wp_store__applyUpdate _ sl dq γs γh c h m pend inputs
-              Hnowrapb Hrooted
+  wp_apply (wp_store__applyUpdate _ sl dq γs γh c h m pend inputs Hwf
               with "[$Hishist $Hstore $Hupd $Hcerts]").
-  iIntros (applied rest m') "(Hupd & Hstore & #Hlb & %Hdrain & %Hvr & %Hnoc & %Hnoloss & #Hrootlbs)".
+  iIntros (applied rest m') "(Hupd & Hstore & #Hlb & %Hdrain & %Hvr & %Hnoloss & #Happlied)".
   wp_auto.
   (* the delete spans, second: a span may target a struct that just arrived
      in this very batch. Deletes are model no-ops, so the store's model,
@@ -151,9 +145,8 @@ Proof.
   (* release the lock at the advanced history (delivered = expand_inputs applied)
      with the leftover as the new pending *)
   wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hstore]").
-  iApply ("HΦ" $! h applied rest m'). iFrame "Hupd Hlb Haccepts Hrootlbs".
-  iSplitL "Hspans"; first (iExists spans; by iFrame "Hspans").
-  iPureIntro. exact (ValidReplay_input_mem (expand_inputs applied) m m' Hvr).
+  iApply ("HΦ" $! h applied m'). iFrame "Hupd Hlb Haccepts Happlied".
+  iExists spans. by iFrame "Hspans".
 Qed.
 
 End doc_ApplySyncUpdate.
