@@ -111,11 +111,7 @@ Definition split_types_update_rel (before after : gmap loc type_state) (w : item
                        ic_loc c' ∉ (ic_loc <$> all_cells before))))) ∧
   (∀ p ts ts', before !! p = Some ts -> after !! p = Some ts' ->
      Forall cell_unit (ty_cells ts) -> ts' = ts) ∧
-  (∀ c', c' ∈ all_cells after -> ∃ c, c ∈ all_cells before ∧
-     cell_client c' = cell_client c ∧
-     (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
-     (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')) <=
-      uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z) ∧
+  cells_within (all_cells before) (all_cells after) ∧
   live_refine before after ∧
   dead_chars_kept before after.
 
@@ -124,7 +120,7 @@ Definition split_types_update_rel (before after : gmap loc type_state) (w : item
     single split location, since repair performs up to two of them: each
     client's run list therefore grows by at most two.
 
-    Used as: the postcondition of [wp_store__repair_split], consumed by
+    Used as: the postcondition of [wp_store__repair], consumed by
     [store/applyUpdate] to carry the pool invariants across the origin
     resolution. *)
 Definition repair_types_update_rel (before after : gmap loc type_state) : Prop :=
@@ -135,11 +131,7 @@ Definition repair_types_update_rel (before after : gmap loc type_state) : Prop :
   (∀ kc, (length (client_run after kc) <= 2 + length (client_run before kc))%nat) ∧
   (∀ p ts ts', before !! p = Some ts -> after !! p = Some ts' ->
      Forall cell_unit (ty_cells ts) -> ts' = ts) ∧
-  (∀ c', c' ∈ all_cells after -> ∃ c, c ∈ all_cells before ∧
-     cell_client c' = cell_client c ∧
-     (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
-     (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')) <=
-      uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z) ∧
+  cells_within (all_cells before) (all_cells after) ∧
   live_refine before after.
 
 (** [delete_types_update_rel before after]: what the wire delete path does to the
@@ -162,11 +154,7 @@ Definition delete_types_update_rel (before after : gmap loc type_state) : Prop :
   (∀ p, is_Some (before !! p) -> is_Some (after !! p)) ∧
   live_refine before after ∧
   dead_chars_kept before after ∧
-  (∀ c', c' ∈ all_cells after -> ∃ c, c ∈ all_cells before ∧
-     cell_client c' = cell_client c ∧
-     (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
-     (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c'))
-      <= uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z).
+  cells_within (all_cells before) (all_cells after).
 
 (* ===== what lookups and splits say about the pool ======================= *)
 

@@ -78,8 +78,10 @@ Proof.
     iAssert (own_store_registry (dvv.(yjs.Doc.store')) bind) with "[Htypesf Htypesmap]" as "Hregistry".
     { iExists types_mref. iFrame "Htypesf Htypesmap". }
     iDestruct (own_store_core_intro _ _ _ Hpool Hreg with "Hitems Hregistry Htypes") as "Hcore".
-    wp_apply (wp_store__getOrCreateYType _ types bind name p Hbnd with "[$Hcore]").
-    iIntros "Hcore".
+    wp_apply (wp_store__getOrCreateYType _ types bind name with "[$Hcore]").
+    iIntros (p' types' bind') "(Hcore & %Hlc)".
+    destruct Hlc as [(Hb' & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hbnd.
+    rewrite Hbnd in Hb'. injection Hb' as <-.
     iDestruct "Hcore" as "(Hitems & Hregistry & Htypes & %Hpool0 & %Hreg0)".
     iDestruct "Hregistry" as (types_mref') "(Htypesf & Htypesmap)".
     iDestruct (big_sepM_lookup _ _ name p Hbnd with "Hbinds") as "#Hbindname".
@@ -111,8 +113,9 @@ Proof.
     iAssert (own_store_registry (dvv.(yjs.Doc.store')) bind) with "[Htypesf Htypesmap]" as "Hregistry".
     { iExists types_mref. iFrame "Htypesf Htypesmap". }
     iDestruct (own_store_core_intro _ _ _ Hpool Hreg with "Hitems Hregistry Htypes") as "Hcore".
-    wp_apply (wp_store__getOrCreateYType_miss _ types bind name Hbnd with "[$Hcore]").
-    iIntros (p) "(Hcore & %Hfresh)".
+    wp_apply (wp_store__getOrCreateYType _ types bind name with "[$Hcore]").
+    iIntros (p types'' bind'') "(Hcore & %Hlc)".
+    destruct Hlc as [(Hb' & _) | (_ & Hfresh & -> & ->)]; first by rewrite Hb' in Hbnd.
     iDestruct "Hcore" as "(Hitems & Hregistry & Htypes & %Hpool0 & %Hreg0)".
     iDestruct "Hregistry" as (types_mref') "(Htypesf & Htypesmap)".
     set (types' := <[p := MkTypeState [] []]> types).

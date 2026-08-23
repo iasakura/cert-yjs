@@ -1,5 +1,5 @@
 (** store update path, repair + applyUpdate layer: [getOrCreateYType],
-    [store.repair] ([wp_store__repair_split]), [integrateDecoded],
+    [store.repair] ([wp_store__repair]), [integrateDecoded],
     [depsArrived], the [wire_*] drain machinery and the [own_store]-level
     certificate specs. Split out of [store/GetNode]; Requires the
     [store/splitNode] pool lemmas. Same boilerplate / [#[local]]
@@ -64,7 +64,7 @@ Proof. rewrite /cell_le. move=> x y. lia. Qed.
     2^64] bound needs the length-nonneg fact spelled out to recover the
     per-clock [< 2^64] word conversion (issue #28 U7c). Isolated here to keep
     [word] on clean variables. *)
-Lemma wp_store__getOrCreateYType (s : loc) (types : gmap loc type_state) (bind : gmap P loc)
+#[local] Lemma wp_store__getOrCreateYType_hit (s : loc) (types : gmap loc type_state) (bind : gmap P loc)
     (nm : go_string) (p : loc) :
   bind !! nm = Some p ->
   {{{ is_pkg_init yjs ∗ own_store_core s types bind }}}
@@ -86,10 +86,9 @@ Qed.
     bound, so the method allocates a fresh empty [yType] via [newYType],
     registers it under [nm], and returns it. The registry map grows by
     [nm -> p] and the per-type DLL big-op by a fresh EMPTY type at the
-    genuinely fresh location [p]. The complement of [wp_store__getOrCreateYType]
-    (the lookup-hit case); the ready branch of [applyUpdate] dispatches on the
-    binding to pick between them. *)
-Lemma wp_store__getOrCreateYType_miss (s : loc) (types : gmap loc type_state) (bind : gmap P loc)
+    genuinely fresh location [p]. Local: with the hit case above, a stepping
+    stone of [wp_store__getOrCreateYType]. *)
+#[local] Lemma wp_store__getOrCreateYType_miss (s : loc) (types : gmap loc type_state) (bind : gmap P loc)
     (nm : go_string) :
   bind !! nm = None ->
   {{{ is_pkg_init yjs ∗ own_store_core s types bind }}}
@@ -125,6 +124,25 @@ Proof using Type*.
             with "[Hitemsf Hitemmap] [Htypesf Htypesmap] Htypes").
   { iExists items_mref. iFrame "Hitemsf Hitemmap". }
   iExists types_mref. iFrame "Htypesf Htypesmap".
+Qed.
+
+(** [store.getOrCreateYType nm]: the root type bound to [nm], created empty
+    and registered first when [nm] is unbound ([registry_lookup_or_create]). *)
+Lemma wp_store__getOrCreateYType (s : loc) (types : gmap loc type_state) (bind : gmap P loc)
+    (nm : go_string) :
+  {{{ is_pkg_init yjs ∗ own_store_core s types bind }}}
+    s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
+  {{{ (p : loc) (types' : gmap loc type_state) (bind' : gmap P loc), RET #p;
+      own_store_core s types' bind' ∗ ⌜registry_lookup_or_create types bind nm p types' bind'⌝ }}}.
+Proof using Type*.
+  iIntros (Φ) "(#Hpkg & Hcore) HΦ".
+  destruct (bind !! nm) as [p|] eqn:Hb.
+  - wp_apply (wp_store__getOrCreateYType_hit s types bind nm p Hb with "[$Hpkg $Hcore]").
+    iIntros "Hcore". iApply ("HΦ" $! p types bind). iFrame "Hcore".
+    iPureIntro. left. split_and!; [exact Hb | reflexivity | reflexivity].
+  - wp_apply (wp_store__getOrCreateYType_miss s types bind nm Hb with "[$Hpkg $Hcore]").
+    iIntros (p) "(Hcore & %Hfresh)". iApply ("HΦ" $! p _ _). iFrame "Hcore".
+    iPureIntro. right. split_and!; [exact Hb | exact Hfresh | reflexivity | reflexivity].
 Qed.
 
 (* ----- the general repair (issue #28 stage D2b) ---------------------------
@@ -186,7 +204,7 @@ Qed.
     [origins_split]). The same-cell clause of [origins_covered] is what item
     validity provides: within one run, doc order is clock order, and an
     item's origin precedes its right origin. *)
-Lemma wp_store__repair_split (s item_l pname : loc)
+Lemma wp_store__repair (s item_l pname : loc)
     (input : IntegrateInput (A := A)) (opn : option go_string)
     (types : gmap loc type_state) (bind : gmap P loc)
     (ocL ocR : option item_cell) (p_t : loc) :
@@ -296,8 +314,10 @@ Proof using Type*.
         rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
         wp_auto.
         iDestruct (own_store_core_intro _ _ _ Hpinvs2 Hreg2 with "Hitems Hregistry Htypes") as "Hcore".
-        wp_apply (wp_store__getOrCreateYType s types2 bind nm p_t Hwpar with "[$Hcore]").
-        iIntros "Hcore".
+        wp_apply (wp_store__getOrCreateYType s types2 bind nm with "[$Hcore]").
+        iIntros (p' types3 bind3) "(Hcore & %Hlc)".
+        destruct Hlc as [(Hb' & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
+        rewrite Hwpar in Hb'. injection Hb' as <-.
         wp_auto.
         iApply ("HΦ" $! (ic_loc cL) rl types2).
         iFrame "Hcore".
@@ -353,8 +373,10 @@ Proof using Type*.
         rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
         wp_auto.
         iDestruct (own_store_core_intro _ _ _ Hpinvs1 Hreg1 with "Hitems Hregistry Htypes") as "Hcore".
-        wp_apply (wp_store__getOrCreateYType s types1 bind nm p_t Hwpar with "[$Hcore]").
-        iIntros "Hcore".
+        wp_apply (wp_store__getOrCreateYType s types1 bind nm with "[$Hcore]").
+        iIntros (p' types3 bind3) "(Hcore & %Hlc)".
+        destruct Hlc as [(Hb' & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
+        rewrite Hwpar in Hb'. injection Hb' as <-.
         wp_auto.
         iApply ("HΦ" $! (ic_loc cL) null types1).
         iFrame "Hcore".
@@ -430,8 +452,10 @@ Proof using Type*.
         rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
         wp_auto.
         iDestruct (own_store_core_intro _ _ _ Hpinvs2 Hreg2 with "Hitems Hregistry Htypes") as "Hcore".
-        wp_apply (wp_store__getOrCreateYType s types2 bind nm p_t Hwpar with "[$Hcore]").
-        iIntros "Hcore".
+        wp_apply (wp_store__getOrCreateYType s types2 bind nm with "[$Hcore]").
+        iIntros (p' types3 bind3) "(Hcore & %Hlc)".
+        destruct Hlc as [(Hb' & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
+        rewrite Hwpar in Hb'. injection Hb' as <-.
         wp_auto.
         iApply ("HΦ" $! null rl types2).
         iFrame "Hcore".
@@ -486,8 +510,10 @@ Proof using Type*.
       rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
       wp_auto.
       iDestruct (own_store_core_intro _ _ _ Hpinvs Hreg with "Hitems Hregistry Htypes") as "Hcore".
-      wp_apply (wp_store__getOrCreateYType s types bind nm p_t Hwpar with "[$Hcore]").
-      iIntros "Hcore".
+      wp_apply (wp_store__getOrCreateYType s types bind nm with "[$Hcore]").
+      iIntros (p' types3 bind3) "(Hcore & %Hlc)".
+      destruct Hlc as [(Hb' & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
+      rewrite Hwpar in Hb'. injection Hb' as <-.
       wp_auto.
       iApply ("HΦ" $! null null types).
       iFrame "Hcore".
@@ -507,7 +533,7 @@ Qed.
     (the item has no origins), and the parent branch registers a fresh empty
     [yType] through [getOrCreateYType]'s miss path; the item comes back linked
     to null/null under the fresh type [p]. The complement of
-    [wp_store__repair_split], which handles items whose target root is already
+    [wp_store__repair], which handles items whose target root is already
     bound; the per-client item map is untouched (no run is split). Local: a
     stepping stone of [wp_store__integrateDecoded_unbound]. *)
 #[local] Lemma wp_store__repair_create (s item_l pname : loc)
@@ -543,8 +569,9 @@ Proof using Type*.
   iDestruct "HisPN" as "[%HnnP #HpnC]".
   rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
   wp_auto.
-  wp_apply (wp_store__getOrCreateYType_miss s types bind nm Hnm with "[$Hcore]").
-  iIntros (p) "(Hcore & %Hfresh)".
+  wp_apply (wp_store__getOrCreateYType s types bind nm with "[$Hcore]").
+  iIntros (p types' bind') "(Hcore & %Hlc)".
+  destruct Hlc as [(Hb' & _) | (_ & Hfresh & -> & ->)]; first by rewrite Hb' in Hnm.
   wp_auto.
   iApply ("HΦ" $! p).
   iFrame "Hcore".
@@ -647,22 +674,75 @@ Proof.
 Qed.
 
 
+Lemma docm_cells_agree (m : DocModel) (bind : gmap P loc)
+    (types : gmap loc type_state) (d : YjsId) :
+  (∀ name p ts, bind !! name = Some p -> types !! p = Some ts ->
+     doc_model_get m (RootId name) = ty_arr ts) ->
+  (∀ t, doc_model_get m t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
+  (∀ name p, bind !! name = Some p -> is_Some (types !! p)) ->
+  (∀ p, is_Some (types !! p) -> ∃ name, bind !! name = Some p) ->
+  (∀ p ts, types !! p = Some ts -> cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)) ->
+  (∀ c, c ∈ all_cells types -> run_wf (ic_run c)) ->
+  (doc_model_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d).
+Proof.
+  move=> Hmtypes Hmdom Hbindtypes Htypesbound Hreprall Hrunwf. split.
+  - move=> /docm_has_spec [t [x [Hx Hid]]].
+    have Hne : doc_model_get m t ≠ [].
+    { move=> Heq. move: Hx. rewrite Heq elem_of_nil //. }
+    destruct (Hmdom t Hne) as (nm & p & -> & Hbnm).
+    destruct (Hbindtypes nm p Hbnm) as [ts Hts].
+    have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
+    have Hrep : ty_arr ts = run_flatten (ty_cells ts) := Hreprall p ts Hts.
+    rewrite Hdg Hrep in Hx.
+    apply list_elem_of_lookup_1 in Hx as [kn Hkn].
+    destruct (run_flatten_lookup_cell (ty_cells ts) kn x Hkn) as (ci & off & c & Hci & Hoff & _).
+    have Hcin : c ∈ ty_cells ts := list_elem_of_lookup_2 _ _ _ Hci.
+    have Hcall : c ∈ all_cells types by (apply all_cells_elem_of; exists p, ts; by split).
+    have Hwf : run_wf (ic_run c) := Hrunwf c Hcall.
+    have Hofflt : (off < length (ic_run c))%nat := lookup_lt_Some _ _ _ Hoff.
+    have Hxid := run_wf_char_id (ic_run c) off x Hwf Hoff.
+    rewrite Hid in Hxid.
+    exists c. split; [exact Hcall |].
+    rewrite /cell_covers /run_head. rewrite Hxid /=.
+    split_and!; [done | lia | lia].
+  - move=> [c [Hc [Hcl [Hle Hlt]]]].
+    apply docm_has_spec.
+    have Hwf : run_wf (ic_run c) := Hrunwf c Hc.
+    apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hts & Hcts).
+    destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
+    have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
+    have Hrep : ty_arr ts = run_flatten (ty_cells ts) := Hreprall p ts Hts.
+    destruct (run_wf_char_at_clock (ic_run c) d Hwf Hcl Hle Hlt) as (ch & Hch & Hchid).
+    exists (RootId nm), ch. split; [| exact Hchid].
+    rewrite Hdg Hrep.
+    apply list_elem_of_lookup_1 in Hcts as [ci Hci].
+    apply (list_elem_of_lookup_2 _
+             (length (run_flatten (take ci (ty_cells ts))) +
+              (clock d - clock (item_id (run_head c))))%nat).
+    exact (run_flatten_lookup_of_cell (ty_cells ts) ci _ c ch Hci Hch).
+Qed.
+
 (** [store.hasNode] (issue #40 x issue #28 U7c): the arrival test the pending
-    gate runs. Its result IS the model presence [doc_model_has m (toYjsId idv)]: the
-    covering GetNode (W64 clock range) is bridged to the model per-char
-    covering ([cell_covers], nat) through the cell id-bounds, then to
-    [doc_model_has] through the store's model/cell agreement ([Hagree]). *)
+    gate runs. Its result IS the model presence [doc_model_has m (toYjsId idv)]:
+    [GetNode]'s covering cell is bridged to [doc_model_has] through the
+    registry's model agreement ([registry_models], [docm_cells_agree]). *)
 Lemma wp_store__hasNode (s : loc) (idv : yjs.id.t)
     (m : DocModel) (types : gmap loc type_state) (bind : gmap P loc) :
-  (∀ d : YjsId, doc_model_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d) ->
+  registry_models m bind types ->
   {{{ is_pkg_init yjs ∗ own_store_core s types bind }}}
     s @! (go.PointerType yjs.store) @! "hasNode" #idv
   {{{ (ok : bool), RET #ok;
       own_store_core s types bind ∗
       ⌜ok = true <-> doc_model_has m (toYjsId idv) = true⌝ }}}.
 Proof using Type*.
-  move=> Hagree.
+  move=> Hregmodel.
   iIntros (Φ) "(#Hpkg & Hcore) HΦ". iNamed "Hcore".
+  have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
+  iDestruct (own_type_pool_repr with "Htypes") as %Hreprall.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwfall.
+  have Hagree : ∀ d : YjsId, doc_model_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d
+    := λ d, docm_cells_agree m bind types d (proj1 Hregmodel) (proj2 Hregmodel)
+              Hbindtypes Htypesbound Hreprall Hrunwfall.
   wp_method_call. wp_call. wp_call. wp_auto.
   wp_apply (wp_store__GetNode s idv types Hpool with "[$Hitems $Htypes]").
   iIntros (l ok) "(Hitems & Htypes & %Hres)".
@@ -793,53 +873,6 @@ Proof using Type*.
 Qed.
 
 
-Lemma docm_cells_agree (m : DocModel) (bind : gmap P loc)
-    (types : gmap loc type_state) (d : YjsId) :
-  (∀ name p ts, bind !! name = Some p -> types !! p = Some ts ->
-     doc_model_get m (RootId name) = ty_arr ts) ->
-  (∀ t, doc_model_get m t ≠ [] -> ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
-  (∀ name p, bind !! name = Some p -> is_Some (types !! p)) ->
-  (∀ p, is_Some (types !! p) -> ∃ name, bind !! name = Some p) ->
-  (∀ p ts, types !! p = Some ts -> cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)) ->
-  (∀ c, c ∈ all_cells types -> run_wf (ic_run c)) ->
-  (doc_model_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d).
-Proof.
-  move=> Hmtypes Hmdom Hbindtypes Htypesbound Hreprall Hrunwf. split.
-  - move=> /docm_has_spec [t [x [Hx Hid]]].
-    have Hne : doc_model_get m t ≠ [].
-    { move=> Heq. move: Hx. rewrite Heq elem_of_nil //. }
-    destruct (Hmdom t Hne) as (nm & p & -> & Hbnm).
-    destruct (Hbindtypes nm p Hbnm) as [ts Hts].
-    have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
-    have Hrep : ty_arr ts = run_flatten (ty_cells ts) := Hreprall p ts Hts.
-    rewrite Hdg Hrep in Hx.
-    apply list_elem_of_lookup_1 in Hx as [kn Hkn].
-    destruct (run_flatten_lookup_cell (ty_cells ts) kn x Hkn) as (ci & off & c & Hci & Hoff & _).
-    have Hcin : c ∈ ty_cells ts := list_elem_of_lookup_2 _ _ _ Hci.
-    have Hcall : c ∈ all_cells types by (apply all_cells_elem_of; exists p, ts; by split).
-    have Hwf : run_wf (ic_run c) := Hrunwf c Hcall.
-    have Hofflt : (off < length (ic_run c))%nat := lookup_lt_Some _ _ _ Hoff.
-    have Hxid := run_wf_char_id (ic_run c) off x Hwf Hoff.
-    rewrite Hid in Hxid.
-    exists c. split; [exact Hcall |].
-    rewrite /cell_covers /run_head. rewrite Hxid /=.
-    split_and!; [done | lia | lia].
-  - move=> [c [Hc [Hcl [Hle Hlt]]]].
-    apply docm_has_spec.
-    have Hwf : run_wf (ic_run c) := Hrunwf c Hc.
-    apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hts & Hcts).
-    destruct (Htypesbound p (ex_intro _ ts Hts)) as [nm Hbnm].
-    have Hdg : doc_model_get m (RootId nm) = ty_arr ts := Hmtypes nm p ts Hbnm Hts.
-    have Hrep : ty_arr ts = run_flatten (ty_cells ts) := Hreprall p ts Hts.
-    destruct (run_wf_char_at_clock (ic_run c) d Hwf Hcl Hle Hlt) as (ch & Hch & Hchid).
-    exists (RootId nm), ch. split; [| exact Hchid].
-    rewrite Hdg Hrep.
-    apply list_elem_of_lookup_1 in Hcts as [ci Hci].
-    apply (list_elem_of_lookup_2 _
-             (length (run_flatten (take ci (ty_cells ts))) +
-              (clock d - clock (item_id (run_head c))))%nat).
-    exact (run_flatten_lookup_of_cell (ty_cells ts) ci _ c ch Hci Hch).
-Qed.
 
 (* ----- the arrival gate ----- *)
 (* (the pure gate lemmas [input_ready_false_of_dep] / [input_ready_true_of] /
@@ -851,7 +884,7 @@ Qed.
 Lemma wp_store__originArrived (s : loc) (p : loc)
     (originId : option yjs.id.t) (m : DocModel) (types : gmap loc type_state)
     (bind : gmap P loc) :
-  (∀ d : YjsId, doc_model_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d) ->
+  registry_models m bind types ->
   {{{ is_pkg_init yjs ∗ is_origin_id p originId ∗ own_store_core s types bind }}}
     s @! (go.PointerType yjs.store) @! "originArrived" #p
   {{{ (ok : bool), RET #ok;
@@ -861,7 +894,7 @@ Lemma wp_store__originArrived (s : loc) (p : loc)
                      | Some idv => doc_model_has m (toYjsId idv) = true
                      end⌝ }}}.
 Proof using Type*.
-  move=> Hagree.
+  move=> Hregmodel.
   iIntros (Φ) "(#Hpkg & #HisP & Hcore) HΦ".
   wp_method_call. wp_call. wp_call. wp_auto.
   destruct originId as [idv |]; simpl.
@@ -870,7 +903,7 @@ Proof using Type*.
     rewrite bool_decide_eq_false_2; last first.
     { move=> Heq. exact (Hpne Heq). }
     wp_auto.
-    wp_apply (wp_store__hasNode s idv m types bind Hagree with "[$Hcore]").
+    wp_apply (wp_store__hasNode s idv m types bind Hregmodel with "[$Hcore]").
     iIntros (ok) "(Hcore & %Hok)".
     wp_auto.
     iApply ("HΦ" $! ok).
@@ -893,12 +926,12 @@ Qed.
 Lemma wp_store__depsArrived (s : loc) (updateItemVal : yjs.updateItem.t)
     (typedInput : TId * IntegrateInput (A := A)) (m : DocModel) (types : gmap loc type_state)
     (bind : gmap P loc) :
-  (∀ d : YjsId, doc_model_has m d = true <-> ∃ c, c ∈ all_cells types ∧ cell_covers c d) ->
+  registry_models m bind types ->
   {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_core s types bind }}}
     s @! (go.PointerType yjs.store) @! "depsArrived" #updateItemVal
   {{{ RET #(input_ready m typedInput.2); own_store_core s types bind }}}.
 Proof using Type*.
-  move=> Hagree.
+  move=> Hregmodel.
   iIntros (Φ) "(#Hpkg & #Hui & Hcore) HΦ".
   iDestruct "Hui" as (oleft oright opn)
     "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)".
@@ -908,7 +941,7 @@ Proof using Type*.
   { rewrite -Hin_id /toYjsId //. }
   wp_method_call. wp_call. wp_call. wp_auto.
   (* ---- left origin ---- *)
-  wp_apply (wp_store__originArrived s _ oleft m types bind Hagree with "[$HisL $Hcore]").
+  wp_apply (wp_store__originArrived s _ oleft m types bind Hregmodel with "[$HisL $Hcore]").
   iIntros (okL) "(Hcore & %HokL)".
   wp_auto.
   destruct okL; last first.
@@ -925,7 +958,7 @@ Proof using Type*.
     iApply ("HΦ" with "[$Hcore]"). }
   wp_auto.
   (* ---- right origin ---- *)
-  wp_apply (wp_store__originArrived s _ oright m types bind Hagree with "[$HisR $Hcore]").
+  wp_apply (wp_store__originArrived s _ oright m types bind Hregmodel with "[$HisR $Hcore]").
   iIntros (okR) "(Hcore & %HokR)".
   wp_auto.
   destruct okR; last first.
@@ -960,7 +993,7 @@ Proof using Type*.
     wp_auto.
     wp_apply (wp_NewId updateItemVal.(yjs.updateItem.id').(yjs.id.clientId')
                 (word.sub updateItemVal.(yjs.updateItem.id').(yjs.id.clock') (W64 1))).
-    wp_apply (wp_store__hasNode s _ m types bind Hagree with "[$Hcore]").
+    wp_apply (wp_store__hasNode s _ m types bind Hregmodel with "[$Hcore]").
     iIntros (okP) "(Hcore & %HokP)".
     wp_auto.
     have Hpredid : toYjsId (yjs.id.mk updateItemVal.(yjs.updateItem.id').(yjs.id.clientId')
@@ -1023,31 +1056,18 @@ Qed.
   IsItemValid newItem ->
   maximalId newItem (doc_model_get m typedInput.1) ->
   integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) (doc_model_get m typedInput.1) = Some arr2 ->
-  (∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (in_id typedInput.2)) ->
-     (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id typedInput.2))))%Z ∧
-     (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (in_id typedInput.2))))%Z) ->
-  (∀ name p' ts, bind !! name = Some p' -> types !! p' = Some ts ->
-     doc_model_get m (RootId name) = ty_arr ts) ->
+  pool_clock_below types (in_id typedInput.2) ->
+  registry_models m bind types ->
   (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z ->
   {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_core s types bind }}}
     s @! (go.PointerType yjs.store) @! "integrateDecoded" #updateItemVal
   {{{ (types' : gmap loc type_state), RET #();
       own_store_core s types' bind ∗
-      ⌜dom types' = dom types⌝ ∗
-      ⌜∀ name p' ts', bind !! name = Some p' -> types' !! p' = Some ts' ->
-         doc_model_get (<[typedInput.1 := arr2]> m) (RootId name) = ty_arr ts'⌝ ∗
-      ⌜∀ c, c ∈ all_cells types' ->
-         (∃ c0, c0 ∈ all_cells types ∧ cell_client c = cell_client c0 ∧
-            (uint.Z (cell_clock c0) <= uint.Z (cell_clock c))%Z ∧
-            (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
-             uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)))%Z) ∨
-         (cell_client c = W64 (clientId (in_id typedInput.2)) ∧
-          (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c))%Z ∧
-          (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
-           uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z)⌝ ∗
+      ⌜registry_models (<[typedInput.1 := arr2]> m) bind types'⌝ ∗
+      ⌜cells_within_or_from [typedInput] (all_cells types) (all_cells types')⌝ ∗
       ⌜integrate_live_refine typedInput.2 (all_cells types) (all_cells types')⌝ }}}.
 Proof using Type*.
-  move=> Htieq Hbnm Htoit Hvld Hmax Hall Hgmax0 Hmtypes Hnowrapc.
+  move=> Htieq Hbnm Htoit Hvld Hmax Hall Hgmax0 [Hmtypes Hmdom] Hnowrapc.
   iIntros (Φ) "(#Hpkg & #Hui & Hcore) HΦ". iNamed "Hcore".
   have [Hfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
@@ -1238,7 +1258,7 @@ Proof using Type*.
     have Hklt : (knL < knR)%nat by lia.
     lia. }
   iDestruct (own_store_core_intro _ _ _ Hpool Hreg with "Hitems Hregistry Htypes") as "Hcore".
-  wp_apply (wp_store__repair_split s itv (updateItemVal.(yjs.updateItem.parentName'))
+  wp_apply (wp_store__repair s itv (updateItemVal.(yjs.updateItem.parentName'))
               input opn types bind ocL ocR p
               (conj HwLc (conj HwRc Hsameg)) Hwpar
               with "[$Hfresh $HisPN $Hcore]").
@@ -1518,13 +1538,12 @@ Proof using Type*.
   iSplitL "Hitems Hregistry Htypes";
     first (iApply (own_store_core_intro _ _ _ Hpool' Hreg' with "Hitems Hregistry Htypes")).
   iPureIntro. split_and!.
-  - (* dom eq *)
-    have Hdomeq2 : dom types2 = dom types.
-    { apply set_eq => p0. rewrite !elem_of_dom. split.
-      - move=> [ts0 Hp0]. destruct (Hpres2 p0 ts0 Hp0) as (tsold & Hpold & _). eauto.
-      - move=> Hp0. exact (Hdom2 p0 Hp0). }
-    rewrite dom_insert_lookup_L; [rewrite Hdomeq2; reflexivity | eauto].
-  - (* per-name coherence at <[RootId nm := arr2]> m *)
+  - (* registry coherence at <[RootId nm := arr2]> m *)
+    split; last first.
+    { move=> t Hne. destruct (decide (t = RootId nm)) as [-> | Hnet].
+      - exists nm, p. split; [reflexivity | exact Hbnm].
+      - have Hnet' : t ≠ (RootId nm, input).1 := Hnet.
+        rewrite docm_get_insert_ne // in Hne. exact (Hmdom t Hne). }
     move=> nm0 p0 ts Hbnm0.
     destruct (decide (p0 = p)) as [-> | Hne].
     + have Hnm0 : nm0 = nm := Hbindinj nm0 nm p Hbnm0 Hbnm.
@@ -1547,10 +1566,11 @@ Proof using Type*.
       left. exists cold. split_and!; [exact Hcold | congruence | lia | lia].
     + apply list_elem_of_singleton in Hnew as ->.
       have Hlen2 : length (ic_run c2) = length (in_content input) by rewrite Hc2len explode_length.
-      right. split_and!.
+      right. exists (RootId nm, input). split_and!.
+      * apply list_elem_of_singleton. reflexivity.
       * exact Hcc2.
-      * rewrite Hclk2. lia.
-      * rewrite Hclk2 Hlen2. lia.
+      * change ((RootId nm, input).2) with input. rewrite Hclk2. lia.
+      * change ((RootId nm, input).2) with input. rewrite Hclk2 Hlen2. lia.
   - (* the live-cell refinement: a repaired cell's chars come from a live cell
        of the entry pool, and the spliced cell's chars are the wire item's own
        (its run starts at the item's id and runs up its clock space) *)
@@ -1586,35 +1606,19 @@ Qed.
   IsItemValid newItem ->
   maximalId newItem [] ->
   integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) [] = Some arr2 ->
-  (∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (in_id typedInput.2)) ->
-     (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id typedInput.2))))%Z ∧
-     (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (in_id typedInput.2))))%Z) ->
-  (∀ name p' ts, bind !! name = Some p' -> types !! p' = Some ts ->
-     doc_model_get m (RootId name) = ty_arr ts) ->
-  (∀ t, doc_model_get m t ≠ [] -> ∃ name p', t = RootId name ∧ bind !! name = Some p') ->
+  pool_clock_below types (in_id typedInput.2) ->
+  registry_models m bind types ->
   (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z ->
   {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_core s types bind }}}
     s @! (go.PointerType yjs.store) @! "integrateDecoded" #updateItemVal
   {{{ (types' : gmap loc type_state) (bind' : gmap P loc), RET #();
       own_store_core s types' bind' ∗
       ⌜bind ⊆ bind'⌝ ∗
-      ⌜dom types ⊆ dom types'⌝ ∗
-      ⌜∀ name p' ts', bind' !! name = Some p' -> types' !! p' = Some ts' ->
-         doc_model_get (<[typedInput.1 := arr2]> m) (RootId name) = ty_arr ts'⌝ ∗
-      ⌜∀ t, doc_model_get (<[typedInput.1 := arr2]> m) t ≠ [] ->
-         ∃ name p', t = RootId name ∧ bind' !! name = Some p'⌝ ∗
-      ⌜∀ c, c ∈ all_cells types' ->
-         (∃ c0, c0 ∈ all_cells types ∧ cell_client c = cell_client c0 ∧
-            (uint.Z (cell_clock c0) <= uint.Z (cell_clock c))%Z ∧
-            (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
-             uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)))%Z) ∨
-         (cell_client c = W64 (clientId (in_id typedInput.2)) ∧
-          (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c))%Z ∧
-          (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
-           uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z)⌝ ∗
+      ⌜registry_models (<[typedInput.1 := arr2]> m) bind' types'⌝ ∗
+      ⌜cells_within_or_from [typedInput] (all_cells types) (all_cells types')⌝ ∗
       ⌜integrate_live_refine typedInput.2 (all_cells types) (all_cells types')⌝ }}}.
 Proof using Type*.
-  move=> Htieq Hbnm HoL HoR Hdgnil Htoit Hvld Hmax Hall Hgmax0 Hmtypes Hmdom Hnowrapc.
+  move=> Htieq Hbnm HoL HoR Hdgnil Htoit Hvld Hmax Hall Hgmax0 [Hmtypes Hmdom] Hnowrapc.
   iIntros (Φ) "(#Hpkg & #Hui & Hcore) HΦ". iNamed "Hcore".
   have [Hfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
@@ -1775,10 +1779,9 @@ Proof using Type*.
   iPureIntro. split_and!.
   - (* bind ⊆ <[nm:=p]>bind *)
     exact (insert_subseteq bind nm p Hbnm).
-  - (* dom types ⊆ dom types' *)
-    rewrite Htypes'eq dom_insert_L. set_solver.
-  - (* mtypes' at <[RootId nm := arr2]> m *)
-    move=> name pl ts' Hb Hts'.
+  - (* registry coherence at <[RootId nm := arr2]> m *)
+    split.
+    { move=> name pl ts' Hb Hts'.
     rewrite Htypes'eq in Hts'.
     destruct (decide (name = nm)) as [-> | Hne].
     + rewrite lookup_insert_eq in Hb. injection Hb as <-.
@@ -1789,22 +1792,22 @@ Proof using Type*.
       rewrite docm_get_insert_ne //.
       destruct (decide (pl = p)) as [-> | Hnep]; first by (exfalso; exact (Hpnotbound name Hb)).
       rewrite lookup_insert_ne // in Hts'.
-      exact (Hmtypes name pl ts' Hb Hts').
-  - (* mdom' at <[RootId nm := arr2]> m *)
-    move=> t Hne.
+      exact (Hmtypes name pl ts' Hb Hts'). }
+    { move=> t Hne.
     destruct (decide (t = RootId nm)) as [-> | Hnet].
     + exists nm, p. split; [done | by rewrite lookup_insert_eq].
     + rewrite docm_get_insert_ne // in Hne.
       destruct (Hmdom t Hne) as (name & pl & Heqt & Hb).
       exists name, pl. split; [exact Heqt |].
-      rewrite lookup_insert_ne //. move=> ?; subst name. by rewrite Hbnm in Hb.
+      rewrite lookup_insert_ne //. move=> ?; subst name. by rewrite Hbnm in Hb. }
   - (* provenance *)
     move=> c0 Hc0. rewrite Hac_step' in Hc0. apply elem_of_app in Hc0 as [Hold | Hnew].
     + left. exists c0. split_and!; [exact Hold | done | lia | lia].
-    + apply list_elem_of_singleton in Hnew as ->. right. split_and!.
+    + apply list_elem_of_singleton in Hnew as ->. right. exists (RootId nm, input). split_and!.
+      * apply list_elem_of_singleton. reflexivity.
       * exact Hcc2.
-      * rewrite Hclk2. lia.
-      * rewrite Hclk2 Hlen2. lia.
+      * change ((RootId nm, input).2) with input. rewrite Hclk2. lia.
+      * change ((RootId nm, input).2) with input. rewrite Hclk2 Hlen2. lia.
   - (* the live-cell refinement: this branch registers a fresh empty type, so
        every old cell survives verbatim and the only new one is the spliced
        cell, whose chars are the wire item's own *)
@@ -1849,10 +1852,10 @@ Qed.
     (registry unchanged), a MISS is [wp_store__integrateDecoded_unbound]
     (registry grows by one fresh type). A
     miss is necessarily an origin-free struct: an origin would resolve inside a
-    nonempty -- hence, by [Hmdom], registered -- target root. Either way the
-    postcondition is the same "grown" shape ([bind ⊆ bind'],
-    [dom types ⊆ dom types'], coherence over the grown maps), so the loop
-    threads a single monotone registry. *)
+    nonempty -- hence, by [registry_models], registered -- target root. Either
+    way the postcondition is the same "grown" shape ([bind ⊆ bind'] and
+    [registry_models] over the grown maps), so the loop threads a single
+    monotone registry. *)
 Lemma wp_store__integrateDecoded (s : loc)
     (updateItemVal : yjs.updateItem.t) (typedInput : TId * IntegrateInput (A := A))
     (m : DocModel) (types : gmap loc type_state) (bind : gmap P loc)
@@ -1862,52 +1865,32 @@ Lemma wp_store__integrateDecoded (s : loc)
   IsItemValid newItem ->
   maximalId newItem (doc_model_get m typedInput.1) ->
   integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) (doc_model_get m typedInput.1) = Some arr2 ->
-  (∀ c0, c0 ∈ all_cells types -> cell_client c0 = W64 (clientId (in_id typedInput.2)) ->
-     (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id typedInput.2))))%Z ∧
-     (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (in_id typedInput.2))))%Z) ->
-  (∀ name p' ts, bind !! name = Some p' -> types !! p' = Some ts ->
-     doc_model_get m (RootId name) = ty_arr ts) ->
-  (∀ t, doc_model_get m t ≠ [] -> ∃ name p', t = RootId name ∧ bind !! name = Some p') ->
+  pool_clock_below types (in_id typedInput.2) ->
+  registry_models m bind types ->
   (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z ->
   {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_core s types bind }}}
     s @! (go.PointerType yjs.store) @! "integrateDecoded" #updateItemVal
   {{{ (types' : gmap loc type_state) (bind' : gmap P loc), RET #();
       own_store_core s types' bind' ∗
       ⌜bind ⊆ bind'⌝ ∗
-      ⌜dom types ⊆ dom types'⌝ ∗
-      ⌜∀ name p' ts', bind' !! name = Some p' -> types' !! p' = Some ts' ->
-         doc_model_get (<[typedInput.1 := arr2]> m) (RootId name) = ty_arr ts'⌝ ∗
-      ⌜∀ t, doc_model_get (<[typedInput.1 := arr2]> m) t ≠ [] ->
-         ∃ name p', t = RootId name ∧ bind' !! name = Some p'⌝ ∗
-      ⌜∀ c, c ∈ all_cells types' ->
-         (∃ c0, c0 ∈ all_cells types ∧ cell_client c = cell_client c0 ∧
-            (uint.Z (cell_clock c0) <= uint.Z (cell_clock c))%Z ∧
-            (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
-             uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)))%Z) ∨
-         (cell_client c = W64 (clientId (in_id typedInput.2)) ∧
-          (uint.Z (W64 (clock (in_id typedInput.2))) <= uint.Z (cell_clock c))%Z ∧
-          (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
-           uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z)⌝ ∗
+      ⌜registry_models (<[typedInput.1 := arr2]> m) bind' types'⌝ ∗
+      ⌜cells_within_or_from [typedInput] (all_cells types) (all_cells types')⌝ ∗
       ⌜integrate_live_refine typedInput.2 (all_cells types) (all_cells types')⌝ }}}.
 Proof using Type*.
-  move=> Htieq Htoit Hvld Hmax Hall Hgmax0 Hmtypes Hmdom Hnowrapc.
+  move=> Htieq Htoit Hvld Hmax Hall Hgmax0 Hregmodel Hnowrapc.
+  have [Hmtypes Hmdom] := Hregmodel.
   iIntros (Φ) "(#Hpkg & #Hui & Hcore) HΦ".
   destruct (bind !! nm) as [p|] eqn:Hbnm.
   - (* HIT: reuse the bound-root integrateDecoded; registry unchanged *)
     wp_apply (wp_store__integrateDecoded_bound s updateItemVal typedInput m types bind
-                newItem arr2 nm p Htieq Hbnm Htoit Hvld Hmax Hall Hgmax0 Hmtypes Hnowrapc
+                newItem arr2 nm p Htieq Hbnm Htoit Hvld Hmax Hall Hgmax0 Hregmodel Hnowrapc
                 with "[$Hui $Hcore]").
-    iIntros (types') "(Hcore & %Hdom' & %Hmtypes' & %Hprov' & %Hilr')".
+    iIntros (types') "(Hcore & %Hregmodel' & %Hprov' & %Hilr')".
     iApply ("HΦ" $! types' bind).
     iFrame "Hcore".
     iPureIntro. split_and!.
     + done.
-    + rewrite Hdom'. done.
-    + exact Hmtypes'.
-    + move=> t Hne. destruct (decide (t = typedInput.1)) as [-> | Hnet].
-      * exists nm, p. split; [exact Htieq | exact Hbnm].
-      * rewrite docm_get_insert_ne // in Hne.
-        exact (Hmdom t Hne).
+    + exact Hregmodel'.
     + exact Hprov'.
     + exact Hilr'.
   - (* MISS: the target root is unbound, so origin-free; grow the registry *)
@@ -1930,7 +1913,7 @@ Proof using Type*.
     rewrite Hdgnil in Htoit Hmax Hall.
     wp_apply (wp_store__integrateDecoded_unbound s updateItemVal typedInput m types bind
                 newItem arr2 nm Htieq Hbnm HoL HoR Hdgnil Htoit Hvld Hmax Hall Hgmax0
-                Hmtypes Hmdom Hnowrapc
+                Hregmodel Hnowrapc
                 with "[$Hui $Hcore]").
     iIntros (types' bind') "Hpost".
     iApply ("HΦ" $! types' bind' with "Hpost").
