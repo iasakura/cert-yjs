@@ -587,10 +587,10 @@ Qed.
     next to it. *)
 Lemma wp_store__GetNode_parts (s : loc) (idv : yjs.id.t) (types : gmap loc type_state) :
   pool_invs types ->
-  {{{ is_pkg_init yjs ∗ own_store_items s types ∗ own_type_pool (DfracOwn 1) types }}}
+  {{{ is_pkg_init yjs ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) ∗ own_type_pool (DfracOwn 1) types }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store_items s types ∗ own_type_pool (DfracOwn 1) types ∗
+      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) ∗ own_type_pool (DfracOwn 1) types ∗
       ⌜if ok then ∃ c, pool_cell_covers types c (toYjsId idv) ∧ ic_loc c = l
        else ∀ c, ¬ pool_cell_covers types c (toYjsId idv)⌝ }}}.
 Proof using Type*.

@@ -95,13 +95,13 @@ Proof.
   wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗
       ∃ (types1 : gmap loc type_state) (ts1 : type_state) (p1 : nat),
       "s" ∷ s_ptr ↦ tv.(yjs.Text.store') ∗
-      "Hitems" ∷ own_store_items (tv.(yjs.Text.store')) types1 ∗
+      "Hitems" ∷ (∃ items_mref : loc, "Hitemsf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types1) ∗
       "Hclient" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "client"] ↦ client ∗
       "Hclock" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "clock"] ↦ k ∗
-      "HdeletedSet" ∷ own_store_deleted_set (tv.(yjs.Text.store')) ∗
-      "Hregistry" ∷ own_store_registry (tv.(yjs.Text.store')) bind ∗
-      "Hpending" ∷ own_store_pending (tv.(yjs.Text.store')) pend ∗
-      "Hpdeletes" ∷ own_store_pending_deletes (tv.(yjs.Text.store')) pdel ∗
+      "HdeletedSet" ∷ (∃ deletedSetVal : yjs.deletedSet.t, ((tv.(yjs.Text.store')) .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal) ∗
+      "Hregistry" ∷ (∃ types_mref : loc, "Htypesf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "types"]) ↦ types_mref ∗ "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind) ∗
+      "Hpending" ∷ (∃ pend_sl : slice.t, "Hpendf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "pending"]) ↦ pend_sl ∗ "Hpend" ∷ own_update_structs pend_sl (DfracOwn 1) pend) ∗
+      "Hpdeletes" ∷ (∃ pdel_sl : slice.t, "Hpddelf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗ "Hpddel" ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel) ∗
       "Hrest" ∷ ([∗ map] kk↦y ∈ delete (tv.(yjs.Text.inner')) types1,
           own_ytype_cells kk (DfracOwn 1) y.(ty_cells) y.(ty_arr) ∗
           ⌜YjsArrInvariant y.(ty_arr)⌝) ∗
@@ -328,11 +328,11 @@ Proof.
     "Hlk" ∷ own_wlock γs ∗
     "Hclient" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "client"] ↦ client ∗
     "Hclock" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "clock"] ↦ k ∗
-    "Hitems" ∷ own_store_items (tv.(yjs.Text.store')) (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) ∗
-    "HdeletedSet" ∷ own_store_deleted_set (tv.(yjs.Text.store')) ∗
-    "Hregistry" ∷ own_store_registry (tv.(yjs.Text.store')) bind ∗
-    "Hpending" ∷ own_store_pending (tv.(yjs.Text.store')) pend ∗
-    "Hpdeletes" ∷ own_store_pending_deletes (tv.(yjs.Text.store')) pdel ∗
+    "Hitems" ∷ (∃ items_mref : loc, "Hitemsf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)) ∗
+    "HdeletedSet" ∷ (∃ deletedSetVal : yjs.deletedSet.t, ((tv.(yjs.Text.store')) .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal) ∗
+    "Hregistry" ∷ (∃ types_mref : loc, "Htypesf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "types"]) ↦ types_mref ∗ "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind) ∗
+    "Hpending" ∷ (∃ pend_sl : slice.t, "Hpendf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "pending"]) ↦ pend_sl ∗ "Hpend" ∷ own_update_structs pend_sl (DfracOwn 1) pend) ∗
+    "Hpdeletes" ∷ (∃ pdel_sl : slice.t, "Hpddelf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗ "Hpddel" ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel) ∗
     "Hseq" ∷ own γs.(sn_seq) (● ((λ ts0 : type_state, (list_to_set ts0.(ty_arr) : gset (YjsItem A))) <$> types) : authR (gmapUR loc (gsetUR (YjsItem A)))) ∗
     "Hhist" ∷ own_client_history γh (uint.nat client) h ∗
     "Hdelete_set" ∷ own_delete_set γs m (all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)) ∗
@@ -668,7 +668,7 @@ Proof.
                     ≡ₚ cell_kp <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells2 ts.(ty_arr)]> types).
       { rewrite (all_cells_insert types _ ts _ Htsp) (all_cells_insert types _ ts _ Htsp) /=.
         rewrite !fmap_app Hkpeq3 //. }
-      iDestruct (own_store_items_kp_perm _ _ _ Hkpperm3 with "Hitems") as "Hitems".
+      iDestruct (store_items_kp_perm _ _ _ Hkpperm3 with "Hitems") as "Hitems".
       (* the tombstone-set invariant across this step: the range-end split
          refines the live cells, and so does the flip that follows it *)
       have Hii3 : <[tv.(yjs.Text.inner') := MkTypeState cells3 ts.(ty_arr)]>
@@ -769,7 +769,7 @@ Proof.
                     ≡ₚ cell_kp <$> all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types).
       { rewrite (all_cells_insert types _ ts _ Htsp) (all_cells_insert types _ ts _ Htsp) /=.
         rewrite !fmap_app Hkpeq3 //. }
-      iDestruct (own_store_items_kp_perm _ _ _ Hkpperm3 with "Hitems") as "Hitems".
+      iDestruct (store_items_kp_perm _ _ _ Hkpperm3 with "Hitems") as "Hitems".
       (* the tombstone-set invariant across this step: a flip only turns bits
          ON, so the live cells refine *)
       have Hii3 : <[tv.(yjs.Text.inner') := MkTypeState cells3 ts.(ty_arr)]>

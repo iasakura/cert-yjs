@@ -69,9 +69,9 @@ Proof. rewrite /cell_le. move=> x y. lia. Qed.
 #[local] Lemma wp_store__getOrCreateYType_hit (s : loc) (bind : gmap P loc)
     (nm : go_string) (p : loc) :
   bind !! nm = Some p ->
-  {{{ is_pkg_init yjs ∗ own_store_registry s bind }}}
+  {{{ is_pkg_init yjs ∗ (∃ types_mref : loc, "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ types_mref ∗ "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind) }}}
     s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
-  {{{ RET #p; own_store_registry s bind }}}.
+  {{{ RET #p; (∃ types_mref : loc, "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ types_mref ∗ "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind) }}}.
 Proof using Type*.
   move=> Hp.
   iIntros (Φ) "(#Hpkg & Hregistry) HΦ". iNamed "Hregistry".
@@ -92,12 +92,12 @@ Qed.
 #[local] Lemma wp_store__getOrCreateYType_miss (s : loc) (types : gmap loc type_state) (bind : gmap P loc)
     (nm : go_string) :
   bind !! nm = None ->
-  {{{ is_pkg_init yjs ∗ own_store_items s types ∗ own_store_registry s bind ∗
+  {{{ is_pkg_init yjs ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) ∗ (∃ types_mref : loc, "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ types_mref ∗ "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind) ∗
       own_type_pool (DfracOwn 1) types }}}
     s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
   {{{ (p : loc), RET #p;
-      own_store_items s (<[p := MkTypeState [] []]> types) ∗
-      own_store_registry s (<[nm := p]> bind) ∗
+      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (<[p := MkTypeState [] []]> types)) ∗
+      (∃ types_mref : loc, "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ types_mref ∗ "Htypesmap" ∷ own_map types_mref (DfracOwn 1) (<[nm := p]> bind)) ∗
       own_type_pool (DfracOwn 1) (<[p := MkTypeState [] []]> types) ∗
       ⌜types !! p = None⌝ }}}.
 Proof using Type*.

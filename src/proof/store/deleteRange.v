@@ -388,7 +388,7 @@ Proof using Type*.
     wp_apply (wp_store__deleteNode s types2 pL tsL kL cL HpL HkL with "[$Htypes]").
     iIntros "Htypes".
     set (types3 := <[pL := MkTypeState (<[kL := flip_cell cL]> (ty_cells tsL)) (ty_arr tsL)]> types2).
-    iDestruct (own_store_items_kp_perm s types2 types3
+    iDestruct (store_items_kp_perm s types2 types3
                  (locs_run_perm_kp _ _ (flip_locs_run_perm types2 pL tsL kL cL HpL HkL))
                  with "Hitems") as "Hitems".
     wp_auto. wp_for_post.
@@ -455,7 +455,7 @@ Proof using Type*.
     wp_apply (wp_store__deleteNode s types1 pR tsR kR cR HpR HkR with "[$Htypes]").
     iIntros "Htypes".
     set (types3 := <[pR := MkTypeState (<[kR := flip_cell cR]> (ty_cells tsR)) (ty_arr tsR)]> types1).
-    iDestruct (own_store_items_kp_perm s types1 types3
+    iDestruct (store_items_kp_perm s types1 types3
                  (locs_run_perm_kp _ _ (flip_locs_run_perm types1 pR tsR kR cR HpR HkR))
                  with "Hitems") as "Hitems".
     wp_auto. wp_for_post.
@@ -617,7 +617,7 @@ Proof using Type*.
     { (* every span has been retried: install the leftover as the new buffer,
          and hand the whole thing back over the PURE model *)
       iApply ("HΦ" $! types_j (delete_span_of_val <$> rest_vs)).
-      iAssert (own_store_pending_deletes s (delete_span_of_val <$> rest_vs))
+      iAssert ((∃ pdel_sl : slice.t, "Hpddelf" ∷ (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗ "Hpddel" ∷ own_delete_spans pdel_sl (DfracOwn 1) (delete_span_of_val <$> rest_vs)))%I
         with "[Hpddelf Hrest Hrestcap]" as "Hpdeletes".
       { iExists rest_sl. iFrame "Hpddelf". iExists rest_vs. by iFrame "Hrest Hrestcap". }
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".

@@ -1613,11 +1613,11 @@ Qed.
   cells !! k = Some cw ->
   (0 < uint.nat diff < length (ic_run cw))%nat ->
   pool_invs types ->
-  {{{ is_pkg_init yjs ∗ own_store_items s types ∗ own_type_pool (DfracOwn 1) types }}}
+  {{{ is_pkg_init yjs ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) ∗ own_type_pool (DfracOwn 1) types }}}
     s @! (go.PointerType yjs.store) @! "splitNode" #(ic_loc cw) #diff
   {{{ (rloc : loc), RET (#(ic_loc cw), #rloc);
       ⌜fresh_loc rloc types⌝ ∗
-      own_store_items s (<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types) ∗
+      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types)) ∗
       own_type_pool (DfracOwn 1) (<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types) ∗
       ⌜pool_invs (<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types)⌝ }}}.
 Proof using Type*.
@@ -1693,10 +1693,10 @@ Qed.
   (uint.Z (cell_clock cw) <= uint.Z idv.(yjs.id.clock'))%Z ->
   (uint.Z idv.(yjs.id.clock') < uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)))%Z ->
   pool_invs types ->
-  {{{ is_pkg_init yjs ∗ own_store_items s types ∗ own_type_pool (DfracOwn 1) types }}}
+  {{{ is_pkg_init yjs ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) ∗ own_type_pool (DfracOwn 1) types }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
   {{{ (types' : gmap loc type_state), RET (#(ic_loc cw), #true);
-      own_store_items s types' ∗ own_type_pool (DfracOwn 1) types' ∗
+      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types') ∗ own_type_pool (DfracOwn 1) types' ∗
       ⌜((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))%nat = (length (ic_run cw) - 1)%nat ∧
         types' = types)
        ∨ (((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) < length (ic_run cw) - 1)%nat ∧
@@ -1800,10 +1800,10 @@ Qed.
   (uint.Z (cell_clock cw) <= uint.Z idv.(yjs.id.clock'))%Z ->
   (uint.Z idv.(yjs.id.clock') < uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)))%Z ->
   pool_invs types ->
-  {{{ is_pkg_init yjs ∗ own_store_items s types ∗ own_type_pool (DfracOwn 1) types }}}
+  {{{ is_pkg_init yjs ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) ∗ own_type_pool (DfracOwn 1) types }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
   {{{ (rl : loc) (types' : gmap loc type_state), RET (#rl, #true);
-      own_store_items s types' ∗ own_type_pool (DfracOwn 1) types' ∗
+      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types') ∗ own_type_pool (DfracOwn 1) types' ∗
       ⌜((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))%nat = 0%nat ∧
         rl = ic_loc cw ∧ types' = types)
        ∨ ((0 < (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)))%nat ∧
@@ -1938,10 +1938,10 @@ Qed.
     (types : gmap loc type_state) (cw : item_cell) :
   pool_cell_covers types cw (toYjsId idv) ->
   pool_invs types ->
-  {{{ is_pkg_init yjs ∗ own_store_items s types ∗ own_type_pool (DfracOwn 1) types }}}
+  {{{ is_pkg_init yjs ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) ∗ own_type_pool (DfracOwn 1) types }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
   {{{ (types' : gmap loc type_state), RET (#(ic_loc cw), #true);
-      own_store_items s types' ∗ own_type_pool (DfracOwn 1) types' ∗
+      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types') ∗ own_type_pool (DfracOwn 1) types' ∗
       ⌜pool_invs types'⌝ ∗ ⌜split_types_update_rel types types' cw⌝ ∗
       ⌜cell_starts_at types' (ic_parent cw) (ic_loc cw) (item_id (run_head cw))⌝ ∗
       ⌜cell_ends_at types' (ic_parent cw) (ic_loc cw) (toYjsId idv)⌝ }}}.
@@ -2078,10 +2078,10 @@ Qed.
     (types : gmap loc type_state) (cw : item_cell) :
   pool_cell_covers types cw (toYjsId idv) ->
   pool_invs types ->
-  {{{ is_pkg_init yjs ∗ own_store_items s types ∗ own_type_pool (DfracOwn 1) types }}}
+  {{{ is_pkg_init yjs ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) ∗ own_type_pool (DfracOwn 1) types }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
   {{{ (rl : loc) (types' : gmap loc type_state), RET (#rl, #true);
-      own_store_items s types' ∗ own_type_pool (DfracOwn 1) types' ∗
+      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types') ∗ own_type_pool (DfracOwn 1) types' ∗
       ⌜pool_invs types'⌝ ∗ ⌜split_types_update_rel types types' cw⌝ ∗
       ⌜cell_starts_at types' (ic_parent cw) rl (toYjsId idv)⌝ }}}.
 Proof using Type*.

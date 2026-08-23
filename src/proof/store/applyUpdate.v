@@ -735,7 +735,7 @@ Proof using Type*.
       iDestruct "Hpending" as (pnil) "(Hpendf & _)".
       wp_auto.
       iApply ("HΦ" $! typesj bindj). simpl.
-      iAssert (own_store_pending s rest) with "[Hpendf HslP HcapP]" as "Hpending".
+      iAssert ((∃ pend_sl : slice.t, "Hpendf" ∷ (s .[(yjs.store.t), "pending"]) ↦ pend_sl ∗ "Hpend" ∷ own_update_structs pend_sl (DfracOwn 1) rest))%I with "[Hpendf HslP HcapP]" as "Hpending".
       { iExists pendingS. iFrame "Hpendf". iExists uivsP. iFrame "HslP HcapP HitemsPj". }
       iSplitL "Hslin Hcapin".
       { iExists uivs_in. iFrame "Hslin Hcapin Hitemsin". }
@@ -1792,7 +1792,7 @@ Proof using Type*.
           Hdrainc Hhcoh Harrinv Hnonemptyb with "Hishist Hhist Hcertpending")
     as "(Hhist & #Hlbnew & %Hvr & %Hcoh' & %Hnoc)".
   iModIntro.
-  iAssert (own_store_pending s_loc pend) with "[Hpendf Hpend]" as "Hpending".
+  iAssert ((∃ pend_sl : slice.t, "Hpendf" ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗ "Hpend" ∷ own_update_structs pend_sl (DfracOwn 1) pend))%I with "[Hpendf Hpend]" as "Hpending".
   { iExists pend_sl. iFrame "Hpendf Hpend". }
   iDestruct (own_store_cells_intro _ (MkStoreState client k types bind pend pdel) Hinvs0
               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".

@@ -2239,10 +2239,10 @@ Qed.
   cells' !! idx = Some c ->
   ic_loc c = item_l ->
   pool_clock_below types (item_id (run_head c)) ->
-  {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells' arr' ∗ own_store_items s types }}}
+  {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells' arr' ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) }}}
     s @! (go.PointerType yjs.store) @! "AddNode" #item_l
   {{{ RET #(); own_ytype_cells parent (DfracOwn 1) cells' arr' ∗
-      own_store_items s (<[parent := MkTypeState cells' arr']> types) }}}.
+      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types)) }}}.
 Proof using Type*.
   move=> Htypes Hperm Hlook Hloc Hgmax.
   iIntros (Φ) "(Hpkg & Htext' & Hitems) HΦ". iNamed "Hitems".
@@ -2366,11 +2366,11 @@ Qed.
   pool_invs types ->
   pool_clock_below types (in_id input) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
-      own_linked_item item_l input parent lft rgt ∗ own_store_items s types }}}
+      own_linked_item item_l input parent lft rgt ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) }}}
     s @! (go.PointerType yjs.store) @! "Integrate" #parent_arg #item_l
   {{{ (cells' : list item_cell) (run : list (YjsItem A)), RET #();
       own_ytype_cells parent (DfracOwn 1) cells' arr' ∗
-      own_store_items s (<[parent := MkTypeState cells' arr']> types) ∗
+      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types)) ∗
       ⌜YjsArrInvariant arr'⌝ ∗
       ⌜integrate_splice cells arr item_l run parent cells' arr'⌝ ∗
       ⌜run_denotes input newItem run⌝ }}}.

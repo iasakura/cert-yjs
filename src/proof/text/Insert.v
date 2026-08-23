@@ -171,13 +171,13 @@ Proof.
   wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗
       ∃ (types1 : gmap loc type_state) (ts1 : type_state) (p1 : nat),
       "s" ∷ s_ptr ↦ tv.(yjs.Text.store') ∗
-      "Hitems" ∷ own_store_items (tv.(yjs.Text.store')) types1 ∗
+      "Hitems" ∷ (∃ items_mref : loc, "Hitemsf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types1) ∗
       "Hclient" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "client"] ↦ client ∗
       "Hclock" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "clock"] ↦ k ∗
-      "HdeletedSet" ∷ own_store_deleted_set (tv.(yjs.Text.store')) ∗
-      "Hregistry" ∷ own_store_registry (tv.(yjs.Text.store')) bind ∗
-      "Hpending" ∷ own_store_pending (tv.(yjs.Text.store')) pend ∗
-      "Hpdeletes" ∷ own_store_pending_deletes (tv.(yjs.Text.store')) pdel ∗
+      "HdeletedSet" ∷ (∃ deletedSetVal : yjs.deletedSet.t, ((tv.(yjs.Text.store')) .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal) ∗
+      "Hregistry" ∷ (∃ types_mref : loc, "Htypesf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "types"]) ↦ types_mref ∗ "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind) ∗
+      "Hpending" ∷ (∃ pend_sl : slice.t, "Hpendf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "pending"]) ↦ pend_sl ∗ "Hpend" ∷ own_update_structs pend_sl (DfracOwn 1) pend) ∗
+      "Hpdeletes" ∷ (∃ pdel_sl : slice.t, "Hpddelf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗ "Hpddel" ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel) ∗
       "Hrest" ∷ ([∗ map] kk↦y ∈ delete (tv.(yjs.Text.inner')) types1,
           own_ytype_cells kk (DfracOwn 1) y.(ty_cells) y.(ty_arr) ∗
           ⌜YjsArrInvariant y.(ty_arr)⌝) ∗
@@ -508,11 +508,11 @@ Proof.
     "Hsp" ∷ s_ptr ↦ tv.(yjs.Text.store') ∗
     "Hclient" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "client"] ↦ client ∗
     "Hclock" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "clock"] ↦ W64 (uint.Z k + Z.of_nat j) ∗
-    "Hitems" ∷ own_store_items (tv.(yjs.Text.store')) (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) ∗
-    "HdeletedSet" ∷ own_store_deleted_set (tv.(yjs.Text.store')) ∗
-    "Hregistry" ∷ own_store_registry (tv.(yjs.Text.store')) bind ∗
-    "Hpending" ∷ own_store_pending (tv.(yjs.Text.store')) pend ∗
-    "Hpdeletes" ∷ own_store_pending_deletes (tv.(yjs.Text.store')) pdel ∗
+    "Hitems" ∷ (∃ items_mref : loc, "Hitemsf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types)) ∗
+    "HdeletedSet" ∷ (∃ deletedSetVal : yjs.deletedSet.t, ((tv.(yjs.Text.store')) .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal) ∗
+    "Hregistry" ∷ (∃ types_mref : loc, "Htypesf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "types"]) ↦ types_mref ∗ "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind) ∗
+    "Hpending" ∷ (∃ pend_sl : slice.t, "Hpendf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "pending"]) ↦ pend_sl ∗ "Hpend" ∷ own_update_structs pend_sl (DfracOwn 1) pend) ∗
+    "Hpdeletes" ∷ (∃ pdel_sl : slice.t, "Hpddelf" ∷ ((tv.(yjs.Text.store')) .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗ "Hpddel" ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel) ∗
     "Hlk" ∷ own_wlock γs ∗
     "Hdelete_set" ∷ own_delete_set γs m (all_cells (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types)) ∗
     "Hseq" ∷ own γs.(sn_seq) (● ((λ ts0 : type_state, (list_to_set ts0.(ty_arr) : gset (YjsItem A))) <$> types) : authR (gmapUR loc (gsetUR (YjsItem A)))) ∗

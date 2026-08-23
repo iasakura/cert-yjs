@@ -8,11 +8,9 @@
     - [own_item_map]: the heap [map[Client][]*item] at the cell level.
     - [own_type_pool]: every registered type's DLL at its cell model, the
       store's whole item pool, [dfrac]-parameterized for the read path.
-    - the pieces of store state, each a struct field with what it points to:
-      [own_store_items] (the item index), [own_store_registry] (the root
-      registry), [own_store_pending] and [own_store_pending_deletes] (the two
-      buffers), [own_store_deleted_set] (the unmodeled delete-set struct);
-      [own_store_fields] is every field of the struct at a [store_state].
+    - [own_store_fields s st]: every field of the struct at a [store_state]
+      (the item index, the root registry, the type pool, the two buffers, the
+      unmodeled delete-set struct), with no predicate per field on purpose.
     - [own_store_cells s st]: THE store at its cell-level state, the fields
       with the invariants every method preserves ([store_invs]). Every
       store-internal method is specified over it, whole; [own_store] is the
@@ -938,56 +936,26 @@ Qed.
 
 (* ----- the store's heap state --------------------------------------------- *)
 
-(** [own_store_items s types]: the store's item index, the [store.items] field
-    and the per-client run map it points to ([own_item_map]), over the pool's
-    cell model. The one piece of store state [Store.Integrate] touches besides
-    the type it inserts into; [own_store_cells] holds it next to the rest. *)
-Definition own_store_items (s : loc) (types : gmap loc type_state) : iProp Σ :=
-  ∃ items_mref : loc,
-    "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗
-    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types.
-
-(** [own_store_registry s bind]: the root registry, the [store.types] field and
-    the name -> type-loc map it points to. What [getOrCreateYType] is specified
-    over. *)
-Definition own_store_registry (s : loc) (bind : gmap P loc) : iProp Σ :=
-  ∃ types_mref : loc,
-    "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ types_mref ∗
-    "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind.
-
-(** [own_store_pending s pend]: the buffered wire items whose dependencies
-    have not arrived ([store.pending]), over their model list. *)
-Definition own_store_pending (s : loc)
-    (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  ∃ pend_sl : slice.t,
-    "Hpendf" ∷ (s .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
-    "Hpend"  ∷ own_update_structs pend_sl (DfracOwn 1) pend.
-
-(** [own_store_pending_deletes s pdel]: the buffered delete spans
-    ([store.pendingDeletes]), over their model list. *)
-Definition own_store_pending_deletes (s : loc) (pdel : list delete_span) : iProp Σ :=
-  ∃ pdel_sl : slice.t,
-    "Hpddelf" ∷ (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗
-    "Hpddel"  ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel.
-
-
 (** [own_store_fields s st]: every field of the store struct [s] at the
-    cell-level state [st]. The deleted-set struct is not modeled
-    ([own_store_deleted_set]: no verified method reads it through the field;
-    the delete set's ghost model is [own_delete_set]), and the field pointers
-    and buffer slices are existential: no spec names them. *)
-Definition own_store_deleted_set (s : loc) : iProp Σ :=
-  ∃ (deletedSetVal : yjs.deletedSet.t), (s .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal.
+    cell-level state [st]: the client id and clock, the deleted-set struct
+    (not modeled: no verified method reads it through the field; the delete
+    set's ghost model is [own_delete_set]), the item index ([store.items] and
+    the per-client run map it points to, [own_item_map]), the root registry
+    ([store.types] and its name -> type-loc map), the type pool, and the two
+    buffers ([store.pending], [store.pendingDeletes]) over their model lists.
+    The field pointers and buffer slices are existential: no spec names them,
+    and no field has a predicate of its own, so a spec can only take the
+    store whole ([own_store_cells]). *)
 
 Definition own_store_fields (s : loc) (st : store_state) : iProp Σ :=
   "Hclient" ∷ (s .[(yjs.store.t), "client"]) ↦ ss_client st ∗
   "Hclock" ∷ (s .[(yjs.store.t), "clock"]) ↦ ss_clock st ∗
-  "HdeletedSet" ∷ own_store_deleted_set s ∗
-  "Hitems" ∷ own_store_items s (ss_types st) ∗
-  "Hregistry" ∷ own_store_registry s (ss_bind st) ∗
+  "HdeletedSet" ∷ (∃ deletedSetVal : yjs.deletedSet.t, (s .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal) ∗
+  "Hitems" ∷ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (ss_types st)) ∗
+  "Hregistry" ∷ (∃ types_mref : loc, "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ types_mref ∗ "Htypesmap" ∷ own_map types_mref (DfracOwn 1) (ss_bind st)) ∗
   "Htypes" ∷ own_type_pool (DfracOwn 1) (ss_types st) ∗
-  "Hpending" ∷ own_store_pending s (ss_pending st) ∗
-  "Hpdeletes" ∷ own_store_pending_deletes s (ss_pending_deletes st).
+  "Hpending" ∷ (∃ pend_sl : slice.t, "Hpendf" ∷ (s .[(yjs.store.t), "pending"]) ↦ pend_sl ∗ "Hpend" ∷ own_update_structs pend_sl (DfracOwn 1) (ss_pending st)) ∗
+  "Hpdeletes" ∷ (∃ pdel_sl : slice.t, "Hpddelf" ∷ (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗ "Hpddel" ∷ own_delete_spans pdel_sl (DfracOwn 1) (ss_pending_deletes st)).
 
 (** [own_store_cells s st]: THE store at its cell-level state: every field
     ([own_store_fields]) with the invariants every method preserves
@@ -1000,9 +968,7 @@ Definition own_store_cells (s : loc) (st : store_state) : iProp Σ :=
 
 #[global] Instance own_store_fields_timeless s st : Timeless (own_store_fields s st).
 Proof.
-  rewrite /own_store_fields /own_store_deleted_set /own_store_items /own_store_registry
-    /own_store_pending /own_store_pending_deletes /own_update_structs /own_delete_spans
-    /is_update_item.
+  rewrite /own_store_fields /own_update_structs /own_delete_spans /is_update_item.
   apply _.
 Qed.
 
@@ -1017,8 +983,8 @@ Lemma own_store_cells_intro_raw (s : loc) (st : store_state)
   store_invs st ->
   (s .[(yjs.store.t), "client"]) ↦ ss_client st -∗
   (s .[(yjs.store.t), "clock"]) ↦ ss_clock st -∗
-  own_store_deleted_set s -∗
-  own_store_items s (ss_types st) -∗
+  (∃ deletedSetVal : yjs.deletedSet.t, (s .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal) -∗
+  (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (ss_types st)) -∗
   (s .[(yjs.store.t), "types"]) ↦ types_mref -∗
   own_map types_mref (DfracOwn 1) (ss_bind st) -∗
   own_type_pool (DfracOwn 1) (ss_types st) -∗
@@ -1043,12 +1009,12 @@ Lemma own_store_cells_intro (s : loc) (st : store_state) :
   store_invs st ->
   (s .[(yjs.store.t), "client"]) ↦ ss_client st -∗
   (s .[(yjs.store.t), "clock"]) ↦ ss_clock st -∗
-  own_store_deleted_set s -∗
-  own_store_items s (ss_types st) -∗
-  own_store_registry s (ss_bind st) -∗
+  (∃ deletedSetVal : yjs.deletedSet.t, (s .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal) -∗
+  (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (ss_types st)) -∗
+  (∃ types_mref : loc, "Htypesf" ∷ (s .[(yjs.store.t), "types"]) ↦ types_mref ∗ "Htypesmap" ∷ own_map types_mref (DfracOwn 1) (ss_bind st)) -∗
   own_type_pool (DfracOwn 1) (ss_types st) -∗
-  own_store_pending s (ss_pending st) -∗
-  own_store_pending_deletes s (ss_pending_deletes st) -∗
+  (∃ pend_sl : slice.t, "Hpendf" ∷ (s .[(yjs.store.t), "pending"]) ↦ pend_sl ∗ "Hpend" ∷ own_update_structs pend_sl (DfracOwn 1) (ss_pending st)) -∗
+  (∃ pdel_sl : slice.t, "Hpddelf" ∷ (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗ "Hpddel" ∷ own_delete_spans pdel_sl (DfracOwn 1) (ss_pending_deletes st)) -∗
   own_store_cells s st.
 Proof.
   move=> Hinvs. iIntros "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
@@ -1535,9 +1501,9 @@ Qed.
 (** The item index only sees the pool's (client, clock, loc) projection, so
     it transports along any step that keeps it ([own_item_map_kp_perm] at the
     field level). *)
-Lemma own_store_items_kp_perm (s : loc) (M1 M2 : gmap loc type_state) :
+Lemma store_items_kp_perm (s : loc) (M1 M2 : gmap loc type_state) :
   cell_kp <$> all_cells M2 ≡ₚ cell_kp <$> all_cells M1 ->
-  own_store_items s M1 -∗ own_store_items s M2.
+  (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) M1) -∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) M2).
 Proof.
   move=> Hperm. iIntros "H". iNamed "H". iExists items_mref. iFrame "Hitemsf".
   iApply (own_item_map_kp_perm with "Hitemmap"). exact Hperm.
