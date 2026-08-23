@@ -53,11 +53,6 @@ Proof. rewrite /cell_le. move=> x y z. lia. Qed.
 #[local] Instance cell_le_total : Total cell_le.
 Proof. rewrite /cell_le. move=> x y. lia. Qed.
 
-(* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54
-   weakened them off their registration resource), so [store_inv_excl] /
-   [own_store] carry them as [⌜..⌝] and no Persistent/Timeless instances are
-   needed here. *)
-
 (** [word] does not use [0 <= Z.of_nat l] on its own, so a [clock + length <
     2^64] bound needs the length-nonneg fact spelled out to recover the
     per-clock [< 2^64] word conversion (issue #28 U7c). Isolated here to keep

@@ -26,7 +26,7 @@ From New.proof.sync_proof Require Import mutex.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
 From stdpp Require Import sorting.
-From New.proof.text Require Import heap.
+From New.proof.text Require Import value heap.
 
 (* iris.algebra / stdpp.sorting push [nat_scope], retuning the default [<] / [≤];
    the verified word-arithmetic proofs write [Z] comparisons unannotated, so

@@ -28,7 +28,7 @@
       lock-protected state as one exclusive predicate over its model.
     - the persistent witnesses [is_Store], [is_type_binding], [is_root],
       [is_type_lb], [is_root_lb], [is_applied_root_lb] / [is_applied_certs],
-      [update_wf], [is_accepted],
+      [is_accepted],
       [is_update_item], and the read capability [own_read_cap].
     - the Integrate-side predicates [own_fresh_item_raw], [own_linked_item]
       and the loop invariant [integrate_loop_inv].
@@ -452,40 +452,6 @@ Definition is_root (γs : store_names) (name : P) : iProp Σ :=
 #[global] Instance is_root_persistent γs name : Persistent (is_root γs name).
 Proof. apply _. Qed.
 
-(** [pending_item_rooted]/[is_pending_rooted] (issue #40, weakened in #54):
-    every HEAD struct of a decoded buffer (both origins absent, so it carries
-    its root's name on the wire) targets a named root [RootId nm]. Issue #49
-    additionally required that root to be ALREADY REGISTERED ([is_root γs nm]);
-    issue #54 LIFTS that pre-bound-roots restriction now that
-    [getOrCreateYType]'s miss branch is verified -- a head struct may target a
-    not-yet-created root, which [applyUpdate]'s drain registers on first use.
-    All that remains is that the target is a root and not an [AnchorId]
-    (Parent::Id / type-as-item is out of the verified subset, #43). With the
-    registration ([is_root], the only resource-bearing conjunct) gone, this is
-    a pure syntactic fact about the batch, so it is a [Prop] (carried as
-    [⌜..⌝] where an [iProp] is expected) and mentions no store; the wire
-    protocol ([yjs_prot], issue #107) states rootedness over it directly.
-    Structs WITH an origin derive their binding from the origin's arrival at
-    integration time, so carry no obligation here. *)
-Definition pending_item_rooted
-    (typedInput : TId * IntegrateInput (A := A)) : Prop :=
-  if decide (in_originId typedInput.2 = None ∧ in_rightOriginId typedInput.2 = None)
-  then (∃ nm : P, typedInput.1 = RootId nm)
-  else True.
-
-Definition is_pending_rooted
-    (pending : list (TId * IntegrateInput (A := A))) : Prop :=
-  ∀ typedInput, typedInput ∈ pending -> pending_item_rooted typedInput.
-
-(** [update_wf inputs]: what a batch must satisfy to be applied: per struct
-    the clock plus the content length fits a word (the 2^64 no-wrap seam), and
-    origin-free structs name a root type ([is_pending_rooted]). Facts about the
-    sender's output, so the wire protocol ([yjs_prot]) states them and
-    [applyUpdate] / [Doc.ApplySyncUpdate] assume them. *)
-Definition update_wf (inputs : list (TId * IntegrateInput (A := A))) : Prop :=
-  (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
-     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ∧
-  is_pending_rooted inputs.
 
 (** [is_accepted γs i]: the persistent receipt that id [i] has been accepted by
     the store (a lower bound on the grow-only accepted set). Combined with the

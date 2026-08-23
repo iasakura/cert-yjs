@@ -30,6 +30,7 @@ From New.proof.id Require Import value heap.
 From New.proof.item Require Import run_theory model value heap.
 From New.proof.ytype Require Import model value heap.
 From New.proof.store Require Import model value heap.
+From New.proof.text Require Import value.
 (* iris.algebra / stdpp.sorting push [nat_scope], retuning the default [<] / [≤];
    the verified word-arithmetic proofs write [Z] comparisons unannotated, so
    restore [Z_scope] as the default. *)
@@ -108,20 +109,6 @@ Definition is_Text (t : loc) (γs : store_names) (γh : history_names) (name : P
 
 #[global] Instance is_Text_persistent t γs γh name L : Persistent (is_Text t γs γh name L).
 Proof. apply _. Qed.
-
-(** [text_snapshot L marr]: the list a reader walked, with tombstones
-    ([marr]), is a valid document holding every item of the handle's model
-    [L] (the handle's list is a lower bound of what the reader sees). *)
-Definition text_snapshot (L : list (YjsItem A)) (marr : list (YjsItem A * bool)) : Prop :=
-  list_to_set L ⊆ (list_to_set marr.*1 : gset (YjsItem A)) ∧
-  YjsArrInvariant marr.*1.
-
-(** [history_reflected h0 name marr]: every insert into the root [name] that
-    the history prefix [h0] delivered has its item in the walked list. *)
-Definition history_reflected (h0 : list Ev) (name : P) (marr : list (YjsItem A * bool)) : Prop :=
-  ∀ input : IntegrateInput (A := A),
-    (RootId name, OpInsert input) ∈ delivered_ops h0 ->
-    ∃ it, item_id it = in_id input ∧ it ∈ marr.*1.
 
 (* ===== lemmas ============================================================= *)
 

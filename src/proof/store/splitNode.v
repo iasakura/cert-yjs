@@ -87,12 +87,6 @@ Lemma hd_inhabitant_drop (r : list (YjsItem A)) (o : nat) (y : YjsItem A) :
 Proof. move=> Ho. rewrite (drop_S r y o Ho) //=. Qed.
 
 
-(* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54
-   weakened them off their registration resource), so [store_inv_excl] /
-   [own_store] carry them as [⌜..⌝] and no Persistent/Timeless instances are
-   needed here. *)
-
-
 (* ----- split_cells pool bookkeeping (issue #28 stage D1c) -----------------
    The pool effect of a split: the covering cell [cw] is replaced by its two
    halves, everything else untouched ([split_pool_perm]). On top of it, the
