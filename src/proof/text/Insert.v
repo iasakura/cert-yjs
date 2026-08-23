@@ -166,7 +166,8 @@ Proof.
   iAssert (own_ytype_cells (tv.(yjs.Text.inner')) (DfracOwn 1) ts.(ty_cells) ts.(ty_arr)) with "[Hparent Hdll]" as "Htext".
   { iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
   wp_apply (wp_yType__findPos (tv.(yjs.Text.inner')) (DfracOwn 1) ts.(ty_cells) ts.(ty_arr) idx with "[$Htext]").
-  iIntros (lft rgt p off) "(Htext & %Hpbound & %Hlftloc & %Hrgtloc & %Hoff)".
+  iIntros (lft rgt p off) "(Htext & %Hfp)".
+  destruct Hfp as (Hpbound & Hlftloc & Hrgtloc & Hoff).
   wp_auto.
   (* normalize the position (issue #28 M3): when the index lands inside a
      multi-char run, split the straddled node at the offset so the insertion
@@ -234,7 +235,8 @@ Proof.
                 (tv.(yjs.Text.inner')) ts.(ty_cells) ts.(ty_arr) (p - 1)%nat cw off
                 Htspm Hcw Hdiffb Hpool
                 with "[$Hitems $Htypes]").
-    iIntros (rloc) "(%Hrlocnn & %Hrlocfresh & Hitems & Htypes & %_)".
+    iIntros (rloc) "(%Hrlocfresh' & Hitems & Htypes & %_)".
+    have [Hrlocnn Hrlocfresh] := Hrlocfresh'.
     wp_auto.
     set (cells1 := split_cells ts.(ty_cells) (p - 1)%nat (uint.nat off) rloc).
     set (ts1 := MkTypeState cells1 ts.(ty_arr)).

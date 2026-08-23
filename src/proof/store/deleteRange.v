@@ -6,7 +6,7 @@
     Both are stated over the store's CELL-POOL bundle (the [items] field, its
     [own_item_map] and the per-type DLL big-op) rather than [own_store]: this
     is the layer the split helpers ([wp_store__splitAtAndGet{Left,Right}_inv])
-    and the id lookup ([wp_store__GetNode_total]) already speak, and the
+    and the id lookup ([wp_store__GetNode]) already speak, and the
     caller ([applyDeleteSpans], D2b) reassembles the store invariant around
     it. The specs are safety-shaped for now: the resources and the pool
     invariants survive and no type's model list moves (tombstoning and
@@ -192,7 +192,7 @@ Qed.
 
 (** [store.deleteRange]: tombstone the clock range [clock, clock+length) of
     [client]'s clock space. Each step looks the current char up
-    ([wp_store__GetNode_total]); a char with no node is skipped (its struct
+    ([wp_store__GetNode]); a char with no node is skipped (its struct
     has not arrived, and the caller re-applies the span later), and otherwise
     the covering node is cut down to exactly the part of the range that starts
     there, by the clean-start / clean-end splits [store.repair] resolves
@@ -260,7 +260,7 @@ Proof using Type*.
     move: n Hnw. rewrite /range_no_overflow /= => Hstop Hnw2. word. }
   wp_apply wp_NewId.
   have [Hfits [Hnodup [Hrangedisj Horiginclk]]] := Hpool.
-  wp_apply (wp_store__GetNode_total s _ types_i Hpool with "[$Hitems $Htypes]").
+  wp_apply (wp_store__GetNode s _ types_i Hpool with "[$Hitems $Htypes]").
   iIntros (nl found) "(Hitems & Htypes & %Hres)".
   wp_auto.
   destruct found; last first.
@@ -271,18 +271,21 @@ Proof using Type*.
     iFrame "Hcur Hcov Hitems Htypes". iPureIntro.
     split_and!; [exact Hpool | word | by move=> _ | exact Hfacts]. }
   (* the covering cell, from the lookup *)
-  destruct Hres as (cw & Hcwmem & Hcwcc & Hcwle & Hcwlt & Hcwloc).
+  destruct Hres as (cw & Hcwcov & Hcwloc).
+  have Hcwmem : cw ∈ all_cells types_i := proj1 Hcwcov.
   have Hpool_i : pool_invs types_i by split_and!; assumption.
   wp_auto.
   wp_apply wp_NewId.
-  wp_apply (wp_store__splitAtAndGetRight_inv s _ types_i cw
-              Hcwmem Hcwcc Hcwle Hcwlt Hpool
+  wp_apply (wp_store__splitAtAndGetRight s _ types_i cw Hcwcov Hpool
               with "[$Hitems $Htypes]").
   iIntros (rl types1) "(Hitems & Htypes & %Hpool1 & %Hstep1 & %HcR)".
   iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwf1.
   iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds1.
-  destruct HcR as (cR & HcRmem & HcRloc & HcRcc & HcRclk & HcRpar).
+  destruct HcR as (cR & HcRmem & HcRloc & HcRpar & HcRid).
   have HcRmem1 := HcRmem.
+  have HcRcc : cell_client cR = client by (rewrite /cell_client HcRid /toYjsId /=; word).
+  have HcRclk : (uint.Z (cell_clock cR) = uint.Z cur)%Z
+    by (rewrite /cell_clock HcRid /toYjsId /=; word).
   have HcRccl : cell_client cR = client := HcRcc.
   wp_auto.
   (* locate the node in its type so its extent can be read *)
@@ -327,17 +330,37 @@ Proof using Type*.
                             (w64_word_instance.(word.add) dclock dlen) (W64 1))
                   < uint.Z (cell_clock cR) + Z.of_nat (length (ic_run cR)))%Z.
     { move: l0. rewrite HivRlen. word. }
-    wp_apply (wp_store__splitAtAndGetLeft_inv s
+    have HcRcovL : pool_cell_covers types1 cR
+        (toYjsId {| yjs.id.clientId' := cell_client cR;
+                    yjs.id.clock' := w64_word_instance.(word.sub)
+                      (w64_word_instance.(word.add) dclock dlen) (W64 1) |}).
+    { split; [exact HcRmem1 |].
+      apply (cell_covers_w64 cR _ (proj1 (Hbnds1 cR HcRmem1)) (proj2 (Hbnds1 cR HcRmem1))
+               (proj1 Hpool1 cR HcRmem1)).
+      split_and!; [reflexivity | exact HcLle | exact HcLlt]. }
+    wp_apply (wp_store__splitAtAndGetLeft s
                 {| yjs.id.clientId' := cell_client cR;
                    yjs.id.clock' := w64_word_instance.(word.sub)
                      (w64_word_instance.(word.add) dclock dlen) (W64 1) |}
-                types1 cR HcRmem1 eq_refl HcLle HcLlt Hpool1
+                types1 cR HcRcovL Hpool1
                 with "[$Hitems $Htypes]").
-    iIntros (types2) "(Hitems & Htypes & %Hpool2 & %Hstep2 & %HcL)".
+    iIntros (types2) "(Hitems & Htypes & %Hpool2 & %Hstep2 & %HcLs & %HcL)".
     iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwf2.
-    destruct HcL as (cL & HcLmem & HcLloc & HcLcc & HcLend & HcLpar & HcLstart).
+    destruct HcL as (cL & HcLmem & HcLloc & HcLpar & HcLcln & HcLendn).
+    destruct HcLs as (cL0 & HcL0mem & HcL0loc & _ & HcL0id).
+    have HcL0eq : cL0 = cL
+      := pool_loc_inj (all_cells types2) _ _ (proj1 (proj2 Hpool2)) HcL0mem HcLmem
+           (eq_trans HcL0loc (eq_sym HcLloc)).
+    subst cL0.
     have HcLmem1 := HcLmem.
     iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds2.
+    have HcLcc : cell_client cL = cell_client cR.
+    { have H := HcLcln. rewrite /toYjsId /= in H. rewrite {1}/cell_client H. word. }
+    have HcLend : (uint.Z (cell_clock cL) + Z.of_nat (length (ic_run cL))
+                   = uint.Z (w64_word_instance.(word.sub)
+                               (w64_word_instance.(word.add) dclock dlen) (W64 1)) + 1)%Z.
+    { have Hb := proj2 (Hbnds2 cL HcLmem). move: HcLendn. rewrite /cell_clock /toYjsId /=. word. }
+    have HcLstart : cell_clock cL = cell_clock cR by rewrite /cell_clock HcL0id.
     wp_auto.
     (* tombstone the truncated node *)
     apply all_cells_elem_of in HcLmem as (pL & tsL & HpL & HcLts).

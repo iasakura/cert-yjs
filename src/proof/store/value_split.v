@@ -8,6 +8,12 @@
       [splitNode]), [repair_types_update_rel] (the at-most-two splits of [repair])
       and [delete_types_update_rel] (the unbounded split-and-tombstone loop of the
       wire delete path).
+    - what the node lookups and splits say about the pool: [pool_cell_covers]
+      (a pool cell holds an id), [cell_covers_clock] (a clock within a run),
+      [sorted_client_run] (one client's clock-sorted node list), [cell_starts_at]
+      / [cell_ends_at] (the cell at a location begins / ends at an id),
+      [fresh_loc] (a location no pool cell uses), and the [repair] contract
+      [origins_covered] / [repair_parent] / [origins_split].
 
     Laws
     - splitting a node is invisible to the model: [split_cells_flatten] and
@@ -16,6 +22,9 @@
       delete loop compose one record per step), and is implied by a split step
       ([delete_types_update_rel_of_split]) and by a tombstone flip
       ([delete_types_update_rel_of_flip]).
+    - [cell_covers_w64] reads [cell_covers] at a runtime id in [w64] arithmetic;
+      [pool_cell_covers_loc]: one id lives in one node; [split_cell_right_head_id]:
+      the id the right half of a split starts at.
 
     Sits above [store/value_cells.v] and [store/value_live.v]. *)
 
@@ -26,7 +35,7 @@ From New.proof Require Import core prelude network_model.
 From iris.algebra Require Import auth gmap gset.
 From stdpp Require Import sorting.
 Local Open Scope Z_scope.
-From New.proof.store Require Import model value_cells value_live.
+From New.proof.store Require Import model value_cells value_live value_span.
 From New.proof.id Require Import value heap.
 From New.proof.item Require Import run_theory model value heap.
 From New.proof.ytype Require Import model value heap.
@@ -79,8 +88,8 @@ Definition split_cells (cells : list item_cell) (k o : nat) (r_loc : loc) : list
     is untouched, every new cell sits inside an old one's range, and the live
     and dead chars refine ([live_refine] / [dead_chars_kept]).
 
-    Used as: the postcondition of [wp_store__splitAtAndGetLeft_inv] and
-    [wp_store__splitAtAndGetRight_inv], composed by [repair] into
+    Used as: the postcondition of [wp_store__splitAtAndGetLeft] and
+    [wp_store__splitAtAndGetRight], composed by [repair] into
     [repair_types_update_rel] and weakened by the delete loop into
     [delete_types_update_rel]. *)
 Definition split_types_update_rel (before after : gmap loc type_state) (w : item_cell) : Prop :=
@@ -159,7 +168,150 @@ Definition delete_types_update_rel (before after : gmap loc type_state) : Prop :
      (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c'))
       <= uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z).
 
+(* ===== what lookups and splits say about the pool ======================= *)
+
+(** [cell_covers_clock c k]: the run of [c] has a char with clock [k], whatever
+    the client ([getNodeIndex] searches one client's run). *)
+Definition cell_covers_clock (c : item_cell) (k : nat) : Prop :=
+  (clock (item_id (run_head c)) <= k)%nat ∧
+  (k < clock (item_id (run_head c)) + length (ic_run c))%nat.
+
+(** [pool_cell_covers types c d]: [c] is a cell of the pool [types] and its run
+    has the char with id [d]. *)
+Definition pool_cell_covers (types : gmap loc type_state) (c : item_cell) (d : YjsId) : Prop :=
+  c ∈ all_cells types ∧ cell_covers c d.
+
+(** [sorted_client_run types kc run]: [run] lists cells of client [kc] from the
+    pool [types], clock-sorted and without a repeated node: the item map's run
+    for [kc], or that run with one cell rewritten during a split. *)
+Definition sorted_client_run (types : gmap loc type_state) (kc : w64)
+    (run : list item_cell) : Prop :=
+  StronglySorted cell_le run ∧ NoDup (ic_loc <$> run) ∧
+  (∀ c, c ∈ run -> c ∈ client_run types kc).
+
+(** [cell_starts_at types parent l d]: the pool [types] holds, under the type
+    [parent], a cell at location [l] whose first char has id [d]. *)
+Definition cell_starts_at (types : gmap loc type_state) (parent l : loc) (d : YjsId) : Prop :=
+  ∃ c, c ∈ all_cells types ∧ ic_loc c = l ∧ ic_parent c = parent ∧
+       item_id (run_head c) = d.
+
+(** [cell_ends_at types parent l d]: the pool [types] holds, under the type
+    [parent], a cell at location [l] whose last char has id [d]. *)
+Definition cell_ends_at (types : gmap loc type_state) (parent l : loc) (d : YjsId) : Prop :=
+  ∃ c, c ∈ all_cells types ∧ ic_loc c = l ∧ ic_parent c = parent ∧
+       clientId (item_id (run_head c)) = clientId d ∧
+       (clock (item_id (run_head c)) + length (ic_run c) = clock d + 1)%nat.
+
+(** [fresh_loc l types]: [l] is a non-null location no cell of the pool [types]
+    lives at (where a split puts its new right half). *)
+Definition fresh_loc (l : loc) (types : gmap loc type_state) : Prop :=
+  l ≠ null ∧ l ∉ ic_loc <$> all_cells types.
+
+(** [origin_covered types o oc]: the optional origin id [o] resolves to the
+    optional cell [oc]: both absent, or [oc] the pool cell whose run has [o]. *)
+Definition origin_covered (types : gmap loc type_state) (o : option YjsId)
+    (oc : option item_cell) : Prop :=
+  match o, oc with
+  | Some d, Some c => pool_cell_covers types c d
+  | None, None => True
+  | _, _ => False
+  end.
+
+(** [origins_covered types input ocL ocR]: both origins of [input] resolve in
+    the pool ([origin_covered]), and when they fall in one cell the left origin
+    precedes the right one in clock (so splitting at the left origin leaves the
+    right one in place). *)
+Definition origins_covered (types : gmap loc type_state) (input : IntegrateInput (A := A))
+    (ocL ocR : option item_cell) : Prop :=
+  origin_covered types (in_originId input) ocL ∧
+  origin_covered types (in_rightOriginId input) ocR ∧
+  match in_originId input, in_rightOriginId input, ocL, ocR with
+  | Some a, Some b, Some cL0, Some cR0 => cL0 = cR0 -> (clock a < clock b)%nat
+  | _, _, _, _ => True
+  end.
+
+(** [repair_parent bind opn ocL ocR p_t]: the type a repaired item lands in:
+    the root bound to its wire parent name when it carries one, otherwise the
+    type of its left, else right, origin cell. *)
+Definition repair_parent (bind : gmap P loc) (opn : option go_string)
+    (ocL ocR : option item_cell) (p_t : loc) : Prop :=
+  match opn with
+  | Some nm => bind !! nm = Some p_t
+  | None => match ocL with
+            | Some c => p_t = ic_parent c
+            | None => match ocR with
+                      | Some c => p_t = ic_parent c
+                      | None => False
+                      end
+            end
+  end.
+
+(** [origins_split types input ocL ocR lft rgt]: after [repair] the item's
+    [left] is the origin cell's location, now a cell ending at the left origin
+    (in the origin cell's type), and its [right] a cell starting at the right
+    origin; an absent origin links to [null]. *)
+Definition origins_split (types : gmap loc type_state) (input : IntegrateInput (A := A))
+    (ocL ocR : option item_cell) (lft rgt : loc) : Prop :=
+  match in_originId input, ocL with
+  | Some d, Some c0 => lft = ic_loc c0 ∧ cell_ends_at types (ic_parent c0) lft d
+  | None, None => lft = null
+  | _, _ => False
+  end ∧
+  match in_rightOriginId input, ocR with
+  | Some d, Some c0 => cell_starts_at types (ic_parent c0) rgt d
+  | None, None => rgt = null
+  | _, _ => False
+  end.
+
 (* ===== lemmas ============================================================= *)
+
+(** [cell_covers] at a runtime id, read in the [w64] arithmetic the node
+    lookups compute with; needs the cell's ids to fit a word. *)
+Lemma cell_covers_w64 (c : item_cell) (idv : yjs.id.t) :
+  (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ->
+  (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z ->
+  cell_fits c ->
+  cell_covers c (toYjsId idv) <->
+  (cell_client c = idv.(yjs.id.clientId') ∧
+   (uint.Z (cell_clock c) <= uint.Z idv.(yjs.id.clock'))%Z ∧
+   (uint.Z idv.(yjs.id.clock') < uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z).
+Proof.
+  move=> Hcl Hck Hfit.
+  rewrite /cell_covers /cell_client /cell_clock /cell_fits /toYjsId /= in Hfit |- *.
+  split.
+  - move=> [H1 [H2 H3]]. split_and!; [rewrite H1; word | word | word].
+  - move=> [H1 [H2 H3]]. split_and!; [| word | word].
+    have H1' := f_equal uint.Z H1. word.
+Qed.
+
+(** One id lives in one node: two pool cells covering the same id share a
+    location ([cells_range_disjoint]). *)
+Lemma pool_cell_covers_loc (types : gmap loc type_state) (c1 c2 : item_cell) (d : YjsId) :
+  pool_invs types ->
+  (∀ c, c ∈ all_cells types -> (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z) ->
+  pool_cell_covers types c1 d -> pool_cell_covers types c2 d -> ic_loc c1 = ic_loc c2.
+Proof.
+  move=> [Hfits [_ [Hdisj _]]] Hbnd [Hc1 [Hcl1 [Hle1 Hlt1]]] [Hc2 [Hcl2 [Hle2 Hlt2]]].
+  destruct (decide (ic_loc c1 = ic_loc c2)) as [He | Hne]; [exact He | exfalso].
+  have Hcc : cell_client c1 = cell_client c2 by rewrite /cell_client Hcl1 Hcl2.
+  have Hb1 := Hbnd c1 Hc1. have Hb2 := Hbnd c2 Hc2.
+  have Hf1 := Hfits c1 Hc1. have Hf2 := Hfits c2 Hc2.
+  rewrite /cell_fits /cell_clock in Hf1 Hf2.
+  destruct (Hdisj c1 c2 Hc1 Hc2 Hcc Hne) as [H | H]; rewrite /cell_clock in H; word.
+Qed.
+
+(** The right half of a split starts [o] chars into the run. *)
+Lemma split_cell_right_head_id (cw : item_cell) (o : nat) (rloc : loc) :
+  run_wf (ic_run cw) -> (o < length (ic_run cw))%nat ->
+  item_id (run_head (split_cell_right cw o rloc))
+    = MkYjsId (clientId (item_id (run_head cw))) (clock (item_id (run_head cw)) + o).
+Proof.
+  move=> Hwf Ho.
+  destruct (lookup_lt_is_Some_2 (ic_run cw) o Ho) as [yo Hyo].
+  have Hheadr : run_head (split_cell_right cw o rloc) = yo.
+  { rewrite /run_head /split_cell_right /= (drop_S _ _ _ Hyo) //. }
+  rewrite Hheadr. exact (run_wf_char_id (ic_run cw) o yo Hwf Hyo).
+Qed.
 
 (** A split step keeps the registry coherent: no type appears or disappears. *)
 Lemma registry_coh_split_step (bind : gmap P loc) (before after : gmap loc type_state)
