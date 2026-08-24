@@ -4,7 +4,8 @@
     Definitions
     - [type_state] / [all_cells]: what the invariant tracks per registered
       yType (its DLL cells and its model list), and the cells across the whole
-      registry.
+      registry; [store_state], every field of the store at this cell level,
+      and [store_invs], the two invariants every store method preserves.
     - the per-client node list: [cell_client] / [cell_clock] / [cell_le] /
       [cell_pr] / [cell_kp] and [client_run], the sorted run of one client's
       cells that shadows [store.items].
@@ -23,7 +24,8 @@
       [run_denotes] (the run is the input's).
 
     Laws
-    - the pool invariants are preserved by appending a fresh cell ([*_snoc])
+    - the pool invariants are preserved by appending a fresh cell ([*_snoc],
+      assembled for one integrate as [pool_invs_integrate])
       and by any permutation that keeps locations and runs
       ([locs_run_perm_*], [flip_locs_run_perm] / [pool_invs_flip] /
       [flip_pool_perm] for the tombstone flip). These are the two shapes every
@@ -47,7 +49,9 @@ From New.proof Require Import core prelude algebra network_model.
 From iris.algebra Require Import auth gmap gset.
 From stdpp Require Import sorting.
 Local Open Scope Z_scope.
-From New.proof.store Require Import model.
+From RecordUpdate Require Import RecordSet.
+Import RecordSetNotations.
+From New.proof.store Require Import model value_span.
 From New.proof.id Require Import value heap.
 From New.proof.item Require Import run_theory model value heap.
 From New.proof.ytype Require Import model value heap.
@@ -233,7 +237,7 @@ Definition inputs_rooted_in_bind (inputs : list (TId * IntegrateInput (A := A)))
 (** [registry_coh bind types]: the root registry [bind] (name -> type loc)
     and the type pool [types] fit together: every bound name has a live type,
     [bind] is injective, and every live type is bound under some name. A
-    heap-level fact: every store method preserves it, so [own_store_heap]
+    heap-level fact: every store method preserves it, so [own_store_cells]
     carries it. *)
 Definition registry_coh (bind : gmap P loc) (types : gmap loc type_state) : Prop :=
   (∀ nm p, bind !! nm = Some p -> is_Some (types !! p)) /\
@@ -305,6 +309,33 @@ Definition pool_invs (types : gmap loc type_state) : Prop :=
   cells_range_disjoint (all_cells types) ∧
   (∀ c, c ∈ all_cells types -> cell_origin_clk c).
 
+(** [store_state]: the store's cell-level state, every field of a [store]
+    under the write lock: the local client and its next clock, the type pool,
+    the root registry, and the buffered wire items and delete spans. The
+    model every store-internal method is specified over ([own_store_cells]). *)
+Record store_state := MkStoreState {
+  ss_client : w64;
+  ss_clock : w64;
+  ss_types : gmap loc type_state;
+  ss_bind : gmap P loc;
+  ss_pending : list (TId * IntegrateInput (A := A));
+  ss_pending_deletes : list delete_span;
+}.
+
+#[export] Instance settable_store_state : Settable store_state :=
+  settable! MkStoreState <ss_client; ss_clock; ss_types; ss_bind; ss_pending; ss_pending_deletes>.
+
+(** [input_fits input]: the wire item's chars fit a word of clocks (the 2^64
+    no-wrap seam per struct, [update_wf]'s per-item clause); what lets its
+    cell satisfy [cell_fits]. *)
+Definition input_fits (input : IntegrateInput (A := A)) : Prop :=
+  (Z.of_nat (clock (in_id input)) + Z.of_nat (length (in_content input)) < 2^64)%Z.
+
+(** [store_invs st]: the two invariants every store method preserves: the
+    pool's ([pool_invs]) and the registry's coherence with it ([registry_coh]). *)
+Definition store_invs (st : store_state) : Prop :=
+  pool_invs (ss_types st) ∧ registry_coh (ss_bind st) (ss_types st).
+
 (* ===== lemmas ============================================================= *)
 
 (** The spliced cell list is the old one plus the new cell, as a multiset. *)
@@ -338,6 +369,7 @@ Qed.
     result ([id_unique]). *)
 Lemma integrate_unit_run (arr arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
     (newItem : YjsItem A) (run : list (YjsItem A)) :
+  YjsArrInvariant arr ->
   integrate_ready arr input newItem ->
   integrate input arr = Some arr' ->
   YjsArrInvariant arr' ->
@@ -346,7 +378,7 @@ Lemma integrate_unit_run (arr arr' : list (YjsItem A)) (input : IntegrateInput (
   (∀ x, x ∈ run -> x ∈ arr') ->
   run = [newItem].
 Proof.
-  move=> [Hinv [Htoitem [Hvalid Hmax]]] Hintegrate Hinv' [Hid [_ [_ Hlen]]] Hlen1 Hsub.
+  move=> Hinv [Htoitem [Hvalid Hmax]] Hintegrate Hinv' [Hid [_ [_ Hlen]]] Hlen1 Hsub.
   rewrite Hlen1 in Hlen.
   destruct run as [| x [| y tl]]; simpl in Hlen; [done | | done].
   have Hxin : x ∈ arr' := Hsub x (list_elem_of_here x []).
@@ -897,6 +929,30 @@ Proof.
   rewrite Hperm in Hc0. apply elem_of_app in Hc0 as [Hc0 | Hc0].
   - exact (Hfits c0 Hc0).
   - apply list_elem_of_singleton in Hc0 as ->. exact Hfc.
+Qed.
+
+(** The pool invariants survive one integrate: a fresh node holding a run
+    that fits, starting above every same-client cell, whose head's same-client
+    origin is older, spliced into one type. *)
+Lemma pool_invs_integrate (types : gmap loc type_state) (parent : loc)
+    (cells arr cells' arr' : list _) (c : item_cell) :
+  pool_invs types ->
+  types !! parent = Some (MkTypeState cells arr) ->
+  cells' ≡ₚ cells ++ [c] ->
+  ic_loc c ∉ ic_loc <$> all_cells types ->
+  cell_fits c ->
+  pool_clock_below types (item_id (run_head c)) ->
+  cell_origin_clk c ->
+  pool_invs (<[parent := MkTypeState cells' arr']> types).
+Proof.
+  move=> [Hfits [Hnodup [Hdisj Horig]]] Hp Hperm Hfresh Hfc Hbelow Hoc.
+  have Hac := all_cells_insert_snoc types parent cells arr cells' arr' c Hp Hperm.
+  split_and!.
+  - exact (fits_snoc _ _ c Hac Hfc Hfits).
+  - exact (nodup_locs_snoc _ _ c Hac Hfresh Hnodup).
+  - apply (rangedisj_snoc _ _ c Hac); [| exact Hdisj].
+    move=> c0 Hc0 Hcc. exact (proj2 (Hbelow c0 Hc0 Hcc)).
+  - exact (originclk_snoc _ _ c Hac Hoc Horig).
 Qed.
 
 (** [cell_kp] projections: a cell's (client, clock, loc) is exactly what its

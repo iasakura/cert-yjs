@@ -504,18 +504,22 @@ Steps 1, 2, 4, 5, 6 and 7 are implemented as the stacked PRs #143 to #151
 each green under `./build.sh`. Where the realized design differs from the
 sections above:
 
-- **F1 footprint.** Instead of one `own_store_heap s st` with a
-  `store_state` record, the internal specs have a two-level footprint:
-  cell surgeries (`Integrate`, `GetNode`, `splitNode`, `splitAtAndGet*`,
-  `deleteRange`) run over `own_store_items s types ∗ own_type_pool dq types`
-  with `pool_invs types` as premise and post; the registry-touching helpers
-  (`repair`, `integrateDecoded`, `hasNode` family, `getOrCreateYType`) over
-  `own_store_core s types bind` (items, registry, pool, `pool_invs`,
-  `registry_coh`); `applyUpdate` adds `own_store_pending`, `applyDeleteSpans`
-  adds `own_store_pending_deletes`; `own_store_heap` is the conjunction and
-  `own_store` is restated on top of it. A record would have forced every
-  cell surgery to mention the registry and the pending buffer it does not
-  touch.
+- **F1 footprint.** Realized as planned, under the name `own_store_cells s st`
+  (`store/heap.v`): `store_state` (`store/value_cells.v`) is a `RecordSet`
+  record of every field at the cell level (`ss_client`, `ss_clock`,
+  `ss_types`, `ss_bind`, `ss_pending`, `ss_pending_deletes`), `store_invs st`
+  bundles `pool_invs` and `registry_coh`, and `own_store_cells s st` is every
+  field (`own_store_fields`) with `store_invs`. Every store-internal method
+  (`Integrate`, `GetNode`, `splitNode`, `deleteRange`, `repair`,
+  `integrateDecoded`, `getOrCreateYType`, `applyUpdate`, ...) takes it whole
+  and returns it at `st <| ss_types := ... |>`; `own_store` is restated on
+  top of it. A first version (#147 to #151) had a two-level footprint
+  (`own_store_items s types ∗ own_type_pool dq types` for cell surgeries,
+  `own_store_core s types bind` for the registry-touching helpers), rejected
+  because a method on `s` must take `s`'s predicate whole (CLAUDE.md "Spec
+  shape"). The partial footprints survive only as `#[local]` stepping stones
+  of one proof (`_parts`, `_range`, `_raw`) and in `wp_store__GetNode_parts`,
+  which `splitNode.v`'s stepping stones need.
 - **F6 / F7 names.** `integrate_ready`, `origins_linked`, `integrate_splice`,
   `run_denotes`, `pool_clock_below` (Integrate); `pool_cell_covers`,
   `cell_covers_clock`, `sorted_client_run`, `cell_starts_at`, `cell_ends_at`,

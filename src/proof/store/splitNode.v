@@ -1,5 +1,7 @@
 (** store update path, split layer: [wp_store__splitNode],
-    [wp_store__splitAtAndGetLeft] / [wp_store__splitAtAndGetRight], plus the
+    [wp_store__splitAtAndGetLeft] / [wp_store__splitAtAndGetRight] (each over
+    the whole store, with a local stepping stone over the item index and the
+    pool), plus the
     split-pool bookkeeping ([pool_invs], [split_types_update_rel], the
     [split_pool_*] / [split_cells_*] lemmas). Split out of
     [store/GetNode] so it proof-checks in parallel; same [Section]
@@ -18,6 +20,8 @@ From New.proof.store Require Import model value heap Integrate.
 From iris.algebra Require Import auth gmap gset.
 From stdpp Require Import sorting.
 From New.proof.store Require Import GetNode.
+From RecordUpdate Require Import RecordSet.
+Import RecordSetNotations.
 
 (* iris.algebra / stdpp.sorting push [nat_scope], retuning the default [<] / [≤].
    The verified WP proofs write [Z] comparisons (e.g. [sint.Z i < …]) unannotated
@@ -1607,13 +1611,9 @@ Proof using Type*.
     iPureIntro. split; [exact Hrsnn | exact Hrsfresh].
 Qed.
 
-(** [store.splitNode n diff] (issue #28 M4): split the run cell [cw] (at DLL
-    index [k] of type [parent]) at offset [diff] into a truncated left half
-    (same node loc) and a fresh right half ([rloc]), updating both the
-    per-type DLL and the per-client run list. The pure cell effect is
-    [split_cells cells k (uint.nat diff) rloc], invisible to the flattened
-    document, and the pool invariants survive it. *)
-Lemma wp_store__splitNode (s : loc) (types : gmap loc type_state)
+(** [store.splitNode] over the item index and the pool alone. Local: the
+    stepping stone of [wp_store__splitNode]. *)
+#[local] Lemma wp_store__splitNode_parts (s : loc) (types : gmap loc type_state)
     (parent : loc) (cells arr : list _) (k : nat) (cw : item_cell) (diff : w64) :
   types !! parent = Some (MkTypeState cells arr) ->
   cells !! k = Some cw ->
@@ -1647,6 +1647,38 @@ Proof using Type*.
   iFrame "Htypes". iSplitL "Hitemsf Hitemmap"; first (iExists items_mref; iFrame).
   iPureIntro.
   exact (pool_invs_split types parent cells arr k cw _ rloc Htypes0 Hck Hrunwf Hdiffb Hckbnd Hrlocfresh Hpool).
+Qed.
+
+(** [store.splitNode n diff] (issue #28 M4): split the run cell [cw] (at DLL
+    index [k] of type [parent]) at offset [diff] into a truncated left half
+    (same node loc) and a fresh right half ([rloc]), updating both the
+    per-type DLL and the per-client run list. The pure cell effect is
+    [split_cells cells k (uint.nat diff) rloc], invisible to the flattened
+    document. *)
+Lemma wp_store__splitNode (s : loc) (st : store_state)
+    (parent : loc) (cells arr : list _) (k : nat) (cw : item_cell) (diff : w64) :
+  ss_types st !! parent = Some (MkTypeState cells arr) ->
+  cells !! k = Some cw ->
+  (0 < uint.nat diff < length (ic_run cw))%nat ->
+  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
+    s @! (go.PointerType yjs.store) @! "splitNode" #(ic_loc cw) #diff
+  {{{ (rloc : loc), RET (#(ic_loc cw), #rloc);
+      own_store_cells s
+        (st <| ss_types := <[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> (ss_types st) |>) ∗
+      ⌜fresh_loc rloc (ss_types st)⌝ }}}.
+Proof using Type*.
+  move=> Hts Hck Hdiff.
+  iIntros (Φ) "(#Hpkg & Hcells) HΦ". iNamed "Hcells". iNamed "Hfields".
+  have [Hpool Hreg] := Hinvs.
+  wp_apply (wp_store__splitNode_parts s (ss_types st) parent cells arr k cw diff Hts Hck Hdiff Hpool
+              with "[$Hpkg $Hitems $Htypes]").
+  iIntros (rloc) "(%Hfresh & Hitems & Htypes & %Hpool')".
+  have Hreg' := registry_coh_insert (ss_bind st) (ss_types st) parent _
+                  (MkTypeState (split_cells cells k (uint.nat diff) rloc) arr) Hts Hreg.
+  iApply ("HΦ" $! rloc).
+  iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes"; last by iPureIntro.
+  iSplitL; last by (iPureIntro; split; [exact Hpool' | exact Hreg']).
+  simpl. iFrame.
 Qed.
 
 (** [store.splitAtAndGetLeft], general splitting form (issue #28 stage D1b):
@@ -1691,7 +1723,7 @@ Proof using Type*.
   { split; [exact Hcwmem |].
     apply (cell_covers_w64 cw idv (proj1 (Hbnds0 cw Hcwmem)) (proj2 (Hbnds0 cw Hcwmem)) (proj1 Hpool cw Hcwmem)).
     split_and!; [exact Hcwcc | exact Hcwle | exact Hcwlt]. }
-  wp_apply (wp_store__GetNode s idv types Hpool with "[$Hitems $Htypes]").
+  wp_apply (wp_store__GetNode_parts s idv types Hpool with "[$Hitems $Htypes]").
   iIntros (nl ok) "(Hitems & Htypes & %Hres)".
   destruct ok; last first.
   { exfalso. exact (Hres cw Hcwcov). }
@@ -1740,7 +1772,7 @@ Proof using Type*.
                       (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                       (W64 1)) < length (ic_run cw))%nat.
     { rewrite Hdiffnat. clear -Hnlt. lia. }
-    wp_apply (wp_store__splitNode s types parent cells arr k cw
+    wp_apply (wp_store__splitNode_parts s types parent cells arr k cw
                 (w64_word_instance.(word.add)
                    (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                    (W64 1))
@@ -1798,7 +1830,7 @@ Proof using Type*.
   { split; [exact Hcwmem |].
     apply (cell_covers_w64 cw idv (proj1 (Hbnds0 cw Hcwmem)) (proj2 (Hbnds0 cw Hcwmem)) (proj1 Hpool cw Hcwmem)).
     split_and!; [exact Hcwcc | exact Hcwle | exact Hcwlt]. }
-  wp_apply (wp_store__GetNode s idv types Hpool with "[$Hitems $Htypes]").
+  wp_apply (wp_store__GetNode_parts s idv types Hpool with "[$Hitems $Htypes]").
   iIntros (nl ok) "(Hitems & Htypes & %Hres)".
   destruct ok; last first.
   { exfalso. exact (Hres cw Hcwcov). }
@@ -1832,7 +1864,7 @@ Proof using Type*.
     have Hdiffb : (0 < uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                    < length (ic_run cw))%nat.
     { rewrite Hdiffnat. clear -Hopos Holt. lia. }
-    wp_apply (wp_store__splitNode s types parent cells arr k cw
+    wp_apply (wp_store__splitNode_parts s types parent cells arr k cw
                 (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                 Htypes Hcellk Hdiffb Hpool
                 with "[$Hpkg $Hitems $Htypes]").
@@ -1906,12 +1938,9 @@ Proof.
     - lia. }
 Qed.
 
-(** [store.splitAtAndGetLeft]: make the char [idv] (any char of the pool
-    cell [cw]) end a node. When it is the run's last char nothing changes;
-    otherwise the node is split just after it and the truncated left half
-    keeps the location. The node at [ic_loc cw] then starts where [cw] did
-    and ends at [idv]. *)
-Lemma wp_store__splitAtAndGetLeft (s : loc) (idv : yjs.id.t)
+(** [store.splitAtAndGetLeft] over the item index and the pool alone. Local:
+    the stepping stone of [wp_store__splitAtAndGetLeft]. *)
+#[local] Lemma wp_store__splitAtAndGetLeft_parts (s : loc) (idv : yjs.id.t)
     (types : gmap loc type_state) (cw : item_cell) :
   pool_cell_covers types cw (toYjsId idv) ->
   pool_invs types ->
@@ -2020,11 +2049,38 @@ Proof using Type*.
       rewrite Hheadl Hlenl. move: Hcc Hle Hlt. rewrite /toYjsId /=. lia.
 Qed.
 
-(** [store.splitAtAndGetRight]: make the char [idv] (any char of the pool
-    cell [cw]) start a node. When it is the run's first char the node is
-    returned as is; otherwise the node is split just before it and the fresh
-    right half comes back. Either way the returned node starts at [idv]. *)
-Lemma wp_store__splitAtAndGetRight (s : loc) (idv : yjs.id.t)
+(** [store.splitAtAndGetLeft]: make the char [idv] (any char of the pool
+    cell [cw]) end a node. When it is the run's last char nothing changes;
+    otherwise the node is split just after it and the truncated left half
+    keeps the location. The node at [ic_loc cw] then starts where [cw] did
+    and ends at [idv]. *)
+Lemma wp_store__splitAtAndGetLeft (s : loc) (idv : yjs.id.t) (st : store_state) (cw : item_cell) :
+  pool_cell_covers (ss_types st) cw (toYjsId idv) ->
+  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
+    s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
+  {{{ (types' : gmap loc type_state), RET (#(ic_loc cw), #true);
+      own_store_cells s (st <| ss_types := types' |>) ∗
+      ⌜split_types_update_rel (ss_types st) types' cw⌝ ∗
+      ⌜cell_starts_at types' (ic_parent cw) (ic_loc cw) (item_id (run_head cw))⌝ ∗
+      ⌜cell_ends_at types' (ic_parent cw) (ic_loc cw) (toYjsId idv)⌝ }}}.
+Proof using Type*.
+  move=> Hcov.
+  iIntros (Φ) "(#Hpkg & Hcells) HΦ". iNamed "Hcells". iNamed "Hfields".
+  have [Hpool Hreg] := Hinvs.
+  wp_apply (wp_store__splitAtAndGetLeft_parts s idv (ss_types st) cw Hcov Hpool
+              with "[$Hpkg $Hitems $Htypes]").
+  iIntros (types') "(Hitems & Htypes & %Hpool' & %Hstep & %Hstarts & %Hends)".
+  have Hreg' := registry_coh_split_step (ss_bind st) (ss_types st) types' cw Hstep Hreg.
+  iApply ("HΦ" $! types').
+  iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
+    last by (iPureIntro; split_and!; [exact Hstep | exact Hstarts | exact Hends]).
+  iSplitL; last by (iPureIntro; split; [exact Hpool' | exact Hreg']).
+  simpl. iFrame.
+Qed.
+
+(** [store.splitAtAndGetRight] over the item index and the pool alone. Local:
+    the stepping stone of [wp_store__splitAtAndGetRight]. *)
+#[local] Lemma wp_store__splitAtAndGetRight_parts (s : loc) (idv : yjs.id.t)
     (types : gmap loc type_state) (cw : item_cell) :
   pool_cell_covers types cw (toYjsId idv) ->
   pool_invs types ->
@@ -2124,6 +2180,33 @@ Proof using Type*.
       split_and!; [rewrite Hnew; apply elem_of_cons; right; apply list_elem_of_here | done | done |].
       rewrite (split_cell_right_head_id cw _ rl Hrunwf (proj2 Ho2)).
       move: Hcl Hle Hcc. rewrite /toYjsId /=. move=> Hcl Hle Hcc. f_equal; [exact Hcl | lia].
+Qed.
+
+(** [store.splitAtAndGetRight]: make the char [idv] (any char of the pool
+    cell [cw]) start a node. When it is the run's first char the node is
+    returned as is; otherwise the node is split just before it and the fresh
+    right half comes back. Either way the returned node starts at [idv]. *)
+Lemma wp_store__splitAtAndGetRight (s : loc) (idv : yjs.id.t) (st : store_state) (cw : item_cell) :
+  pool_cell_covers (ss_types st) cw (toYjsId idv) ->
+  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
+    s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
+  {{{ (rl : loc) (types' : gmap loc type_state), RET (#rl, #true);
+      own_store_cells s (st <| ss_types := types' |>) ∗
+      ⌜split_types_update_rel (ss_types st) types' cw⌝ ∗
+      ⌜cell_starts_at types' (ic_parent cw) rl (toYjsId idv)⌝ }}}.
+Proof using Type*.
+  move=> Hcov.
+  iIntros (Φ) "(#Hpkg & Hcells) HΦ". iNamed "Hcells". iNamed "Hfields".
+  have [Hpool Hreg] := Hinvs.
+  wp_apply (wp_store__splitAtAndGetRight_parts s idv (ss_types st) cw Hcov Hpool
+              with "[$Hpkg $Hitems $Htypes]").
+  iIntros (rl types') "(Hitems & Htypes & %Hpool' & %Hstep & %Hstarts)".
+  have Hreg' := registry_coh_split_step (ss_bind st) (ss_types st) types' cw Hstep Hreg.
+  iApply ("HΦ" $! rl types').
+  iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
+    last by (iPureIntro; split; [exact Hstep | exact Hstarts]).
+  iSplitL; last by (iPureIntro; split; [exact Hpool' | exact Hreg']).
+  simpl. iFrame.
 Qed.
 
 End store_update.

@@ -23,6 +23,8 @@ From New.proof.item Require Import item.
 From New.proof.ytype Require Import ytype.
 From New.proof Require Import history.
 From New.proof.store Require Import model value heap.
+From RecordUpdate Require Import RecordSet.
+Import RecordSetNotations.
 From iris.algebra Require Import auth gmap gset.
 From stdpp Require Import sorting.
 
@@ -2230,7 +2232,7 @@ Qed.
     one just spliced into type [parent] ([cells' ≡ₚ cells ++ [c]]) and is its
     client's newest ([pool_clock_below]), so the append keeps the run list
     clock-sorted; the item index moves to the grown type map. *)
-Lemma wp_store__AddNode (s parent item_l : loc) (types : gmap loc type_state)
+#[local] Lemma wp_store__AddNode (s parent item_l : loc) (types : gmap loc type_state)
     (cells cells' : list item_cell) (arr arr' : list (YjsItem A)) (idx : nat) (c : item_cell) :
   types !! parent = Some (MkTypeState cells arr) ->
   cells' ≡ₚ cells ++ [c] ->
@@ -2352,10 +2354,11 @@ Qed.
     (the update path), in which case the method reads the parent off the
     item, which [store.repair] set; the drop branch for an unresolved parent
     is dead because the item's parent is the type's own non-null location. *)
-Lemma wp_Store__Integrate (s parent parent_arg item_l : loc) (cells : list item_cell)
+#[local] Lemma wp_Store__Integrate_parts (s parent parent_arg item_l : loc) (cells : list item_cell)
     (arr arr' : list (YjsItem A)) (input : IntegrateInput (A := A)) (newItem : YjsItem A)
     (types : gmap loc type_state) (lft rgt : loc) :
   parent_arg = parent ∨ parent_arg = null ->
+  YjsArrInvariant arr ->
   integrate_ready arr input newItem ->
   integrate_all (ops_of_input input (explode (in_content input))) arr = Some arr' ->
   origins_linked cells arr input lft rgt ->
@@ -2372,7 +2375,7 @@ Lemma wp_Store__Integrate (s parent parent_arg item_l : loc) (cells : list item_
       ⌜integrate_splice cells arr item_l run parent cells' arr'⌝ ∗
       ⌜run_denotes input newItem run⌝ }}}.
 Proof using Type*.
-  move=> Hparg [Hinv [Htoitem [Hvalid Hmax]]] Hall Hlinked Htypes Hpool Hgmax.
+  move=> Hparg Hinv [Htoitem [Hvalid Hmax]] Hall Hlinked Htypes Hpool Hgmax.
   destruct Hlinked as (leftIdx & rightIdx & curL & curR & HfindL & HfindR & -> & -> & HcurL & HcurLb & HcurR & HcurRb).
   iIntros (Φ) "(#Hpkg & Htext & Hfresh & Hitems) HΦ".
   have Hidnew : item_id newItem = in_id input := commutativity.toItem_id input arr newItem Htoitem.
@@ -2464,6 +2467,71 @@ Proof using Type*.
       * rewrite -Hc_eq. exact Hsplice.
       * rewrite Hcoup. exact Harrsp.
     + split_and!; [exact Hcid | exact Horig | exact Hrorig | rewrite Hclen explode_length //].
+Qed.
+
+(** [Store.Integrate parent item]: splice the fresh linked item [item_l] into
+    the type [parent] of the store (the argument may be [null], in which case
+    the item's own [parent] field names the type). The model takes the
+    [integrate_all] step of the item's chars ([integrate_ready]), the type's
+    cell list gets the run at the matching position ([integrate_splice]), the
+    run is the input's ([run_denotes]), and the store's invariants survive:
+    the item's chars fit ([input_fits]) and its id is its client's newest in
+    the whole pool ([pool_clock_below]). *)
+Lemma wp_Store__Integrate (s parent parent_arg item_l : loc) (st : store_state)
+    (cells : list item_cell) (arr arr' : list (YjsItem A))
+    (input : IntegrateInput (A := A)) (newItem : YjsItem A) (lft rgt : loc) :
+  parent_arg = parent ∨ parent_arg = null ->
+  ss_types st !! parent = Some (MkTypeState cells arr) ->
+  integrate_ready arr input newItem ->
+  input_fits input ->
+  integrate_all (ops_of_input input (explode (in_content input))) arr = Some arr' ->
+  origins_linked cells arr input lft rgt ->
+  pool_clock_below (ss_types st) (in_id input) ->
+  {{{ is_pkg_init yjs ∗ own_store_cells s st ∗ own_linked_item item_l input parent lft rgt }}}
+    s @! (go.PointerType yjs.store) @! "Integrate" #parent_arg #item_l
+  {{{ (cells' : list item_cell) (run : list (YjsItem A)), RET #();
+      own_store_cells s (st <| ss_types := <[parent := MkTypeState cells' arr']> (ss_types st) |>) ∗
+      ⌜YjsArrInvariant arr'⌝ ∗
+      ⌜integrate_splice cells arr item_l run parent cells' arr'⌝ ∗
+      ⌜run_denotes input newItem run⌝ }}}.
+Proof using Type*.
+  move=> Hparg Hts Hready Hfitsin Hall Hlinked Hbelow.
+  iIntros (Φ) "(#Hpkg & Hcells & Hfresh) HΦ". iNamed "Hcells". iNamed "Hfields".
+  have [Hpool Hreg] := Hinvs.
+  iDestruct (linked_item_fresh2 with "Hfresh Htypes") as %Hfreshloc.
+  rewrite /own_type_pool.
+  iDestruct (big_sepM_delete _ _ parent _ Hts with "Htypes") as "[[Hyt %Hinv] Htypesrest]".
+  wp_apply (wp_Store__Integrate_parts s parent parent_arg item_l cells arr arr' input newItem
+              (ss_types st) lft rgt Hparg Hinv Hready Hall Hlinked Hts Hpool Hbelow
+              with "[$Hpkg $Hyt $Hfresh $Hitems]").
+  iIntros (cells' run) "(Hyt & Hitems & %Hinv' & %Hsplice & %Hrun)".
+  iAssert (own_type_pool (DfracOwn 1) (<[parent := MkTypeState cells' arr']> (ss_types st)))
+    with "[Hyt Htypesrest]" as "Htypes".
+  { rewrite /own_type_pool -insert_delete_eq big_sepM_insert; last apply lookup_delete_eq.
+    iFrame "Htypesrest". simpl. iFrame "Hyt". iPureIntro. exact Hinv'. }
+  set (c := MkItemCell item_l run false parent).
+  have Hperm : cells' ≡ₚ cells ++ [c] := integrate_splice_perm _ _ _ _ _ _ _ Hsplice.
+  have Hrun' := Hrun.
+  destruct Hrun' as (Hcid & Hcorig & Hcrorig & Hclen).
+  have Hidnew : item_id newItem = in_id input
+    := commutativity.toItem_id input arr newItem (proj1 Hready).
+  have Hbelowc : pool_clock_below (ss_types st) (item_id (run_head c)).
+  { rewrite /c /run_head /= Hcid. exact Hbelow. }
+  have Hfitsc : cell_fits c.
+  { rewrite /cell_fits /cell_clock /c /run_head /= Hcid Hclen. move: Hfitsin. rewrite /input_fits. word. }
+  have Hoc : cell_origin_clk c.
+  { move=> originId Hoid Hcl. rewrite /c /run_head /= in Hoid Hcl *.
+    rewrite Hcorig in Hoid. rewrite Hcid -Hidnew in Hcl *.
+    exact (integrate_ready_origin_clk arr input newItem Hready originId Hoid Hcl). }
+  have Hpool' : pool_invs (<[parent := MkTypeState cells' arr']> (ss_types st))
+    := pool_invs_integrate (ss_types st) parent cells arr cells' arr' c Hpool Hts Hperm Hfreshloc Hfitsc Hbelowc Hoc.
+  have Hreg' : registry_coh (ss_bind st) (<[parent := MkTypeState cells' arr']> (ss_types st))
+    := registry_coh_insert _ _ parent _ _ Hts Hreg.
+  iApply ("HΦ" $! cells' run).
+  iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
+    last by (iPureIntro; split_and!; [exact Hinv' | exact Hsplice | exact Hrun]).
+  iSplitL; last by (iPureIntro; split; [exact Hpool' | exact Hreg']).
+  simpl. iFrame.
 Qed.
 
 End store_integrate.

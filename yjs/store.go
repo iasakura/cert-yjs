@@ -163,6 +163,10 @@ func (s *store) deleteRange(client Client, clock uint64, length uint64) bool {
 // deleteRange skips tombstoned nodes. Callers hold s.mu.
 func (s *store) applyDeleteSpans(spans []deleteSpan) {
 	all := s.pendingDeletes
+	// Take the buffer out before retrying it (y-octo's mem::take of the
+	// pending set): while the retry loop runs, the store holds no buffered
+	// spans, and the ones that did not land are installed at the end.
+	s.pendingDeletes = nil
 	for i := 0; i < len(spans); i++ {
 		all = append(all, spans[i])
 	}
