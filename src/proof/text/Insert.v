@@ -103,7 +103,7 @@ Proof.
       iFrame "Hrest". iSplitL "Hparent Hdll".
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. exact Hinvarr. }
-    iDestruct (own_store_cells_intro _ (MkStoreState client k types bind pend pdel) (conj Hpool Hreg)
+    iDestruct (own_store_struct_intro _ (MkStoreState client k types bind pend pdel) (conj Hpool Hreg)
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
                 with "[$His_store $Hlk Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set]").
@@ -137,7 +137,7 @@ Proof.
       iFrame "Hrest". iSplitL "Hparent Hdll".
       - iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
       - iPureIntro. exact Hinvarr. }
-    iDestruct (own_store_cells_intro _ (MkStoreState client k types bind pend pdel) (conj Hpool Hreg)
+    iDestruct (own_store_struct_intro _ (MkStoreState client k types bind pend pdel) (conj Hpool Hreg)
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
                 with "[$His_store $Hlk Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set]").
@@ -232,7 +232,7 @@ Proof.
       have -> : Z.to_nat (Z.of_nat p - 1) = (p - 1)%nat by lia.
       rewrite Hcw //. }
     rewrite Hndl.
-    iDestruct (own_store_cells_intro _ (MkStoreState client k types bind pend pdel) (conj Hpool Hreg)
+    iDestruct (own_store_struct_intro _ (MkStoreState client k types bind pend pdel) (conj Hpool Hreg)
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
     wp_apply (wp_store__splitNode (tv.(yjs.Text.store')) (MkStoreState client k types bind pend pdel)
                 (tv.(yjs.Text.inner')) ts.(ty_cells) ts.(ty_arr) (p - 1)%nat cw off
@@ -813,7 +813,7 @@ Proof.
       with "[Htextj Hrest]" as "Htypes".
     { rewrite /own_type_pool -insert_delete_eq big_sepM_insert; last apply lookup_delete_eq.
       iFrame "Hrest". simpl. iFrame "Htextj". iPureIntro. exact Hinvj. }
-    iDestruct (own_store_cells_intro _
+    iDestruct (own_store_struct_intro _
                  (MkStoreState client _ (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) bind pend pdel)
                  (conj Hpoolj Hregj) with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
     wp_apply (wp_Store__Integrate (tv.(yjs.Text.store')) (tv.(yjs.Text.inner')) (tv.(yjs.Text.inner')) oL2
@@ -1145,7 +1145,7 @@ Proof.
       + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctrj x Hxin Hxc).
       + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
         have := Hctr parent' ts' x Hlook Hxin Hxc. lia. }
-  iDestruct (own_store_cells_intro _
+  iDestruct (own_store_struct_intro _
                (MkStoreState client (W64 (uint.Z k + j)) (<[tv.(yjs.Text.inner') := MkTypeState cells arr]> types) bind pend pdel)
                (conj Hpool_close Hreg_close) with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
   wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) hj (<[RootId name := arr]> m) pend

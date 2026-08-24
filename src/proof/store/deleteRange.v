@@ -219,10 +219,10 @@ Qed.
    clock projection and [list]'s length in Rocq, and shadowing them breaks
    every [clock (item_id ...)] / [length (ic_run c)] below. *)
 Lemma wp_store__deleteRange (s : loc) (st : store_state) (client dclock dlen : w64) :
-  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
+  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
     s @! (go.PointerType yjs.store) @! "deleteRange" #client #dclock #dlen
   {{{ (types' : gmap loc type_state) (covered : bool), RET #covered;
-      own_store_cells s (st <| ss_types := types' |>) ∗
+      own_store_struct s (st <| ss_types := types' |>) ∗
       ⌜delete_types_update_rel (ss_types st) types'⌝ ∗
       ⌜range_no_overflow dclock dlen -> covered = true ->
          ids_tombstoned (range_ids client dclock dlen) (all_cells types')⌝ }}}.
@@ -232,13 +232,13 @@ Proof using Type*.
   iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
   have Hpool0 : pool_invs types := proj1 Hinvs0.
   have Hreg0 : registry_coh bind types := proj2 Hinvs0.
-  iAssert (own_store_cells s (MkStoreState client0 k0 types bind pend pdel)) with "[Hfields0]" as "Hcells".
+  iAssert (own_store_struct s (MkStoreState client0 k0 types bind pend pdel)) with "[Hfields0]" as "Hcells".
   { iFrame "Hfields0". iPureIntro. exact Hinvs0. }
   wp_method_call. wp_call. wp_call. wp_auto.
   iAssert (∃ (cur : w64) (cov : bool) (types_i : gmap loc type_state),
     "Hcur" ∷ cur_ptr ↦ cur ∗
     "Hcov" ∷ covered_ptr ↦ cov ∗
-    "Hcells" ∷ own_store_cells s (MkStoreState client0 k0 types_i bind pend pdel) ∗
+    "Hcells" ∷ own_store_struct s (MkStoreState client0 k0 types_i bind pend pdel) ∗
     "%Hpool" ∷ ⌜pool_invs types_i⌝ ∗
     "%Hcurb" ∷ ⌜(uint.Z dclock <= uint.Z cur)%Z⌝ ∗
     "%Hcovj" ∷ ⌜range_no_overflow dclock dlen -> cov = true ->
@@ -356,7 +356,7 @@ Proof using Type*.
                 (MkStoreState client0 k0 types1 bind pend pdel) cR HcRcovL
                 with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes]").
     { iFrame "#".
-      iApply (own_store_cells_intro _ (MkStoreState client0 k0 types1 bind pend pdel) (conj Hpool1 Hreg1)
+      iApply (own_store_struct_intro _ (MkStoreState client0 k0 types1 bind pend pdel) (conj Hpool1 Hreg1)
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes"). }
     iIntros (types2) "(Hcells & %Hstep2 & %HcLs & %HcL)".
     iEval (simpl) in "Hcells".
@@ -397,7 +397,7 @@ Proof using Type*.
     have Hpool3 : pool_invs types3 := pool_invs_flip types2 pL tsL kL cL HpL HkL Hpool2.
     have Hreg3 : registry_coh bind types3
       := registry_coh_delete_step _ _ _ (delete_types_update_rel_of_flip types2 pL tsL kL cL HpL HkL) Hreg2.
-    iDestruct (own_store_cells_intro _ (MkStoreState client0 k0 types3 bind pend pdel) (conj Hpool3 Hreg3)
+    iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types3 bind pend pdel) (conj Hpool3 Hreg3)
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
     iFrame "Hcur Hcov Hcells".
     have Hdk3 : dead_chars_kept types_i types3.
@@ -465,7 +465,7 @@ Proof using Type*.
     have Hpool3 : pool_invs types3 := pool_invs_flip types1 pR tsR kR cR HpR HkR Hpool1.
     have Hreg3 : registry_coh bind types3
       := registry_coh_delete_step _ _ _ (delete_types_update_rel_of_flip types1 pR tsR kR cR HpR HkR) Hreg1.
-    iDestruct (own_store_cells_intro _ (MkStoreState client0 k0 types3 bind pend pdel) (conj Hpool3 Hreg3)
+    iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types3 bind pend pdel) (conj Hpool3 Hreg3)
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
     iFrame "Hcur Hcov Hcells".
     have Hdk3 : dead_chars_kept types_i types3.
@@ -531,10 +531,10 @@ Qed.
     and the new buffer is a fresh slice. *)
 Lemma wp_store__applyDeleteSpans (s : loc) (st : store_state)
     (sp_sl : slice.t) (dq : dfrac) (spans : list delete_span) :
-  {{{ is_pkg_init yjs ∗ own_store_cells s st ∗ own_delete_spans sp_sl dq spans }}}
+  {{{ is_pkg_init yjs ∗ own_store_struct s st ∗ own_delete_spans sp_sl dq spans }}}
     s @! (go.PointerType yjs.store) @! "applyDeleteSpans" #sp_sl
   {{{ (types' : gmap loc type_state) (rest : list delete_span), RET #();
-      own_store_cells s (st <| ss_types := types' |> <| ss_pending_deletes := rest |>) ∗
+      own_store_struct s (st <| ss_types := types' |> <| ss_pending_deletes := rest |>) ∗
       own_delete_spans sp_sl dq spans ∗
       ⌜delete_types_update_rel (ss_types st) types'⌝ ∗
       ⌜∃ D : gset YjsId,
@@ -586,7 +586,7 @@ Proof using Type*.
       "Hrest" ∷ rest_sl ↦* rest_vs ∗
       "Hrestcap" ∷ own_slice_cap yjs.deleteSpan.t rest_sl (DfracOwn 1) ∗
       "Hall" ∷ all_sl ↦* (pdel_vs ++ spans_vs) ∗
-      "Hcells" ∷ own_store_cells s (MkStoreState client0 k0 types_j bind pend []) ∗
+      "Hcells" ∷ own_store_struct s (MkStoreState client0 k0 types_j bind pend []) ∗
       "%Hjb" ∷ ⌜(uint.nat j <= length (pdel_vs ++ spans_vs))%nat⌝ ∗
       "%HdelDj" ∷ ⌜ids_tombstoned Dj (all_cells types_j)⌝ ∗
       "%HspanDj" ∷ ⌜∀ sp, sp ∈ take (uint.nat j) (pdel_vs ++ spans_vs) ->
@@ -598,7 +598,7 @@ Proof using Type*.
     { iExists (W64 0), _, [], types, (∅ : gset YjsId).
       iFrame "i rest Hrest Hrestcap Hall".
       iSplitL.
-      { iApply (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend []) Hinvs0
+      { iApply (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend []) Hinvs0
                   with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending [Hpddelf]").
         iExists slice.nil. iFrame "Hpddelf". iExists [].
         iSplitL; [iApply own_slice_nil | iSplitL; [iApply own_slice_cap_nil | done]]. }
@@ -624,7 +624,7 @@ Proof using Type*.
       { simpl.
         have Hpoolj' : pool_invs types_j := proj1 Hinvsj.
         have Hregj' : registry_coh bind types_j := proj2 Hinvsj.
-        iApply (own_store_cells_intro _ (MkStoreState client0 k0 types_j bind pend (delete_span_of_val <$> rest_vs))
+        iApply (own_store_struct_intro _ (MkStoreState client0 k0 types_j bind pend (delete_span_of_val <$> rest_vs))
                   (conj Hpoolj' Hregj')
                   with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes"). }
       iSplitL "Hspsl2 Hspcap2"; first (iExists spans_vs; by iFrame "Hspsl2 Hspcap2").
@@ -651,7 +651,7 @@ Proof using Type*.
     wp_apply (wp_store__deleteRange s (MkStoreState client0 k0 types_j bind pend []) _ _ _
                 with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpddelf Hpdnil]").
     { iFrame "#".
-      iApply (own_store_cells_intro _ (MkStoreState client0 k0 types_j bind pend []) Hinvsj
+      iApply (own_store_struct_intro _ (MkStoreState client0 k0 types_j bind pend []) Hinvsj
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending [Hpddelf Hpdnil]").
       iExists pd_sl. iFrame "Hpddelf Hpdnil". }
     iIntros (types_j' cov) "(Hcells & %Hfactsj' & %Hcovj')".

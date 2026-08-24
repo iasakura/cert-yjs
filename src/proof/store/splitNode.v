@@ -645,10 +645,10 @@ Lemma wp_store__splitNode (s : loc) (st : store_state)
   ss_types st !! parent = Some (MkTypeState cells arr) ->
   cells !! k = Some cw ->
   (0 < uint.nat diff < length (ic_run cw))%nat ->
-  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
+  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
     s @! (go.PointerType yjs.store) @! "splitNode" #(ic_loc cw) #diff
   {{{ (rloc : loc), RET (#(ic_loc cw), #rloc);
-      own_store_cells s
+      own_store_struct s
         (st <| ss_types := <[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> (ss_types st) |>) ∗
       ⌜fresh_loc rloc (ss_types st)⌝ }}}.
 Proof using Type*.
@@ -1180,7 +1180,7 @@ Proof using Type*.
     iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap2 Hregistry Htypes2 Hpending Hpdeletes";
       last by (iPureIntro; split; [exact Hrsnn | exact Hrsfresh]).
     simpl.
-    iApply (own_store_cells_intro _ (MkStoreState client0 k0 (<[parent := MkTypeState (split_cells cells k o rs) arr]> types) bind pend pdel)
+    iApply (own_store_struct_intro _ (MkStoreState client0 k0 (<[parent := MkTypeState (split_cells cells k o rs) arr]> types) bind pend pdel)
               (conj Hpool' Hreg') with "Hclient Hclock HdeletedSet [Hitemsf Hitemmap2] Hregistry Htypes2 Hpending Hpdeletes").
     iExists mref. iFrame "Hitemsf Hitemmap2".
   - (* cw has a right neighbour d0: relink d0.left := right, then the same DLL
@@ -1632,7 +1632,7 @@ Proof using Type*.
     iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap2 Hregistry Htypes2 Hpending Hpdeletes";
       last by (iPureIntro; split; [exact Hrsnn | exact Hrsfresh]).
     simpl.
-    iApply (own_store_cells_intro _ (MkStoreState client0 k0 (<[parent := MkTypeState (split_cells cells k o rs) arr]> types) bind pend pdel)
+    iApply (own_store_struct_intro _ (MkStoreState client0 k0 (<[parent := MkTypeState (split_cells cells k o rs) arr]> types) bind pend pdel)
               (conj Hpool' Hreg') with "Hclient Hclock HdeletedSet [Hitemsf Hitemmap2] Hregistry Htypes2 Hpending Hpdeletes").
     iExists mref. iFrame "Hitemsf Hitemmap2".
 Qed.
@@ -1656,10 +1656,10 @@ Qed.
   cell_client cw = idv.(yjs.id.clientId') ->
   (uint.Z (cell_clock cw) <= uint.Z idv.(yjs.id.clock'))%Z ->
   (uint.Z idv.(yjs.id.clock') < uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)))%Z ->
-  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
+  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
   {{{ (types' : gmap loc type_state), RET (#(ic_loc cw), #true);
-      own_store_cells s (st <| ss_types := types' |>) ∗
+      own_store_struct s (st <| ss_types := types' |>) ∗
       ⌜((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))%nat = (length (ic_run cw) - 1)%nat ∧
         types' = ss_types st)
        ∨ (((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) < length (ic_run cw) - 1)%nat ∧
@@ -1684,7 +1684,7 @@ Proof using Type*.
   { split; [exact Hcwmem |].
     apply (cell_covers_w64 cw idv (proj1 (Hbnds0 cw Hcwmem)) (proj2 (Hbnds0 cw Hcwmem)) (proj1 Hpool cw Hcwmem)).
     split_and!; [exact Hcwcc | exact Hcwle | exact Hcwlt]. }
-  iDestruct (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
   wp_apply (wp_store__GetNode s idv (MkStoreState client0 k0 types bind pend pdel) with "[$Hcells]").
   iIntros (nl ok) "(Hcells & %Hres)". simpl in Hres.
   iDestruct "Hcells" as "(Hfields1 & %Hinvs1)".
@@ -1721,7 +1721,7 @@ Proof using Type*.
     iDestruct ("Hback" with "Hval") as "Htypes".
     iApply ("HΦ" $! types). simpl.
     iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes"; last by (iPureIntro; left; split; [word | reflexivity]).
-    iApply (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs1 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes").
+    iApply (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs1 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes").
   - (* the id sits strictly inside the run: split just after it *)
     iDestruct ("Hback" with "Hval") as "Htypes".
     have Hnlt : ((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)) < length (ic_run cw) - 1)%nat.
@@ -1735,7 +1735,7 @@ Proof using Type*.
                       (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                       (W64 1)) < length (ic_run cw))%nat.
     { rewrite Hdiffnat. clear -Hnlt. lia. }
-    iDestruct (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs1 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+    iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs1 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
     wp_apply (wp_store__splitNode s (MkStoreState client0 k0 types bind pend pdel) parent cells arr k cw
                 (w64_word_instance.(word.add)
                    (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
@@ -1771,10 +1771,10 @@ Qed.
   cell_client cw = idv.(yjs.id.clientId') ->
   (uint.Z (cell_clock cw) <= uint.Z idv.(yjs.id.clock'))%Z ->
   (uint.Z idv.(yjs.id.clock') < uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)))%Z ->
-  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
+  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
   {{{ (rl : loc) (types' : gmap loc type_state), RET (#rl, #true);
-      own_store_cells s (st <| ss_types := types' |>) ∗
+      own_store_struct s (st <| ss_types := types' |>) ∗
       ⌜((uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw))%nat = 0%nat ∧
         rl = ic_loc cw ∧ types' = ss_types st)
        ∨ ((0 < (uint.nat idv.(yjs.id.clock') - uint.nat (cell_clock cw)))%nat ∧
@@ -1799,7 +1799,7 @@ Proof using Type*.
   { split; [exact Hcwmem |].
     apply (cell_covers_w64 cw idv (proj1 (Hbnds0 cw Hcwmem)) (proj2 (Hbnds0 cw Hcwmem)) (proj1 Hpool cw Hcwmem)).
     split_and!; [exact Hcwcc | exact Hcwle | exact Hcwlt]. }
-  iDestruct (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
   wp_apply (wp_store__GetNode s idv (MkStoreState client0 k0 types bind pend pdel) with "[$Hcells]").
   iIntros (nl ok) "(Hcells & %Hres)". simpl in Hres.
   iDestruct "Hcells" as "(Hfields1 & %Hinvs1)".
@@ -1836,7 +1836,7 @@ Proof using Type*.
     have Hdiffb : (0 < uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                    < length (ic_run cw))%nat.
     { rewrite Hdiffnat. clear -Hopos Holt. lia. }
-    iDestruct (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs1 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+    iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs1 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
     wp_apply (wp_store__splitNode s (MkStoreState client0 k0 types bind pend pdel) parent cells arr k cw
                 (w64_word_instance.(word.sub) idv.(yjs.id.clock') itemVal.(yjs.item.id').(yjs.id.clock'))
                 Htypes Hcellk Hdiffb
@@ -1856,7 +1856,7 @@ Proof using Type*.
     iDestruct ("Hback" with "Hval") as "Htypes".
     iApply ("HΦ" $! (ic_loc cw) types). simpl.
     iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes"; last by (iPureIntro; left; split_and!; [word | reflexivity | reflexivity]).
-    iApply (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs1 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes").
+    iApply (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs1 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes").
 Qed.
 
 (** Every post-split cell's clock range sits inside a same-client cell of the
@@ -1917,10 +1917,10 @@ Qed.
     and ends at [idv]. *)
 Lemma wp_store__splitAtAndGetLeft (s : loc) (idv : yjs.id.t) (st : store_state) (cw : item_cell) :
   pool_cell_covers (ss_types st) cw (toYjsId idv) ->
-  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
+  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
   {{{ (types' : gmap loc type_state), RET (#(ic_loc cw), #true);
-      own_store_cells s (st <| ss_types := types' |>) ∗
+      own_store_struct s (st <| ss_types := types' |>) ∗
       ⌜split_types_update_rel (ss_types st) types' cw⌝ ∗
       ⌜cell_starts_at types' (ic_parent cw) (ic_loc cw) (item_id (run_head cw))⌝ ∗
       ⌜cell_ends_at types' (ic_parent cw) (ic_loc cw) (toYjsId idv)⌝ }}}.
@@ -1951,7 +1951,7 @@ Proof using Type*.
   have Hfitscw := Hfits cw Hcwmem.
   have Hlenpos : (1 <= Z.of_nat (length (ic_run cw)))%Z.
   { destruct Hrunwf as [Hne0 _]. destruct (ic_run cw) as [|? ?]; [done | simpl; lia]. }
-  iDestruct (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
   wp_apply (wp_store__splitAtAndGetLeft_range s idv (MkStoreState client0 k0 types bind pend pdel) parent cells arr k cw
               Htypes0 Hck Hcwcc Hcwle Hcwlt with "[$Hcells]").
   iIntros (types') "(Hcells & %Hbranch)". simpl in Hbranch.
@@ -2029,10 +2029,10 @@ Qed.
     right half comes back. Either way the returned node starts at [idv]. *)
 Lemma wp_store__splitAtAndGetRight (s : loc) (idv : yjs.id.t) (st : store_state) (cw : item_cell) :
   pool_cell_covers (ss_types st) cw (toYjsId idv) ->
-  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
+  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
   {{{ (rl : loc) (types' : gmap loc type_state), RET (#rl, #true);
-      own_store_cells s (st <| ss_types := types' |>) ∗
+      own_store_struct s (st <| ss_types := types' |>) ∗
       ⌜split_types_update_rel (ss_types st) types' cw⌝ ∗
       ⌜cell_starts_at types' (ic_parent cw) rl (toYjsId idv)⌝ }}}.
 Proof using Type*.
@@ -2062,7 +2062,7 @@ Proof using Type*.
   have Hfitscw := Hfits cw Hcwmem.
   have Hlenpos : (1 <= Z.of_nat (length (ic_run cw)))%Z.
   { destruct Hrunwf as [Hne0 _]. destruct (ic_run cw) as [|? ?]; [done | simpl; lia]. }
-  iDestruct (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
   wp_apply (wp_store__splitAtAndGetRight_range s idv (MkStoreState client0 k0 types bind pend pdel) parent cells arr k cw
               Htypes0 Hck Hcwcc Hcwle Hcwlt with "[$Hcells]").
   iIntros (rl types') "(Hcells & %Hbranch)". simpl in Hbranch.

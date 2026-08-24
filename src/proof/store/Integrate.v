@@ -2234,7 +2234,7 @@ Qed.
     clock-sorted. Local: called mid-[Integrate], where [own_ytype_cells
     parent] already holds the spliced [cells'] but [s.items] is not yet
     appended, so [own_item_map] still holds at the pre-splice [types].
-    [own_store_cells s st] carries [own_type_pool (ss_types st)] and
+    [own_store_struct s st] carries [own_type_pool (ss_types st)] and
     [own_item_map _ _ (ss_types st)] under ONE [ss_types st], and no [st]
     satisfies both at this point; hence the precondition lists exactly the
     resources true here, the borrowed [own_ytype_cells] and the [items]
@@ -2366,7 +2366,7 @@ Qed.
     [wp_store__AddNode] the one place a store method is stated while the
     store is open (the type's cells borrowed out of the pool, the item index
     as its raw field); the whole-store lemma below re-establishes
-    [own_store_cells]. *)
+    [own_store_struct]. *)
 #[local] Lemma wp_Store__Integrate_parts (s parent parent_arg item_l : loc) (cells : list item_cell)
     (arr arr' : list (YjsItem A)) (input : IntegrateInput (A := A)) (newItem : YjsItem A)
     (types : gmap loc type_state) (lft rgt : loc) :
@@ -2500,10 +2500,10 @@ Lemma wp_Store__Integrate (s parent parent_arg item_l : loc) (st : store_state)
   integrate_all (ops_of_input input (explode (in_content input))) arr = Some arr' ->
   origins_linked cells arr input lft rgt ->
   pool_clock_below (ss_types st) (in_id input) ->
-  {{{ is_pkg_init yjs ∗ own_store_cells s st ∗ own_linked_item item_l input parent lft rgt }}}
+  {{{ is_pkg_init yjs ∗ own_store_struct s st ∗ own_linked_item item_l input parent lft rgt }}}
     s @! (go.PointerType yjs.store) @! "Integrate" #parent_arg #item_l
   {{{ (cells' : list item_cell) (run : list (YjsItem A)), RET #();
-      own_store_cells s (st <| ss_types := <[parent := MkTypeState cells' arr']> (ss_types st) |>) ∗
+      own_store_struct s (st <| ss_types := <[parent := MkTypeState cells' arr']> (ss_types st) |>) ∗
       ⌜YjsArrInvariant arr'⌝ ∗
       ⌜integrate_splice cells arr item_l run parent cells' arr'⌝ ∗
       ⌜run_denotes input newItem run⌝ }}}.

@@ -130,10 +130,10 @@ A helper that returns a node names it through the location list:
 
 ```coq
 Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (st : store_state) :
-  {{{ own_store_cells s st }}}
+  {{{ own_store_struct s st }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store_cells s st ∗
+      own_store_struct s st ∗
       ⌜if ok then ∃ parent k, pool_run_covers (ss_pool st) parent k (toYjsId idv) ∧
                               ss_locs st !! parent ≫= (.!! k) = Some l
        else ∀ parent k, ¬ pool_run_covers (ss_pool st) parent k (toYjsId idv)⌝ }}}.
@@ -171,6 +171,13 @@ The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
    lists through `cell_run` / `ic_loc` projections until stage 3.
    Files: `store/heap.v`, every `store/*.v` WP file, `text/Insert.v`,
    `text/Delete.v`, `doc/GetOrCreateText.v`.
+   If the Go decomposition of the store cores is ever done
+   (`parent.integrate(item)` as a `yType` method, a named `itemIndex` type
+   with `addNode`, likewise split and delete), this is the stage for it: the
+   index model is restructured here anyway and each core's spec becomes the
+   whole predicate of its smaller receiver. Decided 2026-08-25: not required;
+   the `#[local]` stepping-stone discipline (CLAUDE.md "Spec shape") covers
+   the cores.
 3. **The node payload.** `own_dll` over `(ls, runs)` with `own_item_node`;
    `is_origin_id` over `option YjsId`; the three `item` method specs over
    `own_item_node` (spec refactor step 3). The borrow lemmas
@@ -196,7 +203,7 @@ The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
    `content : list A`) and a run-level `integrate_run`, the premise is one
    `toItem input runs = Some newRun`, the post is
    `runs' = integrate_run newRun runs` (no `∃ idx`, no `run_denotes`), and
-   the store post is `own_store_cells s (st <| ss_types := <[parent :=
+   the store post is `own_store_struct s (st <| ss_types := <[parent :=
    store_integrate …]> … |>)`. Upstream work in rocq-yjs: define the run
    model, prove `runs_flatten (integrate_run r runs) = integrate_all
    (explode r) (runs_flatten runs)` so the per-char convergence theorems

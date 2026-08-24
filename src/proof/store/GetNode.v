@@ -586,10 +586,10 @@ Qed.
     the location of a pool cell whose run has the char ([pool_cell_covers]),
     [ok = false] certifies no pool cell does. *)
 Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (st : store_state) :
-  {{{ is_pkg_init yjs ∗ own_store_cells s st }}}
+  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store_cells s st ∗
+      own_store_struct s st ∗
       ⌜if ok then ∃ c, pool_cell_covers (ss_types st) c (toYjsId idv) ∧ ic_loc c = l
        else ∀ c, ¬ pool_cell_covers (ss_types st) c (toYjsId idv)⌝ }}}.
 Proof using Type*.
@@ -655,7 +655,7 @@ Proof using Type*.
         iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
       iApply ("HΦ" $! (ic_loc cres) true).
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
-        first (iApply (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
+        first (iApply (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
                   with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes")).
       iPureIntro. exists cres. split; [| done]. split; [exact (proj1 Hcresmem) |].
       have Hb := proj1 (Hbnds cres (proj1 Hcresmem)).
@@ -669,7 +669,7 @@ Proof using Type*.
         iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
       iApply ("HΦ" $! null false).
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
-        first (iApply (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
+        first (iApply (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
                   with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes")).
       iPureIntro. move=> c [Hc [Hcl Hcov]].
       have Hcc : cell_client c = kc by (rewrite /cell_client Hcl /kc /toYjsId /=; word).
@@ -682,7 +682,7 @@ Proof using Type*.
       iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
     iApply ("HΦ" $! null false).
     iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
-      first (iApply (own_store_cells_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
+      first (iApply (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes")).
     iPureIntro. move=> c [Hc [Hcl _]].
     have Hcc : cell_client c = kc by (rewrite /cell_client Hcl /kc /toYjsId /=; word).

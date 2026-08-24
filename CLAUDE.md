@@ -40,7 +40,12 @@ verification of a *realistic* Yjs implementation, not a toy.
   (`s.fld.Method()`, `Method(s.fld, …)`), so that the footprint is visible
   in the program and not only deep in the spec; and re-establishing `X`'s
   invariant is the callee's job, not something a postcondition hands to the
-  caller. Everything the spec
+  caller. An
+  unexported method that is only an internal step of one public method,
+  called while the receiver is open, cannot take `own_X` whole: its spec
+  is a `#[local]` stepping stone of that proof, stated over the call-site
+  state, and the public method re-establishes the invariant; a helper with
+  standalone meaning still takes `own_X` whole. Everything the spec
   says about a value goes through a predicate's model parameter. Forbidden
   in a spec: struct field points-tos (`s .[store, "items"] ↦ …`), raw
   slices or maps of internal records, goose struct values and their fields

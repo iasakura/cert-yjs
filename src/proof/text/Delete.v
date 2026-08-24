@@ -156,7 +156,7 @@ Proof.
       have -> : Z.to_nat (Z.of_nat p - 1) = (p - 1)%nat by lia.
       rewrite Hcw //. }
     rewrite Hndl.
-    iDestruct (own_store_cells_intro _ (MkStoreState client k types bind pend pdel) (conj Hpool Hreg)
+    iDestruct (own_store_struct_intro _ (MkStoreState client k types bind pend pdel) (conj Hpool Hreg)
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
     wp_apply (wp_store__splitNode (tv.(yjs.Text.store')) (MkStoreState client k types bind pend pdel)
                 (tv.(yjs.Text.inner')) ts.(ty_cells) ts.(ty_arr) (p - 1)%nat cw off
@@ -407,7 +407,7 @@ Proof.
           + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
           + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
             exact (Hctr parent' ts' x Hlook Hxin Hxc). }
-      iDestruct (own_store_cells_intro _
+      iDestruct (own_store_struct_intro _
                    (MkStoreState client k (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) bind pend pdel)
                    (conj Hpool_close Hreg_close) with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
       wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
@@ -470,7 +470,7 @@ Proof.
           + rewrite lookup_insert in Hlook. rewrite decide_True in Hlook; [| reflexivity]. injection Hlook as <-. simpl in Hxin. exact (Hctr (tv.(yjs.Text.inner')) ts x Htsp Hxin Hxc).
           + rewrite lookup_insert_ne in Hlook; last (intros HH; apply Hne; symmetry; exact HH).
             exact (Hctr parent' ts' x Hlook Hxin Hxc). }
-      iDestruct (own_store_cells_intro _
+      iDestruct (own_store_struct_intro _
                    (MkStoreState client k (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) bind pend pdel)
                    (conj Hpool_close Hreg_close) with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
       wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
@@ -564,7 +564,7 @@ Proof.
         by (split_and!; [exact Hrunfitsj | exact Hlocdupj | exact Hrangedisjj | exact Horiginclkj]).
       have Hregj' : registry_coh bind (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types)
         := registry_coh_insert bind types _ ts (MkTypeState cells' ts.(ty_arr)) Htsp Hreg.
-      iDestruct (own_store_cells_intro _
+      iDestruct (own_store_struct_intro _
                    (MkStoreState client k (<[tv.(yjs.Text.inner') := MkTypeState cells' ts.(ty_arr)]> types) bind pend pdel)
                    (conj Hpoolj' Hregj') with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
       wp_apply (wp_store__splitNode (tv.(yjs.Text.store'))

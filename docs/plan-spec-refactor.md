@@ -504,11 +504,11 @@ Steps 1, 2, 4, 5, 6 and 7 are implemented as the stacked PRs #143 to #151
 each green under `./build.sh`. Where the realized design differs from the
 sections above:
 
-- **F1 footprint.** Realized as planned, under the name `own_store_cells s st`
+- **F1 footprint.** Realized as planned, under the name `own_store_struct s st`
   (`store/heap.v`): `store_state` (`store/value_cells.v`) is a `RecordSet`
   record of every field at the cell level (`ss_client`, `ss_clock`,
   `ss_types`, `ss_bind`, `ss_pending`, `ss_pending_deletes`), `store_invs st`
-  bundles `pool_invs` and `registry_coh`, and `own_store_cells s st` is every
+  bundles `pool_invs` and `registry_coh`, and `own_store_struct s st` is every
   field (`own_store_fields`) with `store_invs`. Every store-internal method
   (`Integrate`, `GetNode`, `splitNode`, `deleteRange`, `repair`,
   `integrateDecoded`, `getOrCreateYType`, `applyUpdate`, ...) takes it whole
@@ -521,7 +521,7 @@ sections above:
   `own_store_items` / `own_store_registry` / `own_store_pending` /
   `own_store_pending_deletes` / `own_store_deleted_set` are gone:
   `own_store_fields` spells each field as an anonymous existential), so the
-  only store predicate a spec can name is `own_store_cells`. The partial
+  only store predicate a spec can name is `own_store_struct`. The partial
   footprints survive only in three `#[local]` stepping stones that run while
   the store is open: `wp_Store__Integrate_parts` / `wp_store__AddNode` (the
   parent's cells borrowed out of the pool, the item index raw) and
