@@ -6,8 +6,6 @@
       yType (its DLL cells and its model list), and the cells across the whole
       registry; [store_state], every field of the store at this cell level,
       and [store_invs], the two invariants every store method preserves.
-    - what a decoded batch must satisfy: [input_fits] per struct,
-      [pending_item_rooted] / [is_pending_rooted], bundled as [update_wf].
     - the per-client node list: [cell_client] / [cell_clock] / [cell_le] /
       [cell_pr] / [cell_kp] and [client_run], the sorted run of one client's
       cells that shadows [store.items].
@@ -326,45 +324,6 @@ Record store_state := MkStoreState {
 
 #[export] Instance settable_store_state : Settable store_state :=
   settable! MkStoreState <ss_client; ss_clock; ss_types; ss_bind; ss_pending; ss_pending_deletes>.
-
-(** [input_fits input]: the wire item's chars fit a word of clocks (the 2^64
-    no-wrap seam per struct); what lets its cell satisfy [cell_fits]. *)
-Definition input_fits (input : IntegrateInput (A := A)) : Prop :=
-  (Z.of_nat (clock (in_id input)) + Z.of_nat (length (in_content input)) < 2^64)%Z.
-
-(** [pending_item_rooted]/[is_pending_rooted] (issue #40, weakened in #54):
-    every HEAD struct of a decoded buffer (both origins absent, so it carries
-    its root's name on the wire) targets a named root [RootId nm]. Issue #49
-    additionally required that root to be ALREADY REGISTERED ([is_root γs nm]);
-    issue #54 LIFTS that pre-bound-roots restriction now that
-    [getOrCreateYType]'s miss branch is verified -- a head struct may target a
-    not-yet-created root, which [applyUpdate]'s drain registers on first use.
-    All that remains is that the target is a root and not an [AnchorId]
-    (Parent::Id / type-as-item is out of the verified subset, #43). With the
-    registration ([is_root], the only resource-bearing conjunct) gone, this is
-    a pure syntactic fact about the batch, so it is a [Prop] (carried as
-    [⌜..⌝] where an [iProp] is expected) and mentions no store; the wire
-    protocol ([yjs_prot], issue #107) states rootedness over it directly.
-    Structs WITH an origin derive their binding from the origin's arrival at
-    integration time, so carry no obligation here. *)
-Definition pending_item_rooted
-    (typedInput : TId * IntegrateInput (A := A)) : Prop :=
-  if decide (in_originId typedInput.2 = None ∧ in_rightOriginId typedInput.2 = None)
-  then (∃ nm : P, typedInput.1 = RootId nm)
-  else True.
-
-Definition is_pending_rooted
-    (pending : list (TId * IntegrateInput (A := A))) : Prop :=
-  ∀ typedInput, typedInput ∈ pending -> pending_item_rooted typedInput.
-
-(** [update_wf inputs]: what a batch must satisfy to be applied: every
-    struct's chars fit a word of clocks ([input_fits]) and origin-free structs
-    name a root type ([is_pending_rooted]). Facts about the
-    sender's output, so the wire protocol ([yjs_prot]) states them and
-    [applyUpdate] / [Doc.ApplySyncUpdate] assume them. *)
-Definition update_wf (inputs : list (TId * IntegrateInput (A := A))) : Prop :=
-  (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs -> input_fits typedInput.2) ∧
-  is_pending_rooted inputs.
 
 (** [store_invs st]: the two invariants every store method preserves: the
     pool's ([pool_invs]) and the registry's coherence with it ([registry_coh]). *)

@@ -1,5 +1,4 @@
-(** The [Text] handle, VALUE layer: what a reader's walk denotes. Go values
-    (the walked list with its tombstone flags) but no Iris.
+(** The [Text] handle, PURE model layer: what a reader's walk means.
 
     Definitions
     - [text_snapshot L marr]: the walked list [marr] is a valid document
@@ -16,7 +15,7 @@ From New.proof Require Import core network_model.
 From New.proof.doc Require Import model.
 From stdpp Require Import gmap.
 
-Section text_value.
+Section text_model.
 
 Notation A := go_string.
 
@@ -42,4 +41,4 @@ Definition history_reflected (h0 : list Ev) (name : P) (marr : list (YjsItem A *
     (RootId name, OpInsert input) ∈ delivered_ops h0 ->
     ∃ it, item_id it = in_id input ∧ it ∈ marr.*1.
 
-End text_value.
+End text_model.

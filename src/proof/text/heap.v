@@ -30,7 +30,7 @@ From New.proof.id Require Import value heap.
 From New.proof.item Require Import run_theory model value heap.
 From New.proof.ytype Require Import model value heap.
 From New.proof.store Require Import model value heap.
-From New.proof.text Require Import value.
+From New.proof.text Require Import model.
 (* iris.algebra / stdpp.sorting push [nat_scope], retuning the default [<] / [≤];
    the verified word-arithmetic proofs write [Z] comparisons unannotated, so
    restore [Z_scope] as the default. *)
