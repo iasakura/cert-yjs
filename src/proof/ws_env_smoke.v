@@ -118,7 +118,7 @@ Lemma smoke_input_wf (nm : P) (cl : ClientId) (b : w8) :
   update_wf [(RootId nm, smoke_input cl b)].
 Proof.
   split; move=> x Hx; apply list_elem_of_singleton in Hx; subst x; simpl.
-  - word.
+  - rewrite /input_fits /=. word.
   - rewrite /pending_item_rooted /=. by exists nm.
 Qed.
 
@@ -392,7 +392,7 @@ Lemma anchor_input_wf (t : TId) (cl clX : ClientId) (b : w8) :
   update_wf [(t, anchor_input cl clX b)].
 Proof.
   split; move=> x Hx; apply list_elem_of_singleton in Hx; subst x; simpl.
-  - word.
+  - rewrite /input_fits /=. word.
   - rewrite /pending_item_rooted /=. done.
 Qed.
 
@@ -568,7 +568,7 @@ Lemma stream_input_wf (nm : P) (cl : ClientId) (k : nat) (b : w8) :
 Proof.
   move=> Hk.
   split; move=> x Hx; apply list_elem_of_singleton in Hx; subst x; simpl.
-  - word.
+  - rewrite /input_fits /=. word.
   - rewrite /pending_item_rooted.
     destruct k; simpl; [by exists nm | done].
 Qed.

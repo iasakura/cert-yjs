@@ -325,12 +325,6 @@ Record store_state := MkStoreState {
 #[export] Instance settable_store_state : Settable store_state :=
   settable! MkStoreState <ss_client; ss_clock; ss_types; ss_bind; ss_pending; ss_pending_deletes>.
 
-(** [input_fits input]: the wire item's chars fit a word of clocks (the 2^64
-    no-wrap seam per struct, [update_wf]'s per-item clause); what lets its
-    cell satisfy [cell_fits]. *)
-Definition input_fits (input : IntegrateInput (A := A)) : Prop :=
-  (Z.of_nat (clock (in_id input)) + Z.of_nat (length (in_content input)) < 2^64)%Z.
-
 (** [store_invs st]: the two invariants every store method preserves: the
     pool's ([pool_invs]) and the registry's coherence with it ([registry_coh]). *)
 Definition store_invs (st : store_state) : Prop :=

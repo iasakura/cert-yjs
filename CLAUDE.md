@@ -176,7 +176,7 @@ src/proof/
   ytype/  model.v  value.v  heap.v  newYType.v  findPos.v            ytype.v
   store/  model.v  value.v  heap.v  wp_private.v
           Integrate.v GetNode.v splitNode.v repair.v applyUpdate.v   store.v
-  text/   heap.v  Insert.v  Delete.v  Len.v                          text.v
+  text/   model.v  heap.v  Insert.v  Delete.v  Len.v                 text.v
   doc/    model.v  heap.v  ApplySyncUpdate.v                         doc.v
   demo/   pingpong.v  ws_echo.v
 ```

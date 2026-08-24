@@ -3,4 +3,4 @@
     handle has no model of its own; the sequence it exposes is the [yType]
     model, so the document-list theory lives in [ytype/model]. Downstream
     files Require only this module. *)
-From New.proof.text Require Export heap Insert Delete Len String.
+From New.proof.text Require Export model heap Insert Delete Len String.
