@@ -149,7 +149,7 @@ func (s *store) deleteRange(client Client, clock uint64, length uint64) bool {
 				s.splitAtAndGetLeft(newId(client, end-1))
 				next = end
 			}
-			s.deleteNode(it)
+			deleteNode(it)
 			cur = next
 		}
 	}
@@ -184,19 +184,26 @@ func (s *store) applyDeleteSpans(spans []deleteSpan) {
 // type's visible length (y-octo: DocStore::delete_item_inner). A node that is
 // already tombstoned is left alone, which is what makes a re-delivered delete
 // idempotent. The node must be integrated (reached through the store's run
-// lists); callers hold s.mu.
-func (s *store) deleteNode(it *item) {
+// lists); callers hold s.mu. A free function, not a *store method as in
+// y-octo (whose &mut self borrows the whole store either way): it touches
+// only the node and its parent type, and the footprint must be visible in
+// the program (CLAUDE.md "Spec shape").
+func deleteNode(it *item) {
 	if it.Indexable() {
 		it.flags = it.flags | itemDeleted
 		it.parent.len = it.parent.len - it.Len()
 	}
 }
 
-// AddNode appends an item to the run list of its owning client (y-octo:
-// store::add_item), so the store holds the full item set.
-func (s *store) AddNode(it *item) {
+// addNode appends an item to the run list of its owning client (y-octo:
+// store::add_item), so the store holds the full item set. Takes the items
+// map instead of being a *store method as in y-octo (whose &mut self
+// borrows the whole store either way): it touches nothing else of the
+// store, and the footprint must be visible in the program (CLAUDE.md
+// "Spec shape").
+func addNode(items map[Client][]*item, it *item) {
 	client := it.id.clientId
-	s.items[client] = append(s.items[client], it)
+	items[client] = append(items[client], it)
 }
 
 // idOptEqual compares two optional ids (Option<id> in y-octo).
@@ -293,7 +300,7 @@ func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 	// pre-sized make): every copy is between DISJOINT backing arrays, and
 	// unlike make(len+1) the appends carry no slice-length-fit side
 	// condition (goose models append's growth with an overflow assume, the
-	// same way AddNode's append is handled), so callers such as
+	// same way addNode's append is handled), so callers such as
 	// Text.Delete's range-end split need no externally supplied capacity
 	// bound. Same result as items.insert(index+1, right).
 	nodes := s.items[n.id.clientId]
@@ -452,7 +459,7 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 // integrate algorithm, splices item into the doubly linked list at its
 // conflict-resolved position, and bumps parent.len. It is extracted from
 // Integrate so the hard conflict-scan WP proof (wp_Store__integrateCore) stays
-// isolated from the item-set bookkeeping added by AddNode (mirrors the
+// isolated from the item-set bookkeeping added by addNode (mirrors the
 // findIntegrationLeft extraction).
 //
 // Faithful port of y-octo store::integrate (src/doc/store.rs) under the
@@ -514,7 +521,7 @@ func (s *store) Integrate(parent *yType, item *item) {
 		parent = item.parent
 	}
 	s.integrateCore(parent, item)
-	s.AddNode(item)
+	addNode(s.items, item)
 }
 
 // hasNode reports whether the struct with the given id has been integrated.

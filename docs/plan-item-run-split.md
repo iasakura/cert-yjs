@@ -177,7 +177,9 @@ The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
    index model is restructured here anyway and each core's spec becomes the
    whole predicate of its smaller receiver. Decided 2026-08-25: not required;
    the `#[local]` stepping-stone discipline (CLAUDE.md "Spec shape") covers
-   the cores.
+   the cores. Update 2026-08-26: `addNode` and `deleteNode` became
+   footprint-visible free functions without waiting for this stage; only
+   the `parent.integrate(item)` split remains optional here.
 3. **The node payload.** `own_dll` over `(ls, runs)` with `own_item_node`;
    `is_origin_id` over `option YjsId`; the three `item` method specs over
    `own_item_node` (spec refactor step 3). The borrow lemmas

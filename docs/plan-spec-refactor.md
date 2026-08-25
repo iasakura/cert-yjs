@@ -522,10 +522,13 @@ sections above:
   `own_store_pending_deletes` / `own_store_deleted_set` are gone:
   `own_store_fields` spells each field as an anonymous existential), so the
   only store predicate a spec can name is `own_store_struct`. The partial
-  footprints survive only in three `#[local]` stepping stones that run while
-  the store is open: `wp_Store__Integrate_parts` / `wp_store__AddNode` (the
-  parent's cells borrowed out of the pool, the item index raw) and
-  `wp_store__deleteNode` (the pool alone).
+  footprint survives only in `wp_Store__Integrate_parts`, the `#[local]`
+  cut through `store.Integrate`'s own body that runs while the store is
+  open (`own_ytype_cells parent` borrowed out of `own_type_pool`, the
+  `items` field with `own_item_map` at the pre-splice map). `addNode` and
+  `deleteNode` are free functions in the Go (footprint-visible arguments,
+  diverging from y-octo's `&mut self` methods), specified over what they
+  take.
 - **F6 / F7 names.** `integrate_ready`, `origins_linked`, `integrate_splice`,
   `run_denotes`, `pool_clock_below` (Integrate); `pool_cell_covers`,
   `cell_covers_clock`, `sorted_client_run`, `cell_starts_at`, `cell_ends_at`,

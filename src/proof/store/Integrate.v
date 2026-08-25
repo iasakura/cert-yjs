@@ -2227,34 +2227,29 @@ Qed.
 
 
 
-(** [store.AddNode it]: append the freshly integrated item to its client's
-    run list (y-octo: [items[client].push]). The cell [c] at [item_l] is the
-    one just spliced into type [parent] ([cells' ≡ₚ cells ++ [c]]) and is its
-    client's newest ([pool_clock_below]), so the append keeps the run list
-    clock-sorted. Local: called mid-[Integrate], where [own_ytype_cells
-    parent] already holds the spliced [cells'] but [s.items] is not yet
-    appended, so [own_item_map] still holds at the pre-splice [types].
-    [own_store_struct s st] carries [own_type_pool (ss_types st)] and
-    [own_item_map _ _ (ss_types st)] under ONE [ss_types st], and no [st]
-    satisfies both at this point; hence the precondition lists exactly the
-    resources true here, the borrowed [own_ytype_cells] and the [items]
-    field with [own_item_map] at [types] (CLAUDE.md "Spec shape", the
-    open-receiver case). *)
-#[local] Lemma wp_store__AddNode (s parent item_l : loc) (types : gmap loc type_state)
+(** [addNode items it]: append the freshly integrated item to its client's
+    run list in [items] (y-octo: [store::add_item], a [&mut self] method
+    there; a free function here so the footprint is visible, CLAUDE.md "Spec
+    shape"). The cell [c] at [item_l] is the one just spliced into type
+    [parent] ([cells' ≡ₚ cells ++ [c]]) and is its client's newest
+    ([pool_clock_below]), so the append keeps [own_item_map]'s slices sorted
+    by clock. [own_ytype_cells parent] owns [it]'s node, through which the
+    function reads [it.id.clientId]. *)
+#[local] Lemma wp_addNode (items_mref parent item_l : loc) (types : gmap loc type_state)
     (cells cells' : list item_cell) (arr arr' : list (YjsItem A)) (idx : nat) (c : item_cell) :
   types !! parent = Some (MkTypeState cells arr) ->
   cells' ≡ₚ cells ++ [c] ->
   cells' !! idx = Some c ->
   ic_loc c = item_l ->
   pool_clock_below types (item_id (run_head c)) ->
-  {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells' arr' ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) }}}
-    s @! (go.PointerType yjs.store) @! "AddNode" #item_l
+  {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells' arr' ∗ own_item_map items_mref (DfracOwn 1) types }}}
+    @! yjs.addNode #items_mref #item_l
   {{{ RET #(); own_ytype_cells parent (DfracOwn 1) cells' arr' ∗
-      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types)) }}}.
+      own_item_map items_mref (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types) }}}.
 Proof using Type*.
   move=> Htypes Hperm Hlook Hloc Hgmax.
-  iIntros (Φ) "(Hpkg & Htext' & Hitems) HΦ". iNamed "Hitems".
-  wp_method_call. wp_call. wp_call. wp_auto.
+  wp_start as "(Htext' & Hitemmap)".
+  wp_auto.
   iDestruct "Htext'" as (yt tl) "(Hpar & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
   iDestruct (own_dll_acc (DfracOwn 1) cells' yt.(yjs.yType.start') tl idx c Hlook with "Hdll") as "Hacc".
   iNamed "Hacc".
@@ -2343,7 +2338,7 @@ Proof using Type*.
   iApply "HΦ".
   iSplitL "Hpar Hdll".
   { iExists yt, tl. iFrame "Hpar Hdll". iPureIntro. split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
-  iExists items_mref. iFrame "Hitemsf Hitemmap'".
+  iFrame "Hitemmap'".
 Qed.
 
 (** [Store.Integrate parent it]: splice the linked item into its type at
@@ -2362,11 +2357,11 @@ Qed.
     (the update path), in which case the method reads the parent off the
     item, which [store.repair] set; the drop branch for an unresolved parent
     is dead because the item's parent is the type's own non-null location.
-    Local: the stepping stone of [wp_Store__Integrate], and with
-    [wp_store__AddNode] the one place a store method is stated while the
-    store is open (the type's cells borrowed out of the pool, the item index
-    as its raw field); the whole-store lemma below re-establishes
-    [own_store_struct]. *)
+    Local: the stepping stone of [wp_Store__Integrate], the one
+    lemma stated while the store is open: [own_ytype_cells parent] is
+    borrowed out of [own_type_pool], and the [items] field holds
+    [own_item_map] at the pre-splice [types]; the whole-store lemma below
+    re-establishes [own_store_struct]. *)
 #[local] Lemma wp_Store__Integrate_parts (s parent parent_arg item_l : loc) (cells : list item_cell)
     (arr arr' : list (YjsItem A)) (input : IntegrateInput (A := A)) (newItem : YjsItem A)
     (types : gmap loc type_state) (lft rgt : loc) :
@@ -2426,9 +2421,14 @@ Proof using Type*.
     iIntros (idx midx cells' c) "(Htext' & %Hinv' & %Hsplice & %Hidxb & %Hcoup & %Hmile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Horig & %Hrorig & %Hclen & %Hperm)".
     wp_auto.
     have Hgmaxc : pool_clock_below types (item_id (run_head c)) by rewrite Hcid.
-    wp_apply (wp_store__AddNode s parent item_l types cells cells' arr arr' idx c
-                Htypes Hperm Hlook Hloc Hgmaxc with "[$Hpkg $Htext' $Hitems]").
-    iIntros "(Htext' & Hitems)".
+    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
+    wp_auto.
+    wp_apply (wp_addNode items_mref parent item_l types cells cells' arr arr' idx c
+                Htypes Hperm Hlook Hloc Hgmaxc with "[$Hpkg $Htext' $Hitemmap]").
+    iIntros "(Htext' & Hitemmap)".
+    iAssert (∃ items_mref0 : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref0 ∗ "Hitemmap" ∷ own_item_map items_mref0 (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types))%I
+      with "[Hitemsf Hitemmap]" as "Hitems".
+    { iExists items_mref. iFrame "Hitemsf Hitemmap". }
     wp_auto.
     iDestruct "Htext'" as (yt tl) "(Hpar & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
     have Hcpar_c : ic_parent c = parent := Hcpar' c (list_elem_of_lookup_2 _ _ _ Hlook).
@@ -2461,9 +2461,14 @@ Proof using Type*.
     iIntros (idx midx cells' c) "(Htext' & %Hinv' & %Hsplice & %Hidxb & %Hcoup & %Hmile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Horig & %Hrorig & %Hclen & %Hperm)".
     wp_auto.
     have Hgmaxc : pool_clock_below types (item_id (run_head c)) by rewrite Hcid.
-    wp_apply (wp_store__AddNode s parent item_l types cells cells' arr arr' idx c
-                Htypes Hperm Hlook Hloc Hgmaxc with "[$Hpkg $Htext' $Hitems]").
-    iIntros "(Htext' & Hitems)".
+    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
+    wp_auto.
+    wp_apply (wp_addNode items_mref parent item_l types cells cells' arr arr' idx c
+                Htypes Hperm Hlook Hloc Hgmaxc with "[$Hpkg $Htext' $Hitemmap]").
+    iIntros "(Htext' & Hitemmap)".
+    iAssert (∃ items_mref0 : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref0 ∗ "Hitemmap" ∷ own_item_map items_mref0 (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types))%I
+      with "[Hitemsf Hitemmap]" as "Hitems".
+    { iExists items_mref. iFrame "Hitemsf Hitemmap". }
     wp_auto.
     iDestruct "Htext'" as (yt tl) "(Hpar & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
     have Hcpar_c : ic_parent c = parent := Hcpar' c (list_elem_of_lookup_2 _ _ _ Hlook).
