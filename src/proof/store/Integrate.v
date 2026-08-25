@@ -2231,7 +2231,15 @@ Qed.
     run list (y-octo: [items[client].push]). The cell [c] at [item_l] is the
     one just spliced into type [parent] ([cells' ≡ₚ cells ++ [c]]) and is its
     client's newest ([pool_clock_below]), so the append keeps the run list
-    clock-sorted; the item index moves to the grown type map. *)
+    clock-sorted. Local: called mid-[Integrate], where [own_ytype_cells
+    parent] already holds the spliced [cells'] but [s.items] is not yet
+    appended, so [own_item_map] still holds at the pre-splice [types].
+    [own_store_cells s st] carries [own_type_pool (ss_types st)] and
+    [own_item_map _ _ (ss_types st)] under ONE [ss_types st], and no [st]
+    satisfies both at this point; hence the precondition lists exactly the
+    resources true here, the borrowed [own_ytype_cells] and the [items]
+    field with [own_item_map] at [types] (CLAUDE.md "Spec shape", the
+    open-receiver case). *)
 #[local] Lemma wp_store__AddNode (s parent item_l : loc) (types : gmap loc type_state)
     (cells cells' : list item_cell) (arr arr' : list (YjsItem A)) (idx : nat) (c : item_cell) :
   types !! parent = Some (MkTypeState cells arr) ->
