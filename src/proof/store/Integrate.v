@@ -2374,11 +2374,11 @@ Qed.
   pool_invs types ->
   pool_clock_below types (in_id input) ->
   {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
-      own_linked_item item_l input parent lft rgt ∗ (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types) }}}
+      own_linked_item item_l input parent lft rgt ∗ own_items_field (s .[(yjs.store.t), "items"]) types }}}
     s @! (go.PointerType yjs.store) @! "Integrate" #parent_arg #item_l
   {{{ (cells' : list item_cell) (run : list (YjsItem A)), RET #();
       own_ytype_cells parent (DfracOwn 1) cells' arr' ∗
-      (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types)) ∗
+      own_items_field (s .[(yjs.store.t), "items"]) (<[parent := MkTypeState cells' arr']> types) ∗
       ⌜YjsArrInvariant arr'⌝ ∗
       ⌜integrate_splice cells arr item_l run parent cells' arr'⌝ ∗
       ⌜run_denotes input newItem run⌝ }}}.
@@ -2426,7 +2426,7 @@ Proof using Type*.
     wp_apply (wp_addNode items_mref parent item_l types cells cells' arr arr' idx c
                 Htypes Hperm Hlook Hloc Hgmaxc with "[$Hpkg $Htext' $Hitemmap]").
     iIntros "(Htext' & Hitemmap)".
-    iAssert (∃ items_mref0 : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref0 ∗ "Hitemmap" ∷ own_item_map items_mref0 (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types))%I
+    iAssert (own_items_field (s .[(yjs.store.t), "items"]) (<[parent := MkTypeState cells' arr']> types))%I
       with "[Hitemsf Hitemmap]" as "Hitems".
     { iExists items_mref. iFrame "Hitemsf Hitemmap". }
     wp_auto.
@@ -2466,7 +2466,7 @@ Proof using Type*.
     wp_apply (wp_addNode items_mref parent item_l types cells cells' arr arr' idx c
                 Htypes Hperm Hlook Hloc Hgmaxc with "[$Hpkg $Htext' $Hitemmap]").
     iIntros "(Htext' & Hitemmap)".
-    iAssert (∃ items_mref0 : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref0 ∗ "Hitemmap" ∷ own_item_map items_mref0 (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types))%I
+    iAssert (own_items_field (s .[(yjs.store.t), "items"]) (<[parent := MkTypeState cells' arr']> types))%I
       with "[Hitemsf Hitemmap]" as "Hitems".
     { iExists items_mref. iFrame "Hitemsf Hitemmap". }
     wp_auto.

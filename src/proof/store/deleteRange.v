@@ -618,7 +618,7 @@ Proof using Type*.
     { (* every span has been retried: install the leftover as the new buffer,
          and hand the whole thing back over the PURE model *)
       iApply ("HΦ" $! types_j (delete_span_of_val <$> rest_vs)).
-      iAssert ((∃ pdel_sl : slice.t, "Hpddelf" ∷ (s .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗ "Hpddel" ∷ own_delete_spans pdel_sl (DfracOwn 1) (delete_span_of_val <$> rest_vs)))%I
+      iAssert (own_pending_deletes_field (s .[(yjs.store.t), "pendingDeletes"]) (delete_span_of_val <$> rest_vs))%I
         with "[Hpddelf Hrest Hrestcap]" as "Hpdeletes".
       { iExists rest_sl. iFrame "Hpddelf". iExists rest_vs. by iFrame "Hrest Hrestcap". }
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".

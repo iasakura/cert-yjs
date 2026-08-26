@@ -520,8 +520,10 @@ sections above:
   shape"). No field of the store has a predicate of its own (the former
   `own_store_items` / `own_store_registry` / `own_store_pending` /
   `own_store_pending_deletes` / `own_store_deleted_set` are gone:
-  `own_store_fields` spells each field as an anonymous existential), so the
-  only store predicate a spec can name is `own_store_struct`. The partial
+  each field's cell is a mapsto-like predicate keyed by the FIELD ADDRESS,
+  `own_items_field (s .[(yjs.store.t), "items"]) types` and friends, so it
+  cannot appear in a spec without a struct-field address, which specs never
+  have), so the only store predicate a spec can name is `own_store_struct`. The partial
   footprint survives only in `wp_Store__Integrate_parts`, the `#[local]`
   cut through `store.Integrate`'s own body that runs while the store is
   open (`own_ytype_cells parent` borrowed out of `own_type_pool`, the

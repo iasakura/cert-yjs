@@ -650,7 +650,7 @@ Proof using Type*.
       have Hcresmem : cres ∈ all_cells types /\ cell_client cres = kc.
       { apply client_run_mem. exact (list_elem_of_lookup_2 _ _ _ Hcres). }
       iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
-      iAssert (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
+      iAssert (own_items_field (s .[(yjs.store.t), "items"]) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
       { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
         iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
       iApply ("HΦ" $! (ic_loc cres) true).
@@ -664,7 +664,7 @@ Proof using Type*.
     + (* clock miss within a known client: no run of this client covers the id *)
       wp_auto.
       iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
-      iAssert (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
+      iAssert (own_items_field (s .[(yjs.store.t), "items"]) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
       { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
         iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
       iApply ("HΦ" $! null false).
@@ -677,7 +677,7 @@ Proof using Type*.
       exact (Hires c Hcrun Hcov).
   - (* unknown client: no cell of this author at all *)
     wp_auto.
-    iAssert (∃ items_mref : loc, "Hitemsf" ∷ (s .[(yjs.store.t), "items"]) ↦ items_mref ∗ "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
+    iAssert (own_items_field (s .[(yjs.store.t), "items"]) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
     { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
       iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
     iApply ("HΦ" $! null false).
