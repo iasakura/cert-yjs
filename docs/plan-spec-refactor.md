@@ -523,14 +523,14 @@ sections above:
   each field's cell is a mapsto-like predicate keyed by the FIELD ADDRESS,
   `own_items_field (s .[(yjs.store.t), "items"]) types` and friends, so it
   cannot appear in a spec without a struct-field address, which specs never
-  have), so the only store predicate a spec can name is `own_store_struct`. The partial
-  footprint survives only in `wp_Store__Integrate_parts`, the `#[local]`
-  cut through `store.Integrate`'s own body that runs while the store is
-  open (`own_ytype_cells parent` borrowed out of `own_type_pool`, the
-  `items` field with `own_item_map` at the pre-splice map). `addNode` and
-  `deleteNode` are free functions in the Go (footprint-visible arguments,
-  diverging from y-octo's `&mut self` methods), specified over what they
-  take.
+  have), so the only store predicate a spec can name is `own_store_struct`. No lemma is
+  stated while the store is open: `wp_Store__Integrate_parts` is folded
+  into `wp_Store__Integrate`, and `addNode` / `deleteNode` are free
+  functions in the Go (footprint-visible arguments, diverging from
+  y-octo's `&mut self` methods), specified over what they take. If an
+  open-state lemma is ever needed again, CLAUDE.md requires it to go
+  through a relaxed representation predicate that tracks the suspended
+  invariant's pure state.
 - **F6 / F7 names.** `integrate_ready`, `origins_linked`, `integrate_splice`,
   `run_denotes`, `pool_clock_below` (Integrate); `pool_cell_covers`,
   `cell_covers_clock`, `sorted_client_run`, `cell_starts_at`, `cell_ends_at`,

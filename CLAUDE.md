@@ -42,10 +42,16 @@ verification of a *realistic* Yjs implementation, not a toy.
   invariant is the callee's job, not something a postcondition hands to the
   caller. An
   unexported method that is only an internal step of one public method,
-  called while the receiver is open, cannot take `own_X` whole: its spec
-  is a `#[local]` stepping stone of that proof, stated over the call-site
-  state, and the public method re-establishes the invariant; a helper with
-  standalone meaning still takes `own_X` whole. Everything the spec
+  called while the receiver is open, cannot take `own_X` whole; first try
+  to narrow the Go footprint so it can (a free function over the fields it
+  touches, as `addNode` / `deleteNode`). If a lemma must still be stated
+  while `X`'s invariant is broken, it is `#[local]` and goes through a
+  RELAXED representation predicate (`own_X_<relaxation>`, defined in the
+  heap layer next to `own_X`, its extra model parameters tracking the pure
+  state of the suspended invariant, with fold/unfold laws to `own_X`),
+  never through a bare list of call-site resources; no such lemma
+  currently exists. A helper with standalone meaning still takes `own_X`
+  whole. Everything the spec
   says about a value goes through a predicate's model parameter. Forbidden
   in a spec: struct field points-tos (`s .[store, "items"] ↦ …`), raw
   slices or maps of internal records, goose struct values and their fields
