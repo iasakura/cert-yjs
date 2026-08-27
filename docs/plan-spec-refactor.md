@@ -504,11 +504,11 @@ Steps 1, 2, 4, 5, 6 and 7 are implemented as the stacked PRs #143 to #151
 each green under `./build.sh`. Where the realized design differs from the
 sections above:
 
-- **F1 footprint.** Realized as planned, under the name `own_store_cells s st`
+- **F1 footprint.** Realized as planned, under the name `own_store_struct s st`
   (`store/heap.v`): `store_state` (`store/value_cells.v`) is a `RecordSet`
   record of every field at the cell level (`ss_client`, `ss_clock`,
   `ss_types`, `ss_bind`, `ss_pending`, `ss_pending_deletes`), `store_invs st`
-  bundles `pool_invs` and `registry_coh`, and `own_store_cells s st` is every
+  bundles `pool_invs` and `registry_coh`, and `own_store_struct s st` is every
   field (`own_store_fields`) with `store_invs`. Every store-internal method
   (`Integrate`, `GetNode`, `splitNode`, `deleteRange`, `repair`,
   `integrateDecoded`, `getOrCreateYType`, `applyUpdate`, ...) takes it whole
@@ -517,9 +517,20 @@ sections above:
   (`own_store_items s types ∗ own_type_pool dq types` for cell surgeries,
   `own_store_core s types bind` for the registry-touching helpers), rejected
   because a method on `s` must take `s`'s predicate whole (CLAUDE.md "Spec
-  shape"). The partial footprints survive only as `#[local]` stepping stones
-  of one proof (`_parts`, `_range`, `_raw`) and in `wp_store__GetNode_parts`,
-  which `splitNode.v`'s stepping stones need.
+  shape"). No field of the store has a predicate of its own (the former
+  `own_store_items` / `own_store_registry` / `own_store_pending` /
+  `own_store_pending_deletes` / `own_store_deleted_set` are gone:
+  each field's cell is a mapsto-like predicate keyed by the FIELD ADDRESS,
+  `own_items_field (s .[(yjs.store.t), "items"]) types` and friends, so it
+  cannot appear in a spec without a struct-field address, which specs never
+  have), so the only store predicate a spec can name is `own_store_struct`. No lemma is
+  stated while the store is open: `wp_Store__Integrate_parts` is folded
+  into `wp_Store__Integrate`, and `addNode` / `deleteNode` are free
+  functions in the Go (footprint-visible arguments, diverging from
+  y-octo's `&mut self` methods), specified over what they take. If an
+  open-state lemma is ever needed again, CLAUDE.md requires it to go
+  through a relaxed representation predicate that tracks the suspended
+  invariant's pure state.
 - **F6 / F7 names.** `integrate_ready`, `origins_linked`, `integrate_splice`,
   `run_denotes`, `pool_clock_below` (Integrate); `pool_cell_covers`,
   `cell_covers_clock`, `sorted_client_run`, `cell_starts_at`, `cell_ends_at`,

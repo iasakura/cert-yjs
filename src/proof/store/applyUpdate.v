@@ -131,11 +131,11 @@ Qed.
   registry_models m (ss_bind st) (ss_types st) ->
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend0 ++ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
-  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_cells s st }}}
+  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_struct s st }}}
     s @! (go.PointerType yjs.store) @! "applyUpdate" #sl
   {{{ (types' : gmap loc type_state) (bind' : gmap P loc), RET #();
       own_update_structs sl dq inputs ∗
-      own_store_cells s (st <| ss_types := types' |> <| ss_bind := bind' |> <| ss_pending := rest |>) ∗
+      own_store_struct s (st <| ss_types := types' |> <| ss_bind := bind' |> <| ss_pending := rest |>) ∗
       ⌜ss_bind st ⊆ bind'⌝ ∗
       ⌜registry_models m' bind' types'⌝ ∗
       ⌜cells_within_or_from applied (all_cells (ss_types st)) (all_cells types')⌝ ∗
@@ -240,7 +240,7 @@ Proof using Type*.
         "HslP" ∷ pendingS ↦* uivsP ∗
         "HcapP" ∷ own_slice_cap yjs.updateItem.t pendingS (DfracOwn 1) ∗
         "#HitemsPj" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsP;pendingj, is_update_item updateItemVal typedInput) ∗
-        "Hcells" ∷ own_store_cells s (MkStoreState client0 k0 typesj bindj [] pdel) ∗
+        "Hcells" ∷ own_store_struct s (MkStoreState client0 k0 typesj bindj [] pdel) ∗
         "%Hpendingsubj" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A),
             typedInput ∈ pendingj -> typedInput ∈ pend0 ++ inputs⌝ ∗
         "%Hprj" ∷ ⌜WireReplay m appliedj mj⌝ ∗
@@ -261,7 +261,7 @@ Proof using Type*.
       iFrame "progress Hpendingp HslA HcapA".
       iFrame "HitemsA".
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpendf Hpdeletes".
-      { iApply (own_store_cells_intro _ (MkStoreState client0 k0 types bind [] pdel) Hinvs0
+      { iApply (own_store_struct_intro _ (MkStoreState client0 k0 types bind [] pdel) Hinvs0
                   with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes [Hpendf] Hpdeletes").
         iExists slice.nil. iFrame "Hpendf". iExists [].
         iSplitL; [iApply own_slice_nil | iSplitL; [iApply own_slice_cap_nil | by rewrite big_sepL2_nil]]. }
@@ -317,7 +317,7 @@ Proof using Type*.
           "HslR" ∷ restS ↦* uivsR ∗
           "HcapR" ∷ own_slice_cap yjs.updateItem.t restS (DfracOwn 1) ∗
           "#HitemsR" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsR;keptacc, is_update_item updateItemVal typedInput) ∗
-          "Hcells" ∷ own_store_cells s (MkStoreState client0 k0 types_c bind_c [] pdel) ∗
+          "Hcells" ∷ own_store_struct s (MkStoreState client0 k0 types_c bind_c [] pdel) ∗
           "%Hilen" ∷ ⌜(i <= length pendingj)%nat⌝ ∗
           "%Hpassa" ∷ ⌜wire_pass m_c (drop i pendingj) keptacc =
               (app_rem, keptfin0, m_pend0)⌝ ∗
@@ -401,7 +401,7 @@ Proof using Type*.
           replace (sint.nat (W64 i)) with i by word. exact Huiv. }
         iEval (rewrite Hinsid) in "HslP".
         (* the arrival probe: hasNode *)
-        iDestruct (own_store_cells_intro _ (MkStoreState client0 k0 types_c bind_c [] pdel) Hinvsc
+        iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types_c bind_c [] pdel) Hinvsc
                     with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
         wp_apply (wp_store__hasNode s (updateItemVal.(yjs.updateItem.id')) m_c
                     (MkStoreState client0 k0 types_c bind_c [] pdel) (conj Hmtypesc Hmdomc)
@@ -571,7 +571,7 @@ Proof using Type*.
                  := uint_W64_nat_bound _ _ (Hkb1 typedInput Hti_pi).
                split; move: Hlo1 Hhi1; rewrite !Hib !Hib4; lia. }
            simpl. rewrite Hready. wp_auto.
-           iDestruct (own_store_cells_intro _ (MkStoreState client0 k0 types_c bind_c [] pdel) Hinvsc'
+           iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types_c bind_c [] pdel) Hinvsc'
                        with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
            wp_apply (wp_store__integrateDecoded s updateItemVal (targetType, input)
                        m_c (MkStoreState client0 k0 types_c bind_c [] pdel) newItem arr' nm
@@ -735,12 +735,12 @@ Proof using Type*.
       iDestruct "Hpending" as (pnil) "(Hpendf & _)".
       wp_auto.
       iApply ("HΦ" $! typesj bindj). simpl.
-      iAssert (own_store_pending s rest) with "[Hpendf HslP HcapP]" as "Hpending".
+      iAssert (own_pending_field (s .[(yjs.store.t), "pending"]) rest)%I with "[Hpendf HslP HcapP]" as "Hpending".
       { iExists pendingS. iFrame "Hpendf". iExists uivsP. iFrame "HslP HcapP HitemsPj". }
       iSplitL "Hslin Hcapin".
       { iExists uivs_in. iFrame "Hslin Hcapin Hitemsin". }
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
-      { iApply (own_store_cells_intro _ (MkStoreState client0 k0 typesj bindj rest pdel) Hinvsj
+      { iApply (own_store_struct_intro _ (MkStoreState client0 k0 typesj bindj rest pdel) Hinvsj
                   with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes"). }
       iPureIntro. split_and!.
       * exact Hbindsubj.
@@ -1792,9 +1792,9 @@ Proof using Type*.
           Hdrainc Hhcoh Harrinv Hnonemptyb with "Hishist Hhist Hcertpending")
     as "(Hhist & #Hlbnew & %Hvr & %Hcoh' & %Hnoc)".
   iModIntro.
-  iAssert (own_store_pending s_loc pend) with "[Hpendf Hpend]" as "Hpending".
+  iAssert (own_pending_field (s_loc .[(yjs.store.t), "pending"]) pend)%I with "[Hpendf Hpend]" as "Hpending".
   { iExists pend_sl. iFrame "Hpendf Hpend". }
-  iDestruct (own_store_cells_intro _ (MkStoreState client k types bind pend pdel) Hinvs0
+  iDestruct (own_store_struct_intro _ (MkStoreState client k types bind pend pdel) Hinvs0
               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
   wp_apply (wp_store__applyUpdate_unlocked s_loc sl dq
               inputs pend applied rest' m m' (MkStoreState client k types bind pend pdel) eq_refl
@@ -1949,7 +1949,7 @@ Proof using Type*.
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hcerts".
   have Hregmodel' : registry_models m' bind' types'.
   { rewrite /registry_models. split; [exact Hmtypes' | exact Hmdom']. }
-  iDestruct (own_store_cells_intro _ (MkStoreState client k types' bind' rest' pdel) Hinvs'
+  iDestruct (own_store_struct_intro _ (MkStoreState client k types' bind' rest' pdel) Hinvs'
               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
   iSplitL "Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set";
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoloss_in]).

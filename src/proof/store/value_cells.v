@@ -237,7 +237,7 @@ Definition inputs_rooted_in_bind (inputs : list (TId * IntegrateInput (A := A)))
 (** [registry_coh bind types]: the root registry [bind] (name -> type loc)
     and the type pool [types] fit together: every bound name has a live type,
     [bind] is injective, and every live type is bound under some name. A
-    heap-level fact: every store method preserves it, so [own_store_cells]
+    heap-level fact: every store method preserves it, so [own_store_struct]
     carries it. *)
 Definition registry_coh (bind : gmap P loc) (types : gmap loc type_state) : Prop :=
   (∀ nm p, bind !! nm = Some p -> is_Some (types !! p)) /\
@@ -312,7 +312,7 @@ Definition pool_invs (types : gmap loc type_state) : Prop :=
 (** [store_state]: the store's cell-level state, every field of a [store]
     under the write lock: the local client and its next clock, the type pool,
     the root registry, and the buffered wire items and delete spans. The
-    model every store-internal method is specified over ([own_store_cells]). *)
+    model every store-internal method is specified over ([own_store_struct]). *)
 Record store_state := MkStoreState {
   ss_client : w64;
   ss_clock : w64;

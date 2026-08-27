@@ -78,7 +78,7 @@ Proof.
   wp_auto.
   destruct (bind !! name) as [p|] eqn:Hbnd.
   - (* ---- hit: the root is registered; nothing changes ---- *)
-    iDestruct (own_store_cells_intro_raw _ (MkStoreState client k types bind pend pdel)
+    iDestruct (own_store_struct_intro_raw _ (MkStoreState client k types bind pend pdel)
                  types_mref pend_sl pdel_sl Hinvs
                  with "Hclient Hclock HdeletedSet Hitems Htypesf Htypesmap Htypes Hpendf Hpend Hpddelf Hpddel") as "Hcells".
     wp_apply (wp_store__getOrCreateYType _ (MkStoreState client k types bind pend pdel) name with "[$Hcells]").
@@ -110,7 +110,7 @@ Proof.
     iSplitL; last (iPureIntro; constructor).
     iExact "Hlb0".
   - (* ---- miss: register a fresh empty root type ---- *)
-    iDestruct (own_store_cells_intro_raw _ (MkStoreState client k types bind pend pdel)
+    iDestruct (own_store_struct_intro_raw _ (MkStoreState client k types bind pend pdel)
                  types_mref pend_sl pdel_sl Hinvs
                  with "Hclient Hclock HdeletedSet Hitems Htypesf Htypesmap Htypes Hpendf Hpend Hpddelf Hpddel") as "Hcells".
     wp_apply (wp_store__getOrCreateYType _ (MkStoreState client k types bind pend pdel) name with "[$Hcells]").
@@ -230,7 +230,7 @@ Proof.
     wp_auto.
     have Hregmodel' : registry_models m bind' types'.
     { rewrite /registry_models. split; [exact Hmtypes' | exact Hmdom']. }
-    iDestruct (own_store_cells_intro _ (MkStoreState client k types' bind' pend pdel) Hinvs'
+    iDestruct (own_store_struct_intro _ (MkStoreState client k types' bind' pend pdel) Hinvs'
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
                 with "[$His_store $Hwl Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set]").
