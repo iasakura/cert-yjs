@@ -5,9 +5,13 @@ Status: proposal (2026-08-22), written after the spec refactor
 (2026-08-27): `ItemRun`, its vocabulary and split surgery, `cell_run` and
 the projection laws for flatten / visible / flip / split / covers / fits /
 origin / disjointness are in (`item/model.v` section `item_run`,
-`item/value.v`, `store/value_cells.v`, `store/value_split.v`); still open
-in stage 1: run-level `run_starts_at` / `run_ends_at`, `integrate_splice` /
-`origins_resolved` over runs, and the sorted `client_runs` theory.
+`item/value.v`, `store/value_cells.v`, `store/value_split.v`); part 2 adds
+`runs_start_at` / `runs_end_at`, `origins_resolved` (cursor indices only)
+and `runs_integrate_splice`, with `origins_linked` an iff to the resolved
+form plus the `node_loc` readings, and `integrate_splice` projecting onto
+`runs_integrate_splice`. What remains of stage 1 is the sorted
+`client_runs` theory, which needs `all_runs` over the run-granular pool and
+so lands with stage 2.
 
 ## 1. The problem
 

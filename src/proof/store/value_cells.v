@@ -28,7 +28,10 @@
       [cell_clock_run] / [cell_covers_run] / [cell_origin_clk_run];
       [cell_fits_run] and [cells_range_disjoint_runs] under the id no-wrap
       bounds, the latter trading address inequality for index inequality
-      under the heap [NoDup]).
+      under the heap [NoDup]); [origins_linked] is [origins_resolved] at the
+      cursor indices plus the [node_loc] readings
+      ([origins_linked_resolved]), and [integrate_splice] projects onto
+      [runs_integrate_splice] ([integrate_splice_runs]).
     - the pool invariants are preserved by appending a fresh cell ([*_snoc],
       assembled for one integrate as [pool_invs_integrate])
       and by any permutation that keeps locations and runs
@@ -365,6 +368,41 @@ Lemma cell_fits_run (c : item_cell) :
 Proof.
   rewrite /cell_fits /run_fits /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
   move=> Hb. split; move=> H; word.
+Qed.
+
+(** [origins_linked] is [origins_resolved] at the cursor indices plus the
+    [node_loc] reading of the two link addresses; [integrate_splice] projects
+    to [runs_integrate_splice], the new node's address and type being all it
+    adds. The prefix sums agree by [run_flatten_runs]. *)
+Lemma origins_linked_resolved (cells : list item_cell) (arr : list (YjsItem A))
+    (input : IntegrateInput (A := A)) (lft rgt : loc) :
+  origins_linked cells arr input lft rgt ↔
+  ∃ (kL kR : nat), origins_resolved (cell_run <$> cells) arr input kL kR ∧
+    lft = node_loc cells (Z.of_nat kL - 1) ∧ rgt = node_loc cells (Z.of_nat kR).
+Proof.
+  rewrite /origins_linked /origins_resolved. split.
+  - intros (leftIdx & rightIdx & curL & curR & HL & HR & -> & -> & HpsL & HbL & HpsR & HbR).
+    exists curL, curR. split_and!; [| reflexivity | reflexivity].
+    exists leftIdx, rightIdx.
+    rewrite -!fmap_take -?fmap_drop -!run_flatten_runs length_fmap.
+    split_and!; assumption.
+  - intros (kL & kR & (leftIdx & rightIdx & HL & HR & HpsL & HbL & HpsR & HbR) & -> & ->).
+    exists leftIdx, rightIdx, kL, kR.
+    move: HpsL HpsR HbL HbR. rewrite -!fmap_take -?fmap_drop -!run_flatten_runs length_fmap.
+    move=> HpsL HpsR HbL HbR. split_and!; try assumption; reflexivity.
+Qed.
+
+Lemma integrate_splice_runs (cells : list item_cell) (arr : list (YjsItem A))
+    (item_l : loc) (run : list (YjsItem A)) (parent : loc)
+    (cells' : list item_cell) (arr' : list (YjsItem A)) :
+  integrate_splice cells arr item_l run parent cells' arr' ->
+  runs_integrate_splice (cell_run <$> cells) arr run (cell_run <$> cells') arr'.
+Proof.
+  intros (idx & Hb & Hlen & -> & ->).
+  exists idx.
+  rewrite -!fmap_take -?fmap_drop -!run_flatten_runs length_fmap.
+  split_and!; [exact Hb | exact Hlen | | reflexivity].
+  by rewrite fmap_app fmap_cons /=.
 Qed.
 
 Lemma cells_range_disjoint_runs (pool : list item_cell) :

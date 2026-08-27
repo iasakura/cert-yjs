@@ -27,7 +27,9 @@
       [nat]s), [runs_flatten], [runs_visible], [flip_run], [run_fits],
       [run_covers] / [run_covers_clock], [run_origin_clk], [runs_disjoint]
       (runs told apart by index, not address), and the split surgery
-      [split_run_left] / [split_run_right] / [split_runs].
+      [split_run_left] / [split_run_right] / [split_runs]; the index-based
+      forms of the pool statements: [runs_start_at] / [runs_end_at],
+      [origins_resolved] (cursor indices), [runs_integrate_splice].
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
       app-morphic ([runs_flatten_app]).
@@ -305,6 +307,46 @@ Definition split_runs (runs : list ItemRun) (k o : nat) : list ItemRun :=
   | Some r => take k runs ++ [split_run_left r o; split_run_right r o] ++ drop (S k) runs
   | None => runs
   end.
+
+(** [runs_start_at runs k d] / [runs_end_at runs k d]: the [k]-th run starts
+    (ends) at the id [d]: the index-based content of [cell_starts_at] /
+    [cell_ends_at], whose node address and owning type are heap matters. *)
+Definition runs_start_at (runs : list ItemRun) (k : nat) (d : YjsId) : Prop :=
+  ∃ r, runs !! k = Some r ∧ item_id (run_head_item r) = d.
+
+Definition runs_end_at (runs : list ItemRun) (k : nat) (d : YjsId) : Prop :=
+  ∃ r, runs !! k = Some r ∧ run_client r = clientId d ∧
+       (run_clock r + length (run_items r) = clock d + 1)%nat.
+
+(** [origins_resolved runs arr input kL kR]: the cursor indices at which the
+    resolved origins of [input] in [arr] sit: the run cursor [kL] whose
+    prefix sum is one past the left origin's model index ([findLeftIdx]) and
+    [kR] whose prefix sum is the right origin's ([findRightIdx]). The
+    index-based content of [origins_linked]: the linked node ADDRESSES are
+    [node_loc] of these cursors, a value-layer fact. *)
+Definition origins_resolved (runs : list ItemRun) (arr : list (YjsItem A))
+    (input : IntegrateInput (A := A)) (kL kR : nat) : Prop :=
+  ∃ (leftIdx rightIdx : Z),
+    findLeftIdx (in_originId input) arr = Some leftIdx ∧
+    findRightIdx (in_rightOriginId input) arr = Some rightIdx ∧
+    (Z.of_nat (length (runs_flatten (take kL runs))) = leftIdx + 1)%Z ∧
+    (kL <= length runs)%nat ∧
+    (Z.of_nat (length (runs_flatten (take kR runs))) = rightIdx)%Z ∧
+    (kR <= length runs)%nat.
+
+(** [runs_integrate_splice runs arr run runs' arr']: what one integrate does,
+    loc-free: a fresh live run is spliced into [runs] at some cursor, and its
+    items into [arr] at the matching model index (the prefix sum of the runs
+    before it). The new node's address and type are heap matters
+    ([integrate_splice] carries them). *)
+Definition runs_integrate_splice (runs : list ItemRun) (arr : list (YjsItem A))
+    (run : list (YjsItem A)) (runs' : list ItemRun) (arr' : list (YjsItem A)) : Prop :=
+  ∃ idx : nat,
+    (idx <= length runs)%nat ∧
+    (length (runs_flatten (take idx runs)) <= length arr)%nat ∧
+    runs' = take idx runs ++ MkItemRun run false :: drop idx runs ∧
+    arr' = take (length (runs_flatten (take idx runs))) arr ++ run ++
+           drop (length (runs_flatten (take idx runs))) arr.
 
 (* ===== lemmas ============================================================= *)
 

@@ -18,7 +18,9 @@
     Laws
     - the split projects along [cell_run] ([cell_run_split_left] /
       [cell_run_split_right], [split_cells_runs]; [cell_covers_clock_run]),
-      the fresh node's address being all the pure [split_runs] does not see.
+      the fresh node's address being all the pure [split_runs] does not see;
+      [runs_start_at] / [runs_end_at] over a projected cell list read back on
+      the cells ([runs_start_at_fmap] / [runs_end_at_fmap]).
     - splitting a node is invisible to the model: [split_cells_flatten] and
       [split_cells_num_visible].
     - [delete_types_update_rel] is reflexive and transitive (which is what lets the
@@ -273,6 +275,35 @@ Proof.
   rewrite /split_cells /split_runs list_lookup_fmap.
   destruct (cells !! k) as [c|] eqn:Hk; simpl; [| reflexivity].
   rewrite !fmap_app !fmap_cons /= !fmap_take !fmap_drop //.
+Qed.
+
+(** [runs_start_at] / [runs_end_at] over a projected cell list, read back on
+    the cells: the bridge [cell_starts_at] / [cell_ends_at] will cross once
+    the pool is run-granular (the pool-level forms also fix the node's
+    address and owning type). *)
+Lemma runs_start_at_fmap (cells : list item_cell) (k : nat) (d : YjsId) :
+  runs_start_at (cell_run <$> cells) k d ↔
+  ∃ c, cells !! k = Some c ∧ item_id (run_head c) = d.
+Proof.
+  rewrite /runs_start_at. split.
+  - intros (r & Hk & Hd). rewrite list_lookup_fmap in Hk.
+    destruct (cells !! k) as [c|] eqn:Hc; last done.
+    simplify_eq/=. eauto.
+  - intros (c & Hk & Hd). exists (cell_run c).
+    rewrite list_lookup_fmap Hk /=. eauto.
+Qed.
+
+Lemma runs_end_at_fmap (cells : list item_cell) (k : nat) (d : YjsId) :
+  runs_end_at (cell_run <$> cells) k d ↔
+  ∃ c, cells !! k = Some c ∧ clientId (item_id (run_head c)) = clientId d ∧
+       (clock (item_id (run_head c)) + length (ic_run c) = clock d + 1)%nat.
+Proof.
+  rewrite /runs_end_at. split.
+  - intros (r & Hk & Hcl & Hck). rewrite list_lookup_fmap in Hk.
+    destruct (cells !! k) as [c|] eqn:Hc; last done.
+    simplify_eq/=. eauto.
+  - intros (c & Hk & Hcl & Hck). exists (cell_run c).
+    rewrite list_lookup_fmap Hk /=. eauto.
 Qed.
 
 Lemma cell_covers_clock_run (c : item_cell) (k : nat) :
