@@ -20,6 +20,18 @@
     - [explode] preserves length and is the singleton list on a one-char
       string.
 
+    Second section ([item_run], docs/plan-item-run-split.md stage 1): the
+    run as pure DATA.
+    - [ItemRun]: a node's run of items and its tombstone bit, no [loc].
+    - its vocabulary: [run_head_item], [run_client] / [run_clock] (pure
+      [nat]s), [runs_flatten], [runs_visible], [flip_run], [run_fits],
+      [run_covers] / [run_covers_clock], [run_origin_clk], [runs_disjoint]
+      (runs told apart by index, not address), and the split surgery
+      [split_run_left] / [split_run_right] / [split_runs].
+    - laws: a split is invisible to the flatten and the visible count
+      ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
+      app-morphic ([runs_flatten_app]).
+
     The deep run-integration theory is [item/run_theory.v]; the heap node that
     carries a run is [item/value.v]. *)
 From New.proof Require Import proof_prelude.
@@ -194,3 +206,154 @@ Proof.
 Qed.
 
 End item_model.
+
+(* ===== the run record (ItemRun), the loc-free half of item_cell ==========
+   Stage 1 of docs/plan-item-run-split.md: the pure theory of runs as data,
+   next to the [item_cell]-based one it will replace. [item_cell] pairs a run
+   with heap addresses ([ic_loc], [ic_parent]); [ItemRun] is the run alone,
+   so clock-range reasoning, splits and tombstones need no [loc] and no
+   [w64]. [item/value.v]'s [cell_run] projects a cell to its run, and each
+   cell-level definition comes with a projection lemma there. *)
+
+Section item_run.
+
+Set Default Proof Using "Type*".
+
+Notation A := go_string.
+
+(* ===== definitions ======================================================== *)
+
+(** [ItemRun]: what one heap node holds, as pure data: the run of consecutive
+    per-char model items ([run_wf]) and its tombstone bit. *)
+Record ItemRun := MkItemRun {
+  run_items : list (YjsItem A);
+  run_deleted : bool;
+}.
+
+(** The head model item of a run: the one the node's id / origin fields
+    denote ([run_wf] makes every other item a function of it). *)
+Definition run_head_item (r : ItemRun) : YjsItem A := hd inhabitant (run_items r).
+
+(** The creator and start clock of a run, off its head id. Pure [nat]s: the
+    [w64] the heap stores round-trips on the value layer ([cell_client] /
+    [cell_clock]). *)
+Definition run_client (r : ItemRun) : nat := clientId (item_id (run_head_item r)).
+
+Definition run_clock (r : ItemRun) : nat := clock (item_id (run_head_item r)).
+
+(** The flattened per-char document list a run list denotes. *)
+Definition runs_flatten (runs : list ItemRun) : list (YjsItem A) :=
+  mjoin (run_items <$> runs).
+
+(** Number of visible (non-tombstoned) characters: the value the heap keeps
+    in [yType.len]. *)
+Definition runs_visible (runs : list ItemRun) : nat :=
+  list_sum ((λ r, if run_deleted r then 0%nat else length (run_items r)) <$> runs).
+
+(** The run with its tombstone bit set (its items unchanged): what one
+    [deleteNode] does. *)
+Definition flip_run (r : ItemRun) : ItemRun :=
+  MkItemRun (run_items r) true.
+
+(** The run's clock range [run_clock, run_clock + length) fits [w64]
+    arithmetic without wrapping: the pure content of [cell_fits]. *)
+Definition run_fits (r : ItemRun) : Prop :=
+  (Z.of_nat (run_clock r) + Z.of_nat (length (run_items r)) < 2^64)%Z.
+
+(** [run_covers r d]: the id [d] addresses a char of [r]: same creator as the
+    head, clock inside the run's range. Under [run_wf] this is exactly "[d]
+    is the id of some item of [r]" ([run_wf_char_id]). *)
+Definition run_covers (r : ItemRun) (d : YjsId) : Prop :=
+  run_client r = clientId d ∧
+  (run_clock r <= clock d)%nat ∧
+  (clock d < run_clock r + length (run_items r))%nat.
+
+(** [run_covers_clock r k]: some char of [r] has clock [k], whatever the
+    creator (the per-client index search only compares clocks). *)
+Definition run_covers_clock (r : ItemRun) (k : nat) : Prop :=
+  (run_clock r <= k)%nat ∧ (k < run_clock r + length (run_items r))%nat.
+
+(** A run head's same-client left origin strictly precedes it in clock
+    (causal creation order): the pure content of [cell_origin_clk]. *)
+Definition run_origin_clk (r : ItemRun) : Prop :=
+  ∀ originId, origin_id (origin (run_head_item r)) = Some originId →
+    clientId originId = run_client r →
+    (clock originId < run_clock r)%nat.
+
+(** Per-client clock-range disjointness of a run list, with runs told apart
+    BY INDEX (the loc-free replacement of [cells_range_disjoint], which tells
+    cells apart by [ic_loc]; the two agree when node addresses are distinct,
+    the heap-layer [NoDup]). *)
+Definition runs_disjoint (runs : list ItemRun) : Prop :=
+  ∀ i j r1 r2, runs !! i = Some r1 → runs !! j = Some r2 → i ≠ j →
+    run_client r1 = run_client r2 →
+    (run_clock r1 + length (run_items r1) <= run_clock r2)%nat ∨
+    (run_clock r2 + length (run_items r2) <= run_clock r1)%nat.
+
+(** Splitting the [k]-th run at offset [o]: the left half keeps the first [o]
+    items, the right half the rest, both inheriting the tombstone bit (the
+    yjs [splitItem] semantics). The fresh node's ADDRESS, which
+    [split_cells] threads as [r_loc], is a heap matter and does not appear. *)
+Definition split_run_left (r : ItemRun) (o : nat) : ItemRun :=
+  MkItemRun (take o (run_items r)) (run_deleted r).
+
+Definition split_run_right (r : ItemRun) (o : nat) : ItemRun :=
+  MkItemRun (drop o (run_items r)) (run_deleted r).
+
+Definition split_runs (runs : list ItemRun) (k o : nat) : list ItemRun :=
+  match runs !! k with
+  | Some r => take k runs ++ [split_run_left r o; split_run_right r o] ++ drop (S k) runs
+  | None => runs
+  end.
+
+(* ===== lemmas ============================================================= *)
+
+(** The flatten and the visible count are invariant under a split, and a flip
+    only drops the flipped run's characters from the visible count: the run
+    halves of [split_cells_flatten] / [split_cells_num_visible] /
+    [num_visible_flip_run], loc-free. *)
+Lemma runs_flatten_nil : runs_flatten [] = [].
+Proof. reflexivity. Qed.
+
+Lemma runs_flatten_cons (r : ItemRun) (runs : list ItemRun) :
+  runs_flatten (r :: runs) = run_items r ++ runs_flatten runs.
+Proof. reflexivity. Qed.
+
+Lemma runs_flatten_app (rs1 rs2 : list ItemRun) :
+  runs_flatten (rs1 ++ rs2) = runs_flatten rs1 ++ runs_flatten rs2.
+Proof. rewrite /runs_flatten fmap_app join_app //. Qed.
+
+Lemma split_runs_flatten (runs : list ItemRun) (k o : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  runs_flatten (split_runs runs k o) = runs_flatten runs.
+Proof.
+  move=> Hk.
+  have Hmid : runs_flatten runs
+            = runs_flatten (take k runs) ++ run_items r ++ runs_flatten (drop (S k) runs).
+  { rewrite -{1}(take_drop_middle runs k r Hk) runs_flatten_app runs_flatten_cons //. }
+  rewrite /split_runs Hk Hmid.
+  rewrite !runs_flatten_app !runs_flatten_cons runs_flatten_nil app_nil_r /=.
+  rewrite take_drop //.
+Qed.
+
+Lemma split_runs_visible (runs : list ItemRun) (k o : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  (o <= length (run_items r))%nat ->
+  runs_visible (split_runs runs k o) = runs_visible runs.
+Proof.
+  move=> Hk Ho.
+  have Hmid : runs_visible runs
+            = (runs_visible (take k runs)
+               + ((if run_deleted r then 0%nat else length (run_items r))
+                  + runs_visible (drop (S k) runs)))%nat.
+  { rewrite -{1}(take_drop_middle runs k r Hk) /runs_visible fmap_app fmap_cons list_sum_app /=.
+    lia. }
+  rewrite /split_runs Hk Hmid /runs_visible !fmap_app !fmap_cons !list_sum_app /=.
+  destruct (run_deleted r); simpl; [lia |].
+  rewrite length_take length_drop. lia.
+Qed.
+
+Lemma flip_run_items (r : ItemRun) : run_items (flip_run r) = run_items r.
+Proof. reflexivity. Qed.
+
+End item_run.

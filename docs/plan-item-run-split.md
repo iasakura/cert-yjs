@@ -1,8 +1,13 @@
 # Plan: split `item_cell` into a pure `ItemRun` and a location list
 
 Status: proposal (2026-08-22), written after the spec refactor
-(`docs/plan-spec-refactor.md`, PRs #143 to #151). Nothing here is
-implemented.
+(`docs/plan-spec-refactor.md`, PRs #143 to #151). Stage 1 in progress
+(2026-08-27): `ItemRun`, its vocabulary and split surgery, `cell_run` and
+the projection laws for flatten / visible / flip / split / covers / fits /
+origin / disjointness are in (`item/model.v` section `item_run`,
+`item/value.v`, `store/value_cells.v`, `store/value_split.v`); still open
+in stage 1: run-level `run_starts_at` / `run_ends_at`, `integrate_splice` /
+`origins_resolved` over runs, and the sorted `client_runs` theory.
 
 ## 1. The problem
 

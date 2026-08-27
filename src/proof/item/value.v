@@ -13,8 +13,13 @@
       heap struct's bits, [set_deleted] / [flip_cell] flipping the tombstone,
       and [num_visible], the visible-character count [yType.len] shadows.
     - [toContent] and [originId_of], the remaining scalar readings.
+    - [cell_run]: the pure half of a cell, its [ItemRun]
+      (docs/plan-item-run-split.md stage 1).
 
     Laws
+    - the run vocabulary projects along [cell_run]: [cell_run_head],
+      [run_flatten_runs], [num_visible_runs], [cell_run_flip],
+      [cell_unit_runs].
     - [run_flatten] is a monoid morphism ([run_flatten_nil] / [_cons] / [_app])
       and collapses to [run_head <$> cells] on unit cells.
     - the cell-cursor prefix sums: [run_flatten (take k cells)] grows by one
@@ -158,6 +163,13 @@ Definition flip_cell (c : item_cell) : item_cell :=
 
 Definition toContent (c : yjs.content.t) : A := c.(yjs.content.content').
 
+(** [cell_run c]: the pure half of a cell, its run as data ([ItemRun],
+    docs/plan-item-run-split.md stage 1); [ic_loc] and [ic_parent] stay heap
+    facts. The run-level definitions project along it (the [_runs] lemmas
+    below and in [store/value_cells] / [store/value_split]). *)
+Definition cell_run (c : item_cell) : ItemRun :=
+  MkItemRun (ic_run c) (ic_deleted c).
+
 (* ----- item-pointer helpers --------------------------------------------- *)
 
 (** A heap item pointer is null or owns a node; [originId_of] is its model id. *)
@@ -165,6 +177,27 @@ Definition originId_of (ov : option yjs.item.t) : option YjsId :=
   (λ v, toYjsId v.(yjs.item.id')) <$> ov.
 
 (* ===== lemmas ============================================================= *)
+
+(** The cell-level run vocabulary says the same thing as the pure one under
+    [cell_run]: head, flatten, visible count, tombstone flip, unit length. *)
+Lemma cell_run_head (c : item_cell) : run_head_item (cell_run c) = run_head c.
+Proof. reflexivity. Qed.
+
+Lemma run_flatten_runs (cells : list item_cell) :
+  run_flatten cells = runs_flatten (cell_run <$> cells).
+Proof. rewrite /run_flatten /runs_flatten -list_fmap_compose. reflexivity. Qed.
+
+Lemma num_visible_runs (cells : list item_cell) :
+  num_visible cells = runs_visible (cell_run <$> cells).
+Proof. rewrite /num_visible /runs_visible -list_fmap_compose. reflexivity. Qed.
+
+Lemma cell_run_flip (c : item_cell) :
+  cell_run (flip_cell c) = flip_run (cell_run c).
+Proof. reflexivity. Qed.
+
+Lemma cell_unit_runs (c : item_cell) :
+  cell_unit c ↔ length (run_items (cell_run c)) = 1%nat.
+Proof. reflexivity. Qed.
 
 Lemma run_flatten_nil : run_flatten [] = [].
 Proof. done. Qed.

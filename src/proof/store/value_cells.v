@@ -24,6 +24,11 @@
       [run_denotes] (the run is the input's).
 
     Laws
+    - the cell vocabulary projects along [cell_run] ([cell_client_run] /
+      [cell_clock_run] / [cell_covers_run] / [cell_origin_clk_run];
+      [cell_fits_run] and [cells_range_disjoint_runs] under the id no-wrap
+      bounds, the latter trading address inequality for index inequality
+      under the heap [NoDup]).
     - the pool invariants are preserved by appending a fresh cell ([*_snoc],
       assembled for one integrate as [pool_invs_integrate])
       and by any permutation that keeps locations and runs
@@ -331,6 +336,79 @@ Definition store_invs (st : store_state) : Prop :=
   pool_invs (ss_types st) ∧ registry_coh (ss_bind st) (ss_types st).
 
 (* ===== lemmas ============================================================= *)
+
+(** The pool-level cell vocabulary projects along [cell_run]
+    (docs/plan-item-run-split.md stage 1). The [w64] readings agree with the
+    pure [nat] ones outright for client / clock / covers / origin, and under
+    the id no-wrap bound for [cell_fits] and range disjointness (where the
+    machine word would otherwise wrap; the bound is what the heap layer's
+    id round-trip provides, [own_type_pool_id_bounds]). Disjointness also
+    trades [ic_loc c1 ≠ ic_loc c2] for [i ≠ j], which needs the heap-layer
+    [NoDup] of node addresses. *)
+Lemma cell_client_run (c : item_cell) : cell_client c = W64 (run_client (cell_run c)).
+Proof. reflexivity. Qed.
+
+Lemma cell_clock_run (c : item_cell) : cell_clock c = W64 (run_clock (cell_run c)).
+Proof. reflexivity. Qed.
+
+Lemma cell_origin_clk_run (c : item_cell) :
+  cell_origin_clk c ↔ run_origin_clk (cell_run c).
+Proof. reflexivity. Qed.
+
+Lemma cell_covers_run (c : item_cell) (d : YjsId) :
+  cell_covers c d ↔ run_covers (cell_run c) d.
+Proof. reflexivity. Qed.
+
+Lemma cell_fits_run (c : item_cell) :
+  (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z ->
+  (cell_fits c ↔ run_fits (cell_run c)).
+Proof.
+  rewrite /cell_fits /run_fits /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+  move=> Hb. split; move=> H; word.
+Qed.
+
+Lemma cells_range_disjoint_runs (pool : list item_cell) :
+  (∀ c, c ∈ pool -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ pool -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  NoDup (ic_loc <$> pool) ->
+  (cells_range_disjoint pool ↔ runs_disjoint (cell_run <$> pool)).
+Proof.
+  move=> Hbnd Hcbnd Hnd.
+  have Hclk : ∀ c, c ∈ pool -> uint.Z (cell_clock c) = Z.of_nat (run_clock (cell_run c)).
+  { move=> c Hc. have := Hbnd c Hc. rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  split.
+  - move=> Hdisj i j r1 r2 Hi Hj Hij Hcl.
+    rewrite list_lookup_fmap in Hi. rewrite list_lookup_fmap in Hj.
+    destruct (pool !! i) as [c1|] eqn:Hci; last done.
+    destruct (pool !! j) as [c2|] eqn:Hcj; last done.
+    simpl in Hi, Hj. simplify_eq.
+    have Hm1 : c1 ∈ pool := list_elem_of_lookup_2 _ _ _ Hci.
+    have Hm2 : c2 ∈ pool := list_elem_of_lookup_2 _ _ _ Hcj.
+    have Hlocne : ic_loc c1 ≠ ic_loc c2.
+    { move=> Heq.
+      have Hl1 : (ic_loc <$> pool) !! i = Some (ic_loc c2) by rewrite list_lookup_fmap Hci /= Heq.
+      have Hl2 : (ic_loc <$> pool) !! j = Some (ic_loc c2) by rewrite list_lookup_fmap Hcj.
+      exact (Hij (NoDup_lookup _ _ _ _ Hnd Hl1 Hl2)). }
+    have Hcc : cell_client c1 = cell_client c2.
+    { rewrite !cell_client_run Hcl //. }
+    have Hd := Hdisj c1 c2 Hm1 Hm2 Hcc Hlocne.
+    move: Hd. rewrite (Hclk c1 Hm1) (Hclk c2 Hm2) /cell_run /=. lia.
+  - move=> Hdisj c1 c2 Hm1 Hm2 Hcc Hlocne.
+    destruct (list_elem_of_lookup_1 _ _ Hm1) as (i & Hci).
+    destruct (list_elem_of_lookup_1 _ _ Hm2) as (j & Hcj).
+    have Hij : i ≠ j.
+    { move=> Heq. subst j. rewrite Hci in Hcj. simplify_eq. }
+    have Hcl : run_client (cell_run c1) = run_client (cell_run c2).
+    { have Huz := f_equal uint.Z Hcc. move: Huz.
+      rewrite !cell_client_run /=.
+      have Hb1 := Hcbnd c1 Hm1. have Hb2 := Hcbnd c2 Hm2.
+      move=> Huz. word. }
+    have Hd := Hdisj i j (cell_run c1) (cell_run c2)
+              ltac:(rewrite list_lookup_fmap Hci //) ltac:(rewrite list_lookup_fmap Hcj //) Hij Hcl.
+    rewrite (Hclk c1 Hm1) (Hclk c2 Hm2) /cell_run /=.
+    move: Hd. rewrite /cell_run /=. lia.
+Qed.
 
 (** The spliced cell list is the old one plus the new cell, as a multiset. *)
 Lemma integrate_splice_perm (cells : list item_cell) (arr : list (YjsItem A))
