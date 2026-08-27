@@ -91,7 +91,18 @@ Qed.
     registers it under [nm], and returns it. The registry map grows by
     [nm -> p] and the per-type DLL big-op by a fresh EMPTY type at the
     genuinely fresh location [p]. Local: with the hit case above, a stepping
-    stone of [wp_store__getOrCreateYType]. *)
+    stone of [wp_store__getOrCreateYType].
+
+    This proof crosses a window where no [store_state] satisfies
+    [store_invs]: around the [s.types[nm] = p] write, either the registry
+    already binds [nm] to a [p] that [own_type_pool] does not yet hold
+    (breaking [registry_coh]'s bound-names-are-live conjunct, the order
+    taken here) or the pool would hold a live [p] that no name binds
+    (breaking its live-types-are-bound conjunct). The window stays inside
+    this one proof, the fresh type carried as its own resource and refolded
+    with [pool_invs_insert_empty] / [registry_coh_bind_fresh] at the exit;
+    the lemma's pre and post sit at the closed endpoints (CLAUDE.md "Spec
+    shape", the open-receiver case). *)
 #[local] Lemma wp_store__getOrCreateYType_miss (s : loc) (st : store_state) (nm : go_string) :
   ss_bind st !! nm = None ->
   {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
