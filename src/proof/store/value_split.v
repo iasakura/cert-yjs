@@ -16,6 +16,9 @@
       [origins_covered] / [repair_parent] / [origins_split].
 
     Laws
+    - [pool_cell_covers] translates to the projected pool and back
+      ([pool_cell_covers_to_run] / [pool_run_covers_to_cell]): what carries
+      [GetNode]'s postcondition to [(locs, p)].
     - the split projects along [cell_run] ([cell_run_split_left] /
       [cell_run_split_right], [split_cells_runs]; [cell_covers_clock_run]),
       the fresh node's address being all the pure [split_runs] does not see;

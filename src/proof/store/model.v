@@ -29,7 +29,8 @@
     The run-granular pool (plan-item-run-split stage 2): [pool], every
     registered type at its [type_model]; [all_runs] and the clock-sorted
     [client_runs]; [run_pool_invs], the pure pool invariants at run
-    granularity ([pool_invs] minus the heap-side [NoDup] of addresses). *)
+    granularity ([pool_invs] minus the heap-side [NoDup] of addresses);
+    [pool_run_covers], the index-based [pool_cell_covers]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.

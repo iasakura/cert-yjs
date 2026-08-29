@@ -13,7 +13,9 @@
       unmodeled delete-set struct), with no predicate per field on purpose.
     - the run-granular pool (plan-item-run-split stage 2): [locs_wf] (the
       heap half of the pool invariants), [own_type_pool_runs dq locs p] and
-      the cell-level readings [locs_of] / [own_type_pool_runs_of].
+      the cell-level reading [own_type_pool_runs_of]; [own_store_runs s
+      str], the store at a [store_state_runs] (the cell-level state
+      existential), which the stage-2 [_runs] specs are stated over.
     - [own_store_struct s st]: THE store at its cell-level state, the fields
       with the invariants every method preserves ([store_invs]). Every
       store-internal method is specified over it, whole; [own_store] is the
