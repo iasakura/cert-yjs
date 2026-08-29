@@ -71,8 +71,10 @@ tombstone bit. The content pin travels through `items_string_explode`,
 and the restore direction needs no new facts because the run is
 unchanged through a borrow. Next: convert the borrow call sites file by
 file (`text/Delete.v`'s flip loop is the natural first consumer of
-`_update_gen_node`), then `own_dll_acc` / `own_dll_split` /
-`own_dll_insert_middle` node forms as their sites convert.
+`_update_gen_node`; `own_dll_acc_node` and the exposed spelled-length pin
+`length (items_string (ic_run c)) = length (ic_run c)` landed with the
+groundwork), then `own_dll_split` / `own_dll_insert_middle` node forms as
+their sites convert.
 
 ## 1. The problem
 
