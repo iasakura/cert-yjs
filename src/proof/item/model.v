@@ -30,7 +30,8 @@
       (runs told apart by index, not address), and the split surgery
       [split_run_left] / [split_run_right] / [split_runs]; the index-based
       forms of the pool statements: [runs_start_at] / [runs_end_at],
-      [origins_resolved] (cursor indices), [runs_integrate_splice].
+      [origins_resolved] (cursor indices), [runs_integrate_splice], and
+      [runs_within]: every run after a step sits inside a run before it.
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
       app-morphic ([runs_flatten_app]).
@@ -304,6 +305,13 @@ Definition runs_disjoint (runs : list ItemRun) : Prop :=
     run_client r1 = run_client r2 →
     (run_clock r1 + length (run_items r1) <= run_clock r2)%nat ∨
     (run_clock r2 + length (run_items r2) <= run_clock r1)%nat.
+
+(** [runs_within before after]: every run of [after] sits inside a
+    same-client run of [before]'s clock range: the loc-free [cells_within]. *)
+Definition runs_within (before after : list ItemRun) : Prop :=
+  ∀ r, r ∈ after -> ∃ r0, r0 ∈ before ∧ run_client r = run_client r0 ∧
+    (run_clock r0 <= run_clock r)%nat ∧
+    (run_clock r + length (run_items r) <= run_clock r0 + length (run_items r0))%nat.
 
 (** Splitting the [k]-th run at offset [o]: the left half keeps the first [o]
     items, the right half the rest, both inheriting the tombstone bit (the

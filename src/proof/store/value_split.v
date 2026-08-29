@@ -20,6 +20,13 @@
     - [pool_cell_covers] translates to the projected pool and back
       ([pool_cell_covers_to_run] / [pool_run_covers_to_cell]): what carries
       [GetNode]'s postcondition to [(locs, p)].
+    - under parent coherence the location-keyed statements translate to slot
+      indices and back: [cell_starts_at_to_run] / [cell_ends_at_to_run],
+      [pool_run_starts_at_to_cell] / [pool_run_ends_at_to_cell], and both at
+      ONE slot under the address [NoDup] ([cell_starts_ends_at_to_run]);
+      [split_types_update_rel] projects onto [pool_after_split]
+      ([split_types_update_rel_to_pool]): what carries the splitAtAndGet
+      postconditions to [(locs, p)].
     - the split projects along [cell_run] ([cell_run_split_left] /
       [cell_run_split_right], [split_cells_runs]; [cell_covers_clock_run]),
       the fresh node's address being all the pure [split_runs] does not see,
@@ -359,6 +366,306 @@ Lemma cell_covers_clock_run (c : item_cell) (k : nat) :
   cell_covers_clock c k ↔ run_covers_clock (cell_run c) k.
 Proof. reflexivity. Qed.
 
+(** [split_types_update_rel] at the projected pools: the loc-identified
+    clauses become index facts through [all_cells_same_loc_same_slot], the
+    [w64] clock and client readings become [nat] under the id no-wrap
+    bounds, and the client-run growth rides [client_run_runs]. The premises
+    are what the heap layer extracts per pool: parent coherence
+    ([own_ytype_cells]'s [Hcpar]), the id bounds
+    ([own_type_pool_id_bounds]), nonempty runs ([own_type_pool_runs_wf])
+    and [pool_invs]. *)
+Lemma split_types_update_rel_to_pool (before after : gmap loc type_state)
+    (w : item_cell) (parent : loc) (tsw : type_state) (k : nat) :
+  before !! parent = Some tsw ->
+  ty_cells tsw !! k = Some w ->
+  (∀ q ts c, before !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  (∀ q ts c, after !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  (∀ c, c ∈ all_cells before -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells before -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells after -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells after -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells before -> ic_run c ≠ []) ->
+  (∀ c, c ∈ all_cells after -> ic_run c ≠ []) ->
+  pool_invs before -> pool_invs after ->
+  split_types_update_rel before after w ->
+  pool_after_split (pool_of before) (pool_of after) parent k.
+Proof.
+  move=> Htsw Hkw Hparb Hpara Hckb Hclb Hcka Hcla Hneb Hnea Hinvb Hinva Hrel.
+  have [Hfb [Hndb [Hdjb Hocb]]] := Hinvb.
+  have [Hfa [Hnda [Hdja Hoca]]] := Hinva.
+  destruct Hrel as (H1 & H2 & H3 & H4 & H5 & H6 & H7 & H8 & H9).
+  have Hzb : ∀ c, c ∈ all_cells before ->
+      uint.Z (cell_clock c) = Z.of_nat (run_clock (cell_run c)).
+  { move=> c Hc. have := Hckb c Hc.
+    rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  have Hza : ∀ c, c ∈ all_cells after ->
+      uint.Z (cell_clock c) = Z.of_nat (run_clock (cell_run c)).
+  { move=> c Hc. have := Hcka c Hc.
+    rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  split_and!.
+  - (* per-type document and flatten survive *)
+    move=> q tm' Hq. rewrite /pool_of lookup_fmap in Hq.
+    destruct (after !! q) as [ts'|] eqn:Ha; simplify_eq/=.
+    destruct (H1 q ts' Ha) as (ts & Hb & Harr & Hflat).
+    exists (type_model_of ts). rewrite lookup_fmap Hb /=.
+    split_and!; [done | exact Harr |].
+    rewrite /type_model_of /= -!run_flatten_runs //.
+  - (* no type disappears *)
+    move=> q [tm Hq]. rewrite /pool_of lookup_fmap in Hq.
+    destruct (before !! q) as [ts|] eqn:Hb; simplify_eq/=.
+    destruct (H2 q (mk_is_Some _ _ Hb)) as [ts' Ha].
+    rewrite /pool_of lookup_fmap Ha /=. by eexists.
+  - (* client-run growth *)
+    move=> c.
+    destruct (decide (Z.of_nat c < 2^64)%Z) as [Hc | Hc].
+    + have Hcw : uint.nat (W64 c) = c by word.
+      have Heqa := client_run_runs after (W64 c) Hcka Hcla Hnea Hnda Hdja.
+      have Heqb := client_run_runs before (W64 c) Hckb Hclb Hneb Hndb Hdjb.
+      rewrite Hcw in Heqa Heqb.
+      rewrite -Heqa -Heqb !length_fmap.
+      exact (H3 (W64 c)).
+    + have Hemp : ∀ (X : gmap loc type_state),
+          (∀ c0, c0 ∈ all_cells X -> (Z.of_nat (run_client (cell_run c0)) < 2^64)%Z) ->
+          length (client_runs (pool_of X) c) = 0%nat.
+      { move=> X HX.
+        rewrite /client_runs (Permutation_length (merge_sort_Permutation _ _)).
+        destruct (filter (λ r, run_client r = c) (all_runs (pool_of X)))
+          as [| r rest] eqn:E; [done | exfalso].
+        have Hr : r ∈ filter (λ r0, run_client r0 = c) (all_runs (pool_of X)).
+        { rewrite E. apply list_elem_of_here. }
+        apply list_elem_of_filter in Hr as [HP Hmem].
+        rewrite all_runs_pool_of in Hmem.
+        apply list_elem_of_fmap in Hmem as (c0 & -> & Hc0).
+        have HB := HX c0 Hc0. rewrite HP in HB. lia. }
+      rewrite (Hemp after Hcla) (Hemp before Hclb). lia.
+  - (* runs away from the split spot survive *)
+    move=> q tm k' r Hq Hr Hne.
+    rewrite /pool_of lookup_fmap in Hq.
+    destruct (before !! q) as [ts|] eqn:Hb; simplify_eq/=.
+    rewrite /type_model_of /= list_lookup_fmap in Hr.
+    destruct (ty_cells ts !! k') as [c|] eqn:Hk'; simplify_eq/=.
+    have Hlocne : ic_loc c ≠ ic_loc w.
+    { move=> Heq.
+      destruct (all_cells_same_loc_same_slot before q parent ts tsw k' k c w
+                  Hndb Hb Hk' Htsw Hkw Heq) as (?&?&?).
+      apply Hne. by split. }
+    have Hmem : c ∈ all_cells before.
+    { apply all_cells_elem_of. exists q, ts.
+      split; [done | exact (list_elem_of_lookup_2 _ _ _ Hk')]. }
+    rewrite all_runs_pool_of. apply list_elem_of_fmap_2.
+    exact (H4 c Hmem Hlocne).
+  - (* a covered clock stays covered in the same type *)
+    move=> ccl clk q tm k0 r Hq Hr Hccl Hle Hlt.
+    rewrite /pool_of lookup_fmap in Hq.
+    destruct (before !! q) as [ts|] eqn:Hb; simplify_eq/=.
+    rewrite /type_model_of /= list_lookup_fmap in Hr.
+    destruct (ty_cells ts !! k0) as [c|] eqn:Hk0; simplify_eq/=.
+    have Hmem : c ∈ all_cells before.
+    { apply all_cells_elem_of. exists q, ts.
+      split; [done | exact (list_elem_of_lookup_2 _ _ _ Hk0)]. }
+    have HleZ : (uint.Z (cell_clock c) <= Z.of_nat clk)%Z.
+    { rewrite (Hzb c Hmem). lia. }
+    have HltZ : (Z.of_nat clk < uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z.
+    { rewrite (Hzb c Hmem).
+      have Hl : length (run_items (cell_run c)) = length (ic_run c) by reflexivity.
+      rewrite -Hl. lia. }
+    destruct (H5 (cell_client c) (Z.of_nat clk) c Hmem eq_refl HleZ HltZ)
+      as (c' & Hm' & Hccl' & HleZ' & HltZ' & Hpar' & Hdisj').
+    have Hm'2 := Hm'.
+    apply all_cells_elem_of in Hm'2 as (q' & ts' & Ha' & Hcts').
+    have Hq' : q' = q.
+    { rewrite -(Hpara q' ts' c' Ha' Hcts') Hpar' (Hparb q ts c Hb (list_elem_of_lookup_2 _ _ _ Hk0)) //. }
+    subst q'.
+    apply list_elem_of_lookup_1 in Hcts' as (k' & Hk').
+    exists (type_model_of ts'), k', (cell_run c').
+    rewrite lookup_fmap Ha' /=.
+    have Hclient : run_client (cell_run c') = run_client (cell_run c).
+    { have Huz := f_equal uint.Z Hccl'.
+      move: Huz. rewrite !cell_client_run /=.
+      have HB1 := Hcla c' Hm'. have HB2 := Hclb c Hmem.
+      move=> Huz. word. }
+    split_and!.
+    + done.
+    + rewrite /type_model_of /= list_lookup_fmap Hk' //.
+    + exact Hclient.
+    + have Hz' := Hza c' Hm'. lia.
+    + have Hz' := Hza c' Hm'. lia.
+    + destruct Hdisj' as [-> | (Hcw & Hlen & _)].
+      * by left.
+      * right. subst c.
+        destruct (all_cells_same_loc_same_slot before q parent ts tsw k0 k w w
+                    Hndb Hb Hk0 Htsw Hkw eq_refl) as (Hq2 & Hk2 & _).
+        split_and!; [exact Hq2 | exact Hk2 |].
+        rewrite /cell_run /=. exact Hlen.
+  - (* one-char types untouched *)
+    move=> q tm tm' Hq Hq'.
+    rewrite /pool_of lookup_fmap in Hq.
+    destruct (before !! q) as [ts|] eqn:Hb; simplify_eq/=.
+    rewrite /pool_of lookup_fmap in Hq'.
+    destruct (after !! q) as [ts'|] eqn:Ha; simplify_eq/=.
+    rewrite /type_model_of /= Forall_fmap.
+    move=> Hunit.
+    have Hcu : Forall cell_unit (ty_cells ts).
+    { eapply Forall_impl; [exact Hunit |]. move=> c Hc. exact Hc. }
+    rewrite (H6 q ts ts' Hb Ha Hcu) //.
+  - (* every new run sits inside an old one's range *)
+    rewrite /runs_within !all_runs_pool_of.
+    move=> r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
+    destruct (H7 c Hc) as (c0 & Hc0 & Hcl0 & Hle0 & Hhi0).
+    exists (cell_run c0). split_and!.
+    + apply list_elem_of_fmap_2. exact Hc0.
+    + have Huz := f_equal uint.Z Hcl0.
+      move: Huz. rewrite !cell_client_run /=.
+      have HB1 := Hcla c Hc. have HB0 := Hclb c0 Hc0.
+      move=> Huz. word.
+    + have Hz1 := Hza c Hc. have Hz0 := Hzb c0 Hc0. lia.
+    + have Hz1 := Hza c Hc. have Hz0 := Hzb c0 Hc0.
+      have Hl1 : length (run_items (cell_run c)) = length (ic_run c) by reflexivity.
+      have Hl0 : length (run_items (cell_run c0)) = length (ic_run c0) by reflexivity.
+      rewrite Hl1 Hl0. lia.
+  - (* live chars refine *)
+    rewrite /runs_live_refine !all_runs_pool_of.
+    move=> r' Hr' Hdel.
+    apply list_elem_of_fmap in Hr' as (c' & -> & Hc').
+    rewrite /cell_run /= in Hdel.
+    destruct (H8 c' Hc' Hdel) as (c & Hc & Hcdel & Hsub).
+    exists (cell_run c). split_and!.
+    + apply list_elem_of_fmap_2. exact Hc.
+    + rewrite /cell_run /= Hcdel //.
+    + move=> y Hy. rewrite /cell_run /= in Hy |- *. exact (Hsub y Hy).
+  - (* dead chars kept *)
+    rewrite /runs_dead_kept !all_runs_pool_of.
+    move=> r Hr Hdel y Hy.
+    apply list_elem_of_fmap in Hr as (c & -> & Hc).
+    rewrite /cell_run /= in Hdel Hy.
+    destruct (H9 c Hc Hdel y Hy) as (c' & Hc' & Hcdel' & Hy').
+    exists (cell_run c'). split_and!.
+    + apply list_elem_of_fmap_2. exact Hc'.
+    + rewrite /cell_run /= Hcdel' //.
+    + rewrite /cell_run /=. exact Hy'.
+Qed.
+(** [cell_starts_at] / [cell_ends_at] at the projected pool: the node named
+    by its type and run index, its address the address list's entry there;
+    and back. Needs the parent coherence (every cell sits in its own
+    parent's list, [own_ytype_cells]'s per-type fact), which ties
+    [ic_parent] to the pool key. *)
+Lemma cell_starts_at_to_run (types : gmap loc type_state) (parent l : loc) (d : YjsId) :
+  (∀ q ts c, types !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  cell_starts_at types parent l d ->
+  ∃ k, pool_run_starts_at (pool_of types) parent k d ∧
+       (locs_of types !! parent) ≫= (λ ls, ls !! k) = Some l.
+Proof.
+  intros Hpar (c & Hmem & Hloc & Hcpar & Hd).
+  apply all_cells_elem_of in Hmem as (q & ts & Hts & Hcts).
+  have Hq : q = parent by (rewrite -(Hpar q ts c Hts Hcts) Hcpar //).
+  subst q l d.
+  apply list_elem_of_lookup_1 in Hcts as (k & Hk).
+  exists k. split.
+  - exists (type_model_of ts).
+    rewrite /pool_of lookup_fmap Hts /=. split; [done |].
+    exists (cell_run c).
+    rewrite /type_model_of /= list_lookup_fmap Hk /=. done.
+  - rewrite /locs_of lookup_fmap Hts /= list_lookup_fmap Hk //.
+Qed.
+
+Lemma pool_run_starts_at_to_cell (types : gmap loc type_state) (parent : loc) (k : nat) (d : YjsId) (l : loc) :
+  (∀ q ts c, types !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  pool_run_starts_at (pool_of types) parent k d ->
+  (locs_of types !! parent) ≫= (λ ls, ls !! k) = Some l ->
+  cell_starts_at types parent l d.
+Proof.
+  intros Hpar (tm & Hp & (r & Hr & Hd)) Hl.
+  rewrite /pool_of lookup_fmap in Hp.
+  destruct (types !! parent) as [ts|] eqn:Hts; simplify_eq/=.
+  rewrite /type_model_of /= list_lookup_fmap in Hr.
+  destruct (ty_cells ts !! k) as [c|] eqn:Hk; simplify_eq/=.
+  rewrite /locs_of lookup_fmap Hts /= list_lookup_fmap Hk /= in Hl. simplify_eq/=.
+  have Hcts := list_elem_of_lookup_2 _ _ _ Hk.
+  exists c. split_and!.
+  - apply all_cells_elem_of. by exists parent, ts.
+  - done.
+  - exact (Hpar parent ts c Hts Hcts).
+  - done.
+Qed.
+
+(** Starts and ends at the SAME address land on the same slot (the address
+    determines it, [all_cells_same_loc_same_slot]). *)
+Lemma cell_starts_ends_at_to_run (types : gmap loc type_state) (parent l : loc) (d1 d2 : YjsId) :
+  (∀ q ts c, types !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  NoDup (ic_loc <$> all_cells types) ->
+  cell_starts_at types parent l d1 ->
+  cell_ends_at types parent l d2 ->
+  ∃ k, pool_run_starts_at (pool_of types) parent k d1 ∧
+       pool_run_ends_at (pool_of types) parent k d2 ∧
+       (locs_of types !! parent) ≫= (λ ls, ls !! k) = Some l.
+Proof.
+  intros Hpar Hnd Hst Hen.
+  have Hen' := Hen.
+  destruct Hst as (c1 & Hmem1 & Hloc1 & Hcpar1 & Hd1).
+  destruct Hen' as (c2 & Hmem2 & Hloc2 & Hcpar2 & Hcl2 & Hck2).
+  have Hm1 := Hmem1. apply all_cells_elem_of in Hm1 as (q1 & ts1 & Hq1 & Hc1).
+  have Hm2 := Hmem2. apply all_cells_elem_of in Hm2 as (q2 & ts2 & Hq2 & Hc2).
+  apply list_elem_of_lookup_1 in Hc1 as (k1 & Hk1).
+  apply list_elem_of_lookup_1 in Hc2 as (k2 & Hk2).
+  have Hll : ic_loc c1 = ic_loc c2 by congruence.
+  destruct (all_cells_same_loc_same_slot types q1 q2 ts1 ts2 k1 k2 c1 c2
+              Hnd Hq1 Hk1 Hq2 Hk2 Hll) as (Hqq & Hkk & Hcc).
+  subst q2 k2 c2.
+  have Hqp : q1 = parent by (rewrite -(Hpar q1 ts1 c1 Hq1 (list_elem_of_lookup_2 _ _ _ Hk1)) Hcpar1 //).
+  subst q1 l.
+  exists k1. split_and!.
+  - exists (type_model_of ts1).
+    rewrite /pool_of lookup_fmap Hq1 /=. split; [done |].
+    exists (cell_run c1).
+    rewrite /type_model_of /= list_lookup_fmap Hk1 /=. done.
+  - exists (type_model_of ts1).
+    rewrite /pool_of lookup_fmap Hq1 /=. split; [done |].
+    exists (cell_run c1).
+    rewrite /type_model_of /= list_lookup_fmap Hk1 /=. split_and!; [done | exact Hcl2 | exact Hck2].
+  - rewrite /locs_of lookup_fmap Hq1 /= list_lookup_fmap Hk1 //.
+Qed.
+
+Lemma cell_ends_at_to_run (types : gmap loc type_state) (parent l : loc) (d : YjsId) :
+  (∀ q ts c, types !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  cell_ends_at types parent l d ->
+  ∃ k, pool_run_ends_at (pool_of types) parent k d ∧
+       (locs_of types !! parent) ≫= (λ ls, ls !! k) = Some l.
+Proof.
+  intros Hpar (c & Hmem & Hloc & Hcpar & Hcl & Hck).
+  apply all_cells_elem_of in Hmem as (q & ts & Hts & Hcts).
+  have Hq : q = parent by (rewrite -(Hpar q ts c Hts Hcts) Hcpar //).
+  subst q l.
+  apply list_elem_of_lookup_1 in Hcts as (k & Hk).
+  exists k. split.
+  - exists (type_model_of ts).
+    rewrite /pool_of lookup_fmap Hts /=. split; [done |].
+    exists (cell_run c).
+    rewrite /type_model_of /= list_lookup_fmap Hk /=. done.
+  - rewrite /locs_of lookup_fmap Hts /= list_lookup_fmap Hk //.
+Qed.
+
+Lemma pool_run_ends_at_to_cell (types : gmap loc type_state) (parent : loc) (k : nat) (d : YjsId) (l : loc) :
+  (∀ q ts c, types !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  pool_run_ends_at (pool_of types) parent k d ->
+  (locs_of types !! parent) ≫= (λ ls, ls !! k) = Some l ->
+  cell_ends_at types parent l d.
+Proof.
+  intros Hpar (tm & Hp & (r & Hr & Hcl & Hck)) Hl.
+  rewrite /pool_of lookup_fmap in Hp.
+  destruct (types !! parent) as [ts|] eqn:Hts; simplify_eq/=.
+  rewrite /type_model_of /= list_lookup_fmap in Hr.
+  destruct (ty_cells ts !! k) as [c|] eqn:Hk; simplify_eq/=.
+  rewrite /locs_of lookup_fmap Hts /= list_lookup_fmap Hk /= in Hl. simplify_eq/=.
+  have Hcts := list_elem_of_lookup_2 _ _ _ Hk.
+  exists c. split_and!.
+  - apply all_cells_elem_of. by exists parent, ts.
+  - done.
+  - exact (Hpar parent ts c Hts Hcts).
+  - exact Hcl.
+  - exact Hck.
+Qed.
 Lemma split_cells_locs (cells : list item_cell) (k o : nat) (r_loc : loc) :
   ic_loc <$> split_cells cells k o r_loc = split_locs (ic_loc <$> cells) k r_loc.
 Proof.

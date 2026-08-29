@@ -30,7 +30,11 @@
     registered type at its [type_model]; [all_runs] and the clock-sorted
     [client_runs]; [run_pool_invs], the pure pool invariants at run
     granularity ([pool_invs] minus the heap-side [NoDup] of addresses);
-    [pool_run_covers], the index-based [pool_cell_covers]. *)
+    [pool_run_covers], the index-based [pool_cell_covers];
+    [pool_run_starts_at] / [pool_run_ends_at], the run at an index begins /
+    ends at an id; [runs_live_refine] / [runs_dead_kept], the pool-level
+    live-character refinement and tombstone preservation; [pool_after_split],
+    what one [splitNode] leaves of the pool at run granularity. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -74,11 +78,65 @@ Definition all_runs (p : pool) : list ItemRun :=
 Definition client_runs (p : pool) (c : nat) : list ItemRun :=
   merge_sort run_le (filter (λ r, run_client r = c) (all_runs p)).
 
+(** [pool_run_starts_at p parent k d] / [pool_run_ends_at p parent k d]:
+    the [k]-th run of the type at [parent] starts (ends) at the id [d]: the
+    index-based [cell_starts_at] / [cell_ends_at], whose node address is the
+    address list's [k]-th entry. *)
+Definition pool_run_starts_at (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=
+  ∃ tm, p !! parent = Some tm ∧ runs_start_at (tm_runs tm) k d.
+
+Definition pool_run_ends_at (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=
+  ∃ tm, p !! parent = Some tm ∧ runs_end_at (tm_runs tm) k d.
+
 (** [run_pool_invs p]: the pure pool invariants at run granularity: every
     run's clock range fits a word, same-client ranges are disjoint (runs
     told apart by index), and every head's same-client origin is older.
     [pool_invs]'s [NoDup] of node addresses is a heap fact and stays with
     the heap layer. *)
+(** [runs_live_refine p p'] / [runs_dead_kept p p']: the tombstone-side
+    refinements at run granularity (the loc-free [live_refine] /
+    [dead_chars_kept]): every live char of [p'] was live in [p], and every
+    dead char of [p] stays dead in [p']. *)
+Definition runs_live_refine (p p' : pool) : Prop :=
+  ∀ r', r' ∈ all_runs p' -> run_deleted r' = false ->
+    ∃ r, r ∈ all_runs p ∧ run_deleted r = false ∧
+         (∀ y, y ∈ run_items r' -> y ∈ run_items r).
+
+Definition runs_dead_kept (p p' : pool) : Prop :=
+  ∀ r, r ∈ all_runs p -> run_deleted r = true -> ∀ y, y ∈ run_items r ->
+    ∃ r', r' ∈ all_runs p' ∧ run_deleted r' = true ∧ y ∈ run_items r'.
+
+(** [pool_after_split p p' parent k]: [p'] is [p] after one node split at
+    the [k]-th run of the type at [parent]: the loc-free
+    [split_types_update_rel], its address clauses become index facts. Each
+    type's document and flatten survive, no type disappears, a client's run
+    list grows by at most one, every run away from the split spot survives,
+    a covered clock stays covered in the same type (the covering run is the
+    survivor, or a half of the split run; which half is an address-map
+    matter the spec states on [sr_locs]), a type of
+    one-char runs is untouched, every new run sits inside an old one's
+    range, and live and dead chars refine. *)
+Definition pool_after_split (p p' : pool) (parent : loc) (k : nat) : Prop :=
+  (∀ q tm', p' !! q = Some tm' ->
+     ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm ∧
+           runs_flatten (tm_runs tm') = runs_flatten (tm_runs tm)) ∧
+  (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ∧
+  (∀ c, (length (client_runs p' c) <= S (length (client_runs p c)))%nat) ∧
+  (∀ q tm k' r, p !! q = Some tm -> tm_runs tm !! k' = Some r ->
+     ¬ (q = parent ∧ k' = k) -> r ∈ all_runs p') ∧
+  (∀ (ccl clk : nat) q tm k0 r, p !! q = Some tm -> tm_runs tm !! k0 = Some r ->
+     run_client r = ccl -> (run_clock r <= clk)%nat ->
+     (clk < run_clock r + length (run_items r))%nat ->
+     ∃ tm' k' r', p' !! q = Some tm' ∧ tm_runs tm' !! k' = Some r' ∧
+       run_client r' = ccl ∧ (run_clock r' <= clk)%nat ∧
+       (clk < run_clock r' + length (run_items r'))%nat ∧
+       (r' = r ∨ (q = parent ∧ k0 = k ∧ (1 < length (run_items r))%nat))) ∧
+  (∀ q tm tm', p !! q = Some tm -> p' !! q = Some tm' ->
+     Forall (λ r, length (run_items r) = 1%nat) (tm_runs tm) -> tm' = tm) ∧
+  runs_within (all_runs p) (all_runs p') ∧
+  runs_live_refine p p' ∧
+  runs_dead_kept p p'.
+
 (** [pool_run_covers p parent k d]: the [k]-th run of the type at [parent]
     has the char with id [d]: the index-based [pool_cell_covers]. *)
 Definition pool_run_covers (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=

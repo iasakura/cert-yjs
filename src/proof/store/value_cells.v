@@ -50,8 +50,10 @@
       [flip_pool_perm] for the tombstone flip). These are the two shapes every
       store operation takes.
     - [all_cells] under a registry insert ([all_cells_insert(_snoc/_empty)],
-      [all_cells_lookup]); a coherent registry's type domain grows with its
-      bindings ([registry_coh_dom_mono]).
+      [all_cells_lookup]); under the address [NoDup] one location pins its
+      type, slot and cell ([all_cells_same_loc_same_slot]); a coherent
+      registry's type domain grows with its bindings
+      ([registry_coh_dom_mono]).
     - [client_run] is stable under the same steps ([merge_sort_loc_*],
       [client_run_loc_tail] / [_insert] / [_other], [cellctr_locs_run_perm]),
       and [cell_kp] determines client, clock, location and [cell_pr].
@@ -961,6 +963,46 @@ Proof.
   pose proof (all_cells_insert types parent ts ts Hp) as H.
   rewrite (insert_id types parent ts Hp) in H. exact H.
 Qed.
+
+(** Under the address [NoDup], a location determines its slot: two cells at
+    the same address sit in the same type at the same index (what turns the
+    loc-identified clauses of the step records into index facts). *)
+Lemma all_cells_same_loc_same_slot (types : gmap loc type_state)
+    (q1 q2 : loc) (ts1 ts2 : type_state) (k1 k2 : nat) (c1 c2 : item_cell) :
+  NoDup (ic_loc <$> all_cells types) ->
+  types !! q1 = Some ts1 -> ty_cells ts1 !! k1 = Some c1 ->
+  types !! q2 = Some ts2 -> ty_cells ts2 !! k2 = Some c2 ->
+  ic_loc c1 = ic_loc c2 ->
+  q1 = q2 ∧ k1 = k2 ∧ c1 = c2.
+Proof.
+  move=> Hnd Hq1 Hk1 Hq2 Hk2 Hloc.
+  have Hqq : q1 = q2.
+  { destruct (decide (q1 = q2)) as [| Hne]; [done | exfalso].
+    have Hperm := all_cells_lookup types q1 ts1 Hq1.
+    have Hnd2 : NoDup (ic_loc <$> (ty_cells ts1 ++ all_cells (delete q1 types))).
+    { by rewrite -Hperm. }
+    rewrite fmap_app in Hnd2. apply NoDup_app in Hnd2.
+    destruct Hnd2 as (_ & Hdisj & _).
+    apply (Hdisj (ic_loc c1)).
+    - apply list_elem_of_fmap_2. exact (list_elem_of_lookup_2 _ _ _ Hk1).
+    - rewrite Hloc. apply list_elem_of_fmap_2.
+      apply all_cells_elem_of. exists q2, ts2.
+      rewrite lookup_delete_ne; last congruence.
+      split; [exact Hq2 | exact (list_elem_of_lookup_2 _ _ _ Hk2)]. }
+  subst q2. have Hts : ts2 = ts1 by congruence. subst ts2.
+  have Hperm := all_cells_lookup types q1 ts1 Hq1.
+  have Hnd2 : NoDup (ic_loc <$> (ty_cells ts1 ++ all_cells (delete q1 types))).
+  { by rewrite -Hperm. }
+  rewrite fmap_app in Hnd2. apply NoDup_app in Hnd2.
+  destruct Hnd2 as (Hnd1 & _ & _).
+  have Hl1 : (ic_loc <$> ty_cells ts1) !! k1 = Some (ic_loc c2)
+    by rewrite list_lookup_fmap Hk1 /= Hloc.
+  have Hl2 : (ic_loc <$> ty_cells ts1) !! k2 = Some (ic_loc c2)
+    by rewrite list_lookup_fmap Hk2.
+  have Hkk : k1 = k2 := NoDup_lookup _ _ _ _ Hnd1 Hl1 Hl2.
+  subst k2. have Hc : c2 = c1 by congruence. subst c2. done.
+Qed.
+
 
 (** Replacing the registered type at [parent] by one whose cell list is the old
     one with one cell [c] appended (modulo permutation) grows the document-global
