@@ -11,14 +11,20 @@ and `runs_integrate_splice`, with `origins_linked` an iff to the resolved
 form plus the `node_loc` readings, and `integrate_splice` projecting onto
 `runs_integrate_splice`. The sorted `client_runs` theory
 landed with stage 2 part 1 (`client_runs` over `pool`, `client_run_runs`),
-closing stage 1's pure side. Stage 2 part 2 (in flight): `store_state_runs`
-/ `own_store_runs` (the cell-level state existential) and the derived
-`_runs` specs, `GetNode` and `splitNode` so far, each the cell-level spec
-plus pure projection transport. Next there: run-level counterparts of the
-step records (`split_types_update_rel` and kin, whose `ic_loc` clauses
-become index facts) for `splitAtAndGetLeft` / `Right`, then `Integrate`
-(`runs_integrate_splice` is ready), the registry family, and
-`applyUpdate`.
+closing stage 1's pure side. Stage 2 part 2 (merged, PR #160):
+`store_state_runs` / `own_store_runs` (the cell-level state existential)
+and the derived `_runs` specs for `GetNode` and `splitNode`, each the
+cell-level spec plus pure projection transport. Part 3 (2026-08-29): the
+run-level split step record `pool_after_split` (with `pool_run_starts_at`
+/ `pool_run_ends_at`, `runs_live_refine` / `runs_dead_kept`,
+`runs_within`), its transport `split_types_update_rel_to_pool`, the slot
+translations (`cell_starts_ends_at_to_run` and kin, over
+`all_cells_same_loc_same_slot`) and the derived
+`wp_store__splitAtAndGetLeft_runs` / `Right_runs`. The position clauses
+(which half of the split sits at which slot) deliberately stay out of
+`pool_after_split`: they are address-map facts, so the specs state them on
+`sr_locs`. Next there: `Integrate` (`runs_integrate_splice` is ready), the
+registry family, the delete path, and `applyUpdate`.
 
 ## 1. The problem
 
