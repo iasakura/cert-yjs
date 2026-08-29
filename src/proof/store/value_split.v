@@ -3,7 +3,8 @@
     [store/value_live.v].
 
     Definitions
-    - the split surgery [split_cell_left] / [split_cell_right] / [split_cells].
+    - the split surgery [split_cell_left] / [split_cell_right] / [split_cells],
+      and its address-list half [split_locs].
     - the records one store step hands its caller: [split_types_update_rel] (one
       [splitNode]), [repair_types_update_rel] (the at-most-two splits of [repair])
       and [delete_types_update_rel] (the unbounded split-and-tombstone loop of the
@@ -16,9 +17,13 @@
       [origins_covered] / [repair_parent] / [origins_split].
 
     Laws
+    - [pool_cell_covers] translates to the projected pool and back
+      ([pool_cell_covers_to_run] / [pool_run_covers_to_cell]): what carries
+      [GetNode]'s postcondition to [(locs, p)].
     - the split projects along [cell_run] ([cell_run_split_left] /
       [cell_run_split_right], [split_cells_runs]; [cell_covers_clock_run]),
-      the fresh node's address being all the pure [split_runs] does not see;
+      the fresh node's address being all the pure [split_runs] does not see,
+      and [split_locs] on the address list ([split_cells_locs]);
       [runs_start_at] / [runs_end_at] over a projected cell list read back on
       the cells ([runs_start_at_fmap] / [runs_end_at_fmap]).
     - splitting a node is invisible to the model: [split_cells_flatten] and
@@ -81,6 +86,15 @@ Definition split_cells (cells : list item_cell) (k o : nat) (r_loc : loc) : list
   match cells !! k with
   | Some c => take k cells ++ [split_cell_left c o; split_cell_right c o r_loc] ++ drop (S k) cells
   | None => cells
+  end.
+
+(** The address-list half of the split: the left half keeps the node's
+    address at [k], the fresh right half's address [r_loc] lands after it
+    (what [split_cells] does to [ic_loc <$> cells], [split_cells_locs]). *)
+Definition split_locs (ls : list loc) (k : nat) (r_loc : loc) : list loc :=
+  match ls !! k with
+  | Some l => take k ls ++ [l; r_loc] ++ drop (S k) ls
+  | None => ls
   end.
 
 (** [split_types_update_rel before after w]: what one [splitNode] step does to
@@ -258,6 +272,41 @@ Definition origins_split (types : gmap loc type_state) (input : IntegrateInput (
 
 (* ===== lemmas ============================================================= *)
 
+(** [pool_cell_covers] at the projected pool: the covering cell named by its
+    type and run index plus its address ([locs_of]); and back. What
+    translates [GetNode]'s postcondition to [(locs, p)]. *)
+Lemma pool_cell_covers_to_run (types : gmap loc type_state) (c : item_cell) (d : YjsId) :
+  pool_cell_covers types c d ->
+  ∃ parent k, pool_run_covers (pool_of types) parent k d ∧
+    (locs_of types !! parent) ≫= (λ ls, ls !! k) = Some (ic_loc c).
+Proof.
+  intros [Hmem Hcov].
+  apply all_cells_elem_of in Hmem as (parent & ts & Hts & Hcts).
+  apply list_elem_of_lookup_1 in Hcts as (k & Hk).
+  exists parent, k. split.
+  - exists (type_model_of ts), (cell_run c).
+    rewrite /pool_of lookup_fmap Hts /=.
+    split_and!; [done | | by apply cell_covers_run].
+    rewrite /type_model_of /= list_lookup_fmap Hk //.
+  - rewrite /locs_of lookup_fmap Hts /= list_lookup_fmap Hk //.
+Qed.
+
+Lemma pool_run_covers_to_cell (types : gmap loc type_state) (parent : loc) (k : nat) (d : YjsId) :
+  pool_run_covers (pool_of types) parent k d ->
+  ∃ c, pool_cell_covers types c d.
+Proof.
+  intros (tm & r & Hp & Hr & Hcov).
+  rewrite /pool_of lookup_fmap in Hp.
+  destruct (types !! parent) as [ts|] eqn:Hts; simplify_eq/=.
+  rewrite /type_model_of /= list_lookup_fmap in Hr.
+  destruct (ty_cells ts !! k) as [c|] eqn:Hk; simplify_eq/=.
+  exists c. split.
+  - apply all_cells_elem_of. exists parent, ts.
+    split; [done | exact (list_elem_of_lookup_2 _ _ _ Hk)].
+  - by apply cell_covers_run.
+Qed.
+
+
 (** The split surgery projects along [cell_run]: the fresh node's address
     [r_loc] is the only thing the pure [split_runs] does not see
     (docs/plan-item-run-split.md stage 1). *)
@@ -309,6 +358,14 @@ Qed.
 Lemma cell_covers_clock_run (c : item_cell) (k : nat) :
   cell_covers_clock c k ↔ run_covers_clock (cell_run c) k.
 Proof. reflexivity. Qed.
+
+Lemma split_cells_locs (cells : list item_cell) (k o : nat) (r_loc : loc) :
+  ic_loc <$> split_cells cells k o r_loc = split_locs (ic_loc <$> cells) k r_loc.
+Proof.
+  rewrite /split_cells /split_locs list_lookup_fmap.
+  destruct (cells !! k) as [c|] eqn:Hk; simpl; [| reflexivity].
+  rewrite !fmap_app !fmap_cons /= !fmap_take !fmap_drop //.
+Qed.
 
 (** [cell_covers] at a runtime id, read in the [w64] arithmetic the node
     lookups compute with; needs the cell's ids to fit a word. *)

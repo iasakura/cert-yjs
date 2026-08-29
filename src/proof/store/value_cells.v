@@ -17,8 +17,10 @@
       [registry_lookup_or_create].
     - where a step's cells come from: [cells_within] (inside an old cell) and
       [cells_within_or_from] (inside an old cell or an integrated input).
-    - [type_model_of] / [pool_of]: a type state and the pool at their
-      run-granular models (plan-item-run-split stage 2).
+    - [type_model_of] / [pool_of] / [locs_of]: a type state and the pool at
+      their run-granular models and address map; [store_state_runs] /
+      [state_runs_of], the store state with the pool as [(sr_locs, sr_pool)]
+      (plan-item-run-split stage 2).
     - what one integrate asks and does, at the cell level: [pool_clock_below]
       (the new item is its client's newest), [origins_linked] (the item's
       links are the cells its resolved origins designate), [integrate_splice]
@@ -36,7 +38,9 @@
       [runs_integrate_splice] ([integrate_splice_runs]); [all_runs] of a
       projected pool is the projected [all_cells] ([all_runs_pool_of]) and
       [pool_invs] gives [run_pool_invs] under the id no-wrap bounds
-      ([run_pool_invs_of]); [client_run] projects onto [client_runs]
+      ([run_pool_invs_of]); [pool_of] / [locs_of] under a registry insert
+      and the address map's flattening ([pool_of_insert] / [locs_of_insert]
+      / [locs_of_concat]); [client_run] projects onto [client_runs]
       ([client_run_runs], the clock orders agreeing and same-client clocks
       unique).
     - the pool invariants are preserved by appending a fresh cell ([*_snoc],
@@ -466,6 +470,35 @@ Definition type_model_of (ts : type_state) : type_model :=
 Definition pool_of (types : gmap loc type_state) : pool :=
   type_model_of <$> types.
 
+(** The address map of a cell-level pool: each type's node addresses (the
+    heap half [pool_of] forgets). *)
+Definition locs_of (types : gmap loc type_state) : gmap loc (list loc) :=
+  (λ ts, ic_loc <$> ty_cells ts) <$> types.
+
+(** [store_state_runs]: [store_state] at run granularity
+    (plan-item-run-split stage 2): the type pool as [(sr_locs, sr_pool)]
+    instead of the cell-level [ss_types]. [state_runs_of] projects;
+    [own_store_runs] ([store/heap.v]) is the store at such a state. *)
+Record store_state_runs := MkStoreStateRuns {
+  sr_client : w64;
+  sr_clock : w64;
+  sr_locs : gmap loc (list loc);
+  sr_pool : pool;
+  sr_bind : gmap P loc;
+  sr_pending : list (TId * IntegrateInput (A := A));
+  sr_pending_deletes : list delete_span;
+}.
+
+Definition state_runs_of (st : store_state) : store_state_runs :=
+  MkStoreStateRuns (ss_client st) (ss_clock st)
+    (locs_of (ss_types st)) (pool_of (ss_types st))
+    (ss_bind st) (ss_pending st) (ss_pending_deletes st).
+
+#[export] Instance settable_store_state_runs : Settable store_state_runs :=
+  settable! MkStoreStateRuns
+    <sr_client; sr_clock; sr_locs; sr_pool; sr_bind; sr_pending; sr_pending_deletes>.
+
+
 Lemma all_runs_pool_of (types : gmap loc type_state) :
   all_runs (pool_of types) = cell_run <$> all_cells types.
 Proof.
@@ -488,6 +521,25 @@ Proof.
   - apply (cells_range_disjoint_runs _ Hckb Hclb Hnd). exact Hdisj.
   - intros r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
     apply cell_origin_clk_run. exact (Hoc c Hc).
+Qed.
+
+(** [pool_of] / [locs_of] under a registry insert, and the address map's
+    flattening: what carries a store step's [<[parent := ...]>] post and the
+    freshness of a new node address to the run-granular reading. *)
+Lemma pool_of_insert (types : gmap loc type_state) (parent : loc) (ts : type_state) :
+  pool_of (<[parent := ts]> types) = <[parent := type_model_of ts]> (pool_of types).
+Proof. rewrite /pool_of fmap_insert //. Qed.
+
+Lemma locs_of_insert (types : gmap loc type_state) (parent : loc) (ts : type_state) :
+  locs_of (<[parent := ts]> types) = <[parent := ic_loc <$> ty_cells ts]> (locs_of types).
+Proof. rewrite /locs_of fmap_insert //. Qed.
+
+Lemma locs_of_concat (types : gmap loc type_state) :
+  concat ((map_to_list (locs_of types)).*2) = ic_loc <$> all_cells types.
+Proof.
+  rewrite /locs_of /all_cells map_to_list_fmap concat_fmap.
+  f_equal. rewrite -!list_fmap_compose.
+  apply list_fmap_ext. move=> i [k ts] Hl. reflexivity.
 Qed.
 
 (** [client_run] projects onto [client_runs]: the [merge_sort cell_le] run

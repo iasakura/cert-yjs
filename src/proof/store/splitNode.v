@@ -2128,4 +2128,54 @@ Proof using Type*.
 Qed.
 
 
+(** [store.splitNode] at run granularity (plan-item-run-split stage 2):
+    split the [k]-th run of the type at [parent] at offset [diff]; the pool
+    gets the two halves ([split_runs]) and the address list the fresh right
+    half's address after [k] ([split_locs]), the fresh address new to the
+    WHOLE address map. Derived from the cell-level spec through the
+    projections. *)
+Lemma wp_store__splitNode_runs (s : loc) (str : store_state_runs)
+    (parent l : loc) (ls : list loc) (tm : type_model) (k : nat) (r : ItemRun) (diff : w64) :
+  sr_pool str !! parent = Some tm ->
+  sr_locs str !! parent = Some ls ->
+  tm_runs tm !! k = Some r ->
+  ls !! k = Some l ->
+  (0 < uint.nat diff < length (run_items r))%nat ->
+  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+    s @! (go.PointerType yjs.store) @! "splitNode" #l #diff
+  {{{ (rloc : loc), RET (#l, #rloc);
+      own_store_runs s
+        (str <| sr_pool := <[parent := MkTypeModel (split_runs (tm_runs tm) k (uint.nat diff)) (tm_arr tm)]> (sr_pool str) |>
+             <| sr_locs := <[parent := split_locs ls k rloc]> (sr_locs str) |>) ∗
+      ⌜rloc ≠ null ∧ rloc ∉ concat ((map_to_list (sr_locs str)).*2)⌝ }}}.
+Proof using Type*.
+  move=> Hp Hl Hr Hlk Hdiff.
+  iIntros (Φ) "(#Hpkg & Hruns) HΦ".
+  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
+  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
+  rewrite /pool_of lookup_fmap in Hp.
+  destruct (types !! parent) as [ts|] eqn:Hts; simplify_eq/=.
+  rewrite /locs_of lookup_fmap Hts /= in Hl. simplify_eq/=.
+  destruct ts as [cells arr].
+  rewrite /type_model_of /= list_lookup_fmap in Hr.
+  destruct (cells !! k) as [cw|] eqn:Hck; simplify_eq/=.
+  rewrite list_lookup_fmap Hck /= in Hlk. simplify_eq/=.
+  wp_apply (wp_store__splitNode s (MkStoreState client k0 types bind pend pdel)
+              parent cells arr k cw diff Hts Hck Hdiff with "[$Hcells]").
+  iIntros (rloc) "(Hcells & %Hfresh)".
+  iApply ("HΦ" $! rloc).
+  iSplitL.
+  { iExists (MkStoreState client k0
+      (<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types)
+      bind pend pdel).
+    iEval (simpl) in "Hcells".
+    iSplitR; [| iFrame "Hcells"].
+    iPureIntro.
+    rewrite /state_runs_of /= pool_of_insert locs_of_insert /type_model_of /=.
+    rewrite split_cells_runs split_cells_locs //. }
+  iPureIntro.
+  destruct Hfresh as [Hnn Hnotin]. split; [exact Hnn |].
+  simpl. rewrite locs_of_concat. exact Hnotin.
+Qed.
+
 End store_update.

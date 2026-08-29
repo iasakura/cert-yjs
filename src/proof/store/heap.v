@@ -13,7 +13,9 @@
       unmodeled delete-set struct), with no predicate per field on purpose.
     - the run-granular pool (plan-item-run-split stage 2): [locs_wf] (the
       heap half of the pool invariants), [own_type_pool_runs dq locs p] and
-      the cell-level readings [locs_of] / [own_type_pool_runs_of].
+      the cell-level reading [own_type_pool_runs_of]; [own_store_runs s
+      str], the store at a [store_state_runs] (the cell-level state
+      existential), which the stage-2 [_runs] specs are stated over.
     - [own_store_struct s st]: THE store at its cell-level state, the fields
       with the invariants every method preserves ([store_invs]). Every
       store-internal method is specified over it, whole; [own_store] is the
@@ -711,10 +713,6 @@ Definition own_type_pool_runs (dq : dfrac)
     ∃ ls, ⌜locs !! parent = Some ls⌝ ∗
           own_ytype_runs parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
 
-(** The address map of a cell-level pool: each type's node addresses. *)
-Definition locs_of (types : gmap loc type_state) : gmap loc (list loc) :=
-  (λ ts, ic_loc <$> ty_cells ts) <$> types.
-
 (** The cell-level pool at its run-granular reading: [own_type_pool] with
     the address [NoDup] is [own_type_pool_runs] at [locs_of] / [pool_of]. *)
 Lemma own_type_pool_runs_of (types : gmap loc type_state) :
@@ -723,10 +721,7 @@ Lemma own_type_pool_runs_of (types : gmap loc type_state) :
   own_type_pool_runs (DfracOwn 1) (locs_of types) (pool_of types).
 Proof.
   iIntros (Hnd) "Hpool".
-  have Hloceq : concat ((map_to_list (locs_of types)).*2) = ic_loc <$> all_cells types.
-  { rewrite /locs_of /all_cells map_to_list_fmap concat_fmap.
-    f_equal. rewrite -!list_fmap_compose.
-    apply list_fmap_ext. move=> i [k ts] Hl. reflexivity. }
+  have Hloceq := locs_of_concat types.
   iSplitR.
   { iPureIntro. rewrite /locs_wf /locs_of /pool_of !dom_fmap_L.
     split_and!; [done | by rewrite -/(locs_of types) Hloceq |].
@@ -1126,6 +1121,15 @@ Proof.
   iSplitL; last by iPureIntro.
   iFrame.
 Qed.
+
+(** [own_store_runs s str]: THE store at its run-granular state
+    (plan-item-run-split stage 2): [own_store_struct] at some cell-level
+    state projecting to [str]. Migration scaffolding: the stage-2 [_runs]
+    specs are stated over it and derived from the cell-level ones through
+    the [pool_of] / [locs_of] projections; stage 3 makes it primitive and
+    retires the cell-level state. *)
+Definition own_store_runs (s : loc) (str : store_state_runs) : iProp Σ :=
+  ∃ st : store_state, ⌜state_runs_of st = str⌝ ∗ own_store_struct s st.
 
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗

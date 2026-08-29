@@ -11,7 +11,14 @@ and `runs_integrate_splice`, with `origins_linked` an iff to the resolved
 form plus the `node_loc` readings, and `integrate_splice` projecting onto
 `runs_integrate_splice`. The sorted `client_runs` theory
 landed with stage 2 part 1 (`client_runs` over `pool`, `client_run_runs`),
-closing stage 1's pure side.
+closing stage 1's pure side. Stage 2 part 2 (in flight): `store_state_runs`
+/ `own_store_runs` (the cell-level state existential) and the derived
+`_runs` specs, `GetNode` and `splitNode` so far, each the cell-level spec
+plus pure projection transport. Next there: run-level counterparts of the
+step records (`split_types_update_rel` and kin, whose `ic_loc` clauses
+become index facts) for `splitAtAndGetLeft` / `Right`, then `Integrate`
+(`runs_integrate_splice` is ready), the registry family, and
+`applyUpdate`.
 
 ## 1. The problem
 
