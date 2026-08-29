@@ -23,7 +23,12 @@
       predicate).
 
     The method proofs are [ytype/newYType.v], [ytype/findPos.v] and
-    [ytype/Text.v]. *)
+    [ytype/Text.v].
+
+    Run granularity (plan-item-run-split stage 2): [own_ytype_runs parent dq
+    ls tm], the type's DLL at its address list and [type_model], the cell
+    list existential; [own_ytype_runs_intro] reads it off the cells-level
+    view. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -71,6 +76,19 @@ Definition own_ytype (parent : loc) (dq : dfrac) (m : list (YjsItem A * bool)) :
     "Hcells" ∷ own_ytype_cells parent dq cells m.*1 ∗
     "%Hm" ∷ ⌜m = cells_model cells⌝.
 
+(** [own_ytype_runs parent dq ls tm]: the type at its run-granular model
+    (plan-item-run-split stage 2): the DLL nodes' addresses are [ls] and the
+    runs they hold are [tm_runs tm], the cell list existential
+    ([cell_run <$> cells = tm_runs tm], [ic_loc <$> cells = ls]). The
+    [(locs, p)]-keyed pool ([store/heap.v]'s [own_type_pool_runs]) is a
+    big-op of these. *)
+Definition own_ytype_runs (parent : loc) (dq : dfrac)
+    (ls : list loc) (tm : type_model) : iProp Σ :=
+  ∃ (cells : list item_cell),
+    "Hcells" ∷ own_ytype_cells parent dq cells (tm_arr tm) ∗
+    "%Hruns" ∷ ⌜cell_run <$> cells = tm_runs tm⌝ ∗
+    "%Hls" ∷ ⌜ic_loc <$> cells = ls⌝.
+
 (* ===== lemmas ============================================================= *)
 
 (** Introduction: any cells-level view is the public view at its cell model
@@ -100,5 +118,12 @@ Proof.
   iSplitL; last (iPureIntro; exact Hrepr).
   iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
 Qed.
+
+(** [own_ytype_runs] is the cells-level view at the projected model. *)
+Lemma own_ytype_runs_intro (parent : loc) (dq : dfrac)
+    (cells : list item_cell) (arr : list (YjsItem A)) :
+  own_ytype_cells parent dq cells arr -∗
+  own_ytype_runs parent dq (ic_loc <$> cells) (MkTypeModel (cell_run <$> cells) arr).
+Proof. iIntros "H". iExists cells. by iFrame "H". Qed.
 
 End ytype_heap.
