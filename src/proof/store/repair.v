@@ -1,5 +1,8 @@
 (** store update path, repair + applyUpdate layer: [getOrCreateYType],
-    [store.repair] ([wp_store__repair]), [integrateDecoded],
+    [store.repair] ([wp_store__repair]), their run-granular derived forms
+    [wp_store__getOrCreateYType_runs] / [wp_store__repair_runs] (over
+    [own_store_runs], stepping the registry by [pool_lookup_or_create] and
+    the pool by [pool_after_repair]), [integrateDecoded],
     [depsArrived], the [wire_*] drain machinery and the [own_store]-level
     certificate specs. Split out of [store/GetNode]; Requires the
     [store/splitNode] pool lemmas. Same boilerplate / [#[local]]
@@ -168,6 +171,33 @@ Proof using Type*.
     iIntros (p) "(Hcells & %Hfresh)".
     iApply ("HΦ" $! p _ _). iEval (simpl) in "Hcells". simpl. iFrame "Hcells".
     iPureIntro. right. split_and!; [exact Hb | exact Hfresh | reflexivity | reflexivity].
+Qed.
+
+(** [store.getOrCreateYType] at run granularity: the registry step read on
+    [(locs, p)] ([pool_lookup_or_create]). Derived from
+    [wp_store__getOrCreateYType] through the [pool_of] / [locs_of]
+    projections. *)
+Lemma wp_store__getOrCreateYType_runs (s : loc) (str : store_state_runs) (nm : go_string) :
+  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+    s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
+  {{{ (q : loc) (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #q;
+      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>
+                            <| sr_bind := bind' |>) ∗
+      ⌜pool_lookup_or_create (sr_pool str) (sr_locs str) (sr_bind str) nm q p' locs' bind'⌝ }}}.
+Proof using Type*.
+  iIntros (Φ) "(#Hpkg & Hruns) HΦ".
+  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
+  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
+  wp_apply (wp_store__getOrCreateYType s (MkStoreState client k0 types bind pend pdel) nm
+              with "[$Hpkg $Hcells]").
+  iIntros (q types' bind') "(Hcells & %Hstep)".
+  iEval (simpl) in "Hcells".
+  iApply ("HΦ" $! q (pool_of types') (locs_of types') bind').
+  iSplitL.
+  { iExists (MkStoreState client k0 types' bind' pend pdel).
+    iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
+  iPureIntro.
+  exact (registry_lookup_or_create_to_pool types types' bind bind' nm q Hstep).
 Qed.
 
 (* ----- the general repair (issue #28 stage D2b) ---------------------------
@@ -584,6 +614,73 @@ Proof using Type*.
       split.
       { rewrite HinlN //. }
       { rewrite HinrN //. }
+Qed.
+
+(** [store.repair] at run granularity: the origin slots [(q, k)] instead of
+    cells ([pool_origins_covered], [pool_repair_parent]); the item comes back
+    linked to run-boundary addresses read off the updated address map
+    ([pool_origins_split]) and the pool steps by [pool_after_repair].
+    Derived from [wp_store__repair] through the [pool_of] / [locs_of]
+    projections. *)
+Lemma wp_store__repair_runs (s item_l pname : loc)
+    (input : IntegrateInput (A := A)) (opn : option go_string)
+    (str : store_state_runs) (orL orR : option (loc * nat)) (p_t : loc) :
+  pool_origins_covered (sr_pool str) input orL orR ->
+  pool_repair_parent (sr_bind str) opn orL orR p_t ->
+  {{{ is_pkg_init yjs ∗
+      own_linked_item item_l input null null null ∗
+      is_parent_name pname opn ∗
+      own_store_runs s str }}}
+    s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
+  {{{ (lft rgt : loc) (p' : pool) (locs' : gmap loc (list loc)), RET #();
+      own_linked_item item_l input p_t lft rgt ∗
+      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
+      ⌜pool_after_repair (sr_pool str) p'⌝ ∗
+      ⌜pool_origins_split p' locs' input orL orR lft rgt⌝ }}}.
+Proof using Type*.
+  move=> Hcov Hpar.
+  iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hruns) HΦ".
+  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
+  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
+  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
+  have Hpool0 : pool_invs types := proj1 Hinvs0.
+  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct (own_type_pool_parents with "Htypes") as %Hparb.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbndb.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfb.
+  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types bind pend pdel) Hinvs0
+               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  have Hnd : NoDup (ic_loc <$> all_cells types) := proj1 (proj2 Hpool0).
+  destruct (pool_origins_covered_to_cell types input orL orR Hnd Hcov)
+    as (ocL & ocR & Hcovc & HsL & HsR).
+  have Hparc : repair_parent bind opn ocL ocR p_t
+    := pool_repair_parent_to_cell types bind opn orL orR ocL ocR p_t Hparb HsL HsR Hpar.
+  wp_apply (wp_store__repair s item_l pname input opn
+              (MkStoreState client k0 types bind pend pdel) ocL ocR p_t Hcovc Hparc
+              with "[$Hpkg $Hlinked $HisPN $Hcells]").
+  iIntros (lft rgt types2) "(Hlinked & Hcells & %Hstep & %Hsplit)".
+  iEval (simpl) in "Hcells".
+  iDestruct "Hcells" as "(Hfields1 & %Hinvs1)".
+  have Hpool1 : pool_invs types2 := proj1 Hinvs1.
+  iDestruct "Hfields1" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct (own_type_pool_parents with "Htypes") as %Hpara.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnda.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfa.
+  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types2 bind pend pdel) Hinvs1
+               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  iApply ("HΦ" $! lft rgt (pool_of types2) (locs_of types2)).
+  iFrame "Hlinked".
+  iSplitL.
+  { iExists (MkStoreState client k0 types2 bind pend pdel).
+    iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
+  iPureIntro. split.
+  - exact (repair_types_update_rel_to_pool types types2
+             (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
+             (λ c Hc, proj2 (Hbnda c Hc)) (λ c Hc, proj1 (Hbnda c Hc))
+             (λ c Hc, proj1 (Hwfb c Hc)) (λ c Hc, proj1 (Hwfa c Hc))
+             Hpool0 Hpool1 Hstep).
+  - exact (origins_split_to_pool types types2 input orL orR ocL ocR lft rgt
+             Hparb Hpara HsL HsR Hsplit).
 Qed.
 
 (** [store.repair], creation form (issue #54): an ORIGIN-FREE decoded item

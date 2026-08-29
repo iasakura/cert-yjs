@@ -14,7 +14,10 @@
       [sorted_client_run] (one client's clock-sorted node list), [cell_starts_at]
       / [cell_ends_at] (the cell at a location begins / ends at an id),
       [fresh_loc] (a location no pool cell uses), and the [repair] contract
-      [origins_covered] / [repair_parent] / [origins_split].
+      [origins_covered] / [repair_parent] / [origins_split]; that contract at
+      run granularity, [pool_origins_covered] / [pool_repair_parent] /
+      [pool_origins_split] (slots [(q, k)] instead of cells, the addresses
+      read off the address map).
 
     Laws
     - [pool_cell_covers] translates to the projected pool and back
@@ -25,8 +28,9 @@
       [pool_run_starts_at_to_cell] / [pool_run_ends_at_to_cell], and both at
       ONE slot under the address [NoDup] ([cell_starts_ends_at_to_run]);
       [split_types_update_rel] projects onto [pool_after_split]
-      ([split_types_update_rel_to_pool]): what carries the splitAtAndGet
-      postconditions to [(locs, p)].
+      ([split_types_update_rel_to_pool]) and [repair_types_update_rel] onto
+      [pool_after_repair] ([repair_types_update_rel_to_pool]): what carries
+      the splitAtAndGet and [repair] postconditions to [(locs, p)].
     - the split projects along [cell_run] ([cell_run_split_left] /
       [cell_run_split_right], [split_cells_runs]; [cell_covers_clock_run]),
       the fresh node's address being all the pure [split_runs] does not see,
@@ -274,6 +278,81 @@ Definition origins_split (types : gmap loc type_state) (input : IntegrateInput (
   match in_rightOriginId input, ocR with
   | Some d, Some c0 => cell_starts_at types (ic_parent c0) rgt d
   | None, None => rgt = null
+  | _, _ => False
+  end.
+
+(** [pool_origin_covered p o or]: the optional origin id [o] resolves at run
+    granularity to the optional pool slot [or = Some (q, k)]: the [k]-th run
+    of the type at [q] has the char [o]. [origin_covered] with the cell
+    named by its indices. *)
+Definition pool_origin_covered (p : pool) (o : option YjsId)
+    (or : option (loc * nat)) : Prop :=
+  match o, or with
+  | Some d, Some qk => pool_run_covers p qk.1 qk.2 d
+  | None, None => True
+  | _, _ => False
+  end.
+
+(** [pool_origins_covered p input orL orR]: [origins_covered] at run
+    granularity: both origins resolve ([pool_origin_covered]), and when they
+    fall in one slot the left origin precedes the right one in clock. *)
+Definition pool_origins_covered (p : pool) (input : IntegrateInput (A := A))
+    (orL orR : option (loc * nat)) : Prop :=
+  pool_origin_covered p (in_originId input) orL ∧
+  pool_origin_covered p (in_rightOriginId input) orR ∧
+  match in_originId input, in_rightOriginId input, orL, orR with
+  | Some a, Some b, Some qkL, Some qkR => qkL = qkR -> (clock a < clock b)%nat
+  | _, _, _, _ => True
+  end.
+
+(** [pool_repair_parent bind opn orL orR p_t]: [repair_parent] at run
+    granularity: the type a repaired item lands in is the root bound to its
+    wire parent name, otherwise the pool key of its left, else right, origin
+    slot. *)
+Definition pool_repair_parent (bind : gmap P loc) (opn : option go_string)
+    (orL orR : option (loc * nat)) (p_t : loc) : Prop :=
+  match opn with
+  | Some nm => bind !! nm = Some p_t
+  | None => match orL with
+            | Some qk => p_t = qk.1
+            | None => match orR with
+                      | Some qk => p_t = qk.1
+                      | None => False
+                      end
+            end
+  end.
+
+(** [pool_origins_split p' locs' input orL orR lft rgt]: [origins_split] at
+    run granularity: after [repair] the item's [left] is the address of a
+    run ending at the left origin, its [right] of a run starting at the
+    right origin, each in its origin slot's type and read off the address
+    map [locs']; an absent origin links to [null]. *)
+Definition pool_origins_split (p' : pool) (locs' : gmap loc (list loc))
+    (input : IntegrateInput (A := A)) (orL orR : option (loc * nat))
+    (lft rgt : loc) : Prop :=
+  match in_originId input, orL with
+  | Some d, Some qk => ∃ k', pool_run_ends_at p' qk.1 k' d ∧
+                             (locs' !! qk.1) ≫= (λ ls, ls !! k') = Some lft
+  | None, None => lft = null
+  | _, _ => False
+  end ∧
+  match in_rightOriginId input, orR with
+  | Some d, Some qk => ∃ k', pool_run_starts_at p' qk.1 k' d ∧
+                             (locs' !! qk.1) ≫= (λ ls, ls !! k') = Some rgt
+  | None, None => rgt = null
+  | _, _ => False
+  end.
+
+(** [origin_slot_names types or oc]: the slot [(q, k)] names the cell [oc]
+    in the registry [types]: how the run-granular repair premises pick the
+    concrete cells the cell-level contract mentions
+    ([pool_origins_covered_to_cell] produces it,
+    [pool_repair_parent_to_cell] / [origins_split_to_pool] consume it). *)
+Definition origin_slot_names (types : gmap loc type_state)
+    (or : option (loc * nat)) (oc : option item_cell) : Prop :=
+  match or, oc with
+  | Some qk, Some c => ∃ ts, types !! qk.1 = Some ts ∧ ty_cells ts !! qk.2 = Some c
+  | None, None => True
   | _, _ => False
   end.
 
@@ -546,6 +625,104 @@ Proof.
     + rewrite /cell_run /= Hcdel' //.
     + rewrite /cell_run /=. exact Hy'.
 Qed.
+
+(** [repair_types_update_rel] carried to the projected pool: the loc-free
+    clauses of [pool_after_repair], each read off its cell counterpart the
+    way [split_types_update_rel_to_pool] does, minus the split-spot ones.
+    What carries [wp_store__repair]'s step record to [(locs, p)]
+    ([wp_store__repair_runs]). *)
+Lemma repair_types_update_rel_to_pool (before after : gmap loc type_state) :
+  (∀ c, c ∈ all_cells before -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells before -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells after -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells after -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells before -> ic_run c ≠ []) ->
+  (∀ c, c ∈ all_cells after -> ic_run c ≠ []) ->
+  pool_invs before -> pool_invs after ->
+  repair_types_update_rel before after ->
+  pool_after_repair (pool_of before) (pool_of after).
+Proof.
+  move=> Hckb Hclb Hcka Hcla Hneb Hnea Hinvb Hinva Hrel.
+  have [Hfb [Hndb [Hdjb Hocb]]] := Hinvb.
+  have [Hfa [Hnda [Hdja Hoca]]] := Hinva.
+  destruct Hrel as (H1 & H2 & H3 & H4 & H5 & H6).
+  have Hzb : ∀ c, c ∈ all_cells before ->
+      uint.Z (cell_clock c) = Z.of_nat (run_clock (cell_run c)).
+  { move=> c Hc. have := Hckb c Hc.
+    rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  have Hza : ∀ c, c ∈ all_cells after ->
+      uint.Z (cell_clock c) = Z.of_nat (run_clock (cell_run c)).
+  { move=> c Hc. have := Hcka c Hc.
+    rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  split_and!.
+  - move=> q tm' Hq. rewrite /pool_of lookup_fmap in Hq.
+    destruct (after !! q) as [ts'|] eqn:Ha; simplify_eq/=.
+    destruct (H1 q ts' Ha) as (ts & Hb & Harr & Hflat).
+    exists (type_model_of ts). rewrite lookup_fmap Hb /=.
+    split_and!; [done | exact Harr |].
+    rewrite /type_model_of /= -!run_flatten_runs //.
+  - move=> q [tm Hq]. rewrite /pool_of lookup_fmap in Hq.
+    destruct (before !! q) as [ts|] eqn:Hb; simplify_eq/=.
+    destruct (H2 q (mk_is_Some _ _ Hb)) as [ts' Ha].
+    rewrite /pool_of lookup_fmap Ha /=. by eexists.
+  - move=> c.
+    destruct (decide (Z.of_nat c < 2^64)%Z) as [Hc | Hc].
+    + have Hcw : uint.nat (W64 c) = c by word.
+      have Heqa := client_run_runs after (W64 c) Hcka Hcla Hnea Hnda Hdja.
+      have Heqb := client_run_runs before (W64 c) Hckb Hclb Hneb Hndb Hdjb.
+      rewrite Hcw in Heqa Heqb.
+      rewrite -Heqa -Heqb !length_fmap.
+      exact (H3 (W64 c)).
+    + have Hemp : ∀ (X : gmap loc type_state),
+          (∀ c0, c0 ∈ all_cells X -> (Z.of_nat (run_client (cell_run c0)) < 2^64)%Z) ->
+          length (client_runs (pool_of X) c) = 0%nat.
+      { move=> X HX.
+        rewrite /client_runs (Permutation_length (merge_sort_Permutation _ _)).
+        destruct (filter (λ r, run_client r = c) (all_runs (pool_of X)))
+          as [| r rest] eqn:E; [done | exfalso].
+        have Hr : r ∈ filter (λ r0, run_client r0 = c) (all_runs (pool_of X)).
+        { rewrite E. apply list_elem_of_here. }
+        apply list_elem_of_filter in Hr as [HP Hmem].
+        rewrite all_runs_pool_of in Hmem.
+        apply list_elem_of_fmap in Hmem as (c0 & -> & Hc0).
+        have HB := HX c0 Hc0. rewrite HP in HB. lia. }
+      rewrite (Hemp after Hcla) (Hemp before Hclb). lia.
+  - move=> q tm tm' Hq Hq'.
+    rewrite /pool_of lookup_fmap in Hq.
+    destruct (before !! q) as [ts|] eqn:Hb; simplify_eq/=.
+    rewrite /pool_of lookup_fmap in Hq'.
+    destruct (after !! q) as [ts'|] eqn:Ha; simplify_eq/=.
+    rewrite /type_model_of /= Forall_fmap.
+    move=> Hunit.
+    have Hcu : Forall cell_unit (ty_cells ts).
+    { eapply Forall_impl; [exact Hunit |]. move=> c Hc. exact Hc. }
+    rewrite (H4 q ts ts' Hb Ha Hcu) //.
+  - rewrite /runs_within !all_runs_pool_of.
+    move=> r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
+    destruct (H5 c Hc) as (c0 & Hc0 & Hcl0 & Hle0 & Hhi0).
+    exists (cell_run c0). split_and!.
+    + apply list_elem_of_fmap_2. exact Hc0.
+    + have Huz := f_equal uint.Z Hcl0.
+      move: Huz. rewrite !cell_client_run /=.
+      have HB1 := Hcla c Hc. have HB0 := Hclb c0 Hc0.
+      move=> Huz. word.
+    + have Hz1 := Hza c Hc. have Hz0 := Hzb c0 Hc0. lia.
+    + have Hz1 := Hza c Hc. have Hz0 := Hzb c0 Hc0.
+      have Hl1 : length (run_items (cell_run c)) = length (ic_run c) by reflexivity.
+      have Hl0 : length (run_items (cell_run c0)) = length (ic_run c0) by reflexivity.
+      rewrite Hl1 Hl0. lia.
+  - rewrite /runs_live_refine !all_runs_pool_of.
+    move=> r' Hr' Hdel.
+    apply list_elem_of_fmap in Hr' as (c' & -> & Hc').
+    rewrite /cell_run /= in Hdel.
+    destruct (H6 c' Hc' Hdel) as (c & Hc & Hcdel & Hsub).
+    exists (cell_run c). split_and!.
+    + apply list_elem_of_fmap_2. exact Hc.
+    + rewrite /cell_run /= Hcdel //.
+    + move=> y Hy. rewrite /cell_run /= in Hy |- *. exact (Hsub y Hy).
+Qed.
 (** [cell_starts_at] / [cell_ends_at] at the projected pool: the node named
     by its type and run index, its address the address list's entry there;
     and back. Needs the parent coherence (every cell sits in its own
@@ -665,6 +842,109 @@ Proof.
   - exact (Hpar parent ts c Hts Hcts).
   - exact Hcl.
   - exact Hck.
+Qed.
+
+(** The run-granular repair premises give the cell-level ones: the origin
+    slots name their cells (under the address [NoDup], one cell for both
+    origins when the slots coincide), and the pool key is the named cell's
+    parent (under parent coherence). *)
+Lemma pool_origins_covered_to_cell (types : gmap loc type_state)
+    (input : IntegrateInput (A := A)) (orL orR : option (loc * nat)) :
+  NoDup (ic_loc <$> all_cells types) ->
+  pool_origins_covered (pool_of types) input orL orR ->
+  ∃ ocL ocR,
+    origins_covered types input ocL ocR ∧
+    origin_slot_names types orL ocL ∧ origin_slot_names types orR ocR.
+Proof.
+  move=> Hnd Hcov. destruct Hcov as (HcL & HcR & Hsame).
+  have Hpick : ∀ (o : option YjsId) (or : option (loc * nat)),
+      pool_origin_covered (pool_of types) o or ->
+      ∃ oc, origin_covered types o oc ∧ origin_slot_names types or oc.
+  { move=> o or.
+    destruct o as [d|]; destruct or as [[q k]|]; rewrite /pool_origin_covered //=.
+    - intros (tm & r & Hp & Hr & Hcovr).
+      rewrite /pool_of lookup_fmap in Hp.
+      destruct (types !! q) as [ts|] eqn:Hts; simplify_eq/=.
+      rewrite /type_model_of /= list_lookup_fmap in Hr.
+      destruct (ty_cells ts !! k) as [c|] eqn:Hk; simplify_eq/=.
+      exists (Some c). split_and!.
+      + split.
+        * apply all_cells_elem_of. exists q, ts.
+          split; [done | exact (list_elem_of_lookup_2 _ _ _ Hk)].
+        * by apply cell_covers_run.
+      + exists ts. by split.
+    - move=> _. by exists None. }
+  destruct (Hpick _ _ HcL) as (ocL & HoL & HsL).
+  destruct (Hpick _ _ HcR) as (ocR & HoR & HsR).
+  exists ocL, ocR. split_and!; [| exact HsL | exact HsR].
+  split_and!; [exact HoL | exact HoR |].
+  destruct (in_originId input) as [a|]; destruct (in_rightOriginId input) as [b|]; try done.
+  destruct ocL as [cL|]; destruct ocR as [cR|]; try done.
+  destruct orL as [[qL kL]|]; [| done]. destruct orR as [[qR kR]|]; [| done].
+  move=> Heq.
+  destruct HsL as (tsL & HtsL & HkL). destruct HsR as (tsR & HtsR & HkR).
+  destruct (all_cells_same_loc_same_slot types qL qR tsL tsR kL kR cL cR
+              Hnd HtsL HkL HtsR HkR (f_equal ic_loc Heq)) as (Hq & Hk & _).
+  apply Hsame. rewrite Hq Hk //.
+Qed.
+
+Lemma pool_repair_parent_to_cell (types : gmap loc type_state) (bind : gmap P loc)
+    (opn : option go_string) (orL orR : option (loc * nat))
+    (ocL ocR : option item_cell) (p_t : loc) :
+  (∀ q ts c, types !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  origin_slot_names types orL ocL ->
+  origin_slot_names types orR ocR ->
+  pool_repair_parent bind opn orL orR p_t ->
+  repair_parent bind opn ocL ocR p_t.
+Proof.
+  move=> Hcoh HsL HsR.
+  rewrite /pool_repair_parent /repair_parent.
+  destruct opn as [nm|]; [done |].
+  destruct orL as [[qL kL]|]; destruct ocL as [cL|]; try done.
+  - destruct HsL as (tsL & HtsL & HkL).
+    move=> /= ->.
+    rewrite (Hcoh qL tsL cL HtsL (list_elem_of_lookup_2 _ _ _ HkL)) //.
+  - destruct orR as [[qR kR]|]; destruct ocR as [cR|]; try done.
+    destruct HsR as (tsR & HtsR & HkR).
+    move=> /= ->.
+    rewrite (Hcoh qR tsR cR HtsR (list_elem_of_lookup_2 _ _ _ HkR)) //.
+Qed.
+
+(** [origins_split] carried to [(locs, p)]: the boundary cells become
+    run-boundary slots of the updated pool, their addresses read off the
+    updated address map. What carries [wp_store__repair]'s postcondition to
+    the run-granular spec. *)
+Lemma origins_split_to_pool (types types2 : gmap loc type_state)
+    (input : IntegrateInput (A := A)) (orL orR : option (loc * nat))
+    (ocL ocR : option item_cell) (lft rgt : loc) :
+  (∀ q ts c, types !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  (∀ q ts c, types2 !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  origin_slot_names types orL ocL ->
+  origin_slot_names types orR ocR ->
+  origins_split types2 input ocL ocR lft rgt ->
+  pool_origins_split (pool_of types2) (locs_of types2) input orL orR lft rgt.
+Proof.
+  move=> Hcohb Hcoha HsL HsR [HL HR].
+  split.
+  - destruct (in_originId input) as [d|].
+    + destruct orL as [[qL kL]|]; [| by destruct ocL].
+      destruct ocL as [cL|]; [| done].
+      destruct HsL as (tsL & HtsL & HkL).
+      destruct HL as [Hlft Hends].
+      have Hq : ic_parent cL = qL
+        := Hcohb qL tsL cL HtsL (list_elem_of_lookup_2 _ _ _ HkL).
+      rewrite Hq in Hends. simpl.
+      exact (cell_ends_at_to_run types2 qL lft d Hcoha Hends).
+    + destruct orL as [qk|]; [by destruct ocL | destruct ocL as [cL|]; [done | exact HL]].
+  - destruct (in_rightOriginId input) as [d|].
+    + destruct orR as [[qR kR]|]; [| by destruct ocR].
+      destruct ocR as [cR|]; [| done].
+      destruct HsR as (tsR & HtsR & HkR).
+      have Hq : ic_parent cR = qR
+        := Hcohb qR tsR cR HtsR (list_elem_of_lookup_2 _ _ _ HkR).
+      rewrite Hq in HR. simpl.
+      exact (cell_starts_at_to_run types2 qR rgt d Hcoha HR).
+    + destruct orR as [qk|]; [by destruct ocR | destruct ocR as [cR|]; [done | exact HR]].
 Qed.
 Lemma split_cells_locs (cells : list item_cell) (k o : nat) (r_loc : loc) :
   ic_loc <$> split_cells cells k o r_loc = split_locs (ic_loc <$> cells) k r_loc.

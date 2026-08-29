@@ -14,7 +14,8 @@
       [pool_invs].
     - the registry coherence side conditions [doc_registry_coh] and
       [inputs_rooted_in_bind]; what [getOrCreateYType] does to the registry,
-      [registry_lookup_or_create].
+      [registry_lookup_or_create] ([pool_lookup_or_create] the same at run
+      granularity, with the address map).
     - where a step's cells come from: [cells_within] (inside an old cell) and
       [cells_within_or_from] (inside an old cell or an integrated input).
     - [type_model_of] / [pool_of] / [locs_of]: a type state and the pool at
@@ -42,7 +43,9 @@
       projected pool is the projected [all_cells] ([all_runs_pool_of]) and
       [pool_invs] gives [run_pool_invs] under the id no-wrap bounds
       ([run_pool_invs_of]) and [pool_run_clock_below] reads back on the
-      cells ([pool_run_clock_below_to_cell]); [pool_of] / [locs_of] under a
+      cells ([pool_run_clock_below_to_cell]);
+      [registry_lookup_or_create] carries to [(locs, p)]
+      ([registry_lookup_or_create_to_pool]); [pool_of] / [locs_of] under a
       registry insert
       and the address map's flattening ([pool_of_insert] / [locs_of_insert]
       / [locs_of_concat]); [client_run] projects onto [client_runs]
@@ -335,6 +338,18 @@ Definition registry_lookup_or_create (types : gmap loc type_state) (bind : gmap 
   (bind !! nm = None ∧ types !! p = None ∧
    types' = <[p := MkTypeState [] []]> types ∧ bind' = <[nm := p]> bind).
 
+(** [pool_lookup_or_create p ls bind nm q p' ls' bind']:
+    [registry_lookup_or_create] at run granularity, over the pool and its
+    address map: the root bound to [nm] handed back unchanged, or [nm] bound
+    to a fresh empty type at [q] (empty run list, empty address list). *)
+Definition pool_lookup_or_create (p : pool) (ls : gmap loc (list loc))
+    (bind : gmap P loc) (nm : P) (q : loc)
+    (p' : pool) (ls' : gmap loc (list loc)) (bind' : gmap P loc) : Prop :=
+  (bind !! nm = Some q ∧ p' = p ∧ ls' = ls ∧ bind' = bind) ∨
+  (bind !! nm = None ∧ p !! q = None ∧
+   p' = <[q := MkTypeModel [] []]> p ∧ ls' = <[q := []]> ls ∧
+   bind' = <[nm := q]> bind).
+
 Definition pool_invs (types : gmap loc type_state) : Prop :=
   (∀ c, c ∈ all_cells types -> cell_fits c) ∧
   NoDup (ic_loc <$> all_cells types) ∧
@@ -603,6 +618,25 @@ Proof. rewrite /pool_of fmap_insert //. Qed.
 Lemma locs_of_insert (types : gmap loc type_state) (parent : loc) (ts : type_state) :
   locs_of (<[parent := ts]> types) = <[parent := ic_loc <$> ty_cells ts]> (locs_of types).
 Proof. rewrite /locs_of fmap_insert //. Qed.
+
+(** [registry_lookup_or_create] carried to [(locs, p)]: what projects
+    [getOrCreateYType]'s postcondition ([wp_store__getOrCreateYType_runs]).
+    A miss inserts the empty type model and the empty address list. *)
+Lemma registry_lookup_or_create_to_pool (types types' : gmap loc type_state)
+    (bind bind' : gmap P loc) (nm : P) (q : loc) :
+  registry_lookup_or_create types bind nm q types' bind' ->
+  pool_lookup_or_create (pool_of types) (locs_of types) bind nm q
+    (pool_of types') (locs_of types') bind'.
+Proof.
+  intros [ (Hb & -> & ->) | (Hb & Hfresh & -> & ->) ].
+  - left. by split_and!.
+  - right. split_and!.
+    + exact Hb.
+    + rewrite /pool_of lookup_fmap Hfresh //.
+    + rewrite pool_of_insert //.
+    + rewrite locs_of_insert //.
+    + done.
+Qed.
 
 Lemma locs_of_concat (types : gmap loc type_state) :
   concat ((map_to_list (locs_of types)).*2) = ic_loc <$> all_cells types.

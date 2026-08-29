@@ -34,7 +34,8 @@
     [pool_run_starts_at] / [pool_run_ends_at], the run at an index begins /
     ends at an id; [runs_live_refine] / [runs_dead_kept], the pool-level
     live-character refinement and tombstone preservation; [pool_after_split],
-    what one [splitNode] leaves of the pool at run granularity;
+    what one [splitNode] leaves of the pool at run granularity
+    ([pool_after_repair] the same for [store.repair]'s at most two splits);
     [pool_run_clock_below], the index-based [pool_clock_below]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
@@ -137,6 +138,23 @@ Definition pool_after_split (p p' : pool) (parent : loc) (k : nat) : Prop :=
   runs_within (all_runs p) (all_runs p') ∧
   runs_live_refine p p' ∧
   runs_dead_kept p p'.
+
+(** [pool_after_repair p p']: [p'] is [p] after [store.repair]'s at most two
+    node splits: the loc-free [repair_types_update_rel]. The same clauses as
+    [pool_after_split] minus the ones about a single split spot: each type's
+    document and flatten survive, no type disappears, a client's run list
+    grows by at most two, a type of one-char runs is untouched, every new
+    run sits inside an old one's range, and live chars refine. *)
+Definition pool_after_repair (p p' : pool) : Prop :=
+  (∀ q tm', p' !! q = Some tm' ->
+     ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm ∧
+           runs_flatten (tm_runs tm') = runs_flatten (tm_runs tm)) ∧
+  (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ∧
+  (∀ c, (length (client_runs p' c) <= 2 + length (client_runs p c))%nat) ∧
+  (∀ q tm tm', p !! q = Some tm -> p' !! q = Some tm' ->
+     Forall (λ r, length (run_items r) = 1%nat) (tm_runs tm) -> tm' = tm) ∧
+  runs_within (all_runs p) (all_runs p') ∧
+  runs_live_refine p p'.
 
 (** [pool_run_covers p parent k d]: the [k]-th run of the type at [parent]
     has the char with id [d]: the index-based [pool_cell_covers]. *)
