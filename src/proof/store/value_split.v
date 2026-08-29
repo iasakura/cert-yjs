@@ -3,7 +3,8 @@
     [store/value_live.v].
 
     Definitions
-    - the split surgery [split_cell_left] / [split_cell_right] / [split_cells].
+    - the split surgery [split_cell_left] / [split_cell_right] / [split_cells],
+      and its address-list half [split_locs].
     - the records one store step hands its caller: [split_types_update_rel] (one
       [splitNode]), [repair_types_update_rel] (the at-most-two splits of [repair])
       and [delete_types_update_rel] (the unbounded split-and-tombstone loop of the
@@ -21,7 +22,8 @@
       [GetNode]'s postcondition to [(locs, p)].
     - the split projects along [cell_run] ([cell_run_split_left] /
       [cell_run_split_right], [split_cells_runs]; [cell_covers_clock_run]),
-      the fresh node's address being all the pure [split_runs] does not see;
+      the fresh node's address being all the pure [split_runs] does not see,
+      and [split_locs] on the address list ([split_cells_locs]);
       [runs_start_at] / [runs_end_at] over a projected cell list read back on
       the cells ([runs_start_at_fmap] / [runs_end_at_fmap]).
     - splitting a node is invisible to the model: [split_cells_flatten] and

@@ -38,7 +38,9 @@
       [runs_integrate_splice] ([integrate_splice_runs]); [all_runs] of a
       projected pool is the projected [all_cells] ([all_runs_pool_of]) and
       [pool_invs] gives [run_pool_invs] under the id no-wrap bounds
-      ([run_pool_invs_of]); [client_run] projects onto [client_runs]
+      ([run_pool_invs_of]); [pool_of] / [locs_of] under a registry insert
+      and the address map's flattening ([pool_of_insert] / [locs_of_insert]
+      / [locs_of_concat]); [client_run] projects onto [client_runs]
       ([client_run_runs], the clock orders agreeing and same-client clocks
       unique).
     - the pool invariants are preserved by appending a fresh cell ([*_snoc],
