@@ -86,6 +86,15 @@ Definition split_cells (cells : list item_cell) (k o : nat) (r_loc : loc) : list
   | None => cells
   end.
 
+(** The address-list half of the split: the left half keeps the node's
+    address at [k], the fresh right half's address [r_loc] lands after it
+    (what [split_cells] does to [ic_loc <$> cells], [split_cells_locs]). *)
+Definition split_locs (ls : list loc) (k : nat) (r_loc : loc) : list loc :=
+  match ls !! k with
+  | Some l => take k ls ++ [l; r_loc] ++ drop (S k) ls
+  | None => ls
+  end.
+
 (** [split_types_update_rel before after w]: what one [splitNode] step does to
     the type map, as everything a caller is told about the two maps. The
     clauses are of mixed character on purpose, because re-establishing the
@@ -347,6 +356,14 @@ Qed.
 Lemma cell_covers_clock_run (c : item_cell) (k : nat) :
   cell_covers_clock c k ↔ run_covers_clock (cell_run c) k.
 Proof. reflexivity. Qed.
+
+Lemma split_cells_locs (cells : list item_cell) (k o : nat) (r_loc : loc) :
+  ic_loc <$> split_cells cells k o r_loc = split_locs (ic_loc <$> cells) k r_loc.
+Proof.
+  rewrite /split_cells /split_locs list_lookup_fmap.
+  destruct (cells !! k) as [c|] eqn:Hk; simpl; [| reflexivity].
+  rewrite !fmap_app !fmap_cons /= !fmap_take !fmap_drop //.
+Qed.
 
 (** [cell_covers] at a runtime id, read in the [w64] arithmetic the node
     lookups compute with; needs the cell's ids to fit a word. *)

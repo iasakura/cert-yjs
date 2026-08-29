@@ -721,10 +721,7 @@ Lemma own_type_pool_runs_of (types : gmap loc type_state) :
   own_type_pool_runs (DfracOwn 1) (locs_of types) (pool_of types).
 Proof.
   iIntros (Hnd) "Hpool".
-  have Hloceq : concat ((map_to_list (locs_of types)).*2) = ic_loc <$> all_cells types.
-  { rewrite /locs_of /all_cells map_to_list_fmap concat_fmap.
-    f_equal. rewrite -!list_fmap_compose.
-    apply list_fmap_ext. move=> i [k ts] Hl. reflexivity. }
+  have Hloceq := locs_of_concat types.
   iSplitR.
   { iPureIntro. rewrite /locs_wf /locs_of /pool_of !dom_fmap_L.
     split_and!; [done | by rewrite -/(locs_of types) Hloceq |].

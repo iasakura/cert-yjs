@@ -492,6 +492,10 @@ Definition state_runs_of (st : store_state) : store_state_runs :=
     (locs_of (ss_types st)) (pool_of (ss_types st))
     (ss_bind st) (ss_pending st) (ss_pending_deletes st).
 
+#[export] Instance settable_store_state_runs : Settable store_state_runs :=
+  settable! MkStoreStateRuns
+    <sr_client; sr_clock; sr_locs; sr_pool; sr_bind; sr_pending; sr_pending_deletes>.
+
 
 Lemma all_runs_pool_of (types : gmap loc type_state) :
   all_runs (pool_of types) = cell_run <$> all_cells types.
@@ -515,6 +519,25 @@ Proof.
   - apply (cells_range_disjoint_runs _ Hckb Hclb Hnd). exact Hdisj.
   - intros r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
     apply cell_origin_clk_run. exact (Hoc c Hc).
+Qed.
+
+(** [pool_of] / [locs_of] under a registry insert, and the address map's
+    flattening: what carries a store step's [<[parent := ...]>] post and the
+    freshness of a new node address to the run-granular reading. *)
+Lemma pool_of_insert (types : gmap loc type_state) (parent : loc) (ts : type_state) :
+  pool_of (<[parent := ts]> types) = <[parent := type_model_of ts]> (pool_of types).
+Proof. rewrite /pool_of fmap_insert //. Qed.
+
+Lemma locs_of_insert (types : gmap loc type_state) (parent : loc) (ts : type_state) :
+  locs_of (<[parent := ts]> types) = <[parent := ic_loc <$> ty_cells ts]> (locs_of types).
+Proof. rewrite /locs_of fmap_insert //. Qed.
+
+Lemma locs_of_concat (types : gmap loc type_state) :
+  concat ((map_to_list (locs_of types)).*2) = ic_loc <$> all_cells types.
+Proof.
+  rewrite /locs_of /all_cells map_to_list_fmap concat_fmap.
+  f_equal. rewrite -!list_fmap_compose.
+  apply list_fmap_ext. move=> i [k ts] Hl. reflexivity.
 Qed.
 
 (** [client_run] projects onto [client_runs]: the [merge_sort cell_le] run
