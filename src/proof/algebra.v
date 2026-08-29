@@ -5,7 +5,10 @@
     [auth (gmap K (gset V))] (the per-type item sets), the same for an
     [auth (gset YjsId)] (the accepted-id set), a grow-and-persist step for a
     [ghost_map] (the root-type registry), and replication laws for [tok_set]
-    token bundles (the reader capabilities). *)
+    token bundles (the reader capabilities).
+
+    List facts free of cert-yjs definitions: [list_elem_of_concat],
+    [concat_fmap]. *)
 From New.proof Require Import proof_prelude.
 From New.golang Require Import theory.
 From New.proof Require Import core.
@@ -30,6 +33,15 @@ Qed.
    [store/applyUpdate], whose section lacks the store's [seq_inG] / [ftypes_inG],
    reconciles the registry map with the concrete one after [applyUpdate]'s drain
    creates fresh root types, minting one persistent binding per new name. *)
+(** [fmap] pushes through [concat]. *)
+Lemma concat_fmap {X Y : Type} (f : X -> Y) (l : list (list X)) :
+  fmap (M := list) f (concat l)
+  = concat (fmap (M := list) (λ xs, fmap (M := list) f xs) l).
+Proof.
+  induction l as [| x l IH]; simpl; [done |].
+  rewrite fmap_app IH //.
+Qed.
+
 Section ghost_map_grow.
 Context {Σ : gFunctors} {K V : Type} `{Countable K} `{ghost_mapG Σ K V}.
 Lemma ghost_map_grow_persist (γ : gname) (m m' : gmap K V) :

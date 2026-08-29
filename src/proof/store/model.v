@@ -24,7 +24,12 @@
       applyUpdate step ([accepted_coh_applyUpdate]): the two state-transition
       laws the no-loss argument runs on.
 
-    The cell bookkeeping that shadows this model is [store/value.v]. *)
+    The cell bookkeeping that shadows this model is [store/value.v].
+
+    The run-granular pool (plan-item-run-split stage 2): [pool], every
+    registered type at its [type_model]; [all_runs] and the clock-sorted
+    [client_runs]; [run_pool_invs], the pure pool invariants at run
+    granularity ([pool_invs] minus the heap-side [NoDup] of addresses). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -52,6 +57,31 @@ Local Notation Ev := (@Event Op).
 Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (* ===== definitions ======================================================== *)
+
+(** The run-granular pool (plan-item-run-split stage 2): every registered
+    type at its [type_model], keyed by the yType's address (the key only
+    names the type; no pure lemma computes with it). *)
+Definition pool := gmap loc type_model.
+
+(** All runs across all types: the loc-free [all_cells]. *)
+Definition all_runs (p : pool) : list ItemRun :=
+  concat (tm_runs <$> (map_to_list p).*2).
+
+(** [client_runs p c]: client [c]'s runs across every type, clock-sorted:
+    the loc-free model of the [store.items] run list ([client_run] projects
+    onto it). *)
+Definition client_runs (p : pool) (c : nat) : list ItemRun :=
+  merge_sort run_le (filter (λ r, run_client r = c) (all_runs p)).
+
+(** [run_pool_invs p]: the pure pool invariants at run granularity: every
+    run's clock range fits a word, same-client ranges are disjoint (runs
+    told apart by index), and every head's same-client origin is older.
+    [pool_invs]'s [NoDup] of node addresses is a heap fact and stays with
+    the heap layer. *)
+Definition run_pool_invs (p : pool) : Prop :=
+  (∀ r, r ∈ all_runs p -> run_fits r) ∧
+  runs_disjoint (all_runs p) ∧
+  (∀ r, r ∈ all_runs p -> run_origin_clk r).
 
 (** Per-char op expansion of a wire batch (issue #28 U7c), lifted here from
     [store/GetNode] (which had defined it downstream). The pending-buffer

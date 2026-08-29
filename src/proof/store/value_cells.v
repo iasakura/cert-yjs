@@ -17,6 +17,8 @@
       [registry_lookup_or_create].
     - where a step's cells come from: [cells_within] (inside an old cell) and
       [cells_within_or_from] (inside an old cell or an integrated input).
+    - [type_model_of] / [pool_of]: a type state and the pool at their
+      run-granular models (plan-item-run-split stage 2).
     - what one integrate asks and does, at the cell level: [pool_clock_below]
       (the new item is its client's newest), [origins_linked] (the item's
       links are the cells its resolved origins designate), [integrate_splice]
@@ -31,7 +33,10 @@
       under the heap [NoDup]); [origins_linked] is [origins_resolved] at the
       cursor indices plus the [node_loc] readings
       ([origins_linked_resolved]), and [integrate_splice] projects onto
-      [runs_integrate_splice] ([integrate_splice_runs]).
+      [runs_integrate_splice] ([integrate_splice_runs]); [all_runs] of a
+      projected pool is the projected [all_cells] ([all_runs_pool_of]) and
+      [pool_invs] gives [run_pool_invs] under the id no-wrap bounds
+      ([run_pool_invs_of]).
     - the pool invariants are preserved by appending a fresh cell ([*_snoc],
       assembled for one integrate as [pool_invs_integrate])
       and by any permutation that keeps locations and runs
@@ -447,6 +452,42 @@ Proof.
     rewrite (Hclk c1 Hm1) (Hclk c2 Hm2) /cell_run /=.
     move: Hd. rewrite /cell_run /=. lia.
 Qed.
+
+(** [type_model_of] / [pool_of]: a [type_state] and a type-state pool at
+    their run-granular models. [all_runs] of a projected pool is the
+    projected [all_cells], and the cell-level [pool_invs] gives
+    [run_pool_invs] under the id no-wrap bounds (the range-disjointness
+    trade of [cells_range_disjoint_runs]). *)
+Definition type_model_of (ts : type_state) : type_model :=
+  MkTypeModel (cell_run <$> ty_cells ts) (ty_arr ts).
+
+Definition pool_of (types : gmap loc type_state) : pool :=
+  type_model_of <$> types.
+
+Lemma all_runs_pool_of (types : gmap loc type_state) :
+  all_runs (pool_of types) = cell_run <$> all_cells types.
+Proof.
+  rewrite /all_runs /pool_of /all_cells map_to_list_fmap concat_fmap.
+  f_equal. rewrite -!list_fmap_compose.
+  apply list_fmap_ext. move=> i [k ts] Hl. reflexivity.
+Qed.
+
+Lemma run_pool_invs_of (types : gmap loc type_state) :
+  (∀ c, c ∈ all_cells types -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells types -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  pool_invs types ->
+  run_pool_invs (pool_of types).
+Proof.
+  move=> Hckb Hclb [Hfits [Hnd [Hdisj Hoc]]].
+  rewrite /run_pool_invs all_runs_pool_of.
+  split_and!.
+  - intros r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
+    apply (cell_fits_run c (Hckb c Hc)). exact (Hfits c Hc).
+  - apply (cells_range_disjoint_runs _ Hckb Hclb Hnd). exact Hdisj.
+  - intros r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
+    apply cell_origin_clk_run. exact (Hoc c Hc).
+Qed.
+
 
 (** The spliced cell list is the old one plus the new cell, as a multiset. *)
 Lemma integrate_splice_perm (cells : list item_cell) (arr : list (YjsItem A))

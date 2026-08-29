@@ -17,7 +17,11 @@
       bound.
     - [integrate_ready]: the premises of an integrate, as one predicate.
     - [sorted_subseteq_sublist]: set inclusion between two sorted document
-      lists is a [sublist]. *)
+      lists is a [sublist].
+
+    Second section ([ytype_run_model], plan-item-run-split stage 2):
+    [type_model], the type at run granularity: its runs as data ([tm_runs])
+    and the per-char document list they flatten to ([tm_arr]). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -353,3 +357,28 @@ Proof.
 Qed.
 
 End ytype_model.
+
+(* ===== the type's run-granular model (plan-item-run-split stage 2) ========
+   [type_model] is [type_state] without locations: the type's runs as data
+   and its flattened document list. The projection [type_model_of] and the
+   pool ([store/model.v]'s [pool]) sit on top; the heap side pairs it with
+   the node-address list ([locs]). *)
+
+Section ytype_run_model.
+
+Set Default Proof Using "Type*".
+
+Notation A := go_string.
+
+(* ===== definitions ======================================================== *)
+
+(** [type_model]: one registered type, loc-free: its list of runs and the
+    per-char document list they flatten to ([tm_arr = runs_flatten tm_runs]
+    wherever the heap holds it; the equation is [cells_repr]'s projection,
+    kept as a fact rather than folded away until stage 4). *)
+Record type_model := MkTypeModel {
+  tm_runs : list ItemRun;
+  tm_arr  : list (YjsItem A);
+}.
+
+End ytype_run_model.
