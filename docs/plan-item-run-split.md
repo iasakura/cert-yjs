@@ -60,7 +60,21 @@ pinned to the wire item, flag byte pinned so Countable is free), the
 three item method specs over it (`wp_item__Len_node` /
 `wp_item__Deleted_node` / `wp_item__Indexable_node`) and
 `own_linked_item_as_node` (store/heap.v): the payload `own_dll` moves
-onto in the borrow rewrite.
+onto in the borrow rewrite. Stage 3b groundwork (2026-08-29):
+`items_string` (with `_app` / `_explode`) moved from ytype/value.v down
+to item/model.v, `input_of_run` (the wire item a run denotes), and the
+node-level borrow forms `own_dll_lookup_acc_node` /
+`own_dll_update_gen_node` (item/heap.v): each hands the k-th node out
+WHOLE as `own_item_node` at `input_of_run (cell_run c)` instead of
+`itemVal` plus ten equations; the update wand takes the node back at any
+tombstone bit. The content pin travels through `items_string_explode`,
+and the restore direction needs no new facts because the run is
+unchanged through a borrow. Next: convert the borrow call sites file by
+file (`text/Delete.v`'s flip loop is the natural first consumer of
+`_update_gen_node`; `own_dll_acc_node` and the exposed spelled-length pin
+`length (items_string (ic_run c)) = length (ic_run c)` landed with the
+groundwork), then `own_dll_split` / `own_dll_insert_middle` node forms as
+their sites convert.
 
 ## 1. The problem
 

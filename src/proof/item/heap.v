@@ -22,7 +22,10 @@
       [own_dll_last_agree]), and a null head means an empty segment.
     - access: [own_dll_acc] / [own_dll_lookup_acc] borrow the [k]-th node,
       [own_dll_update_gen] borrows it for an update, and [node_loc] of an
-      in-range index is non-null.
+      in-range index is non-null. Their stage-3 forms hand the node out
+      WHOLE, as [own_item_node] at [input_of_run], each also exposing the
+      run's spelled length ([own_dll_acc_node] / [own_dll_lookup_acc_node]
+      / [own_dll_update_gen_node]).
     - freshness: a fully owned node is fresh for any segment
       ([own_dll_fresh], via [item_pointsto_conflict]), which is where the
       [NoDup] of locations comes from.
@@ -505,6 +508,248 @@ Proof.
   iEval (rewrite (proj1 Hloc)) in "Hpre".
   iEval (rewrite (proj1 Hloc)) in "Hrest2".
   iFrame "Hpre Hval2 Hol Hor Hrest2".
+Qed.
+
+(** [own_dll_lookup_acc] at the node predicate (stage 3): borrow the [k]-th
+    node WHOLE, as [own_item_node] at the wire item its run denotes
+    ([input_of_run]), its spine links existential; the wand takes the node
+    back (any struct satisfying the pins) and restores the DLL. The content
+    pin travels through [items_string_explode]; the run is unchanged through
+    the borrow, so the exploded form is recovered from the original pin. *)
+Lemma own_dll_lookup_acc_node (dq : dfrac) (l lst prev nxt : loc)
+    (cs : list item_cell) (k : nat) (c : item_cell) :
+  cs !! k = Some c ->
+  own_dll dq l lst prev nxt cs -∗
+    ∃ (prev' nxt' : loc),
+      "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
+      "%Hclen" ∷ ⌜length (items_string (ic_run c)) = length (ic_run c)⌝ ∗
+      "Hnode" ∷ own_item_node (ic_loc c) dq (input_of_run (cell_run c))
+                  (ic_deleted c) (ic_parent c) prev' nxt' ∗
+      "Hback" ∷ (own_item_node (ic_loc c) dq (input_of_run (cell_run c))
+                   (ic_deleted c) (ic_parent c) prev' nxt' -∗
+                 own_dll dq l lst prev nxt cs).
+Proof.
+  move=> Hk. iIntros "Hdll".
+  pose proof (take_drop_middle cs k c Hk) as Hsplit.
+  set (pre := take k cs) in Hsplit.
+  set (suf := drop (S k) cs) in Hsplit.
+  iEval (rewrite -Hsplit own_dll_app) in "Hdll".
+  iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
+  iDestruct "Hrest" as (itemVal olid orid)
+    "(%Hloc & %Hprevml & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hrunc & Hval0 & Hol0 & Hor0 & Hrest2)".
+  have Hstr : toContent itemVal.(yjs.item.content') = items_string (ic_run c).
+  { symmetry. exact (items_string_explode _ _ Hcontentc). }
+  have Hexp : content <$> ic_run c = explode (items_string (ic_run c)).
+  { rewrite -Hstr. exact Hcontentc. }
+  have Hclen : length (items_string (ic_run c)) = length (ic_run c).
+  { have Hleq := f_equal length Hcontentc.
+    rewrite length_fmap explode_length in Hleq. rewrite -Hstr. lia. }
+  iExists itemVal.(yjs.item.left'), itemVal.(yjs.item.right').
+  iSplitR; [iPureIntro; exact Hrunc |].
+  iSplitR; [iPureIntro; exact Hclen |].
+  iSplitL "Hval0 Hol0 Hor0".
+  { iExists itemVal, olid, orid.
+    iFrame "Hval0 Hol0 Hor0".
+    iPureIntro. split_and!.
+    - exact (eq_sym Holidc).
+    - exact (eq_sym Horidc).
+    - exact (eq_sym Hidc).
+    - exact Hstr.
+    - exact Hparc.
+    - reflexivity.
+    - reflexivity.
+    - exact Hflagsc. }
+  iIntros "Hnode".
+  iDestruct "Hnode" as (v' olid' orid') "H". iNamed "H".
+  iEval (rewrite -Hsplit own_dll_app).
+  iExists ml, mf. iFrame "Hpre".
+  iExists v', olid', orid'.
+  rewrite Hnext.
+  iFrame "Hval Holeft Horight Hrest2".
+  iPureIntro. split_and!.
+  - exact (proj1 Hloc).
+  - exact (proj2 Hloc).
+  - rewrite Hprev. exact Hprevml.
+  - exact Hpar.
+  - exact (eq_sym Hid).
+  - rewrite Hcontent. exact Hexp.
+  - exact (eq_sym Hin_l).
+  - exact (eq_sym Hin_r).
+  - exact Hflags.
+  - exact Hrunc.
+Qed.
+
+(** [own_dll_acc] at the node predicate (stage 3): borrow the [k]-th node of
+    a WHOLE DLL as [own_item_node] at [input_of_run], its spine links the
+    [node_loc] cursors; the wand takes the node back (any struct satisfying
+    the pins: relinking is invisible to the abstract cells) and restores the
+    DLL. *)
+Lemma own_dll_acc_node (dq : dfrac) (cells : list item_cell) (hd tl : loc) (k : nat) (c : item_cell) :
+  cells !! k = Some c ->
+  own_dll dq hd tl null null cells -∗
+    ∃ (prev' nxt' : loc),
+      "%Hcloc" ∷ ⌜ic_loc c = node_loc cells (Z.of_nat k)⌝ ∗
+      "%Hcl" ∷ ⌜prev' = node_loc cells (Z.of_nat k - 1)⌝ ∗
+      "%Hcr" ∷ ⌜nxt' = node_loc cells (Z.of_nat k + 1)⌝ ∗
+      "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
+      "%Hclen" ∷ ⌜length (items_string (ic_run c)) = length (ic_run c)⌝ ∗
+      "Hnode" ∷ own_item_node (ic_loc c) dq (input_of_run (cell_run c))
+                  (ic_deleted c) (ic_parent c) prev' nxt' ∗
+      "Hback" ∷ (own_item_node (ic_loc c) dq (input_of_run (cell_run c))
+                   (ic_deleted c) (ic_parent c) prev' nxt' -∗
+                 own_dll dq hd tl null null cells).
+Proof.
+  move=> Hk. iIntros "Hdll".
+  have Hpe : default null (ic_loc <$> list.last (take k cells)) = node_loc cells (Z.of_nat k - 1).
+  { destruct k as [|k'].
+    - rewrite take_0 /= /node_loc. case_decide as Hdec; [exfalso; lia | done].
+    - have Hk' : (k' < length cells)%nat by (apply lookup_lt_Some in Hk; lia).
+      destruct (cells !! k') as [c'|] eqn:Hck'; last by (apply lookup_ge_None in Hck'; lia).
+      rewrite (take_S_r cells k' c' Hck') last_snoc /= /node_loc decide_True; last lia.
+      have -> : Z.to_nat (Z.of_nat (S k') - 1) = k' by lia.
+      by rewrite Hck' /=. }
+  pose proof (take_drop_middle cells k c Hk) as Hsplit.
+  set (pre := take k cells) in Hsplit.
+  set (suf := drop (S k) cells) in Hsplit.
+  iEval (rewrite -Hsplit own_dll_app) in "Hdll".
+  iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
+  iDestruct "Hrest" as (itemVal olid orid)
+    "(%Hloc & %Hprevml & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hrunc & Hval0 & Hol0 & Hor0 & Hrest2)".
+  iDestruct (own_dll_lastptr with "Hpre") as "[%Hml Hpre]".
+  iDestruct (own_dll_headptr with "Hrest2") as "[%Hhd Hrest2]".
+  have Hcl : itemVal.(yjs.item.left') = node_loc cells (Z.of_nat k - 1).
+  { rewrite Hprevml Hml. exact Hpe. }
+  have Hcloc : c.(ic_loc) = node_loc cells (Z.of_nat k)
+    by rewrite /node_loc decide_True; [rewrite Nat2Z.id Hk | lia].
+  have Hnn : c.(ic_loc) ≠ null by rewrite -(proj1 Hloc); exact (proj2 Hloc).
+  have Hcr : itemVal.(yjs.item.right') = node_loc cells (Z.of_nat k + 1).
+  { rewrite Hhd /node_loc decide_True; last lia.
+    have HZ : Z.to_nat (Z.of_nat k + 1) = S k by lia.
+    rewrite HZ. f_equal. f_equal. rewrite /suf head_lookup lookup_drop Nat.add_0_r //. }
+  have Hstr : toContent itemVal.(yjs.item.content') = items_string (ic_run c).
+  { symmetry. exact (items_string_explode _ _ Hcontentc). }
+  have Hexp : content <$> ic_run c = explode (items_string (ic_run c)).
+  { rewrite -Hstr. exact Hcontentc. }
+  have Hclen : length (items_string (ic_run c)) = length (ic_run c).
+  { have Hleq := f_equal length Hcontentc.
+    rewrite length_fmap explode_length in Hleq. rewrite -Hstr. lia. }
+  iExists itemVal.(yjs.item.left'), itemVal.(yjs.item.right').
+  iSplit; [iPureIntro; exact Hcloc|].
+  iSplit; [iPureIntro; exact Hcl|].
+  iSplit; [iPureIntro; exact Hcr|].
+  iSplit; [iPureIntro; exact Hrunc|].
+  iSplit; [iPureIntro; exact Hclen|].
+  iSplitL "Hval0 Hol0 Hor0".
+  { iExists itemVal, olid, orid.
+    iFrame "Hval0 Hol0 Hor0".
+    iPureIntro. split_and!.
+    - exact (eq_sym Holidc).
+    - exact (eq_sym Horidc).
+    - exact (eq_sym Hidc).
+    - exact Hstr.
+    - exact Hparc.
+    - reflexivity.
+    - reflexivity.
+    - exact Hflagsc. }
+  iIntros "Hnode".
+  iDestruct "Hnode" as (v' olid' orid') "H". iNamed "H".
+  have Hpv : v'.(yjs.item.left') = ml by rewrite Hprev; exact Hprevml.
+  have Hparv : v'.(yjs.item.parent') = ic_parent c by exact Hpar.
+  have Hidt : item_id (run_head c) = toYjsId v'.(yjs.item.id') by exact (eq_sym Hid).
+  have Hcontt : content <$> ic_run c = explode (toContent v'.(yjs.item.content')).
+  { rewrite Hcontent. exact Hexp. }
+  have Holid' : origin_id (origin (run_head c)) = toYjsId <$> olid' by exact (eq_sym Hin_l).
+  have Horid' : origin_id (rightOrigin (run_head c)) = toYjsId <$> orid' by exact (eq_sym Hin_r).
+  iEval (rewrite -Hsplit).
+  iApply (own_dll_insert_middle dq pre suf c v' olid' orid' hd tl ml v'.(yjs.item.right')
+            Hnn Hpv eq_refl Hparv Hidt Hcontt Holid' Horid' Hflags Hrunc).
+  rewrite Hnext.
+  iEval (rewrite (proj1 Hloc)) in "Hpre".
+  iEval (rewrite (proj1 Hloc)) in "Hrest2".
+  iFrame "Hpre Hval Holeft Horight Hrest2".
+Qed.
+
+(** [own_dll_update_gen] at the node predicate (stage 3): borrow the [k]-th
+    node WHOLE for an update; the wand takes the node back at ANY tombstone
+    bit [d'] and gives the DLL with the cell flipped to [d']. Replaces the
+    eight field equations of [own_dll_update_gen] with one node predicate. *)
+Lemma own_dll_update_gen_node (cells : list item_cell) (hd tl : loc) (k : nat) (c : item_cell) :
+  cells !! k = Some c ->
+  own_dll (DfracOwn 1) hd tl null null cells -∗
+    ∃ (prev' nxt' : loc),
+      "%Hcloc" ∷ ⌜ic_loc c = node_loc cells (Z.of_nat k)⌝ ∗
+      "%Hcr" ∷ ⌜nxt' = node_loc cells (Z.of_nat k + 1)⌝ ∗
+      "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
+      "%Hclen" ∷ ⌜length (items_string (ic_run c)) = length (ic_run c)⌝ ∗
+      "Hnode" ∷ own_item_node (ic_loc c) (DfracOwn 1) (input_of_run (cell_run c))
+                  (ic_deleted c) (ic_parent c) prev' nxt' ∗
+      "Hback" ∷ (∀ d' : bool,
+         own_item_node (ic_loc c) (DfracOwn 1) (input_of_run (cell_run c))
+           d' (ic_parent c) prev' nxt' -∗
+         own_dll (DfracOwn 1) hd tl null null
+           (<[k := MkItemCell (ic_loc c) (ic_run c) d' (ic_parent c)]> cells)).
+Proof.
+  move=> Hk. iIntros "Hdll".
+  pose proof (take_drop_middle cells k c Hk) as Hsplit.
+  set (pre := take k cells) in Hsplit.
+  set (suf := drop (S k) cells) in Hsplit.
+  iEval (rewrite -Hsplit own_dll_app) in "Hdll".
+  iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
+  iDestruct "Hrest" as (itemVal olid orid)
+    "(%Hloc & %Hprevml & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hrunc & Hval0 & Hol0 & Hor0 & Hrest2)".
+  iDestruct (own_dll_headptr with "Hrest2") as "[%Hhd Hrest2]".
+  have Hcloc : ic_loc c = node_loc cells (Z.of_nat k)
+    by rewrite /node_loc decide_True; [rewrite Nat2Z.id Hk | lia].
+  have Hnn : ic_loc c ≠ null by rewrite -(proj1 Hloc); exact (proj2 Hloc).
+  have Hcr : itemVal.(yjs.item.right') = node_loc cells (Z.of_nat k + 1).
+  { rewrite Hhd /node_loc decide_True; last lia.
+    have HZ : Z.to_nat (Z.of_nat k + 1) = S k by lia.
+    rewrite HZ. f_equal. f_equal. rewrite /suf head_lookup lookup_drop Nat.add_0_r //. }
+  have Hstr : toContent itemVal.(yjs.item.content') = items_string (ic_run c).
+  { symmetry. exact (items_string_explode _ _ Hcontentc). }
+  have Hexp : content <$> ic_run c = explode (items_string (ic_run c)).
+  { rewrite -Hstr. exact Hcontentc. }
+  have Hclen : length (items_string (ic_run c)) = length (ic_run c).
+  { have Hleq := f_equal length Hcontentc.
+    rewrite length_fmap explode_length in Hleq. rewrite -Hstr. lia. }
+  iExists itemVal.(yjs.item.left'), itemVal.(yjs.item.right').
+  iSplit; [iPureIntro; exact Hcloc|].
+  iSplit; [iPureIntro; exact Hcr|].
+  iSplit; [iPureIntro; exact Hrunc|].
+  iSplit; [iPureIntro; exact Hclen|].
+  iSplitL "Hval0 Hol0 Hor0".
+  { iExists itemVal, olid, orid.
+    iFrame "Hval0 Hol0 Hor0".
+    iPureIntro. split_and!.
+    - exact (eq_sym Holidc).
+    - exact (eq_sym Horidc).
+    - exact (eq_sym Hidc).
+    - exact Hstr.
+    - exact Hparc.
+    - reflexivity.
+    - reflexivity.
+    - exact Hflagsc. }
+  iIntros (d') "Hnode".
+  iDestruct "Hnode" as (v' olid' orid') "H". iNamed "H".
+  have Hpv : v'.(yjs.item.left') = ml by rewrite Hprev; exact Hprevml.
+  have Hparv : v'.(yjs.item.parent') = ic_parent c by exact Hpar.
+  have Hidt : item_id (run_head c) = toYjsId v'.(yjs.item.id') by exact (eq_sym Hid).
+  have Hcontt : content <$> ic_run c = explode (toContent v'.(yjs.item.content')).
+  { rewrite Hcontent. exact Hexp. }
+  have Holid' : origin_id (origin (run_head c)) = toYjsId <$> olid' by exact (eq_sym Hin_l).
+  have Horid' : origin_id (rightOrigin (run_head c)) = toYjsId <$> orid' by exact (eq_sym Hin_r).
+  have Hins : <[k := MkItemCell (ic_loc c) (ic_run c) d' (ic_parent c)]> cells
+            = pre ++ MkItemCell (ic_loc c) (ic_run c) d' (ic_parent c) :: suf.
+  { rewrite /pre /suf. apply insert_take_drop. apply lookup_lt_Some in Hk; exact Hk. }
+  rewrite Hins.
+  iApply (own_dll_insert_middle (DfracOwn 1) pre suf
+            (MkItemCell (ic_loc c) (ic_run c) d' (ic_parent c)) v' olid' orid'
+            hd tl ml v'.(yjs.item.right')
+            Hnn Hpv eq_refl Hparv Hidt Hcontt Holid' Horid' Hflags Hrunc).
+  rewrite Hnext.
+  iEval (rewrite (proj1 Hloc)) in "Hpre".
+  iEval (rewrite (proj1 Hloc)) in "Hrest2".
+  iFrame "Hpre Hval Holeft Horight Hrest2".
 Qed.
 
 (* ----- location freshness (issue #28 part 6) ------------------------------ *)

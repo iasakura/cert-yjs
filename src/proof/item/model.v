@@ -34,7 +34,10 @@
       cursor-explicit [runs_integrate_splice_at] under an exists), and
       [runs_within]: every run after a step sits inside a run before it,
       and [ids_tombstoned_runs]: a set of ids all covered by tombstoned
-      runs.
+      runs; [items_string], the string a run of per-char items spells
+      (append-homomorphic, [items_string_app], and recovering an exploded
+      string, [items_string_explode]); [input_of_run], the wire item a run
+      denotes.
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
       app-morphic ([runs_flatten_app]).
@@ -384,6 +387,29 @@ Definition runs_integrate_splice (runs : list ItemRun) (arr : list (YjsItem A))
 Definition ids_tombstoned_runs (ids : gset YjsId) (runs : list ItemRun) : Prop :=
   ∀ i, i ∈ ids -> ∃ r, r ∈ runs ∧ run_deleted r = true ∧ i ∈ char_ids (run_items r).
 
+(** [items_string l]: the string a list of per-char items spells (the
+    concatenation of their contents). A bespoke [foldr], NOT
+    [mjoin (content <$> ...)]: using [content] as [fmap]'s function argument
+    together with [mjoin] entangles rocq-yjs's [YjsPtr.u0] universe with
+    stdpp's monad-class universes, and in any file that also loads
+    Perennial's [New.ghost] universal-[own] syntax codes that chain
+    contradicts [syntax.cmra]'s universe bound (the [IsCmra] instances for
+    [gset (YjsItem A)] then fail with "no instance found"). The
+    fully-applied [content x] avoids the entanglement. Moved here from
+    [ytype/value.v] for [input_of_run] (stage 3). *)
+Definition items_string (l : list (YjsItem A)) : A :=
+  foldr (λ x acc, content x ++ acc) [] l.
+
+(** [input_of_run r]: the wire item a run denotes: its head's id and origin
+    ids, and the string its chars spell. What the stage-3 node predicate
+    ([own_item_node]) is pinned to when it holds a DLL node. *)
+Definition input_of_run (r : ItemRun) : IntegrateInput (A := A) :=
+  MkIntegrateInput
+    (origin_id (origin (run_head_item r)))
+    (origin_id (rightOrigin (run_head_item r)))
+    (items_string (run_items r))
+    (item_id (run_head_item r)).
+
 (* ===== lemmas ============================================================= *)
 
 (** The flatten and the visible count are invariant under a split, and a flip
@@ -392,6 +418,27 @@ Definition ids_tombstoned_runs (ids : gset YjsId) (runs : list ItemRun) : Prop :
     [num_visible_flip_run], loc-free. *)
 Lemma runs_flatten_nil : runs_flatten [] = [].
 Proof. reflexivity. Qed.
+
+Lemma items_string_app (l1 l2 : list (YjsItem A)) :
+  items_string (l1 ++ l2) = items_string l1 ++ items_string l2.
+Proof.
+  induction l1 as [|x l1 IH]; first done.
+  rewrite /items_string /= -/(items_string (l1 ++ l2)) -/(items_string l1)
+    IH app_assoc //.
+Qed.
+
+(** A run whose per-char contents explode a heap content string spells exactly
+    that string (the [own_dll] node fact, consumed by the [yType.Text] walk
+    and the stage-3 node borrows). *)
+Lemma items_string_explode (r : list (YjsItem A)) (s : go_string) :
+  content <$> r = explode s -> items_string r = s.
+Proof.
+  revert s. induction r as [|x r IH] => s Hc.
+  - destruct s; [done | discriminate].
+  - destruct s as [|b s']; first discriminate.
+    injection Hc as Hx Hr.
+    rewrite /items_string /= -/(items_string r) (IH s' Hr) Hx //.
+Qed.
 
 Lemma runs_flatten_cons (r : ItemRun) (runs : list ItemRun) :
   runs_flatten (r :: runs) = run_items r ++ runs_flatten runs.
