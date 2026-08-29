@@ -34,7 +34,8 @@
     [pool_run_starts_at] / [pool_run_ends_at], the run at an index begins /
     ends at an id; [runs_live_refine] / [runs_dead_kept], the pool-level
     live-character refinement and tombstone preservation; [pool_after_split],
-    what one [splitNode] leaves of the pool at run granularity. *)
+    what one [splitNode] leaves of the pool at run granularity;
+    [pool_run_clock_below], the index-based [pool_clock_below]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -146,6 +147,14 @@ Definition run_pool_invs (p : pool) : Prop :=
   (∀ r, r ∈ all_runs p -> run_fits r) ∧
   runs_disjoint (all_runs p) ∧
   (∀ r, r ∈ all_runs p -> run_origin_clk r).
+
+(** [pool_run_clock_below p id]: every run of [id]'s client in the pool ends
+    at or below [id]'s clock: the item about to be integrated is its client's
+    newest, [pool_clock_below] with the [w64] comparisons replaced by [nat]
+    ones (a run is nonempty, so the strict head bound follows). *)
+Definition pool_run_clock_below (p : pool) (id : YjsId) : Prop :=
+  ∀ r, r ∈ all_runs p -> run_client r = clientId id ->
+    (run_clock r + length (run_items r) <= clock id)%nat.
 
 (** Per-char op expansion of a wire batch (issue #28 U7c), lifted here from
     [store/GetNode] (which had defined it downstream). The pending-buffer

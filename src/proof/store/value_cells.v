@@ -25,7 +25,8 @@
       (the new item is its client's newest), [origins_linked] (the item's
       links are the cells its resolved origins designate), [integrate_splice]
       (the new cell and its run are spliced at matching indices) and
-      [run_denotes] (the run is the input's).
+      [run_denotes] (the run is the input's); [integrate_locs], the
+      address-list half of one splice.
 
     Laws
     - the cell vocabulary projects along [cell_run] ([cell_client_run] /
@@ -35,10 +36,14 @@
       under the heap [NoDup]); [origins_linked] is [origins_resolved] at the
       cursor indices plus the [node_loc] readings
       ([origins_linked_resolved]), and [integrate_splice] projects onto
-      [runs_integrate_splice] ([integrate_splice_runs]); [all_runs] of a
+      [runs_integrate_splice] ([integrate_splice_runs]; the run and the
+      address-list halves at one shared cursor,
+      [integrate_splice_runs_locs]); [all_runs] of a
       projected pool is the projected [all_cells] ([all_runs_pool_of]) and
       [pool_invs] gives [run_pool_invs] under the id no-wrap bounds
-      ([run_pool_invs_of]); [pool_of] / [locs_of] under a registry insert
+      ([run_pool_invs_of]) and [pool_run_clock_below] reads back on the
+      cells ([pool_run_clock_below_to_cell]); [pool_of] / [locs_of] under a
+      registry insert
       and the address map's flattening ([pool_of_insert] / [locs_of_insert]
       / [locs_of_concat]); [client_run] projects onto [client_runs]
       ([client_run_runs], the clock orders agreeing and same-client clocks
@@ -245,6 +250,12 @@ Definition run_denotes (input : IntegrateInput (A := A)) (newItem : YjsItem A)
   rightOrigin (hd inhabitant run) = rightOrigin newItem ∧
   length run = length (in_content input).
 
+(** [integrate_locs ls idx item_l]: the address-list half of one integrate
+    splice: the fresh node's address [item_l] inserted at the cursor [idx]
+    ([runs_integrate_splice_at] is the run half, at the same cursor). *)
+Definition integrate_locs (ls : list loc) (idx : nat) (item_l : loc) : list loc :=
+  take idx ls ++ item_l :: drop idx ls.
+
 (** [inputs_rooted_in_bind inputs bind]: every origin-free tagged input targets
     a root name that is already bound in [bind]. An op with neither a left nor a
     right origin attaches directly under a registered root, so that root must
@@ -412,10 +423,31 @@ Lemma integrate_splice_runs (cells : list item_cell) (arr : list (YjsItem A))
   runs_integrate_splice (cell_run <$> cells) arr run (cell_run <$> cells') arr'.
 Proof.
   intros (idx & Hb & Hlen & -> & ->).
-  exists idx.
+  exists idx. rewrite /runs_integrate_splice_at.
   rewrite -!fmap_take -?fmap_drop -!run_flatten_runs length_fmap.
   split_and!; [exact Hb | exact Hlen | | reflexivity].
   by rewrite fmap_app fmap_cons /=.
+Qed.
+
+(** One integrate splice at BOTH granularities: the run and the address-list
+    halves of [integrate_splice] share one cursor. What carries
+    [wp_Store__Integrate]'s postcondition to [(locs, p)]
+    ([wp_store__Integrate_runs]). *)
+Lemma integrate_splice_runs_locs (cells : list item_cell) (arr : list (YjsItem A))
+    (item_l : loc) (run : list (YjsItem A)) (parent : loc)
+    (cells' : list item_cell) (arr' : list (YjsItem A)) :
+  integrate_splice cells arr item_l run parent cells' arr' ->
+  ∃ idx : nat,
+    runs_integrate_splice_at idx (cell_run <$> cells) arr run (cell_run <$> cells') arr' ∧
+    ic_loc <$> cells' = integrate_locs (ic_loc <$> cells) idx item_l.
+Proof.
+  intros (idx & Hb & Hlen & -> & ->).
+  exists idx. split.
+  - rewrite /runs_integrate_splice_at.
+    rewrite -!fmap_take -?fmap_drop -!run_flatten_runs length_fmap.
+    split_and!; [exact Hb | exact Hlen | | reflexivity].
+    by rewrite fmap_app fmap_cons /=.
+  - by rewrite /integrate_locs fmap_app fmap_cons -fmap_take -fmap_drop /=.
 Qed.
 
 Lemma cells_range_disjoint_runs (pool : list item_cell) :
@@ -523,6 +555,42 @@ Proof.
   - apply (cells_range_disjoint_runs _ Hckb Hclb Hnd). exact Hdisj.
   - intros r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
     apply cell_origin_clk_run. exact (Hoc c Hc).
+Qed.
+
+(** [pool_run_clock_below] read back on the cells: under the pool id bounds
+    and nonempty runs, the [nat] clock bound gives [pool_clock_below]'s [w64]
+    comparisons. The premise side of [wp_store__Integrate_runs]. *)
+Lemma pool_run_clock_below_to_cell (types : gmap loc type_state) (id : YjsId) :
+  (∀ c, c ∈ all_cells types -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells types -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells types -> ic_run c ≠ []) ->
+  (Z.of_nat (clientId id) < 2^64)%Z ->
+  (Z.of_nat (clock id) < 2^64)%Z ->
+  pool_run_clock_below (pool_of types) id ->
+  pool_clock_below types id.
+Proof.
+  move=> Hckb Hclb Hne Hidcl Hidck Hrb c0 Hc0 Hclient.
+  have Hcl : uint.Z (cell_client c0) = Z.of_nat (run_client (cell_run c0)).
+  { have := Hclb c0 Hc0.
+    rewrite /cell_client /run_client /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  have Hck : uint.Z (cell_clock c0) = Z.of_nat (run_clock (cell_run c0)).
+  { have := Hckb c0 Hc0.
+    rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  have Hclid : run_client (cell_run c0) = clientId id.
+  { apply Nat2Z.inj. rewrite -Hcl Hclient. word. }
+  have Hmem : cell_run c0 ∈ all_runs (pool_of types).
+  { rewrite all_runs_pool_of. apply list_elem_of_fmap. by exists c0. }
+  have Hsum := Hrb (cell_run c0) Hmem Hclid.
+  have Hlenr : length (ic_run c0) = length (run_items (cell_run c0)) by reflexivity.
+  have Huck : uint.Z (W64 (clock id)) = Z.of_nat (clock id) by word.
+  have Hnn : ic_run c0 ≠ [] := Hne c0 Hc0.
+  have Hpos : (1 <= length (run_items (cell_run c0)))%nat.
+  { rewrite -Hlenr. destruct (ic_run c0) eqn:Hic; [congruence | simpl; lia]. }
+  split.
+  - rewrite Hck Huck. lia.
+  - rewrite Hck Huck Hlenr. lia.
 Qed.
 
 (** [pool_of] / [locs_of] under a registry insert, and the address map's

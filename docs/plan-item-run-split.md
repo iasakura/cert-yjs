@@ -23,8 +23,15 @@ translations (`cell_starts_ends_at_to_run` and kin, over
 `wp_store__splitAtAndGetLeft_runs` / `Right_runs`. The position clauses
 (which half of the split sits at which slot) deliberately stay out of
 `pool_after_split`: they are address-map facts, so the specs state them on
-`sr_locs`. Next there: `Integrate` (`runs_integrate_splice` is ready), the
-registry family, the delete path, and `applyUpdate`.
+`sr_locs`. Part 4 (2026-08-29): `Integrate` at run granularity:
+`pool_run_clock_below` with its cell read-back
+`pool_run_clock_below_to_cell`, `loc_at` (`node_loc` over a bare address
+list), `runs_integrate_splice_at` (the cursor-explicit core of
+`runs_integrate_splice`), `integrate_locs` and
+`integrate_splice_runs_locs` (the run and the address-list halves of one
+splice at one shared cursor), and the derived `wp_store__Integrate_runs`.
+Next there: the registry family (`getOrCreateYType` / `repair` /
+`hasNode`), the delete path, and `applyUpdate`.
 
 ## 1. The problem
 

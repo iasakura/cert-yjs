@@ -30,7 +30,8 @@
       (runs told apart by index, not address), and the split surgery
       [split_run_left] / [split_run_right] / [split_runs]; the index-based
       forms of the pool statements: [runs_start_at] / [runs_end_at],
-      [origins_resolved] (cursor indices), [runs_integrate_splice], and
+      [origins_resolved] (cursor indices), [runs_integrate_splice] (the
+      cursor-explicit [runs_integrate_splice_at] under an exists), and
       [runs_within]: every run after a step sits inside a run before it.
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
@@ -355,19 +356,25 @@ Definition origins_resolved (runs : list ItemRun) (arr : list (YjsItem A))
     (Z.of_nat (length (runs_flatten (take kR runs))) = rightIdx)%Z ∧
     (kR <= length runs)%nat.
 
-(** [runs_integrate_splice runs arr run runs' arr']: what one integrate does,
-    loc-free: a fresh live run is spliced into [runs] at some cursor, and its
-    items into [arr] at the matching model index (the prefix sum of the runs
-    before it). The new node's address and type are heap matters
-    ([integrate_splice] carries them). *)
+(** [runs_integrate_splice_at idx runs arr run runs' arr']: what one
+    integrate does, loc-free: a fresh live run is spliced into [runs] at the
+    cursor [idx], and its items into [arr] at the matching model index (the
+    prefix sum of the runs before it). The new node's address and type are
+    heap matters ([integrate_splice] carries them; the address list gets the
+    same splice, [store/value_cells]'s [integrate_locs]).
+    [runs_integrate_splice] hides the cursor. *)
+Definition runs_integrate_splice_at (idx : nat) (runs : list ItemRun)
+    (arr : list (YjsItem A)) (run : list (YjsItem A))
+    (runs' : list ItemRun) (arr' : list (YjsItem A)) : Prop :=
+  (idx <= length runs)%nat ∧
+  (length (runs_flatten (take idx runs)) <= length arr)%nat ∧
+  runs' = take idx runs ++ MkItemRun run false :: drop idx runs ∧
+  arr' = take (length (runs_flatten (take idx runs))) arr ++ run ++
+         drop (length (runs_flatten (take idx runs))) arr.
+
 Definition runs_integrate_splice (runs : list ItemRun) (arr : list (YjsItem A))
     (run : list (YjsItem A)) (runs' : list ItemRun) (arr' : list (YjsItem A)) : Prop :=
-  ∃ idx : nat,
-    (idx <= length runs)%nat ∧
-    (length (runs_flatten (take idx runs)) <= length arr)%nat ∧
-    runs' = take idx runs ++ MkItemRun run false :: drop idx runs ∧
-    arr' = take (length (runs_flatten (take idx runs))) arr ++ run ++
-           drop (length (runs_flatten (take idx runs))) arr.
+  ∃ idx : nat, runs_integrate_splice_at idx runs arr run runs' arr'.
 
 (* ===== lemmas ============================================================= *)
 
