@@ -5,7 +5,9 @@
     [YjsArrInvariant] from [YjsArrInvariant_integrate]), the item-validity /
     insertion helper lemmas ([item_valid_*], [insert_*], [toItem_at]), and the
     top-level [Store.Integrate] (cells-level and model-level, including the
-    per-client item-map maintenance).
+    per-client item-map maintenance), and its run-granular derived form
+    [wp_store__Integrate_runs] (over [own_store_runs], splicing the run and
+    the fresh address at one shared cursor).
 
     Split out of [store/heap] (the predicates and the lock layer) so
     these heavy loop proofs compile in their own [.vo]; the update path
@@ -69,6 +71,14 @@ Local Notation TId := (TypeId P).
 Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation Ev := (@Event Op).
 Local Notation DocModel := (gmap TId (list (YjsItem A))).
+
+(* The heap-layer extraction lemmas ([own_type_pool_id_bounds] and kin) and
+   [own_store_struct_intro] abstract over [store/heap]'s ghost instances;
+   declare them so the run-granular derivation can invoke those lemmas
+   (the same three [store/splitNode] declares). *)
+Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
 
 (** [containsId] decides membership of the span slice's char-id set (issue #28:
     an id addresses any char of a scanned run, so the Go test is a clock-range
@@ -2522,5 +2532,81 @@ Proof using Type*.
     simpl. iFrame.
 Qed.
 
+
+(** [Store.Integrate] at run granularity: the origins are read at their run
+    cursors ([origins_resolved]) and the two link addresses off the address
+    list ([loc_at]); the postcondition splices the run and the fresh address
+    at one shared cursor. Derived from [wp_Store__Integrate] through the
+    [pool_of] / [locs_of] projections. *)
+Lemma wp_store__Integrate_runs (s parent parent_arg item_l : loc)
+    (str : store_state_runs) (tm : type_model) (ls : list loc)
+    (arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
+    (newItem : YjsItem A) (kL kR : nat) :
+  parent_arg = parent ∨ parent_arg = null ->
+  sr_pool str !! parent = Some tm ->
+  sr_locs str !! parent = Some ls ->
+  integrate_ready (tm_arr tm) input newItem ->
+  input_fits input ->
+  (Z.of_nat (clientId (in_id input)) < 2^64)%Z ->
+  integrate_all (ops_of_input input (explode (in_content input))) (tm_arr tm) = Some arr' ->
+  origins_resolved (tm_runs tm) (tm_arr tm) input kL kR ->
+  pool_run_clock_below (sr_pool str) (in_id input) ->
+  {{{ is_pkg_init yjs ∗ own_store_runs s str ∗
+      own_linked_item item_l input parent
+        (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) }}}
+    s @! (go.PointerType yjs.store) @! "Integrate" #parent_arg #item_l
+  {{{ (runs' : list ItemRun) (ls' : list loc) (run : list (YjsItem A)), RET #();
+      own_store_runs s (str <| sr_pool := <[parent := MkTypeModel runs' arr']> (sr_pool str) |>
+                            <| sr_locs := <[parent := ls']> (sr_locs str) |>) ∗
+      ⌜YjsArrInvariant arr'⌝ ∗
+      ⌜∃ idx : nat, runs_integrate_splice_at idx (tm_runs tm) (tm_arr tm) run runs' arr' ∧
+                    ls' = integrate_locs ls idx item_l⌝ ∗
+      ⌜run_denotes input newItem run⌝ }}}.
+Proof using Type*.
+  move=> Hparg Hpl Hlocs Hready Hfitsin Hclbnd Hall Hres Hbelow.
+  iIntros (Φ) "(#Hpkg & Hruns & Hfresh) HΦ".
+  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
+  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
+  rewrite /pool_of lookup_fmap in Hpl.
+  destruct (types !! parent) as [ts|] eqn:Hts; simplify_eq/=.
+  destruct ts as [cells arr]. simpl in *.
+  have Hls : ls = ic_loc <$> cells.
+  { rewrite /locs_of lookup_fmap Hts /= in Hlocs. congruence. }
+  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
+  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbndb.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfb.
+  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types bind pend pdel) Hinvs0
+               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  have Hidck : (Z.of_nat (clock (in_id input)) < 2^64)%Z.
+  { move: Hfitsin. rewrite /input_fits. lia. }
+  have Hbelow' : pool_clock_below types (in_id input)
+    := pool_run_clock_below_to_cell types (in_id input)
+         (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
+         (λ c Hc, proj1 (Hwfb c Hc)) Hclbnd Hidck Hbelow.
+  have Hlinked : origins_linked cells arr input
+                   (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)).
+  { rewrite Hls -!node_loc_loc_at. apply/origins_linked_resolved.
+    exists kL, kR. split_and!; [exact Hres | done | done]. }
+  wp_apply (wp_Store__Integrate s parent parent_arg item_l
+              (MkStoreState client k0 types bind pend pdel) cells arr arr' input newItem
+              (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR))
+              Hparg Hts Hready Hfitsin Hall Hlinked Hbelow'
+              with "[$Hpkg $Hcells $Hfresh]").
+  iIntros (cells' run) "(Hcells & %Hinv' & %Hsplice & %Hden)".
+  iEval (simpl) in "Hcells".
+  have Hrl := integrate_splice_runs_locs cells arr item_l run parent cells' arr' Hsplice.
+  destruct Hrl as (idx & Hat & Hlocs').
+  iApply ("HΦ" $! (cell_run <$> cells') (ic_loc <$> cells') run).
+  iSplitL.
+  { iExists (MkStoreState client k0 (<[parent := MkTypeState cells' arr']> types) bind pend pdel).
+    iFrame "Hcells". iPureIntro.
+    rewrite /state_runs_of /= pool_of_insert locs_of_insert /type_model_of /=.
+    reflexivity. }
+  iPureIntro. split_and!.
+  - exact Hinv'.
+  - exists idx. split; [exact Hat | rewrite Hls; exact Hlocs'].
+  - exact Hden.
+Qed.
 
 End store_integrate.

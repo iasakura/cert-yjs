@@ -4,8 +4,9 @@
     Definitions
     - [item_cell]: one node, its location plus the run of model items it
       carries, its tombstone bit and its resolved parent type; [node_loc] is
-      the cursor into a cell list; [run_head] its first item, [cell_unit] the
-      one-item case.
+      the cursor into a cell list ([loc_at] the same cursor over a bare
+      address list, [node_loc_loc_at] relating them); [run_head] its first
+      item, [cell_unit] the one-item case.
     - [run_flatten cells]: the document list a cell list denotes.
     - [cell_repr] / [cells_repr]: the isomorphism from a cell list to a model
       item list.
@@ -116,6 +117,12 @@ Definition cell_unit (c : item_cell) : Prop := length (ic_run c) = 1%nat.
 Definition node_loc (cells : list item_cell) (k : Z) : loc :=
   if decide (0 <= k)%Z then default null (ic_loc <$> cells !! Z.to_nat k) else null.
 
+(** [loc_at ls k]: [node_loc] over a bare address list ([null] outside
+    [0, len)): how a run-granular spec reads a node address off the
+    [sr_locs] half of the store state (plan-item-run-split stage 2). *)
+Definition loc_at (ls : list loc) (k : Z) : loc :=
+  if decide (0 <= k)%Z then default null (ls !! Z.to_nat k) else null.
+
 (* ----- per-node accessors read by yType.findPos -------------------------- *)
 
 (** The Deleted bit (y-octo ITEM_DELETED = 0x04) of a heap item's [flags], read
@@ -177,6 +184,10 @@ Definition originId_of (ov : option yjs.item.t) : option YjsId :=
   (λ v, toYjsId v.(yjs.item.id')) <$> ov.
 
 (* ===== lemmas ============================================================= *)
+
+Lemma node_loc_loc_at (cells : list item_cell) (k : Z) :
+  node_loc cells k = loc_at (ic_loc <$> cells) k.
+Proof. by rewrite /node_loc /loc_at list_lookup_fmap. Qed.
 
 (** The cell-level run vocabulary says the same thing as the pure one under
     [cell_run]: head, flatten, visible count, tombstone flip, unit length. *)
