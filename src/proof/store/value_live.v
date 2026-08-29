@@ -534,4 +534,18 @@ Proof.
   move=> Hperm c Hc Hdel y Hy. exists c. split_and!; [by rewrite Hperm | exact Hdel | exact Hy].
 Qed.
 
+(** [ids_tombstoned] carried to the projected runs: what carries the delete
+    path's coverage record to the run-granular specs
+    ([wp_store__deleteRange_runs] / [wp_store__applyDeleteSpans_runs]). *)
+Lemma ids_tombstoned_runs_of (ids : gset YjsId) (pool : list item_cell) :
+  ids_tombstoned ids pool ->
+  ids_tombstoned_runs ids (cell_run <$> pool).
+Proof.
+  move=> H i Hi. destruct (H i Hi) as (c & Hc & Hdel & Hin).
+  exists (cell_run c). split_and!.
+  - apply list_elem_of_fmap_2. exact Hc.
+  - rewrite /cell_run /= Hdel //.
+  - exact Hin.
+Qed.
+
 End store_value_live.

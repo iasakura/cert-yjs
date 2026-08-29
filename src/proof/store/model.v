@@ -35,7 +35,8 @@
     ends at an id; [runs_live_refine] / [runs_dead_kept], the pool-level
     live-character refinement and tombstone preservation; [pool_after_split],
     what one [splitNode] leaves of the pool at run granularity
-    ([pool_after_repair] the same for [store.repair]'s at most two splits);
+    ([pool_after_repair] the same for [store.repair]'s at most two splits,
+    [pool_after_delete] for the wire delete path's unbounded sweep);
     [pool_run_clock_below], the index-based [pool_clock_below]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
@@ -155,6 +156,19 @@ Definition pool_after_repair (p p' : pool) : Prop :=
      Forall (λ r, length (run_items r) = 1%nat) (tm_runs tm) -> tm' = tm) ∧
   runs_within (all_runs p) (all_runs p') ∧
   runs_live_refine p p'.
+
+(** [pool_after_delete p p']: [p'] is [p] after a sweep of the wire delete
+    path ([deleteRange] / [applyDeleteSpans]): the loc-free
+    [delete_types_update_rel]. Each type's document survives, no type
+    disappears, live and dead chars refine, and every new run sits inside an
+    old one's range. No run-count bound: the delete loop splits an unbounded
+    number of times. *)
+Definition pool_after_delete (p p' : pool) : Prop :=
+  (∀ q tm', p' !! q = Some tm' -> ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm) ∧
+  (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ∧
+  runs_live_refine p p' ∧
+  runs_dead_kept p p' ∧
+  runs_within (all_runs p) (all_runs p').
 
 (** [pool_run_covers p parent k d]: the [k]-th run of the type at [parent]
     has the char with id [d]: the index-based [pool_cell_covers]. *)
