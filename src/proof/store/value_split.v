@@ -16,6 +16,11 @@
       [origins_covered] / [repair_parent] / [origins_split].
 
     Laws
+    - the split projects along [cell_run] ([cell_run_split_left] /
+      [cell_run_split_right], [split_cells_runs]; [cell_covers_clock_run]),
+      the fresh node's address being all the pure [split_runs] does not see;
+      [runs_start_at] / [runs_end_at] over a projected cell list read back on
+      the cells ([runs_start_at_fmap] / [runs_end_at_fmap]).
     - splitting a node is invisible to the model: [split_cells_flatten] and
       [split_cells_num_visible].
     - [delete_types_update_rel] is reflexive and transitive (which is what lets the
@@ -252,6 +257,58 @@ Definition origins_split (types : gmap loc type_state) (input : IntegrateInput (
   end.
 
 (* ===== lemmas ============================================================= *)
+
+(** The split surgery projects along [cell_run]: the fresh node's address
+    [r_loc] is the only thing the pure [split_runs] does not see
+    (docs/plan-item-run-split.md stage 1). *)
+Lemma cell_run_split_left (c : item_cell) (o : nat) :
+  cell_run (split_cell_left c o) = split_run_left (cell_run c) o.
+Proof. reflexivity. Qed.
+
+Lemma cell_run_split_right (c : item_cell) (o : nat) (r_loc : loc) :
+  cell_run (split_cell_right c o r_loc) = split_run_right (cell_run c) o.
+Proof. reflexivity. Qed.
+
+Lemma split_cells_runs (cells : list item_cell) (k o : nat) (r_loc : loc) :
+  cell_run <$> split_cells cells k o r_loc = split_runs (cell_run <$> cells) k o.
+Proof.
+  rewrite /split_cells /split_runs list_lookup_fmap.
+  destruct (cells !! k) as [c|] eqn:Hk; simpl; [| reflexivity].
+  rewrite !fmap_app !fmap_cons /= !fmap_take !fmap_drop //.
+Qed.
+
+(** [runs_start_at] / [runs_end_at] over a projected cell list, read back on
+    the cells: the bridge [cell_starts_at] / [cell_ends_at] will cross once
+    the pool is run-granular (the pool-level forms also fix the node's
+    address and owning type). *)
+Lemma runs_start_at_fmap (cells : list item_cell) (k : nat) (d : YjsId) :
+  runs_start_at (cell_run <$> cells) k d ↔
+  ∃ c, cells !! k = Some c ∧ item_id (run_head c) = d.
+Proof.
+  rewrite /runs_start_at. split.
+  - intros (r & Hk & Hd). rewrite list_lookup_fmap in Hk.
+    destruct (cells !! k) as [c|] eqn:Hc; last done.
+    simplify_eq/=. eauto.
+  - intros (c & Hk & Hd). exists (cell_run c).
+    rewrite list_lookup_fmap Hk /=. eauto.
+Qed.
+
+Lemma runs_end_at_fmap (cells : list item_cell) (k : nat) (d : YjsId) :
+  runs_end_at (cell_run <$> cells) k d ↔
+  ∃ c, cells !! k = Some c ∧ clientId (item_id (run_head c)) = clientId d ∧
+       (clock (item_id (run_head c)) + length (ic_run c) = clock d + 1)%nat.
+Proof.
+  rewrite /runs_end_at. split.
+  - intros (r & Hk & Hcl & Hck). rewrite list_lookup_fmap in Hk.
+    destruct (cells !! k) as [c|] eqn:Hc; last done.
+    simplify_eq/=. eauto.
+  - intros (c & Hk & Hcl & Hck). exists (cell_run c).
+    rewrite list_lookup_fmap Hk /=. eauto.
+Qed.
+
+Lemma cell_covers_clock_run (c : item_cell) (k : nat) :
+  cell_covers_clock c k ↔ run_covers_clock (cell_run c) k.
+Proof. reflexivity. Qed.
 
 (** [cell_covers] at a runtime id, read in the [w64] arithmetic the node
     lookups compute with; needs the cell's ids to fit a word. *)

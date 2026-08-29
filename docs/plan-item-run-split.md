@@ -1,8 +1,17 @@
 # Plan: split `item_cell` into a pure `ItemRun` and a location list
 
 Status: proposal (2026-08-22), written after the spec refactor
-(`docs/plan-spec-refactor.md`, PRs #143 to #151). Nothing here is
-implemented.
+(`docs/plan-spec-refactor.md`, PRs #143 to #151). Stage 1 in progress
+(2026-08-27): `ItemRun`, its vocabulary and split surgery, `cell_run` and
+the projection laws for flatten / visible / flip / split / covers / fits /
+origin / disjointness are in (`item/model.v` section `item_run`,
+`item/value.v`, `store/value_cells.v`, `store/value_split.v`); part 2 adds
+`runs_start_at` / `runs_end_at`, `origins_resolved` (cursor indices only)
+and `runs_integrate_splice`, with `origins_linked` an iff to the resolved
+form plus the `node_loc` readings, and `integrate_splice` projecting onto
+`runs_integrate_splice`. What remains of stage 1 is the sorted
+`client_runs` theory, which needs `all_runs` over the run-granular pool and
+so lands with stage 2.
 
 ## 1. The problem
 
@@ -210,6 +219,18 @@ The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
    model, prove `runs_flatten (integrate_run r runs) = integrate_all
    (explode r) (runs_flatten runs)` so the per-char convergence theorems
    transfer. Done after stage 4, when there is one run list to refine.
+   Representation candidate (2026-08-28): a run-level item is
+   `YjsItem (list A)` paired with the tombstone bit (the bit is not a model
+   notion, as `text_snapshot`'s `list (YjsItem A * bool)` already shows).
+   On `run_wf` runs this is an isomorphism with stage 1's `ItemRun` (a run
+   is its head's origin / rightOrigin / id plus its contents), it makes
+   well-formedness structural, and because rocq-yjs's order theory never
+   reads the content, instantiating the generic `integrate` /
+   `YjsArrInvariant` / convergence theorems at `list A` gives the
+   run-granular algorithm and its theorems outright; the flatten bridge
+   (`run_wf_of_chain`'s chain construction) is the one new proof. Not used
+   in stages 1 to 4 on purpose: there `cell_run` stays a restriction and
+   the projections definitional, keeping the explode bridge out of them.
 
 Stages 1 and 2 are where the user-visible improvement is (loc-free pure
 lemmas, specs over `(p, locs)`); stage 3 is the part shared with the spec
