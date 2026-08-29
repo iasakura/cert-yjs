@@ -52,19 +52,9 @@ Definition cells_model (cells : list item_cell) : list (YjsItem A * bool) :=
     API ([Text.Len] / [Text.String]) exposes about a snapshot (issue #125).
     The bound a read hands back is at the ITEM level ([m.*1] contains a set);
     a tombstoned item is in [m.*1] but not in [visible_items m].
-
-    [items_string] is a bespoke [foldr], NOT [mjoin (content <$> ...)]: using
-    [content] as [fmap]'s function argument together with [mjoin] entangles
-    rocq-yjs's [YjsPtr.u0] universe with stdpp's monad-class universes, and in
-    any file that also loads Perennial's [New.ghost] universal-[own] syntax
-    codes that chain contradicts [syntax.cmra]'s universe bound (the [IsCmra]
-    instances for [gset (YjsItem A)] then fail with "no instance found"). The
-    fully-applied [content x] avoids the entanglement. *)
+    [items_string] is [item/model.v]'s. *)
 Definition visible_items (m : list (YjsItem A * bool)) : list (YjsItem A) :=
   (filter (λ p, p.2 = false) m).*1.
-
-Definition items_string (l : list (YjsItem A)) : A :=
-  foldr (λ x acc, content x ++ acc) [] l.
 
 Definition visible_string (m : list (YjsItem A * bool)) : A :=
   items_string (visible_items m).
@@ -105,29 +95,9 @@ Lemma visible_items_app (m1 m2 : list (YjsItem A * bool)) :
   visible_items (m1 ++ m2) = visible_items m1 ++ visible_items m2.
 Proof. rewrite /visible_items filter_app fmap_app //. Qed.
 
-Lemma items_string_app (l1 l2 : list (YjsItem A)) :
-  items_string (l1 ++ l2) = items_string l1 ++ items_string l2.
-Proof.
-  induction l1 as [|x l1 IH]; first done.
-  rewrite /items_string /= -/(items_string (l1 ++ l2)) -/(items_string l1)
-    IH app_assoc //.
-Qed.
-
 Lemma visible_string_app (m1 m2 : list (YjsItem A * bool)) :
   visible_string (m1 ++ m2) = visible_string m1 ++ visible_string m2.
 Proof. rewrite /visible_string visible_items_app items_string_app //. Qed.
-
-(** A run whose per-char contents explode a heap content string spells exactly
-    that string (the [own_dll] node fact, consumed by the [yType.Text] walk). *)
-Lemma items_string_explode (r : list (YjsItem A)) (s : go_string) :
-  content <$> r = explode s -> items_string r = s.
-Proof.
-  revert s. induction r as [|x r IH] => s Hc.
-  - destruct s; [done | discriminate].
-  - destruct s as [|b s']; first discriminate.
-    injection Hc as Hx Hr.
-    rewrite /items_string /= -/(items_string r) (IH s' Hr) Hx //.
-Qed.
 
 (** One cell's visible items: its whole run when live, nothing when
     tombstoned. *)
