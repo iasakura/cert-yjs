@@ -258,6 +258,41 @@ Definition origins_split (types : gmap loc type_state) (input : IntegrateInput (
 
 (* ===== lemmas ============================================================= *)
 
+(** [pool_cell_covers] at the projected pool: the covering cell named by its
+    type and run index plus its address ([locs_of]); and back. What
+    translates [GetNode]'s postcondition to [(locs, p)]. *)
+Lemma pool_cell_covers_to_run (types : gmap loc type_state) (c : item_cell) (d : YjsId) :
+  pool_cell_covers types c d ->
+  ∃ parent k, pool_run_covers (pool_of types) parent k d ∧
+    (locs_of types !! parent) ≫= (λ ls, ls !! k) = Some (ic_loc c).
+Proof.
+  intros [Hmem Hcov].
+  apply all_cells_elem_of in Hmem as (parent & ts & Hts & Hcts).
+  apply list_elem_of_lookup_1 in Hcts as (k & Hk).
+  exists parent, k. split.
+  - exists (type_model_of ts), (cell_run c).
+    rewrite /pool_of lookup_fmap Hts /=.
+    split_and!; [done | | by apply cell_covers_run].
+    rewrite /type_model_of /= list_lookup_fmap Hk //.
+  - rewrite /locs_of lookup_fmap Hts /= list_lookup_fmap Hk //.
+Qed.
+
+Lemma pool_run_covers_to_cell (types : gmap loc type_state) (parent : loc) (k : nat) (d : YjsId) :
+  pool_run_covers (pool_of types) parent k d ->
+  ∃ c, pool_cell_covers types c d.
+Proof.
+  intros (tm & r & Hp & Hr & Hcov).
+  rewrite /pool_of lookup_fmap in Hp.
+  destruct (types !! parent) as [ts|] eqn:Hts; simplify_eq/=.
+  rewrite /type_model_of /= list_lookup_fmap in Hr.
+  destruct (ty_cells ts !! k) as [c|] eqn:Hk; simplify_eq/=.
+  exists c. split.
+  - apply all_cells_elem_of. exists parent, ts.
+    split; [done | exact (list_elem_of_lookup_2 _ _ _ Hk)].
+  - by apply cell_covers_run.
+Qed.
+
+
 (** The split surgery projects along [cell_run]: the fresh node's address
     [r_loc] is the only thing the pure [split_runs] does not see
     (docs/plan-item-run-split.md stage 1). *)

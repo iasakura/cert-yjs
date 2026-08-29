@@ -17,8 +17,10 @@
       [registry_lookup_or_create].
     - where a step's cells come from: [cells_within] (inside an old cell) and
       [cells_within_or_from] (inside an old cell or an integrated input).
-    - [type_model_of] / [pool_of]: a type state and the pool at their
-      run-granular models (plan-item-run-split stage 2).
+    - [type_model_of] / [pool_of] / [locs_of]: a type state and the pool at
+      their run-granular models and address map; [store_state_runs] /
+      [state_runs_of], the store state with the pool as [(sr_locs, sr_pool)]
+      (plan-item-run-split stage 2).
     - what one integrate asks and does, at the cell level: [pool_clock_below]
       (the new item is its client's newest), [origins_linked] (the item's
       links are the cells its resolved origins designate), [integrate_splice]
@@ -465,6 +467,31 @@ Definition type_model_of (ts : type_state) : type_model :=
 
 Definition pool_of (types : gmap loc type_state) : pool :=
   type_model_of <$> types.
+
+(** The address map of a cell-level pool: each type's node addresses (the
+    heap half [pool_of] forgets). *)
+Definition locs_of (types : gmap loc type_state) : gmap loc (list loc) :=
+  (λ ts, ic_loc <$> ty_cells ts) <$> types.
+
+(** [store_state_runs]: [store_state] at run granularity
+    (plan-item-run-split stage 2): the type pool as [(sr_locs, sr_pool)]
+    instead of the cell-level [ss_types]. [state_runs_of] projects;
+    [own_store_runs] ([store/heap.v]) is the store at such a state. *)
+Record store_state_runs := MkStoreStateRuns {
+  sr_client : w64;
+  sr_clock : w64;
+  sr_locs : gmap loc (list loc);
+  sr_pool : pool;
+  sr_bind : gmap P loc;
+  sr_pending : list (TId * IntegrateInput (A := A));
+  sr_pending_deletes : list delete_span;
+}.
+
+Definition state_runs_of (st : store_state) : store_state_runs :=
+  MkStoreStateRuns (ss_client st) (ss_clock st)
+    (locs_of (ss_types st)) (pool_of (ss_types st))
+    (ss_bind st) (ss_pending st) (ss_pending_deletes st).
+
 
 Lemma all_runs_pool_of (types : gmap loc type_state) :
   all_runs (pool_of types) = cell_run <$> all_cells types.

@@ -693,4 +693,32 @@ Proof using Type*.
 Qed.
 
 
+(** [store.GetNode] at run granularity (plan-item-run-split stage 2): a hit
+    returns the address at the covering type's run cursor ([sr_locs] at the
+    index [pool_run_covers] names), a miss certifies no run covers the id.
+    Derived from the cell-level spec through the projections. *)
+Lemma wp_store__GetNode_runs (s : loc) (idv : yjs.id.t) (str : store_state_runs) :
+  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+    s @! (go.PointerType yjs.store) @! "GetNode" #idv
+  {{{ (l : loc) (ok : bool), RET (#l, #ok);
+      own_store_runs s str ∗
+      ⌜if ok then ∃ parent k, pool_run_covers (sr_pool str) parent k (toYjsId idv) ∧
+                    (sr_locs str !! parent) ≫= (λ ls, ls !! k) = Some l
+       else ∀ parent k, ¬ pool_run_covers (sr_pool str) parent k (toYjsId idv)⌝ }}}.
+Proof using Type*.
+  iIntros (Φ) "(#Hpkg & Hruns) HΦ".
+  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
+  wp_apply (wp_store__GetNode s idv st with "[$Hpkg $Hcells]").
+  iIntros (l ok) "(Hcells & %Hres)".
+  iApply ("HΦ" $! l ok).
+  iSplitL. { iExists st. by iFrame "Hcells". }
+  iPureIntro. subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
+  destruct ok.
+  - destruct Hres as (c & Hcov & <-).
+    exact (pool_cell_covers_to_run types c (toYjsId idv) Hcov).
+  - move=> parent k Hrc.
+    destruct (pool_run_covers_to_cell types parent k (toYjsId idv) Hrc) as (c & Hcov).
+    exact (Hres c Hcov).
+Qed.
+
 End store_update.

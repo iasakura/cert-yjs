@@ -711,10 +711,6 @@ Definition own_type_pool_runs (dq : dfrac)
     ∃ ls, ⌜locs !! parent = Some ls⌝ ∗
           own_ytype_runs parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
 
-(** The address map of a cell-level pool: each type's node addresses. *)
-Definition locs_of (types : gmap loc type_state) : gmap loc (list loc) :=
-  (λ ts, ic_loc <$> ty_cells ts) <$> types.
-
 (** The cell-level pool at its run-granular reading: [own_type_pool] with
     the address [NoDup] is [own_type_pool_runs] at [locs_of] / [pool_of]. *)
 Lemma own_type_pool_runs_of (types : gmap loc type_state) :
@@ -1126,6 +1122,15 @@ Proof.
   iSplitL; last by iPureIntro.
   iFrame.
 Qed.
+
+(** [own_store_runs s str]: THE store at its run-granular state
+    (plan-item-run-split stage 2): [own_store_struct] at some cell-level
+    state projecting to [str]. Migration scaffolding: the stage-2 [_runs]
+    specs are stated over it and derived from the cell-level ones through
+    the [pool_of] / [locs_of] projections; stage 3 makes it primitive and
+    retires the cell-level state. *)
+Definition own_store_runs (s : loc) (str : store_state_runs) : iProp Σ :=
+  ∃ st : store_state, ⌜state_runs_of st = str⌝ ∗ own_store_struct s st.
 
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗

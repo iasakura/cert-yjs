@@ -78,6 +78,11 @@ Definition client_runs (p : pool) (c : nat) : list ItemRun :=
     told apart by index), and every head's same-client origin is older.
     [pool_invs]'s [NoDup] of node addresses is a heap fact and stays with
     the heap layer. *)
+(** [pool_run_covers p parent k d]: the [k]-th run of the type at [parent]
+    has the char with id [d]: the index-based [pool_cell_covers]. *)
+Definition pool_run_covers (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=
+  ∃ tm r, p !! parent = Some tm ∧ tm_runs tm !! k = Some r ∧ run_covers r d.
+
 Definition run_pool_invs (p : pool) : Prop :=
   (∀ r, r ∈ all_runs p -> run_fits r) ∧
   runs_disjoint (all_runs p) ∧
