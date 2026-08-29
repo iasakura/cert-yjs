@@ -36,7 +36,9 @@
       [runs_integrate_splice] ([integrate_splice_runs]); [all_runs] of a
       projected pool is the projected [all_cells] ([all_runs_pool_of]) and
       [pool_invs] gives [run_pool_invs] under the id no-wrap bounds
-      ([run_pool_invs_of]).
+      ([run_pool_invs_of]); [client_run] projects onto [client_runs]
+      ([client_run_runs], the clock orders agreeing and same-client clocks
+      unique).
     - the pool invariants are preserved by appending a fresh cell ([*_snoc],
       assembled for one integrate as [pool_invs_integrate])
       and by any permutation that keeps locations and runs
@@ -486,6 +488,86 @@ Proof.
   - apply (cells_range_disjoint_runs _ Hckb Hclb Hnd). exact Hdisj.
   - intros r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
     apply cell_origin_clk_run. exact (Hoc c Hc).
+Qed.
+
+(** [client_run] projects onto [client_runs]: the [merge_sort cell_le] run
+    list, mapped through [cell_run], is the [merge_sort run_le] of the
+    projected pool. Needs the id no-wrap bounds (so the [w64] and [nat]
+    clock orders agree), nonempty runs, range disjointness and the address
+    [NoDup] (so same-client clocks are unique and sortedness pins the list). *)
+Lemma client_run_runs (types : gmap loc type_state) (client : w64) :
+  (∀ c, c ∈ all_cells types -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells types -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells types -> ic_run c ≠ []) ->
+  NoDup (ic_loc <$> all_cells types) ->
+  cells_range_disjoint (all_cells types) ->
+  cell_run <$> client_run types client = client_runs (pool_of types) (uint.nat client).
+Proof.
+  move=> Hckb Hclb Hne Hnd Hdisj.
+  rewrite /client_runs all_runs_pool_of list_filter_fmap /client_run.
+  set (P1 := λ c : item_cell, cell_client c = client).
+  set (P2 := λ c : item_cell, run_client (cell_run c) = uint.nat client).
+  have Hpq : ∀ c, c ∈ all_cells types -> (P1 c ↔ P2 c).
+  { move=> c Hc. rewrite /P1 /P2 cell_client_run.
+    have Hb := Hclb c Hc. split; move=> H; word. }
+  have -> : filter P2 (all_cells types) = filter P1 (all_cells types).
+  { apply list_filter_iff_elem_of. move=> c Hc. symmetry. by apply Hpq. }
+  set (F := filter P1 (all_cells types)).
+  have HFsub : ∀ c, c ∈ F -> c ∈ all_cells types.
+  { move=> c Hc. apply list_elem_of_filter in Hc. tauto. }
+  apply (StronglySorted_unique_strong run_le).
+  - (* same clock, same client, disjoint ranges, nonempty runs -> same cell *)
+    move=> r1 r2 Hr1 Hr2 H12 H21.
+    apply list_elem_of_fmap in Hr1 as (c1 & -> & Hc1).
+    rewrite merge_sort_Permutation in Hc1.
+    rewrite merge_sort_Permutation in Hr2.
+    apply list_elem_of_fmap in Hr2 as (c2 & -> & Hc2).
+    have Hm1 : c1 ∈ all_cells types := HFsub c1 Hc1.
+    have Hm2 : c2 ∈ all_cells types := HFsub c2 Hc2.
+    have Hcl : cell_client c1 = cell_client c2.
+    { apply list_elem_of_filter in Hc1. apply list_elem_of_filter in Hc2.
+      rewrite /P1 in Hc1 Hc2. destruct Hc1 as [-> _]. destruct Hc2 as [-> _]. done. }
+    have Hck : run_clock (cell_run c1) = run_clock (cell_run c2).
+    { rewrite /run_le in H12 H21. lia. }
+    have Hloc : ic_loc c1 = ic_loc c2.
+    { destruct (decide (ic_loc c1 = ic_loc c2)) as [| Hnee]; [done |].
+      have Hd := Hdisj c1 c2 Hm1 Hm2 Hcl Hnee.
+      have Hlen1 : (1 <= length (ic_run c1))%nat
+        by (destruct (ic_run c1) eqn:E; [exfalso; exact (Hne c1 Hm1 E) | simpl; lia]).
+      have Hlen2 : (1 <= length (ic_run c2))%nat
+        by (destruct (ic_run c2) eqn:E; [exfalso; exact (Hne c2 Hm2 E) | simpl; lia]).
+      have Hz1 : uint.Z (cell_clock c1) = Z.of_nat (run_clock (cell_run c1)).
+      { have := Hckb c1 Hm1. rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+        move=> Hb. word. }
+      have Hz2 : uint.Z (cell_clock c2) = Z.of_nat (run_clock (cell_run c2)).
+      { have := Hckb c2 Hm2. rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+        move=> Hb. word. }
+      move: Hd. rewrite Hz1 Hz2 Hck /cell_run /=. lia. }
+    f_equal.
+    destruct (list_elem_of_lookup_1 _ _ Hm1) as (i1 & Hi1).
+    destruct (list_elem_of_lookup_1 _ _ Hm2) as (i2 & Hi2).
+    have Hll1 : (ic_loc <$> all_cells types) !! i1 = Some (ic_loc c2)
+      by rewrite list_lookup_fmap Hi1 /= Hloc.
+    have Hll2 : (ic_loc <$> all_cells types) !! i2 = Some (ic_loc c2)
+      by rewrite list_lookup_fmap Hi2.
+    have Heqi : i1 = i2 := NoDup_lookup _ _ _ _ Hnd Hll1 Hll2.
+    rewrite Heqi Hi2 in Hi1. by simplify_eq.
+  - apply (StronglySorted_fmap_elem_of cell_le run_le).
+    + move=> x y Hx Hy Hxy.
+      rewrite merge_sort_Permutation in Hx. rewrite merge_sort_Permutation in Hy.
+      have Hmx : x ∈ all_cells types := HFsub x Hx.
+      have Hmy : y ∈ all_cells types := HFsub y Hy.
+      move: Hxy. rewrite /cell_le /run_le.
+      have Hzx : uint.Z (cell_clock x) = Z.of_nat (run_clock (cell_run x)).
+      { have := Hckb x Hmx. rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+        move=> Hb. word. }
+      have Hzy : uint.Z (cell_clock y) = Z.of_nat (run_clock (cell_run y)).
+      { have := Hckb y Hmy. rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+        move=> Hb. word. }
+      rewrite Hzx Hzy. lia.
+    + apply (StronglySorted_merge_sort cell_le).
+  - apply (StronglySorted_merge_sort run_le).
+  - rewrite !merge_sort_Permutation //.
 Qed.
 
 
