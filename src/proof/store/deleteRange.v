@@ -1,7 +1,9 @@
 (** The wire delete path (issue #133, plan section 5): [store.deleteNode]
     tombstones one integrated node and [store.deleteRange] tombstones a whole
     clock range, splitting at the range boundaries so the deletion covers
-    exactly the requested chars.
+    exactly the requested chars. The run-granular derived forms are
+    [wp_store__deleteRange_runs] / [wp_store__applyDeleteSpans_runs] (over
+    [own_store_runs], stepping the pool by [pool_after_delete]).
 
     Both are stated over the store's CELL-POOL bundle (the [items] field, its
     [own_item_map] and the per-type DLL big-op) rather than [own_store]: this
@@ -818,6 +820,101 @@ Proof using Type*.
   iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh
     | exact Hctr' | exact Hacccoh].
+Qed.
+
+(** [store.deleteRange] at run granularity: the pool steps by
+    [pool_after_delete] and a fully covered range is tombstoned at run
+    granularity ([ids_tombstoned_runs]). Derived from [wp_store__deleteRange]
+    through the [pool_of] / [locs_of] projections. *)
+Lemma wp_store__deleteRange_runs (s : loc) (str : store_state_runs)
+    (client dclock dlen : w64) :
+  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+    s @! (go.PointerType yjs.store) @! "deleteRange" #client #dclock #dlen
+  {{{ (p' : pool) (locs' : gmap loc (list loc)) (covered : bool), RET #covered;
+      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
+      ⌜pool_after_delete (sr_pool str) p'⌝ ∗
+      ⌜range_no_overflow dclock dlen -> covered = true ->
+         ids_tombstoned_runs (range_ids client dclock dlen) (all_runs p')⌝ }}}.
+Proof using Type*.
+  iIntros (Φ) "(#Hpkg & Hruns) HΦ".
+  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
+  subst str. destruct st as [client0 k0 types bind pend pdel]. simpl in *.
+  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
+  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbndb.
+  iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
+               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  wp_apply (wp_store__deleteRange s (MkStoreState client0 k0 types bind pend pdel)
+              client dclock dlen with "[$Hpkg $Hcells]").
+  iIntros (types' covered) "(Hcells & %Hstep & %Hcov)".
+  iEval (simpl) in "Hcells".
+  iDestruct "Hcells" as "(Hfields1 & %Hinvs1)".
+  iDestruct "Hfields1" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnda.
+  iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types' bind pend pdel) Hinvs1
+               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  iApply ("HΦ" $! (pool_of types') (locs_of types') covered).
+  iSplitL.
+  { iExists (MkStoreState client0 k0 types' bind pend pdel).
+    iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
+  iPureIntro. split.
+  - exact (delete_types_update_rel_to_pool types types'
+             (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
+             (λ c Hc, proj2 (Hbnda c Hc)) (λ c Hc, proj1 (Hbnda c Hc))
+             Hstep).
+  - move=> Hnoov Hcovt.
+    rewrite all_runs_pool_of. apply ids_tombstoned_runs_of.
+    exact (Hcov Hnoov Hcovt).
+Qed.
+
+(** [store.applyDeleteSpans] at run granularity: like
+    [wp_store__deleteRange_runs], with the surviving buffer existential and
+    the landed spans' ids tombstoned. *)
+Lemma wp_store__applyDeleteSpans_runs (s : loc) (str : store_state_runs)
+    (sp_sl : slice.t) (dq : dfrac) (spans : list delete_span) :
+  {{{ is_pkg_init yjs ∗ own_store_runs s str ∗ own_delete_spans sp_sl dq spans }}}
+    s @! (go.PointerType yjs.store) @! "applyDeleteSpans" #sp_sl
+  {{{ (p' : pool) (locs' : gmap loc (list loc)) (rest : list delete_span), RET #();
+      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>
+                            <| sr_pending_deletes := rest |>) ∗
+      own_delete_spans sp_sl dq spans ∗
+      ⌜pool_after_delete (sr_pool str) p'⌝ ∗
+      ⌜∃ D : gset YjsId,
+         ids_tombstoned_runs D (all_runs p') ∧
+         (∀ sp, sp ∈ sr_pending_deletes str ++ spans -> delete_span_no_overflow sp ->
+            delete_span_ids sp ⊆ D ∪ delete_batch_ids rest)⌝ }}}.
+Proof using Type*.
+  iIntros (Φ) "(#Hpkg & Hruns & Hsp) HΦ".
+  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
+  subst str. destruct st as [client0 k0 types bind pend pdel]. simpl in *.
+  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
+  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbndb.
+  iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
+               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  wp_apply (wp_store__applyDeleteSpans s (MkStoreState client0 k0 types bind pend pdel)
+              sp_sl dq spans with "[$Hpkg $Hcells $Hsp]").
+  iIntros (types' rest) "(Hcells & Hsp & %Hstep & %Hcov)".
+  iEval (simpl) in "Hcells".
+  iDestruct "Hcells" as "(Hfields1 & %Hinvs1)".
+  iDestruct "Hfields1" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnda.
+  iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types' bind pend rest) Hinvs1
+               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  iApply ("HΦ" $! (pool_of types') (locs_of types') rest).
+  iFrame "Hsp".
+  iSplitL.
+  { iExists (MkStoreState client0 k0 types' bind pend rest).
+    iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
+  iPureIntro. split.
+  - exact (delete_types_update_rel_to_pool types types'
+             (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
+             (λ c Hc, proj2 (Hbnda c Hc)) (λ c Hc, proj1 (Hbnda c Hc))
+             Hstep).
+  - destruct Hcov as (D & Htomb & Hspans).
+    exists D. split.
+    + rewrite all_runs_pool_of. apply ids_tombstoned_runs_of. exact Htomb.
+    + exact Hspans.
 Qed.
 
 End store_deleteRange.

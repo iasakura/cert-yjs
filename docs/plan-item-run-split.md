@@ -42,8 +42,14 @@ translations); and the derived `wp_store__getOrCreateYType_runs` /
 `origins_split`'s left-address identity (`lft = ic_loc c0`); add it on
 `sr_locs` if the `applyUpdate` conversion needs it. `hasNode` converts
 with `applyUpdate` (its premise `registry_models` is DocModel-level).
-Next there: the delete path (`deleteRange` / `applyDeleteSpans`,
-`delete_types_update_rel` loc-free), then `applyUpdate`.
+Part 6 (2026-08-29): the delete path: `pool_after_delete`
+(`delete_types_update_rel` loc-free) with its transport
+`delete_types_update_rel_to_pool`; `ids_tombstoned_runs` (item/model.v,
+the loc-free `ids_tombstoned`) with `ids_tombstoned_runs_of`
+(value_live.v); and the derived `wp_store__deleteRange_runs` /
+`wp_store__applyDeleteSpans_runs`. Next there: `applyUpdate` (with
+`hasNode`, whose premise `registry_models` is DocModel-level), closing
+stage 2.
 
 ## 1. The problem
 

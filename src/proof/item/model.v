@@ -32,7 +32,9 @@
       forms of the pool statements: [runs_start_at] / [runs_end_at],
       [origins_resolved] (cursor indices), [runs_integrate_splice] (the
       cursor-explicit [runs_integrate_splice_at] under an exists), and
-      [runs_within]: every run after a step sits inside a run before it.
+      [runs_within]: every run after a step sits inside a run before it,
+      and [ids_tombstoned_runs]: a set of ids all covered by tombstoned
+      runs.
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
       app-morphic ([runs_flatten_app]).
@@ -375,6 +377,12 @@ Definition runs_integrate_splice_at (idx : nat) (runs : list ItemRun)
 Definition runs_integrate_splice (runs : list ItemRun) (arr : list (YjsItem A))
     (run : list (YjsItem A)) (runs' : list ItemRun) (arr' : list (YjsItem A)) : Prop :=
   ∃ idx : nat, runs_integrate_splice_at idx runs arr run runs' arr'.
+
+(** [ids_tombstoned_runs ids runs]: every id of [ids] is a char of some
+    tombstoned run of [runs]: the loc-free [ids_tombstoned], what a
+    run-granular delete reports about what it just did. *)
+Definition ids_tombstoned_runs (ids : gset YjsId) (runs : list ItemRun) : Prop :=
+  ∀ i, i ∈ ids -> ∃ r, r ∈ runs ∧ run_deleted r = true ∧ i ∈ char_ids (run_items r).
 
 (* ===== lemmas ============================================================= *)
 
