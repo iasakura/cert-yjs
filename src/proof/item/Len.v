@@ -32,4 +32,24 @@ Proof.
   iApply "HΦ". iFrame "Hl".
 Qed.
 
+(** [item.Len] over the node predicate: the byte length of the wire item's
+    content (docs/plan-item-run-split.md stage 3). *)
+Lemma wp_item__Len_node (l : loc) (dq : dfrac) (input : IntegrateInput (A := A))
+    (d : bool) (parent prev nxt : loc) :
+  {{{ is_pkg_init yjs ∗ own_item_node l dq input d parent prev nxt }}}
+    l @! (go.PointerType yjs.item) @! "Len" #()
+  {{{ RET #(W64 (length (in_content input)));
+      own_item_node l dq input d parent prev nxt }}}.
+Proof.
+  iIntros (Φ) "(#Hpkg & Hnode) HΦ".
+  iDestruct "Hnode" as (v olid orid) "H". iNamed "H".
+  have Hcontent' : v.(yjs.item.content').(yjs.content.content') = in_content input
+    := Hcontent.
+  wp_apply (wp_item__Len l dq v with "[$Hpkg $Hval]").
+  iIntros "Hval".
+  rewrite Hcontent'.
+  iApply "HΦ". iExists v, olid, orid. iFrame "Hval Holeft Horight".
+  iPureIntro. split_and!; assumption.
+Qed.
+
 End item_Len.

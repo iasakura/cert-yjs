@@ -34,7 +34,9 @@
       [is_accepted],
       [is_update_item], and the read capability [own_read_cap].
     - the Integrate-side predicates [own_fresh_item_raw], [own_linked_item]
-      and the loop invariant [integrate_loop_inv].
+      ([own_linked_item_as_node]: it is [item/heap]'s [own_item_node] at
+      [DfracOwn 1], live, with a nonempty content) and the loop invariant
+      [integrate_loop_inv].
 
     Laws
     - [store_inv_init]: how to build the invariant from the raw points-tos, and
@@ -1536,6 +1538,40 @@ Definition own_linked_item (item_l : loc) (input : IntegrateInput (A := A))
     ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
     ⌜itemVal.(yjs.item.flags') = W8 2⌝ ∗
     ⌜(1 <= length (itemVal.(yjs.item.content').(yjs.content.content')))%nat⌝.
+
+(** [own_linked_item] IS the stage-3 node predicate at [DfracOwn 1], live,
+    with a nonempty content: the fold/unfold between the two
+    (docs/plan-item-run-split.md stage 3). *)
+Lemma own_linked_item_as_node (item_l : loc) (input : IntegrateInput (A := A))
+    (parent lft rgt : loc) :
+  own_linked_item item_l input parent lft rgt ⊣⊢
+  own_item_node item_l (DfracOwn 1) input false parent lft rgt ∗
+  ⌜(1 <= length (in_content input))%nat⌝.
+Proof.
+  rewrite /own_linked_item /own_fresh_item_raw /own_item_node.
+  iSplit.
+  - iIntros "H".
+    iDestruct "H" as (v olid orid) "(H & %Hfl & %Hfr & %Hfpar & %Hflags & %Hlen)".
+    iNamed "H".
+    have Hc' : v.(yjs.item.content').(yjs.content.content') = in_content input
+      := Hcontent.
+    iSplitL; last first.
+    { iPureIntro. rewrite -Hc'. exact Hlen. }
+    iExists v, olid, orid.
+    iFrame "Hitem Holeft Horight".
+    iPureIntro.
+    split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
+                | exact Hfpar | exact Hfl | exact Hfr | exact Hflags].
+  - iIntros "[H %Hlen]". iDestruct "H" as (v olid orid) "H". iNamed "H".
+    have Hc' : v.(yjs.item.content').(yjs.content.content') = in_content input
+      := Hcontent.
+    iExists v, olid, orid.
+    iFrame "Hval Holeft Horight".
+    iPureIntro.
+    split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
+                | exact Hprev | exact Hnext | exact Hpar | exact Hflags
+                | rewrite Hc' //].
+Qed.
 
 (** A fully-owned node struct's location is fresh for the whole document cell
     pool: the source of the [NoDup (ic_loc <$> all_cells types)] maintenance

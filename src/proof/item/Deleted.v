@@ -30,4 +30,23 @@ Proof.
   iApply "HΦ". iFrame "Hl".
 Qed.
 
+(** [item.Deleted] over the node predicate: the tombstone bit
+    (docs/plan-item-run-split.md stage 3). *)
+Lemma wp_item__Deleted_node (l : loc) (dq : dfrac) (input : IntegrateInput (A := A))
+    (d : bool) (parent prev nxt : loc) :
+  {{{ is_pkg_init yjs ∗ own_item_node l dq input d parent prev nxt }}}
+    l @! (go.PointerType yjs.item) @! "Deleted" #()
+  {{{ RET #d; own_item_node l dq input d parent prev nxt }}}.
+Proof.
+  iIntros (Φ) "(#Hpkg & Hnode) HΦ".
+  iDestruct "Hnode" as (v olid orid) "H". iNamed "H".
+  have Hd : is_deleted_flag v = d.
+  { rewrite /is_deleted_flag Hflags. destruct d; vm_compute; reflexivity. }
+  wp_apply (wp_item__Deleted l dq v with "[$Hpkg $Hval]").
+  iIntros "Hval".
+  rewrite Hd.
+  iApply "HΦ". iExists v, olid, orid. iFrame "Hval Holeft Horight".
+  iPureIntro. split_and!; assumption.
+Qed.
+
 End item_Deleted.

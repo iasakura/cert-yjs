@@ -7,6 +7,11 @@
       Adapted from the reference sorted-DLL proof (iasakura/perennial-sandbox,
       dll/list.go, [is_dlist_node]).
     - [item_or_null p ov]: a heap item pointer is null or owns a node.
+    - [own_item_node l dq input deleted parent prev nxt]: one heap [Item]
+      node in full: the wire item it denotes, its tombstone bit, its parent
+      and its two spine links (docs/plan-item-run-split.md stage 3: the
+      node payload [own_dll] moves onto, and what the borrow lemmas will
+      hand out).
 
     Laws
     - the spine is a monoid: [own_dll_app] splits and joins a segment, and
@@ -90,6 +95,30 @@ Fixpoint own_dll (dq : dfrac) (l last prev next : loc) (cells : list item_cell) 
       "Horight" ∷ is_origin_id itemVal.(yjs.item.originRightId') orid ∗
       "Hrest" ∷ own_dll dq itemVal.(yjs.item.right') last l next rest
   end.
+
+(** [own_item_node l dq input deleted parent prev nxt]: one heap [Item] node
+    in full: the struct and its two origin-id cells are existential, pinned
+    to the wire item [input] (the [toYjsId] images of the id and the origins,
+    [toContent] of the content), tombstoned iff [deleted] (the flag byte is
+    [W8 6] / [W8 2], so a node is always Countable), under [parent], its
+    [left'] / [right'] spine links at [prev] / [nxt]. The per-node payload
+    the stage-3 [own_dll] holds and the borrow lemmas hand out
+    (docs/plan-item-run-split.md); [own_linked_item] is its [DfracOwn 1]
+    live form ([own_linked_item_as_node], [store/heap.v]). *)
+Definition own_item_node (l : loc) (dq : dfrac) (input : IntegrateInput (A := A))
+    (deleted : bool) (parent prev nxt : loc) : iProp Σ :=
+  ∃ (v : yjs.item.t) (olid orid : option yjs.id.t),
+    "Hval" ∷ l ↦{dq} v ∗
+    "Holeft" ∷ is_origin_id v.(yjs.item.originLeftId') olid ∗
+    "Horight" ∷ is_origin_id v.(yjs.item.originRightId') orid ∗
+    "%Hin_l" ∷ ⌜(toYjsId <$> olid) = in_originId input⌝ ∗
+    "%Hin_r" ∷ ⌜(toYjsId <$> orid) = in_rightOriginId input⌝ ∗
+    "%Hid" ∷ ⌜toYjsId v.(yjs.item.id') = in_id input⌝ ∗
+    "%Hcontent" ∷ ⌜toContent v.(yjs.item.content') = in_content input⌝ ∗
+    "%Hpar" ∷ ⌜v.(yjs.item.parent') = parent⌝ ∗
+    "%Hprev" ∷ ⌜v.(yjs.item.left') = prev⌝ ∗
+    "%Hnext" ∷ ⌜v.(yjs.item.right') = nxt⌝ ∗
+    "%Hflags" ∷ ⌜v.(yjs.item.flags') = (if deleted then W8 6 else W8 2)⌝.
 
 (* ===== lemmas ============================================================= *)
 

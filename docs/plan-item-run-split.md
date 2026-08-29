@@ -47,9 +47,20 @@ Part 6 (2026-08-29): the delete path: `pool_after_delete`
 `delete_types_update_rel_to_pool`; `ids_tombstoned_runs` (item/model.v,
 the loc-free `ids_tombstoned`) with `ids_tombstoned_runs_of`
 (value_live.v); and the derived `wp_store__deleteRange_runs` /
-`wp_store__applyDeleteSpans_runs`. Next there: `applyUpdate` (with
-`hasNode`, whose premise `registry_models` is DocModel-level), closing
-stage 2.
+`wp_store__applyDeleteSpans_runs`. The `applyUpdate` / `hasNode` conversion is DEFERRED to stage 3:
+their public spec is `own_store`-level (ghost certificates, and
+`registry_models` sits inside `own_store`'s invariant), so their run form
+belongs with the run-granular `own_store`; the pure pieces are mechanical
+(`registry_models`: `ty_arr` to `tm_arr`; `apply_live_refine` /
+`cells_within_or_from` mirror `runs_live_refine` plus a fresh disjunct).
+That closes the stage-2 derived-spec program. Stage 3a (2026-08-29,
+started): `own_item_node` (item/heap.v, the F2a node predicate of
+docs/plan-spec-refactor.md step 3: struct and origin cells existential,
+pinned to the wire item, flag byte pinned so Countable is free), the
+three item method specs over it (`wp_item__Len_node` /
+`wp_item__Deleted_node` / `wp_item__Indexable_node`) and
+`own_linked_item_as_node` (store/heap.v): the payload `own_dll` moves
+onto in the borrow rewrite.
 
 ## 1. The problem
 
