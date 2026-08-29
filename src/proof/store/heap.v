@@ -11,6 +11,9 @@
     - [own_store_fields s st]: every field of the struct at a [store_state]
       (the item index, the root registry, the type pool, the two buffers, the
       unmodeled delete-set struct), with no predicate per field on purpose.
+    - the run-granular pool (plan-item-run-split stage 2): [locs_wf] (the
+      heap half of the pool invariants), [own_type_pool_runs dq locs p] and
+      the cell-level readings [locs_of] / [own_type_pool_runs_of].
     - [own_store_struct s st]: THE store at its cell-level state, the fields
       with the invariants every method preserves ([store_invs]). Every
       store-internal method is specified over it, whole; [own_store] is the
@@ -244,6 +247,10 @@ Qed.
 #[global] Instance own_ytype_cells_timeless parent dq cells arr :
   Timeless (own_ytype_cells parent dq cells arr).
 Proof. rewrite /own_ytype_cells. apply _. Qed.
+
+#[global] Instance own_ytype_runs_timeless parent dq ls tm :
+  Timeless (own_ytype_runs parent dq ls tm).
+Proof. rewrite /own_ytype_runs. apply _. Qed.
 
 (* ----- fractional DLL stack (for the concurrent-read share of [store_inv]) ---
    The read lock hands each reader a fractional share of the read-only part of
@@ -681,6 +688,60 @@ Qed.
 
 #[global] Instance own_type_pool_timeless dq types : Timeless (own_type_pool dq types).
 Proof. rewrite /own_type_pool. apply _. Qed.
+
+(** [locs_wf locs p]: the heap-only half of the pool invariants at run
+    granularity (plan-item-run-split stage 2): the address map covers
+    exactly the registered types, one node address per run, and no node is
+    in two types or at two indices. What [pool_invs]'s [NoDup] becomes once
+    addresses leave the pure layer. *)
+Definition locs_wf (locs : gmap loc (list loc)) (p : pool) : Prop :=
+  dom locs = dom p ∧
+  NoDup (concat ((map_to_list locs).*2)) ∧
+  (∀ parent ls tm, locs !! parent = Some ls -> p !! parent = Some tm ->
+     length ls = length (tm_runs tm)).
+
+(** [own_type_pool_runs dq locs p]: the pool at run granularity: every
+    registered type's [own_ytype_runs] at its address list, the whole
+    address map [locs_wf]. The [(locs, p)] pair is what stage 2's specs
+    carry in place of the cell-level [types]. *)
+Definition own_type_pool_runs (dq : dfrac)
+    (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
+  "%Hlocswf" ∷ ⌜locs_wf locs p⌝ ∗
+  "Hpool" ∷ [∗ map] parent ↦ tm ∈ p,
+    ∃ ls, ⌜locs !! parent = Some ls⌝ ∗
+          own_ytype_runs parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
+
+(** The address map of a cell-level pool: each type's node addresses. *)
+Definition locs_of (types : gmap loc type_state) : gmap loc (list loc) :=
+  (λ ts, ic_loc <$> ty_cells ts) <$> types.
+
+(** The cell-level pool at its run-granular reading: [own_type_pool] with
+    the address [NoDup] is [own_type_pool_runs] at [locs_of] / [pool_of]. *)
+Lemma own_type_pool_runs_of (types : gmap loc type_state) :
+  NoDup (ic_loc <$> all_cells types) ->
+  own_type_pool (DfracOwn 1) types -∗
+  own_type_pool_runs (DfracOwn 1) (locs_of types) (pool_of types).
+Proof.
+  iIntros (Hnd) "Hpool".
+  have Hloceq : concat ((map_to_list (locs_of types)).*2) = ic_loc <$> all_cells types.
+  { rewrite /locs_of /all_cells map_to_list_fmap concat_fmap.
+    f_equal. rewrite -!list_fmap_compose.
+    apply list_fmap_ext. move=> i [k ts] Hl. reflexivity. }
+  iSplitR.
+  { iPureIntro. rewrite /locs_wf /locs_of /pool_of !dom_fmap_L.
+    split_and!; [done | by rewrite -/(locs_of types) Hloceq |].
+    move=> parent ls tm. rewrite !lookup_fmap.
+    destruct (types !! parent) as [ts|] eqn:Hts; simpl; [| done].
+    intros [= <-] [= <-]. rewrite !length_fmap //. }
+  rewrite /own_type_pool /pool_of big_sepM_fmap.
+  iApply (big_sepM_impl with "Hpool").
+  iIntros "!#" (parent ts Hts) "[Hcells %Hinv]".
+  iExists (ic_loc <$> ty_cells ts).
+  iSplitR. { iPureIntro. rewrite /locs_of lookup_fmap Hts //. }
+  iSplitL; [| iPureIntro; exact Hinv].
+  iApply (own_ytype_runs_intro with "Hcells").
+Qed.
+
 
 (* ----- laws of the type pool --------------------------------------------- *)
 

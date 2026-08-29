@@ -9,9 +9,9 @@ origin / disjointness are in (`item/model.v` section `item_run`,
 `runs_start_at` / `runs_end_at`, `origins_resolved` (cursor indices only)
 and `runs_integrate_splice`, with `origins_linked` an iff to the resolved
 form plus the `node_loc` readings, and `integrate_splice` projecting onto
-`runs_integrate_splice`. What remains of stage 1 is the sorted
-`client_runs` theory, which needs `all_runs` over the run-granular pool and
-so lands with stage 2.
+`runs_integrate_splice`. The sorted `client_runs` theory
+landed with stage 2 part 1 (`client_runs` over `pool`, `client_run_runs`),
+closing stage 1's pure side.
 
 ## 1. The problem
 

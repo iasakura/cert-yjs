@@ -25,7 +25,8 @@
     - [ItemRun]: a node's run of items and its tombstone bit, no [loc].
     - its vocabulary: [run_head_item], [run_client] / [run_clock] (pure
       [nat]s), [runs_flatten], [runs_visible], [flip_run], [run_fits],
-      [run_covers] / [run_covers_clock], [run_origin_clk], [runs_disjoint]
+      [run_covers] / [run_covers_clock], [run_origin_clk], [run_le]
+      (the clock order on runs), [runs_disjoint]
       (runs told apart by index, not address), and the split surgery
       [split_run_left] / [split_run_right] / [split_runs]; the index-based
       forms of the pool statements: [runs_start_at] / [runs_end_at],
@@ -281,6 +282,18 @@ Definition run_origin_clk (r : ItemRun) : Prop :=
   ∀ originId, origin_id (origin (run_head_item r)) = Some originId →
     clientId originId = run_client r →
     (clock originId < run_clock r)%nat.
+
+(** The clock order on runs: what sorts a client's run list. *)
+Definition run_le (r1 r2 : ItemRun) : Prop := (run_clock r1 <= run_clock r2)%nat.
+
+#[global] Instance run_le_dec : RelDecision run_le.
+Proof. rewrite /run_le. solve_decision. Defined.
+
+#[global] Instance run_le_trans : Transitive run_le.
+Proof. rewrite /run_le. move=> x y z. lia. Qed.
+
+#[global] Instance run_le_total : Total run_le.
+Proof. rewrite /run_le. move=> x y. lia. Qed.
 
 (** Per-client clock-range disjointness of a run list, with runs told apart
     BY INDEX (the loc-free replacement of [cells_range_disjoint], which tells

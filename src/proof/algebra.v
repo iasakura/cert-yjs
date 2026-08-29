@@ -5,12 +5,17 @@
     [auth (gmap K (gset V))] (the per-type item sets), the same for an
     [auth (gset YjsId)] (the accepted-id set), a grow-and-persist step for a
     [ghost_map] (the root-type registry), and replication laws for [tok_set]
-    token bundles (the reader capabilities). *)
+    token bundles (the reader capabilities).
+
+    List facts free of cert-yjs definitions: [list_elem_of_concat],
+    [concat_fmap], [list_filter_fmap], [list_filter_iff_elem_of],
+    [StronglySorted_fmap_elem_of]. *)
 From New.proof Require Import proof_prelude.
 From New.golang Require Import theory.
 From New.proof Require Import core.
 From New.proof Require Import tok_set.
 From iris.algebra Require Import auth gmap gset.
+From stdpp Require Import sorting.
 
 (** Membership in a concatenation: some member list holds the element. *)
 Lemma list_elem_of_concat {D : Type} (x : D) (ls : list (list D)) :
@@ -30,6 +35,53 @@ Qed.
    [store/applyUpdate], whose section lacks the store's [seq_inG] / [ftypes_inG],
    reconciles the registry map with the concrete one after [applyUpdate]'s drain
    creates fresh root types, minting one persistent binding per new name. *)
+(** [fmap] pushes through [concat]. *)
+Lemma concat_fmap {X Y : Type} (f : X -> Y) (l : list (list X)) :
+  fmap (M := list) f (concat l)
+  = concat (fmap (M := list) (λ xs, fmap (M := list) f xs) l).
+Proof.
+  induction l as [| x l IH]; simpl; [done |].
+  rewrite fmap_app IH //.
+Qed.
+
+(** [filter] commutes with [fmap] (the predicate pulled back along the
+    function). *)
+Lemma list_filter_fmap {X Y : Type} (f : X -> Y) (P : Y -> Prop)
+    `{!∀ y, Decision (P y)} (l : list X) :
+  filter P (f <$> l) = f <$> filter (λ x, P (f x)) l.
+Proof.
+  induction l as [| x l IH]; [done |].
+  csimpl. rewrite !filter_cons.
+  repeat case_decide; csimpl; rewrite ?IH; first [done | tauto].
+Qed.
+
+(** [list_filter_iff] with the equivalence only on members. *)
+Lemma list_filter_iff_elem_of {X : Type} (P1 P2 : X -> Prop)
+    `{!∀ x, Decision (P1 x), !∀ x, Decision (P2 x)} (l : list X) :
+  (∀ x, x ∈ l -> (P1 x ↔ P2 x)) ->
+  filter P1 l = filter P2 l.
+Proof.
+  induction l as [| x l IH]; [done |].
+  move=> Hiff. rewrite !filter_cons.
+  have Hx : P1 x ↔ P2 x by (apply Hiff; apply elem_of_cons; by left).
+  have Hrest : filter P1 l = filter P2 l
+    by (apply IH; move=> y Hy; apply Hiff; apply elem_of_cons; by right).
+  repeat case_decide; rewrite Hrest; first [done | tauto].
+Qed.
+
+(** [StronglySorted_fmap] with the order implication only on members. *)
+Lemma StronglySorted_fmap_elem_of {X Y : Type} (R1 : relation X) (R2 : relation Y)
+    (f : X -> Y) (l : list X) :
+  (∀ x y, x ∈ l -> y ∈ l -> R1 x y -> R2 (f x) (f y)) ->
+  StronglySorted R1 l -> StronglySorted R2 (f <$> l).
+Proof.
+  intros Himp Hss. induction Hss as [| x l Hss IH Hall]; csimpl; constructor.
+  - apply IH. intros a b Ha Hb. apply Himp; apply elem_of_cons; by right.
+  - rewrite Forall_fmap. apply Forall_forall. intros a Ha. simpl.
+    apply Himp; [apply elem_of_cons; by left | apply elem_of_cons; by right |].
+    rewrite Forall_forall in Hall. by apply Hall.
+Qed.
+
 Section ghost_map_grow.
 Context {Σ : gFunctors} {K V : Type} `{Countable K} `{ghost_mapG Σ K V}.
 Lemma ghost_map_grow_persist (γ : gname) (m m' : gmap K V) :
