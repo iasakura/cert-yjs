@@ -30,8 +30,20 @@ list), `runs_integrate_splice_at` (the cursor-explicit core of
 `runs_integrate_splice`), `integrate_locs` and
 `integrate_splice_runs_locs` (the run and the address-list halves of one
 splice at one shared cursor), and the derived `wp_store__Integrate_runs`.
-Next there: the registry family (`getOrCreateYType` / `repair` /
-`hasNode`), the delete path, and `applyUpdate`.
+Part 5 (2026-08-29): the registry family: `pool_after_repair`
+(`repair_types_update_rel` loc-free, the `pool_after_split` clauses minus
+the split-spot ones) with its transport `repair_types_update_rel_to_pool`;
+`pool_lookup_or_create` + `registry_lookup_or_create_to_pool`; the repair
+contract at run granularity (`pool_origins_covered` /
+`pool_repair_parent` / `pool_origins_split` over origin slots `(q, k)`,
+with `origin_slot_names` naming the cells and the covered / parent / split
+translations); and the derived `wp_store__getOrCreateYType_runs` /
+`wp_store__repair_runs`. `pool_origins_split` deliberately drops
+`origins_split`'s left-address identity (`lft = ic_loc c0`); add it on
+`sr_locs` if the `applyUpdate` conversion needs it. `hasNode` converts
+with `applyUpdate` (its premise `registry_models` is DocModel-level).
+Next there: the delete path (`deleteRange` / `applyDeleteSpans`,
+`delete_types_update_rel` loc-free), then `applyUpdate`.
 
 ## 1. The problem
 
