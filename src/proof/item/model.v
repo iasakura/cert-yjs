@@ -37,7 +37,8 @@
       runs; [items_string], the string a run of per-char items spells
       (append-homomorphic, [items_string_app], and recovering an exploded
       string, [items_string_explode]); [input_of_run], the wire item a run
-      denotes.
+      denotes, and [run_per_char]: each of the run's items carries exactly
+      one byte of that wire content.
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
       app-morphic ([runs_flatten_app]).
@@ -409,6 +410,15 @@ Definition input_of_run (r : ItemRun) : IntegrateInput (A := A) :=
     (origin_id (rightOrigin (run_head_item r)))
     (items_string (run_items r))
     (item_id (run_head_item r)).
+
+(** [run_per_char r]: each item of the run carries exactly one byte of the
+    string the run spells: the per-char granularity of the model
+    (issue #28). The wire view ([input_of_run]) alone cannot recover how
+    its content splits over the run's items; today the heap content pin
+    ([own_dll]'s explode equation) carries it, and the run-granular DLL
+    ([own_dll_runs]) states it per run. *)
+Definition run_per_char (r : ItemRun) : Prop :=
+  content <$> run_items r = explode (items_string (run_items r)).
 
 (* ===== lemmas ============================================================= *)
 

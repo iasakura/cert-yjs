@@ -12,6 +12,10 @@
       and its two spine links (docs/plan-item-run-split.md stage 3: the
       node payload [own_dll] moves onto, and what the borrow lemmas will
       hand out).
+    - [own_dll_runs dq parent l last prev next ls runs]: the DLL at run
+      granularity: node addresses paired with the runs they hold, one
+      [own_item_node] per node ([own_dll_as_runs] is the fold/unfold to
+      the cell-level [own_dll], under per-cell parent coherence).
 
     Laws
     - the spine is a monoid: [own_dll_app] splits and joins a segment, and
@@ -122,6 +126,27 @@ Definition own_item_node (l : loc) (dq : dfrac) (input : IntegrateInput (A := A)
     "%Hprev" ∷ ⌜v.(yjs.item.left') = prev⌝ ∗
     "%Hnext" ∷ ⌜v.(yjs.item.right') = nxt⌝ ∗
     "%Hflags" ∷ ⌜v.(yjs.item.flags') = (if deleted then W8 6 else W8 2)⌝.
+
+(** [own_dll_runs dq parent l last prev next ls runs]: the DLL segment at run
+    granularity (docs/plan-item-run-split.md section 2.2): the node
+    addresses [ls] paired with the runs they hold, every node one
+    [own_item_node] at the wire item its run denotes, all under one type
+    [parent]. Each run also carries [run_wf] and [run_per_char] (the wire
+    view alone cannot recover how the content splits over the run's items).
+    [own_dll_as_runs] folds and unfolds to the cell-level [own_dll]. *)
+Fixpoint own_dll_runs (dq : dfrac) (parent l last prev next : loc)
+    (ls : list loc) (runs : list ItemRun) : iProp Σ :=
+  match ls, runs with
+  | [], [] => ⌜l = next ∧ last = prev⌝
+  | lc :: ls', r :: runs' =>
+      "%Hloc" ∷ ⌜l = lc ∧ lc ≠ null⌝ ∗
+      "%Hperchar" ∷ ⌜run_per_char r⌝ ∗
+      "%Hrun" ∷ ⌜run_wf (run_items r)⌝ ∗
+      ∃ (nxt0 : loc),
+        "Hnode" ∷ own_item_node lc dq (input_of_run r) (run_deleted r) parent prev nxt0 ∗
+        "Hrest" ∷ own_dll_runs dq parent nxt0 last lc next ls' runs'
+  | _, _ => False
+  end.
 
 (* ===== lemmas ============================================================= *)
 
@@ -750,6 +775,71 @@ Proof.
   iEval (rewrite (proj1 Hloc)) in "Hpre".
   iEval (rewrite (proj1 Hloc)) in "Hrest2".
   iFrame "Hpre Hval Holeft Horight Hrest2".
+Qed.
+
+(** The cell-level DLL IS the run-granular one at the projected addresses and
+    runs, under per-cell parent coherence (the [own_ytype_cells] fact): the
+    stage-3 migration bridge, letting one file at a time trade [own_dll] for
+    [own_dll_runs]. The content pin translates through
+    [items_string_explode] / [run_per_char]. *)
+Lemma own_dll_as_runs (dq : dfrac) (l last prev next parent : loc) (cells : list item_cell) :
+  (∀ c, c ∈ cells -> ic_parent c = parent) ->
+  own_dll dq l last prev next cells ⊣⊢
+  own_dll_runs dq parent l last prev next (ic_loc <$> cells) (cell_run <$> cells).
+Proof.
+  revert l prev. induction cells as [|c cells IH] => l prev Hpars /=.
+  - reflexivity.
+  - have Hparc : ic_parent c = parent := Hpars c (list_elem_of_here _ _).
+    have Hpars' : ∀ c0, c0 ∈ cells -> ic_parent c0 = parent
+      := λ c0 Hc0, Hpars c0 (list_elem_of_further _ _ _ Hc0).
+    iSplit.
+    + iIntros "H". iNamed "H".
+      have Hstr : toContent itemVal.(yjs.item.content') = items_string (ic_run c).
+      { symmetry. exact (items_string_explode _ _ Hcontent). }
+      have Hpc : run_per_char (cell_run c).
+      { rewrite /run_per_char /=. rewrite -Hstr. exact Hcontent. }
+      iSplitR.
+      { iPureIntro. split; [exact (proj1 Hloc) | rewrite -(proj1 Hloc); exact (proj2 Hloc)]. }
+      iSplitR; [iPureIntro; exact Hpc |].
+      iSplitR; [iPureIntro; exact Hrun |].
+      iExists itemVal.(yjs.item.right').
+      iSplitL "Hval Holeft Horight".
+      { iExists itemVal, olid, orid. iFrame "Hval Holeft Horight".
+        iPureIntro. split_and!.
+        - exact (eq_sym Holid).
+        - exact (eq_sym Horid).
+        - exact (eq_sym Hid).
+        - exact Hstr.
+        - rewrite Hpar. exact Hparc.
+        - exact Hprev.
+        - reflexivity.
+        - exact Hflags. }
+      iEval (rewrite (proj1 Hloc)) in "Hrest".
+      iEval (rewrite (IH _ _ Hpars')) in "Hrest".
+      iExact "Hrest".
+    + iIntros "H".
+      iDestruct "H" as "(%Hlocr & %Hpc & %Hrunr & H)".
+      iDestruct "H" as (nxt0) "[Hnode Hrest]".
+      iDestruct "Hnode" as (v olid orid)
+        "(Hval & Holeft & Horight & %Hinl & %Hinr & %Hid & %Hcont & %Hparv & %Hprev & %Hnext & %Hflags)".
+      have Hpc' : content <$> ic_run c = explode (items_string (ic_run c)) := Hpc.
+      have Hstr : toContent v.(yjs.item.content') = items_string (ic_run c) := Hcont.
+      iExists v, olid, orid.
+      rewrite Hnext.
+      iEval (rewrite -(IH _ _ Hpars')) in "Hrest".
+      iEval (rewrite -(proj1 Hlocr)) in "Hrest".
+      iFrame "Hval Holeft Horight Hrest".
+      iPureIntro. split_and!.
+      * exact (proj1 Hlocr).
+      * rewrite (proj1 Hlocr). exact (proj2 Hlocr).
+      * exact Hprev.
+      * rewrite Hparv Hparc //.
+      * exact (eq_sym Hid).
+      * rewrite Hstr. exact Hpc'.
+      * exact (eq_sym Hinl).
+      * exact (eq_sym Hinr).
+      * exact Hflags.
+      * exact Hrunr.
 Qed.
 
 (* ----- location freshness (issue #28 part 6) ------------------------------ *)

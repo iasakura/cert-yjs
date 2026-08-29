@@ -69,12 +69,23 @@ WHOLE as `own_item_node` at `input_of_run (cell_run c)` instead of
 `itemVal` plus ten equations; the update wand takes the node back at any
 tombstone bit. The content pin travels through `items_string_explode`,
 and the restore direction needs no new facts because the run is
-unchanged through a borrow. Next: convert the borrow call sites file by
-file (`text/Delete.v`'s flip loop is the natural first consumer of
-`_update_gen_node`; `own_dll_acc_node` and the exposed spelled-length pin
+unchanged through a borrow. `own_dll_acc_node` and the exposed spelled-length pin
 `length (items_string (ic_run c)) = length (ic_run c)` landed with the
-groundwork), then `own_dll_split` / `own_dll_insert_middle` node forms as
-their sites convert.
+groundwork. REASSESSED 2026-08-30: converting the existing borrow SITES
+(text/Delete.v's flip loop was the candidate) is a net loss while
+`own_dll` is cell-level: goose field reads and the tombstone store need
+the raw struct, so a site opens the node anyway and each of the four
+wand returns pays a ~5-line node re-pack against the old one-line
+eq_refl wand. The node borrows pay off when `own_dll` itself is
+primitive over the address list and the runs. So the next step is the
+stage-3 core: `own_dll_runs dq parent l last prev next ls runs` (per
+section 2.2, payload one `own_item_node` at `input_of_run r` per node,
+plus the per-run PER-CHAR pin `content <$> run_items r =
+explode (items_string (run_items r))`, which the wire view alone cannot
+recover and today's explode pin carries), with the fold/unfold bridge to
+the cell-level `own_dll` (under per-cell parent coherence) that lets
+files convert one at a time, and its structural laws (app, then acc /
+insert_middle / split forms as conversions need them).
 
 ## 1. The problem
 
