@@ -780,6 +780,22 @@ Proof.
   - move=> c Hc. exact (Hpar parent ts c Hts Hc).
 Qed.
 
+(** [client_locs locs p client]: the client's clock-sorted node-address
+    slice at [(locs, pool)]: [own_item_map]'s backing-slice model, read at
+    run granularity. Defined THROUGH the materialized registry (the
+    per-client index stays [client_run] over [types_of_locs_pool], per the
+    owner decision in docs/plan-item-run-split.md); [client_locs_of] is
+    the transport along the registry round-trip. *)
+Definition client_locs (locs : gmap loc (list loc)) (p : pool) (client : w64) : list loc :=
+  ic_loc <$> client_run (types_of_locs_pool locs p) client.
+
+Lemma client_locs_of (types : gmap loc type_state) (client : w64) :
+  (∀ q ts c, types !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  client_locs (locs_of types) (pool_of types) client = ic_loc <$> client_run types client.
+Proof.
+  move=> Hpar. rewrite /client_locs types_of_locs_pool_of //.
+Qed.
+
 (** [client_run] projects onto [client_runs]: the [merge_sort cell_le] run
     list, mapped through [cell_run], is the [merge_sort run_le] of the
     projected pool. Needs the id no-wrap bounds (so the [w64] and [nat]
