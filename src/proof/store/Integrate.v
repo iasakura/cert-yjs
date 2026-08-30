@@ -463,16 +463,17 @@ Proof.
       destruct (cells !! Z.to_nat b) as [cb|] eqn:Hcb; last by (apply lookup_ge_None in Hcb; lia).
       have Hpa : node_loc cells a = ic_loc ca by rewrite /node_loc decide_True; [rewrite Hca | lia].
       have Hpb : node_loc cells b = ic_loc cb by rewrite /node_loc decide_True; [rewrite Hcb | lia].
-      pose proof (take_drop_middle cells (Z.to_nat a) ca Hca) as Hsa.
-      set (pre := take (Z.to_nat a) cells) in Hsa.
-      set (suf := drop (S (Z.to_nat a)) cells) in Hsa.
-      iEval (rewrite -Hsa own_dll_app) in "Hdll".
-      iDestruct "Hdll" as (ml mf) "[Hpre Hrest]".
-      iDestruct "Hrest" as (iva olida orida)
-        "(%Hloca & %Hpreva & %Hpara & %Hida & %Hcontenta & %Holida & %Horida & %Hflagsa & %Hruna & Hvala & #Hola & #Hora & Htail)".
-      have Hsuf_b : suf !! (Z.to_nat b - S (Z.to_nat a))%nat = Some cb.
-      { rewrite /suf lookup_drop. rewrite -Hcb. f_equal. lia. }
-      iDestruct (own_dll_lookup_acc _ _ _ _ _ _ _ _ Hsuf_b with "Htail") as (ivb olidb oridb) "Hacc". iNamed "Hacc".
+      have Hab_nat : (Z.to_nat a < Z.to_nat b)%nat by lia.
+      iDestruct (own_dll_lookup_acc_2_node _ _ _ _ _ cells (Z.to_nat a) (Z.to_nat b) ca cb Hab_nat Hca Hcb with "Hdll")
+        as (preva nxta prevb nxtb) "(%Hruna & %Hrunb & Hnodea & Hnodeb & Hback)".
+      iDestruct "Hnodea" as (iva olida orida)
+        "(Hvala & Hola & Hora & %Hinla & %Hinra & %Hidan & %Hconta & %Hpara & %Hpreva & %Hnexta & %Hflagsa)".
+      iDestruct "Hnodeb" as (ivb olidb oridb)
+        "(Hval & Hol & Hor & %Hinlb & %Hinrb & %Hidbn & %Hcontb & %Hparb & %Hprevb & %Hnextb & %Hflagsb)".
+      have Hida : item_id (run_head ca) = toYjsId iva.(yjs.item.id').
+      { symmetry. exact Hidan. }
+      have Hid : item_id (run_head cb) = toYjsId ivb.(yjs.item.id').
+      { symmetry. exact Hidbn. }
       have Hids_unique := yai_unique _ Harr.
       have Hnea : ic_run ca ≠ [] := Forall_lookup_1 _ _ _ _ Hnec Hca.
       have Hneb : ic_run cb ≠ [] := Forall_lookup_1 _ _ _ _ Hnec Hcb.
@@ -488,21 +489,31 @@ Proof.
         have Heqid := Some_inj _ _ Heqsome.
         rewrite Hida Hid Heqid //. }
       rewrite Hpa Hpb.
+      iDestruct (typed_pointsto_not_null with "Hvala") as %Hnna.
       iDestruct (typed_pointsto_not_null with "Hval") as %Hnnb.
       wp_apply (wp_itemPtrEqual (ic_loc ca) (ic_loc cb) (Some iva) (Some ivb) dq dq with "[$Hpkg Hvala Hval]").
       { rewrite /item_or_null. iFrame "Hvala Hval". iSplit; iPureIntro.
-        - rewrite -(proj1 Hloca). exact (proj2 Hloca).
+        - exact Hnna.
         - exact Hnnb. }
       rewrite (bool_decide_eq_false_2 (originId_of (Some iva) = originId_of (Some ivb)) Hoid_ne).
       iIntros "[Ha Hb]". rewrite /item_or_null.
       iDestruct "Ha" as "[_ Hvala]". iDestruct "Hb" as "[_ Hval]".
-      iDestruct ("Hback" with "Hval") as "Htail".
+      iAssert (own_item_node (ic_loc ca) dq (input_of_run (cell_run ca))
+                 (ic_deleted ca) (ic_parent ca) preva nxta) with "[Hvala Hola Hora]" as "Hnodea".
+      { iExists iva, olida, orida. iFrame "Hvala Hola Hora".
+        iPureIntro. split_and!;
+          [exact Hinla | exact Hinra | exact Hidan | exact Hconta | exact Hpara
+          | exact Hpreva | exact Hnexta | exact Hflagsa]. }
+      iAssert (own_item_node (ic_loc cb) dq (input_of_run (cell_run cb))
+                 (ic_deleted cb) (ic_parent cb) prevb nxtb) with "[Hval Hol Hor]" as "Hnodeb".
+      { iExists ivb, olidb, oridb. iFrame "Hval Hol Hor".
+        iPureIntro. split_and!;
+          [exact Hinlb | exact Hinrb | exact Hidbn | exact Hcontb | exact Hparb
+          | exact Hprevb | exact Hnextb | exact Hflagsb]. }
+      iDestruct ("Hback" with "Hnodea Hnodeb") as "Hdll".
       iApply "HΦ". iExists yt, tl. iFrame "Hparent".
       iSplitL; last (iPureIntro; split_and!; [exact Hlen | exact Hrepr | exact Hcpar]).
-      rewrite -Hsa own_dll_app. iExists ml, mf. iFrame "Hpre".
-      iExists iva, olida, orida. iFrame "Hvala Hola Hora Htail".
-      iPureIntro; split_and!;
-        [exact (proj1 Hloca) | exact (proj2 Hloca) | exact Hpreva | exact Hpara | exact Hida | exact Hcontenta | exact Holida | exact Horida | exact Hflagsa | exact Hruna].
+      iFrame "Hdll".
     + (* b = length: [b] is null, [a] a node *)
       have Ha_lt : (Z.to_nat a < length cells)%nat by lia.
       destruct (cells !! Z.to_nat a) as [ca|] eqn:Hca; last by (apply lookup_ge_None in Hca; lia).
@@ -1313,13 +1324,13 @@ Proof using Type*.
         have Hcrl_nn : ivr.(yjs.item.left') ≠ null by rewrite Hcrl_eq Hcrl_loc; exact Hcrlnn.
         rewrite (bool_decide_eq_false_2 (ivr.(yjs.item.left') = null) Hcrl_nn). wp_auto.
         iAssert (⌜yt.(yjs.yType.start') = node_loc cells 0⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hstart Hdll]".
-        { destruct cells as [|c rest].
-          { iDestruct "Hdll" as %[Hl Hlst]. iSplit; iPureIntro; [rewrite Hl /node_loc // | split; [exact Hl | exact Hlst]]. }
-          iDestruct "Hdll" as (ivh olidh oridh) "(%Hloch & %Hprevh & %Hparh & %Hidh & %Hconth & %Holidh & %Horidh & %Hflagsh & %Hrunh & Hvalh & #Holefth & #Horighth & Hresth)".
-          iSplitR.
-          { iPureIntro. rewrite /node_loc /=. by destruct Hloch as [-> _]. }
-          iExists ivh, olidh, oridh. iFrame "Hvalh Holefth Horighth Hresth".
-          iPureIntro; split_and!; [exact (proj1 Hloch) | exact (proj2 Hloch) | exact Hprevh | exact Hparh | exact Hidh | exact Hconth | exact Holidh | exact Horidh | exact Hflagsh | exact Hrunh]. }
+        { iDestruct (own_dll_headptr with "Hdll") as "[%Hhd Hdll]".
+          iFrame "Hdll". iPureIntro.
+          rewrite Hhd /node_loc. destruct cells as [|c rest]; simpl.
+          - done.
+          - first [ done
+                  | (rewrite decide_True; last (simpl; lia)); done
+                  | case_decide; [done | exfalso; simpl in *; lia] ]. }
         replace (# null) with (# (node_loc cells (Z.of_nat curL - 1))) by (rewrite -Hll Hlnull //).
         replace (yt.(yjs.yType.start')) with (node_loc cells (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
         wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
