@@ -39,8 +39,10 @@
       string, [items_string_explode]); [input_of_run], the wire item a run
       denotes, and [run_per_char]: each of the run's items carries exactly
       one byte of that wire content ([explode] is append-homomorphic,
-      [explode_app], and [run_per_char] survives the split surgery,
-      [run_per_char_split_left] / [run_per_char_split_right]); the split
+      [explode_app], [run_per_char_intro] introduces the per-char fact
+      from an explode coupling, and [run_per_char] survives the split
+      surgery, [run_per_char_split_left] / [run_per_char_split_right]);
+      the split
       halves' head / length / client / clock facts in one bundle
       ([split_run_facts], over [hd_inhabitant_take] / [_drop]), and
       [runs_disjoint] is permutation-invariant ([runs_disjoint_perm]).
@@ -546,6 +548,15 @@ Proof.
     injection Hpc as Hx Hrest.
     simplify_eq/=.
     split; [by exists b | exact Hrest].
+Qed.
+
+(** Introduce [run_per_char] from any explode coupling of the run's
+    contents (the wire item's content string is one witness). *)
+Lemma run_per_char_intro (l : list (YjsItem A)) (d : bool) (s : A) :
+  content <$> l = explode s -> run_per_char (MkItemRun l d).
+Proof.
+  move=> H. rewrite /run_per_char /=.
+  by rewrite (items_string_explode _ _ H).
 Qed.
 
 (** [run_per_char] survives the split surgery: each half of a split run is
