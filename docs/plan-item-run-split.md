@@ -85,7 +85,19 @@ explode (items_string (run_items r))`, which the wire view alone cannot
 recover and today's explode pin carries), with the fold/unfold bridge to
 the cell-level `own_dll` (under per-cell parent coherence) that lets
 files convert one at a time, and its structural laws (app, then acc /
-insert_middle / split forms as conversions need them).
+insert_middle / split forms as conversions need them). Landed 2026-08-30
+(PR #167); on top of it, `own_ytype_runs` is REDEFINED primitively over
+`own_dll_runs` (a heap `yType` heading the run-granular DLL, `len` =
+`runs_visible`, the document list = `runs_flatten`), with
+`own_ytype_runs_intro` reproven through `own_dll_as_runs`, the new
+elimination `own_ytype_runs_as_cells` re-materializing cells as
+`cells_of_locs_runs` (the zip of the addresses with the runs,
+item/value.v, laws `_run` / `_loc` / `_parent`), `own_dll_runs_length`
+aligning the spine's two lists, and the `own_item_node` /
+`own_dll_runs` Timeless instances beside the other heap instances
+(store/heap.v). Next: the `(locs, p)` pool (`own_type_pool_runs`
+consumers through the primitive form, `own_store_runs` over it) and
+`store_state`.
 
 ## 1. The problem
 

@@ -15,7 +15,8 @@
     - [own_dll_runs dq parent l last prev next ls runs]: the DLL at run
       granularity: node addresses paired with the runs they hold, one
       [own_item_node] per node ([own_dll_as_runs] is the fold/unfold to
-      the cell-level [own_dll], under per-cell parent coherence).
+      the cell-level [own_dll], under per-cell parent coherence;
+      [own_dll_runs_length] aligns the two lists).
 
     Laws
     - the spine is a monoid: [own_dll_app] splits and joins a segment, and
@@ -840,6 +841,22 @@ Proof.
       * exact (eq_sym Hinr).
       * exact Hflags.
       * exact Hrunr.
+Qed.
+
+(** The run-granular spine aligns addresses with runs. *)
+Lemma own_dll_runs_length (dq : dfrac) (parent l last prev next : loc)
+    (ls : list loc) (runs : list ItemRun) :
+  own_dll_runs dq parent l last prev next ls runs -∗ ⌜length ls = length runs⌝.
+Proof.
+  iIntros "H".
+  iInduction ls as [|lc ls] "IH" forall (runs l prev); destruct runs as [|r runs]; simpl.
+  - done.
+  - iDestruct "H" as %[].
+  - iDestruct "H" as %[].
+  - iDestruct "H" as "(%Hloc & %Hpc & %Hrun & H)".
+    iDestruct "H" as (nxt0) "[Hnode Hrest]".
+    iDestruct ("IH" with "Hrest") as %Hlen.
+    iPureIntro. lia.
 Qed.
 
 (* ----- location freshness (issue #28 part 6) ------------------------------ *)

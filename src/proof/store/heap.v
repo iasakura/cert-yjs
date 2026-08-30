@@ -248,6 +248,17 @@ Proof.
     apply IH.
 Qed.
 
+#[global] Instance own_item_node_timeless l dq input deleted parent prev nxt :
+  Timeless (own_item_node l dq input deleted parent prev nxt).
+Proof. rewrite /own_item_node. apply _. Qed.
+
+#[global] Instance own_dll_runs_timeless dq parent l last prev next ls runs :
+  Timeless (own_dll_runs dq parent l last prev next ls runs).
+Proof.
+  revert runs l prev.
+  induction ls as [|lc ls IH]; intros [|r runs] l prev; simpl; apply _.
+Qed.
+
 #[global] Instance own_ytype_cells_timeless parent dq cells arr :
   Timeless (own_ytype_cells parent dq cells arr).
 Proof. rewrite /own_ytype_cells. apply _. Qed.

@@ -25,10 +25,11 @@
     The method proofs are [ytype/newYType.v], [ytype/findPos.v] and
     [ytype/Text.v].
 
-    Run granularity (plan-item-run-split stage 2): [own_ytype_runs parent dq
-    ls tm], the type's DLL at its address list and [type_model], the cell
-    list existential; [own_ytype_runs_intro] reads it off the cells-level
-    view. *)
+    Run granularity (plan-item-run-split stages 2 and 3): [own_ytype_runs
+    parent dq ls tm], the type's DLL at its address list and [type_model],
+    PRIMITIVE over [own_dll_runs] (stage 3c); [own_ytype_runs_intro] reads
+    it off the cells-level view and [own_ytype_runs_as_cells] reads it back
+    at the re-materialized cells ([cells_of_locs_runs]). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -76,18 +77,21 @@ Definition own_ytype (parent : loc) (dq : dfrac) (m : list (YjsItem A * bool)) :
     "Hcells" ∷ own_ytype_cells parent dq cells m.*1 ∗
     "%Hm" ∷ ⌜m = cells_model cells⌝.
 
-(** [own_ytype_runs parent dq ls tm]: the type at its run-granular model
-    (plan-item-run-split stage 2): the DLL nodes' addresses are [ls] and the
-    runs they hold are [tm_runs tm], the cell list existential
-    ([cell_run <$> cells = tm_runs tm], [ic_loc <$> cells = ls]). The
-    [(locs, p)]-keyed pool ([store/heap.v]'s [own_type_pool_runs]) is a
-    big-op of these. *)
+(** [own_ytype_runs parent dq ls tm]: the type at its run-granular model,
+    PRIMITIVE (plan-item-run-split stage 3c): [parent] is a heap [yType]
+    whose [start] heads the run-granular DLL [own_dll_runs] at the node
+    addresses [ls] and the runs [tm_runs tm]; [len] counts the visible
+    chars and the document list is the runs' flatten. The [(locs, p)]-keyed
+    pool ([store/heap.v]'s [own_type_pool_runs]) is a big-op of these;
+    [own_ytype_runs_intro] / [own_ytype_runs_as_cells] fold and unfold the
+    cells-level view through it during the migration. *)
 Definition own_ytype_runs (parent : loc) (dq : dfrac)
     (ls : list loc) (tm : type_model) : iProp Σ :=
-  ∃ (cells : list item_cell),
-    "Hcells" ∷ own_ytype_cells parent dq cells (tm_arr tm) ∗
-    "%Hruns" ∷ ⌜cell_run <$> cells = tm_runs tm⌝ ∗
-    "%Hls" ∷ ⌜ic_loc <$> cells = ls⌝.
+  ∃ (yt : yjs.yType.t) (tl : loc),
+    "Hparent" ∷ parent ↦{dq} yt ∗
+    "Hdll" ∷ own_dll_runs dq parent yt.(yjs.yType.start') tl null null ls (tm_runs tm) ∗
+    "%Hlen" ∷ ⌜yt.(yjs.yType.len') = W64 (runs_visible (tm_runs tm))⌝ ∗
+    "%Harr" ∷ ⌜tm_arr tm = runs_flatten (tm_runs tm)⌝.
 
 (* ===== lemmas ============================================================= *)
 
@@ -124,6 +128,45 @@ Lemma own_ytype_runs_intro (parent : loc) (dq : dfrac)
     (cells : list item_cell) (arr : list (YjsItem A)) :
   own_ytype_cells parent dq cells arr -∗
   own_ytype_runs parent dq (ic_loc <$> cells) (MkTypeModel (cell_run <$> cells) arr).
-Proof. iIntros "H". iExists cells. by iFrame "H". Qed.
+Proof.
+  iIntros "H". iDestruct "H" as (yt tl) "(Hp & Hdll & %Hlen & %Hrepr & %Hcpar)".
+  iExists yt, tl.
+  iEval (rewrite (own_dll_as_runs dq yt.(yjs.yType.start') tl null null parent cells Hcpar)) in "Hdll".
+  iFrame "Hp Hdll".
+  iPureIntro. simpl. split.
+  - rewrite Hlen num_visible_runs //.
+  - rewrite /cells_repr in Hrepr. rewrite Hrepr run_flatten_runs //.
+Qed.
+
+(** The primitive run view read back at cells: the zip of the addresses with
+    the runs ([cells_of_locs_runs]). What lets a cells-level proof consume
+    [own_ytype_runs] during the migration. *)
+Lemma own_ytype_runs_as_cells (parent : loc) (dq : dfrac)
+    (ls : list loc) (tm : type_model) :
+  own_ytype_runs parent dq ls tm -∗
+  ∃ (cells : list item_cell),
+    own_ytype_cells parent dq cells (tm_arr tm) ∗
+    ⌜cell_run <$> cells = tm_runs tm⌝ ∗ ⌜ic_loc <$> cells = ls⌝.
+Proof.
+  iIntros "H". iDestruct "H" as (yt tl) "(Hp & Hdll & %Hlen & %Harr)".
+  iDestruct (own_dll_runs_length with "Hdll") as %Hlenls.
+  set (cells := cells_of_locs_runs parent ls (tm_runs tm)).
+  have Hcr : cell_run <$> cells = tm_runs tm
+    := cells_of_locs_runs_run parent ls (tm_runs tm) Hlenls.
+  have Hlc : ic_loc <$> cells = ls
+    := cells_of_locs_runs_loc parent ls (tm_runs tm) Hlenls.
+  have Hcp : ∀ c, c ∈ cells -> ic_parent c = parent
+    := cells_of_locs_runs_parent parent ls (tm_runs tm).
+  iExists cells.
+  iSplitL; last by iPureIntro.
+  iExists yt, tl.
+  iEval (rewrite -Hcr -Hlc
+           -(own_dll_as_runs dq yt.(yjs.yType.start') tl null null parent cells Hcp)) in "Hdll".
+  iFrame "Hp Hdll".
+  iPureIntro. split_and!.
+  - rewrite Hlen num_visible_runs Hcr //.
+  - rewrite /cells_repr Harr run_flatten_runs Hcr //.
+  - exact Hcp.
+Qed.
 
 End ytype_heap.
