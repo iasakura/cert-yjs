@@ -766,7 +766,7 @@ Proof using Type*.
        own_ytype_cells rebuild over split_cells, and the item-map surgery
        (getNodeIndex over the split run + client_run_loc_insert). *)
     (* ----- guard + n.right := rs ----- *)
-    iDestruct "Hrest" as %[Hrnull0 Htl0eq].
+    iDestruct "Hrest" as %[_ [Hrnull0 Htl0eq]].
     have Hrnull : itemVal.(yjs.item.right') = null by rewrite Hnextcw Hrnull0.
     rewrite (bool_decide_eq_true_2 (itemVal.(yjs.item.right') = null) Hrnull).
     wp_auto.
@@ -892,7 +892,9 @@ Proof using Type*.
         - rewrite Hp12. exact Hclloc.
         - exact Hivr_r.
         - exact Hp18. }
-      iPureIntro. split; reflexivity. }
+      iPureIntro. split.
+      { move=> c Hc. by rewrite elem_of_nil in Hc. }
+      split; reflexivity. }
     have Hcparcw : ic_parent cw = parent by (apply Hcpar0; apply (list_elem_of_lookup_2 _ _ _ Hcellk)).
     have Hcpar_split : ∀ c, c ∈ split_cells cells k o rs -> ic_parent c = parent.
     { rewrite Hsc. move=> c Hc. apply elem_of_app in Hc as [Hc | Hc].

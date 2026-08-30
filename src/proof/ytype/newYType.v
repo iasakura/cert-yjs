@@ -36,6 +36,7 @@ Proof.
   iApply "HΦ".
   iExists {| yjs.yType.start' := null; yjs.yType.len' := W64 0 |}, null.
   iFrame "Hp". iPureIntro. split_and!.
+  - move=> c Hc. by apply elem_of_nil in Hc.
   - reflexivity.
   - reflexivity.
   - reflexivity.

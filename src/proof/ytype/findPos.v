@@ -49,7 +49,7 @@ Proof.
   iDestruct (own_dll_head_node dq cells _ tl with "Hdll") as %Hhead.
   destruct cells as [|c0 cs].
   - (* empty document: both loops are no-ops, return (null, null, 0) at p = 0 *)
-    iDestruct "Hdll" as %[Hs Ht]. wp_auto. rewrite Hs.
+    iDestruct "Hdll" as %[Hcoh0 [Hs Ht]]. wp_auto. rewrite Hs.
     iAssert ("Hp" ∷ parent ↦{dq} yt ∗ "Hl" ∷ left_ptr ↦ null ∗ "Hr" ∷ right_ptr ↦ null ∗ "Hidx" ∷ index_ptr ↦ idx)%I
       with "[Hparent left right index]" as "IH".
     { iFrame. }
@@ -60,10 +60,10 @@ Proof.
     wp_for "IH".
     wp_if_destruct.
     + wp_auto. iApply ("HΦ" $! null null 0%nat (W64 0)). iSplitL "Hp".
-      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen | exact Hrepr | exact Hcpar]. }
+      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [move=> c Hc; by apply elem_of_nil in Hc | exact Hs | reflexivity | exact Hlen | exact Hrepr | exact Hcpar]. }
       iPureIntro. split_and!; [lia | rewrite /node_loc; case_decide; reflexivity | rewrite /node_loc; case_decide; reflexivity | by left].
     + iApply ("HΦ" $! null null 0%nat (W64 0)). iSplitL "Hp".
-      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen | exact Hrepr | exact Hcpar]. }
+      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [move=> c Hc; by apply elem_of_nil in Hc | exact Hs | reflexivity | exact Hlen | exact Hrepr | exact Hcpar]. }
       iPureIntro. split_and!; [lia | rewrite /node_loc; case_decide; reflexivity | rewrite /node_loc; case_decide; reflexivity | by left].
   - (* non-empty: skip leading tombstones, then count visible nodes to [idx] *)
     wp_auto.

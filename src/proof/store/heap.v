@@ -265,26 +265,6 @@ Qed.
   Timeless (own_dll dq parent l last prev next cells).
 Proof. rewrite /own_dll. apply _. Qed.
 
-#[global] Instance own_dll_fractional parent l last prev next cells :
-  Fractional (λ q, own_dll (DfracOwn q) parent l last prev next cells).
-Proof.
-  intros q1 q2. iSplit.
-  - iIntros "H". iEval (rewrite own_dll_unfold_layout) in "H".
-    iDestruct "H" as "[%Hcoh H]".
-    iEval (rewrite (fractional q1 q2)) in "H".
-    iDestruct "H" as "[H1 H2]".
-    iSplitL "H1".
-    + iEval (rewrite own_dll_unfold_layout). iSplitR; first done. iFrame "H1".
-    + iEval (rewrite own_dll_unfold_layout). iSplitR; first done. iFrame "H2".
-  - iIntros "[H1 H2]".
-    iEval (rewrite own_dll_unfold_layout) in "H1".
-    iEval (rewrite own_dll_unfold_layout) in "H2".
-    iDestruct "H1" as "[%Hcoh H1]". iDestruct "H2" as "[_ H2]".
-    iEval (rewrite own_dll_unfold_layout).
-    iSplitR; first done.
-    iEval (rewrite (fractional q1 q2)).
-    iFrame "H1 H2".
-Qed.
 
 #[global] Instance own_ytype_cells_timeless parent dq cells arr :
   Timeless (own_ytype_cells parent dq cells arr).
@@ -325,13 +305,34 @@ Proof.
       iExists iv1, olid1, orid1. iFrame "Hval Hrest Holeft1 Horight1". done.
 Qed.
 
+#[global] Instance own_dll_fractional parent l last prev next cells :
+  Fractional (λ q, own_dll (DfracOwn q) parent l last prev next cells).
+Proof.
+  intros q1 q2. iSplit.
+  - iIntros "H". iEval (rewrite own_dll_unfold_layout) in "H".
+    iDestruct "H" as "[%Hcoh H]".
+    iEval (rewrite (own_dll_cells_layout_fractional l last prev next cells q1 q2)) in "H".
+    iDestruct "H" as "[H1 H2]".
+    iSplitL "H1".
+    + iEval (rewrite own_dll_unfold_layout). iSplitR; first done. iFrame "H1".
+    + iEval (rewrite own_dll_unfold_layout). iSplitR; first done. iFrame "H2".
+  - iIntros "[H1 H2]".
+    iEval (rewrite own_dll_unfold_layout) in "H1".
+    iEval (rewrite own_dll_unfold_layout) in "H2".
+    iDestruct "H1" as "[%Hcoh H1]". iDestruct "H2" as "[_ H2]".
+    iEval (rewrite own_dll_unfold_layout).
+    iSplitR; first done.
+    iEval (rewrite (own_dll_cells_layout_fractional l last prev next cells q1 q2)).
+    iFrame "H1 H2".
+Qed.
+
 #[global] Instance own_ytype_cells_fractional parent cells arr :
   Fractional (λ q, own_ytype_cells parent (DfracOwn q) cells arr).
 Proof.
   intros q1 q2. rewrite /own_ytype_cells. iSplit.
   - iIntros "H". iNamed "H".
     iDestruct "Hparent" as "[Hp1 Hp2]".
-    iDestruct (own_dll_fractional _ _ _ _ _ q1 q2 with "Hdll") as "[Hd1 Hd2]".
+    iDestruct (own_dll_fractional _ _ _ _ _ _ q1 q2 with "Hdll") as "[Hd1 Hd2]".
     iSplitL "Hp1 Hd1".
     + iExists yt, tl. iFrame "Hp1 Hd1". auto.
     + iExists yt, tl. iFrame "Hp2 Hd2". auto.
@@ -341,7 +342,7 @@ Proof.
     iCombine "Hparent1 Hparent2" gives %Hyt. subst yt2.
     iDestruct (own_dll_last_agree with "Hdll1 Hdll2") as %Htl. subst tl2.
     iCombine "Hparent1 Hparent2" as "Hparent".
-    iDestruct (own_dll_fractional _ _ _ _ _ q1 q2 with "[$Hdll1 $Hdll2]") as "Hdll".
+    iDestruct (own_dll_fractional _ _ _ _ _ _ q1 q2 with "[$Hdll1 $Hdll2]") as "Hdll".
     iExists yt1, tl1. iFrame "Hparent Hdll". auto.
 Qed.
 
