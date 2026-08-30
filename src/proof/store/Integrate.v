@@ -741,8 +741,21 @@ Proof using Type*.
       have Hir : (leftIdx + Z.of_nat offset < rightIdx)%Z by (clear -Hcur HcurR Hlt_pref; lia).
       wp_auto.
       iNamed "Htext".
-      iDestruct (own_dll_acc _ cells _ _ cur ci Hci with "Hdll")
-        as (iv_ci olid_ci orid_ci) "(%Hcloc0 & %Hcl0 & %Hcr0 & %Hcid_ci & %Hccont_ci & %Hcolid_ci & %Hcorid_ci & %Hcflags_ci & %Hrunwf_ci & %Hcpar_ci & Hcival & #Hcol & #Hcor & Hback)".
+      iDestruct (own_dll_acc_node _ cells _ _ cur ci Hci with "Hdll")
+        as (prev_ci nxt_ci) "(%Hcloc0 & %Hcl0p & %Hcr0p & %Hrunwf_ci & %Hclen_ci & %Hpc_ci & Hnode & Hback)".
+      iDestruct "Hnode" as (iv_ci olid_ci orid_ci)
+        "(Hcival & #Hcol & #Hcor & %Hinl_ci & %Hinr_ci & %Hcidn_ci & %Hccontn_ci & %Hcpar_ci & %Hprev_ci & %Hnext_ci & %Hcflags_ci)".
+      have Hcid_ci : item_id (run_head ci) = toYjsId iv_ci.(yjs.item.id').
+      { symmetry. exact Hcidn_ci. }
+      have Hccont_ci : content <$> ic_run ci = explode (toContent iv_ci.(yjs.item.content')).
+      { have Hstr : toContent iv_ci.(yjs.item.content') = items_string (ic_run ci) := Hccontn_ci.
+        rewrite Hstr. exact Hpc_ci. }
+      have Hcolid_ci : origin_id (origin (run_head ci)) = toYjsId <$> olid_ci.
+      { symmetry. exact Hinl_ci. }
+      have Hcorid_ci : origin_id (rightOrigin (run_head ci)) = toYjsId <$> orid_ci.
+      { symmetry. exact Hinr_ci. }
+      have Hcr0 : iv_ci.(yjs.item.right') = node_loc cells (Z.of_nat cur + 1).
+      { rewrite Hnext_ci. exact Hcr0p. }
       iEval (rewrite Hcloc0) in "Hcival".
       wp_auto.
       iDestruct "Hids_before" as (ibo_s) "[Hibo_ref Hibo_setf]".
@@ -851,7 +864,7 @@ Proof using Type*.
            iIntros "%ci_empty [Hci_empty Hci_empty_cap]". wp_auto.
            wp_for_post.
            iEval (rewrite -Hcloc0) in "Hcival".
-           iDestruct ("Hback" with "Hcival") as "Hdll".
+           iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, olid_ci, orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
            iFrame "HΦ item".
            iExists (offset + length (ic_run ci))%nat, (S cur), (S cur), (char_ids (ic_run ci) ∪ idsB), ∅, (leftIdx + Z.of_nat (offset + length (ic_run ci)))%Z.
            rewrite /integrate_loop_inv /own_fresh_item_raw.
@@ -892,7 +905,7 @@ Proof using Type*.
               rewrite (decide_True _ _ HoeqRR) in Hloop.
               injection Hloop as HdestL.
               wp_auto.
-              iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+              iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, olid_ci, orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
               wp_for_post.
               iApply ("HΦ" $! (node_loc cells (Z.of_nat curD - 1))).
               iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
@@ -905,7 +918,7 @@ Proof using Type*.
               rewrite (decide_False _ _ HneqRR) in Hloop.
               wp_auto.
               wp_for_post.
-              iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+              iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, olid_ci, orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
               iFrame "HΦ item".
               iExists (offset + length (ic_run ci))%nat, (S cur), curD, (char_ids (ic_run ci) ∪ idsB), (char_ids (ic_run ci) ∪ conflictI), destL.
               rewrite /integrate_loop_inv /own_fresh_item_raw.
@@ -941,7 +954,7 @@ Proof using Type*.
            iDestruct "Hcol" as "%Hcol_null".
            simpl in Hloop. injection Hloop as HdestL.
            wp_auto. rewrite Hcol_null. wp_auto.
-           iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+           iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, None, orid_ci. iFrame "Hcival Hcor". iSplitR; [iPureIntro; exact Hcol_null|]. iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
            wp_for_post.
            iApply ("HΦ" $! (node_loc cells (Z.of_nat curD - 1))).
            iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
@@ -950,6 +963,8 @@ Proof using Type*.
              [done | rewrite HcurD HdestL -Hd_eq Z2Nat.id; [done | clear -Hdest HdestL HleftLB; lia] | exact HcurDb].
         -- (* conflict has a left origin [idv] (different from the new item's) *)
            iDestruct "Hcol" as "[%Hcol_nn #Hcol_pt]".
+           iAssert (is_origin_id iv_ci.(yjs.item.originLeftId') (Some idv)) as "#Hcol".
+           { iSplit; [iPureIntro; exact Hcol_nn | iExact "Hcol_pt"]. }
            simpl in Hloop.
            wp_auto. rewrite bool_decide_eq_false_2; last exact Hcol_nn. wp_auto.
            (* the block-query bridge: the Go queries the whole run's span, [set_find_integration]
@@ -982,7 +997,7 @@ Proof using Type*.
                  rewrite (decide_False _ _ Hnn) in Hloop.
                  wp_auto.
                  wp_for_post.
-                 iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+                 iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, (Some idv), orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
                  iFrame "HΦ item".
                  iExists (offset + length (ic_run ci))%nat, (S cur), curD, (char_ids (ic_run ci) ∪ idsB), (char_ids (ic_run ci) ∪ conflictI), destL.
                  rewrite /integrate_loop_inv /own_fresh_item_raw.
@@ -1017,7 +1032,7 @@ Proof using Type*.
                  wp_apply wp_slice_literal. iSplitR; first done.
                  iIntros "%ci_empty [Hci_empty Hci_empty_cap]". wp_auto.
                  wp_for_post.
-                 iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+                 iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, (Some idv), orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
                  iFrame "HΦ item".
                  iExists (offset + length (ic_run ci))%nat, (S cur), (S cur), (char_ids (ic_run ci) ∪ idsB), ∅, (leftIdx + Z.of_nat (offset + length (ic_run ci)))%Z.
                  rewrite /integrate_loop_inv /own_fresh_item_raw.
@@ -1051,7 +1066,7 @@ Proof using Type*.
               rewrite (decide_False _ _ Hnin_ibo_head) in Hloop.
               injection Hloop as HdestL.
               wp_auto.
-              iEval (rewrite -Hcloc0) in "Hcival". iDestruct ("Hback" with "Hcival") as "Hdll".
+              iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, (Some idv), orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
               wp_for_post.
               iApply ("HΦ" $! (node_loc cells (Z.of_nat curD - 1))).
               iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
