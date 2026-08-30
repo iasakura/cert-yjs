@@ -70,7 +70,7 @@ Proof.
     (* ----- skip loop invariant (runs before [remaining := index]) ----- *)
     iAssert (∃ (q : nat),
       "Hp" ∷ parent ↦{dq} yt ∗
-      "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
+      "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
       "Hindex" ∷ index_ptr ↦ idx ∗
       "Hleftp" ∷ left_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q - 1) ∗
       "Hrightp" ∷ right_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q) ∗
@@ -127,7 +127,7 @@ Proof.
         wp_auto.
         iAssert (∃ (q2 : nat) (rem off : w64),
           "Hp" ∷ parent ↦{dq} yt ∗
-          "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
+          "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
           "Hleftp" ∷ left_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2 - 1) ∗
           "Hrightp" ∷ right_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2) ∗
           "Hrem" ∷ remaining_ptr ↦ rem ∗
@@ -244,7 +244,7 @@ Proof.
       wp_auto.
         iAssert (∃ (q2 : nat) (rem off : w64),
           "Hp" ∷ parent ↦{dq} yt ∗
-          "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
+          "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null (c0 :: cs) ∗
           "Hleftp" ∷ left_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2 - 1) ∗
           "Hrightp" ∷ right_ptr ↦ node_loc (c0 :: cs) (Z.of_nat q2) ∗
           "Hrem" ∷ remaining_ptr ↦ rem ∗

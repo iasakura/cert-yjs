@@ -852,13 +852,17 @@ Proof using Type*.
     rewrite Hslk /=.
     wp_auto.
     (* ----- Phase A: own_dll_split, own_ytype_cells rebuild, close over types2 ----- *)
-    iAssert (own_dll (DfracOwn 1) yt.(yjs.yType.start') rs null null (split_cells cells k o rs))
+    iAssert (own_dll (DfracOwn 1) parent yt.(yjs.yType.start') rs null null (split_cells cells k o rs))
       with "[Hseg1 Hval Holeft Horight Hrs]" as "Hdll2".
     { rewrite Hsc.
       have Hpcl : run_per_char (cell_run leftCell) := run_per_char_intro _ _ _ Hp7.
       have Hpcr : run_per_char (cell_run rightCell) := run_per_char_intro _ _ _ Hp15.
       iDestruct "Horight" as "#HorightP".
-      iApply (own_dll_split_node (DfracOwn 1) pre (@nil item_cell) leftCell rightCell yt.(yjs.yType.start') rs ml null Hp11 Hpcl Hp19 Hpcr).
+      have Hparl : ic_parent leftCell = parent.
+      { rewrite /leftCell /=. apply Hcpar0. exact (list_elem_of_lookup_2 _ _ _ Hcellk). }
+      have Hparr : ic_parent rightCell = parent.
+      { rewrite /rightCell /=. apply Hcpar0. exact (list_elem_of_lookup_2 _ _ _ Hcellk). }
+      iApply (own_dll_split_node (DfracOwn 1) pre (@nil item_cell) leftCell rightCell yt.(yjs.yType.start') rs ml null Hparl Hparr Hp11 Hpcl Hp19 Hpcr).
       rewrite Hclloc Hcrloc.
       iSplitL "Hseg1"; first iFrame "Hseg1".
       iSplitL "Hval Holeft".
@@ -1320,10 +1324,13 @@ Proof using Type*.
     rewrite Hslk /=.
     wp_auto.
     (* ----- Phase A: reassemble the suffix DLL behind [rightCell], own_dll_split, close ----- *)
-    iAssert (own_dll (DfracOwn 1) itemVal.(yjs.item.right') tl0 rs null (d0 :: drest))
+    iAssert (own_dll (DfracOwn 1) parent itemVal.(yjs.item.right') tl0 rs null (d0 :: drest))
       with "[Hvald Holeftd Horightd Hrestd]" as "Hsufdll".
     { rewrite Hlocd1.
-      iApply (own_dll_cons_node_fold (DfracOwn 1) tl0 rs null nxtd d0 drest Hrund Hpcd0).
+      have Hpard0 : ic_parent d0 = parent.
+      { apply Hcpar0. rewrite -Hsplit. apply elem_of_app. right.
+        apply elem_of_cons. right. apply elem_of_cons. by left. }
+      iApply (own_dll_cons_node_fold (DfracOwn 1) tl0 rs null nxtd d0 drest Hpard0 Hrund Hpcd0).
       iSplitL "Hvald Holeftd Horightd".
       { iExists ivd2, olidd, oridd.
         rewrite Hd2ol Hd2or.
@@ -1338,13 +1345,17 @@ Proof using Type*.
         - rewrite Hd2r. exact Hnextd.
         - rewrite Hd2f. exact Hflagsd. }
       iFrame "Hrestd". }
-    iAssert (own_dll (DfracOwn 1) yt.(yjs.yType.start') tl0 null null (split_cells cells k o rs))
+    iAssert (own_dll (DfracOwn 1) parent yt.(yjs.yType.start') tl0 null null (split_cells cells k o rs))
       with "[Hseg1 Hval Holeft Horight Hrs Hsufdll]" as "Hdll2".
     { rewrite Hsc.
       have Hpcl : run_per_char (cell_run leftCell) := run_per_char_intro _ _ _ Hp7.
       have Hpcr : run_per_char (cell_run rightCell) := run_per_char_intro _ _ _ Hp15.
       iDestruct "Horight" as "#HorightP".
-      iApply (own_dll_split_node (DfracOwn 1) pre (d0 :: drest) leftCell rightCell yt.(yjs.yType.start') tl0 ml itemVal.(yjs.item.right') Hp11 Hpcl Hp19 Hpcr).
+      have Hparl : ic_parent leftCell = parent.
+      { rewrite /leftCell /=. apply Hcpar0. exact (list_elem_of_lookup_2 _ _ _ Hcellk). }
+      have Hparr : ic_parent rightCell = parent.
+      { rewrite /rightCell /=. apply Hcpar0. exact (list_elem_of_lookup_2 _ _ _ Hcellk). }
+      iApply (own_dll_split_node (DfracOwn 1) pre (d0 :: drest) leftCell rightCell yt.(yjs.yType.start') tl0 ml itemVal.(yjs.item.right') Hparl Hparr Hp11 Hpcl Hp19 Hpcr).
       rewrite Hclloc Hcrloc.
       iSplitL "Hseg1"; first iFrame "Hseg1".
       iSplitL "Hval Holeft".

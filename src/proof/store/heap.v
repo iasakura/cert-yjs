@@ -239,8 +239,8 @@ Proof. rewrite /own_item_map. apply _. Qed.
 #[global] Instance is_origin_id_timeless p originId : Timeless (is_origin_id p originId).
 Proof. rewrite /is_origin_id. by destruct originId; apply _. Qed.
 
-#[global] Instance own_dll_timeless dq l last prev next cells :
-  Timeless (own_dll dq l last prev next cells).
+#[global] Instance own_dll_cells_layout_timeless dq l last prev next cells :
+  Timeless (own_dll_cells_layout dq l last prev next cells).
 Proof.
   revert l last prev next.
   induction cells as [|c rest IH]; intros l last prev next; simpl.
@@ -261,6 +261,31 @@ Proof.
   induction ls as [|lc ls IH]; intros [|r runs] l prev; simpl; apply _.
 Qed.
 
+#[global] Instance own_dll_timeless dq parent l last prev next cells :
+  Timeless (own_dll dq parent l last prev next cells).
+Proof. rewrite /own_dll. apply _. Qed.
+
+#[global] Instance own_dll_fractional parent l last prev next cells :
+  Fractional (λ q, own_dll (DfracOwn q) parent l last prev next cells).
+Proof.
+  intros q1 q2. iSplit.
+  - iIntros "H". iEval (rewrite own_dll_unfold_layout) in "H".
+    iDestruct "H" as "[%Hcoh H]".
+    iEval (rewrite (fractional q1 q2)) in "H".
+    iDestruct "H" as "[H1 H2]".
+    iSplitL "H1".
+    + iEval (rewrite own_dll_unfold_layout). iSplitR; first done. iFrame "H1".
+    + iEval (rewrite own_dll_unfold_layout). iSplitR; first done. iFrame "H2".
+  - iIntros "[H1 H2]".
+    iEval (rewrite own_dll_unfold_layout) in "H1".
+    iEval (rewrite own_dll_unfold_layout) in "H2".
+    iDestruct "H1" as "[%Hcoh H1]". iDestruct "H2" as "[_ H2]".
+    iEval (rewrite own_dll_unfold_layout).
+    iSplitR; first done.
+    iEval (rewrite (fractional q1 q2)).
+    iFrame "H1 H2".
+Qed.
+
 #[global] Instance own_ytype_cells_timeless parent dq cells arr :
   Timeless (own_ytype_cells parent dq cells arr).
 Proof. rewrite /own_ytype_cells. apply _. Qed.
@@ -277,8 +302,8 @@ Proof. rewrite /own_ytype_runs. apply _. Qed.
    the DLL tail loc ([tl]) to AGREE across the two shares; [own_dll_last_agree]
    supplies the [tl] agreement (both DLLs over the same cells end at the same
    node); [itemVal]/[yt] agree by [pointsto] agreement. *)
-#[global] Instance own_dll_fractional l last prev next cells :
-  Fractional (λ q, own_dll (DfracOwn q) l last prev next cells).
+#[global] Instance own_dll_cells_layout_fractional l last prev next cells :
+  Fractional (λ q, own_dll_cells_layout (DfracOwn q) l last prev next cells).
 Proof.
   intros q1 q2. revert l last prev next.
   induction cells as [|c rest IH]; intros l last prev next; simpl.

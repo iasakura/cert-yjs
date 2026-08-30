@@ -423,15 +423,18 @@ With the re-threading done, the coordinated cutover proceeds bottom-up in
 six compiling stages. Scaffolding (compat wrappers) is allowed DURING the
 cutover and dies in C6; nothing of it survives.
 
-- **C1, item layer.** `item/heap.v`: `own_dll` is redefined at
-  `(parent, ls, runs)` (today's `own_dll_runs`, renamed); a scaffolding
-  wrapper `own_dll_cells dq l last prev next cells :=
-  own_dll … (ic_loc <$> cells) (cell_run <$> cells)` (the `own_dll_as_runs`
-  reading turned into the definition) keeps every current consumer
-  compiling verbatim. The toolkit laws move to `(ls, runs)` signatures;
-  their cell-shaped forms become derived corollaries over the wrapper.
-  `item/value.v` keeps `item_cell` and the projections for now (they feed
-  the wrapper).
+- **C1, item layer** (landed 2026-08-30; the original wording had a flaw:
+  a parentless wrapper cannot synthesize the run spine's parent).
+  `own_dll` GAINS the parent parameter and is defined as
+  `⌜∀ c ∈ cells, ic_parent c = parent⌝ ∗ own_dll_runs dq parent …
+  (ic_loc <$> cells) (cell_run <$> cells)`. The old cons Fixpoint and
+  all its laws survive renamed `own_dll_cells_layout(_*)` (scaffolding,
+  deleted at C6); `own_dll_unfold_layout` is the isomorphism, and a
+  wrapper-level suite re-exports every consumer-facing law with the
+  parent IMPLICIT, so the ~40 borrow call sites compile unchanged; only
+  sites that STATE `own_dll` spell the parent, and the splice calls
+  discharge the new parent-coherence premises. `item/value.v` keeps
+  `item_cell` and the projections for now (they feed the wrapper).
 - **C2, ytype layer.** `own_ytype_runs` (already primitive) becomes THE
   `own_ytype_cells` replacement: the cell-shaped predicate becomes a
   wrapper over it, `type_state` callers start moving to `type_model`

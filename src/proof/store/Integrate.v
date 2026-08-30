@@ -1156,7 +1156,7 @@ Proof using Type*.
       have Hlnull : left_loc = null.
       { rewrite Hll Hl0 /node_loc. case_decide; [lia | done]. }
       rewrite Hlnull. wp_auto.
-      iAssert (⌜yt.(yjs.yType.start') = node_loc cells 0⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hstart Hdll]".
+      iAssert (⌜yt.(yjs.yType.start') = node_loc cells 0⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hstart Hdll]".
       { destruct cells as [|c rest].
         { iDestruct "Hdll" as %[Hl Hlst]. iSplit; iPureIntro; [rewrite Hl /node_loc // | split; [exact Hl | exact Hlst]]. }
         iDestruct "Hdll" as (ivh olidh oridh) "(%Hloch & %Hprevh & %Hparh & %Hidh & %Hconth & %Holidh & %Horidh & %Hflagsh & %Hrunh & Hvalh & #Holefth & #Horighth & Hresth)".
@@ -1184,7 +1184,7 @@ Proof using Type*.
       { rewrite /node_loc decide_True; last lia.
         have -> : Z.to_nat (Z.of_nat curL - 1) = (curL - 1)%nat by lia.
         rewrite Hcl_lookup //. }
-      iAssert (⌜ic_loc leftCell ≠ null⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
+      iAssert (⌜ic_loc leftCell ≠ null⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
       { iDestruct (own_dll_lookup_acc_node _ _ _ _ _ _ _ _ Hcl_lookup with "Hdll") as (px nx) "(_ & _ & _ & Hnode & Hbk)".
         iDestruct (own_item_node_not_null with "Hnode") as "[%Hnn Hnode]".
         iDestruct ("Hbk" with "Hnode") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
@@ -1257,7 +1257,7 @@ Proof using Type*.
     destruct (cells !! curR) as [rightCell|] eqn:Hcr_lookup; last by (apply lookup_ge_None in Hcr_lookup; lia).
     have Hcr_loc : node_loc cells (Z.of_nat curR) = ic_loc rightCell.
     { rewrite /node_loc decide_True; last lia. rewrite Nat2Z.id Hcr_lookup //. }
-    iAssert (⌜ic_loc rightCell ≠ null⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hcrnn Hdll]".
+    iAssert (⌜ic_loc rightCell ≠ null⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hcrnn Hdll]".
     { iDestruct (own_dll_lookup_acc_node _ _ _ _ _ _ _ _ Hcr_lookup with "Hdll") as (px nx) "(_ & _ & _ & Hnode & Hbk)".
       iDestruct (own_item_node_not_null with "Hnode") as "[%Hnn Hnode]".
       iDestruct ("Hbk" with "Hnode") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
@@ -1317,13 +1317,13 @@ Proof using Type*.
         { rewrite /node_loc decide_True; last lia.
           have -> : Z.to_nat (Z.of_nat curR - 1) = (curR - 1)%nat by lia.
           rewrite Hcrl_lookup //. }
-        iAssert (⌜ic_loc crl ≠ null⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hcrlnn Hdll]".
+        iAssert (⌜ic_loc crl ≠ null⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hcrlnn Hdll]".
         { iDestruct (own_dll_lookup_acc_node _ _ _ _ _ _ _ _ Hcrl_lookup with "Hdll") as (px nx) "(_ & _ & _ & Hnode & Hb)".
           iDestruct (own_item_node_not_null with "Hnode") as "[%Hnn2 Hnode]".
           iDestruct ("Hb" with "Hnode") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
         have Hcrl_nn : ivr.(yjs.item.left') ≠ null by rewrite Hcrl_eq Hcrl_loc; exact Hcrlnn.
         rewrite (bool_decide_eq_false_2 (ivr.(yjs.item.left') = null) Hcrl_nn). wp_auto.
-        iAssert (⌜yt.(yjs.yType.start') = node_loc cells 0⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hstart Hdll]".
+        iAssert (⌜yt.(yjs.yType.start') = node_loc cells 0⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hstart Hdll]".
         { iDestruct (own_dll_headptr with "Hdll") as "[%Hhd Hdll]".
           iFrame "Hdll". iPureIntro.
           rewrite Hhd /node_loc. destruct cells as [|c rest]; simpl.
@@ -1350,7 +1350,7 @@ Proof using Type*.
       { rewrite /node_loc decide_True; last lia.
         have -> : Z.to_nat (Z.of_nat curL - 1) = (curL - 1)%nat by lia.
         rewrite Hcl_lookup //. }
-      iAssert (⌜ic_loc leftCell ≠ null⌝ ∗ own_dll dq yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
+      iAssert (⌜ic_loc leftCell ≠ null⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
       { iDestruct (own_dll_lookup_acc_node _ _ _ _ _ _ _ _ Hcl_lookup with "Hdll") as (px nx) "(_ & _ & _ & Hnode & Hbk)".
         iDestruct (own_item_node_not_null with "Hnode") as "[%Hnn3 Hnode]".
         iDestruct ("Hbk" with "Hnode") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
@@ -1624,7 +1624,7 @@ Proof using Type*.
       "Hparent" ∷ parent ↦ ytv ∗
       "%Hyts" ∷ ⌜ytv.(yjs.yType.start') = hd'⌝ ∗
       "%Hytl" ∷ ⌜ytv.(yjs.yType.len') = W64 (num_visible cells)⌝ ∗
-      "Hleftdll" ∷ own_dll (DfracOwn 1) hd' (node_loc cells (Z.of_nat curD - 1)) null item_l cs1m ∗
+      "Hleftdll" ∷ own_dll (DfracOwn 1) parent hd' (node_loc cells (Z.of_nat curD - 1)) null item_l cs1m ∗
       "%Hcs1m" ∷ ⌜cells_repr arr cs1m (take destIdx arr)⌝ ∗
       "%Hcs1eq" ∷ ⌜cs1m = take curD cells⌝ ∗
       "Hitem" ∷ item_l ↦ ivL ∗
@@ -1635,13 +1635,13 @@ Proof using Type*.
       "%HivLoL" ∷ ⌜ivL.(yjs.item.originLeftId') = iv2.(yjs.item.originLeftId')⌝ ∗
       "%HivLoR" ∷ ⌜ivL.(yjs.item.originRightId') = iv2.(yjs.item.originRightId')⌝ ∗
       "%HivLpar" ∷ ⌜ivL.(yjs.item.parent') = iv2.(yjs.item.parent')⌝ ∗
-      "Hrightdll" ∷ own_dll (DfracOwn 1) (node_loc cells (Z.of_nat curD)) tl' (node_loc cells (Z.of_nat curD - 1)) null (drop curD cells) ∗
+      "Hrightdll" ∷ own_dll (DfracOwn 1) parent (node_loc cells (Z.of_nat curD)) tl' (node_loc cells (Z.of_nat curD - 1)) null (drop curD cells) ∗
       "Hrightptr" ∷ right_ptr ↦ node_loc cells (Z.of_nat curD) ∗
       "item" ∷ item_ptr ↦ item_l ∗
       "parent" ∷ parent_ptr ↦ parent)%I
     with "[Hparent Hdll Hitem left right item parent]".
   { (* curD = 0 : head insertion (else branch already executed) *)
-    iAssert (⌜curD = 0%nat⌝ ∗ own_dll (DfracOwn 1) yt'.(yjs.yType.start') tl' null null cells)%I
+    iAssert (⌜curD = 0%nat⌝ ∗ own_dll (DfracOwn 1) parent yt'.(yjs.yType.start') tl' null null cells)%I
       with "[Hdll]" as "(%Hd0 & Hdll)".
     { destruct (decide (curD = 0%nat)) as [Hd0c|Hne].
       - iFrame "Hdll". done.
@@ -1713,7 +1713,9 @@ Proof using Type*.
     { rewrite own_dll_app. iExists ml1, lc.(ic_loc).
       iEval (rewrite Hmf1) in "Hleft1". iFrame "Hleft1".
       set (ivlc2 := ivlc <| yjs.item.right' := item_l |>).
-      iApply (own_dll_cons_node_fold (DfracOwn 1) _ _ _ item_l lc (@nil item_cell) Hrunlc Hpclc).
+      have Hparlc : ic_parent lc = parent.
+      { apply Hcpar'. exact (list_elem_of_lookup_2 _ _ _ Hlc). }
+      iApply (own_dll_cons_node_fold (DfracOwn 1) _ _ _ item_l lc (@nil item_cell) Hparlc Hrunlc Hpclc).
       iSplitL "Hval Holc Horc".
       { iExists ivlc2, olidlc, oridlc.
         iFrame "Hval Holc Horc".
@@ -1748,7 +1750,7 @@ Proof using Type*.
      fragment [cs2m] whose first [left'] points at [item]. *)
   wp_if_join (λ v, ⌜v = execute_val⌝ ∗
     ∃ (cs2m : list item_cell) (tlN : loc),
-      "Hrightdll2" ∷ own_dll (DfracOwn 1) (node_loc cells (Z.of_nat curD)) tlN item_l null cs2m ∗
+      "Hrightdll2" ∷ own_dll (DfracOwn 1) parent (node_loc cells (Z.of_nat curD)) tlN item_l null cs2m ∗
       "%Hcs2m" ∷ ⌜cells_repr arr cs2m (drop destIdx arr)⌝ ∗
       "%Hcs2eq" ∷ ⌜cs2m = drop curD cells⌝ ∗
       "Hrightptr" ∷ right_ptr ↦ node_loc cells (Z.of_nat curD) ∗
@@ -2051,7 +2053,7 @@ Proof using Type*.
         := run_per_char_intro _ _ _ Hconttr.
       iApply (own_dll_insert_middle_node (DfracOwn 1) cs1m cs2m (MkItemCell item_l RUNITEMS false parent)
                 hd' tlN (node_loc cells (Z.of_nat curD - 1)) (node_loc cells (Z.of_nat curD))
-                Hrunwf Hpcnew).
+                eq_refl Hrunwf Hpcnew).
       iSplitL "Hleftdll"; first iFrame "Hleftdll".
       iSplitL "Hitem Holeft2 Horight2"; last iFrame "Hrightdll2".
       iExists (ivL <| yjs.item.right' := node_loc cells (Z.of_nat curD) |>), oleft, oright.

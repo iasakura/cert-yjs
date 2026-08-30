@@ -324,7 +324,7 @@ Proof.
     "Hcur" ∷ cur_ptr ↦ node_loc cells' (Z.of_nat q) ∗
     "Hrem" ∷ remaining_ptr ↦ rem ∗
     "Hparent" ∷ tv.(yjs.Text.inner') ↦ yt' ∗
-    "Hdll" ∷ own_dll (DfracOwn 1) yt'.(yjs.yType.start') tl' null null cells' ∗
+    "Hdll" ∷ own_dll (DfracOwn 1) tv.(yjs.Text.inner') yt'.(yjs.yType.start') tl' null null cells' ∗
     "Hlk" ∷ own_wlock γs ∗
     "Hclient" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "client"] ↦ client ∗
     "Hclock" ∷ (tv.(yjs.Text.store')).[yjs.store.t, "clock"] ↦ k ∗

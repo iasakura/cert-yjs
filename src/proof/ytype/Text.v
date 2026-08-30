@@ -35,7 +35,7 @@ Proof.
   wp_auto.
   iAssert (∃ (k : nat),
     "Hp" ∷ parent ↦{dq} yt ∗
-    "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null cells ∗
+    "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null cells ∗
     "Hresult" ∷ result_ptr ↦ visible_string (cells_model (take k cells)) ∗
     "Hcur" ∷ cur_ptr ↦ node_loc cells (Z.of_nat k) ∗
     "%Hk" ∷ ⌜(k <= length cells)%nat⌝)%I

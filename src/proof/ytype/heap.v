@@ -63,7 +63,7 @@ Definition own_ytype_cells (parent : loc) (dq : dfrac)
     (cells : list item_cell) (arr : list (YjsItem A)) : iProp Σ :=
   ∃ (yt : yjs.yType.t) (tl : loc),
     "Hparent" ∷ parent ↦{dq} yt ∗
-    "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null cells ∗
+    "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null cells ∗
     "%Hlen" ∷ ⌜yt.(yjs.yType.len') = W64 (num_visible cells)⌝ ∗
     "%Hrepr" ∷ ⌜cells_repr arr cells arr⌝ ∗
     "%Hcpar" ∷ ⌜∀ c, c ∈ cells -> ic_parent c = parent⌝.
@@ -131,7 +131,7 @@ Lemma own_ytype_runs_intro (parent : loc) (dq : dfrac)
 Proof.
   iIntros "H". iDestruct "H" as (yt tl) "(Hp & Hdll & %Hlen & %Hrepr & %Hcpar)".
   iExists yt, tl.
-  iEval (rewrite (own_dll_as_runs dq yt.(yjs.yType.start') tl null null parent cells Hcpar)) in "Hdll".
+  iEval (rewrite /own_dll) in "Hdll". iDestruct "Hdll" as "[_ Hdll]".
   iFrame "Hp Hdll".
   iPureIntro. simpl. split.
   - rewrite Hlen num_visible_runs //.
@@ -160,9 +160,11 @@ Proof.
     := cells_of_locs_runs_parent parent ls (tm_runs tm).
   iSplitR; [by iPureIntro |].
   iExists yt, tl.
-  iEval (rewrite -Hcr -Hlc
-           -(own_dll_as_runs dq yt.(yjs.yType.start') tl null null parent cells Hcp)) in "Hdll".
-  iFrame "Hp Hdll".
+  iEval (rewrite -Hcr -Hlc) in "Hdll".
+  iFrame "Hp".
+  iEval (rewrite /own_dll).
+  iSplitL "Hdll".
+  { iSplitR; last iFrame "Hdll". iPureIntro. exact Hcp. }
   iPureIntro. split_and!.
   - rewrite Hlen num_visible_runs Hcr //.
   - rewrite /cells_repr Harr run_flatten_runs Hcr //.
