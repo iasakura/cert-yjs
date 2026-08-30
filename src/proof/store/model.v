@@ -37,11 +37,14 @@
     what one [splitNode] leaves of the pool at run granularity
     ([pool_after_repair] the same for [store.repair]'s at most two splits,
     [pool_after_delete] for the wire delete path's unbounded sweep);
-    [pool_run_clock_below], the index-based [pool_clock_below]. *)
+    [pool_run_clock_below], the index-based [pool_clock_below];
+    [all_runs] under a registry insert or lookup ([all_runs_insert] /
+    [all_runs_lookup]) and [run_pool_invs] surviving one node split
+    ([run_pool_invs_split]). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
-From New.proof Require Import core prelude network_model.
+From New.proof Require Import core prelude algebra network_model.
 From iris.algebra Require Import auth gmap gset.
 From stdpp Require Import sorting.
 From New.proof.item Require Import run_theory model value heap.
@@ -179,6 +182,138 @@ Definition run_pool_invs (p : pool) : Prop :=
   (∀ r, r ∈ all_runs p -> run_fits r) ∧
   runs_disjoint (all_runs p) ∧
   (∀ r, r ∈ all_runs p -> run_origin_clk r).
+
+(** [all_runs] under a registry insert or lookup: one type's runs out, the
+    rest untouched (the run form of [all_cells_insert] / [all_cells_lookup]). *)
+Lemma all_runs_insert (p : pool) (parent : loc) (tm tm' : type_model) :
+  p !! parent = Some tm ->
+  all_runs (<[parent := tm']> p) ≡ₚ tm_runs tm' ++ all_runs (delete parent p).
+Proof.
+  move=> Hp. rewrite /all_runs.
+  apply (concat_perm (tm_runs <$> (map_to_list (<[parent := tm']> p)).*2)
+                     (tm_runs tm' :: (tm_runs <$> (map_to_list (delete parent p)).*2))).
+  rewrite (map_to_list_insert_existing p parent tm tm' Hp). simpl. reflexivity.
+Qed.
+
+Lemma all_runs_lookup (p : pool) (parent : loc) (tm : type_model) :
+  p !! parent = Some tm ->
+  all_runs p ≡ₚ tm_runs tm ++ all_runs (delete parent p).
+Proof.
+  move=> Hp.
+  pose proof (all_runs_insert p parent tm tm Hp) as H.
+  rewrite (insert_id p parent tm Hp) in H. exact H.
+Qed.
+
+(** [run_pool_invs] survives one node split: the pure half of the
+    [splitNode] surgery ([split_pool_fits] / [_rangedisj] / [_originclk] at
+    run granularity, one bundle; runs are told apart by index, so no
+    address [NoDup] premise). *)
+Lemma run_pool_invs_split (p : pool) (parent : loc) (tm : type_model)
+    (k o : nat) (r : ItemRun) :
+  p !! parent = Some tm ->
+  tm_runs tm !! k = Some r ->
+  run_wf (run_items r) ->
+  (0 < o < length (run_items r))%nat ->
+  run_pool_invs p ->
+  run_pool_invs (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p).
+Proof.
+  move=> Hp Hrk Hwf Ho [Hfits [Hdisj Hoclk]].
+  destruct (split_run_facts r o Hwf Ho)
+    as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
+  set (rest := take k (tm_runs tm) ++ drop (S k) (tm_runs tm) ++ all_runs (delete parent p)).
+  have Hsplit : split_runs (tm_runs tm) k o
+              = take k (tm_runs tm)
+                ++ [split_run_left r o; split_run_right r o] ++ drop (S k) (tm_runs tm).
+  { rewrite /split_runs Hrk //. }
+  have Hmid := take_drop_middle (tm_runs tm) k r Hrk.
+  have Hnew : all_runs (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p)
+            ≡ₚ split_run_left r o :: split_run_right r o :: rest.
+  { rewrite (all_runs_insert p parent tm _ Hp) /= Hsplit /rest.
+    rewrite -!app_assoc /=.
+    rewrite -Permutation_middle.
+    rewrite -Permutation_middle //. }
+  have Hold : all_runs p ≡ₚ r :: rest.
+  { rewrite (all_runs_lookup p parent tm Hp) /rest.
+    rewrite -{1}Hmid -app_assoc /=.
+    rewrite -Permutation_middle //. }
+  have Hrmem : r ∈ all_runs p by (rewrite Hold; apply list_elem_of_here).
+  have Hrfits := Hfits r Hrmem.
+  split_and!.
+  - (* fits *)
+    move=> r0 Hr0. rewrite Hnew in Hr0.
+    apply elem_of_cons in Hr0 as [-> | Hr0].
+    + rewrite /run_fits Hclockl Hlenl. move: Hrfits. rewrite /run_fits. lia.
+    + apply elem_of_cons in Hr0 as [-> | Hr0].
+      * rewrite /run_fits Hclockr Hlenr. move: Hrfits. rewrite /run_fits. lia.
+      * apply Hfits. rewrite Hold. apply elem_of_cons. by right.
+  - (* disjoint *)
+    have Hdisj1 : runs_disjoint (r :: rest) := runs_disjoint_perm _ _ Hold Hdisj.
+    have Hsub : ∀ j' r2, rest !! j' = Some r2 -> run_client r2 = run_client r ->
+        (run_clock r2 + length (run_items r2) <= run_clock r)%nat ∨
+        (run_clock r + length (run_items r) <= run_clock r2)%nat.
+    { move=> j' r2 Hj' Hcl2.
+      have := Hdisj1 (S j') 0%nat r2 r ltac:(rewrite /= Hj' //) ltac:(done)
+                ltac:(lia) Hcl2.
+      move=> [Hl | Hr2]; [by left | by right]. }
+    apply (runs_disjoint_perm (split_run_left r o :: split_run_right r o :: rest));
+      [by symmetry |].
+    move=> i j r1 r2 Hi Hj Hij Hcl.
+    destruct i as [|[|i']]; destruct j as [|[|j']]; simpl in Hi, Hj; simplify_eq.
+    + (* left vs right *)
+      left. rewrite Hclockl Hlenl Hclockr. lia.
+    + (* left vs rest *)
+      have := Hsub j' r2 Hj ltac:(by rewrite -Hcl Hclientl).
+      move=> [Hle | Hge].
+      * right. rewrite Hclockl. lia.
+      * left. rewrite Hclockl Hlenl. lia.
+    + (* right vs left *)
+      right. rewrite Hclockl Hlenl Hclockr. lia.
+    + (* right vs rest *)
+      have := Hsub j' r2 Hj ltac:(by rewrite -Hcl Hclientr).
+      move=> [Hle | Hge].
+      * right. rewrite Hclockr. lia.
+      * left. rewrite Hclockr Hlenr. lia.
+    + (* rest vs left *)
+      have := Hsub i' r1 Hi ltac:(by rewrite Hcl Hclientl).
+      move=> [Hle | Hge].
+      * left. rewrite Hclockl. lia.
+      * right. rewrite Hclockl Hlenl. lia.
+    + (* rest vs right *)
+      have := Hsub i' r1 Hi ltac:(by rewrite Hcl Hclientr).
+      move=> [Hle | Hge].
+      * left. rewrite Hclockr. lia.
+      * right. rewrite Hclockr Hlenr. lia.
+    + (* rest vs rest *)
+      have := Hdisj1 (S i') (S j') r1 r2 ltac:(rewrite /= Hi //) ltac:(rewrite /= Hj //)
+                ltac:(lia) Hcl.
+      done.
+  - (* origin clock *)
+    move=> r0 Hr0. rewrite Hnew in Hr0.
+    apply elem_of_cons in Hr0 as [-> | Hr0].
+    + rewrite /run_origin_clk Hheadl Hclientl Hclockl. exact (Hoclk r Hrmem).
+    + apply elem_of_cons in Hr0 as [-> | Hr0].
+      * rewrite /run_origin_clk.
+        have Hrun0 : run_items r !! 0%nat = Some (run_head_item r).
+        { rewrite /run_head_item. destruct Hwf as [Hne _].
+          destruct (run_items r) as [|a r']; [done | reflexivity]. }
+        destruct (run_items r !! o) as [yo|] eqn:Hyo;
+          last by (apply lookup_ge_None in Hyo; lia).
+        destruct (run_items r !! (o - 1)%nat) as [yp|] eqn:Hyp;
+          last by (apply lookup_ge_None in Hyp; lia).
+        have Hheadr' : run_head_item (split_run_right r o) = yo.
+        { rewrite /run_head_item /split_run_right /=.
+          exact (hd_inhabitant_drop _ o yo Hyo). }
+        have Hso : S (o - 1)%nat = o by lia.
+        have Hstep := proj2 Hwf (o - 1)%nat yp yo Hyp ltac:(rewrite Hso //).
+        destruct Hstep as (Hidyo & Horigyo & _).
+        have Hidyp := run_wf_lookup_clock (run_items r) (o - 1)%nat
+                        (run_head_item r) yp Hwf Hrun0 Hyp.
+        move=> originId Hoid Hcl.
+        rewrite Hheadr' Horigyo /= in Hoid.
+        injection Hoid as <-.
+        rewrite /run_clock Hheadr' Hidyo Hidyp /=. lia.
+      * apply Hoclk. rewrite Hold. apply elem_of_cons. by right.
+Qed.
 
 (** [pool_run_clock_below p id]: every run of [id]'s client in the pool ends
     at or below [id]'s clock: the item about to be integrated is its client's

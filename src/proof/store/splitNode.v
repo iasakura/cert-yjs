@@ -69,26 +69,6 @@ Proof. rewrite /cell_le. move=> x y. lia. Qed.
     it would grow [types]/[bind]/[m] with a fresh empty type mid-batch). *)
 
 
-(** The head model item survives a nonempty left truncation ([take]) — used by
-    the split's LEFT half ([ic_run = take o (ic_run c)]), which keeps the node's
-    location and head. Stated over the raw run list ([run_head c = hd inhabitant
-    (ic_run c)]); [split_cell_left] lives in [store/model]. *)
-Lemma hd_inhabitant_take (r : list (YjsItem A)) (o : nat) :
-  (0 < o)%nat -> hd inhabitant (take o r) = hd inhabitant r.
-Proof.
-  move=> Ho. destruct r as [|a r']; first by rewrite take_nil.
-  destruct o; [lia | done].
-Qed.
-
-
-
-(** The head of a right drop is the element at the drop offset — the split's
-    RIGHT half heads at [ic_run c !! o]. *)
-Lemma hd_inhabitant_drop (r : list (YjsItem A)) (o : nat) (y : YjsItem A) :
-  r !! o = Some y -> hd inhabitant (drop o r) = y.
-Proof. move=> Ho. rewrite (drop_S r y o Ho) //=. Qed.
-
-
 (* ----- split_cells pool bookkeeping (issue #28 stage D1c) -----------------
    The pool effect of a split: the covering cell [cw] is replaced by its two
    halves, everything else untouched ([split_pool_perm]). On top of it, the

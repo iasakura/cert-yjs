@@ -20,8 +20,9 @@
       splits and joins a segment, [own_dll_runs_insert_middle] splices a
       fresh node, [own_dll_runs_lookup_acc] / [own_dll_runs_update]
       borrow the [k]-th node whole (the update wand flipping its tombstone
-      bit), and [own_dll_runs_split] rejoins a split node's two halves,
-      mirroring the cell laws).
+      bit), [own_dll_runs_split] rejoins a split node's two halves, and a
+      fully owned node's address is outside any segment's list
+      ([own_dll_runs_fresh]), mirroring the cell laws).
 
     Laws
     - the spine is a monoid: [own_dll_app] splits and joins a segment, and
@@ -1097,6 +1098,28 @@ Proof.
       iPureIntro. rewrite fmap_cons. apply not_elem_of_cons.
       split; [exact Hne | exact Hnotin].
 Qed.
+
+(** A fully-owned node's address is outside a run-granular segment's address
+    list: the run form of [own_dll_fresh], the [NoDup] source when a fresh
+    node is spliced in. *)
+Lemma own_dll_runs_fresh (dq : dfrac) (q : loc) (v : yjs.item.t)
+    (parent l last prev next : loc) (ls : list loc) (runs : list ItemRun) :
+  q ↦ v -∗ own_dll_runs dq parent l last prev next ls runs -∗ ⌜q ∉ ls⌝.
+Proof.
+  iIntros "Hq Hdll".
+  iInduction ls as [|lc ls] "IH" forall (runs l prev); destruct runs as [|r runs]; simpl.
+  - iPureIntro. apply not_elem_of_nil.
+  - iDestruct "Hdll" as %[].
+  - iDestruct "Hdll" as %[].
+  - iDestruct "Hdll" as "(%Hloc & %Hpc & %Hrun & H)".
+    iDestruct "H" as (nxt0) "[Hnode Hrest]".
+    iDestruct "Hnode" as (v' olid orid) "(Hval & Hrestnode)".
+    destruct (decide (q = lc)) as [-> | Hne].
+    + iExFalso. iApply (item_pointsto_conflict with "Hq Hval").
+    + iDestruct ("IH" with "Hq Hrest") as %Hrest.
+      iPureIntro. rewrite not_elem_of_cons. by split.
+Qed.
+
 
 
 

@@ -1143,27 +1143,6 @@ Proof.
   done.
 Qed.
 
-(** Updating an existing key's value reshuffles [map_to_list] only at that key. *)
-Lemma map_to_list_insert_existing {V : Type} (m : gmap loc V) (k : loc) (v v' : V) :
-  m !! k = Some v ->
-  map_to_list (<[k:=v']> m) ≡ₚ (k, v') :: map_to_list (delete k m).
-Proof.
-  move=> Hk.
-  pose proof (map_to_list_delete (<[k:=v']> m) k v' (lookup_insert_eq m k v')) as Hp.
-  rewrite delete_insert_eq in Hp. symmetry. exact Hp.
-Qed.
-
-(** [concat] respects permutation of the outer list. *)
-Lemma concat_perm {D : Type} (ll1 ll2 : list (list D)) :
-  ll1 ≡ₚ ll2 -> concat ll1 ≡ₚ concat ll2.
-Proof.
-  induction 1; simpl.
-  - reflexivity.
-  - apply Permutation_app_head. exact IHPermutation.
-  - rewrite !app_assoc. apply Permutation_app_tail. apply Permutation_app_comm.
-  - etrans; eassumption.
-Qed.
-
 (** Updating one registered type's cell list reshuffles the document-global cell
     pool [all_cells] only at that type. *)
 Lemma all_cells_insert (types : gmap loc type_state) (parent : loc) (ts ts' : type_state) :

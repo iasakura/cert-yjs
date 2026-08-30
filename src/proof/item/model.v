@@ -40,7 +40,10 @@
       denotes, and [run_per_char]: each of the run's items carries exactly
       one byte of that wire content ([explode] is append-homomorphic,
       [explode_app], and [run_per_char] survives the split surgery,
-      [run_per_char_split_left] / [run_per_char_split_right]).
+      [run_per_char_split_left] / [run_per_char_split_right]); the split
+      halves' head / length / client / clock facts in one bundle
+      ([split_run_facts], over [hd_inhabitant_take] / [_drop]), and
+      [runs_disjoint] is permutation-invariant ([runs_disjoint_perm]).
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
       app-morphic ([runs_flatten_app]).
@@ -455,6 +458,70 @@ Qed.
 Lemma explode_app (s1 s2 : go_string) :
   explode (s1 ++ s2) = explode s1 ++ explode s2.
 Proof. rewrite /explode fmap_app //. Qed.
+
+(** The head model item survives a nonempty left truncation ([take]): the
+    split's LEFT half keeps the head. *)
+Lemma hd_inhabitant_take (r : list (YjsItem A)) (o : nat) :
+  (0 < o)%nat -> hd inhabitant (take o r) = hd inhabitant r.
+Proof.
+  move=> Ho. destruct r as [|a r']; first by rewrite take_nil.
+  destruct o; [lia | done].
+Qed.
+
+(** The head of a right drop is the element at the drop offset: where the
+    split's RIGHT half heads. *)
+Lemma hd_inhabitant_drop (r : list (YjsItem A)) (o : nat) (y : YjsItem A) :
+  r !! o = Some y -> hd inhabitant (drop o r) = y.
+Proof. move=> Ho. rewrite (drop_S r y o Ho) //=. Qed.
+
+(** The two halves' head / length / client / clock facts of a run split, in
+    one bundle ([split_cell_facts] at nat granularity). *)
+Lemma split_run_facts (r : ItemRun) (o : nat) :
+  run_wf (run_items r) ->
+  (0 < o < length (run_items r))%nat ->
+  run_head_item (split_run_left r o) = run_head_item r ∧
+  length (run_items (split_run_left r o)) = o ∧
+  length (run_items (split_run_right r o)) = (length (run_items r) - o)%nat ∧
+  run_client (split_run_left r o) = run_client r ∧
+  run_client (split_run_right r o) = run_client r ∧
+  run_clock (split_run_left r o) = run_clock r ∧
+  run_clock (split_run_right r o) = (run_clock r + o)%nat.
+Proof.
+  move=> Hrunwf [Hopos Holt].
+  have Hrun0 : run_items r !! 0%nat = Some (run_head_item r).
+  { rewrite /run_head_item. destruct Hrunwf as [Hne _].
+    destruct (run_items r) as [|a r']; [done | reflexivity]. }
+  destruct (run_items r !! o) as [yo|] eqn:Hyo; last by (apply lookup_ge_None in Hyo; lia).
+  have Hidy := run_wf_lookup_clock (run_items r) o (run_head_item r) yo Hrunwf Hrun0 Hyo.
+  have Hheadl : run_head_item (split_run_left r o) = run_head_item r.
+  { rewrite /run_head_item /split_run_left /=. apply hd_inhabitant_take. lia. }
+  have Hheadr : run_head_item (split_run_right r o) = yo.
+  { rewrite /run_head_item /split_run_right /=. exact (hd_inhabitant_drop _ o yo Hyo). }
+  split_and!.
+  - exact Hheadl.
+  - rewrite /split_run_left /= length_take. lia.
+  - rewrite /split_run_right /= length_drop //.
+  - rewrite /run_client Hheadl //.
+  - rewrite /run_client Hheadr Hidy //=.
+  - rewrite /run_clock Hheadl //.
+  - rewrite /run_clock Hheadr Hidy //=.
+Qed.
+
+(** [runs_disjoint] is permutation-invariant: the index pairs transport
+    along [Permutation_inj]'s bijection. *)
+Lemma runs_disjoint_perm (runs1 runs2 : list ItemRun) :
+  runs1 ≡ₚ runs2 -> runs_disjoint runs1 -> runs_disjoint runs2.
+Proof.
+  move=> Hperm Hdisj.
+  symmetry in Hperm.
+  apply Permutation_inj in Hperm as [_ (f & Hinj & Hf)].
+  move=> i j r1 r2 Hi Hj Hij Hcl.
+  apply (Hdisj (f i) (f j) r1 r2).
+  - rewrite -Hf //.
+  - rewrite -Hf //.
+  - move=> Hfij. apply Hij. exact (Hinj _ _ Hfij).
+  - exact Hcl.
+Qed.
 
 (** Peeling one item off a per-char run: its content is one byte, and the
     tail is per-char again. The induction step of the split-surgery
