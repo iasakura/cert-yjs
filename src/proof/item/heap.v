@@ -39,7 +39,8 @@
       / [own_dll_lookup_acc_node] / [own_dll_update_gen_node]);
       [own_item_node_not_null] reads the location's non-nullness off the
       node; [own_dll_lookup_acc_2_node] borrows two nodes of one
-      segment at once; [own_dll_insert_middle_node] / [own_dll_split_node] splice
+      segment at once; [own_dll_cons_node_unfold] / [_fold] take one node
+      off a segment's head and put one back (links free); [own_dll_insert_middle_node] / [own_dll_split_node] splice
       whole nodes between segments given the runs' [run_wf] and
       [run_per_char].
     - freshness: a fully owned node is fresh for any segment
@@ -623,6 +624,82 @@ Qed.
     [node_loc] cursors; the wand takes the node back (any struct satisfying
     the pins: relinking is invisible to the abstract cells) and restores the
     DLL. *)
+(** Unfold one node off a segment's head (for surgery windows that hold
+    the pieces open across writes): the head comes out whole with its
+    [run_wf] / [run_per_char] pins, the tail keeps its segment form. *)
+Lemma own_dll_cons_node_unfold (dq : dfrac) (l lst prev nxt : loc)
+    (c : item_cell) (cs : list item_cell) :
+  own_dll dq l lst prev nxt (c :: cs) -∗
+    ∃ (nxt2 : loc),
+      "%Hhead" ∷ ⌜l = ic_loc c ∧ ic_loc c ≠ null⌝ ∗
+      "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
+      "%Hperchar" ∷ ⌜run_per_char (cell_run c)⌝ ∗
+      "Hnode" ∷ own_item_node (ic_loc c) dq (input_of_run (cell_run c))
+                  (ic_deleted c) (ic_parent c) prev nxt2 ∗
+      "Hrest" ∷ own_dll dq nxt2 lst (ic_loc c) nxt cs.
+Proof.
+  iIntros "Hdll".
+  iDestruct "Hdll" as (itemVal olid orid)
+    "(%Hloc & %Hprevc & %Hparc & %Hidc & %Hcontentc & %Holidc & %Horidc & %Hflagsc & %Hrunc & Hval & Hol & Hor & Hrest)".
+  have Hstr : toContent itemVal.(yjs.item.content') = items_string (ic_run c).
+  { symmetry. exact (items_string_explode _ _ Hcontentc). }
+  have Hexp : content <$> ic_run c = explode (items_string (ic_run c)).
+  { rewrite -Hstr. exact Hcontentc. }
+  iExists itemVal.(yjs.item.right').
+  iSplitR; [iPureIntro; split; [exact (proj1 Hloc) | rewrite -(proj1 Hloc); exact (proj2 Hloc)] |].
+  iSplitR; [iPureIntro; exact Hrunc |].
+  iSplitR; [iPureIntro; exact Hexp |].
+  iSplitL "Hval Hol Hor".
+  { iExists itemVal, olid, orid.
+    iFrame "Hval Hol Hor".
+    iPureIntro. split_and!.
+    - exact (eq_sym Holidc).
+    - exact (eq_sym Horidc).
+    - exact (eq_sym Hidc).
+    - exact Hstr.
+    - exact Hparc.
+    - exact Hprevc.
+    - reflexivity.
+    - exact Hflagsc. }
+  rewrite -(proj1 Hloc). iFrame "Hrest".
+Qed.
+
+(** Fold one whole node back onto a segment (the inverse direction, links
+    free): the wire-level cell conditions are internal, the caller owes the
+    run's well-formedness and per-char granularity. *)
+Lemma own_dll_cons_node_fold (dq : dfrac) (lst prev nxt nxt2 : loc)
+    (c : item_cell) (cs : list item_cell) :
+  run_wf (ic_run c) ->
+  run_per_char (cell_run c) ->
+  own_item_node (ic_loc c) dq (input_of_run (cell_run c))
+    (ic_deleted c) (ic_parent c) prev nxt2 ∗
+  own_dll dq nxt2 lst (ic_loc c) nxt cs
+  ⊢ own_dll dq (ic_loc c) lst prev nxt (c :: cs).
+Proof.
+  move=> Hnrun Hnpc.
+  iIntros "(Hnode & Hrest)".
+  iDestruct "Hnode" as (itemVal olid orid)
+    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & %Hcont & %Hpar & %Hprev & %Hnext & %Hflags)".
+  iDestruct (typed_pointsto_not_null with "Hval") as %Hnn.
+  have Hcontt : content <$> ic_run c = explode (toContent itemVal.(yjs.item.content')).
+  { have Hstr : toContent itemVal.(yjs.item.content') = items_string (ic_run c) := Hcont.
+    rewrite Hstr. exact Hnpc. }
+  simpl. iExists itemVal, olid, orid.
+  rewrite Hnext.
+  iFrame "Hval Hol Hor Hrest".
+  iPureIntro. split_and!.
+  - reflexivity.
+  - exact Hnn.
+  - exact Hprev.
+  - exact Hpar.
+  - exact (eq_sym Hid).
+  - exact Hcontt.
+  - exact (eq_sym Hinl).
+  - exact (eq_sym Hinr).
+  - exact Hflags.
+  - exact Hnrun.
+Qed.
+
 (** Borrow TWO nodes of one segment at once (for pointer-comparison
     windows that must hold both structs): the [k1]-th and [k2]-th nodes come
     out whole, and the wand takes both back and restores the segment. *)
