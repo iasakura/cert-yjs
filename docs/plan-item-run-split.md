@@ -108,9 +108,21 @@ plus `locs_aligned`; `own_store_runs_as_state` folds and unfolds the old
 derived `_runs` proofs consume it through one rewrite at entry and exit.
 `(sr_locs, sr_pool)` is now THE store state of the run-granular layer;
 what remains cell-level lives inside `own_store_struct`'s field
-predicates and goes at stage 4. Next: the WP-file conversions onto the
-primitive layer, and the `own_store` (ghost) level with `applyUpdate` /
-`hasNode`.
+predicates and goes at stage 4. SYNTHESIS (2026-08-30): stage 3's spec
+surface is COMPLETE with this. The public layer (`own_store`'s
+`(c, h, m, pend)` model, `is_Text`, `is_Doc`) is already cell-free, as
+section 2.3 says, so `applyUpdate` / `hasNode` need no spec conversion
+at all (the stage-2 deferral resolves to "nothing to do"); every
+cell-keyed conjunct inside `own_store` (`own_store_struct`, the seq
+auth over `ty_arr`, `registry_models`, the counter bound,
+`own_delete_set`'s pool argument) is existential and dies with stage
+4's internal rewrite. Stage 4's order: first the `own_dll_runs`
+structural toolkit (app, insert_middle, split, the borrow laws at run
+granularity, mirroring the cell ones), then rewrite the store WP files
+one at a time onto `(ls, runs)` (deleting their `own_dll` use), then
+the field predicates (`own_item_map` at a per-client address theory,
+`own_delete_set` over runs), and last delete `item_cell` and fold
+`ty_arr`.
 
 ## 1. The problem
 

@@ -16,7 +16,9 @@
       granularity: node addresses paired with the runs they hold, one
       [own_item_node] per node ([own_dll_as_runs] is the fold/unfold to
       the cell-level [own_dll], under per-cell parent coherence;
-      [own_dll_runs_length] aligns the two lists).
+      [own_dll_runs_length] aligns the two lists; [own_dll_runs_app]
+      splits and joins a segment and [own_dll_runs_insert_middle] splices
+      a fresh node, mirroring the cell laws).
 
     Laws
     - the spine is a monoid: [own_dll_app] splits and joins a segment, and
@@ -841,6 +843,72 @@ Proof.
       * exact (eq_sym Hinr).
       * exact Hflags.
       * exact Hrunr.
+Qed.
+
+(** Split / join a run-granular DLL segment at an aligned list append: the
+    run form of [own_dll_app]. *)
+Lemma own_dll_runs_app (dq : dfrac) (parent l last prev next : loc)
+    (ls1 ls2 : list loc) (runs1 runs2 : list ItemRun) :
+  length ls1 = length runs1 ->
+  own_dll_runs dq parent l last prev next (ls1 ++ ls2) (runs1 ++ runs2)
+  ⊣⊢ ∃ ml mf,
+     own_dll_runs dq parent l ml prev mf ls1 runs1 ∗
+     own_dll_runs dq parent mf last ml next ls2 runs2.
+Proof.
+  revert runs1 l prev.
+  induction ls1 as [|lc ls1 IH] => runs1 l prev Hlen.
+  - destruct runs1; [| discriminate]. simpl.
+    iSplit.
+    + iIntros "H". iExists prev, l. by iFrame.
+    + iIntros "(%ml & %mf & [%H1 %H2] & H)". subst. by iFrame.
+  - destruct runs1 as [|r runs1]; [discriminate |].
+    injection Hlen as Hlen. simpl.
+    iSplit.
+    + iIntros "H".
+      iDestruct "H" as "(%Hloc & %Hpc & %Hrun & H)".
+      iDestruct "H" as (nxt0) "[Hnode Hrest]".
+      iEval (rewrite (IH _ _ _ Hlen)) in "Hrest".
+      iDestruct "Hrest" as (ml mf) "[H1 H2]".
+      iExists ml, mf. iFrame "H2".
+      iSplitR; [by iPureIntro |].
+      iSplitR; [by iPureIntro |].
+      iSplitR; [by iPureIntro |].
+      iExists nxt0. iFrame "Hnode H1".
+    + iIntros "H". iDestruct "H" as (ml mf) "[H1 H2]".
+      iDestruct "H1" as "(%Hloc & %Hpc & %Hrun & H1)".
+      iDestruct "H1" as (nxt0) "[Hnode Hrest]".
+      iSplitR; [by iPureIntro |].
+      iSplitR; [by iPureIntro |].
+      iSplitR; [by iPureIntro |].
+      iExists nxt0. iFrame "Hnode".
+      iEval (rewrite (IH _ _ _ Hlen)).
+      iExists ml, mf. iFrame "Hrest H2".
+Qed.
+
+(** Splice a fresh node between two run-granular segments whose boundary
+    links already point at it: the run form of [own_dll_insert_middle],
+    which [Store.Integrate]'s stage-4 rewrite splices with. *)
+Lemma own_dll_runs_insert_middle (dq : dfrac) (parent : loc)
+    (ls1 ls2 : list loc) (runs1 runs2 : list ItemRun)
+    (newl : loc) (r : ItemRun) (hd tl ml mr : loc) :
+  length ls1 = length runs1 ->
+  newl ≠ null ->
+  run_wf (run_items r) ->
+  run_per_char r ->
+  own_dll_runs dq parent hd ml null newl ls1 runs1 ∗
+  own_item_node newl dq (input_of_run r) (run_deleted r) parent ml mr ∗
+  own_dll_runs dq parent mr tl newl null ls2 runs2
+  ⊢ own_dll_runs dq parent hd tl null null (ls1 ++ newl :: ls2) (runs1 ++ r :: runs2).
+Proof.
+  move=> Hlen Hnn Hwf Hpc.
+  iIntros "(H1 & Hnode & H2)".
+  rewrite (own_dll_runs_app dq parent hd tl null null ls1 (newl :: ls2)
+             runs1 (r :: runs2) Hlen).
+  iExists ml, newl. iFrame "H1". simpl.
+  iSplitR; [by iPureIntro |].
+  iSplitR; [by iPureIntro |].
+  iSplitR; [by iPureIntro |].
+  iExists mr. iFrame "Hnode H2".
 Qed.
 
 (** The run-granular spine aligns addresses with runs. *)
