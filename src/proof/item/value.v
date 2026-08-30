@@ -10,6 +10,10 @@
     - [run_flatten cells]: the document list a cell list denotes.
     - [cell_repr] / [cells_repr]: the isomorphism from a cell list to a model
       item list.
+    - [cells_of_locs_runs]: the cell list an address list and a run list
+      determine under one type (the run-granular elimination's zip,
+      [cells_of_locs_runs_run] / [_loc] / [_parent]; on the projections it
+      is the identity, [cells_of_locs_runs_projections]).
     - the flag accessors [is_deleted_flag] / [is_countable_flag] reading the
       heap struct's bits, [set_deleted] / [flip_cell] flipping the tombstone,
       and [num_visible], the visible-character count [yType.len] shadows.
@@ -160,6 +164,13 @@ Definition cell_repr (m : list (YjsItem A)) (c : item_cell) (yi : YjsItem A) : P
 Definition cells_repr (m : list (YjsItem A)) (cells : list item_cell) (items : list (YjsItem A)) : Prop :=
   items = run_flatten cells.
 
+(** [cells_of_locs_runs parent ls runs]: the cell list an address list and a
+    run list determine under one type: the zip re-materializing cells from
+    the run-granular state (the [own_ytype_runs] elimination,
+    [own_ytype_runs_as_cells]). *)
+Definition cells_of_locs_runs (parent : loc) (ls : list loc) (runs : list ItemRun) : list item_cell :=
+  zip_with (λ lc r, MkItemCell lc (run_items r) (run_deleted r) parent) ls runs.
+
 (** The heap effect of [item.flags |= itemDeleted]: set the Deleted bit. *)
 Definition set_deleted (v : yjs.item.t) : yjs.item.t :=
   v <| yjs.item.flags' := w8_word_instance.(word.or) v.(yjs.item.flags') (W8 4) |>.
@@ -201,6 +212,58 @@ Proof. rewrite /run_flatten /runs_flatten -list_fmap_compose. reflexivity. Qed.
 Lemma num_visible_runs (cells : list item_cell) :
   num_visible cells = runs_visible (cell_run <$> cells).
 Proof. rewrite /num_visible /runs_visible -list_fmap_compose. reflexivity. Qed.
+
+Lemma cells_of_locs_runs_run (parent : loc) (ls : list loc) (runs : list ItemRun) :
+  length ls = length runs ->
+  cell_run <$> cells_of_locs_runs parent ls runs = runs.
+Proof.
+  rewrite /cells_of_locs_runs. revert runs.
+  induction ls as [|lc ls IH] => runs Hlen.
+  - destruct runs; [done | discriminate].
+  - destruct runs as [|r runs]; [discriminate |].
+    injection Hlen as Hlen.
+    destruct r as [items del].
+    cbn [zip_with]. rewrite fmap_cons.
+    f_equal; try done. exact (IH runs Hlen).
+Qed.
+
+Lemma cells_of_locs_runs_loc (parent : loc) (ls : list loc) (runs : list ItemRun) :
+  length ls = length runs ->
+  ic_loc <$> cells_of_locs_runs parent ls runs = ls.
+Proof.
+  rewrite /cells_of_locs_runs. revert runs.
+  induction ls as [|lc ls IH] => runs Hlen.
+  - destruct runs; [done | discriminate].
+  - destruct runs as [|r runs]; [discriminate |].
+    injection Hlen as Hlen.
+    cbn [zip_with]. rewrite fmap_cons.
+    f_equal; try done. exact (IH runs Hlen).
+Qed.
+
+Lemma cells_of_locs_runs_projections (parent : loc) (cells : list item_cell) :
+  (∀ c, c ∈ cells -> ic_parent c = parent) ->
+  cells_of_locs_runs parent (ic_loc <$> cells) (cell_run <$> cells) = cells.
+Proof.
+  rewrite /cells_of_locs_runs.
+  induction cells as [|c cells IH] => Hpar; [done |].
+  have Hparc : ic_parent c = parent := Hpar c (list_elem_of_here _ _).
+  have Hpar' : ∀ c0, c0 ∈ cells -> ic_parent c0 = parent
+    := λ c0 Hc0, Hpar c0 (list_elem_of_further _ _ _ Hc0).
+  rewrite !fmap_cons. cbn [zip_with].
+  rewrite IH; [| exact Hpar'].
+  destruct c. simpl in Hparc. rewrite Hparc //.
+Qed.
+
+Lemma cells_of_locs_runs_parent (parent : loc) (ls : list loc) (runs : list ItemRun) :
+  ∀ c, c ∈ cells_of_locs_runs parent ls runs -> ic_parent c = parent.
+Proof.
+  rewrite /cells_of_locs_runs. revert runs.
+  induction ls as [|lc ls IH] => runs c Hc.
+  - by apply elem_of_nil in Hc.
+  - destruct runs as [|r runs]; [by apply elem_of_nil in Hc |].
+    cbn [zip_with] in Hc.
+    apply elem_of_cons in Hc as [-> | Hc]; [done | exact (IH runs c Hc)].
+Qed.
 
 Lemma cell_run_flip (c : item_cell) :
   cell_run (flip_cell c) = flip_run (cell_run c).

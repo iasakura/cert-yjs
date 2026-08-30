@@ -35,7 +35,7 @@ Proof.
   wp_auto.
   iAssert (∃ (k : nat),
     "Hp" ∷ parent ↦{dq} yt ∗
-    "Hdll" ∷ own_dll dq yt.(yjs.yType.start') tl null null cells ∗
+    "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null cells ∗
     "Hresult" ∷ result_ptr ↦ visible_string (cells_model (take k cells)) ∗
     "Hcur" ∷ cur_ptr ↦ node_loc cells (Z.of_nat k) ∗
     "%Hk" ∷ ⌜(k <= length cells)%nat⌝)%I
@@ -48,7 +48,17 @@ Proof.
     rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat k) = null) Hnn).
     simpl negb.
     destruct (cells !! k) as [c|] eqn:Hc; [| apply lookup_ge_None in Hc; lia].
-    iDestruct (own_dll_acc dq cells _ tl k c Hc with "Hdll") as "H". iNamed "H".
+    iDestruct (own_dll_acc_node dq cells _ tl k c Hc with "Hdll")
+      as (prevk nxtk) "(%Hcloc & %Hcl & %Hcrn & %Hrun & %Hclen & %Hpck & Hnode & Hback)".
+    iDestruct "Hnode" as (itemVal olidk oridk)
+      "(Hcval & Hcol & Hcor & %Hinl & %Hinr & %Hid & %Hcontent & %Hpark & %Hprevk & %Hnextk & %Hflags)".
+    have Hcr : itemVal.(yjs.item.right') = node_loc cells (Z.of_nat k + 1).
+    { rewrite Hnextk. exact Hcrn. }
+    have Hcontold : content <$> ic_run c
+                  = explode (itemVal.(yjs.item.content').(yjs.content.content')).
+    { have Hstr : itemVal.(yjs.item.content').(yjs.content.content')
+                = in_content (input_of_run (cell_run c)) := Hcontent.
+      rewrite Hstr. exact Hpck. }
     iEval (rewrite -Hcloc) in "Hcur".
     rewrite decide_True; [| reflexivity].
     wp_auto.
@@ -57,19 +67,31 @@ Proof.
     destruct (ic_deleted c) eqn:Hd; simpl negb.
     + (* tombstone: contributes nothing *)
       wp_auto.
-      iDestruct ("Hback" with "Hcval") as "Hdll".
+      iAssert (own_item_node c.(ic_loc) dq (input_of_run (cell_run c)) true
+                 (ic_parent c) prevk nxtk) with "[Hcval Hcol Hcor]" as "Hnode".
+      { iExists itemVal, olidk, oridk. iFrame "Hcval Hcol Hcor".
+        iPureIntro. split_and!;
+          [exact Hinl | exact Hinr | exact Hid | exact Hcontent | exact Hpark
+          | exact Hprevk | exact Hnextk | (by rewrite Hflags ?Hd)]. }
+      iDestruct ("Hback" with "Hnode") as "Hdll".
       wp_for_post.
       iFrame "HΦ". iExists (S k). iFrame "Hp Hdll".
-      rewrite (visible_string_take_S cells k c _ Hc Hcontent) Hd app_nil_r.
+      rewrite (visible_string_take_S cells k c _ Hc Hcontold) Hd app_nil_r.
       iFrame "Hresult".
       rewrite Hcr. replace (Z.of_nat k + 1)%Z with (Z.of_nat (S k)) by lia.
       iFrame "Hcur". iPureIntro. lia.
     + (* visible: append the node's content string *)
       wp_auto.
-      iDestruct ("Hback" with "Hcval") as "Hdll".
+      iAssert (own_item_node c.(ic_loc) dq (input_of_run (cell_run c)) false
+                 (ic_parent c) prevk nxtk) with "[Hcval Hcol Hcor]" as "Hnode".
+      { iExists itemVal, olidk, oridk. iFrame "Hcval Hcol Hcor".
+        iPureIntro. split_and!;
+          [exact Hinl | exact Hinr | exact Hid | exact Hcontent | exact Hpark
+          | exact Hprevk | exact Hnextk | (by rewrite Hflags ?Hd)]. }
+      iDestruct ("Hback" with "Hnode") as "Hdll".
       wp_for_post.
       iFrame "HΦ". iExists (S k). iFrame "Hp Hdll".
-      rewrite (visible_string_take_S cells k c _ Hc Hcontent) Hd.
+      rewrite (visible_string_take_S cells k c _ Hc Hcontold) Hd.
       iFrame "Hresult".
       rewrite Hcr. replace (Z.of_nat k + 1)%Z with (Z.of_nat (S k)) by lia.
       iFrame "Hcur". iPureIntro. lia.

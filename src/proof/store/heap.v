@@ -13,7 +13,9 @@
       unmodeled delete-set struct), with no predicate per field on purpose.
     - the run-granular pool (plan-item-run-split stage 2): [locs_wf] (the
       heap half of the pool invariants), [own_type_pool_runs dq locs p] and
-      the cell-level reading [own_type_pool_runs_of]; [own_store_runs s
+      the cell-level readings [own_type_pool_runs_of] /
+      [own_type_pool_runs_to_cells] (the converse, at the re-materialized
+      registry [types_of_locs_pool]); the PRIMITIVE [own_store_runs s
       str], the store at a [store_state_runs] (the cell-level state
       existential), which the stage-2 [_runs] specs are stated over.
     - [own_store_struct s st]: THE store at its cell-level state, the fields
@@ -237,8 +239,8 @@ Proof. rewrite /own_item_map. apply _. Qed.
 #[global] Instance is_origin_id_timeless p originId : Timeless (is_origin_id p originId).
 Proof. rewrite /is_origin_id. by destruct originId; apply _. Qed.
 
-#[global] Instance own_dll_timeless dq l last prev next cells :
-  Timeless (own_dll dq l last prev next cells).
+#[global] Instance own_dll_cells_layout_timeless dq l last prev next cells :
+  Timeless (own_dll_cells_layout dq l last prev next cells).
 Proof.
   revert l last prev next.
   induction cells as [|c rest IH]; intros l last prev next; simpl.
@@ -247,6 +249,22 @@ Proof.
     repeat (apply bi.sep_timeless; [ apply _ | ]).
     apply IH.
 Qed.
+
+#[global] Instance own_item_node_timeless l dq input deleted parent prev nxt :
+  Timeless (own_item_node l dq input deleted parent prev nxt).
+Proof. rewrite /own_item_node. apply _. Qed.
+
+#[global] Instance own_dll_runs_timeless dq parent l last prev next ls runs :
+  Timeless (own_dll_runs dq parent l last prev next ls runs).
+Proof.
+  revert runs l prev.
+  induction ls as [|lc ls IH]; intros [|r runs] l prev; simpl; apply _.
+Qed.
+
+#[global] Instance own_dll_timeless dq parent l last prev next cells :
+  Timeless (own_dll dq parent l last prev next cells).
+Proof. rewrite /own_dll. apply _. Qed.
+
 
 #[global] Instance own_ytype_cells_timeless parent dq cells arr :
   Timeless (own_ytype_cells parent dq cells arr).
@@ -264,8 +282,8 @@ Proof. rewrite /own_ytype_runs. apply _. Qed.
    the DLL tail loc ([tl]) to AGREE across the two shares; [own_dll_last_agree]
    supplies the [tl] agreement (both DLLs over the same cells end at the same
    node); [itemVal]/[yt] agree by [pointsto] agreement. *)
-#[global] Instance own_dll_fractional l last prev next cells :
-  Fractional (λ q, own_dll (DfracOwn q) l last prev next cells).
+#[global] Instance own_dll_cells_layout_fractional l last prev next cells :
+  Fractional (λ q, own_dll_cells_layout (DfracOwn q) l last prev next cells).
 Proof.
   intros q1 q2. revert l last prev next.
   induction cells as [|c rest IH]; intros l last prev next; simpl.
@@ -287,13 +305,34 @@ Proof.
       iExists iv1, olid1, orid1. iFrame "Hval Hrest Holeft1 Horight1". done.
 Qed.
 
+#[global] Instance own_dll_fractional parent l last prev next cells :
+  Fractional (λ q, own_dll (DfracOwn q) parent l last prev next cells).
+Proof.
+  intros q1 q2. iSplit.
+  - iIntros "H". iEval (rewrite own_dll_unfold_layout) in "H".
+    iDestruct "H" as "[%Hcoh H]".
+    iEval (rewrite (own_dll_cells_layout_fractional l last prev next cells q1 q2)) in "H".
+    iDestruct "H" as "[H1 H2]".
+    iSplitL "H1".
+    + iEval (rewrite own_dll_unfold_layout). iSplitR; first done. iFrame "H1".
+    + iEval (rewrite own_dll_unfold_layout). iSplitR; first done. iFrame "H2".
+  - iIntros "[H1 H2]".
+    iEval (rewrite own_dll_unfold_layout) in "H1".
+    iEval (rewrite own_dll_unfold_layout) in "H2".
+    iDestruct "H1" as "[%Hcoh H1]". iDestruct "H2" as "[_ H2]".
+    iEval (rewrite own_dll_unfold_layout).
+    iSplitR; first done.
+    iEval (rewrite (own_dll_cells_layout_fractional l last prev next cells q1 q2)).
+    iFrame "H1 H2".
+Qed.
+
 #[global] Instance own_ytype_cells_fractional parent cells arr :
   Fractional (λ q, own_ytype_cells parent (DfracOwn q) cells arr).
 Proof.
   intros q1 q2. rewrite /own_ytype_cells. iSplit.
   - iIntros "H". iNamed "H".
     iDestruct "Hparent" as "[Hp1 Hp2]".
-    iDestruct (own_dll_fractional _ _ _ _ _ q1 q2 with "Hdll") as "[Hd1 Hd2]".
+    iDestruct (own_dll_fractional _ _ _ _ _ _ q1 q2 with "Hdll") as "[Hd1 Hd2]".
     iSplitL "Hp1 Hd1".
     + iExists yt, tl. iFrame "Hp1 Hd1". auto.
     + iExists yt, tl. iFrame "Hp2 Hd2". auto.
@@ -303,7 +342,7 @@ Proof.
     iCombine "Hparent1 Hparent2" gives %Hyt. subst yt2.
     iDestruct (own_dll_last_agree with "Hdll1 Hdll2") as %Htl. subst tl2.
     iCombine "Hparent1 Hparent2" as "Hparent".
-    iDestruct (own_dll_fractional _ _ _ _ _ q1 q2 with "[$Hdll1 $Hdll2]") as "Hdll".
+    iDestruct (own_dll_fractional _ _ _ _ _ _ q1 q2 with "[$Hdll1 $Hdll2]") as "Hdll".
     iExists yt1, tl1. iFrame "Hparent Hdll". auto.
 Qed.
 
@@ -715,6 +754,43 @@ Definition own_type_pool_runs (dq : dfrac)
     ∃ ls, ⌜locs !! parent = Some ls⌝ ∗
           own_ytype_runs parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
 
+(** The run-granular pool read back at the re-materialized cell registry
+    ([types_of_locs_pool]): the converse of [own_type_pool_runs_of]. The
+    per-type lengths come off [locs_wf], and the address [NoDup] comes back
+    out of it through [locs_of_concat]. *)
+Lemma own_type_pool_runs_to_cells (locs : gmap loc (list loc)) (p : pool) :
+  own_type_pool_runs (DfracOwn 1) locs p -∗
+  own_type_pool (DfracOwn 1) (types_of_locs_pool locs p) ∗
+  ⌜pool_of (types_of_locs_pool locs p) = p⌝ ∗
+  ⌜locs_of (types_of_locs_pool locs p) = locs⌝ ∗
+  ⌜NoDup (ic_loc <$> all_cells (types_of_locs_pool locs p))⌝.
+Proof.
+  iIntros "(%Hlocswf & Hpool)".
+  destruct Hlocswf as (Hdom & Hnd & Hlens).
+  have Hprem : ∀ parent tm, p !! parent = Some tm ->
+      ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm).
+  { move=> parent tm Hp.
+    have His : is_Some (locs !! parent).
+    { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
+    destruct His as [ls Hls]. exists ls.
+    split; [done | exact (Hlens parent ls tm Hls Hp)]. }
+  have Hpeq : pool_of (types_of_locs_pool locs p) = p
+    := pool_of_types_of_locs_pool locs p Hprem.
+  have Hleq : locs_of (types_of_locs_pool locs p) = locs
+    := locs_of_types_of_locs_pool locs p Hdom Hprem.
+  iSplitL; last first.
+  { iPureIntro. split_and!; [exact Hpeq | exact Hleq |].
+    have Hcc := locs_of_concat (types_of_locs_pool locs p).
+    rewrite -Hcc Hleq. exact Hnd. }
+  rewrite /own_type_pool /types_of_locs_pool big_sepM_map_imap_total.
+  iApply (big_sepM_impl with "Hpool").
+  iIntros "!#" (parent tm Hp) "H".
+  iDestruct "H" as (ls) "(%Hls & Hruns & %Hinv)".
+  rewrite Hls /=.
+  iDestruct (own_ytype_runs_as_cells with "Hruns") as "[%Hlen Hcells]".
+  iFrame "Hcells". by iPureIntro.
+Qed.
+
 (** The cell-level pool at its run-granular reading: [own_type_pool] with
     the address [NoDup] is [own_type_pool_runs] at [locs_of] / [pool_of]. *)
 Lemma own_type_pool_runs_of (types : gmap loc type_state) :
@@ -768,19 +844,36 @@ Proof using Type*.
   apply list_elem_of_lookup_1 in Hcts. destruct Hcts as [k Hk].
   iDestruct (big_sepM_lookup_acc _ _ p ts Hp with "Htypes") as "[(Hyt & %Hinvp) Hrest]".
   iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  iDestruct (own_dll_acc (DfracOwn 1) (ty_cells ts) yt.(yjs.yType.start') tl k c Hk with "Hdll") as "Hacc".
-  iNamed "Hacc".
+  iDestruct (own_dll_acc_node (DfracOwn 1) (ty_cells ts) yt.(yjs.yType.start') tl k c Hk with "Hdll")
+    as (prev' nxt') "(%Hcloc & %Hcl & %Hcrn & %Hrunwf & %Hclen & %Hpc & Hnode & Hback)".
+  iDestruct "Hnode" as (itemVal olid orid)
+    "(Hval & #Hol & #Hor & %Hinl & %Hinr & %Hidn & %Hcont & %Hparf & %Hprevf & %Hnextf & %Hflagsn)".
+  have Hid : item_id (run_head c) = toYjsId itemVal.(yjs.item.id').
+  { symmetry. exact Hidn. }
+  have Hcontent : content <$> ic_run c = explode (toContent itemVal.(yjs.item.content')).
+  { have Hstr : toContent itemVal.(yjs.item.content') = items_string (ic_run c) := Hcont.
+    rewrite Hstr. exact Hpc. }
+  have Holid : origin_id (origin (run_head c)) = toYjsId <$> olid.
+  { symmetry. exact Hinl. }
+  have Horid : origin_id (rightOrigin (run_head c)) = toYjsId <$> orid.
+  { symmetry. exact Hinr. }
   iExists itemVal, olid, orid.
   iSplitR; [iPureIntro; exact Hid |].
-  iSplitR; [iPureIntro; exact Hpar |].
+  iSplitR; [iPureIntro; exact Hparf |].
   iSplitR; [iPureIntro; exact Hcontent |].
   iSplitR; [iPureIntro; exact Holid |].
   iSplitR; [iPureIntro; exact Horid |].
-  iSplitR; [iPureIntro; exact Hflags |].
-  iSplitR; [iPureIntro; exact Hrun |].
-  iFrame "Hcval Hcol Hcor".
+  iSplitR; [iPureIntro; exact Hflagsn |].
+  iSplitR; [iPureIntro; exact Hrunwf |].
+  iFrame "Hval Hol Hor".
   iIntros "Hval".
-  iDestruct ("Hback" with "Hval") as "Hdll".
+  iAssert (own_item_node (ic_loc c) (DfracOwn 1) (input_of_run (cell_run c))
+             (ic_deleted c) (ic_parent c) prev' nxt') with "[Hval]" as "Hnode".
+  { iExists itemVal, olid, orid. iFrame "Hval Hol Hor".
+    iPureIntro. split_and!;
+      [exact Hinl | exact Hinr | exact Hidn | exact Hcont | exact Hparf
+      | exact Hprevf | exact Hnextf | exact Hflagsn]. }
+  iDestruct ("Hback" with "Hnode") as "Hdll".
   iApply "Hrest". iSplitL; [| iPureIntro; exact Hinvp].
   iExists yt, tl. iFrame "Hparent Hdll". iPureIntro.
   split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
@@ -1124,14 +1217,38 @@ Proof.
   iFrame.
 Qed.
 
-(** [own_store_runs s str]: THE store at its run-granular state
-    (plan-item-run-split stage 2): [own_store_struct] at some cell-level
-    state projecting to [str]. Migration scaffolding: the stage-2 [_runs]
-    specs are stated over it and derived from the cell-level ones through
-    the [pool_of] / [locs_of] projections; stage 3 makes it primitive and
-    retires the cell-level state. *)
+(** [own_store_runs s str]: THE store at its run-granular state, PRIMITIVE
+    (plan-item-run-split stage 3c): [own_store_struct] at the state the
+    run-granular one determines ([state_of_runs], the registry
+    re-materialized as [types_of_locs_pool]), plus the pure alignment of
+    the address map with the pool. [own_store_runs_as_state] is the
+    fold/unfold to "some cell-level state projecting to [str]", which is
+    how the derived [_runs] specs consume it during the migration. *)
 Definition own_store_runs (s : loc) (str : store_state_runs) : iProp Σ :=
+  "Hstruct" ∷ own_store_struct s (state_of_runs str) ∗
+  "%Haligned" ∷ ⌜locs_aligned (sr_locs str) (sr_pool str)⌝.
+
+Lemma own_store_runs_as_state (s : loc) (str : store_state_runs) :
+  own_store_runs s str ⊣⊢
   ∃ st : store_state, ⌜state_runs_of st = str⌝ ∗ own_store_struct s st.
+Proof.
+  iSplit.
+  - iIntros "H". iDestruct "H" as "(Hstruct & %Haligned)".
+    iExists (state_of_runs str).
+    iFrame "Hstruct".
+    iPureIntro. exact (state_runs_of_of_runs str Haligned).
+  - iIntros "H". iDestruct "H" as (st) "(%Hproj & Hcells)".
+    subst str. destruct st as [client k0 types bind pend pdel].
+    iDestruct "Hcells" as "(Hfields & %Hinvs)".
+    iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+    iDestruct (own_type_pool_parents with "Htypes") as %Hpar.
+    iDestruct (own_store_struct_intro _ (MkStoreState client k0 types bind pend pdel) Hinvs
+                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+    rewrite /own_store_runs /state_of_runs /state_runs_of /=.
+    rewrite (types_of_locs_pool_of types Hpar).
+    iFrame "Hcells".
+    iPureIntro. exact (locs_aligned_of types).
+Qed.
 
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗

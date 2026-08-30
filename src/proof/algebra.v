@@ -9,13 +9,37 @@
 
     List facts free of cert-yjs definitions: [list_elem_of_concat],
     [concat_fmap], [list_filter_fmap], [list_filter_iff_elem_of],
-    [StronglySorted_fmap_elem_of]. *)
+    [StronglySorted_fmap_elem_of], [map_to_list_insert_existing],
+    [concat_perm]. Map big-op:
+    [big_sepM_map_imap_total], a big-op over a total [map_imap] is the
+    big-op over the underlying map. *)
 From New.proof Require Import proof_prelude.
 From New.golang Require Import theory.
 From New.proof Require Import core.
 From New.proof Require Import tok_set.
 From iris.algebra Require Import auth gmap gset.
 From stdpp Require Import sorting.
+
+(** Updating an existing key's value reshuffles [map_to_list] only at that key. *)
+Lemma map_to_list_insert_existing {V : Type} (m : gmap loc V) (k : loc) (v v' : V) :
+  m !! k = Some v ->
+  map_to_list (<[k:=v']> m) ≡ₚ (k, v') :: map_to_list (delete k m).
+Proof.
+  move=> Hk.
+  pose proof (map_to_list_delete (<[k:=v']> m) k v' (lookup_insert_eq m k v')) as Hp.
+  rewrite delete_insert_eq in Hp. symmetry. exact Hp.
+Qed.
+
+(** [concat] respects permutation of the outer list. *)
+Lemma concat_perm {D : Type} (ll1 ll2 : list (list D)) :
+  ll1 ≡ₚ ll2 -> concat ll1 ≡ₚ concat ll2.
+Proof.
+  induction 1; simpl.
+  - reflexivity.
+  - apply Permutation_app_head. exact IHPermutation.
+  - rewrite !app_assoc. apply Permutation_app_tail. apply Permutation_app_comm.
+  - etrans; eassumption.
+Qed.
 
 (** Membership in a concatenation: some member list holds the element. *)
 Lemma list_elem_of_concat {D : Type} (x : D) (ls : list (list D)) :
@@ -327,3 +351,24 @@ Lemma auth_gset_frag_empty (γ : gname) :
 Proof. iApply own_unit. Qed.
 
 End auth_gset.
+
+Section big_sepM_imap.
+Context {PROP : bi}.
+Context `{Countable K} {A B : Type}.
+
+(** A big-op over a [map_imap] with a total (always-[Some]) function is the
+    big-op over the underlying map at the transformed entries. *)
+Lemma big_sepM_map_imap_total (f : K -> A -> B) (Φ : K -> B -> PROP) (m : gmap K A) :
+  ([∗ map] i ↦ y ∈ map_imap (λ i x, Some (f i x)) m, Φ i y) ⊣⊢
+  ([∗ map] i ↦ x ∈ m, Φ i (f i x)).
+Proof.
+  induction m as [|i x m Hmi IH] using map_ind.
+  - rewrite map_imap_empty !big_sepM_empty //.
+  - rewrite (map_imap_insert_Some _ _ _ _ (f i x)); [| done].
+    rewrite big_sepM_insert; last first.
+    { rewrite map_lookup_imap Hmi //. }
+    rewrite big_sepM_insert; [| exact Hmi].
+    rewrite IH //.
+Qed.
+
+End big_sepM_imap.

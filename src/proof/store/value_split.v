@@ -227,6 +227,12 @@ Definition cell_ends_at (types : gmap loc type_state) (parent l : loc) (d : YjsI
 Definition fresh_loc (l : loc) (types : gmap loc type_state) : Prop :=
   l ≠ null ∧ l ∉ ic_loc <$> all_cells types.
 
+(** [locs_fresh l ls]: [l] is a non-null location outside every type's
+    address list: [fresh_loc] read at the address map alone
+    ([fresh_loc_locs] is the transport along [locs_of]). *)
+Definition locs_fresh (l : loc) (ls : gmap loc (list loc)) : Prop :=
+  l ≠ null ∧ (∀ q lsq, ls !! q = Some lsq -> l ∉ lsq).
+
 (** [origin_covered types o oc]: the optional origin id [o] resolves to the
     optional cell [oc]: both absent, or [oc] the pool cell whose run has [o]. *)
 Definition origin_covered (types : gmap loc type_state) (o : option YjsId)
@@ -1196,6 +1202,24 @@ Proof.
       have Hl1 : length (run_items (cell_run c)) = length (ic_run c) by reflexivity.
       have Hl0 : length (run_items (cell_run c0)) = length (ic_run c0) by reflexivity.
       rewrite Hl1 Hl0. lia.
+Qed.
+
+Lemma fresh_loc_locs (l : loc) (types : gmap loc type_state) :
+  fresh_loc l types <-> locs_fresh l (locs_of types).
+Proof.
+  rewrite /fresh_loc /locs_fresh /locs_of.
+  split; move=> [Hnn H]; split; try exact Hnn.
+  - move=> q lsq. rewrite lookup_fmap.
+    destruct (types !! q) as [ts|] eqn:Hts; last by [].
+    move=> /= [<-] Hin.
+    apply H. apply list_elem_of_fmap in Hin as (c & -> & Hc).
+    apply list_elem_of_fmap_2.
+    apply all_cells_elem_of. exists q, ts. split; [exact Hts | exact Hc].
+  - move=> Hin. apply list_elem_of_fmap in Hin as (c & -> & Hc).
+    apply all_cells_elem_of in Hc as (q & ts & Hts & Hc).
+    apply (H q (ic_loc <$> ty_cells ts)).
+    + rewrite lookup_fmap Hts //.
+    + apply list_elem_of_fmap_2. exact Hc.
 Qed.
 
 End store_value_split.

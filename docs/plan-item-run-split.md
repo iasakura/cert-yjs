@@ -69,12 +69,102 @@ WHOLE as `own_item_node` at `input_of_run (cell_run c)` instead of
 `itemVal` plus ten equations; the update wand takes the node back at any
 tombstone bit. The content pin travels through `items_string_explode`,
 and the restore direction needs no new facts because the run is
-unchanged through a borrow. Next: convert the borrow call sites file by
-file (`text/Delete.v`'s flip loop is the natural first consumer of
-`_update_gen_node`; `own_dll_acc_node` and the exposed spelled-length pin
+unchanged through a borrow. `own_dll_acc_node` and the exposed spelled-length pin
 `length (items_string (ic_run c)) = length (ic_run c)` landed with the
-groundwork), then `own_dll_split` / `own_dll_insert_middle` node forms as
-their sites convert.
+groundwork. REASSESSED 2026-08-30: converting the existing borrow SITES
+(text/Delete.v's flip loop was the candidate) is a net loss while
+`own_dll` is cell-level: goose field reads and the tombstone store need
+the raw struct, so a site opens the node anyway and each of the four
+wand returns pays a ~5-line node re-pack against the old one-line
+eq_refl wand. The node borrows pay off when `own_dll` itself is
+primitive over the address list and the runs. So the next step is the
+stage-3 core: `own_dll_runs dq parent l last prev next ls runs` (per
+section 2.2, payload one `own_item_node` at `input_of_run r` per node,
+plus the per-run PER-CHAR pin `content <$> run_items r =
+explode (items_string (run_items r))`, which the wire view alone cannot
+recover and today's explode pin carries), with the fold/unfold bridge to
+the cell-level `own_dll` (under per-cell parent coherence) that lets
+files convert one at a time, and its structural laws (app, then acc /
+insert_middle / split forms as conversions need them). Landed 2026-08-30
+(PR #167); on top of it, `own_ytype_runs` is REDEFINED primitively over
+`own_dll_runs` (a heap `yType` heading the run-granular DLL, `len` =
+`runs_visible`, the document list = `runs_flatten`), with
+`own_ytype_runs_intro` reproven through `own_dll_as_runs`, the new
+elimination `own_ytype_runs_as_cells` re-materializing cells as
+`cells_of_locs_runs` (the zip of the addresses with the runs,
+item/value.v, laws `_run` / `_loc` / `_parent`), `own_dll_runs_length`
+aligning the spine's two lists, and the `own_item_node` /
+`own_dll_runs` Timeless instances beside the other heap instances
+(store/heap.v). The pool elimination landed on top:
+`types_of_locs_pool` (value_cells.v, the cell registry an address map
+and a run pool determine, round-tripping under matching domains and
+counts) and `own_type_pool_runs_to_cells` (store/heap.v, via the generic
+`big_sepM_map_imap_total`, algebra.v), the converse of
+`own_type_pool_runs_of`. On top of that, `own_store_runs` is
+REDEFINED primitively (2026-08-30): `own_store_struct` at
+`state_of_runs` (the registry re-materialized as `types_of_locs_pool`)
+plus `locs_aligned`; `own_store_runs_as_state` folds and unfolds the old
+"some cell-level state projecting to `str`" reading, and the nine
+derived `_runs` proofs consume it through one rewrite at entry and exit.
+`(sr_locs, sr_pool)` is now THE store state of the run-granular layer;
+what remains cell-level lives inside `own_store_struct`'s field
+predicates and goes at stage 4. SYNTHESIS (2026-08-30): stage 3's spec
+surface is COMPLETE with this. The public layer (`own_store`'s
+`(c, h, m, pend)` model, `is_Text`, `is_Doc`) is already cell-free, as
+section 2.3 says, so `applyUpdate` / `hasNode` need no spec conversion
+at all (the stage-2 deferral resolves to "nothing to do"); every
+cell-keyed conjunct inside `own_store` (`own_store_struct`, the seq
+auth over `ty_arr`, `registry_models`, the counter bound,
+`own_delete_set`'s pool argument) is existential and dies with stage
+4's internal rewrite. Stage 4's order: first the `own_dll_runs`
+structural toolkit (app, insert_middle, split, the borrow laws at run
+granularity, mirroring the cell ones), then rewrite the store WP files
+one at a time onto `(ls, runs)` (deleting their `own_dll` use), then
+the field predicates (`own_item_map` at a per-client address theory,
+`own_delete_set` over runs), and last delete `item_cell` and fold
+`ty_arr`. The toolkit landed 2026-08-30 (#167 commits 5 to 8: `_app`,
+`_insert_middle`, `_split` with its per-char premises discharged by
+`run_per_char_split_left` / `_right`, and the `_lookup_acc` / `_update`
+borrows). Scoping of the first file rewrite (splitNode.v, ~2300 lines):
+its ~20 `split_pool_*` transports map as follows. Already run-level:
+`runs_within` (subrange), `runs_live_refine` / `runs_dead_kept`,
+`split_runs_flatten` / `split_runs_visible`, `run_wf_take` / `_drop`
+(the halves' well-formedness). MISSING pure lemmas, to write first:
+`split_runs_fits` / `split_runs_disjoint` / `split_runs_origin_clk`
+(run_pool_invs survives one split; the cell proofs `split_pool_fits` /
+`_rangedisj` / `_originclk` are the templates, minus the address
+reasoning), and the heap freshness law `own_dll_runs_fresh` (a fully
+owned node's address is outside a segment's `ls`, replacing
+`split_pool_locdup`). `split_cell_cover`'s role is played by
+`pool_after_split`'s coverage clause. All of these landed (#167 commit
+10, as `run_pool_invs_split` and kin).
+
+DECISION 2026-08-30 (owner): the per-client item index at run
+granularity goes the MATERIALIZATION route: the index stays
+`client_run` over `types_of_locs_pool locs p` (no new sort theory now);
+`client_run` itself is re-implemented at run granularity only at the
+item_cell deletion step, behind one bridge. Consequently the stage-4
+step order corrects to: the direct body rewrites would be 80 percent
+textual copies while the index and the goose stepping stay cell-shaped
+under materialization, so the CELL SPECS AND BODIES STAY until the
+final coordinated cutover; the remaining pre-cutover work is to
+re-thread the DLL-TOUCHING proof internals onto the run primitives
+through the bridges (`own_dll_as_runs`, the `_node` borrows), file by
+file, smallest first (`ytype/findPos.v`, `ytype/Text.v`,
+`text/Delete.v`'s flip loop, then the store cores), so that at the
+cutover the `own_dll`/`item_cell` deletion is a definition swap plus
+mechanical cleanup instead of a proof rewrite. DONE 2026-08-30 (#167
+commits 13 to 24): every WP-file window now goes through the node
+toolkit (`own_dll_acc_node` / `_lookup_acc_node` / `_update_gen_node` /
+`_lookup_acc_2_node`, `own_dll_cons_node_unfold` / `_fold`,
+`own_dll_insert_middle_node` / `own_dll_split_node`,
+`own_item_node_not_null`; `run_per_char_intro` discharges fold premises
+from explode couplings). Converted: `findPos`, `ytype/Text`,
+`text/Delete`, `text/Insert`, `store/deleteRange`, `own_type_pool_acc`,
+all of `store/Integrate` (scan, pairwise, splices, cursor reads), and
+`store/splitNode` end-to-end. The only cons-layout proofs left are
+layer-internal (`own_dll_fractional` and the toolkit's own proofs),
+re-proved over the runs bridge at the cutover.
 
 ## 1. The problem
 
@@ -326,3 +416,87 @@ not stack on eight unmerged branches.
 - `ty_arr` is folded away in stage 4 (decided 2026-08-23): the double
   bookkeeping of cells and their flattened document is what makes
   `integrate_splice` state the same splice twice.
+
+## 6. Cutover execution order (added 2026-08-30, after the re-threading)
+
+With the re-threading done, the coordinated cutover proceeds bottom-up in
+six compiling stages. Scaffolding (compat wrappers) is allowed DURING the
+cutover and dies in C6; nothing of it survives.
+
+- **C1, item layer** (LANDED 2026-08-30, full build green; the original wording had a flaw:
+  a parentless wrapper cannot synthesize the run spine's parent).
+  `own_dll` GAINS the parent parameter and is defined as
+  `⌜∀ c ∈ cells, ic_parent c = parent⌝ ∗ own_dll_runs dq parent …
+  (ic_loc <$> cells) (cell_run <$> cells)`. The old cons Fixpoint and
+  all its laws survive renamed `own_dll_cells_layout(_*)` (scaffolding,
+  deleted at C6); `own_dll_unfold_layout` is the isomorphism, and a
+  wrapper-level suite re-exports every consumer-facing law with the
+  parent IMPLICIT, so the ~40 borrow call sites compile unchanged; only
+  sites that STATE `own_dll` spell the parent, and the splice calls
+  discharge the new parent-coherence premises. `item/value.v` keeps
+  `item_cell` and the projections for now (they feed the wrapper).
+REVISION 2026-08-30, after C1 landed: C2 to C4 collapse into C6. The
+run-side definitions they would make primitive already exist with
+bridges (`own_ytype_runs`, `own_type_pool_runs`, `own_store_runs`,
+`store_state_runs` with `state_runs_of`), and flipping which side is
+the Definition buys nothing before C5: consumers keep the cell spelling
+either way, and a function-valued `ss_types` compat is not transparent
+enough (the `types_of_locs_pool` round-trips are propositional, so
+every proof that constructs a state and reads `ss_types` back by iota
+would need rewriting). The remaining work before C6 is C5 preparation:
+the pool-level analogues of the setter-spec relations
+(`split_types_update_rel`, `repair_types_update_rel`,
+`delete_types_update_rel`, `registry_lookup_or_create`,
+`registry_models`, `fresh_loc`) must be complete, and each WP file's
+vocabulary substitution table written; then C5 restates the specs at
+`(locs, pool)` file by file and C6 deletes the cell side.
+
+- **C2, ytype layer** (collapsed into C6, see above). `own_ytype_runs` (already primitive) becomes THE
+  `own_ytype_cells` replacement: the cell-shaped predicate becomes a
+  wrapper over it, `type_state` callers start moving to `type_model`
+  (`ty_arr` reads become `runs_flatten` through `cells_repr`).
+- **C3, value files.** `value_cells.v` / `value_split.v` / `value_live.v` /
+  `value_span.v`: the run/pool side (already present: `pool`, `all_runs`,
+  `run_pool_invs`, `pool_run_covers`, `pool_origins_*`, `split_runs`
+  analogues, the `_to_pool` / `_to_cell` transports) becomes primary;
+  cell-shaped definitions become wrappers or die where unused.
+- **C4, store heap.** `own_store_struct`'s state moves to
+  `(ss_locs, ss_pool)` (today's `own_store_runs` reading becomes the
+  definition); `own_type_pool` over `(locs, p)`; `own_item_map`'s
+  per-client slice model becomes `client_locs locs p client`;
+  `own_delete_set` takes runs.
+- **C5, WP files, one at a time.** Specs restated in the 2.3 shape
+  (indices plus `locs`), proofs transported; the windows already speak the
+  node language, so each file is vocabulary substitution plus the
+  entry/exit rewrite between the wrapper and the primitive. Order by
+  footprint, smallest first: `doc/GetOrCreateText`, `ytype/Text`,
+  `ytype/findPos`, `applyUpdate`, `deleteRange`, `GetNode`, `text/Insert`,
+  `text/Delete`, `repair`, `Integrate`, `splitNode`.
+- **C5/C6 per-file map** (added 2026-08-30). Specs already staged at
+  `(locs, pool)`: `GetNode`, `splitNode` / `splitAtAndGetLeft` /
+  `_Right`, `deleteRange` / `applyDeleteSpans`, `getOrCreateYType` /
+  `repair`, `Integrate` (the nine `_runs` forms, today derived from the
+  cell specs by one rewrite at entry and exit; the cutover flips the
+  derivation). Relations: the setter specs' update relations all have
+  pool-level forms with transports (`split_types_update_rel_to_pool`,
+  `repair_types_update_rel_to_pool`, `delete_types_update_rel_to_pool`,
+  `pool_lookup_or_create`, `pool_registry_coh`, `pool_registry_models`,
+  `locs_fresh`). Internals: every DLL window already speaks the node
+  language (the re-threading), so per file the conversion is the pure
+  vocabulary of section 2.1's table plus the index materialization
+  (`client_run` re-implemented at run granularity behind its bridge, per
+  the owner decision). Heavy files by footprint: `splitNode` (~670 uses),
+  `value_cells` (~450), `Integrate` (~290), `value_split` (~280),
+  `repair` (~190); the sixteen `<| ss_types := … |>` setter sites
+  (repair 7, splitNode 5, deleteRange 2, applyUpdate 1, Integrate 1)
+  are where the state-update spelling changes by hand.
+
+- **C6, delete the scaffolding.** `item_cell`, `cell_*`, `cells_of_locs_*`,
+  the wrappers, `node_loc`, `ty_arr` (folded: `tm_arr = runs_flatten`),
+  and the `_to_cell` transports are removed; `own_dll_fractional` and kin
+  are re-proved over the run Fixpoint (mechanical inductions).
+
+Each stage ends `./build.sh make`-green and is one reviewable commit (or
+a small stack); the wrapper discipline keeps the tree compiling at every
+point, and C6 is the enforcement that the coexistence was scaffolding
+only.

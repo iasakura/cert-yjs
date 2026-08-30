@@ -414,14 +414,25 @@ Proof.
       have Hpe : (p = length ts.(ty_cells))%nat by lia.
       rewrite Hpe Nat2Z.id lookup_ge_None_2; [done|lia]. }
     destruct (ts.(ty_cells) !! p) as [c0|] eqn:Hc0; [| apply lookup_ge_None in Hc0; lia].
-    iDestruct (own_dll_acc (DfracOwn 1) ts.(ty_cells) yt1.(yjs.yType.start') tl1 (p) c0 Hc0 with "Hdll1") as "Hacc". iNamed "Hacc".
+    iDestruct (own_dll_acc_node (DfracOwn 1) ts.(ty_cells) yt1.(yjs.yType.start') tl1 (p) c0 Hc0 with "Hdll1")
+      as (prevn nxtn) "(%Hcloc & %Hcl & %Hcrn & %Hrun & %Hclen & %Hpc & Hnode & Hback)".
+    iDestruct "Hnode" as (itemVal olid orid)
+      "(Hcval & Hol & Hor & %Hinl & %Hinr & %Hidn & %Hcont & %Hparf & %Hprevf & %Hnextf & %Hflagsn)".
+    have Hid : item_id (run_head c0) = toYjsId itemVal.(yjs.item.id').
+    { symmetry. exact Hidn. }
     iEval (rewrite Hcloc) in "Hcval".
     wp_load. wp_pures. wp_store.
     iDestruct (typed_pointsto_not_null with "rid") as %Hridnn.
     iPersist "rid".
     wp_auto.
     iEval (rewrite -Hcloc) in "Hcval".
-    iDestruct ("Hback" with "Hcval") as "Hdll1".
+    iAssert (own_item_node (ic_loc c0) (DfracOwn 1) (input_of_run (cell_run c0))
+               (ic_deleted c0) (ic_parent c0) prevn nxtn) with "[Hcval Hol Hor]" as "Hnode".
+    { iExists itemVal, olid, orid. iFrame "Hcval Hol Hor".
+      iPureIntro. split_and!;
+        [exact Hinl | exact Hinr | exact Hidn | exact Hcont | exact Hparf
+        | exact Hprevf | exact Hnextf | exact Hflagsn]. }
+    iDestruct ("Hback" with "Hnode") as "Hdll1".
     iSplitR; [done|].
     iExists rid_ptr, (Some itemVal.(yjs.item.id')).
     iFrame "originRightId right".
@@ -621,13 +632,21 @@ Proof.
       - iSplitR; [done|]. iExists null, None. iFrame "originLeftId Htextj Hleftp".
         iSplit; [by rewrite /is_origin_id|]. iPureIntro. left. split; [reflexivity | exact Hpe0].
       - iDestruct "Htextj" as (yth tlh) "(Hpar & Hdll & %Hlenh & %Hreprh & %Hcparh)".
-        iDestruct (own_dll_acc (DfracOwn 1) cells yth.(yjs.yType.start') tlh (p + length ins - 1)%nat lc Hlccells with "Hdll") as "Hacc". iNamed "Hacc".
+        iDestruct (own_dll_acc_node (DfracOwn 1) cells yth.(yjs.yType.start') tlh (p + length ins - 1)%nat lc Hlccells with "Hdll")
+          as (prevn nxtn) "(%Hcloc & %Hcl & %Hcrn & %Hrun & %Hclen & %Hpc & Hnode & Hback)".
+        iDestruct "Hnode" as (itemVal olid orid)
+          "(Hcval & #Hol & #Hor & %Hinl & %Hinr & %Hidn & %Hcont & %Hparf & %Hprevf & %Hnextf & %Hflagsn)".
         iDestruct (typed_pointsto_not_null with "Hcval") as %Hlcnn.
         exfalso. exact (Hlcnn Hlcloc). }
     { destruct Hleftj as [[Hln _] | (lc & li & Hlccells & Hlcloc & Hliarr & Hliitem & Hge1 & _)].
       { exfalso; exact (n Hln). }
       iDestruct "Htextj" as (yth tlh) "(Hpar & Hdll & %Hlenh & %Hreprh & %Hcparh)".
-      iDestruct (own_dll_acc (DfracOwn 1) cells yth.(yjs.yType.start') tlh (p + length ins - 1)%nat lc Hlccells with "Hdll") as "Hacc". iNamed "Hacc".
+      iDestruct (own_dll_acc_node (DfracOwn 1) cells yth.(yjs.yType.start') tlh (p + length ins - 1)%nat lc Hlccells with "Hdll")
+        as (prevn nxtn) "(%Hcloc & %Hcl & %Hcrn & %Hrun & %Hclen & %Hpc & Hnode & Hback)".
+      iDestruct "Hnode" as (itemVal olid orid)
+        "(Hcval & Hol & Hor & %Hinl & %Hinr & %Hidn & %Hcont & %Hparf & %Hprevf & %Hnextf & %Hflagsn)".
+      have Hid : item_id (run_head lc) = toYjsId itemVal.(yjs.item.id').
+      { symmetry. exact Hidn. }
       iEval (rewrite Hlcloc) in "Hcval".
       wp_method_call. wp_call. wp_auto.
       wp_method_call. wp_call. rewrite /yjs.item__LastIdⁱᵐᵖˡ. wp_auto.
@@ -635,13 +654,20 @@ Proof.
       wp_bind (icopy @! (go.PointerType yjs.item) @! "Len" (# ()))%E.
       wp_apply (wp_item__Len icopy (DfracOwn 1) itemVal with "[$Hic]"). iIntros "Hic".
       have Hlenrun : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (ic_run lc).
-      { have Hleq := f_equal length Hcontent.
-        rewrite length_fmap explode_length /toContent in Hleq. lia. }
+      { have Hstr : itemVal.(yjs.item.content').(yjs.content.content')
+                  = in_content (input_of_run (cell_run lc)) := Hcont.
+        rewrite Hstr. exact Hclen. }
       wp_pures. wp_store.
       iDestruct (typed_pointsto_not_null with "lid") as %Hlidnn.
       iPersist "lid". wp_auto.
       iEval (rewrite -Hlcloc) in "Hcval".
-      iDestruct ("Hback" with "Hcval") as "Hdll".
+      iAssert (own_item_node (ic_loc lc) (DfracOwn 1) (input_of_run (cell_run lc))
+                 (ic_deleted lc) (ic_parent lc) prevn nxtn) with "[Hcval Hol Hor]" as "Hnode".
+      { iExists itemVal, olid, orid. iFrame "Hcval Hol Hor".
+        iPureIntro. split_and!;
+          [exact Hinl | exact Hinr | exact Hidn | exact Hcont | exact Hparf
+          | exact Hprevf | exact Hnextf | exact Hflagsn]. }
+      iDestruct ("Hback" with "Hnode") as "Hdll".
       iSplitR; [done|].
       iExists lid_ptr, (Some {| yjs.id.clientId' := itemVal.(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := w64_word_instance.(word.sub) (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (itemVal.(yjs.item.content').(yjs.content.content'))))) (W64 1) |}).
       iFrame "originLeftId Hleftp".

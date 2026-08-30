@@ -37,7 +37,15 @@
       runs; [items_string], the string a run of per-char items spells
       (append-homomorphic, [items_string_app], and recovering an exploded
       string, [items_string_explode]); [input_of_run], the wire item a run
-      denotes.
+      denotes, and [run_per_char]: each of the run's items carries exactly
+      one byte of that wire content ([explode] is append-homomorphic,
+      [explode_app], [run_per_char_intro] introduces the per-char fact
+      from an explode coupling, and [run_per_char] survives the split
+      surgery, [run_per_char_split_left] / [run_per_char_split_right]);
+      the split
+      halves' head / length / client / clock facts in one bundle
+      ([split_run_facts], over [hd_inhabitant_take] / [_drop]), and
+      [runs_disjoint] is permutation-invariant ([runs_disjoint_perm]).
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
       app-morphic ([runs_flatten_app]).
@@ -410,6 +418,15 @@ Definition input_of_run (r : ItemRun) : IntegrateInput (A := A) :=
     (items_string (run_items r))
     (item_id (run_head_item r)).
 
+(** [run_per_char r]: each item of the run carries exactly one byte of the
+    string the run spells: the per-char granularity of the model
+    (issue #28). The wire view ([input_of_run]) alone cannot recover how
+    its content splits over the run's items; today the heap content pin
+    ([own_dll]'s explode equation) carries it, and the run-granular DLL
+    ([own_dll_runs]) states it per run. *)
+Definition run_per_char (r : ItemRun) : Prop :=
+  content <$> run_items r = explode (items_string (run_items r)).
+
 (* ===== lemmas ============================================================= *)
 
 (** The flatten and the visible count are invariant under a split, and a flip
@@ -438,6 +455,140 @@ Proof.
   - destruct s as [|b s']; first discriminate.
     injection Hc as Hx Hr.
     rewrite /items_string /= -/(items_string r) (IH s' Hr) Hx //.
+Qed.
+
+Lemma explode_app (s1 s2 : go_string) :
+  explode (s1 ++ s2) = explode s1 ++ explode s2.
+Proof. rewrite /explode fmap_app //. Qed.
+
+(** The head model item survives a nonempty left truncation ([take]): the
+    split's LEFT half keeps the head. *)
+Lemma hd_inhabitant_take (r : list (YjsItem A)) (o : nat) :
+  (0 < o)%nat -> hd inhabitant (take o r) = hd inhabitant r.
+Proof.
+  move=> Ho. destruct r as [|a r']; first by rewrite take_nil.
+  destruct o; [lia | done].
+Qed.
+
+(** The head of a right drop is the element at the drop offset: where the
+    split's RIGHT half heads. *)
+Lemma hd_inhabitant_drop (r : list (YjsItem A)) (o : nat) (y : YjsItem A) :
+  r !! o = Some y -> hd inhabitant (drop o r) = y.
+Proof. move=> Ho. rewrite (drop_S r y o Ho) //=. Qed.
+
+(** The two halves' head / length / client / clock facts of a run split, in
+    one bundle ([split_cell_facts] at nat granularity). *)
+Lemma split_run_facts (r : ItemRun) (o : nat) :
+  run_wf (run_items r) ->
+  (0 < o < length (run_items r))%nat ->
+  run_head_item (split_run_left r o) = run_head_item r ∧
+  length (run_items (split_run_left r o)) = o ∧
+  length (run_items (split_run_right r o)) = (length (run_items r) - o)%nat ∧
+  run_client (split_run_left r o) = run_client r ∧
+  run_client (split_run_right r o) = run_client r ∧
+  run_clock (split_run_left r o) = run_clock r ∧
+  run_clock (split_run_right r o) = (run_clock r + o)%nat.
+Proof.
+  move=> Hrunwf [Hopos Holt].
+  have Hrun0 : run_items r !! 0%nat = Some (run_head_item r).
+  { rewrite /run_head_item. destruct Hrunwf as [Hne _].
+    destruct (run_items r) as [|a r']; [done | reflexivity]. }
+  destruct (run_items r !! o) as [yo|] eqn:Hyo; last by (apply lookup_ge_None in Hyo; lia).
+  have Hidy := run_wf_lookup_clock (run_items r) o (run_head_item r) yo Hrunwf Hrun0 Hyo.
+  have Hheadl : run_head_item (split_run_left r o) = run_head_item r.
+  { rewrite /run_head_item /split_run_left /=. apply hd_inhabitant_take. lia. }
+  have Hheadr : run_head_item (split_run_right r o) = yo.
+  { rewrite /run_head_item /split_run_right /=. exact (hd_inhabitant_drop _ o yo Hyo). }
+  split_and!.
+  - exact Hheadl.
+  - rewrite /split_run_left /= length_take. lia.
+  - rewrite /split_run_right /= length_drop //.
+  - rewrite /run_client Hheadl //.
+  - rewrite /run_client Hheadr Hidy //=.
+  - rewrite /run_clock Hheadl //.
+  - rewrite /run_clock Hheadr Hidy //=.
+Qed.
+
+(** [runs_disjoint] is permutation-invariant: the index pairs transport
+    along [Permutation_inj]'s bijection. *)
+Lemma runs_disjoint_perm (runs1 runs2 : list ItemRun) :
+  runs1 ≡ₚ runs2 -> runs_disjoint runs1 -> runs_disjoint runs2.
+Proof.
+  move=> Hperm Hdisj.
+  symmetry in Hperm.
+  apply Permutation_inj in Hperm as [_ (f & Hinj & Hf)].
+  move=> i j r1 r2 Hi Hj Hij Hcl.
+  apply (Hdisj (f i) (f j) r1 r2).
+  - rewrite -Hf //.
+  - rewrite -Hf //.
+  - move=> Hfij. apply Hij. exact (Hinj _ _ Hfij).
+  - exact Hcl.
+Qed.
+
+(** Peeling one item off a per-char run: its content is one byte, and the
+    tail is per-char again. The induction step of the split-surgery
+    preservation below. *)
+Lemma per_char_cons_inv (x : YjsItem A) (l : list (YjsItem A)) :
+  content <$> (x :: l) = explode (items_string (x :: l)) ->
+  (∃ b, content x = [b]) ∧ content <$> l = explode (items_string l).
+Proof.
+  move=> Hpc.
+  have Hs : items_string (x :: l) = content x ++ items_string l by reflexivity.
+  have Hf : content <$> (x :: l) = content x :: (content <$> l) by reflexivity.
+  rewrite Hs explode_app Hf in Hpc.
+  destruct (content x) as [|b bs] eqn:Hcx.
+  - simpl in Hpc.
+    destruct (items_string l) as [|b' s'].
+    + discriminate Hpc.
+    + have He : explode (b' :: s') = [b'] :: explode s' by reflexivity.
+      idtac "B1C". Set Printing All. Show.
+      rewrite He in Hpc. injection Hpc as Hh _. discriminate Hh.
+  - have He : explode (b :: bs) = [b] :: explode bs by reflexivity.
+    rewrite He in Hpc. simpl in Hpc.
+    injection Hpc as Hx Hrest.
+    simplify_eq/=.
+    split; [by exists b | exact Hrest].
+Qed.
+
+(** Introduce [run_per_char] from any explode coupling of the run's
+    contents (the wire item's content string is one witness). *)
+Lemma run_per_char_intro (l : list (YjsItem A)) (d : bool) (s : A) :
+  content <$> l = explode s -> run_per_char (MkItemRun l d).
+Proof.
+  move=> H. rewrite /run_per_char /=.
+  by rewrite (items_string_explode _ _ H).
+Qed.
+
+(** [run_per_char] survives the split surgery: each half of a split run is
+    per-char again (the premises of [own_dll_runs_split], discharged from
+    the split node's original pin). *)
+Lemma run_per_char_split_left (r : ItemRun) (o : nat) :
+  run_per_char r -> run_per_char (split_run_left r o).
+Proof.
+  rewrite /run_per_char /split_run_left /=.
+  move: o. induction (run_items r) as [|x l IH] => o Hpc.
+  - rewrite take_nil //.
+  - destruct o as [|o']; [done |].
+    destruct (per_char_cons_inv x l Hpc) as [[b Hb] Htail].
+    have Ht : take (S o') (x :: l) = x :: take o' l by reflexivity.
+    have Hf : content <$> (x :: take o' l) = content x :: (content <$> take o' l)
+      by reflexivity.
+    have Hs : items_string (x :: take o' l) = content x ++ items_string (take o' l)
+      by reflexivity.
+    have He : explode [b] = [[b]] by reflexivity.
+    rewrite Ht Hf Hs explode_app Hb He /=.
+    f_equal; try done. exact (IH o' Htail).
+Qed.
+
+Lemma run_per_char_split_right (r : ItemRun) (o : nat) :
+  run_per_char r -> run_per_char (split_run_right r o).
+Proof.
+  rewrite /run_per_char /split_run_right /=.
+  move: o. induction (run_items r) as [|x l IH] => o Hpc.
+  - rewrite drop_nil //.
+  - destruct o as [|o']; [exact Hpc |].
+    destruct (per_char_cons_inv x l Hpc) as [_ Htail].
+    rewrite /=. exact (IH o' Htail).
 Qed.
 
 Lemma runs_flatten_cons (r : ItemRun) (runs : list ItemRun) :
