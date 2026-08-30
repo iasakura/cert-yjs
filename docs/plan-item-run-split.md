@@ -435,7 +435,23 @@ cutover and dies in C6; nothing of it survives.
   sites that STATE `own_dll` spell the parent, and the splice calls
   discharge the new parent-coherence premises. `item/value.v` keeps
   `item_cell` and the projections for now (they feed the wrapper).
-- **C2, ytype layer.** `own_ytype_runs` (already primitive) becomes THE
+REVISION 2026-08-30, after C1 landed: C2 to C4 collapse into C6. The
+run-side definitions they would make primitive already exist with
+bridges (`own_ytype_runs`, `own_type_pool_runs`, `own_store_runs`,
+`store_state_runs` with `state_runs_of`), and flipping which side is
+the Definition buys nothing before C5: consumers keep the cell spelling
+either way, and a function-valued `ss_types` compat is not transparent
+enough (the `types_of_locs_pool` round-trips are propositional, so
+every proof that constructs a state and reads `ss_types` back by iota
+would need rewriting). The remaining work before C6 is C5 preparation:
+the pool-level analogues of the setter-spec relations
+(`split_types_update_rel`, `repair_types_update_rel`,
+`delete_types_update_rel`, `registry_lookup_or_create`,
+`registry_models`, `fresh_loc`) must be complete, and each WP file's
+vocabulary substitution table written; then C5 restates the specs at
+`(locs, pool)` file by file and C6 deletes the cell side.
+
+- **C2, ytype layer** (collapsed into C6, see above). `own_ytype_runs` (already primitive) becomes THE
   `own_ytype_cells` replacement: the cell-shaped predicate becomes a
   wrapper over it, `type_state` callers start moving to `type_model`
   (`ty_arr` reads become `runs_flatten` through `cells_repr`).
