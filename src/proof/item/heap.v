@@ -18,9 +18,10 @@
       the cell-level [own_dll], under per-cell parent coherence;
       [own_dll_runs_length] aligns the two lists; [own_dll_runs_app]
       splits and joins a segment, [own_dll_runs_insert_middle] splices a
-      fresh node, and [own_dll_runs_lookup_acc] /
-      [own_dll_runs_update] borrow the [k]-th node whole, the update
-      wand flipping its tombstone bit, mirroring the cell laws).
+      fresh node, [own_dll_runs_lookup_acc] / [own_dll_runs_update]
+      borrow the [k]-th node whole (the update wand flipping its tombstone
+      bit), and [own_dll_runs_split] rejoins a split node's two halves,
+      mirroring the cell laws).
 
     Laws
     - the spine is a monoid: [own_dll_app] splits and joins a segment, and
@@ -911,6 +912,45 @@ Proof.
   iSplitR; [by iPureIntro |].
   iSplitR; [by iPureIntro |].
   iExists mr. iFrame "Hnode H2".
+Qed.
+
+(** Rejoin the two halves of a split node between two relinked run-granular
+    segments: the run form of [own_dll_split]. The halves' [run_wf] and
+    [run_per_char] are premises; the split surgery itself is the pure
+    [split_runs]. *)
+Lemma own_dll_runs_split (dq : dfrac) (parent : loc)
+    (ls1 ls2 : list loc) (runs1 runs2 : list ItemRun)
+    (lc rloc : loc) (r : ItemRun) (o : nat) (hd tl ml mr : loc) :
+  length ls1 = length runs1 ->
+  lc ≠ null ->
+  rloc ≠ null ->
+  run_per_char (split_run_left r o) ->
+  run_per_char (split_run_right r o) ->
+  run_wf (run_items (split_run_left r o)) ->
+  run_wf (run_items (split_run_right r o)) ->
+  own_dll_runs dq parent hd ml null lc ls1 runs1 ∗
+  own_item_node lc dq (input_of_run (split_run_left r o))
+    (run_deleted (split_run_left r o)) parent ml rloc ∗
+  own_item_node rloc dq (input_of_run (split_run_right r o))
+    (run_deleted (split_run_right r o)) parent lc mr ∗
+  own_dll_runs dq parent mr tl rloc null ls2 runs2
+  ⊢ own_dll_runs dq parent hd tl null null
+      (ls1 ++ [lc; rloc] ++ ls2)
+      (runs1 ++ [split_run_left r o; split_run_right r o] ++ runs2).
+Proof.
+  move=> Hlen Hlcnn Hrlnn Hpcl Hpcr Hwfl Hwfr.
+  iIntros "(H1 & Hnl & Hnr & H2)".
+  rewrite (own_dll_runs_app dq parent hd tl null null ls1 ([lc; rloc] ++ ls2)
+             runs1 ([split_run_left r o; split_run_right r o] ++ runs2) Hlen).
+  iExists ml, lc. iFrame "H1". simpl.
+  iSplitR; [by iPureIntro |].
+  iSplitR; [by iPureIntro |].
+  iSplitR; [by iPureIntro |].
+  iExists rloc. iFrame "Hnl".
+  iSplitR; [by iPureIntro |].
+  iSplitR; [by iPureIntro |].
+  iSplitR; [by iPureIntro |].
+  iExists mr. iFrame "Hnr H2".
 Qed.
 
 (** The run-granular spine aligns addresses with runs. *)
