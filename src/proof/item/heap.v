@@ -36,7 +36,9 @@
       in-range index is non-null. Their stage-3 forms hand the node out
       WHOLE, as [own_item_node] at [input_of_run], each also exposing the
       run's spelled length and its [run_per_char] pin ([own_dll_acc_node]
-      / [own_dll_lookup_acc_node] / [own_dll_update_gen_node]).
+      / [own_dll_lookup_acc_node] / [own_dll_update_gen_node]);
+      [own_item_node_not_null] reads the location's non-nullness off the
+      node.
     - freshness: a fully owned node is fresh for any segment
       ([own_dll_fresh], via [item_pointsto_conflict]), which is where the
       [NoDup] of locations comes from.
@@ -618,6 +620,18 @@ Qed.
     [node_loc] cursors; the wand takes the node back (any struct satisfying
     the pins: relinking is invisible to the abstract cells) and restores the
     DLL. *)
+(** A node's location is never null: the heap points-to inside says so. *)
+Lemma own_item_node_not_null (l : loc) (dq : dfrac) (input : IntegrateInput (A := A))
+    (deleted : bool) (parent prev nxt : loc) :
+  own_item_node l dq input deleted parent prev nxt -∗
+    ⌜l ≠ null⌝ ∗ own_item_node l dq input deleted parent prev nxt.
+Proof.
+  iIntros "Hnode". iDestruct "Hnode" as (v olid orid) "(Hval & Hrest)".
+  iDestruct (typed_pointsto_not_null with "Hval") as %Hnn.
+  iSplitR; first (iPureIntro; exact Hnn).
+  iExists v, olid, orid. iFrame "Hval Hrest".
+Qed.
+
 Lemma own_dll_acc_node (dq : dfrac) (cells : list item_cell) (hd tl : loc) (k : nat) (c : item_cell) :
   cells !! k = Some c ->
   own_dll dq hd tl null null cells -∗
