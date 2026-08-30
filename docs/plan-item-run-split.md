@@ -472,6 +472,25 @@ vocabulary substitution table written; then C5 restates the specs at
   footprint, smallest first: `doc/GetOrCreateText`, `ytype/Text`,
   `ytype/findPos`, `applyUpdate`, `deleteRange`, `GetNode`, `text/Insert`,
   `text/Delete`, `repair`, `Integrate`, `splitNode`.
+- **C5/C6 per-file map** (added 2026-08-30). Specs already staged at
+  `(locs, pool)`: `GetNode`, `splitNode` / `splitAtAndGetLeft` /
+  `_Right`, `deleteRange` / `applyDeleteSpans`, `getOrCreateYType` /
+  `repair`, `Integrate` (the nine `_runs` forms, today derived from the
+  cell specs by one rewrite at entry and exit; the cutover flips the
+  derivation). Relations: the setter specs' update relations all have
+  pool-level forms with transports (`split_types_update_rel_to_pool`,
+  `repair_types_update_rel_to_pool`, `delete_types_update_rel_to_pool`,
+  `pool_lookup_or_create`, `pool_registry_coh`, `pool_registry_models`,
+  `locs_fresh`). Internals: every DLL window already speaks the node
+  language (the re-threading), so per file the conversion is the pure
+  vocabulary of section 2.1's table plus the index materialization
+  (`client_run` re-implemented at run granularity behind its bridge, per
+  the owner decision). Heavy files by footprint: `splitNode` (~670 uses),
+  `value_cells` (~450), `Integrate` (~290), `value_split` (~280),
+  `repair` (~190); the sixteen `<| ss_types := … |>` setter sites
+  (repair 7, splitNode 5, deleteRange 2, applyUpdate 1, Integrate 1)
+  are where the state-update spelling changes by hand.
+
 - **C6, delete the scaffolding.** `item_cell`, `cell_*`, `cells_of_locs_*`,
   the wrappers, `node_loc`, `ty_arr` (folded: `tm_arr = runs_flatten`),
   and the `_to_cell` transports are removed; `own_dll_fractional` and kin
