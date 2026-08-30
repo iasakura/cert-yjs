@@ -38,7 +38,9 @@
       (append-homomorphic, [items_string_app], and recovering an exploded
       string, [items_string_explode]); [input_of_run], the wire item a run
       denotes, and [run_per_char]: each of the run's items carries exactly
-      one byte of that wire content.
+      one byte of that wire content ([explode] is append-homomorphic,
+      [explode_app], and [run_per_char] survives the split surgery,
+      [run_per_char_split_left] / [run_per_char_split_right]).
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
       app-morphic ([runs_flatten_app]).
@@ -448,6 +450,67 @@ Proof.
   - destruct s as [|b s']; first discriminate.
     injection Hc as Hx Hr.
     rewrite /items_string /= -/(items_string r) (IH s' Hr) Hx //.
+Qed.
+
+Lemma explode_app (s1 s2 : go_string) :
+  explode (s1 ++ s2) = explode s1 ++ explode s2.
+Proof. rewrite /explode fmap_app //. Qed.
+
+(** Peeling one item off a per-char run: its content is one byte, and the
+    tail is per-char again. The induction step of the split-surgery
+    preservation below. *)
+Lemma per_char_cons_inv (x : YjsItem A) (l : list (YjsItem A)) :
+  content <$> (x :: l) = explode (items_string (x :: l)) ->
+  (∃ b, content x = [b]) ∧ content <$> l = explode (items_string l).
+Proof.
+  move=> Hpc.
+  have Hs : items_string (x :: l) = content x ++ items_string l by reflexivity.
+  have Hf : content <$> (x :: l) = content x :: (content <$> l) by reflexivity.
+  rewrite Hs explode_app Hf in Hpc.
+  destruct (content x) as [|b bs] eqn:Hcx.
+  - simpl in Hpc.
+    destruct (items_string l) as [|b' s'].
+    + discriminate Hpc.
+    + have He : explode (b' :: s') = [b'] :: explode s' by reflexivity.
+      idtac "B1C". Set Printing All. Show.
+      rewrite He in Hpc. injection Hpc as Hh _. discriminate Hh.
+  - have He : explode (b :: bs) = [b] :: explode bs by reflexivity.
+    rewrite He in Hpc. simpl in Hpc.
+    injection Hpc as Hx Hrest.
+    simplify_eq/=.
+    split; [by exists b | exact Hrest].
+Qed.
+
+(** [run_per_char] survives the split surgery: each half of a split run is
+    per-char again (the premises of [own_dll_runs_split], discharged from
+    the split node's original pin). *)
+Lemma run_per_char_split_left (r : ItemRun) (o : nat) :
+  run_per_char r -> run_per_char (split_run_left r o).
+Proof.
+  rewrite /run_per_char /split_run_left /=.
+  move: o. induction (run_items r) as [|x l IH] => o Hpc.
+  - rewrite take_nil //.
+  - destruct o as [|o']; [done |].
+    destruct (per_char_cons_inv x l Hpc) as [[b Hb] Htail].
+    have Ht : take (S o') (x :: l) = x :: take o' l by reflexivity.
+    have Hf : content <$> (x :: take o' l) = content x :: (content <$> take o' l)
+      by reflexivity.
+    have Hs : items_string (x :: take o' l) = content x ++ items_string (take o' l)
+      by reflexivity.
+    have He : explode [b] = [[b]] by reflexivity.
+    rewrite Ht Hf Hs explode_app Hb He /=.
+    f_equal; try done. exact (IH o' Htail).
+Qed.
+
+Lemma run_per_char_split_right (r : ItemRun) (o : nat) :
+  run_per_char r -> run_per_char (split_run_right r o).
+Proof.
+  rewrite /run_per_char /split_run_right /=.
+  move: o. induction (run_items r) as [|x l IH] => o Hpc.
+  - rewrite drop_nil //.
+  - destruct o as [|o']; [exact Hpc |].
+    destruct (per_char_cons_inv x l Hpc) as [_ Htail].
+    rewrite /=. exact (IH o' Htail).
 Qed.
 
 Lemma runs_flatten_cons (r : ItemRun) (runs : list ItemRun) :
