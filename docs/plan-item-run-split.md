@@ -136,7 +136,24 @@ its ~20 `split_pool_*` transports map as follows. Already run-level:
 reasoning), and the heap freshness law `own_dll_runs_fresh` (a fully
 owned node's address is outside a segment's `ls`, replacing
 `split_pool_locdup`). `split_cell_cover`'s role is played by
-`pool_after_split`'s coverage clause.
+`pool_after_split`'s coverage clause. All of these landed (#167 commit
+10, as `run_pool_invs_split` and kin).
+
+DECISION 2026-08-30 (owner): the per-client item index at run
+granularity goes the MATERIALIZATION route: the index stays
+`client_run` over `types_of_locs_pool locs p` (no new sort theory now);
+`client_run` itself is re-implemented at run granularity only at the
+item_cell deletion step, behind one bridge. Consequently the stage-4
+step order corrects to: the direct body rewrites would be 80 percent
+textual copies while the index and the goose stepping stay cell-shaped
+under materialization, so the CELL SPECS AND BODIES STAY until the
+final coordinated cutover; the remaining pre-cutover work is to
+re-thread the DLL-TOUCHING proof internals onto the run primitives
+through the bridges (`own_dll_as_runs`, the `_node` borrows), file by
+file, smallest first (`ytype/findPos.v`, `ytype/Text.v`,
+`text/Delete.v`'s flip loop, then the store cores), so that at the
+cutover the `own_dll`/`item_cell` deletion is a definition swap plus
+mechanical cleanup instead of a proof rewrite.
 
 ## 1. The problem
 
