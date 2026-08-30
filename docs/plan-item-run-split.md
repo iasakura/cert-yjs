@@ -153,7 +153,18 @@ through the bridges (`own_dll_as_runs`, the `_node` borrows), file by
 file, smallest first (`ytype/findPos.v`, `ytype/Text.v`,
 `text/Delete.v`'s flip loop, then the store cores), so that at the
 cutover the `own_dll`/`item_cell` deletion is a definition swap plus
-mechanical cleanup instead of a proof rewrite.
+mechanical cleanup instead of a proof rewrite. DONE 2026-08-30 (#167
+commits 13 to 24): every WP-file window now goes through the node
+toolkit (`own_dll_acc_node` / `_lookup_acc_node` / `_update_gen_node` /
+`_lookup_acc_2_node`, `own_dll_cons_node_unfold` / `_fold`,
+`own_dll_insert_middle_node` / `own_dll_split_node`,
+`own_item_node_not_null`; `run_per_char_intro` discharges fold premises
+from explode couplings). Converted: `findPos`, `ytype/Text`,
+`text/Delete`, `text/Insert`, `store/deleteRange`, `own_type_pool_acc`,
+all of `store/Integrate` (scan, pairwise, splices, cursor reads), and
+`store/splitNode` end-to-end. The only cons-layout proofs left are
+layer-internal (`own_dll_fractional` and the toolkit's own proofs),
+re-proved over the runs bridge at the cutover.
 
 ## 1. The problem
 
