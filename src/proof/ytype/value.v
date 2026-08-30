@@ -190,4 +190,38 @@ Proof.
     exists c. split_and!; [reflexivity | exact Hd | exact Hlt].
 Qed.
 
+(** The run form of [visible_string_take_S]: one more run contributes its
+    string when live and nothing when tombstoned. Proved by materializing a
+    cell list over dummy addresses, which the cells-level lemma then walks. *)
+Lemma visible_string_runs_take_S (runs : list ItemRun) (k : nat) (r : ItemRun)
+    (s : go_string) :
+  runs !! k = Some r ->
+  content <$> run_items r = explode s ->
+  visible_string (runs_model (take (S k) runs))
+  = visible_string (runs_model (take k runs))
+    ++ (if run_deleted r then [] else s).
+Proof.
+  move=> Hk Hc.
+  set (ls := replicate (length runs) null).
+  have Hlenls : length ls = length runs by rewrite /ls length_replicate.
+  set (cells := cells_of_locs_runs null ls runs).
+  have Hcr : cell_run <$> cells = runs := cells_of_locs_runs_run null ls runs Hlenls.
+  have Hlencells : length cells = length runs by rewrite -Hcr length_fmap.
+  destruct (cells !! k) as [c|] eqn:Hck; last first.
+  { exfalso. apply lookup_ge_None in Hck. apply lookup_lt_Some in Hk. lia. }
+  have Hcrk : cell_run c = r.
+  { have Hlk : (cell_run <$> cells) !! k = runs !! k by rewrite Hcr.
+    rewrite list_lookup_fmap Hck /= Hk in Hlk. by injection Hlk. }
+  have Hmodel : ∀ j, runs_model (take j runs) = cells_model (take j cells).
+  { move=> j. rewrite cells_model_runs.
+    have -> : cell_run <$> take j cells = take j runs by rewrite fmap_take Hcr.
+    reflexivity. }
+  rewrite !Hmodel.
+  have Hdel : run_deleted r = ic_deleted c by rewrite -Hcrk.
+  rewrite Hdel.
+  apply (visible_string_take_S cells k c s Hck).
+  have Hrun : ic_run c = run_items r by rewrite -Hcrk.
+  rewrite Hrun. exact Hc.
+Qed.
+
 End ytype_value.

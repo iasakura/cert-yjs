@@ -24,51 +24,61 @@ Set Default Proof Using "Type*".
 
 Notation A := go_string.
 
-Lemma wp_yType__Text (parent : loc) (dq : dfrac) (cells : list item_cell)
-    (arr : list (YjsItem A)) :
-  {{{ is_pkg_init yjs ∗ own_ytype_cells parent dq cells arr }}}
+Lemma wp_yType__Text (parent : loc) (dq : dfrac) (ls : list loc) (tm : type_model) :
+  {{{ is_pkg_init yjs ∗ own_ytype_runs parent dq ls tm }}}
     parent @! (go.PointerType yjs.yType) @! "Text" #()
-  {{{ RET #(visible_string (cells_model cells)); own_ytype_cells parent dq cells arr }}}.
+  {{{ RET #(visible_string (runs_model (tm_runs tm)));
+      own_ytype_runs parent dq ls tm }}}.
 Proof.
-  wp_start as "Hyt". iNamed "Hyt".
-  iDestruct (own_dll_head_node dq cells _ tl with "Hdll") as %Hhead.
+  wp_start as "Hyt".
+  destruct tm as [runs arr]. simpl.
+  iNamed "Hyt".
+  iDestruct (own_dll_runs_headptr with "Hdll") as "[%Hhd Hdll]".
+  have Hhead : yt.(yjs.yType.start') = loc_at ls 0.
+  { rewrite Hhd /loc_at. case_decide as Hd0; last lia.
+    rewrite /= head_lookup //. }
   wp_auto.
   iAssert (∃ (k : nat),
     "Hp" ∷ parent ↦{dq} yt ∗
-    "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null cells ∗
-    "Hresult" ∷ result_ptr ↦ visible_string (cells_model (take k cells)) ∗
-    "Hcur" ∷ cur_ptr ↦ node_loc cells (Z.of_nat k) ∗
-    "%Hk" ∷ ⌜(k <= length cells)%nat⌝)%I
+    "Hdll" ∷ own_dll_runs dq parent yt.(yjs.yType.start') tl null null ls runs ∗
+    "Hresult" ∷ result_ptr ↦ visible_string (runs_model (take k runs)) ∗
+    "Hcur" ∷ cur_ptr ↦ loc_at ls (Z.of_nat k) ∗
+    "%Hk" ∷ ⌜(k <= length runs)%nat⌝)%I
     with "[Hparent Hdll result cur]" as "IH".
   { iExists 0%nat. rewrite take_0 /= -Hhead. iFrame. iPureIntro; lia. }
   wp_for "IH".
-  destruct (decide (k < length cells)%nat) as [Hlt | Hge].
-  - (* cur ≠ null: read the node, append its content when visible, advance *)
-    iDestruct (node_loc_lt_not_null dq cells _ tl k Hlt with "Hdll") as "[%Hnn Hdll]".
-    rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat k) = null) Hnn).
+  iDestruct (own_dll_runs_length with "Hdll") as %Hlenl.
+  destruct (decide (k < length runs)%nat) as [Hlt | Hge].
+  - (* cur is not null: read the node, append its content when visible, advance *)
+    iDestruct (loc_at_lt_not_null dq parent yt.(yjs.yType.start') tl ls runs k ltac:(lia) with "Hdll")
+      as "[%Hnn Hdll]".
+    rewrite (bool_decide_eq_false_2 (loc_at ls (Z.of_nat k) = null) Hnn).
     simpl negb.
-    destruct (cells !! k) as [c|] eqn:Hc; [| apply lookup_ge_None in Hc; lia].
-    iDestruct (own_dll_acc_node dq cells _ tl k c Hc with "Hdll")
-      as (prevk nxtk) "(%Hcloc & %Hcl & %Hcrn & %Hrun & %Hclen & %Hpck & Hnode & Hback)".
+    destruct (ls !! k) as [lk|] eqn:Hlk; [| apply lookup_ge_None in Hlk; lia].
+    destruct (runs !! k) as [r|] eqn:Hrk; [| apply lookup_ge_None in Hrk; lia].
+    iDestruct (own_dll_runs_acc dq parent yt.(yjs.yType.start') tl ls runs k lk r Hlk Hrk with "Hdll")
+      as (prevk nxtk) "(%Hcl & %Hcrn & %Hrun & %Hpck & %Hclen & Hnode & Hback)".
     iDestruct "Hnode" as (itemVal olidk oridk)
       "(Hcval & Hcol & Hcor & %Hinl & %Hinr & %Hid & %Hcontent & %Hpark & %Hprevk & %Hnextk & %Hflags)".
-    have Hcr : itemVal.(yjs.item.right') = node_loc cells (Z.of_nat k + 1).
+    have Hcloc : lk = loc_at ls (Z.of_nat k).
+    { rewrite /loc_at decide_True; last lia. rewrite Nat2Z.id Hlk //. }
+    have Hcr : itemVal.(yjs.item.right') = loc_at ls (Z.of_nat k + 1).
     { rewrite Hnextk. exact Hcrn. }
-    have Hcontold : content <$> ic_run c
+    have Hcontold : content <$> run_items r
                   = explode (itemVal.(yjs.item.content').(yjs.content.content')).
     { have Hstr : itemVal.(yjs.item.content').(yjs.content.content')
-                = in_content (input_of_run (cell_run c)) := Hcontent.
+                = in_content (input_of_run r) := Hcontent.
       rewrite Hstr. exact Hpck. }
     iEval (rewrite -Hcloc) in "Hcur".
     rewrite decide_True; [| reflexivity].
     wp_auto.
-    wp_apply (wp_item__Deleted c.(ic_loc) dq itemVal with "[$Hcval]"). iIntros "Hcval".
-    rewrite (flags_if_deleted itemVal (ic_deleted c) Hflags).
-    destruct (ic_deleted c) eqn:Hd; simpl negb.
+    wp_apply (wp_item__Deleted lk dq itemVal with "[$Hcval]"). iIntros "Hcval".
+    rewrite (flags_if_deleted itemVal (run_deleted r) Hflags).
+    destruct (run_deleted r) eqn:Hd; simpl negb.
     + (* tombstone: contributes nothing *)
       wp_auto.
-      iAssert (own_item_node c.(ic_loc) dq (input_of_run (cell_run c)) true
-                 (ic_parent c) prevk nxtk) with "[Hcval Hcol Hcor]" as "Hnode".
+      iAssert (own_item_node lk dq (input_of_run r) true parent prevk nxtk)
+        with "[Hcval Hcol Hcor]" as "Hnode".
       { iExists itemVal, olidk, oridk. iFrame "Hcval Hcol Hcor".
         iPureIntro. split_and!;
           [exact Hinl | exact Hinr | exact Hid | exact Hcontent | exact Hpark
@@ -76,14 +86,14 @@ Proof.
       iDestruct ("Hback" with "Hnode") as "Hdll".
       wp_for_post.
       iFrame "HΦ". iExists (S k). iFrame "Hp Hdll".
-      rewrite (visible_string_take_S cells k c _ Hc Hcontold) Hd app_nil_r.
+      rewrite (visible_string_runs_take_S runs k r _ Hrk Hcontold) Hd app_nil_r.
       iFrame "Hresult".
       rewrite Hcr. replace (Z.of_nat k + 1)%Z with (Z.of_nat (S k)) by lia.
       iFrame "Hcur". iPureIntro. lia.
     + (* visible: append the node's content string *)
       wp_auto.
-      iAssert (own_item_node c.(ic_loc) dq (input_of_run (cell_run c)) false
-                 (ic_parent c) prevk nxtk) with "[Hcval Hcol Hcor]" as "Hnode".
+      iAssert (own_item_node lk dq (input_of_run r) false parent prevk nxtk)
+        with "[Hcval Hcol Hcor]" as "Hnode".
       { iExists itemVal, olidk, oridk. iFrame "Hcval Hcol Hcor".
         iPureIntro. split_and!;
           [exact Hinl | exact Hinr | exact Hid | exact Hcontent | exact Hpark
@@ -91,51 +101,22 @@ Proof.
       iDestruct ("Hback" with "Hnode") as "Hdll".
       wp_for_post.
       iFrame "HΦ". iExists (S k). iFrame "Hp Hdll".
-      rewrite (visible_string_take_S cells k c _ Hc Hcontold) Hd.
+      rewrite (visible_string_runs_take_S runs k r _ Hrk Hcontold) Hd.
       iFrame "Hresult".
       rewrite Hcr. replace (Z.of_nat k + 1)%Z with (Z.of_nat (S k)) by lia.
       iFrame "Hcur". iPureIntro. lia.
-  - (* cur = null: the walk is done, return the accumulated string *)
-    have Hkeq : k = length cells by lia.
-    have Hnull : node_loc cells (Z.of_nat k) = null.
-    { rewrite /node_loc decide_True; [| lia]. rewrite Nat2Z.id lookup_ge_None_2; [done | lia]. }
-    rewrite (bool_decide_eq_true_2 (node_loc cells (Z.of_nat k) = null) Hnull).
+  - (* cur is null: the walk is done, return the accumulated string *)
+    have Hkeq : k = length runs by lia.
+    have Hnull : loc_at ls (Z.of_nat k) = null.
+    { rewrite /loc_at decide_True; [| lia]. rewrite Nat2Z.id lookup_ge_None_2; [done | lia]. }
+    rewrite (bool_decide_eq_true_2 (loc_at ls (Z.of_nat k) = null) Hnull).
     simpl negb.
     rewrite decide_False; [| done]. rewrite decide_True; [| done].
     wp_auto.
     rewrite Hkeq take_ge; [| lia].
     iApply "HΦ".
     iExists yt, tl. iFrame "Hp Hdll".
-    iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
-Qed.
-
-(** [Text] at the run-granular view: the string is the visible content of the
-    type's runs ([runs_model]), the cells-level spec above being its stepping
-    stone (docs/plan-item-run-split.md's cutover). *)
-Lemma wp_yType__Text_runs (parent : loc) (dq : dfrac) (ls : list loc)
-    (tm : type_model) :
-  {{{ is_pkg_init yjs ∗ own_ytype_runs parent dq ls tm }}}
-    parent @! (go.PointerType yjs.yType) @! "Text" #()
-  {{{ RET #(visible_string (runs_model (tm_runs tm)));
-      own_ytype_runs parent dq ls tm }}}.
-Proof.
-  iIntros (Φ) "(#Hpkg & Hyt) HΦ".
-  destruct tm as [runs arr]. simpl.
-  iDestruct (own_ytype_runs_as_cells with "Hyt") as "[%Hlen Hcells]".
-  simpl in Hlen.
-  set (cells := cells_of_locs_runs parent ls runs).
-  have Hcr : cell_run <$> cells = runs
-    := cells_of_locs_runs_run parent ls runs Hlen.
-  have Hlc : ic_loc <$> cells = ls
-    := cells_of_locs_runs_loc parent ls runs Hlen.
-  have Hvs : visible_string (runs_model runs) = visible_string (cells_model cells).
-  { by rewrite cells_model_runs Hcr. }
-  iEval (rewrite Hvs) in "HΦ".
-  wp_apply (wp_yType__Text parent dq cells arr with "[$Hpkg $Hcells]").
-  iIntros "Hcells".
-  iApply "HΦ".
-  iDestruct (own_ytype_runs_intro with "Hcells") as "Hyt".
-  rewrite Hcr Hlc. iFrame "Hyt".
+    iPureIntro. split_and!; [exact Hlen | exact Harr].
 Qed.
 
 End ytype.
