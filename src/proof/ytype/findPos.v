@@ -89,7 +89,7 @@ Proof.
       rewrite (bool_decide_eq_false_2 (node_loc (c0 :: cs) q = null) Hnn). simpl negb.
       destruct ((c0 :: cs) !! q) as [cq|] eqn:Hcq; [| apply lookup_ge_None in Hcq; lia].
       iDestruct (own_dll_acc_node dq (c0 :: cs) yt.(yjs.yType.start') tl q cq Hcq with "Hdll")
-        as (prevq nxtq) "(%Hcloc & %Hcl & %Hcrn & %Hrun & %Hclen & Hnode & Hback)".
+        as (prevq nxtq) "(%Hcloc & %Hcl & %Hcrn & %Hrun & %Hclen & %Hpcq & Hnode & Hback)".
       iDestruct "Hnode" as (itemVal olidq oridq)
         "(Hcval & Hcol & Hcor & %Hinl & %Hinr & %Hid & %Hcontent & %Hparq & %Hprevq & %Hnextq & %Hflags)".
       have Hcr : itemVal.(yjs.item.right') = node_loc (c0 :: cs) (Z.of_nat q + 1).
@@ -166,7 +166,7 @@ Proof.
         rewrite decide_True; [| done].
         destruct ((c0 :: cs) !! q2) as [c2|] eqn:Hc2; [| apply lookup_ge_None in Hc2; lia].
         iDestruct (own_dll_acc_node dq (c0 :: cs) yt.(yjs.yType.start') tl q2 c2 Hc2 with "Hdll")
-          as (prev2 nxt2) "(%Hc2loc & %Hc2l & %Hc2rn & %Hc2run & %Hc2len & Hnode2 & Hback2)".
+          as (prev2 nxt2) "(%Hc2loc & %Hc2l & %Hc2rn & %Hc2run & %Hc2len & %Hpc2 & Hnode2 & Hback2)".
         iDestruct "Hnode2" as (iv2 olid2 orid2)
           "(Hc2val & Hc2ol & Hc2or & %Hc2inl & %Hc2inr & %Hc2id & %Hc2cont & %Hc2par & %Hc2prev & %Hc2next & %Hc2flags)".
         have Hcount2 : is_countable_flag iv2 = true := flags_if_countable iv2 (ic_deleted c2) Hc2flags.
@@ -283,7 +283,7 @@ Proof.
         rewrite decide_True; [| done].
         destruct ((c0 :: cs) !! q2) as [c2|] eqn:Hc2; [| apply lookup_ge_None in Hc2; lia].
         iDestruct (own_dll_acc_node dq (c0 :: cs) yt.(yjs.yType.start') tl q2 c2 Hc2 with "Hdll")
-          as (prev2 nxt2) "(%Hc2loc & %Hc2l & %Hc2rn & %Hc2run & %Hc2len & Hnode2 & Hback2)".
+          as (prev2 nxt2) "(%Hc2loc & %Hc2l & %Hc2rn & %Hc2run & %Hc2len & %Hpc2 & Hnode2 & Hback2)".
         iDestruct "Hnode2" as (iv2 olid2 orid2)
           "(Hc2val & Hc2ol & Hc2or & %Hc2inl & %Hc2inr & %Hc2id & %Hc2cont & %Hc2par & %Hc2prev & %Hc2next & %Hc2flags)".
         have Hcount2 : is_countable_flag iv2 = true := flags_if_countable iv2 (ic_deleted c2) Hc2flags.

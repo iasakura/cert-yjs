@@ -35,8 +35,8 @@
       [own_dll_update_gen] borrows it for an update, and [node_loc] of an
       in-range index is non-null. Their stage-3 forms hand the node out
       WHOLE, as [own_item_node] at [input_of_run], each also exposing the
-      run's spelled length ([own_dll_acc_node] / [own_dll_lookup_acc_node]
-      / [own_dll_update_gen_node]).
+      run's spelled length and its [run_per_char] pin ([own_dll_acc_node]
+      / [own_dll_lookup_acc_node] / [own_dll_update_gen_node]).
     - freshness: a fully owned node is fresh for any segment
       ([own_dll_fresh], via [item_pointsto_conflict]), which is where the
       [NoDup] of locations comes from.
@@ -555,6 +555,7 @@ Lemma own_dll_lookup_acc_node (dq : dfrac) (l lst prev nxt : loc)
     ∃ (prev' nxt' : loc),
       "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
       "%Hclen" ∷ ⌜length (items_string (ic_run c)) = length (ic_run c)⌝ ∗
+      "%Hperchar" ∷ ⌜run_per_char (cell_run c)⌝ ∗
       "Hnode" ∷ own_item_node (ic_loc c) dq (input_of_run (cell_run c))
                   (ic_deleted c) (ic_parent c) prev' nxt' ∗
       "Hback" ∷ (own_item_node (ic_loc c) dq (input_of_run (cell_run c))
@@ -579,6 +580,7 @@ Proof.
   iExists itemVal.(yjs.item.left'), itemVal.(yjs.item.right').
   iSplitR; [iPureIntro; exact Hrunc |].
   iSplitR; [iPureIntro; exact Hclen |].
+  iSplitR; [iPureIntro; exact Hexp |].
   iSplitL "Hval0 Hol0 Hor0".
   { iExists itemVal, olid, orid.
     iFrame "Hval0 Hol0 Hor0".
@@ -625,6 +627,7 @@ Lemma own_dll_acc_node (dq : dfrac) (cells : list item_cell) (hd tl : loc) (k : 
       "%Hcr" ∷ ⌜nxt' = node_loc cells (Z.of_nat k + 1)⌝ ∗
       "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
       "%Hclen" ∷ ⌜length (items_string (ic_run c)) = length (ic_run c)⌝ ∗
+      "%Hperchar" ∷ ⌜run_per_char (cell_run c)⌝ ∗
       "Hnode" ∷ own_item_node (ic_loc c) dq (input_of_run (cell_run c))
                   (ic_deleted c) (ic_parent c) prev' nxt' ∗
       "Hback" ∷ (own_item_node (ic_loc c) dq (input_of_run (cell_run c))
@@ -671,6 +674,7 @@ Proof.
   iSplit; [iPureIntro; exact Hcr|].
   iSplit; [iPureIntro; exact Hrunc|].
   iSplit; [iPureIntro; exact Hclen|].
+  iSplit; [iPureIntro; exact Hexp|].
   iSplitL "Hval0 Hol0 Hor0".
   { iExists itemVal, olid, orid.
     iFrame "Hval0 Hol0 Hor0".
@@ -713,6 +717,7 @@ Lemma own_dll_update_gen_node (cells : list item_cell) (hd tl : loc) (k : nat) (
       "%Hcr" ∷ ⌜nxt' = node_loc cells (Z.of_nat k + 1)⌝ ∗
       "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
       "%Hclen" ∷ ⌜length (items_string (ic_run c)) = length (ic_run c)⌝ ∗
+      "%Hperchar" ∷ ⌜run_per_char (cell_run c)⌝ ∗
       "Hnode" ∷ own_item_node (ic_loc c) (DfracOwn 1) (input_of_run (cell_run c))
                   (ic_deleted c) (ic_parent c) prev' nxt' ∗
       "Hback" ∷ (∀ d' : bool,
@@ -749,6 +754,7 @@ Proof.
   iSplit; [iPureIntro; exact Hcr|].
   iSplit; [iPureIntro; exact Hrunc|].
   iSplit; [iPureIntro; exact Hclen|].
+  iSplit; [iPureIntro; exact Hexp|].
   iSplitL "Hval0 Hol0 Hor0".
   { iExists itemVal, olid, orid.
     iFrame "Hval0 Hol0 Hor0".
