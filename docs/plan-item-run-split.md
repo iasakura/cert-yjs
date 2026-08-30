@@ -416,3 +416,49 @@ not stack on eight unmerged branches.
 - `ty_arr` is folded away in stage 4 (decided 2026-08-23): the double
   bookkeeping of cells and their flattened document is what makes
   `integrate_splice` state the same splice twice.
+
+## 6. Cutover execution order (added 2026-08-30, after the re-threading)
+
+With the re-threading done, the coordinated cutover proceeds bottom-up in
+six compiling stages. Scaffolding (compat wrappers) is allowed DURING the
+cutover and dies in C6; nothing of it survives.
+
+- **C1, item layer.** `item/heap.v`: `own_dll` is redefined at
+  `(parent, ls, runs)` (today's `own_dll_runs`, renamed); a scaffolding
+  wrapper `own_dll_cells dq l last prev next cells :=
+  own_dll … (ic_loc <$> cells) (cell_run <$> cells)` (the `own_dll_as_runs`
+  reading turned into the definition) keeps every current consumer
+  compiling verbatim. The toolkit laws move to `(ls, runs)` signatures;
+  their cell-shaped forms become derived corollaries over the wrapper.
+  `item/value.v` keeps `item_cell` and the projections for now (they feed
+  the wrapper).
+- **C2, ytype layer.** `own_ytype_runs` (already primitive) becomes THE
+  `own_ytype_cells` replacement: the cell-shaped predicate becomes a
+  wrapper over it, `type_state` callers start moving to `type_model`
+  (`ty_arr` reads become `runs_flatten` through `cells_repr`).
+- **C3, value files.** `value_cells.v` / `value_split.v` / `value_live.v` /
+  `value_span.v`: the run/pool side (already present: `pool`, `all_runs`,
+  `run_pool_invs`, `pool_run_covers`, `pool_origins_*`, `split_runs`
+  analogues, the `_to_pool` / `_to_cell` transports) becomes primary;
+  cell-shaped definitions become wrappers or die where unused.
+- **C4, store heap.** `own_store_struct`'s state moves to
+  `(ss_locs, ss_pool)` (today's `own_store_runs` reading becomes the
+  definition); `own_type_pool` over `(locs, p)`; `own_item_map`'s
+  per-client slice model becomes `client_locs locs p client`;
+  `own_delete_set` takes runs.
+- **C5, WP files, one at a time.** Specs restated in the 2.3 shape
+  (indices plus `locs`), proofs transported; the windows already speak the
+  node language, so each file is vocabulary substitution plus the
+  entry/exit rewrite between the wrapper and the primitive. Order by
+  footprint, smallest first: `doc/GetOrCreateText`, `ytype/Text`,
+  `ytype/findPos`, `applyUpdate`, `deleteRange`, `GetNode`, `text/Insert`,
+  `text/Delete`, `repair`, `Integrate`, `splitNode`.
+- **C6, delete the scaffolding.** `item_cell`, `cell_*`, `cells_of_locs_*`,
+  the wrappers, `node_loc`, `ty_arr` (folded: `tm_arr = runs_flatten`),
+  and the `_to_cell` transports are removed; `own_dll_fractional` and kin
+  are re-proved over the run Fixpoint (mechanical inductions).
+
+Each stage ends `./build.sh make`-green and is one reviewable commit (or
+a small stack); the wrapper discipline keeps the tree compiling at every
+point, and C6 is the enforcement that the coexistence was scaffolding
+only.
