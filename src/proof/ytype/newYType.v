@@ -44,4 +44,20 @@ Proof.
   - move=> c Hc. by apply elem_of_nil in Hc.
 Qed.
 
+(** The same at the run-granular view: an empty type has no node addresses
+    and no runs (docs/plan-item-run-split.md's cutover; the cells-level form
+    above is its stepping stone). *)
+Lemma wp_newYType_runs :
+  {{{ is_pkg_init yjs }}}
+    @! yjs.newYType #()
+  {{{ (p : loc), RET #p; own_ytype_runs p (DfracOwn 1) [] (MkTypeModel [] []) }}}.
+Proof.
+  iIntros (Φ) "#Hpkg HΦ".
+  wp_apply (wp_newYType with "Hpkg").
+  iIntros (p) "Hnew".
+  iApply ("HΦ" $! p).
+  iDestruct (own_ytype_runs_intro with "Hnew") as "H".
+  iExact "H".
+Qed.
+
 End ytype_newYType.

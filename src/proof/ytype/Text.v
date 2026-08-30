@@ -109,4 +109,33 @@ Proof.
     iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
 Qed.
 
+(** [Text] at the run-granular view: the string is the visible content of the
+    type's runs ([runs_model]), the cells-level spec above being its stepping
+    stone (docs/plan-item-run-split.md's cutover). *)
+Lemma wp_yType__Text_runs (parent : loc) (dq : dfrac) (ls : list loc)
+    (tm : type_model) :
+  {{{ is_pkg_init yjs ∗ own_ytype_runs parent dq ls tm }}}
+    parent @! (go.PointerType yjs.yType) @! "Text" #()
+  {{{ RET #(visible_string (runs_model (tm_runs tm)));
+      own_ytype_runs parent dq ls tm }}}.
+Proof.
+  iIntros (Φ) "(#Hpkg & Hyt) HΦ".
+  destruct tm as [runs arr]. simpl.
+  iDestruct (own_ytype_runs_as_cells with "Hyt") as "[%Hlen Hcells]".
+  simpl in Hlen.
+  set (cells := cells_of_locs_runs parent ls runs).
+  have Hcr : cell_run <$> cells = runs
+    := cells_of_locs_runs_run parent ls runs Hlen.
+  have Hlc : ic_loc <$> cells = ls
+    := cells_of_locs_runs_loc parent ls runs Hlen.
+  have Hvs : visible_string (runs_model runs) = visible_string (cells_model cells).
+  { by rewrite cells_model_runs Hcr. }
+  iEval (rewrite Hvs) in "HΦ".
+  wp_apply (wp_yType__Text parent dq cells arr with "[$Hpkg $Hcells]").
+  iIntros "Hcells".
+  iApply "HΦ".
+  iDestruct (own_ytype_runs_intro with "Hcells") as "Hyt".
+  rewrite Hcr Hlc. iFrame "Hyt".
+Qed.
+
 End ytype.

@@ -354,4 +354,34 @@ Proof.
         rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro. split; [lia | by left].
 Qed.
 
+(** [findPos] at the run-granular view: the cursor indexes the type's run
+    list and the two node addresses come off its address list
+    ([find_pos_runs]). The cells-level spec above is its stepping stone: the
+    addresses and runs re-materialize the cell list the walk is proved over
+    (docs/plan-item-run-split.md's cutover). *)
+Lemma wp_yType__findPos_runs (parent : loc) (dq : dfrac) (ls : list loc)
+    (tm : type_model) (idx : w64) :
+  {{{ is_pkg_init yjs ∗ own_ytype_runs parent dq ls tm }}}
+    parent @! (go.PointerType yjs.yType) @! "findPos" #idx
+  {{{ (lft rgt : loc) (p : nat) (off : w64), RET (#lft, #rgt, #off);
+      own_ytype_runs parent dq ls tm ∗ ⌜find_pos_runs ls (tm_runs tm) p lft rgt off⌝ }}}.
+Proof.
+  iIntros (Φ) "(#Hpkg & Hyt) HΦ".
+  destruct tm as [runs arr]. simpl.
+  iDestruct (own_ytype_runs_as_cells with "Hyt") as "[%Hlen Hcells]".
+  simpl in Hlen.
+  set (cells := cells_of_locs_runs parent ls runs).
+  have Hcr : cell_run <$> cells = runs
+    := cells_of_locs_runs_run parent ls runs Hlen.
+  have Hlc : ic_loc <$> cells = ls
+    := cells_of_locs_runs_loc parent ls runs Hlen.
+  wp_apply (wp_yType__findPos parent dq cells arr idx with "[$Hpkg $Hcells]").
+  iIntros (lft rgt p off) "(Hcells & %Hfp)".
+  iApply ("HΦ" $! lft rgt p off).
+  iDestruct (own_ytype_runs_intro with "Hcells") as "Hyt".
+  rewrite Hcr Hlc. iFrame "Hyt".
+  iPureIntro.
+  apply find_pos_runs_of in Hfp. rewrite Hcr Hlc in Hfp. exact Hfp.
+Qed.
+
 End ytype.
