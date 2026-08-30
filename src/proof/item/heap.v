@@ -22,7 +22,7 @@
       borrow the [k]-th node whole (the update wand flipping its tombstone
       bit), [own_dll_runs_acc] the same with the spine links named as the
       address list's neighbours ([own_dll_runs_headptr] / [_lastptr] read
-      its ends), [own_dll_runs_split] rejoins a split node's two halves, and a
+      its ends, [loc_at_lt_not_null] says an in-range one is not null), [own_dll_runs_split] rejoins a split node's two halves, and a
       fully owned node's address is outside any segment's list
       ([own_dll_runs_fresh]), mirroring the cell laws).
 
@@ -1313,6 +1313,9 @@ Lemma own_dll_runs_acc (dq : dfrac) (parent hd tl : loc)
     ∃ (prev' nxt' : loc),
       "%Hcl" ∷ ⌜prev' = loc_at ls (Z.of_nat k - 1)⌝ ∗
       "%Hcr" ∷ ⌜nxt' = loc_at ls (Z.of_nat k + 1)⌝ ∗
+      "%Hrun" ∷ ⌜run_wf (run_items r)⌝ ∗
+      "%Hperchar" ∷ ⌜run_per_char r⌝ ∗
+      "%Hclen" ∷ ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
       "Hnode" ∷ own_item_node lc dq (input_of_run r) (run_deleted r) parent prev' nxt' ∗
       "Hback" ∷ (own_item_node lc dq (input_of_run r) (run_deleted r) parent prev' nxt' -∗
                  own_dll_runs dq parent hd tl null null ls runs).
@@ -1345,9 +1348,15 @@ Proof.
   iDestruct "Hrest" as (nxt0) "[Hnode Hrest2]".
   iDestruct (own_dll_runs_lastptr with "Hpre") as "[%Hml Hpre]".
   iDestruct (own_dll_runs_headptr with "Hrest2") as "[%Hhd Hrest2]".
+  have Hclen : length (items_string (run_items r)) = length (run_items r).
+  { have Hleq := f_equal length Hpc.
+    rewrite length_fmap explode_length in Hleq. lia. }
   iExists ml, nxt0.
   iSplitR; first (iPureIntro; rewrite Hml -Hpe //).
   iSplitR; first (iPureIntro; rewrite Hhd -Hhe //).
+  iSplitR; first by iPureIntro.
+  iSplitR; first by iPureIntro.
+  iSplitR; first by iPureIntro.
   iFrame "Hnode".
   iIntros "Hnode".
   iEval (rewrite -Hsplitl -Hsplitr (own_dll_runs_app _ _ _ _ _ _ _ _ _ _ Hlent)).
@@ -1399,6 +1408,26 @@ Proof.
   iSplitR; [by iPureIntro |].
   iExists nxt0.
   iFrame "Hnode Hrest2".
+Qed.
+
+(** An in-range address of a run-granular DLL is never null (the run form of
+    [node_loc_lt_not_null]); the resource is returned. *)
+Lemma loc_at_lt_not_null (dq : dfrac) (parent hd tl : loc)
+    (ls : list loc) (runs : list ItemRun) (k : nat) :
+  (k < length ls)%nat ->
+  own_dll_runs dq parent hd tl null null ls runs -∗
+    ⌜loc_at ls (Z.of_nat k) ≠ null⌝ ∗ own_dll_runs dq parent hd tl null null ls runs.
+Proof.
+  move=> Hk. iIntros "H".
+  iDestruct (own_dll_runs_length with "H") as %Hlen.
+  destruct (ls !! k) as [lc|] eqn:Hlk; last by (apply lookup_ge_None in Hlk; lia).
+  destruct (runs !! k) as [r|] eqn:Hrk; last by (apply lookup_ge_None in Hrk; lia).
+  iDestruct (own_dll_runs_acc dq parent hd tl ls runs k lc r Hlk Hrk with "H")
+    as (prev' nxt') "(%Hcl & %Hcr & %Hrun & %Hpc & %Hclen & Hnode & Hback)".
+  iDestruct (own_item_node_not_null with "Hnode") as "[%Hnn Hnode]".
+  iSplitR.
+  - iPureIntro. rewrite /loc_at decide_True; last lia. rewrite Nat2Z.id Hlk /=. exact Hnn.
+  - iApply ("Hback" with "Hnode").
 Qed.
 
 (** Borrow the [k]-th node for an update: the wand takes the node back at

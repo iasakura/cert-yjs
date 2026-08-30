@@ -83,9 +83,18 @@ Proof.
   (* findPos: locate the cursor [right] at some list position [p]. *)
   iAssert (own_ytype_cells (tv.(yjs.Text.inner')) (DfracOwn 1) ts.(ty_cells) ts.(ty_arr)) with "[Hparent Hdll]" as "Htext".
   { iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar]. }
-  wp_apply (wp_yType__findPos (tv.(yjs.Text.inner')) (DfracOwn 1) ts.(ty_cells) ts.(ty_arr) index with "[$Htext]").
-  iIntros (lft rgt p off) "(Htext & %Hfp)".
-  destruct Hfp as (Hpbound & Hlftloc & Hrgtloc & Hoff).
+  (* [findPos] is stated at run granularity: hand the type over as its
+     addresses and runs, and read the cursor back through the projections. *)
+  iDestruct (own_ytype_runs_intro with "Htext") as "Htextr".
+  wp_apply (wp_yType__findPos (tv.(yjs.Text.inner')) (DfracOwn 1) (ic_loc <$> ts.(ty_cells))
+              (MkTypeModel (cell_run <$> ts.(ty_cells)) ts.(ty_arr)) index with "[$Htextr]").
+  iIntros (lft rgt p off) "(Htextr & %Hfp)".
+  iDestruct (own_ytype_runs_as_cells with "Htextr") as "[_ Htext]".
+  iEval (simpl; rewrite (cells_of_locs_runs_projections (tv.(yjs.Text.inner')) ts.(ty_cells) Hcpar)) in "Htext".
+  have Hfpc : find_pos ts.(ty_cells) p lft rgt off.
+  { apply find_pos_runs_of. simpl in Hfp. exact Hfp. }
+  clear Hfp.
+  destruct Hfpc as (Hpbound & Hlftloc & Hrgtloc & Hoff).
   wp_auto.
   (* normalize the position (issue #28 M3): when the index lands inside a
      multi-char run, split the straddled node at the offset so the insertion
