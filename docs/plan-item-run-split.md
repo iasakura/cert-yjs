@@ -122,7 +122,21 @@ granularity, mirroring the cell ones), then rewrite the store WP files
 one at a time onto `(ls, runs)` (deleting their `own_dll` use), then
 the field predicates (`own_item_map` at a per-client address theory,
 `own_delete_set` over runs), and last delete `item_cell` and fold
-`ty_arr`.
+`ty_arr`. The toolkit landed 2026-08-30 (#167 commits 5 to 8: `_app`,
+`_insert_middle`, `_split` with its per-char premises discharged by
+`run_per_char_split_left` / `_right`, and the `_lookup_acc` / `_update`
+borrows). Scoping of the first file rewrite (splitNode.v, ~2300 lines):
+its ~20 `split_pool_*` transports map as follows. Already run-level:
+`runs_within` (subrange), `runs_live_refine` / `runs_dead_kept`,
+`split_runs_flatten` / `split_runs_visible`, `run_wf_take` / `_drop`
+(the halves' well-formedness). MISSING pure lemmas, to write first:
+`split_runs_fits` / `split_runs_disjoint` / `split_runs_origin_clk`
+(run_pool_invs survives one split; the cell proofs `split_pool_fits` /
+`_rangedisj` / `_originclk` are the templates, minus the address
+reasoning), and the heap freshness law `own_dll_runs_fresh` (a fully
+owned node's address is outside a segment's `ls`, replacing
+`split_pool_locdup`). `split_cell_cover`'s role is played by
+`pool_after_split`'s coverage clause.
 
 ## 1. The problem
 
