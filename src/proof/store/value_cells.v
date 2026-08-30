@@ -21,7 +21,10 @@
     - [type_model_of] / [pool_of] / [locs_of]: a type state and the pool at
       their run-granular models and address map; [store_state_runs] /
       [state_runs_of], the store state with the pool as [(sr_locs, sr_pool)]
-      (plan-item-run-split stage 2).
+      (plan-item-run-split stage 2); [types_of_locs_pool], the cell-level
+      registry an address map and a run pool determine (round-tripping
+      under matching domains and counts, [pool_of_types_of_locs_pool] /
+      [locs_of_types_of_locs_pool]).
     - what one integrate asks and does, at the cell level: [pool_clock_below]
       (the new item is its client's newest), [origins_linked] (the item's
       links are the cells its resolved origins designate), [integrate_splice]
@@ -547,6 +550,16 @@ Definition state_runs_of (st : store_state) : store_state_runs :=
   settable! MkStoreStateRuns
     <sr_client; sr_clock; sr_locs; sr_pool; sr_bind; sr_pending; sr_pending_deletes>.
 
+(** [types_of_locs_pool locs p]: the cell-level registry an address map and a
+    run pool determine: each type's cells re-materialized as
+    [cells_of_locs_runs] (the run-granular POOL elimination,
+    [own_type_pool_runs_to_cells]). *)
+Definition types_of_locs_pool (locs : gmap loc (list loc)) (p : pool)
+    : gmap loc type_state :=
+  map_imap (λ parent tm,
+    Some (MkTypeState (cells_of_locs_runs parent (default [] (locs !! parent)) (tm_runs tm))
+                      (tm_arr tm))) p.
+
 
 Lemma all_runs_pool_of (types : gmap loc type_state) :
   all_runs (pool_of types) = cell_run <$> all_cells types.
@@ -644,6 +657,43 @@ Proof.
   rewrite /locs_of /all_cells map_to_list_fmap concat_fmap.
   f_equal. rewrite -!list_fmap_compose.
   apply list_fmap_ext. move=> i [k ts] Hl. reflexivity.
+Qed.
+
+(** [types_of_locs_pool] round-trips: under matching domains and per-type
+    address counts, its [pool_of] is the pool and its [locs_of] is the
+    address map. What carries the run-granular pool back to a cell-level
+    registry ([own_type_pool_runs_to_cells]). *)
+Lemma pool_of_types_of_locs_pool (locs : gmap loc (list loc)) (p : pool) :
+  (∀ parent tm, p !! parent = Some tm ->
+     ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
+  pool_of (types_of_locs_pool locs p) = p.
+Proof.
+  move=> Hlen. apply map_eq => parent.
+  rewrite /pool_of /types_of_locs_pool lookup_fmap map_lookup_imap.
+  destruct (p !! parent) as [tm|] eqn:Hp; rewrite Hp /=.
+  - destruct (Hlen parent tm Hp) as (ls & Hls & Hl).
+    rewrite Hls /type_model_of /=.
+    rewrite cells_of_locs_runs_run; [| exact Hl].
+    destruct tm. done.
+  - done.
+Qed.
+
+Lemma locs_of_types_of_locs_pool (locs : gmap loc (list loc)) (p : pool) :
+  dom locs = dom p ->
+  (∀ parent tm, p !! parent = Some tm ->
+     ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
+  locs_of (types_of_locs_pool locs p) = locs.
+Proof.
+  move=> Hdom Hlen. apply map_eq => parent.
+  rewrite /locs_of /types_of_locs_pool lookup_fmap map_lookup_imap.
+  destruct (p !! parent) as [tm|] eqn:Hp; rewrite Hp /=.
+  - destruct (Hlen parent tm Hp) as (ls & Hls & Hl).
+    rewrite Hls /=.
+    rewrite cells_of_locs_runs_loc; [| exact Hl].
+    done.
+  - have Hnd : parent ∉ dom p by apply not_elem_of_dom.
+    rewrite -Hdom in Hnd.
+    apply not_elem_of_dom in Hnd. rewrite Hnd //.
 Qed.
 
 (** [client_run] projects onto [client_runs]: the [merge_sort cell_le] run

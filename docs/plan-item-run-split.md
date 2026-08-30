@@ -95,9 +95,13 @@ elimination `own_ytype_runs_as_cells` re-materializing cells as
 item/value.v, laws `_run` / `_loc` / `_parent`), `own_dll_runs_length`
 aligning the spine's two lists, and the `own_item_node` /
 `own_dll_runs` Timeless instances beside the other heap instances
-(store/heap.v). Next: the `(locs, p)` pool (`own_type_pool_runs`
-consumers through the primitive form, `own_store_runs` over it) and
-`store_state`.
+(store/heap.v). The pool elimination landed on top:
+`types_of_locs_pool` (value_cells.v, the cell registry an address map
+and a run pool determine, round-tripping under matching domains and
+counts) and `own_type_pool_runs_to_cells` (store/heap.v, via the generic
+`big_sepM_map_imap_total`, algebra.v), the converse of
+`own_type_pool_runs_of`. Next: `own_store_runs` primitively over
+`own_type_pool_runs` and the `store_state` field flip.
 
 ## 1. The problem
 

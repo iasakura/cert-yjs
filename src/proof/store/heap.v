@@ -13,7 +13,9 @@
       unmodeled delete-set struct), with no predicate per field on purpose.
     - the run-granular pool (plan-item-run-split stage 2): [locs_wf] (the
       heap half of the pool invariants), [own_type_pool_runs dq locs p] and
-      the cell-level reading [own_type_pool_runs_of]; [own_store_runs s
+      the cell-level readings [own_type_pool_runs_of] /
+      [own_type_pool_runs_to_cells] (the converse, at the re-materialized
+      registry [types_of_locs_pool]); [own_store_runs s
       str], the store at a [store_state_runs] (the cell-level state
       existential), which the stage-2 [_runs] specs are stated over.
     - [own_store_struct s st]: THE store at its cell-level state, the fields
@@ -725,6 +727,43 @@ Definition own_type_pool_runs (dq : dfrac)
   "Hpool" ∷ [∗ map] parent ↦ tm ∈ p,
     ∃ ls, ⌜locs !! parent = Some ls⌝ ∗
           own_ytype_runs parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
+
+(** The run-granular pool read back at the re-materialized cell registry
+    ([types_of_locs_pool]): the converse of [own_type_pool_runs_of]. The
+    per-type lengths come off [locs_wf], and the address [NoDup] comes back
+    out of it through [locs_of_concat]. *)
+Lemma own_type_pool_runs_to_cells (locs : gmap loc (list loc)) (p : pool) :
+  own_type_pool_runs (DfracOwn 1) locs p -∗
+  own_type_pool (DfracOwn 1) (types_of_locs_pool locs p) ∗
+  ⌜pool_of (types_of_locs_pool locs p) = p⌝ ∗
+  ⌜locs_of (types_of_locs_pool locs p) = locs⌝ ∗
+  ⌜NoDup (ic_loc <$> all_cells (types_of_locs_pool locs p))⌝.
+Proof.
+  iIntros "(%Hlocswf & Hpool)".
+  destruct Hlocswf as (Hdom & Hnd & Hlens).
+  have Hprem : ∀ parent tm, p !! parent = Some tm ->
+      ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm).
+  { move=> parent tm Hp.
+    have His : is_Some (locs !! parent).
+    { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
+    destruct His as [ls Hls]. exists ls.
+    split; [done | exact (Hlens parent ls tm Hls Hp)]. }
+  have Hpeq : pool_of (types_of_locs_pool locs p) = p
+    := pool_of_types_of_locs_pool locs p Hprem.
+  have Hleq : locs_of (types_of_locs_pool locs p) = locs
+    := locs_of_types_of_locs_pool locs p Hdom Hprem.
+  iSplitL; last first.
+  { iPureIntro. split_and!; [exact Hpeq | exact Hleq |].
+    have Hcc := locs_of_concat (types_of_locs_pool locs p).
+    rewrite -Hcc Hleq. exact Hnd. }
+  rewrite /own_type_pool /types_of_locs_pool big_sepM_map_imap_total.
+  iApply (big_sepM_impl with "Hpool").
+  iIntros "!#" (parent tm Hp) "H".
+  iDestruct "H" as (ls) "(%Hls & Hruns & %Hinv)".
+  rewrite Hls /=.
+  iDestruct (own_ytype_runs_as_cells with "Hruns") as "[%Hlen Hcells]".
+  iFrame "Hcells". by iPureIntro.
+Qed.
 
 (** The cell-level pool at its run-granular reading: [own_type_pool] with
     the address [NoDup] is [own_type_pool_runs] at [locs_of] / [pool_of]. *)

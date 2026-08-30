@@ -138,15 +138,16 @@ Proof.
   - rewrite /cells_repr in Hrepr. rewrite Hrepr run_flatten_runs //.
 Qed.
 
-(** The primitive run view read back at cells: the zip of the addresses with
-    the runs ([cells_of_locs_runs]). What lets a cells-level proof consume
-    [own_ytype_runs] during the migration. *)
+(** The primitive run view read back at cells: exactly the zip of the
+    addresses with the runs ([cells_of_locs_runs]). What lets a cells-level
+    proof consume [own_ytype_runs] during the migration; the projection pins
+    follow from the exposed length through [cells_of_locs_runs_run] /
+    [_loc]. *)
 Lemma own_ytype_runs_as_cells (parent : loc) (dq : dfrac)
     (ls : list loc) (tm : type_model) :
   own_ytype_runs parent dq ls tm -∗
-  ∃ (cells : list item_cell),
-    own_ytype_cells parent dq cells (tm_arr tm) ∗
-    ⌜cell_run <$> cells = tm_runs tm⌝ ∗ ⌜ic_loc <$> cells = ls⌝.
+  ⌜length ls = length (tm_runs tm)⌝ ∗
+  own_ytype_cells parent dq (cells_of_locs_runs parent ls (tm_runs tm)) (tm_arr tm).
 Proof.
   iIntros "H". iDestruct "H" as (yt tl) "(Hp & Hdll & %Hlen & %Harr)".
   iDestruct (own_dll_runs_length with "Hdll") as %Hlenls.
@@ -157,8 +158,7 @@ Proof.
     := cells_of_locs_runs_loc parent ls (tm_runs tm) Hlenls.
   have Hcp : ∀ c, c ∈ cells -> ic_parent c = parent
     := cells_of_locs_runs_parent parent ls (tm_runs tm).
-  iExists cells.
-  iSplitL; last by iPureIntro.
+  iSplitR; [by iPureIntro |].
   iExists yt, tl.
   iEval (rewrite -Hcr -Hlc
            -(own_dll_as_runs dq yt.(yjs.yType.start') tl null null parent cells Hcp)) in "Hdll".
