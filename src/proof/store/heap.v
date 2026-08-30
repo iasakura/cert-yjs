@@ -15,7 +15,7 @@
       heap half of the pool invariants), [own_type_pool_runs dq locs p] and
       the cell-level readings [own_type_pool_runs_of] /
       [own_type_pool_runs_to_cells] (the converse, at the re-materialized
-      registry [types_of_locs_pool]); [own_store_runs s
+      registry [types_of_locs_pool]); the PRIMITIVE [own_store_runs s
       str], the store at a [store_state_runs] (the cell-level state
       existential), which the stage-2 [_runs] specs are stated over.
     - [own_store_struct s st]: THE store at its cell-level state, the fields
@@ -1174,14 +1174,38 @@ Proof.
   iFrame.
 Qed.
 
-(** [own_store_runs s str]: THE store at its run-granular state
-    (plan-item-run-split stage 2): [own_store_struct] at some cell-level
-    state projecting to [str]. Migration scaffolding: the stage-2 [_runs]
-    specs are stated over it and derived from the cell-level ones through
-    the [pool_of] / [locs_of] projections; stage 3 makes it primitive and
-    retires the cell-level state. *)
+(** [own_store_runs s str]: THE store at its run-granular state, PRIMITIVE
+    (plan-item-run-split stage 3c): [own_store_struct] at the state the
+    run-granular one determines ([state_of_runs], the registry
+    re-materialized as [types_of_locs_pool]), plus the pure alignment of
+    the address map with the pool. [own_store_runs_as_state] is the
+    fold/unfold to "some cell-level state projecting to [str]", which is
+    how the derived [_runs] specs consume it during the migration. *)
 Definition own_store_runs (s : loc) (str : store_state_runs) : iProp Σ :=
+  "Hstruct" ∷ own_store_struct s (state_of_runs str) ∗
+  "%Haligned" ∷ ⌜locs_aligned (sr_locs str) (sr_pool str)⌝.
+
+Lemma own_store_runs_as_state (s : loc) (str : store_state_runs) :
+  own_store_runs s str ⊣⊢
   ∃ st : store_state, ⌜state_runs_of st = str⌝ ∗ own_store_struct s st.
+Proof.
+  iSplit.
+  - iIntros "H". iDestruct "H" as "(Hstruct & %Haligned)".
+    iExists (state_of_runs str).
+    iFrame "Hstruct".
+    iPureIntro. exact (state_runs_of_of_runs str Haligned).
+  - iIntros "H". iDestruct "H" as (st) "(%Hproj & Hcells)".
+    subst str. destruct st as [client k0 types bind pend pdel].
+    iDestruct "Hcells" as "(Hfields & %Hinvs)".
+    iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+    iDestruct (own_type_pool_parents with "Htypes") as %Hpar.
+    iDestruct (own_store_struct_intro _ (MkStoreState client k0 types bind pend pdel) Hinvs
+                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+    rewrite /own_store_runs /state_of_runs /state_runs_of /=.
+    rewrite (types_of_locs_pool_of types Hpar).
+    iFrame "Hcells".
+    iPureIntro. exact (locs_aligned_of types).
+Qed.
 
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗

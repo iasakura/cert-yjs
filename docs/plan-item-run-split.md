@@ -100,8 +100,17 @@ aligning the spine's two lists, and the `own_item_node` /
 and a run pool determine, round-tripping under matching domains and
 counts) and `own_type_pool_runs_to_cells` (store/heap.v, via the generic
 `big_sepM_map_imap_total`, algebra.v), the converse of
-`own_type_pool_runs_of`. Next: `own_store_runs` primitively over
-`own_type_pool_runs` and the `store_state` field flip.
+`own_type_pool_runs_of`. On top of that, `own_store_runs` is
+REDEFINED primitively (2026-08-30): `own_store_struct` at
+`state_of_runs` (the registry re-materialized as `types_of_locs_pool`)
+plus `locs_aligned`; `own_store_runs_as_state` folds and unfolds the old
+"some cell-level state projecting to `str`" reading, and the nine
+derived `_runs` proofs consume it through one rewrite at entry and exit.
+`(sr_locs, sr_pool)` is now THE store state of the run-granular layer;
+what remains cell-level lives inside `own_store_struct`'s field
+predicates and goes at stage 4. Next: the WP-file conversions onto the
+primitive layer, and the `own_store` (ghost) level with `applyUpdate` /
+`hasNode`.
 
 ## 1. The problem
 

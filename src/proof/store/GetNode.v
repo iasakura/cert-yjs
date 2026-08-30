@@ -707,11 +707,13 @@ Lemma wp_store__GetNode_runs (s : loc) (idv : yjs.id.t) (str : store_state_runs)
        else ∀ parent k, ¬ pool_run_covers (sr_pool str) parent k (toYjsId idv)⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
   iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
   wp_apply (wp_store__GetNode s idv st with "[$Hpkg $Hcells]").
   iIntros (l ok) "(Hcells & %Hres)".
   iApply ("HΦ" $! l ok).
-  iSplitL. { iExists st. by iFrame "Hcells". }
+  iSplitL.
+  { rewrite own_store_runs_as_state. iExists st. by iFrame "Hcells". }
   iPureIntro. subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
   destruct ok.
   - destruct Hres as (c & Hcov & <-).

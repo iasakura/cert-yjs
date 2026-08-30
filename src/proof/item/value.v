@@ -12,7 +12,8 @@
       item list.
     - [cells_of_locs_runs]: the cell list an address list and a run list
       determine under one type (the run-granular elimination's zip,
-      [cells_of_locs_runs_run] / [_loc] / [_parent]).
+      [cells_of_locs_runs_run] / [_loc] / [_parent]; on the projections it
+      is the identity, [cells_of_locs_runs_projections]).
     - the flag accessors [is_deleted_flag] / [is_countable_flag] reading the
       heap struct's bits, [set_deleted] / [flip_cell] flipping the tombstone,
       and [num_visible], the visible-character count [yType.len] shadows.
@@ -237,6 +238,20 @@ Proof.
     injection Hlen as Hlen.
     cbn [zip_with]. rewrite fmap_cons.
     f_equal; try done. exact (IH runs Hlen).
+Qed.
+
+Lemma cells_of_locs_runs_projections (parent : loc) (cells : list item_cell) :
+  (∀ c, c ∈ cells -> ic_parent c = parent) ->
+  cells_of_locs_runs parent (ic_loc <$> cells) (cell_run <$> cells) = cells.
+Proof.
+  rewrite /cells_of_locs_runs.
+  induction cells as [|c cells IH] => Hpar; [done |].
+  have Hparc : ic_parent c = parent := Hpar c (list_elem_of_here _ _).
+  have Hpar' : ∀ c0, c0 ∈ cells -> ic_parent c0 = parent
+    := λ c0 Hc0, Hpar c0 (list_elem_of_further _ _ _ Hc0).
+  rewrite !fmap_cons. cbn [zip_with].
+  rewrite IH; [| exact Hpar'].
+  destruct c. simpl in Hparc. rewrite Hparc //.
 Qed.
 
 Lemma cells_of_locs_runs_parent (parent : loc) (ls : list loc) (runs : list ItemRun) :

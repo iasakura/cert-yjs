@@ -837,6 +837,7 @@ Lemma wp_store__deleteRange_runs (s : loc) (str : store_state_runs)
          ids_tombstoned_runs (range_ids client dclock dlen) (all_runs p')⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
   iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
   subst str. destruct st as [client0 k0 types bind pend pdel]. simpl in *.
   iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
@@ -855,7 +856,7 @@ Proof using Type*.
                with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
   iApply ("HΦ" $! (pool_of types') (locs_of types') covered).
   iSplitL.
-  { iExists (MkStoreState client0 k0 types' bind pend pdel).
+  { rewrite own_store_runs_as_state. iExists (MkStoreState client0 k0 types' bind pend pdel).
     iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
   iPureIntro. split.
   - exact (delete_types_update_rel_to_pool types types'
@@ -885,6 +886,7 @@ Lemma wp_store__applyDeleteSpans_runs (s : loc) (str : store_state_runs)
             delete_span_ids sp ⊆ D ∪ delete_batch_ids rest)⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns & Hsp) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
   iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
   subst str. destruct st as [client0 k0 types bind pend pdel]. simpl in *.
   iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
@@ -904,7 +906,7 @@ Proof using Type*.
   iApply ("HΦ" $! (pool_of types') (locs_of types') rest).
   iFrame "Hsp".
   iSplitL.
-  { iExists (MkStoreState client0 k0 types' bind pend rest).
+  { rewrite own_store_runs_as_state. iExists (MkStoreState client0 k0 types' bind pend rest).
     iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
   iPureIntro. split.
   - exact (delete_types_update_rel_to_pool types types'

@@ -2153,6 +2153,7 @@ Lemma wp_store__splitNode_runs (s : loc) (str : store_state_runs)
 Proof using Type*.
   move=> Hp Hl Hr Hlk Hdiff.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
   iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
   subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
   rewrite /pool_of lookup_fmap in Hp.
@@ -2167,7 +2168,7 @@ Proof using Type*.
   iIntros (rloc) "(Hcells & %Hfresh)".
   iApply ("HΦ" $! rloc).
   iSplitL.
-  { iExists (MkStoreState client k0
+  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0
       (<[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> types)
       bind pend pdel).
     iEval (simpl) in "Hcells".
@@ -2203,6 +2204,7 @@ Lemma wp_store__splitAtAndGetLeft_runs (s : loc) (idv : yjs.id.t) (str : store_s
 Proof using Type*.
   move=> Hp Hr Hcov.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
   iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
   subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
   rewrite /pool_of lookup_fmap in Hp.
@@ -2236,7 +2238,7 @@ Proof using Type*.
                with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
   iApply ("HΦ" $! (ic_loc cw) (pool_of types') (locs_of types')).
   iSplitL.
-  { iExists (MkStoreState client k0 types' bind pend pdel).
+  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0 types' bind pend pdel).
     iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
   iPureIntro.
   have Hpc : ic_parent cw = parent
@@ -2270,6 +2272,7 @@ Lemma wp_store__splitAtAndGetRight_runs (s : loc) (idv : yjs.id.t) (str : store_
 Proof using Type*.
   move=> Hp Hr Hcov.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
   iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
   subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
   rewrite /pool_of lookup_fmap in Hp.
@@ -2303,7 +2306,7 @@ Proof using Type*.
                with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
   iApply ("HΦ" $! rl (pool_of types') (locs_of types')).
   iSplitL.
-  { iExists (MkStoreState client k0 types' bind pend pdel).
+  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0 types' bind pend pdel).
     iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
   iPureIntro.
   have Hpc : ic_parent cw = parent

@@ -2565,6 +2565,7 @@ Lemma wp_store__Integrate_runs (s parent parent_arg item_l : loc)
 Proof using Type*.
   move=> Hparg Hpl Hlocs Hready Hfitsin Hclbnd Hall Hres Hbelow.
   iIntros (Φ) "(#Hpkg & Hruns & Hfresh) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
   iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
   subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
   rewrite /pool_of lookup_fmap in Hpl.
@@ -2599,7 +2600,7 @@ Proof using Type*.
   destruct Hrl as (idx & Hat & Hlocs').
   iApply ("HΦ" $! (cell_run <$> cells') (ic_loc <$> cells') run).
   iSplitL.
-  { iExists (MkStoreState client k0 (<[parent := MkTypeState cells' arr']> types) bind pend pdel).
+  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0 (<[parent := MkTypeState cells' arr']> types) bind pend pdel).
     iFrame "Hcells". iPureIntro.
     rewrite /state_runs_of /= pool_of_insert locs_of_insert /type_model_of /=.
     reflexivity. }

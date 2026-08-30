@@ -186,6 +186,7 @@ Lemma wp_store__getOrCreateYType_runs (s : loc) (str : store_state_runs) (nm : g
       ⌜pool_lookup_or_create (sr_pool str) (sr_locs str) (sr_bind str) nm q p' locs' bind'⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
   iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
   subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
   wp_apply (wp_store__getOrCreateYType s (MkStoreState client k0 types bind pend pdel) nm
@@ -194,7 +195,7 @@ Proof using Type*.
   iEval (simpl) in "Hcells".
   iApply ("HΦ" $! q (pool_of types') (locs_of types') bind').
   iSplitL.
-  { iExists (MkStoreState client k0 types' bind' pend pdel).
+  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0 types' bind' pend pdel).
     iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
   iPureIntro.
   exact (registry_lookup_or_create_to_pool types types' bind bind' nm q Hstep).
@@ -640,6 +641,7 @@ Lemma wp_store__repair_runs (s item_l pname : loc)
 Proof using Type*.
   move=> Hcov Hpar.
   iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hruns) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
   iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
   subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
   iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
@@ -671,7 +673,7 @@ Proof using Type*.
   iApply ("HΦ" $! lft rgt (pool_of types2) (locs_of types2)).
   iFrame "Hlinked".
   iSplitL.
-  { iExists (MkStoreState client k0 types2 bind pend pdel).
+  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0 types2 bind pend pdel).
     iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
   iPureIntro. split.
   - exact (repair_types_update_rel_to_pool types types2

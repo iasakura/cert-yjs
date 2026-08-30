@@ -21,10 +21,13 @@
     - [type_model_of] / [pool_of] / [locs_of]: a type state and the pool at
       their run-granular models and address map; [store_state_runs] /
       [state_runs_of], the store state with the pool as [(sr_locs, sr_pool)]
-      (plan-item-run-split stage 2); [types_of_locs_pool], the cell-level
-      registry an address map and a run pool determine (round-tripping
-      under matching domains and counts, [pool_of_types_of_locs_pool] /
-      [locs_of_types_of_locs_pool]).
+      (plan-item-run-split stage 2); [locs_aligned], the pure alignment of
+      an address map with a run pool; [types_of_locs_pool] /
+      [state_of_runs], the cell-level registry and state a run-granular
+      state determines (round-tripping under alignment,
+      [pool_of_types_of_locs_pool] / [locs_of_types_of_locs_pool] /
+      [state_runs_of_of_runs] / [locs_aligned_of], the identity on a
+      parent-coherent registry, [types_of_locs_pool_of]).
     - what one integrate asks and does, at the cell level: [pool_clock_below]
       (the new item is its client's newest), [origins_linked] (the item's
       links are the cells its resolved origins designate), [integrate_splice]
@@ -550,6 +553,16 @@ Definition state_runs_of (st : store_state) : store_state_runs :=
   settable! MkStoreStateRuns
     <sr_client; sr_clock; sr_locs; sr_pool; sr_bind; sr_pending; sr_pending_deletes>.
 
+(** [locs_aligned locs p]: the pure alignment of an address map with a run
+    pool: same type domain, and per type as many addresses as runs. The pure
+    half of [store/heap.v]'s [locs_wf] (which adds the heap [NoDup]); what
+    the [types_of_locs_pool] round-trips run on, and the pure conjunct of
+    the primitive [own_store_runs]. *)
+Definition locs_aligned (locs : gmap loc (list loc)) (p : pool) : Prop :=
+  dom locs = dom p ∧
+  (∀ parent ls tm, locs !! parent = Some ls -> p !! parent = Some tm ->
+     length ls = length (tm_runs tm)).
+
 (** [types_of_locs_pool locs p]: the cell-level registry an address map and a
     run pool determine: each type's cells re-materialized as
     [cells_of_locs_runs] (the run-granular POOL elimination,
@@ -559,6 +572,16 @@ Definition types_of_locs_pool (locs : gmap loc (list loc)) (p : pool)
   map_imap (λ parent tm,
     Some (MkTypeState (cells_of_locs_runs parent (default [] (locs !! parent)) (tm_runs tm))
                       (tm_arr tm))) p.
+
+(** [state_of_runs str]: the cell-level state a run-granular state
+    determines: the registry re-materialized as [types_of_locs_pool], every
+    other field carried over. The section of [state_runs_of]
+    ([state_runs_of_of_runs]), and what the primitive [own_store_runs] holds
+    the store at. *)
+Definition state_of_runs (str : store_state_runs) : store_state :=
+  MkStoreState (sr_client str) (sr_clock str)
+    (types_of_locs_pool (sr_locs str) (sr_pool str))
+    (sr_bind str) (sr_pending str) (sr_pending_deletes str).
 
 
 Lemma all_runs_pool_of (types : gmap loc type_state) :
@@ -694,6 +717,52 @@ Proof.
   - have Hnd : parent ∉ dom p by apply not_elem_of_dom.
     rewrite -Hdom in Hnd.
     apply not_elem_of_dom in Hnd. rewrite Hnd //.
+Qed.
+
+(** The projections are always aligned; [state_runs_of] sections
+    [state_of_runs] on aligned states; and on a parent-coherent registry the
+    re-materialization is the identity. The three pure legs of the primitive
+    [own_store_runs]'s fold/unfold ([own_store_runs_as_state]). *)
+Lemma locs_aligned_of (types : gmap loc type_state) :
+  locs_aligned (locs_of types) (pool_of types).
+Proof.
+  split.
+  - rewrite /locs_of /pool_of !dom_fmap_L //.
+  - move=> parent ls tm.
+    rewrite /locs_of /pool_of !lookup_fmap.
+    destruct (types !! parent) as [ts|] eqn:Hts; simpl; [| done].
+    intros [= <-] [= <-]. rewrite !length_fmap //.
+Qed.
+
+Lemma state_runs_of_of_runs (str : store_state_runs) :
+  locs_aligned (sr_locs str) (sr_pool str) ->
+  state_runs_of (state_of_runs str) = str.
+Proof.
+  move=> [Hdom Hlens].
+  have Hprem : ∀ parent tm, sr_pool str !! parent = Some tm ->
+      ∃ ls, sr_locs str !! parent = Some ls ∧ length ls = length (tm_runs tm).
+  { move=> parent tm Hp.
+    have His : is_Some (sr_locs str !! parent).
+    { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
+    destruct His as [ls Hls]. exists ls.
+    split; [done | exact (Hlens parent ls tm Hls Hp)]. }
+  destruct str. rewrite /state_of_runs /state_runs_of /=.
+  f_equal.
+  - exact (locs_of_types_of_locs_pool _ _ Hdom Hprem).
+  - exact (pool_of_types_of_locs_pool _ _ Hprem).
+Qed.
+
+Lemma types_of_locs_pool_of (types : gmap loc type_state) :
+  (∀ q ts c, types !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
+  types_of_locs_pool (locs_of types) (pool_of types) = types.
+Proof.
+  move=> Hpar. apply map_eq => parent.
+  rewrite /types_of_locs_pool map_lookup_imap /pool_of /locs_of !lookup_fmap.
+  destruct (types !! parent) as [ts|] eqn:Hts; simpl; [| done].
+  rewrite /type_model_of /=.
+  rewrite cells_of_locs_runs_projections.
+  - destruct ts. done.
+  - move=> c Hc. exact (Hpar parent ts c Hts Hc).
 Qed.
 
 (** [client_run] projects onto [client_runs]: the [merge_sort cell_le] run
