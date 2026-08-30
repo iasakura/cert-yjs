@@ -488,8 +488,12 @@ Proof.
   rewrite (bool_decide_eq_false_2 (node_loc cells' (Z.of_nat q) = null) Hnn). simpl negb.
   rewrite decide_True; [| done].
   destruct (cells' !! q) as [cq|] eqn:Hcq; [| apply lookup_ge_None in Hcq; lia].
-  iDestruct (own_dll_update_gen cells' yt'.(yjs.yType.start') tl' q cq Hcq with "Hdll")
-    as (itemVal) "(%Hcloc & %Hcr & %Hcparfield & %Hflags & %Hrunwf & %Hcontq & Hcval & Hback)".
+  iDestruct (own_dll_update_gen_node cells' yt'.(yjs.yType.start') tl' q cq Hcq with "Hdll")
+    as (prevq nxtq) "(%Hcloc & %Hcrn & %Hrunwf & %Hclenq & %Hpcq & Hnode & Hback)".
+  iDestruct "Hnode" as (itemVal olidq oridq)
+    "(Hcval & Holq & Horq & %Hinlq & %Hinrq & %Hidq & %Hcontq & %Hcparfield & %Hprevq & %Hnextq & %Hflags)".
+  have Hcr : itemVal.(yjs.item.right') = node_loc cells' (Z.of_nat q + 1).
+  { rewrite Hnextq. exact Hcrn. }
   have Hcountq : is_countable_flag itemVal = true := flags_if_countable itemVal (ic_deleted cq) Hflags.
   have Hdelq : is_deleted_flag itemVal = ic_deleted cq := flags_if_deleted itemVal (ic_deleted cq) Hflags.
   iEval (rewrite -Hcloc) in "Hcur".
@@ -499,7 +503,13 @@ Proof.
   destruct (ic_deleted cq) eqn:Hdq.
   - (* already a tombstone: [Indexable] is false, walk past it unchanged *)
     simpl negb. wp_auto.
-    iDestruct ("Hback" $! itemVal true eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl Hflags with "Hcval") as "Hdll".
+    iAssert (own_item_node cq.(ic_loc) (DfracOwn 1) (input_of_run (cell_run cq)) true
+               (ic_parent cq) prevq nxtq) with "[Hcval Holq Horq]" as "Hnode".
+    { iExists itemVal, olidq, oridq. iFrame "Hcval Holq Horq".
+      iPureIntro. split_and!;
+        [exact Hinlq | exact Hinrq | exact Hidq | exact Hcontq | exact Hcparfield
+        | exact Hprevq | exact Hnextq | (by rewrite Hflags ?Hdq)]. }
+    iDestruct ("Hback" $! true with "Hnode") as "Hdll".
     have Hins0 : <[q := MkItemCell cq.(ic_loc) cq.(ic_run) true cq.(ic_parent)]> cells' = cells'.
     { rewrite -Hdq.
       have -> : MkItemCell cq.(ic_loc) cq.(ic_run) cq.(ic_deleted) cq.(ic_parent) = cq by destruct cq.
@@ -516,8 +526,9 @@ Proof.
   - (* visible node: spend the whole run, or split at the range end first *)
     simpl negb. wp_auto.
     have Hlenq : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (ic_run cq).
-    { have Hleq := f_equal length Hcontq.
-      rewrite length_fmap explode_length /toContent in Hleq. lia. }
+    { have Hstr : itemVal.(yjs.item.content').(yjs.content.content')
+                = in_content (input_of_run (cell_run cq)) := Hcontq.
+      rewrite Hstr. exact Hclenq. }
     wp_apply (wp_item__Len cq.(ic_loc) (DfracOwn 1) itemVal with "[$Hcval]"). iIntros "Hcval".
     rewrite Hlenq.
     wp_auto.
@@ -532,7 +543,14 @@ Proof.
          left half; both Len() reads below then return the truncated length,
          so the budget hits zero and the loop exits on its next test *)
       (* return the borrow unchanged, re-pack the store big-sep *)
-      iDestruct ("Hback" $! itemVal false eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl Hflags with "Hcval") as "Hdll".
+      iAssert (own_item_node cq.(ic_loc) (DfracOwn 1) (input_of_run (cell_run cq)) false
+                 (ic_parent cq) itemVal.(yjs.item.left') (node_loc cells' (Z.of_nat q + 1)))
+        with "[Hcval Holq Horq]" as "Hnode".
+      { iExists itemVal, olidq, oridq. iFrame "Hcval Holq Horq".
+        iPureIntro. split_and!;
+          [exact Hinlq | exact Hinrq | exact Hidq | exact Hcontq | exact Hcparfield
+          | reflexivity | exact Hnextq | (by rewrite Hflags ?Hdq)]. }
+      iDestruct ("Hback" $! false with "Hnode") as "Hdll".
       have Hins0 : <[q := MkItemCell cq.(ic_loc) cq.(ic_run) false cq.(ic_parent)]> cells' = cells'.
       { rewrite -Hdq.
         have -> : MkItemCell cq.(ic_loc) cq.(ic_run) cq.(ic_deleted) cq.(ic_parent) = cq by destruct cq.
@@ -619,15 +637,20 @@ Proof.
       set (leftCell := split_cell_left cq (uint.nat rem)).
       have Hcl2 : cells2 !! q = Some leftCell
         := split_cells_lookup_left cells' q (uint.nat rem) rloc cq Hcq.
-      iDestruct (own_dll_update_gen cells2 yt2.(yjs.yType.start') tl2 q leftCell Hcl2 with "Hdll")
-        as (iv2) "(%Hcloc2 & %Hcr2 & %Hcparfield2 & %Hflags2 & %Hrunwf2 & %Hcontq2 & Hcval & Hback)".
+      iDestruct (own_dll_update_gen_node cells2 yt2.(yjs.yType.start') tl2 q leftCell Hcl2 with "Hdll")
+        as (prev2 nxt2) "(%Hcloc2 & %Hcrn2 & %Hrunwf2 & %Hclen2 & %Hpc2 & Hnode & Hback)".
+      iDestruct "Hnode" as (iv2 olid2 orid2)
+        "(Hcval & Hol2 & Hor2 & %Hinl2 & %Hinr2 & %Hid2 & %Hcontq2 & %Hcparfield2 & %Hprev2 & %Hnext2 & %Hflags2)".
+      have Hcr2 : iv2.(yjs.item.right') = node_loc cells2 (Z.of_nat q + 1).
+      { rewrite Hnext2. exact Hcrn2. }
       have Hcllocq : ic_loc leftCell = ic_loc cq by rewrite /leftCell //.
       have Hcldel : ic_deleted leftCell = false by rewrite /leftCell /= Hdq //.
       have Hlenl : length (ic_run leftCell) = uint.nat rem.
       { rewrite /leftCell /= length_take. lia. }
       have Hlenl2 : length (iv2.(yjs.item.content').(yjs.content.content')) = uint.nat rem.
-      { have Hleq := f_equal length Hcontq2.
-        rewrite length_fmap explode_length /toContent in Hleq. rewrite -Hlenl. lia. }
+      { have Hstr : iv2.(yjs.item.content').(yjs.content.content')
+                  = in_content (input_of_run (cell_run leftCell)) := Hcontq2.
+        rewrite Hstr -Hlenl. exact Hclen2. }
       iEval (rewrite Hcllocq) in "Hcval".
       wp_auto.
       (* both Len() reads below return the TRUNCATED length [rem] *)
@@ -638,8 +661,15 @@ Proof.
       iEval (rewrite -Hcllocq) in "Hcval".
       have Hflagspin2 : iv2.(yjs.item.flags') = (if false then W8 6 else W8 2)
         by rewrite Hflags2 Hcldel //.
-      iDestruct ("Hback" $! (set_deleted iv2) true eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl
-                   eq_refl (set_deleted_flags iv2 false Hflagspin2) with "Hcval") as "Hdll".
+      iAssert (own_item_node leftCell.(ic_loc) (DfracOwn 1) (input_of_run (cell_run leftCell)) true
+                 (ic_parent leftCell) prev2 nxt2) with "[Hcval Hol2 Hor2]" as "Hnode".
+      { iExists (set_deleted iv2), olid2, orid2.
+        iEval (rewrite /set_deleted /=).
+        iFrame "Hcval Hol2 Hor2".
+        iPureIntro. split_and!;
+          [exact Hinl2 | exact Hinr2 | exact Hid2 | exact Hcontq2 | exact Hcparfield2
+          | exact Hprev2 | exact Hnext2 | (rewrite Hflagspin2; vm_compute; reflexivity)]. }
+      iDestruct ("Hback" $! true with "Hnode") as "Hdll".
       have Hflip2 : MkItemCell leftCell.(ic_loc) leftCell.(ic_run) true leftCell.(ic_parent) = flip_cell leftCell by reflexivity.
       rewrite Hflip2.
       wp_for_post.
@@ -743,8 +773,18 @@ Proof.
       rewrite Hlenq. wp_auto.
       wp_apply (wp_item__Len cq.(ic_loc) (DfracOwn 1) (set_deleted itemVal) with "[$Hcval]"). iIntros "Hcval".
       rewrite Hlenq. wp_auto.
-      iDestruct ("Hback" $! (set_deleted itemVal) true eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl
-                   eq_refl (set_deleted_flags itemVal false Hflags) with "Hcval") as "Hdll".
+      have Hflagspinq : itemVal.(yjs.item.flags') = (if false then W8 6 else W8 2)
+        by rewrite Hflags ?Hdq.
+      iAssert (own_item_node cq.(ic_loc) (DfracOwn 1) (input_of_run (cell_run cq)) true
+                 (ic_parent cq) itemVal.(yjs.item.left') (node_loc cells' (Z.of_nat q + 1)))
+        with "[Hcval Holq Horq]" as "Hnode".
+      { iExists (set_deleted itemVal), olidq, oridq.
+        iEval (rewrite /set_deleted /=).
+        iFrame "Hcval Holq Horq".
+        iPureIntro. split_and!;
+          [exact Hinlq | exact Hinrq | exact Hidq | exact Hcontq | exact Hcparfield
+          | reflexivity | exact Hnextq | (rewrite Hflagspinq; vm_compute; reflexivity)]. }
+      iDestruct ("Hback" $! true with "Hnode") as "Hdll".
       have Hflip : MkItemCell cq.(ic_loc) cq.(ic_run) true cq.(ic_parent) = flip_cell cq by reflexivity.
       rewrite Hflip.
       wp_for_post.
