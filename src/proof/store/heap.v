@@ -818,19 +818,36 @@ Proof using Type*.
   apply list_elem_of_lookup_1 in Hcts. destruct Hcts as [k Hk].
   iDestruct (big_sepM_lookup_acc _ _ p ts Hp with "Htypes") as "[(Hyt & %Hinvp) Hrest]".
   iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  iDestruct (own_dll_acc (DfracOwn 1) (ty_cells ts) yt.(yjs.yType.start') tl k c Hk with "Hdll") as "Hacc".
-  iNamed "Hacc".
+  iDestruct (own_dll_acc_node (DfracOwn 1) (ty_cells ts) yt.(yjs.yType.start') tl k c Hk with "Hdll")
+    as (prev' nxt') "(%Hcloc & %Hcl & %Hcrn & %Hrunwf & %Hclen & %Hpc & Hnode & Hback)".
+  iDestruct "Hnode" as (itemVal olid orid)
+    "(Hval & #Hol & #Hor & %Hinl & %Hinr & %Hidn & %Hcont & %Hparf & %Hprevf & %Hnextf & %Hflagsn)".
+  have Hid : item_id (run_head c) = toYjsId itemVal.(yjs.item.id').
+  { symmetry. exact Hidn. }
+  have Hcontent : content <$> ic_run c = explode (toContent itemVal.(yjs.item.content')).
+  { have Hstr : toContent itemVal.(yjs.item.content') = items_string (ic_run c) := Hcont.
+    rewrite Hstr. exact Hpc. }
+  have Holid : origin_id (origin (run_head c)) = toYjsId <$> olid.
+  { symmetry. exact Hinl. }
+  have Horid : origin_id (rightOrigin (run_head c)) = toYjsId <$> orid.
+  { symmetry. exact Hinr. }
   iExists itemVal, olid, orid.
   iSplitR; [iPureIntro; exact Hid |].
-  iSplitR; [iPureIntro; exact Hpar |].
+  iSplitR; [iPureIntro; exact Hparf |].
   iSplitR; [iPureIntro; exact Hcontent |].
   iSplitR; [iPureIntro; exact Holid |].
   iSplitR; [iPureIntro; exact Horid |].
-  iSplitR; [iPureIntro; exact Hflags |].
-  iSplitR; [iPureIntro; exact Hrun |].
-  iFrame "Hcval Hcol Hcor".
+  iSplitR; [iPureIntro; exact Hflagsn |].
+  iSplitR; [iPureIntro; exact Hrunwf |].
+  iFrame "Hval Hol Hor".
   iIntros "Hval".
-  iDestruct ("Hback" with "Hval") as "Hdll".
+  iAssert (own_item_node (ic_loc c) (DfracOwn 1) (input_of_run (cell_run c))
+             (ic_deleted c) (ic_parent c) prev' nxt') with "[Hval]" as "Hnode".
+  { iExists itemVal, olid, orid. iFrame "Hval Hol Hor".
+    iPureIntro. split_and!;
+      [exact Hinl | exact Hinr | exact Hidn | exact Hcont | exact Hparf
+      | exact Hprevf | exact Hnextf | exact Hflagsn]. }
+  iDestruct ("Hback" with "Hnode") as "Hdll".
   iApply "Hrest". iSplitL; [| iPureIntro; exact Hinvp].
   iExists yt, tl. iFrame "Hparent Hdll". iPureIntro.
   split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
