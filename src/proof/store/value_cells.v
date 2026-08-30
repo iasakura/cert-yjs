@@ -303,6 +303,21 @@ Definition doc_registry_coh (m : DocModel) (bind : gmap P loc)
     (types : gmap loc type_state) : Prop :=
   registry_coh bind types /\ registry_models m bind types.
 
+(** [pool_registry_coh bind p] / [pool_registry_models m bind p]: the
+    registry's coherence and its doc-model agreement, read at the run pool.
+    [registry_coh_pool] / [registry_models_pool] transport them along
+    [pool_of] as equivalences (the fmap preserves the domain). What C5
+    states the repair / applyUpdate specs over. *)
+Definition pool_registry_coh (bind : gmap P loc) (p : pool) : Prop :=
+  (∀ nm q, bind !! nm = Some q -> is_Some (p !! q)) /\
+  (∀ n1 n2 q, bind !! n1 = Some q -> bind !! n2 = Some q -> n1 = n2) /\
+  (∀ q, is_Some (p !! q) -> ∃ nm, bind !! nm = Some q).
+
+Definition pool_registry_models (m : DocModel) (bind : gmap P loc) (p : pool) : Prop :=
+  (∀ nm q tm, bind !! nm = Some q -> p !! q = Some tm ->
+     doc_model_get m (RootId nm) = tm_arr tm) /\
+  (∀ t, doc_model_get m t ≠ [] -> ∃ nm q, t = RootId nm /\ bind !! nm = Some q).
+
 (** [pool_invs types]: the invariants of the document cell pool that the model
     does not determine: every cell's clock range fits in [w64] ([cell_fits]),
     node locations are distinct, same-client cells occupy disjoint clock
@@ -1708,6 +1723,29 @@ Proof.
   { rewrite -Hcc /cell_client /run_head Hr //. }
   have Hb := Hbnd c' Hc' Hcc'.
   rewrite /cell_clock /run_head Hr. exact Hb.
+Qed.
+
+Lemma registry_coh_pool (bind : gmap P loc) (types : gmap loc type_state) :
+  registry_coh bind types <-> pool_registry_coh bind (pool_of types).
+Proof.
+  rewrite /registry_coh /pool_registry_coh /pool_of.
+  split; move=> [H1 [H2 H3]]; split_and!; try exact H2.
+  - move=> nm q Hq. rewrite lookup_fmap fmap_is_Some. exact (H1 nm q Hq).
+  - move=> q. rewrite lookup_fmap fmap_is_Some. exact (H3 q).
+  - move=> nm q Hq. have := H1 nm q Hq. rewrite lookup_fmap fmap_is_Some //.
+  - move=> q Hq. apply (H3 q). rewrite lookup_fmap fmap_is_Some //.
+Qed.
+
+Lemma registry_models_pool (m : DocModel) (bind : gmap P loc) (types : gmap loc type_state) :
+  registry_models m bind types <-> pool_registry_models m bind (pool_of types).
+Proof.
+  rewrite /registry_models /pool_registry_models /pool_of.
+  split; move=> [H1 H2]; split; try exact H2.
+  - move=> nm q tm Hq. rewrite lookup_fmap.
+    destruct (types !! q) as [ts|] eqn:Hts; last by [].
+    move=> /= [<-]. exact (H1 nm q ts Hq Hts).
+  - move=> nm q ts Hq Hts. have := H1 nm q (type_model_of ts) Hq.
+    rewrite lookup_fmap Hts /=. move=> H. exact (H eq_refl).
 Qed.
 
 End store_value_cells.
