@@ -80,7 +80,7 @@ Lemma types_cell_acc (types : gmap loc type_state) (p : loc) (ts : type_state)
   (own_type_pool (DfracOwn 1) types) -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head c) = toYjsId itemVal.(yjs.item.id')⌝ ∗
-    "%Hacccontent" ∷ ⌜content <$> ic_run c = explode (toContent itemVal.(yjs.item.content'))⌝ ∗
+    "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (ic_run c)⌝ ∗
     "Haccval" ∷ ic_loc c ↦ itemVal ∗
     "Haccback" ∷ (ic_loc c ↦ itemVal -∗
        (own_type_pool (DfracOwn 1) types)).
@@ -88,13 +88,27 @@ Proof.
   move=> Hp Hck. iIntros "Htypes".
   iDestruct (big_sepM_delete _ _ p _ Hp with "Htypes") as "[[Hpc %Harrinv] Hrest]".
   iDestruct "Hpc" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  iDestruct (own_dll_acc (DfracOwn 1) (ty_cells ts) _ tl k c Hck with "Hdll") as "H".
-  iNamed "H".
-  iExists itemVal. iFrame "Hcval".
-  iSplitR; first (iPureIntro; exact Hid).
-  iSplitR; first (iPureIntro; exact Hcontent).
+  iDestruct (own_dll_acc_node (DfracOwn 1) (ty_cells ts) _ tl k c Hck with "Hdll")
+    as (prev' nxt') "(%Hcloc & %Hcl & %Hcrn & %Hrunwf & %Hclen & %Hpc & Hnode & Hback)".
+  iDestruct "Hnode" as (itemVal olid orid)
+    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & %Hcont & %Hparf & %Hprevf & %Hnextf & %Hflags)".
+  have Haccid : item_id (run_head c) = toYjsId itemVal.(yjs.item.id').
+  { symmetry. exact Hid. }
+  have Haccle : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (ic_run c).
+  { have Hstr : itemVal.(yjs.item.content').(yjs.content.content')
+              = in_content (input_of_run (cell_run c)) := Hcont.
+    rewrite Hstr. exact Hclen. }
+  iExists itemVal. iFrame "Hval".
+  iSplitR; first (iPureIntro; exact Haccid).
+  iSplitR; first (iPureIntro; exact Haccle).
   iIntros "Hval".
-  iDestruct ("Hback" with "Hval") as "Hdll".
+  iAssert (own_item_node (ic_loc c) (DfracOwn 1) (input_of_run (cell_run c))
+             (ic_deleted c) (ic_parent c) prev' nxt') with "[Hval Hol Hor]" as "Hnode".
+  { iExists itemVal, olid, orid. iFrame "Hval Hol Hor".
+    iPureIntro. split_and!;
+      [exact Hinl | exact Hinr | exact Hid | exact Hcont | exact Hparf
+      | exact Hprevf | exact Hnextf | exact Hflags]. }
+  iDestruct ("Hback" with "Hnode") as "Hdll".
   iApply big_sepM_delete; first exact Hp.
   iFrame "Hrest". iSplitL; last (iPureIntro; exact Harrinv).
   iExists yt, tl. iFrame "Hparent Hdll". iPureIntro.
@@ -126,12 +140,14 @@ Proof using Type*.
   (* open the owning type and borrow its node [k] *)
   iDestruct (big_sepM_delete _ _ p _ Hp with "Htypes") as "[[Hpc %Harrinv] Hrest]".
   iDestruct "Hpc" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  iDestruct (own_dll_update_gen (ty_cells ts) _ tl k c Hck with "Hdll") as (itemVal) "H".
-  iDestruct "H" as "(%Hcloc & %Hcr & %Hcpar0 & %Hflags & %Hrun & %Hcontent & Hval & Hback)".
+  iDestruct (own_dll_update_gen_node (ty_cells ts) _ tl k c Hck with "Hdll")
+    as (prev' nxt') "(%Hcloc & %Hcrn & %Hrunwf & %Hclen & %Hpc & Hnode & Hback)".
+  iDestruct "Hnode" as (itemVal olid orid)
+    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & %Hcont & %Hcpar0 & %Hprevf & %Hnextf & %Hflags)".
   have Hcparc : ic_parent c = p := Hcpar c (list_elem_of_lookup_2 _ _ _ Hck).
   (* the heap node's own [parent] field is this type's loc, so the [len]
      update the Go performs through [it.parent] lands on [p] *)
-  rewrite Hcparc in Hcpar0.
+  have Hparp : itemVal.(yjs.item.parent') = p by rewrite Hcpar0 Hcparc.
   wp_auto.
   wp_apply (wp_item__Indexable (ic_loc c) (DfracOwn 1) itemVal
               (flags_if_countable itemVal (ic_deleted c) Hflags) with "[$Hval]").
@@ -140,8 +156,16 @@ Proof using Type*.
   destruct (ic_deleted c) eqn:Hd; simpl negb.
   - (* already tombstoned: nothing happens, and [flip_cell] is the identity *)
     wp_auto.
-    iDestruct ("Hback" $! itemVal true eq_refl eq_refl eq_refl eq_refl eq_refl eq_refl
-                 eq_refl Hflags with "Hval") as "Hdll".
+    iAssert (own_item_node (ic_loc c) (DfracOwn 1) (input_of_run (cell_run c)) true
+               (ic_parent c) prev' nxt') with "[Hval Hol Hor]" as "Hnode".
+    { iExists itemVal, olid, orid. iFrame "Hval Hol Hor".
+      iPureIntro. split_and!;
+        [exact Hinl | exact Hinr | exact Hid | exact Hcont | exact Hcpar0
+        | exact Hprevf | exact Hnextf | (by rewrite Hflags ?Hd)]. }
+    iDestruct ("Hback" $! true with "Hnode") as "Hdll".
+    have Hflip : MkItemCell (ic_loc c) (ic_run c) true (ic_parent c) = flip_cell c
+      by reflexivity.
+    rewrite Hflip.
     have Hins : <[k := flip_cell c]> (ty_cells ts) = ty_cells ts.
     { have -> : flip_cell c = c.
       { rewrite /flip_cell -Hd. by destruct c. }
@@ -158,19 +182,29 @@ Proof using Type*.
        [set_deleted itemVal] when [Len] is read (the content is untouched) *)
     (* the node's [parent] field is this type's loc, so the [len] load and
        store the Go performs through [it.parent] land on [Hparent] *)
-    rewrite Hcpar0. wp_auto.
+    rewrite Hparp. wp_auto.
     wp_apply (wp_item__Len (ic_loc c) (DfracOwn 1) (set_deleted itemVal) with "[$Hval]").
     iIntros "Hval".
     (* the [len] store resolves [it.parent] again, so re-point it at [p] *)
-    wp_auto. rewrite Hcpar0. wp_auto.
-    iDestruct ("Hback" $! (set_deleted itemVal) true eq_refl eq_refl eq_refl eq_refl
-                 eq_refl eq_refl Hcpar0 (set_deleted_flags itemVal false Hflags)
-                 with "Hval") as "Hdll".
+    wp_auto. rewrite Hparp. wp_auto.
+    have Hflagspin : itemVal.(yjs.item.flags') = (if false then W8 6 else W8 2)
+      by rewrite Hflags ?Hd.
+    iAssert (own_item_node (ic_loc c) (DfracOwn 1) (input_of_run (cell_run c)) true
+               (ic_parent c) prev' nxt') with "[Hval Hol Hor]" as "Hnode".
+    { iExists (set_deleted itemVal), olid, orid.
+      iEval (rewrite /set_deleted /=).
+      iFrame "Hval Hol Hor".
+      iPureIntro. split_and!;
+        [exact Hinl | exact Hinr | exact Hid | exact Hcont | exact Hcpar0
+        | exact Hprevf | exact Hnextf | (rewrite Hflagspin; vm_compute; reflexivity)]. }
+    iDestruct ("Hback" $! true with "Hnode") as "Hdll".
     have Hflip : MkItemCell (ic_loc c) (ic_run c) true (ic_parent c) = flip_cell c
       by reflexivity.
     rewrite Hflip.
     have Hrunlen : length (ic_run c) = length (itemVal.(yjs.item.content').(yjs.content.content')).
-    { by rewrite -(length_fmap content (ic_run c)) Hcontent /toContent explode_length. }
+    { have Hstr : itemVal.(yjs.item.content').(yjs.content.content')
+                = in_content (input_of_run (cell_run c)) := Hcont.
+      rewrite Hstr. symmetry. exact Hclen. }
     have Hnv : num_visible (<[k := flip_cell c]> (ty_cells ts))
              = (num_visible (ty_cells ts) - length (ic_run c))%nat
       := num_visible_flip_run (ty_cells ts) k c Hck Hd.
@@ -317,7 +351,7 @@ Proof using Type*.
   { rewrite /cell_clock Haccid /toYjsId /=. word. }
   have HivRlen : length (ivR.(yjs.item.content').(yjs.content.content'))
                = length (ic_run cR).
-  { by rewrite -(length_fmap content (ic_run cR)) Hacccontent /toContent explode_length. }
+  { exact Haccle. }
   wp_auto.
   (* The node starts exactly at [cur]. Kept at the [uint.Z] level on purpose:
      [wp_if_destruct]'s bare [subst] would consume a [cell_clock cR = cur]
