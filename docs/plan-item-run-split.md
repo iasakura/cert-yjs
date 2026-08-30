@@ -423,7 +423,7 @@ With the re-threading done, the coordinated cutover proceeds bottom-up in
 six compiling stages. Scaffolding (compat wrappers) is allowed DURING the
 cutover and dies in C6; nothing of it survives.
 
-- **C1, item layer** (landed 2026-08-30; the original wording had a flaw:
+- **C1, item layer** (LANDED 2026-08-30, full build green; the original wording had a flaw:
   a parentless wrapper cannot synthesize the run spine's parent).
   `own_dll` GAINS the parent parameter and is defined as
   `⌜∀ c ∈ cells, ic_parent c = parent⌝ ∗ own_dll_runs dq parent …
