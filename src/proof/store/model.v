@@ -46,7 +46,17 @@
     one split and one tombstoning ([pool_after_delete_refl] /
     [pool_after_delete_trans] / [pool_after_split_delete] /
     [pool_after_delete_flip]), and the tombstone record survives a step
-    that keeps dead chars dead ([ids_tombstoned_runs_dead_kept]). *)
+    that keeps dead chars dead ([ids_tombstoned_runs_dead_kept]);
+    membership in [all_runs] is membership in some type
+    ([elem_of_all_runs]). The apply path's step records at run
+    granularity: [runs_within_or_from] (every new run sits inside an old
+    one or inside an integrated input's range; reflexive and composing
+    across appended inputs, [runs_within_or_from_refl] / [_trans]),
+    [runs_apply_live_refine] (live chars are old live chars or chars the
+    model did not have; reflexive, transitive against a growing model,
+    and following from one integrate step under the replay's client bound,
+    [runs_apply_live_refine_refl] / [_trans] / [_of_integrate]) and
+    [runs_integrate_live_refine] (what one integrate step reports). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -224,6 +234,22 @@ Lemma elem_of_all_runs_lookup (p : pool) (parent : loc) (tm : type_model) (r : I
   r ∈ all_runs p <-> r ∈ tm_runs tm ∨ r ∈ all_runs (delete parent p).
 Proof.
   move=> Hp. rewrite (all_runs_lookup p parent tm Hp) elem_of_app //.
+Qed.
+
+(** Membership in [all_runs]: a run of some registered type (the run form
+    of [all_cells_elem_of]). *)
+Lemma elem_of_all_runs (p : pool) (r : ItemRun) :
+  r ∈ all_runs p <-> ∃ q tm, p !! q = Some tm ∧ r ∈ tm_runs tm.
+Proof.
+  rewrite /all_runs list_elem_of_concat. split.
+  - move=> [runs [Hr Hruns]].
+    apply list_elem_of_fmap in Hruns as (tm & -> & Htm).
+    apply list_elem_of_fmap in Htm as ([q tm'] & -> & Hq). simpl in *.
+    apply elem_of_map_to_list in Hq. eauto.
+  - move=> [q [tm [Hq Hr]]]. exists (tm_runs tm). split; first exact Hr.
+    apply list_elem_of_fmap. exists tm. split; first done.
+    apply list_elem_of_fmap. exists (q, tm). split; first done.
+    by apply elem_of_map_to_list.
 Qed.
 
 (** [run_pool_invs] survives one node split: the pure half of the
@@ -492,6 +518,102 @@ Proof.
   destruct (Hkept r Hr Hd y Hy) as (r' & Hr' & Hd' & Hy').
   exists r'. split_and!; [exact Hr' | exact Hd' |].
   rewrite /char_ids elem_of_list_to_set. apply list_elem_of_fmap. eauto.
+Qed.
+
+(** The apply path's step records at run granularity (the loc-free
+    [cells_within_or_from] / [apply_live_refine] / [integrate_live_refine]
+    of [store/value_cells] and [store/value_live]).
+
+    [runs_within_or_from inputs before after]: every run of [after] sits
+    inside a run of [before] or inside the clock range of one of the
+    integrated [inputs]. [runs_apply_live_refine m before after]: every char
+    of a live run of [after] sat in a live run of [before] or is an id the
+    model [m] did not have (a char this apply integrated).
+    [runs_integrate_live_refine input before after]: the same with "is one
+    of [input]'s own chars" as the escape, what one integrate step reports.
+    Used as: the loop invariant and the postcondition of
+    [wp_store__applyUpdate_unlocked] and the postcondition of
+    [wp_store__integrateDecoded_runs]. *)
+Definition runs_within_or_from (inputs : list (TId * IntegrateInput (A := A)))
+    (before after : list ItemRun) : Prop :=
+  ∀ r, r ∈ after ->
+    (∃ r0, r0 ∈ before ∧ run_client r = run_client r0 ∧
+       (run_clock r0 <= run_clock r)%nat ∧
+       (run_clock r + length (run_items r) <= run_clock r0 + length (run_items r0))%nat) ∨
+    (∃ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ∧
+       run_client r = clientId (in_id typedInput.2) ∧
+       (clock (in_id typedInput.2) <= run_clock r)%nat ∧
+       (run_clock r + length (run_items r) <=
+        clock (in_id typedInput.2) + length (in_content typedInput.2))%nat).
+
+Definition runs_apply_live_refine (m : DocModel) (before after : list ItemRun) : Prop :=
+  ∀ r', r' ∈ after -> run_deleted r' = false -> ∀ y, y ∈ run_items r' ->
+    (∃ r, r ∈ before ∧ run_deleted r = false ∧ y ∈ run_items r)
+    ∨ doc_model_has m (item_id y) = false.
+
+Definition runs_integrate_live_refine (input : IntegrateInput (A := A))
+    (before after : list ItemRun) : Prop :=
+  ∀ r', r' ∈ after -> run_deleted r' = false -> ∀ y, y ∈ run_items r' ->
+    (∃ r, r ∈ before ∧ run_deleted r = false ∧ y ∈ run_items r)
+    ∨ (clientId (item_id y) = clientId (in_id input) ∧
+       (clock (in_id input) <= clock (item_id y))%nat).
+
+(** [runs_within_or_from] is reflexive and composes across a step whose
+    inputs are appended; [runs_apply_live_refine] is reflexive, transitive
+    against a growing model, and follows from one integrate step under the
+    replay's client bound. *)
+Lemma runs_within_or_from_refl (inputs : list (TId * IntegrateInput (A := A)))
+    (runs : list ItemRun) :
+  runs_within_or_from inputs runs runs.
+Proof.
+  move=> r Hr. left. exists r. split_and!; [exact Hr | reflexivity | lia | lia].
+Qed.
+
+Lemma runs_within_or_from_trans (inputs1 inputs2 : list (TId * IntegrateInput (A := A)))
+    (r1 r2 r3 : list ItemRun) :
+  runs_within_or_from inputs1 r1 r2 ->
+  runs_within_or_from inputs2 r2 r3 ->
+  runs_within_or_from (inputs1 ++ inputs2) r1 r3.
+Proof.
+  move=> H12 H23 r Hr.
+  destruct (H23 r Hr) as [(rb & Hrb & Hcl & Hlo & Hhi) | (ti & Hti & Hcl & Hlo & Hhi)].
+  - destruct (H12 rb Hrb) as [(ra & Hra & Hcl' & Hlo' & Hhi') | (ti & Hti & Hcl' & Hlo' & Hhi')].
+    + left. exists ra. split_and!; [exact Hra | congruence | lia | lia].
+    + right. exists ti. split_and!; [apply elem_of_app; by left | congruence | lia | lia].
+  - right. exists ti. split_and!; [apply elem_of_app; by right | exact Hcl | exact Hlo | exact Hhi].
+Qed.
+
+Lemma runs_apply_live_refine_refl (m : DocModel) (runs : list ItemRun) :
+  runs_apply_live_refine m runs runs.
+Proof. move=> r' Hr' Hlive y Hy. left. by exists r'. Qed.
+
+Lemma runs_apply_live_refine_trans (m m1 : DocModel) (r0 r1 r2 : list ItemRun) :
+  (∀ i, doc_model_has m i = true -> doc_model_has m1 i = true) ->
+  runs_apply_live_refine m r0 r1 ->
+  runs_apply_live_refine m1 r1 r2 ->
+  runs_apply_live_refine m r0 r2.
+Proof.
+  move=> Hmono H01 H12 r Hr Hlive y Hy.
+  destruct (H12 r Hr Hlive y Hy) as [(r' & Hr' & Hlive' & Hy') | Hfresh].
+  - exact (H01 r' Hr' Hlive' y Hy').
+  - right. destruct (doc_model_has m (item_id y)) eqn:Hm; last done.
+    rewrite (Hmono _ Hm) in Hfresh. discriminate.
+Qed.
+
+Lemma runs_apply_live_refine_of_integrate (input : IntegrateInput (A := A))
+    (mc : DocModel) (before after : list ItemRun) :
+  (∀ (t' : TId) x, x ∈ doc_model_get mc t' ->
+     clientId (item_id x) = clientId (in_id input) ->
+     (clock (item_id x) < clock (in_id input))%nat) ->
+  runs_integrate_live_refine input before after ->
+  runs_apply_live_refine mc before after.
+Proof.
+  move=> Hbound Hilr r Hr Hlive y Hy.
+  destruct (Hilr r Hr Hlive y Hy) as [Hold | [Hcl Hclk]]; [by left | right].
+  destruct (doc_model_has mc (item_id y)) eqn:Hm; last done.
+  exfalso. apply docm_has_spec in Hm as (t' & x & Hx & Hid).
+  have Hcx : clientId (item_id x) = clientId (in_id input) by rewrite Hid.
+  have := Hbound t' x Hx Hcx. rewrite Hid. lia.
 Qed.
 
 (** [pool_run_clock_below p id]: every run of [id]'s client in the pool ends

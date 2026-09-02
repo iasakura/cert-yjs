@@ -19,7 +19,8 @@
       str], the store at a [store_state_runs] (the cell-level state
       existential), which the stage-2 [_runs] specs are stated over, and
       what it reads back at run granularity ([own_store_runs_run_pool_invs]
-      / [own_store_runs_run_wf]).
+      / [own_store_runs_run_wf] / [own_store_runs_arr], the last also on
+      the pool, [own_type_pool_runs_arr]).
     - [own_store_struct s st]: THE store at its cell-level state, the fields
       with the invariants every method preserves ([store_invs]). Every
       store-internal method is specified over it, whole; [own_store] is the
@@ -1307,6 +1308,37 @@ Proof.
   rewrite -(pool_of_types_of_locs_pool _ _ Hprem) all_runs_pool_of in Hr.
   apply list_elem_of_fmap in Hr as (c & -> & Hc).
   exact (Hwf c Hc).
+Qed.
+
+(** Every registered type's document is the flatten of its runs: the yType
+    pin, read off the run-granular pool and off the store. *)
+Lemma own_type_pool_runs_arr (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) :
+  own_type_pool_runs dq locs p -∗
+  ⌜∀ parent tm, p !! parent = Some tm -> tm_arr tm = runs_flatten (tm_runs tm)⌝.
+Proof.
+  iIntros "(%Hlocswf & Hpool)".
+  iAssert ([∗ map] parent ↦ tm ∈ p, ⌜tm_arr tm = runs_flatten (tm_runs tm)⌝)%I
+    with "[Hpool]" as "H".
+  { iApply (big_sepM_impl with "Hpool").
+    iIntros "!#" (parent tm Hp) "H".
+    iDestruct "H" as (ls) "(_ & Hyt & _)".
+    iDestruct "Hyt" as (yt tl) "(_ & _ & _ & %Harr)". by iPureIntro. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> parent tm Hp. exact (Hall parent tm Hp).
+Qed.
+
+Lemma own_store_runs_arr (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗
+  ⌜∀ parent tm, sr_pool str !! parent = Some tm -> tm_arr tm = runs_flatten (tm_runs tm)⌝.
+Proof.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
+  iDestruct (own_type_pool_runs_of _ (proj1 (proj2 (proj1 Hinvs))) with "Htypes") as "Htypes".
+  have Hprem := locs_aligned_lens _ _ Haligned.
+  rewrite /state_of_runs /= (pool_of_types_of_locs_pool _ _ Hprem).
+  iDestruct (own_type_pool_runs_arr with "Htypes") as %Harr.
+  by iPureIntro.
 Qed.
 
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=

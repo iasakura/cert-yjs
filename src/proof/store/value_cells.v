@@ -31,7 +31,9 @@
       across one registry slot, [types_of_locs_pool_insert]; alignment
       surviving a same-length type update,
       [locs_aligned_insert_same_len], and giving each type a same-length
-      address list, [locs_aligned_lens]).
+      address list, [locs_aligned_lens]); [cells_within_or_from] projects
+      onto [runs_within_or_from] under the id no-wrap bounds
+      ([cells_within_or_from_to_runs]).
     - what one integrate asks and does, at the cell level: [pool_clock_below]
       (the new item is its client's newest), [origins_linked] (the item's
       links are the cells its resolved origins designate), [integrate_splice]
@@ -777,6 +779,54 @@ Proof.
   have His : is_Some (locs !! parent).
   { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
   destruct His as [ls Hls]. exists ls. split; [done | exact (Hlens parent ls tm Hls Hp)].
+Qed.
+
+(** [cells_within_or_from] projects onto [runs_within_or_from] under the
+    id no-wrap bounds of the cells and of the inputs. *)
+Lemma cells_within_or_from_to_runs (inputs : list (TId * IntegrateInput (A := A)))
+    (before after : list item_cell) :
+  (∀ c, c ∈ before -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ before -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ after -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ after -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
+     (Z.of_nat (clientId (in_id typedInput.2)) < 2^64)%Z ∧
+     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
+  cells_within_or_from inputs before after ->
+  runs_within_or_from inputs (cell_run <$> before) (cell_run <$> after).
+Proof.
+  move=> Hckb Hclb Hcka Hcla Hinb H r Hr.
+  apply list_elem_of_fmap in Hr as (c & -> & Hc).
+  have Hzc : uint.Z (cell_clock c) = Z.of_nat (run_clock (cell_run c)).
+  { have := Hcka c Hc. rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  have Hzcl : uint.Z (cell_client c) = Z.of_nat (run_client (cell_run c)).
+  { have := Hcla c Hc. rewrite /cell_client /run_client /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  destruct (H c Hc) as [(c0 & Hc0 & Hcl & Hlo & Hhi) | (ti & Hti & Hcl & Hlo & Hhi)].
+  - left. exists (cell_run c0).
+    have Hzc0 : uint.Z (cell_clock c0) = Z.of_nat (run_clock (cell_run c0)).
+    { have := Hckb c0 Hc0. rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+      move=> Hb. word. }
+    have Hzcl0 : uint.Z (cell_client c0) = Z.of_nat (run_client (cell_run c0)).
+    { have := Hclb c0 Hc0. rewrite /cell_client /run_client /run_head_item /run_head /cell_run /=.
+      move=> Hb. word. }
+    split_and!.
+    + apply list_elem_of_fmap. eauto.
+    + have Hz : uint.Z (cell_client c) = uint.Z (cell_client c0) by rewrite Hcl.
+      rewrite Hzcl Hzcl0 in Hz. lia.
+    + rewrite Hzc Hzc0 in Hlo. lia.
+    + move: Hhi. rewrite Hzc Hzc0 /cell_run /=. lia.
+  - right. exists ti.
+    have [Hib Hkb] := Hinb ti Hti.
+    have Hzk : uint.Z (W64 (clock (in_id ti.2))) = Z.of_nat (clock (in_id ti.2)).
+    { have Hlp : (0 <= Z.of_nat (length (in_content ti.2)))%Z by lia. clear -Hkb Hlp. word. }
+    split_and!.
+    + exact Hti.
+    + have Hz : uint.Z (cell_client c) = uint.Z (W64 (clientId (in_id ti.2))) by rewrite Hcl.
+      rewrite Hzcl in Hz. move: Hz Hib. word.
+    + rewrite Hzc Hzk in Hlo. lia.
+    + move: Hhi. rewrite Hzc Hzk /cell_run /=. lia.
 Qed.
 
 Lemma state_runs_of_of_runs (str : store_state_runs) :

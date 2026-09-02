@@ -50,7 +50,8 @@
       [runs_disjoint] is permutation-invariant ([runs_disjoint_perm]).
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
-      app-morphic ([runs_flatten_app]).
+      app-morphic ([runs_flatten_app]) and a run's [off]-th char sits at
+      its prefix sum plus [off] ([runs_flatten_lookup_of_run]).
 
     The deep run-integration theory is [item/run_theory.v]; the heap node that
     carries a run is [item/value.v]. *)
@@ -639,6 +640,26 @@ Proof.
   rewrite Hins runs_flatten_app runs_flatten_cons /flip_run /=.
   rewrite -[in X in _ = X](take_drop_middle runs k r Hk).
   rewrite runs_flatten_app runs_flatten_cons //.
+Qed.
+
+(** A run's [off]-th char sits in the flatten at that run's prefix sum plus
+    [off] (the run form of [item/value]'s [run_flatten_lookup_of_cell]). *)
+Lemma runs_flatten_lookup_of_run (runs : list ItemRun) (k off : nat)
+    (r : ItemRun) (it : YjsItem A) :
+  runs !! k = Some r -> run_items r !! off = Some it ->
+  runs_flatten runs !! (length (runs_flatten (take k runs)) + off)%nat = Some it.
+Proof.
+  move=> Hk Hoff.
+  have Hsplit := take_drop_middle runs k r Hk.
+  have Hdec : runs_flatten runs
+            = runs_flatten (take k runs) ++ run_items r ++ runs_flatten (drop (S k) runs).
+  { transitivity (runs_flatten (take k runs ++ r :: drop (S k) runs)).
+    - by rewrite Hsplit.
+    - by rewrite runs_flatten_app runs_flatten_cons. }
+  rewrite Hdec lookup_app_r; last lia.
+  replace (length (runs_flatten (take k runs)) + off -
+           length (runs_flatten (take k runs)))%nat with off by lia.
+  rewrite lookup_app_l; [exact Hoff | by apply lookup_lt_Some in Hoff].
 Qed.
 
 Lemma split_runs_visible (runs : list ItemRun) (k o : nat) (r : ItemRun) :

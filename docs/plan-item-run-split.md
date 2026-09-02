@@ -491,8 +491,11 @@ vocabulary substitution table written; then C5 restates the specs at
   (repair 7, splitNode 5, deleteRange 2, applyUpdate 1, Integrate 1)
   are where the state-update spelling changes by hand.
   PROGRESS 2026-09-02: `ytype/findPos`, `ytype/Text`, `ytype/newYType`,
-  `deleteRange` / `applyDeleteSpans` (and `deleteNode`) are proved
-  directly at `(locs, pool)`; the cell-level `applyDeleteSpans` is now
+  `deleteRange` / `applyDeleteSpans` (and `deleteNode`) and the
+  `applyUpdate` drain core (`wp_store__applyUpdate_unlocked`, over
+  `own_store_runs`, stepping by `runs_within_or_from` /
+  `runs_apply_live_refine`; its `own_store` wrapper lifts and lowers) are
+  proved directly at `(locs, pool)`; the cell-level `applyDeleteSpans` is now
   DERIVED from the run-granular proof (for the `own_store` wrapper), the
   reverse of the original derivation. The store-level recipe: open
   `own_store_runs`, lift the pool (`own_type_pool_runs_of`), run the

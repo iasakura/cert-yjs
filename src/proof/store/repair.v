@@ -3,7 +3,11 @@
     [wp_store__getOrCreateYType_runs] / [wp_store__repair_runs] (over
     [own_store_runs], stepping the registry by [pool_lookup_or_create] and
     the pool by [pool_after_repair]), [integrateDecoded],
-    [depsArrived], the [wire_*] drain machinery and the [own_store]-level
+    [depsArrived] and [hasNode] (each with its run-granular derived form,
+    [wp_store__integrateDecoded_runs] / [wp_store__depsArrived_runs] /
+    [wp_store__hasNode_runs], read against [pool_registry_models]; the
+    first reports [runs_within_or_from] and [runs_integrate_live_refine]),
+    the [wire_*] drain machinery and the [own_store]-level
     certificate specs. Split out of [store/GetNode]; Requires the
     [store/splitNode] pool lemmas. Same boilerplate / [#[local]]
     instances. *)
@@ -921,6 +925,30 @@ Proof using Type*.
     exact (Hres c (conj Hc Hcov)).
 Qed.
 
+(** [store.hasNode] at run granularity: whether the id is a char of the
+    document, read against [pool_registry_models]. Derived from
+    [wp_store__hasNode] through [registry_models_pool]. *)
+Lemma wp_store__hasNode_runs (s : loc) (idv : yjs.id.t) (m : DocModel) (str : store_state_runs) :
+  pool_registry_models m (sr_bind str) (sr_pool str) ->
+  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+    s @! (go.PointerType yjs.store) @! "hasNode" #idv
+  {{{ (ok : bool), RET #ok;
+      own_store_runs s str ∗
+      ⌜ok = true <-> doc_model_has m (toYjsId idv) = true⌝ }}}.
+Proof using Type*.
+  move=> Hreg.
+  iIntros (Φ) "(#Hpkg & Hruns) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
+  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
+  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
+  wp_apply (wp_store__hasNode s idv m (MkStoreState client k0 types bind pend pdel)
+              (proj2 (registry_models_pool m bind types) Hreg) with "[$Hpkg $Hcells]").
+  iIntros (ok) "(Hcells & %Hok)".
+  iApply ("HΦ" $! ok). iSplitL; last by iPureIntro.
+  rewrite own_store_runs_as_state. iExists (MkStoreState client k0 types bind pend pdel).
+  iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=.
+Qed.
+
 (** [store.splitAtAndGetLeft] / [store.splitAtAndGetRight], unit fast path
     (issue #28 M2): with every run 1-char (the M1 all-singleton invariant) the
     found node already ends (resp. starts) at the requested id — the offset is
@@ -1193,6 +1221,29 @@ Proof using Type*.
       move=> k' Hk'. exfalso. rewrite Hck in Hk'. word. }
     iEval (rewrite Hready) in "HΦ".
     iApply ("HΦ" with "[$Hcells]").
+Qed.
+
+(** [store.depsArrived] at run granularity: the structural readiness gate,
+    read against [pool_registry_models]. Derived from
+    [wp_store__depsArrived] through [registry_models_pool]. *)
+Lemma wp_store__depsArrived_runs (s : loc) (updateItemVal : yjs.updateItem.t)
+    (typedInput : TId * IntegrateInput (A := A)) (m : DocModel) (str : store_state_runs) :
+  pool_registry_models m (sr_bind str) (sr_pool str) ->
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_runs s str }}}
+    s @! (go.PointerType yjs.store) @! "depsArrived" #updateItemVal
+  {{{ RET #(input_ready m typedInput.2); own_store_runs s str }}}.
+Proof using Type*.
+  move=> Hreg.
+  iIntros (Φ) "(#Hpkg & #Hui & Hruns) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
+  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
+  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
+  wp_apply (wp_store__depsArrived s updateItemVal typedInput m (MkStoreState client k0 types bind pend pdel)
+              (proj2 (registry_models_pool m bind types) Hreg) with "[$Hpkg $Hui $Hcells]").
+  iIntros "Hcells".
+  iApply "HΦ".
+  rewrite own_store_runs_as_state. iExists (MkStoreState client k0 types bind pend pdel).
+  iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=.
 Qed.
 
 (* ----- the ready step: one decoded struct, repaired and integrated ----- *)
@@ -2015,6 +2066,82 @@ Proof using Type*.
                 with "[$Hui $Hcells]").
     iIntros (types' bind') "Hpost".
     iApply ("HΦ" $! types' bind' with "Hpost").
+Qed.
+
+(** [store.integrateDecoded] at run granularity: the registry steps by
+    [pool_registry_models] at the grown model, every new run sits inside an
+    old one or inside the integrated item's range
+    ([runs_within_or_from]), and the live chars refine up to the item's own
+    ([runs_integrate_live_refine]). Derived from [wp_store__integrateDecoded]
+    through the projections and the transports of [store/value_cells] /
+    [store/value_live]. *)
+Lemma wp_store__integrateDecoded_runs (s : loc)
+    (updateItemVal : yjs.updateItem.t) (typedInput : TId * IntegrateInput (A := A))
+    (m : DocModel) (str : store_state_runs)
+    (newItem : YjsItem A) (arr2 : list (YjsItem A)) (nm : P) :
+  typedInput.1 = RootId nm ->
+  toItem typedInput.2 (doc_model_get m typedInput.1) = Some newItem ->
+  IsItemValid newItem ->
+  maximalId newItem (doc_model_get m typedInput.1) ->
+  integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) (doc_model_get m typedInput.1) = Some arr2 ->
+  pool_run_clock_below (sr_pool str) (in_id typedInput.2) ->
+  pool_registry_models m (sr_bind str) (sr_pool str) ->
+  input_fits typedInput.2 ->
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_runs s str }}}
+    s @! (go.PointerType yjs.store) @! "integrateDecoded" #updateItemVal
+  {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #();
+      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |> <| sr_bind := bind' |>) ∗
+      ⌜sr_bind str ⊆ bind'⌝ ∗
+      ⌜pool_registry_models (<[typedInput.1 := arr2]> m) bind' p'⌝ ∗
+      ⌜runs_within_or_from [typedInput] (all_runs (sr_pool str)) (all_runs p')⌝ ∗
+      ⌜runs_integrate_live_refine typedInput.2 (all_runs (sr_pool str)) (all_runs p')⌝ }}}.
+Proof using Type*.
+  move=> Htj Htoit Hvld Hmax Hall Hbelow Hreg Hfits.
+  iIntros (Φ) "(#Hpkg & #Hui & Hruns) HΦ".
+  iEval (rewrite own_store_runs_as_state) in "Hruns".
+  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
+  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
+  (* the item's client fits a machine word: its id came off the heap *)
+  iAssert (⌜toYjsId updateItemVal.(yjs.updateItem.id') = in_id typedInput.2⌝)%I with "[]" as %Hin_id.
+  { iDestruct "Hui" as (oleft oright opn) "(_ & _ & _ & _ & _ & %H & _)". by iPureIntro. }
+  have Hidcl : (Z.of_nat (clientId (in_id typedInput.2)) < 2^64)%Z.
+  { rewrite -Hin_id /toYjsId /=. word. }
+  have Hidck : (Z.of_nat (clock (in_id typedInput.2)) < 2^64)%Z.
+  { move: Hfits. rewrite /input_fits. lia. }
+  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
+  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbndb.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfb.
+  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types bind pend pdel) Hinvs0
+               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  have Hbelowc : pool_clock_below types (in_id typedInput.2)
+    := pool_run_clock_below_to_cell types _
+         (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
+         (λ c Hc, proj1 (Hwfb c Hc)) Hidcl Hidck Hbelow.
+  wp_apply (wp_store__integrateDecoded s updateItemVal typedInput m
+              (MkStoreState client k0 types bind pend pdel) newItem arr2 nm
+              Htj Htoit Hvld Hmax Hall Hbelowc (proj2 (registry_models_pool m bind types) Hreg) Hfits
+              with "[$Hpkg $Hui $Hcells]").
+  iIntros (types' bind') "(Hcells & %Hbindsub & %Hregmodel' & %Hprov & %Hilr)".
+  iEval (simpl) in "Hcells".
+  iDestruct "Hcells" as "(Hfields1 & %Hinvs1)".
+  iDestruct "Hfields1" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnda.
+  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types' bind' pend pdel) Hinvs1
+               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  iApply ("HΦ" $! (pool_of types') (locs_of types') bind').
+  iSplitL.
+  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0 types' bind' pend pdel).
+    iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
+  iPureIntro. split_and!.
+  - exact Hbindsub.
+  - exact (proj1 (registry_models_pool _ bind' types') Hregmodel').
+  - rewrite !all_runs_pool_of.
+    apply (cells_within_or_from_to_runs [typedInput] (all_cells types) (all_cells types')
+             (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
+             (λ c Hc, proj2 (Hbnda c Hc)) (λ c Hc, proj1 (Hbnda c Hc))); last exact Hprov.
+    move=> ti Hti. apply list_elem_of_singleton in Hti. subst ti. split; [exact Hidcl | exact Hfits].
+  - rewrite !all_runs_pool_of. exact (integrate_live_refine_to_runs _ _ _ Hilr).
 Qed.
 
 Lemma wire_pass_kept_le (pending : list (TId * IntegrateInput (A := A))) :
