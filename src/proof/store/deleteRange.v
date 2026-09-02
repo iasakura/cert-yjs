@@ -231,6 +231,107 @@ Proof using Type*.
         exact (Hcpar c0 (list_elem_of_lookup_2 _ _ _ Hi0)).
 Qed.
 
+(** [deleteNode] at run granularity (the cutover's form of the lemma above):
+    the pool at [(locs, p)], the node named by its type's address list and
+    the run it holds; the post flips that run's bit ([flip_run]) and leaves
+    everything else, the address map included. The Deleted branch is the
+    identity on the nose. *)
+#[local] Lemma wp_deleteNode_runs (locs : gmap loc (list loc)) (p : pool)
+    (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
+  locs !! parent = Some ls ->
+  p !! parent = Some tm ->
+  ls !! k = Some lc ->
+  tm_runs tm !! k = Some r ->
+  {{{ is_pkg_init yjs ∗ own_type_pool_runs (DfracOwn 1) locs p }}}
+    @! yjs.deleteNode #lc
+  {{{ RET #(); own_type_pool_runs (DfracOwn 1) locs
+        (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p) }}}.
+Proof using Type*.
+  move=> Hlp Hpp Hlk Hrk.
+  destruct tm as [runs arr]. simpl in *.
+  wp_start as "Hpool".
+  iDestruct "Hpool" as "(%Hlocswf & Hpool)".
+  iDestruct (big_sepM_delete _ _ parent _ Hpp with "Hpool") as "[Hpc Hrest]".
+  iDestruct "Hpc" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
+  rewrite Hlp in Hls0. injection Hls0 as <-.
+  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Harr)". simpl in Hlen, Harr.
+  iDestruct (own_dll_runs_update parent yt.(yjs.yType.start') tl null null ls runs k lc r Hlk Hrk with "Hdll")
+    as (prev' nxt') "(%Hrun & %Hpc & %Hclen & Hnode & Hback)".
+  iDestruct "Hnode" as (itemVal olid orid)
+    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & %Hcont & %Hpar & %Hprevf & %Hnextf & %Hflags)".
+  wp_auto.
+  wp_apply (wp_item__Indexable lc (DfracOwn 1) itemVal
+              (flags_if_countable itemVal (run_deleted r) Hflags) with "[$Hval]").
+  iIntros "Hval".
+  rewrite (flags_if_deleted itemVal (run_deleted r) Hflags).
+  destruct (run_deleted r) eqn:Hd; simpl negb.
+  - (* already tombstoned: nothing happens, and the flip is the identity *)
+    wp_auto.
+    iAssert (own_item_node lc (DfracOwn 1) (input_of_run r) true parent prev' nxt')
+      with "[Hval Hol Hor]" as "Hnode".
+    { iExists itemVal, olid, orid. iFrame "Hval Hol Hor".
+      iPureIntro. split_and!;
+        [exact Hinl | exact Hinr | exact Hid | exact Hcont | exact Hpar
+        | exact Hprevf | exact Hnextf | (by rewrite Hflags ?Hd)]. }
+    iDestruct ("Hback" $! true with "Hnode") as "Hdll".
+    have Hr : MkItemRun (run_items r) true = r.
+    { destruct r as [items d]. simpl in Hd. subst d. reflexivity. }
+    rewrite Hr (list_insert_id runs k r Hrk).
+    iApply "HΦ".
+    rewrite /flip_run Hr (list_insert_id runs k r Hrk).
+    have Hpid : <[parent := MkTypeModel runs arr]> p = p by apply insert_id; exact Hpp.
+    rewrite Hpid.
+    rewrite /own_type_pool_runs.
+    iSplitR; first (iPureIntro; exact Hlocswf).
+    iApply big_sepM_delete; first exact Hpp.
+    iFrame "Hrest".
+    iExists ls. iSplitR; first (iPureIntro; exact Hlp).
+    iSplitL; last (iPureIntro; exact Harrinv).
+    iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Harr].
+  - (* visible: set the bit and shrink the type's [len] by the run length *)
+    wp_auto.
+    rewrite Hpar. wp_auto.
+    wp_apply (wp_item__Len lc (DfracOwn 1) (set_deleted itemVal) with "[$Hval]").
+    iIntros "Hval".
+    wp_auto. rewrite Hpar. wp_auto.
+    have Hflagspin : itemVal.(yjs.item.flags') = (if false then W8 6 else W8 2)
+      by rewrite Hflags ?Hd.
+    iAssert (own_item_node lc (DfracOwn 1) (input_of_run r) true parent prev' nxt')
+      with "[Hval Hol Hor]" as "Hnode".
+    { iExists (set_deleted itemVal), olid, orid.
+      iEval (rewrite /set_deleted /=).
+      iFrame "Hval Hol Hor".
+      iPureIntro. split_and!;
+        [exact Hinl | exact Hinr | exact Hid | exact Hcont | exact Hpar
+        | exact Hprevf | exact Hnextf | (rewrite Hflagspin; vm_compute; reflexivity)]. }
+    iDestruct ("Hback" $! true with "Hnode") as "Hdll".
+    iEval (change (MkItemRun (run_items r) true) with (flip_run r)) in "Hdll".
+    have Hrunlen : length (run_items r) = length (itemVal.(yjs.item.content').(yjs.content.content')).
+    { have Hstr : itemVal.(yjs.item.content').(yjs.content.content') = in_content (input_of_run r) := Hcont.
+      rewrite Hstr. symmetry. exact Hclen. }
+    have Hnv : runs_visible (<[k := flip_run r]> runs) = (runs_visible runs - length (run_items r))%nat
+      := runs_visible_flip_run runs k r Hrk Hd.
+    have Hnvge : (length (run_items r) <= runs_visible runs)%nat.
+    { rewrite /runs_visible -(take_drop_middle runs k r Hrk) fmap_app list_sum_app fmap_cons /=.
+      rewrite Hd. lia. }
+    iApply "HΦ".
+    rewrite /own_type_pool_runs.
+    iSplitR.
+    { iPureIntro.
+      apply (locs_wf_insert_same_len locs p parent (MkTypeModel runs arr)
+               (MkTypeModel (<[k := flip_run r]> runs) arr) Hpp); last exact Hlocswf.
+      simpl. rewrite length_insert //. }
+    iEval (rewrite big_sepM_insert_delete).
+    iSplitR "Hrest"; last iExact "Hrest".
+    iExists ls. iSplitR; first (iPureIntro; exact Hlp).
+    iSplitL; last (iPureIntro; simpl; exact Harrinv).
+    iExists (yt <| yjs.yType.len' := w64_word_instance.(word.sub) yt.(yjs.yType.len')
+                     (W64 (length (itemVal.(yjs.item.content').(yjs.content.content')))) |>), tl.
+    iFrame "Hparent Hdll". iPureIntro. split.
+    + simpl. rewrite Hlen Hnv -Hrunlen. word.
+    + simpl. rewrite (runs_flatten_flip_run runs k r Hrk). exact Harr.
+Qed.
+
 (** [store.deleteRange]: tombstone the clock range [clock, clock+length) of
     [client]'s clock space. Each step looks the current char up
     ([wp_store__GetNode]); a char with no node is skipped (its struct

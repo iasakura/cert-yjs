@@ -1439,6 +1439,9 @@ Lemma own_dll_runs_update (parent l lst prev nxt : loc)
   runs !! k = Some r ->
   own_dll_runs (DfracOwn 1) parent l lst prev nxt ls runs -∗
     ∃ (prev' nxt' : loc),
+      "%Hrun" ∷ ⌜run_wf (run_items r)⌝ ∗
+      "%Hperchar" ∷ ⌜run_per_char r⌝ ∗
+      "%Hclen" ∷ ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
       "Hnode" ∷ own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev' nxt' ∗
       "Hback" ∷ (∀ d' : bool,
          own_item_node lc (DfracOwn 1) (input_of_run r) d' parent prev' nxt' -∗
@@ -1459,7 +1462,13 @@ Proof.
   iDestruct "H" as (ml mf) "[Hpre Hrest]".
   iDestruct "Hrest" as "(%Hloc & %Hpc & %Hrun & Hrest)".
   iDestruct "Hrest" as (nxt0) "[Hnode Hrest2]".
+  have Hclen : length (items_string (run_items r)) = length (run_items r).
+  { have Hleq := f_equal length Hpc.
+    rewrite length_fmap explode_length in Hleq. lia. }
   iExists ml, nxt0.
+  iSplitR; first by iPureIntro.
+  iSplitR; first by iPureIntro.
+  iSplitR; first by iPureIntro.
   iFrame "Hnode".
   iIntros (d') "Hnode".
   have Hins : <[k := MkItemRun (run_items r) d']> runs

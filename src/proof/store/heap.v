@@ -754,6 +754,25 @@ Definition own_type_pool_runs (dq : dfrac)
     ∃ ls, ⌜locs !! parent = Some ls⌝ ∗
           own_ytype_runs parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
 
+(** [locs_wf] survives replacing one type's model by one with as many runs
+    (a tombstone flip, a per-run update): the address map is untouched. *)
+Lemma locs_wf_insert_same_len (locs : gmap loc (list loc)) (p : pool)
+    (parent : loc) (tm tm' : type_model) :
+  p !! parent = Some tm ->
+  length (tm_runs tm') = length (tm_runs tm) ->
+  locs_wf locs p -> locs_wf locs (<[parent := tm']> p).
+Proof.
+  move=> Hp Hlen [Hdom [Hnd Hlens]]. split_and!.
+  - rewrite dom_insert_L Hdom. symmetry.
+    apply subseteq_union_1_L, singleton_subseteq_l. apply elem_of_dom. by exists tm.
+  - exact Hnd.
+  - move=> q lsq tmq Hlsq Htmq.
+    destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Htmq. injection Htmq as <-. rewrite Hlen.
+      exact (Hlens parent lsq tm Hlsq Hp).
+    + rewrite lookup_insert_ne in Htmq; [| congruence]. exact (Hlens q lsq tmq Hlsq Htmq).
+Qed.
+
 (** The run-granular pool read back at the re-materialized cell registry
     ([types_of_locs_pool]): the converse of [own_type_pool_runs_of]. The
     per-type lengths come off [locs_wf], and the address [NoDup] comes back

@@ -612,6 +612,33 @@ Proof.
   rewrite take_drop //.
 Qed.
 
+(** A tombstone flip drops the flipped run's characters from the visible
+    count and leaves the flatten alone (the run forms of
+    [num_visible_flip_run] / [cells_repr_update_run]). *)
+Lemma runs_visible_flip_run (runs : list ItemRun) (k : nat) (r : ItemRun) :
+  runs !! k = Some r -> run_deleted r = false ->
+  runs_visible (<[k := flip_run r]> runs) = (runs_visible runs - length (run_items r))%nat.
+Proof.
+  move=> Hk Hd.
+  have Hins : <[k := flip_run r]> runs = take k runs ++ flip_run r :: drop (S k) runs
+    by (apply insert_take_drop; apply lookup_lt_Some in Hk; exact Hk).
+  rewrite Hins /runs_visible fmap_app fmap_cons list_sum_app /flip_run /=.
+  rewrite -[in X in _ = (X - _)%nat](take_drop_middle runs k r Hk).
+  rewrite fmap_app fmap_cons list_sum_app /=. rewrite Hd. lia.
+Qed.
+
+Lemma runs_flatten_flip_run (runs : list ItemRun) (k : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  runs_flatten (<[k := flip_run r]> runs) = runs_flatten runs.
+Proof.
+  move=> Hk.
+  have Hins : <[k := flip_run r]> runs = take k runs ++ flip_run r :: drop (S k) runs
+    by (apply insert_take_drop; apply lookup_lt_Some in Hk; exact Hk).
+  rewrite Hins runs_flatten_app runs_flatten_cons /flip_run /=.
+  rewrite -[in X in _ = X](take_drop_middle runs k r Hk).
+  rewrite runs_flatten_app runs_flatten_cons //.
+Qed.
+
 Lemma split_runs_visible (runs : list ItemRun) (k o : nat) (r : ItemRun) :
   runs !! k = Some r ->
   (o <= length (run_items r))%nat ->
