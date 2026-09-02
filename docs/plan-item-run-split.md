@@ -500,7 +500,10 @@ vocabulary substitution table written; then C5 restates the specs at
   `pool_split_right_step`) and `repair` (from the split helpers and
   `getOrCreateYType_runs`; the two origin slots are kept apart by
   `own_store_runs_covers_unique` and carried across each other's split by
-  `pool_split_step_other_slot`) are proved directly at `(locs, pool)`; the
+  `pool_split_step_other_slot`) and `integrateDecoded` (bound / unbound /
+  creation cases; the origins resolve to slots through the flatten,
+  `runs_flatten_lookup_run`) are proved directly at `(locs, pool)`; the
+  cell-level `repair` / `integrateDecoded` and their locals are deleted; the
   run-count clause of `pool_after_split` / `pool_after_repair` was dropped
   (no consumer); the cell-level `applyDeleteSpans` is now
   DERIVED from the run-granular proof (for the `own_store` wrapper), the

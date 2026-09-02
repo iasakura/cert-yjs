@@ -19,8 +19,10 @@
       str], the store at a [store_state_runs] (the cell-level state
       existential), which the stage-2 [_runs] specs are stated over, and
       what it reads back at run granularity ([own_store_runs_run_pool_invs]
-      / [own_store_runs_run_wf] / [own_store_runs_arr], the last also on
-      the pool, [own_type_pool_runs_arr]), the node borrows
+      / [own_store_runs_run_wf] / [own_store_runs_arr] /
+      [own_store_runs_arr_inv] / [own_store_runs_registry_coh], the
+      document readers also on the pool, [own_type_pool_runs_arr] /
+      [own_type_pool_runs_arr_inv]), the node borrows
       ([own_type_pool_runs_node_acc] / [own_store_runs_node_acc]) and
       covering-slot uniqueness ([own_store_runs_covers_unique]).
     - [own_store_struct s st]: THE store at its cell-level state, the fields
@@ -1334,6 +1336,20 @@ Proof.
   iPureIntro. move=> parent tm Hp. exact (Hall parent tm Hp).
 Qed.
 
+Lemma own_type_pool_runs_arr_inv (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) :
+  own_type_pool_runs dq locs p -∗
+  ⌜∀ parent tm, p !! parent = Some tm -> YjsArrInvariant (tm_arr tm)⌝.
+Proof.
+  iIntros "(%Hlocswf & Hpool)".
+  iAssert ([∗ map] parent ↦ tm ∈ p, ⌜YjsArrInvariant (tm_arr tm)⌝)%I
+    with "[Hpool]" as "H".
+  { iApply (big_sepM_impl with "Hpool").
+    iIntros "!#" (parent tm Hp) "H".
+    iDestruct "H" as (ls) "(_ & _ & %Hinv)". by iPureIntro. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> parent tm Hp. exact (Hall parent tm Hp).
+Qed.
+
 Lemma own_store_runs_arr (s : loc) (str : store_state_runs) :
   own_store_runs s str -∗
   ⌜∀ parent tm, sr_pool str !! parent = Some tm -> tm_arr tm = runs_flatten (tm_runs tm)⌝.
@@ -1346,6 +1362,34 @@ Proof.
   rewrite /state_of_runs /= (pool_of_types_of_locs_pool _ _ Hprem).
   iDestruct (own_type_pool_runs_arr with "Htypes") as %Harr.
   by iPureIntro.
+Qed.
+
+(** Every registered type's document satisfies the array invariant, and the
+    registry is coherent with the pool: read off the store at run
+    granularity. *)
+Lemma own_store_runs_arr_inv (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗
+  ⌜∀ parent tm, sr_pool str !! parent = Some tm -> YjsArrInvariant (tm_arr tm)⌝.
+Proof.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
+  iDestruct (own_type_pool_runs_of _ (proj1 (proj2 (proj1 Hinvs))) with "Htypes") as "Htypes".
+  have Hprem := locs_aligned_lens _ _ Haligned.
+  rewrite /state_of_runs /= (pool_of_types_of_locs_pool _ _ Hprem).
+  iDestruct (own_type_pool_runs_arr_inv with "Htypes") as %Hinv.
+  by iPureIntro.
+Qed.
+
+Lemma own_store_runs_registry_coh (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗ ⌜pool_registry_coh (sr_bind str) (sr_pool str)⌝.
+Proof.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(_ & %Hinvs)".
+  iPureIntro.
+  have Hprem := locs_aligned_lens _ _ Haligned.
+  have H := proj1 (registry_coh_pool _ _) (proj2 Hinvs).
+  rewrite /state_of_runs /= (pool_of_types_of_locs_pool _ _ Hprem) in H. exact H.
 Qed.
 
 (** Borrow the [k]-th node of the type at [parent] out of a run-granular

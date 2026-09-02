@@ -51,7 +51,9 @@
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
       app-morphic ([runs_flatten_app]) and a run's [off]-th char sits at
-      its prefix sum plus [off] ([runs_flatten_lookup_of_run]); where the
+      its prefix sum plus [off] ([runs_flatten_lookup_of_run], and back,
+      [runs_flatten_lookup_run]; one more run in the prefix,
+      [runs_flatten_take_S]); where the
       split surgery leaves each slot ([split_runs_length],
       [split_runs_lookup_left] / [_right] / [_before] / [_after]).
 
@@ -721,6 +723,31 @@ Proof.
            length (runs_flatten (take k runs)))%nat with off by lia.
   rewrite lookup_app_l; [exact Hoff | by apply lookup_lt_Some in Hoff].
 Qed.
+
+(** A char of the flatten sits in some run at an offset, at that run's prefix
+    sum plus the offset (the converse of [runs_flatten_lookup_of_run]). *)
+Lemma runs_flatten_lookup_run (runs : list ItemRun) (kn : nat) (it : YjsItem A) :
+  runs_flatten runs !! kn = Some it ->
+  ∃ (k off : nat) (r : ItemRun), runs !! k = Some r ∧ run_items r !! off = Some it ∧
+    kn = (length (runs_flatten (take k runs)) + off)%nat.
+Proof.
+  elim: runs kn => [| r0 rs IH] kn.
+  { rewrite /runs_flatten /= lookup_nil //. }
+  rewrite runs_flatten_cons => /lookup_app_Some [Hin | [Hge Hlk]].
+  - exists 0%nat, kn, r0. split_and!; [done | done | rewrite take_0 /runs_flatten //=].
+  - destruct (IH _ Hlk) as (k & off & r & Hk & Hoff & Hkn).
+    exists (S k), off, r. split_and!; [done | done |].
+    rewrite /= runs_flatten_cons length_app. lia.
+Qed.
+
+(** The flatten of one more run: the prefix plus that run's items. *)
+Lemma runs_flatten_take_S (runs : list ItemRun) (k : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  runs_flatten (take (S k) runs) = runs_flatten (take k runs) ++ run_items r.
+Proof.
+  move=> Hk. rewrite (take_S_r _ _ _ Hk) runs_flatten_app runs_flatten_cons runs_flatten_nil app_nil_r //.
+Qed.
+
 
 Lemma split_runs_visible (runs : list ItemRun) (k o : nat) (r : ItemRun) :
   runs !! k = Some r ->

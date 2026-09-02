@@ -59,7 +59,15 @@
     model did not have; reflexive, transitive against a growing model,
     and following from one integrate step under the replay's client bound,
     [runs_apply_live_refine_refl] / [_trans] / [_of_integrate]) and
-    [runs_integrate_live_refine] (what one integrate step reports). *)
+    [runs_integrate_live_refine] (what one integrate step reports;
+    transitive, implied by [runs_live_refine], and holding of a splice
+    whose new run carries the item's own chars,
+    [runs_integrate_live_refine_trans] / [_of_live_refine] / [_snoc]);
+    [runs_within] is the origin-free half of [runs_within_or_from]
+    ([runs_within_or_from_of_within]); [all_runs] around an integrate
+    splice and a fresh empty type ([all_runs_splice_perm] /
+    [all_runs_insert_empty]); the per-client clock bound survives a step
+    whose runs sit inside old ones ([pool_run_clock_below_within]). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -649,6 +657,7 @@ Proof.
 Qed.
 
 
+
 Lemma pool_after_delete_flip (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
   p !! parent = Some tm ->
   tm_runs tm !! k = Some r ->
@@ -809,6 +818,78 @@ Proof.
   have Hcx : clientId (item_id x) = clientId (in_id input) by rewrite Hid.
   have := Hbound t' x Hx Hcx. rewrite Hid. lia.
 Qed.
+
+(** [all_runs] around one integrate splice: the fresh run and the old pool. *)
+Lemma all_runs_splice_perm (p : pool) (parent : loc) (tm : type_model) (idx : nat)
+    (r : ItemRun) (arr' : list (YjsItem A)) :
+  p !! parent = Some tm ->
+  all_runs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p)
+    ≡ₚ r :: all_runs p.
+Proof.
+  move=> Hp.
+  rewrite (all_runs_insert p parent tm _ Hp) /= (all_runs_lookup p parent tm Hp).
+  rewrite -app_assoc /=.
+  rewrite -Permutation_middle.
+  apply Permutation_cons; first done.
+  rewrite app_assoc take_drop //.
+Qed.
+
+(** A fresh empty type adds no run. *)
+Lemma all_runs_insert_empty (p : pool) (q : loc) (arr : list (YjsItem A)) :
+  p !! q = None ->
+  all_runs (<[q := MkTypeModel [] arr]> p) ≡ₚ all_runs p.
+Proof.
+  move=> Hq. rewrite /all_runs.
+  apply (concat_perm (tm_runs <$> (map_to_list (<[q := MkTypeModel [] arr]> p)).*2)
+                     ([] :: (tm_runs <$> (map_to_list p).*2))).
+  rewrite (map_to_list_insert p q _ Hq) /=. reflexivity.
+Qed.
+
+(** [runs_integrate_live_refine] composes, follows from [runs_live_refine],
+    and holds of a splice whose new run carries the item's own chars. *)
+Lemma runs_integrate_live_refine_trans (input : IntegrateInput (A := A))
+    (r0 r1 r2 : list ItemRun) :
+  runs_integrate_live_refine input r0 r1 ->
+  runs_integrate_live_refine input r1 r2 ->
+  runs_integrate_live_refine input r0 r2.
+Proof.
+  move=> H01 H12 r Hr Hlive y Hy.
+  destruct (H12 r Hr Hlive y Hy) as [(r' & Hr' & Hlive' & Hy') | Hnew]; last by right.
+  exact (H01 r' Hr' Hlive' y Hy').
+Qed.
+
+Lemma runs_integrate_live_refine_of_live_refine (input : IntegrateInput (A := A)) (p p' : pool) :
+  runs_live_refine p p' ->
+  runs_integrate_live_refine input (all_runs p) (all_runs p').
+Proof.
+  move=> Hlr r' Hr' Hlive y Hy. left.
+  destruct (Hlr r' Hr' Hlive) as (r & Hr & Hliver & Hin).
+  exists r. split_and!; [exact Hr | exact Hliver | exact (Hin y Hy)].
+Qed.
+
+Lemma runs_integrate_live_refine_snoc (input : IntegrateInput (A := A))
+    (runs runs' : list ItemRun) (r : ItemRun) :
+  runs' ≡ₚ r :: runs ->
+  (∀ y, y ∈ run_items r -> clientId (item_id y) = clientId (in_id input) ∧
+     (clock (in_id input) <= clock (item_id y))%nat) ->
+  runs_integrate_live_refine input runs runs'.
+Proof.
+  move=> Hperm Hnew r' Hr' Hlive y Hy. rewrite Hperm in Hr'.
+  apply elem_of_cons in Hr' as [-> | Hr'].
+  - right. exact (Hnew y Hy).
+  - left. by exists r'.
+Qed.
+
+(** [runs_within] is the origin-free half of [runs_within_or_from]. *)
+Lemma runs_within_or_from_of_within (inputs : list (TId * IntegrateInput (A := A)))
+    (before after : list ItemRun) :
+  runs_within before after ->
+  runs_within_or_from inputs before after.
+Proof.
+  move=> Hw r Hr. destruct (Hw r Hr) as (r0 & Hr0 & Hcl & Hlo & Hhi).
+  left. exists r0. split_and!; [exact Hr0 | exact Hcl | exact Hlo | exact Hhi].
+Qed.
+
 
 (** [pool_run_clock_below p id]: every run of [id]'s client in the pool ends
     at or below [id]'s clock: the item about to be integrated is its client's
@@ -1062,6 +1143,18 @@ Proof.
   destruct (Hsplit (elem_of_weaken _ _ _ Hi Hcoh)) as [Hd | Hp].
   - apply elem_of_union_l. by apply Hdsub.
   - apply elem_of_pending_id_set in Hp as [x [Hx Hxid]]. rewrite -Hxid. exact (Hpend x Hx).
+Qed.
+
+(** The per-client clock bound survives a step whose runs sit inside old
+    ones. *)
+Lemma pool_run_clock_below_within (p p' : pool) (d : YjsId) :
+  runs_within (all_runs p) (all_runs p') ->
+  pool_run_clock_below p d ->
+  pool_run_clock_below p' d.
+Proof.
+  move=> Hw Hb r' Hr' Hcl.
+  destruct (Hw r' Hr') as (r & Hr & Hcl0 & Hlo & Hhi).
+  have := Hb r Hr ltac:(congruence). lia.
 Qed.
 
 End store_model.
