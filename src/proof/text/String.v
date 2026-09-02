@@ -86,9 +86,20 @@ Proof.
   iDestruct "Hbody" as "(Htext & %Hinvarr)".
   iDestruct (own_ytype_cells_flatten with "Htext") as "[Htext %Hflat]".
   wp_auto.
+  (* [Text] is stated at run granularity: hand the type over as its addresses
+     and runs, and read the string and the type back through the projections. *)
+  iDestruct (own_ytype_cells_parents with "Htext") as "[Htext %Hcparts]".
+  iDestruct (own_ytype_runs_intro with "Htext") as "Htextr".
+  have Hvs : visible_string (runs_model (cell_run <$> ty_cells ts))
+           = visible_string (cells_model (ty_cells ts)).
+  { by rewrite cells_model_runs. }
   wp_apply (wp_yType__Text (tv.(yjs.Text.inner')) (DfracOwn rwmutex_guard.rfrac)
-              (ty_cells ts) (ty_arr ts) with "[$Htext]").
-  iIntros "Htext".
+              (ic_loc <$> ty_cells ts)
+              (MkTypeModel (cell_run <$> ty_cells ts) (ty_arr ts)) with "[$Htextr]").
+  iIntros "Htextr".
+  simpl. rewrite Hvs.
+  iDestruct (own_ytype_runs_as_cells with "Htextr") as "[_ Htext]".
+  iEval (simpl; rewrite (cells_of_locs_runs_projections (tv.(yjs.Text.inner')) (ty_cells ts) Hcparts)) in "Htext".
   iDestruct ("Hclose" with "[Htext]") as "Htypes".
   { iFrame "Htext". iPureIntro. exact Hinvarr. }
   wp_auto.

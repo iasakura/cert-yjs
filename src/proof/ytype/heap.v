@@ -123,6 +123,20 @@ Proof.
   iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
 Qed.
 
+(** Projection: every cell of a type lives under that type (the [Hcpar]
+    conjunct, extracted without opening the predicate). What a caller needs
+    to read a borrowed type back at its own cell list after a round trip
+    through the run-granular view ([cells_of_locs_runs_projections]). *)
+Lemma own_ytype_cells_parents (parent : loc) (dq : dfrac)
+    (cells : list item_cell) (arr : list (YjsItem A)) :
+  own_ytype_cells parent dq cells arr -∗
+  own_ytype_cells parent dq cells arr ∗ ⌜∀ c, c ∈ cells -> ic_parent c = parent⌝.
+Proof.
+  iIntros "H". iDestruct "H" as (yt tl) "(Hp & Hdll & %Hlen & %Hrepr & %Hcpar)".
+  iSplitL; last (iPureIntro; exact Hcpar).
+  iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
+Qed.
+
 (** [own_ytype_runs] is the cells-level view at the projected model. *)
 Lemma own_ytype_runs_intro (parent : loc) (dq : dfrac)
     (cells : list item_cell) (arr : list (YjsItem A)) :

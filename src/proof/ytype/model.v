@@ -362,7 +362,9 @@ End ytype_model.
    [type_model] is [type_state] without locations: the type's runs as data
    and its flattened document list. The projection [type_model_of] and the
    pool ([store/model.v]'s [pool]) sit on top; the heap side pairs it with
-   the node-address list ([locs]). *)
+   the node-address list ([locs]). [runs_model] reads a run list as the
+   abstract per-char sequence, the loc-free form of [ytype/value]'s
+   [cells_model]. *)
 
 Section ytype_run_model.
 
@@ -380,5 +382,16 @@ Record type_model := MkTypeModel {
   tm_runs : list ItemRun;
   tm_arr  : list (YjsItem A);
 }.
+
+(** [run_models r] / [runs_model runs]: a run list read as the abstract
+    per-char sequence [list (YjsItem A * bool)], each document item paired
+    with its run's tombstone bit. The loc-free form of [ytype/value]'s
+    [cell_models] / [cells_model] ([cells_model_runs] is the projection),
+    which is what the run-granular specs state their content over. *)
+Definition run_models (r : ItemRun) : list (YjsItem A * bool) :=
+  (λ x, (x, run_deleted r)) <$> run_items r.
+
+Definition runs_model (runs : list ItemRun) : list (YjsItem A * bool) :=
+  mjoin (run_models <$> runs).
 
 End ytype_run_model.
