@@ -1295,6 +1295,11 @@ Proof.
   rewrite /state_of_runs /= (pool_of_types_of_locs_pool _ _ Hprem) in Hrp. exact Hrp.
 Qed.
 
+(** The address map is aligned with the pool: read off the store. *)
+Lemma own_store_runs_aligned (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗ ⌜locs_aligned (sr_locs str) (sr_pool str)⌝.
+Proof. iIntros "(_ & %Haligned)". by iPureIntro. Qed.
+
 (** Every run of the store is chained ([run_wf]): the heap pin of the run
     spine, read off the store. *)
 Lemma own_store_runs_run_wf (s : loc) (str : store_state_runs) :
@@ -1356,6 +1361,7 @@ Lemma own_type_pool_runs_node_acc (locs : gmap loc (list loc)) (p : pool) (paren
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
     "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
+    "%Haccpar" ∷ ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
     "Haccval" ∷ lc ↦ itemVal ∗
     "Haccback" ∷ (lc ↦ itemVal -∗ own_type_pool_runs (DfracOwn 1) locs p).
 Proof.
@@ -1378,6 +1384,7 @@ Proof.
   iExists itemVal. iFrame "Hval".
   iSplitR; first (iPureIntro; exact Haccid).
   iSplitR; first (iPureIntro; exact Haccle).
+  iSplitR; first (iPureIntro; exact Hparf).
   iIntros "Hval".
   iAssert (own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev' nxt')
     with "[Hval Hol Hor]" as "Hnode".
@@ -1406,6 +1413,7 @@ Lemma own_store_runs_node_acc (s : loc) (str : store_state_runs)
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
     "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
+    "%Haccpar" ∷ ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
     "Haccval" ∷ lc ↦ itemVal ∗
     "Haccback" ∷ (lc ↦ itemVal -∗ own_store_runs s str).
 Proof.
@@ -1424,6 +1432,7 @@ Proof.
   iExists itemVal. iFrame "Haccval".
   iSplitR; first (iPureIntro; exact Haccid).
   iSplitR; first (iPureIntro; exact Haccle).
+  iSplitR; first (iPureIntro; exact Haccpar).
   iIntros "Haccval".
   iDestruct ("Haccback" with "Haccval") as "Htypes".
   iDestruct (own_type_pool_runs_to_cells with "Htypes") as "(Htypes & _ & _ & _)".
@@ -1436,18 +1445,18 @@ Qed.
     the same slot (the run form of [pool_cell_covers_loc], read through
     the materialized cells' address [NoDup]). What lets a split helper's
     caller identify the node [GetNode] returned with the slot it holds. *)
-Lemma own_store_runs_covers_unique (s : loc) (str : store_state_runs) (d : YjsId)
-    (q1 q2 : loc) (k1 k2 : nat) :
-  pool_run_covers (sr_pool str) q1 k1 d ->
-  pool_run_covers (sr_pool str) q2 k2 d ->
-  own_store_runs s str -∗ ⌜q1 = q2 ∧ k1 = k2⌝.
+Lemma own_store_runs_covers_unique (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗
+  ⌜∀ (d : YjsId) (q1 q2 : loc) (k1 k2 : nat),
+     pool_run_covers (sr_pool str) q1 k1 d ->
+     pool_run_covers (sr_pool str) q2 k2 d ->
+     q1 = q2 ∧ k1 = k2⌝.
 Proof.
-  move=> Hcov1 Hcov2.
   iIntros "(Hstruct & %Haligned)".
   iDestruct "Hstruct" as "(Hfields & %Hinvs)".
   iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
   iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnd.
-  iPureIntro.
+  iPureIntro. move=> d q1 q2 k1 k2 Hcov1 Hcov2.
   have Hpool : pool_invs (types_of_locs_pool (sr_locs str) (sr_pool str)) := proj1 Hinvs.
   have Hprem := locs_aligned_lens _ _ Haligned.
   (* the materialized cell of a covering slot covers the id *)

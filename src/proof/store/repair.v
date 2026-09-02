@@ -1,6 +1,7 @@
 (** store update path, repair + applyUpdate layer: [getOrCreateYType],
-    [store.repair] ([wp_store__repair]), their run-granular derived forms
-    [wp_store__getOrCreateYType_runs] / [wp_store__repair_runs] (over
+    [store.repair] ([wp_store__repair]), their run-granular forms
+    [wp_store__getOrCreateYType_runs] (derived) / [wp_store__repair_runs]
+    (proved directly from the run-granular split helpers; over
     [own_store_runs], stepping the registry by [pool_lookup_or_create] and
     the pool by [pool_after_repair]), [integrateDecoded],
     [depsArrived] and [hasNode] (each with its run-granular derived form,
@@ -625,8 +626,13 @@ Qed.
     cells ([pool_origins_covered], [pool_repair_parent]); the item comes back
     linked to run-boundary addresses read off the updated address map
     ([pool_origins_split]) and the pool steps by [pool_after_repair].
-    Derived from [wp_store__repair] through the [pool_of] / [locs_of]
-    projections. *)
+    Proved directly from the run-granular split helpers and
+    [wp_store__getOrCreateYType_runs]: the clean-end split first, the right
+    origin's slot relocated through [pool_after_split]'s coverage clause,
+    the clean-start split second, and the left boundary carried across it
+    by [pool_split_step_other_slot] (the two slots differ: the left result
+    ends at the left origin, which same origin slots put strictly before
+    the right one). *)
 Lemma wp_store__repair_runs (s item_l pname : loc)
     (input : IntegrateInput (A := A)) (opn : option go_string)
     (str : store_state_runs) (orL orR : option (loc * nat)) (p_t : loc) :
@@ -643,50 +649,330 @@ Lemma wp_store__repair_runs (s item_l pname : loc)
       ⌜pool_after_repair (sr_pool str) p'⌝ ∗
       ⌜pool_origins_split p' locs' input orL orR lft rgt⌝ }}}.
 Proof using Type*.
-  move=> Hcov Hpar.
+  move=> [HwL [HwR Hsame]] Hwpar.
+  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  rewrite /pool_origin_covered in HwL HwR. rewrite /pool_repair_parent in Hwpar.
   iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hruns) HΦ".
-  iEval (rewrite own_store_runs_as_state) in "Hruns".
-  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
-  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
-  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
-  have Hpool0 : pool_invs types := proj1 Hinvs0.
-  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iDestruct (own_type_pool_parents with "Htypes") as %Hparb.
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbndb.
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfb.
-  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types bind pend pdel) Hinvs0
-               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
-  have Hnd : NoDup (ic_loc <$> all_cells types) := proj1 (proj2 Hpool0).
-  destruct (pool_origins_covered_to_cell types input orL orR Hnd Hcov)
-    as (ocL & ocR & Hcovc & HsL & HsR).
-  have Hparc : repair_parent bind opn ocL ocR p_t
-    := pool_repair_parent_to_cell types bind opn orL orR ocL ocR p_t Hparb HsL HsR Hpar.
-  wp_apply (wp_store__repair s item_l pname input opn
-              (MkStoreState client k0 types bind pend pdel) ocL ocR p_t Hcovc Hparc
-              with "[$Hpkg $Hlinked $HisPN $Hcells]").
-  iIntros (lft rgt types2) "(Hlinked & Hcells & %Hstep & %Hsplit)".
-  iEval (simpl) in "Hcells".
-  iDestruct "Hcells" as "(Hfields1 & %Hinvs1)".
-  have Hpool1 : pool_invs types2 := proj1 Hinvs1.
-  iDestruct "Hfields1" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iDestruct (own_type_pool_parents with "Htypes") as %Hpara.
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnda.
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfa.
-  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types2 bind pend pdel) Hinvs1
-               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
-  iApply ("HΦ" $! lft rgt (pool_of types2) (locs_of types2)).
-  iFrame "Hlinked".
-  iSplitL.
-  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0 types2 bind pend pdel).
-    iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
-  iPureIntro. split.
-  - exact (repair_types_update_rel_to_pool types types2
-             (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
-             (λ c Hc, proj2 (Hbnda c Hc)) (λ c Hc, proj1 (Hbnda c Hc))
-             (λ c Hc, proj1 (Hwfb c Hc)) (λ c Hc, proj1 (Hwfa c Hc))
-             Hpool0 Hpool1 Hstep).
-  - exact (origins_split_to_pool types types2 input orL orR ocL ocR lft rgt
-             Hparb Hpara HsL HsR Hsplit).
+  iDestruct "Hlinked" as (itemVal oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrunc)".
+  iNamed "Hraw".
+  iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf0.
+  iDestruct (own_store_runs_aligned with "Hruns") as %Haligned0.
+  iDestruct (own_store_runs_covers_unique with "Hruns") as %Huniq0.
+  (* a run covers its own head *)
+  have Hhead_cov : ∀ r, run_wf (run_items r) -> run_covers r (item_id (run_head_item r)).
+  { move=> r Hwf. rewrite run_head_item_id /run_covers /=.
+    destruct Hwf as [Hne _].
+    have Hlen : (1 <= length (run_items r))%nat by (destruct (run_items r); [done | simpl; lia]).
+    split_and!; [done | lia | lia]. }
+  wp_method_call. wp_call. wp_call. wp_auto.
+  destruct oleft as [idvL|].
+  - (* left origin present: clean-end split *)
+    have HinlS : input.(in_originId) = Some (toYjsId idvL) by rewrite -Hin_l //.
+    rewrite HinlS in HwL. destruct orL as [[qL kL]|]; last done. simpl in HwL.
+    destruct HwL as (tmL & rL & HpL & HrL & HrLcov).
+    iDestruct "Holeft" as "[%HnnL #HolC]".
+    rewrite (bool_decide_eq_false_2 (itemVal.(yjs.item.originLeftId') = null) HnnL) /=.
+    wp_auto.
+    destruct (locs_aligned_lens _ _ Haligned0 qL tmL HpL) as (lsL & HlsL & HlenL).
+    have HkLlt : (kL < length lsL)%nat by (rewrite HlenL; exact (lookup_lt_Some _ _ _ HrL)).
+    destruct (lookup_lt_is_Some_2 lsL kL HkLlt) as [lcL HlkL].
+    wp_apply (wp_store__splitAtAndGetLeft_runs s idvL (MkStoreStateRuns client0 k0 locs p bind pend pdel)
+                qL tmL lsL kL rL lcL HpL HlsL HrL HlkL HrLcov with "[$Hpkg $Hruns]").
+    iIntros (p1 locs1) "(Hruns & %Hlstep1)".
+    iEval (simpl) in "Hruns".
+    have HrLslot : ∃ tm, p !! qL = Some tm ∧ tm_runs tm !! kL = Some rL := ex_intro _ tmL (conj HpL HrL).
+    have HrLmem : rL ∈ all_runs p.
+    { apply (elem_of_all_runs p rL). exists qL, tmL. split; [exact HpL | exact (list_elem_of_lookup_2 _ _ _ HrL)]. }
+    have HrLwf : run_wf (run_items rL) := Hwf0 rL HrLmem.
+    have Hsstep1 : pool_split_step p locs qL kL p1 locs1
+      := pool_split_step_of_left _ _ _ _ _ _ _ _ HrLslot HrLcov Hlstep1.
+    have Hstep1 : pool_after_split p p1 qL kL := pool_after_split_of_split_step _ _ _ _ _ _ Hwf0 Hsstep1.
+    have HlcLloc : (locs !! qL) ≫= (λ ls, ls !! kL) = Some lcL by rewrite HlsL /= HlkL.
+    destruct (pool_split_left_step_ends_at _ _ _ _ _ _ _ _ _ HrLslot HlcLloc HrLwf HrLcov Hlstep1)
+      as (HstartL1 & HendL1 & HlocL1).
+    iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf1.
+    iDestruct (own_store_runs_aligned with "Hruns") as %Haligned1.
+    have Hrepair1 : pool_after_repair p p1 := pool_after_repair_of_split _ _ _ _ Hstep1.
+    wp_auto.
+    destruct oright as [idvR|].
+    + (* right origin present: relocate the witness, clean-start split *)
+      have HinrS : input.(in_rightOriginId) = Some (toYjsId idvR) by rewrite -Hin_r //.
+      rewrite HinrS in HwR. destruct orR as [[qR kR]|]; last done. simpl in HwR.
+      destruct HwR as (tmR & rR & HpR & HrR & HrRcov).
+      rewrite HinlS HinrS in Hsame.
+      have Hsame' : (qL, kL) = (qR, kR) -> (clock (toYjsId idvL) < clock (toYjsId idvR))%nat := Hsame.
+      iDestruct "Horight" as "[%HnnR #HorC]".
+      rewrite (bool_decide_eq_false_2 (itemVal.(yjs.item.originRightId') = null) HnnR) /=.
+      wp_auto.
+      (* the right origin's covering slot after the first split *)
+      have Hcover1 := proj1 (proj2 (proj2 (proj2 Hstep1))).
+      have HrRcov' := HrRcov.
+      destruct HrRcov as (HrRcl & HrRlo & HrRhi).
+      destruct (Hcover1 (clientId (toYjsId idvR)) (clock (toYjsId idvR)) qR tmR kR rR HpR HrR HrRcl HrRlo HrRhi)
+        as (tmR1 & kR1 & rR1 & HpR1 & HrR1 & HrR1cl & HrR1lo & HrR1hi & Hprov).
+      have HrR1cov : run_covers rR1 (toYjsId idvR) by (split_and!; done).
+      destruct (locs_aligned_lens _ _ Haligned1 qR tmR1 HpR1) as (lsR1 & HlsR1 & HlenR1).
+      have HkR1lt : (kR1 < length lsR1)%nat by (rewrite HlenR1; exact (lookup_lt_Some _ _ _ HrR1)).
+      destruct (lookup_lt_is_Some_2 lsR1 kR1 HkR1lt) as [lcR1 HlkR1].
+      destruct HendL1 as (tmL1 & HpL1 & rL1 & HrL1 & HrL1cl & HrL1end).
+      destruct HstartL1 as (tmL1' & HpL1' & rL1' & HrL1' & HrL1head).
+      rewrite HpL1 in HpL1'. injection HpL1' as <-. rewrite HrL1 in HrL1'. injection HrL1' as <-.
+      (* the right slot is not the left result's slot: the left result ends
+         at [idvL] and covers [rL]'s head, so a right run there would put
+         [idvR] at or before [idvL] while sitting at [rL]'s original slot *)
+      have Hslotne : ¬ (qL = qR ∧ kL = kR1).
+      { move=> [HqLR HkLR]. subst qR kR1.
+        rewrite HpL1 in HpR1. injection HpR1 as <-. rewrite HrL1 in HrR1. injection HrR1 as <-.
+        have Hle : (clock (toYjsId idvR) <= clock (toYjsId idvL))%nat by lia.
+        destruct Hprov as [Heq | [_ [HkLeq _]]]; last first.
+        { subst kR. have := Hsame' eq_refl. lia. }
+        (* [rR] is the left result: it covers [rL]'s head, as [rL] does *)
+        subst rR.
+        have Hcl1 : run_client rL1 = run_client rL.
+        { have := f_equal clientId HrL1head. rewrite !run_head_item_id //. }
+        have Hck1 : run_clock rL1 = run_clock rL.
+        { have := f_equal clock HrL1head. rewrite !run_head_item_id //. }
+        have HrRmem : rL1 ∈ all_runs p.
+        { apply (elem_of_all_runs p rL1). exists qL, tmR. split; [exact HpR | exact (list_elem_of_lookup_2 _ _ _ HrR)]. }
+        have HrRwf : run_wf (run_items rL1) := Hwf0 rL1 HrRmem.
+        have HcovR : pool_run_covers p qL kR (item_id (run_head_item rL)).
+        { exists tmR, rL1. split_and!; [exact HpR | exact HrR |].
+          rewrite -HrL1head. exact (Hhead_cov rL1 HrRwf). }
+        have HcovL : pool_run_covers p qL kL (item_id (run_head_item rL)).
+        { exists tmL, rL. split_and!; [exact HpL | exact HrL | exact (Hhead_cov rL HrLwf)]. }
+        destruct (Huniq0 _ _ _ _ _ HcovR HcovL) as [_ HkeqLR]. subst kR.
+        have := Hsame' eq_refl. lia. }
+      wp_apply (wp_store__splitAtAndGetRight_runs s idvR (MkStoreStateRuns client0 k0 locs1 p1 bind pend pdel)
+                  qR tmR1 lsR1 kR1 rR1 lcR1 HpR1 HlsR1 HrR1 HlkR1 HrR1cov with "[$Hpkg $Hruns]").
+      iIntros (rl p2 locs2) "(Hruns & %Hrstep2)".
+      iEval (simpl) in "Hruns".
+      have HrR1slot : ∃ tm, p1 !! qR = Some tm ∧ tm_runs tm !! kR1 = Some rR1 := ex_intro _ tmR1 (conj HpR1 HrR1).
+      have HrR1wf : run_wf (run_items rR1).
+      { apply Hwf1. apply (elem_of_all_runs p1 rR1). exists qR, tmR1.
+        split; [exact HpR1 | exact (list_elem_of_lookup_2 _ _ _ HrR1)]. }
+      have Hsstep2 : pool_split_step p1 locs1 qR kR1 p2 locs2
+        := pool_split_step_of_right _ _ _ _ _ _ _ _ _ HrR1slot HrR1cov Hrstep2.
+      have Hstep2 : pool_after_split p1 p2 qR kR1 := pool_after_split_of_split_step _ _ _ _ _ _ Hwf1 Hsstep2.
+      destruct (pool_split_right_step_starts_at _ _ _ _ _ _ _ _ _ HrR1slot HrR1wf HrR1cov Hrstep2)
+        as (kR2 & HstartR2 & HlocR2).
+      (* the left boundary survives the second split at its address *)
+      destruct (pool_split_step_other_slot _ _ _ _ _ _ qL kL tmL1 rL1 lcL Hsstep2 HpL1 HrL1 HlocL1 Hslotne)
+        as (kL2 & tmL2 & HpL2 & HrL2 & HlocL2 & _).
+      have HendL2 : pool_run_ends_at p2 qL kL2 (toYjsId idvL).
+      { exists tmL2. split; first exact HpL2. exists rL1. split_and!; [exact HrL2 | exact HrL1cl | exact HrL1end]. }
+      have Hrepair2 : pool_after_repair p p2
+        := pool_after_repair_trans _ _ _ Hrepair1 (pool_after_repair_of_split _ _ _ _ Hstep2).
+      wp_auto.
+      destruct opn as [nm|].
+      * (* Parent::String *)
+        iDestruct "HisPN" as "[%HnnP #HpnC]".
+        rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
+        wp_auto.
+        wp_apply (wp_store__getOrCreateYType_runs s (MkStoreStateRuns client0 k0 locs2 p2 bind pend pdel) nm
+                    with "[$Hpkg $Hruns]").
+        iIntros (q p3 locs3 bind3) "(Hruns & %Hlc)". simpl in Hlc.
+        destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
+        rewrite Hwpar in Hb'. injection Hb' as <-.
+        iEval (simpl) in "Hruns".
+        wp_auto.
+        iApply ("HΦ" $! lcL rl p2 locs2). simpl.
+        iFrame "Hruns".
+        iSplitL "Hitem".
+        { iExists _, (Some idvL), (Some idvR). rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HolC HorC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split; first exact Hrepair2.
+        split.
+        { rewrite HinlS /=. exists kL2. split; [exact HendL2 | exact HlocL2]. }
+        { rewrite HinrS /=. exists kR2. split; [exact HstartR2 | exact HlocR2]. }
+      * (* Parent::None: borrow from the resolved left neighbour *)
+        iDestruct "HisPN" as "%HpN".
+        rewrite (bool_decide_eq_true_2 (pname = null) HpN) /=.
+        destruct (locs2 !! qL) as [lsL2|] eqn:HlsL2; last done. simpl in HlocL2.
+        iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs2 p2 bind pend pdel)
+                     qL lsL2 tmL2 kL2 lcL rL1 HlsL2 HpL2 HlocL2 HrL2 with "Hruns") as (ivL) "H".
+        iNamed "H".
+        iDestruct (typed_pointsto_not_null with "Haccval") as %HnnCL.
+        wp_auto.
+        rewrite (bool_decide_eq_false_2 (lcL = null) HnnCL) /=.
+        wp_auto.
+        iDestruct ("Haccback" with "Haccval") as "Hruns".
+        rewrite Haccpar Hwpar.
+        iApply ("HΦ" $! lcL rl p2 locs2). simpl.
+        iFrame "Hruns".
+        iSplitL "Hitem".
+        { iExists _, (Some idvL), (Some idvR). rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HolC HorC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split; first exact Hrepair2.
+        split.
+        { rewrite HinlS /=. exists kL2. split; [exact HendL2 | rewrite HlsL2 /=; exact HlocL2]. }
+        { rewrite HinrS /=. exists kR2. split; [exact HstartR2 | exact HlocR2]. }
+    + (* no right origin *)
+      have HinrN : input.(in_rightOriginId) = None by rewrite -Hin_r //.
+      rewrite HinrN in HwR. destruct orR as [[qR kR]|]; first done.
+      iDestruct "Horight" as "%HnR".
+      rewrite (bool_decide_eq_true_2 (itemVal.(yjs.item.originRightId') = null) HnR) /=.
+      wp_auto.
+      destruct HendL1 as (tmL1 & HpL1 & rL1 & HrL1 & HrL1cl & HrL1end).
+      have HendL1' : pool_run_ends_at p1 qL kL (toYjsId idvL).
+      { exists tmL1. split; first exact HpL1. exists rL1. split_and!; [exact HrL1 | exact HrL1cl | exact HrL1end]. }
+      destruct opn as [nm|].
+      * (* Parent::String *)
+        iDestruct "HisPN" as "[%HnnP #HpnC]".
+        rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
+        wp_auto.
+        wp_apply (wp_store__getOrCreateYType_runs s (MkStoreStateRuns client0 k0 locs1 p1 bind pend pdel) nm
+                    with "[$Hpkg $Hruns]").
+        iIntros (q p3 locs3 bind3) "(Hruns & %Hlc)". simpl in Hlc.
+        destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
+        rewrite Hwpar in Hb'. injection Hb' as <-.
+        iEval (simpl) in "Hruns".
+        wp_auto.
+        iApply ("HΦ" $! lcL null p1 locs1). simpl.
+        iFrame "Hruns".
+        iSplitL "Hitem".
+        { iExists _, (Some idvL), None. rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HolC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split; first exact Hrepair1.
+        split.
+        { rewrite HinlS /=. exists kL. split; [exact HendL1' | exact HlocL1]. }
+        { rewrite HinrN //. }
+      * (* Parent::None: borrow from the resolved left neighbour *)
+        iDestruct "HisPN" as "%HpN".
+        rewrite (bool_decide_eq_true_2 (pname = null) HpN) /=.
+        destruct (locs1 !! qL) as [lsL1|] eqn:HlsL1; last done. simpl in HlocL1.
+        iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs1 p1 bind pend pdel)
+                     qL lsL1 tmL1 kL lcL rL1 HlsL1 HpL1 HlocL1 HrL1 with "Hruns") as (ivL) "H".
+        iNamed "H".
+        iDestruct (typed_pointsto_not_null with "Haccval") as %HnnCL.
+        wp_auto.
+        rewrite (bool_decide_eq_false_2 (lcL = null) HnnCL) /=.
+        wp_auto.
+        iDestruct ("Haccback" with "Haccval") as "Hruns".
+        rewrite Haccpar Hwpar.
+        iApply ("HΦ" $! lcL null p1 locs1). simpl.
+        iFrame "Hruns".
+        iSplitL "Hitem".
+        { iExists _, (Some idvL), None. rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HolC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split; first exact Hrepair1.
+        split.
+        { rewrite HinlS /=. exists kL. split; [exact HendL1' | rewrite HlsL1 /=; exact HlocL1]. }
+        { rewrite HinrN //. }
+  - (* no left origin *)
+    have HinlN : input.(in_originId) = None by rewrite -Hin_l //.
+    rewrite HinlN in HwL. destruct orL as [[qL kL]|]; first done.
+    iDestruct "Holeft" as "%HnL".
+    rewrite (bool_decide_eq_true_2 (itemVal.(yjs.item.originLeftId') = null) HnL) /=.
+    wp_auto.
+    destruct oright as [idvR|].
+    + (* right origin present: clean-start split, no relocation *)
+      have HinrS : input.(in_rightOriginId) = Some (toYjsId idvR) by rewrite -Hin_r //.
+      rewrite HinrS in HwR. destruct orR as [[qR kR]|]; last done. simpl in HwR.
+      destruct HwR as (tmR & rR & HpR & HrR & HrRcov).
+      iDestruct "Horight" as "[%HnnR #HorC]".
+      rewrite (bool_decide_eq_false_2 (itemVal.(yjs.item.originRightId') = null) HnnR) /=.
+      wp_auto.
+      destruct (locs_aligned_lens _ _ Haligned0 qR tmR HpR) as (lsR & HlsR & HlenR).
+      have HkRlt : (kR < length lsR)%nat by (rewrite HlenR; exact (lookup_lt_Some _ _ _ HrR)).
+      destruct (lookup_lt_is_Some_2 lsR kR HkRlt) as [lcR HlkR].
+      wp_apply (wp_store__splitAtAndGetRight_runs s idvR (MkStoreStateRuns client0 k0 locs p bind pend pdel)
+                  qR tmR lsR kR rR lcR HpR HlsR HrR HlkR HrRcov with "[$Hpkg $Hruns]").
+      iIntros (rl p1 locs1) "(Hruns & %Hrstep1)".
+      iEval (simpl) in "Hruns".
+      have HrRslot : ∃ tm, p !! qR = Some tm ∧ tm_runs tm !! kR = Some rR := ex_intro _ tmR (conj HpR HrR).
+      have HrRwf : run_wf (run_items rR).
+      { apply Hwf0. apply (elem_of_all_runs p rR). exists qR, tmR.
+        split; [exact HpR | exact (list_elem_of_lookup_2 _ _ _ HrR)]. }
+      have Hsstep1 : pool_split_step p locs qR kR p1 locs1
+        := pool_split_step_of_right _ _ _ _ _ _ _ _ _ HrRslot HrRcov Hrstep1.
+      have Hstep1 : pool_after_split p p1 qR kR := pool_after_split_of_split_step _ _ _ _ _ _ Hwf0 Hsstep1.
+      destruct (pool_split_right_step_starts_at _ _ _ _ _ _ _ _ _ HrRslot HrRwf HrRcov Hrstep1)
+        as (kR2 & HstartR2 & HlocR2).
+      have Hrepair1 : pool_after_repair p p1 := pool_after_repair_of_split _ _ _ _ Hstep1.
+      wp_auto.
+      destruct opn as [nm|].
+      * (* Parent::String *)
+        iDestruct "HisPN" as "[%HnnP #HpnC]".
+        rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
+        wp_auto.
+        wp_apply (wp_store__getOrCreateYType_runs s (MkStoreStateRuns client0 k0 locs1 p1 bind pend pdel) nm
+                    with "[$Hpkg $Hruns]").
+        iIntros (q p3 locs3 bind3) "(Hruns & %Hlc)". simpl in Hlc.
+        destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
+        rewrite Hwpar in Hb'. injection Hb' as <-.
+        iEval (simpl) in "Hruns".
+        wp_auto.
+        iApply ("HΦ" $! null rl p1 locs1). simpl.
+        iFrame "Hruns".
+        iSplitL "Hitem".
+        { iExists _, None, (Some idvR). rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HorC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split; first exact Hrepair1.
+        split.
+        { rewrite HinlN //. }
+        { rewrite HinrS /=. exists kR2. split; [exact HstartR2 | exact HlocR2]. }
+      * (* Parent::None: borrow from the resolved right neighbour *)
+        iDestruct "HisPN" as "%HpN".
+        rewrite (bool_decide_eq_true_2 (pname = null) HpN) /=.
+        have Hfl' : (itemVal <| yjs.item.right' := rl |>).(yjs.item.left') = null
+          by simpl; exact Hfl.
+        destruct HstartR2 as (tmR2 & HpR2 & rR2 & HrR2 & HrR2head).
+        destruct (locs1 !! qR) as [lsR2|] eqn:HlsR2; last done. simpl in HlocR2.
+        iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs1 p1 bind pend pdel)
+                     qR lsR2 tmR2 kR2 rl rR2 HlsR2 HpR2 HlocR2 HrR2 with "Hruns") as (ivR) "H".
+        iNamed "H".
+        iDestruct (typed_pointsto_not_null with "Haccval") as %HnnCR.
+        wp_auto.
+        rewrite (bool_decide_eq_true_2 _ Hfl') /=.
+        wp_auto.
+        rewrite (bool_decide_eq_false_2 (rl = null) HnnCR) /=.
+        wp_auto.
+        iDestruct ("Haccback" with "Haccval") as "Hruns".
+        rewrite Haccpar Hwpar.
+        iApply ("HΦ" $! null rl p1 locs1). simpl.
+        iFrame "Hruns".
+        iSplitL "Hitem".
+        { iExists _, None, (Some idvR). rewrite /own_fresh_item_raw. simpl.
+          iFrame "Hitem". iFrame "HorC".
+          iPureIntro. split_and!; try done. }
+        iPureIntro. split; first exact Hrepair1.
+        split.
+        { rewrite HinlN //. }
+        { rewrite HinrS /=. exists kR2. split.
+          - exists tmR2. split; first exact HpR2. exists rR2. split; [exact HrR2 | exact HrR2head].
+          - rewrite HlsR2 /=. exact HlocR2. }
+    + (* no origins at all: Parent::None is ruled out by the premise *)
+      have HinrN : input.(in_rightOriginId) = None by rewrite -Hin_r //.
+      rewrite HinrN in HwR. destruct orR as [[qR kR]|]; first done.
+      iDestruct "Horight" as "%HnR".
+      rewrite (bool_decide_eq_true_2 (itemVal.(yjs.item.originRightId') = null) HnR) /=.
+      wp_auto.
+      destruct opn as [nm|]; last done.
+      iDestruct "HisPN" as "[%HnnP #HpnC]".
+      rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
+      wp_auto.
+      wp_apply (wp_store__getOrCreateYType_runs s (MkStoreStateRuns client0 k0 locs p bind pend pdel) nm
+                  with "[$Hpkg $Hruns]").
+      iIntros (q p3 locs3 bind3) "(Hruns & %Hlc)". simpl in Hlc.
+      destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
+      rewrite Hwpar in Hb'. injection Hb' as <-.
+      iEval (simpl) in "Hruns".
+      wp_auto.
+      iApply ("HΦ" $! null null p locs). simpl.
+      iFrame "Hruns".
+      iSplitL "Hitem".
+      { iExists _, None, None. rewrite /own_fresh_item_raw. simpl.
+        iFrame "Hitem".
+        iPureIntro. split_and!; try done. }
+      iPureIntro. split; first exact (pool_after_repair_refl p).
+      split.
+      { rewrite HinlN //. }
+      { rewrite HinrN //. }
 Qed.
 
 (** [store.repair], creation form (issue #54): an ORIGIN-FREE decoded item

@@ -610,6 +610,45 @@ Proof.
     rewrite Hnew. apply elem_of_cons; right. apply elem_of_cons; right. exact Hr0.
 Qed.
 
+(** [pool_after_repair] is reflexive, transitive, and contains one
+    split: what composes [store.repair]'s at most two split steps. *)
+Lemma pool_after_repair_refl (p : pool) : pool_after_repair p p.
+Proof.
+  split_and!.
+  - move=> q tm' Hq. exists tm'. done.
+  - done.
+  - move=> q tm tm' Hq Hq' _. congruence.
+  - apply runs_within_refl.
+  - move=> r' Hr' Hd. exists r'. done.
+Qed.
+
+Lemma pool_after_repair_of_split (p p' : pool) (parent : loc) (k : nat) :
+  pool_after_split p p' parent k -> pool_after_repair p p'.
+Proof.
+  move=> [H1 [H2 [_ [_ [H6 [H7 [H8 _]]]]]]].
+  split_and!; [exact H1 | exact H2 | exact H6 | exact H7 | exact H8].
+Qed.
+
+Lemma pool_after_repair_trans (p1 p2 p3 : pool) :
+  pool_after_repair p1 p2 -> pool_after_repair p2 p3 -> pool_after_repair p1 p3.
+Proof.
+  move=> [A1 [A2 [A3 [A4 A5]]]] [B1 [B2 [B3 [B4 B5]]]].
+  split_and!.
+  - move=> q tm3 Hq. destruct (B1 q tm3 Hq) as (tm2 & Hq2 & Harr2 & Hfl2).
+    destruct (A1 q tm2 Hq2) as (tm1 & Hq1 & Harr1 & Hfl1).
+    exists tm1. split_and!; [exact Hq1 | congruence | congruence].
+  - move=> q Hq. apply B2, A2, Hq.
+  - move=> q tm tm' Hq Hq' Hunit.
+    destruct (A2 q (mk_is_Some _ _ Hq)) as [tm2 Hq2].
+    have Heq2 : tm2 = tm := A3 q tm tm2 Hq Hq2 Hunit.
+    subst tm2. exact (B3 q tm tm' Hq2 Hq' Hunit).
+  - exact (runs_within_trans _ _ _ A4 B4).
+  - move=> r3 Hr3 Hd3. destruct (B5 r3 Hr3 Hd3) as (r2 & Hr2 & Hd2 & Hin2).
+    destruct (A5 r2 Hr2 Hd2) as (r1 & Hr1 & Hd1 & Hin1).
+    exists r1. split_and!; [exact Hr1 | exact Hd1 | move=> y Hy; apply Hin1, Hin2, Hy].
+Qed.
+
+
 Lemma pool_after_delete_flip (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
   p !! parent = Some tm ->
   tm_runs tm !! k = Some r ->

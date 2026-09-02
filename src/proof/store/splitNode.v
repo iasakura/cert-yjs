@@ -2302,8 +2302,8 @@ Proof using Type*.
   destruct ok; last first.
   { exfalso. exact (Hres parent k Hcovp). }
   destruct Hres as (q' & k' & Hcov' & Hloc').
-  iDestruct (own_store_runs_covers_unique s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
-               (toYjsId idv) q' parent k' k Hcov' Hcovp with "Hruns") as %[-> ->].
+  iDestruct (own_store_runs_covers_unique with "Hruns") as %Huniq.
+  destruct (Huniq _ _ _ _ _ Hcov' Hcovp) as [-> ->].
   rewrite Hls /= Hlk in Hloc'. injection Hloc' as <-.
   iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf.
   iDestruct (own_store_runs_run_pool_invs with "Hruns") as %Hrinv.
@@ -2315,6 +2315,8 @@ Proof using Type*.
   iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
                parent ls tm k lc r Hls Hp Hlk Hr with "Hruns") as (ivR) "H".
   iNamed "H".
+  (* the parent pin names [parent]; [wp_if_destruct]'s bare [subst] would take it *)
+  clear Haccpar.
   (* the node's clock and length, at the [uint.Z] level ([wp_if_destruct]'s
      bare [subst] must not eat an equation naming a variable) *)
   have Hivclk : uint.Z ivR.(yjs.item.id').(yjs.id.clock') = Z.of_nat (run_clock r).
@@ -2394,8 +2396,8 @@ Proof using Type*.
   destruct ok; last first.
   { exfalso. exact (Hres parent k Hcovp). }
   destruct Hres as (q' & k' & Hcov' & Hloc').
-  iDestruct (own_store_runs_covers_unique s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
-               (toYjsId idv) q' parent k' k Hcov' Hcovp with "Hruns") as %[-> ->].
+  iDestruct (own_store_runs_covers_unique with "Hruns") as %Huniq.
+  destruct (Huniq _ _ _ _ _ Hcov' Hcovp) as [-> ->].
   rewrite Hls /= Hlk in Hloc'. injection Hloc' as <-.
   iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf.
   iDestruct (own_store_runs_run_pool_invs with "Hruns") as %Hrinv.
@@ -2407,6 +2409,8 @@ Proof using Type*.
   iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
                parent ls tm k lc r Hls Hp Hlk Hr with "Hruns") as (ivR) "H".
   iNamed "H".
+  (* the parent pin names [parent]; [wp_if_destruct]'s bare [subst] would take it *)
+  clear Haccpar.
   have Hivclk : uint.Z ivR.(yjs.item.id').(yjs.id.clock') = Z.of_nat (run_clock r).
   { rewrite /run_clock Haccid /toYjsId /=. word. }
   destruct Hcov as (Hcl & Hlo & Hhi). rewrite /toYjsId /= in Hcl Hlo Hhi.

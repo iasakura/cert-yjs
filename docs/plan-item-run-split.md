@@ -497,7 +497,10 @@ vocabulary substitution table written; then C5 restates the specs at
   `runs_apply_live_refine`; its `own_store` wrapper lifts and lowers) and
   `splitAtAndGetLeft` / `splitAtAndGetRight` (from `GetNode_runs` +
   `splitNode_runs`, reporting the index-explicit `pool_split_left_step` /
-  `pool_split_right_step`) are proved directly at `(locs, pool)`; the
+  `pool_split_right_step`) and `repair` (from the split helpers and
+  `getOrCreateYType_runs`; the two origin slots are kept apart by
+  `own_store_runs_covers_unique` and carried across each other's split by
+  `pool_split_step_other_slot`) are proved directly at `(locs, pool)`; the
   run-count clause of `pool_after_split` / `pool_after_repair` was dropped
   (no consumer); the cell-level `applyDeleteSpans` is now
   DERIVED from the run-granular proof (for the `own_store` wrapper), the

@@ -1295,6 +1295,32 @@ Proof.
   done.
 Qed.
 
+Lemma split_locs_lookup_before (ls : list loc) (k : nat) (rloc : loc) (j : nat) :
+  (j < k)%nat ->
+  split_locs ls k rloc !! j = ls !! j.
+Proof.
+  move=> Hj. rewrite /split_locs.
+  destruct (ls !! k) as [lc|] eqn:Hk; last done.
+  have Hklen : (k < length ls)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k ls) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_l; last lia.
+  rewrite lookup_take_lt; [done | lia].
+Qed.
+
+Lemma split_locs_lookup_after (ls : list loc) (k : nat) (rloc lc : loc) (j : nat) :
+  ls !! k = Some lc -> (k < j)%nat ->
+  split_locs ls k rloc !! (S j) = ls !! j.
+Proof.
+  move=> Hk Hj. rewrite /split_locs Hk.
+  have Hklen : (k < length ls)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k ls) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk /=.
+  have -> : (S j - k)%nat = S (S (j - S k)) by lia.
+  simpl. rewrite lookup_drop. f_equal. lia.
+Qed.
+
+
 (** [pool_split_left_step p locs parent k d p' locs'] /
     [pool_split_right_step p locs parent k d l p' locs']: what
     [splitAtAndGetLeft] / [splitAtAndGetRight] do at the slot [(parent, k)]
@@ -1417,6 +1443,43 @@ Proof.
       split; first exact (split_runs_lookup_right _ _ _ _ Hr0).
       rewrite run_head_item_id Hclientr Hclockr. destruct d as [dc dk]. simpl in *. f_equal; lia.
     + rewrite lookup_insert_eq /=. exact (split_locs_lookup_right ls k l lc Hlk).
+Qed.
+
+(** Under one split step at [(parent, k)], the run at another slot
+    [(q, j)] survives at [j] (a different type, or [j < k]) or at [S j]
+    ([k < j]), with its address. *)
+Lemma pool_split_step_other_slot (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
+    (p' : pool) (locs' : gmap loc (list loc)) (q : loc) (j : nat) (tm : type_model) (r : ItemRun) (l : loc) :
+  pool_split_step p locs parent k p' locs' ->
+  p !! q = Some tm -> tm_runs tm !! j = Some r ->
+  (locs !! q) ≫= (λ ls, ls !! j) = Some l ->
+  ¬ (q = parent ∧ j = k) ->
+  ∃ j' tm', p' !! q = Some tm' ∧ tm_runs tm' !! j' = Some r ∧
+            (locs' !! q) ≫= (λ ls, ls !! j') = Some l ∧
+            (j' = j ∨ (q = parent ∧ (k < j)%nat ∧ j' = S j)).
+Proof.
+  move=> Hstep Hq Hr Hl Hnot.
+  destruct Hstep as [[-> ->] | (tm0 & ls0 & r0 & o & rloc & Hp0 & Hls0 & Hr0 & Ho & _ & _ & -> & ->)].
+  { exists j, tm. split_and!; [exact Hq | exact Hr | exact Hl | by left]. }
+  destruct (decide (parent = q)) as [<- | Hne]; last first.
+  { exists j, tm. rewrite !lookup_insert_ne; [| exact Hne | exact Hne].
+    split_and!; [exact Hq | exact Hr | exact Hl | by left]. }
+  rewrite Hq in Hp0. injection Hp0 as <-.
+  destruct (locs !! parent) as [ls|] eqn:Hls; last done. simpl in Hl.
+  injection Hls0 as <-.
+  rewrite !lookup_insert_eq /=.
+  destruct (decide (j < k)%nat) as [Hlt | Hge].
+  - exists j, (MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)). simpl.
+    split_and!; [done | rewrite (split_runs_lookup_before _ _ _ _ _ Hr0 Hlt) // |
+                 rewrite (split_locs_lookup_before _ _ _ _ Hlt) // | by left].
+  - have Hgt : (k < j)%nat.
+    { destruct (decide (j = k)) as [-> | Hne']; [exfalso; apply Hnot; done | lia]. }
+    exists (S j), (MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)). simpl.
+    destruct (ls !! k) as [lk|] eqn:Hlk; last first.
+    { exfalso. apply lookup_ge_None in Hlk.
+      have := lookup_lt_Some _ _ _ Hl. lia. }
+    split_and!; [done | rewrite (split_runs_lookup_after _ _ _ _ _ Hr0 Hgt) // |
+                 rewrite (split_locs_lookup_after _ _ _ _ _ Hlk Hgt) // | right; done].
 Qed.
 
 Lemma fresh_loc_locs (l : loc) (types : gmap loc type_state) :

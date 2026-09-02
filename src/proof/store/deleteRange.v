@@ -339,6 +339,8 @@ Proof using Type*.
   iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs1 p1 bind pend pdel) pw lsR tmR kR rl rR
                HlsR HpR HkRloc HrR with "Hruns") as (ivR) "H".
   iNamed "H".
+  (* the parent pin names [pw]; [wp_if_destruct]'s bare [subst] would take it *)
+  clear Haccpar.
   wp_auto.
   wp_apply (wp_item__Len rl (DfracOwn 1) ivR with "[$Haccval]").
   iIntros "Haccval".
