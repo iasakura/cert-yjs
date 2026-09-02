@@ -48,7 +48,10 @@
     [pool_after_delete_flip]), and the tombstone record survives a step
     that keeps dead chars dead ([ids_tombstoned_runs_dead_kept]);
     membership in [all_runs] is membership in some type
-    ([elem_of_all_runs]). The apply path's step records at run
+    ([elem_of_all_runs]) and [all_runs] around one split is the two halves
+    in place of the split run ([all_runs_split_perm]); [pool_after_split]
+    holds of no change and of one [split_runs] surgery
+    ([pool_after_split_refl] / [pool_after_split_of_split_runs]). The apply path's step records at run
     granularity: [runs_within_or_from] (every new run sits inside an old
     one or inside an integrated input's range; reflexive and composing
     across appended inputs, [runs_within_or_from_refl] / [_trans]),
@@ -131,8 +134,7 @@ Definition runs_dead_kept (p p' : pool) : Prop :=
 (** [pool_after_split p p' parent k]: [p'] is [p] after one node split at
     the [k]-th run of the type at [parent]: the loc-free
     [split_types_update_rel], its address clauses become index facts. Each
-    type's document and flatten survive, no type disappears, a client's run
-    list grows by at most one, every run away from the split spot survives,
+    type's document and flatten survive, no type disappears, every run away from the split spot survives,
     a covered clock stays covered in the same type (the covering run is the
     survivor, or a half of the split run; which half is an address-map
     matter the spec states on [sr_locs]), a type of
@@ -143,7 +145,6 @@ Definition pool_after_split (p p' : pool) (parent : loc) (k : nat) : Prop :=
      ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm ∧
            runs_flatten (tm_runs tm') = runs_flatten (tm_runs tm)) ∧
   (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ∧
-  (∀ c, (length (client_runs p' c) <= S (length (client_runs p c)))%nat) ∧
   (∀ q tm k' r, p !! q = Some tm -> tm_runs tm !! k' = Some r ->
      ¬ (q = parent ∧ k' = k) -> r ∈ all_runs p') ∧
   (∀ (ccl clk : nat) q tm k0 r, p !! q = Some tm -> tm_runs tm !! k0 = Some r ->
@@ -170,7 +171,6 @@ Definition pool_after_repair (p p' : pool) : Prop :=
      ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm ∧
            runs_flatten (tm_runs tm') = runs_flatten (tm_runs tm)) ∧
   (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ∧
-  (∀ c, (length (client_runs p' c) <= 2 + length (client_runs p c))%nat) ∧
   (∀ q tm tm', p !! q = Some tm -> p' !! q = Some tm' ->
      Forall (λ r, length (run_items r) = 1%nat) (tm_runs tm) -> tm' = tm) ∧
   runs_within (all_runs p) (all_runs p') ∧
@@ -450,9 +450,164 @@ Qed.
 Lemma pool_after_split_delete (p p' : pool) (parent : loc) (k : nat) :
   pool_after_split p p' parent k -> pool_after_delete p p'.
 Proof.
-  move=> [H1 [H2 [_ [_ [_ [_ [H7 [H8 H9]]]]]]]].
+  move=> [H1 [H2 [_ [_ [_ [H7 [H8 H9]]]]]]].
   split_and!; [| exact H2 | exact H8 | exact H9 | exact H7].
   move=> q tm' Hq. destruct (H1 q tm' Hq) as (tm & Hq0 & Harr & _). eauto.
+Qed.
+
+(** [all_runs] around one split: the two halves in place of the split run,
+    everything else untouched. *)
+Lemma all_runs_split_perm (p : pool) (parent : loc) (tm : type_model) (k o : nat) (r : ItemRun) :
+  p !! parent = Some tm ->
+  tm_runs tm !! k = Some r ->
+  all_runs (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p)
+    ≡ₚ split_run_left r o :: split_run_right r o
+       :: (take k (tm_runs tm) ++ drop (S k) (tm_runs tm) ++ all_runs (delete parent p)) ∧
+  all_runs p ≡ₚ r :: (take k (tm_runs tm) ++ drop (S k) (tm_runs tm) ++ all_runs (delete parent p)).
+Proof.
+  move=> Hp Hrk.
+  have Hmid := take_drop_middle (tm_runs tm) k r Hrk.
+  have Hsplit : split_runs (tm_runs tm) k o
+              = take k (tm_runs tm)
+                ++ [split_run_left r o; split_run_right r o] ++ drop (S k) (tm_runs tm).
+  { rewrite /split_runs Hrk //. }
+  split.
+  - rewrite (all_runs_insert p parent tm _ Hp) /= Hsplit.
+    rewrite -!app_assoc /=.
+    rewrite -Permutation_middle.
+    rewrite -Permutation_middle //.
+  - rewrite (all_runs_lookup p parent tm Hp).
+    rewrite -{1}Hmid -app_assoc /=.
+    rewrite -Permutation_middle //.
+Qed.
+
+(** [pool_after_split] holds of no change, and of one [split_runs] surgery
+    at a proper offset of a chained run: what the direct run-granular
+    proofs of the split helpers report. *)
+Lemma pool_after_split_refl (p : pool) (parent : loc) (k : nat) :
+  pool_after_split p p parent k.
+Proof.
+  split_and!.
+  - move=> q tm' Hq. exists tm'. done.
+  - done.
+  - move=> q tm k' r Hq Hr _. apply (elem_of_all_runs p r). eauto using list_elem_of_lookup_2.
+  - move=> ccl clk q tm k0 r Hq Hr Hcl Hlo Hhi. exists tm, k0, r. split_and!; try done. by left.
+  - move=> q tm tm' Hq Hq' _. congruence.
+  - apply runs_within_refl.
+  - move=> r' Hr' Hd. exists r'. done.
+  - move=> r Hr Hd y Hy. exists r. done.
+Qed.
+
+Lemma pool_after_split_of_split_runs (p : pool) (parent : loc) (tm : type_model)
+    (k o : nat) (r : ItemRun) :
+  p !! parent = Some tm ->
+  tm_runs tm !! k = Some r ->
+  run_wf (run_items r) ->
+  (0 < o < length (run_items r))%nat ->
+  pool_after_split p (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p) parent k.
+Proof.
+  move=> Hp Hrk Hwf Ho.
+  set (tm' := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)).
+  set (rest := take k (tm_runs tm) ++ drop (S k) (tm_runs tm) ++ all_runs (delete parent p)).
+  destruct (all_runs_split_perm p parent tm k o r Hp Hrk) as [Hnew Hold].
+  destruct (split_run_facts r o Hwf Ho)
+    as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
+  have Hrmem : r ∈ all_runs p by (rewrite Hold; apply list_elem_of_here).
+  have Hrestin : ∀ r0, r0 ∈ rest -> r0 ∈ all_runs p.
+  { move=> r0 Hr0. rewrite Hold. apply elem_of_cons. by right. }
+  have Hitemsl : run_items (split_run_left r o) = take o (run_items r) by done.
+  have Hitemsr : run_items (split_run_right r o) = drop o (run_items r) by done.
+  have Hdell : run_deleted (split_run_left r o) = run_deleted r by done.
+  have Hdelr : run_deleted (split_run_right r o) = run_deleted r by done.
+  split_and!.
+  - (* documents and flattens survive *)
+    move=> q tmq Hq. destruct (decide (parent = q)) as [<- | Hne].
+    + rewrite lookup_insert_eq in Hq. injection Hq as <-. exists tm.
+      split_and!; [done | done | exact (split_runs_flatten _ _ _ _ Hrk)].
+    + rewrite lookup_insert_ne in Hq; last exact Hne. exists tmq. done.
+  - (* no type disappears *)
+    move=> q Hq. destruct (decide (parent = q)) as [<- | Hne].
+    + rewrite lookup_insert_eq. done.
+    + rewrite lookup_insert_ne; [exact Hq | exact Hne].
+  - (* every run away from the split spot survives *)
+    move=> q tmq k' r' Hq Hr' Hnot.
+    apply (elem_of_all_runs_insert p parent tm tm' r' Hp).
+    destruct (decide (parent = q)) as [<- | Hne].
+    + left. rewrite Hq in Hp. injection Hp as <-. simpl.
+      destruct (decide (k' < k)%nat) as [Hlt | Hge].
+      * apply list_elem_of_lookup. exists k'. rewrite (split_runs_lookup_before _ _ _ _ _ Hrk Hlt) //.
+      * have Hgt : (k < k')%nat.
+        { destruct (decide (k' = k)) as [-> | Hne']; [exfalso; apply Hnot; done | lia]. }
+        apply list_elem_of_lookup. exists (S k'). rewrite (split_runs_lookup_after _ _ _ _ _ Hrk Hgt) //.
+    + right. apply (elem_of_all_runs (delete parent p) r'). exists q, tmq.
+      rewrite lookup_delete_ne; [| exact Hne]. split; [exact Hq | exact (list_elem_of_lookup_2 _ _ _ Hr')].
+  - (* a covered clock stays covered in the same type *)
+    move=> ccl clk q tmq k0 r0 Hq Hr0 Hcl Hlo Hhi.
+    destruct (decide (parent = q)) as [<- | Hne]; last first.
+    { exists tmq, k0, r0. rewrite lookup_insert_ne; last exact Hne. split_and!; try done. by left. }
+    rewrite Hq in Hp. injection Hp as <-.
+    exists tm'. rewrite lookup_insert_eq.
+    destruct (decide (k0 = k)) as [-> | Hnek]; last first.
+    { destruct (decide (k0 < k)%nat) as [Hlt | Hge].
+      - exists k0, r0. rewrite /tm' /= (split_runs_lookup_before _ _ _ _ _ Hrk Hlt).
+        split_and!; try done. by left.
+      - have Hgt : (k < k0)%nat by lia.
+        exists (S k0), r0. rewrite /tm' /= (split_runs_lookup_after _ _ _ _ _ Hrk Hgt).
+        split_and!; try done. by left. }
+    rewrite Hrk in Hr0. injection Hr0 as <-.
+    have Hlen1 : (1 < length (run_items r))%nat by lia.
+    destruct (decide (clk < run_clock r + o)%nat) as [Hleft | Hright].
+    + exists k, (split_run_left r o).
+      split_and!.
+      * done.
+      * exact (split_runs_lookup_left _ _ _ _ Hrk).
+      * rewrite Hclientl. exact Hcl.
+      * rewrite Hclockl. lia.
+      * rewrite Hclockl Hlenl. lia.
+      * right. done.
+    + exists (S k), (split_run_right r o).
+      split_and!.
+      * done.
+      * exact (split_runs_lookup_right _ _ _ _ Hrk).
+      * rewrite Hclientr. exact Hcl.
+      * rewrite Hclockr. lia.
+      * rewrite Hclockr Hlenr. lia.
+      * right. done.
+  - (* a type of one-char runs is untouched *)
+    move=> q tmq tmq' Hq Hq' Hunit.
+    destruct (decide (parent = q)) as [<- | Hne].
+    + rewrite Hq in Hp. injection Hp as <-.
+      exfalso. have Hu := Forall_lookup_1 _ _ _ _ Hunit Hrk. lia.
+    + rewrite lookup_insert_ne in Hq'; last exact Hne.
+      rewrite Hq in Hq'. by injection Hq' as ->.
+  - (* every new run sits inside an old one *)
+    move=> r' Hr'. rewrite Hnew in Hr'.
+    apply elem_of_cons in Hr' as [-> | Hr'].
+    { exists r. split_and!; [exact Hrmem | exact Hclientl | rewrite Hclockl; lia | rewrite Hclockl Hlenl; lia]. }
+    apply elem_of_cons in Hr' as [-> | Hr'].
+    { exists r. split_and!; [exact Hrmem | exact Hclientr | rewrite Hclockr; lia | rewrite Hclockr Hlenr; lia]. }
+    exists r'. split_and!; [exact (Hrestin r' Hr') | done | lia | lia].
+  - (* live chars refine *)
+    move=> r' Hr' Hlive. rewrite Hnew in Hr'.
+    apply elem_of_cons in Hr' as [-> | Hr'].
+    { exists r. split_and!; [exact Hrmem | rewrite -Hdell // |].
+      move=> y Hy. rewrite Hitemsl in Hy. apply elem_of_take in Hy as (i & Hi & _).
+      exact (list_elem_of_lookup_2 _ _ _ Hi). }
+    apply elem_of_cons in Hr' as [-> | Hr'].
+    { exists r. split_and!; [exact Hrmem | rewrite -Hdelr // |].
+      move=> y Hy. rewrite Hitemsr in Hy. apply list_elem_of_lookup in Hy as (i & Hi).
+      rewrite lookup_drop in Hi. exact (list_elem_of_lookup_2 _ _ _ Hi). }
+    exists r'. split_and!; [exact (Hrestin r' Hr') | exact Hlive | done].
+  - (* dead chars stay dead *)
+    move=> r0 Hr0 Hdead y Hy. rewrite Hold in Hr0.
+    apply elem_of_cons in Hr0 as [-> | Hr0].
+    { rewrite -(take_drop o (run_items r)) in Hy. apply elem_of_app in Hy as [Hy | Hy].
+      - exists (split_run_left r o). split_and!;
+          [rewrite Hnew; apply list_elem_of_here | rewrite Hdell // | rewrite Hitemsl //].
+      - exists (split_run_right r o). split_and!;
+          [rewrite Hnew; apply elem_of_cons; right; apply list_elem_of_here | rewrite Hdelr // | rewrite Hitemsr //]. }
+    exists r0. split_and!; [| exact Hdead | exact Hy].
+    rewrite Hnew. apply elem_of_cons; right. apply elem_of_cons; right. exact Hr0.
 Qed.
 
 Lemma pool_after_delete_flip (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :

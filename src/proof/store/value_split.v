@@ -34,6 +34,14 @@
       ([delete_types_update_rel_to_pool], and back,
       [pool_after_delete_of_types]): what carries the splitAtAndGet,
       [repair] and delete-path postconditions to [(locs, p)].
+    - the index-explicit split steps at [(locs, p)]: [pool_split_step] (one
+      surgery or nothing, weakening to [pool_after_split] through
+      [pool_after_split_of_split_step]) and the precise
+      [pool_split_left_step] / [pool_split_right_step] the split helpers
+      report ([pool_split_step_of_left] / [_of_right]; the boundary they pin,
+      [pool_split_left_step_ends_at] / [pool_split_right_step_starts_at]);
+      [split_locs] slot laws ([split_locs_lookup_left] / [_right]) and a
+      run's head id as its client and clock ([run_head_item_id]).
     - the split projects along [cell_run] ([cell_run_split_left] /
       [cell_run_split_right], [split_cells_runs]; [cell_covers_clock_run]),
       the fresh node's address being all the pure [split_runs] does not see,
@@ -505,29 +513,6 @@ Proof.
     destruct (before !! q) as [ts|] eqn:Hb; simplify_eq/=.
     destruct (H2 q (mk_is_Some _ _ Hb)) as [ts' Ha].
     rewrite /pool_of lookup_fmap Ha /=. by eexists.
-  - (* client-run growth *)
-    move=> c.
-    destruct (decide (Z.of_nat c < 2^64)%Z) as [Hc | Hc].
-    + have Hcw : uint.nat (W64 c) = c by word.
-      have Heqa := client_run_runs after (W64 c) Hcka Hcla Hnea Hnda Hdja.
-      have Heqb := client_run_runs before (W64 c) Hckb Hclb Hneb Hndb Hdjb.
-      rewrite Hcw in Heqa Heqb.
-      rewrite -Heqa -Heqb !length_fmap.
-      exact (H3 (W64 c)).
-    + have Hemp : ∀ (X : gmap loc type_state),
-          (∀ c0, c0 ∈ all_cells X -> (Z.of_nat (run_client (cell_run c0)) < 2^64)%Z) ->
-          length (client_runs (pool_of X) c) = 0%nat.
-      { move=> X HX.
-        rewrite /client_runs (Permutation_length (merge_sort_Permutation _ _)).
-        destruct (filter (λ r, run_client r = c) (all_runs (pool_of X)))
-          as [| r rest] eqn:E; [done | exfalso].
-        have Hr : r ∈ filter (λ r0, run_client r0 = c) (all_runs (pool_of X)).
-        { rewrite E. apply list_elem_of_here. }
-        apply list_elem_of_filter in Hr as [HP Hmem].
-        rewrite all_runs_pool_of in Hmem.
-        apply list_elem_of_fmap in Hmem as (c0 & -> & Hc0).
-        have HB := HX c0 Hc0. rewrite HP in HB. lia. }
-      rewrite (Hemp after Hcla) (Hemp before Hclb). lia.
   - (* runs away from the split spot survive *)
     move=> q tm k' r Hq Hr Hne.
     rewrite /pool_of lookup_fmap in Hq.
@@ -676,28 +661,6 @@ Proof.
     destruct (before !! q) as [ts|] eqn:Hb; simplify_eq/=.
     destruct (H2 q (mk_is_Some _ _ Hb)) as [ts' Ha].
     rewrite /pool_of lookup_fmap Ha /=. by eexists.
-  - move=> c.
-    destruct (decide (Z.of_nat c < 2^64)%Z) as [Hc | Hc].
-    + have Hcw : uint.nat (W64 c) = c by word.
-      have Heqa := client_run_runs after (W64 c) Hcka Hcla Hnea Hnda Hdja.
-      have Heqb := client_run_runs before (W64 c) Hckb Hclb Hneb Hndb Hdjb.
-      rewrite Hcw in Heqa Heqb.
-      rewrite -Heqa -Heqb !length_fmap.
-      exact (H3 (W64 c)).
-    + have Hemp : ∀ (X : gmap loc type_state),
-          (∀ c0, c0 ∈ all_cells X -> (Z.of_nat (run_client (cell_run c0)) < 2^64)%Z) ->
-          length (client_runs (pool_of X) c) = 0%nat.
-      { move=> X HX.
-        rewrite /client_runs (Permutation_length (merge_sort_Permutation _ _)).
-        destruct (filter (λ r, run_client r = c) (all_runs (pool_of X)))
-          as [| r rest] eqn:E; [done | exfalso].
-        have Hr : r ∈ filter (λ r0, run_client r0 = c) (all_runs (pool_of X)).
-        { rewrite E. apply list_elem_of_here. }
-        apply list_elem_of_filter in Hr as [HP Hmem].
-        rewrite all_runs_pool_of in Hmem.
-        apply list_elem_of_fmap in Hmem as (c0 & -> & Hc0).
-        have HB := HX c0 Hc0. rewrite HP in HB. lia. }
-      rewrite (Hemp after Hcla) (Hemp before Hclb). lia.
   - move=> q tm tm' Hq Hq'.
     rewrite /pool_of lookup_fmap in Hq.
     destruct (before !! q) as [ts|] eqn:Hb; simplify_eq/=.
@@ -1271,6 +1234,189 @@ Proof.
     + apply (inj uint.Z). rewrite (Hcla' c Hc) (Hclb' c0 Hc0). lia.
     + rewrite (Hza c Hc) (Hzb c0 Hc0). lia.
     + rewrite (Hza c Hc) (Hzb c0 Hc0). move: Hhi. rewrite /cell_run /=. lia.
+Qed.
+
+(** [pool_split_step p locs parent k p' locs']: what one of the split
+    helpers ([splitAtAndGetLeft] / [splitAtAndGetRight]) does to the run
+    pool and the address map at slot [(parent, k)]: nothing, or one
+    [split_runs] / [split_locs] surgery at a proper offset with a fresh
+    address for the right half. The index-explicit form of
+    [pool_after_split], which it implies ([pool_after_split_of_split_step]);
+    what the two precise forms below weaken to and what
+    [store.repair]'s run-granular proof steps by. *)
+Definition pool_split_step (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
+    (p' : pool) (locs' : gmap loc (list loc)) : Prop :=
+  (p' = p ∧ locs' = locs) ∨
+  (∃ (tm : type_model) (ls : list loc) (r : ItemRun) (o : nat) (rloc : loc),
+     p !! parent = Some tm ∧ locs !! parent = Some ls ∧ tm_runs tm !! k = Some r ∧
+     (0 < o < length (run_items r))%nat ∧
+     rloc ≠ null ∧ rloc ∉ concat ((map_to_list locs).*2) ∧
+     p' = <[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p ∧
+     locs' = <[parent := split_locs ls k rloc]> locs).
+
+Lemma pool_after_split_of_split_step (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
+    (p' : pool) (locs' : gmap loc (list loc)) :
+  (∀ r, r ∈ all_runs p -> run_wf (run_items r)) ->
+  pool_split_step p locs parent k p' locs' ->
+  pool_after_split p p' parent k.
+Proof.
+  move=> Hwf Hstep.
+  destruct Hstep as [[-> ->] | (tm & ls & r & o & rloc & Hp & Hls & Hr & Ho & _ & _ & -> & ->)].
+  - exact (pool_after_split_refl p parent k).
+  - apply (pool_after_split_of_split_runs p parent tm k o r Hp Hr); last exact Ho.
+    apply Hwf. apply (elem_of_all_runs p r). exists parent, tm.
+    split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hr)].
+Qed.
+
+(** Where the address surgery leaves each slot: the split node's address at
+    [k], the fresh right address at [S k] (the address half of
+    [split_runs_lookup_left] / [_right]). *)
+Lemma split_locs_lookup_left (ls : list loc) (k : nat) (rloc lc : loc) :
+  ls !! k = Some lc ->
+  split_locs ls k rloc !! k = Some lc.
+Proof.
+  move=> Hk. rewrite /split_locs Hk.
+  have Hklen : (k < length ls)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k ls) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk Nat.sub_diag //.
+Qed.
+
+Lemma split_locs_lookup_right (ls : list loc) (k : nat) (rloc lc : loc) :
+  ls !! k = Some lc ->
+  split_locs ls k rloc !! (S k) = Some rloc.
+Proof.
+  move=> Hk. rewrite /split_locs Hk.
+  have Hklen : (k < length ls)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k ls) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk.
+  have -> : (S k - k)%nat = 1%nat by lia.
+  done.
+Qed.
+
+(** [pool_split_left_step p locs parent k d p' locs'] /
+    [pool_split_right_step p locs parent k d l p' locs']: what
+    [splitAtAndGetLeft] / [splitAtAndGetRight] do at the slot [(parent, k)]
+    whose run covers [d]. Left: nothing when [d] is the run's last char,
+    else the split just after [d]. Right: nothing when [d] is the run's
+    head (the node's own address [l] comes back), else the split at [d]
+    with the fresh right address [l] coming back. Both are one
+    [pool_split_step] ([pool_split_step_of_left] / [_of_right]), and both
+    pin where the requested boundary now sits
+    ([pool_split_left_step_ends_at], [pool_split_right_step_starts_at]).
+    What [wp_store__splitAtAndGetLeft_runs] / [_Right_runs] report. *)
+Definition pool_split_left_step (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
+    (d : YjsId) (p' : pool) (locs' : gmap loc (list loc)) : Prop :=
+  ∃ (tm : type_model) (ls : list loc) (r : ItemRun),
+    p !! parent = Some tm ∧ locs !! parent = Some ls ∧ tm_runs tm !! k = Some r ∧
+    (((clock d - run_clock r)%nat = (length (run_items r) - 1)%nat ∧ p' = p ∧ locs' = locs) ∨
+     ((clock d - run_clock r < length (run_items r) - 1)%nat ∧
+      ∃ rloc : loc, rloc ≠ null ∧ rloc ∉ concat ((map_to_list locs).*2) ∧
+        p' = <[parent := MkTypeModel (split_runs (tm_runs tm) k (clock d - run_clock r + 1)) (tm_arr tm)]> p ∧
+        locs' = <[parent := split_locs ls k rloc]> locs)).
+
+Definition pool_split_right_step (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
+    (d : YjsId) (l : loc) (p' : pool) (locs' : gmap loc (list loc)) : Prop :=
+  ∃ (tm : type_model) (ls : list loc) (r : ItemRun) (lc : loc),
+    p !! parent = Some tm ∧ locs !! parent = Some ls ∧ tm_runs tm !! k = Some r ∧ ls !! k = Some lc ∧
+    (((clock d - run_clock r)%nat = 0%nat ∧ l = lc ∧ p' = p ∧ locs' = locs) ∨
+     ((0 < clock d - run_clock r)%nat ∧ l ≠ null ∧ l ∉ concat ((map_to_list locs).*2) ∧
+      p' = <[parent := MkTypeModel (split_runs (tm_runs tm) k (clock d - run_clock r)) (tm_arr tm)]> p ∧
+      locs' = <[parent := split_locs ls k l]> locs)).
+
+Lemma pool_split_step_of_left (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
+    (d : YjsId) (p' : pool) (locs' : gmap loc (list loc)) (r : ItemRun) :
+  (∃ tm, p !! parent = Some tm ∧ tm_runs tm !! k = Some r) ->
+  run_covers r d ->
+  pool_split_left_step p locs parent k d p' locs' ->
+  pool_split_step p locs parent k p' locs'.
+Proof.
+  move=> [tm0 [Hp0 Hr0]] [Hcl [Hlo Hhi]] [tm [ls [r' [Hp [Hls [Hr Hcase]]]]]].
+  rewrite Hp0 in Hp. injection Hp as <-. rewrite Hr0 in Hr. injection Hr as <-.
+  destruct Hcase as [[_ [-> ->]] | [Hlt (rloc & Hnn & Hfresh & -> & ->)]]; [by left | right].
+  exists tm0, ls, r, (clock d - run_clock r + 1)%nat, rloc.
+  split_and!; [exact Hp0 | exact Hls | exact Hr0 | lia | lia | exact Hnn | exact Hfresh | done | done].
+Qed.
+
+Lemma pool_split_step_of_right (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
+    (d : YjsId) (l : loc) (p' : pool) (locs' : gmap loc (list loc)) (r : ItemRun) :
+  (∃ tm, p !! parent = Some tm ∧ tm_runs tm !! k = Some r) ->
+  run_covers r d ->
+  pool_split_right_step p locs parent k d l p' locs' ->
+  pool_split_step p locs parent k p' locs'.
+Proof.
+  move=> [tm0 [Hp0 Hr0]] [Hcl [Hlo Hhi]] [tm [ls [r' [lc [Hp [Hls [Hr [Hlk Hcase]]]]]]]].
+  rewrite Hp0 in Hp. injection Hp as <-. rewrite Hr0 in Hr. injection Hr as <-.
+  destruct Hcase as [[_ [_ [-> ->]]] | [Hpos (Hnn & Hfresh & -> & ->)]]; [by left | right].
+  exists tm0, ls, r, (clock d - run_clock r)%nat, l.
+  split_and!; [exact Hp0 | exact Hls | exact Hr0 | lia | lia | exact Hnn | exact Hfresh | done | done].
+Qed.
+
+(** The head id of a run is its client and clock. *)
+Lemma run_head_item_id (r : ItemRun) :
+  item_id (run_head_item r) = MkYjsId (run_client r) (run_clock r).
+Proof. rewrite /run_client /run_clock. by destruct (item_id (run_head_item r)). Qed.
+
+Lemma pool_split_left_step_ends_at (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
+    (d : YjsId) (p' : pool) (locs' : gmap loc (list loc)) (r : ItemRun) (lc : loc) :
+  (∃ tm, p !! parent = Some tm ∧ tm_runs tm !! k = Some r) ->
+  (locs !! parent) ≫= (λ ls, ls !! k) = Some lc ->
+  run_wf (run_items r) ->
+  run_covers r d ->
+  pool_split_left_step p locs parent k d p' locs' ->
+  pool_run_starts_at p' parent k (item_id (run_head_item r)) ∧
+  pool_run_ends_at p' parent k d ∧
+  (locs' !! parent) ≫= (λ ls, ls !! k) = Some lc.
+Proof.
+  move=> [tm0 [Hp0 Hr0]] Hlc Hwf [Hcl [Hlo Hhi]] [tm [ls [r' [Hp [Hls [Hr Hcase]]]]]].
+  rewrite Hp0 in Hp. injection Hp as <-. rewrite Hr0 in Hr. injection Hr as <-.
+  rewrite Hls /= in Hlc.
+  destruct Hcase as [[Hlast [-> ->]] | [Hlt (rloc & _ & _ & -> & ->)]].
+  - split_and!.
+    + exists tm0. split; first exact Hp0. exists r. done.
+    + exists tm0. split; first exact Hp0. exists r. split_and!; [exact Hr0 | exact Hcl | lia].
+    + rewrite Hls /=. exact Hlc.
+  - have Ho : (0 < clock d - run_clock r + 1 < length (run_items r))%nat by lia.
+    destruct (split_run_facts r _ Hwf Ho)
+      as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
+    split_and!.
+    + exists (MkTypeModel (split_runs (tm_runs tm0) k (clock d - run_clock r + 1)) (tm_arr tm0)).
+      rewrite lookup_insert_eq. split; first done.
+      exists (split_run_left r (clock d - run_clock r + 1)). simpl.
+      split; [exact (split_runs_lookup_left _ _ _ _ Hr0) | rewrite Hheadl //].
+    + exists (MkTypeModel (split_runs (tm_runs tm0) k (clock d - run_clock r + 1)) (tm_arr tm0)).
+      rewrite lookup_insert_eq. split; first done.
+      exists (split_run_left r (clock d - run_clock r + 1)). simpl.
+      split_and!; [exact (split_runs_lookup_left _ _ _ _ Hr0) | rewrite Hclientl // | rewrite Hclockl Hlenl; lia].
+    + rewrite lookup_insert_eq /=. exact (split_locs_lookup_left ls k rloc lc Hlc).
+Qed.
+
+Lemma pool_split_right_step_starts_at (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
+    (d : YjsId) (l : loc) (p' : pool) (locs' : gmap loc (list loc)) (r : ItemRun) :
+  (∃ tm, p !! parent = Some tm ∧ tm_runs tm !! k = Some r) ->
+  run_wf (run_items r) ->
+  run_covers r d ->
+  pool_split_right_step p locs parent k d l p' locs' ->
+  ∃ k', pool_run_starts_at p' parent k' d ∧ (locs' !! parent) ≫= (λ ls, ls !! k') = Some l.
+Proof.
+  move=> [tm0 [Hp0 Hr0]] Hwf [Hcl [Hlo Hhi]] [tm [ls [r' [lc [Hp [Hls [Hr [Hlk Hcase]]]]]]]].
+  rewrite Hp0 in Hp. injection Hp as <-. rewrite Hr0 in Hr. injection Hr as <-.
+  destruct Hcase as [[Hhead [-> [-> ->]]] | [Hpos (_ & _ & -> & ->)]].
+  - exists k. split.
+    + exists tm0. split; first exact Hp0. exists r. split; first exact Hr0.
+      rewrite run_head_item_id. destruct d as [dc dk]. simpl in *. f_equal; lia.
+    + rewrite Hls /=. exact Hlk.
+  - have Ho : (0 < clock d - run_clock r < length (run_items r))%nat by lia.
+    destruct (split_run_facts r _ Hwf Ho)
+      as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
+    exists (S k). split.
+    + exists (MkTypeModel (split_runs (tm_runs tm0) k (clock d - run_clock r)) (tm_arr tm0)).
+      rewrite lookup_insert_eq. split; first done.
+      exists (split_run_right r (clock d - run_clock r)). simpl.
+      split; first exact (split_runs_lookup_right _ _ _ _ Hr0).
+      rewrite run_head_item_id Hclientr Hclockr. destruct d as [dc dk]. simpl in *. f_equal; lia.
+    + rewrite lookup_insert_eq /=. exact (split_locs_lookup_right ls k l lc Hlk).
 Qed.
 
 Lemma fresh_loc_locs (l : loc) (types : gmap loc type_state) :

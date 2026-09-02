@@ -1,9 +1,11 @@
 (** store update path, split layer: [wp_store__splitNode],
     [wp_store__splitAtAndGetLeft] / [wp_store__splitAtAndGetRight] (each over
     the whole store, with a local stepping stone over the item index and the
-    pool), their run-granular derived forms
+    pool), their run-granular forms
     [wp_store__splitAtAndGetLeft_runs] / [wp_store__splitAtAndGetRight_runs]
-    (over [own_store_runs], stepping the pool by [pool_after_split]), plus the
+    (over [own_store_runs], proved directly from [wp_store__GetNode_runs] and
+    [wp_store__splitNode_runs], stepping the pool and the address map by the
+    index-explicit [pool_split_left_step] / [pool_split_right_step]), plus the
     split-pool bookkeeping ([pool_invs], [split_types_update_rel], the
     [split_pool_*] / [split_cells_*] lemmas). Split out of
     [store/GetNode] so it proof-checks in parallel; same [Section]
@@ -2267,150 +2269,181 @@ Proof using Type*.
   simpl. rewrite locs_of_concat. exact Hnotin.
 Qed.
 
-(** [store.splitAtAndGetLeft] at run granularity (plan-item-run-split
-    stage 2): make the char [idv], covered by the [k]-th run of the type at
-    [parent], END a node: the returned address holds a run starting at that
-    run's head and ending at [idv], at one slot [k'] of the updated pool,
-    which is [pool_after_split] of the old one; that address is the [k]-th
-    run's old address (the left half stays in place, which is what lets the
-    delete loop tombstone the node it holds). Derived from the cell-level
-    spec through the projections and
-    [split_types_update_rel_to_pool]. *)
+(** [store.splitAtAndGetLeft] at run granularity: make the char [idv],
+    covered by the [k]-th run of the type at [parent] (the node at [lc]),
+    END a node. Nothing changes when [idv] is the run's last char; else the
+    node is split just after [idv] and the truncated left half keeps its
+    address. Either way the node at [lc] comes back and the pool and the
+    address map step by [pool_split_left_step] (index-explicit; the
+    boundary it pins is [pool_split_left_step_ends_at], and it weakens to
+    [pool_after_split] through [pool_split_step_of_left]). Proved directly
+    from [wp_store__GetNode_runs] and [wp_store__splitNode_runs]. *)
 Lemma wp_store__splitAtAndGetLeft_runs (s : loc) (idv : yjs.id.t) (str : store_state_runs)
-    (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
+    (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc) :
   sr_pool str !! parent = Some tm ->
+  sr_locs str !! parent = Some ls ->
   tm_runs tm !! k = Some r ->
+  ls !! k = Some lc ->
   run_covers r (toYjsId idv) ->
   {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
-  {{{ (l : loc) (p' : pool) (locs' : gmap loc (list loc)), RET (#l, #true);
+  {{{ (p' : pool) (locs' : gmap loc (list loc)), RET (#lc, #true);
       own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
-      ⌜pool_after_split (sr_pool str) p' parent k⌝ ∗
-      ⌜(sr_locs str !! parent) ≫= (λ ls, ls !! k) = Some l⌝ ∗
-      ⌜∃ k', pool_run_starts_at p' parent k' (item_id (run_head_item r)) ∧
-             pool_run_ends_at p' parent k' (toYjsId idv) ∧
-             (locs' !! parent) ≫= (λ ls, ls !! k') = Some l⌝ }}}.
+      ⌜pool_split_left_step (sr_pool str) (sr_locs str) parent k (toYjsId idv) p' locs'⌝ }}}.
 Proof using Type*.
-  move=> Hp Hr Hcov.
+  move=> Hp Hls Hr Hlk Hcov.
+  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
-  iEval (rewrite own_store_runs_as_state) in "Hruns".
-  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
-  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
-  rewrite /pool_of lookup_fmap in Hp.
-  destruct (types !! parent) as [ts|] eqn:Hts; simplify_eq/=.
-  rewrite /type_model_of /= list_lookup_fmap in Hr.
-  destruct (ty_cells ts !! k) as [cw|] eqn:Hk; simplify_eq/=.
-  have Hkloc : (locs_of types !! parent) ≫= (λ ls, ls !! k) = Some (ic_loc cw).
-  { rewrite /locs_of lookup_fmap Hts /= list_lookup_fmap Hk //. }
-  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
-  have Hpool0 : pool_invs types := proj1 Hinvs0.
-  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iDestruct (own_type_pool_parents with "Htypes") as %Hparb.
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbndb.
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfb.
-  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types bind pend pdel) Hinvs0
-               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
-  have Hcwmem : cw ∈ all_cells types.
-  { apply all_cells_elem_of. exists parent, ts.
-    split; [done | exact (list_elem_of_lookup_2 _ _ _ Hk)]. }
-  have Hcwcov : pool_cell_covers types cw (toYjsId idv).
-  { split; [exact Hcwmem | by apply cell_covers_run]. }
-  wp_apply (wp_store__splitAtAndGetLeft s idv (MkStoreState client k0 types bind pend pdel) cw Hcwcov
-              with "[$Hpkg $Hcells]").
-  iIntros (types') "(Hcells & %Hstep & %Hstarts & %Hends)".
-  iEval (simpl) in "Hcells".
-  iDestruct "Hcells" as "(Hfields1 & %Hinvs1)".
-  have Hpool1 : pool_invs types' := proj1 Hinvs1.
-  iDestruct "Hfields1" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iDestruct (own_type_pool_parents with "Htypes") as %Hpara.
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnda.
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfa.
-  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types' bind pend pdel) Hinvs1
-               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
-  iApply ("HΦ" $! (ic_loc cw) (pool_of types') (locs_of types')).
-  iSplitL.
-  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0 types' bind pend pdel).
-    iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
-  iPureIntro.
-  have Hpc : ic_parent cw = parent
-    := Hparb parent ts cw Hts (list_elem_of_lookup_2 _ _ _ Hk).
-  rewrite Hpc in Hstarts Hends.
-  split_and!.
-  - exact (split_types_update_rel_to_pool types types' cw parent ts k Hts Hk Hparb Hpara
-             (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
-             (λ c Hc, proj2 (Hbnda c Hc)) (λ c Hc, proj1 (Hbnda c Hc))
-             (λ c Hc, proj1 (Hwfb c Hc)) (λ c Hc, proj1 (Hwfa c Hc))
-             Hpool0 Hpool1 Hstep).
-  - exact Hkloc.
-  - exact (cell_starts_ends_at_to_run types' parent (ic_loc cw) _ _ Hpara
-             (proj1 (proj2 Hpool1)) Hstarts Hends).
+  wp_method_call. wp_call. wp_call. wp_auto.
+  have Hcovp : pool_run_covers p parent k (toYjsId idv) by (exists tm, r).
+  wp_apply (wp_store__GetNode_runs s idv (MkStoreStateRuns client0 k0 locs p bind pend pdel)
+              with "[$Hpkg $Hruns]").
+  iIntros (nl ok) "(Hruns & %Hres)". simpl in Hres.
+  destruct ok; last first.
+  { exfalso. exact (Hres parent k Hcovp). }
+  destruct Hres as (q' & k' & Hcov' & Hloc').
+  iDestruct (own_store_runs_covers_unique s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
+               (toYjsId idv) q' parent k' k Hcov' Hcovp with "Hruns") as %[-> ->].
+  rewrite Hls /= Hlk in Hloc'. injection Hloc' as <-.
+  iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf.
+  iDestruct (own_store_runs_run_pool_invs with "Hruns") as %Hrinv.
+  have Hrmem : r ∈ all_runs p.
+  { apply (elem_of_all_runs p r). exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hr)]. }
+  have Hrwf : run_wf (run_items r) := Hwf r Hrmem.
+  have Hrfits : run_fits r := proj1 Hrinv r Hrmem.
+  wp_auto.
+  iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
+               parent ls tm k lc r Hls Hp Hlk Hr with "Hruns") as (ivR) "H".
+  iNamed "H".
+  (* the node's clock and length, at the [uint.Z] level ([wp_if_destruct]'s
+     bare [subst] must not eat an equation naming a variable) *)
+  have Hivclk : uint.Z ivR.(yjs.item.id').(yjs.id.clock') = Z.of_nat (run_clock r).
+  { rewrite /run_clock Haccid /toYjsId /=. word. }
+  destruct Hcov as (Hcl & Hlo & Hhi). rewrite /toYjsId /= in Hcl Hlo Hhi.
+  have Hlenpos : (1 <= length (run_items r))%nat.
+  { destruct Hrwf as [Hne _]. destruct (run_items r); [done | simpl; lia]. }
+  have Hrfits' : (Z.of_nat (run_clock r) + Z.of_nat (length (run_items r)) < 2^64)%Z := Hrfits.
+  have Hosub : uint.Z (w64_word_instance.(word.sub) idv.(yjs.id.clock') ivR.(yjs.item.id').(yjs.id.clock'))
+             = Z.of_nat (uint.nat idv.(yjs.id.clock') - run_clock r)%nat.
+  { move: Hivclk Hlo. word. }
+  wp_auto.
+  wp_apply (wp_item__Len lc (DfracOwn 1) ivR with "[$Haccval]"). iIntros "Haccval".
+  iDestruct ("Haccback" with "Haccval") as "Hruns".
+  rewrite Haccle.
+  wp_auto.
+  wp_if_destruct.
+  - (* offset = Len-1: the run already ends at [idv]; no split *)
+    iApply ("HΦ" $! p locs). simpl.
+    iFrame "Hruns". iPureIntro.
+    exists tm, ls, r. split_and!; [exact Hp | exact Hls | exact Hr |].
+    left. split_and!; [| done | done].
+    move: Hosub Hlo Hhi Hrfits'. rewrite /toYjsId /=. word.
+  - (* the id sits strictly inside the run: split just after it *)
+    have Hnlt : (uint.nat idv.(yjs.id.clock') - run_clock r < length (run_items r) - 1)%nat.
+    { move: Hosub Hlo Hhi Hrfits'. rewrite /toYjsId /=. word. }
+    have Hdiffnat : uint.nat (w64_word_instance.(word.add)
+                      (w64_word_instance.(word.sub) idv.(yjs.id.clock') ivR.(yjs.item.id').(yjs.id.clock'))
+                      (W64 1))
+                  = (uint.nat idv.(yjs.id.clock') - run_clock r + 1)%nat.
+    { move: Hosub Hnlt Hrfits' Hlenpos. word. }
+    have Hdiffb : (0 < uint.nat (w64_word_instance.(word.add)
+                      (w64_word_instance.(word.sub) idv.(yjs.id.clock') ivR.(yjs.item.id').(yjs.id.clock'))
+                      (W64 1)) < length (run_items r))%nat.
+    { rewrite Hdiffnat. lia. }
+    wp_apply (wp_store__splitNode_runs s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
+                parent lc ls tm k r _ Hp Hls Hr Hlk Hdiffb with "[$Hpkg $Hruns]").
+    iIntros (rloc) "(Hruns & %Hfresh)". simpl in Hfresh.
+    wp_auto.
+    iApply ("HΦ" $! _ _). simpl.
+    iFrame "Hruns". iPureIntro.
+    exists tm, ls, r. split_and!; [exact Hp | exact Hls | exact Hr |].
+    right. split; [exact Hnlt |].
+    exists rloc. split_and!; [exact (proj1 Hfresh) | exact (proj2 Hfresh) | | done].
+    rewrite Hdiffnat /toYjsId //=.
 Qed.
 
-(** [store.splitAtAndGetRight] at run granularity: make the char [idv]
-    START a node; the returned address's run starts at [idv], at one slot of
-    the updated pool. *)
+(** [store.splitAtAndGetRight] at run granularity: make the char [idv],
+    covered by the [k]-th run of the type at [parent] (the node at [lc]),
+    START a node. Nothing changes when [idv] is the run's head and the node
+    itself comes back; else the node is split at [idv] and the fresh right
+    half comes back. The returned address and the step are
+    [pool_split_right_step] (the boundary it pins is
+    [pool_split_right_step_starts_at]). Proved directly from
+    [wp_store__GetNode_runs] and [wp_store__splitNode_runs]. *)
 Lemma wp_store__splitAtAndGetRight_runs (s : loc) (idv : yjs.id.t) (str : store_state_runs)
-    (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
+    (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc) :
   sr_pool str !! parent = Some tm ->
+  sr_locs str !! parent = Some ls ->
   tm_runs tm !! k = Some r ->
+  ls !! k = Some lc ->
   run_covers r (toYjsId idv) ->
   {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
   {{{ (l : loc) (p' : pool) (locs' : gmap loc (list loc)), RET (#l, #true);
       own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
-      ⌜pool_after_split (sr_pool str) p' parent k⌝ ∗
-      ⌜∃ k', pool_run_starts_at p' parent k' (toYjsId idv) ∧
-             (locs' !! parent) ≫= (λ ls, ls !! k') = Some l⌝ }}}.
+      ⌜pool_split_right_step (sr_pool str) (sr_locs str) parent k (toYjsId idv) l p' locs'⌝ }}}.
 Proof using Type*.
-  move=> Hp Hr Hcov.
+  move=> Hp Hls Hr Hlk Hcov.
+  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
-  iEval (rewrite own_store_runs_as_state) in "Hruns".
-  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
-  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
-  rewrite /pool_of lookup_fmap in Hp.
-  destruct (types !! parent) as [ts|] eqn:Hts; simplify_eq/=.
-  rewrite /type_model_of /= list_lookup_fmap in Hr.
-  destruct (ty_cells ts !! k) as [cw|] eqn:Hk; simplify_eq/=.
-  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
-  have Hpool0 : pool_invs types := proj1 Hinvs0.
-  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iDestruct (own_type_pool_parents with "Htypes") as %Hparb.
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbndb.
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfb.
-  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types bind pend pdel) Hinvs0
-               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
-  have Hcwmem : cw ∈ all_cells types.
-  { apply all_cells_elem_of. exists parent, ts.
-    split; [done | exact (list_elem_of_lookup_2 _ _ _ Hk)]. }
-  have Hcwcov : pool_cell_covers types cw (toYjsId idv).
-  { split; [exact Hcwmem | by apply cell_covers_run]. }
-  wp_apply (wp_store__splitAtAndGetRight s idv (MkStoreState client k0 types bind pend pdel) cw Hcwcov
-              with "[$Hpkg $Hcells]").
-  iIntros (rl types') "(Hcells & %Hstep & %Hstarts)".
-  iEval (simpl) in "Hcells".
-  iDestruct "Hcells" as "(Hfields1 & %Hinvs1)".
-  have Hpool1 : pool_invs types' := proj1 Hinvs1.
-  iDestruct "Hfields1" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iDestruct (own_type_pool_parents with "Htypes") as %Hpara.
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnda.
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfa.
-  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types' bind pend pdel) Hinvs1
-               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
-  iApply ("HΦ" $! rl (pool_of types') (locs_of types')).
-  iSplitL.
-  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0 types' bind pend pdel).
-    iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
-  iPureIntro.
-  have Hpc : ic_parent cw = parent
-    := Hparb parent ts cw Hts (list_elem_of_lookup_2 _ _ _ Hk).
-  rewrite Hpc in Hstarts.
-  split.
-  - exact (split_types_update_rel_to_pool types types' cw parent ts k Hts Hk Hparb Hpara
-             (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
-             (λ c Hc, proj2 (Hbnda c Hc)) (λ c Hc, proj1 (Hbnda c Hc))
-             (λ c Hc, proj1 (Hwfb c Hc)) (λ c Hc, proj1 (Hwfa c Hc))
-             Hpool0 Hpool1 Hstep).
-  - exact (cell_starts_at_to_run types' parent rl _ Hpara Hstarts).
+  wp_method_call. wp_call. wp_call. wp_auto.
+  have Hcovp : pool_run_covers p parent k (toYjsId idv) by (exists tm, r).
+  wp_apply (wp_store__GetNode_runs s idv (MkStoreStateRuns client0 k0 locs p bind pend pdel)
+              with "[$Hpkg $Hruns]").
+  iIntros (nl ok) "(Hruns & %Hres)". simpl in Hres.
+  destruct ok; last first.
+  { exfalso. exact (Hres parent k Hcovp). }
+  destruct Hres as (q' & k' & Hcov' & Hloc').
+  iDestruct (own_store_runs_covers_unique s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
+               (toYjsId idv) q' parent k' k Hcov' Hcovp with "Hruns") as %[-> ->].
+  rewrite Hls /= Hlk in Hloc'. injection Hloc' as <-.
+  iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf.
+  iDestruct (own_store_runs_run_pool_invs with "Hruns") as %Hrinv.
+  have Hrmem : r ∈ all_runs p.
+  { apply (elem_of_all_runs p r). exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hr)]. }
+  have Hrwf : run_wf (run_items r) := Hwf r Hrmem.
+  have Hrfits : run_fits r := proj1 Hrinv r Hrmem.
+  wp_auto.
+  iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
+               parent ls tm k lc r Hls Hp Hlk Hr with "Hruns") as (ivR) "H".
+  iNamed "H".
+  have Hivclk : uint.Z ivR.(yjs.item.id').(yjs.id.clock') = Z.of_nat (run_clock r).
+  { rewrite /run_clock Haccid /toYjsId /=. word. }
+  destruct Hcov as (Hcl & Hlo & Hhi). rewrite /toYjsId /= in Hcl Hlo Hhi.
+  have Hlenpos : (1 <= length (run_items r))%nat.
+  { destruct Hrwf as [Hne _]. destruct (run_items r); [done | simpl; lia]. }
+  have Hrfits' : (Z.of_nat (run_clock r) + Z.of_nat (length (run_items r)) < 2^64)%Z := Hrfits.
+  have Hosub : uint.Z (w64_word_instance.(word.sub) idv.(yjs.id.clock') ivR.(yjs.item.id').(yjs.id.clock'))
+             = Z.of_nat (uint.nat idv.(yjs.id.clock') - run_clock r)%nat.
+  { move: Hivclk Hlo. word. }
+  wp_auto.
+  wp_if_destruct.
+  - (* offset > 0: split at the offset, return the fresh right half *)
+    iDestruct ("Haccback" with "Haccval") as "Hruns".
+    have Hopos : (0 < uint.nat idv.(yjs.id.clock') - run_clock r)%nat.
+    { move: Hosub. word. }
+    have Hdiffnat : uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') ivR.(yjs.item.id').(yjs.id.clock'))
+                  = (uint.nat idv.(yjs.id.clock') - run_clock r)%nat.
+    { move: Hosub. word. }
+    have Hdiffb : (0 < uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') ivR.(yjs.item.id').(yjs.id.clock'))
+                   < length (run_items r))%nat.
+    { rewrite Hdiffnat. lia. }
+    wp_apply (wp_store__splitNode_runs s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
+                parent lc ls tm k r _ Hp Hls Hr Hlk Hdiffb with "[$Hpkg $Hruns]").
+    iIntros (rloc) "(Hruns & %Hfresh)". simpl in Hfresh.
+    wp_auto.
+    iApply ("HΦ" $! rloc _ _). simpl.
+    iFrame "Hruns". iPureIntro.
+    exists tm, ls, r, lc. split_and!; [exact Hp | exact Hls | exact Hr | exact Hlk |].
+    right. split_and!; [exact Hopos | exact (proj1 Hfresh) | exact (proj2 Hfresh) | | done].
+    rewrite Hdiffnat //.
+  - (* offset = 0: the run already starts at [idv]; no split *)
+    iDestruct ("Haccback" with "Haccval") as "Hruns".
+    iApply ("HΦ" $! lc p locs). simpl.
+    iFrame "Hruns". iPureIntro.
+    exists tm, ls, r, lc. split_and!; [exact Hp | exact Hls | exact Hr | exact Hlk |].
+    left. split_and!; [| done | done | done].
+    rewrite /toYjsId /=. move: Hosub. word.
 Qed.
 
 End store_update.

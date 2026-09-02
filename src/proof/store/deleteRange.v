@@ -10,7 +10,8 @@
     pool by [pool_after_delete] and recording coverage as
     [ids_tombstoned_runs]. The loops speak indices, addresses and runs;
     the store is opened and re-closed around the node-level cores by the
-    local [wp_deleteNode_store_runs] / [store_run_acc]. The cell-level
+    local [wp_deleteNode_store_runs] and the store's node borrow
+    [own_store_runs_node_acc]. The cell-level
     [wp_store__applyDeleteSpans] is derived from the run-granular proof
     for [wp_store__applyDeleteSpans_store], the [own_store] form the lock
     layer consumes. *)
@@ -169,55 +170,6 @@ Proof using Type*.
     + simpl. rewrite (runs_flatten_flip_run runs k r Hrk). exact Harr.
 Qed.
 
-(** Borrow the [k]-th node of the type at [parent] out of a run-granular
-    pool, exposing its heap struct with the id and content length the
-    loop reads (the run form of [types_cell_acc]). *)
-#[local] Lemma types_run_acc (locs : gmap loc (list loc)) (p : pool) (parent : loc)
-    (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
-  locs !! parent = Some ls ->
-  p !! parent = Some tm ->
-  ls !! k = Some lc ->
-  tm_runs tm !! k = Some r ->
-  own_type_pool_runs (DfracOwn 1) locs p -∗
-  ∃ itemVal : yjs.item.t,
-    "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
-    "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
-    "Haccval" ∷ lc ↦ itemVal ∗
-    "Haccback" ∷ (lc ↦ itemVal -∗ own_type_pool_runs (DfracOwn 1) locs p).
-Proof.
-  move=> Hls Hp Hlk Hrk. iIntros "(%Hlocswf & Hpool)".
-  iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Hpc Hrest]".
-  iDestruct "Hpc" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
-  rewrite Hls in Hls0. injection Hls0 as <-.
-  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Harr)".
-  iDestruct (own_dll_runs_acc (DfracOwn 1) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk
-               with "Hdll")
-    as (prev' nxt') "(%Hcl & %Hcr & %Hrun & %Hperchar & %Hclen & Hnode & Hback)".
-  iDestruct "Hnode" as (itemVal olid orid)
-    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & %Hcont & %Hparf & %Hprevf & %Hnextf & %Hflags)".
-  have Haccid : item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id').
-  { symmetry. exact Hid. }
-  have Haccle : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r).
-  { have Hstr : itemVal.(yjs.item.content').(yjs.content.content')
-              = in_content (input_of_run r) := Hcont.
-    rewrite Hstr. exact Hclen. }
-  iExists itemVal. iFrame "Hval".
-  iSplitR; first (iPureIntro; exact Haccid).
-  iSplitR; first (iPureIntro; exact Haccle).
-  iIntros "Hval".
-  iAssert (own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev' nxt')
-    with "[Hval Hol Hor]" as "Hnode".
-  { iExists itemVal, olid, orid. iFrame "Hval Hol Hor".
-    iPureIntro. split_and!;
-      [exact Hinl | exact Hinr | exact Hid | exact Hcont | exact Hparf
-      | exact Hprevf | exact Hnextf | exact Hflags]. }
-  iDestruct ("Hback" with "Hnode") as "Hdll".
-  iSplitR; first (iPureIntro; exact Hlocswf).
-  iApply big_sepM_delete; first exact Hp.
-  iFrame "Hrest". iExists ls. iSplitR; first (iPureIntro; exact Hls).
-  iSplitL; last (iPureIntro; exact Harrinv).
-  iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Harr].
-Qed.
 
 (** [deleteNode] on the store: the addressed run is tombstoned and every
     other field is untouched (the store re-closed around
@@ -285,44 +237,6 @@ Proof.
   rewrite /tm' /= length_insert //.
 Qed.
 
-(** Borrow the [k]-th node of the type at [parent] out of the store, exposing
-    its heap struct with the id and content length the delete loop reads
-    ([types_run_acc] behind the store's lift and lower). *)
-#[local] Lemma store_run_acc (s : loc) (str : store_state_runs)
-    (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
-  sr_locs str !! parent = Some ls ->
-  sr_pool str !! parent = Some tm ->
-  ls !! k = Some lc ->
-  tm_runs tm !! k = Some r ->
-  own_store_runs s str -∗
-  ∃ itemVal : yjs.item.t,
-    "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
-    "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
-    "Haccval" ∷ lc ↦ itemVal ∗
-    "Haccback" ∷ (lc ↦ itemVal -∗ own_store_runs s str).
-Proof.
-  move=> Hls Hp Hlk Hrk.
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
-  iIntros "(Hstruct & %Haligned)".
-  iDestruct "Hstruct" as "(Hfields & %Hinvs)".
-  iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iEval (simpl) in "Htypes".
-  iDestruct (own_type_pool_runs_of _ (proj1 (proj2 (proj1 Hinvs))) with "Htypes") as "Htypes".
-  have Hprem := locs_aligned_lens locs p Haligned.
-  rewrite (locs_of_types_of_locs_pool locs p (proj1 Haligned) Hprem)
-          (pool_of_types_of_locs_pool locs p Hprem).
-  iDestruct (types_run_acc locs p parent ls tm k lc r Hls Hp Hlk Hrk with "Htypes") as (itemVal) "H".
-  iNamed "H".
-  iExists itemVal. iFrame "Haccval".
-  iSplitR; first (iPureIntro; exact Haccid).
-  iSplitR; first (iPureIntro; exact Haccle).
-  iIntros "Haccval".
-  iDestruct ("Haccback" with "Haccval") as "Htypes".
-  iDestruct (own_type_pool_runs_to_cells with "Htypes") as "(Htypes & _ & _ & _)".
-  iSplitL; last (iPureIntro; exact Haligned).
-  iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend pdel) Hinvs
-            with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes").
-Qed.
 
 (** [store.deleteRange]: tombstone the chars [(client, dclock) ..
     (client, dclock + dlen)) that are integrated. Each iteration looks the
@@ -399,11 +313,21 @@ Proof using Type*.
   wp_auto.
   wp_apply wp_NewId.
   destruct Hcovw as (tmw & rw & Hpw & Hrw & Hrwcov).
+  destruct (locs_i !! pw) as [lsw|] eqn:Hlsw; last done. simpl in Hlocw.
+  iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf_i.
   wp_apply (wp_store__splitAtAndGetRight_runs s _ (MkStoreStateRuns client0 k0 locs_i p_i bind pend pdel)
-              pw tmw kw rw Hpw Hrw Hrwcov with "[$Hpkg $Hruns]").
-  iIntros (rl p1 locs1) "(Hruns & %Hstep1 & %HkR)".
+              pw tmw lsw kw rw nl Hpw Hlsw Hrw Hlocw Hrwcov with "[$Hpkg $Hruns]").
+  iIntros (rl p1 locs1) "(Hruns & %Hrstep1)".
   iEval (simpl) in "Hruns".
-  destruct HkR as (kR & HkRstart & HkRloc).
+  have Hrwslot : ∃ tm, p_i !! pw = Some tm ∧ tm_runs tm !! kw = Some rw := ex_intro _ tmw (conj Hpw Hrw).
+  have Hrwwf : run_wf (run_items rw).
+  { apply Hwf_i. apply (elem_of_all_runs p_i rw). exists pw, tmw.
+    split; [exact Hpw | exact (list_elem_of_lookup_2 _ _ _ Hrw)]. }
+  have Hstep1 : pool_after_split p_i p1 pw kw
+    := pool_after_split_of_split_step _ _ _ _ _ _ Hwf_i
+         (pool_split_step_of_right _ _ _ _ _ _ _ _ _ Hrwslot Hrwcov Hrstep1).
+  destruct (pool_split_right_step_starts_at _ _ _ _ _ _ _ _ _ Hrwslot Hrwwf Hrwcov Hrstep1)
+    as (kR & HkRstart & HkRloc).
   destruct HkRstart as (tmR & HpR & rR & HrR & HrRid).
   destruct (locs1 !! pw) as [lsR|] eqn:HlsR; last done. simpl in HkRloc.
   have HrRcl : run_client rR = uint.nat client by rewrite /run_client HrRid.
@@ -412,7 +336,7 @@ Proof using Type*.
   have HrRmem : rR ∈ all_runs p1.
   { apply (elem_of_all_runs_lookup p1 pw tmR rR HpR). left. exact (list_elem_of_lookup_2 _ _ _ HrR). }
   have HrRfits : run_fits rR := proj1 Hrinv1 rR HrRmem.
-  iDestruct (store_run_acc s (MkStoreStateRuns client0 k0 locs1 p1 bind pend pdel) pw lsR tmR kR rl rR
+  iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs1 p1 bind pend pdel) pw lsR tmR kR rl rR
                HlsR HpR HkRloc HrR with "Hruns") as (ivR) "H".
   iNamed "H".
   wp_auto.
@@ -444,11 +368,16 @@ Proof using Type*.
     have HrRcovL : run_covers rR (toYjsId idL).
     { rewrite /run_covers /toYjsId /= HrRcl HrRclk. split_and!; [done | word | word]. }
     wp_apply (wp_store__splitAtAndGetLeft_runs s idL (MkStoreStateRuns client0 k0 locs1 p1 bind pend pdel)
-                pw tmR kR rR HpR HrR HrRcovL with "[$Hpkg $Hruns]").
-    iIntros (lL p2 locs2) "(Hruns & %Hstep2 & %HlL & %HkL)".
-    iEval (simpl) in "Hruns". simpl in HlL.
-    rewrite HlsR /= HkRloc in HlL. injection HlL as <-.
-    destruct HkL as (kL & HkLstart & HkLend & HkLloc).
+                pw tmR lsR kR rR rl HpR HlsR HrR HkRloc HrRcovL with "[$Hpkg $Hruns]").
+    iIntros (p2 locs2) "(Hruns & %Hlstep2)".
+    iEval (simpl) in "Hruns".
+    have HrRslot : ∃ tm, p1 !! pw = Some tm ∧ tm_runs tm !! kR = Some rR := ex_intro _ tmR (conj HpR HrR).
+    have Hstep2 : pool_after_split p1 p2 pw kR
+      := pool_after_split_of_split_step _ _ _ _ _ _ Hwf1
+           (pool_split_step_of_left _ _ _ _ _ _ _ _ HrRslot HrRcovL Hlstep2).
+    have HkRloc' : (locs1 !! pw) ≫= (λ ls, ls !! kR) = Some rl by rewrite HlsR /= HkRloc.
+    destruct (pool_split_left_step_ends_at _ _ _ _ _ _ _ _ _ HrRslot HkRloc' HrRwf HrRcovL Hlstep2)
+      as (HkLstart & HkLend & HkLloc).
     destruct HkLstart as (tmL & HpL & rL & HrL & HrLid).
     destruct HkLend as (tmL' & HpL' & rL' & HrL' & HrLcl & HrLend).
     rewrite HpL in HpL'. injection HpL' as <-. rewrite HrL in HrL'. injection HrL' as <-.
@@ -460,10 +389,10 @@ Proof using Type*.
     wp_auto.
     (* tombstone the truncated node *)
     wp_apply (wp_deleteNode_store_runs s (MkStoreStateRuns client0 k0 locs2 p2 bind pend pdel)
-                pw lsL tmL kL rl rL HlsL HpL HkLloc HrL with "[$Hpkg $Hruns]").
+                pw lsL tmL kR rl rL HlsL HpL HkLloc HrL with "[$Hpkg $Hruns]").
     iIntros "Hruns".
     iEval (simpl) in "Hruns".
-    set (p3 := <[pw := MkTypeModel (<[kL := flip_run rL]> (tm_runs tmL)) (tm_arr tmL)]> p2).
+    set (p3 := <[pw := MkTypeModel (<[kR := flip_run rL]> (tm_runs tmL)) (tm_arr tmL)]> p2).
     wp_auto. wp_for_post.
     iFrame "HΦ s client end".
     iExists (w64_word_instance.(word.add) dclock dlen), cov, locs2, p3.
@@ -471,7 +400,7 @@ Proof using Type*.
     have Hstep3 : pool_after_delete p_i p3.
     { eapply pool_after_delete_trans; first exact (pool_after_split_delete _ _ _ _ Hstep1).
       eapply pool_after_delete_trans; first exact (pool_after_split_delete _ _ _ _ Hstep2).
-      exact (pool_after_delete_flip p2 pw tmL kL rL HpL HrL). }
+      exact (pool_after_delete_flip p2 pw tmL kR rL HpL HrL). }
     have Hdk3 : runs_dead_kept p_i p3 := proj1 (proj2 (proj2 (proj2 Hstep3))).
     have HrLcl' : run_client rL = uint.nat client.
     { rewrite /run_client HrLid HrRid //. }

@@ -494,8 +494,12 @@ vocabulary substitution table written; then C5 restates the specs at
   `deleteRange` / `applyDeleteSpans` (and `deleteNode`) and the
   `applyUpdate` drain core (`wp_store__applyUpdate_unlocked`, over
   `own_store_runs`, stepping by `runs_within_or_from` /
-  `runs_apply_live_refine`; its `own_store` wrapper lifts and lowers) are
-  proved directly at `(locs, pool)`; the cell-level `applyDeleteSpans` is now
+  `runs_apply_live_refine`; its `own_store` wrapper lifts and lowers) and
+  `splitAtAndGetLeft` / `splitAtAndGetRight` (from `GetNode_runs` +
+  `splitNode_runs`, reporting the index-explicit `pool_split_left_step` /
+  `pool_split_right_step`) are proved directly at `(locs, pool)`; the
+  run-count clause of `pool_after_split` / `pool_after_repair` was dropped
+  (no consumer); the cell-level `applyDeleteSpans` is now
   DERIVED from the run-granular proof (for the `own_store` wrapper), the
   reverse of the original derivation. The store-level recipe: open
   `own_store_runs`, lift the pool (`own_type_pool_runs_of`), run the

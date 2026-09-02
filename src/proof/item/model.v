@@ -51,7 +51,9 @@
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
       app-morphic ([runs_flatten_app]) and a run's [off]-th char sits at
-      its prefix sum plus [off] ([runs_flatten_lookup_of_run]).
+      its prefix sum plus [off] ([runs_flatten_lookup_of_run]); where the
+      split surgery leaves each slot ([split_runs_length],
+      [split_runs_lookup_left] / [_right] / [_before] / [_after]).
 
     The deep run-integration theory is [item/run_theory.v]; the heap node that
     carries a run is [item/value.v]. *)
@@ -613,6 +615,64 @@ Proof.
   rewrite /split_runs Hk Hmid.
   rewrite !runs_flatten_app !runs_flatten_cons runs_flatten_nil app_nil_r /=.
   rewrite take_drop //.
+Qed.
+
+(** Where the split surgery leaves each slot: the halves at [k] / [S k],
+    the runs before [k] in place, the runs after shifted by one. *)
+Lemma split_runs_length (runs : list ItemRun) (k o : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  length (split_runs runs k o) = S (length runs).
+Proof.
+  move=> Hk. rewrite /split_runs Hk !length_app /= length_take length_drop.
+  have := lookup_lt_Some _ _ _ Hk. lia.
+Qed.
+
+Lemma split_runs_lookup_left (runs : list ItemRun) (k o : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  split_runs runs k o !! k = Some (split_run_left r o).
+Proof.
+  move=> Hk. rewrite /split_runs Hk.
+  have Hklen : (k < length runs)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k runs) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk Nat.sub_diag //.
+Qed.
+
+Lemma split_runs_lookup_right (runs : list ItemRun) (k o : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  split_runs runs k o !! (S k) = Some (split_run_right r o).
+Proof.
+  move=> Hk. rewrite /split_runs Hk.
+  have Hklen : (k < length runs)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k runs) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk.
+  have -> : (S k - k)%nat = 1%nat by lia.
+  done.
+Qed.
+
+Lemma split_runs_lookup_before (runs : list ItemRun) (k o : nat) (r : ItemRun) (j : nat) :
+  runs !! k = Some r -> (j < k)%nat ->
+  split_runs runs k o !! j = runs !! j.
+Proof.
+  move=> Hk Hj. rewrite /split_runs Hk.
+  have Hklen : (k < length runs)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k runs) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_l; last lia.
+  rewrite lookup_take_lt; [done | lia].
+Qed.
+
+Lemma split_runs_lookup_after (runs : list ItemRun) (k o : nat) (r : ItemRun) (j : nat) :
+  runs !! k = Some r -> (k < j)%nat ->
+  split_runs runs k o !! (S j) = runs !! j.
+Proof.
+  move=> Hk Hj. rewrite /split_runs Hk.
+  have Hklen : (k < length runs)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k runs) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk /=.
+  have -> : (S j - k)%nat = S (S (j - S k)) by lia.
+  simpl. rewrite lookup_drop. f_equal. lia.
 Qed.
 
 (** A tombstone flip drops the flipped run's characters from the visible
