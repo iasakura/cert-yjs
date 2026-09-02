@@ -17,7 +17,14 @@
       [own_type_pool_runs_to_cells] (the converse, at the re-materialized
       registry [types_of_locs_pool]); the PRIMITIVE [own_store_runs s
       str], the store at a [store_state_runs] (the cell-level state
-      existential), which the stage-2 [_runs] specs are stated over.
+      existential), which the stage-2 [_runs] specs are stated over, and
+      what it reads back at run granularity ([own_store_runs_run_pool_invs]
+      / [own_store_runs_run_wf] / [own_store_runs_arr] /
+      [own_store_runs_arr_inv] / [own_store_runs_registry_coh], the
+      document readers also on the pool, [own_type_pool_runs_arr] /
+      [own_type_pool_runs_arr_inv]), the node borrows
+      ([own_type_pool_runs_node_acc] / [own_store_runs_node_acc]) and
+      covering-slot uniqueness ([own_store_runs_covers_unique]).
     - [own_store_struct s st]: THE store at its cell-level state, the fields
       with the invariants every method preserves ([store_invs]). Every
       store-internal method is specified over it, whole; [own_store] is the
@@ -754,6 +761,25 @@ Definition own_type_pool_runs (dq : dfrac)
     ∃ ls, ⌜locs !! parent = Some ls⌝ ∗
           own_ytype_runs parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
 
+(** [locs_wf] survives replacing one type's model by one with as many runs
+    (a tombstone flip, a per-run update): the address map is untouched. *)
+Lemma locs_wf_insert_same_len (locs : gmap loc (list loc)) (p : pool)
+    (parent : loc) (tm tm' : type_model) :
+  p !! parent = Some tm ->
+  length (tm_runs tm') = length (tm_runs tm) ->
+  locs_wf locs p -> locs_wf locs (<[parent := tm']> p).
+Proof.
+  move=> Hp Hlen [Hdom [Hnd Hlens]]. split_and!.
+  - rewrite dom_insert_L Hdom. symmetry.
+    apply subseteq_union_1_L, singleton_subseteq_l. apply elem_of_dom. by exists tm.
+  - exact Hnd.
+  - move=> q lsq tmq Hlsq Htmq.
+    destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Htmq. injection Htmq as <-. rewrite Hlen.
+      exact (Hlens parent lsq tm Hlsq Hp).
+    + rewrite lookup_insert_ne in Htmq; [| congruence]. exact (Hlens q lsq tmq Hlsq Htmq).
+Qed.
+
 (** The run-granular pool read back at the re-materialized cell registry
     ([types_of_locs_pool]): the converse of [own_type_pool_runs_of]. The
     per-type lengths come off [locs_wf], and the address [NoDup] comes back
@@ -1248,6 +1274,262 @@ Proof.
     rewrite (types_of_locs_pool_of types Hpar).
     iFrame "Hcells".
     iPureIntro. exact (locs_aligned_of types).
+Qed.
+
+(** The run-granular pool invariants, read off the store. *)
+Lemma own_store_runs_run_pool_invs (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗ ⌜run_pool_invs (sr_pool str)⌝.
+Proof.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnd.
+  iPureIntro.
+  have Hrp := run_pool_invs_of _ (λ c Hc, proj2 (Hbnd c Hc)) (λ c Hc, proj1 (Hbnd c Hc))
+                (proj1 Hinvs).
+  destruct Haligned as [Hdom Hlens].
+  have Hprem : ∀ parent tm, sr_pool str !! parent = Some tm ->
+      ∃ ls, sr_locs str !! parent = Some ls ∧ length ls = length (tm_runs tm).
+  { move=> parent tm Hp.
+    have His : is_Some (sr_locs str !! parent).
+    { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
+    destruct His as [ls Hls]. exists ls. split; [done | exact (Hlens parent ls tm Hls Hp)]. }
+  rewrite /state_of_runs /= (pool_of_types_of_locs_pool _ _ Hprem) in Hrp. exact Hrp.
+Qed.
+
+(** The address map is aligned with the pool: read off the store. *)
+Lemma own_store_runs_aligned (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗ ⌜locs_aligned (sr_locs str) (sr_pool str)⌝.
+Proof. iIntros "(_ & %Haligned)". by iPureIntro. Qed.
+
+(** Every run of the store is chained ([run_wf]): the heap pin of the run
+    spine, read off the store. *)
+Lemma own_store_runs_run_wf (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗ ⌜∀ r, r ∈ all_runs (sr_pool str) -> run_wf (run_items r)⌝.
+Proof.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwf.
+  iPureIntro.
+  have Hprem := locs_aligned_lens _ _ Haligned.
+  move=> r Hr.
+  rewrite -(pool_of_types_of_locs_pool _ _ Hprem) all_runs_pool_of in Hr.
+  apply list_elem_of_fmap in Hr as (c & -> & Hc).
+  exact (Hwf c Hc).
+Qed.
+
+(** Every registered type's document is the flatten of its runs: the yType
+    pin, read off the run-granular pool and off the store. *)
+Lemma own_type_pool_runs_arr (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) :
+  own_type_pool_runs dq locs p -∗
+  ⌜∀ parent tm, p !! parent = Some tm -> tm_arr tm = runs_flatten (tm_runs tm)⌝.
+Proof.
+  iIntros "(%Hlocswf & Hpool)".
+  iAssert ([∗ map] parent ↦ tm ∈ p, ⌜tm_arr tm = runs_flatten (tm_runs tm)⌝)%I
+    with "[Hpool]" as "H".
+  { iApply (big_sepM_impl with "Hpool").
+    iIntros "!#" (parent tm Hp) "H".
+    iDestruct "H" as (ls) "(_ & Hyt & _)".
+    iDestruct "Hyt" as (yt tl) "(_ & _ & _ & %Harr)". by iPureIntro. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> parent tm Hp. exact (Hall parent tm Hp).
+Qed.
+
+Lemma own_type_pool_runs_arr_inv (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) :
+  own_type_pool_runs dq locs p -∗
+  ⌜∀ parent tm, p !! parent = Some tm -> YjsArrInvariant (tm_arr tm)⌝.
+Proof.
+  iIntros "(%Hlocswf & Hpool)".
+  iAssert ([∗ map] parent ↦ tm ∈ p, ⌜YjsArrInvariant (tm_arr tm)⌝)%I
+    with "[Hpool]" as "H".
+  { iApply (big_sepM_impl with "Hpool").
+    iIntros "!#" (parent tm Hp) "H".
+    iDestruct "H" as (ls) "(_ & _ & %Hinv)". by iPureIntro. }
+  iDestruct (big_sepM_pure with "H") as %Hall.
+  iPureIntro. move=> parent tm Hp. exact (Hall parent tm Hp).
+Qed.
+
+Lemma own_store_runs_arr (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗
+  ⌜∀ parent tm, sr_pool str !! parent = Some tm -> tm_arr tm = runs_flatten (tm_runs tm)⌝.
+Proof.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
+  iDestruct (own_type_pool_runs_of _ (proj1 (proj2 (proj1 Hinvs))) with "Htypes") as "Htypes".
+  have Hprem := locs_aligned_lens _ _ Haligned.
+  rewrite /state_of_runs /= (pool_of_types_of_locs_pool _ _ Hprem).
+  iDestruct (own_type_pool_runs_arr with "Htypes") as %Harr.
+  by iPureIntro.
+Qed.
+
+(** Every registered type's document satisfies the array invariant, and the
+    registry is coherent with the pool: read off the store at run
+    granularity. *)
+Lemma own_store_runs_arr_inv (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗
+  ⌜∀ parent tm, sr_pool str !! parent = Some tm -> YjsArrInvariant (tm_arr tm)⌝.
+Proof.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
+  iDestruct (own_type_pool_runs_of _ (proj1 (proj2 (proj1 Hinvs))) with "Htypes") as "Htypes".
+  have Hprem := locs_aligned_lens _ _ Haligned.
+  rewrite /state_of_runs /= (pool_of_types_of_locs_pool _ _ Hprem).
+  iDestruct (own_type_pool_runs_arr_inv with "Htypes") as %Hinv.
+  by iPureIntro.
+Qed.
+
+Lemma own_store_runs_registry_coh (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗ ⌜pool_registry_coh (sr_bind str) (sr_pool str)⌝.
+Proof.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(_ & %Hinvs)".
+  iPureIntro.
+  have Hprem := locs_aligned_lens _ _ Haligned.
+  have H := proj1 (registry_coh_pool _ _) (proj2 Hinvs).
+  rewrite /state_of_runs /= (pool_of_types_of_locs_pool _ _ Hprem) in H. exact H.
+Qed.
+
+(** Borrow the [k]-th node of the type at [parent] out of a run-granular
+    pool, exposing its heap struct with the id and content length the
+    loop reads (the run form of the cell borrow). *)
+Lemma own_type_pool_runs_node_acc (locs : gmap loc (list loc)) (p : pool) (parent : loc)
+    (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
+  locs !! parent = Some ls ->
+  p !! parent = Some tm ->
+  ls !! k = Some lc ->
+  tm_runs tm !! k = Some r ->
+  own_type_pool_runs (DfracOwn 1) locs p -∗
+  ∃ itemVal : yjs.item.t,
+    "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
+    "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
+    "%Haccpar" ∷ ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
+    "Haccval" ∷ lc ↦ itemVal ∗
+    "Haccback" ∷ (lc ↦ itemVal -∗ own_type_pool_runs (DfracOwn 1) locs p).
+Proof.
+  move=> Hls Hp Hlk Hrk. iIntros "(%Hlocswf & Hpool)".
+  iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Hpc Hrest]".
+  iDestruct "Hpc" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
+  rewrite Hls in Hls0. injection Hls0 as <-.
+  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Harr)".
+  iDestruct (own_dll_runs_acc (DfracOwn 1) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk
+               with "Hdll")
+    as (prev' nxt') "(%Hcl & %Hcr & %Hrun & %Hperchar & %Hclen & Hnode & Hback)".
+  iDestruct "Hnode" as (itemVal olid orid)
+    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & %Hcont & %Hparf & %Hprevf & %Hnextf & %Hflags)".
+  have Haccid : item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id').
+  { symmetry. exact Hid. }
+  have Haccle : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r).
+  { have Hstr : itemVal.(yjs.item.content').(yjs.content.content')
+              = in_content (input_of_run r) := Hcont.
+    rewrite Hstr. exact Hclen. }
+  iExists itemVal. iFrame "Hval".
+  iSplitR; first (iPureIntro; exact Haccid).
+  iSplitR; first (iPureIntro; exact Haccle).
+  iSplitR; first (iPureIntro; exact Hparf).
+  iIntros "Hval".
+  iAssert (own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev' nxt')
+    with "[Hval Hol Hor]" as "Hnode".
+  { iExists itemVal, olid, orid. iFrame "Hval Hol Hor".
+    iPureIntro. split_and!;
+      [exact Hinl | exact Hinr | exact Hid | exact Hcont | exact Hparf
+      | exact Hprevf | exact Hnextf | exact Hflags]. }
+  iDestruct ("Hback" with "Hnode") as "Hdll".
+  iSplitR; first (iPureIntro; exact Hlocswf).
+  iApply big_sepM_delete; first exact Hp.
+  iFrame "Hrest". iExists ls. iSplitR; first (iPureIntro; exact Hls).
+  iSplitL; last (iPureIntro; exact Harrinv).
+  iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Harr].
+Qed.
+
+(** Borrow the [k]-th node of the type at [parent] out of the store, exposing
+    its heap struct with the id and content length the delete loop reads
+    ([own_type_pool_runs_node_acc] behind the store's lift and lower). *)
+Lemma own_store_runs_node_acc (s : loc) (str : store_state_runs)
+    (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
+  sr_locs str !! parent = Some ls ->
+  sr_pool str !! parent = Some tm ->
+  ls !! k = Some lc ->
+  tm_runs tm !! k = Some r ->
+  own_store_runs s str -∗
+  ∃ itemVal : yjs.item.t,
+    "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
+    "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
+    "%Haccpar" ∷ ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
+    "Haccval" ∷ lc ↦ itemVal ∗
+    "Haccback" ∷ (lc ↦ itemVal -∗ own_store_runs s str).
+Proof.
+  move=> Hls Hp Hlk Hrk.
+  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iEval (simpl) in "Htypes".
+  iDestruct (own_type_pool_runs_of _ (proj1 (proj2 (proj1 Hinvs))) with "Htypes") as "Htypes".
+  have Hprem := locs_aligned_lens locs p Haligned.
+  rewrite (locs_of_types_of_locs_pool locs p (proj1 Haligned) Hprem)
+          (pool_of_types_of_locs_pool locs p Hprem).
+  iDestruct (own_type_pool_runs_node_acc locs p parent ls tm k lc r Hls Hp Hlk Hrk with "Htypes") as (itemVal) "H".
+  iNamed "H".
+  iExists itemVal. iFrame "Haccval".
+  iSplitR; first (iPureIntro; exact Haccid).
+  iSplitR; first (iPureIntro; exact Haccle).
+  iSplitR; first (iPureIntro; exact Haccpar).
+  iIntros "Haccval".
+  iDestruct ("Haccback" with "Haccval") as "Htypes".
+  iDestruct (own_type_pool_runs_to_cells with "Htypes") as "(Htypes & _ & _ & _)".
+  iSplitL; last (iPureIntro; exact Haligned).
+  iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend pdel) Hinvs
+            with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes").
+Qed.
+
+(** One id lives in one slot: two covering slots of the store's pool are
+    the same slot (the run form of [pool_cell_covers_loc], read through
+    the materialized cells' address [NoDup]). What lets a split helper's
+    caller identify the node [GetNode] returned with the slot it holds. *)
+Lemma own_store_runs_covers_unique (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗
+  ⌜∀ (d : YjsId) (q1 q2 : loc) (k1 k2 : nat),
+     pool_run_covers (sr_pool str) q1 k1 d ->
+     pool_run_covers (sr_pool str) q2 k2 d ->
+     q1 = q2 ∧ k1 = k2⌝.
+Proof.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnd.
+  iPureIntro. move=> d q1 q2 k1 k2 Hcov1 Hcov2.
+  have Hpool : pool_invs (types_of_locs_pool (sr_locs str) (sr_pool str)) := proj1 Hinvs.
+  have Hprem := locs_aligned_lens _ _ Haligned.
+  (* the materialized cell of a covering slot covers the id *)
+  have Hcell : ∀ q k, pool_run_covers (sr_pool str) q k d ->
+      ∃ ts c, types_of_locs_pool (sr_locs str) (sr_pool str) !! q = Some ts ∧
+              ty_cells ts !! k = Some c ∧
+              pool_cell_covers (types_of_locs_pool (sr_locs str) (sr_pool str)) c d.
+  { move=> q k [tm [r [Hq [Hr Hrcov]]]].
+    destruct (Hprem q tm Hq) as (ls & Hls & Hlen).
+    have Hk : (k < length ls)%nat by (rewrite Hlen; exact (lookup_lt_Some _ _ _ Hr)).
+    destruct (lookup_lt_is_Some_2 ls k Hk) as [lc Hlc].
+    set (c := MkItemCell lc (run_items r) (run_deleted r) q).
+    exists (MkTypeState (cells_of_locs_runs q ls (tm_runs tm)) (tm_arr tm)), c.
+    have Hts : types_of_locs_pool (sr_locs str) (sr_pool str) !! q
+             = Some (MkTypeState (cells_of_locs_runs q ls (tm_runs tm)) (tm_arr tm)).
+    { rewrite /types_of_locs_pool map_lookup_imap Hq /= Hls //. }
+    have Hck : cells_of_locs_runs q ls (tm_runs tm) !! k = Some c.
+    { rewrite /cells_of_locs_runs lookup_zip_with Hlc Hr //. }
+    split_and!; [exact Hts | exact Hck |].
+    split.
+    - apply all_cells_elem_of. eexists _, _. split; [exact Hts | exact (list_elem_of_lookup_2 _ _ _ Hck)].
+    - apply cell_covers_run. rewrite /cell_run /c /=. by destruct r. }
+  destruct (Hcell q1 k1 Hcov1) as (ts1 & c1 & Hts1 & Hck1 & Hccov1).
+  destruct (Hcell q2 k2 Hcov2) as (ts2 & c2 & Hts2 & Hck2 & Hccov2).
+  have Hloc : ic_loc c1 = ic_loc c2
+    := pool_cell_covers_loc _ c1 c2 d Hpool (λ c Hc, proj2 (Hbnd c Hc)) Hccov1 Hccov2.
+  have := all_cells_same_loc_same_slot _ q1 q2 ts1 ts2 k1 k2 c1 c2 (proj1 (proj2 Hpool))
+            Hts1 Hck1 Hts2 Hck2 Hloc.
+  move=> [-> [-> _]]. done.
 Qed.
 
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=

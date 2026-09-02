@@ -116,60 +116,58 @@ Proof.
 Qed.
 
 (** [store.applyUpdate] over the unlocked store fields: the drain loop's
-    contract stated on the raw registry / type map / pending buffer. Local:
-    the stepping stone of [wp_store__applyUpdate] below, which is the spec. *)
+    contract stated on the raw registry / run pool / pending buffer, at run
+    granularity ([own_store_runs]). The registry follows the model
+    ([pool_registry_models]) and the live chars refine up to the chars this
+    apply integrated ([runs_apply_live_refine]). Local: the stepping stone of
+    [wp_store__applyUpdate] below, which is the spec. *)
 #[local] Lemma wp_store__applyUpdate_unlocked (s : loc) (sl : slice.t) (dq : dfrac)
     (inputs pend0 applied rest : list (TId * IntegrateInput (A := A)))
-    (m m' : DocModel) (st : store_state) :
-  ss_pending st = pend0 ->
+    (m m' : DocModel) (str : store_state_runs) :
+  sr_pending str = pend0 ->
   wire_drain m (pend0 ++ inputs) = (applied, rest, m') ->
   ValidReplay (expand_inputs applied) m m' ->
   wire_ready_total m (pend0 ++ inputs) applied ->
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ applied -> typedInput ∈ pend0 ++ inputs) ->
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend0 ++ inputs ->
      (1 <= length (in_content typedInput.2))%nat) ->
-  registry_models m (ss_bind st) (ss_types st) ->
+  pool_registry_models m (sr_bind str) (sr_pool str) ->
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend0 ++ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
-  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_struct s st }}}
+  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_runs s str }}}
     s @! (go.PointerType yjs.store) @! "applyUpdate" #sl
-  {{{ (types' : gmap loc type_state) (bind' : gmap P loc), RET #();
+  {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #();
       own_update_structs sl dq inputs ∗
-      own_store_struct s (st <| ss_types := types' |> <| ss_bind := bind' |> <| ss_pending := rest |>) ∗
-      ⌜ss_bind st ⊆ bind'⌝ ∗
-      ⌜registry_models m' bind' types'⌝ ∗
-      ⌜cells_within_or_from applied (all_cells (ss_types st)) (all_cells types')⌝ ∗
-      ⌜apply_live_refine m (all_cells (ss_types st)) (all_cells types')⌝ }}}.
+      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>
+                            <| sr_bind := bind' |> <| sr_pending := rest |>) ∗
+      ⌜sr_bind str ⊆ bind'⌝ ∗
+      ⌜pool_registry_models m' bind' p'⌝ ∗
+      ⌜runs_apply_live_refine m (all_runs (sr_pool str)) (all_runs p')⌝ }}}.
 Proof using Type*.
   move=> Hpend0 Hdrain Hvr Hrtot Happliedsub Hnonempty [Hmtypes Hmdom] Hkb1.
-  destruct st as [client0 k0 types bind pend1 pdel]. simpl in *. subst pend1.
-  iIntros (Φ) "(#Hpkg & Hupd & Hcells) HΦ".
-  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
-  have Hpool : pool_invs types := proj1 Hinvs0.
-  have Hreg : registry_coh bind types := proj2 Hinvs0.
+  destruct str as [client0 k0 locs p bind pend1 pdel]. simpl in *. subst pend1.
+  iIntros (Φ) "(#Hpkg & Hupd & Hruns) HΦ".
+  (* the INITIAL pool's run structure, read while [Hruns] is over [p]
+     (pure, non-consuming): needed in the ready branch to bound an original
+     run's clock range below a fresh batch item via [expand_inputs_arr_fresh]. *)
+  iDestruct (own_store_runs_arr with "Hruns") as %Harr_init.
+  iDestruct (own_store_runs_run_wf with "Hruns") as %Hrunwf_init.
+  iDestruct "Hruns" as "(Hstruct & %Haligned)".
+  iEval (simpl) in "Hstruct".
+  iDestruct "Hstruct" as "(Hfields0 & %Hinvs0)".
+  have Hpool0 : pool_invs (types_of_locs_pool locs p) := proj1 Hinvs0.
+  have Hreg0 : registry_coh bind (types_of_locs_pool locs p) := proj2 Hinvs0.
+  have Hpreg0 : pool_registry_coh bind p.
+  { have Hpeq : pool_of (types_of_locs_pool locs p) = p
+      := pool_of_types_of_locs_pool _ _ (locs_aligned_lens _ _ Haligned).
+    rewrite -Hpeq. exact (proj1 (registry_coh_pool bind _) Hreg0). }
+  have [Hbindtypes [Hbindinj Htypesbound]] := Hpreg0.
   iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iDestruct "Hpending" as (pend_sl) "(Hpendf & Hpend)".
-  have [Hfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
-  have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
-  (* W64 id bounds of the whole pending, from the two heap slices *)
-  iDestruct (own_update_id_bounds with "Hupd") as %Hidbin.
-  iDestruct (own_update_id_bounds with "Hpend") as %Hidbpd.
-  have Hidb : ∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend0 ++ inputs ->
-      (Z.of_nat (clientId (in_id typedInput.2)) < 2^64)%Z ∧
-      (Z.of_nat (clock (in_id typedInput.2)) < 2^64)%Z.
-  { move=> typedInput /elem_of_app [Hin | Hin];
-      apply list_elem_of_lookup_1 in Hin; destruct Hin as [ix Hix];
-      [exact (Hidbpd ix typedInput Hix) | exact (Hidbin ix typedInput Hix)]. }
   iDestruct "Hupd" as (uivs_in) "(Hslin & Hcapin & #Hitemsin)".
   iDestruct (big_sepL2_length with "Hitemsin") as %Hlenin.
   iDestruct "Hpend" as (uivs_pd) "(Hslpd & Hcappd & #Hitemspd)".
   iDestruct (big_sepL2_length with "Hitemspd") as %Hlenpd.
-  (* the INITIAL types' run structure, extracted while [Htypes] is over [types]
-     (pure, non-consuming): needed in the ready branch to bound an original
-     cell's clock range below a fresh batch item via [expand_inputs_arr_fresh]. *)
-  iDestruct (own_type_pool_repr with "Htypes") as %Hreprall_init.
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwf_init.
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds_init.
   wp_method_call. wp_call. wp_call. wp_auto.
   (* ----- phase A: pending := pending ++ structs ----- *)
   iDestruct (own_slice_len with "Hslin") as %[Hinlen Hinlen0].
@@ -234,34 +232,36 @@ Proof using Type*.
     (* ----- phase B: the drain loop ----- *)
     iAssert (∃ (pv : bool) (pendingS : slice.t) (uivsP : list yjs.updateItem.t)
                (pendingj appliedj suffix : list (TId * IntegrateInput (A := A)))
-               (typesj : gmap loc type_state) (bindj : gmap P loc) (mj : DocModel),
+               (locs_j : gmap loc (list loc)) (p_j : pool) (bindj : gmap P loc) (mj : DocModel),
         "Hprog" ∷ progress_ptr ↦ pv ∗
         "Hpendingp" ∷ pending_ptr ↦ pendingS ∗
         "HslP" ∷ pendingS ↦* uivsP ∗
         "HcapP" ∷ own_slice_cap yjs.updateItem.t pendingS (DfracOwn 1) ∗
         "#HitemsPj" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsP;pendingj, is_update_item updateItemVal typedInput) ∗
-        "Hcells" ∷ own_store_struct s (MkStoreState client0 k0 typesj bindj [] pdel) ∗
+        "Hruns" ∷ own_store_runs s (MkStoreStateRuns client0 k0 locs_j p_j bindj [] pdel) ∗
         "%Hpendingsubj" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A),
             typedInput ∈ pendingj -> typedInput ∈ pend0 ++ inputs⌝ ∗
         "%Hprj" ∷ ⌜WireReplay m appliedj mj⌝ ∗
         "%Hbindsubj" ∷ ⌜bind ⊆ bindj⌝ ∗
-        "%Hmtypesj" ∷ ⌜∀ name pl ts, bindj !! name = Some pl ->
-            typesj !! pl = Some ts -> doc_model_get mj (RootId name) = ty_arr ts⌝ ∗
+        "%Hmtypesj" ∷ ⌜∀ name pl tm, bindj !! name = Some pl ->
+            p_j !! pl = Some tm -> doc_model_get mj (RootId name) = tm_arr tm⌝ ∗
         "%Hmdomj" ∷ ⌜∀ t, doc_model_get mj t ≠ [] ->
             ∃ name pl, t = RootId name ∧ bindj !! name = Some pl⌝ ∗
-        "%Hprovj" ∷ ⌜cells_within_or_from appliedj (all_cells types) (all_cells typesj)⌝ ∗
-        "%Halrj" ∷ ⌜apply_live_refine m (all_cells types) (all_cells typesj)⌝ ∗
+        "%Hprovj" ∷ ⌜runs_within_or_from appliedj (all_runs p) (all_runs p_j)⌝ ∗
+        "%Halrj" ∷ ⌜runs_apply_live_refine m (all_runs p) (all_runs p_j)⌝ ∗
         "%Hmid" ∷ ⌜pv = true ->
             wire_drain mj pendingj = (suffix, rest, m') ∧
             applied = appliedj ++ suffix ∧ ValidReplay (expand_inputs suffix) mj m'⌝ ∗
         "%Hfin" ∷ ⌜pv = false -> pendingj = rest ∧ mj = m' ∧ applied = appliedj⌝)%I
       with "[progress Hpendingp HslA HcapA Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpendf Hpdeletes]"
       as "IH".
-    { iExists true, pslA, uivsA, (pend0 ++ inputs), [], applied, types, bind, m.
+    { iExists true, pslA, uivsA, (pend0 ++ inputs), [], applied, locs, p, bind, m.
       iFrame "progress Hpendingp HslA HcapA".
       iFrame "HitemsA".
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpendf Hpdeletes".
-      { iApply (own_store_struct_intro _ (MkStoreState client0 k0 types bind [] pdel) Hinvs0
+      { iSplitL; last (iPureIntro; exact Haligned).
+        iEval (simpl).
+        iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind [] pdel) (conj Hpool0 Hreg0)
                   with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes [Hpendf] Hpdeletes").
         iExists slice.nil. iFrame "Hpendf". iExists [].
         iSplitL; [iApply own_slice_nil | iSplitL; [iApply own_slice_cap_nil | by rewrite big_sepL2_nil]]. }
@@ -271,8 +271,8 @@ Proof using Type*.
       - done.
       - exact Hmtypes.
       - exact Hmdom.
-      - move=> c0 Hc0. left. exists c0. split_and!; [exact Hc0 | done | lia | lia].
-      - exact (apply_live_refine_refl m (all_cells types)).
+      - exact (runs_within_or_from_refl [] (all_runs p)).
+      - exact (runs_apply_live_refine_refl m (all_runs p)).
       - move=> _. split_and!; [exact Hdrain | done | exact Hvr].
       - move=> Hf. discriminate. }
     wp_for "IH".
@@ -310,14 +310,14 @@ Proof using Type*.
       iAssert (∃ (i : nat) (pvi : bool) (restS : slice.t)
                  (uivsR : list yjs.updateItem.t)
                  (keptacc appacc app_rem af2 : list (TId * IntegrateInput (A := A)))
-                 (types_c : gmap loc type_state) (bind_c : gmap P loc) (m_c : DocModel),
+                 (locs_c : gmap loc (list loc)) (p_c : pool) (bind_c : gmap P loc) (m_c : DocModel),
           "Hii" ∷ i_ptr ↦ W64 i ∗
           "Hprog" ∷ progress_ptr ↦ pvi ∗
           "Hrestp" ∷ rest_ptr ↦ restS ∗
           "HslR" ∷ restS ↦* uivsR ∗
           "HcapR" ∷ own_slice_cap yjs.updateItem.t restS (DfracOwn 1) ∗
           "#HitemsR" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsR;keptacc, is_update_item updateItemVal typedInput) ∗
-          "Hcells" ∷ own_store_struct s (MkStoreState client0 k0 types_c bind_c [] pdel) ∗
+          "Hruns" ∷ own_store_runs s (MkStoreStateRuns client0 k0 locs_c p_c bind_c [] pdel) ∗
           "%Hilen" ∷ ⌜(i <= length pendingj)%nat⌝ ∗
           "%Hpassa" ∷ ⌜wire_pass m_c (drop i pendingj) keptacc =
               (app_rem, keptfin0, m_pend0)⌝ ∗
@@ -329,17 +329,17 @@ Proof using Type*.
           "%Hkeptsub" ∷ ⌜∀ typedInput, typedInput ∈ keptacc -> typedInput ∈ pendingj⌝ ∗
           "%Hpv" ∷ ⌜pvi = false <-> appacc = []⌝ ∗
           "%Hbindsubc" ∷ ⌜bind ⊆ bind_c⌝ ∗
-          "%Hmtypesc" ∷ ⌜∀ name pl ts, bind_c !! name = Some pl ->
-              types_c !! pl = Some ts -> doc_model_get m_c (RootId name) = ty_arr ts⌝ ∗
+          "%Hmtypesc" ∷ ⌜∀ name pl tm, bind_c !! name = Some pl ->
+              p_c !! pl = Some tm -> doc_model_get m_c (RootId name) = tm_arr tm⌝ ∗
           "%Hmdomc" ∷ ⌜∀ t, doc_model_get m_c t ≠ [] ->
               ∃ name pl, t = RootId name ∧ bind_c !! name = Some pl⌝ ∗
-          "%Hprovc" ∷ ⌜cells_within_or_from (appliedj ++ appacc) (all_cells types) (all_cells types_c)⌝ ∗
+          "%Hprovc" ∷ ⌜runs_within_or_from (appliedj ++ appacc) (all_runs p) (all_runs p_c)⌝ ∗
           "%Hgrowc" ∷ ⌜∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m_c t⌝ ∗
-          "%Halrc" ∷ ⌜apply_live_refine m (all_cells types) (all_cells types_c)⌝)%I
-        with "[i Hprog rest Hrsl0 Hrcap0 Hcells]"
+          "%Halrc" ∷ ⌜runs_apply_live_refine m (all_runs p) (all_runs p_c)⌝)%I
+        with "[i Hprog rest Hrsl0 Hrcap0 Hruns]"
         as "IHin".
-      { iExists 0%nat, false, _, [], [], [], app_rem0, af, typesj, bindj, mj.
-        iFrame "i Hprog rest Hrsl0 Hrcap0 Hcells".
+      { iExists 0%nat, false, _, [], [], [], app_rem0, af, locs_j, p_j, bindj, mj.
+        iFrame "i Hprog rest Hrsl0 Hrcap0 Hruns".
         iSplit; first by rewrite big_sepL2_nil.
         iPureIntro. split_and!.
         - lia.
@@ -353,9 +353,7 @@ Proof using Type*.
         - exact Hbindsubj.
         - exact Hmtypesj.
         - exact Hmdomj.
-        - move=> c0 Hc0. destruct (Hprovj c0 Hc0) as [Ho | Ho]; [by left | right].
-          destruct Ho as (typedInput & Hti & Hcc & Hlo & Hhi). exists typedInput.
-          rewrite app_nil_r. split_and!; [exact Hti | exact Hcc | exact Hlo | exact Hhi].
+        - rewrite app_nil_r. exact Hprovj.
         - exact (WireReplay_mem m mj appliedj Hprj).
         - exact Halrj. }
       wp_for "IHin".
@@ -374,17 +372,6 @@ Proof using Type*.
           "(#HisL & #HisR & #HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)";
           [exact Huiv | exact Hpi |].
         simpl in Hin_l, Hin_r, Hin_id, Hin_c, Htid, Hborrow.
-        (* registry coherence for the current [types_c] / [bind_c] is carried by
-           the loop invariant ([Hbindtypesc] / [Htypesboundc]), since the drain
-           grows the registry as it creates fresh root types (issue #54). *)
-        iDestruct "Hcells" as "(Hfieldsc & %Hinvsc)".
-        have Hpoolc : pool_invs types_c := proj1 Hinvsc.
-        have Hregc : registry_coh bind_c types_c := proj2 Hinvsc.
-        iDestruct "Hfieldsc" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-        have [Hfitsc [Hlocdupc [Hrangedisjc Horiginclkc]]] := Hpoolc.
-        have [Hbindtypesc [Hbindinjc Htypesboundc]] := Hregc.
-        iDestruct (own_type_pool_repr with "Htypes") as %Hreprallc.
-        iDestruct (own_type_pool_runs_wf with "Htypes") as %Hrunwfc.
         have Hpending0in : (targetType, input) ∈ pend0 ++ inputs.
         { apply Hpendingsubj. exact (list_elem_of_lookup_2 _ _ _ Hpi). }
         (* read pending[i] into ui *)
@@ -401,12 +388,10 @@ Proof using Type*.
           replace (sint.nat (W64 i)) with i by word. exact Huiv. }
         iEval (rewrite Hinsid) in "HslP".
         (* the arrival probe: hasNode *)
-        iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types_c bind_c [] pdel) Hinvsc
-                    with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
-        wp_apply (wp_store__hasNode s (updateItemVal.(yjs.updateItem.id')) m_c
-                    (MkStoreState client0 k0 types_c bind_c [] pdel) (conj Hmtypesc Hmdomc)
-                    with "[$Hcells]").
-        iIntros (ok) "(Hcells & %Hok)".
+        wp_apply (wp_store__hasNode_runs s (updateItemVal.(yjs.updateItem.id')) m_c
+                    (MkStoreStateRuns client0 k0 locs_c p_c bind_c [] pdel) (conj Hmtypesc Hmdomc)
+                    with "[$Hruns]").
+        iIntros (ok) "(Hruns & %Hok)".
         rewrite Hin_id in Hok.
         have Hokm : ok = doc_model_has m_c (in_id input).
         { destruct ok, (doc_model_has m_c (in_id input)) eqn:Hd;
@@ -417,9 +402,9 @@ Proof using Type*.
           wp_auto. wp_for_post.
           iFrame "Hcapin HΦ s Hslin Hpendingp HslP HcapP".
           iExists (S i), pvi, restS, uivsR, keptacc, appacc, app_rem, af2,
-            types_c, bind_c, m_c.
+            locs_c, p_c, bind_c, m_c.
           replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
-          iFrame "Hii Hprog Hrestp HslR HcapR Hcells".
+          iFrame "Hii Hprog Hrestp HslR HcapR Hruns".
           iFrame "HitemsR".
           iPureIntro. split_and!; try done.
           - apply (lookup_lt_Some _ _ _ Hpi).
@@ -427,10 +412,10 @@ Proof using Type*.
             exact Hpassa. }
         (* fresh: probe the structural gate *)
         wp_auto.
-        wp_apply (wp_store__depsArrived s updateItemVal (targetType, input) m_c
-                    (MkStoreState client0 k0 types_c bind_c [] pdel) (conj Hmtypesc Hmdomc)
-                    with "[$Hui $Hcells]").
-        iIntros "Hcells".
+        wp_apply (wp_store__depsArrived_runs s updateItemVal (targetType, input) m_c
+                    (MkStoreStateRuns client0 k0 locs_c p_c bind_c [] pdel) (conj Hmtypesc Hmdomc)
+                    with "[$Hui $Hruns]").
+        iIntros "Hruns".
         destruct (input_ready m_c input) eqn:Hready.
         -- (* ready: certified pendings always integrate the whole chunk *)
            have Hsome : is_Some (wire_integrate m_c (targetType, input)).
@@ -474,78 +459,45 @@ Proof using Type*.
                destruct (Hmdomc targetType Hne) as (nm & pl & Heq & Hb). by exists nm. }
            have Hnwc : (Z.of_nat (clock (in_id input)) + Z.of_nat (length (in_content input)) < 2^64)%Z
              := Hkb1 (targetType, input) Hpending0in.
-           have Hib : uint.Z (W64 (clock (in_id input))) = Z.of_nat (clock (in_id input))
-             := uint_W64_nat_bound (clock (in_id input)) (length (in_content input)) Hnwc.
-           iDestruct "Hcells" as "(Hfieldsc' & %Hinvsc')".
-           have Hpoolc' : pool_invs types_c := proj1 Hinvsc'.
-           have Hregc' : registry_coh bind_c types_c := proj2 Hinvsc'.
-           iDestruct "Hfieldsc'" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-           iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbndsc.
+           iDestruct (own_store_runs_run_wf with "Hruns") as %Hrunwfc.
            (* the current item's flat position in [applied] *)
            have HKlk : applied !! (length (appliedj ++ appacc)) = Some (targetType, input).
            { rewrite Happdec (app_assoc appliedj appacc) lookup_app_r; last done.
              rewrite Nat.sub_diag /=. done. }
-           (* freshness: existing same-client cells lie below this item's clock *)
-           have Hgmax0 : ∀ c0, c0 ∈ all_cells types_c ->
-               cell_client c0 = W64 (clientId (in_id input)) ->
-               (uint.Z (cell_clock c0) < uint.Z (W64 (clock (in_id input))))%Z ∧
-               (uint.Z (cell_clock c0) + Z.of_nat (length (ic_run c0)) <= uint.Z (W64 (clock (in_id input))))%Z.
-           { move=> c0 Hc0 Hcc0.
-             have [Hcb0 Hkb0] := Hbndsc c0 Hc0.
-             have Hzc0 : (uint.Z (cell_clock c0) = Z.of_nat (clock (item_id (run_head c0))))%Z
-               by (rewrite /cell_clock; word).
-             have Hccn : clientId (item_id (run_head c0)) = clientId (in_id input).
-             { move: Hcc0. rewrite /cell_client. move=> Hcc.
-               have Hz : uint.Z (W64 (clientId (item_id (run_head c0)))) = uint.Z (W64 (clientId (in_id input)))
-                 by rewrite Hcc.
-               have Hib2 : (Z.of_nat (clientId (in_id input)) < 2^64)%Z
-                 := proj1 (Hidb (targetType, input) Hpending0in).
-               clear -Hz Hcb0 Hib2. word. }
-             have Hwfc0 : run_wf (ic_run c0) := Hrunwfc c0 Hc0.
-             have Hlen0 : (1 <= length (ic_run c0))%nat.
-             { destruct (ic_run c0) eqn:E; [exact (False_ind _ (proj1 Hwfc0 eq_refl)) | simpl; lia]. }
-             destruct (Hprovc c0 Hc0) as [(c1 & Hc1 & Hcl1 & Hlo1 & Hhi1) | (typedInput & Hti & Hcc1 & Hlo1 & Hhi1)].
-             - (* original cell c1 ∈ types: [expand_inputs_arr_fresh] via its last char *)
-               have Hc1all := Hc1. apply all_cells_elem_of in Hc1 as (p1 & ts1 & Hp1 & Hcts1).
-               have Hwf1 : run_wf (ic_run c1) := Hrunwf_init c1 Hc1all.
-               have Hlen1 : (1 <= length (ic_run c1))%nat.
-               { destruct (ic_run c1) eqn:E; [exact (False_ind _ (proj1 Hwf1 eq_refl)) | simpl; lia]. }
-               destruct (lookup_lt_is_Some_2 (ic_run c1) (length (ic_run c1) - 1)%nat ltac:(lia)) as [xl Hxl].
-               have Hxlid := run_wf_char_id (ic_run c1) _ xl Hwf1 Hxl.
-               destruct (Htypesbound p1 (ex_intro _ ts1 Hp1)) as [name1 Hbnm1].
-               have Hdg1 : doc_model_get m (RootId name1) = ty_arr ts1 := Hmtypes name1 p1 ts1 Hbnm1 Hp1.
-               have Hrep1 : ty_arr ts1 = run_flatten (ty_cells ts1) := Hreprall_init p1 ts1 Hp1.
-               apply list_elem_of_lookup_1 in Hcts1 as [ci1 Hci1].
+           (* freshness: existing same-client runs lie below this item's clock *)
+           have Hbelow : pool_run_clock_below p_c (in_id input).
+           { move=> r0 Hr0 Hcc0.
+             have Hwfr0 : run_wf (run_items r0) := Hrunwfc r0 Hr0.
+             destruct (Hprovc r0 Hr0) as [(r1 & Hr1 & Hcl1 & Hlo1 & Hhi1) | (typedInput & Hti & Hcc1 & Hlo1 & Hhi1)].
+             - (* original run r1 of p: [expand_inputs_arr_fresh] via its last char *)
+               have Hwf1 : run_wf (run_items r1) := Hrunwf_init r1 Hr1.
+               have Hlen1 : (1 <= length (run_items r1))%nat.
+               { destruct (run_items r1) eqn:E; [exact (False_ind _ (proj1 Hwf1 eq_refl)) | simpl; lia]. }
+               destruct (lookup_lt_is_Some_2 (run_items r1) (length (run_items r1) - 1)%nat ltac:(lia)) as [xl Hxl].
+               have Hxlid := run_wf_char_id (run_items r1) _ xl Hwf1 Hxl.
+               apply elem_of_all_runs in Hr1 as (q1 & tm1 & Hq1 & Hrt1).
+               destruct (Htypesbound q1 (ex_intro _ tm1 Hq1)) as [name1 Hbnm1].
+               have Hdg1 : doc_model_get m (RootId name1) = tm_arr tm1 := Hmtypes name1 q1 tm1 Hbnm1 Hq1.
+               have Hrep1 : tm_arr tm1 = runs_flatten (tm_runs tm1) := Harr_init q1 tm1 Hq1.
+               apply list_elem_of_lookup_1 in Hrt1 as [ci1 Hci1].
                have Hxlmem : xl ∈ doc_model_get m (RootId name1).
                { rewrite Hdg1 Hrep1.
                  apply (list_elem_of_lookup_2 _
-                          (length (run_flatten (take ci1 (ty_cells ts1))) + (length (ic_run c1) - 1))%nat).
-                 exact (run_flatten_lookup_of_cell (ty_cells ts1) ci1 _ c1 xl Hci1 Hxl). }
-               have [Hcb1 Hkb1c] := Hbnds_init c1 Hc1all.
-               have Hzc1 : (uint.Z (cell_clock c1) = Z.of_nat (clock (item_id (run_head c1))))%Z
-                 by (rewrite /cell_clock; word).
+                          (length (runs_flatten (take ci1 (tm_runs tm1))) + (length (run_items r1) - 1))%nat).
+                 exact (runs_flatten_lookup_of_run (tm_runs tm1) ci1 _ r1 xl Hci1 Hxl). }
                have Hxlcl : clientId (item_id xl) = clientId (in_id input).
-               { rewrite Hxlid /run_head /=.
-                 have Hclc : clientId (item_id (run_head c1)) = clientId (item_id (run_head c0)).
-                 { move: Hcl1. rewrite /cell_client. move=> Hcc.
-                   have Hz : uint.Z (W64 (clientId (item_id (run_head c0)))) = uint.Z (W64 (clientId (item_id (run_head c1))))
-                     by rewrite Hcc.
-                   clear -Hz Hcb0 Hcb1. word. }
-                 rewrite /run_head in Hclc. rewrite Hclc Hccn //. }
+               { rewrite Hxlid /=. rewrite -Hcc0 Hcl1 /run_client /run_head_item //. }
                have Hxlfr := expand_inputs_arr_fresh applied m m' Hvr (length (appliedj ++ appacc))
                                (targetType, input) HKlk Hne1 (RootId name1) xl Hxlmem Hxlcl.
                change ((targetType, input).2) with input in Hxlfr.
-               have Hxlck : (clock (item_id xl)
-                             = clock (item_id (hd inhabitant (ic_run c1))) + (length (ic_run c1) - 1))%nat
-                 by rewrite Hxlid.
-               rewrite Hxlck in Hxlfr.
-               have Hc1fr : (Z.of_nat (clock (item_id (hd inhabitant (ic_run c1)))) + Z.of_nat (length (ic_run c1))
-                             <= Z.of_nat (clock (in_id input)))%Z.
-               { clear -Hxlfr Hlen1. lia. }
-               rewrite /run_head in Hzc0 Hzc1.
-               rewrite Hzc0 in Hlo1 Hhi1. rewrite Hzc1 in Hlo1 Hhi1.
-               rewrite !Hzc0 !Hib. split; lia.
-             - (* batch cell: [expand_inputs_range_causal] on the applied replay *)
+               (* no [simpl] on [Hxlfr]: it would unfold [inhabitant] under the
+                  [hd] and split the atom [run_clock r1] sees *)
+               have Hxlck : clock (item_id xl) = (run_clock r1 + (length (run_items r1) - 1))%nat
+                 by rewrite Hxlid /run_clock /run_head_item //.
+               have Hend1 : (run_clock r1 + length (run_items r1) <= clock (in_id input))%nat.
+               { move: Hxlfr Hxlck Hlen1. lia. }
+               lia.
+             - (* batch run: [expand_inputs_range_causal] on the applied replay *)
                have Hti_in : typedInput ∈ applied.
                { rewrite Happdec (app_assoc appliedj appacc). apply elem_of_app. by left. }
                have Hti_pi : typedInput ∈ pend0 ++ inputs := Happliedsub typedInput Hti_in.
@@ -554,31 +506,20 @@ Proof using Type*.
                have Hjapp : applied !! jb = Some typedInput.
                { rewrite Happdec (app_assoc appliedj appacc) lookup_app_l; last exact Hjlt.
                  exact Hj0. }
-               have Hcln : clientId (in_id typedInput.2) = clientId (in_id input).
-               { have Hz : uint.Z (W64 (clientId (in_id typedInput.2))) = uint.Z (W64 (clientId (in_id input)))
-                   by rewrite -Hcc1 Hcc0.
-                 have Hib2 : (Z.of_nat (clientId (in_id input)) < 2^64)%Z
-                   := proj1 (Hidb (targetType, input) Hpending0in).
-                 have Hib3 : (Z.of_nat (clientId (in_id typedInput.2)) < 2^64)%Z
-                   := proj1 (Hidb typedInput Hti_pi).
-                 clear -Hz Hib2 Hib3. word. }
+               have Hcln : clientId (in_id typedInput.2) = clientId (in_id input) by congruence.
                have Hnei : (1 <= length (in_content typedInput.2))%nat := Hnonempty typedInput Hti_pi.
                have Htifr := expand_inputs_range_causal applied m m' Hvr
                                (length (appliedj ++ appacc)) jb (targetType, input) typedInput HKlk Hjapp Hjlt
                                Hcln Hnei Hne1.
                change ((targetType, input).2) with input in Htifr.
-               have Hib4 : uint.Z (W64 (clock (in_id typedInput.2))) = Z.of_nat (clock (in_id typedInput.2))
-                 := uint_W64_nat_bound _ _ (Hkb1 typedInput Hti_pi).
-               split; move: Hlo1 Hhi1; rewrite !Hib !Hib4; lia. }
+               lia. }
            simpl. rewrite Hready. wp_auto.
-           iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types_c bind_c [] pdel) Hinvsc'
-                       with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
-           wp_apply (wp_store__integrateDecoded s updateItemVal (targetType, input)
-                       m_c (MkStoreState client0 k0 types_c bind_c [] pdel) newItem arr' nm
-                       Htjeq Htoit Hvld Hmax Hall Hgmax0 (conj Hmtypesc Hmdomc) Hnwc
-                       with "[$Hui $Hcells]").
-           iIntros (types'' bind'') "(Hcells & %Hbindsub'' & %Hregmodel'' & %Hprov'' & %Hilr'')".
-           iEval (simpl) in "Hcells".
+           wp_apply (wp_store__integrateDecoded_runs s updateItemVal (targetType, input)
+                       m_c (MkStoreStateRuns client0 k0 locs_c p_c bind_c [] pdel) newItem arr' nm
+                       Htjeq Htoit Hvld Hmax Hall Hbelow (conj Hmtypesc Hmdomc) Hnwc
+                       with "[$Hui $Hruns]").
+           iIntros (p'' locs'' bind'') "(Hruns & %Hbindsub'' & %Hregmodel'' & %Hprov'' & %Hilr'')".
+           iEval (simpl) in "Hruns".
            have [Hmtypes'' Hmdom''] := Hregmodel''.
            have Hstep1 : WireReplay m_c [(targetType, input)] (<[targetType := arr']> m_c)
              := WireReplay_cons m_c (targetType, input) arr' [] _ Hd Hready Hint'
@@ -589,9 +530,9 @@ Proof using Type*.
            wp_auto. wp_for_post.
            iFrame "Hcapin HΦ s Hslin Hpendingp HslP HcapP".
            iExists (S i), true, restS, uivsR, keptacc, (appacc ++ [(targetType, input)]),
-             app2, af2, types'', bind'', (<[targetType := arr']> m_c).
+             app2, af2, locs'', p'', bind'', (<[targetType := arr']> m_c).
            replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
-           iFrame "Hii Hprog Hrestp HslR HcapR Hcells".
+           iFrame "Hii Hprog Hrestp HslR HcapR Hruns".
            iFrame "HitemsR".
            iPureIntro. split_and!.
            ++ apply (lookup_lt_Some _ _ _ Hpi).
@@ -608,25 +549,17 @@ Proof using Type*.
            ++ etrans; [exact Hbindsubc | exact Hbindsub''].
            ++ exact Hmtypes''.
            ++ exact Hmdom''.
-           ++ move=> c0 Hc0.
-              destruct (Hprov'' c0 Hc0) as [(c1 & Hc1 & Hcl1 & Hlo1 & Hhi1) | (ti & Hti & Hcc & Hlo & Hhi)].
-              ** destruct (Hprovc c1 Hc1) as [(c2 & Hc2 & Hcl2 & Hlo2 & Hhi2) | (typedInput & Hti & Hcc2 & Hlo2 & Hhi2)].
-                 { left. exists c2. split_and!; [exact Hc2 | congruence | lia | lia]. }
-                 { right. exists typedInput. rewrite app_assoc. split_and!;
-                     [apply elem_of_app; by left | congruence | lia | lia]. }
-              ** apply list_elem_of_singleton in Hti. subst ti.
-                 right. exists (targetType, input). rewrite app_assoc. split_and!;
-                   [apply elem_of_app; right; apply elem_of_cons; by left
-                   | exact Hcc | exact Hlo | exact Hhi].
+           ++ rewrite app_assoc.
+              exact (runs_within_or_from_trans _ _ _ _ _ Hprovc Hprov'').
            ++ (* the model grows by this one integrate step *)
               move=> t x Hx. exact (Hgrow_step t x (Hgrowc t x Hx)).
            ++ (* the tombstone-set refinement: the repaired/spliced pool's live
                  chars are old live chars or chars this step just integrated,
                  which the replay's client bound puts outside the old model *)
-              apply (apply_live_refine_trans m m_c (all_cells types)
-                       (all_cells types_c) (all_cells types'') Hgrowc_has Halrc).
-              exact (apply_live_refine_of_integrate input m_c
-                       (all_cells types_c) (all_cells types'') Hclkbound Hilr'').
+              apply (runs_apply_live_refine_trans m m_c (all_runs p)
+                       (all_runs p_c) (all_runs p'') Hgrowc_has Halrc).
+              exact (runs_apply_live_refine_of_integrate input m_c
+                       (all_runs p_c) (all_runs p'') Hclkbound Hilr'').
         -- (* blocked: keep (deduplicated by id) *)
            rewrite (drop_S pendingj (targetType, input) i Hpi) /= Hd Hready in Hpassa.
            simpl. rewrite Hready. wp_auto.
@@ -641,9 +574,9 @@ Proof using Type*.
               wp_auto. wp_for_post.
               iFrame "Hcapin HΦ s Hslin Hpendingp HslP HcapP".
               iExists (S i), pvi, restS, uivsR2, keptacc, appacc, app_rem, af2,
-                types_c, bind_c, m_c.
+                locs_c, p_c, bind_c, m_c.
               replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
-              iFrame "Hii Hprog Hrestp HslR HcapR Hcells".
+              iFrame "Hii Hprog Hrestp HslR HcapR Hruns".
               iFrame "HitemsR2".
               iPureIntro. split_and!; try done.
               --- apply (lookup_lt_Some _ _ _ Hpi).
@@ -657,11 +590,11 @@ Proof using Type*.
               wp_for_post.
               iFrame "Hcapin HΦ s Hslin Hpendingp HslP HcapP".
               iExists (S i), pvi, restS', (uivsR2 ++ [updateItemVal]),
-                (keptacc ++ [(targetType, input)]), appacc, app_rem, af2, types_c, bind_c, m_c.
+                (keptacc ++ [(targetType, input)]), appacc, app_rem, af2, locs_c, p_c, bind_c, m_c.
               replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
               have H00 : sint.nat (W64 0) = 0%nat by word.
               iEval (rewrite H00 /=) in "HslR'".
-              iFrame "Hii Hprog Hrestp HslR' HcapR' Hcells".
+              iFrame "Hii Hprog Hrestp HslR' HcapR' Hruns".
               iSplit.
               { rewrite big_sepL2_snoc.
                 iSplit; [iFrame "HitemsR2" | iFrame "Hui"]. }
@@ -687,8 +620,8 @@ Proof using Type*.
         wp_auto. wp_for_post.
         iFrame "Hcapin HΦ s Hslin".
         iExists pvi, restS, uivsR, keptacc, (appliedj ++ appacc), af2,
-          types_c, bind_c, m_c.
-        iFrame "Hprog Hpendingp HslR HcapR Hcells".
+          locs_c, p_c, bind_c, m_c.
+        iFrame "Hprog Hpendingp HslR HcapR Hruns".
         iFrame "HitemsR".
         iPureIntro. split_and!.
         ** move=> typedInput Hti. apply Hpendingsubj. exact (Hkeptsub typedInput Hti).
@@ -730,24 +663,27 @@ Proof using Type*.
       rewrite decide_True; last done.
       destruct (Hfin eq_refl) as (Hpendingeq & Hmeq & Happeq).
       subst pendingj mj.
-      iDestruct "Hcells" as "(Hfieldsj & %Hinvsj)".
+      iDestruct "Hruns" as "(Hstruct & %Halignedj)".
+      iEval (simpl) in "Hstruct".
+      iDestruct "Hstruct" as "(Hfieldsj & %Hinvsj)".
+      have Hpoolj : pool_invs (types_of_locs_pool locs_j p_j) := proj1 Hinvsj.
+      have Hregj : registry_coh bindj (types_of_locs_pool locs_j p_j) := proj2 Hinvsj.
       iDestruct "Hfieldsj" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
       iDestruct "Hpending" as (pnil) "(Hpendf & _)".
       wp_auto.
-      iApply ("HΦ" $! typesj bindj). simpl.
+      iApply ("HΦ" $! p_j locs_j bindj). simpl.
       iAssert (own_pending_field (s .[(yjs.store.t), "pending"]) rest)%I with "[Hpendf HslP HcapP]" as "Hpending".
       { iExists pendingS. iFrame "Hpendf". iExists uivsP. iFrame "HslP HcapP HitemsPj". }
       iSplitL "Hslin Hcapin".
       { iExists uivs_in. iFrame "Hslin Hcapin Hitemsin". }
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
-      { iApply (own_store_struct_intro _ (MkStoreState client0 k0 typesj bindj rest pdel) Hinvsj
+      { iSplitL; last (iPureIntro; exact Halignedj).
+        iEval (simpl).
+        iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bindj rest pdel) (conj Hpoolj Hregj)
                   with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes"). }
       iPureIntro. split_and!.
       * exact Hbindsubj.
       * exact (conj Hmtypesj Hmdomj).
-      * move=> c0 Hc0.
-        destruct (Hprovj c0 Hc0) as [Hold | (typedInput & Hti & Hcc & Hlo & Hhi)]; [by left |].
-        right. exists typedInput. rewrite Happeq. split_and!; [exact Hti | exact Hcc | exact Hlo | exact Hhi].
       * exact Halrj.
 Qed.
 
@@ -1796,13 +1732,28 @@ Proof using Type*.
   { iExists pend_sl. iFrame "Hpendf Hpend". }
   iDestruct (own_store_struct_intro _ (MkStoreState client k types bind pend pdel) Hinvs0
               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  (* the core runs at run granularity: lift the store, lower it back *)
+  iAssert (own_store_runs s_loc (state_runs_of (MkStoreState client k types bind pend pdel)))
+    with "[Hcells]" as "Hruns".
+  { rewrite own_store_runs_as_state. iExists _. iFrame "Hcells". done. }
   wp_apply (wp_store__applyUpdate_unlocked s_loc sl dq
-              inputs pend applied rest' m m' (MkStoreState client k types bind pend pdel) eq_refl
-              Hdrainc Hvr Hrtot Happsub Hnonemptyb (conj Hmtypes Hmdom) Hkb1c
-              with "[$Hupd $Hcells]").
-  iIntros (types' bind') "(Hupd & Hcells & %Hbindsub' & %Hregmodelu & %Hprov' & %Hilr')".
-  have [Hmtypes' Hmdom'] := Hregmodelu.
+              inputs pend applied rest' m m' (state_runs_of (MkStoreState client k types bind pend pdel)) eq_refl
+              Hdrainc Hvr Hrtot Happsub Hnonemptyb
+              (proj1 (registry_models_pool m bind types) (conj Hmtypes Hmdom)) Hkb1c
+              with "[$Hupd $Hruns]").
+  iIntros (p' locs' bind') "(Hupd & Hruns & %Hbindsub' & %Hregmodelp & %Halrp)".
+  iEval (simpl) in "Hruns".
+  iDestruct "Hruns" as "(Hcells & %Haligned')".
   iEval (simpl) in "Hcells".
+  simpl in Hregmodelp, Halrp.
+  set (types' := types_of_locs_pool locs' p') in *.
+  have Hpeq' : pool_of types' = p'
+    := pool_of_types_of_locs_pool _ _ (locs_aligned_lens _ _ Haligned').
+  have Hregmodelu : registry_models m' bind' types'.
+  { apply (proj2 (registry_models_pool m' bind' types')). rewrite Hpeq'. exact Hregmodelp. }
+  have Hilr' : apply_live_refine m (all_cells types) (all_cells types').
+  { apply apply_live_refine_of_runs. rewrite -!all_runs_pool_of Hpeq'. exact Halrp. }
+  have [Hmtypes' Hmdom'] := Hregmodelu.
   iDestruct "Hcells" as "(Hfields' & %Hinvs')".
   have Hpool' : pool_invs types' := proj1 Hinvs'.
   have Hreg' : registry_coh bind' types' := proj2 Hinvs'.

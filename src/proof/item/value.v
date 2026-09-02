@@ -13,7 +13,9 @@
     - [cells_of_locs_runs]: the cell list an address list and a run list
       determine under one type (the run-granular elimination's zip,
       [cells_of_locs_runs_run] / [_loc] / [_parent]; on the projections it
-      is the identity, [cells_of_locs_runs_projections]).
+      is the identity, [cells_of_locs_runs_projections]; with one slot
+      tombstoned it is the cell list with that cell flipped,
+      [cells_of_locs_runs_flip]).
     - the flag accessors [is_deleted_flag] / [is_countable_flag] reading the
       heap struct's bits, [set_deleted] / [flip_cell] flipping the tombstone,
       and [num_visible], the visible-character count [yType.len] shadows.
@@ -263,6 +265,29 @@ Proof.
   - destruct runs as [|r runs]; [by apply elem_of_nil in Hc |].
     cbn [zip_with] in Hc.
     apply elem_of_cons in Hc as [-> | Hc]; [done | exact (IH runs c Hc)].
+Qed.
+
+(** Materializing a run list with one slot tombstoned: the cell list with
+    that slot's cell flipped. *)
+Lemma cells_of_locs_runs_flip (parent : loc) (ls : list loc) (runs : list ItemRun)
+    (k : nat) (lc : loc) (r : ItemRun) :
+  ls !! k = Some lc ->
+  runs !! k = Some r ->
+  cells_of_locs_runs parent ls (<[k := flip_run r]> runs)
+  = <[k := flip_cell (MkItemCell lc (run_items r) (run_deleted r) parent)]>
+      (cells_of_locs_runs parent ls runs).
+Proof.
+  move=> Hlk Hrk. rewrite /cells_of_locs_runs.
+  have Hkl : (k < length ls)%nat := lookup_lt_Some _ _ _ Hlk.
+  have Hkr : (k < length runs)%nat := lookup_lt_Some _ _ _ Hrk.
+  apply list_eq => i.
+  destruct (decide (i = k)) as [-> | Hne].
+  - rewrite list_lookup_insert_eq; last (rewrite length_zip_with; lia).
+    rewrite lookup_zip_with Hlk list_lookup_insert_eq; last exact Hkr.
+    rewrite /flip_cell /flip_run //=.
+  - have Hne' : k ≠ i := λ H, Hne (eq_sym H).
+    rewrite list_lookup_insert_ne; last exact Hne'.
+    rewrite !lookup_zip_with list_lookup_insert_ne; last exact Hne'. done.
 Qed.
 
 Lemma cell_run_flip (c : item_cell) :

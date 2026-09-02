@@ -14,7 +14,8 @@
       bound. [dead_chars_kept] is the dual, carrying a delete loop's record of
       what it has already tombstoned across the next iteration's surgeries.
     - [ids_tombstoned]: the ids are held by cells that are tombstoned, what a
-      delete reports about what it just did.
+      delete reports about what it just did ([ids_tombstoned_runs_of]
+      carries it to the projected runs, [ids_tombstoned_of_runs] back).
 
     Laws
     - a well-formed run denotes exactly its cell's coordinate window
@@ -30,7 +31,10 @@
       misses the set ([delete_set_tombstoned_snoc]).
     - the same shape for [apply_live_refine] / [integrate_live_refine]
       (reflexivity, transitivity, the splice, and the bridge
-      [apply_live_refine_of_integrate]) and for [dead_chars_kept].
+      [apply_live_refine_of_integrate]) and for [dead_chars_kept]; at the
+      projected runs, [integrate_live_refine] carries over
+      ([integrate_live_refine_to_runs]) and [runs_apply_live_refine] reads
+      back ([apply_live_refine_of_runs]).
 
     Sits above [store/value_cells.v] and below [store/value_split.v]. *)
 
@@ -546,6 +550,44 @@ Proof.
   - apply list_elem_of_fmap_2. exact Hc.
   - rewrite /cell_run /= Hdel //.
   - exact Hin.
+Qed.
+
+(** ...and read back: the converse, for the cell-level delete specs derived
+    from the run-granular proofs. *)
+Lemma ids_tombstoned_of_runs (ids : gset YjsId) (pool : list item_cell) :
+  ids_tombstoned_runs ids (cell_run <$> pool) ->
+  ids_tombstoned ids pool.
+Proof.
+  move=> H i Hi. destruct (H i Hi) as (r & Hr & Hdel & Hin).
+  apply list_elem_of_fmap in Hr as (c & -> & Hc).
+  exists c. split_and!; [exact Hc | exact Hdel | exact Hin].
+Qed.
+
+(** The live-refinement records at the projected runs and back:
+    [integrate_live_refine] carries to [runs_integrate_live_refine] (what
+    derives [wp_store__integrateDecoded_runs]), and [runs_apply_live_refine]
+    reads back as [apply_live_refine] (what the [own_store] form of
+    [applyUpdate] hands to [own_delete_set_apply]). *)
+Lemma integrate_live_refine_to_runs (input : IntegrateInput (A := A))
+    (before after : list item_cell) :
+  integrate_live_refine input before after ->
+  runs_integrate_live_refine input (cell_run <$> before) (cell_run <$> after).
+Proof.
+  move=> H r' Hr' Hlive y Hy.
+  apply list_elem_of_fmap in Hr' as (c' & -> & Hc').
+  destruct (H c' Hc' Hlive y Hy) as [(c & Hc & Hlivec & Hyc) | Hown]; [left | by right].
+  exists (cell_run c). split_and!; [apply list_elem_of_fmap; eauto | exact Hlivec | exact Hyc].
+Qed.
+
+Lemma apply_live_refine_of_runs (m : DocModel) (before after : list item_cell) :
+  runs_apply_live_refine m (cell_run <$> before) (cell_run <$> after) ->
+  apply_live_refine m before after.
+Proof.
+  move=> H c' Hc' Hlive y Hy.
+  have Hr' : cell_run c' ∈ cell_run <$> after by (apply list_elem_of_fmap; eauto).
+  destruct (H (cell_run c') Hr' Hlive y Hy) as [(r & Hr & Hliver & Hyr) | Hfresh]; [left | by right].
+  apply list_elem_of_fmap in Hr as (c & -> & Hc).
+  exists c. split_and!; [exact Hc | exact Hliver | exact Hyr].
 Qed.
 
 End store_value_live.

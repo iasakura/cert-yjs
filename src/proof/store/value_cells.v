@@ -27,7 +27,13 @@
       state determines (round-tripping under alignment,
       [pool_of_types_of_locs_pool] / [locs_of_types_of_locs_pool] /
       [state_runs_of_of_runs] / [locs_aligned_of], the identity on a
-      parent-coherent registry, [types_of_locs_pool_of]).
+      parent-coherent registry, [types_of_locs_pool_of]; materialization
+      across one registry slot, [types_of_locs_pool_insert]; alignment
+      surviving a same-length type update,
+      [locs_aligned_insert_same_len], and giving each type a same-length
+      address list, [locs_aligned_lens]); [cells_within_or_from] projects
+      onto [runs_within_or_from] under the id no-wrap bounds
+      ([cells_within_or_from_to_runs]).
     - what one integrate asks and does, at the cell level: [pool_clock_below]
       (the new item is its client's newest), [origins_linked] (the item's
       links are the cells its resolved origins designate), [integrate_splice]
@@ -749,6 +755,80 @@ Proof.
     intros [= <-] [= <-]. rewrite !length_fmap //.
 Qed.
 
+Lemma locs_aligned_insert_same_len (locs : gmap loc (list loc)) (p : pool)
+    (parent : loc) (tm tm' : type_model) :
+  p !! parent = Some tm ->
+  length (tm_runs tm') = length (tm_runs tm) ->
+  locs_aligned locs p -> locs_aligned locs (<[parent := tm']> p).
+Proof.
+  move=> Hp Hlen [Hdom Hlens]. split.
+  - rewrite dom_insert_L Hdom. symmetry. apply subseteq_union_1_L, singleton_subseteq_l.
+    apply elem_of_dom. eauto.
+  - move=> q lsq tmq Hq Hpq. destruct (decide (parent = q)) as [<- | Hne].
+    + rewrite lookup_insert_eq in Hpq. injection Hpq as <-. rewrite Hlen. exact (Hlens _ _ _ Hq Hp).
+    + rewrite lookup_insert_ne in Hpq; last exact Hne. exact (Hlens _ _ _ Hq Hpq).
+Qed.
+
+(** An aligned address map has a same-length address list for every type. *)
+Lemma locs_aligned_lens (locs : gmap loc (list loc)) (p : pool) :
+  locs_aligned locs p ->
+  ∀ parent tm, p !! parent = Some tm ->
+    ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm).
+Proof.
+  move=> [Hdom Hlens] parent tm Hp.
+  have His : is_Some (locs !! parent).
+  { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
+  destruct His as [ls Hls]. exists ls. split; [done | exact (Hlens parent ls tm Hls Hp)].
+Qed.
+
+(** [cells_within_or_from] projects onto [runs_within_or_from] under the
+    id no-wrap bounds of the cells and of the inputs. *)
+Lemma cells_within_or_from_to_runs (inputs : list (TId * IntegrateInput (A := A)))
+    (before after : list item_cell) :
+  (∀ c, c ∈ before -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ before -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ after -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ after -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs ->
+     (Z.of_nat (clientId (in_id typedInput.2)) < 2^64)%Z ∧
+     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
+  cells_within_or_from inputs before after ->
+  runs_within_or_from inputs (cell_run <$> before) (cell_run <$> after).
+Proof.
+  move=> Hckb Hclb Hcka Hcla Hinb H r Hr.
+  apply list_elem_of_fmap in Hr as (c & -> & Hc).
+  have Hzc : uint.Z (cell_clock c) = Z.of_nat (run_clock (cell_run c)).
+  { have := Hcka c Hc. rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  have Hzcl : uint.Z (cell_client c) = Z.of_nat (run_client (cell_run c)).
+  { have := Hcla c Hc. rewrite /cell_client /run_client /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  destruct (H c Hc) as [(c0 & Hc0 & Hcl & Hlo & Hhi) | (ti & Hti & Hcl & Hlo & Hhi)].
+  - left. exists (cell_run c0).
+    have Hzc0 : uint.Z (cell_clock c0) = Z.of_nat (run_clock (cell_run c0)).
+    { have := Hckb c0 Hc0. rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+      move=> Hb. word. }
+    have Hzcl0 : uint.Z (cell_client c0) = Z.of_nat (run_client (cell_run c0)).
+    { have := Hclb c0 Hc0. rewrite /cell_client /run_client /run_head_item /run_head /cell_run /=.
+      move=> Hb. word. }
+    split_and!.
+    + apply list_elem_of_fmap. eauto.
+    + have Hz : uint.Z (cell_client c) = uint.Z (cell_client c0) by rewrite Hcl.
+      rewrite Hzcl Hzcl0 in Hz. lia.
+    + rewrite Hzc Hzc0 in Hlo. lia.
+    + move: Hhi. rewrite Hzc Hzc0 /cell_run /=. lia.
+  - right. exists ti.
+    have [Hib Hkb] := Hinb ti Hti.
+    have Hzk : uint.Z (W64 (clock (in_id ti.2))) = Z.of_nat (clock (in_id ti.2)).
+    { have Hlp : (0 <= Z.of_nat (length (in_content ti.2)))%Z by lia. clear -Hkb Hlp. word. }
+    split_and!.
+    + exact Hti.
+    + have Hz : uint.Z (cell_client c) = uint.Z (W64 (clientId (in_id ti.2))) by rewrite Hcl.
+      rewrite Hzcl in Hz. move: Hz Hib. word.
+    + rewrite Hzc Hzk in Hlo. lia.
+    + move: Hhi. rewrite Hzc Hzk /cell_run /=. lia.
+Qed.
+
 Lemma state_runs_of_of_runs (str : store_state_runs) :
   locs_aligned (sr_locs str) (sr_pool str) ->
   state_runs_of (state_of_runs str) = str.
@@ -778,6 +858,17 @@ Proof.
   rewrite cells_of_locs_runs_projections.
   - destruct ts. done.
   - move=> c Hc. exact (Hpar parent ts c Hts Hc).
+Qed.
+
+(** Materialization across one registry slot. *)
+Lemma types_of_locs_pool_insert (locs : gmap loc (list loc)) (p : pool)
+    (parent : loc) (ls : list loc) (tm' : type_model) :
+  locs !! parent = Some ls ->
+  types_of_locs_pool locs (<[parent := tm']> p)
+  = <[parent := MkTypeState (cells_of_locs_runs parent ls (tm_runs tm')) (tm_arr tm')]>
+      (types_of_locs_pool locs p).
+Proof.
+  move=> Hls. rewrite /types_of_locs_pool map_imap_insert Hls //.
 Qed.
 
 (** [client_locs locs p client]: the client's clock-sorted node-address

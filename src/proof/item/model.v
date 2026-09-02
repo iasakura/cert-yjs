@@ -32,9 +32,11 @@
       forms of the pool statements: [runs_start_at] / [runs_end_at],
       [origins_resolved] (cursor indices), [runs_integrate_splice] (the
       cursor-explicit [runs_integrate_splice_at] under an exists), and
-      [runs_within]: every run after a step sits inside a run before it,
+      [runs_within]: every run after a step sits inside a run before it
+      (a preorder, [runs_within_refl] / [runs_within_trans]),
       and [ids_tombstoned_runs]: a set of ids all covered by tombstoned
-      runs; [items_string], the string a run of per-char items spells
+      runs; a chained run holds every id it covers
+      ([run_covers_char_ids]); [items_string], the string a run of per-char items spells
       (append-homomorphic, [items_string_app], and recovering an exploded
       string, [items_string_explode]); [input_of_run], the wire item a run
       denotes, and [run_per_char]: each of the run's items carries exactly
@@ -48,7 +50,12 @@
       [runs_disjoint] is permutation-invariant ([runs_disjoint_perm]).
     - laws: a split is invisible to the flatten and the visible count
       ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
-      app-morphic ([runs_flatten_app]).
+      app-morphic ([runs_flatten_app]) and a run's [off]-th char sits at
+      its prefix sum plus [off] ([runs_flatten_lookup_of_run], and back,
+      [runs_flatten_lookup_run]; one more run in the prefix,
+      [runs_flatten_take_S]); where the
+      split surgery leaves each slot ([split_runs_length],
+      [split_runs_lookup_left] / [_right] / [_before] / [_after]).
 
     The deep run-integration theory is [item/run_theory.v]; the heap node that
     carries a run is [item/value.v]. *)
@@ -612,6 +619,136 @@ Proof.
   rewrite take_drop //.
 Qed.
 
+(** Where the split surgery leaves each slot: the halves at [k] / [S k],
+    the runs before [k] in place, the runs after shifted by one. *)
+Lemma split_runs_length (runs : list ItemRun) (k o : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  length (split_runs runs k o) = S (length runs).
+Proof.
+  move=> Hk. rewrite /split_runs Hk !length_app /= length_take length_drop.
+  have := lookup_lt_Some _ _ _ Hk. lia.
+Qed.
+
+Lemma split_runs_lookup_left (runs : list ItemRun) (k o : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  split_runs runs k o !! k = Some (split_run_left r o).
+Proof.
+  move=> Hk. rewrite /split_runs Hk.
+  have Hklen : (k < length runs)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k runs) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk Nat.sub_diag //.
+Qed.
+
+Lemma split_runs_lookup_right (runs : list ItemRun) (k o : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  split_runs runs k o !! (S k) = Some (split_run_right r o).
+Proof.
+  move=> Hk. rewrite /split_runs Hk.
+  have Hklen : (k < length runs)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k runs) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk.
+  have -> : (S k - k)%nat = 1%nat by lia.
+  done.
+Qed.
+
+Lemma split_runs_lookup_before (runs : list ItemRun) (k o : nat) (r : ItemRun) (j : nat) :
+  runs !! k = Some r -> (j < k)%nat ->
+  split_runs runs k o !! j = runs !! j.
+Proof.
+  move=> Hk Hj. rewrite /split_runs Hk.
+  have Hklen : (k < length runs)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k runs) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_l; last lia.
+  rewrite lookup_take_lt; [done | lia].
+Qed.
+
+Lemma split_runs_lookup_after (runs : list ItemRun) (k o : nat) (r : ItemRun) (j : nat) :
+  runs !! k = Some r -> (k < j)%nat ->
+  split_runs runs k o !! (S j) = runs !! j.
+Proof.
+  move=> Hk Hj. rewrite /split_runs Hk.
+  have Hklen : (k < length runs)%nat := lookup_lt_Some _ _ _ Hk.
+  have Htk : length (take k runs) = k by (rewrite length_take_le; lia).
+  rewrite lookup_app_r; last lia.
+  rewrite Htk /=.
+  have -> : (S j - k)%nat = S (S (j - S k)) by lia.
+  simpl. rewrite lookup_drop. f_equal. lia.
+Qed.
+
+(** A tombstone flip drops the flipped run's characters from the visible
+    count and leaves the flatten alone (the run forms of
+    [num_visible_flip_run] / [cells_repr_update_run]). *)
+Lemma runs_visible_flip_run (runs : list ItemRun) (k : nat) (r : ItemRun) :
+  runs !! k = Some r -> run_deleted r = false ->
+  runs_visible (<[k := flip_run r]> runs) = (runs_visible runs - length (run_items r))%nat.
+Proof.
+  move=> Hk Hd.
+  have Hins : <[k := flip_run r]> runs = take k runs ++ flip_run r :: drop (S k) runs
+    by (apply insert_take_drop; apply lookup_lt_Some in Hk; exact Hk).
+  rewrite Hins /runs_visible fmap_app fmap_cons list_sum_app /flip_run /=.
+  rewrite -[in X in _ = (X - _)%nat](take_drop_middle runs k r Hk).
+  rewrite fmap_app fmap_cons list_sum_app /=. rewrite Hd. lia.
+Qed.
+
+Lemma runs_flatten_flip_run (runs : list ItemRun) (k : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  runs_flatten (<[k := flip_run r]> runs) = runs_flatten runs.
+Proof.
+  move=> Hk.
+  have Hins : <[k := flip_run r]> runs = take k runs ++ flip_run r :: drop (S k) runs
+    by (apply insert_take_drop; apply lookup_lt_Some in Hk; exact Hk).
+  rewrite Hins runs_flatten_app runs_flatten_cons /flip_run /=.
+  rewrite -[in X in _ = X](take_drop_middle runs k r Hk).
+  rewrite runs_flatten_app runs_flatten_cons //.
+Qed.
+
+(** A run's [off]-th char sits in the flatten at that run's prefix sum plus
+    [off] (the run form of [item/value]'s [run_flatten_lookup_of_cell]). *)
+Lemma runs_flatten_lookup_of_run (runs : list ItemRun) (k off : nat)
+    (r : ItemRun) (it : YjsItem A) :
+  runs !! k = Some r -> run_items r !! off = Some it ->
+  runs_flatten runs !! (length (runs_flatten (take k runs)) + off)%nat = Some it.
+Proof.
+  move=> Hk Hoff.
+  have Hsplit := take_drop_middle runs k r Hk.
+  have Hdec : runs_flatten runs
+            = runs_flatten (take k runs) ++ run_items r ++ runs_flatten (drop (S k) runs).
+  { transitivity (runs_flatten (take k runs ++ r :: drop (S k) runs)).
+    - by rewrite Hsplit.
+    - by rewrite runs_flatten_app runs_flatten_cons. }
+  rewrite Hdec lookup_app_r; last lia.
+  replace (length (runs_flatten (take k runs)) + off -
+           length (runs_flatten (take k runs)))%nat with off by lia.
+  rewrite lookup_app_l; [exact Hoff | by apply lookup_lt_Some in Hoff].
+Qed.
+
+(** A char of the flatten sits in some run at an offset, at that run's prefix
+    sum plus the offset (the converse of [runs_flatten_lookup_of_run]). *)
+Lemma runs_flatten_lookup_run (runs : list ItemRun) (kn : nat) (it : YjsItem A) :
+  runs_flatten runs !! kn = Some it ->
+  ∃ (k off : nat) (r : ItemRun), runs !! k = Some r ∧ run_items r !! off = Some it ∧
+    kn = (length (runs_flatten (take k runs)) + off)%nat.
+Proof.
+  elim: runs kn => [| r0 rs IH] kn.
+  { rewrite /runs_flatten /= lookup_nil //. }
+  rewrite runs_flatten_cons => /lookup_app_Some [Hin | [Hge Hlk]].
+  - exists 0%nat, kn, r0. split_and!; [done | done | rewrite take_0 /runs_flatten //=].
+  - destruct (IH _ Hlk) as (k & off & r & Hk & Hoff & Hkn).
+    exists (S k), off, r. split_and!; [done | done |].
+    rewrite /= runs_flatten_cons length_app. lia.
+Qed.
+
+(** The flatten of one more run: the prefix plus that run's items. *)
+Lemma runs_flatten_take_S (runs : list ItemRun) (k : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  runs_flatten (take (S k) runs) = runs_flatten (take k runs) ++ run_items r.
+Proof.
+  move=> Hk. rewrite (take_S_r _ _ _ Hk) runs_flatten_app runs_flatten_cons runs_flatten_nil app_nil_r //.
+Qed.
+
+
 Lemma split_runs_visible (runs : list ItemRun) (k o : nat) (r : ItemRun) :
   runs !! k = Some r ->
   (o <= length (run_items r))%nat ->
@@ -631,5 +768,40 @@ Qed.
 
 Lemma flip_run_items (r : ItemRun) : run_items (flip_run r) = run_items r.
 Proof. reflexivity. Qed.
+
+(** [runs_within] is a preorder. *)
+Lemma runs_within_refl (runs : list ItemRun) : runs_within runs runs.
+Proof.
+  move=> r Hr. exists r. split_and!; [exact Hr | reflexivity | lia | lia].
+Qed.
+
+Lemma runs_within_trans (r1 r2 r3 : list ItemRun) :
+  runs_within r1 r2 -> runs_within r2 r3 -> runs_within r1 r3.
+Proof.
+  move=> H12 H23 r Hr.
+  destruct (H23 r Hr) as (r' & Hr' & Hcl' & Hlo' & Hhi').
+  destruct (H12 r' Hr') as (r0 & Hr0 & Hcl0 & Hlo0 & Hhi0).
+  exists r0. split_and!; [exact Hr0 | congruence | lia | lia].
+Qed.
+
+(** A chained run holds every id it covers. *)
+Lemma run_covers_char_ids (r : ItemRun) (i : YjsId) :
+  run_wf (run_items r) ->
+  run_covers r i ->
+  i ∈ char_ids (run_items r).
+Proof.
+  move=> Hwf [Hcl [Hlo Hhi]].
+  have Hhd : run_items r !! 0%nat = Some (run_head_item r).
+  { rewrite /run_head_item. move: Hwf => [Hne _]. by destruct (run_items r). }
+  set (o := (clock i - run_clock r)%nat).
+  have [y Hy] : is_Some (run_items r !! o).
+  { apply lookup_lt_is_Some. rewrite /o. lia. }
+  have Hid := run_wf_lookup_clock (run_items r) o (run_head_item r) y Hwf Hhd Hy.
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap.
+  exists y. split; last exact (list_elem_of_lookup_2 _ _ _ Hy).
+  rewrite Hid. destruct i as [ci ki].
+  rewrite /run_client in Hcl. rewrite /run_clock in Hlo Hhi. simpl in *.
+  rewrite /o /run_clock. f_equal; lia.
+Qed.
 
 End item_run.

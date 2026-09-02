@@ -490,6 +490,31 @@ vocabulary substitution table written; then C5 restates the specs at
   `repair` (~190); the sixteen `<| ss_types := … |>` setter sites
   (repair 7, splitNode 5, deleteRange 2, applyUpdate 1, Integrate 1)
   are where the state-update spelling changes by hand.
+  PROGRESS 2026-09-02: `ytype/findPos`, `ytype/Text`, `ytype/newYType`,
+  `deleteRange` / `applyDeleteSpans` (and `deleteNode`) and the
+  `applyUpdate` drain core (`wp_store__applyUpdate_unlocked`, over
+  `own_store_runs`, stepping by `runs_within_or_from` /
+  `runs_apply_live_refine`; its `own_store` wrapper lifts and lowers) and
+  `splitAtAndGetLeft` / `splitAtAndGetRight` (from `GetNode_runs` +
+  `splitNode_runs`, reporting the index-explicit `pool_split_left_step` /
+  `pool_split_right_step`) and `repair` (from the split helpers and
+  `getOrCreateYType_runs`; the two origin slots are kept apart by
+  `own_store_runs_covers_unique` and carried across each other's split by
+  `pool_split_step_other_slot`) and `integrateDecoded` (bound / unbound /
+  creation cases; the origins resolve to slots through the flatten,
+  `runs_flatten_lookup_run`) are proved directly at `(locs, pool)`; the
+  cell-level `repair` / `integrateDecoded` and their locals are deleted;
+  `hasNode` / `originArrived` / `depsArrived` are direct too (the model
+  agreement `docm_runs_agree` replaces `docm_cells_agree`); the
+  run-count clause of `pool_after_split` / `pool_after_repair` was dropped
+  (no consumer); the cell-level `applyDeleteSpans` is now
+  DERIVED from the run-granular proof (for the `own_store` wrapper), the
+  reverse of the original derivation. The store-level recipe: open
+  `own_store_runs`, lift the pool (`own_type_pool_runs_of`), run the
+  node-level core, lower it (`own_type_pool_runs_to_cells`) and re-close
+  through the materialization laws (`types_of_locs_pool_insert`,
+  `cells_of_locs_runs_flip`), so the cell-level pool lemmas apply verbatim
+  until C6 swaps the definition.
 
 - **C6, delete the scaffolding.** `item_cell`, `cell_*`, `cells_of_locs_*`,
   the wrappers, `node_loc`, `ty_arr` (folded: `tm_arr = runs_flatten`),
