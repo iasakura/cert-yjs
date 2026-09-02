@@ -31,7 +31,8 @@
       ([split_types_update_rel_to_pool]), [repair_types_update_rel] onto
       [pool_after_repair] ([repair_types_update_rel_to_pool]) and
       [delete_types_update_rel] onto [pool_after_delete]
-      ([delete_types_update_rel_to_pool]): what carries the splitAtAndGet,
+      ([delete_types_update_rel_to_pool], and back,
+      [pool_after_delete_of_types]): what carries the splitAtAndGet,
       [repair] and delete-path postconditions to [(locs, p)].
     - the split projects along [cell_run] ([cell_run_split_left] /
       [cell_run_split_right], [split_cells_runs]; [cell_covers_clock_run]),
@@ -1202,6 +1203,74 @@ Proof.
       have Hl1 : length (run_items (cell_run c)) = length (ic_run c) by reflexivity.
       have Hl0 : length (run_items (cell_run c0)) = length (ic_run c0) by reflexivity.
       rewrite Hl1 Hl0. lia.
+Qed.
+
+(** [pool_after_delete] read back at the cells: the converse of
+    [delete_types_update_rel_to_pool]. What derives the cell-level
+    [wp_store__applyDeleteSpans] (the shape [own_store] still speaks)
+    from the run-granular proof. *)
+Lemma pool_after_delete_of_types (before after : gmap loc type_state) :
+  (∀ c, c ∈ all_cells before -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells before -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells after -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells after -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  pool_after_delete (pool_of before) (pool_of after) ->
+  delete_types_update_rel before after.
+Proof.
+  move=> Hckb Hclb Hcka Hcla [H1 [H2 [H3 [H4 H5]]]].
+  have Hzb : ∀ c, c ∈ all_cells before ->
+      uint.Z (cell_clock c) = Z.of_nat (run_clock (cell_run c)).
+  { move=> c Hc. have := Hckb c Hc.
+    rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  have Hza : ∀ c, c ∈ all_cells after ->
+      uint.Z (cell_clock c) = Z.of_nat (run_clock (cell_run c)).
+  { move=> c Hc. have := Hcka c Hc.
+    rewrite /cell_clock /run_clock /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  have Hclb' : ∀ c, c ∈ all_cells before ->
+      uint.Z (cell_client c) = Z.of_nat (run_client (cell_run c)).
+  { move=> c Hc. have := Hclb c Hc.
+    rewrite /cell_client /run_client /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  have Hcla' : ∀ c, c ∈ all_cells after ->
+      uint.Z (cell_client c) = Z.of_nat (run_client (cell_run c)).
+  { move=> c Hc. have := Hcla c Hc.
+    rewrite /cell_client /run_client /run_head_item /run_head /cell_run /=.
+    move=> Hb. word. }
+  have Hmemb : ∀ r, r ∈ all_runs (pool_of before) -> ∃ c, c ∈ all_cells before ∧ r = cell_run c.
+  { move=> r. rewrite all_runs_pool_of list_elem_of_fmap. move=> [c [-> Hc]]. eauto. }
+  have Hmema : ∀ r, r ∈ all_runs (pool_of after) -> ∃ c, c ∈ all_cells after ∧ r = cell_run c.
+  { move=> r. rewrite all_runs_pool_of list_elem_of_fmap. move=> [c [-> Hc]]. eauto. }
+  have Hinb : ∀ c, c ∈ all_cells before -> cell_run c ∈ all_runs (pool_of before).
+  { move=> c Hc. rewrite all_runs_pool_of. apply list_elem_of_fmap. eauto. }
+  have Hina : ∀ c, c ∈ all_cells after -> cell_run c ∈ all_runs (pool_of after).
+  { move=> c Hc. rewrite all_runs_pool_of. apply list_elem_of_fmap. eauto. }
+  split_and!.
+  - move=> q ts' Hq.
+    have Hq' : pool_of after !! q = Some (type_model_of ts') by rewrite /pool_of lookup_fmap Hq.
+    destruct (H1 q _ Hq') as (tm & Htm & Harr).
+    rewrite /pool_of lookup_fmap in Htm.
+    destruct (before !! q) as [ts|] eqn:Hts; last done.
+    injection Htm as <-. exists ts. split; [done | exact Harr].
+  - move=> q Hq.
+    have Hq' : is_Some (pool_of before !! q) by rewrite /pool_of lookup_fmap fmap_is_Some.
+    have := H2 q Hq'. rewrite /pool_of lookup_fmap fmap_is_Some //.
+  - move=> c' Hc' Hd.
+    destruct (H3 (cell_run c') (Hina c' Hc') Hd) as (r & Hr & Hrd & Hrin).
+    destruct (Hmemb r Hr) as (c & Hc & ->).
+    exists c. split_and!; [exact Hc | exact Hrd | exact Hrin].
+  - move=> c Hc Hd y Hy.
+    destruct (H4 (cell_run c) (Hinb c Hc) Hd y Hy) as (r' & Hr' & Hrd' & Hy').
+    destruct (Hmema r' Hr') as (c' & Hc' & ->).
+    exists c'. split_and!; [exact Hc' | exact Hrd' | exact Hy'].
+  - move=> c Hc.
+    destruct (H5 (cell_run c) (Hina c Hc)) as (r0 & Hr0 & Hcl & Hlo & Hhi).
+    destruct (Hmemb r0 Hr0) as (c0 & Hc0 & ->).
+    exists c0. split_and!; [exact Hc0 | | |].
+    + apply (inj uint.Z). rewrite (Hcla' c Hc) (Hclb' c0 Hc0). lia.
+    + rewrite (Hza c Hc) (Hzb c0 Hc0). lia.
+    + rewrite (Hza c Hc) (Hzb c0 Hc0). move: Hhi. rewrite /cell_run /=. lia.
 Qed.
 
 Lemma fresh_loc_locs (l : loc) (types : gmap loc type_state) :

@@ -490,6 +490,16 @@ vocabulary substitution table written; then C5 restates the specs at
   `repair` (~190); the sixteen `<| ss_types := … |>` setter sites
   (repair 7, splitNode 5, deleteRange 2, applyUpdate 1, Integrate 1)
   are where the state-update spelling changes by hand.
+  PROGRESS 2026-09-02: `ytype/findPos`, `ytype/Text`, `ytype/newYType`,
+  `deleteRange` / `applyDeleteSpans` (and `deleteNode`) are proved
+  directly at `(locs, pool)`; the cell-level `applyDeleteSpans` is now
+  DERIVED from the run-granular proof (for the `own_store` wrapper), the
+  reverse of the original derivation. The store-level recipe: open
+  `own_store_runs`, lift the pool (`own_type_pool_runs_of`), run the
+  node-level core, lower it (`own_type_pool_runs_to_cells`) and re-close
+  through the materialization laws (`types_of_locs_pool_insert`,
+  `cells_of_locs_runs_flip`), so the cell-level pool lemmas apply verbatim
+  until C6 swaps the definition.
 
 - **C6, delete the scaffolding.** `item_cell`, `cell_*`, `cells_of_locs_*`,
   the wrappers, `node_loc`, `ty_arr` (folded: `tm_arr = runs_flatten`),

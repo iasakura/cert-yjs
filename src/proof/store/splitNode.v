@@ -2271,7 +2271,9 @@ Qed.
     stage 2): make the char [idv], covered by the [k]-th run of the type at
     [parent], END a node: the returned address holds a run starting at that
     run's head and ending at [idv], at one slot [k'] of the updated pool,
-    which is [pool_after_split] of the old one. Derived from the cell-level
+    which is [pool_after_split] of the old one; that address is the [k]-th
+    run's old address (the left half stays in place, which is what lets the
+    delete loop tombstone the node it holds). Derived from the cell-level
     spec through the projections and
     [split_types_update_rel_to_pool]. *)
 Lemma wp_store__splitAtAndGetLeft_runs (s : loc) (idv : yjs.id.t) (str : store_state_runs)
@@ -2284,6 +2286,7 @@ Lemma wp_store__splitAtAndGetLeft_runs (s : loc) (idv : yjs.id.t) (str : store_s
   {{{ (l : loc) (p' : pool) (locs' : gmap loc (list loc)), RET (#l, #true);
       own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
       ⌜pool_after_split (sr_pool str) p' parent k⌝ ∗
+      ⌜(sr_locs str !! parent) ≫= (λ ls, ls !! k) = Some l⌝ ∗
       ⌜∃ k', pool_run_starts_at p' parent k' (item_id (run_head_item r)) ∧
              pool_run_ends_at p' parent k' (toYjsId idv) ∧
              (locs' !! parent) ≫= (λ ls, ls !! k') = Some l⌝ }}}.
@@ -2297,6 +2300,8 @@ Proof using Type*.
   destruct (types !! parent) as [ts|] eqn:Hts; simplify_eq/=.
   rewrite /type_model_of /= list_lookup_fmap in Hr.
   destruct (ty_cells ts !! k) as [cw|] eqn:Hk; simplify_eq/=.
+  have Hkloc : (locs_of types !! parent) ≫= (λ ls, ls !! k) = Some (ic_loc cw).
+  { rewrite /locs_of lookup_fmap Hts /= list_lookup_fmap Hk //. }
   iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
   have Hpool0 : pool_invs types := proj1 Hinvs0.
   iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
@@ -2330,12 +2335,13 @@ Proof using Type*.
   have Hpc : ic_parent cw = parent
     := Hparb parent ts cw Hts (list_elem_of_lookup_2 _ _ _ Hk).
   rewrite Hpc in Hstarts Hends.
-  split.
+  split_and!.
   - exact (split_types_update_rel_to_pool types types' cw parent ts k Hts Hk Hparb Hpara
              (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
              (λ c Hc, proj2 (Hbnda c Hc)) (λ c Hc, proj1 (Hbnda c Hc))
              (λ c Hc, proj1 (Hwfb c Hc)) (λ c Hc, proj1 (Hwfa c Hc))
              Hpool0 Hpool1 Hstep).
+  - exact Hkloc.
   - exact (cell_starts_ends_at_to_run types' parent (ic_loc cw) _ _ Hpara
              (proj1 (proj2 Hpool1)) Hstarts Hends).
 Qed.

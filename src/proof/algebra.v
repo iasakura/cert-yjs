@@ -10,7 +10,8 @@
     List facts free of cert-yjs definitions: [list_elem_of_concat],
     [concat_fmap], [list_filter_fmap], [list_filter_iff_elem_of],
     [StronglySorted_fmap_elem_of], [map_to_list_insert_existing],
-    [concat_perm]. Map big-op:
+    [concat_perm], [elem_of_list_insert_inv] (membership in a list with one
+    slot replaced). Map big-op:
     [big_sepM_map_imap_total], a big-op over a total [map_imap] is the
     big-op over the underlying map. *)
 From New.proof Require Import proof_prelude.
@@ -106,6 +107,23 @@ Proof.
     rewrite Forall_forall in Hall. by apply Hall.
 Qed.
 
+
+(** Membership in a list with one slot replaced: the new element, or an
+    element of the old list. *)
+Lemma elem_of_list_insert_inv {X : Type} (l : list X) (k : nat) (x y : X) :
+  y ∈ <[k := x]> l -> y = x ∨ y ∈ l.
+Proof.
+  destruct (decide (k < length l)%nat) as [Hk | Hk].
+  - rewrite insert_take_drop; last exact Hk.
+    rewrite elem_of_app elem_of_cons.
+    move=> [Hy | [Hy | Hy]].
+    + right. apply list_elem_of_lookup in Hy as (i & Hi).
+      apply lookup_take_Some in Hi as [Hi _]. apply list_elem_of_lookup. eauto.
+    + left. exact Hy.
+    + right. apply list_elem_of_lookup in Hy as (i & Hi).
+      rewrite lookup_drop in Hi. apply list_elem_of_lookup. eauto.
+  - rewrite list_insert_ge; last lia. move=> Hy. right. exact Hy.
+Qed.
 Section ghost_map_grow.
 Context {Σ : gFunctors} {K V : Type} `{Countable K} `{ghost_mapG Σ K V}.
 Lemma ghost_map_grow_persist (γ : gname) (m m' : gmap K V) :

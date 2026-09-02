@@ -17,7 +17,9 @@
       [own_type_pool_runs_to_cells] (the converse, at the re-materialized
       registry [types_of_locs_pool]); the PRIMITIVE [own_store_runs s
       str], the store at a [store_state_runs] (the cell-level state
-      existential), which the stage-2 [_runs] specs are stated over.
+      existential), which the stage-2 [_runs] specs are stated over, and
+      what it reads back at run granularity ([own_store_runs_run_pool_invs]
+      / [own_store_runs_run_wf]).
     - [own_store_struct s st]: THE store at its cell-level state, the fields
       with the invariants every method preserves ([store_invs]). Every
       store-internal method is specified over it, whole; [own_store] is the
@@ -1267,6 +1269,44 @@ Proof.
     rewrite (types_of_locs_pool_of types Hpar).
     iFrame "Hcells".
     iPureIntro. exact (locs_aligned_of types).
+Qed.
+
+(** The run-granular pool invariants, read off the store. *)
+Lemma own_store_runs_run_pool_invs (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗ ⌜run_pool_invs (sr_pool str)⌝.
+Proof.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnd.
+  iPureIntro.
+  have Hrp := run_pool_invs_of _ (λ c Hc, proj2 (Hbnd c Hc)) (λ c Hc, proj1 (Hbnd c Hc))
+                (proj1 Hinvs).
+  destruct Haligned as [Hdom Hlens].
+  have Hprem : ∀ parent tm, sr_pool str !! parent = Some tm ->
+      ∃ ls, sr_locs str !! parent = Some ls ∧ length ls = length (tm_runs tm).
+  { move=> parent tm Hp.
+    have His : is_Some (sr_locs str !! parent).
+    { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
+    destruct His as [ls Hls]. exists ls. split; [done | exact (Hlens parent ls tm Hls Hp)]. }
+  rewrite /state_of_runs /= (pool_of_types_of_locs_pool _ _ Hprem) in Hrp. exact Hrp.
+Qed.
+
+(** Every run of the store is chained ([run_wf]): the heap pin of the run
+    spine, read off the store. *)
+Lemma own_store_runs_run_wf (s : loc) (str : store_state_runs) :
+  own_store_runs s str -∗ ⌜∀ r, r ∈ all_runs (sr_pool str) -> run_wf (run_items r)⌝.
+Proof.
+  iIntros "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwf.
+  iPureIntro.
+  have Hprem := locs_aligned_lens _ _ Haligned.
+  move=> r Hr.
+  rewrite -(pool_of_types_of_locs_pool _ _ Hprem) all_runs_pool_of in Hr.
+  apply list_elem_of_fmap in Hr as (c & -> & Hc).
+  exact (Hwf c Hc).
 Qed.
 
 Definition store_inv_ro (γs : store_names) (types : gmap loc type_state) (q : Qp) : iProp Σ :=

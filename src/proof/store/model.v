@@ -39,8 +39,14 @@
     [pool_after_delete] for the wire delete path's unbounded sweep);
     [pool_run_clock_below], the index-based [pool_clock_below];
     [all_runs] under a registry insert or lookup ([all_runs_insert] /
-    [all_runs_lookup]) and [run_pool_invs] surviving one node split
-    ([run_pool_invs_split]). *)
+    [all_runs_lookup], membership across one slot [elem_of_all_runs_insert]
+    / [elem_of_all_runs_lookup]) and [run_pool_invs] surviving one node
+    split ([run_pool_invs_split]) and one tombstoning
+    ([run_pool_invs_flip]); [pool_after_delete] is a preorder containing
+    one split and one tombstoning ([pool_after_delete_refl] /
+    [pool_after_delete_trans] / [pool_after_split_delete] /
+    [pool_after_delete_flip]), and the tombstone record survives a step
+    that keeps dead chars dead ([ids_tombstoned_runs_dead_kept]). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -204,6 +210,22 @@ Proof.
   rewrite (insert_id p parent tm Hp) in H. exact H.
 Qed.
 
+(** Membership in [all_runs] across one registry slot: a run of the new
+    type model, or a run of another type. *)
+Lemma elem_of_all_runs_insert (p : pool) (parent : loc) (tm tm' : type_model) (r : ItemRun) :
+  p !! parent = Some tm ->
+  r ∈ all_runs (<[parent := tm']> p) <-> r ∈ tm_runs tm' ∨ r ∈ all_runs (delete parent p).
+Proof.
+  move=> Hp. rewrite (all_runs_insert p parent tm tm' Hp) elem_of_app //.
+Qed.
+
+Lemma elem_of_all_runs_lookup (p : pool) (parent : loc) (tm : type_model) (r : ItemRun) :
+  p !! parent = Some tm ->
+  r ∈ all_runs p <-> r ∈ tm_runs tm ∨ r ∈ all_runs (delete parent p).
+Proof.
+  move=> Hp. rewrite (all_runs_lookup p parent tm Hp) elem_of_app //.
+Qed.
+
 (** [run_pool_invs] survives one node split: the pure half of the
     [splitNode] surgery ([split_pool_fits] / [_rangedisj] / [_originclk] at
     run granularity, one bundle; runs are told apart by index, so no
@@ -313,6 +335,163 @@ Proof.
         injection Hoid as <-.
         rewrite /run_clock Hheadr' Hidyo Hidyp /=. lia.
       * apply Hoclk. rewrite Hold. apply elem_of_cons. by right.
+Qed.
+
+(** [run_pool_invs] survives one tombstoning: a flip changes no run's id,
+    client, clock, or chars. *)
+Lemma run_pool_invs_flip (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
+  p !! parent = Some tm ->
+  tm_runs tm !! k = Some r ->
+  run_pool_invs p ->
+  run_pool_invs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p).
+Proof.
+  move=> Hp Hrk [Hfits [Hdisj Hoclk]].
+  set (rest := take k (tm_runs tm) ++ drop (S k) (tm_runs tm) ++ all_runs (delete parent p)).
+  have Hk : (k < length (tm_runs tm))%nat := lookup_lt_Some _ _ _ Hrk.
+  have Hmid := take_drop_middle (tm_runs tm) k r Hrk.
+  have Hnew : all_runs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p)
+            ≡ₚ flip_run r :: rest.
+  { rewrite (all_runs_insert p parent tm _ Hp) /= /rest.
+    rewrite insert_take_drop; last exact Hk.
+    rewrite -app_assoc /=.
+    rewrite -Permutation_middle //. }
+  have Hold : all_runs p ≡ₚ r :: rest.
+  { rewrite (all_runs_lookup p parent tm Hp) /rest.
+    rewrite -{1}Hmid -app_assoc /=.
+    rewrite -Permutation_middle //. }
+  have Hrmem : r ∈ all_runs p by (rewrite Hold; apply list_elem_of_here).
+  have Hcl : run_client (flip_run r) = run_client r by rewrite /run_client /run_head_item flip_run_items.
+  have Hck : run_clock (flip_run r) = run_clock r by rewrite /run_clock /run_head_item flip_run_items.
+  have Hhd : run_head_item (flip_run r) = run_head_item r by rewrite /run_head_item flip_run_items.
+  split_and!.
+  - (* fits *)
+    move=> r0 Hr0. rewrite Hnew in Hr0.
+    apply elem_of_cons in Hr0 as [-> | Hr0].
+    + rewrite /run_fits Hck flip_run_items. exact (Hfits r Hrmem).
+    + apply Hfits. rewrite Hold. apply elem_of_cons. by right.
+  - (* disjoint *)
+    have Hdisj1 : runs_disjoint (r :: rest) := runs_disjoint_perm _ _ Hold Hdisj.
+    apply (runs_disjoint_perm (flip_run r :: rest)); [by symmetry |].
+    move=> i j r1 r2 Hi Hj Hij Hcl12.
+    destruct i as [|i']; destruct j as [|j']; simpl in Hi, Hj; simplify_eq.
+    + (* flipped vs rest *)
+      have := Hdisj1 0%nat (S j') r r2 ltac:(done) ltac:(rewrite /= Hj //) ltac:(lia)
+                ltac:(by rewrite -Hcl).
+      rewrite Hck flip_run_items. done.
+    + (* rest vs flipped *)
+      have := Hdisj1 (S i') 0%nat r1 r ltac:(rewrite /= Hi //) ltac:(done) ltac:(lia)
+                ltac:(by rewrite Hcl12 Hcl).
+      rewrite Hck flip_run_items. done.
+    + (* rest vs rest *)
+      exact (Hdisj1 (S i') (S j') r1 r2 ltac:(rewrite /= Hi //) ltac:(rewrite /= Hj //)
+               ltac:(lia) Hcl12).
+  - (* origin clock *)
+    move=> r0 Hr0. rewrite Hnew in Hr0.
+    apply elem_of_cons in Hr0 as [-> | Hr0].
+    + rewrite /run_origin_clk Hhd Hcl Hck. exact (Hoclk r Hrmem).
+    + apply Hoclk. rewrite Hold. apply elem_of_cons. by right.
+Qed.
+
+(** [pool_after_delete] is a preorder, contains one split, and contains
+    one tombstoning: the laws the delete loops step their invariant by. *)
+Lemma pool_after_delete_refl (p : pool) : pool_after_delete p p.
+Proof.
+  split_and!.
+  - move=> q tm' Hq. exists tm'. done.
+  - done.
+  - move=> r' Hr' Hd. exists r'. done.
+  - move=> r Hr Hd y Hy. exists r. done.
+  - apply runs_within_refl.
+Qed.
+
+Lemma pool_after_delete_trans (p1 p2 p3 : pool) :
+  pool_after_delete p1 p2 -> pool_after_delete p2 p3 -> pool_after_delete p1 p3.
+Proof.
+  move=> [A1 [A2 [A3 [A4 A5]]]] [B1 [B2 [B3 [B4 B5]]]].
+  split_and!.
+  - move=> q tm3 Hq. destruct (B1 q tm3 Hq) as (tm2 & Hq2 & Harr2).
+    destruct (A1 q tm2 Hq2) as (tm1 & Hq1 & Harr1).
+    exists tm1. split; [exact Hq1 | congruence].
+  - move=> q Hq. apply B2, A2, Hq.
+  - move=> r3 Hr3 Hd3. destruct (B3 r3 Hr3 Hd3) as (r2 & Hr2 & Hd2 & Hin2).
+    destruct (A3 r2 Hr2 Hd2) as (r1 & Hr1 & Hd1 & Hin1).
+    exists r1. split_and!; [exact Hr1 | exact Hd1 | move=> y Hy; apply Hin1, Hin2, Hy].
+  - move=> r1 Hr1 Hd1 y Hy. destruct (A4 r1 Hr1 Hd1 y Hy) as (r2 & Hr2 & Hd2 & Hy2).
+    exact (B4 r2 Hr2 Hd2 y Hy2).
+  - exact (runs_within_trans _ _ _ A5 B5).
+Qed.
+
+Lemma pool_after_split_delete (p p' : pool) (parent : loc) (k : nat) :
+  pool_after_split p p' parent k -> pool_after_delete p p'.
+Proof.
+  move=> [H1 [H2 [_ [_ [_ [_ [H7 [H8 H9]]]]]]]].
+  split_and!; [| exact H2 | exact H8 | exact H9 | exact H7].
+  move=> q tm' Hq. destruct (H1 q tm' Hq) as (tm & Hq0 & Harr & _). eauto.
+Qed.
+
+Lemma pool_after_delete_flip (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
+  p !! parent = Some tm ->
+  tm_runs tm !! k = Some r ->
+  pool_after_delete p (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p).
+Proof.
+  move=> Hp Hrk.
+  set (tm' := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)).
+  have Hmem : ∀ r', r' ∈ all_runs (<[parent := tm']> p) ->
+      r' = flip_run r ∨ r' ∈ all_runs p.
+  { move=> r' Hr'. apply (elem_of_all_runs_insert p parent tm tm' r' Hp) in Hr'.
+    destruct Hr' as [Hr' | Hr'].
+    - simpl in Hr'. apply elem_of_list_insert_inv in Hr' as [-> | Hr']; [by left |].
+      right. apply (elem_of_all_runs_lookup p parent tm r' Hp). by left.
+    - right. apply (elem_of_all_runs_lookup p parent tm r' Hp). by right. }
+  split_and!.
+  - move=> q tmq Hq. destruct (decide (parent = q)) as [<- | Hne].
+    + rewrite lookup_insert_eq in Hq. injection Hq as <-. exists tm. done.
+    + rewrite lookup_insert_ne in Hq; last exact Hne. exists tmq. done.
+  - move=> q Hq. destruct (decide (parent = q)) as [<- | Hne].
+    + rewrite lookup_insert_eq. done.
+    + rewrite lookup_insert_ne; last exact Hne. exact Hq.
+  - move=> r' Hr' Hd. destruct (Hmem r' Hr') as [-> | Hr0].
+    + rewrite /flip_run /= in Hd. discriminate.
+    + exists r'. done.
+  - move=> r0 Hr0 Hd y Hy.
+    apply (elem_of_all_runs_lookup p parent tm r0 Hp) in Hr0.
+    destruct Hr0 as [Hr0 | Hr0]; last first.
+    { exists r0. split_and!; [| exact Hd | exact Hy].
+      apply (elem_of_all_runs_insert p parent tm tm' _ Hp). by right. }
+    apply list_elem_of_lookup in Hr0 as (i & Hi).
+    destruct (decide (k = i)) as [<- | Hne].
+    + rewrite Hi in Hrk. injection Hrk as Heq. subst r0.
+      exists (flip_run r). split_and!.
+      * apply (elem_of_all_runs_insert p parent tm tm' _ Hp). left. simpl.
+        apply list_elem_of_insert. apply lookup_lt_Some in Hi. exact Hi.
+      * done.
+      * rewrite flip_run_items. exact Hy.
+    + exists r0. split_and!; [| exact Hd | exact Hy].
+      apply (elem_of_all_runs_insert p parent tm tm' _ Hp). left. simpl.
+      apply list_elem_of_lookup. exists i.
+      rewrite list_lookup_insert_ne; [exact Hi | exact Hne].
+  - move=> r' Hr'. destruct (Hmem r' Hr') as [-> | Hr0].
+    + exists r. split_and!;
+        [| rewrite /run_client /run_head_item flip_run_items //
+         | rewrite /run_clock /run_head_item flip_run_items //
+         | rewrite /run_clock /run_head_item flip_run_items //].
+      apply (elem_of_all_runs_lookup p parent tm r Hp). left.
+      exact (list_elem_of_lookup_2 _ _ _ Hrk).
+    + exists r'. split_and!; [exact Hr0 | reflexivity | lia | lia].
+Qed.
+
+(** The tombstone record survives a step that keeps dead chars dead. *)
+Lemma ids_tombstoned_runs_dead_kept (ids : gset YjsId) (p p' : pool) :
+  runs_dead_kept p p' ->
+  ids_tombstoned_runs ids (all_runs p) ->
+  ids_tombstoned_runs ids (all_runs p').
+Proof.
+  move=> Hkept H i Hi. destruct (H i Hi) as (r & Hr & Hd & Hin).
+  rewrite /char_ids elem_of_list_to_set in Hin.
+  apply list_elem_of_fmap in Hin as (y & Hid & Hy).
+  destruct (Hkept r Hr Hd y Hy) as (r' & Hr' & Hd' & Hy').
+  exists r'. split_and!; [exact Hr' | exact Hd' |].
+  rewrite /char_ids elem_of_list_to_set. apply list_elem_of_fmap. eauto.
 Qed.
 
 (** [pool_run_clock_below p id]: every run of [id]'s client in the pool ends

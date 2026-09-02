@@ -32,9 +32,11 @@
       forms of the pool statements: [runs_start_at] / [runs_end_at],
       [origins_resolved] (cursor indices), [runs_integrate_splice] (the
       cursor-explicit [runs_integrate_splice_at] under an exists), and
-      [runs_within]: every run after a step sits inside a run before it,
+      [runs_within]: every run after a step sits inside a run before it
+      (a preorder, [runs_within_refl] / [runs_within_trans]),
       and [ids_tombstoned_runs]: a set of ids all covered by tombstoned
-      runs; [items_string], the string a run of per-char items spells
+      runs; a chained run holds every id it covers
+      ([run_covers_char_ids]); [items_string], the string a run of per-char items spells
       (append-homomorphic, [items_string_app], and recovering an exploded
       string, [items_string_explode]); [input_of_run], the wire item a run
       denotes, and [run_per_char]: each of the run's items carries exactly
@@ -658,5 +660,40 @@ Qed.
 
 Lemma flip_run_items (r : ItemRun) : run_items (flip_run r) = run_items r.
 Proof. reflexivity. Qed.
+
+(** [runs_within] is a preorder. *)
+Lemma runs_within_refl (runs : list ItemRun) : runs_within runs runs.
+Proof.
+  move=> r Hr. exists r. split_and!; [exact Hr | reflexivity | lia | lia].
+Qed.
+
+Lemma runs_within_trans (r1 r2 r3 : list ItemRun) :
+  runs_within r1 r2 -> runs_within r2 r3 -> runs_within r1 r3.
+Proof.
+  move=> H12 H23 r Hr.
+  destruct (H23 r Hr) as (r' & Hr' & Hcl' & Hlo' & Hhi').
+  destruct (H12 r' Hr') as (r0 & Hr0 & Hcl0 & Hlo0 & Hhi0).
+  exists r0. split_and!; [exact Hr0 | congruence | lia | lia].
+Qed.
+
+(** A chained run holds every id it covers. *)
+Lemma run_covers_char_ids (r : ItemRun) (i : YjsId) :
+  run_wf (run_items r) ->
+  run_covers r i ->
+  i ∈ char_ids (run_items r).
+Proof.
+  move=> Hwf [Hcl [Hlo Hhi]].
+  have Hhd : run_items r !! 0%nat = Some (run_head_item r).
+  { rewrite /run_head_item. move: Hwf => [Hne _]. by destruct (run_items r). }
+  set (o := (clock i - run_clock r)%nat).
+  have [y Hy] : is_Some (run_items r !! o).
+  { apply lookup_lt_is_Some. rewrite /o. lia. }
+  have Hid := run_wf_lookup_clock (run_items r) o (run_head_item r) y Hwf Hhd Hy.
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap.
+  exists y. split; last exact (list_elem_of_lookup_2 _ _ _ Hy).
+  rewrite Hid. destruct i as [ci ki].
+  rewrite /run_client in Hcl. rewrite /run_clock in Hlo Hhi. simpl in *.
+  rewrite /o /run_clock. f_equal; lia.
+Qed.
 
 End item_run.

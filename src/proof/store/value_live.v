@@ -14,7 +14,8 @@
       bound. [dead_chars_kept] is the dual, carrying a delete loop's record of
       what it has already tombstoned across the next iteration's surgeries.
     - [ids_tombstoned]: the ids are held by cells that are tombstoned, what a
-      delete reports about what it just did.
+      delete reports about what it just did ([ids_tombstoned_runs_of]
+      carries it to the projected runs, [ids_tombstoned_of_runs] back).
 
     Laws
     - a well-formed run denotes exactly its cell's coordinate window
@@ -546,6 +547,17 @@ Proof.
   - apply list_elem_of_fmap_2. exact Hc.
   - rewrite /cell_run /= Hdel //.
   - exact Hin.
+Qed.
+
+(** ...and read back: the converse, for the cell-level delete specs derived
+    from the run-granular proofs. *)
+Lemma ids_tombstoned_of_runs (ids : gset YjsId) (pool : list item_cell) :
+  ids_tombstoned_runs ids (cell_run <$> pool) ->
+  ids_tombstoned ids pool.
+Proof.
+  move=> H i Hi. destruct (H i Hi) as (r & Hr & Hdel & Hin).
+  apply list_elem_of_fmap in Hr as (c & -> & Hc).
+  exists c. split_and!; [exact Hc | exact Hdel | exact Hin].
 Qed.
 
 End store_value_live.
