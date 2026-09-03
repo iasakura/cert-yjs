@@ -190,7 +190,7 @@ Proof.
   move=> Hls Hp Hlk Hrk.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
   destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
-  iDestruct "Hruns" as "(Hstruct & %Haligned)".
+  iDestruct (own_store_runs_to_state with "Hruns") as "(Hstruct & %Haligned)".
   iDestruct "Hstruct" as "(Hfields & %Hinvs)".
   have Hpool : pool_invs (types_of_locs_pool locs p) := proj1 Hinvs.
   have Hreg : registry_coh bind (types_of_locs_pool locs p) := proj2 Hinvs.
@@ -228,14 +228,14 @@ Proof.
                with "Hitems") as "Hitems".
   have Hpool' := pool_invs_flip _ parent ts0 k c Hts Hck Hpool.
   have Hreg' := registry_coh_delete_step _ _ _ (delete_types_update_rel_of_flip _ parent ts0 k c Hts Hck) Hreg.
+  have Haligned' : locs_aligned locs (<[parent := tm']> p).
+  { apply (locs_aligned_insert_same_len locs p parent tm tm' Hp); last exact Haligned.
+    rewrite /tm' /= length_insert //. }
   iApply "HΦ".
-  iSplitL.
-  { iEval (rewrite /state_of_runs /= Hmat).
-    iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend pdel) (conj Hpool' Hreg')
-              with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes"). }
-  iPureIntro. simpl.
-  apply (locs_aligned_insert_same_len locs p parent tm tm' Hp); last exact Haligned.
-  rewrite /tm' /= length_insert //.
+  iApply (own_store_runs_intro_state _ _ _ _ _ _ _ _ Haligned').
+  iEval (rewrite /state_of_runs /= Hmat).
+  iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend pdel) (conj Hpool' Hreg')
+            with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes").
 Qed.
 
 
@@ -500,7 +500,7 @@ Lemma wp_store__applyDeleteSpans_runs (s : loc) (str : store_state_runs)
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns & Hsp) HΦ".
   destruct str as [client0 k0 locs p bind pend pdel]. simpl.
-  iDestruct "Hruns" as "(Hstruct & %Haligned)".
+  iDestruct (own_store_runs_to_state with "Hruns") as "(Hstruct & %Haligned)".
   iEval (simpl) in "Hstruct".
   iDestruct "Hstruct" as "(Hfields0 & %Hinvs0)".
   have Hpool0 : pool_invs (types_of_locs_pool locs p) := proj1 Hinvs0.
@@ -556,7 +556,7 @@ Proof using Type*.
     { iExists (W64 0), _, [], locs, p, (∅ : gset YjsId).
       iFrame "i rest Hrest Hrestcap Hall".
       iSplitL.
-      { iSplitL; last (iPureIntro; exact Haligned).
+      { iApply (own_store_runs_intro_state _ _ _ _ _ _ _ _ Haligned).
         iEval (simpl).
         iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend []) (conj Hpool0 Hreg0)
                   with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending [Hpddelf]").
@@ -570,7 +570,7 @@ Proof using Type*.
         rewrite take_0. apply elem_of_nil. }
     wp_for "IH".
     iDestruct (own_slice_len with "Hall") as %[Halllen _].
-    iDestruct "Hruns" as "(Hstruct & %Halignedj)".
+    iDestruct (own_store_runs_to_state with "Hruns") as "(Hstruct & %Halignedj)".
     iEval (simpl) in "Hstruct".
     iDestruct "Hstruct" as "(Hfieldsj & %Hinvsj)".
     have Hpoolj : pool_invs (types_of_locs_pool locs_j p_j) := proj1 Hinvsj.
@@ -586,7 +586,7 @@ Proof using Type*.
       { iExists rest_sl. iFrame "Hpddelf". iExists rest_vs. by iFrame "Hrest Hrestcap". }
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
       { simpl.
-        iSplitL; last (iPureIntro; exact Halignedj).
+        iApply (own_store_runs_intro_state _ _ _ _ _ _ _ _ Halignedj).
         iEval (simpl).
         iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend (delete_span_of_val <$> rest_vs))
                   (conj Hpoolj Hregj)
@@ -615,7 +615,7 @@ Proof using Type*.
     wp_apply (wp_store__deleteRange_runs s (MkStoreStateRuns client0 k0 locs_j p_j bind pend []) _ _ _
                 with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpddelf Hpdnil]").
     { iFrame "#".
-      iSplitL; last (iPureIntro; exact Halignedj).
+      iApply (own_store_runs_intro_state _ _ _ _ _ _ _ _ Halignedj).
       iEval (simpl).
       iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend []) (conj Hpoolj Hregj)
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending [Hpddelf Hpdnil]").
@@ -730,7 +730,7 @@ Proof using Type*.
   wp_apply (wp_store__applyDeleteSpans_runs s _ sp_sl dq spans with "[$Hpkg $Hruns $Hsp]").
   iIntros (p' locs' rest) "(Hruns & Hsp & %Hstep & %Hcov)".
   iEval (simpl) in "Hruns".
-  iDestruct "Hruns" as "(Hstruct & %Haligned)".
+  iDestruct (own_store_runs_to_state with "Hruns") as "(Hstruct & %Haligned)".
   iEval (simpl) in "Hstruct".
   iDestruct "Hstruct" as "(Hfields1 & %Hinvs1)".
   iDestruct "Hfields1" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".

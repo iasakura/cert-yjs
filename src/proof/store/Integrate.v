@@ -2375,7 +2375,7 @@ Proof using Type*.
   destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
   iDestruct (own_store_runs_run_pool_invs with "Hruns") as %Hrpinv.
   iDestruct (own_store_runs_run_wf with "Hruns") as %Hwfall.
-  iDestruct "Hruns" as "(Hstruct & %Haligned)".
+  iDestruct (own_store_runs_to_state with "Hruns") as "(Hstruct & %Haligned)".
   iDestruct "Hstruct" as "(Hfields0 & %Hinvs0)".
   have Hpool : pool_invs (types_of_locs_pool locs p) := proj1 Hinvs0.
   have Hreg : registry_coh bind (types_of_locs_pool locs p) := proj2 Hinvs0.
@@ -2492,9 +2492,8 @@ Proof using Type*.
     iApply ("HΦ" $! runs' ls' run).
     iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes1 Hpending Hpdeletes";
       last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
-    iSplitL; last first.
-    { iPureIntro. simpl.
-      exact (locs_aligned_insert_both locs p parent ls' (MkTypeModel runs' arr') Hls'len Haligned). }
+    iApply (own_store_runs_intro_state _ _ _ _ _ _ _ _
+              (locs_aligned_insert_both locs p parent ls' (MkTypeModel runs' arr') Hls'len Haligned)).
     iEval (rewrite /state_of_runs /= (types_of_locs_pool_insert_both locs p parent ls' (MkTypeModel runs' arr')) /= Hcells'eq).
     iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend pdel) (conj Hpool' Hreg')
               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes1 Hpending Hpdeletes").
@@ -2563,9 +2562,8 @@ Proof using Type*.
     iApply ("HΦ" $! runs' ls' run).
     iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes1 Hpending Hpdeletes";
       last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
-    iSplitL; last first.
-    { iPureIntro. simpl.
-      exact (locs_aligned_insert_both locs p parent ls' (MkTypeModel runs' arr') Hls'len Haligned). }
+    iApply (own_store_runs_intro_state _ _ _ _ _ _ _ _
+              (locs_aligned_insert_both locs p parent ls' (MkTypeModel runs' arr') Hls'len Haligned)).
     iEval (rewrite /state_of_runs /= (types_of_locs_pool_insert_both locs p parent ls' (MkTypeModel runs' arr')) /= Hcells'eq).
     iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend pdel) (conj Hpool' Hreg')
               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes1 Hpending Hpdeletes").

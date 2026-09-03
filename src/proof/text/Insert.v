@@ -118,7 +118,7 @@ Proof.
       with "[Hparent Hdll]" as "Hyt".
     { iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Hrepr]. }
     iDestruct ("Hytback" with "Hyt") as "Hruns".
-    iDestruct "Hruns" as "(Hcells & _)".
+    iDestruct (own_store_runs_to_state with "Hruns") as "(Hcells & _)".
     iEval (rewrite /state_of_runs /= (types_of_locs_pool_of types Hpar)) in "Hcells".
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
                 with "[$His_store $Hlk Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set]").
@@ -151,7 +151,7 @@ Proof.
     wp_auto.
     iDestruct ("Hclockback" with "Hclock") as "Hruns".
     iEval (simpl) in "Hruns".
-    iDestruct "Hruns" as "(Hcells & _)".
+    iDestruct (own_store_runs_to_state with "Hruns") as "(Hcells & _)".
     iEval (rewrite /state_of_runs /= (types_of_locs_pool_of types Hpar)) in "Hcells".
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
                 with "[$His_store $Hlk Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set]").
@@ -879,7 +879,7 @@ Proof.
   (* lower the store to its cell registry: this text at its materialized cells *)
   set (cellsj := cells_of_locs_runs tv.(yjs.Text.inner') lsj runsj).
   set (types' := <[tv.(yjs.Text.inner') := MkTypeState cellsj arr]> types).
-  iDestruct "Hruns" as "(Hcells & %Halj)".
+  iDestruct (own_store_runs_to_state with "Hruns") as "(Hcells & %Halj)".
   have Htypes' : types_of_locs_pool locsj pj = types'.
   { rewrite (types_of_locs_pool_ext_insert locsj locs0 pj p0 tv.(yjs.Text.inner') lsj (MkTypeModel runsj arr) Hlj Hpj Hdomlj Hdompj) /=
       (types_of_locs_pool_of types Hpar) //. }

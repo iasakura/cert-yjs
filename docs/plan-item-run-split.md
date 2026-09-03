@@ -612,6 +612,20 @@ vocabulary substitution table written; then C5 restates the specs at
     compiling; `store_inv` / `types_frag` carry `(locs, pool)` and the read
     API (`own_read_locked`, `text/Len`, `text/String`, `doc/*`) reads the
     pool.
+    PROGRESS 2026-09-04 (C6-2a): `own_store_runs` is the Definition
+    (`own_store_fields_runs` with `own_items_field_runs` over
+    `own_item_map_runs`, `own_type_pool_runs`, and `store_invs_runs` =
+    `run_pool_invs` plus `pool_registry_coh`; the address `NoDup` is
+    `locs_wf`). `own_store_struct` stays a cell-level definition, reached
+    from the store by `own_store_runs_to_state` and folded back by
+    `own_store_runs_intro_state` (`own_store_runs_as_state` re-proved
+    from them; `pool_invs_of_runs` is the pure converse). The readers and
+    borrows are proved off the run fields; `own_store_runs_run_wf` and
+    `_covers_unique` still read through the cell state. The consumers'
+    direct unfolds became `own_store_runs_to_state` and their refolds
+    `own_store_runs_intro_state` (one line each). C6-2b, the lock layer
+    (`own_store` / `store_inv` / `types_frag` / the read API) at
+    `(locs, pool)`, is next.
   - **C6-3, bodies at runs.** Each transition proof drops the cell recipe
     for the run-level laws: `splitNode` (pool bookkeeping over
     `own_type_pool_runs` and the item-map split law), `Integrate`

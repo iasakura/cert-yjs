@@ -152,7 +152,7 @@ Proof using Type*.
      run's clock range below a fresh batch item via [expand_inputs_arr_fresh]. *)
   iDestruct (own_store_runs_arr with "Hruns") as %Harr_init.
   iDestruct (own_store_runs_run_wf with "Hruns") as %Hrunwf_init.
-  iDestruct "Hruns" as "(Hstruct & %Haligned)".
+  iDestruct (own_store_runs_to_state with "Hruns") as "(Hstruct & %Haligned)".
   iEval (simpl) in "Hstruct".
   iDestruct "Hstruct" as "(Hfields0 & %Hinvs0)".
   have Hpool0 : pool_invs (types_of_locs_pool locs p) := proj1 Hinvs0.
@@ -259,7 +259,7 @@ Proof using Type*.
       iFrame "progress Hpendingp HslA HcapA".
       iFrame "HitemsA".
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpendf Hpdeletes".
-      { iSplitL; last (iPureIntro; exact Haligned).
+      { iApply (own_store_runs_intro_state _ _ _ _ _ _ _ _ Haligned).
         iEval (simpl).
         iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind [] pdel) (conj Hpool0 Hreg0)
                   with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes [Hpendf] Hpdeletes").
@@ -663,7 +663,7 @@ Proof using Type*.
       rewrite decide_True; last done.
       destruct (Hfin eq_refl) as (Hpendingeq & Hmeq & Happeq).
       subst pendingj mj.
-      iDestruct "Hruns" as "(Hstruct & %Halignedj)".
+      iDestruct (own_store_runs_to_state with "Hruns") as "(Hstruct & %Halignedj)".
       iEval (simpl) in "Hstruct".
       iDestruct "Hstruct" as "(Hfieldsj & %Hinvsj)".
       have Hpoolj : pool_invs (types_of_locs_pool locs_j p_j) := proj1 Hinvsj.
@@ -677,7 +677,7 @@ Proof using Type*.
       iSplitL "Hslin Hcapin".
       { iExists uivs_in. iFrame "Hslin Hcapin Hitemsin". }
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
-      { iSplitL; last (iPureIntro; exact Halignedj).
+      { iApply (own_store_runs_intro_state _ _ _ _ _ _ _ _ Halignedj).
         iEval (simpl).
         iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bindj rest pdel) (conj Hpoolj Hregj)
                   with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes"). }
@@ -1743,7 +1743,7 @@ Proof using Type*.
               with "[$Hupd $Hruns]").
   iIntros (p' locs' bind') "(Hupd & Hruns & %Hbindsub' & %Hregmodelp & %Halrp)".
   iEval (simpl) in "Hruns".
-  iDestruct "Hruns" as "(Hcells & %Haligned')".
+  iDestruct (own_store_runs_to_state with "Hruns") as "(Hcells & %Haligned')".
   iEval (simpl) in "Hcells".
   simpl in Hregmodelp, Halrp.
   set (types' := types_of_locs_pool locs' p') in *.

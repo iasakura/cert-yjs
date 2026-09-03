@@ -748,7 +748,7 @@ Proof using Type*.
   move=> Hp Hl Hr Hlk Hdiff.
   destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
-  iDestruct "Hruns" as "(Hstruct & %Haligned)".
+  iDestruct (own_store_runs_to_state with "Hruns") as "(Hstruct & %Haligned)".
   iDestruct "Hstruct" as "(Hfields0 & %Hinvs0)".
   have Hpool : pool_invs (types_of_locs_pool locs p) := proj1 Hinvs0.
   have Hreg0 : registry_coh bind (types_of_locs_pool locs p) := proj2 Hinvs0.
@@ -1191,11 +1191,12 @@ Proof using Type*.
   iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap2 Hregistry Htypes2 Hpending Hpdeletes"; last first.
   { iPureIntro. split; [exact Hrsnn |].
     rewrite -(locs_of_types_of_locs_pool locs p (proj1 Haligned) Hprem) locs_of_concat. exact Hrsfresh. }
-  iSplitL; last first.
-  { iPureIntro. simpl.
-    apply (locs_aligned_insert_both locs p parent (split_locs ls k rs)
+  have Haligned' : locs_aligned (<[parent := split_locs ls k rs]> locs)
+                     (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p).
+  { apply (locs_aligned_insert_both locs p parent (split_locs ls k rs)
              (MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm))); last exact Haligned.
     rewrite /split_locs Hlk /split_runs Hr /= !length_app /= !length_take !length_drop Hlsl //. }
+  iApply (own_store_runs_intro_state _ _ _ _ _ _ _ _ Haligned').
   iEval (rewrite /state_of_runs /=
            (types_of_locs_pool_insert_both locs p parent (split_locs ls k rs)
               (MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm))) /=
