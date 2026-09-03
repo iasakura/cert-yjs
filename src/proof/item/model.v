@@ -49,8 +49,9 @@
       ([split_run_facts], over [hd_inhabitant_take] / [_drop]), and
       [runs_disjoint] is permutation-invariant ([runs_disjoint_perm]).
     - laws: a split is invisible to the flatten and the visible count
-      ([split_runs_flatten], [split_runs_visible]); [runs_flatten] is
-      app-morphic ([runs_flatten_app]) and a run's [off]-th char sits at
+      ([split_runs_flatten], [split_runs_visible]); [runs_flatten] and
+      [runs_visible] are app-morphic ([runs_flatten_app],
+      [runs_visible_app] / [runs_visible_cons]) and a run's [off]-th char sits at
       its prefix sum plus [off] ([runs_flatten_lookup_of_run], and back,
       [runs_flatten_lookup_run]; one more run in the prefix,
       [runs_flatten_take_S]); where the
@@ -606,6 +607,16 @@ Lemma runs_flatten_app (rs1 rs2 : list ItemRun) :
   runs_flatten (rs1 ++ rs2) = runs_flatten rs1 ++ runs_flatten rs2.
 Proof. rewrite /runs_flatten fmap_app join_app //. Qed.
 
+(** [runs_visible] over an append and a cons. *)
+Lemma runs_visible_app (rs1 rs2 : list ItemRun) :
+  runs_visible (rs1 ++ rs2) = (runs_visible rs1 + runs_visible rs2)%nat.
+Proof. rewrite /runs_visible fmap_app list_sum_app //. Qed.
+
+Lemma runs_visible_cons (r : ItemRun) (rs : list ItemRun) :
+  runs_visible (r :: rs)
+  = ((if run_deleted r then 0 else length (run_items r)) + runs_visible rs)%nat.
+Proof. reflexivity. Qed.
+
 Lemma split_runs_flatten (runs : list ItemRun) (k o : nat) (r : ItemRun) :
   runs !! k = Some r ->
   runs_flatten (split_runs runs k o) = runs_flatten runs.
@@ -746,6 +757,104 @@ Lemma runs_flatten_take_S (runs : list ItemRun) (k : nat) (r : ItemRun) :
   runs_flatten (take (S k) runs) = runs_flatten (take k runs) ++ run_items r.
 Proof.
   move=> Hk. rewrite (take_S_r _ _ _ Hk) runs_flatten_app runs_flatten_cons runs_flatten_nil app_nil_r //.
+Qed.
+
+(* ----- run prefix-sum toolkit for the run-cursor scan (the run form of
+   [item/value]'s and [store/Integrate]'s cell toolkit) ----- *)
+
+(** Advancing the cursor past one more run adds at least one char (the run is
+    nonempty), so the flattened prefix length strictly grows. *)
+Lemma runs_flatten_take_length_step (runs : list ItemRun) (k : nat) :
+  Forall (λ r, run_items r ≠ []) runs ->
+  (k < length runs)%nat ->
+  (length (runs_flatten (take k runs)) < length (runs_flatten (take (S k) runs)))%nat.
+Proof.
+  move=> Hne Hk.
+  destruct (lookup_lt_is_Some_2 runs k Hk) as [r Hr].
+  rewrite (runs_flatten_take_S runs k r Hr) length_app.
+  have Hnn : run_items r ≠ [] := Forall_lookup_1 _ _ _ _ Hne Hr.
+  destruct (run_items r) as [|y l]; [done | simpl; lia].
+Qed.
+
+(** Strict and non-strict monotonicity of the flattened-prefix length in the
+    cursor, its converse, and injectivity within range. *)
+Lemma runs_flatten_take_length_lt (runs : list ItemRun) (cur1 cur2 : nat) :
+  Forall (λ r, run_items r ≠ []) runs ->
+  (cur1 < cur2)%nat -> (cur2 <= length runs)%nat ->
+  (length (runs_flatten (take cur1 runs)) < length (runs_flatten (take cur2 runs)))%nat.
+Proof.
+  move=> Hne. move: cur1. induction cur2 as [|c2 IH]; move=> cur1 Hlt Hle; first lia.
+  have Hstep : (length (runs_flatten (take c2 runs)) < length (runs_flatten (take (S c2) runs)))%nat
+    := runs_flatten_take_length_step runs c2 Hne ltac:(lia).
+  destruct (decide (cur1 = c2)) as [-> | Hne2]; first lia.
+  have := IH cur1 ltac:(lia) ltac:(lia). lia.
+Qed.
+
+Lemma runs_flatten_take_length_inj (runs : list ItemRun) (cur1 cur2 : nat) :
+  Forall (λ r, run_items r ≠ []) runs ->
+  (cur1 <= length runs)%nat -> (cur2 <= length runs)%nat ->
+  length (runs_flatten (take cur1 runs)) = length (runs_flatten (take cur2 runs)) ->
+  cur1 = cur2.
+Proof.
+  move=> Hne H1 H2 Heq.
+  destruct (Nat.lt_trichotomy cur1 cur2) as [Hlt | [Heq' | Hgt]]; [| exact Heq' |].
+  - have := runs_flatten_take_length_lt runs cur1 cur2 Hne Hlt H2. lia.
+  - have := runs_flatten_take_length_lt runs cur2 cur1 Hne Hgt H1. lia.
+Qed.
+
+Lemma runs_flatten_take_length_le (runs : list ItemRun) (cur1 cur2 : nat) :
+  (cur1 <= cur2)%nat ->
+  (length (runs_flatten (take cur1 runs)) <= length (runs_flatten (take cur2 runs)))%nat.
+Proof.
+  move=> Hle.
+  have -> : take cur1 runs = take cur1 (take cur2 runs)
+    by rewrite take_take Nat.min_l.
+  set l2 := take cur2 runs.
+  rewrite -{2}(take_drop cur1 l2) runs_flatten_app length_app. lia.
+Qed.
+
+Lemma runs_flatten_take_length_le_inv (runs : list ItemRun) (cur1 cur2 : nat) :
+  Forall (λ r, run_items r ≠ []) runs ->
+  (cur1 <= length runs)%nat ->
+  (length (runs_flatten (take cur1 runs)) <= length (runs_flatten (take cur2 runs)))%nat ->
+  (cur1 <= cur2)%nat.
+Proof.
+  move=> Hne Hb Hlen.
+  destruct (decide (cur1 <= cur2)%nat) as [|Hgt]; first done.
+  have := runs_flatten_take_length_lt runs cur2 cur1 Hne ltac:(lia) Hb. lia.
+Qed.
+
+(** The flattened prefix / suffix of a run [take] / [drop] is the model
+    [take] / [drop] at the boundary. *)
+Lemma runs_flatten_take_prefix (runs : list ItemRun) (arr : list (YjsItem A)) (cur : nat) :
+  arr = runs_flatten runs ->
+  runs_flatten (take cur runs) = take (length (runs_flatten (take cur runs))) arr.
+Proof.
+  move=> ->.
+  rewrite -{3}(take_drop cur runs) runs_flatten_app take_app_length //.
+Qed.
+
+Lemma runs_flatten_drop_suffix (runs : list ItemRun) (arr : list (YjsItem A)) (cur : nat) :
+  arr = runs_flatten runs ->
+  runs_flatten (drop cur runs) = drop (length (runs_flatten (take cur runs))) arr.
+Proof.
+  move=> ->.
+  rewrite -{3}(take_drop cur runs) runs_flatten_app drop_app_length //.
+Qed.
+
+(** The model item at a run boundary is that run's head. *)
+Lemma runs_head_at_prefix (runs : list ItemRun) (arr : list (YjsItem A))
+    (i : nat) (r : ItemRun) :
+  arr = runs_flatten runs ->
+  runs !! i = Some r ->
+  run_items r ≠ [] ->
+  arr !! (length (runs_flatten (take i runs))) = Some (run_head_item r).
+Proof.
+  move=> -> Hi Hne.
+  have Hhd : run_items r !! 0%nat = Some (run_head_item r).
+  { rewrite /run_head_item. move: Hne. destruct (run_items r) as [|y l]; [by move=> H; destruct (H eq_refl) | done]. }
+  have := runs_flatten_lookup_of_run runs i 0%nat r (run_head_item r) Hi Hhd.
+  rewrite Nat.add_0_r //.
 Qed.
 
 

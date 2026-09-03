@@ -1330,15 +1330,13 @@ Proof using Type*.
   have Hres : origins_resolved (tm_runs tm2) (tm_arr tm2) input curL2 curR2.
   { exists leftIdx, rightIdx. rewrite Harrj2.
     split_and!; [exact HfindL | exact HfindR | exact HcurL2 | exact HcurL2b | exact HcurR2 | exact HcurR2b]. }
-  have Hclbnd : (Z.of_nat (clientId (in_id input)) < 2^64)%Z.
-  { rewrite -Hin_id /toYjsId /=. word. }
   have Hready : integrate_ready (tm_arr tm2) input newItem.
   { rewrite Harrj2. exact (conj Htoit (conj Hvld Hmax)). }
   have Hall' : integrate_all (ops_of_input input (explode (in_content input))) (tm_arr tm2) = Some arr2
     by rewrite Harrj2; exact Hall.
   wp_apply (wp_store__Integrate_runs s p null itv (MkStoreStateRuns client0 k0 locs2 p2 bind pend pdel)
               tm2 ls2 arr2 input newItem curL2 curR2
-              (or_intror eq_refl) Htm2 Hls2 Hready Hnowrapc Hclbnd Hall' Hres Hgmaxj'
+              (or_intror eq_refl) Htm2 Hls2 Hready Hnowrapc Hall' Hres Hgmaxj'
               with "[$Hpkg $Hruns $Hlinked]").
   iIntros (runs' ls' run) "(Hruns & %Hinv3 & %Hsplice & %Hden)".
   iEval (simpl) in "Hruns".
@@ -1493,13 +1491,11 @@ Proof using Type*.
   have HlinkR : (null : loc) = loc_at [] (Z.of_nat 0).
   { rewrite /loc_at. case_decide as Hd; [reflexivity | exfalso; lia]. }
   iEval (rewrite {1}HlinkL {1}HlinkR) in "Hlinked".
-  have Hclbnd : (Z.of_nat (clientId (in_id input)) < 2^64)%Z.
-  { rewrite -Hin_id /toYjsId /=. word. }
   have Hready : integrate_ready (tm_arr (MkTypeModel [] [])) input newItem := conj Htoit (conj Hvld Hmax).
   wp_auto.
   wp_apply (wp_store__Integrate_runs s q null itv (MkStoreStateRuns client0 k0 locs2 p2 (<[nm := q]> bind) pend pdel)
               (MkTypeModel [] []) [] arr2 input newItem 0 0
-              (or_intror eq_refl) Htm2 Hls2 Hready Hnowrapc Hclbnd Hall Hres Hgmaxj'
+              (or_intror eq_refl) Htm2 Hls2 Hready Hnowrapc Hall Hres Hgmaxj'
               with "[$Hpkg $Hruns $Hlinked]").
   iIntros (runs' ls' run) "(Hruns & %Hinv3 & %Hsplice & %Hden)".
   iEval (simpl) in "Hruns".

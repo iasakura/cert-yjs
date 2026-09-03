@@ -45,7 +45,7 @@
     - the Integrate-side predicates [own_fresh_item_raw], [own_linked_item]
       ([own_linked_item_as_node]: it is [item/heap]'s [own_item_node] at
       [DfracOwn 1], live, with a nonempty content) and the loop invariant
-      [integrate_loop_inv].
+      [integrate_loop_inv_runs].
 
     Laws
     - [store_inv_init]: how to build the invariant from the raw points-tos, and
@@ -1849,50 +1849,51 @@ Definition own_id_set (s : slice.t) (dq : dfrac) (gs : gset YjsId) : iProp Σ :=
     "%Hwf" ∷ ⌜Forall span_no_overflow vs⌝ ∗
     "%Hset" ∷ ⌜⋃ (span_ids <$> vs) = gs⌝.
 
-(** Loop invariant for the conflict scan in [Integrate]. The heap loop refines
-    the pure set-based loop [set_find_integration_loop] *directly*: the heap slices
-    [itemsBeforeOrigin] / [conflictingItems] literally carry the [set_find_integration_loop]
-    accumulators [idsBeforeOrigin] / [conflictIds] (as [gset]s), and the loop's
-    progress is tracked by a fuel equation — the remaining run from the current
-    state equals the fixed overall result [loopResult]. (The
-    [set_find_integration_loop ↔ fii_loop] equivalence is a separate, already-proved fact used
-    only to inherit [YjsArrInvariant].)
-
-    - [conflict_l] (Go [conflict]) sits at the cursor CELL [cur], whose run
+(** [integrate_loop_inv_runs parent dq ls runs arr leftIdx rightIdx curR
+    originLeftId originRightId newItemId loopResult conflict_l left_l
+    right_l idsBeforeOrigin_l conflictIds_l offset cur curD idsBeforeOrigin
+    conflictIds destIdx]: the loop invariant of [scanConflicts] (what
+    [store/Integrate]'s [wp_scanConflicts_runs] walks), coupling the Go loop
+    state to a [set_find_integration_loop] run over the type at
+    [(ls, runs, arr)], the anchor pointers read off the address list
+    ([loc_at]) and the cursors coupled to model indices by the run prefix
+    sum:
+    - [conflict_l] (Go [conflict]) sits at the cursor RUN [cur], whose run
       starts at model index [leftIdx+offset] (the coupling [Hcur]);
-    - [left_l] (Go [left]) is the anchor: the cell just left of the insert
-      boundary [curD], whose model boundary is [destIdx] ([HcurD]), so [item]
-      is spliced after cell [curD - 1];
-    - [right_l] (Go [right]) is loop-constant at CELL [curR] (the right
+    - [left_l] (Go [left]) is the anchor: the run just left of the insert
+      boundary [curD], whose model boundary is [destIdx] ([HcurD]), so
+      [item] is spliced after run [curD - 1];
+    - [right_l] (Go [right]) is loop-constant at RUN [curR] (the right
       origin / [Last]), whose model boundary is [rightIdx] (a spec premise);
-      the [conflict == right] break compares cell locs, i.e. [cur = curR],
+      the [conflict == right] break compares addresses, i.e. [cur = curR],
       which the prefix-sum injectivity turns into [leftIdx+offset = rightIdx];
     - [Hloop]: from the current accumulators, the remaining
-      [Z.to_nat (rightIdx - leftIdx) - offset] steps of [set_find_integration_loop] still
-      compute [loopResult]. With [Hbound] / [Hdest] this makes the Go
-      [for conflict ≠ nil] test (with the [== right] break) consume exactly the
-      loop's fuel.
-    [own_fresh_item_raw] and the [parent.len] field are loop-constant, framed outside. *)
-Definition integrate_loop_inv
-    (parent : loc) (dq : dfrac) (cells : list item_cell) (arr : list (YjsItem A))
+      [Z.to_nat (rightIdx - leftIdx) - offset] steps of
+      [set_find_integration_loop] still compute [loopResult]. With [Hbound] /
+      [Hdest] this makes the Go [for conflict ≠ nil] test (with the
+      [== right] break) consume exactly the loop's fuel.
+    [own_fresh_item_raw] and the [parent.len] field are loop-constant, framed
+    outside. *)
+Definition integrate_loop_inv_runs
+    (parent : loc) (dq : dfrac) (ls : list loc) (runs : list ItemRun) (arr : list (YjsItem A))
     (leftIdx rightIdx : Z) (curR : nat)
     (originLeftId originRightId : option YjsId) (newItemId : YjsId)
     (loopResult : option Z)
     (conflict_l left_l right_l idsBeforeOrigin_l conflictIds_l : loc)
     (offset cur curD : nat) (idsBeforeOrigin conflictIds : gset YjsId) (destIdx : Z) : iProp Σ :=
-  "Htext" ∷ own_ytype_cells parent dq cells arr ∗
-  "Hconflict" ∷ conflict_l ↦ node_loc cells (Z.of_nat cur) ∗
-  "Hleft" ∷ left_l ↦ node_loc cells (Z.of_nat curD - 1) ∗
-  "Hright" ∷ right_l ↦ node_loc cells (Z.of_nat curR) ∗
+  "Htext" ∷ own_ytype_runs parent dq ls (MkTypeModel runs arr) ∗
+  "Hconflict" ∷ conflict_l ↦ loc_at ls (Z.of_nat cur) ∗
+  "Hleft" ∷ left_l ↦ loc_at ls (Z.of_nat curD - 1) ∗
+  "Hright" ∷ right_l ↦ loc_at ls (Z.of_nat curR) ∗
   "Hids_before" ∷ (∃ s : slice.t, "Hids_before_ref" ∷ idsBeforeOrigin_l ↦ s ∗
                      "Hids_before_set" ∷ own_id_set s (DfracOwn 1) idsBeforeOrigin) ∗
   "Hconflict_ids" ∷ (∃ s : slice.t, "Hconflict_ids_ref" ∷ conflictIds_l ↦ s ∗
                      "Hconflict_ids_set" ∷ own_id_set s (DfracOwn 1) conflictIds) ∗
   "%Hoff" ∷ ⌜(1 <= offset)%nat⌝ ∗
-  "%Hcur" ∷ ⌜(Z.of_nat (length (run_flatten (take cur cells))) = leftIdx + Z.of_nat offset)%Z⌝ ∗
-  "%Hcurb" ∷ ⌜(cur <= length cells)%nat⌝ ∗
-  "%HcurD" ∷ ⌜(Z.of_nat (length (run_flatten (take curD cells))) = destIdx)%Z⌝ ∗
-  "%HcurDb" ∷ ⌜(curD <= length cells)%nat⌝ ∗
+  "%Hcur" ∷ ⌜(Z.of_nat (length (runs_flatten (take cur runs))) = leftIdx + Z.of_nat offset)%Z⌝ ∗
+  "%Hcurb" ∷ ⌜(cur <= length runs)%nat⌝ ∗
+  "%HcurD" ∷ ⌜(Z.of_nat (length (runs_flatten (take curD runs))) = destIdx)%Z⌝ ∗
+  "%HcurDb" ∷ ⌜(curD <= length runs)%nat⌝ ∗
   "%Hdest" ∷ ⌜(leftIdx + 1 <= destIdx <= leftIdx + Z.of_nat offset)%Z⌝ ∗
   "%Hbound" ∷ ⌜(leftIdx + Z.of_nat offset <= rightIdx)%Z⌝ ∗
   "%Hloop" ∷ ⌜set_find_integration_loop (Z.to_nat (rightIdx - leftIdx) - offset) offset leftIdx rightIdx
