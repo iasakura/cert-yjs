@@ -37,7 +37,9 @@
     what one [splitNode] leaves of the pool at run granularity
     ([pool_after_repair] the same for [store.repair]'s at most two splits,
     [pool_after_delete] for the wire delete path's unbounded sweep);
-    [pool_run_clock_below], the index-based [pool_clock_below];
+    [pool_run_clock_below], the index-based [pool_clock_below]
+    ([pool_run_clock_below_of_arrs] reads it off a per-type clock bound on
+    the flattened lists);
     [all_runs] under a registry insert or lookup ([all_runs_insert] /
     [all_runs_lookup], membership across one slot [elem_of_all_runs_insert]
     / [elem_of_all_runs_lookup]) and [run_pool_invs] surviving one node
@@ -1155,6 +1157,36 @@ Proof.
   move=> Hw Hb r' Hr' Hcl.
   destruct (Hw r' Hr') as (r & Hr & Hcl0 & Hlo & Hhi).
   have := Hb r Hr ltac:(congruence). lia.
+Qed.
+
+(** The per-client clock bound of a pool at run granularity, from the
+    model-level bound on every type's document: a run's last char is its
+    head clock plus its length minus one ([run_wf_char_id]), and it sits in
+    the type's flatten. What [Text.Insert] feeds [wp_store__Integrate_runs]. *)
+Lemma pool_run_clock_below_of_arrs (p : pool) (c k : nat) :
+  (∀ q tm, p !! q = Some tm -> tm_arr tm = runs_flatten (tm_runs tm)) ->
+  (∀ r, r ∈ all_runs p -> run_wf (run_items r)) ->
+  (∀ q tm x, p !! q = Some tm -> x ∈ tm_arr tm -> clientId (item_id x) = c ->
+     (clock (item_id x) < k)%nat) ->
+  pool_run_clock_below p (MkYjsId c k).
+Proof.
+  move=> Harr Hwf Hb r Hr Hcl.
+  have Hwfr := Hwf r Hr.
+  destruct (proj1 (elem_of_all_runs p r) Hr) as (q & tm & Hq & Hrtm).
+  have Hlen1 : (1 <= length (run_items r))%nat.
+  { destruct (run_items r) eqn:Hrc; [exact (False_ind _ (proj1 Hwfr eq_refl)) | simpl; lia]. }
+  destruct (lookup_lt_is_Some_2 (run_items r) (length (run_items r) - 1)%nat ltac:(lia)) as [li Hli].
+  apply list_elem_of_lookup_1 in Hrtm as [i Hi].
+  have Hin : li ∈ tm_arr tm.
+  { rewrite (Harr q tm Hq).
+    exact (list_elem_of_lookup_2 _ _ _ (runs_flatten_lookup_of_run (tm_runs tm) i _ r li Hi Hli)). }
+  have Hid := run_wf_char_id (run_items r) _ li Hwfr Hli.
+  have Hcl' : clientId (item_id (hd inhabitant (run_items r))) = c := Hcl.
+  have Hclid : clientId (item_id li) = c by rewrite Hid; exact Hcl'.
+  have Hlt := Hb q tm li Hq Hin Hclid.
+  have Hlt' : (clock (item_id (hd inhabitant (run_items r))) + (length (run_items r) - 1) < k)%nat
+    by rewrite Hid in Hlt; exact Hlt.
+  change ((clock (item_id (hd inhabitant (run_items r))) + length (run_items r) <= k)%nat). lia.
 Qed.
 
 End store_model.

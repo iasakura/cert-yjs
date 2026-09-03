@@ -284,7 +284,7 @@ Qed.
 
 (** The fresh item is maximal among same-client items of [arr]: its clock [clk]
     exceeds every same-client clock already present. This is the [maximalId] side
-    condition of [wp_Store__Integrate], read off the Doc clock-counter invariant. *)
+    condition of [wp_store__Integrate_runs], read off the Doc clock-counter invariant. *)
 Lemma insert_maximalId (arr : list (YjsItem A)) (o r : YjsPtr A) (client clk : nat) (c : A) :
   (∀ x, ArrSet arr (itemPtr x) -> clientId (item_id x) = client -> (clock (item_id x) < clk)%nat) ->
   maximalId (Item o r (MkYjsId client clk) c) arr.

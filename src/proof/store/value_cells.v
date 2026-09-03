@@ -30,7 +30,8 @@
       parent-coherent registry, [types_of_locs_pool_of]; materialization
       across one registry slot, [types_of_locs_pool_insert], or across
       that slot's addresses and model together,
-      [types_of_locs_pool_insert_both]; alignment surviving a same-length
+      [types_of_locs_pool_insert_both], or of a map pair that agrees with
+      another away from one slot, [types_of_locs_pool_ext_insert]; alignment surviving a same-length
       type update, [locs_aligned_insert_same_len], or a slot's addresses
       and model replaced together at equal length,
       [locs_aligned_insert_both], and giving each type a same-length
@@ -188,8 +189,8 @@ Definition pr_le (p q : Z * loc) : Prop := (p.1 <= q.1)%Z.
 
 (** Per-client clock-RANGE disjointness of the document cell pool: two distinct
     same-client cells occupy disjoint clock intervals [clock, clock + len).
-    This is [wp_store__splitNode]'s [Hdisj] hypothesis shape: it pins the
-    covering cell [getNodeIndex] returns uniquely once runs are multi-char. *)
+    It pins the covering cell [getNodeIndex] returns uniquely once runs are
+    multi-char. *)
 Definition cells_range_disjoint (pool : list item_cell) : Prop :=
   ∀ c1 c2, c1 ∈ pool → c2 ∈ pool →
     cell_client c1 = cell_client c2 → ic_loc c1 ≠ ic_loc c2 →
@@ -862,6 +863,24 @@ Proof.
   rewrite cells_of_locs_runs_projections.
   - destruct ts. done.
   - move=> c Hc. exact (Hpar parent ts c Hts Hc).
+Qed.
+
+(** Materialization of an address map and a pool that agree with
+    [(locs0, p0)] away from one type: an insert into [(locs0, p0)]'s
+    registry. *)
+Lemma types_of_locs_pool_ext_insert (locs locs0 : gmap loc (list loc)) (p p0 : pool)
+    (parent : loc) (ls : list loc) (tm : type_model) :
+  locs !! parent = Some ls -> p !! parent = Some tm ->
+  (∀ q, q ≠ parent -> locs !! q = locs0 !! q) ->
+  (∀ q, q ≠ parent -> p !! q = p0 !! q) ->
+  types_of_locs_pool locs p
+  = <[parent := MkTypeState (cells_of_locs_runs parent ls (tm_runs tm)) (tm_arr tm)]> (types_of_locs_pool locs0 p0).
+Proof.
+  move=> Hls Hp Hl Hq. apply map_eq => x.
+  destruct (decide (x = parent)) as [-> | Hne].
+  - rewrite lookup_insert_eq /types_of_locs_pool map_lookup_imap Hp /= Hls //.
+  - rewrite lookup_insert_ne; last congruence.
+    rewrite /types_of_locs_pool !map_lookup_imap (Hq x Hne) (Hl x Hne) //.
 Qed.
 
 (** Materialization across one registry slot. *)
@@ -1641,9 +1660,6 @@ Proof. move=> H. exact (f_equal (fun p => p.2.1) H). Qed.
 
 Lemma cell_kp_loc (a b : item_cell) : cell_kp a = cell_kp b -> ic_loc a = ic_loc b.
 Proof. move=> H. exact (f_equal snd (cell_kp_pr a b H)). Qed.
-
-Lemma cell_kp_flip (c : item_cell) : cell_kp (flip_cell c) = cell_kp c.
-Proof. reflexivity. Qed.
 
 Lemma cell_pr_filter_kp (client : w64) (l : list item_cell) :
   cell_pr <$> filter (λ c, cell_client c = client) l

@@ -8,8 +8,7 @@
     [integrateCore], and the top-level [Store.Integrate]:
     [wp_store__Integrate_runs] over [own_store_runs] (splicing the run and
     the fresh address at one shared cursor, with the per-client item-map
-    maintenance) and its cell-level reading [wp_Store__Integrate], derived
-    from it for the text layer until plan-item-run-split C6.
+    maintenance).
 
     Split out of [store/heap] (the predicates and the lock layer) so
     these heavy loop proofs compile in their own [.vo]; the update path
@@ -301,42 +300,6 @@ Proof.
   move=> Huniq Hkx. rewrite /findRightIdx (list_find_id_at arr kx x Huniq Hkx) //.
 Qed.
 
-(** Node locations across a cell splice: positions at/after the splice shift
-    by one. Pure index bookkeeping the cell-level text layer uses to track the
-    loop-constant [right] pointer through [Integrate] (the run form is
-    [item/value]'s [loc_at_splice_ge]). *)
-Lemma node_loc_splice_ge (cells : list item_cell) (c : item_cell) (idx : nat) (k : Z) :
-  (Z.of_nat idx <= k)%Z -> (idx <= length cells)%nat ->
-  node_loc (take idx cells ++ c :: drop idx cells) (k + 1) = node_loc cells k.
-Proof.
-  move=> Hk Hle. rewrite /node_loc.
-  rewrite decide_True; last lia. rewrite decide_True; last lia.
-  rewrite lookup_app_r; last (rewrite length_take_le; [lia | exact Hle]).
-  rewrite length_take_le; last exact Hle.
-  have -> : (Z.to_nat (k + 1) - idx)%nat = S (Z.to_nat k - idx)%nat by lia.
-  simpl. rewrite lookup_drop.
-  have -> : (idx + (Z.to_nat k - idx))%nat = Z.to_nat k by lia.
-  done.
-Qed.
-
-(* ----- the cell-cursor prefix sum, for the cell-level text layer ----------
-   The scan stack is stated over run cursors ([item/model]'s
-   [runs_flatten_take_*] toolkit); the cell-level text layer still couples
-   cell cursors to model indices by [length (run_flatten (take cur cells))]
-   and consumes this one law (deleted at plan-item-run-split C6). *)
-
-(** Non-strict monotonicity of the flattened-prefix length in the cursor. *)
-Lemma run_flatten_take_length_le (cells : list item_cell) (cur1 cur2 : nat) :
-  (cur1 <= cur2)%nat ->
-  (length (run_flatten (take cur1 cells)) <= length (run_flatten (take cur2 cells)))%nat.
-Proof.
-  move=> Hle.
-  have -> : take cur1 cells = take cur1 (take cur2 cells)
-    by rewrite take_take Nat.min_l.
-  set l2 := take cur2 cells.
-  rewrite -{2}(take_drop cur1 l2) run_flatten_app length_app. lia.
-Qed.
-
 (** Comparing a node pointer with itself is always [true] (it has its own id).
     A stepping stone of [wp_itemPtrEqual_runs]. *)
 #[local] Lemma wp_itemPtrEqual_self (p : loc) (v : yjs.item.t) (dq : dfrac) :
@@ -525,20 +488,6 @@ Proof.
       own_ytype_cells p dq (ty_cells ts) (ty_arr ts))%I with "[Htypes]" as "Htypes".
   { iApply (big_sepM_impl with "Htypes"). iIntros "!#" (p ts Hp) "($ & _)". }
   iApply (all_cells_fresh with "Hitem Htypes").
-Qed.
-
-Lemma linked_item_fresh_ytype (item_l parent2 lft rgt parent : loc)
-    (input : IntegrateInput (A := A)) (dq : dfrac)
-    (cells : list item_cell) (arr : list (YjsItem A)) :
-  own_linked_item item_l input parent2 lft rgt -∗
-  own_ytype_cells parent dq cells arr -∗
-  ⌜item_l ∉ ic_loc <$> cells⌝.
-Proof.
-  iIntros "Hlinked Hyt".
-  iDestruct "Hlinked" as (itemVal oleft oright) "(Hraw & _)".
-  iDestruct "Hraw" as "(Hitem & _)".
-  iDestruct "Hyt" as (yt tl) "(_ & Hdll & _)".
-  iApply (own_dll_fresh with "Hitem Hdll").
 Qed.
 
 (** The algorithmic core (extracted Go function [scanConflicts]) at run
@@ -2259,7 +2208,7 @@ Qed.
    is retired by #49: the core's precondition now mentions the resolved origin
    neighbours' node locations (the item arrives pre-linked), which a pure
    model-level footprint cannot state. The public story lives one level up
-   ([wp_Store__Integrate] and the doc-level [applyUpdate] specs). *)
+   ([wp_store__Integrate_runs] and the doc-level [applyUpdate] specs). *)
 
 
 
@@ -2396,8 +2345,7 @@ Qed.
     ([runs_integrate_splice_at] / [integrate_locs]), denotes the input
     ([run_denotes]), and the store's invariants survive: the item's chars
     fit ([input_fits]) and its id is its client's newest in the whole pool
-    ([pool_run_clock_below]). Proved on the run core; the cell-level
-    [wp_Store__Integrate] is derived from it. *)
+    ([pool_run_clock_below]). Proved on the run core. *)
 Lemma wp_store__Integrate_runs (s parent parent_arg item_l : loc)
     (str : store_state_runs) (tm : type_model) (ls : list loc)
     (arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
@@ -2621,85 +2569,6 @@ Proof using Type*.
     iEval (rewrite /state_of_runs /= (types_of_locs_pool_insert_both locs p parent ls' (MkTypeModel runs' arr')) /= Hcells'eq).
     iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend pdel) (conj Hpool' Hreg')
               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes1 Hpending Hpdeletes").
-Qed.
-
-(** [Store.Integrate parent item] at cell granularity: the run-level
-    [wp_store__Integrate_runs] read back through the [pool_of] / [locs_of]
-    projections (the type's cell list gets the run at the matching position,
-    [integrate_splice]). Kept for the cell-level text layer until
-    plan-item-run-split C6. *)
-Lemma wp_Store__Integrate (s parent parent_arg item_l : loc) (st : store_state)
-    (cells : list item_cell) (arr arr' : list (YjsItem A))
-    (input : IntegrateInput (A := A)) (newItem : YjsItem A) (lft rgt : loc) :
-  parent_arg = parent ∨ parent_arg = null ->
-  ss_types st !! parent = Some (MkTypeState cells arr) ->
-  integrate_ready arr input newItem ->
-  input_fits input ->
-  integrate_all (ops_of_input input (explode (in_content input))) arr = Some arr' ->
-  origins_linked cells arr input lft rgt ->
-  pool_clock_below (ss_types st) (in_id input) ->
-  {{{ is_pkg_init yjs ∗ own_store_struct s st ∗ own_linked_item item_l input parent lft rgt }}}
-    s @! (go.PointerType yjs.store) @! "Integrate" #parent_arg #item_l
-  {{{ (cells' : list item_cell) (run : list (YjsItem A)), RET #();
-      own_store_struct s (st <| ss_types := <[parent := MkTypeState cells' arr']> (ss_types st) |>) ∗
-      ⌜YjsArrInvariant arr'⌝ ∗
-      ⌜integrate_splice cells arr item_l run parent cells' arr'⌝ ∗
-      ⌜run_denotes input newItem run⌝ }}}.
-Proof using Type*.
-  move=> Hparg Hts Hready Hfitsin Hall Hlinked Hbelow.
-  iIntros (Φ) "(#Hpkg & Hcells & Hfresh) HΦ".
-  destruct st as [client0 k0 types bind pend pdel]. simpl in *.
-  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
-  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes0 & Hpending & Hpdeletes)".
-  iDestruct (own_type_pool_id_bounds with "Htypes0") as %Hbndb.
-  iDestruct (own_type_pool_parents with "Htypes0") as %Hpar.
-  iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
-               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes0 Hpending Hpdeletes") as "Hcells".
-  iAssert (own_store_runs s (state_runs_of (MkStoreState client0 k0 types bind pend pdel)))
-    with "[Hcells]" as "Hruns".
-  { rewrite own_store_runs_as_state. iExists _. iFrame "Hcells". done. }
-  destruct (proj1 (origins_linked_resolved cells arr input lft rgt) Hlinked) as (kL & kR & Hres & -> & ->).
-  have Hpl : pool_of types !! parent = Some (MkTypeModel (cell_run <$> cells) arr).
-  { rewrite /pool_of lookup_fmap Hts //. }
-  have Hlocs : locs_of types !! parent = Some (ic_loc <$> cells).
-  { rewrite /locs_of lookup_fmap Hts //. }
-  have Hidck : (Z.of_nat (clock (in_id input)) < 2^64)%Z.
-  { move: Hfitsin. rewrite /input_fits. lia. }
-  have Hbelowr : pool_run_clock_below (pool_of types) (in_id input)
-    := pool_clock_below_to_run types (in_id input) (λ c Hc, proj2 (Hbndb c Hc)) Hidck Hbelow.
-  iEval (rewrite !node_loc_loc_at) in "Hfresh".
-  wp_apply (wp_store__Integrate_runs s parent parent_arg item_l
-              (state_runs_of (MkStoreState client0 k0 types bind pend pdel))
-              (MkTypeModel (cell_run <$> cells) arr) (ic_loc <$> cells) arr' input newItem kL kR
-              Hparg Hpl Hlocs Hready Hfitsin Hall Hres Hbelowr
-              with "[$Hpkg $Hruns $Hfresh]").
-  iIntros (runs' ls' run) "(Hruns & %Hinv' & %Hsp & %Hden)".
-  destruct Hsp as (idx & Hat & Hls').
-  have Hparcells : ∀ c, c ∈ cells -> ic_parent c = parent
-    := λ c Hc, Hpar parent (MkTypeState cells arr) c Hts Hc.
-  have Hruns' : runs' = take idx (cell_run <$> cells) ++ MkItemRun run false :: drop idx (cell_run <$> cells)
-    := proj1 (proj2 (proj2 Hat)).
-  set (cells' := take idx cells ++ MkItemCell item_l run false parent :: drop idx cells).
-  have Hlenfm : length (ic_loc <$> cells) = length (cell_run <$> cells) by rewrite !length_fmap.
-  have Hcells' : cells_of_locs_runs parent ls' runs' = cells'.
-  { rewrite Hls' Hruns' /integrate_locs
-      (cells_of_locs_runs_splice parent (ic_loc <$> cells) (cell_run <$> cells) idx item_l (MkItemRun run false) Hlenfm)
-      (cells_of_locs_runs_projections parent cells Hparcells) //. }
-  iApply ("HΦ" $! cells' run).
-  iSplitL.
-  { iDestruct "Hruns" as "(Hstruct & _)".
-    iEval (rewrite /state_of_runs /state_runs_of /=
-             (types_of_locs_pool_insert_both (locs_of types) (pool_of types) parent ls' (MkTypeModel runs' arr'))
-             /= Hcells' (types_of_locs_pool_of types Hpar)) in "Hstruct".
-    iFrame "Hstruct". }
-  iPureIntro. destruct Hat as (Hb & Hlen & _ & Harr'). split_and!.
-  - exact Hinv'.
-  - exists idx. split_and!.
-    + rewrite -(length_fmap cell_run cells). exact Hb.
-    + rewrite run_flatten_runs fmap_take. exact Hlen.
-    + done.
-    + rewrite run_flatten_runs fmap_take. exact Harr'.
-  - exact Hden.
 Qed.
 
 End store_integrate.

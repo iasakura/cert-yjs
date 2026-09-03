@@ -1602,7 +1602,7 @@ Qed.
     items (the receiver-side freshness that used to be a leftover hypothesis
     of [applyUpdate]'s certificate spec; with doc-global clocks it is a fact
     of the replay) — and the pure [integrate] advances that type's list. This
-    is exactly the chain of preconditions [wp_Store__Integrate] needs at each
+    is exactly the chain of preconditions [wp_store__Integrate_runs] needs at each
     loop step; it coincides with a valid replay of doc-level [OpInsert]s in
     the network model, so a proof against it inherits the model's invariant
     preservation and strong convergence.

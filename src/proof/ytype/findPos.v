@@ -1,6 +1,6 @@
 (** [wp_yType__findPos]: the tombstone-aware walk to a visible character index,
-    returning the straddling neighbours and the in-node offset ([find_pos], over
-    an existential list position [p]). Feeds the [Store.Integrate] loop in
+    returning the straddling neighbours and the in-node offset
+    ([find_pos_runs], over an existential run position [p]). Feeds the [Store.Integrate] loop in
     [Text.Insert] and [Text.Delete]; read-only, so stated at a generic [dq].
 
     Stated over the representation predicates of [ytype/heap.v]. *)
