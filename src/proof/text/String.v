@@ -43,7 +43,7 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc (list loc) * pool)))}.
 
 Local Notation P := go_string.
 Local Notation TId := (TypeId P).
@@ -77,46 +77,36 @@ Proof.
   iDestruct "His_store" as "#His_store".
   wp_auto. subst s_loc. subst parent.
   wp_apply (wp_Store__rlock _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
-  iIntros (types) "(Hrlo & Hro & %Hfact)".
+  iIntros (locs p) "(Hrlo & Hro & %Hfact)".
   iNamed "Hro".
   iDestruct (auth_gmap_gset_lookup_dq with "Hseq His_lb") as %(S' & HmS & HLsub).
-  rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (ts & Htsp & ->).
-  (* borrow the type's DLL and run the verified walk *)
-  iDestruct (big_sepM_lookup_acc _ _ _ _ Htsp with "Htypes") as "[Hbody Hclose]".
-  iDestruct "Hbody" as "(Htext & %Hinvarr)".
-  iDestruct (own_ytype_cells_flatten with "Htext") as "[Htext %Hflat]".
+  rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (tm & Htmp & ->).
+  iDestruct "Htypes" as "(%Hlocswf & Hpool)".
+  (* borrow the type's run view and run the verified walk *)
+  iDestruct (big_sepM_lookup_acc _ _ _ _ Htmp with "Hpool") as "[Hbody Hclose]".
+  iDestruct "Hbody" as (ls) "(%Hls & Htextr & %Hinvarr)".
+  iAssert (⌜tm_arr tm = runs_flatten (tm_runs tm)⌝)%I as %Harr;
+    first by iDestruct "Htextr" as (yt tl) "(_ & _ & _ & %Harr)".
   wp_auto.
-  (* [Text] is stated at run granularity: hand the type over as its addresses
-     and runs, and read the string and the type back through the projections. *)
-  iDestruct (own_ytype_cells_parents with "Htext") as "[Htext %Hcparts]".
-  iDestruct (own_ytype_runs_intro with "Htext") as "Htextr".
-  have Hvs : visible_string (runs_model (cell_run <$> ty_cells ts))
-           = visible_string (cells_model (ty_cells ts)).
-  { by rewrite cells_model_runs. }
-  wp_apply (wp_yType__Text (tv.(yjs.Text.inner')) (DfracOwn rwmutex_guard.rfrac)
-              (ic_loc <$> ty_cells ts)
-              (MkTypeModel (cell_run <$> ty_cells ts) (ty_arr ts)) with "[$Htextr]").
+  wp_apply (wp_yType__Text (tv.(yjs.Text.inner')) (DfracOwn rwmutex_guard.rfrac) ls tm with "[$Htextr]").
   iIntros "Htextr".
-  simpl. rewrite Hvs.
-  iDestruct (own_ytype_runs_as_cells with "Htextr") as "[_ Htext]".
-  iEval (simpl; rewrite (cells_of_locs_runs_projections (tv.(yjs.Text.inner')) (ty_cells ts) Hcparts)) in "Htext".
-  iDestruct ("Hclose" with "[Htext]") as "Htypes".
-  { iFrame "Htext". iPureIntro. exact Hinvarr. }
+  iDestruct ("Hclose" with "[Htextr]") as "Hpool".
+  { iExists ls. iSplitR; first by iPureIntro. iFrame "Htextr". by iPureIntro. }
   wp_auto.
-  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Htypes]").
-  { iFrame "Hseq Htypes". }
+  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Hpool]").
+  { iFrame "Hseq". rewrite /own_type_pool_runs. iSplitR; [by iPureIntro | iFrame "Hpool"]. }
   iIntros "Hcap".
   wp_auto.
-  have Hfst : (cells_model (ty_cells ts)).*1 = ty_arr ts.
-  { rewrite cells_model_fst -Hflat //. }
-  iApply ("HΦ" $! _ (cells_model (ty_cells ts))).
+  have Hfst : (runs_model (tm_runs tm)).*1 = tm_arr tm.
+  { rewrite runs_model_fst -Harr //. }
+  iApply ("HΦ" $! _ (runs_model (tm_runs tm))).
   iSplitR "Hcap"; last first.
   { iFrame "Hcap". iPureIntro. split_and!.
     - reflexivity.
     - split; rewrite Hfst; [exact HLsub | exact Hinvarr].
     - move=> input Hin.
-      destruct (Hfact input Hin) as (ts' & it & Hts' & Hitid & Hitmem).
-      rewrite Htsp in Hts'. injection Hts' as <-.
+      destruct (Hfact input Hin) as (tm' & it & Htm' & Hitid & Hitmem).
+      rewrite Htmp in Htm'. injection Htm' as <-.
       exists it. split; [exact Hitid | rewrite Hfst //]. }
   iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
   iFrame "Ht His_store His_hist Hbind His_lb".

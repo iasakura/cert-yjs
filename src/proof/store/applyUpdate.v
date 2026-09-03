@@ -50,7 +50,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* The store's reader-count accounting ties the readers' share to the [types]
    map via a [dfrac_agree]; [store/heap] declares it up front, so the specs
    reached from here carry it too. *)
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc (list loc) * pool)))}.
 
 (* [client_run]'s merge_sort instances are [#[local]] in [store/model];
    the run-list lemmas here need them again. *)
@@ -1680,7 +1680,7 @@ Lemma wp_store__applyUpdate (s_loc : loc) (sl : slice.t) (dq : dfrac)
 Proof using Type*.
   move=> [Hnowrapb Hrooted].
   iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertsin) HΦ".
-  iNamed "Hstore".
+  iEval (rewrite own_store_as_cells) in "Hstore". iNamed "Hstore".
   iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
   have Hpool : pool_invs types := proj1 Hinvs0.
   have Hreg : registry_coh bind types := proj2 Hinvs0.
@@ -1904,6 +1904,7 @@ Proof using Type*.
               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
   iSplitL "Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set";
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoloss_in]).
+  rewrite own_store_as_cells.
   iExists client, k, pdel, types', bind', acc.
   iFrame "Hcells Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set".
   iFrame "Hpendcert' Hclientpin".

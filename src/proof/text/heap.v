@@ -56,7 +56,7 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc (list loc) * pool)))}.
 
 (* The ghost op-history types at the document content type; type names are Go
    strings (issue #49). *)

@@ -22,7 +22,8 @@
     - [num_visible_model]: the heap [len] counter counts the model's visible
       items.
     - [cells_model_runs]: the cells-level model is the run-level one under
-      [cell_run]. *)
+      [cell_run]; [runs_model_fst] / [runs_visible_model], the run model's
+      items and visible count. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -154,6 +155,40 @@ Lemma cells_model_runs (cells : list item_cell) :
 Proof.
   rewrite /cells_model /runs_model -list_fmap_compose.
   f_equal.
+Qed.
+
+(** The run model's items are the runs' flatten, and its visible items are
+    counted by [runs_visible]: the run forms of [cells_model_fst] /
+    [num_visible_model], what the read API reports off a type's run view. *)
+Lemma runs_model_fst (runs : list ItemRun) : (runs_model runs).*1 = runs_flatten runs.
+Proof.
+  induction runs as [|r rs IH]; first done.
+  have -> : runs_model (r :: rs) = run_models r ++ runs_model rs by done.
+  have -> : runs_flatten (r :: rs) = run_items r ++ runs_flatten rs by done.
+  rewrite fmap_app IH. f_equal.
+  rewrite /run_models -list_fmap_compose -{2}(list_fmap_id (run_items r)).
+  apply list_fmap_ext. move=> i x _. reflexivity.
+Qed.
+
+Lemma visible_items_run_models (r : ItemRun) :
+  visible_items (run_models r) = if run_deleted r then [] else run_items r.
+Proof.
+  rewrite /visible_items /run_models.
+  induction (run_items r) as [|x l IH].
+  - destruct (run_deleted r); done.
+  - rewrite fmap_cons. destruct (run_deleted r) eqn:Hd.
+    + rewrite filter_cons_False; [exact IH | done].
+    + rewrite filter_cons_True; [| done].
+      rewrite fmap_cons IH //.
+Qed.
+
+Lemma runs_visible_model (runs : list ItemRun) :
+  runs_visible runs = length (visible_items (runs_model runs)).
+Proof.
+  induction runs as [|r rs IH]; first done.
+  have -> : runs_model (r :: rs) = run_models r ++ runs_model rs by done.
+  rewrite visible_items_app length_app runs_visible_cons IH. f_equal.
+  rewrite visible_items_run_models. destruct (run_deleted r); done.
 Qed.
 
 (** The run form of [visible_string_take_S]: one more run contributes its

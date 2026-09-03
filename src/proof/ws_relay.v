@@ -77,7 +77,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
    lock + item-set RAs; mirror their Context here to apply them. *)
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc (list loc) * pool)))}.
 
 (** The abstract codec the deployment runs under (see yjs_prot.v). *)
 Context (decode : list u8 -> option (list Input)).

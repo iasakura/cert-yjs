@@ -42,7 +42,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc (list loc) * pool)))}.
 
 (* The ghost op-history types at the document content type; type names are Go
    strings (issue #49). *)
@@ -71,7 +71,7 @@ Proof.
   wp_auto.
   subst s_loc.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
-  iDestruct "Hinv" as (c0 h m pend) "Hown". iNamed "Hown". subst c0.
+  iDestruct "Hinv" as (c0 h m pend) "Hown". iEval (rewrite own_store_as_cells) in "Hown". iNamed "Hown". subst c0.
   iDestruct "Hcells" as "(Hfields & %Hinvs)".
   have [Hpool Hreg] : pool_invs types ∧ registry_coh bind types := Hinvs.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
@@ -122,7 +122,7 @@ Proof.
     iEval (rewrite /state_of_runs /= (types_of_locs_pool_of types Hpar)) in "Hcells".
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
                 with "[$His_store $Hlk Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set]").
-    { iExists client, k, pdel, types, bind, acc.
+    { rewrite own_store_as_cells. iExists client, k, pdel, types, bind, acc.
       iFrame "∗#". iPureIntro.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
@@ -155,7 +155,7 @@ Proof.
     iEval (rewrite /state_of_runs /= (types_of_locs_pool_of types Hpar)) in "Hcells".
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
                 with "[$His_store $Hlk Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set]").
-    { iExists client, k, pdel, types, bind, acc.
+    { rewrite own_store_as_cells. iExists client, k, pdel, types, bind, acc.
       iFrame "∗#". iPureIntro.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
@@ -924,7 +924,7 @@ Proof.
         have := Hctr parent' ts' x Hlook Hxin Hxc. lia. }
   wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) hj (<[RootId name := arr]> m) pend
               with "[$His_store $Hlk Hcells Hseq HtypesAuth Hhistj Hacc Hdelete_set]").
-  { iExists client, (W64 (uint.Z k + j)), pdel, types', bind, acc.
+  { rewrite own_store_as_cells. iExists client, (W64 (uint.Z k + j)), pdel, types', bind, acc.
     rewrite /types' fmap_insert /=.
     iFrame "∗#". iPureIntro. split_and!;
       [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close

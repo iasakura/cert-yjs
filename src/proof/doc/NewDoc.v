@@ -48,7 +48,7 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc (list loc) * pool)))}.
 
 Lemma wp_NewDoc (γh : history_names) (client : w64) :
   {{{ is_pkg_init yjs ∗

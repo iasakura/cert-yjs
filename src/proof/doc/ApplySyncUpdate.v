@@ -47,7 +47,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Store]. *)
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc (list loc) * pool)))}.
 
 
 (** [Doc.ApplySyncUpdate]: the receiving half of the Yjs sync protocol
