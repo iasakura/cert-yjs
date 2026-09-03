@@ -45,7 +45,9 @@
     - the split projects along [cell_run] ([cell_run_split_left] /
       [cell_run_split_right], [split_cells_runs]; [cell_covers_clock_run]),
       the fresh node's address being all the pure [split_runs] does not see,
-      and [split_locs] on the address list ([split_cells_locs]);
+      and [split_locs] on the address list ([split_cells_locs]), and a
+      split address list with a split run list materializes to the split
+      cell list ([cells_of_locs_runs_split]);
       [runs_start_at] / [runs_end_at] over a projected cell list read back on
       the cells ([runs_start_at_fmap] / [runs_end_at_fmap]).
     - splitting a node is invisible to the model: [split_cells_flatten] and
@@ -1318,6 +1320,23 @@ Proof.
   rewrite Htk /=.
   have -> : (S j - k)%nat = S (S (j - S k)) by lia.
   simpl. rewrite lookup_drop. f_equal. lia.
+Qed.
+
+(** Materializing a run list split at slot [k] (with the fresh right address
+    [rloc]): the cell list split at [k]. *)
+Lemma cells_of_locs_runs_split (parent : loc) (ls : list loc) (runs : list ItemRun)
+    (k o : nat) (lc rloc : loc) (r : ItemRun) :
+  length ls = length runs ->
+  ls !! k = Some lc -> runs !! k = Some r ->
+  cells_of_locs_runs parent (split_locs ls k rloc) (split_runs runs k o)
+  = split_cells (cells_of_locs_runs parent ls runs) k o rloc.
+Proof.
+  move=> Hlen Hlk Hrk.
+  have Hck : cells_of_locs_runs parent ls runs !! k = Some (MkItemCell lc (run_items r) (run_deleted r) parent).
+  { rewrite /cells_of_locs_runs lookup_zip_with Hlk Hrk //. }
+  rewrite /split_locs Hlk /split_runs Hrk /split_cells Hck /cells_of_locs_runs.
+  rewrite zip_with_app; last by rewrite !length_take Hlen.
+  rewrite -zip_with_take /=. rewrite -zip_with_drop. done.
 Qed.
 
 

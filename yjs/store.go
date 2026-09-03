@@ -272,6 +272,36 @@ func containsId(s []idSpan, id id) bool {
 // the bit resurrects tombstoned content when repair splits a deleted run
 // (candidate upstream bug, see docs/plan-issue-28-runs-split.md).
 func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
+	right := splitItem(n, diff)
+	// Insert the right node into the client's run list just after n
+	// (y-octo: items.insert(index + 1, right)), keeping it clock-sorted.
+	// Built by appending the prefix, the new node, and the suffix into a
+	// fresh nil slice (rather than the in-place grow+copy+set idiom, or a
+	// pre-sized make): every copy is between DISJOINT backing arrays, and
+	// unlike make(len+1) the appends carry no slice-length-fit side
+	// condition (goose models append's growth with an overflow assume, the
+	// same way addNode's append is handled), so callers such as
+	// Text.Delete's range-end split need no externally supplied capacity
+	// bound. Same result as items.insert(index+1, right).
+	nodes := s.items[n.id.clientId]
+	index, _ := getNodeIndex(nodes, n.id.clock)
+	var newNodes []*item
+	newNodes = append(newNodes, nodes[:index+1]...)
+	newNodes = append(newNodes, right)
+	newNodes = append(newNodes, nodes[index+1:]...)
+	s.items[n.id.clientId] = newNodes
+	return n, right
+}
+
+// splitItem splits the run node n at offset diff (0 < diff < n.Len()) in
+// its type's doubly linked list (y-octo: Item::split_at, the node half of
+// DocStore::split_node_at): n is truncated in place to its first diff clocks
+// and the fresh right node covering the rest is spliced after it, its left
+// origin the last id of the truncated half and its right origin copied from
+// n. A free function, not a *store method: it touches only the node and its
+// neighbours, and the footprint must be visible in the program (CLAUDE.md
+// "Spec shape"); splitNode adds the per-client run-list insertion.
+func splitItem(n *item, diff uint64) *item {
 	olid := newId(n.id.clientId, n.id.clock+diff-1)
 	// Split the content through a []byte round-trip rather than slicing the
 	// string directly: Perennial's goose model has no reduction for slicing a
@@ -293,24 +323,7 @@ func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 		n.right.left = right
 	}
 	n.right = right
-	// Insert the right node into the client's run list just after n
-	// (y-octo: items.insert(index + 1, right)), keeping it clock-sorted.
-	// Built by appending the prefix, the new node, and the suffix into a
-	// fresh nil slice (rather than the in-place grow+copy+set idiom, or a
-	// pre-sized make): every copy is between DISJOINT backing arrays, and
-	// unlike make(len+1) the appends carry no slice-length-fit side
-	// condition (goose models append's growth with an overflow assume, the
-	// same way addNode's append is handled), so callers such as
-	// Text.Delete's range-end split need no externally supplied capacity
-	// bound. Same result as items.insert(index+1, right).
-	nodes := s.items[n.id.clientId]
-	index, _ := getNodeIndex(nodes, n.id.clock)
-	var newNodes []*item
-	newNodes = append(newNodes, nodes[:index+1]...)
-	newNodes = append(newNodes, right)
-	newNodes = append(newNodes, nodes[index+1:]...)
-	s.items[n.id.clientId] = newNodes
-	return n, right
+	return right
 }
 
 // splitAtAndGetLeft returns the node ENDING exactly at id (y-octo:

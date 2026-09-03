@@ -533,6 +533,20 @@ vocabulary substitution table written; then C5 restates the specs at
   `clientId < 2^64` premise of `wp_store__Integrate_runs` is gone (it is
   the linked item's own id).
 
+  PROGRESS 2026-09-04: `store.splitNode` is direct at `(locs, pool)`. The
+  Go gained the free function `splitItem(n, diff)` (the DLL half, y-octo's
+  `Item::split_at`; `splitNode` keeps the per-client run-list insertion), so
+  the split has a node-level spec `wp_splitItem_runs` over `own_ytype_runs`
+  (the surgery through `own_dll_runs_app` / `own_dll_runs_cons_unfold` /
+  `own_dll_runs_split`, one proof for both neighbour cases) and the store
+  wrapper `wp_store__splitNode_runs` composes it with the item-map surgery
+  written once (the two duplicated cell branches are gone; the pool
+  bookkeeping `pool_invs_split` / `split_pool_perm` applies through
+  `cells_of_locs_runs_split`). The cell `wp_store__splitNode` is DERIVED
+  from it (for `text/Insert` / `text/Delete`); the cell
+  `splitAtAndGetLeft` / `Right`, their `_range` locals and the split-pool
+  laws only they consumed are deleted.
+
 - **C6, delete the scaffolding.** `item_cell`, `cell_*`, `cells_of_locs_*`,
   the wrappers, `node_loc`, `ty_arr` (folded: `tm_arr = runs_flatten`),
   and the `_to_cell` transports are removed; `own_dll_fractional` and kin
