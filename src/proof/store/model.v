@@ -49,6 +49,10 @@
     [pool_after_delete_trans] / [pool_after_split_delete] /
     [pool_after_delete_flip]), and the tombstone record survives a step
     that keeps dead chars dead ([ids_tombstoned_runs_dead_kept]);
+    [delete_set_tombstoned_runs], the tombstone-set clause at runs, refined
+    along [runs_live_refine] ([delete_set_tombstoned_runs_refine]) and
+    transported along a permutation, a growth by a fresh run, a set union
+    or shrink;
     membership in [all_runs] is membership in some type
     ([elem_of_all_runs]) and [all_runs] around one split is the two halves
     in place of the split run ([all_runs_split_perm]); [pool_after_split]
@@ -140,6 +144,12 @@ Definition runs_live_refine (p p' : pool) : Prop :=
 Definition runs_dead_kept (p p' : pool) : Prop :=
   ∀ r, r ∈ all_runs p -> run_deleted r = true -> ∀ y, y ∈ run_items r ->
     ∃ r', r' ∈ all_runs p' ∧ run_deleted r' = true ∧ y ∈ run_items r'.
+
+(** [delete_set_tombstoned_runs delete_set runs]: no live run of [runs]
+    holds a char whose id is in [delete_set]: the tombstone-set clause at
+    run granularity (what [own_delete_set_runs] carries). *)
+Definition delete_set_tombstoned_runs (delete_set : gset YjsId) (runs : list ItemRun) : Prop :=
+  ∀ r, r ∈ runs -> ∀ y, y ∈ run_items r -> item_id y ∈ delete_set -> run_deleted r = true.
 
 (** [pool_after_split p p' parent k]: [p'] is [p] after one node split at
     the [k]-th run of the type at [parent]: the loc-free
@@ -1188,5 +1198,48 @@ Proof.
     by rewrite Hid in Hlt; exact Hlt.
   change ((clock (item_id (hd inhabitant (run_items r))) + length (run_items r) <= k)%nat). lia.
 Qed.
+
+(** The tombstone-set clause travels along [runs_live_refine] (a split, a
+    flip, a registry insert), a permutation of the runs, a growth by a run
+    none of whose ids the set holds (an integrate), and a set union or
+    shrink. *)
+Lemma delete_set_tombstoned_runs_refine (delete_set : gset YjsId) (p p' : pool) :
+  runs_live_refine p p' ->
+  delete_set_tombstoned_runs delete_set (all_runs p) ->
+  delete_set_tombstoned_runs delete_set (all_runs p').
+Proof.
+  move=> Hlr Ht r' Hr' y Hy Hd.
+  destruct (run_deleted r') eqn:Hdel; [done |].
+  destruct (Hlr r' Hr' Hdel) as (r & Hr & Hrdel & Hsub).
+  have := Ht r Hr y (Hsub y Hy) Hd. congruence.
+Qed.
+
+Lemma delete_set_tombstoned_runs_perm (delete_set : gset YjsId) (runs runs' : list ItemRun) :
+  runs' ≡ₚ runs ->
+  delete_set_tombstoned_runs delete_set runs -> delete_set_tombstoned_runs delete_set runs'.
+Proof. move=> Hperm Ht r Hr. apply Ht. by rewrite -Hperm. Qed.
+
+Lemma delete_set_tombstoned_runs_snoc (delete_set : gset YjsId) (runs runs' : list ItemRun) (r : ItemRun) :
+  runs' ≡ₚ runs ++ [r] ->
+  (∀ y, y ∈ run_items r -> item_id y ∉ delete_set) ->
+  delete_set_tombstoned_runs delete_set runs -> delete_set_tombstoned_runs delete_set runs'.
+Proof.
+  move=> Hperm Hfresh Ht r0 Hr0 y Hy Hd. rewrite Hperm in Hr0.
+  apply elem_of_app in Hr0 as [Hr0 | Hr0]; [exact (Ht r0 Hr0 y Hy Hd) |].
+  apply list_elem_of_singleton in Hr0 as ->. exfalso. exact (Hfresh y Hy Hd).
+Qed.
+
+Lemma delete_set_tombstoned_runs_union (delete_set S : gset YjsId) (runs : list ItemRun) :
+  delete_set_tombstoned_runs delete_set runs -> delete_set_tombstoned_runs S runs ->
+  delete_set_tombstoned_runs (delete_set ∪ S) runs.
+Proof.
+  move=> H1 H2 r Hr y Hy Hin. apply elem_of_union in Hin as [Hin | Hin];
+    [exact (H1 r Hr y Hy Hin) | exact (H2 r Hr y Hy Hin)].
+Qed.
+
+Lemma delete_set_tombstoned_runs_mono (delete_set delete_set' : gset YjsId) (runs : list ItemRun) :
+  delete_set' ⊆ delete_set ->
+  delete_set_tombstoned_runs delete_set runs -> delete_set_tombstoned_runs delete_set' runs.
+Proof. move=> Hsub Ht r Hr y Hy Hin. exact (Ht r Hr y Hy (Hsub _ Hin)). Qed.
 
 End store_model.

@@ -7,7 +7,7 @@
     [ghost_map] (the root-type registry), and replication laws for [tok_set]
     token bundles (the reader capabilities).
 
-    List facts free of cert-yjs definitions: [list_elem_of_concat],
+    List facts free of cert-yjs definitions: [fmap_concat], [list_elem_of_concat],
     [concat_fmap], [list_filter_fmap], [list_filter_iff_elem_of],
     [StronglySorted_fmap_elem_of], [map_to_list_insert_existing],
     [concat_perm], [elem_of_list_insert_inv] (membership in a list with one
@@ -390,3 +390,9 @@ Proof.
 Qed.
 
 End big_sepM_imap.
+
+(** [fmap] distributes over [concat]. *)
+Lemma fmap_concat {X Y : Type} (f : X -> Y) (L : list (list X)) :
+  (f <$> concat L : list Y) = concat ((λ l : list X, (f <$> l : list Y)) <$> L : list (list Y)).
+Proof. induction L as [| l L IH]; [done |]. simpl. rewrite fmap_app IH //. Qed.
+
