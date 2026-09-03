@@ -650,6 +650,20 @@ vocabulary substitution table written; then C5 restates the specs at
     `applyUpdate` (type creation and the materialization sites), the text
     layer (the delete-set ghost at runs, `types_of_locs_pool_ext_insert`
     gone).
+    PROGRESS 2026-09-04 (C6-3a): `store.GetNode` is direct at runs.
+    `client_entries` (value_cells: the client's `(address, run)` entries
+    in clock order, `client_locs_entries` / `client_entries_mem` /
+    `_sorted` / `_lookup_slot`; `sorted_client_entries`, any clock-sorted
+    address-distinct list of a client's entries, with
+    `sorted_client_entries_disjoint`; the pool's entries at their slots,
+    `pool_entries_slot` / `pool_entries_snd` / `pool_entries_locs_NoDup`),
+    `own_type_pool_runs_id_bounds` / `_run_wf` (heap, read through the
+    cells until C6-4), `wp_getNodeIndex_runs` (the binary search over a
+    `sorted_client_entries` list, so `splitNode` can search the index with
+    one run rewritten) and
+    `wp_store__GetNode_runs` proved on the run fields; the cell
+    `wp_store__GetNode` is deleted. The cell `wp_getNodeIndex` stays for
+    `splitNode`'s cell body (next).
   - **C6-4, delete the cell side.** `item_cell`, the cell `own_dll` and
     `own_dll_cells_layout`, `own_ytype_cells`, `cells_of_locs_runs`,
     `types_of_locs_pool` / `state_of_runs`, `type_state` / `store_state`,

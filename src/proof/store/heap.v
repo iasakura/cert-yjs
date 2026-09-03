@@ -1297,6 +1297,38 @@ Proof.
   exists p, ts. split; [exact Hp | exact (Hall p ts Hp c Hcts y Hy)].
 Qed.
 
+(** Every run head's id components round-trip through [w64] heap fields:
+    the run form of [own_type_pool_id_bounds], read through the
+    materialized cells. *)
+Lemma own_type_pool_runs_id_bounds (locs : gmap loc (list loc)) (p : pool) :
+  own_type_pool_runs (DfracOwn 1) locs p -∗
+  ⌜∀ r, r ∈ all_runs p ->
+     (Z.of_nat (run_client r) < 2^64)%Z ∧ (Z.of_nat (run_clock r) < 2^64)%Z⌝.
+Proof.
+  iIntros "H".
+  iDestruct (own_type_pool_runs_to_cells with "H") as "(Htypes & %Hpeq & _ & _)".
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnd.
+  iPureIntro. move=> r Hr.
+  rewrite -Hpeq all_runs_pool_of in Hr.
+  apply list_elem_of_fmap in Hr as (c & -> & Hc).
+  exact (Hbnd c Hc).
+Qed.
+
+(** Every run of the run-granular pool is chained ([run_wf]): read through
+    the materialized cells. *)
+Lemma own_type_pool_runs_run_wf (locs : gmap loc (list loc)) (p : pool) :
+  own_type_pool_runs (DfracOwn 1) locs p -∗
+  ⌜∀ r, r ∈ all_runs p -> run_wf (run_items r)⌝.
+Proof.
+  iIntros "H".
+  iDestruct (own_type_pool_runs_to_cells with "H") as "(Htypes & %Hpeq & _ & _)".
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwf.
+  iPureIntro. move=> r Hr.
+  rewrite -Hpeq all_runs_pool_of in Hr.
+  apply list_elem_of_fmap in Hr as (c & -> & Hc).
+  exact (Hwf c Hc).
+Qed.
+
 (** The [w64] cell-level shadow of the per-client clock counter: if every
     item of this client in the pool's model lists has clock below [k], then
     every cell of this client ends at or before [k] in machine arithmetic

@@ -41,7 +41,15 @@
       [_other] / [_snoc_max] / [_insert]) and [client_locs] over the
       entries, meeting [client_run] at [client_run_kp_locs] /
       [client_locs_of] and the materialized registry at [entries_kp_of] /
-      [entries_kp_to_cells]; alignment surviving a same-length
+      [entries_kp_to_cells]; [client_entries], the client's entries in
+      clock order ([client_locs_entries], [client_entries_mem] /
+      [_sorted] / [_lookup_slot]; [sorted_client_entries], any clock-sorted
+      address-distinct list of one client's entries, with disjoint clock
+      ranges, [sorted_client_entries_disjoint], the index's own being one,
+      [client_entries_sorted_client]), with the pool's entries at
+      their slots, [pool_entries_slot] / [pool_entries_snd] /
+      [pool_entries_locs_NoDup]; [entry_clock_Z], an entry's machine-word
+      clock under the pool's clock bound); alignment surviving a same-length
       type update, [locs_aligned_insert_same_len], or a slot's addresses
       and model replaced together at equal length,
       [locs_aligned_insert_both], and giving each type a same-length
@@ -976,10 +984,23 @@ Qed.
 Definition pool_entries (locs : gmap loc (list loc)) (p : pool) : list (loc * ItemRun) :=
   concat ((λ kv, zip (default [] (locs !! kv.1)) (tm_runs kv.2)) <$> map_to_list p).
 
-(** An entry's (client, clock, address) in machine words: the [cell_kp] of
-    the cell it materializes to. *)
-Definition entry_kp (e : loc * ItemRun) : w64 * (Z * loc) :=
-  (W64 (run_client e.2), (uint.Z (W64 (run_clock e.2)), e.1)).
+(** An entry's client and clock in machine words, its (clock, address) key
+    and the clock order the item index sorts by; [entry_kp] bundles the
+    (client, clock, address) key, the [cell_kp] of the cell the entry
+    materializes to. *)
+Definition entry_client (e : loc * ItemRun) : w64 := W64 (run_client e.2).
+Definition entry_clock (e : loc * ItemRun) : w64 := W64 (run_clock e.2).
+Definition entry_pr (e : loc * ItemRun) : Z * loc := (uint.Z (entry_clock e), e.1).
+Definition entry_le (a b : loc * ItemRun) : Prop := (uint.Z (entry_clock a) <= uint.Z (entry_clock b))%Z.
+
+#[local] Instance entry_le_dec : RelDecision entry_le.
+Proof. rewrite /entry_le. solve_decision. Defined.
+#[local] Instance entry_le_trans : Transitive entry_le.
+Proof. rewrite /entry_le. move=> x y z. lia. Qed.
+#[local] Instance entry_le_total : Total entry_le.
+Proof. rewrite /entry_le. move=> x y. lia. Qed.
+
+Definition entry_kp (e : loc * ItemRun) : w64 * (Z * loc) := (entry_client e, entry_pr e).
 
 (** [kp_clkloc kps]: one client's clock names one address, over a
     (client, clock, address) list: the uniqueness the item index relies on
@@ -1001,6 +1022,22 @@ Definition kp_client_locs (client : w64) (kps : list (w64 * (Z * loc))) : list l
     [client_locs_of]. *)
 Definition client_locs (locs : gmap loc (list loc)) (p : pool) (client : w64) : list loc :=
   kp_client_locs client (entry_kp <$> pool_entries locs p).
+
+(** [client_entries locs p client]: the client's entries in clock order, the
+    index's addresses with their runs ([client_locs_entries]); what the
+    index walk ([getNodeIndex]) probes. *)
+Definition client_entries (locs : gmap loc (list loc)) (p : pool) (client : w64) : list (loc * ItemRun) :=
+  merge_sort entry_le (filter (λ e, entry_client e = client) (pool_entries locs p)).
+
+(** [sorted_client_entries locs p client E]: [E] lists entries of client
+    [client] from the pool [(locs, p)], clock-sorted and without a repeated
+    address: the index's entries for [client] ([client_entries]), or those
+    with one run rewritten during a split. What the index walk
+    ([wp_getNodeIndex_runs]) searches. *)
+Definition sorted_client_entries (locs : gmap loc (list loc)) (p : pool) (client : w64)
+    (E : list (loc * ItemRun)) : Prop :=
+  StronglySorted entry_le E ∧ NoDup E.*1 ∧
+  (∀ e, e ∈ E -> e ∈ pool_entries locs p ∧ entry_client e = client).
 
 (** [client_run] projects onto [client_runs]: the [merge_sort cell_le] run
     list, mapped through [cell_run], is the [merge_sort run_le] of the
@@ -1959,6 +1996,198 @@ Lemma client_locs_of (types : gmap loc type_state) (client : w64) :
   kp_clkloc (cell_kp <$> all_cells types) ->
   client_locs (locs_of types) (pool_of types) client = ic_loc <$> client_run types client.
 Proof. move=> Hkd. rewrite /client_locs entries_kp_of (client_run_kp_locs types client Hkd) //. Qed.
+
+(** The client's entries: a permutation of the pool's entries with that
+    client tag, clock-sorted; their addresses are the index's slice
+    ([client_locs_entries], under the key uniqueness); each sits at a slot of
+    the pool ([pool_entries_slot] / [client_entries_lookup_slot]); the pool's
+    entries carry the pool's runs ([pool_entries_snd]) and, under the
+    address [NoDup], distinct entries of one client have disjoint clock
+    ranges ([client_entries_disjoint]). *)
+Lemma entry_kp_split (e : loc * ItemRun) : entry_kp e = (entry_client e, entry_pr e).
+Proof. reflexivity. Qed.
+
+(** An entry's machine-word clock is its run's clock, under the pool's clock
+    bound. *)
+Lemma entry_clock_Z (l : loc) (r : ItemRun) :
+  (Z.of_nat (run_clock r) < 2^64)%Z -> uint.Z (entry_clock (l, r)) = Z.of_nat (run_clock r).
+Proof. move=> Hb. rewrite /entry_clock /=. word. Qed.
+
+Lemma client_entries_mem (locs : gmap loc (list loc)) (p : pool) (client : w64) (e : loc * ItemRun) :
+  e ∈ client_entries locs p client <-> (e ∈ pool_entries locs p ∧ entry_client e = client).
+Proof. rewrite /client_entries (merge_sort_Permutation entry_le _) list_elem_of_filter. tauto. Qed.
+
+Lemma client_entries_sorted (locs : gmap loc (list loc)) (p : pool) (client : w64) :
+  StronglySorted entry_le (client_entries locs p client).
+Proof. apply StronglySorted_merge_sort; apply _. Qed.
+
+Lemma entry_pr_filter_kp (client : w64) (l : list (loc * ItemRun)) :
+  entry_pr <$> filter (λ e, entry_client e = client) l
+  = (filter (λ kp : w64 * (Z * loc), kp.1 = client) (entry_kp <$> l)).*2.
+Proof.
+  induction l as [|e l IH]; [reflexivity|].
+  rewrite fmap_cons filter_cons filter_cons entry_kp_split /=.
+  case_decide as Hc.
+  - rewrite fmap_cons IH /=. reflexivity.
+  - exact IH.
+Qed.
+
+Lemma SS_entry_pr_merge (l : list (loc * ItemRun)) :
+  StronglySorted pr_le (entry_pr <$> merge_sort entry_le l).
+Proof.
+  apply (StronglySorted_fmap entry_pr entry_le pr_le).
+  - move=> x y Hxy. rewrite /pr_le /entry_pr /entry_le in Hxy |- *. exact Hxy.
+  - apply (StronglySorted_merge_sort entry_le).
+Qed.
+
+Lemma client_locs_entries (locs : gmap loc (list loc)) (p : pool) (client : w64) :
+  kp_clkloc (entry_kp <$> pool_entries locs p) ->
+  client_locs locs p client = (client_entries locs p client).*1.
+Proof.
+  move=> Hkd. rewrite /client_locs /kp_client_locs /client_entries.
+  have Hfst : ∀ l : list (loc * ItemRun), l.*1 = snd <$> (entry_pr <$> l).
+  { move=> l. rewrite -list_fmap_compose. apply list_fmap_ext. move=> i e _. reflexivity. }
+  rewrite Hfst -entry_pr_filter_kp. f_equal.
+  apply (StronglySorted_unique_strong pr_le).
+  - move=> p1 p2 Hp1 Hp2 H12 H21.
+    rewrite (merge_sort_Permutation pr_le) in Hp1.
+    rewrite (merge_sort_Permutation entry_le) in Hp2.
+    apply list_elem_of_fmap in Hp1 as (x1 & -> & Hx1).
+    apply list_elem_of_fmap in Hp2 as (x2 & -> & Hx2).
+    apply list_elem_of_filter in Hx1 as [Hc1 Hx1]. apply list_elem_of_filter in Hx2 as [Hc2 Hx2].
+    rewrite /pr_le in H12 H21.
+    have Hkeq : (entry_pr x1).1 = (entry_pr x2).1 by lia.
+    have Hcc : (entry_kp x1).1 = (entry_kp x2).1.
+    { rewrite !entry_kp_split /=. congruence. }
+    have Hloc := Hkd (entry_kp x1) (entry_kp x2) (list_elem_of_fmap_2 _ _ _ Hx1) (list_elem_of_fmap_2 _ _ _ Hx2) Hcc Hkeq.
+    rewrite /entry_pr. f_equal; [exact Hkeq | exact Hloc].
+  - apply (StronglySorted_merge_sort pr_le).
+  - apply SS_entry_pr_merge.
+  - rewrite (merge_sort_Permutation pr_le). apply Permutation_map. symmetry. apply merge_sort_Permutation.
+Qed.
+
+Lemma pool_entries_slot (locs : gmap loc (list loc)) (p : pool) (l : loc) (r : ItemRun) :
+  (l, r) ∈ pool_entries locs p <->
+  ∃ parent ls tm k, locs !! parent = Some ls ∧ p !! parent = Some tm ∧ ls !! k = Some l ∧ tm_runs tm !! k = Some r.
+Proof.
+  rewrite /pool_entries list_elem_of_concat. split.
+  - move=> [zl [Hin Hzl]].
+    apply list_elem_of_fmap in Hzl as (kv & -> & Hkv).
+    destruct kv as [parent tm]. apply elem_of_map_to_list in Hkv. simpl in Hin.
+    destruct (locs !! parent) as [ls|] eqn:Hls; simpl in Hin; last by rewrite elem_of_nil in Hin.
+    apply list_elem_of_lookup in Hin as [k Hk].
+    apply lookup_zip_with_Some in Hk as (x & y & Heq & Hx & Hy).
+    injection Heq as <- <-.
+    by exists parent, ls, tm, k.
+  - intros (parent & ls & tm & k & Hls & Hp & Hl & Hr).
+    exists (zip ls (tm_runs tm)). split.
+    + apply list_elem_of_lookup. exists k. apply lookup_zip_with_Some. by exists l, r.
+    + apply list_elem_of_fmap. exists (parent, tm). split; [by rewrite /= Hls | by apply elem_of_map_to_list].
+Qed.
+
+Lemma pool_entries_snd (locs : gmap loc (list loc)) (p : pool) :
+  dom locs = dom p ->
+  (∀ parent ls tm, locs !! parent = Some ls -> p !! parent = Some tm -> length ls = length (tm_runs tm)) ->
+  (pool_entries locs p).*2 = all_runs p.
+Proof.
+  move=> Hdom Hlens. rewrite /pool_entries /all_runs fmap_concat -!list_fmap_compose.
+  f_equal. apply list_fmap_ext. move=> i [parent tm] Hi. simpl.
+  have Hp : p !! parent = Some tm by (apply elem_of_map_to_list; exact (list_elem_of_lookup_2 _ _ _ Hi)).
+  have His : is_Some (locs !! parent).
+  { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
+  destruct His as [ls Hls]. rewrite Hls /=. apply snd_zip. rewrite (Hlens parent ls tm Hls Hp). lia.
+Qed.
+
+Lemma pool_entries_locs_NoDup (locs : gmap loc (list loc)) (p : pool) :
+  dom locs = dom p ->
+  (∀ parent tm, p !! parent = Some tm -> ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
+  NoDup (concat ((map_to_list locs).*2)) ->
+  NoDup (pool_entries locs p).*1.
+Proof.
+  move=> Hdom Hlens Hnd.
+  have Hkp := entries_kp_to_cells locs p Hdom Hlens.
+  have Hfst : (pool_entries locs p).*1 = ic_loc <$> all_cells (types_of_locs_pool locs p).
+  { have H : (λ kp : w64 * (Z * loc), kp.2.2) <$> (entry_kp <$> pool_entries locs p)
+           = (λ kp : w64 * (Z * loc), kp.2.2) <$> (cell_kp <$> all_cells (types_of_locs_pool locs p))
+      by rewrite Hkp.
+    rewrite -!list_fmap_compose in H. exact H. }
+  rewrite Hfst -locs_of_concat (locs_of_types_of_locs_pool locs p Hdom Hlens). exact Hnd.
+Qed.
+
+Lemma client_entries_NoDup_locs (locs : gmap loc (list loc)) (p : pool) (client : w64) :
+  NoDup (pool_entries locs p).*1 -> NoDup (client_entries locs p client).*1.
+Proof.
+  move=> Hnd. rewrite /client_entries.
+  have Hperm : (merge_sort entry_le (filter (λ e, entry_client e = client) (pool_entries locs p))).*1
+             ≡ₚ (filter (λ e, entry_client e = client) (pool_entries locs p)).*1.
+  { apply Permutation_map. apply merge_sort_Permutation. }
+  rewrite Hperm. clear Hperm.
+  induction (pool_entries locs p) as [|e l IH]; first done.
+  rewrite fmap_cons NoDup_cons in Hnd. destruct Hnd as [Hnotin Hnd].
+  rewrite filter_cons. case_decide as Hc.
+  - rewrite fmap_cons NoDup_cons. split; [| exact (IH Hnd)].
+    move=> Hin. apply Hnotin. apply list_elem_of_fmap in Hin as (e' & Heq & He').
+    apply list_elem_of_fmap. exists e'. split; [exact Heq |].
+    exact (proj2 (proj1 (list_elem_of_filter _ _ _) He')).
+  - exact (IH Hnd).
+Qed.
+
+Lemma client_entries_lookup_slot (locs : gmap loc (list loc)) (p : pool) (client : w64)
+    (i : nat) (l : loc) (r : ItemRun) :
+  client_entries locs p client !! i = Some (l, r) ->
+  entry_client (l, r) = client ∧
+  ∃ parent ls tm k, locs !! parent = Some ls ∧ p !! parent = Some tm ∧ ls !! k = Some l ∧ tm_runs tm !! k = Some r.
+Proof.
+  move=> Hi. have Hmem := list_elem_of_lookup_2 _ _ _ Hi.
+  apply client_entries_mem in Hmem as [Hpe Hc]. split; [exact Hc | by apply pool_entries_slot].
+Qed.
+
+Lemma sorted_client_entries_disjoint (locs : gmap loc (list loc)) (p : pool) (client : w64)
+    (E : list (loc * ItemRun)) :
+  dom locs = dom p ->
+  (∀ parent tm, p !! parent = Some tm -> ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
+  NoDup (pool_entries locs p).*1 ->
+  (∀ r, r ∈ all_runs p -> (Z.of_nat (run_client r) < 2^64)%Z) ->
+  runs_disjoint (all_runs p) ->
+  sorted_client_entries locs p client E ->
+  ∀ (i j : nat) (l1 l2 : loc) (r1 r2 : ItemRun),
+    E !! i = Some (l1, r1) -> E !! j = Some (l2, r2) -> i ≠ j ->
+    (run_clock r1 + length (run_items r1) <= run_clock r2)%nat ∨
+    (run_clock r2 + length (run_items r2) <= run_clock r1)%nat.
+Proof.
+  move=> Hdom Hlens Hnd Hclb Hdisj [_ [Hndc Hmem]] i j l1 l2 r1 r2 Hi Hj Hij.
+  have Hlens' : ∀ parent ls tm, locs !! parent = Some ls -> p !! parent = Some tm ->
+      length ls = length (tm_runs tm).
+  { move=> parent ls tm Hls Hp. destruct (Hlens parent tm Hp) as (ls' & Hls' & Hlen).
+    rewrite Hls in Hls'. injection Hls' as <-. exact Hlen. }
+  have Hsnd := pool_entries_snd locs p Hdom Hlens'.
+  have Hl12 : l1 ≠ l2.
+  { move=> Heq. apply Hij. apply (NoDup_lookup _ i j l1 Hndc);
+      rewrite list_lookup_fmap; [rewrite Hi // | rewrite Hj /= Heq //]. }
+  have [Hm1 Hc1] := Hmem _ (list_elem_of_lookup_2 _ _ _ Hi).
+  have [Hm2 Hc2] := Hmem _ (list_elem_of_lookup_2 _ _ _ Hj).
+  apply list_elem_of_lookup in Hm1 as [n1 Hn1]. apply list_elem_of_lookup in Hm2 as [n2 Hn2].
+  have Hn12 : n1 ≠ n2.
+  { move=> Heq. subst n2. rewrite Hn1 in Hn2. injection Hn2 as Heq _. exact (Hl12 Heq). }
+  have Hr1 : all_runs p !! n1 = Some r1 by rewrite -Hsnd list_lookup_fmap Hn1 //.
+  have Hr2 : all_runs p !! n2 = Some r2 by rewrite -Hsnd list_lookup_fmap Hn2 //.
+  have Hcl : run_client r1 = run_client r2.
+  { have Hb1 := Hclb r1 (list_elem_of_lookup_2 _ _ _ Hr1).
+    have Hb2 := Hclb r2 (list_elem_of_lookup_2 _ _ _ Hr2).
+    rewrite /entry_client /= in Hc1 Hc2.
+    have Hz : uint.Z (W64 (run_client r1)) = uint.Z (W64 (run_client r2)) by rewrite Hc1 Hc2.
+    apply Nat2Z.inj. word. }
+  exact (Hdisj n1 n2 r1 r2 Hr1 Hr2 Hn12 Hcl).
+Qed.
+
+(** The index's own entries are such a list. *)
+Lemma client_entries_sorted_client (locs : gmap loc (list loc)) (p : pool) (client : w64) :
+  NoDup (pool_entries locs p).*1 ->
+  sorted_client_entries locs p client (client_entries locs p client).
+Proof.
+  move=> Hnd. split_and!; [exact (client_entries_sorted locs p client) | exact (client_entries_NoDup_locs locs p client Hnd) |].
+  move=> e He. by apply client_entries_mem.
+Qed.
 
 Lemma cell_pr_filter_perm (client : w64) (l1 l2 : list item_cell) :
   cell_kp <$> l1 ≡ₚ cell_kp <$> l2 ->
