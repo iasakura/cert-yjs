@@ -1,13 +1,15 @@
-(** WP proofs for the [store] integration stack: the id-lookup helpers
-    ([containsId] / [findById] / [itemPtrEqual]), the conflict scan
-    ([scanConflicts] / [findIntegrationLeft]) refining [set_find_integration_loop] (the
-    splice lands at the pure [setfindIntegratedIndex] and the result inherits
-    [YjsArrInvariant] from [YjsArrInvariant_integrate]), the item-validity /
-    insertion helper lemmas ([item_valid_*], [insert_*], [toItem_at]), and the
-    top-level [Store.Integrate] (cells-level and model-level, including the
-    per-client item-map maintenance), and its run-granular derived form
-    [wp_store__Integrate_runs] (over [own_store_runs], splicing the run and
-    the fresh address at one shared cursor).
+(** WP proofs for the [store] integration stack at run granularity: the
+    id-lookup helpers ([containsId] / [findById] / [itemPtrEqual]), the
+    conflict scan ([scanConflicts] / [findIntegrationLeft]) refining
+    [set_find_integration_loop] over run cursors (the splice lands at the
+    pure [setfindIntegratedIndex] and the result inherits [YjsArrInvariant]
+    from [YjsArrInvariant_integrate]), the item-validity / insertion helper
+    lemmas ([item_valid_*], [insert_*], [toItem_at]), the DLL-splice core
+    [integrateCore], and the top-level [Store.Integrate]:
+    [wp_store__Integrate_runs] over [own_store_runs] (splicing the run and
+    the fresh address at one shared cursor, with the per-client item-map
+    maintenance) and its cell-level reading [wp_Store__Integrate], derived
+    from it for the text layer until plan-item-run-split C6.
 
     Split out of [store/heap] (the predicates and the lock layer) so
     these heavy loop proofs compile in their own [.vo]; the update path
@@ -299,19 +301,10 @@ Proof.
   move=> Huniq Hkx. rewrite /findRightIdx (list_find_id_at arr kx x Huniq Hkx) //.
 Qed.
 
-(** Node locations across a cell splice: positions strictly before the splice
-    keep their loc; positions at/after shift by one. Pure index bookkeeping,
-    used to track the loop-constant [right] pointer through [Integrate]. *)
-Lemma node_loc_splice_lt (cells : list item_cell) (c : item_cell) (idx : nat) (k : Z) :
-  (k < Z.of_nat idx)%Z -> (idx <= length cells)%nat ->
-  node_loc (take idx cells ++ c :: drop idx cells) k = node_loc cells k.
-Proof.
-  move=> Hk Hle. rewrite /node_loc.
-  case: (decide (0 <= k)%Z) => H0; [| done].
-  rewrite lookup_app_l; last (rewrite length_take_le; [lia | exact Hle]).
-  rewrite lookup_take_lt; [done | lia].
-Qed.
-
+(** Node locations across a cell splice: positions at/after the splice shift
+    by one. Pure index bookkeeping the cell-level text layer uses to track the
+    loop-constant [right] pointer through [Integrate] (the run form is
+    [item/value]'s [loc_at_splice_ge]). *)
 Lemma node_loc_splice_ge (cells : list item_cell) (c : item_cell) (idx : nat) (k : Z) :
   (Z.of_nat idx <= k)%Z -> (idx <= length cells)%nat ->
   node_loc (take idx cells ++ c :: drop idx cells) (k + 1) = node_loc cells k.
@@ -326,12 +319,11 @@ Proof.
   done.
 Qed.
 
-(* ----- run prefix-sum toolkit for the cell-cursor scan (issue #28 C1d) ----
-   The scan stack is stated over CELL cursors coupled to model indices by the
-   prefix sum [length (run_flatten (take cur cells))]; these close the gaps the
-   unit-only [cells_repr_length]/[cells_repr_take] identifications left. They
-   live here (not [prelude]) to keep the root dependency stable; promote at
-   stage C2 when the update path needs them too. *)
+(* ----- the cell-cursor prefix sum, for the cell-level text layer ----------
+   The scan stack is stated over run cursors ([item/model]'s
+   [runs_flatten_take_*] toolkit); the cell-level text layer still couples
+   cell cursors to model indices by [length (run_flatten (take cur cells))]
+   and consumes this one law (deleted at plan-item-run-split C6). *)
 
 (** Non-strict monotonicity of the flattened-prefix length in the cursor. *)
 Lemma run_flatten_take_length_le (cells : list item_cell) (cur1 cur2 : nat) :
@@ -345,57 +337,8 @@ Proof.
   rewrite -{2}(take_drop cur1 l2) run_flatten_app length_app. lia.
 Qed.
 
-(** Reverse direction: a prefix-length [<=] forces the cursor [<=] (nonempty
-    runs, the left cursor in range). *)
-Lemma run_flatten_take_length_le_inv (cells : list item_cell) (cur1 cur2 : nat) :
-  Forall (λ c, ic_run c ≠ []) cells ->
-  (cur1 <= length cells)%nat ->
-  (length (run_flatten (take cur1 cells)) <= length (run_flatten (take cur2 cells)))%nat ->
-  (cur1 <= cur2)%nat.
-Proof.
-  move=> Hne Hb Hlen.
-  destruct (decide (cur1 <= cur2)%nat) as [|Hgt]; first done.
-  have := run_flatten_take_length_lt cells cur2 cur1 Hne ltac:(lia) Hb. lia.
-Qed.
-
-(** The flattened prefix of a cell [take] is the model [take] at the boundary:
-    the run-general replacement for the unit-only [cells_repr_take]. *)
-Lemma run_flatten_take_prefix (cells : list item_cell) (arr : list (YjsItem A)) (cur : nat) :
-  arr = run_flatten cells ->
-  run_flatten (take cur cells) = take (length (run_flatten (take cur cells))) arr.
-Proof.
-  move=> ->.
-  rewrite -{3}(take_drop cur cells) run_flatten_app take_app_length //.
-Qed.
-
-(** The flattened suffix of a cell [drop] is the model [drop] at the boundary:
-    the run-general replacement for the unit-only [cells_repr_drop]. *)
-Lemma run_flatten_drop_suffix (cells : list item_cell) (arr : list (YjsItem A)) (cur : nat) :
-  arr = run_flatten cells ->
-  run_flatten (drop cur cells) = drop (length (run_flatten (take cur cells))) arr.
-Proof.
-  move=> ->.
-  rewrite -{3}(take_drop cur cells) run_flatten_app drop_app_length //.
-Qed.
-
-(** The model item at a cell boundary is that cell's run head: the model
-    lookup behind every head-field read of the scanned node. *)
-Lemma run_head_at_prefix (cells : list item_cell) (arr : list (YjsItem A))
-    (i : nat) (ci : item_cell) :
-  arr = run_flatten cells ->
-  cells !! i = Some ci ->
-  ic_run ci ≠ [] ->
-  arr !! (length (run_flatten (take i cells))) = Some (run_head ci).
-Proof.
-  move=> -> Hi Hne.
-  have Hhd : ic_run ci !! 0%nat = Some (run_head ci).
-  { rewrite /run_head. move: Hne. destruct (ic_run ci) as [|y r]; [by move=> H; destruct (H eq_refl) | done]. }
-  have := run_flatten_take_lookup cells i ci 0%nat (run_head ci) Hi Hhd.
-  rewrite Nat.add_0_r //.
-Qed.
-
 (** Comparing a node pointer with itself is always [true] (it has its own id).
-    A stepping stone of [wp_itemPtrEqual_node]. *)
+    A stepping stone of [wp_itemPtrEqual_runs]. *)
 #[local] Lemma wp_itemPtrEqual_self (p : loc) (v : yjs.item.t) (dq : dfrac) :
   {{{ is_pkg_init yjs ∗ p ↦{dq} v }}}
     @! yjs.itemPtrEqual #p #p
@@ -411,78 +354,81 @@ Proof.
   iApply "HΦ". iFrame "Hp".
 Qed.
 
-(** Comparing two DLL nodes by [itemPtrEqual] decides CELL-index equality:
-    distinct cells sit at distinct model boundaries (the prefix sum is strictly
-    monotone for nonempty runs), so their head ids differ by id-uniqueness of
-    [arr]. [a]/[b] range over [[0, length cells]] (the [length] sentinel is the
-    [null] / [Last] boundary), with [a <= b]. Used for the [conflict == right]
-    break test and the entry [left.right == right] test. *)
-Lemma wp_itemPtrEqual_node (parent : loc) (dq : dfrac) (cells : list item_cell)
+(** Comparing two node addresses of one type: equal cursors give [true],
+    distinct cursors [false] (distinct heads have distinct ids under the
+    array invariant; a cursor at the length is the null pointer). The run
+    form of the cell walk. *)
+Lemma wp_itemPtrEqual_runs (parent : loc) (dq : dfrac) (ls : list loc) (runs : list ItemRun)
     (arr : list (YjsItem A)) (a b : Z) :
   YjsArrInvariant arr ->
-  Forall (λ c, ic_run c ≠ []) cells ->
-  (0 <= a)%Z -> (a <= b)%Z -> (b <= Z.of_nat (length cells))%Z ->
-  {{{ is_pkg_init yjs ∗ own_ytype_cells parent dq cells arr }}}
-    @! yjs.itemPtrEqual #(node_loc cells a) #(node_loc cells b)
-  {{{ RET #(bool_decide (a = b)); own_ytype_cells parent dq cells arr }}}.
+  Forall (λ r, run_items r ≠ []) runs ->
+  (0 <= a)%Z -> (a <= b)%Z -> (b <= Z.of_nat (length runs))%Z ->
+  {{{ is_pkg_init yjs ∗ own_ytype_runs parent dq ls (MkTypeModel runs arr) }}}
+    @! yjs.itemPtrEqual #(loc_at ls a) #(loc_at ls b)
+  {{{ RET #(bool_decide (a = b)); own_ytype_runs parent dq ls (MkTypeModel runs arr) }}}.
 Proof.
   move=> Harr Hnec Ha0 Hab Hblen.
-  iIntros (Φ) "[#Hpkg Ht] HΦ". iNamed "Ht".
-  have Hrfl : arr = run_flatten cells := Hrepr.
+  iIntros (Φ) "[#Hpkg Ht] HΦ". iNamed "Ht". simpl in *.
+  iDestruct (own_dll_runs_length with "Hdll") as %Hlenl.
+  have Hrfl : arr = runs_flatten runs := Harr0.
   destruct (decide (a = b)) as [Heq | Hne].
   - subst b. rewrite bool_decide_eq_true_2; last reflexivity.
-    destruct (decide (a < Z.of_nat (length cells))%Z) as [Halt | Hage].
-    + have Ha_lt : (Z.to_nat a < length cells)%nat by lia.
-      destruct (cells !! Z.to_nat a) as [ca|] eqn:Hca; last by (apply lookup_ge_None in Hca; lia).
-      have Hpa : node_loc cells a = ic_loc ca by rewrite /node_loc decide_True; [rewrite Hca | lia].
-      iDestruct (own_dll_lookup_acc_node _ _ _ _ _ _ _ _ Hca with "Hdll") as (pva nva) "(%Hruna & %Hclena & %Hpca & Hnode & Hback)".
+    destruct (decide (a < Z.of_nat (length runs))%Z) as [Halt | Hage].
+    + have Ha_lt : (Z.to_nat a < length runs)%nat by lia.
+      destruct (runs !! Z.to_nat a) as [ra|] eqn:Hra; last by (apply lookup_ge_None in Hra; lia).
+      destruct (ls !! Z.to_nat a) as [la|] eqn:Hla; last by (apply lookup_ge_None in Hla; lia).
+      have Hpa : loc_at ls a = la by rewrite /loc_at decide_True; [rewrite Hla | lia].
+      iDestruct (own_dll_runs_lookup_acc _ _ _ _ _ _ _ _ _ _ _ Hla Hra with "Hdll") as (pva nva) "(Hnode & Hback)".
       iDestruct "Hnode" as (iva olida orida)
         "(Hval & Hola & Hora & %Hinla & %Hinra & %Hida & %Hconta & %Hpara & %Hpreva & %Hnexta & %Hflagsa)".
-      rewrite Hpa. wp_apply (wp_itemPtrEqual_self (ic_loc ca) iva dq with "[$Hpkg $Hval]").
+      rewrite Hpa. wp_apply (wp_itemPtrEqual_self la iva dq with "[$Hpkg $Hval]").
       iIntros "Hval". iApply "HΦ". iExists yt, tl. iFrame "Hparent".
-      iAssert (own_item_node (ic_loc ca) dq (input_of_run (cell_run ca))
-                 (ic_deleted ca) (ic_parent ca) pva nva) with "[Hval Hola Hora]" as "Hnode".
+      iAssert (own_item_node la dq (input_of_run ra) (run_deleted ra) parent pva nva)
+        with "[Hval Hola Hora]" as "Hnode".
       { iExists iva, olida, orida. iFrame "Hval Hola Hora".
         iPureIntro. split_and!;
           [exact Hinla | exact Hinra | exact Hida | exact Hconta | exact Hpara
           | exact Hpreva | exact Hnexta | exact Hflagsa]. }
       iDestruct ("Hback" with "Hnode") as "Hdll". iFrame "Hdll". done.
-    + have Hpa : node_loc cells a = null.
-      { rewrite /node_loc. case_decide; [|done]. rewrite lookup_ge_None_2; [done | lia]. }
+    + have Hpa : loc_at ls a = null.
+      { rewrite /loc_at. case_decide; [|done]. rewrite lookup_ge_None_2; [done | lia]. }
       rewrite Hpa. wp_apply (wp_itemPtrEqual null null None None (DfracOwn 1) (DfracOwn 1) with "[$Hpkg]").
       { rewrite /item_or_null. iSplit; done. }
       rewrite (bool_decide_eq_true_2 (originId_of None = originId_of None)); last reflexivity.
       iIntros "_". iApply "HΦ". iExists yt, tl. iFrame "Hparent Hdll". done.
   - rewrite bool_decide_eq_false_2; last exact Hne.
     have Hab' : (a < b)%Z by lia.
-    destruct (decide (b < Z.of_nat (length cells))%Z) as [Hblt | Hbge].
+    destruct (decide (b < Z.of_nat (length runs))%Z) as [Hblt | Hbge].
     + (* a < b < length: borrow both nodes, distinct ids by uniqueness *)
-      have Ha_lt : (Z.to_nat a < length cells)%nat by lia.
-      have Hb_lt : (Z.to_nat b < length cells)%nat by lia.
-      destruct (cells !! Z.to_nat a) as [ca|] eqn:Hca; last by (apply lookup_ge_None in Hca; lia).
-      destruct (cells !! Z.to_nat b) as [cb|] eqn:Hcb; last by (apply lookup_ge_None in Hcb; lia).
-      have Hpa : node_loc cells a = ic_loc ca by rewrite /node_loc decide_True; [rewrite Hca | lia].
-      have Hpb : node_loc cells b = ic_loc cb by rewrite /node_loc decide_True; [rewrite Hcb | lia].
+      have Ha_lt : (Z.to_nat a < length runs)%nat by lia.
+      have Hb_lt : (Z.to_nat b < length runs)%nat by lia.
+      destruct (runs !! Z.to_nat a) as [ra|] eqn:Hra; last by (apply lookup_ge_None in Hra; lia).
+      destruct (runs !! Z.to_nat b) as [rb|] eqn:Hrb; last by (apply lookup_ge_None in Hrb; lia).
+      destruct (ls !! Z.to_nat a) as [la|] eqn:Hla; last by (apply lookup_ge_None in Hla; lia).
+      destruct (ls !! Z.to_nat b) as [lb|] eqn:Hlb; last by (apply lookup_ge_None in Hlb; lia).
+      have Hpa : loc_at ls a = la by rewrite /loc_at decide_True; [rewrite Hla | lia].
+      have Hpb : loc_at ls b = lb by rewrite /loc_at decide_True; [rewrite Hlb | lia].
       have Hab_nat : (Z.to_nat a < Z.to_nat b)%nat by lia.
-      iDestruct (own_dll_lookup_acc_2_node _ _ _ _ _ cells (Z.to_nat a) (Z.to_nat b) ca cb Hab_nat Hca Hcb with "Hdll")
-        as (preva nxta prevb nxtb) "(%Hruna & %Hrunb & Hnodea & Hnodeb & Hback)".
+      iDestruct (own_dll_runs_lookup_acc_2 _ _ _ _ _ _ ls runs (Z.to_nat a) (Z.to_nat b) la lb ra rb
+                   Hab_nat Hla Hra Hlb Hrb with "Hdll")
+        as (preva nxta prevb nxtb) "(Hnodea & Hnodeb & Hback)".
       iDestruct "Hnodea" as (iva olida orida)
         "(Hvala & Hola & Hora & %Hinla & %Hinra & %Hidan & %Hconta & %Hpara & %Hpreva & %Hnexta & %Hflagsa)".
       iDestruct "Hnodeb" as (ivb olidb oridb)
         "(Hval & Hol & Hor & %Hinlb & %Hinrb & %Hidbn & %Hcontb & %Hparb & %Hprevb & %Hnextb & %Hflagsb)".
-      have Hida : item_id (run_head ca) = toYjsId iva.(yjs.item.id').
+      have Hida : item_id (run_head_item ra) = toYjsId iva.(yjs.item.id').
       { symmetry. exact Hidan. }
-      have Hid : item_id (run_head cb) = toYjsId ivb.(yjs.item.id').
+      have Hid : item_id (run_head_item rb) = toYjsId ivb.(yjs.item.id').
       { symmetry. exact Hidbn. }
       have Hids_unique := yai_unique _ Harr.
-      have Hnea : ic_run ca ≠ [] := Forall_lookup_1 _ _ _ _ Hnec Hca.
-      have Hneb : ic_run cb ≠ [] := Forall_lookup_1 _ _ _ _ Hnec Hcb.
-      have Hma := run_head_at_prefix cells arr (Z.to_nat a) ca Hrfl Hca Hnea.
-      have Hmb := run_head_at_prefix cells arr (Z.to_nat b) cb Hrfl Hcb Hneb.
-      have Hlen_lt : (length (run_flatten (take (Z.to_nat a) cells))
-                      < length (run_flatten (take (Z.to_nat b) cells)))%nat
-        := run_flatten_take_length_lt cells (Z.to_nat a) (Z.to_nat b) Hnec ltac:(lia) ltac:(lia).
-      have Hid_ne : item_id (run_head ca) ≠ item_id (run_head cb)
+      have Hnea : run_items ra ≠ [] := Forall_lookup_1 _ _ _ _ Hnec Hra.
+      have Hneb : run_items rb ≠ [] := Forall_lookup_1 _ _ _ _ Hnec Hrb.
+      have Hma := runs_head_at_prefix runs arr (Z.to_nat a) ra Hrfl Hra Hnea.
+      have Hmb := runs_head_at_prefix runs arr (Z.to_nat b) rb Hrfl Hrb Hneb.
+      have Hlen_lt : (length (runs_flatten (take (Z.to_nat a) runs))
+                      < length (runs_flatten (take (Z.to_nat b) runs)))%nat
+        := runs_flatten_take_length_lt runs (Z.to_nat a) (Z.to_nat b) Hnec ltac:(lia) ltac:(lia).
+      have Hid_ne : item_id (run_head_item ra) ≠ item_id (run_head_item rb)
         := uniqueId_lookup_ne arr _ _ _ _ Hids_unique Hma Hmb Hlen_lt.
       have Hoid_ne : originId_of (Some iva) ≠ originId_of (Some ivb).
       { rewrite /originId_of /= => Heqsome. apply Hid_ne.
@@ -491,47 +437,46 @@ Proof.
       rewrite Hpa Hpb.
       iDestruct (typed_pointsto_not_null with "Hvala") as %Hnna.
       iDestruct (typed_pointsto_not_null with "Hval") as %Hnnb.
-      wp_apply (wp_itemPtrEqual (ic_loc ca) (ic_loc cb) (Some iva) (Some ivb) dq dq with "[$Hpkg Hvala Hval]").
+      wp_apply (wp_itemPtrEqual la lb (Some iva) (Some ivb) dq dq with "[$Hpkg Hvala Hval]").
       { rewrite /item_or_null. iFrame "Hvala Hval". iSplit; iPureIntro.
         - exact Hnna.
         - exact Hnnb. }
       rewrite (bool_decide_eq_false_2 (originId_of (Some iva) = originId_of (Some ivb)) Hoid_ne).
       iIntros "[Ha Hb]". rewrite /item_or_null.
       iDestruct "Ha" as "[_ Hvala]". iDestruct "Hb" as "[_ Hval]".
-      iAssert (own_item_node (ic_loc ca) dq (input_of_run (cell_run ca))
-                 (ic_deleted ca) (ic_parent ca) preva nxta) with "[Hvala Hola Hora]" as "Hnodea".
+      iAssert (own_item_node la dq (input_of_run ra) (run_deleted ra) parent preva nxta)
+        with "[Hvala Hola Hora]" as "Hnodea".
       { iExists iva, olida, orida. iFrame "Hvala Hola Hora".
         iPureIntro. split_and!;
           [exact Hinla | exact Hinra | exact Hidan | exact Hconta | exact Hpara
           | exact Hpreva | exact Hnexta | exact Hflagsa]. }
-      iAssert (own_item_node (ic_loc cb) dq (input_of_run (cell_run cb))
-                 (ic_deleted cb) (ic_parent cb) prevb nxtb) with "[Hval Hol Hor]" as "Hnodeb".
+      iAssert (own_item_node lb dq (input_of_run rb) (run_deleted rb) parent prevb nxtb)
+        with "[Hval Hol Hor]" as "Hnodeb".
       { iExists ivb, olidb, oridb. iFrame "Hval Hol Hor".
         iPureIntro. split_and!;
           [exact Hinlb | exact Hinrb | exact Hidbn | exact Hcontb | exact Hparb
           | exact Hprevb | exact Hnextb | exact Hflagsb]. }
       iDestruct ("Hback" with "Hnodea Hnodeb") as "Hdll".
-      iApply "HΦ". iExists yt, tl. iFrame "Hparent".
-      iSplitL; last (iPureIntro; split_and!; [exact Hlen | exact Hrepr | exact Hcpar]).
-      iFrame "Hdll".
+      iApply "HΦ". iExists yt, tl. iFrame "Hparent Hdll". done.
     + (* b = length: [b] is null, [a] a node *)
-      have Ha_lt : (Z.to_nat a < length cells)%nat by lia.
-      destruct (cells !! Z.to_nat a) as [ca|] eqn:Hca; last by (apply lookup_ge_None in Hca; lia).
-      have Hpa : node_loc cells a = ic_loc ca by rewrite /node_loc decide_True; [rewrite Hca | lia].
-      have Hpb : node_loc cells b = null.
-      { rewrite /node_loc. case_decide; [|done]. rewrite lookup_ge_None_2; [done | lia]. }
-      iDestruct (own_dll_lookup_acc_node _ _ _ _ _ _ _ _ Hca with "Hdll") as (pva nva) "(%Hruna & %Hclena & %Hpca & Hnode & Hback)".
+      have Ha_lt : (Z.to_nat a < length runs)%nat by lia.
+      destruct (runs !! Z.to_nat a) as [ra|] eqn:Hra; last by (apply lookup_ge_None in Hra; lia).
+      destruct (ls !! Z.to_nat a) as [la|] eqn:Hla; last by (apply lookup_ge_None in Hla; lia).
+      have Hpa : loc_at ls a = la by rewrite /loc_at decide_True; [rewrite Hla | lia].
+      have Hpb : loc_at ls b = null.
+      { rewrite /loc_at. case_decide; [|done]. rewrite lookup_ge_None_2; [done | lia]. }
+      iDestruct (own_dll_runs_lookup_acc _ _ _ _ _ _ _ _ _ _ _ Hla Hra with "Hdll") as (pva nva) "(Hnode & Hback)".
       iDestruct "Hnode" as (iva olida orida)
         "(Hval & Hola & Hora & %Hinla & %Hinra & %Hida & %Hconta & %Hpara & %Hpreva & %Hnexta & %Hflagsa)".
       iDestruct (typed_pointsto_not_null with "Hval") as %Hnna.
       rewrite Hpa Hpb.
-      wp_apply (wp_itemPtrEqual (ic_loc ca) null (Some iva) None dq dq with "[$Hpkg Hval]").
+      wp_apply (wp_itemPtrEqual la null (Some iva) None dq dq with "[$Hpkg Hval]").
       { rewrite /item_or_null. iSplitL "Hval"; [iFrame "Hval"; iPureIntro; exact Hnna | done]. }
       rewrite (bool_decide_eq_false_2 (originId_of (Some iva) = originId_of None)); last done.
       iIntros "[Ha _]". rewrite /item_or_null. iDestruct "Ha" as "[_ Hval]".
       iApply "HΦ". iExists yt, tl. iFrame "Hparent".
-      iAssert (own_item_node (ic_loc ca) dq (input_of_run (cell_run ca))
-                 (ic_deleted ca) (ic_parent ca) pva nva) with "[Hval Hola Hora]" as "Hnode".
+      iAssert (own_item_node la dq (input_of_run ra) (run_deleted ra) parent pva nva)
+        with "[Hval Hola Hora]" as "Hnode".
       { iExists iva, olida, orida. iFrame "Hval Hola Hora".
         iPureIntro. split_and!;
           [exact Hinla | exact Hinra | exact Hida | exact Hconta | exact Hpara
@@ -596,16 +541,17 @@ Proof.
   iApply (own_dll_fresh with "Hitem Hdll").
 Qed.
 
-(** The algorithmic core (extracted Go function [scanConflicts]): starting at
-    the cursor CELL [curL] (the boundary cell of model index [leftIdx + 1])
-    with the anchor at cell [curL - 1], the scan returns the resolved left
-    anchor: the cell just left of a run boundary [curD] whose model index is
-    the pure [setfindIntegratedIndex]. This is the WP refinement of the loop
-    onto [set_find_integration_loop]: the loop invariant [integrate_loop_inv] couples the
-    heap loop state to a [set_find_integration_loop] run, and each Go iteration consumes one
-    whole run block via [set_find_integration_block_step] (issue #28 C1c/C1d). *)
-Lemma wp_scanConflicts (parent item_l : loc) (dq : dfrac)
-    (cells : list item_cell) (arr : list (YjsItem A))
+(** The algorithmic core (extracted Go function [scanConflicts]) at run
+    granularity: starting at the cursor RUN [curL] (the boundary run of model
+    index [leftIdx + 1]) with the anchor at run [curL - 1], the scan returns
+    the resolved left anchor: the address just left of a run boundary [curD]
+    whose model index is the pure [setfindIntegratedIndex]. This is the WP
+    refinement of the loop onto [set_find_integration_loop]: the loop
+    invariant [integrate_loop_inv_runs] couples the heap loop state to a
+    [set_find_integration_loop] run, and each Go iteration consumes one
+    whole run block via [set_find_integration_block_step]. *)
+Lemma wp_scanConflicts_runs (parent item_l : loc) (dq : dfrac)
+    (ls : list loc) (runs : list ItemRun) (arr : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A)
     (itemVal : yjs.item.t) (oleft oright : option yjs.id.t)
     (leftIdx rightIdx : Z) (destIdx : nat) (curL curR : nat) :
@@ -616,27 +562,27 @@ Lemma wp_scanConflicts (parent item_l : loc) (dq : dfrac)
   findLeftIdx (in_originId input) arr = Some leftIdx ->
   findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
   setfindIntegratedIndex leftIdx rightIdx input arr = Some destIdx ->
-  Forall (λ c, ic_run c ≠ []) cells ->
-  (∀ c0, c0 ∈ cells -> cell_fits c0) ->
-  (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->
-  (Z.of_nat (length (run_flatten (take curL cells))) = leftIdx + 1)%Z ->
-  (curL <= length cells)%nat ->
-  (Z.of_nat (length (run_flatten (take curR cells))) = rightIdx)%Z ->
-  (curR <= length cells)%nat ->
-  {{{ is_pkg_init yjs ∗ own_ytype_cells parent dq cells arr ∗
+  Forall (λ r, run_items r ≠ []) runs ->
+  (∀ r, r ∈ runs -> run_fits r) ->
+  (∀ r, r ∈ runs -> run_origin_clk r) ->
+  (Z.of_nat (length (runs_flatten (take curL runs))) = leftIdx + 1)%Z ->
+  (curL <= length runs)%nat ->
+  (Z.of_nat (length (runs_flatten (take curR runs))) = rightIdx)%Z ->
+  (curR <= length runs)%nat ->
+  {{{ is_pkg_init yjs ∗ own_ytype_runs parent dq ls (MkTypeModel runs arr) ∗
       own_fresh_item_raw item_l input itemVal oleft oright }}}
-    @! yjs.scanConflicts #item_l #(node_loc cells (Z.of_nat curL - 1))
-        #(node_loc cells (Z.of_nat curL)) #(node_loc cells (Z.of_nat curR))
+    @! yjs.scanConflicts #item_l #(loc_at ls (Z.of_nat curL - 1))
+        #(loc_at ls (Z.of_nat curL)) #(loc_at ls (Z.of_nat curR))
   {{{ (ret : loc), RET #ret;
-      own_ytype_cells parent dq cells arr ∗
+      own_ytype_runs parent dq ls (MkTypeModel runs arr) ∗
       own_fresh_item_raw item_l input itemVal oleft oright ∗
-      ∃ curD : nat, ⌜ret = node_loc cells (Z.of_nat curD - 1)⌝ ∗
-        ⌜(Z.of_nat (length (run_flatten (take curD cells))) = Z.of_nat destIdx)%Z⌝ ∗
-        ⌜(curD <= length cells)%nat⌝ }}}.
+      ∃ curD : nat, ⌜ret = loc_at ls (Z.of_nat curD - 1)⌝ ∗
+        ⌜(Z.of_nat (length (runs_flatten (take curD runs))) = Z.of_nat destIdx)%Z⌝ ∗
+        ⌜(curD <= length runs)%nat⌝ }}}.
 Proof using Type*.
   move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb.
-  wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh".
-  (* Index bounds via the pure model. *)
+  wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh". simpl in *.
+  iDestruct (own_dll_runs_length with "Hdll") as %Hlenl.
   have Hids_unique := yai_unique _ Harr.
   have HfindLeftPtr : findPtrIdx (origin newItem) arr = Some leftIdx.
   { rewrite -(toitem_lemmas.findLeftIdx_findPtrIdx_eq input newItem arr Hids_unique Htoitem). exact HfindL. }
@@ -648,27 +594,23 @@ Proof using Type*.
   have HleftLtRight := findptridx_order2.YjsLt'_findPtrIdx_lt arr (origin newItem) (rightOrigin newItem)
                 leftIdx rightIdx Harr HoriginInArr HrightOriginInArr (iiv_origin_lt _ Hvalid) HfindLeftPtr HfindRightPtr.
   have HrightUB := insert_lemmas.findPtrIdx_le_size arr (rightOrigin newItem) rightIdx HfindRightPtr.
-  have Hrfl : arr = run_flatten cells := Hrepr.
+  have Hrfl : arr = runs_flatten runs := Harr0.
   wp_auto.
-  (* the two id-set accumulators start empty *)
   wp_apply wp_slice_literal. iSplitR; first done. iIntros "%ci_sl [Hci_sl Hci_cap]". wp_auto.
   wp_apply wp_slice_literal. iSplitR; first done. iIntros "%ibo_sl [Hibo_sl Hibo_cap]". wp_auto.
-  (* expose the pure loop result [d] (with [Z.to_nat d = destIdx]) *)
   rewrite /setfindIntegratedIndex in HfindD.
   destruct (set_find_integration_loop (Z.to_nat (rightIdx - leftIdx) - 1) 1 leftIdx rightIdx
               (in_originId input) (in_rightOriginId input) (in_id input) arr ∅ ∅ (leftIdx + 1))
     as [d|] eqn:Hset_find_integration; last by (simpl in HfindD; done).
   simpl in HfindD. injection HfindD as Hd_eq.
-  (* loop invariant: offset = 1, cursor at the boundary cell [curL],
-     accumulators empty, dest = leftIdx + 1 (anchor cursor [curL]) *)
   iAssert (∃ (offset cur curD : nat) (idsB conflictI : gset YjsId) (destL : Z),
-    integrate_loop_inv parent dq cells arr leftIdx rightIdx curR input.(in_originId)
+    integrate_loop_inv_runs parent dq ls runs arr leftIdx rightIdx curR input.(in_originId)
       input.(in_rightOriginId) input.(in_id) (Some d) conflict_ptr left_ptr right_ptr
       itemsBeforeOrigin_ptr conflictingItems_ptr offset cur curD idsB conflictI destL
     ∗ own_fresh_item_raw item_l input itemVal oleft oright)%I
     with "[Hparent Hdll conflict left right conflictingItems Hci_sl Hci_cap itemsBeforeOrigin Hibo_sl Hibo_cap Hitem Holeft Horight]" as "IH".
   { iExists 1%nat, curL, curL, ∅, ∅, (leftIdx + 1)%Z.
-    rewrite /integrate_loop_inv /own_fresh_item_raw.
+    rewrite /integrate_loop_inv_runs /own_fresh_item_raw.
     iFrame "conflict left right Hitem Holeft Horight".
     iSplitL "Hparent Hdll itemsBeforeOrigin Hibo_sl Hibo_cap conflictingItems Hci_sl Hci_cap".
     - iSplitL "Hparent Hdll".
@@ -686,10 +628,10 @@ Proof using Type*.
   iDestruct "IH" as "[Hinv Hfresh]". iNamed "Hinv". iNamed "Hfresh".
   iDestruct "Holeft" as "#Holeft". iDestruct "Horight" as "#Horight".
   wp_auto.
-  destruct (decide (cur = length cells)%nat) as [Heq_len | Hne_len].
+  destruct (decide (cur = length runs)%nat) as [Heq_len | Hne_len].
   - (* cursor reached the end: [conflict = nil], loop exits; fuel 0 pins [destL = d] *)
-    have Hnull : node_loc cells (Z.of_nat cur) = null.
-    { rewrite /node_loc decide_True; last lia.
+    have Hnull : loc_at ls (Z.of_nat cur) = null.
+    { rewrite /loc_at decide_True; last lia.
       rewrite Nat2Z.id Heq_len lookup_ge_None_2; [done | lia]. }
     have Harrfull : (Z.of_nat (length arr) = leftIdx + Z.of_nat offset)%Z.
     { rewrite -Hcur Heq_len take_ge; [by rewrite Hrfl | lia]. }
@@ -701,30 +643,31 @@ Proof using Type*.
     rewrite decide_False; last done.
     wp_auto.
     rewrite decide_True; last reflexivity. wp_auto.
-    iApply ("HΦ" $! (node_loc cells (Z.of_nat curD - 1))).
+    iApply ("HΦ" $! (loc_at ls (Z.of_nat curD - 1))).
     iFrame "Htext".
     iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
     iExists curD. iPureIntro. split_and!;
       [done | rewrite HcurD HdestL -Hd_eq Z2Nat.id; [done | clear -Hdest HdestL HleftLB; lia] | exact HcurDb].
   - (* cursor in range: run one scan step, matched to a [set_find_integration_block_step] unfold. *)
-    have Hcur_lt : (cur < length cells)%nat by lia.
-    destruct (cells !! cur) as [ci|] eqn:Hci;
-      last by (apply lookup_ge_None in Hci; lia).
-    have Hci_loc : node_loc cells (Z.of_nat cur) = ic_loc ci
-      by rewrite /node_loc decide_True; [rewrite Nat2Z.id Hci | lia].
-    iAssert (⌜ic_loc ci ≠ null⌝ ∗ own_ytype_cells parent dq cells arr)%I with "[Htext]" as "[%Hci_nn Htext]".
-    { iNamed "Htext". iDestruct (own_dll_lookup_acc_node _ _ _ _ _ _ _ _ Hci with "Hdll") as (px nx) "(_ & _ & _ & Hnode & Hback)".
+    have Hcur_lt : (cur < length runs)%nat by lia.
+    destruct (runs !! cur) as [rc|] eqn:Hrc;
+      last by (apply lookup_ge_None in Hrc; lia).
+    destruct (ls !! cur) as [lc|] eqn:Hlc;
+      last by (apply lookup_ge_None in Hlc; lia).
+    have Hci_loc : loc_at ls (Z.of_nat cur) = lc
+      by rewrite /loc_at decide_True; [rewrite Nat2Z.id Hlc | lia].
+    iAssert (⌜lc ≠ null⌝ ∗ own_ytype_runs parent dq ls (MkTypeModel runs arr))%I with "[Htext]" as "[%Hci_nn Htext]".
+    { iNamed "Htext". iDestruct (own_dll_runs_lookup_acc _ _ _ _ _ _ _ _ _ _ _ Hlc Hrc with "Hdll") as (px nx) "(Hnode & Hback)".
       iDestruct (own_item_node_not_null with "Hnode") as "[%Hnn Hnode]".
       iDestruct ("Hback" with "Hnode") as "Hdll".
       iSplitR; first (iPureIntro; exact Hnn). iExists yt0, tl0. iFrame "Hparent Hdll". done. }
-    have Hnnull : node_loc cells (Z.of_nat cur) ≠ null by rewrite Hci_loc; exact Hci_nn.
+    have Hnnull : loc_at ls (Z.of_nat cur) ≠ null by rewrite Hci_loc; exact Hci_nn.
     rewrite (bool_decide_eq_false_2 _ Hnnull). simpl. rewrite decide_True; last reflexivity.
     wp_auto.
-    (* the cursor cannot be past the right cell: prefix sums are monotone *)
     have Hcur_le_R : (cur <= curR)%nat.
-    { apply (run_flatten_take_length_le_inv cells cur curR Hnec Hcurb).
+    { apply (runs_flatten_take_length_le_inv runs cur curR Hnec Hcurb).
       clear -Hcur HcurR Hbound. lia. }
-    wp_apply (wp_itemPtrEqual_node parent dq cells arr (Z.of_nat cur) (Z.of_nat curR) Harr Hnec
+    wp_apply (wp_itemPtrEqual_runs parent dq ls runs arr (Z.of_nat cur) (Z.of_nat curR) Harr Hnec
                 ltac:(lia) ltac:(lia) ltac:(lia) with "[$Htext]").
     iIntros "Htext".
     destruct (decide (Z.of_nat cur = Z.of_nat curR)) as [Heqr | Hner].
@@ -738,7 +681,7 @@ Proof using Type*.
         rewrite Hfuel0 /= in Hloop. by injection Hloop. }
       wp_auto.
       wp_for_post.
-      iApply ("HΦ" $! (node_loc cells (Z.of_nat curD - 1))).
+      iApply ("HΦ" $! (loc_at ls (Z.of_nat curD - 1))).
       iFrame "Htext".
       iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
       iExists curD. iPureIntro. split_and!;
@@ -746,49 +689,48 @@ Proof using Type*.
     + (* conflict ≠ right: scan one run block; match [set_find_integration_block_step]'s branches *)
       rewrite (bool_decide_eq_false_2 _ Hner).
       have Hcur_lt_R : (cur < curR)%nat by lia.
-      have Hlt_pref : (length (run_flatten (take cur cells))
-                       < length (run_flatten (take curR cells)))%nat
-        := run_flatten_take_length_lt cells cur curR Hnec Hcur_lt_R HcurRb.
+      have Hlt_pref : (length (runs_flatten (take cur runs))
+                       < length (runs_flatten (take curR runs)))%nat
+        := runs_flatten_take_length_lt runs cur curR Hnec Hcur_lt_R HcurRb.
       have Hir : (leftIdx + Z.of_nat offset < rightIdx)%Z by (clear -Hcur HcurR Hlt_pref; lia).
       wp_auto.
       iNamed "Htext".
-      iDestruct (own_dll_acc_node _ cells _ _ cur ci Hci with "Hdll")
-        as (prev_ci nxt_ci) "(%Hcloc0 & %Hcl0p & %Hcr0p & %Hrunwf_ci & %Hclen_ci & %Hpc_ci & Hnode & Hback)".
+      iDestruct (own_dll_runs_acc dq parent _ tl0 ls runs cur lc rc Hlc Hrc with "Hdll")
+        as (prev_ci nxt_ci) "(%Hcl0p & %Hcr0p & %Hrunwf_ci & %Hpc_ci & %Hclen_ci & Hnode & Hback)".
       iDestruct "Hnode" as (iv_ci olid_ci orid_ci)
         "(Hcival & #Hcol & #Hcor & %Hinl_ci & %Hinr_ci & %Hcidn_ci & %Hccontn_ci & %Hcpar_ci & %Hprev_ci & %Hnext_ci & %Hcflags_ci)".
-      have Hcid_ci : item_id (run_head ci) = toYjsId iv_ci.(yjs.item.id').
+      have Hcid_ci : item_id (run_head_item rc) = toYjsId iv_ci.(yjs.item.id').
       { symmetry. exact Hcidn_ci. }
-      have Hccont_ci : content <$> ic_run ci = explode (toContent iv_ci.(yjs.item.content')).
-      { have Hstr : toContent iv_ci.(yjs.item.content') = items_string (ic_run ci) := Hccontn_ci.
+      have Hccont_ci : content <$> run_items rc = explode (toContent iv_ci.(yjs.item.content')).
+      { have Hstr : toContent iv_ci.(yjs.item.content') = items_string (run_items rc) := Hccontn_ci.
         rewrite Hstr. exact Hpc_ci. }
-      have Hcolid_ci : origin_id (origin (run_head ci)) = toYjsId <$> olid_ci.
+      have Hcolid_ci : origin_id (origin (run_head_item rc)) = toYjsId <$> olid_ci.
       { symmetry. exact Hinl_ci. }
-      have Hcorid_ci : origin_id (rightOrigin (run_head ci)) = toYjsId <$> orid_ci.
+      have Hcorid_ci : origin_id (rightOrigin (run_head_item rc)) = toYjsId <$> orid_ci.
       { symmetry. exact Hinr_ci. }
-      have Hcr0 : iv_ci.(yjs.item.right') = node_loc cells (Z.of_nat cur + 1).
+      have Hcr0 : iv_ci.(yjs.item.right') = loc_at ls (Z.of_nat cur + 1).
       { rewrite Hnext_ci. exact Hcr0p. }
-      iEval (rewrite Hcloc0) in "Hcival".
+      rewrite Hci_loc.
       wp_auto.
       iDestruct "Hids_before" as (ibo_s) "[Hibo_ref Hibo_setf]".
       iDestruct "Hibo_setf" as (vs_ibo) "(Hibo_sl & Hibo_cap & %Hibo_wf & %Hibo_set)".
       iDestruct "Hconflict_ids" as (ci_s) "[Hci_ref Hci_setf]".
       iDestruct "Hci_setf" as (vs_ci) "(Hci_sl & Hci_cap & %Hci_wf & %Hci_set)".
       wp_apply (wp_item__Len with "[$Hcival]"). iIntros "Hcival". wp_auto.
-      (* the scanned node's run: split into head [hh] + tail [tl2] (nonempty by run_wf) *)
-      destruct (ic_run ci) as [|hh tl2] eqn:Hrun; first by (exfalso; exact (proj1 Hrunwf_ci eq_refl)).
+      destruct (run_items rc) as [|hh tl2] eqn:Hrun; first by (exfalso; exact (proj1 Hrunwf_ci eq_refl)).
       rewrite -Hrun in Hccont_ci Hrunwf_ci.
-      have Hrhead : run_head ci = hh by rewrite /run_head Hrun.
+      have Hrhead : run_head_item rc = hh by rewrite /run_head_item Hrun.
       have Hrunstep : run_step (hh :: tl2).
-      { have Hrs := run_wf_run_step (ic_run ci) Hrunwf_ci. rewrite Hrun in Hrs. exact Hrs. }
-      have Hlencont : (length (iv_ci.(yjs.item.content').(yjs.content.content')) = length (ic_run ci))%nat.
+      { have Hrs := run_wf_run_step (run_items rc) Hrunwf_ci. rewrite Hrun in Hrs. exact Hrs. }
+      have Hlencont : (length (iv_ci.(yjs.item.content').(yjs.content.content')) = length (run_items rc))%nat.
       { have Hl := f_equal length Hccont_ci.
         rewrite length_fmap explode_length /toContent in Hl. lia. }
-      have Hfits_ci : cell_fits ci := Hfits ci (list_elem_of_lookup_2 _ _ _ Hci).
-      have Hrunfits : (Z.of_nat (length (ic_run ci)) < 2^64)%Z.
-      { have H := Hfits_ci. rewrite /cell_fits in H. clear -H. word. }
-      have Hlen_w : (length (ic_run ci) = uint.nat (W64 (length (ic_run ci))))%nat
+      have Hfits_ci : run_fits rc := Hfits rc (list_elem_of_lookup_2 _ _ _ Hrc).
+      have Hrunfits : (Z.of_nat (length (run_items rc)) < 2^64)%Z.
+      { have H := Hfits_ci. rewrite /run_fits in H. clear -H. lia. }
+      have Hlen_w : (length (run_items rc) = uint.nat (W64 (length (run_items rc))))%nat
         by (clear -Hrunfits; word).
-      have Hclk_ci : clock (item_id (run_head ci)) = uint.nat iv_ci.(yjs.item.id').(yjs.id.clock') by rewrite Hcid_ci /toYjsId.
+      have Hclk_ci : clock (item_id (run_head_item rc)) = uint.nat iv_ci.(yjs.item.id').(yjs.id.clock') by rewrite Hcid_ci /toYjsId.
       rewrite Hlencont.
       wp_apply wp_slice_literal. iSplitR; first done. iIntros "%sing1 [Hsing1 _]". wp_auto.
       wp_apply (wp_slice_append with "[$Hibo_sl $Hibo_cap $Hsing1]").
@@ -799,13 +741,13 @@ Proof using Type*.
       have H0 : sint.nat (W64 0) = 0%nat by word.
       iEval (rewrite H0 /=) in "Hibo_sl".
       iEval (rewrite H0 /=) in "Hci_sl".
-      set sp := yjs.idSpan.mk iv_ci.(yjs.item.id') (W64 (length (ic_run ci))).
+      set sp := yjs.idSpan.mk iv_ci.(yjs.item.id') (W64 (length (run_items rc))).
       have Hwf_sp : span_no_overflow sp.
       { rewrite /sp /span_no_overflow /range_no_overflow /=.
-        have H := Hfits_ci. rewrite /cell_fits /cell_clock Hclk_ci in H.
+        have H := Hfits_ci. rewrite /run_fits /run_clock Hclk_ci in H.
         clear -H Hrunfits. word. }
       have Hidhh : item_id hh = toYjsId iv_ci.(yjs.item.id') by rewrite -Hrhead; exact Hcid_ci.
-      have Hsp_ids : span_ids sp = char_ids (ic_run ci).
+      have Hsp_ids : span_ids sp = char_ids (run_items rc).
       { rewrite /sp Hrun.
         apply (span_ids_char_ids iv_ci.(yjs.item.id') (W64 (length (hh :: tl2))) hh tl2 Hidhh Hrunstep).
         rewrite -Hrun. exact Hlen_w. }
@@ -813,36 +755,31 @@ Proof using Type*.
       { apply Forall_app. split; [exact Hibo_wf | by apply Forall_singleton]. }
       have Hci_wf2 : Forall span_no_overflow (vs_ci ++ [sp]).
       { apply Forall_app. split; [exact Hci_wf | by apply Forall_singleton]. }
-      have Hibo_set2 : ⋃ (span_ids <$> (vs_ibo ++ [sp])) = char_ids (ic_run ci) ∪ idsB.
+      have Hibo_set2 : ⋃ (span_ids <$> (vs_ibo ++ [sp])) = char_ids (run_items rc) ∪ idsB.
       { rewrite span_union_snoc Hsp_ids Hibo_set //. }
-      have Hci_set2 : ⋃ (span_ids <$> (vs_ci ++ [sp])) = char_ids (ic_run ci) ∪ conflictI.
+      have Hci_set2 : ⋃ (span_ids <$> (vs_ci ++ [sp])) = char_ids (run_items rc) ∪ conflictI.
       { rewrite span_union_snoc Hsp_ids Hci_set //. }
-      (* head-char facts (run head = [hh]) matching [set_find_integration_block_step]'s decisions *)
       have HcId : item_id hh = toYjsId iv_ci.(yjs.item.id') := Hidhh.
       have HoL : origin_id (origin hh) = toYjsId <$> olid_ci by rewrite -Hrhead; exact Hcolid_ci.
       have HoR : origin_id (rightOrigin hh) = toYjsId <$> orid_ci by rewrite -Hrhead; exact Hcorid_ci.
-      (* rewrite [Hloop] one whole run block via [set_find_integration_block_step]: the block
-         fits under [rightIdx] because the NEXT cell boundary is still at most
-         the right cell's boundary (prefix-sum monotonicity) *)
-      have HlenS : (length (run_flatten (take (S cur) cells))
-                    = length (run_flatten (take cur cells)) + length (ic_run ci))%nat
-        by rewrite (run_flatten_take_S cells cur ci Hci) length_app.
-      have HleS_R : (length (run_flatten (take (S cur) cells))
-                     <= length (run_flatten (take curR cells)))%nat
-        := run_flatten_take_length_le cells (S cur) curR ltac:(lia).
-      have Hblockfits : (leftIdx + Z.of_nat offset + Z.of_nat (length (ic_run ci)) <= rightIdx)%Z
+      have HlenS : (length (runs_flatten (take (S cur) runs))
+                    = length (runs_flatten (take cur runs)) + length (run_items rc))%nat
+        by rewrite (runs_flatten_take_S runs cur rc Hrc) length_app.
+      have HleS_R : (length (runs_flatten (take (S cur) runs))
+                     <= length (runs_flatten (take curR runs)))%nat
+        := runs_flatten_take_length_le runs (S cur) curR ltac:(lia).
+      have Hblockfits : (leftIdx + Z.of_nat offset + Z.of_nat (length (run_items rc)) <= rightIdx)%Z
         by (clear -Hcur HcurR HlenS HleS_R; lia).
       have Hlook : forall k c0, (hh :: tl2) !! k = Some c0 ->
           arr !! (Z.to_nat (leftIdx + Z.of_nat (offset + k))) = Some c0.
       { move=> k c0 Hk.
-        have Hrepr' : arr = run_flatten cells := Hrepr.
-        rewrite Hrepr'.
-        have Hprefix : (length (run_flatten (take cur cells)) = Z.to_nat (leftIdx + Z.of_nat offset))%nat.
+        rewrite Hrfl.
+        have Hprefix : (length (runs_flatten (take cur runs)) = Z.to_nat (leftIdx + Z.of_nat offset))%nat.
         { apply Nat2Z.inj. rewrite Hcur Z2Nat.id; [done | clear -HleftLB Hoff; lia]. }
-        have Hidx : (Z.to_nat (leftIdx + Z.of_nat (offset + k)) = length (run_flatten (take cur cells)) + k)%nat
+        have Hidx : (Z.to_nat (leftIdx + Z.of_nat (offset + k)) = length (runs_flatten (take cur runs)) + k)%nat
           by (rewrite Hprefix; clear -HleftLB Hoff; lia).
         rewrite Hidx.
-        apply (run_flatten_take_lookup cells cur ci k c0 Hci).
+        apply (runs_flatten_lookup_of_run runs cur k rc c0 Hrc).
         rewrite Hrun. exact Hk. }
       have Hnotleft : forall c0, c0 ∈ hh :: tl2 -> Some (item_id c0) ≠ input.(in_originId).
       { move=> c0 Hc0. apply list_elem_of_lookup_1 in Hc0 as [k Hk].
@@ -874,11 +811,12 @@ Proof using Type*.
            wp_apply wp_slice_literal. iSplitR; first done.
            iIntros "%ci_empty [Hci_empty Hci_empty_cap]". wp_auto.
            wp_for_post.
-           iEval (rewrite -Hcloc0) in "Hcival".
-           iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, olid_ci, orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
+           iAssert (own_item_node lc dq (input_of_run rc) (run_deleted rc) parent prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci".
+           { iExists iv_ci, olid_ci, orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. }
+           iDestruct ("Hback" with "Hnode_ci") as "Hdll".
            iFrame "HΦ item".
-           iExists (offset + length (ic_run ci))%nat, (S cur), (S cur), (char_ids (ic_run ci) ∪ idsB), ∅, (leftIdx + Z.of_nat (offset + length (ic_run ci)))%Z.
-           rewrite /integrate_loop_inv /own_fresh_item_raw.
+           iExists (offset + length (run_items rc))%nat, (S cur), (S cur), (char_ids (run_items rc) ∪ idsB), ∅, (leftIdx + Z.of_nat (offset + length (run_items rc)))%Z.
+           rewrite /integrate_loop_inv_runs /own_fresh_item_raw.
            iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_empty Hci_empty_cap"; last first.
            { iFrame "Hitem Holeft Horight".
              iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
@@ -886,7 +824,7 @@ Proof using Type*.
            iSplitL "Hconflict".
            { rewrite Hcr0. replace (Z.of_nat (S cur))%Z with (Z.of_nat cur + 1)%Z by lia. iFrame "Hconflict". }
            iSplitL "Hleft".
-           { replace (Z.of_nat (S cur) - 1)%Z with (Z.of_nat cur)%Z by lia. iFrame "Hleft". }
+           { replace (Z.of_nat (S cur) - 1)%Z with (Z.of_nat cur)%Z by lia. rewrite Hci_loc. iFrame "Hleft". }
            iSplitL "Hright". { iFrame "Hright". }
            iSplitL "Hibo_ref Hibo_sl Hibo_cap".
            { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
@@ -916,9 +854,11 @@ Proof using Type*.
               rewrite (decide_True _ _ HoeqRR) in Hloop.
               injection Hloop as HdestL.
               wp_auto.
-              iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, olid_ci, orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
+              iAssert (own_item_node lc dq (input_of_run rc) (run_deleted rc) parent prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci".
+           { iExists iv_ci, olid_ci, orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. }
+              iDestruct ("Hback" with "Hnode_ci") as "Hdll".
               wp_for_post.
-              iApply ("HΦ" $! (node_loc cells (Z.of_nat curD - 1))).
+              iApply ("HΦ" $! (loc_at ls (Z.of_nat curD - 1))).
               iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
               iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
               iExists curD. iPureIntro. split_and!;
@@ -929,10 +869,12 @@ Proof using Type*.
               rewrite (decide_False _ _ HneqRR) in Hloop.
               wp_auto.
               wp_for_post.
-              iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, olid_ci, orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
+              iAssert (own_item_node lc dq (input_of_run rc) (run_deleted rc) parent prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci".
+           { iExists iv_ci, olid_ci, orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. }
+              iDestruct ("Hback" with "Hnode_ci") as "Hdll".
               iFrame "HΦ item".
-              iExists (offset + length (ic_run ci))%nat, (S cur), curD, (char_ids (ic_run ci) ∪ idsB), (char_ids (ic_run ci) ∪ conflictI), destL.
-              rewrite /integrate_loop_inv /own_fresh_item_raw.
+              iExists (offset + length (run_items rc))%nat, (S cur), curD, (char_ids (run_items rc) ∪ idsB), (char_ids (run_items rc) ∪ conflictI), destL.
+              rewrite /integrate_loop_inv_runs /own_fresh_item_raw.
               iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_sl Hci_cap"; last first.
               { iFrame "Hitem Holeft Horight".
                 iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
@@ -965,9 +907,11 @@ Proof using Type*.
            iDestruct "Hcol" as "%Hcol_null".
            simpl in Hloop. injection Hloop as HdestL.
            wp_auto. rewrite Hcol_null. wp_auto.
-           iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, None, orid_ci. iFrame "Hcival Hcor". iSplitR; [iPureIntro; exact Hcol_null|]. iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
+           iAssert (own_item_node lc dq (input_of_run rc) (run_deleted rc) parent prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci".
+           { iExists iv_ci, None, orid_ci. iFrame "Hcival Hcor". iSplitR; [iPureIntro; exact Hcol_null|]. iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. }
+           iDestruct ("Hback" with "Hnode_ci") as "Hdll".
            wp_for_post.
-           iApply ("HΦ" $! (node_loc cells (Z.of_nat curD - 1))).
+           iApply ("HΦ" $! (loc_at ls (Z.of_nat curD - 1))).
            iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
            iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
            iExists curD. iPureIntro. split_and!;
@@ -978,28 +922,26 @@ Proof using Type*.
            { iSplit; [iPureIntro; exact Hcol_nn | iExact "Hcol_pt"]. }
            simpl in Hloop.
            wp_auto. rewrite bool_decide_eq_false_2; last exact Hcol_nn. wp_auto.
-           (* the block-query bridge: the Go queries the whole run's span, [set_find_integration]
-              decides the head-only set; they agree by the origin-clock invariant *)
-           have Horig_eq : origin_id (origin (run_head ci)) = Some (toYjsId idv)
+           have Horig_eq : origin_id (origin (run_head_item rc)) = Some (toYjsId idv)
              by rewrite Hcolid_ci ?Hcoleft.
            have Hquery_clk : clientId (toYjsId idv) = clientId (item_id hh) -> (clock (toYjsId idv) < S (clock (item_id hh)))%nat.
-           { move=> Hcl. have Hoc := Hoclk ci (list_elem_of_lookup_2 _ _ _ Hci).
-             have Hlt := Hoc (toYjsId idv) Horig_eq. rewrite Hrhead in Hlt. specialize (Hlt Hcl). lia. }
-           have Hbq_ibo : toYjsId idv ∈ char_ids (ic_run ci) ∪ idsB <-> toYjsId idv ∈ ({[item_id hh]} ∪ idsB : gset YjsId).
+           { move=> Hcl. have Hoc := Hoclk rc (list_elem_of_lookup_2 _ _ _ Hrc).
+             have Hlt := Hoc (toYjsId idv) Horig_eq. rewrite /run_client /run_clock Hrhead in Hlt. specialize (Hlt Hcl). lia. }
+           have Hbq_ibo : toYjsId idv ∈ char_ids (run_items rc) ∪ idsB <-> toYjsId idv ∈ ({[item_id hh]} ∪ idsB : gset YjsId).
            { rewrite Hrun. apply (block_query_head hh tl2 (toYjsId idv) idsB Hrunstep Hquery_clk). }
            wp_apply (wp_containsId _ _ _ _ Hibo_wf2 with "[$Hibo_sl]"). iIntros "Hibo_sl".
            rewrite Hibo_set2.
-           destruct (decide (toYjsId idv ∈ (char_ids (ic_run ci) ∪ idsB : gset YjsId))) as [Hin_ibo | Hnin_ibo].
+           destruct (decide (toYjsId idv ∈ (char_ids (run_items rc) ∪ idsB : gset YjsId))) as [Hin_ibo | Hnin_ibo].
            ++ (* conflict's left origin was already scanned (case 2) *)
               rewrite (bool_decide_eq_true_2 _ Hin_ibo).
               have Hin_ibo_head : toYjsId idv ∈ ({[item_id hh]} ∪ idsB : gset YjsId) by apply Hbq_ibo.
               rewrite (decide_True _ _ Hin_ibo_head) in Hloop.
               wp_auto.
-              have Hbq_ci : toYjsId idv ∈ char_ids (ic_run ci) ∪ conflictI <-> toYjsId idv ∈ ({[item_id hh]} ∪ conflictI : gset YjsId).
+              have Hbq_ci : toYjsId idv ∈ char_ids (run_items rc) ∪ conflictI <-> toYjsId idv ∈ ({[item_id hh]} ∪ conflictI : gset YjsId).
               { rewrite Hrun. apply (block_query_head hh tl2 (toYjsId idv) conflictI Hrunstep Hquery_clk). }
               wp_apply (wp_containsId _ _ _ _ Hci_wf2 with "[$Hci_sl]"). iIntros "Hci_sl".
               rewrite Hci_set2.
-              destruct (decide (toYjsId idv ∈ (char_ids (ic_run ci) ∪ conflictI : gset YjsId))) as [Hin_ci | Hnin_ci].
+              destruct (decide (toYjsId idv ∈ (char_ids (run_items rc) ∪ conflictI : gset YjsId))) as [Hin_ci | Hnin_ci].
               ** (* already in conflictingItems: no anchor move, keep scanning (continue) *)
                  rewrite (bool_decide_eq_true_2 _ Hin_ci).
                  have Hin_ci_head : toYjsId idv ∈ ({[item_id hh]} ∪ conflictI : gset YjsId) by apply Hbq_ci.
@@ -1008,10 +950,12 @@ Proof using Type*.
                  rewrite (decide_False _ _ Hnn) in Hloop.
                  wp_auto.
                  wp_for_post.
-                 iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, (Some idv), orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
+                 iAssert (own_item_node lc dq (input_of_run rc) (run_deleted rc) parent prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci".
+           { iExists iv_ci, (Some idv), orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. }
+                 iDestruct ("Hback" with "Hnode_ci") as "Hdll".
                  iFrame "HΦ item".
-                 iExists (offset + length (ic_run ci))%nat, (S cur), curD, (char_ids (ic_run ci) ∪ idsB), (char_ids (ic_run ci) ∪ conflictI), destL.
-                 rewrite /integrate_loop_inv /own_fresh_item_raw.
+                 iExists (offset + length (run_items rc))%nat, (S cur), curD, (char_ids (run_items rc) ∪ idsB), (char_ids (run_items rc) ∪ conflictI), destL.
+                 rewrite /integrate_loop_inv_runs /own_fresh_item_raw.
                  iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_sl Hci_cap"; last first.
                  { iFrame "Hitem Holeft Horight".
                    iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
@@ -1043,10 +987,12 @@ Proof using Type*.
                  wp_apply wp_slice_literal. iSplitR; first done.
                  iIntros "%ci_empty [Hci_empty Hci_empty_cap]". wp_auto.
                  wp_for_post.
-                 iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, (Some idv), orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
+                 iAssert (own_item_node lc dq (input_of_run rc) (run_deleted rc) parent prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci".
+           { iExists iv_ci, (Some idv), orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. }
+                 iDestruct ("Hback" with "Hnode_ci") as "Hdll".
                  iFrame "HΦ item".
-                 iExists (offset + length (ic_run ci))%nat, (S cur), (S cur), (char_ids (ic_run ci) ∪ idsB), ∅, (leftIdx + Z.of_nat (offset + length (ic_run ci)))%Z.
-                 rewrite /integrate_loop_inv /own_fresh_item_raw.
+                 iExists (offset + length (run_items rc))%nat, (S cur), (S cur), (char_ids (run_items rc) ∪ idsB), ∅, (leftIdx + Z.of_nat (offset + length (run_items rc)))%Z.
+                 rewrite /integrate_loop_inv_runs /own_fresh_item_raw.
                  iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_empty Hci_empty_cap"; last first.
                  { iFrame "Hitem Holeft Horight".
                    iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0|exact Hcontent0]. }
@@ -1054,7 +1000,7 @@ Proof using Type*.
                  iSplitL "Hconflict".
                  { rewrite Hcr0. replace (Z.of_nat (S cur))%Z with (Z.of_nat cur + 1)%Z by lia. iFrame "Hconflict". }
                  iSplitL "Hleft".
-                 { replace (Z.of_nat (S cur) - 1)%Z with (Z.of_nat cur)%Z by lia. iFrame "Hleft". }
+                 { replace (Z.of_nat (S cur) - 1)%Z with (Z.of_nat cur)%Z by lia. rewrite Hci_loc. iFrame "Hleft". }
                  iSplitL "Hright". { iFrame "Hright". }
                  iSplitL "Hibo_ref Hibo_sl Hibo_cap".
                  { iExists ibo_s2. iFrame "Hibo_ref". iExists _. iFrame "Hibo_sl Hibo_cap". iPureIntro.
@@ -1077,9 +1023,11 @@ Proof using Type*.
               rewrite (decide_False _ _ Hnin_ibo_head) in Hloop.
               injection Hloop as HdestL.
               wp_auto.
-              iEval (rewrite -Hcloc0) in "Hcival". iAssert (own_item_node (ic_loc ci) dq (input_of_run (cell_run ci)) (ic_deleted ci) (ic_parent ci) prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci". { iExists iv_ci, (Some idv), orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. } iDestruct ("Hback" with "Hnode_ci") as "Hdll".
+              iAssert (own_item_node lc dq (input_of_run rc) (run_deleted rc) parent prev_ci nxt_ci) with "[Hcival]" as "Hnode_ci".
+           { iExists iv_ci, (Some idv), orid_ci. iFrame "Hcival Hcol Hcor". iPureIntro. split_and!; [exact Hinl_ci | exact Hinr_ci | exact Hcidn_ci | exact Hccontn_ci | exact Hcpar_ci | exact Hprev_ci | exact Hnext_ci | exact Hcflags_ci]. }
+              iDestruct ("Hback" with "Hnode_ci") as "Hdll".
               wp_for_post.
-              iApply ("HΦ" $! (node_loc cells (Z.of_nat curD - 1))).
+              iApply ("HΦ" $! (loc_at ls (Z.of_nat curD - 1))).
               iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
               iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
               iExists curD. iPureIntro. split_and!;
@@ -1088,14 +1036,14 @@ Qed.
 
 (** The conflict scan with its entry guard: resolves whether to scan at all
     (y-octo's left/right-connection check), sets the initial cursor, and
-    delegates to [scanConflicts]. The anchors are CELL cursors: [left_loc] is
-    the cell before the boundary [curL] (model index [leftIdx + 1]),
-    [right_loc] the cell at [curR] (model index [rightIdx]). When the guard is
-    false the anchors are adjacent cells ([curL = curR], i.e.
+    delegates to [scanConflicts]. The anchors are run cursors: [left_loc] is
+    the address before the boundary [curL] (model index [leftIdx + 1]),
+    [right_loc] the address at [curR] (model index [rightIdx]). When the
+    guard is false the anchors are adjacent runs ([curL = curR], i.e.
     [leftIdx + 1 = rightIdx] by prefix-sum injectivity) so [destIdx = leftIdx
     + 1] and the unchanged [left] is the answer. *)
-Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc : loc) (dq : dfrac)
-    (cells : list item_cell) (arr : list (YjsItem A))
+Lemma wp_findIntegrationLeft_runs (parent item_l left_loc right_loc : loc) (dq : dfrac)
+    (ls : list loc) (runs : list ItemRun) (arr : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A)
     (itemVal : yjs.item.t) (oleft oright : option yjs.id.t)
     (leftIdx rightIdx : Z) (destIdx : nat) (curL curR : nat) :
@@ -1106,27 +1054,28 @@ Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc : loc) (dq : dfra
   findLeftIdx (in_originId input) arr = Some leftIdx ->
   findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
   setfindIntegratedIndex leftIdx rightIdx input arr = Some destIdx ->
-  left_loc = node_loc cells (Z.of_nat curL - 1) ->
-  right_loc = node_loc cells (Z.of_nat curR) ->
-  Forall (λ c, ic_run c ≠ []) cells ->
-  (∀ c0, c0 ∈ cells -> cell_fits c0) ->
-  (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->
-  (Z.of_nat (length (run_flatten (take curL cells))) = leftIdx + 1)%Z ->
-  (curL <= length cells)%nat ->
-  (Z.of_nat (length (run_flatten (take curR cells))) = rightIdx)%Z ->
-  (curR <= length cells)%nat ->
-  {{{ is_pkg_init yjs ∗ own_ytype_cells parent dq cells arr ∗
+  left_loc = loc_at ls (Z.of_nat curL - 1) ->
+  right_loc = loc_at ls (Z.of_nat curR) ->
+  Forall (λ r, run_items r ≠ []) runs ->
+  (∀ r, r ∈ runs -> run_fits r) ->
+  (∀ r, r ∈ runs -> run_origin_clk r) ->
+  (Z.of_nat (length (runs_flatten (take curL runs))) = leftIdx + 1)%Z ->
+  (curL <= length runs)%nat ->
+  (Z.of_nat (length (runs_flatten (take curR runs))) = rightIdx)%Z ->
+  (curR <= length runs)%nat ->
+  {{{ is_pkg_init yjs ∗ own_ytype_runs parent dq ls (MkTypeModel runs arr) ∗
       own_fresh_item_raw item_l input itemVal oleft oright }}}
     @! yjs.findIntegrationLeft #parent #item_l #left_loc #right_loc
   {{{ (ret : loc), RET #ret;
-      own_ytype_cells parent dq cells arr ∗
+      own_ytype_runs parent dq ls (MkTypeModel runs arr) ∗
       own_fresh_item_raw item_l input itemVal oleft oright ∗
-      ∃ curD : nat, ⌜ret = node_loc cells (Z.of_nat curD - 1)⌝ ∗
-        ⌜(Z.of_nat (length (run_flatten (take curD cells))) = Z.of_nat destIdx)%Z⌝ ∗
-        ⌜(curD <= length cells)%nat⌝ }}}.
+      ∃ curD : nat, ⌜ret = loc_at ls (Z.of_nat curD - 1)⌝ ∗
+        ⌜(Z.of_nat (length (runs_flatten (take curD runs))) = Z.of_nat destIdx)%Z⌝ ∗
+        ⌜(curD <= length runs)%nat⌝ }}}.
 Proof using Type*.
   move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hll Hrl Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb.
   wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh". wp_auto.
+  iDestruct (own_dll_runs_length with "Hdll") as %Hlenl. simpl in Hlenl.
   (* Index bounds via the pure model (mirrors setintegrate_eq_integrate). *)
   have Huniq := yai_unique _ Harr.
   have HfLp : findPtrIdx (origin newItem) arr = Some leftIdx.
@@ -1139,146 +1088,129 @@ Proof using Type*.
   have Hlr := findptridx_order2.YjsLt'_findPtrIdx_lt arr (origin newItem) (rightOrigin newItem)
                 leftIdx rightIdx Harr Horig Hror (iiv_origin_lt _ Hvalid) HfLp HfRp.
   have HrUB := insert_lemmas.findPtrIdx_le_size arr (rightOrigin newItem) rightIdx HfRp.
-  have Hrfl : arr = run_flatten cells := Hrepr.
-  (* the left boundary cell precedes the right boundary cell *)
+  (* the left boundary run precedes the right boundary run *)
   have HcurLR : (curL <= curR)%nat.
-  { apply (run_flatten_take_length_le_inv cells curL curR Hnec HcurLb).
+  { apply (runs_flatten_take_length_le_inv runs curL curR Hnec HcurLb).
     clear -HcurL HcurR Hlr. lia. }
   (* Entry guard: read the left/right neighbour connections to decide whether
      the conflict scan runs. Four boundary combos: left/right null? *)
-  destruct (decide (curR = length cells)) as [HrN | HrNN].
+  destruct (decide (curR = length runs)) as [HrN | HrNN].
   { (* right is null: rightIsNullOrHasLeft = true (no read of right.left) *)
     have Hrnull : right_loc = null.
-    { rewrite Hrl HrN /node_loc decide_True; last lia. rewrite Nat2Z.id lookup_ge_None_2; [done | lia]. }
+    { rewrite Hrl HrN /loc_at decide_True; last lia. rewrite Nat2Z.id lookup_ge_None_2; [done | lia]. }
     rewrite (bool_decide_eq_true_2 (right_loc = null) Hrnull). wp_auto.
     destruct (decide (curL = 0%nat)) as [Hl0 | HlP].
     { (* combo 1: left null -> scan from parent.start *)
       have Hlnull : left_loc = null.
-      { rewrite Hll Hl0 /node_loc. case_decide; [lia | done]. }
+      { rewrite Hll Hl0 /loc_at. case_decide; [lia | done]. }
       rewrite Hlnull. wp_auto.
-      iAssert (⌜yt.(yjs.yType.start') = node_loc cells 0⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hstart Hdll]".
-      { iDestruct (own_dll_headptr with "Hdll") as "[%Hhd Hdll]".
-        iFrame "Hdll". iPureIntro.
-        rewrite Hhd /node_loc. destruct cells as [|c rest]; simpl.
-        - done.
-        - first [ done
-                | (rewrite decide_True; last (simpl; lia)); done
-                | case_decide; [done | exfalso; simpl in *; lia] ]. }
-      replace (# null) with (# (node_loc cells (Z.of_nat curL - 1))) by (rewrite -Hll Hlnull //).
-      replace (yt.(yjs.yType.start')) with (node_loc cells (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
+      iDestruct (own_dll_runs_headptr with "Hdll") as "[%Hhd Hdll]".
+      have Hstart : yt.(yjs.yType.start') = loc_at ls 0.
+      { rewrite Hhd /loc_at. destruct ls as [|l0 ls']; simpl;
+          first [ done | (case_decide; [done | lia]) ]. }
+      replace (# null) with (# (loc_at ls (Z.of_nat curL - 1))) by (rewrite -Hll Hlnull //).
+      replace (yt.(yjs.yType.start')) with (loc_at ls (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
       rewrite Hrl.
-      wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
+      wp_apply (wp_scanConflicts_runs parent item_l dq ls runs arr input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
                   Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[Hparent Hdll Hitem Holeft Horight]").
       { iSplitL "Hparent Hdll".
         { iExists yt, tl. iFrame "Hparent".
-          replace (yt.(yjs.yType.start')) with (node_loc cells (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
+          replace (yt.(yjs.yType.start')) with (loc_at ls (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
           iFrame "Hdll". done. }
         rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
       iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
       iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". }
     { (* combo 3: left non-null, right null -> compare left.right with right *)
       have HlP' : (1 <= curL)%nat by lia.
-      have Hi_lt : (curL - 1 < length cells)%nat by lia.
-      destruct (cells !! (curL - 1)%nat) as [leftCell|] eqn:Hcl_lookup; last by (apply lookup_ge_None in Hcl_lookup; lia).
-      have Hcl_loc : node_loc cells (Z.of_nat curL - 1) = ic_loc leftCell.
-      { rewrite /node_loc decide_True; last lia.
+      have Hi_lt : (curL - 1 < length ls)%nat by lia.
+      destruct (ls !! (curL - 1)%nat) as [lcL|] eqn:HlL; last by (apply lookup_ge_None in HlL; lia).
+      destruct (runs !! (curL - 1)%nat) as [rL|] eqn:HrL; last by (apply lookup_ge_None in HrL; lia).
+      have Hcl_loc : loc_at ls (Z.of_nat curL - 1) = lcL.
+      { rewrite /loc_at decide_True; last lia.
         have -> : Z.to_nat (Z.of_nat curL - 1) = (curL - 1)%nat by lia.
-        rewrite Hcl_lookup //. }
-      iAssert (⌜ic_loc leftCell ≠ null⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
-      { iDestruct (own_dll_lookup_acc_node _ _ _ _ _ _ _ _ Hcl_lookup with "Hdll") as (px nx) "(_ & _ & _ & Hnode & Hbk)".
-        iDestruct (own_item_node_not_null with "Hnode") as "[%Hnn Hnode]".
-        iDestruct ("Hbk" with "Hnode") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
-      have Hlnn : left_loc ≠ null by rewrite Hll Hcl_loc; exact Hclnn.
+        rewrite HlL //. }
+      iDestruct (loc_at_lt_not_null _ _ _ _ _ _ (curL - 1)%nat Hi_lt with "Hdll") as "[%Hclnn Hdll]".
+      have Hlnn : left_loc ≠ null.
+      { rewrite Hll. replace (Z.of_nat curL - 1)%Z with (Z.of_nat (curL - 1)) by lia. exact Hclnn. }
       rewrite (bool_decide_eq_false_2 (left_loc = null) Hlnn).
-      iDestruct (own_dll_acc_node _ cells _ _ (curL - 1)%nat leftCell Hcl_lookup with "Hdll")
-        as (prevl nxtl) "(%Hcloc & %Hcl_l & %Hcr_l & %Hrunl & %Hclenl & %Hpcl & Hnode & Hback)".
+      iDestruct (own_dll_runs_acc dq parent _ tl ls runs (curL - 1)%nat lcL rL HlL HrL with "Hdll")
+        as (prevl nxtl) "(%Hcl_l & %Hcr_l & %Hrunl & %Hpcl & %Hclenl & Hnode & Hback)".
       iDestruct "Hnode" as (ivl olidl oridl)
         "(Hcval & Hcol_l & Hcor_l & %Hinl_l & %Hinr_l & %Hidl & %Hcontl & %Hparl & %Hprevl & %Hnextl & %Hflagsl)".
       iEval (rewrite -Hcl_loc) in "Hcval". iEval (rewrite Hll) in "left". wp_auto.
-      have Hcr_l' : ivl.(yjs.item.right') = node_loc cells (Z.of_nat curL).
+      have Hcr_l' : ivl.(yjs.item.right') = loc_at ls (Z.of_nat curL).
       { rewrite Hnextl Hcr_l. f_equal. lia. }
       rewrite Hcr_l' Hrl.
       iEval (rewrite Hcl_loc) in "Hcval".
-      iAssert (own_item_node (ic_loc leftCell) dq (input_of_run (cell_run leftCell))
-                 (ic_deleted leftCell) (ic_parent leftCell) prevl nxtl) with "[Hcval Hcol_l Hcor_l]" as "Hnode".
+      iAssert (own_item_node lcL dq (input_of_run rL) (run_deleted rL) parent prevl nxtl) with "[Hcval Hcol_l Hcor_l]" as "Hnode".
       { iExists ivl, olidl, oridl. iFrame "Hcval Hcol_l Hcor_l".
         iPureIntro. split_and!;
           [exact Hinl_l | exact Hinr_l | exact Hidl | exact Hcontl | exact Hparl
           | exact Hprevl | exact Hnextl | exact Hflagsl]. }
       iDestruct ("Hback" with "Hnode") as "Hdll".
-      iAssert (own_ytype_cells parent dq cells arr) with "[Hparent Hdll]" as "Htext".
+      iAssert (own_ytype_runs parent dq ls (MkTypeModel runs arr)) with "[Hparent Hdll]" as "Htext".
       { iExists yt, tl. iFrame "Hparent Hdll". done. }
-      wp_apply (wp_itemPtrEqual_node parent dq cells arr (Z.of_nat curL) (Z.of_nat curR) Harr Hnec ltac:(lia) ltac:(lia) ltac:(lia) with "[$Htext]").
+      wp_apply (wp_itemPtrEqual_runs parent dq ls runs arr (Z.of_nat curL) (Z.of_nat curR) Harr Hnec ltac:(lia) ltac:(lia) ltac:(lia) with "[$Htext]").
       iIntros "Htext".
       destruct (decide (Z.of_nat curL = Z.of_nat curR)) as [Hadj | Hnadj].
       { (* no scan: curL = curR -> leftIdx+1 = rightIdx -> destIdx = leftIdx+1 *)
         rewrite (bool_decide_eq_true_2 _ Hadj). wp_auto.
-        rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat curL - 1) = null) ltac:(rewrite -Hll; exact Hlnn)). wp_auto.
+        rewrite (bool_decide_eq_false_2 (loc_at ls (Z.of_nat curL - 1) = null) ltac:(rewrite -Hll; exact Hlnn)). wp_auto.
         have HcLR : curL = curR by lia.
         have Hadj' : (leftIdx + 1 = rightIdx)%Z by rewrite -HcurL -HcurR HcLR.
         have Hdestadj : Z.of_nat destIdx = (leftIdx + 1)%Z.
         { rewrite /setfindIntegratedIndex in HfindD.
           replace (Z.to_nat (rightIdx - leftIdx) - 1)%nat with 0%nat in HfindD by lia.
           simpl in HfindD. injection HfindD as HfindD'. rewrite -HfindD' Z2Nat.id; lia. }
-        iApply ("HΦ" $! (node_loc cells (Z.of_nat curL - 1))).
+        iApply ("HΦ" $! (loc_at ls (Z.of_nat curL - 1))).
         iFrame "Htext".
         iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
         iExists curL. iPureIntro. split_and!;
           [done | rewrite HcurL Hdestadj // | exact HcurLb]. }
       { (* scan: curL < curR, conflict = left.right *)
         rewrite (bool_decide_eq_false_2 _ Hnadj). wp_auto.
-        have Hlnn' : node_loc cells (Z.of_nat curL - 1) ≠ null by (rewrite -Hll; exact Hlnn).
-        rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat curL - 1) = null) Hlnn'). wp_auto.
-        rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat curL - 1) = null) Hlnn').
-        iDestruct "Htext" as (yt' tl') "(Hparent & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
-        iDestruct (own_dll_acc_node _ cells _ _ (curL - 1)%nat leftCell Hcl_lookup with "Hdll")
-          as (prevl2 nxtl2) "(%Hcloc2 & %Hcl_l2 & %Hcr_l2 & %Hrunl2 & %Hclenl2 & %Hpcl2 & Hnode & Hback)".
+        have Hlnn' : loc_at ls (Z.of_nat curL - 1) ≠ null by (rewrite -Hll; exact Hlnn).
+        rewrite (bool_decide_eq_false_2 (loc_at ls (Z.of_nat curL - 1) = null) Hlnn'). wp_auto.
+        rewrite (bool_decide_eq_false_2 (loc_at ls (Z.of_nat curL - 1) = null) Hlnn').
+        iDestruct "Htext" as (yt' tl') "(Hparent & Hdll & %Hlen' & %Hrepr')".
+        iDestruct (own_dll_runs_acc dq parent _ tl' ls runs (curL - 1)%nat lcL rL HlL HrL with "Hdll")
+          as (prevl2 nxtl2) "(%Hcl_l2 & %Hcr_l2 & %Hrunl2 & %Hpcl2 & %Hclenl2 & Hnode & Hback)".
         iDestruct "Hnode" as (ivl2 olidl2 oridl2)
           "(Hcval & Hcol2 & Hcor2 & %Hinl2 & %Hinr2 & %Hidl2 & %Hcontl2 & %Hparl2 & %Hprevl2 & %Hnextl2 & %Hflagsl2)".
-        have Hcr_l2' : ivl2.(yjs.item.right') = node_loc cells (Z.of_nat curL) by (rewrite Hnextl2 Hcr_l2; f_equal; lia).
+        have Hcr_l2' : ivl2.(yjs.item.right') = loc_at ls (Z.of_nat curL) by (rewrite Hnextl2 Hcr_l2; f_equal; lia).
         iEval (rewrite -Hcl_loc) in "Hcval". wp_auto. rewrite Hcr_l2'.
         iEval (rewrite Hcl_loc) in "Hcval".
-        iAssert (own_item_node (ic_loc leftCell) dq (input_of_run (cell_run leftCell))
-                   (ic_deleted leftCell) (ic_parent leftCell) prevl2 nxtl2) with "[Hcval Hcol2 Hcor2]" as "Hnode".
+        iAssert (own_item_node lcL dq (input_of_run rL) (run_deleted rL) parent prevl2 nxtl2) with "[Hcval Hcol2 Hcor2]" as "Hnode".
         { iExists ivl2, olidl2, oridl2. iFrame "Hcval Hcol2 Hcor2".
           iPureIntro. split_and!;
             [exact Hinl2 | exact Hinr2 | exact Hidl2 | exact Hcontl2 | exact Hparl2
             | exact Hprevl2 | exact Hnextl2 | exact Hflagsl2]. }
         iDestruct ("Hback" with "Hnode") as "Hdll".
-        iAssert (own_ytype_cells parent dq cells arr) with "[Hparent Hdll]" as "Htext".
-        { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
-        wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
+        iAssert (own_ytype_runs parent dq ls (MkTypeModel runs arr)) with "[Hparent Hdll]" as "Htext".
+        { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split; [exact Hlen' | exact Hrepr']. }
+        wp_apply (wp_scanConflicts_runs parent item_l dq ls runs arr input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[Htext Hitem Holeft Horight]").
         { iSplitL "Htext"; [iFrame "Htext" | rewrite /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
         iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
         iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". } } }
-  { (* right non-null (curR < length cells): read right.left *)
-    have Hr_lt : (curR < length cells)%nat by lia.
-    destruct (cells !! curR) as [rightCell|] eqn:Hcr_lookup; last by (apply lookup_ge_None in Hcr_lookup; lia).
-    have Hcr_loc : node_loc cells (Z.of_nat curR) = ic_loc rightCell.
-    { rewrite /node_loc decide_True; last lia. rewrite Nat2Z.id Hcr_lookup //. }
-    iAssert (⌜ic_loc rightCell ≠ null⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hcrnn Hdll]".
-    { iDestruct (own_dll_lookup_acc_node _ _ _ _ _ _ _ _ Hcr_lookup with "Hdll") as (px nx) "(_ & _ & _ & Hnode & Hbk)".
-      iDestruct (own_item_node_not_null with "Hnode") as "[%Hnn Hnode]".
-      iDestruct ("Hbk" with "Hnode") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
-    have Hrnn : right_loc ≠ null by rewrite Hrl Hcr_loc; exact Hcrnn.
+  { (* right non-null (curR < length runs): read right.left *)
+    have Hr_lt : (curR < length ls)%nat by lia.
+    destruct (ls !! curR) as [lcR|] eqn:HlR; last by (apply lookup_ge_None in HlR; lia).
+    destruct (runs !! curR) as [rR|] eqn:HrR; last by (apply lookup_ge_None in HrR; lia).
+    have Hcr_loc : loc_at ls (Z.of_nat curR) = lcR.
+    { rewrite /loc_at decide_True; last lia. rewrite Nat2Z.id HlR //. }
+    iDestruct (loc_at_lt_not_null _ _ _ _ _ _ curR Hr_lt with "Hdll") as "[%Hcrnn Hdll]".
+    have Hrnn : right_loc ≠ null by rewrite Hrl; exact Hcrnn.
     rewrite (bool_decide_eq_false_2 (right_loc = null) Hrnn).
-    iDestruct (own_dll_acc_node _ cells _ _ curR rightCell Hcr_lookup with "Hdll")
-      as (prevr nxtr) "(%Hcloc_r & %Hclr0 & %Hcrr0 & %Hrunr & %Hclenr & %Hpcr & Hnode & Hback)".
+    iDestruct (own_dll_runs_acc dq parent _ tl ls runs curR lcR rR HlR HrR with "Hdll")
+      as (prevr nxtr) "(%Hclr0 & %Hcrr0 & %Hrunr & %Hpcr & %Hclenr & Hnode & Hback)".
     iDestruct "Hnode" as (ivr olidr oridr)
       "(Hcrval & Hcol_r & Hcor_r & %Hinlr & %Hinrr & %Hidrn & %Hcontrn & %Hparr & %Hprevr & %Hnextr & %Hflagsr)".
-    have Hcl_r : ivr.(yjs.item.left') = node_loc cells (Z.of_nat curR - 1).
+    have Hcl_r : ivr.(yjs.item.left') = loc_at ls (Z.of_nat curR - 1).
     { rewrite Hprevr. exact Hclr0. }
-    have Hidr : item_id (run_head rightCell) = toYjsId ivr.(yjs.item.id').
-    { symmetry. exact Hidrn. }
-    have Holidr : origin_id (origin (run_head rightCell)) = toYjsId <$> olidr.
-    { symmetry. exact Hinlr. }
-    have Horidr : origin_id (rightOrigin (run_head rightCell)) = toYjsId <$> oridr.
-    { symmetry. exact Hinrr. }
     iEval (rewrite -Hcr_loc) in "Hcrval". iEval (rewrite Hrl) in "right". wp_auto.
     iEval (rewrite Hcr_loc) in "Hcrval".
-    iAssert (own_item_node (ic_loc rightCell) dq (input_of_run (cell_run rightCell))
-               (ic_deleted rightCell) (ic_parent rightCell) prevr nxtr) with "[Hcrval Hcol_r Hcor_r]" as "Hnode".
+    iAssert (own_item_node lcR dq (input_of_run rR) (run_deleted rR) parent prevr nxtr) with "[Hcrval Hcol_r Hcor_r]" as "Hnode".
     { iExists ivr, olidr, oridr. iFrame "Hcrval Hcol_r Hcor_r".
       iPureIntro. split_and!;
         [exact Hinlr | exact Hinrr | exact Hidrn | exact Hcontrn | exact Hparr
@@ -1286,17 +1218,17 @@ Proof using Type*.
     iDestruct ("Hback" with "Hnode") as "Hdll".
     destruct (decide (curL = 0%nat)) as [Hl0 | HlP].
     { (* combo 2: left null; guard = rightIsNullOrHasLeft = (curR != 0) *)
-      have Hlnull : left_loc = null by (rewrite Hll Hl0 /node_loc; case_decide; [lia | done]).
+      have Hlnull : left_loc = null by (rewrite Hll Hl0 /loc_at; case_decide; [lia | done]).
       rewrite Hlnull.
       destruct (decide (curR = 0%nat)) as [Hr0 | HrP].
       { (* curR = 0 (rightIdx = 0): no scan *)
         have Hcrl_null : ivr.(yjs.item.left') = null.
-        { rewrite Hcl_r Hr0 /node_loc. case_decide; [lia | done]. }
+        { rewrite Hcl_r Hr0 /loc_at. case_decide; [lia | done]. }
         rewrite Hcrl_null. wp_auto.
         have Hlm1 : leftIdx = (-1)%Z.
-        { have H := HcurL. rewrite Hl0 take_0 run_flatten_nil /= in H. lia. }
+        { have H := HcurL. rewrite Hl0 take_0 runs_flatten_nil /= in H. lia. }
         have Hr0' : rightIdx = 0%Z.
-        { have H := HcurR. rewrite Hr0 take_0 run_flatten_nil /= in H. lia. }
+        { have H := HcurR. rewrite Hr0 take_0 runs_flatten_nil /= in H. lia. }
         have Hdest0 : destIdx = 0%nat.
         { rewrite /setfindIntegratedIndex in HfindD.
           replace (Z.to_nat (rightIdx - leftIdx) - 1)%nat with 0%nat in HfindD by lia.
@@ -1306,114 +1238,99 @@ Proof using Type*.
         { iExists yt, tl. iFrame "Hparent Hdll". done. }
         iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
         iExists 0%nat. iPureIntro. split_and!;
-          [rewrite /node_loc; case_decide; [lia | done]
-          | rewrite take_0 run_flatten_nil /= Hdest0 //
+          [rewrite /loc_at; case_decide; [lia | done]
+          | rewrite take_0 runs_flatten_nil /= Hdest0 //
           | lia]. }
       { (* curR >= 1: scan from parent.start *)
-        have Hcrl_eq : ivr.(yjs.item.left') = node_loc cells (Z.of_nat curR - 1) := Hcl_r.
-        have Hr1_lt : (curR - 1 < length cells)%nat by lia.
-        destruct (cells !! (curR - 1)%nat) as [crl|] eqn:Hcrl_lookup; last by (apply lookup_ge_None in Hcrl_lookup; lia).
-        have Hcrl_loc : node_loc cells (Z.of_nat curR - 1) = ic_loc crl.
-        { rewrite /node_loc decide_True; last lia.
-          have -> : Z.to_nat (Z.of_nat curR - 1) = (curR - 1)%nat by lia.
-          rewrite Hcrl_lookup //. }
-        iAssert (⌜ic_loc crl ≠ null⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hcrlnn Hdll]".
-        { iDestruct (own_dll_lookup_acc_node _ _ _ _ _ _ _ _ Hcrl_lookup with "Hdll") as (px nx) "(_ & _ & _ & Hnode & Hb)".
-          iDestruct (own_item_node_not_null with "Hnode") as "[%Hnn2 Hnode]".
-          iDestruct ("Hb" with "Hnode") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
-        have Hcrl_nn : ivr.(yjs.item.left') ≠ null by rewrite Hcrl_eq Hcrl_loc; exact Hcrlnn.
+        have Hr1_lt : (curR - 1 < length ls)%nat by lia.
+        iDestruct (loc_at_lt_not_null _ _ _ _ _ _ (curR - 1)%nat Hr1_lt with "Hdll") as "[%Hcrlnn Hdll]".
+        have Hcrl_nn : ivr.(yjs.item.left') ≠ null.
+        { rewrite Hcl_r. replace (Z.of_nat curR - 1)%Z with (Z.of_nat (curR - 1)) by lia. exact Hcrlnn. }
         rewrite (bool_decide_eq_false_2 (ivr.(yjs.item.left') = null) Hcrl_nn). wp_auto.
-        iAssert (⌜yt.(yjs.yType.start') = node_loc cells 0⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hstart Hdll]".
-        { iDestruct (own_dll_headptr with "Hdll") as "[%Hhd Hdll]".
-          iFrame "Hdll". iPureIntro.
-          rewrite Hhd /node_loc. destruct cells as [|c rest]; simpl.
-          - done.
-          - first [ done
-                  | (rewrite decide_True; last (simpl; lia)); done
-                  | case_decide; [done | exfalso; simpl in *; lia] ]. }
-        replace (# null) with (# (node_loc cells (Z.of_nat curL - 1))) by (rewrite -Hll Hlnull //).
-        replace (yt.(yjs.yType.start')) with (node_loc cells (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
-        wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
+        iDestruct (own_dll_runs_headptr with "Hdll") as "[%Hhd Hdll]".
+        have Hstart : yt.(yjs.yType.start') = loc_at ls 0.
+        { rewrite Hhd /loc_at. destruct ls as [|l0 ls']; simpl;
+          first [ done | (case_decide; [done | lia]) ]. }
+        replace (# null) with (# (loc_at ls (Z.of_nat curL - 1))) by (rewrite -Hll Hlnull //).
+        replace (yt.(yjs.yType.start')) with (loc_at ls (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
+        wp_apply (wp_scanConflicts_runs parent item_l dq ls runs arr input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[Hparent Hdll Hitem Holeft Horight]").
         { iSplitL "Hparent Hdll".
           { iExists yt, tl. iFrame "Hparent".
-            replace (yt.(yjs.yType.start')) with (node_loc cells (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
+            replace (yt.(yjs.yType.start')) with (loc_at ls (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
             iFrame "Hdll". done. }
           rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
         iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
         iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". } }
     { (* combo 4: left non-null, right non-null -> compare left.right with right *)
       have HlP' : (1 <= curL)%nat by lia.
-      have Hi_lt : (curL - 1 < length cells)%nat by lia.
-      destruct (cells !! (curL - 1)%nat) as [leftCell|] eqn:Hcl_lookup; last by (apply lookup_ge_None in Hcl_lookup; lia).
-      have Hcl_loc : node_loc cells (Z.of_nat curL - 1) = ic_loc leftCell.
-      { rewrite /node_loc decide_True; last lia.
+      have Hi_lt : (curL - 1 < length ls)%nat by lia.
+      destruct (ls !! (curL - 1)%nat) as [lcL|] eqn:HlL; last by (apply lookup_ge_None in HlL; lia).
+      destruct (runs !! (curL - 1)%nat) as [rL|] eqn:HrL; last by (apply lookup_ge_None in HrL; lia).
+      have Hcl_loc : loc_at ls (Z.of_nat curL - 1) = lcL.
+      { rewrite /loc_at decide_True; last lia.
         have -> : Z.to_nat (Z.of_nat curL - 1) = (curL - 1)%nat by lia.
-        rewrite Hcl_lookup //. }
-      iAssert (⌜ic_loc leftCell ≠ null⌝ ∗ own_dll dq parent yt.(yjs.yType.start') tl null null cells)%I with "[Hdll]" as "[%Hclnn Hdll]".
-      { iDestruct (own_dll_lookup_acc_node _ _ _ _ _ _ _ _ Hcl_lookup with "Hdll") as (px nx) "(_ & _ & _ & Hnode & Hbk)".
-        iDestruct (own_item_node_not_null with "Hnode") as "[%Hnn3 Hnode]".
-        iDestruct ("Hbk" with "Hnode") as "Hdll". iSplitR; [done | iFrame "Hdll"]. }
-      have Hlnn : left_loc ≠ null by rewrite Hll Hcl_loc; exact Hclnn.
+        rewrite HlL //. }
+      iDestruct (loc_at_lt_not_null _ _ _ _ _ _ (curL - 1)%nat Hi_lt with "Hdll") as "[%Hclnn Hdll]".
+      have Hlnn : left_loc ≠ null.
+      { rewrite Hll. replace (Z.of_nat curL - 1)%Z with (Z.of_nat (curL - 1)) by lia. exact Hclnn. }
       rewrite (bool_decide_eq_false_2 (left_loc = null) Hlnn).
-      iDestruct (own_dll_acc_node _ cells _ _ (curL - 1)%nat leftCell Hcl_lookup with "Hdll")
-        as (prevl4 nxtl4) "(%Hcloc & %Hcl_l & %Hcr_l2 & %Hrunl & %Hclenl4 & %Hpcl4 & Hnode & Hback)".
+      iDestruct (own_dll_runs_acc dq parent _ tl ls runs (curL - 1)%nat lcL rL HlL HrL with "Hdll")
+        as (prevl4 nxtl4) "(%Hcl_l & %Hcr_l2 & %Hrunl & %Hpcl4 & %Hclenl4 & Hnode & Hback)".
       iDestruct "Hnode" as (ivl olidl oridl)
         "(Hcval & Hcol_l & Hcor_l & %Hinl_l & %Hinr_l & %Hidl & %Hcontl & %Hparl & %Hprevl & %Hnextl & %Hflagsl)".
       iEval (rewrite -Hcl_loc) in "Hcval". iEval (rewrite Hll) in "left". wp_auto.
-      have Hcr_l' : ivl.(yjs.item.right') = node_loc cells (Z.of_nat curL).
+      have Hcr_l' : ivl.(yjs.item.right') = loc_at ls (Z.of_nat curL).
       { rewrite Hnextl Hcr_l2. f_equal. lia. }
       rewrite Hcr_l'.
       iEval (rewrite Hcl_loc) in "Hcval".
-      iAssert (own_item_node (ic_loc leftCell) dq (input_of_run (cell_run leftCell))
-                 (ic_deleted leftCell) (ic_parent leftCell) prevl4 nxtl4) with "[Hcval Hcol_l Hcor_l]" as "Hnode".
+      iAssert (own_item_node lcL dq (input_of_run rL) (run_deleted rL) parent prevl4 nxtl4) with "[Hcval Hcol_l Hcor_l]" as "Hnode".
       { iExists ivl, olidl, oridl. iFrame "Hcval Hcol_l Hcor_l".
         iPureIntro. split_and!;
           [exact Hinl_l | exact Hinr_l | exact Hidl | exact Hcontl | exact Hparl
           | exact Hprevl | exact Hnextl | exact Hflagsl]. }
       iDestruct ("Hback" with "Hnode") as "Hdll".
-      iAssert (own_ytype_cells parent dq cells arr) with "[Hparent Hdll]" as "Htext".
+      iAssert (own_ytype_runs parent dq ls (MkTypeModel runs arr)) with "[Hparent Hdll]" as "Htext".
       { iExists yt, tl. iFrame "Hparent Hdll". done. }
-      wp_apply (wp_itemPtrEqual_node parent dq cells arr (Z.of_nat curL) (Z.of_nat curR) Harr Hnec ltac:(lia) ltac:(lia) ltac:(lia) with "[$Htext]").
+      wp_apply (wp_itemPtrEqual_runs parent dq ls runs arr (Z.of_nat curL) (Z.of_nat curR) Harr Hnec ltac:(lia) ltac:(lia) ltac:(lia) with "[$Htext]").
       iIntros "Htext".
       destruct (decide (Z.of_nat curL = Z.of_nat curR)) as [Hadj | Hnadj].
       { (* no scan *)
         rewrite (bool_decide_eq_true_2 _ Hadj). wp_auto.
-        rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat curL - 1) = null) ltac:(rewrite -Hll; exact Hlnn)). wp_auto.
+        rewrite (bool_decide_eq_false_2 (loc_at ls (Z.of_nat curL - 1) = null) ltac:(rewrite -Hll; exact Hlnn)). wp_auto.
         have HcLR : curL = curR by lia.
         have Hadj' : (leftIdx + 1 = rightIdx)%Z by rewrite -HcurL -HcurR HcLR.
         have Hdestadj : Z.of_nat destIdx = (leftIdx + 1)%Z.
         { rewrite /setfindIntegratedIndex in HfindD.
           replace (Z.to_nat (rightIdx - leftIdx) - 1)%nat with 0%nat in HfindD by lia.
           simpl in HfindD. injection HfindD as HfindD'. rewrite -HfindD' Z2Nat.id; lia. }
-        iApply ("HΦ" $! (node_loc cells (Z.of_nat curL - 1))).
+        iApply ("HΦ" $! (loc_at ls (Z.of_nat curL - 1))).
         iFrame "Htext".
         iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
         iExists curL. iPureIntro. split_and!;
           [done | rewrite HcurL Hdestadj // | exact HcurLb]. }
       { (* scan *)
         rewrite (bool_decide_eq_false_2 _ Hnadj). wp_auto.
-        have Hlnn' : node_loc cells (Z.of_nat curL - 1) ≠ null by (rewrite -Hll; exact Hlnn).
-        rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat curL - 1) = null) Hlnn'). wp_auto.
-        rewrite (bool_decide_eq_false_2 (node_loc cells (Z.of_nat curL - 1) = null) Hlnn').
-        iDestruct "Htext" as (yt' tl') "(Hparent & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
-        iDestruct (own_dll_acc_node _ cells _ _ (curL - 1)%nat leftCell Hcl_lookup with "Hdll")
-          as (prevl2 nxtl2) "(%Hcloc2 & %Hcl_l2b & %Hcr_l2b & %Hrunl2 & %Hclenl2 & %Hpcl2 & Hnode & Hback)".
+        have Hlnn' : loc_at ls (Z.of_nat curL - 1) ≠ null by (rewrite -Hll; exact Hlnn).
+        rewrite (bool_decide_eq_false_2 (loc_at ls (Z.of_nat curL - 1) = null) Hlnn'). wp_auto.
+        rewrite (bool_decide_eq_false_2 (loc_at ls (Z.of_nat curL - 1) = null) Hlnn').
+        iDestruct "Htext" as (yt' tl') "(Hparent & Hdll & %Hlen' & %Hrepr')".
+        iDestruct (own_dll_runs_acc dq parent _ tl' ls runs (curL - 1)%nat lcL rL HlL HrL with "Hdll")
+          as (prevl2 nxtl2) "(%Hcl_l2b & %Hcr_l2b & %Hrunl2 & %Hpcl2 & %Hclenl2 & Hnode & Hback)".
         iDestruct "Hnode" as (ivl2 olidl2 oridl2)
           "(Hcval & Hcol2 & Hcor2 & %Hinl2 & %Hinr2 & %Hidl2 & %Hcontl2 & %Hparl2 & %Hprevl2 & %Hnextl2 & %Hflagsl2)".
-        have Hcr_l2' : ivl2.(yjs.item.right') = node_loc cells (Z.of_nat curL) by (rewrite Hnextl2 Hcr_l2b; f_equal; lia).
+        have Hcr_l2' : ivl2.(yjs.item.right') = loc_at ls (Z.of_nat curL) by (rewrite Hnextl2 Hcr_l2b; f_equal; lia).
         iEval (rewrite -Hcl_loc) in "Hcval". wp_auto. rewrite Hcr_l2'.
         iEval (rewrite Hcl_loc) in "Hcval".
-        iAssert (own_item_node (ic_loc leftCell) dq (input_of_run (cell_run leftCell))
-                   (ic_deleted leftCell) (ic_parent leftCell) prevl2 nxtl2) with "[Hcval Hcol2 Hcor2]" as "Hnode".
+        iAssert (own_item_node lcL dq (input_of_run rL) (run_deleted rL) parent prevl2 nxtl2) with "[Hcval Hcol2 Hcor2]" as "Hnode".
         { iExists ivl2, olidl2, oridl2. iFrame "Hcval Hcol2 Hcor2".
           iPureIntro. split_and!;
             [exact Hinl2 | exact Hinr2 | exact Hidl2 | exact Hcontl2 | exact Hparl2
             | exact Hprevl2 | exact Hnextl2 | exact Hflagsl2]. }
         iDestruct ("Hback" with "Hnode") as "Hdll".
-        iAssert (own_ytype_cells parent dq cells arr) with "[Hparent Hdll]" as "Htext".
-        { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
-        wp_apply (wp_scanConflicts parent item_l dq cells arr input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
+        iAssert (own_ytype_runs parent dq ls (MkTypeModel runs arr)) with "[Hparent Hdll]" as "Htext".
+        { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; split; [exact Hlen' | exact Hrepr']. }
+        wp_apply (wp_scanConflicts_runs parent item_l dq ls runs arr input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[Htext Hitem Holeft Horight]").
         { iSplitL "Htext"; [iFrame "Htext" | rewrite /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
         iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
@@ -1437,16 +1354,14 @@ Proof.
   - apply (reachable_head _ y). { exact (Hstep _ H). } exact H0.
 Qed.
 
-(** Auxiliary spec (the raw refinement): integrating a valid run into a valid
-    document yields the document updated per the pure per-char fold
-    ([integrate_all] of [ops_of_input], issue #28 U7): the HEAD op scans
-    exactly like the wire input (same origins/id) and lands the run's head;
-    the tail chains off it adjacently ([integrate_chain]). Kept as the
-    detailed functional characterisation (exposes the fold/[itemVal]); the
-    [wp_Store__Integrate] spec below repackages it. Local: a stepping stone of
-    [wp_Store__integrateCore_cells_run]. *)
-#[local] Lemma wp_Store__integrateCore_aux (s parent item_l : loc) (arr arr' : list (YjsItem A))
-    (input : IntegrateInput (A := A)) (newItem : YjsItem A) (cells : list item_cell)
+(** The raw refinement of [store.integrateCore] at run granularity: the
+    run-level statement of [wp_Store__integrateCore_aux]. The fresh run lands
+    at the cursor [idx] of the address list and the run list, its chars at
+    the matching model index. Local: a stepping stone of
+    [wp_store__integrateCore_runs]. *)
+#[local] Lemma wp_Store__integrateCore_aux_runs (s parent item_l : loc) (arr arr' : list (YjsItem A))
+    (input : IntegrateInput (A := A)) (newItem : YjsItem A)
+    (ls : list loc) (runs : list ItemRun)
     (itemVal : yjs.item.t) (oleft oright : option yjs.id.t) (leftIdx rightIdx : Z)
     (curL curR : nat) :
   YjsArrInvariant arr ->
@@ -1455,40 +1370,40 @@ Qed.
   maximalId newItem arr ->
   findLeftIdx (in_originId input) arr = Some leftIdx ->
   findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
-  (* the caller's item arrives already linked to its resolved origin
-     neighbours and carrying its parent (store.repair / the local-edit
-     creator set them, issue #49); the neighbours are the boundary CELLS of
-     the resolved model indices (issue #28 C1d) *)
-  itemVal.(yjs.item.left') = node_loc cells (Z.of_nat curL - 1) ->
-  itemVal.(yjs.item.right') = node_loc cells (Z.of_nat curR) ->
+  itemVal.(yjs.item.left') = loc_at ls (Z.of_nat curL - 1) ->
+  itemVal.(yjs.item.right') = loc_at ls (Z.of_nat curR) ->
   itemVal.(yjs.item.parent') = parent ->
-  itemVal.(yjs.item.flags') = W8 2 ->   (* freshly built item is Countable (NewItem sets ItemCountable) *)
-  (1 <= length (itemVal.(yjs.item.content').(yjs.content.content')))%nat ->   (* nonempty run *)
-  Forall (λ c, ic_run c ≠ []) cells ->
-  (∀ c0, c0 ∈ cells -> cell_fits c0) ->   (* run-fits: the scan's idSpan no-wrap *)
-  (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->   (* origin-clock: the span query collapse *)
-  (Z.of_nat (length (run_flatten (take curL cells))) = leftIdx + 1)%Z ->
-  (curL <= length cells)%nat ->
-  (Z.of_nat (length (run_flatten (take curR cells))) = rightIdx)%Z ->
-  (curR <= length cells)%nat ->
+  itemVal.(yjs.item.flags') = W8 2 ->
+  (1 <= length (itemVal.(yjs.item.content').(yjs.content.content')))%nat ->
+  Forall (λ r, run_items r ≠ []) runs ->
+  (∀ r, r ∈ runs -> run_fits r) ->
+  (∀ r, r ∈ runs -> run_origin_clk r) ->
+  (Z.of_nat (length (runs_flatten (take curL runs))) = leftIdx + 1)%Z ->
+  (curL <= length runs)%nat ->
+  (Z.of_nat (length (runs_flatten (take curR runs))) = rightIdx)%Z ->
+  (curR <= length runs)%nat ->
   integrate_all (ops_of_input input (explode (toContent itemVal.(yjs.item.content')))) arr = Some arr' ->
-  {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
+  {{{ is_pkg_init yjs ∗ own_ytype_runs parent (DfracOwn 1) ls (MkTypeModel runs arr) ∗
       own_fresh_item_raw item_l input itemVal oleft oright }}}
     s @! (go.PointerType yjs.store) @! "integrateCore" #parent #item_l
-  {{{ (cells' : list item_cell) (idx midx : nat) (c : item_cell), RET #();
-      own_ytype_cells parent (DfracOwn 1) cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ ∗
-      ⌜cells' = take idx cells ++ c :: drop idx cells⌝ ∗
-      ⌜(idx <= length cells)%nat⌝ ∗
-      ⌜length (run_flatten (take idx cells)) = midx⌝ ∗
-      ⌜(midx <= length arr)%nat⌝ ∗
-      ⌜arr' = take midx arr ++ ic_run c ++ drop midx arr⌝ ∗
-      ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
-      ⌜item_id (run_head c) = in_id input⌝ ∗ ⌜ic_deleted c = false⌝ ∗
-      ⌜origin (run_head c) = origin newItem⌝ ∗ ⌜rightOrigin (run_head c) = rightOrigin newItem⌝ ∗
-      ⌜length (ic_run c) = length (explode (toContent itemVal.(yjs.item.content')))⌝ ∗
-      ⌜cells' ≡ₚ cells ++ [c]⌝ }}}.
+  {{{ (idx : nat) (run : list (YjsItem A)), RET #();
+      own_ytype_runs parent (DfracOwn 1) (integrate_locs ls idx item_l)
+        (MkTypeModel (take idx runs ++ MkItemRun run false :: drop idx runs) arr') ∗
+      ⌜YjsArrInvariant arr'⌝ ∗
+      ⌜(idx <= length runs)%nat⌝ ∗
+      ⌜(length (runs_flatten (take idx runs)) <= length arr)%nat⌝ ∗
+      ⌜arr' = take (length (runs_flatten (take idx runs))) arr ++ run ++
+              drop (length (runs_flatten (take idx runs))) arr⌝ ∗
+      ⌜item_id (hd inhabitant run) = in_id input⌝ ∗
+      ⌜origin (hd inhabitant run) = origin newItem⌝ ∗
+      ⌜rightOrigin (hd inhabitant run) = rightOrigin newItem⌝ ∗
+      ⌜length run = length (explode (toContent itemVal.(yjs.item.content')))⌝ }}}.
 Proof using Type*.
   move=> Harr Htoitem Hvalid Hmax HfindL HfindR HivL HivR Hivpar Hflags Hlen1 Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb Hall.
+  (* [wp_if_join]'s bare [subst] would eliminate [parent] through [Hivpar]
+     mid-proof; substitute it NOW and re-bind the name as a local
+     definition, which [subst] skips. *)
+  subst parent. set (parent := itemVal.(yjs.item.parent')) in *.
   (* --- issue #28 U7: split the fold. The head op [h] shares the wire
      input's origins/id, so its scan is literally the input's; decompose
      its setintegrate into the destIdx/itemM case shape the singleton
@@ -1549,13 +1464,14 @@ Proof using Type*.
   have Hlr := findptridx_order2.YjsLt'_findPtrIdx_lt arr (origin newItem) (rightOrigin newItem)
                 leftIdx rightIdx Harr Horig Hror (iiv_origin_lt _ Hvalid) HfLp HfRp.
   have HrUB := insert_lemmas.findPtrIdx_le_size arr (rightOrigin newItem) rightIdx HfRp.
-  iDestruct "Htext" as (yt3 tl3) "(Hparent & Hdll & %Hlen3 & %Hrepr3 & %Hcpar3)".
-  have Hrfl : arr = run_flatten cells := Hrepr3.
+  iDestruct "Htext" as (yt3 tl3) "(Hparent & Hdll & %Hlen3 & %Hrepr3)".
+  iDestruct (own_dll_runs_length with "Hdll") as %Hlenl. simpl in Hlenl.
+  have Hrfl : arr = runs_flatten runs := Hrepr3.
   iDestruct "Holeft" as "#Holeft". iDestruct "Horight" as "#Horight".
   (* the item's links are already resolved: no repair stepping (issue #49) *)
   set iv2 := itemVal.
-  have Hiv2L : iv2.(yjs.item.left') = node_loc cells (Z.of_nat curL - 1) := HivL.
-  have Hiv2R : iv2.(yjs.item.right') = node_loc cells (Z.of_nat curR) := HivR.
+  have Hiv2L : iv2.(yjs.item.left') = loc_at ls (Z.of_nat curL - 1) := HivL.
+  have Hiv2R : iv2.(yjs.item.right') = loc_at ls (Z.of_nat curR) := HivR.
   have Hiv2oL : iv2.(yjs.item.originLeftId') = itemVal.(yjs.item.originLeftId') := eq_refl.
   have Hiv2oR : iv2.(yjs.item.originRightId') = itemVal.(yjs.item.originRightId') := eq_refl.
   have Hiv2id : iv2.(yjs.item.id') = itemVal.(yjs.item.id') := eq_refl.
@@ -1564,20 +1480,20 @@ Proof using Type*.
   wp_auto.
   (* Conflict scan (the extracted algorithmic core), via the proved spec. *)
   rewrite Hiv2L Hiv2R.
-  iAssert (own_ytype_cells parent (DfracOwn 1) cells arr) with "[Hparent Hdll]" as "Htext".
+  iAssert (own_ytype_runs parent (DfracOwn 1) ls (MkTypeModel runs arr)) with "[Hparent Hdll]" as "Htext".
   { iExists yt3, tl3. iFrame "Hparent Hdll". done. }
   iAssert (own_fresh_item_raw item_l input iv2 oleft oright) with "[Hitem]" as "Hfresh".
   { rewrite /own_fresh_item_raw. iFrame "Hitem". rewrite Hiv2oL Hiv2oR. iFrame "Holeft Horight".
     iPureIntro; split_and!; [exact Hin_l | exact Hin_r | rewrite Hiv2id; exact Hid | rewrite Hiv2con; exact Hcontent]. }
-  wp_apply (wp_findIntegrationLeft parent item_l (node_loc cells (Z.of_nat curL - 1)) (node_loc cells (Z.of_nat curR))
-              (DfracOwn 1) cells arr input newItem iv2 oleft oright leftIdx rightIdx destIdx curL curR
+  wp_apply (wp_findIntegrationLeft_runs parent item_l (loc_at ls (Z.of_nat curL - 1)) (loc_at ls (Z.of_nat curR))
+              (DfracOwn 1) ls runs arr input newItem iv2 oleft oright leftIdx rightIdx destIdx curL curR
               Harr Htoitem Hvalid Hmax HfindL HfindR HfindD eq_refl eq_refl Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[$Htext $Hfresh]").
   iIntros (v) "(Htext & Hfresh & Hpost)".
   iDestruct "Hpost" as (curD) "(%Hveq & %HcurDc & %HcurDb)". subst v.
   wp_auto.
   (* [destIdx] is in bounds ([≤ rightIdx ≤ length arr]), so the model splice
      index is valid and [insertIdxIfInBounds] actually inserts (mirrors
-     setintegrate_eq_integrate to reach findIntegratedIndex_bounds); the CELL
+     setintegrate_eq_integrate to reach findIntegratedIndex_bounds); the RUN
      splice happens at the returned anchor boundary [curD]. *)
   have Hsameid : forall x, ArrSet arr (itemPtr x) -> item_id x = item_id newItem -> x = newItem.
   { move=> x Hx Hxid. exfalso.
@@ -1593,7 +1509,7 @@ Proof using Type*.
   have Hfii : findIntegratedIndex leftIdx rightIdx input arr = Some destIdx by (rewrite -Hsfeq; exact HfindD).
   have Hdle_r := findIntegratedIndex_bounds leftIdx rightIdx input arr destIdx HlB Hlr Hfii.
   have Hdle_arr : (destIdx <= length arr)%nat by (clear -Hdle_r HrUB; lia).
-  have HcurD_nat : length (run_flatten (take curD cells)) = destIdx
+  have HcurD_nat : length (runs_flatten (take curD runs)) = destIdx
     by (apply Nat2Z.inj; exact HcurDc).
   (* [wp_if_join]'s [wp_if_destruct] runs a bare [subst], which would consume
      the boundary equations ([Hrfl], [HcurD_nat], the [HcurR] premise) and
@@ -1603,65 +1519,65 @@ Proof using Type*.
      joins. *)
   clear Hrepr3.
   subst destIdx rightIdx arr.
-  set (arr := run_flatten cells) in *.
-  set (rightIdx := Z.of_nat (length (run_flatten (take curR cells)))) in *.
-  set (destIdx := (length (run_flatten (take curD cells)))) in *.
-  have Hrfl : arr = run_flatten cells := eq_refl.
-  have HcurD_nat : length (run_flatten (take curD cells)) = destIdx := eq_refl.
-  (* Splice [item] in at index [destIdx]: relink left.right / right.left / item /
-     parent.start (own_dll_app to split at destIdx, wp_store to relink, rejoin via
-     own_dll_insert_middle), bump parent.len, then conclude is_valid_ytype parent
-     (insertIdxIfInBounds destIdx itemM arr) via cells_repr_insert and
-     YjsArrInvariant_setintegrate. *)
-  iDestruct "Htext" as (yt' tl') "(Hparent & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
+  set (arr := runs_flatten runs) in *.
+  set (rightIdx := Z.of_nat (length (runs_flatten (take curR runs)))) in *.
+  set (destIdx := (length (runs_flatten (take curD runs)))) in *.
+  have Hrfl : arr = runs_flatten runs := eq_refl.
+  have HcurD_nat : length (runs_flatten (take curD runs)) = destIdx := eq_refl.
+  (* Splice [item] in at cursor [curD]: relink left.right / right.left / item /
+     parent.start (own_dll_runs_app to split at curD, wp_store to relink, rejoin
+     via own_dll_runs_insert_middle), bump parent.len, then conclude the run
+     view at [insertIdxIfInBounds destIdx itemM arr] via the prefix-sum laws
+     and YjsArrInvariant_setintegrate. *)
+  iDestruct "Htext" as (yt' tl') "(Hparent & Hdll & %Hlen' & %Hrepr')".
+  iEval (cbn [tm_runs]) in "Hdll".
   iDestruct "Hfresh" as "(Hitem & #Holeft2 & #Horight2 & %Hin_l2 & %Hin_r2 & %Hid2 & %Hcont2)".
   iDestruct (typed_pointsto_not_null with "Hitem") as %Hitem_nn.
   (* First [if] (y-octo: link [item] after [left]/[parent.start]). The two index
-     cases ([destIdx=0] head insertion vs [destIdx>=1]) converge to a uniform
-     left fragment [cs1m] + an untouched right fragment [drop destIdx cells]. *)
+     cases ([curD=0] head insertion vs [curD>=1]) converge to a uniform
+     left fragment [(ls1, runs1)] + an untouched right fragment [drop curD]. *)
   wp_if_join (λ v, ⌜v = execute_val⌝ ∗
-    ∃ (cs1m : list item_cell) (hd' : loc) (ytv : yjs.yType.t) (ivL : yjs.item.t),
+    ∃ (ls1 : list loc) (runs1 : list ItemRun) (hd' : loc) (ytv : yjs.yType.t) (ivL : yjs.item.t),
       "Hparent" ∷ parent ↦ ytv ∗
       "%Hyts" ∷ ⌜ytv.(yjs.yType.start') = hd'⌝ ∗
-      "%Hytl" ∷ ⌜ytv.(yjs.yType.len') = W64 (num_visible cells)⌝ ∗
-      "Hleftdll" ∷ own_dll (DfracOwn 1) parent hd' (node_loc cells (Z.of_nat curD - 1)) null item_l cs1m ∗
-      "%Hcs1m" ∷ ⌜cells_repr arr cs1m (take destIdx arr)⌝ ∗
-      "%Hcs1eq" ∷ ⌜cs1m = take curD cells⌝ ∗
+      "%Hytl" ∷ ⌜ytv.(yjs.yType.len') = W64 (runs_visible runs)⌝ ∗
+      "Hleftdll" ∷ own_dll_runs (DfracOwn 1) parent hd' (loc_at ls (Z.of_nat curD - 1)) null item_l ls1 runs1 ∗
+      "%Hls1" ∷ ⌜ls1 = take curD ls⌝ ∗
+      "%Hruns1" ∷ ⌜runs1 = take curD runs⌝ ∗
       "Hitem" ∷ item_l ↦ ivL ∗
-      "%HivLl" ∷ ⌜ivL.(yjs.item.left') = node_loc cells (Z.of_nat curD - 1)⌝ ∗
+      "%HivLl" ∷ ⌜ivL.(yjs.item.left') = loc_at ls (Z.of_nat curD - 1)⌝ ∗
       "%HivLf" ∷ ⌜ivL.(yjs.item.flags') = iv2.(yjs.item.flags')⌝ ∗
       "%HivLc" ∷ ⌜ivL.(yjs.item.content') = iv2.(yjs.item.content')⌝ ∗
       "%HivLid" ∷ ⌜ivL.(yjs.item.id') = iv2.(yjs.item.id')⌝ ∗
       "%HivLoL" ∷ ⌜ivL.(yjs.item.originLeftId') = iv2.(yjs.item.originLeftId')⌝ ∗
       "%HivLoR" ∷ ⌜ivL.(yjs.item.originRightId') = iv2.(yjs.item.originRightId')⌝ ∗
       "%HivLpar" ∷ ⌜ivL.(yjs.item.parent') = iv2.(yjs.item.parent')⌝ ∗
-      "Hrightdll" ∷ own_dll (DfracOwn 1) parent (node_loc cells (Z.of_nat curD)) tl' (node_loc cells (Z.of_nat curD - 1)) null (drop curD cells) ∗
-      "Hrightptr" ∷ right_ptr ↦ node_loc cells (Z.of_nat curD) ∗
+      "Hrightdll" ∷ own_dll_runs (DfracOwn 1) parent (loc_at ls (Z.of_nat curD)) tl' (loc_at ls (Z.of_nat curD - 1)) null (drop curD ls) (drop curD runs) ∗
+      "Hrightptr" ∷ right_ptr ↦ loc_at ls (Z.of_nat curD) ∗
       "item" ∷ item_ptr ↦ item_l ∗
       "parent" ∷ parent_ptr ↦ parent)%I
     with "[Hparent Hdll Hitem left right item parent]".
   { (* curD = 0 : head insertion (else branch already executed) *)
     destruct (decide (curD = 0%nat)) as [Hd0|Hne]; last first.
-    { iDestruct (node_loc_lt_not_null (DfracOwn 1) cells yt'.(yjs.yType.start') tl' (curD - 1) with "Hdll") as "(%Hnn & Hdll)"; first lia.
+    { iDestruct (loc_at_lt_not_null (DfracOwn 1) parent yt'.(yjs.yType.start') tl' ls runs (curD - 1)%nat ltac:(lia) with "Hdll") as "(%Hnn & Hdll)".
       iExFalso. iPureIntro.
       apply Hnn.
       have -> : Z.of_nat (curD - 1) = (Z.of_nat curD - 1)%Z by lia.
       exact e. }
-    have Hd0m : destIdx = 0%nat by rewrite -HcurD_nat Hd0 take_0 run_flatten_nil //.
-    iDestruct (own_dll_head_node with "Hdll") as %Hhd.
-    have Hhd2 : node_loc cells (Z.of_nat curD) = yt'.(yjs.yType.start').
-    { rewrite Hhd. f_equal. lia. }
-    have Hdrop : drop curD cells = cells by rewrite Hd0 //.
+    have Hd0m : destIdx = 0%nat by rewrite -HcurD_nat Hd0 take_0 runs_flatten_nil //.
+    iDestruct (own_dll_runs_headptr with "Hdll") as "[%Hhd Hdll]".
+    have Hhd2 : loc_at ls (Z.of_nat curD) = yt'.(yjs.yType.start').
+    { rewrite Hhd Hd0 /loc_at. destruct ls as [|l0 ls0]; simpl;
+        first [ done | (case_decide; [done | lia]) ]. }
+    have Hdropl : drop curD ls = ls by rewrite Hd0 //.
+    have Hdropr : drop curD runs = runs by rewrite Hd0 //.
     iSplitR; first done.
-    iExists [], item_l, (yt' <| yjs.yType.start' := item_l |>), (iv2 <| yjs.item.left' := null |>).
+    iExists [], [], item_l, (yt' <| yjs.yType.start' := item_l |>), (iv2 <| yjs.item.left' := null |>).
     iFrame "Hparent Hitem".
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. exact Hlen'. }
-    iSplitR.
-    { rewrite /own_dll /=. iSplit; iPureIntro.
-      - move=> c Hc. by rewrite elem_of_nil in Hc.
-      - split; [done | exact e]. }
-    iSplitR. { iPureIntro. rewrite Hd0m /=. apply cells_repr_nil. }
+    iSplitR. { iEval (simpl). iPureIntro. split; [done | exact e]. }
+    iSplitR. { iPureIntro. rewrite Hd0 take_0 //. }
     iSplitR. { iPureIntro. rewrite Hd0 take_0 //. }
     iSplitR. { iPureIntro. rewrite e //. }
     iSplitR. { iPureIntro. done. }
@@ -1670,51 +1586,60 @@ Proof using Type*.
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
-    rewrite Hhd2 e Hdrop.
+    rewrite Hhd2 e Hdropl Hdropr.
     iFrame "Hdll right item parent". }
-  { (* curD >= 1 : splice [item] after cell (curD-1) (then branch). Relink
-       that node's [right'] to [item] via own_dll_app + cons unfold + wp_store. *)
+  { (* curD >= 1 : splice [item] after the run at (curD-1) (then branch). Relink
+       that node's [right'] to [item] via own_dll_runs_app + cons unfold + wp_store. *)
     have Hdpos : (1 <= curD)%nat.
     { destruct (decide (1 <= curD)%nat) as [?|Hlt]; [done | exfalso; apply n].
       have Hd0 : curD = 0%nat by lia.
-      rewrite Hd0 /node_loc. case_decide as Hdc; [exfalso; lia | done]. }
-    have Hltlen : (curD - 1 < length cells)%nat by lia.
-    destruct (cells !! (curD - 1)%nat) as [lc|] eqn:Hlc; last by (apply lookup_ge_None in Hlc; lia).
-    have Hlcloc : node_loc cells (Z.of_nat curD - 1) = ic_loc lc.
-    { rewrite /node_loc decide_True; last lia.
+      rewrite Hd0 /loc_at. case_decide as Hdc; [exfalso; lia | done]. }
+    have Hltlen : (curD - 1 < length ls)%nat by lia.
+    destruct (ls !! (curD - 1)%nat) as [lcD|] eqn:HlD; last by (apply lookup_ge_None in HlD; lia).
+    destruct (runs !! (curD - 1)%nat) as [rD|] eqn:HrD; last by (apply lookup_ge_None in HrD; lia).
+    have HlDloc : loc_at ls (Z.of_nat curD - 1) = lcD.
+    { rewrite /loc_at decide_True; last lia.
       have -> : Z.to_nat (Z.of_nat curD - 1) = (curD - 1)%nat by lia.
-      rewrite Hlc //. }
-    have Hdrop_eq : drop (curD - 1)%nat cells = lc :: drop curD cells.
-    { rewrite (drop_S cells lc (curD-1)%nat Hlc). have -> : S (curD - 1)%nat = curD by lia. done. }
-    have Hce : cells = take (curD - 1)%nat cells ++ lc :: drop curD cells.
-    { rewrite -Hdrop_eq. symmetry. apply take_drop. }
-    have Htake : take curD cells = take (curD - 1)%nat cells ++ [lc].
-    { rewrite -(take_S_r cells (curD-1)%nat lc Hlc). f_equal. lia. }
-    iEval (rewrite {1}Hce) in "Hdll".
-    iEval (rewrite own_dll_app) in "Hdll".
+      rewrite HlD //. }
+    have Hdrop_l : drop (curD - 1)%nat ls = lcD :: drop curD ls.
+    { rewrite (drop_S ls lcD (curD-1)%nat HlD). have -> : S (curD - 1)%nat = curD by lia. done. }
+    have Hdrop_r : drop (curD - 1)%nat runs = rD :: drop curD runs.
+    { rewrite (drop_S runs rD (curD-1)%nat HrD). have -> : S (curD - 1)%nat = curD by lia. done. }
+    have Hce_l : ls = take (curD - 1)%nat ls ++ lcD :: drop curD ls.
+    { rewrite -Hdrop_l. symmetry. apply take_drop. }
+    have Hce_r : runs = take (curD - 1)%nat runs ++ rD :: drop curD runs.
+    { rewrite -Hdrop_r. symmetry. apply take_drop. }
+    have Htake_l : take curD ls = take (curD - 1)%nat ls ++ [lcD].
+    { rewrite -(take_S_r ls (curD-1)%nat lcD HlD). f_equal. lia. }
+    have Htake_r : take curD runs = take (curD - 1)%nat runs ++ [rD].
+    { rewrite -(take_S_r runs (curD-1)%nat rD HrD). f_equal. lia. }
+    have Hlent : length (take (curD - 1)%nat ls) = length (take (curD - 1)%nat runs)
+      by rewrite !length_take Hlenl.
+    iEval (rewrite {1}Hce_l {1}Hce_r (own_dll_runs_app _ _ _ _ _ _ _ _ _ _ Hlent)) in "Hdll".
     iDestruct "Hdll" as (ml1 mf1) "[Hleft1 Hright1]".
-    iDestruct (own_dll_cons_node_unfold with "Hright1") as (nxtlc) "(%Hhead1 & %Hrunlc & %Hpclc & Hnodelc & Hrest)".
-    destruct Hhead1 as [Hmf1 Hmf1nn].
+    iDestruct (own_dll_runs_cons_unfold with "Hright1") as (nxtlc) "(%Hhead1 & %Hpclc & %Hrunlc & Hnodelc & Hrest)".
+    destruct Hhead1 as [Hmf1 Hmf1nn]. subst mf1.
     iDestruct "Hnodelc" as (ivlc olidlc oridlc)
       "(Hval & Holc & Horc & %Hinllc & %Hinrlc & %Hidlcn & %Hcontlcn & %Hparlc & %Hprev1 & %Hnextlc & %Hflagslc)".
-    iDestruct (own_dll_headptr with "Hrest") as "[%Hhd_rest Hrest]".
-    have Hcr_rest : ivlc.(yjs.item.right') = node_loc cells (Z.of_nat curD).
-    { rewrite Hnextlc Hhd_rest /node_loc decide_True; last lia. rewrite Nat2Z.id. f_equal. f_equal.
+    iDestruct (own_dll_runs_headptr with "Hrest") as "[%Hhd_rest Hrest]".
+    have Hcr_rest : ivlc.(yjs.item.right') = loc_at ls (Z.of_nat curD).
+    { rewrite Hnextlc Hhd_rest /loc_at decide_True; last lia. rewrite Nat2Z.id. f_equal.
       rewrite head_lookup lookup_drop Nat.add_0_r //. }
-    iEval (rewrite Hlcloc) in "left".
-    rewrite Hlcloc.
+    iEval (rewrite HlDloc) in "left".
+    rewrite HlDloc.
     wp_auto.
     iSplitR; first done.
-    iExists (take (curD - 1)%nat cells ++ [lc]), yt'.(yjs.yType.start'), yt', (iv2 <| yjs.item.left' := lc.(ic_loc) |>).
+    iExists (take (curD - 1)%nat ls ++ [lcD]), (take (curD - 1)%nat runs ++ [rD]),
+      yt'.(yjs.yType.start'), yt', (iv2 <| yjs.item.left' := lcD |>).
     iFrame "Hparent Hitem".
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. exact Hlen'. }
     iSplitL "Hleft1 Hval Holc Horc".
-    { rewrite own_dll_app. iExists ml1, lc.(ic_loc).
-      iEval (rewrite Hmf1) in "Hleft1". iFrame "Hleft1".
+    { rewrite (own_dll_runs_app _ _ _ _ _ _ _ [lcD] _ [rD] Hlent). iExists ml1, lcD.
+      iFrame "Hleft1".
       set (ivlc2 := ivlc <| yjs.item.right' := item_l |>).
-      iApply (own_dll_cons_node_fold (DfracOwn 1) _ _ _ item_l lc (@nil item_cell)
-                (Hcpar' lc (list_elem_of_lookup_2 _ _ _ Hlc)) Hrunlc Hpclc).
+      iApply (own_dll_runs_cons_fold (DfracOwn 1) parent lcD ml1 item_l item_l lcD [] rD []
+                Hmf1nn Hrunlc Hpclc).
       iSplitL "Hval Holc Horc".
       { iExists ivlc2, olidlc, oridlc.
         iFrame "Hval Holc Horc".
@@ -1727,13 +1652,9 @@ Proof using Type*.
         - rewrite /ivlc2 /=. exact Hprev1.
         - rewrite /ivlc2 /=. reflexivity.
         - rewrite /ivlc2 /=. exact Hflagslc. }
-      iPureIntro. split.
-      { move=> c Hc. by rewrite elem_of_nil in Hc. }
-      split; reflexivity. }
-    iSplitR.
-    { iPureIntro. rewrite -Htake /cells_repr -HcurD_nat.
-      symmetry. exact (run_flatten_take_prefix cells arr curD Hrfl). }
-    iSplitR. { iPureIntro. symmetry. exact Htake. }
+      iEval (simpl). iPureIntro. split; reflexivity. }
+    iSplitR. { iPureIntro. symmetry. exact Htake_l. }
+    iSplitR. { iPureIntro. symmetry. exact Htake_r. }
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
@@ -1741,49 +1662,43 @@ Proof using Type*.
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
     iSplitR. { iPureIntro. done. }
-    have Hnxtlc_eq : nxtlc = node_loc cells (Z.of_nat curD) by rewrite -Hnextlc Hcr_rest.
+    have Hnxtlc_eq : nxtlc = loc_at ls (Z.of_nat curD) by rewrite -Hnextlc Hcr_rest.
     iEval (rewrite Hnxtlc_eq) in "Hrest".
     iEval (rewrite Hcr_rest) in "right".
     iFrame "Hrest right item parent". }
   iIntros (v) "[%Hv HQ]". iNamed "HQ". subst v. wp_auto.
   (* Second [if] (y-octo: link [right.left] to [item] when a right neighbour
-     exists). The [destIdx<length] / [destIdx=length] cases converge to a right
-     fragment [cs2m] whose first [left'] points at [item]. *)
+     exists). The [curD < length] / [curD = length] cases converge to a right
+     fragment [(ls2, runs2)] whose first [left'] points at [item]. *)
   wp_if_join (λ v, ⌜v = execute_val⌝ ∗
-    ∃ (cs2m : list item_cell) (tlN : loc),
-      "Hrightdll2" ∷ own_dll (DfracOwn 1) parent (node_loc cells (Z.of_nat curD)) tlN item_l null cs2m ∗
-      "%Hcs2m" ∷ ⌜cells_repr arr cs2m (drop destIdx arr)⌝ ∗
-      "%Hcs2eq" ∷ ⌜cs2m = drop curD cells⌝ ∗
-      "Hrightptr" ∷ right_ptr ↦ node_loc cells (Z.of_nat curD) ∗
+    ∃ (ls2 : list loc) (runs2 : list ItemRun) (tlN : loc),
+      "Hrightdll2" ∷ own_dll_runs (DfracOwn 1) parent (loc_at ls (Z.of_nat curD)) tlN item_l null ls2 runs2 ∗
+      "%Hls2" ∷ ⌜ls2 = drop curD ls⌝ ∗
+      "%Hruns2" ∷ ⌜runs2 = drop curD runs⌝ ∗
+      "Hrightptr" ∷ right_ptr ↦ loc_at ls (Z.of_nat curD) ∗
       "item" ∷ item_ptr ↦ item_l)%I
     with "[Hrightdll Hrightptr item]".
-  { (* curD = length cells: no right neighbour (else / no-op) *)
-    destruct (drop curD cells) as [|rc rest] eqn:Hdrop.
-    - iSplitR; first done. iExists [], item_l. iFrame "Hrightptr item".
-      iSplitR.
-      { rewrite /own_dll /=. iSplit; iPureIntro.
-        - move=> c Hc. by rewrite elem_of_nil in Hc.
-        - split; [exact e | reflexivity]. }
-      iSplitR.
-      { iPureIntro.
-        have Hge : (length cells <= curD)%nat.
-        { have Hlen0 : length (drop curD cells) = 0%nat by rewrite Hdrop //.
-          rewrite length_drop in Hlen0. lia. }
-        have Hdge : (length arr <= destIdx)%nat.
-        { rewrite -HcurD_nat take_ge; last exact Hge. rewrite Hrfl //. }
-        rewrite drop_ge; [apply cells_repr_nil | exact Hdge]. }
-      iPureIntro. done.
-    - iDestruct (own_dll_cons_node_unfold with "Hrightdll") as (nxtx) "(%Hl & _)".
+  { (* curD = length: no right neighbour (else / no-op) *)
+    destruct (drop curD ls) as [|rcl restl] eqn:Hdropl;
+      destruct (drop curD runs) as [|rcr restr] eqn:Hdropr.
+    - iSplitR; first done. iExists [], [], item_l. iFrame "Hrightptr item".
+      iSplitR. { iEval (simpl). iPureIntro. split; [exact e | reflexivity]. }
+      iSplit; iPureIntro; done.
+    - iDestruct "Hrightdll" as %[].
+    - iDestruct "Hrightdll" as %[].
+    - iDestruct (own_dll_runs_cons_unfold with "Hrightdll") as (nxtx) "(%Hl & _)".
       destruct Hl as [Hheq Hnn]. exfalso. apply Hnn. rewrite -Hheq. exact e. }
-  { (* curD < length cells: relink right neighbour's left to item *)
-    have Hltlen : (curD < length cells)%nat.
-    { destruct (decide (curD < length cells)%nat) as [?|Hge]; [done|].
-      exfalso. apply n. rewrite /node_loc decide_True; last lia.
+  { (* curD < length: relink right neighbour's left to item *)
+    have Hltlen : (curD < length ls)%nat.
+    { destruct (decide (curD < length ls)%nat) as [?|Hge]; [done|].
+      exfalso. apply n. rewrite /loc_at decide_True; last lia.
       rewrite Nat2Z.id lookup_ge_None_2; [done | lia]. }
-    destruct (drop curD cells) as [|rc rest] eqn:Hdrop.
-    { exfalso. have Hl0 : length (drop curD cells) = 0%nat by rewrite Hdrop //.
+    destruct (drop curD ls) as [|rcl restl] eqn:Hdropl.
+    { exfalso. have Hl0 : length (drop curD ls) = 0%nat by rewrite Hdropl //.
       rewrite length_drop in Hl0. lia. }
-    iDestruct (own_dll_cons_node_unfold with "Hrightdll") as (nxtr) "(%Hlocr & %Hrunr & %Hpcr & Hnoder & Hrestr)".
+    destruct (drop curD runs) as [|rcr restr] eqn:Hdropr.
+    { iDestruct "Hrightdll" as %[]. }
+    iDestruct (own_dll_runs_cons_unfold with "Hrightdll") as (nxtr) "(%Hlocr & %Hpcr & %Hrunr & Hnoder & Hrestr)".
     destruct Hlocr as [Hrcloc Hrcnn].
     iDestruct "Hnoder" as (ivr olidr oridr)
       "(Hvalr & Holr & Horr & %Hinlr & %Hinrr & %Hidrn & %Hcontrn & %Hparr2 & %Hprevr & %Hnextr & %Hflagsr)".
@@ -1791,13 +1706,11 @@ Proof using Type*.
     wp_auto.
     iDestruct (typed_pointsto_not_null with "Hvalr") as %Hrcnn2.
     iSplitR; first done.
-    iExists (rc :: rest), tl'.
+    iExists (rcl :: restl), (rcr :: restr), tl'.
     iFrame "Hrightptr item".
     iSplitL "Hvalr Holr Horr Hrestr".
-    { have Hrc0 : cells !! (curD + 0)%nat = Some rc by rewrite -lookup_drop Hdrop //.
-      rewrite Nat.add_0_r in Hrc0.
-      iApply (own_dll_cons_node_fold (DfracOwn 1) tl' item_l null nxtr rc rest
-                (Hcpar' rc (list_elem_of_lookup_2 _ _ _ Hrc0)) Hrunr Hpcr).
+    { iApply (own_dll_runs_cons_fold (DfracOwn 1) parent tl' item_l null nxtr rcl restl rcr restr
+                Hrcnn Hrunr Hpcr).
       iSplitL "Hvalr Holr Horr".
       { set (ivr2 := ivr <| yjs.item.left' := item_l |>).
         iExists ivr2, olidr, oridr.
@@ -1812,12 +1725,9 @@ Proof using Type*.
         - rewrite /ivr2 /=. exact Hnextr.
         - rewrite /ivr2 /=. exact Hflagsr. }
       iFrame "Hrestr". }
-    iSplitR.
-    { iPureIntro. rewrite /cells_repr -Hdrop -HcurD_nat.
-      symmetry. exact (run_flatten_drop_suffix cells arr curD Hrfl). }
-    iPureIntro. done. }
+    iSplit; iPureIntro; done. }
   iIntros (v) "[%Hv HQ2]". iNamed "HQ2". subst v. wp_auto.
-  (* item.right := right (node_loc cells destIdx) already done; now [Countable()]
+  (* item.right := right (loc_at ls curD) already done; now [Countable()]
      is true (flags = ItemCountable) and [Len()] is the run length, so
      [parent.len += Len()]. Step the [Item.Countable] / [Item.Len] /
      [Content.Len] methods, resolving the symbolic word tests with [Hflv];
@@ -1837,7 +1747,7 @@ Proof using Type*.
   wp_apply strings.wp_string_len. iIntros "%Hslen". wp_auto. rewrite Hclv.
   (* Conclude: resolve [itemM]'s origins, land the WHOLE run's model splice
      ([integrate_chain] off the freshly inserted head, issue #28 U7), and
-     reassemble the DLL with the run cell spliced in. *)
+     reassemble the DLL with the run spliced in. *)
   destruct (findptridx_insert.findLeftIdx_getElemExcept arr input leftIdx HfindL) as [lptr [HgetL HisL]].
   destruct (findptridx_insert.findRightIdx_getElemExcept arr input rightIdx HfindR) as [rptr [HgetR HisR]].
   have HitemM : itemM = Item lptr rptr input.(in_id) ch0.
@@ -1999,7 +1909,7 @@ Proof using Type*.
   { rewrite -Harr'run Htake1 Hdrop1 /RUNITEMS -app_assoc //. }
   have Hinvarr' : YjsArrInvariant arr'.
   { rewrite Harr'run in Hinvfin. exact Hinvfin. }
-  (* the run cell's structural facts *)
+  (* the run's structural facts *)
   have Htailfacts : forall k it, news !! k = Some it ->
       item_id it = MkYjsId (clientId (in_id input)) (clock (in_id input) + S k)%nat ∧
       rightOrigin it = rptr ∧
@@ -2041,44 +1951,43 @@ Proof using Type*.
   have HRUNlen : length RUNITEMS = length (ch0 :: chrest).
   { rewrite /RUNITEMS /= Hnewslen.
     rewrite /tailops ops_from_length //. }
-  (* --- the cell splice, now with the whole run --- *)
-  have Hlen0 : length (cs1m ++ MkItemCell item_l RUNITEMS false parent :: cs2m) = (length cells + 1)%nat.
-  { rewrite length_app /= Hcs1eq Hcs2eq length_take length_drop. lia. }
-  have Hnv0 : num_visible (cs1m ++ MkItemCell item_l RUNITEMS false parent :: cs2m)
-            = (num_visible cells + length RUNITEMS)%nat.
-  { rewrite Hcs1eq Hcs2eq. apply num_visible_insert_visible_run; reflexivity. }
+  (* --- the run splice, now with the whole run --- *)
+  have Hlent1 : length ls1 = length runs1.
+  { rewrite Hls1 Hruns1 !length_take Hlenl //. }
+  have Hnv0 : runs_visible (runs1 ++ MkItemRun RUNITEMS false :: runs2)
+            = (runs_visible runs + length RUNITEMS)%nat.
+  { rewrite runs_visible_app runs_visible_cons /= Hruns1 Hruns2.
+    rewrite -{3}(take_drop curD runs) runs_visible_app. lia. }
   have Hstart : (ytv <| yjs.yType.len' := w64_word_instance.(word.add) ytv.(yjs.yType.len') (W64 (length (ch0 :: chrest))%nat) |>).(yjs.yType.start') = hd'.
   { simpl. exact Hyts. }
-  have Hcs1len : length cs1m = curD.
-  { rewrite Hcs1eq length_take_le; [done | exact HcurDb]. }
-  iApply ("HΦ" $! (cs1m ++ MkItemCell item_l RUNITEMS false parent :: cs2m) curD destIdx (MkItemCell item_l RUNITEMS false parent)).
+  have HrightEq : (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>).(yjs.item.right') = loc_at ls (Z.of_nat curD) by reflexivity.
+  have HleftEq : (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>).(yjs.item.left') = loc_at ls (Z.of_nat curD - 1).
+  { simpl. exact HivLl. }
+  have Hidtr : item_id (run_head_item (MkItemRun RUNITEMS false)) = toYjsId (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>).(yjs.item.id').
+  { rewrite /run_head_item /= Hheadid /= HivLid Hiv2id Hid //. }
+  have Hconttr : content <$> run_items (MkItemRun RUNITEMS false) = explode (toContent (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>).(yjs.item.content')).
+  { rewrite /= HivLc Hiv2con Hchars. exact Hruncont. }
+  have Holtr : origin_id (origin (run_head_item (MkItemRun RUNITEMS false))) = toYjsId <$> oleft.
+  { rewrite /run_head_item /= HitemM /= Hlpo -Hin_l2 //. }
+  have Hortr : origin_id (rightOrigin (run_head_item (MkItemRun RUNITEMS false))) = toYjsId <$> oright.
+  { rewrite /run_head_item /= HitemM /= Hrpo -Hin_r2 //. }
+  have Hpartr : (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>).(yjs.item.parent') = parent.
+  { simpl. rewrite HivLpar /iv2 /parent //. }
+  have Hpcnew : run_per_char (MkItemRun RUNITEMS false)
+    := run_per_char_intro _ _ _ Hconttr.
+  iApply ("HΦ" $! curD RUNITEMS).
   iSplitL "Hparent Hleftdll Hitem Hrightdll2".
   { iExists (ytv <| yjs.yType.len' := w64_word_instance.(word.add) ytv.(yjs.yType.len') (W64 (length (ch0 :: chrest))%nat) |>), tlN.
     iFrame "Hparent".
     iSplitL.
     { rewrite Hstart.
-      have HrightEq : (ivL <| yjs.item.right' := node_loc cells (Z.of_nat curD) |>).(yjs.item.right') = node_loc cells (Z.of_nat curD) by reflexivity.
-      have HleftEq : (ivL <| yjs.item.right' := node_loc cells (Z.of_nat curD) |>).(yjs.item.left') = node_loc cells (Z.of_nat curD - 1).
-      { simpl. exact HivLl. }
-      have Hidtr : item_id (run_head (MkItemCell item_l RUNITEMS false parent)) = toYjsId (ivL <| yjs.item.right' := node_loc cells (Z.of_nat curD) |>).(yjs.item.id').
-      { rewrite /run_head /= Hheadid /= HivLid Hiv2id Hid //. }
-      have Hconttr : content <$> ic_run (MkItemCell item_l RUNITEMS false parent) = explode (toContent (ivL <| yjs.item.right' := node_loc cells (Z.of_nat curD) |>).(yjs.item.content')).
-      { rewrite /= HivLc Hiv2con Hchars. exact Hruncont. }
-      have Holtr : origin_id (origin (run_head (MkItemCell item_l RUNITEMS false parent))) = toYjsId <$> oleft.
-      { rewrite /run_head /= HitemM /= Hlpo -Hin_l2 //. }
-      have Hortr : origin_id (rightOrigin (run_head (MkItemCell item_l RUNITEMS false parent))) = toYjsId <$> oright.
-      { rewrite /run_head /= HitemM /= Hrpo -Hin_r2 //. }
-      have Hpartr : (ivL <| yjs.item.right' := node_loc cells (Z.of_nat curD) |>).(yjs.item.parent')
-                    = ic_parent (MkItemCell item_l RUNITEMS false parent).
-      { simpl. rewrite HivLpar /iv2 Hivpar //. }
-      have Hpcnew : run_per_char (cell_run (MkItemCell item_l RUNITEMS false parent))
-        := run_per_char_intro _ _ _ Hconttr.
-      iApply (own_dll_insert_middle_node (DfracOwn 1) cs1m cs2m (MkItemCell item_l RUNITEMS false parent)
-                hd' tlN (node_loc cells (Z.of_nat curD - 1)) (node_loc cells (Z.of_nat curD))
-                eq_refl Hrunwf Hpcnew).
+      iEval (rewrite /integrate_locs /= -Hls1 -Hls2 -Hruns1 -Hruns2).
+      iApply (own_dll_runs_insert_middle (DfracOwn 1) parent ls1 ls2 runs1 runs2 item_l
+                (MkItemRun RUNITEMS false) hd' tlN (loc_at ls (Z.of_nat curD - 1)) (loc_at ls (Z.of_nat curD))
+                Hlent1 Hitem_nn Hrunwf Hpcnew).
       iSplitL "Hleftdll"; first iFrame "Hleftdll".
       iSplitL "Hitem Holeft2 Horight2"; last iFrame "Hrightdll2".
-      iExists (ivL <| yjs.item.right' := node_loc cells (Z.of_nat curD) |>), oleft, oright.
+      iExists (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>), oleft, oright.
       simpl. rewrite HivLoL HivLoR.
       iFrame "Hitem Holeft2 Horight2".
       iPureIntro. split_and!.
@@ -2090,34 +1999,19 @@ Proof using Type*.
       - exact HleftEq.
       - exact HrightEq.
       - exact Hflv. }
-    iPureIntro. split_and!.
-    - rewrite /= Hytl Hnv0 HRUNlen /=. word.
-    - rewrite /cells_repr Harr'form run_flatten_app run_flatten_cons /=.
-      f_equal; last f_equal.
-      + move: Hcs1m. rewrite /cells_repr //.
-      + move: Hcs2m. rewrite /cells_repr. by move=> ->.
-    - move=> c Hc. rewrite Hcs1eq Hcs2eq in Hc.
-      move: Hc. rewrite elem_of_app elem_of_cons.
-      move=> [Hc | [-> | Hc]].
-      + apply Hcpar'. rewrite -(take_drop curD cells) elem_of_app. by left.
-      + done.
-      + apply Hcpar'. rewrite -(take_drop curD cells) elem_of_app. by right. }
+    iPureIntro. split.
+    - rewrite /= -Hruns1 -Hruns2 Hytl Hnv0 HRUNlen /=. word.
+    - rewrite /= Harr'form runs_flatten_app runs_flatten_cons /= /destIdx
+        -(runs_flatten_take_prefix runs arr curD Hrfl)
+        -(runs_flatten_drop_suffix runs arr curD Hrfl) //. }
   iSplit; [iPureIntro; exact Hinvarr'|].
-  iSplit; [iPureIntro; rewrite Hcs1eq Hcs2eq //|].
   iSplit; [iPureIntro; exact HcurDb|].
-  iSplit; [iPureIntro; exact HcurD_nat|].
   iSplit; [iPureIntro; exact Hdle_arr|].
-  iSplit; [iPureIntro; simpl; exact Harr'form|].
-  iSplit; [iPureIntro; apply list_lookup_middle; by rewrite Hcs1len|].
-  iSplit; [iPureIntro; reflexivity|].
-  iSplit; [iPureIntro; rewrite /run_head /= Hheadid //|].
-  iSplit; [iPureIntro; reflexivity|].
-  iSplit; [iPureIntro; rewrite /run_head /= HitemMh /headit /= -HnewItemEq //|].
-  iSplit; [iPureIntro; rewrite /run_head /= HitemMh /headit /= -HnewItemEq //|].
-  iSplit; [iPureIntro; exact HRUNlen|].
-  iPureIntro. rewrite Hcs1eq Hcs2eq.
-  rewrite (Permutation_cons_append (drop curD cells) (MkItemCell item_l RUNITEMS false parent)).
-  rewrite app_assoc take_drop //.
+  iSplit; [iPureIntro; exact Harr'form|].
+  iSplit; [iPureIntro; rewrite /RUNITEMS /= Hheadid //|].
+  iSplit; [iPureIntro; rewrite /RUNITEMS /= HitemMh /headit /= -HnewItemEq //|].
+  iSplit; [iPureIntro; rewrite /RUNITEMS /= HitemMh /headit /= -HnewItemEq //|].
+  iPureIntro. exact HRUNlen.
 Qed.
 
 (** When [newItem]'s left origin is the current tail element [a] of a valid
@@ -2302,17 +2196,14 @@ Proof.
     + rewrite (find_by_id_self arr b Hinv Hb) /=. reflexivity.
 Qed.
 
-(** [wp_Store__integrateCore_cells_run]: the cells-level spec of the DLL-splice
-    core for an [n]-char run (issue #28 U7). It forwards
-    [wp_Store__integrateCore_aux]'s [n]-char run post directly (no singleton
-    collapse), so the produced cell holds the whole run [ic_run c] with
-    [length = length (explode (in_content input))]. Unlike the single-char
-    version, the model fold's success ([Hall]) is not derived from single
-    integrate totality but supplied by the caller (the update path's replay /
-    certificates). Local: a stepping stone of [wp_Store__Integrate]. *)
-#[local] Lemma wp_Store__integrateCore_cells_run (s parent item_l : loc)
+(** [store.integrateCore] at run granularity on the caller's linked item:
+    the fresh live run lands at one cursor of the address list and the run
+    list ([runs_integrate_splice_at] / [integrate_locs]) and denotes the
+    input ([run_denotes]). Local: a stepping stone of
+    [wp_store__Integrate_runs]. *)
+#[local] Lemma wp_store__integrateCore_runs (s parent item_l : loc)
     (arr arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
-    (newItem : YjsItem A) (cells : list item_cell)
+    (newItem : YjsItem A) (ls : list loc) (runs : list ItemRun)
     (leftIdx rightIdx : Z) (curL curR : nat) :
   YjsArrInvariant arr ->
   toItem input arr = Some newItem ->
@@ -2320,37 +2211,28 @@ Qed.
   maximalId newItem arr ->
   findLeftIdx (in_originId input) arr = Some leftIdx ->
   findRightIdx (in_rightOriginId input) arr = Some rightIdx ->
-  Forall (λ c, ic_run c ≠ []) cells ->
-  (∀ c0, c0 ∈ cells -> cell_fits c0) ->
-  (∀ c0, c0 ∈ cells -> cell_origin_clk c0) ->
-  (Z.of_nat (length (run_flatten (take curL cells))) = leftIdx + 1)%Z ->
-  (curL <= length cells)%nat ->
-  (Z.of_nat (length (run_flatten (take curR cells))) = rightIdx)%Z ->
-  (curR <= length cells)%nat ->
+  Forall (λ r, run_items r ≠ []) runs ->
+  (∀ r, r ∈ runs -> run_fits r) ->
+  (∀ r, r ∈ runs -> run_origin_clk r) ->
+  (Z.of_nat (length (runs_flatten (take curL runs))) = leftIdx + 1)%Z ->
+  (curL <= length runs)%nat ->
+  (Z.of_nat (length (runs_flatten (take curR runs))) = rightIdx)%Z ->
+  (curR <= length runs)%nat ->
   integrate_all (ops_of_input input (explode (in_content input))) arr = Some arr' ->
-  {{{ is_pkg_init yjs ∗ own_ytype_cells parent (DfracOwn 1) cells arr ∗
-      own_linked_item item_l input parent (node_loc cells (Z.of_nat curL - 1)) (node_loc cells (Z.of_nat curR)) }}}
+  {{{ is_pkg_init yjs ∗ own_ytype_runs parent (DfracOwn 1) ls (MkTypeModel runs arr) ∗
+      own_linked_item item_l input parent (loc_at ls (Z.of_nat curL - 1)) (loc_at ls (Z.of_nat curR)) }}}
     s @! (go.PointerType yjs.store) @! "integrateCore" #parent #item_l
-  {{{ (idx midx : nat) (cells' : list item_cell) (c : item_cell), RET #();
-      own_ytype_cells parent (DfracOwn 1) cells' arr' ∗ ⌜YjsArrInvariant arr'⌝ ∗
-      ⌜cells' = take idx cells ++ c :: drop idx cells⌝ ∗
-      ⌜(idx <= length cells)%nat⌝ ∗
-      ⌜length (run_flatten (take idx cells)) = midx⌝ ∗
-      ⌜(midx <= length arr)%nat⌝ ∗
-      ⌜arr' = take midx arr ++ ic_run c ++ drop midx arr⌝ ∗
-      ⌜cells' !! idx = Some c⌝ ∗ ⌜ic_loc c = item_l⌝ ∗
-      ⌜item_id (run_head c) = in_id input⌝ ∗ ⌜ic_deleted c = false⌝ ∗
-      ⌜origin (run_head c) = origin newItem⌝ ∗ ⌜rightOrigin (run_head c) = rightOrigin newItem⌝ ∗
-      ⌜length (ic_run c) = length (explode (in_content input))⌝ ∗
-      ⌜cells' ≡ₚ cells ++ [c]⌝ }}}.
+  {{{ (idx : nat) (run : list (YjsItem A)), RET #();
+      own_ytype_runs parent (DfracOwn 1) (integrate_locs ls idx item_l)
+        (MkTypeModel (take idx runs ++ MkItemRun run false :: drop idx runs) arr') ∗
+      ⌜YjsArrInvariant arr'⌝ ∗
+      ⌜runs_integrate_splice_at idx runs arr run (take idx runs ++ MkItemRun run false :: drop idx runs) arr'⌝ ∗
+      ⌜run_denotes input newItem run⌝ }}}.
 Proof using Type*.
   move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb Hall.
   iIntros (Φ) "(Hpkg & Htext & Hfresh) HΦ".
   iDestruct "Hfresh" as (itemVal oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrun)".
   iDestruct "Hraw" as "(Hitem & Holeft & Horight & %Hin_l & %Hin_r & %Hid & %Hcontent)".
-  (* the caller's fold premise is over [in_content input]; rewrite it onto the
-     item's own content ([toContent itemVal.content = in_content input]) so it feeds
-     [integrateCore_aux] verbatim. *)
   have Hcc : explode (toContent itemVal.(yjs.item.content')) = explode (in_content input)
     by rewrite Hcontent.
   have Hall' : integrate_all (ops_of_input input (explode (toContent itemVal.(yjs.item.content')))) arr = Some arr'
@@ -2359,18 +2241,18 @@ Proof using Type*.
   iAssert (own_fresh_item_raw item_l input itemVal oleft oright) with "[Hitem Holeft Horight]" as "Hraw".
   { iFrame "Hitem Holeft Horight". iPureIntro.
     split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent]. }
-  wp_apply (wp_Store__integrateCore_aux s parent item_l arr arr' input newItem cells itemVal oleft oright
+  wp_apply (wp_Store__integrateCore_aux_runs s parent item_l arr arr' input newItem ls runs itemVal oleft oright
               leftIdx rightIdx curL curR
               Hinv Htoitem Hvalid Hmax HfindL HfindR Hfl Hfr Hfpar Hflags Hlen1 Hnec Hfits Hoclk
               HcurL HcurLb HcurR HcurRb Hall'
               with "[$Hpkg $Hraw $Htext]").
-  iIntros (cells' idx midx c) "(Htext' & %Hinv' & %Hsplice & %Hidxb & %Hcoup & %Hmile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Horig & %Hrorig & %Hclen & %Hperm)".
-  iApply ("HΦ" $! idx midx cells' c).
+  iIntros (idx run) "(Htext' & %Hinv' & %Hidxb & %Hmile & %Harrsp & %Hcid & %Horig & %Hrorig & %Hclen)".
+  iApply ("HΦ" $! idx run).
   iFrame "Htext'".
-  iPureIntro. split_and!;
-    [exact Hinv' | exact Hsplice | exact Hidxb | exact Hcoup | exact Hmile | exact Harrsp
-    | exact Hlook | exact Hloc | exact Hcid | exact Hcdel | exact Horig | exact Hrorig
-    | rewrite Hclen Hcc // | exact Hperm].
+  iPureIntro. split_and!.
+  - exact Hinv'.
+  - split_and!; [exact Hidxb | exact Hmile | done | exact Harrsp].
+  - split_and!; [exact Hcid | exact Horig | exact Hrorig | rewrite Hclen Hcc explode_length //].
 Qed.
 
 (* The former public model-level [wp_Store__integrateCore] (over [own_ytype])
@@ -2505,14 +2387,247 @@ Proof using Type*.
   iFrame "Hitemmap'".
 Qed.
 
-(** [Store.Integrate parent item]: splice the fresh linked item [item_l] into
-    the type [parent] of the store (the argument may be [null], in which case
-    the item's own [parent] field names the type). The model takes the
-    [integrate_all] step of the item's chars ([integrate_ready]), the type's
-    cell list gets the run at the matching position ([integrate_splice]), the
-    run is the input's ([run_denotes]), and the store's invariants survive:
-    the item's chars fit ([input_fits]) and its id is its client's newest in
-    the whole pool ([pool_clock_below]). *)
+(** [Store.Integrate parent item] at run granularity: splice the fresh
+    linked item [item_l] into the type [parent] of the store (the argument
+    may be [null], in which case the item's own [parent] field names the
+    type). The origins are read at their run cursors ([origins_resolved])
+    and the two link addresses off the address list ([loc_at]); the run
+    lands at one shared cursor of the run list and the address list
+    ([runs_integrate_splice_at] / [integrate_locs]), denotes the input
+    ([run_denotes]), and the store's invariants survive: the item's chars
+    fit ([input_fits]) and its id is its client's newest in the whole pool
+    ([pool_run_clock_below]). Proved on the run core; the cell-level
+    [wp_Store__Integrate] is derived from it. *)
+Lemma wp_store__Integrate_runs (s parent parent_arg item_l : loc)
+    (str : store_state_runs) (tm : type_model) (ls : list loc)
+    (arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
+    (newItem : YjsItem A) (kL kR : nat) :
+  parent_arg = parent ∨ parent_arg = null ->
+  sr_pool str !! parent = Some tm ->
+  sr_locs str !! parent = Some ls ->
+  integrate_ready (tm_arr tm) input newItem ->
+  input_fits input ->
+  integrate_all (ops_of_input input (explode (in_content input))) (tm_arr tm) = Some arr' ->
+  origins_resolved (tm_runs tm) (tm_arr tm) input kL kR ->
+  pool_run_clock_below (sr_pool str) (in_id input) ->
+  {{{ is_pkg_init yjs ∗ own_store_runs s str ∗
+      own_linked_item item_l input parent
+        (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) }}}
+    s @! (go.PointerType yjs.store) @! "Integrate" #parent_arg #item_l
+  {{{ (runs' : list ItemRun) (ls' : list loc) (run : list (YjsItem A)), RET #();
+      own_store_runs s (str <| sr_pool := <[parent := MkTypeModel runs' arr']> (sr_pool str) |>
+                            <| sr_locs := <[parent := ls']> (sr_locs str) |>) ∗
+      ⌜YjsArrInvariant arr'⌝ ∗
+      ⌜∃ idx : nat, runs_integrate_splice_at idx (tm_runs tm) (tm_arr tm) run runs' arr' ∧
+                    ls' = integrate_locs ls idx item_l⌝ ∗
+      ⌜run_denotes input newItem run⌝ }}}.
+Proof using Type*.
+  move=> Hparg Hpl Hlocs Hready Hfitsin Hall Hres Hbelow.
+  iIntros (Φ) "(#Hpkg & Hruns & Hfresh) HΦ".
+  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  iDestruct (own_store_runs_run_pool_invs with "Hruns") as %Hrpinv.
+  iDestruct (own_store_runs_run_wf with "Hruns") as %Hwfall.
+  iDestruct "Hruns" as "(Hstruct & %Haligned)".
+  iDestruct "Hstruct" as "(Hfields0 & %Hinvs0)".
+  have Hpool : pool_invs (types_of_locs_pool locs p) := proj1 Hinvs0.
+  have Hreg : registry_coh bind (types_of_locs_pool locs p) := proj2 Hinvs0.
+  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes0 & Hpending & Hpdeletes)".
+  iEval (simpl) in "Htypes0". iEval (simpl) in "Hitems".
+  set (types := types_of_locs_pool locs p) in *.
+  have Hprem := locs_aligned_lens _ _ Haligned.
+  have Hlsl : length ls = length (tm_runs tm).
+  { destruct (Hprem parent tm Hpl) as (ls0 & Hls0 & Hlen0).
+    rewrite Hlocs in Hls0. injection Hls0 as <-. exact Hlen0. }
+  set (cells := cells_of_locs_runs parent ls (tm_runs tm)).
+  have Hts : types !! parent = Some (MkTypeState cells (tm_arr tm)).
+  { rewrite /types /types_of_locs_pool map_lookup_imap Hpl /= Hlocs //. }
+  have [Htoitem [Hvalid Hmax]] := Hready.
+  destruct Hres as (leftIdx & rightIdx & HfindL & HfindR & HcurL & HcurLb & HcurR & HcurRb).
+  iDestruct (linked_item_fresh2 with "Hfresh Htypes0") as %Hfreshloc.
+  iDestruct (own_type_pool_id_bounds with "Htypes0") as %Hbndb.
+  iDestruct (own_type_pool_runs_wf with "Htypes0") as %Hwfb.
+  have Hidck : (Z.of_nat (clock (in_id input)) < 2^64)%Z.
+  { move: Hfitsin. rewrite /input_fits. lia. }
+  iDestruct "Hfresh" as (iv2 oleft2 oright2) "(Hraw & %Hfl2 & %Hfr2 & %Hfpar2 & %Hflags2 & %Hrun2)".
+  iNamed "Hraw".
+  have Hclbnd : (Z.of_nat (clientId (in_id input)) < 2^64)%Z.
+  { rewrite -Hid /toYjsId /=. word. }
+  have Hbelowp : pool_run_clock_below (pool_of types) (in_id input).
+  { rewrite /types (pool_of_types_of_locs_pool locs p Hprem). exact Hbelow. }
+  have Hbelowc : pool_clock_below types (in_id input)
+    := pool_run_clock_below_to_cell types (in_id input)
+         (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
+         (λ c Hc, proj1 (Hwfb c Hc)) Hclbnd Hidck Hbelowp.
+  rewrite /own_type_pool.
+  iDestruct (big_sepM_delete _ _ parent _ Hts with "Htypes0") as "[[Htext %Hinv] Htypesrest]".
+  iEval (cbn [ty_cells ty_arr]) in "Htext".
+  have Hidnew : item_id newItem = in_id input := commutativity.toItem_id input (tm_arr tm) newItem Htoitem.
+  (* the per-run side conditions of the core, from the run pool invariants *)
+  have Hrunsall : ∀ r, r ∈ tm_runs tm -> r ∈ all_runs p.
+  { move=> r Hr. apply elem_of_all_runs. exists parent, tm. split; [exact Hpl | exact Hr]. }
+  have [Hfitsall [_ Hoclkall]] := Hrpinv.
+  have Hfits : ∀ r, r ∈ tm_runs tm -> run_fits r := λ r Hr, Hfitsall r (Hrunsall r Hr).
+  have Hoclk : ∀ r, r ∈ tm_runs tm -> run_origin_clk r := λ r Hr, Hoclkall r (Hrunsall r Hr).
+  have Hnec : Forall (λ r, run_items r ≠ []) (tm_runs tm).
+  { apply Forall_forall. move=> r Hr. exact (proj1 (Hwfall r (Hrunsall r Hr))). }
+  iDestruct (own_ytype_runs_intro with "Htext") as "Htext".
+  iEval (rewrite /cells (cells_of_locs_runs_loc parent ls (tm_runs tm) Hlsl)
+                 (cells_of_locs_runs_run parent ls (tm_runs tm) Hlsl)) in "Htext".
+  iDestruct "Htext" as (yt0 tl0) "(Hparent0 & Hdll0 & %Hlen0 & %Hrepr0)".
+  iDestruct (typed_pointsto_not_null with "Hparent0") as %Hpnn.
+  iAssert (own_ytype_runs parent (DfracOwn 1) ls (MkTypeModel (tm_runs tm) (tm_arr tm)))
+    with "[Hparent0 Hdll0]" as "Htext".
+  { iExists yt0, tl0. iFrame "Hparent0 Hdll0". iPureIntro. split; [exact Hlen0 | exact Hrepr0]. }
+  wp_method_call. wp_call. wp_call. wp_auto.
+  (* the parent argument: given, or read off the item (the update path) *)
+  destruct Hparg as [-> | ->].
+  - rewrite (bool_decide_eq_false_2 (parent = null) Hpnn). wp_auto.
+    iAssert (own_linked_item item_l input parent (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)))
+      with "[Hitem Holeft Horight]" as "Hfresh".
+    { iExists iv2, oleft2, oright2. rewrite /own_fresh_item_raw.
+      iFrame "Hitem Holeft Horight". iPureIntro.
+      split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
+                  | exact Hfl2 | exact Hfr2 | exact Hfpar2 | exact Hflags2 | exact Hrun2]. }
+    wp_apply (wp_store__integrateCore_runs s parent item_l (tm_arr tm) arr' input newItem ls (tm_runs tm)
+                leftIdx rightIdx kL kR
+                Hinv Htoitem Hvalid Hmax HfindL HfindR Hnec Hfits Hoclk
+                HcurL HcurLb HcurR HcurRb Hall with "[$Hpkg $Htext $Hfresh]").
+    iIntros (idx run) "(Htext' & %Hinv' & %Hsplice & %Hden)".
+    wp_auto.
+    set (runs' := take idx (tm_runs tm) ++ MkItemRun run false :: drop idx (tm_runs tm)).
+    set (ls' := integrate_locs ls idx item_l).
+    set (c := MkItemCell item_l run false parent).
+    set (cells' := take idx cells ++ c :: drop idx cells).
+    have Hidxb : (idx <= length (tm_runs tm))%nat := proj1 Hsplice.
+    have Hcells'eq : cells_of_locs_runs parent ls' runs' = cells'.
+    { rewrite /ls' /runs' /integrate_locs
+        (cells_of_locs_runs_splice parent ls (tm_runs tm) idx item_l (MkItemRun run false) Hlsl) //. }
+    have Hcellslen : length cells = length (tm_runs tm).
+    { rewrite /cells /cells_of_locs_runs length_zip_with Hlsl. lia. }
+    have Hperm : cells' ≡ₚ cells ++ [c].
+    { rewrite /cells' (Permutation_cons_append (drop idx cells) c) app_assoc take_drop //. }
+    have Hlook : cells' !! idx = Some c.
+    { rewrite /cells'. apply list_lookup_middle. rewrite length_take_le; [done | lia]. }
+    have Hgmaxc : pool_clock_below types (item_id (run_head c)).
+    { rewrite /run_head /c /= (proj1 Hden). exact Hbelowc. }
+    iDestruct (own_ytype_runs_as_cells with "Htext'") as "[%Hlen' Htext']".
+    iEval (cbn [tm_runs tm_arr]) in "Htext'".
+    iEval (rewrite Hcells'eq) in "Htext'".
+    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
+    wp_auto.
+    wp_apply (wp_addNode items_mref parent item_l types cells cells' (tm_arr tm) arr' idx c
+                Hts Hperm Hlook eq_refl Hgmaxc with "[$Hpkg $Htext' $Hitemmap]").
+    iIntros "(Htext' & Hitemmap)".
+    iAssert (own_items_field (s .[(yjs.store.t), "items"]) (<[parent := MkTypeState cells' arr']> types))%I
+      with "[Hitemsf Hitemmap]" as "Hitems".
+    { iExists items_mref. iFrame "Hitemsf Hitemmap". }
+    wp_auto.
+    have Hfitsc : cell_fits c.
+    { rewrite /cell_fits /cell_clock /c /run_head /= (proj1 Hden) (proj2 (proj2 (proj2 Hden))).
+      move: Hfitsin. rewrite /input_fits. word. }
+    have Hoc : cell_origin_clk c.
+    { move=> originId Hoid Hcl. rewrite /run_head /c /= in Hoid Hcl *.
+      rewrite (proj1 (proj2 Hden)) in Hoid. rewrite (proj1 Hden) -Hidnew in Hcl *.
+      exact (integrate_ready_origin_clk (tm_arr tm) input newItem (conj Htoitem (conj Hvalid Hmax)) originId Hoid Hcl). }
+    have Hfreshc : ic_loc c ∉ ic_loc <$> all_cells types := Hfreshloc.
+    have Hpool' : pool_invs (<[parent := MkTypeState cells' arr']> types)
+      := pool_invs_integrate types parent cells (tm_arr tm) cells' arr' c Hpool Hts Hperm Hfreshc Hfitsc Hgmaxc Hoc.
+    have Hreg' : registry_coh bind (<[parent := MkTypeState cells' arr']> types)
+      := registry_coh_insert _ _ parent _ _ Hts Hreg.
+    iAssert (own_type_pool (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types))
+      with "[Htext' Htypesrest]" as "Htypes1".
+    { rewrite /own_type_pool -insert_delete_eq big_sepM_insert; last apply lookup_delete_eq.
+      iFrame "Htypesrest". simpl. iSplitL; last (iPureIntro; exact Hinv').
+      iFrame "Htext'". }
+    have Hls'len : length ls' = length (tm_runs (MkTypeModel runs' arr')).
+    { rewrite /ls' /runs' /integrate_locs /= !length_app /= !length_take !length_drop Hlsl //. }
+    iApply ("HΦ" $! runs' ls' run).
+    iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes1 Hpending Hpdeletes";
+      last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
+    iSplitL; last first.
+    { iPureIntro. simpl.
+      exact (locs_aligned_insert_both locs p parent ls' (MkTypeModel runs' arr') Hls'len Haligned). }
+    iEval (rewrite /state_of_runs /= (types_of_locs_pool_insert_both locs p parent ls' (MkTypeModel runs' arr')) /= Hcells'eq).
+    iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend pdel) (conj Hpool' Hreg')
+              with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes1 Hpending Hpdeletes").
+  - wp_auto. rewrite Hfpar2 (bool_decide_eq_false_2 (parent = null) Hpnn).
+    wp_auto.
+    iAssert (own_linked_item item_l input parent (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)))
+      with "[Hitem Holeft Horight]" as "Hfresh".
+    { iExists iv2, oleft2, oright2. rewrite /own_fresh_item_raw.
+      iFrame "Hitem Holeft Horight". iPureIntro.
+      split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
+                  | exact Hfl2 | exact Hfr2 | exact Hfpar2 | exact Hflags2 | exact Hrun2]. }
+    rewrite Hfpar2.
+    wp_apply (wp_store__integrateCore_runs s parent item_l (tm_arr tm) arr' input newItem ls (tm_runs tm)
+                leftIdx rightIdx kL kR
+                Hinv Htoitem Hvalid Hmax HfindL HfindR Hnec Hfits Hoclk
+                HcurL HcurLb HcurR HcurRb Hall with "[$Hpkg $Htext $Hfresh]").
+    iIntros (idx run) "(Htext' & %Hinv' & %Hsplice & %Hden)".
+    wp_auto.
+    set (runs' := take idx (tm_runs tm) ++ MkItemRun run false :: drop idx (tm_runs tm)).
+    set (ls' := integrate_locs ls idx item_l).
+    set (c := MkItemCell item_l run false parent).
+    set (cells' := take idx cells ++ c :: drop idx cells).
+    have Hidxb : (idx <= length (tm_runs tm))%nat := proj1 Hsplice.
+    have Hcells'eq : cells_of_locs_runs parent ls' runs' = cells'.
+    { rewrite /ls' /runs' /integrate_locs
+        (cells_of_locs_runs_splice parent ls (tm_runs tm) idx item_l (MkItemRun run false) Hlsl) //. }
+    have Hcellslen : length cells = length (tm_runs tm).
+    { rewrite /cells /cells_of_locs_runs length_zip_with Hlsl. lia. }
+    have Hperm : cells' ≡ₚ cells ++ [c].
+    { rewrite /cells' (Permutation_cons_append (drop idx cells) c) app_assoc take_drop //. }
+    have Hlook : cells' !! idx = Some c.
+    { rewrite /cells'. apply list_lookup_middle. rewrite length_take_le; [done | lia]. }
+    have Hgmaxc : pool_clock_below types (item_id (run_head c)).
+    { rewrite /run_head /c /= (proj1 Hden). exact Hbelowc. }
+    iDestruct (own_ytype_runs_as_cells with "Htext'") as "[%Hlen' Htext']".
+    iEval (cbn [tm_runs tm_arr]) in "Htext'".
+    iEval (rewrite Hcells'eq) in "Htext'".
+    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
+    wp_auto.
+    wp_apply (wp_addNode items_mref parent item_l types cells cells' (tm_arr tm) arr' idx c
+                Hts Hperm Hlook eq_refl Hgmaxc with "[$Hpkg $Htext' $Hitemmap]").
+    iIntros "(Htext' & Hitemmap)".
+    iAssert (own_items_field (s .[(yjs.store.t), "items"]) (<[parent := MkTypeState cells' arr']> types))%I
+      with "[Hitemsf Hitemmap]" as "Hitems".
+    { iExists items_mref. iFrame "Hitemsf Hitemmap". }
+    wp_auto.
+    have Hfitsc : cell_fits c.
+    { rewrite /cell_fits /cell_clock /c /run_head /= (proj1 Hden) (proj2 (proj2 (proj2 Hden))).
+      move: Hfitsin. rewrite /input_fits. word. }
+    have Hoc : cell_origin_clk c.
+    { move=> originId Hoid Hcl. rewrite /run_head /c /= in Hoid Hcl *.
+      rewrite (proj1 (proj2 Hden)) in Hoid. rewrite (proj1 Hden) -Hidnew in Hcl *.
+      exact (integrate_ready_origin_clk (tm_arr tm) input newItem (conj Htoitem (conj Hvalid Hmax)) originId Hoid Hcl). }
+    have Hfreshc : ic_loc c ∉ ic_loc <$> all_cells types := Hfreshloc.
+    have Hpool' : pool_invs (<[parent := MkTypeState cells' arr']> types)
+      := pool_invs_integrate types parent cells (tm_arr tm) cells' arr' c Hpool Hts Hperm Hfreshc Hfitsc Hgmaxc Hoc.
+    have Hreg' : registry_coh bind (<[parent := MkTypeState cells' arr']> types)
+      := registry_coh_insert _ _ parent _ _ Hts Hreg.
+    iAssert (own_type_pool (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types))
+      with "[Htext' Htypesrest]" as "Htypes1".
+    { rewrite /own_type_pool -insert_delete_eq big_sepM_insert; last apply lookup_delete_eq.
+      iFrame "Htypesrest". simpl. iSplitL; last (iPureIntro; exact Hinv').
+      iFrame "Htext'". }
+    have Hls'len : length ls' = length (tm_runs (MkTypeModel runs' arr')).
+    { rewrite /ls' /runs' /integrate_locs /= !length_app /= !length_take !length_drop Hlsl //. }
+    iApply ("HΦ" $! runs' ls' run).
+    iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes1 Hpending Hpdeletes";
+      last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
+    iSplitL; last first.
+    { iPureIntro. simpl.
+      exact (locs_aligned_insert_both locs p parent ls' (MkTypeModel runs' arr') Hls'len Haligned). }
+    iEval (rewrite /state_of_runs /= (types_of_locs_pool_insert_both locs p parent ls' (MkTypeModel runs' arr')) /= Hcells'eq).
+    iApply (own_store_struct_intro _ (MkStoreState client0 k0 _ bind pend pdel) (conj Hpool' Hreg')
+              with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes1 Hpending Hpdeletes").
+Qed.
+
+(** [Store.Integrate parent item] at cell granularity: the run-level
+    [wp_store__Integrate_runs] read back through the [pool_of] / [locs_of]
+    projections (the type's cell list gets the run at the matching position,
+    [integrate_splice]). Kept for the cell-level text layer until
+    plan-item-run-split C6. *)
 Lemma wp_Store__Integrate (s parent parent_arg item_l : loc) (st : store_state)
     (cells : list item_cell) (arr arr' : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A) (lft rgt : loc) :
@@ -2532,235 +2647,58 @@ Lemma wp_Store__Integrate (s parent parent_arg item_l : loc) (st : store_state)
       ⌜run_denotes input newItem run⌝ }}}.
 Proof using Type*.
   move=> Hparg Hts Hready Hfitsin Hall Hlinked Hbelow.
-  destruct st as [client0 k0 types bind pend pdel]. simpl in *.
-  have Htypes := Hts.
-  have [Htoitem [Hvalid Hmax]] := Hready.
-  have Hgmax := Hbelow.
-  destruct Hlinked as (leftIdx & rightIdx & curL & curR & HfindL & HfindR & -> & -> & HcurL & HcurLb & HcurR & HcurRb).
   iIntros (Φ) "(#Hpkg & Hcells & Hfresh) HΦ".
+  destruct st as [client0 k0 types bind pend pdel]. simpl in *.
   iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
-  have Hpool : pool_invs types := proj1 Hinvs0.
-  have Hreg : registry_coh bind types := proj2 Hinvs0.
   iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes0 & Hpending & Hpdeletes)".
-  iDestruct (linked_item_fresh2 with "Hfresh Htypes0") as %Hfreshloc.
-  rewrite /own_type_pool.
-  iDestruct (big_sepM_delete _ _ parent _ Hts with "Htypes0") as "[[Htext %Hinv] Htypesrest]".
-  have Hidnew : item_id newItem = in_id input := commutativity.toItem_id input arr newItem Htoitem.
-  (* the per-cell side conditions of the core, from the pool invariants *)
-  have Hcellsall : ∀ c0, c0 ∈ cells -> c0 ∈ all_cells types.
-  { move=> c0 Hc0. apply all_cells_elem_of. exists parent, (MkTypeState cells arr).
-    split; [exact Htypes | exact Hc0]. }
-  have [Hfitsall [_ [_ Hoclkall]]] := Hpool.
-  have Hfits : ∀ c0, c0 ∈ cells -> cell_fits c0 := λ c0 Hc0, Hfitsall c0 (Hcellsall c0 Hc0).
-  have Hoclk : ∀ c0, c0 ∈ cells -> cell_origin_clk c0 := λ c0 Hc0, Hoclkall c0 (Hcellsall c0 Hc0).
-  iDestruct "Htext" as (yt0 tl0) "(Hparent0 & Hdll0 & %Hlen0 & %Hrepr0 & %Hcpar0)".
-  iDestruct (own_dll_runs_wf with "Hdll0") as %Hwfs.
-  have Hnec : Forall (λ c, ic_run c ≠ []) cells.
-  { apply Forall_forall. move=> c0 Hc0. exact (proj1 (Hwfs c0 Hc0)). }
-  iDestruct (typed_pointsto_not_null with "Hparent0") as %Hpnn.
-  iAssert (own_ytype_cells parent (DfracOwn 1) cells arr) with "[Hparent0 Hdll0]" as "Htext".
-  { iExists yt0, tl0. iFrame "Hparent0 Hdll0". iPureIntro.
-    split_and!; [exact Hlen0 | exact Hrepr0 | exact Hcpar0]. }
-  iDestruct "Hfresh" as (iv2 oleft2 oright2) "(Hraw & %Hfl2 & %Hfr2 & %Hfpar2 & %Hflags2 & %Hrun2)".
-  iNamed "Hraw".
-  wp_method_call. wp_call. wp_call. wp_auto.
-  (* the parent argument: given, or read off the item (the update path) *)
-  destruct Hparg as [-> | ->].
-  - rewrite (bool_decide_eq_false_2 (parent = null) Hpnn). wp_auto.
-    iAssert (own_linked_item item_l input parent (node_loc cells (Z.of_nat curL - 1)) (node_loc cells (Z.of_nat curR)))
-      with "[Hitem Holeft Horight]" as "Hfresh".
-    { iExists iv2, oleft2, oright2. rewrite /own_fresh_item_raw.
-      iFrame "Hitem Holeft Horight". iPureIntro.
-      split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
-                  | exact Hfl2 | exact Hfr2 | exact Hfpar2 | exact Hflags2 | exact Hrun2]. }
-    wp_apply (wp_Store__integrateCore_cells_run s parent item_l arr arr' input newItem cells
-                leftIdx rightIdx curL curR
-                Hinv Htoitem Hvalid Hmax HfindL HfindR Hnec Hfits Hoclk
-                HcurL HcurLb HcurR HcurRb Hall with "[$Hpkg $Htext $Hfresh]").
-    iIntros (idx midx cells' c) "(Htext' & %Hinv' & %Hsplice & %Hidxb & %Hcoup & %Hmile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Horig & %Hrorig & %Hclen & %Hperm)".
-    wp_auto.
-    have Hgmaxc : pool_clock_below types (item_id (run_head c)) by rewrite Hcid.
-    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
-    wp_auto.
-    wp_apply (wp_addNode items_mref parent item_l types cells cells' arr arr' idx c
-                Htypes Hperm Hlook Hloc Hgmaxc with "[$Hpkg $Htext' $Hitemmap]").
-    iIntros "(Htext' & Hitemmap)".
-    iAssert (own_items_field (s .[(yjs.store.t), "items"]) (<[parent := MkTypeState cells' arr']> types))%I
-      with "[Hitemsf Hitemmap]" as "Hitems".
-    { iExists items_mref. iFrame "Hitemsf Hitemmap". }
-    wp_auto.
-    iDestruct "Htext'" as (yt tl) "(Hpar & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
-    have Hcpar_c : ic_parent c = parent := Hcpar' c (list_elem_of_lookup_2 _ _ _ Hlook).
-    have Hc_eq : c = MkItemCell item_l (ic_run c) false parent.
-    { destruct c as [cl cr cd cp]. simpl in Hloc, Hcdel, Hcpar_c. rewrite Hloc Hcdel Hcpar_c //. }
-    have Hsplice_post : integrate_splice cells arr item_l (ic_run c) parent cells' arr'.
-    { exists idx. refine (conj Hidxb (conj _ (conj _ _))).
-      - rewrite Hcoup. exact Hmile.
-      - rewrite -Hc_eq. exact Hsplice.
-      - rewrite Hcoup. exact Harrsp. }
-    have Hrun_post : run_denotes input newItem (ic_run c)
-      by (split_and!; [exact Hcid | exact Horig | exact Hrorig | rewrite Hclen explode_length //]).
-    have Hbelowc : pool_clock_below types (item_id (run_head c)).
-    { rewrite /run_head Hcid. exact Hgmax. }
-    have Hfitsc : cell_fits c.
-    { rewrite /cell_fits /cell_clock /run_head Hcid Hclen explode_length.
-      move: Hfitsin. rewrite /input_fits. word. }
-    have Hoc : cell_origin_clk c.
-    { move=> originId Hoid Hcl. rewrite /run_head /= in Hoid Hcl *.
-      rewrite Horig in Hoid. rewrite Hcid -Hidnew in Hcl *.
-      exact (integrate_ready_origin_clk arr input newItem (conj Htoitem (conj Hvalid Hmax)) originId Hoid Hcl). }
-    have Hfreshc : ic_loc c ∉ ic_loc <$> all_cells types by rewrite Hloc; exact Hfreshloc.
-    have Hpool' : pool_invs (<[parent := MkTypeState cells' arr']> types)
-      := pool_invs_integrate types parent cells arr cells' arr' c Hpool Htypes Hperm Hfreshc Hfitsc Hbelowc Hoc.
-    have Hreg' : registry_coh bind (<[parent := MkTypeState cells' arr']> types)
-      := registry_coh_insert _ _ parent _ _ Htypes Hreg.
-    iAssert (own_type_pool (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types))
-      with "[Hpar Hdll Htypesrest]" as "Htypes1".
-    { rewrite /own_type_pool -insert_delete_eq big_sepM_insert; last apply lookup_delete_eq.
-      iFrame "Htypesrest". simpl. iSplitL; last (iPureIntro; exact Hinv').
-      iExists yt, tl. iFrame "Hpar Hdll". iPureIntro. split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
-    iApply ("HΦ" $! cells' (ic_run c)).
-    iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes1 Hpending Hpdeletes";
-      last by (iPureIntro; split_and!; [exact Hinv' | exact Hsplice_post | exact Hrun_post]).
-    iSplitL; last by (iPureIntro; split; [exact Hpool' | exact Hreg']).
-    simpl. iFrame.
-  - wp_auto. rewrite Hfpar2 (bool_decide_eq_false_2 (parent = null) Hpnn).
-    wp_auto.
-    iAssert (own_linked_item item_l input parent (node_loc cells (Z.of_nat curL - 1)) (node_loc cells (Z.of_nat curR)))
-      with "[Hitem Holeft Horight]" as "Hfresh".
-    { iExists iv2, oleft2, oright2. rewrite /own_fresh_item_raw.
-      iFrame "Hitem Holeft Horight". iPureIntro.
-      split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
-                  | exact Hfl2 | exact Hfr2 | exact Hfpar2 | exact Hflags2 | exact Hrun2]. }
-    rewrite Hfpar2.
-    wp_apply (wp_Store__integrateCore_cells_run s parent item_l arr arr' input newItem cells
-                leftIdx rightIdx curL curR
-                Hinv Htoitem Hvalid Hmax HfindL HfindR Hnec Hfits Hoclk
-                HcurL HcurLb HcurR HcurRb Hall with "[$Hpkg $Htext $Hfresh]").
-    iIntros (idx midx cells' c) "(Htext' & %Hinv' & %Hsplice & %Hidxb & %Hcoup & %Hmile & %Harrsp & %Hlook & %Hloc & %Hcid & %Hcdel & %Horig & %Hrorig & %Hclen & %Hperm)".
-    wp_auto.
-    have Hgmaxc : pool_clock_below types (item_id (run_head c)) by rewrite Hcid.
-    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
-    wp_auto.
-    wp_apply (wp_addNode items_mref parent item_l types cells cells' arr arr' idx c
-                Htypes Hperm Hlook Hloc Hgmaxc with "[$Hpkg $Htext' $Hitemmap]").
-    iIntros "(Htext' & Hitemmap)".
-    iAssert (own_items_field (s .[(yjs.store.t), "items"]) (<[parent := MkTypeState cells' arr']> types))%I
-      with "[Hitemsf Hitemmap]" as "Hitems".
-    { iExists items_mref. iFrame "Hitemsf Hitemmap". }
-    wp_auto.
-    iDestruct "Htext'" as (yt tl) "(Hpar & Hdll & %Hlen' & %Hrepr' & %Hcpar')".
-    have Hcpar_c : ic_parent c = parent := Hcpar' c (list_elem_of_lookup_2 _ _ _ Hlook).
-    have Hc_eq : c = MkItemCell item_l (ic_run c) false parent.
-    { destruct c as [cl cr cd cp]. simpl in Hloc, Hcdel, Hcpar_c. rewrite Hloc Hcdel Hcpar_c //. }
-    have Hsplice_post : integrate_splice cells arr item_l (ic_run c) parent cells' arr'.
-    { exists idx. refine (conj Hidxb (conj _ (conj _ _))).
-      - rewrite Hcoup. exact Hmile.
-      - rewrite -Hc_eq. exact Hsplice.
-      - rewrite Hcoup. exact Harrsp. }
-    have Hrun_post : run_denotes input newItem (ic_run c)
-      by (split_and!; [exact Hcid | exact Horig | exact Hrorig | rewrite Hclen explode_length //]).
-    have Hbelowc : pool_clock_below types (item_id (run_head c)).
-    { rewrite /run_head Hcid. exact Hgmax. }
-    have Hfitsc : cell_fits c.
-    { rewrite /cell_fits /cell_clock /run_head Hcid Hclen explode_length.
-      move: Hfitsin. rewrite /input_fits. word. }
-    have Hoc : cell_origin_clk c.
-    { move=> originId Hoid Hcl. rewrite /run_head /= in Hoid Hcl *.
-      rewrite Horig in Hoid. rewrite Hcid -Hidnew in Hcl *.
-      exact (integrate_ready_origin_clk arr input newItem (conj Htoitem (conj Hvalid Hmax)) originId Hoid Hcl). }
-    have Hfreshc : ic_loc c ∉ ic_loc <$> all_cells types by rewrite Hloc; exact Hfreshloc.
-    have Hpool' : pool_invs (<[parent := MkTypeState cells' arr']> types)
-      := pool_invs_integrate types parent cells arr cells' arr' c Hpool Htypes Hperm Hfreshc Hfitsc Hbelowc Hoc.
-    have Hreg' : registry_coh bind (<[parent := MkTypeState cells' arr']> types)
-      := registry_coh_insert _ _ parent _ _ Htypes Hreg.
-    iAssert (own_type_pool (DfracOwn 1) (<[parent := MkTypeState cells' arr']> types))
-      with "[Hpar Hdll Htypesrest]" as "Htypes1".
-    { rewrite /own_type_pool -insert_delete_eq big_sepM_insert; last apply lookup_delete_eq.
-      iFrame "Htypesrest". simpl. iSplitL; last (iPureIntro; exact Hinv').
-      iExists yt, tl. iFrame "Hpar Hdll". iPureIntro. split_and!; [exact Hlen' | exact Hrepr' | exact Hcpar']. }
-    iApply ("HΦ" $! cells' (ic_run c)).
-    iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes1 Hpending Hpdeletes";
-      last by (iPureIntro; split_and!; [exact Hinv' | exact Hsplice_post | exact Hrun_post]).
-    iSplitL; last by (iPureIntro; split; [exact Hpool' | exact Hreg']).
-    simpl. iFrame.
-Qed.
-
-
-(** [Store.Integrate] at run granularity: the origins are read at their run
-    cursors ([origins_resolved]) and the two link addresses off the address
-    list ([loc_at]); the postcondition splices the run and the fresh address
-    at one shared cursor. Derived from [wp_Store__Integrate] through the
-    [pool_of] / [locs_of] projections. *)
-Lemma wp_store__Integrate_runs (s parent parent_arg item_l : loc)
-    (str : store_state_runs) (tm : type_model) (ls : list loc)
-    (arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
-    (newItem : YjsItem A) (kL kR : nat) :
-  parent_arg = parent ∨ parent_arg = null ->
-  sr_pool str !! parent = Some tm ->
-  sr_locs str !! parent = Some ls ->
-  integrate_ready (tm_arr tm) input newItem ->
-  input_fits input ->
-  (Z.of_nat (clientId (in_id input)) < 2^64)%Z ->
-  integrate_all (ops_of_input input (explode (in_content input))) (tm_arr tm) = Some arr' ->
-  origins_resolved (tm_runs tm) (tm_arr tm) input kL kR ->
-  pool_run_clock_below (sr_pool str) (in_id input) ->
-  {{{ is_pkg_init yjs ∗ own_store_runs s str ∗
-      own_linked_item item_l input parent
-        (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) }}}
-    s @! (go.PointerType yjs.store) @! "Integrate" #parent_arg #item_l
-  {{{ (runs' : list ItemRun) (ls' : list loc) (run : list (YjsItem A)), RET #();
-      own_store_runs s (str <| sr_pool := <[parent := MkTypeModel runs' arr']> (sr_pool str) |>
-                            <| sr_locs := <[parent := ls']> (sr_locs str) |>) ∗
-      ⌜YjsArrInvariant arr'⌝ ∗
-      ⌜∃ idx : nat, runs_integrate_splice_at idx (tm_runs tm) (tm_arr tm) run runs' arr' ∧
-                    ls' = integrate_locs ls idx item_l⌝ ∗
-      ⌜run_denotes input newItem run⌝ }}}.
-Proof using Type*.
-  move=> Hparg Hpl Hlocs Hready Hfitsin Hclbnd Hall Hres Hbelow.
-  iIntros (Φ) "(#Hpkg & Hruns & Hfresh) HΦ".
-  iEval (rewrite own_store_runs_as_state) in "Hruns".
-  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
-  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
-  rewrite /pool_of lookup_fmap in Hpl.
-  destruct (types !! parent) as [ts|] eqn:Hts; simplify_eq/=.
-  destruct ts as [cells arr]. simpl in *.
-  have Hls : ls = ic_loc <$> cells.
-  { rewrite /locs_of lookup_fmap Hts /= in Hlocs. congruence. }
-  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
-  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbndb.
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfb.
-  iDestruct (own_store_struct_intro _ (MkStoreState client k0 types bind pend pdel) Hinvs0
-               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
+  iDestruct (own_type_pool_id_bounds with "Htypes0") as %Hbndb.
+  iDestruct (own_type_pool_parents with "Htypes0") as %Hpar.
+  iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
+               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes0 Hpending Hpdeletes") as "Hcells".
+  iAssert (own_store_runs s (state_runs_of (MkStoreState client0 k0 types bind pend pdel)))
+    with "[Hcells]" as "Hruns".
+  { rewrite own_store_runs_as_state. iExists _. iFrame "Hcells". done. }
+  destruct (proj1 (origins_linked_resolved cells arr input lft rgt) Hlinked) as (kL & kR & Hres & -> & ->).
+  have Hpl : pool_of types !! parent = Some (MkTypeModel (cell_run <$> cells) arr).
+  { rewrite /pool_of lookup_fmap Hts //. }
+  have Hlocs : locs_of types !! parent = Some (ic_loc <$> cells).
+  { rewrite /locs_of lookup_fmap Hts //. }
   have Hidck : (Z.of_nat (clock (in_id input)) < 2^64)%Z.
   { move: Hfitsin. rewrite /input_fits. lia. }
-  have Hbelow' : pool_clock_below types (in_id input)
-    := pool_run_clock_below_to_cell types (in_id input)
-         (λ c Hc, proj2 (Hbndb c Hc)) (λ c Hc, proj1 (Hbndb c Hc))
-         (λ c Hc, proj1 (Hwfb c Hc)) Hclbnd Hidck Hbelow.
-  have Hlinked : origins_linked cells arr input
-                   (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)).
-  { rewrite Hls -!node_loc_loc_at. apply/origins_linked_resolved.
-    exists kL, kR. split_and!; [exact Hres | done | done]. }
-  wp_apply (wp_Store__Integrate s parent parent_arg item_l
-              (MkStoreState client k0 types bind pend pdel) cells arr arr' input newItem
-              (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR))
-              Hparg Hts Hready Hfitsin Hall Hlinked Hbelow'
-              with "[$Hpkg $Hcells $Hfresh]").
-  iIntros (cells' run) "(Hcells & %Hinv' & %Hsplice & %Hden)".
-  iEval (simpl) in "Hcells".
-  have Hrl := integrate_splice_runs_locs cells arr item_l run parent cells' arr' Hsplice.
-  destruct Hrl as (idx & Hat & Hlocs').
-  iApply ("HΦ" $! (cell_run <$> cells') (ic_loc <$> cells') run).
+  have Hbelowr : pool_run_clock_below (pool_of types) (in_id input)
+    := pool_clock_below_to_run types (in_id input) (λ c Hc, proj2 (Hbndb c Hc)) Hidck Hbelow.
+  iEval (rewrite !node_loc_loc_at) in "Hfresh".
+  wp_apply (wp_store__Integrate_runs s parent parent_arg item_l
+              (state_runs_of (MkStoreState client0 k0 types bind pend pdel))
+              (MkTypeModel (cell_run <$> cells) arr) (ic_loc <$> cells) arr' input newItem kL kR
+              Hparg Hpl Hlocs Hready Hfitsin Hall Hres Hbelowr
+              with "[$Hpkg $Hruns $Hfresh]").
+  iIntros (runs' ls' run) "(Hruns & %Hinv' & %Hsp & %Hden)".
+  destruct Hsp as (idx & Hat & Hls').
+  have Hparcells : ∀ c, c ∈ cells -> ic_parent c = parent
+    := λ c Hc, Hpar parent (MkTypeState cells arr) c Hts Hc.
+  have Hruns' : runs' = take idx (cell_run <$> cells) ++ MkItemRun run false :: drop idx (cell_run <$> cells)
+    := proj1 (proj2 (proj2 Hat)).
+  set (cells' := take idx cells ++ MkItemCell item_l run false parent :: drop idx cells).
+  have Hlenfm : length (ic_loc <$> cells) = length (cell_run <$> cells) by rewrite !length_fmap.
+  have Hcells' : cells_of_locs_runs parent ls' runs' = cells'.
+  { rewrite Hls' Hruns' /integrate_locs
+      (cells_of_locs_runs_splice parent (ic_loc <$> cells) (cell_run <$> cells) idx item_l (MkItemRun run false) Hlenfm)
+      (cells_of_locs_runs_projections parent cells Hparcells) //. }
+  iApply ("HΦ" $! cells' run).
   iSplitL.
-  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0 (<[parent := MkTypeState cells' arr']> types) bind pend pdel).
-    iFrame "Hcells". iPureIntro.
-    rewrite /state_runs_of /= pool_of_insert locs_of_insert /type_model_of /=.
-    reflexivity. }
-  iPureIntro. split_and!.
+  { iDestruct "Hruns" as "(Hstruct & _)".
+    iEval (rewrite /state_of_runs /state_runs_of /=
+             (types_of_locs_pool_insert_both (locs_of types) (pool_of types) parent ls' (MkTypeModel runs' arr'))
+             /= Hcells' (types_of_locs_pool_of types Hpar)) in "Hstruct".
+    iFrame "Hstruct". }
+  iPureIntro. destruct Hat as (Hb & Hlen & _ & Harr'). split_and!.
   - exact Hinv'.
-  - exists idx. split; [exact Hat | rewrite Hls; exact Hlocs'].
+  - exists idx. split_and!.
+    + rewrite -(length_fmap cell_run cells). exact Hb.
+    + rewrite run_flatten_runs fmap_take. exact Hlen.
+    + done.
+    + rewrite run_flatten_runs fmap_take. exact Harr'.
   - exact Hden.
 Qed.
 

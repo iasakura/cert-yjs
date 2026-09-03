@@ -17,8 +17,9 @@
       [own_item_node] per node ([own_dll_cells_layout_as_runs] is the fold/unfold to
       the cell-level [own_dll_cells_layout], under per-cell parent coherence;
       [own_dll_runs_length] aligns the two lists; [own_dll_runs_app]
-      splits and joins a segment, [own_dll_runs_insert_middle] splices a
-      fresh node, [own_dll_runs_lookup_acc] / [own_dll_runs_update]
+      splits and joins a segment, [own_dll_runs_cons_unfold] / [_fold]
+      open and close the node at the front of one,
+      [own_dll_runs_insert_middle] splices a fresh node, [own_dll_runs_lookup_acc] / [own_dll_runs_update]
       borrow the [k]-th node whole (the update wand flipping its tombstone
       bit), [own_dll_runs_acc] the same with the spine links named as the
       address list's neighbours ([own_dll_runs_headptr] / [_lastptr] read
@@ -1201,6 +1202,35 @@ Proof.
   iExists mr. iFrame "Hnode H2".
 Qed.
 
+(** Unfold / fold one node off the front of a run-granular DLL segment
+    (the run form of [own_dll_cons_node_unfold] / [_fold]). *)
+Lemma own_dll_runs_cons_unfold (dq : dfrac) (parent l lst prev nxt lc : loc)
+    (ls : list loc) (r : ItemRun) (runs : list ItemRun) :
+  own_dll_runs dq parent l lst prev nxt (lc :: ls) (r :: runs) -∗
+  ∃ nxt0 : loc,
+    ⌜l = lc ∧ lc ≠ null⌝ ∗ ⌜run_per_char r⌝ ∗ ⌜run_wf (run_items r)⌝ ∗
+    own_item_node lc dq (input_of_run r) (run_deleted r) parent prev nxt0 ∗
+    own_dll_runs dq parent nxt0 lst lc nxt ls runs.
+Proof.
+  simpl. iIntros "(%Hloc & %Hpc & %Hwf & H)".
+  iDestruct "H" as (nxt0) "[Hnode Hrest]".
+  iExists nxt0. iFrame "Hnode Hrest". by iPureIntro.
+Qed.
+
+Lemma own_dll_runs_cons_fold (dq : dfrac) (parent lst prev nxt nxt0 lc : loc)
+    (ls : list loc) (r : ItemRun) (runs : list ItemRun) :
+  lc ≠ null -> run_wf (run_items r) -> run_per_char r ->
+  own_item_node lc dq (input_of_run r) (run_deleted r) parent prev nxt0 ∗
+  own_dll_runs dq parent nxt0 lst lc nxt ls runs -∗
+  own_dll_runs dq parent lc lst prev nxt (lc :: ls) (r :: runs).
+Proof.
+  move=> Hnn Hwf Hpc. simpl. iIntros "[Hnode Hrest]".
+  iSplitR; first (iPureIntro; done).
+  iSplitR; first (iPureIntro; exact Hpc).
+  iSplitR; first (iPureIntro; exact Hwf).
+  iExists nxt0. iFrame "Hnode Hrest".
+Qed.
+
 (** Rejoin the two halves of a split node between two relinked run-granular
     segments: the run form of [own_dll_cells_layout_split]. The halves' [run_wf] and
     [run_per_char] are premises; the split surgery itself is the pure
@@ -1408,6 +1438,54 @@ Proof.
   iSplitR; [by iPureIntro |].
   iExists nxt0.
   iFrame "Hnode Hrest2".
+Qed.
+
+(** Borrow two nodes of a run-granular DLL at once, the earlier one first
+    (the run form of [own_dll_lookup_acc_2_node]). *)
+Lemma own_dll_runs_lookup_acc_2 (dq : dfrac) (parent l lst prev nxt : loc)
+    (ls : list loc) (runs : list ItemRun) (k1 k2 : nat) (l1 l2 : loc) (r1 r2 : ItemRun) :
+  (k1 < k2)%nat ->
+  ls !! k1 = Some l1 -> runs !! k1 = Some r1 ->
+  ls !! k2 = Some l2 -> runs !! k2 = Some r2 ->
+  own_dll_runs dq parent l lst prev nxt ls runs -∗
+    ∃ (prev1 nxt1 prev2 nxt2 : loc),
+      "Hnode1" ∷ own_item_node l1 dq (input_of_run r1) (run_deleted r1) parent prev1 nxt1 ∗
+      "Hnode2" ∷ own_item_node l2 dq (input_of_run r2) (run_deleted r2) parent prev2 nxt2 ∗
+      "Hback" ∷ (own_item_node l1 dq (input_of_run r1) (run_deleted r1) parent prev1 nxt1 -∗
+                 own_item_node l2 dq (input_of_run r2) (run_deleted r2) parent prev2 nxt2 -∗
+                 own_dll_runs dq parent l lst prev nxt ls runs).
+Proof.
+  move=> Hk12 Hl1 Hr1 Hl2 Hr2. iIntros "H".
+  iDestruct (own_dll_runs_length with "H") as %Hlen.
+  pose proof (take_drop_middle ls k1 l1 Hl1) as Hsl1.
+  pose proof (take_drop_middle runs k1 r1 Hr1) as Hsr1.
+  set (prel := take k1 ls) in Hsl1.
+  set (sufl := drop (S k1) ls) in Hsl1.
+  set (prer := take k1 runs) in Hsr1.
+  set (sufr := drop (S k1) runs) in Hsr1.
+  have Hlent1 : length prel = length prer.
+  { rewrite /prel /prer !length_take Hlen //. }
+  iEval (rewrite -Hsl1 -Hsr1 (own_dll_runs_app _ _ _ _ _ _ _ _ _ _ Hlent1)) in "H".
+  iDestruct "H" as (ml mf) "[Hpre Hrest]".
+  iDestruct "Hrest" as "(%Hloc & %Hpc & %Hrun1 & Hrest)".
+  iDestruct "Hrest" as (nxt0) "[Hnode1 Hsuf]".
+  have Hl2' : sufl !! (k2 - S k1)%nat = Some l2.
+  { rewrite /sufl lookup_drop. replace (S k1 + (k2 - S k1))%nat with k2 by lia. exact Hl2. }
+  have Hr2' : sufr !! (k2 - S k1)%nat = Some r2.
+  { rewrite /sufr lookup_drop. replace (S k1 + (k2 - S k1))%nat with k2 by lia. exact Hr2. }
+  iDestruct (own_dll_runs_lookup_acc _ _ _ _ _ _ _ _ _ _ _ Hl2' Hr2' with "Hsuf") as (prev2 nxt2) "[Hnode2 Hback2]".
+  iExists ml, nxt0, prev2, nxt2.
+  iFrame "Hnode1 Hnode2".
+  iIntros "Hnode1 Hnode2".
+  iDestruct ("Hback2" with "Hnode2") as "Hsuf".
+  iEval (rewrite -Hsl1 -Hsr1 (own_dll_runs_app _ _ _ _ _ _ _ _ _ _ Hlent1)).
+  iExists ml, mf.
+  iFrame "Hpre".
+  iSplitR; [by iPureIntro |].
+  iSplitR; [by iPureIntro |].
+  iSplitR; [by iPureIntro |].
+  iExists nxt0.
+  iFrame "Hnode1 Hsuf".
 Qed.
 
 (** An in-range address of a run-granular DLL is never null (the run form of

@@ -15,7 +15,9 @@
       [cells_of_locs_runs_run] / [_loc] / [_parent]; on the projections it
       is the identity, [cells_of_locs_runs_projections]; with one slot
       tombstoned it is the cell list with that cell flipped,
-      [cells_of_locs_runs_flip]).
+      [cells_of_locs_runs_flip], and with one run spliced in it is the
+      cell list with the matching cell spliced in,
+      [cells_of_locs_runs_splice]).
     - the flag accessors [is_deleted_flag] / [is_countable_flag] reading the
       heap struct's bits, [set_deleted] / [flip_cell] flipping the tombstone,
       and [num_visible], the visible-character count [yType.len] shadows.
@@ -202,6 +204,32 @@ Lemma node_loc_loc_at (cells : list item_cell) (k : Z) :
   node_loc cells k = loc_at (ic_loc <$> cells) k.
 Proof. by rewrite /node_loc /loc_at list_lookup_fmap. Qed.
 
+(** Addresses across a splice of the address list: positions strictly before
+    the splice keep their address; positions at/after shift by one. *)
+Lemma loc_at_splice_lt (ls : list loc) (l : loc) (idx : nat) (k : Z) :
+  (k < Z.of_nat idx)%Z -> (idx <= length ls)%nat ->
+  loc_at (take idx ls ++ l :: drop idx ls) k = loc_at ls k.
+Proof.
+  move=> Hk Hle. rewrite /loc_at.
+  case: (decide (0 <= k)%Z) => H0; [| done].
+  rewrite lookup_app_l; last (rewrite length_take_le; [lia | exact Hle]).
+  rewrite lookup_take_lt; [done | lia].
+Qed.
+
+Lemma loc_at_splice_ge (ls : list loc) (l : loc) (idx : nat) (k : Z) :
+  (Z.of_nat idx <= k)%Z -> (idx <= length ls)%nat ->
+  loc_at (take idx ls ++ l :: drop idx ls) (k + 1) = loc_at ls k.
+Proof.
+  move=> Hk Hle. rewrite /loc_at.
+  rewrite decide_True; last lia. rewrite decide_True; last lia.
+  rewrite lookup_app_r; last (rewrite length_take_le; [lia | exact Hle]).
+  rewrite length_take_le; last exact Hle.
+  have -> : (Z.to_nat (k + 1) - idx)%nat = S (Z.to_nat k - idx)%nat by lia.
+  simpl. rewrite lookup_drop.
+  have -> : (idx + (Z.to_nat k - idx))%nat = Z.to_nat k by lia.
+  done.
+Qed.
+
 (** The cell-level run vocabulary says the same thing as the pure one under
     [cell_run]: head, flatten, visible count, tombstone flip, unit length. *)
 Lemma cell_run_head (c : item_cell) : run_head_item (cell_run c) = run_head c.
@@ -288,6 +316,20 @@ Proof.
   - have Hne' : k ≠ i := λ H, Hne (eq_sym H).
     rewrite list_lookup_insert_ne; last exact Hne'.
     rewrite !lookup_zip_with list_lookup_insert_ne; last exact Hne'. done.
+Qed.
+
+(** Materializing a run list with one run spliced in at [idx]: the cell
+    list with the matching cell spliced in. *)
+Lemma cells_of_locs_runs_splice (parent : loc) (ls : list loc) (runs : list ItemRun)
+    (idx : nat) (l : loc) (r : ItemRun) :
+  length ls = length runs ->
+  cells_of_locs_runs parent (take idx ls ++ l :: drop idx ls) (take idx runs ++ r :: drop idx runs)
+  = take idx (cells_of_locs_runs parent ls runs)
+    ++ MkItemCell l (run_items r) (run_deleted r) parent :: drop idx (cells_of_locs_runs parent ls runs).
+Proof.
+  move=> Hlen. rewrite /cells_of_locs_runs.
+  rewrite zip_with_app; last by rewrite !length_take Hlen.
+  rewrite -zip_with_take /=. rewrite -zip_with_drop. done.
 Qed.
 
 Lemma cell_run_flip (c : item_cell) :
@@ -453,16 +495,6 @@ Proof.
   destruct (ic_run c) as [|y [|y' r']]; simpl in Hu; [lia | done | lia].
 Qed.
 
-Lemma cells_repr_nil m : cells_repr m [] [].
-Proof. reflexivity. Qed.
-
-Lemma cells_repr_cons m c yi cs ys :
-  cell_repr m c yi -> cells_repr m cs ys -> cells_repr m (c :: cs) (yi :: ys).
-Proof.
-  rewrite /cells_repr /cell_repr => Hc Hcs.
-  by rewrite run_flatten_cons Hc Hcs.
-Qed.
-
 (** Inserting a corresponding cell/item at the same position preserves the
     isomorphism (the splice's model side); position alignment needs the
     all-singleton invariant. *)
@@ -563,18 +595,6 @@ Proof.
 Qed.
 
 (* ----- run-aware generalizations (issue #28 part 6) ----------------------- *)
-
-(** Inserting a *visible* cell adds its whole run length to the visible count:
-    the general form of [num_visible_insert_visible] (the Go bumps [parent.len]
-    by [item.Len()], the run length). *)
-Lemma num_visible_insert_visible_run (cells : list item_cell) (k : nat) (c : item_cell) :
-  ic_deleted c = false ->
-  num_visible (take k cells ++ c :: drop k cells) = (num_visible cells + length (ic_run c))%nat.
-Proof.
-  move=> Hc. rewrite /num_visible.
-  rewrite fmap_app fmap_cons list_sum_app /=. rewrite Hc.
-  rewrite -[in X in _ = (X + _)%nat](take_drop k cells) fmap_app list_sum_app. lia.
-Qed.
 
 (** Tombstoning a visible cell drops the visible count by its run length: the
     general form of [num_visible_flip]. *)

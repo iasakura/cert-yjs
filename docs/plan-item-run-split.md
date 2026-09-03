@@ -516,6 +516,23 @@ vocabulary substitution table written; then C5 restates the specs at
   `cells_of_locs_runs_flip`), so the cell-level pool lemmas apply verbatim
   until C6 swaps the definition.
 
+  PROGRESS 2026-09-03: `Store.Integrate` is direct at `(locs, pool)`:
+  `wp_itemPtrEqual_runs`, `wp_scanConflicts_runs` (over
+  `integrate_loop_inv_runs`), `wp_findIntegrationLeft_runs`, the
+  DLL-splice core `wp_Store__integrateCore_aux_runs` /
+  `wp_store__integrateCore_runs` (the splice through `own_dll_runs_app`,
+  `own_dll_runs_cons_unfold` / `_fold`, `own_dll_runs_insert_middle`; the
+  post is `runs_integrate_splice_at` + `integrate_locs` + `run_denotes`)
+  and `wp_store__Integrate_runs` (the parent's `own_ytype_runs` borrowed
+  out of the cell pool through `own_ytype_runs_intro` / `_as_cells` so the
+  cell `wp_addNode` and `pool_invs_integrate` still apply; the registry
+  re-materializes by `types_of_locs_pool_insert_both`). The cell
+  `wp_Store__Integrate` is DERIVED from it (for `text/Insert`), and the
+  cell scan stack, `integrate_loop_inv`, `integrate_splice_runs(_locs)`
+  and the cell prefix-sum laws it consumed are deleted. The
+  `clientId < 2^64` premise of `wp_store__Integrate_runs` is gone (it is
+  the linked item's own id).
+
 - **C6, delete the scaffolding.** `item_cell`, `cell_*`, `cells_of_locs_*`,
   the wrappers, `node_loc`, `ty_arr` (folded: `tm_arr = runs_flatten`),
   and the `_to_cell` transports are removed; `own_dll_fractional` and kin

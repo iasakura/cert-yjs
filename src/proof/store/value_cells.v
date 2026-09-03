@@ -28,9 +28,12 @@
       [pool_of_types_of_locs_pool] / [locs_of_types_of_locs_pool] /
       [state_runs_of_of_runs] / [locs_aligned_of], the identity on a
       parent-coherent registry, [types_of_locs_pool_of]; materialization
-      across one registry slot, [types_of_locs_pool_insert]; alignment
-      surviving a same-length type update,
-      [locs_aligned_insert_same_len], and giving each type a same-length
+      across one registry slot, [types_of_locs_pool_insert], or across
+      that slot's addresses and model together,
+      [types_of_locs_pool_insert_both]; alignment surviving a same-length
+      type update, [locs_aligned_insert_same_len], or a slot's addresses
+      and model replaced together at equal length,
+      [locs_aligned_insert_both], and giving each type a same-length
       address list, [locs_aligned_lens]); [cells_within_or_from] projects
       onto [runs_within_or_from] under the id no-wrap bounds
       ([cells_within_or_from_to_runs]).
@@ -48,14 +51,12 @@
       bounds, the latter trading address inequality for index inequality
       under the heap [NoDup]); [origins_linked] is [origins_resolved] at the
       cursor indices plus the [node_loc] readings
-      ([origins_linked_resolved]), and [integrate_splice] projects onto
-      [runs_integrate_splice] ([integrate_splice_runs]; the run and the
-      address-list halves at one shared cursor,
-      [integrate_splice_runs_locs]); [all_runs] of a
+      ([origins_linked_resolved]); [all_runs] of a
       projected pool is the projected [all_cells] ([all_runs_pool_of]) and
       [pool_invs] gives [run_pool_invs] under the id no-wrap bounds
       ([run_pool_invs_of]) and [pool_run_clock_below] reads back on the
-      cells ([pool_run_clock_below_to_cell]);
+      cells ([pool_run_clock_below_to_cell]) and [pool_clock_below] at run
+      granularity ([pool_clock_below_to_run]);
       [registry_lookup_or_create] carries to [(locs, p)]
       ([registry_lookup_or_create_to_pool]); [pool_of] / [locs_of] under a
       registry insert
@@ -458,40 +459,6 @@ Proof.
     move=> HpsL HpsR HbL HbR. split_and!; try assumption; reflexivity.
 Qed.
 
-Lemma integrate_splice_runs (cells : list item_cell) (arr : list (YjsItem A))
-    (item_l : loc) (run : list (YjsItem A)) (parent : loc)
-    (cells' : list item_cell) (arr' : list (YjsItem A)) :
-  integrate_splice cells arr item_l run parent cells' arr' ->
-  runs_integrate_splice (cell_run <$> cells) arr run (cell_run <$> cells') arr'.
-Proof.
-  intros (idx & Hb & Hlen & -> & ->).
-  exists idx. rewrite /runs_integrate_splice_at.
-  rewrite -!fmap_take -?fmap_drop -!run_flatten_runs length_fmap.
-  split_and!; [exact Hb | exact Hlen | | reflexivity].
-  by rewrite fmap_app fmap_cons /=.
-Qed.
-
-(** One integrate splice at BOTH granularities: the run and the address-list
-    halves of [integrate_splice] share one cursor. What carries
-    [wp_Store__Integrate]'s postcondition to [(locs, p)]
-    ([wp_store__Integrate_runs]). *)
-Lemma integrate_splice_runs_locs (cells : list item_cell) (arr : list (YjsItem A))
-    (item_l : loc) (run : list (YjsItem A)) (parent : loc)
-    (cells' : list item_cell) (arr' : list (YjsItem A)) :
-  integrate_splice cells arr item_l run parent cells' arr' ->
-  ∃ idx : nat,
-    runs_integrate_splice_at idx (cell_run <$> cells) arr run (cell_run <$> cells') arr' ∧
-    ic_loc <$> cells' = integrate_locs (ic_loc <$> cells) idx item_l.
-Proof.
-  intros (idx & Hb & Hlen & -> & ->).
-  exists idx. split.
-  - rewrite /runs_integrate_splice_at.
-    rewrite -!fmap_take -?fmap_drop -!run_flatten_runs length_fmap.
-    split_and!; [exact Hb | exact Hlen | | reflexivity].
-    by rewrite fmap_app fmap_cons /=.
-  - by rewrite /integrate_locs fmap_app fmap_cons -fmap_take -fmap_drop /=.
-Qed.
-
 Lemma cells_range_disjoint_runs (pool : list item_cell) :
   (∀ c, c ∈ pool -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
   (∀ c, c ∈ pool -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
@@ -665,6 +632,27 @@ Proof.
   - rewrite Hck Huck Hlenr. lia.
 Qed.
 
+(** [pool_clock_below] read at run granularity (the converse of
+    [pool_run_clock_below_to_cell], under the same id bounds). *)
+Lemma pool_clock_below_to_run (types : gmap loc type_state) (id : YjsId) :
+  (∀ c, c ∈ all_cells types -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (Z.of_nat (clock id) < 2^64)%Z ->
+  pool_clock_below types id ->
+  pool_run_clock_below (pool_of types) id.
+Proof.
+  move=> Hckb Hidck Hb r Hr Hcl.
+  rewrite all_runs_pool_of in Hr.
+  apply list_elem_of_fmap in Hr as (c & -> & Hc).
+  have Hck' : (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z := Hckb c Hc.
+  have Hcl' : clientId (item_id (run_head c)) = clientId id := Hcl.
+  have Hcc : cell_client c = W64 (clientId id) by rewrite /cell_client Hcl'.
+  have [_ Hle] := Hb c Hc Hcc.
+  have Hle' : (uint.Z (W64 (clock (item_id (run_head c)))) + Z.of_nat (length (ic_run c))
+               <= uint.Z (W64 (clock id)))%Z := Hle.
+  change ((clock (item_id (run_head c)) + length (ic_run c) <= clock id)%nat).
+  clear Hle Hcl Hb. word.
+Qed.
+
 (** [pool_of] / [locs_of] under a registry insert, and the address map's
     flattening: what carries a store step's [<[parent := ...]>] post and the
     freshness of a new node address to the run-granular reading. *)
@@ -769,6 +757,22 @@ Proof.
     + rewrite lookup_insert_ne in Hpq; last exact Hne. exact (Hlens _ _ _ Hq Hpq).
 Qed.
 
+(** Alignment survives replacing one type's address list and model
+    together, when the new ones agree on length. *)
+Lemma locs_aligned_insert_both (locs : gmap loc (list loc)) (p : pool)
+    (parent : loc) (ls' : list loc) (tm' : type_model) :
+  length ls' = length (tm_runs tm') ->
+  locs_aligned locs p -> locs_aligned (<[parent := ls']> locs) (<[parent := tm']> p).
+Proof.
+  move=> Hlen [Hdom Hlens]. split.
+  - rewrite !dom_insert_L Hdom //.
+  - move=> q lsq tmq Hq Hpq. destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Hq. rewrite lookup_insert_eq in Hpq. simplify_eq/=. exact Hlen.
+    + rewrite lookup_insert_ne in Hq; last congruence.
+      rewrite lookup_insert_ne in Hpq; last congruence.
+      exact (Hlens _ _ _ Hq Hpq).
+Qed.
+
 (** An aligned address map has a same-length address list for every type. *)
 Lemma locs_aligned_lens (locs : gmap loc (list loc)) (p : pool) :
   locs_aligned locs p ->
@@ -869,6 +873,23 @@ Lemma types_of_locs_pool_insert (locs : gmap loc (list loc)) (p : pool)
       (types_of_locs_pool locs p).
 Proof.
   move=> Hls. rewrite /types_of_locs_pool map_imap_insert Hls //.
+Qed.
+
+(** Materialization across one registry slot when both the address list
+    and the model of that slot change. *)
+Lemma types_of_locs_pool_insert_both (locs : gmap loc (list loc)) (p : pool)
+    (parent : loc) (ls' : list loc) (tm' : type_model) :
+  types_of_locs_pool (<[parent := ls']> locs) (<[parent := tm']> p)
+  = <[parent := MkTypeState (cells_of_locs_runs parent ls' (tm_runs tm')) (tm_arr tm')]>
+      (types_of_locs_pool locs p).
+Proof.
+  apply map_eq => q. destruct (decide (q = parent)) as [-> | Hne].
+  - rewrite lookup_insert_eq /types_of_locs_pool map_lookup_imap !lookup_insert_eq //.
+  - rewrite lookup_insert_ne; last congruence.
+    rewrite /types_of_locs_pool !map_lookup_imap.
+    rewrite lookup_insert_ne; last congruence.
+    rewrite lookup_insert_ne; last congruence.
+    done.
 Qed.
 
 (** [client_locs locs p client]: the client's clock-sorted node-address
