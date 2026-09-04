@@ -689,6 +689,23 @@ vocabulary substitution table written; then C5 restates the specs at
     binder and the fact never matches the lemma's premise; state it over
     the sorted entries (`entry_pr <$> E`) and carry it to the
     `merge_sort` form through `client_entries_prs`.
+    PROGRESS 2026-09-04 (C6-3c): `Store.Integrate` is proved on the run
+    fields. `wp_store__Integrate_runs` opens `own_store_runs`, borrows the
+    type out of `own_type_pool_runs`, runs the (already run-level)
+    `wp_store__integrateCore_runs`, and appends the fresh node's address
+    to its client's slice with `wp_addNode_runs` (a run-level `addNode`
+    over `own_ytype_runs` and `own_item_map_runs`: the new key is the
+    client's newest, `kp_client_locs_snoc_max`, with the entries stepping
+    by `pool_entries_integrate`); `run_pool_invs_integrate` (model),
+    `locs_wf_integrate` (value_cells) and
+    `pool_registry_coh_insert_existing` re-establish the invariants, and
+    the fresh address is new to the whole address map by
+    `own_linked_item_fresh_runs` (heap, off
+    `own_type_pool_runs_fresh_concat`). `kp_client_locs_absent` covers a
+    client with no slice yet. Deleted: the cell `wp_addNode`,
+    `linked_item_fresh2`, `list_find_cells_repr`, `findById_res_*` and
+    the local `cell_has_id_dec` (Integrate). No spec changed.
+
   - **C6-4, delete the cell side.** `item_cell`, the cell `own_dll` and
     `own_dll_cells_layout`, `own_ytype_cells`, `cells_of_locs_runs`,
     `types_of_locs_pool` / `state_of_runs`, `type_state` / `store_state`,

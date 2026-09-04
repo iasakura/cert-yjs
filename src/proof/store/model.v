@@ -44,7 +44,8 @@
     [all_runs] under a registry insert or lookup ([all_runs_insert] /
     [all_runs_lookup], membership across one slot [elem_of_all_runs_insert]
     / [elem_of_all_runs_lookup]) and [run_pool_invs] surviving one node
-    split ([run_pool_invs_split]) and one tombstoning
+    split ([run_pool_invs_split]), one integrate splice
+    ([run_pool_invs_integrate]) and one tombstoning
     ([run_pool_invs_flip]); [pool_after_delete] is a preorder containing
     one split and one tombstoning ([pool_after_delete_refl] /
     [pool_after_delete_trans] / [pool_after_split_delete] /
@@ -388,6 +389,41 @@ Proof.
         injection Hoid as <-.
         rewrite /run_clock Hheadr' Hidyo Hidyp /=. lia.
       * apply Hoclk. rewrite Hold. apply elem_of_cons. by right.
+Qed.
+
+(** [run_pool_invs] survives one integrate splice: the new run fits, its
+    same-client origin precedes it, and every same-client run of the pool
+    ends at or before its clock (the pure half of [store.Integrate]'s
+    [addNode] step). *)
+Lemma run_pool_invs_integrate (p : pool) (parent : loc) (tm : type_model)
+    (idx : nat) (r : ItemRun) (arr' : list (YjsItem A)) :
+  p !! parent = Some tm ->
+  run_fits r ->
+  run_origin_clk r ->
+  (∀ r0, r0 ∈ all_runs p -> run_client r0 = run_client r ->
+     (run_clock r0 + length (run_items r0) <= run_clock r)%nat) ->
+  run_pool_invs p ->
+  run_pool_invs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p).
+Proof.
+  move=> Hp Hfitsr Hoclkr Hbelow [Hfits [Hdisj Hoclk]].
+  have Hnew : all_runs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p)
+            ≡ₚ r :: all_runs p.
+  { rewrite (all_runs_insert p parent tm _ Hp) /= (all_runs_lookup p parent tm Hp).
+    rewrite -app_assoc /=.
+    rewrite -{3}(take_drop idx (tm_runs tm)) -app_assoc.
+    symmetry. apply Permutation_middle. }
+  have Hmem : ∀ r0, r0 ∈ all_runs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p)
+                 -> r0 = r ∨ r0 ∈ all_runs p.
+  { move=> r0 Hr0. rewrite Hnew in Hr0. apply elem_of_cons in Hr0. exact Hr0. }
+  split_and!.
+  - move=> r0 Hr0. destruct (Hmem r0 Hr0) as [-> | Hr0']; [exact Hfitsr | exact (Hfits r0 Hr0')].
+  - apply (runs_disjoint_perm (r :: all_runs p)); [by symmetry |].
+    move=> i j r1 r2 Hi Hj Hij Hcl.
+    destruct i as [|i']; destruct j as [|j']; simpl in Hi, Hj; simplify_eq.
+    + right. apply Hbelow; [exact (list_elem_of_lookup_2 _ _ _ Hj) | symmetry; exact Hcl].
+    + left. apply Hbelow; [exact (list_elem_of_lookup_2 _ _ _ Hi) | exact Hcl].
+    + exact (Hdisj i' j' r1 r2 Hi Hj ltac:(lia) Hcl).
+  - move=> r0 Hr0. destruct (Hmem r0 Hr0) as [-> | Hr0']; [exact Hoclkr | exact (Hoclk r0 Hr0')].
 Qed.
 
 (** [run_pool_invs] survives one tombstoning: a flip changes no run's id,

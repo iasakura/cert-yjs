@@ -1324,6 +1324,24 @@ Proof.
   iApply (own_ytype_runs_fresh with "Hq Hyt").
 Qed.
 
+(** The same, over the whole pool: an owned node address is absent from
+    every address list of the map. *)
+Lemma own_type_pool_runs_fresh_concat (q : loc) (v : yjs.item.t) (dq : dfrac)
+    (locs : gmap loc (list loc)) (p : pool) :
+  q ↦ v -∗ own_type_pool_runs dq locs p -∗ ⌜q ∉ concat ((map_to_list locs).*2)⌝.
+Proof.
+  iIntros "Hq (%Hlocswf & Hpool)".
+  iDestruct (own_type_pool_runs_fresh with "Hq Hpool") as %Hfr.
+  iPureIntro. destruct Hlocswf as (Hdom & _ & _).
+  move=> Hin. apply list_elem_of_concat in Hin as (lsq & Hin & Hlsq).
+  apply list_elem_of_fmap in Hlsq as ([parent lsq'] & -> & Hq). simpl in Hin.
+  apply elem_of_map_to_list in Hq.
+  have Hqp : is_Some (p !! parent).
+  { apply elem_of_dom. rewrite -Hdom. apply elem_of_dom. by exists lsq'. }
+  destruct Hqp as [tmq Htmq].
+  exact (Hfr parent lsq' tmq Hq Htmq Hin).
+Qed.
+
 (** The [w64] cell-level shadow of the per-client clock counter: if every
     item of this client in the pool's model lists has clock below [k], then
     every cell of this client ends at or before [k] in machine arithmetic
@@ -2542,6 +2560,21 @@ Proof.
     split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
                 | exact Hprev | exact Hnext | exact Hpar | exact Hflags
                 | rewrite Hc' //].
+Qed.
+
+(** A linked item's address is new to the whole address map of the pool
+    (the item is owned separately). *)
+Lemma own_linked_item_fresh_runs (item_l parent lft rgt : loc)
+    (input : IntegrateInput (A := A)) (dq : dfrac)
+    (locs : gmap loc (list loc)) (p : pool) :
+  own_linked_item item_l input parent lft rgt -∗
+  own_type_pool_runs dq locs p -∗
+  ⌜item_l ∉ concat ((map_to_list locs).*2)⌝.
+Proof.
+  iIntros "Hlinked Htypes".
+  iDestruct "Hlinked" as (itemVal oleft oright) "(Hraw & _)".
+  iDestruct "Hraw" as "(Hitem & _)".
+  iApply (own_type_pool_runs_fresh_concat with "Hitem Htypes").
 Qed.
 
 (** A fully-owned node struct's location is fresh for the whole document cell
