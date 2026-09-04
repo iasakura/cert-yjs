@@ -4,15 +4,15 @@
 
     Definitions
     - the split surgery [split_cell_left] / [split_cell_right] / [split_cells],
-      and its address-list half [split_locs].
+      and its address-list half [split_locs]; across a split the pool's
+      entries and address map go by [pool_entries_split] / [locs_wf_split].
     - the records one store step hands its caller: [split_types_update_rel] (one
       [splitNode]), [repair_types_update_rel] (the at-most-two splits of [repair])
       and [delete_types_update_rel] (the unbounded split-and-tombstone loop of the
       wire delete path).
     - what the node lookups and splits say about the pool: [pool_cell_covers]
       (a pool cell holds an id), [cell_covers_clock] (a clock within a run),
-      [sorted_client_run] (one client's clock-sorted node list), [cell_starts_at]
-      / [cell_ends_at] (the cell at a location begins / ends at an id),
+      [cell_starts_at] / [cell_ends_at] (the cell at a location begins / ends at an id),
       [fresh_loc] (a location no pool cell uses), and the [repair] contract
       [origins_covered] / [repair_parent] / [origins_split]; that contract at
       run granularity, [pool_origins_covered] / [pool_repair_parent] /
@@ -65,7 +65,7 @@
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
-From New.proof Require Import core prelude network_model.
+From New.proof Require Import core prelude algebra network_model.
 From iris.algebra Require Import auth gmap gset.
 From stdpp Require Import sorting.
 Local Open Scope Z_scope.
@@ -211,14 +211,6 @@ Definition cell_covers_clock (c : item_cell) (k : nat) : Prop :=
     has the char with id [d]. *)
 Definition pool_cell_covers (types : gmap loc type_state) (c : item_cell) (d : YjsId) : Prop :=
   c ∈ all_cells types ∧ cell_covers c d.
-
-(** [sorted_client_run types kc run]: [run] lists cells of client [kc] from the
-    pool [types], clock-sorted and without a repeated node: the item map's run
-    for [kc], or that run with one cell rewritten during a split. *)
-Definition sorted_client_run (types : gmap loc type_state) (kc : w64)
-    (run : list item_cell) : Prop :=
-  StronglySorted cell_le run ∧ NoDup (ic_loc <$> run) ∧
-  (∀ c, c ∈ run -> c ∈ client_run types kc).
 
 (** [cell_starts_at types parent l d]: the pool [types] holds, under the type
     [parent], a cell at location [l] whose first char has id [d]. *)
@@ -1517,6 +1509,95 @@ Proof.
     apply (H q (ic_loc <$> ty_cells ts)).
     + rewrite lookup_fmap Hts //.
     + apply list_elem_of_fmap_2. exact Hc.
+Qed.
+
+(** The pool's entries across a node split: the split entry becomes its two
+    halves (the right one at the fresh address), every other entry stays
+    (the run form of [split_pool_perm]). *)
+Lemma pool_entries_split (locs : gmap loc (list loc)) (p : pool) (parent : loc)
+    (ls : list loc) (tm : type_model) (k : nat) (l : loc) (r : ItemRun) (o : nat) (rloc : loc) :
+  locs !! parent = Some ls -> p !! parent = Some tm ->
+  ls !! k = Some l -> tm_runs tm !! k = Some r ->
+  length ls = length (tm_runs tm) ->
+  ∃ rest : list (loc * ItemRun),
+    pool_entries locs p ≡ₚ (l, r) :: rest ∧
+    pool_entries (<[parent := split_locs ls k rloc]> locs)
+                 (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p)
+      ≡ₚ (l, split_run_left r o) :: (rloc, split_run_right r o) :: rest.
+Proof.
+  move=> Hls Hp Hlk Hrk Hlen.
+  set (F := λ (locs' : gmap loc (list loc)) (kv : loc * type_model),
+              zip (default [] (locs' !! kv.1)) (tm_runs kv.2)).
+  set (others := concat (F locs <$> map_to_list (delete parent p))).
+  have Hpe : ∀ (locs' : gmap loc (list loc)) (tm' : type_model),
+      (∀ q, q ≠ parent -> locs' !! q = locs !! q) ->
+      pool_entries locs' (<[parent := tm']> p) ≡ₚ F locs' (parent, tm') ++ others.
+  { move=> locs' tm' Hq. rewrite /pool_entries.
+    have Hm : F locs' <$> map_to_list (<[parent := tm']> p)
+            ≡ₚ F locs' <$> ((parent, tm') :: map_to_list (delete parent p)).
+    { apply Permutation_map. exact (map_to_list_insert_existing p parent tm tm' Hp). }
+    rewrite (concat_perm _ _ Hm) fmap_cons concat_cons. apply Permutation_app_head. rewrite /others.
+    have -> : F locs' <$> map_to_list (delete parent p) = F locs <$> map_to_list (delete parent p);
+      last reflexivity.
+    apply list_fmap_ext. move=> i [q tmq] Hi. rewrite /F /=.
+    have Hq' : delete parent p !! q = Some tmq
+      by (apply elem_of_map_to_list; exact (list_elem_of_lookup_2 _ _ _ Hi)).
+    apply lookup_delete_Some in Hq' as [Hne _]. rewrite (Hq q (λ H, Hne (eq_sym H))) //. }
+  set (A := zip (take k ls) (take k (tm_runs tm))).
+  set (B := zip (drop (S k) ls) (drop (S k) (tm_runs tm))).
+  have HlenA : length (take k ls) = length (take k (tm_runs tm)) by rewrite !length_take Hlen.
+  have Hother : ∀ q, q ≠ parent -> <[parent := split_locs ls k rloc]> locs !! q = locs !! q.
+  { move=> q Hne. rewrite lookup_insert_ne //. }
+  exists (A ++ B ++ others). split.
+  - rewrite -{1}(insert_id p parent tm Hp) (Hpe locs tm (λ q _, eq_refl)) /F /= Hls /=.
+    rewrite -{1}(take_drop_middle ls k l Hlk) -{1}(take_drop_middle (tm_runs tm) k r Hrk).
+    rewrite zip_with_app; last exact HlenA.
+    simpl. rewrite -/A -/B -app_assoc /=.
+    symmetry. apply Permutation_middle.
+  - rewrite (Hpe (<[parent := split_locs ls k rloc]> locs) _ Hother) /F /=.
+    rewrite lookup_insert_eq /= /split_locs /split_runs Hlk Hrk /=.
+    rewrite zip_with_app; last exact HlenA.
+    simpl. rewrite -/A -/B -app_assoc /=.
+    etransitivity; first (symmetry; apply Permutation_middle).
+    apply perm_skip. symmetry. apply Permutation_middle.
+Qed.
+
+(** The address map stays well formed across a split whose right half lands
+    at a fresh address. *)
+Lemma locs_wf_split (locs : gmap loc (list loc)) (p : pool) (parent : loc)
+    (ls : list loc) (tm : type_model) (k : nat) (l : loc) (r : ItemRun) (o : nat) (rloc : loc) :
+  locs !! parent = Some ls -> p !! parent = Some tm ->
+  ls !! k = Some l -> tm_runs tm !! k = Some r ->
+  rloc ∉ concat ((map_to_list locs).*2) ->
+  locs_wf locs p ->
+  locs_wf (<[parent := split_locs ls k rloc]> locs)
+          (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p).
+Proof.
+  move=> Hls Hp Hlk Hrk Hfresh [Hdom [Hnd Hlens]].
+  have Hklt : (k < length ls)%nat := lookup_lt_Some _ _ _ Hlk.
+  have Hperm0 : concat ((map_to_list locs).*2) ≡ₚ ls ++ concat ((map_to_list (delete parent locs)).*2).
+  { rewrite -{1}(insert_id locs parent ls Hls).
+    rewrite (concat_perm _ _ (Permutation_map snd (map_to_list_insert_existing locs parent ls ls Hls))) //. }
+  have Hperm : concat ((map_to_list (<[parent := split_locs ls k rloc]> locs)).*2)
+             ≡ₚ split_locs ls k rloc ++ concat ((map_to_list (delete parent locs)).*2).
+  { rewrite (concat_perm _ _ (Permutation_map snd (map_to_list_insert_existing locs parent ls _ Hls))) //. }
+  have Hsl : split_locs ls k rloc ≡ₚ rloc :: ls.
+  { rewrite /split_locs Hlk -{3}(take_drop_middle ls k l Hlk).
+    have -> : take k ls ++ [l; rloc] ++ drop (S k) ls = (take k ls ++ [l]) ++ rloc :: drop (S k) ls
+      by rewrite -app_assoc //.
+    have -> : take k ls ++ l :: drop (S k) ls = (take k ls ++ [l]) ++ drop (S k) ls
+      by rewrite -app_assoc //.
+    symmetry. apply Permutation_middle. }
+  split_and!.
+  - rewrite !dom_insert_L Hdom //.
+  - rewrite Hperm Hsl. rewrite Hperm0 in Hnd Hfresh.
+    apply NoDup_cons. split; [exact Hfresh | exact Hnd].
+  - move=> q lsq tmq. destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite !lookup_insert_eq. move=> [<-] [<-]. simpl.
+      have Hlsl := Hlens parent ls tm Hls Hp.
+      rewrite /split_locs Hlk /= !length_app /= length_take_le; last lia.
+      rewrite length_drop (split_runs_length _ _ _ _ Hrk). lia.
+    + rewrite !lookup_insert_ne //. exact (Hlens q lsq tmq).
 Qed.
 
 End store_value_split.

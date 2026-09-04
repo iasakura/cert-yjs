@@ -6,9 +6,9 @@
     (proved from [wp_store__GetNode_runs] and [wp_store__splitNode_runs],
     stepping the pool and the address map by the index-explicit
     [pool_split_left_step] / [pool_split_right_step]), plus the split-pool
-    bookkeeping ([pool_invs_split], [split_types_update_rel], the
-    [split_pool_*] / [split_cells_*] laws the run-level text layer reads
-    its materialized cells through).
+    bookkeeping the run-level text layer still reads its materialized cells
+    through ([split_pool_perm], [split_pool_live_refine],
+    [split_pool_dead_chars_kept], [split_cells_lookup_left]; gone at C6-4).
     Split out of [store/GetNode] so it proof-checks in parallel; same
     [Section] boilerplate and [#[local]] instances. *)
 From New.proof Require Import proof_prelude.
@@ -16,6 +16,7 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core.
 From New.proof Require Import prelude.
+From New.proof Require Import algebra.
 From New.proof.id Require Import id.
 From New.proof.item Require Import item.
 From New.proof.ytype Require Import ytype.
@@ -81,38 +82,6 @@ Proof. rewrite /cell_le. move=> x y. lia. Qed.
    These are what the general [repair] uses to re-establish [store_inv]
    across its clean-end / clean-start splits at the C2 flip. *)
 
-(** The two halves' head / length / client / clock facts, in one bundle. *)
-Lemma split_cell_facts (cw : item_cell) (o : nat) (rloc : loc) :
-  run_wf (ic_run cw) ->
-  (0 < o < length (ic_run cw))%nat ->
-  run_head (split_cell_left cw o) = run_head cw ∧
-  length (ic_run (split_cell_left cw o)) = o ∧
-  length (ic_run (split_cell_right cw o rloc)) = (length (ic_run cw) - o)%nat ∧
-  cell_client (split_cell_left cw o) = cell_client cw ∧
-  cell_client (split_cell_right cw o rloc) = cell_client cw ∧
-  cell_clock (split_cell_left cw o) = cell_clock cw ∧
-  cell_clock (split_cell_right cw o rloc) = W64 (Z.of_nat (clock (item_id (run_head cw)) + o)%nat).
-Proof.
-  move=> Hrunwf [Hopos Holt].
-  have Hrun0 : ic_run cw !! 0%nat = Some (run_head cw).
-  { rewrite /run_head. destruct Hrunwf as [Hne _].
-    destruct (ic_run cw) as [|a r']; [done | reflexivity]. }
-  destruct (ic_run cw !! o) as [yo|] eqn:Hyo; last by (apply lookup_ge_None in Hyo; lia).
-  have Hidy := run_wf_lookup_clock (ic_run cw) o (run_head cw) yo Hrunwf Hrun0 Hyo.
-  have Hheadl : run_head (split_cell_left cw o) = run_head cw.
-  { rewrite /run_head /split_cell_left /=. apply hd_inhabitant_take. lia. }
-  have Hheadr : run_head (split_cell_right cw o rloc) = yo.
-  { rewrite /run_head /split_cell_right /=. exact (hd_inhabitant_drop _ o yo Hyo). }
-  split_and!.
-  - exact Hheadl.
-  - rewrite /split_cell_left /= length_take. lia.
-  - rewrite /split_cell_right /= length_drop //.
-  - rewrite /cell_client Hheadl //.
-  - rewrite /cell_client Hheadr Hidy //=.
-  - rewrite /cell_clock Hheadl //.
-  - rewrite /cell_clock Hheadr Hidy //=.
-Qed.
-
 (** The pool permutation of a split: [cw] out, its two halves in. *)
 Lemma split_pool_perm (types : gmap loc type_state) (parent : loc)
     (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
@@ -135,197 +104,6 @@ Proof.
     rewrite -!app_assoc /=.
     rewrite -Permutation_middle.
     rewrite -Permutation_middle //.
-Qed.
-
-(** Run-fits survives a split: each half's range is a sub-range of [cw]'s.
-    [Hckbnd] (the head clock fits as a NAT, from [own_type_pool_id_bounds])
-    makes the right half's [W64] clock exact. *)
-Lemma split_pool_fits (types : gmap loc type_state) (parent : loc)
-    (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
-    (o : nat) (rloc : loc) :
-  types !! parent = Some (MkTypeState cells arr) ->
-  cells !! k = Some cw ->
-  run_wf (ic_run cw) ->
-  (0 < o < length (ic_run cw))%nat ->
-  (Z.of_nat (clock (item_id (run_head cw))) < 2^64)%Z ->
-  (∀ c, c ∈ all_cells types -> (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z) ->
-  (∀ c, c ∈ all_cells (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types) ->
-     (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) < 2^64)%Z).
-Proof.
-  move=> Htypes Hck Hrunwf Ho Hckbnd Hfits c Hc.
-  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck) as (rest & Hold & Hnew).
-  have Hcwmem : cw ∈ all_cells types by (rewrite Hold; apply list_elem_of_here).
-  have Hfitscw := Hfits cw Hcwmem.
-  destruct (split_cell_facts cw o rloc Hrunwf Ho)
-    as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
-  have HclkZ : uint.Z (cell_clock cw) = Z.of_nat (clock (item_id (run_head cw))).
-  { rewrite /cell_clock. word. }
-  rewrite Hnew in Hc.
-  apply elem_of_cons in Hc as [-> | Hc].
-  - rewrite Hclockl Hlenl. lia.
-  - apply elem_of_cons in Hc as [-> | Hc].
-    + rewrite Hclockr Hlenr.
-      have Hbo : (Z.of_nat (clock (item_id (run_head cw)) + o) < 2^64)%Z by lia.
-      have -> : uint.Z (W64 (Z.of_nat (clock (item_id (run_head cw)) + o)%nat))
-              = Z.of_nat (clock (item_id (run_head cw)) + o)%nat by word.
-      lia.
-    + apply Hfits. rewrite Hold. apply elem_of_cons. by right.
-Qed.
-
-(** Origin-clock survives a split: the left half keeps [cw]'s head (and so
-    its origin fact); the right half's head is [cw]'s char at offset [o],
-    whose origin is the previous char of the SAME run ([run_wf] chaining):
-    same client, clock exactly one below. *)
-Lemma split_pool_originclk (types : gmap loc type_state) (parent : loc)
-    (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
-    (o : nat) (rloc : loc) :
-  types !! parent = Some (MkTypeState cells arr) ->
-  cells !! k = Some cw ->
-  run_wf (ic_run cw) ->
-  (0 < o < length (ic_run cw))%nat ->
-  (∀ c, c ∈ all_cells types -> cell_origin_clk c) ->
-  (∀ c, c ∈ all_cells (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types) ->
-     cell_origin_clk c).
-Proof.
-  move=> Htypes Hck Hrunwf Ho Hoclk c Hc.
-  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck) as (rest & Hold & Hnew).
-  have Hcwmem : cw ∈ all_cells types by (rewrite Hold; apply list_elem_of_here).
-  destruct (split_cell_facts cw o rloc Hrunwf Ho)
-    as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
-  rewrite Hnew in Hc.
-  apply elem_of_cons in Hc as [-> | Hc].
-  - rewrite /cell_origin_clk Hheadl. exact (Hoclk cw Hcwmem).
-  - apply elem_of_cons in Hc as [-> | Hc].
-    + (* the right half: its head's origin is the previous char of the run *)
-      rewrite /cell_origin_clk.
-      have Hrun0 : ic_run cw !! 0%nat = Some (run_head cw).
-      { rewrite /run_head. destruct Hrunwf as [Hne _].
-        destruct (ic_run cw) as [|a r']; [done | reflexivity]. }
-      destruct (ic_run cw !! o) as [yo|] eqn:Hyo; last by (apply lookup_ge_None in Hyo; lia).
-      destruct (ic_run cw !! (o - 1)%nat) as [yp|] eqn:Hyp; last by (apply lookup_ge_None in Hyp; lia).
-      have Hheadr : run_head (split_cell_right cw o rloc) = yo.
-      { rewrite /run_head /split_cell_right /=. exact (hd_inhabitant_drop _ o yo Hyo). }
-      have Hso : S (o - 1)%nat = o by lia.
-      have Hstep := proj2 Hrunwf (o - 1)%nat yp yo Hyp ltac:(rewrite Hso //).
-      destruct Hstep as (Hidyo & Horigyo & _).
-      have Hidyp := run_wf_lookup_clock (ic_run cw) (o - 1)%nat (run_head cw) yp Hrunwf Hrun0 Hyp.
-      move=> originId Hoid Hcl.
-      rewrite Hheadr Horigyo /= in Hoid.
-      injection Hoid as <-.
-      rewrite Hheadr Hidyo Hidyp /=. lia.
-    + apply (Hoclk c). rewrite Hold. apply elem_of_cons. by right.
-Qed.
-
-(** Range disjointness survives a split: the halves' ranges partition [cw]'s,
-    so any old cell disjoint from [cw] is disjoint from both halves, and the
-    halves are disjoint from each other by construction. Needs loc-NoDup so
-    an old cell at [cw]'s own location cannot survive into [rest]. *)
-Lemma split_pool_rangedisj (types : gmap loc type_state) (parent : loc)
-    (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
-    (o : nat) (rloc : loc) :
-  types !! parent = Some (MkTypeState cells arr) ->
-  cells !! k = Some cw ->
-  run_wf (ic_run cw) ->
-  (0 < o < length (ic_run cw))%nat ->
-  (Z.of_nat (clock (item_id (run_head cw))) < 2^64)%Z ->
-  (uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)) < 2^64)%Z ->
-  NoDup (ic_loc <$> all_cells types) ->
-  cells_range_disjoint (all_cells types) ->
-  cells_range_disjoint (all_cells (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types)).
-Proof.
-  move=> Htypes Hck Hrunwf Ho Hckbnd Hfitscw Hnodup Hdisj.
-  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck) as (rest & Hold & Hnew).
-  have Hcwmem : cw ∈ all_cells types by (rewrite Hold; apply list_elem_of_here).
-  destruct (split_cell_facts cw o rloc Hrunwf Ho)
-    as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
-  have HclkZ : uint.Z (cell_clock cw) = Z.of_nat (clock (item_id (run_head cw))).
-  { rewrite /cell_clock. word. }
-  have Hbo : (Z.of_nat (clock (item_id (run_head cw)) + o) < 2^64)%Z by lia.
-  have HclkrZ : uint.Z (cell_clock (split_cell_right cw o rloc))
-              = (uint.Z (cell_clock cw) + Z.of_nat o)%Z.
-  { rewrite Hclockr HclkZ. word. }
-  (* an old cell in [rest] never sits at [cw]'s location (loc-NoDup) *)
-  have Hrestloc : ∀ c, c ∈ rest -> ic_loc c ≠ ic_loc cw.
-  { move=> c Hc Heq.
-    have Hperm : ic_loc <$> all_cells types ≡ₚ ic_loc cw :: (ic_loc <$> rest)
-      by rewrite Hold //.
-    have Hnd2 : NoDup (ic_loc cw :: (ic_loc <$> rest)) by rewrite -Hperm //.
-    apply NoDup_cons in Hnd2 as [Hnotin _].
-    apply Hnotin. rewrite -Heq. apply list_elem_of_fmap_2. exact Hc.
-  }
-  (* disjointness of an old cell against [cw] transfers to both halves *)
-  have Holdcase : ∀ c, c ∈ rest -> cell_client c = cell_client cw ->
-    (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z (cell_clock cw))%Z ∨
-    (uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)) <= uint.Z (cell_clock c))%Z.
-  { move=> c Hc Hcc.
-    apply (Hdisj c cw); [rewrite Hold; apply elem_of_cons; by right | exact Hcwmem | exact Hcc |].
-    exact (Hrestloc c Hc). }
-  move=> c1 c2 Hc1 Hc2 Hcc Hlocne.
-  rewrite Hnew in Hc1 Hc2.
-  apply elem_of_cons in Hc1 as [-> | Hc1];
-    [| apply elem_of_cons in Hc1 as [-> | Hc1]];
-    apply elem_of_cons in Hc2 as [-> | Hc2];
-    try (apply elem_of_cons in Hc2 as [-> | Hc2]).
-  - (* leftCell vs leftCell: same loc, guard is false *)
-    exfalso. exact (Hlocne eq_refl).
-  - (* leftCell vs rightCell: left half strictly below the right half *)
-    left. rewrite Hclockl Hlenl HclkrZ. lia.
-  - (* leftCell vs old *)
-    have Hcc' : cell_client c2 = cell_client cw by rewrite -Hcc Hclientl //.
-    destruct (Holdcase c2 Hc2 Hcc') as [Hd | Hd].
-    + right. rewrite Hclockl. lia.
-    + left. rewrite Hclockl Hlenl. lia.
-  - (* rightCell vs leftCell *)
-    right. rewrite Hclockl Hlenl HclkrZ. lia.
-  - (* rightCell vs rightCell: same loc *)
-    exfalso. exact (Hlocne eq_refl).
-  - (* rightCell vs old *)
-    have Hcc' : cell_client c2 = cell_client cw by rewrite -Hcc Hclientr //.
-    destruct (Holdcase c2 Hc2 Hcc') as [Hd | Hd].
-    + right. rewrite HclkrZ. lia.
-    + left. rewrite HclkrZ Hlenr. lia.
-  - (* old vs leftCell *)
-    have Hcc' : cell_client c1 = cell_client cw by rewrite Hcc Hclientl //.
-    destruct (Holdcase c1 Hc1 Hcc') as [Hd | Hd].
-    + left. rewrite Hclockl. lia.
-    + right. rewrite Hclockl Hlenl. lia.
-  - (* old vs rightCell *)
-    have Hcc' : cell_client c1 = cell_client cw by rewrite Hcc Hclientr //.
-    destruct (Holdcase c1 Hc1 Hcc') as [Hd | Hd].
-    + left. rewrite HclkrZ. lia.
-    + right. rewrite HclkrZ Hlenr. lia.
-  - (* old vs old *)
-    apply (Hdisj c1 c2); [rewrite Hold; apply elem_of_cons; by right
-                         | rewrite Hold; apply elem_of_cons; by right
-                         | exact Hcc | exact Hlocne].
-Qed.
-
-(** Loc-NoDup survives a split, given the fresh right location: the pool's
-    location multiset gains exactly [rloc]. *)
-Lemma split_pool_locdup (types : gmap loc type_state) (parent : loc)
-    (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
-    (o : nat) (rloc : loc) :
-  types !! parent = Some (MkTypeState cells arr) ->
-  cells !! k = Some cw ->
-  rloc ∉ (ic_loc <$> all_cells types) ->
-  NoDup (ic_loc <$> all_cells types) ->
-  NoDup (ic_loc <$> all_cells (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types)).
-Proof.
-  move=> Htypes Hck Hfresh Hnodup.
-  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck) as (rest & Hold & Hnew).
-  have Hpermnew : ic_loc <$> all_cells (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types)
-                ≡ₚ ic_loc cw :: rloc :: (ic_loc <$> rest)
-    by rewrite Hnew //.
-  have Hpermold : ic_loc <$> all_cells types ≡ₚ ic_loc cw :: (ic_loc <$> rest)
-    by rewrite Hold //.
-  rewrite Hpermnew.
-  have Hndold : NoDup (ic_loc cw :: (ic_loc <$> rest)) by rewrite -Hpermold //.
-  apply NoDup_cons in Hndold as [Hcwnotin Hndrest].
-  have Hrfresh2 : rloc ∉ ic_loc cw :: (ic_loc <$> rest) by rewrite -Hpermold //.
-  apply not_elem_of_cons in Hrfresh2 as [Hrnecw Hrnotin].
-  apply NoDup_cons. split.
-  { apply not_elem_of_cons. split; [congruence | exact Hcwnotin]. }
-  apply NoDup_cons. split; [exact Hrnotin | exact Hndrest].
 Qed.
 
 (** [split_cells] index bookkeeping: the left half sits at the split
@@ -392,33 +170,6 @@ Proof.
   - exists (split_cell_right cw o rloc). split_and!;
       [rewrite Hnew; apply elem_of_cons; right; apply list_elem_of_here
       | exact Hdel | exact Hy].
-Qed.
-
-(** The pool invariants survive a split: the two halves inherit the node's
-    coordinates ([split_pool_fits] / [_rangedisj] / [_originclk]) and the
-    right half lands at a fresh location ([split_pool_locdup]). *)
-Lemma pool_invs_split (types : gmap loc type_state) (parent : loc)
-    (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
-    (o : nat) (rloc : loc) :
-  types !! parent = Some (MkTypeState cells arr) ->
-  cells !! k = Some cw ->
-  run_wf (ic_run cw) ->
-  (0 < o < length (ic_run cw))%nat ->
-  (Z.of_nat (clock (item_id (run_head cw))) < 2^64)%Z ->
-  rloc ∉ (ic_loc <$> all_cells types) ->
-  pool_invs types ->
-  pool_invs (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types).
-Proof.
-  move=> Htypes0 Hck Hrunwf Ho Hckbnd Hrfresh [Hfits [Hnodup [Hrangedisj Horiginclk]]].
-  have Hcwmem : cw ∈ all_cells types.
-  { apply all_cells_elem_of. exists parent, (MkTypeState cells arr).
-    split; [exact Htypes0 | exact (list_elem_of_lookup_2 _ _ _ Hck)]. }
-  have Hfitscw := Hfits cw Hcwmem.
-  split_and!.
-  - exact (split_pool_fits types parent cells arr k cw _ rloc Htypes0 Hck Hrunwf Ho Hckbnd Hfits).
-  - exact (split_pool_locdup types parent cells arr k cw _ rloc Htypes0 Hck Hrfresh Hnodup).
-  - exact (split_pool_rangedisj types parent cells arr k cw _ rloc Htypes0 Hck Hrunwf Ho Hckbnd Hfitscw Hnodup Hrangedisj).
-  - exact (split_pool_originclk types parent cells arr k cw _ rloc Htypes0 Hck Hrunwf Ho Horiginclk).
 Qed.
 
 (** [splitItem n diff] at run granularity: the node at address [lc], the
@@ -727,9 +478,9 @@ Qed.
     gets the two halves ([split_runs]) and the address list the fresh right
     half's address after [k] ([split_locs]), the fresh address new to the
     WHOLE address map. The DLL half is [wp_splitItem_runs]; the per-client
-    run list ([own_item_map]) gets the right half inserted after the split
-    node, the cell-level bookkeeping ([split_pool_*]) applying through the
-    materialized registry until C6. *)
+    address slice ([own_item_map_runs]) gets the right half's address
+    inserted after the split node's, the pool and address-map laws being
+    [run_pool_invs_split] / [locs_wf_split] / [pool_entries_split]. *)
 Lemma wp_store__splitNode_runs (s : loc) (str : store_state_runs)
     (parent l : loc) (ls : list loc) (tm : type_model) (k : nat) (r : ItemRun) (diff : w64) :
   sr_pool str !! parent = Some tm ->
@@ -748,53 +499,45 @@ Proof using Type*.
   move=> Hp Hl Hr Hlk Hdiff.
   destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
-  iDestruct (own_store_runs_to_state with "Hruns") as "(Hstruct & %Haligned)".
-  iDestruct "Hstruct" as "(Hfields0 & %Hinvs0)".
-  have Hpool : pool_invs (types_of_locs_pool locs p) := proj1 Hinvs0.
-  have Hreg0 : registry_coh bind (types_of_locs_pool locs p) := proj2 Hinvs0.
-  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iEval (simpl) in "Htypes". iEval (simpl) in "Hitems".
-  set (types := types_of_locs_pool locs p) in *.
-  have [Hrunfits [Hnodup [Hrangedisj Horiginclk]]] := Hpool.
-  have Hprem := locs_aligned_lens _ _ Haligned.
-  have Hlsl : length ls = length (tm_runs tm).
-  { destruct (Hprem parent tm Hp) as (ls0 & Hls0 & Hlen0). rewrite Hl in Hls0. injection Hls0 as <-. exact Hlen0. }
-  set (cells := cells_of_locs_runs parent ls (tm_runs tm)).
-  set (cw := MkItemCell l (run_items r) (run_deleted r) parent).
-  have Htypes : types !! parent = Some (MkTypeState cells (tm_arr tm)).
-  { rewrite /types /types_of_locs_pool map_lookup_imap Hp /= Hl //. }
-  have Hcellk : cells !! k = Some cw.
-  { rewrite /cells /cells_of_locs_runs lookup_zip_with Hlk Hr //. }
-  set (o := uint.nat diff).
-  iDestruct "Hitems" as (mref) "(Hitemsf & Hitemmap)".
-  have Hcwmem : cw ∈ all_cells types.
-  { apply all_cells_elem_of. exists parent, (MkTypeState cells (tm_arr tm)).
-    split; [exact Htypes | exact (list_elem_of_lookup_2 _ _ _ Hcellk)]. }
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds0.
-  have Hckbnd : (Z.of_nat (clock (item_id (run_head cw))) < 2^64)%Z := proj2 (Hbnds0 cw Hcwmem).
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwfs0.
-  have Hrun : run_wf (ic_run cw) := Hwfs0 cw Hcwmem.
-  have Hnowrapcw : (uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)) < 2^64)%Z := Hrunfits cw Hcwmem.
-  have Hfitsr : run_fits r.
-  { have H' : (uint.Z (W64 (clock (item_id (run_head_item r)))) + Z.of_nat (length (run_items r)) < 2^64)%Z := Hnowrapcw.
-    have Hb : (Z.of_nat (clock (item_id (run_head_item r))) < 2^64)%Z := Hckbnd.
-    change ((Z.of_nat (clock (item_id (run_head_item r))) + Z.of_nat (length (run_items r)) < 2^64)%Z).
-    word. }
-  (* open [parent]'s cells as the run view, and read the split node's struct
-     (its id is what the item-map surgery keys on) *)
-  rewrite /own_type_pool.
-  iDestruct (big_sepM_delete _ _ parent _ Htypes with "Htypes") as "[(Hpc & %Harrinv) Hrestmap]".
-  iEval (cbn [ty_cells ty_arr]) in "Hpc".
-  iDestruct (own_ytype_runs_intro with "Hpc") as "Hyt".
-  iEval (rewrite /cells (cells_of_locs_runs_loc parent ls (tm_runs tm) Hlsl)
-                 (cells_of_locs_runs_run parent ls (tm_runs tm) Hlsl)) in "Hyt".
+  iDestruct "Hruns" as "(Hfields & %Hinvs)".
+  have Hrpi : run_pool_invs p := proj1 Hinvs.
+  have Hreg : pool_registry_coh bind p := proj2 Hinvs.
+  have [Hfits [Hdisj Hoc]] := Hrpi.
+  iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iEval (simpl) in "Hitems Htypes".
+  iDestruct (own_type_pool_runs_id_bounds with "Htypes") as %Hbnds.
+  iDestruct (own_type_pool_runs_run_wf with "Htypes") as %Hwfall.
+  iDestruct "Htypes" as "(%Hlocswf & Hpool)".
+  have Hlocswf0 := Hlocswf. destruct Hlocswf as (Hdom & Hnd & Hlens).
+  have Hlens' : ∀ parent' tm', p !! parent' = Some tm' ->
+      ∃ ls', locs !! parent' = Some ls' ∧ length ls' = length (tm_runs tm').
+  { move=> parent' tm' Hp'.
+    have His : is_Some (locs !! parent').
+    { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm'. }
+    destruct His as [ls' Hls']. exists ls'. split; [done | exact (Hlens parent' ls' tm' Hls' Hp')]. }
+  have Hlsl : length ls = length (tm_runs tm) := Hlens parent ls tm Hl Hp.
+  have Hrmem : r ∈ all_runs p.
+  { apply elem_of_all_runs. exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hr)]. }
+  have Hfitsr : run_fits r := Hfits r Hrmem.
+  have Hwfr : run_wf (run_items r) := Hwfall r Hrmem.
+  have Hclb : (Z.of_nat (run_client r) < 2^64)%Z := proj1 (Hbnds r Hrmem).
+  have Hckb : (Z.of_nat (run_clock r) < 2^64)%Z := proj2 (Hbnds r Hrmem).
+  have Hob : (0 < uint.nat diff < length (run_items r))%nat := Hdiff.
+  have Hopos : (0 < uint.nat diff)%nat by lia.
+  have Hoinrun : (uint.nat diff < length (run_items r))%nat by lia.
+  have Hfitsr' : (Z.of_nat (run_clock r) + Z.of_nat (length (run_items r)) < 2^64)%Z := Hfitsr.
+  destruct (split_run_facts r (uint.nat diff) Hwfr Hob)
+    as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
+  (* this type's run view; the split node's struct (its id keys the item-map
+     surgery) *)
+  iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Hpc Hrest]".
+  iDestruct "Hpc" as (ls0) "(%Hls0 & Hyt & %Harrinv)". rewrite Hl in Hls0. injection Hls0 as <-.
   iDestruct "Hyt" as (yt0 tl0) "(Hparent0 & Hdll0 & %Hlen0 & %Hrepr0)".
   iDestruct (own_dll_runs_acc (DfracOwn 1) parent _ tl0 ls (tm_runs tm) k l r Hlk Hr with "Hdll0")
     as (prev0 nxt0) "(%Hcl0 & %Hcr0 & %Hrun0 & %Hpc0 & %Hclen0 & Hnode0 & Hback0)".
   iDestruct "Hnode0" as (itemVal olid0 orid0)
     "(Hval0 & Hol0 & Hor0 & %Hinl0 & %Hinr0 & %Hidn0 & %Hcont0 & %Hpar0 & %Hprev0 & %Hnext0 & %Hflags0)".
-  have Hid : item_id (run_head cw) = toYjsId itemVal.(yjs.item.id').
-  { symmetry. exact Hidn0. }
+  have Hid : item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id') by (symmetry; exact Hidn0).
   iAssert (own_item_node l (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev0 nxt0)
     with "[Hval0 Hol0 Hor0]" as "Hnode0".
   { iExists itemVal, olid0, orid0. iFrame "Hval0 Hol0 Hor0". iPureIntro.
@@ -812,221 +555,188 @@ Proof using Type*.
   (* the fresh address misses the other types too: borrow its node against
      the rest of the pool *)
   have Hlk' : split_locs ls k rs !! S k = Some rs := split_locs_lookup_right ls k rs l Hlk.
-  have Hrk' : split_runs (tm_runs tm) k o !! S k = Some (split_run_right r o)
+  have Hrk' : split_runs (tm_runs tm) k (uint.nat diff) !! S k = Some (split_run_right r (uint.nat diff))
     := split_runs_lookup_right _ _ _ _ Hr.
   iDestruct "Hyt2" as (yt2 tl2) "(Hparent2 & Hdll2 & %Hlen2 & %Hrepr2)".
   iEval (cbn [tm_runs]) in "Hdll2".
   iDestruct (own_dll_runs_lookup_acc _ _ _ _ _ _ _ _ _ _ _ Hlk' Hrk' with "Hdll2") as (pr nr) "(Hnoder & Hbackr)".
   iDestruct "Hnoder" as (ivr olr orr) "(Hrsval & Hrsol & Hrsor & %Hf1 & %Hf2 & %Hf3 & %Hf4 & %Hf5 & %Hf6 & %Hf7 & %Hf8)".
-  iDestruct (big_sepM_sep with "Hrestmap") as "[Hrestown Hrestinv]".
-  iDestruct (all_cells_fresh rs _ (DfracOwn 1) (delete parent types) with "Hrsval Hrestown") as %Hfr_rest.
-  iAssert (own_type_pool (DfracOwn 1) (delete parent types))%I with "[Hrestown Hrestinv]" as "Hrestmap".
-  { rewrite /own_type_pool big_sepM_sep. iFrame "Hrestown Hrestinv". }
-  iAssert (own_item_node rs (DfracOwn 1) (input_of_run (split_run_right r o)) (run_deleted (split_run_right r o)) parent pr nr)
+  iDestruct (own_type_pool_runs_fresh rs ivr (DfracOwn 1) locs (delete parent p) with "Hrsval Hrest") as %Hfr_rest.
+  iAssert (own_item_node rs (DfracOwn 1) (input_of_run (split_run_right r (uint.nat diff)))
+             (run_deleted (split_run_right r (uint.nat diff))) parent pr nr)
     with "[Hrsval Hrsol Hrsor]" as "Hnoder".
   { iExists ivr, olr, orr. iFrame "Hrsval Hrsol Hrsor". iPureIntro.
     split_and!; [exact Hf1 | exact Hf2 | exact Hf3 | exact Hf4 | exact Hf5 | exact Hf6 | exact Hf7 | exact Hf8]. }
   iDestruct ("Hbackr" with "Hnoder") as "Hdll2".
-  have Hrsfresh : rs ∉ ic_loc <$> all_cells types.
-  { move=> Hin. rewrite (all_cells_lookup types parent _ Htypes) /= fmap_app in Hin.
-    apply elem_of_app in Hin as [Hin | Hin].
-    - rewrite /cells (cells_of_locs_runs_loc parent ls (tm_runs tm) Hlsl) in Hin. exact (Hrsls Hin).
-    - exact (Hfr_rest Hin). }
-  (* back to the cell registry: the split type is [split_cells] *)
-  iAssert (own_ytype_runs parent (DfracOwn 1) (split_locs ls k rs) (MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)))
-    with "[Hparent2 Hdll2]" as "Hyt2".
+  have Hrsfresh : rs ∉ concat ((map_to_list locs).*2).
+  { move=> Hin. apply list_elem_of_concat in Hin as (lsq & Hin & Hlsq).
+    apply list_elem_of_fmap in Hlsq as ([q lsq'] & -> & Hq). simpl in Hin.
+    apply elem_of_map_to_list in Hq.
+    destruct (decide (q = parent)) as [-> | Hne].
+    - rewrite Hl in Hq. injection Hq as <-. exact (Hrsls Hin).
+    - have Hqp : is_Some (p !! q).
+      { apply elem_of_dom. rewrite -Hdom. apply elem_of_dom. by exists lsq'. }
+      destruct Hqp as [tmq Htmq].
+      have Hdq : delete parent p !! q = Some tmq by (rewrite lookup_delete_ne; [exact Htmq | congruence]).
+      exact (Hfr_rest q lsq' tmq Hq Hdq Hin). }
+  destruct (pool_entries_split locs p parent ls tm k l r (uint.nat diff) rs Hl Hp Hlk Hr Hlsl)
+    as (rest & Hperm1 & Hperm2).
+  set (o := uint.nat diff) in *.
+  set (ls2 := split_locs ls k rs) in *.
+  set (runs2 := split_runs (tm_runs tm) k o) in *.
+  set (tm2 := MkTypeModel runs2 (tm_arr tm)) in *.
+  set (locs2 := <[parent := ls2]> locs) in *.
+  set (p2 := <[parent := tm2]> p) in *.
+  set (leftRun := split_run_left r o) in *.
+  set (rightRun := split_run_right r o) in *.
+  (* the pool at (locs2, p2) *)
+  iAssert (own_ytype_runs parent (DfracOwn 1) ls2 tm2) with "[Hparent2 Hdll2]" as "Hyt2".
   { iExists yt2, tl2. iFrame "Hparent2 Hdll2". iPureIntro. split; [exact Hlen2 | exact Hrepr2]. }
-  iDestruct (own_ytype_runs_as_cells with "Hyt2") as "[%Hlen2' Hyt2]".
-  iEval (cbn [tm_runs tm_arr]) in "Hyt2".
-  iEval (rewrite (cells_of_locs_runs_split parent ls (tm_runs tm) k o l rs r Hlsl Hlk Hr) -/cells) in "Hyt2".
-  set (types2 := <[parent := MkTypeState (split_cells cells k o rs) (tm_arr tm)]> types).
-  iAssert (own_type_pool (DfracOwn 1) types2)%I with "[Hyt2 Hrestmap]" as "Htypes2".
-  { rewrite /types2 /own_type_pool -insert_delete_eq big_sepM_insert_delete delete_delete_eq.
-    iFrame "Hrestmap". simpl. iFrame "Hyt2". iPureIntro. exact Harrinv. }
-  (* ----- the halves' cell facts ----- *)
-  have Hdisj : ∀ c, c ∈ all_cells types -> cell_client c = cell_client cw -> ic_loc c ≠ ic_loc cw ->
-     (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <= uint.Z (cell_clock cw))%Z ∨
-     (uint.Z (cell_clock cw) + Z.of_nat (length (ic_run cw)) <= uint.Z (cell_clock c))%Z
-    := λ c Hc Hcc Hlocne, Hrangedisj c cw Hc Hcwmem Hcc Hlocne.
-  have Hck' : clock (item_id (run_head cw)) = uint.nat itemVal.(yjs.item.id').(yjs.id.clock') by rewrite Hid //.
-  have Hcwck : cell_clock cw = itemVal.(yjs.item.id').(yjs.id.clock').
-  { rewrite /cell_clock Hck'. word. }
-  have Hob : (0 < o < length (ic_run cw))%nat := Hdiff.
-  have Hoinrun : (o < length (ic_run cw))%nat by lia.
-  have Hopos : (0 < o)%nat by lia.
-  set (leftCell := split_cell_left cw o).
-  set (rightCell := split_cell_right cw o rs).
-  destruct (split_cell_facts cw o rs Hrun Hob) as (Hrhcl & Hlenl & Hlenr & Hcccl & Hcccr & Hclcl & Hclcr).
-  have Hrhcl' : run_head leftCell = run_head cw := Hrhcl.
-  have Hrhck : clock (item_id (run_head cw)) = uint.nat itemVal.(yjs.item.id').(yjs.id.clock') by (rewrite Hid /toYjsId /=).
-  have Hrhcli : clientId (item_id (run_head cw)) = uint.nat itemVal.(yjs.item.id').(yjs.id.clientId') by (rewrite Hid /toYjsId /=).
-  have Hccr_clock : uint.Z (cell_clock rightCell) = (uint.Z (cell_clock cw) + Z.of_nat o)%Z.
-  { have H1 := Hckbnd. have H2 := Hoinrun. have H3 := Hnowrapcw.
-    rewrite /rightCell Hclcr. rewrite /cell_clock in H3 *. clear -H1 H2 H3. word. }
-  have Hclloc : ic_loc leftCell = l by reflexivity.
-  have Hcrloc : ic_loc rightCell = rs by reflexivity.
-  have Hclcli : cell_client leftCell = cell_client cw := Hcccl.
-  have Hkpcl : cell_kp leftCell = cell_kp cw.
-  { rewrite /cell_kp /cell_pr Hcccl Hclcl Hclloc. reflexivity. }
-  destruct (split_pool_perm types parent cells (tm_arr tm) k cw o rs Htypes Hcellk) as (rest & Hperm1 & Hperm2).
-  (* ----- read the client run slice (map.lookup1) through the truncated node ----- *)
+  have Hlocswf2 : locs_wf locs2 p2 := locs_wf_split locs p parent ls tm k l r o rs Hl Hp Hlk Hr Hrsfresh Hlocswf0.
+  have Hrpi2 : run_pool_invs p2 := run_pool_invs_split p parent tm k o r Hp Hr Hwfr Hob Hrpi.
+  have Hreg2 : pool_registry_coh bind p2 := pool_registry_coh_insert_existing bind p parent tm tm2 Hp Hreg.
+  have Hp2 : p2 !! parent = Some tm2 by apply lookup_insert_eq.
+  have Hl2 : locs2 !! parent = Some ls2 by apply lookup_insert_eq.
+  have Hlk2 : ls2 !! k = Some l := split_locs_lookup_left ls k rs l Hlk.
+  have Hrk2 : runs2 !! k = Some leftRun := split_runs_lookup_left _ _ _ _ Hr.
+  iAssert (own_type_pool_runs (DfracOwn 1) locs2 p2)%I with "[Hyt2 Hrest]" as "Htypes2".
+  { iSplitR; first (iPureIntro; exact Hlocswf2).
+    rewrite /p2 big_sepM_insert_delete.
+    iSplitL "Hyt2".
+    { iExists ls2. iFrame "Hyt2". iPureIntro. split; [exact Hl2 | exact Harrinv]. }
+    iApply (big_sepM_impl with "Hrest"). iIntros "!>" (q tmq Hq) "H".
+    iDestruct "H" as (lsq) "(%Hlsq & Hyt & %Hinv)". iExists lsq. iFrame "Hyt".
+    iPureIntro. split; [| exact Hinv].
+    apply lookup_delete_Some in Hq as [Hne _]. rewrite /locs2 lookup_insert_ne //. }
+  have Hlocswf2' := Hlocswf2. destruct Hlocswf2' as (Hdom2 & Hnd2 & Hlens2).
+  have Hlens2' : ∀ parent' tm', p2 !! parent' = Some tm' ->
+      ∃ ls', locs2 !! parent' = Some ls' ∧ length ls' = length (tm_runs tm').
+  { move=> parent' tm' Hp'.
+    have His : is_Some (locs2 !! parent').
+    { apply elem_of_dom. rewrite Hdom2. apply elem_of_dom. by exists tm'. }
+    destruct His as [ls' Hls']. exists ls'. split; [done | exact (Hlens2 parent' ls' tm' Hls' Hp')]. }
+  (* ----- the item-map surgery ----- *)
+  iDestruct "Hitems" as (mref) "(Hitemsf & Hitemmap)".
   iDestruct "Hitemmap" as (gm) "(Hmap & Hruns & %Hcomplete & %Hclkloc)".
-  set (kc := itemVal.(yjs.item.id').(yjs.id.clientId')).
-  have Hcwcc : cell_client cw = kc by (rewrite /cell_client Hrhcli /kc; word).
-  have Hkcin : kc ∈ (cell_client <$> all_cells types).
-  { rewrite -Hcwcc. apply list_elem_of_fmap_2. exact Hcwmem. }
-  have Hcwrun : cw ∈ client_run types kc.
-  { apply client_run_mem. split; [exact Hcwmem | exact Hcwcc]. }
-  apply list_elem_of_lookup_1 in Hcwrun. destruct Hcwrun as [kw Hkw].
+  set (kc := itemVal.(yjs.item.id').(yjs.id.clientId')) in *.
+  have Hecl : entry_client (l, r) = kc.
+  { rewrite /entry_client /= /run_client Hid /toYjsId /=. rewrite /kc. word. }
+  have Hlr_mem : (l, r) ∈ pool_entries locs p by (rewrite Hperm1; apply list_elem_of_here).
+  set (E := client_entries locs p kc) in *.
+  set (kps := entry_kp <$> pool_entries locs p) in *.
+  set (kps2 := entry_kp <$> pool_entries locs2 p2) in *.
+  have Hce : client_locs locs p kc = E.*1 := client_locs_entries locs p kc Hclkloc.
+  have Hprs : merge_sort pr_le ((filter (λ kp0 : w64 * (Z * loc), kp0.1 = kc) kps).*2) = entry_pr <$> E
+    := client_entries_prs locs p kc Hclkloc.
+  have Hndl : NoDup (pool_entries locs p).*1 := pool_entries_locs_NoDup locs p Hdom Hlens' Hnd.
+  have HE : sorted_client_entries locs p kc E := client_entries_sorted_client locs p kc Hndl.
+  have HndE : NoDup E.*1 := proj1 (proj2 HE).
+  have HsortE : StronglySorted entry_le E := proj1 HE.
+  have HidisjE := sorted_client_entries_disjoint locs p kc E Hdom Hlens' Hndl
+                    (λ r' Hr', proj1 (Hbnds r' Hr')) Hdisj HE.
+  have HEmem : ∀ e, e ∈ E -> e.2 ∈ all_runs p.
+  { move=> [le re] He. apply client_entries_mem in He as [Hpe _].
+    apply pool_entries_slot in Hpe as (parent' & ls' & tm' & k' & _ & Hp' & _ & Hr').
+    apply elem_of_all_runs. exists parent', tm'. split; [exact Hp' | exact (list_elem_of_lookup_2 _ _ _ Hr')]. }
+  have Hlr_E : (l, r) ∈ E by (apply client_entries_mem; split; [exact Hlr_mem | exact Hecl]).
+  apply list_elem_of_lookup in Hlr_E as [kw Hkw].
+  have Hkwlt : (kw < length E)%nat := lookup_lt_Some _ _ _ Hkw.
+  have Hkcin : kc ∈ kps.*1.
+  { rewrite -Hecl. apply list_elem_of_fmap. exists (entry_kp (l, r)).
+    split; [reflexivity | apply list_elem_of_fmap_2; exact Hlr_mem]. }
   destruct (Hcomplete kc Hkcin) as [slk Hslk].
   iDestruct (big_sepM_lookup_acc _ _ kc slk Hslk with "Hruns") as "[Hrunslk Hrunsback]".
   iNamed "Hrunslk".
-  have Hsck0 : split_cells cells k o rs !! k = Some leftCell := split_cells_lookup_left cells k o rs cw Hcellk.
-  have Hlk2 : types2 !! parent = Some (MkTypeState (split_cells cells k o rs) (tm_arr tm)) by apply lookup_insert_eq.
-  iDestruct (big_sepM_lookup_acc _ _ parent _ Hlk2 with "Htypes2") as "[(Hpc2 & %Harrinv2) Hclose2]".
-  iDestruct "Hpc2" as (yt2b tl2b) "(Hparent2 & Hdll3 & %Hlen3 & %Hrepr3 & %Hcpar3)".
-  iDestruct (own_dll_acc_node (DfracOwn 1) (split_cells cells k o rs) yt2b.(yjs.yType.start') tl2b k leftCell Hsck0 with "Hdll3")
-    as (prevl2 nxtl2) "(%Hcloc2 & %Hcl2 & %Hcr2 & %Hrun2 & %Hclen2 & %Hpc2 & Hnode2 & Hback2)".
-  iDestruct "Hnode2" as (iv2 olid2 orid2)
-    "(Hcval2 & Hcol2 & Hcor2 & %Hinl2 & %Hinr2 & %Hid2n & %Hcont2 & %Hpar2 & %Hprev2 & %Hnext2 & %Hflags2)".
-  have Hid2 : item_id (run_head leftCell) = toYjsId iv2.(yjs.item.id').
-  { symmetry. exact Hid2n. }
+  iEval (rewrite -/(client_locs locs p kc) Hce) in "Hslice".
+  (* the key read: the truncated left half keeps the run's head id *)
+  iDestruct (own_type_pool_runs_node_acc locs2 p2 parent ls2 tm2 k l leftRun Hl2 Hp2 Hlk2 Hrk2 with "Htypes2")
+    as (iv2) "Hacc2". iNamed "Hacc2".
+  have Hid2 : toYjsId iv2.(yjs.item.id') = toYjsId itemVal.(yjs.item.id').
+  { rewrite -Haccid /leftRun Hheadl Hid //. }
   have Hkey : iv2.(yjs.item.id').(yjs.id.clientId') = kc.
-  { move: Hid2. rewrite Hrhcl' Hid /toYjsId /=. move=> Heq.
-    have Hc1 := f_equal clientId Heq. simpl in Hc1. rewrite /kc. clear -Hc1. word. }
+  { have Hc1 := f_equal clientId Hid2. simpl in Hc1. rewrite /kc. clear -Hc1. word. }
   have Hkeyck : iv2.(yjs.item.id').(yjs.id.clock') = itemVal.(yjs.item.id').(yjs.id.clock').
-  { move: Hid2. rewrite Hrhcl' Hid /toYjsId /=. move=> Heq.
-    have Hc1 := f_equal clock Heq. simpl in Hc1. clear -Hc1. word. }
-  iEval (rewrite Hclloc) in "Hcval2".
+  { have Hc1 := f_equal clock Hid2. simpl in Hc1. clear -Hc1. word. }
   wp_auto.
   wp_apply (wp_map_lookup1 with "Hmap"). iIntros "Hmap".
   rewrite Hkey Hslk /=.
   wp_auto.
   rewrite Hkeyck.
-  iEval (rewrite -Hclloc) in "Hcval2".
-  iAssert (own_item_node (ic_loc leftCell) (DfracOwn 1) (input_of_run (cell_run leftCell))
-             (ic_deleted leftCell) (ic_parent leftCell) prevl2 nxtl2) with "[Hcval2 Hcol2 Hcor2]" as "Hnode2".
-  { iExists iv2, olid2, orid2. iFrame "Hcval2 Hcol2 Hcor2".
-    iPureIntro. split_and!;
-      [exact Hinl2 | exact Hinr2 | exact Hid2n | exact Hcont2 | exact Hpar2
-      | exact Hprev2 | exact Hnext2 | exact Hflags2]. }
-  iDestruct ("Hback2" with "Hnode2") as "Hdll3".
-  iAssert (own_ytype_cells parent (DfracOwn 1) (split_cells cells k o rs) (tm_arr tm)) with "[Hparent2 Hdll3]" as "Hyt2b".
-  { iExists yt2b, tl2b. iFrame "Hparent2 Hdll3". iPureIntro.
-    split_and!; [exact Hlen3 | exact Hrepr3 | exact Hcpar3]. }
-  iDestruct ("Hclose2" with "[Hyt2b]") as "Htypes2"; first (iFrame "Hyt2b"; iPureIntro; exact Harrinv2).
-  (* ----- getNodeIndex over the split run, then the append-based surgery ----- *)
-  have Hss_replace : ∀ (ll : list item_cell) (i : nat) (a b : item_cell),
-      StronglySorted cell_le ll → ll !! i = Some a → cell_clock b = cell_clock a →
-      StronglySorted cell_le (<[i:=b]> ll).
+  iDestruct ("Haccback" with "Haccval") as "Htypes2".
+  (* getNodeIndex over the split run: the index's entries with the split run
+     truncated *)
+  set (E' := <[kw := (l, leftRun)]> E) in *.
+  have HE'fst : E'.*1 = E.*1.
+  { rewrite /E' list_fmap_insert /=. apply list_insert_id. rewrite list_lookup_fmap Hkw //. }
+  have Hkw' : E' !! kw = Some (l, leftRun) by (rewrite /E' list_lookup_insert_eq //).
+  have Hss_replace : ∀ (ll : list (loc * ItemRun)) (i : nat) (a b : loc * ItemRun),
+      StronglySorted entry_le ll → ll !! i = Some a → entry_clock b = entry_clock a →
+      StronglySorted entry_le (<[i:=b]> ll).
   { elim => [| c ll IH] i a b Hss Hi Hclk.
     - by rewrite /=.
     - apply StronglySorted_inv in Hss as [Hssll Hfa].
       destruct i as [|i']; simpl.
       + simpl in Hi. injection Hi as Hca. rewrite Hca in Hfa.
         apply SSorted_cons; [exact Hssll |].
-        apply Forall_forall => x Hx. rewrite /cell_le Hclk.
+        apply Forall_forall => x Hx. rewrite /entry_le Hclk.
         exact (proj1 (Forall_forall _ _) Hfa x Hx).
       + apply SSorted_cons; [exact (IH i' a b Hssll Hi Hclk) |].
         apply Forall_insert; [exact Hfa |].
-        rewrite /cell_le Hclk.
+        rewrite /entry_le Hclk.
         exact (proj1 (Forall_forall _ _) Hfa a (list_elem_of_lookup_2 ll i' a Hi)). }
-  have Hss_half : StronglySorted cell_le (<[kw := leftCell]> (client_run types kc)) := Hss_replace (client_run types kc) kw cw leftCell (client_run_sorted types kc) Hkw Hclcl.
-  set (run_half := <[kw := leftCell]> (client_run types kc)).
-  have HndAll : NoDup (all_cells types) := NoDup_fmap_1 ic_loc _ Hnodup.
-  have Hndrun : NoDup (client_run types kc).
-  { rewrite /client_run (merge_sort_Permutation cell_le _). apply NoDup_filter. exact HndAll. }
-  have Hkwlt : (kw < length (client_run types kc))%nat by (apply lookup_lt_Some in Hkw; exact Hkw).
-  have Hlockw : (ic_loc <$> client_run types kc) !! kw = Some (ic_loc leftCell).
-  { rewrite list_lookup_fmap Hkw /=. done. }
-  have Hlocs : ic_loc <$> run_half = ic_loc <$> client_run types kc.
-  { rewrite /run_half list_fmap_insert (list_insert_id _ _ _ Hlockw) //. }
-  have Hkw_half : run_half !! kw = Some leftCell.
-  { rewrite /run_half. apply list_lookup_insert_Some. left. split_and!; [reflexivity | reflexivity | exact Hkwlt]. }
-  have Hclk_half : cell_clock leftCell = itemVal.(yjs.item.id').(yjs.id.clock') by (rewrite Hclcl Hcwck).
-  have Hsub : ∀ c, c ∈ run_half → c = leftCell ∨ c ∈ client_run types kc.
-  { move=> c Hc. apply list_elem_of_lookup_1 in Hc as [j Hj]. rewrite /run_half in Hj.
-    apply list_lookup_insert_Some in Hj as [(_ & <- & _) | (_ & Hj)]; [by left | right; exact (list_elem_of_lookup_2 _ _ _ Hj)]. }
-  have Hfits_half : ∀ c, c ∈ run_half → (uint.Z (cell_clock c) + length (ic_run c) < 2^64)%Z.
-  { move=> c Hc. destruct (Hsub c Hc) as [-> | HcL].
-    - rewrite Hclcl /leftCell /= length_take. have H := Hnowrapcw. lia.
-    - exact (Hrunfits c (proj1 (proj1 (client_run_mem types kc c) HcL))). }
-  have Hmem_half : ∀ c, c ∈ run_half → c ∈ all_cells types2.
-  { move=> c Hc. apply list_elem_of_lookup_1 in Hc as [j Hj]. rewrite /run_half in Hj.
+  have Hclkl : entry_clock (l, leftRun) = entry_clock (l, r).
+  { rewrite /entry_clock /= /leftRun Hclockl //. }
+  have HE'mem : ∀ e, e ∈ E' -> e ∈ pool_entries locs2 p2 ∧ entry_client e = kc.
+  { move=> e He. apply list_elem_of_lookup_1 in He as [j Hj]. rewrite /E' in Hj.
     apply list_lookup_insert_Some in Hj as [(_ & <- & _) | (Hne & Hj)].
-    - rewrite Hperm2. apply list_elem_of_here.
-    - have HcL : c ∈ client_run types kc := list_elem_of_lookup_2 _ _ _ Hj.
-      have Hcne : c ≠ cw. { move=> Heq. rewrite Heq in Hj. exact (Hne (NoDup_lookup _ _ _ _ Hndrun Hkw Hj)). }
-      have Hcall : c ∈ all_cells types := proj1 (proj1 (client_run_mem types kc c) HcL).
-      rewrite Hperm1 in Hcall. apply elem_of_cons in Hcall as [Heq | Hrest]; [done |].
-      rewrite Hperm2. apply elem_of_cons; right. apply elem_of_cons; right. exact Hrest. }
-  (* pin [uint.nat idx = kw]: the covering cell in [run_half] is [leftCell] (NoDup locs) *)
-  have Hinj : ∀ x y, x ∈ client_run types kc → y ∈ client_run types kc → ic_loc x = ic_loc y → x = y.
-  { move=> x y Hx Hy Hxy.
-    have Hxa : x ∈ all_cells types := proj1 (proj1 (client_run_mem types kc x) Hx).
-    have Hya : y ∈ all_cells types := proj1 (proj1 (client_run_mem types kc y) Hy).
-    apply list_elem_of_lookup_1 in Hxa as [ix Hix]. apply list_elem_of_lookup_1 in Hya as [iy Hiy].
-    have Hlix : (ic_loc <$> all_cells types) !! ix = Some (ic_loc y) by (rewrite list_lookup_fmap Hix /= Hxy //).
-    have Hliy : (ic_loc <$> all_cells types) !! iy = Some (ic_loc y) by (rewrite list_lookup_fmap Hiy //).
-    have Hijeq : ix = iy := NoDup_lookup _ _ _ _ Hnodup Hlix Hliy.
-    congruence. }
-  have HndLocRun : NoDup (ic_loc <$> client_run types kc).
-  { apply NoDup_fmap_inj_on; [exact Hinj | exact Hndrun]. }
-  have Hrun_half : sorted_client_run types2 kc run_half.
-  { split_and!; [exact Hss_half | rewrite Hlocs; exact HndLocRun |].
-    move=> c Hc. apply client_run_mem. split; [exact (Hmem_half c Hc) |].
-    destruct (Hsub c Hc) as [-> | HcL]; [rewrite Hclcli; exact Hcwcc |].
-    exact (proj2 (proj1 (client_run_mem types kc c) HcL)). }
-  have Hpool2 : pool_invs types2
-    := pool_invs_split types parent cells (tm_arr tm) k cw o rs Htypes Hcellk Hrun Hdiff Hckbnd Hrsfresh Hpool.
-  iEval (rewrite -Hlocs) in "Hslice".
-  wp_apply (wp_getNodeIndex slk (DfracOwn 1) types2 kc run_half (itemVal.(yjs.item.id').(yjs.id.clock')) Hrun_half Hpool2 with "[$Hslice $Htypes2]").
+    - split; [rewrite Hperm2; apply list_elem_of_here |].
+      rewrite /entry_client /= /leftRun Hclientl. exact Hecl.
+    - have HeE : e ∈ E := list_elem_of_lookup_2 _ _ _ Hj.
+      apply client_entries_mem in HeE as [Hpe Hcl]. split; [| exact Hcl].
+      rewrite Hperm1 in Hpe. apply elem_of_cons in Hpe as [-> | Hpe].
+      + exfalso. apply Hne. apply (NoDup_lookup _ kw j l HndE);
+          rewrite list_lookup_fmap; [rewrite Hkw // | rewrite Hj //].
+      + rewrite Hperm2. apply elem_of_cons; right. apply elem_of_cons; right. exact Hpe. }
+  have HE' : sorted_client_entries locs2 p2 kc E'.
+  { split_and!; [exact (Hss_replace E kw (l, r) (l, leftRun) HsortE Hkw Hclkl)
+                | rewrite HE'fst; exact HndE | exact HE'mem]. }
+  iEval (rewrite -HE'fst) in "Hslice".
+  wp_apply (wp_getNodeIndex_runs slk (DfracOwn 1) locs2 p2 kc itemVal.(yjs.item.id').(yjs.id.clock') E' Hrpi2 HE'
+              with "[$Hslice $Htypes2]").
   iIntros (idx ok) "(Hslice & Htypes2 & %Hires)".
-  iDestruct (own_type_pool_id_bounds with "Htypes2") as %Hbnds2.
-  have Hlcbnd := proj2 (Hbnds2 leftCell (Hmem_half leftCell (list_elem_of_lookup_2 _ _ _ Hkw_half))).
-  have Hlccov : cell_covers_clock leftCell (uint.nat itemVal.(yjs.item.id').(yjs.id.clock')).
-  { have Hlen : (0 < length (ic_run leftCell))%nat.
-    { rewrite /leftCell /split_cell_left /= length_take /o. lia. }
-    move: Hclk_half. rewrite /cell_clock /cell_covers_clock. move=> Hclk. split; word. }
+  (* the covering entry is the left half, at [kw] *)
+  have Hclkr : uint.nat itemVal.(yjs.item.id').(yjs.id.clock') = run_clock r.
+  { rewrite /run_clock Hid /toYjsId //. }
+  have Hlcov : run_covers_clock leftRun (uint.nat itemVal.(yjs.item.id').(yjs.id.clock')).
+  { rewrite /run_covers_clock Hclkr /leftRun Hclockl Hlenl. lia. }
   destruct ok; last first.
-  { exfalso. exact (Hires leftCell (list_elem_of_lookup_2 _ _ _ Hkw_half) Hlccov). }
-  destruct Hires as (cres & Hcres & Hcov).
-  have Hcresbnd := proj2 (Hbnds2 cres (Hmem_half cres (list_elem_of_lookup_2 _ _ _ Hcres))).
-  have Hcresle : (uint.Z (cell_clock cres) <= uint.Z itemVal.(yjs.item.id').(yjs.id.clock'))%Z.
-  { destruct Hcov as [H1 _]. rewrite /cell_clock. word. }
-  have Hcreslt : (uint.Z itemVal.(yjs.item.id').(yjs.id.clock') < uint.Z (cell_clock cres) + Z.of_nat (length (ic_run cres)))%Z.
-  { destruct Hcov as [_ H2]. rewrite /cell_clock. word. }
-  have Hcresmem : cres ∈ run_half := list_elem_of_lookup_2 _ _ _ Hcres.
-  have Hcresloc : ic_loc cres = ic_loc leftCell.
-  { destruct (Hsub cres Hcresmem) as [-> | HcresL]; [reflexivity |].
-    have Hcresall : cres ∈ all_cells types := proj1 (proj1 (client_run_mem types kc cres) HcresL).
-    have Hcrescc : cell_client cres = cell_client cw.
-    { rewrite (proj2 (proj1 (client_run_mem types kc cres) HcresL)) -Hcwcc //. }
-    destruct (decide (ic_loc cres = ic_loc cw)) as [Heq | Hne].
-    - rewrite Heq Hclloc //.
-    - exfalso. rewrite -Hcwck in Hcresle Hcreslt.
-      destruct (Hdisj cres Hcresall Hcrescc Hne) as [Hd | Hd]; lia. }
-  have Hidxloc : (ic_loc <$> run_half) !! (uint.nat idx) = Some (ic_loc leftCell) by (rewrite list_lookup_fmap Hcres /= Hcresloc //).
-  have Hkwloc : (ic_loc <$> run_half) !! kw = Some (ic_loc leftCell) by (rewrite list_lookup_fmap Hkw_half //).
-  have HndLocRunHalf : NoDup (ic_loc <$> run_half) by (rewrite Hlocs; exact HndLocRun).
-  have Hidxkw : uint.nat idx = kw := NoDup_lookup _ _ _ _ HndLocRunHalf Hidxloc Hkwloc.
-  have Hcrescl : cres = leftCell.
-  { have Htmp : run_half !! kw = Some cres by (rewrite -Hidxkw; exact Hcres). congruence. }
-  iEval (rewrite Hlocs) in "Hslice".
+  { exfalso. exact (Hires l leftRun (list_elem_of_lookup_2 _ _ _ Hkw') Hlcov). }
+  destruct Hires as (lres & rres & Hres & Hcov).
+  iDestruct (own_type_pool_runs_id_bounds with "Htypes2") as %Hbnds2.
+  have Hndl2 : NoDup (pool_entries locs2 p2).*1 := pool_entries_locs_NoDup locs2 p2 Hdom2 Hlens2' Hnd2.
+  have Hidisj2 := sorted_client_entries_disjoint locs2 p2 kc E' Hdom2 Hlens2' Hndl2
+                    (λ r' Hr', proj1 (Hbnds2 r' Hr')) (proj1 (proj2 Hrpi2)) HE'.
+  have Hidxkw : uint.nat idx = kw.
+  { destruct (decide (uint.nat idx = kw)) as [? | Hne]; [done | exfalso].
+    destruct (Hidisj2 (uint.nat idx) kw lres l rres leftRun Hres Hkw' Hne) as [Hd | Hd];
+      destruct Hcov as [Hc1 Hc2]; destruct Hlcov as [Hlc1 Hlc2]; lia. }
+  have Hcresl : lres = l ∧ rres = leftRun.
+  { rewrite Hidxkw Hkw' in Hres. injection Hres as -> ->. done. }
+  destruct Hcresl as [-> ->].
+  iEval (rewrite HE'fst) in "Hslice".
   (* ----- the append-based item-map surgery (no length-fit side condition:
      append's growth is modeled with an overflow assume, so no client-run
      capacity premise is needed, unlike a pre-sized make) ----- *)
   iDestruct (own_slice_len with "Hslice") as %[Hslklen Hslklen0].
   rewrite length_fmap in Hslklen Hslklen0.
-  have Hkwlt2 : (kw < length (client_run types kc))%nat by (apply lookup_lt_Some in Hkw).
-  have Hidxsint : sint.Z idx = Z.of_nat kw by (move: Hslklen Hslklen0 Hkwlt2; rewrite -Hidxkw => ? ? ?; word).
+  have Hidxsint : sint.Z idx = Z.of_nat kw by (move: Hslklen Hslklen0 Hkwlt; rewrite -Hidxkw => ? ? ?; word).
   wp_auto.
   iDestruct (own_slice_wf with "Hslice") as %Hslkwf.
   (* newNodes = append(nil, nodes[:index+1]...) *)
   rewrite decide_True; last word.
   wp_auto.
   have Hsplitbnd : (0 ≤ sint.Z (w64_word_instance.(word.add) idx (W64 1)) ≤ sint.Z slk.(slice.len) ≤ sint.Z slk.(slice.len))%Z by word.
-  iDestruct (own_slice_slice (w64_word_instance.(word.add) idx (W64 1)) slk.(slice.len) slk (DfracOwn 1) (ic_loc <$> client_run types kc) Hsplitbnd with "Hslice") as "(Hsl_pre & Hsl_suf & Hsl_tail)".
+  iDestruct (own_slice_slice (w64_word_instance.(word.add) idx (W64 1)) slk.(slice.len) slk (DfracOwn 1) E.*1 Hsplitbnd with "Hslice") as "(Hsl_pre & Hsl_suf & Hsl_tail)".
   iAssert (slice.nil ↦* ([] : list loc))%I with "[]" as "Hnil0"; first iApply own_slice_nil.
   iAssert (own_slice_cap loc slice.nil (DfracOwn 1))%I with "[]" as "Hnilcap"; first iApply own_slice_cap_nil.
   wp_apply (wp_slice_append with "[Hnil0 Hnilcap Hsl_pre]"); first (iFrame "Hnil0 Hnilcap Hsl_pre").
@@ -1044,166 +754,133 @@ Proof using Type*.
   iIntros (newSl) "(HnewNodes & HnewCap & Hsl_suf)".
   wp_auto.
   have HnkB : sint.nat (w64_word_instance.(word.add) idx (W64 1)) = (kw + 1)%nat.
-  { move: Hslklen Hslklen0 Hkwlt2 Hidxsint => ? ? ? ?. word. }
-  have Esrc : subslice (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (sint.nat slk.(slice.len)) (ic_loc <$> client_run types kc) = drop (kw + 1) (ic_loc <$> client_run types kc).
-  { rewrite HnkB -Hslklen /subslice take_ge; [reflexivity | rewrite length_fmap; clear -Hkwlt2; lia]. }
+  { move: Hslklen Hslklen0 Hkwlt Hidxsint => ? ? ? ?. word. }
+  have Esrc : subslice (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (sint.nat slk.(slice.len)) E.*1 = drop (kw + 1) E.*1.
+  { rewrite HnkB -Hslklen /subslice take_ge; [reflexivity | rewrite length_fmap; clear -Hkwlt; lia]. }
   have Elit : <[sint.nat (W64 0) := rs]> ([null] : list loc) = [rs].
   { have -> : sint.nat (W64 0) = 0%nat by word. reflexivity. }
-  have Eall : (([] ++ take (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (ic_loc <$> client_run types kc)) ++ <[sint.nat (W64 0) := rs]> ([null] : list loc)) ++ subslice (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (sint.nat slk.(slice.len)) (ic_loc <$> client_run types kc) = take (kw + 1) (ic_loc <$> client_run types kc) ++ rs :: drop (kw + 1) (ic_loc <$> client_run types kc).
+  have Eall : (([] ++ take (sint.nat (w64_word_instance.(word.add) idx (W64 1))) E.*1) ++ <[sint.nat (W64 0) := rs]> ([null] : list loc)) ++ subslice (sint.nat (w64_word_instance.(word.add) idx (W64 1))) (sint.nat slk.(slice.len)) E.*1 = take (kw + 1) E.*1 ++ rs :: drop (kw + 1) E.*1.
   { rewrite Esrc Elit HnkB app_nil_l -app_assoc /=. reflexivity. }
   iEval (rewrite Eall) in "HnewNodes".
-  iAssert (slk ↦* (ic_loc <$> client_run types kc))%I with "[Hsl_pre Hsl_suf Hsl_tail]" as "Hslice".
-  { rewrite (own_slice_slice (w64_word_instance.(word.add) idx (W64 1)) slk.(slice.len) slk (DfracOwn 1) (ic_loc <$> client_run types kc) Hsplitbnd). iFrame. }
-  (* s.items[client] = newNodes: the key read borrows cl's node back from types2 *)
-  have Hklt : (k < length cells)%nat by (apply lookup_lt_Some in Hcellk).
-  have Hsck : split_cells cells k o rs !! k = Some leftCell := split_cells_lookup_left cells k o rs cw Hcellk.
-  have Hlk3 : types2 !! parent = Some (MkTypeState (split_cells cells k o rs) (tm_arr tm)) by apply lookup_insert_eq.
-  iDestruct (big_sepM_lookup_acc _ _ parent (MkTypeState (split_cells cells k o rs) (tm_arr tm)) Hlk3 with "Htypes2") as "[(Hpc3 & %Harrinv3) Hclose3]".
-  iDestruct "Hpc3" as (yt3 tl3) "(Hparent3 & Hdll4 & %Hlen4 & %Hrepr4 & %Hcpar4)".
-  iDestruct (own_dll_acc_node (DfracOwn 1) (split_cells cells k o rs) yt3.(yjs.yType.start') tl3 k leftCell Hsck with "Hdll4")
-    as (prevl3 nxtl3) "(%Hcloc3 & %Hcl3 & %Hcr3 & %Hrun3 & %Hclen3 & %Hpc3 & Hnode3 & Hback3)".
-  iDestruct "Hnode3" as (iv3 olid3 orid3)
-    "(Hcval3 & Hcol3 & Hcor3 & %Hinl3 & %Hinr3 & %Hid3n & %Hcont3 & %Hpar3 & %Hprev3 & %Hnext3 & %Hflags3)".
-  have Hid3 : item_id (run_head leftCell) = toYjsId iv3.(yjs.item.id').
-  { symmetry. exact Hid3n. }
-  iEval (rewrite Hclloc) in "Hcval3".
+  iAssert (slk ↦* E.*1)%I with "[Hsl_pre Hsl_suf Hsl_tail]" as "Hslice".
+  { rewrite (own_slice_slice (w64_word_instance.(word.add) idx (W64 1)) slk.(slice.len) slk (DfracOwn 1) E.*1 Hsplitbnd). iFrame. }
+  (* s.items[client] = newNodes: the key read borrows the left half's node again *)
+  iDestruct (own_type_pool_runs_node_acc locs2 p2 parent ls2 tm2 k l leftRun Hl2 Hp2 Hlk2 Hrk2 with "Htypes2")
+    as (iv3) "Hacc3". iNamed "Hacc3".
+  have Hid3 : toYjsId iv3.(yjs.item.id') = toYjsId itemVal.(yjs.item.id').
+  { rewrite -Haccid0 /leftRun Hheadl Hid //. }
   have Hkey3 : iv3.(yjs.item.id').(yjs.id.clientId') = kc.
-  { move: Hid3. rewrite Hrhcl' Hid /toYjsId /=. move=> Heq.
-    have Hc1 := f_equal clientId Heq. simpl in Hc1. rewrite /kc.
-    clear -Hc1. word. }
+  { have Hc1 := f_equal clientId Hid3. simpl in Hc1. rewrite /kc. clear -Hc1. word. }
   wp_auto.
   wp_apply (wp_map_insert with "Hmap").
   iIntros "Hmap".
   iEval (rewrite Hkey3) in "Hmap".
-  iEval (rewrite -Hclloc) in "Hcval3".
-  iAssert (own_item_node (ic_loc leftCell) (DfracOwn 1) (input_of_run (cell_run leftCell))
-             (ic_deleted leftCell) (ic_parent leftCell) prevl3 nxtl3) with "[Hcval3 Hcol3 Hcor3]" as "Hnode3".
-  { iExists iv3, olid3, orid3. iFrame "Hcval3 Hcol3 Hcor3".
-    iPureIntro. split_and!;
-      [exact Hinl3 | exact Hinr3 | exact Hid3n | exact Hcont3 | exact Hpar3
-      | exact Hprev3 | exact Hnext3 | exact Hflags3]. }
-  iDestruct ("Hback3" with "Hnode3") as "Hdll4".
-  iAssert (own_ytype_cells parent (DfracOwn 1) (split_cells cells k o rs) (tm_arr tm)) with "[Hparent3 Hdll4]" as "Hyt3b".
-  { iExists yt3, tl3. iFrame "Hparent3 Hdll4". iPureIntro.
-    split_and!; [exact Hlen4 | exact Hrepr4 | exact Hcpar4]. }
-  iDestruct ("Hclose3" with "[Hyt3b]") as "Htypes2"; first (iFrame "Hyt3b"; iPureIntro; exact Harrinv3).
-  (* the item-map model surgery: the right half's loc lands at position kw+1 *)
-  have Hkp : cell_kp <$> all_cells types2 ≡ₚ (cell_kp <$> all_cells types) ++ [cell_kp rightCell].
-  { etransitivity; [apply Permutation_map; exact Hperm2 |].
-    etransitivity; last (apply Permutation_app_tail; apply Permutation_map; symmetry; exact Hperm1).
-    simpl. rewrite -/leftCell -/rightCell Hkpcl. apply perm_skip. apply Permutation_cons_append. }
-  have Hbef : forall y, y ∈ take (kw + 1) (client_run types (cell_client rightCell)) -> ((cell_pr y).1 < (cell_pr rightCell).1)%Z.
-  { move=> y Hy.
-    rewrite Hcccr Hcwcc in Hy.
-    apply list_elem_of_lookup_1 in Hy as [j Hj].
-    apply lookup_take_Some in Hj as [Hj Hjlt].
-    have Hple : (uint.Z (cell_clock y) <= uint.Z (cell_clock cw))%Z.
-    { destruct (decide (j = kw)) as [-> | Hne].
-      - rewrite Hkw in Hj. injection Hj as <-. lia.
-      - exact (StronglySorted_lookup_le cell_le (client_run types kc) j kw y cw (client_run_sorted types kc) Hj Hkw ltac:(clear -Hjlt Hne; lia)). }
-    rewrite /cell_pr /= Hccr_clock. clear -Hple Hopos. lia. }
-  have Haft : forall y, y ∈ drop (kw + 1) (client_run types (cell_client rightCell)) -> ((cell_pr rightCell).1 < (cell_pr y).1)%Z.
-  { move=> y Hy.
-    rewrite Hcccr Hcwcc in Hy.
-    apply list_elem_of_lookup_1 in Hy as [j Hj].
-    rewrite lookup_drop in Hj.
-    have HyCR : y ∈ client_run types kc := list_elem_of_lookup_2 _ _ _ Hj.
-    have Hyall : y ∈ all_cells types := proj1 (proj1 (client_run_mem types kc y) HyCR).
-    have Hycc : cell_client y = cell_client cw.
-    { rewrite (proj2 (proj1 (client_run_mem types kc y) HyCR)) Hcwcc //. }
-    have Hyne : y ≠ cw.
-    { move=> Heq. rewrite Heq in Hj.
-      have := NoDup_lookup _ _ _ _ Hndrun Hkw Hj. clear -k. lia. }
-    have Hylocne : y.(ic_loc) ≠ cw.(ic_loc).
-    { move=> Heq. apply Hyne. exact (Hinj y cw HyCR (list_elem_of_lookup_2 _ _ _ Hkw) Heq). }
-    have Hle : (uint.Z (cell_clock cw) <= uint.Z (cell_clock y))%Z.
-    { exact (StronglySorted_lookup_le cell_le (client_run types kc) kw (kw + 1 + j) cw y (client_run_sorted types kc) Hkw Hj ltac:(clear -k; lia)). }
-    rewrite /cell_pr /= Hccr_clock.
-    destruct (Hdisj y Hyall Hycc Hylocne) as [Hd | Hd].
+  iDestruct ("Haccback" with "Haccval") as "Htypes2".
+  (* the item-map model surgery: the right half's address lands at position
+     kw+1 of the client's slice *)
+  have Hkp_left : entry_kp (l, leftRun) = entry_kp (l, r) := entry_kp_split_left l r o Hopos.
+  set (kp := entry_kp (rs, rightRun)) in *.
+  have Hkps2 : kps2 ≡ₚ kps ++ [kp].
+  { rewrite /kps2 /kps Hperm2 Hperm1 !fmap_cons Hkp_left /kp.
+    apply perm_skip. apply Permutation_cons_append. }
+  have Hkc_kp : kp.1 = kc.
+  { rewrite /kp /entry_kp /entry_client /= /rightRun Hclientr. exact Hecl. }
+  have Hkp_clock : kp.2.1 = (Z.of_nat (run_clock r) + Z.of_nat o)%Z.
+  { rewrite /kp /entry_kp /entry_pr /entry_clock /= /rightRun Hclockr. word. }
+  have Hdisj_E : ∀ j e, E !! j = Some e -> j ≠ kw ->
+      (run_clock e.2 + length (run_items e.2) <= run_clock r)%nat ∨
+      (run_clock r + length (run_items r) <= run_clock e.2)%nat.
+  { move=> j [le re] Hj Hne. exact (HidisjE j kw le l re r Hj Hkw Hne). }
+  (* [pr_le]'s decision instance is local to [store/value_cells], so the
+     two order premises are stated over the sorted entries and carried to
+     [merge_sort]'s form through [Hprs] *)
+  have Hbef : ∀ a, a ∈ take (kw + 1) (entry_pr <$> E) -> (a.1 < kp.2.1)%Z.
+  { rewrite -fmap_take. move=> a Ha. apply list_elem_of_fmap in Ha as (e & -> & He).
+    apply list_elem_of_lookup_1 in He as [j Hj]. apply lookup_take_Some in Hj as [Hj Hjlt].
+    have Hbe : (Z.of_nat (run_clock e.2) < 2^64)%Z := proj2 (Hbnds e.2 (HEmem e (list_elem_of_lookup_2 _ _ _ Hj))).
+    destruct e as [le re]. simpl in Hbe.
+    rewrite Hkp_clock /entry_pr /= (entry_clock_Z le re Hbe).
+    destruct (decide (j = kw)) as [-> | Hne].
+    - rewrite Hkw in Hj. injection Hj as <- <-. lia.
+    - have Hle := StronglySorted_lookup_le entry_le E j kw (le, re) (l, r) HsortE Hj Hkw ltac:(lia).
+      rewrite /entry_le (entry_clock_Z le re Hbe) (entry_clock_Z l r Hckb) in Hle. lia. }
+  have Haft : ∀ a, a ∈ drop (kw + 1) (entry_pr <$> E) -> (kp.2.1 < a.1)%Z.
+  { rewrite -fmap_drop. move=> a Ha. apply list_elem_of_fmap in Ha as (e & -> & He).
+    apply list_elem_of_lookup_1 in He as [j Hj]. rewrite lookup_drop in Hj.
+    have Hmem := HEmem e (list_elem_of_lookup_2 _ _ _ Hj).
+    have Hbe : (Z.of_nat (run_clock e.2) < 2^64)%Z := proj2 (Hbnds e.2 Hmem).
+    have Hwe : run_wf (run_items e.2) := Hwfall e.2 Hmem.
+    destruct e as [le re]. simpl in Hbe, Hwe, Hmem.
+    have Hne : (kw + 1 + j)%nat ≠ kw by lia.
+    rewrite Hkp_clock /entry_pr /= (entry_clock_Z le re Hbe).
+    destruct (Hdisj_E (kw + 1 + j)%nat (le, re) Hj Hne) as [Hd | Hd]; simpl in Hd.
     - exfalso.
-      have Hyeq : uint.Z (cell_clock y) = uint.Z (cell_clock cw) by (clear -Hd Hle; lia).
-      apply Hylocne. apply (Hclkloc y cw Hyall Hcwmem Hycc).
-      rewrite /cell_pr /=. exact Hyeq.
-    - clear -Hd Hoinrun. lia. }
-  have Hrun_eq := client_run_loc_insert types types2 rightCell (kw + 1) Hkp Hclkloc Hbef Haft.
-  rewrite Hcccr Hcwcc Hcrloc in Hrun_eq.
-  iEval (rewrite -Hrun_eq) in "HnewNodes".
-  (* re-establish the own_item_map side conditions over types2 *)
-  have HinjAll : forall x y, x ∈ all_cells types -> y ∈ all_cells types -> x.(ic_loc) = y.(ic_loc) -> x = y.
-  { move=> x y Hx Hy Hxy.
-    apply list_elem_of_lookup_1 in Hx as [ix Hix]. apply list_elem_of_lookup_1 in Hy as [iy Hiy].
-    have Hlix : (ic_loc <$> all_cells types) !! ix = Some (y.(ic_loc)) by (rewrite list_lookup_fmap Hix /= Hxy //).
-    have Hliy : (ic_loc <$> all_cells types) !! iy = Some (y.(ic_loc)) by (rewrite list_lookup_fmap Hiy //).
-    have Hijeq : ix = iy := NoDup_lookup _ _ _ _ Hnodup Hlix Hliy.
-    congruence. }
-  have Hdecomp : forall c0, c0 ∈ all_cells types2 -> c0 ∈ all_cells types \/ c0 = leftCell \/ c0 = rightCell.
-  { move=> c0 Hc0. rewrite Hperm2 in Hc0.
-    apply elem_of_cons in Hc0 as [-> | Hc0]; [by right; left |].
-    apply elem_of_cons in Hc0 as [-> | Hc0]; [by right; right |].
-    left. rewrite Hperm1. apply elem_of_cons. by right. }
-  have Hcomplete2 : forall c0 : w64, c0 ∈ cell_client <$> all_cells types2 -> is_Some (<[kc := newSl]> gm !! c0).
-  { move=> c0 Hc0. apply list_elem_of_fmap in Hc0 as (cc & -> & Hcc0).
-    destruct (Hdecomp cc Hcc0) as [Hin | [-> | ->]].
-    - destruct (decide (cell_client cc = kc)) as [He | Hne].
-      + rewrite He lookup_insert_eq. eauto.
-      + rewrite lookup_insert_ne; [| congruence]. apply Hcomplete. apply list_elem_of_fmap_2. exact Hin.
-    - rewrite Hcccl Hcwcc lookup_insert_eq. eauto.
-    - rewrite Hcccr Hcwcc lookup_insert_eq. eauto. }
-  have HF2 : forall c, c ∈ all_cells types -> cell_client c = cell_client cw -> (cell_pr c).1 = (cell_pr rightCell).1 -> False.
-  { move=> c Hc Hcc Hpr.
-    rewrite /cell_pr /= Hccr_clock in Hpr.
-    destruct (decide (c.(ic_loc) = cw.(ic_loc))) as [He | Hne].
-    - have Heq : c = cw := HinjAll c cw Hc Hcwmem He.
-      rewrite Heq in Hpr. clear -Hpr Hopos. lia.
-    - destruct (Hdisj c Hc Hcc Hne) as [Hd | Hd].
-      + clear -Hd Hpr Hopos. lia.
-      + clear -Hd Hpr Hoinrun. lia. }
-  have Hprcl : (cell_pr leftCell).1 = (cell_pr cw).1 by (rewrite /cell_pr /= Hclcl //).
-  have Hclkloc2 : forall c1 c2, c1 ∈ all_cells types2 -> c2 ∈ all_cells types2 -> cell_client c1 = cell_client c2 -> (cell_pr c1).1 = (cell_pr c2).1 -> c1.(ic_loc) = c2.(ic_loc).
-  { move=> c1 c2 Hc1 Hc2 Hcc Hpr.
-    destruct (Hdecomp c1 Hc1) as [Hin1 | [-> | ->]]; destruct (Hdecomp c2 Hc2) as [Hin2 | [-> | ->]].
-    - exact (Hclkloc c1 c2 Hin1 Hin2 Hcc Hpr).
-    - rewrite Hclloc.
-      apply (Hclkloc c1 cw Hin1 Hcwmem); [rewrite Hcc Hcccl // | rewrite Hpr Hprcl //].
-    - exfalso. apply (HF2 c1 Hin1); [rewrite Hcc Hcccr // | exact Hpr].
-    - rewrite Hclloc. symmetry.
-      apply (Hclkloc c2 cw Hin2 Hcwmem); [rewrite -Hcc Hcccl // | rewrite -Hpr Hprcl //].
-    - reflexivity.
-    - exfalso. rewrite /cell_pr /= Hclcl Hccr_clock in Hpr. clear -Hpr Hopos. lia.
-    - exfalso. apply (HF2 c2 Hin2); [rewrite -Hcc Hcccr // | rewrite -Hpr //].
-    - exfalso. rewrite /cell_pr /= Hclcl Hccr_clock in Hpr. clear -Hpr Hopos. lia.
-    - reflexivity. }
-  iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
-  iAssert (own_item_map mref (DfracOwn 1) types2) with "[Hmap HnewNodes HnewCap Hruns]" as "Hitemmap2".
+      have Hle := StronglySorted_lookup_le entry_le E kw (kw + 1 + j)%nat (l, r) (le, re) HsortE Hkw Hj ltac:(lia).
+      rewrite /entry_le (entry_clock_Z l r Hckb) (entry_clock_Z le re Hbe) in Hle.
+      have [Hne0 _] := Hwe. destruct (run_items re); [done | simpl in Hd; lia].
+    - lia. }
+  have Hnokey : ∀ a, a ∈ kps -> a.1 = kp.1 -> a.2.1 = kp.2.1 -> False.
+  { move=> a Ha Hac Hapr. apply list_elem_of_fmap in Ha as (e & -> & He).
+    destruct e as [le re].
+    have HeE : (le, re) ∈ E.
+    { apply client_entries_mem. split; [exact He |]. rewrite Hkc_kp entry_kp_split /= in Hac. exact Hac. }
+    have Hmem := HEmem (le, re) HeE. simpl in Hmem.
+    have Hbe : (Z.of_nat (run_clock re) < 2^64)%Z := proj2 (Hbnds re Hmem).
+    apply list_elem_of_lookup in HeE as [j Hj].
+    rewrite Hkp_clock entry_kp_split /= /entry_pr /= (entry_clock_Z le re Hbe) in Hapr.
+    destruct (decide (j = kw)) as [-> | Hne].
+    - rewrite Hkw in Hj. injection Hj as <- <-. lia.
+    - destruct (Hdisj_E j (le, re) Hj Hne) as [Hd | Hd]; simpl in Hd; lia. }
+  have Hkpc : kp_clkloc (kps ++ [kp]).
+  { move=> a b Ha Hb Hab Hpr.
+    apply elem_of_app in Ha as [Ha | Ha]; apply elem_of_app in Hb as [Hb | Hb].
+    - exact (Hclkloc a b Ha Hb Hab Hpr).
+    - apply list_elem_of_singleton in Hb as ->. exfalso. exact (Hnokey a Ha Hab Hpr).
+    - apply list_elem_of_singleton in Ha as ->. exfalso. apply (Hnokey b Hb); [symmetry; exact Hab | symmetry; exact Hpr].
+    - apply list_elem_of_singleton in Ha as ->. apply list_elem_of_singleton in Hb as ->. reflexivity. }
+  have Hclkloc2 : kp_clkloc kps2.
+  { move=> a b Ha Hb. rewrite Hkps2 in Ha Hb. exact (Hkpc a b Ha Hb). }
+  have Hbef' := Hbef. rewrite -Hprs in Hbef'.
+  have Haft' := Haft. rewrite -Hprs in Haft'.
+  have Hnew_kc : kp_client_locs kc kps2 = take (kw + 1) E.*1 ++ rs :: drop (kw + 1) E.*1.
+  { rewrite (kp_client_locs_perm kc kps2 (kps ++ [kp]) Hclkloc2 Hkps2).
+    rewrite (kp_client_locs_insert kc kps kp (kw + 1) Hclkloc Hkc_kp Hbef' Haft').
+    rewrite -/(client_locs locs p kc) Hce. reflexivity. }
+  have Hnew_other : ∀ c', c' ≠ kc -> kp_client_locs c' kps2 = kp_client_locs c' kps.
+  { move=> c' Hne. rewrite (kp_client_locs_perm c' kps2 (kps ++ [kp]) Hclkloc2 Hkps2).
+    apply kp_client_locs_other. rewrite Hkc_kp. exact (λ H, Hne (eq_sym H)). }
+  have Hcomplete2 : ∀ c, c ∈ kps2.*1 -> is_Some (<[kc := newSl]> gm !! c).
+  { move=> c Hc. rewrite Hkps2 fmap_app in Hc. apply elem_of_app in Hc as [Hc | Hc].
+    - destruct (decide (c = kc)) as [-> | Hne].
+      + rewrite lookup_insert_eq. eauto.
+      + rewrite lookup_insert_ne; [| congruence]. exact (Hcomplete c Hc).
+    - apply list_elem_of_fmap in Hc as (a & -> & Ha). apply list_elem_of_singleton in Ha as ->.
+      rewrite Hkc_kp lookup_insert_eq. eauto. }
+  iEval (rewrite -Hce /client_locs) in "Hslice".
+  iDestruct ("Hrunsback" with "[Hslice Hcap]") as "Hruns";
+    first (iSplitL "Hslice"; [iExact "Hslice" | iExact "Hcap"]).
+  iAssert (own_item_map_runs mref (DfracOwn 1) locs2 p2) with "[Hmap HnewNodes HnewCap Hruns]" as "Hitemmap2".
   { iExists (<[kc := newSl]> gm). iFrame "Hmap".
     iSplitL "HnewNodes HnewCap Hruns".
-    - rewrite big_sepM_insert_delete. iSplitL "HnewNodes HnewCap"; [iFrame |].
+    - rewrite big_sepM_insert_delete. iSplitL "HnewNodes HnewCap".
+      { rewrite -/kps2 Hnew_kc. iFrame. }
       iDestruct (big_sepM_delete _ _ kc slk Hslk with "Hruns") as "[_ Hrest]".
       iApply (big_sepM_impl with "Hrest").
       iIntros "!#" (client s0 Hcs) "H". iNamed "H".
-      have Hne2 : client ≠ cell_client rightCell.
-      { rewrite Hcccr Hcwcc. move=> Heqc. rewrite Heqc lookup_delete_eq in Hcs. discriminate. }
-      rewrite (client_run_loc_other types types2 rightCell client Hkp Hclkloc Hne2). iFrame.
+      have Hne2 : client ≠ kc.
+      { move=> Heqc. rewrite Heqc lookup_delete_eq in Hcs. discriminate. }
+      rewrite -/kps2 (Hnew_other client Hne2). iFrame.
     - iPureIntro. split; [exact Hcomplete2 | exact Hclkloc2]. }
   wp_auto.
-  have Hreg' : registry_coh bind types2 := registry_coh_insert bind types parent _ _ Htypes Hreg0.
+  iAssert (own_store_runs s (MkStoreStateRuns client0 k0 locs2 p2 bind pend pdel))
+    with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap2 Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
+  { iSplitL; last (iPureIntro; split; [exact Hrpi2 | exact Hreg2]).
+    rewrite /own_store_fields_runs /=.
+    iFrame "Hclient Hclock HdeletedSet Hregistry Htypes2 Hpending Hpdeletes".
+    iExists mref. iFrame "Hitemsf Hitemmap2". }
   iApply ("HΦ" $! rs).
-  iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap2 Hregistry Htypes2 Hpending Hpdeletes"; last first.
-  { iPureIntro. split; [exact Hrsnn |].
-    rewrite -(locs_of_types_of_locs_pool locs p (proj1 Haligned) Hprem) locs_of_concat. exact Hrsfresh. }
-  have Haligned' : locs_aligned (<[parent := split_locs ls k rs]> locs)
-                     (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p).
-  { apply (locs_aligned_insert_both locs p parent (split_locs ls k rs)
-             (MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm))); last exact Haligned.
-    rewrite /split_locs Hlk /split_runs Hr /= !length_app /= !length_take !length_drop Hlsl //. }
-  iApply (own_store_runs_intro_state _ _ _ _ _ _ _ _ Haligned').
-  iEval (rewrite /state_of_runs /=
-           (types_of_locs_pool_insert_both locs p parent (split_locs ls k rs)
-              (MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm))) /=
-           (cells_of_locs_runs_split parent ls (tm_runs tm) k o l rs r Hlsl Hlk Hr) -/cells).
-  iApply (own_store_struct_intro _ (MkStoreState client0 k0 types2 bind pend pdel)
-            (conj Hpool2 Hreg') with "Hclient Hclock HdeletedSet [Hitemsf Hitemmap2] Hregistry Htypes2 Hpending Hpdeletes").
-  iExists mref. iFrame "Hitemsf Hitemmap2".
+  iSplitL "Hfinal"; first iExact "Hfinal".
+  iPureIntro. split; [exact Hrsnn | exact Hrsfresh].
 Qed.
 
 

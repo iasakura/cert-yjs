@@ -281,9 +281,8 @@ Proof.
 Qed.
 
 (** [run_pool_invs] survives one node split: the pure half of the
-    [splitNode] surgery ([split_pool_fits] / [_rangedisj] / [_originclk] at
-    run granularity, one bundle; runs are told apart by index, so no
-    address [NoDup] premise). *)
+    [splitNode] surgery (fits, range disjointness and origin-clock in one
+    bundle; runs are told apart by index, so no address [NoDup] premise). *)
 Lemma run_pool_invs_split (p : pool) (parent : loc) (tm : type_model)
     (k o : nat) (r : ItemRun) :
   p !! parent = Some tm ->

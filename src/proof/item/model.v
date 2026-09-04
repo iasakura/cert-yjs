@@ -484,7 +484,7 @@ Lemma hd_inhabitant_drop (r : list (YjsItem A)) (o : nat) (y : YjsItem A) :
 Proof. move=> Ho. rewrite (drop_S r y o Ho) //=. Qed.
 
 (** The two halves' head / length / client / clock facts of a run split, in
-    one bundle ([split_cell_facts] at nat granularity). *)
+    one bundle. *)
 Lemma split_run_facts (r : ItemRun) (o : nat) :
   run_wf (run_items r) ->
   (0 < o < length (run_items r))%nat ->
