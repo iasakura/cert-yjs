@@ -47,9 +47,9 @@ gotchas `build.sh` absorbs, and one-time environment setup. CI runs the same
 
 - **Spell every identifier out.** No cryptic abbreviations, in predicates,
   lemmas, binders and Go names alike: `key_pair` not `kp`, `state` not `st`,
-  `delete_set` not `ds`. A reader should not have to reconstruct what a name
-  stands for. The conventional short binders of the Iris and Perennial idiom
-  (`dq`, `m`, `l`, `n`) stay.
+  `leftNode` not `lft`, `delete_set` not `ds`. A reader should not have to
+  reconstruct what a name stands for. The conventional short binders of the
+  Iris and Perennial idiom (`dq`, `m`, `l`, `n`) stay.
 - **`is_X` / `own_X`**: `is_X` is persistent, duplicable knowledge (`is_Store`,
   `is_Text`, `is_text_lb`, `is_origin_id`); `own_X` is ownership,
   `dfrac`-parameterized when it is plain heap state (`own_ytype`, `own_dll`,
@@ -106,7 +106,8 @@ gotchas `build.sh` absorbs, and one-time environment setup. CI runs the same
   lemma over the model or the predicates in the layer file, not a conjunct.
 - **One spec per function.** A second spec exists only if it is used and cannot
   be derived from the first. Specs that are unused, or that are a stepping
-  stone of one proof, are deleted or made `#[local]` in that proof's file.
+  stone of one proof, are deleted or made `#[local]` in that proof's file:
+  Integrate's stepping stone is folded into `wp_Store__Integrate`.
 - **Reuse the rocq-yjs model, don't invent independent proofs.** State WP specs
   as refinements of the pure model and compose with its lemmas
   (`YjsArrInvariant_integrate`, `setintegrate_eq_integrate`,
@@ -171,7 +172,10 @@ independent job, so no single heavy proof serializes the build.
 - **Spec and invariant changes belong in the PR description.** A PR that
   changes a WP spec, a representation predicate, or an invariant says which one
   and how, before and after, and why; that is what the review is about. A PR
-  that changes none says so.
+  that changes none says so. So: "`wp_Store__Integrate` takes
+  `own_store_struct` whole where it took `own_store_items ∗ own_type_pool`, so
+  that re-establishing the invariant is the callee's job", not "rethreaded the
+  Integrate proof".
 - **Report unrequested changes** in the conversation as well: any change to
   `yjs/*.go` behavior, to a public function's spec or signature, or to a
   proof-layer contract that was not explicitly asked for. Any simplification
