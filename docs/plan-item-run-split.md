@@ -727,6 +727,14 @@ vocabulary substitution table written; then C5 restates the specs at
     read off `pool_registry_models`. Deleted: `own_type_pool_arr_inv`
     (heap) and `apply_live_refine_of_runs` (value_live), both orphaned.
 
+    PROGRESS 2026-09-04 (C6-3f): `Doc.GetOrCreateText` is proved on the run
+    fields. It calls `wp_store__getOrCreateYType_runs` and keeps the whole
+    lock body at `(locs, pool)`: the fresh empty root grows the item-set
+    authority over the pool and moves no run (`all_runs_insert_empty`), so
+    the delete set transports by `own_delete_set_runs_perm`. Deleted:
+    `own_store_struct_intro_raw`, `own_type_pool_client_clock_bound` and
+    `own_delete_set_perm` (heap), all orphaned.
+
   - **C6-4, delete the cell side.** `item_cell`, the cell `own_dll` and
     `own_dll_cells_layout`, `own_ytype_cells`, `cells_of_locs_runs`,
     `types_of_locs_pool` / `state_of_runs`, `type_state` / `store_state`,
