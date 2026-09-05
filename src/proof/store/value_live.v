@@ -86,7 +86,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     Used as: a conjunct of [split_types_update_rel], [repair_types_update_rel] and
     [delete_types_update_rel], consumed by [delete_set_tombstoned_refine] and its Iris
     wrapper [own_delete_set_refine] to carry the tombstone-set invariant across a
-    surgery. Discharged by [split_pool_live_refine], [live_refine_flip] and
+    surgery. Discharged by [live_refine_flip] and
     [live_refine_perm]. *)
 Definition live_refine (types types' : gmap loc type_state) : Prop :=
   ∀ c', c' ∈ all_cells types' -> ic_deleted c' = false ->
@@ -141,7 +141,7 @@ Definition integrate_live_refine (input : IntegrateInput (A := A))
     Used as: a conjunct of [split_types_update_rel] and [delete_types_update_rel], so a
     delete loop can carry its "everything covered so far is tombstoned"
     record ([ids_tombstoned]) across the split and flip the next iteration
-    performs. Discharged by [split_pool_dead_chars_kept] and
+    performs. Discharged by
     [dead_chars_kept_flip], since a split's halves inherit the bit and
     partition the run, and a flip only turns bits on. *)
 Definition dead_chars_kept (types types' : gmap loc type_state) : Prop :=

@@ -5,10 +5,7 @@
     [wp_store__splitAtAndGetLeft_runs] / [wp_store__splitAtAndGetRight_runs]
     (proved from [wp_store__GetNode_runs] and [wp_store__splitNode_runs],
     stepping the pool and the address map by the index-explicit
-    [pool_split_left_step] / [pool_split_right_step]), plus the split-pool
-    bookkeeping the run-level text layer still reads its materialized cells
-    through ([split_pool_perm], [split_pool_live_refine],
-    [split_pool_dead_chars_kept], [split_cells_lookup_left]; gone at C6-4).
+    [pool_split_left_step] / [pool_split_right_step]).
     Split out of [store/GetNode] so it proof-checks in parallel; same
     [Section] boilerplate and [#[local]] instances. *)
 From New.proof Require Import proof_prelude.
@@ -72,105 +69,6 @@ Proof. rewrite /cell_le. move=> x y. lia. Qed.
     creation of y-octo's update path is outside the verified subset for now:
     it would grow [types]/[bind]/[m] with a fresh empty type mid-batch). *)
 
-
-(* ----- split_cells pool bookkeeping (issue #28 stage D1c) -----------------
-   The pool effect of a split: the covering cell [cw] is replaced by its two
-   halves, everything else untouched ([split_pool_perm]). On top of it, the
-   pointwise preservation of the store pool invariants: run-fits, range
-   disjointness, origin-clock (the right half's origin telescopes inside
-   [cw]'s own run), and loc-NoDup (given the right half's location is fresh).
-   These are what the general [repair] uses to re-establish [store_inv]
-   across its clean-end / clean-start splits at the C2 flip. *)
-
-(** The pool permutation of a split: [cw] out, its two halves in. *)
-Lemma split_pool_perm (types : gmap loc type_state) (parent : loc)
-    (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
-    (o : nat) (rloc : loc) :
-  types !! parent = Some (MkTypeState cells arr) ->
-  cells !! k = Some cw ->
-  ∃ rest : list item_cell,
-    all_cells types ≡ₚ cw :: rest ∧
-    all_cells (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types)
-      ≡ₚ split_cell_left cw o :: split_cell_right cw o rloc :: rest.
-Proof.
-  move=> Htypes Hck.
-  exists (take k cells ++ drop (S k) cells ++ all_cells (delete parent types)).
-  split.
-  - rewrite (all_cells_lookup types parent _ Htypes) /=.
-    rewrite -{1}(take_drop_middle cells k cw Hck).
-    rewrite -app_assoc /=.
-    rewrite -Permutation_middle //.
-  - rewrite (all_cells_insert types parent _ _ Htypes) /= /split_cells Hck.
-    rewrite -!app_assoc /=.
-    rewrite -Permutation_middle.
-    rewrite -Permutation_middle //.
-Qed.
-
-(** [split_cells] index bookkeeping: the left half sits at the split
-    index. *)
-Lemma split_cells_lookup_left (cells : list item_cell) (k o : nat) (rloc : loc) (cw : item_cell) :
-  cells !! k = Some cw ->
-  split_cells cells k o rloc !! k = Some (split_cell_left cw o).
-Proof.
-  move=> Hck. rewrite /split_cells Hck.
-  have Hklen : (k < length cells)%nat := lookup_lt_Some _ _ _ Hck.
-  have Htk : length (take k cells) = k by (rewrite length_take_le; lia).
-  rewrite lookup_app_r; last lia.
-  rewrite Htk Nat.sub_diag //.
-Qed.
-
-(** A split refines the live cells: both halves inherit the node's
-    [ic_deleted] bit and share out its run ([split_cell_left] takes a prefix,
-    [split_cell_right] the matching suffix), so a live cell after the split is
-    covered, chars and all, by a live cell before it. This is what carries the
-    tombstone-set invariant [delete_set_tombstoned] across a split. *)
-Lemma split_pool_live_refine (types : gmap loc type_state) (parent : loc)
-    (cells : list item_cell) (arr : list (YjsItem A)) (k o : nat) (rloc : loc)
-    (cw : item_cell) :
-  types !! parent = Some (MkTypeState cells arr) ->
-  cells !! k = Some cw ->
-  live_refine types (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types).
-Proof.
-  move=> Htypes Hck.
-  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck) as (rest & Hold & Hnew).
-  have Hcw : cw ∈ all_cells types by rewrite Hold; apply list_elem_of_here.
-  move=> c' Hc' Hlive. rewrite Hnew in Hc'.
-  apply elem_of_cons in Hc' as [-> | Hc'].
-  { exists cw. split_and!; [exact Hcw | exact Hlive |].
-    move=> y Hy. rewrite -(take_drop o (ic_run cw)). apply elem_of_app. by left. }
-  apply elem_of_cons in Hc' as [-> | Hc'].
-  { exists cw. split_and!; [exact Hcw | exact Hlive |].
-    move=> y Hy. rewrite -(take_drop o (ic_run cw)). apply elem_of_app. by right. }
-  exists c'. split_and!; [rewrite Hold; apply elem_of_cons; by right | exact Hlive | done].
-Qed.
-
-(** Dually, a split keeps every tombstoned char tombstoned: the halves inherit
-    the node's bit and partition its run, so a dead char lands in one of them.
-    This is what carries a delete loop's "covered so far" record across the
-    splits the next iteration performs. *)
-Lemma split_pool_dead_chars_kept (types : gmap loc type_state) (parent : loc)
-    (cells : list item_cell) (arr : list (YjsItem A)) (k o : nat) (rloc : loc)
-    (cw : item_cell) :
-  types !! parent = Some (MkTypeState cells arr) ->
-  cells !! k = Some cw ->
-  dead_chars_kept types (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types).
-Proof.
-  move=> Htypes Hck.
-  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck) as (rest & Hold & Hnew).
-  move=> c Hc Hdel y Hy. rewrite Hold in Hc.
-  apply elem_of_cons in Hc as [-> | Hc]; last first.
-  { exists c. split_and!;
-      [rewrite Hnew; apply elem_of_cons; right; apply elem_of_cons; by right
-      | exact Hdel | exact Hy]. }
-  (* the split node: the char sits in the prefix or in the suffix *)
-  rewrite -(take_drop o (ic_run cw)) in Hy.
-  apply elem_of_app in Hy as [Hy | Hy].
-  - exists (split_cell_left cw o). split_and!;
-      [rewrite Hnew; apply list_elem_of_here | exact Hdel | exact Hy].
-  - exists (split_cell_right cw o rloc). split_and!;
-      [rewrite Hnew; apply elem_of_cons; right; apply list_elem_of_here
-      | exact Hdel | exact Hy].
-Qed.
 
 (** [splitItem n diff] at run granularity: the node at address [lc], the
     [k]-th run [r] of the type at [parent], is split at offset [diff] in

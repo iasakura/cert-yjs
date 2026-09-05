@@ -735,6 +735,23 @@ vocabulary substitution table written; then C5 restates the specs at
     `own_store_struct_intro_raw`, `own_type_pool_client_clock_bound` and
     `own_delete_set_perm` (heap), all orphaned.
 
+    PROGRESS 2026-09-04 (C6-3g): the text layer is proved on the run
+    fields, and C6-3 is complete: no proof materializes the cell state any
+    more. `Text.Insert` and `Text.Delete` open `own_store` at
+    `(locs, pool)` and close it there; the normalization split and the
+    tombstone loop step the pool by `pool_after_delete`
+    (`pool_after_split_of_split_runs` / `pool_after_delete_flip` /
+    `pool_after_delete_trans`), so the tombstone set follows by
+    `own_delete_set_runs_refine` and the insert loop's fresh run by
+    `own_delete_set_runs_snoc` with `pool_docm_has_registry_false`. New
+    transport laws for a one-type run rebuild: `pool_registry_models_ext`,
+    `pool_arr_pointwise_ext`, `pool_seq_map_ext`,
+    `pool_seq_map_insert_at`. Deleted: `own_store_cells` /
+    `own_store_as_cells` (heap) and `split_pool_perm` /
+    `split_pool_live_refine` / `split_pool_dead_chars_kept` /
+    `split_cells_lookup_left` (splitNode). The cell `own_delete_set`
+    cluster and the `value_*` cell laws are dead now and go in C6-4.
+
   - **C6-4, delete the cell side.** `item_cell`, the cell `own_dll` and
     `own_dll_cells_layout`, `own_ytype_cells`, `cells_of_locs_runs`,
     `types_of_locs_pool` / `state_of_runs`, `type_state` / `store_state`,

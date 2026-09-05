@@ -39,9 +39,8 @@
       covering-slot uniqueness ([own_store_runs_covers_unique]).
     - [own_store_struct s st]: the store at a cell-level state, the fields
       with the invariants every method preserves ([store_invs]); the
-      reading the cell-recipe bodies still work in. [own_store] is the
-      lock layer's closure of [own_store_runs] over the public model;
-      [own_store_cells] its cell reading ([own_store_as_cells]).
+      reading the remaining cell-recipe bodies work in. [own_store] is the
+      lock layer's closure of [own_store_runs] over the public model.
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
       hands out) and [own_delete_set] (its authority, with the domain bound and the
       tombstone-bit coherence that make the bound mean something);
@@ -2211,88 +2210,6 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
     "Hdelete_set" ∷ own_delete_set_runs γs m (all_runs p) ∗
     "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
-
-(** [own_store_cells]: [own_store] at the cell state the store materializes
-    to, the reading the lock-layer consumers' bodies still work in until
-    plan-item-run-split C6-3 ([own_store_as_cells] is the fold / unfold). *)
-Definition own_store_cells (s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
-  ∃ (client k : w64) (pdel : list delete_span)
-    (types : gmap loc type_state) (bind : gmap P loc) (acc : gset YjsId),
-    "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗
-    "#Hclientpin" ∷ is_store_client γs c ∗
-    "Hcells" ∷ own_store_struct s_loc (MkStoreState client k types bind pend pdel) ∗
-    "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
-    "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
-    "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
-                    (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
-    "Hseq"    ∷ own γs.(sn_seq) (● ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types) : seqUR) ∗
-    "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
-    "#Hbinds" ∷ ([∗ map] name ↦ p ∈ bind, is_type_binding γs.(sn_types) name p) ∗
-    "Hhist"   ∷ own_client_history γh c h ∗
-    "%Hregmodel" ∷ ⌜registry_models m bind types⌝ ∗
-    "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
-    "%Hctr"   ∷ ⌜∀ parent ts x, types !! parent = Some ts -> x ∈ ty_arr ts ->
-                   clientId (item_id x) = c -> (clock (item_id x) < uint.nat k)%nat⌝ ∗
-    (* no-loss accepted-id layer: matches [store_inv_excl] *)
-    "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
-    "Hdelete_set" ∷ own_delete_set γs m (all_cells types) ∗
-    "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
-
-(** [own_store] read at the cell state its store materializes to
-    ([own_store_runs_to_state]) and back ([own_store_runs_intro_state]): the
-    item-set authority through [pool_of_seq_map], the registry model through
-    [registry_models_pool], the delete set through [own_delete_set_as_runs]. *)
-Lemma own_store_as_cells (s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) :
-  own_store s_loc γs γh c h m pend ⊣⊢ own_store_cells s_loc γs γh c h m pend.
-Proof.
-  iSplit.
-  - iIntros "H". iNamed "H".
-    iDestruct (own_store_runs_to_state with "Hcells") as "[Hcells %Haligned]".
-    iEval (simpl) in "Hcells".
-    have Hprem := locs_aligned_lens _ _ Haligned.
-    have Hpeq : pool_of (types_of_locs_pool locs p) = p := pool_of_types_of_locs_pool locs p Hprem.
-    have Hseqeq : ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p)
-                = ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types_of_locs_pool locs p).
-    { rewrite -pool_of_seq_map Hpeq //. }
-    have Hrunseq : all_runs p = cell_run <$> all_cells (types_of_locs_pool locs p).
-    { rewrite -all_runs_pool_of Hpeq //. }
-    iEval (rewrite Hseqeq) in "Hseq".
-    iEval (rewrite Hrunseq -own_delete_set_as_runs) in "Hdelete_set".
-    iExists client, k, pdel, (types_of_locs_pool locs p), bind, acc.
-    iFrame "Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set Hclientpin Hpendcert Hbinds".
-    iPureIntro. split_and!; [exact Hclientc | exact Hpendroot | exact Hpendbnd | | exact Hhcoh | | exact Hacccoh].
-    + apply registry_models_pool. rewrite Hpeq. exact Hregmodel.
-    + move=> parent ts x Hts Hx Hcx.
-      destruct (types_of_locs_pool_arr locs p parent ts Hts) as (tm & Htm & Harr).
-      rewrite Harr in Hx. exact (Hctr parent tm x Htm Hx Hcx).
-  - iIntros "H". iNamed "H".
-    iDestruct "Hcells" as "(Hfields & %Hinvs)".
-    iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-    iDestruct (own_type_pool_parents with "Htypes") as %Hpar.
-    iDestruct (own_store_struct_intro _ (MkStoreState client k types bind pend pdel) Hinvs
-                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
-    iDestruct (own_store_runs_intro_state s_loc client k (locs_of types) (pool_of types) bind pend pdel
-                 (locs_aligned_of types) with "[Hcells]") as "Hcells".
-    { rewrite /state_of_runs /= (types_of_locs_pool_of types Hpar). iFrame "Hcells". }
-    have Hseqeq : ((λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types)
-                = ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> pool_of types).
-    { rewrite pool_of_seq_map //. }
-    have Hrunseq : cell_run <$> all_cells types = all_runs (pool_of types).
-    { rewrite all_runs_pool_of //. }
-    iEval (rewrite Hseqeq) in "Hseq".
-    iEval (rewrite own_delete_set_as_runs Hrunseq) in "Hdelete_set".
-    iExists client, k, pdel, (locs_of types), (pool_of types), bind, acc.
-    iFrame "Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set Hclientpin Hpendcert Hbinds".
-    iPureIntro. split_and!; [exact Hclientc | exact Hpendroot | exact Hpendbnd | | exact Hhcoh | | exact Hacccoh].
-    + apply registry_models_pool. exact Hregmodel.
-    + move=> parent tm x Htm Hx Hcx.
-      rewrite /pool_of lookup_fmap in Htm. destruct (types !! parent) as [ts|] eqn:Hts; last done.
-      injection Htm as <-. exact (Hctr parent ts x Hts Hx Hcx).
-Qed.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
    Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked

@@ -1513,7 +1513,7 @@ Qed.
 
 (** The pool's entries across a node split: the split entry becomes its two
     halves (the right one at the fresh address), every other entry stays
-    (the run form of [split_pool_perm]). *)
+    (the run form of the cell-level split permutation). *)
 Lemma pool_entries_split (locs : gmap loc (list loc)) (p : pool) (parent : loc)
     (ls : list loc) (tm : type_model) (k : nat) (l : loc) (r : ItemRun) (o : nat) (rloc : loc) :
   locs !! parent = Some ls -> p !! parent = Some tm ->

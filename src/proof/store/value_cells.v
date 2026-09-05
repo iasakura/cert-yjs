@@ -55,7 +55,10 @@
       map) and one tombstoning keeping every key ([pool_entries_flip_kp]);
       what a delete step transports ([pool_after_delete_seq_map] /
       [pool_after_delete_arr_pointwise] /
-      [pool_registry_models_after_delete]); [entry_clock_Z], an entry's machine-word
+      [pool_registry_models_after_delete]) and what a one-type run rebuild
+      transports ([pool_registry_models_ext] / [pool_arr_pointwise_ext] /
+      [pool_seq_map_ext] / [pool_seq_map_insert_at]); an id no type's document holds is absent from the
+      model ([pool_docm_has_registry_false]); [entry_clock_Z], an entry's machine-word
       clock under the pool's clock bound); alignment surviving a same-length
       type update, [locs_aligned_insert_same_len], or a slot's addresses
       and model replaced together at equal length,
@@ -2353,6 +2356,88 @@ Proof.
   intros (Harr & _) [Hmtypes Hmdom]. split; [| exact Hmdom].
   move=> nm q tm' Hb Htm'. destruct (Harr q tm' Htm') as (tm & Htm & Heq).
   rewrite Heq. exact (Hmtypes nm q tm Hb Htm).
+Qed.
+
+(** What a step that rebuilds ONE type's runs, keeping its document,
+    transports: the registry's model reading, a pointwise fact about the
+    documents, and the per-type item-set map (the text layer's split and
+    tombstone loops step the pool this way). *)
+Lemma pool_registry_models_ext (m : DocModel) (bind : gmap P loc) (p p' : pool)
+    (parent : loc) (tm tm' : type_model) :
+  (∀ q, q ≠ parent -> p' !! q = p !! q) ->
+  p !! parent = Some tm -> p' !! parent = Some tm' -> tm_arr tm' = tm_arr tm ->
+  pool_registry_models m bind p -> pool_registry_models m bind p'.
+Proof.
+  move=> Hext Hp Hp' Harr [Hmtypes Hmdom]. split; [| exact Hmdom].
+  move=> nm q tmq Hb Hq.
+  destruct (decide (q = parent)) as [-> | Hne].
+  - rewrite Hp' in Hq. injection Hq as <-. rewrite Harr. exact (Hmtypes nm parent tm Hb Hp).
+  - rewrite (Hext q Hne) in Hq. exact (Hmtypes nm q tmq Hb Hq).
+Qed.
+
+Lemma pool_arr_pointwise_ext (p p' : pool) (parent : loc) (tm tm' : type_model)
+    (Q : YjsItem A -> Prop) :
+  (∀ q, q ≠ parent -> p' !! q = p !! q) ->
+  p !! parent = Some tm -> p' !! parent = Some tm' -> tm_arr tm' = tm_arr tm ->
+  (∀ q tmq x, p !! q = Some tmq -> x ∈ tm_arr tmq -> Q x) ->
+  (∀ q tmq x, p' !! q = Some tmq -> x ∈ tm_arr tmq -> Q x).
+Proof.
+  move=> Hext Hp Hp' Harr H q tmq x Hq Hx.
+  destruct (decide (q = parent)) as [-> | Hne].
+  - rewrite Hp' in Hq. injection Hq as <-. rewrite Harr in Hx. exact (H parent tm x Hp Hx).
+  - rewrite (Hext q Hne) in Hq. exact (H q tmq x Hq Hx).
+Qed.
+
+Lemma pool_seq_map_ext (p p' : pool) (parent : loc) (tm tm' : type_model) :
+  (∀ q, q ≠ parent -> p' !! q = p !! q) ->
+  p !! parent = Some tm -> p' !! parent = Some tm' -> tm_arr tm' = tm_arr tm ->
+  ((λ tmq, (list_to_set (tm_arr tmq) : gset (YjsItem A))) <$> p')
+  = ((λ tmq, (list_to_set (tm_arr tmq) : gset (YjsItem A))) <$> p).
+Proof.
+  move=> Hext Hp Hp' Harr. apply map_eq => q. rewrite !lookup_fmap.
+  destruct (decide (q = parent)) as [-> | Hne].
+  - rewrite Hp Hp' /= Harr //.
+  - rewrite (Hext q Hne) //.
+Qed.
+
+(** The same when the one type's document DID change: the item-set map is
+    the old one with that type's entry replaced (the text insert's step). *)
+Lemma pool_seq_map_insert_at (p p' : pool) (parent : loc) (tm tm' : type_model) :
+  (∀ q, q ≠ parent -> p' !! q = p !! q) ->
+  p !! parent = Some tm -> p' !! parent = Some tm' ->
+  ((λ tmq, (list_to_set (tm_arr tmq) : gset (YjsItem A))) <$> p')
+  = <[parent := (list_to_set (tm_arr tm') : gset (YjsItem A))]>
+      ((λ tmq, (list_to_set (tm_arr tmq) : gset (YjsItem A))) <$> p).
+Proof.
+  move=> Hext Hp Hp'. apply map_eq => q. rewrite lookup_fmap.
+  destruct (decide (q = parent)) as [-> | Hne].
+  - rewrite Hp' lookup_insert_eq //.
+  - rewrite lookup_insert_ne // lookup_fmap (Hext q Hne) //.
+Qed.
+
+(** An id no type's document holds is absent from the model: the pool
+    reading of [store/heap]'s [docm_has_registry_false], for a caller that
+    knows its fresh id beats every item of the pool (typically by the
+    store's clock counter). *)
+Lemma pool_docm_has_registry_false (bind : gmap P loc) (p : pool)
+    (m : DocModel) (i : YjsId) :
+  (∀ name q tm, bind !! name = Some q -> p !! q = Some tm ->
+     doc_model_get m (RootId name) = tm_arr tm) ->
+  (∀ t, doc_model_get m t ≠ [] ->
+     ∃ name q, t = RootId name ∧ bind !! name = Some q) ->
+  (∀ name q, bind !! name = Some q -> is_Some (p !! q)) ->
+  (∀ q tm x, p !! q = Some tm -> x ∈ tm_arr tm -> item_id x ≠ i) ->
+  doc_model_has m i = false.
+Proof.
+  move=> Hmtypes Hmdom Hbindtypes Hbeats.
+  destruct (doc_model_has m i) eqn:Hhas; last done.
+  exfalso. apply docm_has_spec in Hhas as (t & x & Hx & Hid).
+  have Hne : doc_model_get m t ≠ [].
+  { move=> Hnil. rewrite Hnil in Hx. by rewrite elem_of_nil in Hx. }
+  destruct (Hmdom t Hne) as (nm & q & -> & Hb).
+  destruct (Hbindtypes nm q Hb) as [tm Htm].
+  rewrite (Hmtypes nm q tm Hb Htm) in Hx.
+  exact (Hbeats q tm x Htm Hx Hid).
 Qed.
 
 Lemma client_entries_NoDup_locs (locs : gmap loc (list loc)) (p : pool) (client : w64) :
