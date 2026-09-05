@@ -1729,6 +1729,45 @@ Proof.
   iApply (own_dll_cells_layout_runs_wf with "H").
 Qed.
 
+(** The same read directly off the run spine, plus the head id's word
+    bounds: what the pool-level extractions are built from. *)
+Lemma own_dll_runs_run_wf (dq : dfrac) (parent l last prev next : loc)
+    (ls : list loc) (runs : list ItemRun) :
+  own_dll_runs dq parent l last prev next ls runs -∗
+  ⌜∀ r, r ∈ runs -> run_wf (run_items r)⌝.
+Proof.
+  iInduction ls as [|lc ls] "IH" forall (l prev runs).
+  - destruct runs as [|r runs]; last (iIntros "[]").
+    iIntros "_". iPureIntro. move=> r Hr. by apply elem_of_nil in Hr.
+  - destruct runs as [|r0 runs]; first (iIntros "[]").
+    iIntros "H". iNamed "H". iDestruct "H" as (nxt0) "H". iNamed "H".
+    iDestruct ("IH" with "Hrest") as %Hrest.
+    iPureIntro. move=> r Hr.
+    apply elem_of_cons in Hr as [-> | Hr]; last exact (Hrest r Hr).
+    exact Hrun.
+Qed.
+
+Lemma own_dll_runs_id_bounds (dq : dfrac) (parent l last prev next : loc)
+    (ls : list loc) (runs : list ItemRun) :
+  own_dll_runs dq parent l last prev next ls runs -∗
+  ⌜∀ r, r ∈ runs -> (Z.of_nat (run_client r) < 2^64)%Z ∧
+                    (Z.of_nat (run_clock r) < 2^64)%Z⌝.
+Proof.
+  iInduction ls as [|lc ls] "IH" forall (l prev runs).
+  - destruct runs as [|r runs]; last (iIntros "[]").
+    iIntros "_". iPureIntro. move=> r Hr. by apply elem_of_nil in Hr.
+  - destruct runs as [|r0 runs]; first (iIntros "[]").
+    iIntros "H". iNamed "H". iDestruct "H" as (nxt0) "H". iNamed "H".
+    iDestruct ("IH" with "Hrest") as %Hrest.
+    iDestruct "Hnode" as (v olid orid) "(_ & _ & _ & _ & _ & %Hid & _)".
+    iPureIntro. move=> r Hr.
+    apply elem_of_cons in Hr as [-> | Hr]; last exact (Hrest r Hr).
+    rewrite /run_client /run_clock.
+    have Hidr : item_id (run_head_item r0) = toYjsId v.(yjs.item.id').
+    { rewrite Hid /input_of_run //. }
+    rewrite Hidr /toYjsId /=. split; word.
+Qed.
+
 Lemma own_dll_acc_node (dq : dfrac) {parent : loc} (cells : list item_cell)
     (hd tl : loc) (k : nat) (c : item_cell) :
   cells !! k = Some c ->
