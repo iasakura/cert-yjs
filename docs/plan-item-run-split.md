@@ -662,8 +662,33 @@ vocabulary substitution table written; then C5 restates the specs at
     `sorted_client_entries` list, so `splitNode` can search the index with
     one run rewritten) and
     `wp_store__GetNode_runs` proved on the run fields; the cell
-    `wp_store__GetNode` is deleted. The cell `wp_getNodeIndex` stays for
-    `splitNode`'s cell body (next).
+    `wp_store__GetNode` is deleted.
+
+    PROGRESS 2026-09-04 (C6-3b): `store.splitNode` is proved on the run
+    fields. `wp_store__splitNode_runs` opens `own_store_runs`, runs
+    `wp_splitItem_runs` on the type's `own_ytype_runs`, and does the
+    item-map surgery over `own_item_map_runs` directly: the split node's
+    client slice is `client_entries locs p kc` (`client_locs_entries`),
+    the search is `wp_getNodeIndex_runs` over that list with the split
+    entry rewritten to the left half (`sorted_client_entries` at the
+    split `(locs, pool)`), and the appended slice is `kp_client_locs` of
+    the entries plus the right half's key, by `kp_client_locs_insert`
+    (`pool_entries_split`, `entry_kp_split_left`). The fresh address is
+    new to the whole address map by `own_type_pool_runs_fresh` (heap);
+    `locs_wf_split` / `run_pool_invs_split` /
+    `pool_registry_coh_insert_existing` re-establish the invariants.
+    Deleted: the cell `wp_getNodeIndex` / `wp_getNodeIndex_raw`,
+    `client_run_mem` / `client_run_sorted` (GetNode), `sorted_client_run`
+    (value_split), `split_cell_facts`, `split_pool_fits` / `_originclk` /
+    `_rangedisj` / `_locdup`, `pool_invs_split` (splitNode).
+    `split_pool_perm` / `split_pool_live_refine` /
+    `split_pool_dead_chars_kept` / `split_cells_lookup_left` stay for the
+    text layer's cell reads until its C6-3 step. Gotcha: `pr_le`'s
+    decision instance is `#[local]` to `store/value_cells`, so a downstream
+    `have` stating `merge_sort pr_le …` gets the instance as a forall
+    binder and the fact never matches the lemma's premise; state it over
+    the sorted entries (`entry_pr <$> E`) and carry it to the
+    `merge_sort` form through `client_entries_prs`.
   - **C6-4, delete the cell side.** `item_cell`, the cell `own_dll` and
     `own_dll_cells_layout`, `own_ytype_cells`, `cells_of_locs_runs`,
     `types_of_locs_pool` / `state_of_runs`, `type_state` / `store_state`,

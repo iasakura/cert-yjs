@@ -15,8 +15,8 @@
     - [own_store_fields s st]: every field of the struct at a [store_state]
       (the item index, the root registry, the type pool, the two buffers, the
       unmodeled delete-set struct), with no predicate per field on purpose.
-    - the run-granular pool (plan-item-run-split stage 2): [locs_wf] (the
-      heap half of the pool invariants), [own_type_pool_runs dq locs p] and
+    - the run-granular pool (plan-item-run-split stage 2):
+      [own_type_pool_runs dq locs p] (over [store/value_cells]'s [locs_wf]) and
       the cell-level readings [own_type_pool_runs_of] /
       [own_type_pool_runs_to_cells] (the converse, at the re-materialized
       registry [types_of_locs_pool]); the PRIMITIVE [own_store_runs s
@@ -924,17 +924,6 @@ Qed.
 #[global] Instance own_type_pool_timeless dq types : Timeless (own_type_pool dq types).
 Proof. rewrite /own_type_pool. apply _. Qed.
 
-(** [locs_wf locs p]: the heap-only half of the pool invariants at run
-    granularity (plan-item-run-split stage 2): the address map covers
-    exactly the registered types, one node address per run, and no node is
-    in two types or at two indices. What [pool_invs]'s [NoDup] becomes once
-    addresses leave the pure layer. *)
-Definition locs_wf (locs : gmap loc (list loc)) (p : pool) : Prop :=
-  dom locs = dom p ∧
-  NoDup (concat ((map_to_list locs).*2)) ∧
-  (∀ parent ls tm, locs !! parent = Some ls -> p !! parent = Some tm ->
-     length ls = length (tm_runs tm)).
-
 (** [own_type_pool_runs dq locs p]: the pool at run granularity: every
     registered type's [own_ytype_runs] at its address list, the whole
     address map [locs_wf]. The [(locs, p)] pair is what stage 2's specs
@@ -997,25 +986,6 @@ Proof.
     rewrite Hls1 in Hls2. injection Hls2 as <-.
     iExists ls1. iSplitR; first by iPureIntro. iSplitL; last by iPureIntro.
     iApply (own_ytype_runs_fractional parent ls1 tm q1 q2). iFrame "Hyt1 Hyt2".
-Qed.
-
-(** [locs_wf] survives replacing one type's model by one with as many runs
-    (a tombstone flip, a per-run update): the address map is untouched. *)
-Lemma locs_wf_insert_same_len (locs : gmap loc (list loc)) (p : pool)
-    (parent : loc) (tm tm' : type_model) :
-  p !! parent = Some tm ->
-  length (tm_runs tm') = length (tm_runs tm) ->
-  locs_wf locs p -> locs_wf locs (<[parent := tm']> p).
-Proof.
-  move=> Hp Hlen [Hdom [Hnd Hlens]]. split_and!.
-  - rewrite dom_insert_L Hdom. symmetry.
-    apply subseteq_union_1_L, singleton_subseteq_l. apply elem_of_dom. by exists tm.
-  - exact Hnd.
-  - move=> q lsq tmq Hlsq Htmq.
-    destruct (decide (q = parent)) as [-> | Hne].
-    + rewrite lookup_insert_eq in Htmq. injection Htmq as <-. rewrite Hlen.
-      exact (Hlens parent lsq tm Hlsq Hp).
-    + rewrite lookup_insert_ne in Htmq; [| congruence]. exact (Hlens q lsq tmq Hlsq Htmq).
 Qed.
 
 (** The run-granular pool read back at the re-materialized cell registry
@@ -1327,6 +1297,31 @@ Proof.
   rewrite -Hpeq all_runs_pool_of in Hr.
   apply list_elem_of_fmap in Hr as (c & -> & Hc).
   exact (Hwf c Hc).
+Qed.
+
+(** A fully owned node struct's address is not an address of a run-granular
+    type, nor of any type of the run-granular pool (the run forms of
+    [own_dll_fresh] / [all_cells_fresh]): the source of [locs_wf]'s [NoDup]
+    when a freshly allocated node is spliced in. *)
+Lemma own_ytype_runs_fresh (q : loc) (v : yjs.item.t) (parent : loc) (dq : dfrac)
+    (ls : list loc) (tm : type_model) :
+  q ↦ v -∗ own_ytype_runs parent dq ls tm -∗ ⌜q ∉ ls⌝.
+Proof.
+  iIntros "Hq Hyt". iDestruct "Hyt" as (yt tl) "(_ & Hdll & _ & _)".
+  iApply (own_dll_runs_fresh with "Hq Hdll").
+Qed.
+
+Lemma own_type_pool_runs_fresh (q : loc) (v : yjs.item.t) (dq : dfrac)
+    (locs : gmap loc (list loc)) (p : pool) :
+  q ↦ v -∗
+  ([∗ map] parent ↦ tm ∈ p,
+     ∃ ls, ⌜locs !! parent = Some ls⌝ ∗ own_ytype_runs parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝) -∗
+  ⌜∀ parent ls tm, locs !! parent = Some ls -> p !! parent = Some tm -> q ∉ ls⌝.
+Proof.
+  iIntros "Hq Hpool". iIntros (parent ls tm Hls Hp).
+  iDestruct (big_sepM_lookup _ _ parent tm Hp with "Hpool") as (ls0) "(%Hls0 & Hyt & _)".
+  rewrite Hls in Hls0. injection Hls0 as <-.
+  iApply (own_ytype_runs_fresh with "Hq Hyt").
 Qed.
 
 (** The [w64] cell-level shadow of the per-client clock counter: if every

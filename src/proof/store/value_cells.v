@@ -23,7 +23,9 @@
     - [type_model_of] / [pool_of] / [locs_of]: a type state and the pool at
       their run-granular models and address map; [store_state_runs] /
       [state_runs_of], the store state with the pool as [(sr_locs, sr_pool)]
-      (plan-item-run-split stage 2); [locs_aligned], the pure alignment of
+      (plan-item-run-split stage 2); [locs_wf], the address map covering
+      the registered types with one address per run and no address twice
+      ([locs_wf_insert_same_len]); [locs_aligned], the pure alignment of
       an address map with a run pool; [types_of_locs_pool] /
       [state_of_runs], the cell-level registry and state a run-granular
       state determines (round-tripping under alignment,
@@ -42,7 +44,7 @@
       entries, meeting [client_run] at [client_run_kp_locs] /
       [client_locs_of] and the materialized registry at [entries_kp_of] /
       [entries_kp_to_cells]; [client_entries], the client's entries in
-      clock order ([client_locs_entries], [client_entries_mem] /
+      clock order ([client_entries_prs] / [client_locs_entries], [client_entries_mem] /
       [_sorted] / [_lookup_slot]; [sorted_client_entries], any clock-sorted
       address-distinct list of one client's entries, with disjoint clock
       ranges, [sorted_client_entries_disjoint], the index's own being one,
@@ -582,6 +584,17 @@ Definition locs_aligned (locs : gmap loc (list loc)) (p : pool) : Prop :=
   (∀ parent ls tm, locs !! parent = Some ls -> p !! parent = Some tm ->
      length ls = length (tm_runs tm)).
 
+(** [locs_wf locs p]: the heap-only half of the pool invariants at run
+    granularity (plan-item-run-split stage 2): the address map covers
+    exactly the registered types, one node address per run, and no node is
+    in two types or at two indices. What [pool_invs]'s [NoDup] becomes once
+    addresses leave the pure layer. *)
+Definition locs_wf (locs : gmap loc (list loc)) (p : pool) : Prop :=
+  dom locs = dom p ∧
+  NoDup (concat ((map_to_list locs).*2)) ∧
+  (∀ parent ls tm, locs !! parent = Some ls -> p !! parent = Some tm ->
+     length ls = length (tm_runs tm)).
+
 (** [types_of_locs_pool locs p]: the cell-level registry an address map and a
     run pool determine: each type's cells re-materialized as
     [cells_of_locs_runs] (the run-granular POOL elimination,
@@ -850,6 +863,40 @@ Proof.
   have His : is_Some (locs !! parent).
   { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
   destruct His as [ls Hls]. exists ls. split; [done | exact (Hlens parent ls tm Hls Hp)].
+Qed.
+
+(** [locs_wf] survives replacing one type's model by one with as many runs
+    (a tombstone flip, a per-run update): the address map is untouched. *)
+Lemma locs_wf_insert_same_len (locs : gmap loc (list loc)) (p : pool)
+    (parent : loc) (tm tm' : type_model) :
+  p !! parent = Some tm ->
+  length (tm_runs tm') = length (tm_runs tm) ->
+  locs_wf locs p -> locs_wf locs (<[parent := tm']> p).
+Proof.
+  move=> Hp Hlen [Hdom [Hnd Hlens]]. split_and!.
+  - rewrite dom_insert_L Hdom. symmetry.
+    apply subseteq_union_1_L, singleton_subseteq_l. apply elem_of_dom. by exists tm.
+  - exact Hnd.
+  - move=> q lsq tmq Hlsq Htmq.
+    destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Htmq. injection Htmq as <-. rewrite Hlen.
+      exact (Hlens parent lsq tm Hlsq Hp).
+    + rewrite lookup_insert_ne in Htmq; [| congruence]. exact (Hlens q lsq tmq Hlsq Htmq).
+Qed.
+
+(** The pool's registry coherence only reads the pool's domain: replacing a
+    registered type's model keeps it. *)
+Lemma pool_registry_coh_insert_existing (bind : gmap P loc) (p : pool) (parent : loc) (tm tm' : type_model) :
+  p !! parent = Some tm ->
+  pool_registry_coh bind p -> pool_registry_coh bind (<[parent := tm']> p).
+Proof.
+  move=> Hp [H1 [H2 H3]]. split_and!; [| exact H2 |].
+  - move=> nm q Hq. destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite lookup_insert_eq. by eexists.
+    + rewrite lookup_insert_ne; [exact (H1 nm q Hq) | congruence].
+  - move=> q Hq. destruct (decide (q = parent)) as [-> | Hne].
+    + apply H3. by exists tm.
+    + rewrite lookup_insert_ne in Hq; [exact (H3 q Hq) | congruence].
 Qed.
 
 (** [cells_within_or_from] projects onto [runs_within_or_from] under the
@@ -2007,6 +2054,17 @@ Proof. move=> Hkd. rewrite /client_locs entries_kp_of (client_run_kp_locs types 
 Lemma entry_kp_split (e : loc * ItemRun) : entry_kp e = (entry_client e, entry_pr e).
 Proof. reflexivity. Qed.
 
+(** The left half of a split keeps the run's head, so its keys are the
+    split run's. *)
+Lemma entry_kp_split_left (l : loc) (r : ItemRun) (o : nat) :
+  (0 < o)%nat -> entry_kp (l, split_run_left r o) = entry_kp (l, r).
+Proof.
+  move=> Ho. destruct o as [|o']; [lia |]. destruct r as [items d].
+  rewrite /entry_kp /entry_client /entry_pr /entry_clock /run_client /run_clock /run_head_item
+          /split_run_left /=.
+  destruct items; reflexivity.
+Qed.
+
 (** An entry's machine-word clock is its run's clock, under the pool's clock
     bound. *)
 Lemma entry_clock_Z (l : loc) (r : ItemRun) :
@@ -2040,14 +2098,12 @@ Proof.
   - apply (StronglySorted_merge_sort entry_le).
 Qed.
 
-Lemma client_locs_entries (locs : gmap loc (list loc)) (p : pool) (client : w64) :
+Lemma client_entries_prs (locs : gmap loc (list loc)) (p : pool) (client : w64) :
   kp_clkloc (entry_kp <$> pool_entries locs p) ->
-  client_locs locs p client = (client_entries locs p client).*1.
+  merge_sort pr_le ((filter (λ kp : w64 * (Z * loc), kp.1 = client) (entry_kp <$> pool_entries locs p)).*2)
+  = entry_pr <$> client_entries locs p client.
 Proof.
-  move=> Hkd. rewrite /client_locs /kp_client_locs /client_entries.
-  have Hfst : ∀ l : list (loc * ItemRun), l.*1 = snd <$> (entry_pr <$> l).
-  { move=> l. rewrite -list_fmap_compose. apply list_fmap_ext. move=> i e _. reflexivity. }
-  rewrite Hfst -entry_pr_filter_kp. f_equal.
+  move=> Hkd. rewrite /client_entries -entry_pr_filter_kp.
   apply (StronglySorted_unique_strong pr_le).
   - move=> p1 p2 Hp1 Hp2 H12 H21.
     rewrite (merge_sort_Permutation pr_le) in Hp1.
@@ -2064,6 +2120,14 @@ Proof.
   - apply (StronglySorted_merge_sort pr_le).
   - apply SS_entry_pr_merge.
   - rewrite (merge_sort_Permutation pr_le). apply Permutation_map. symmetry. apply merge_sort_Permutation.
+Qed.
+
+Lemma client_locs_entries (locs : gmap loc (list loc)) (p : pool) (client : w64) :
+  kp_clkloc (entry_kp <$> pool_entries locs p) ->
+  client_locs locs p client = (client_entries locs p client).*1.
+Proof.
+  move=> Hkd. rewrite /client_locs /kp_client_locs (client_entries_prs locs p client Hkd).
+  rewrite -list_fmap_compose. apply list_fmap_ext. move=> i e _. reflexivity.
 Qed.
 
 Lemma pool_entries_slot (locs : gmap loc (list loc)) (p : pool) (l : loc) (r : ItemRun) :
