@@ -1,5 +1,8 @@
-(** store update path, node layer: [wp_getNodeIndex] / [wp_store__GetNode]
-    (the id lookups) and the applyUpdate input-expansion helpers ([expand_inputs_*],
+(** store update path, node layer: the id lookups, [wp_getNodeIndex_runs]
+    (the binary search over one client's entries) and [wp_store__GetNode_runs]
+    (direct, over [own_store_runs]; the cell-level [wp_getNodeIndex] stays
+    for [store/splitNode]'s cell body until C6-3 converts it) and the
+    applyUpdate input-expansion helpers ([expand_inputs_*],
     [ValidReplay_chunk_extract], the [types_*] accessors). The heavier
     [splitNode] and repair/applyUpdate proofs live in [store/splitNode]
     and [store/repair]; all three reached via the [store/store] facade. *)
@@ -579,124 +582,169 @@ Proof using Type*.
     apply (Hres kx c Hkx); rewrite /cell_clock; word.
 Qed.
 
-(** [store.GetNode]: look the node holding the char [idv] up. The id may
-    address any char of a run cell and may be absent (the pending gate probes
-    origins that have not arrived, issue #40), so both miss paths (unknown
-    client, clock not covered by any of its cells) are live: [ok = true] returns
-    the location of a pool cell whose run has the char ([pool_cell_covers]),
-    [ok = false] certifies no pool cell does. *)
-Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (st : store_state) :
-  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
-    s @! (go.PointerType yjs.store) @! "GetNode" #idv
-  {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store_struct s st ∗
-      ⌜if ok then ∃ c, pool_cell_covers (ss_types st) c (toYjsId idv) ∧ ic_loc c = l
-       else ∀ c, ¬ pool_cell_covers (ss_types st) c (toYjsId idv)⌝ }}}.
+(** [getNodeIndex] over one client's entries ([client_entries]), the run
+    form of [wp_getNodeIndex]: [ok] iff some entry's run covers [clk]
+    ([run_covers_clock]); the clock ranges of distinct entries are disjoint
+    ([client_entries_disjoint]), so the binary search corners the covering
+    one, and the empty-window exit certifies that no entry covers [clk]. *)
+Lemma wp_getNodeIndex_runs (sl : slice.t) (dq : dfrac) (locs : gmap loc (list loc)) (p : pool)
+    (kc clk : w64) (E : list (loc * ItemRun)) :
+  run_pool_invs p ->
+  sorted_client_entries locs p kc E ->
+  {{{ is_pkg_init yjs ∗ sl ↦*{dq} E.*1 ∗ own_type_pool_runs (DfracOwn 1) locs p }}}
+    @! yjs.getNodeIndex #sl #clk
+  {{{ (i : w64) (ok : bool), RET (#i, #ok);
+      sl ↦*{dq} E.*1 ∗ own_type_pool_runs (DfracOwn 1) locs p ∗
+      ⌜if ok then ∃ l r, E !! uint.nat i = Some (l, r) ∧ run_covers_clock r (uint.nat clk)
+       else ∀ l r, (l, r) ∈ E -> ¬ run_covers_clock r (uint.nat clk)⌝ }}}.
 Proof using Type*.
-  iIntros (Φ) "(#Hpkg & Hcells) HΦ".
-  destruct st as [client0 k0 types bind pend pdel]. simpl in *.
-  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
-  have Hpool : pool_invs types := proj1 Hinvs0.
-  have [Hrunfits [Hnodup [Hrangedisj Horiginclk]]] := Hpool.
-  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds.
-  set (kc := idv.(yjs.id.clientId')).
-  iDestruct "Hitemmap" as (gm) "(Hmap & Hruns & %Hcomplete & %Hclkloc)".
-  wp_method_call. wp_call. wp_call. wp_auto.
-  wp_apply (wp_map_lookup2 with "Hmap"). iIntros "Hmap".
-  destruct (gm !! kc) as [slk |] eqn:Hslk; rewrite Hslk /=.
-  - (* known client: run the binary search *)
+  move=> Hrpi Hsce.
+  wp_start as "(Hsl & Htypes)".
+  iAssert (⌜locs_wf locs p⌝)%I as %Hlocswf; first by iDestruct "Htypes" as "[%Hwf _]".
+  destruct Hlocswf as (Hdom & Hnd & Hlens).
+  have Hlens' : ∀ parent tm, p !! parent = Some tm ->
+      ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm).
+  { move=> parent tm Hp.
+    have His : is_Some (locs !! parent).
+    { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
+    destruct His as [ls Hls]. exists ls. split; [done | exact (Hlens parent ls tm Hls Hp)]. }
+  iDestruct (own_type_pool_runs_id_bounds with "Htypes") as %Hbnds.
+  iDestruct (own_type_pool_runs_run_wf with "Htypes") as %Hwfall.
+  have [Hfits [Hdisj _]] := Hrpi.
+  have Hsort : StronglySorted entry_le E := proj1 Hsce.
+  have Hndl : NoDup (pool_entries locs p).*1 := pool_entries_locs_NoDup locs p Hdom Hlens' Hnd.
+  have Hidisj := sorted_client_entries_disjoint locs p kc E Hdom Hlens' Hndl (λ r Hr, proj1 (Hbnds r Hr)) Hdisj Hsce.
+  have Hlookup_slot : ∀ k l r, E !! k = Some (l, r) ->
+      ∃ parent ls tm k', locs !! parent = Some ls ∧ p !! parent = Some tm ∧ ls !! k' = Some l ∧ tm_runs tm !! k' = Some r.
+  { move=> k l r Hk. apply pool_entries_slot.
+    exact (proj1 (proj2 (proj2 Hsce) _ (list_elem_of_lookup_2 _ _ _ Hk))). }
+  have Hslot : ∀ k l r, E !! k = Some (l, r) -> r ∈ all_runs p.
+  { move=> k l r Hk.
+    destruct (Hlookup_slot k l r Hk) as (parent & ls & tm & k' & Hls & Hp & Hl & Hr).
+    apply elem_of_all_runs. exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hr)]. }
+  have Hclk : ∀ k l r, E !! k = Some (l, r) -> uint.Z (entry_clock (l, r)) = Z.of_nat (run_clock r).
+  { move=> k l r Hk. apply entry_clock_Z. exact (proj2 (Hbnds r (Hslot k l r Hk))). }
+  iDestruct (own_slice_len with "Hsl") as %[Hsllen Hsllen0].
+  rewrite length_fmap in Hsllen Hsllen0.
+  wp_auto.
+  (* loop invariant: the window [lo, hi) contains every COVERING entry *)
+  iAssert (∃ (lo hi : w64),
+    "Hleft" ∷ left_ptr ↦ lo ∗ "Hright" ∷ right_ptr ↦ hi ∗
+    "Hnodes" ∷ nodes_ptr ↦ sl ∗ "Hclock" ∷ clock_ptr ↦ clk ∗
+    "Hsl" ∷ sl ↦*{dq} E.*1 ∗
+    "Htypes" ∷ own_type_pool_runs (DfracOwn 1) locs p ∗
+    "%Hbnd" ∷ ⌜(0 <= uint.Z lo /\ uint.Z hi <= Z.of_nat (length E))%Z⌝ ∗
+    "%Hwin" ∷ ⌜∀ (k : nat) (l : loc) (r : ItemRun), E !! k = Some (l, r) ->
+                (Z.of_nat (run_clock r) <= uint.Z clk)%Z ->
+                (uint.Z clk < Z.of_nat (run_clock r) + Z.of_nat (length (run_items r)))%Z ->
+                (uint.Z lo <= Z.of_nat k < uint.Z hi)%Z⌝)%I
+    with "[left right nodes clock Hsl Htypes]" as "IH".
+  { iExists (W64 0), sl.(slice.len).
+    iFrame "left right nodes clock Hsl Htypes".
+    iPureIntro. split; [word |].
+    move=> k l r Hk _ _. have Hklt := lookup_lt_Some _ _ _ Hk. word. }
+  wp_for "IH".
+  case_bool_decide as Hcond.
+  - (* probe the middle *)
+    set (mid := word.add lo (word.divu (word.sub hi lo) (W64 2))).
+    have Hmid : (uint.Z lo <= uint.Z mid < uint.Z hi)%Z.
+    { rewrite /mid. destruct Hbnd as [Hb1 Hb2]. word. }
     wp_auto.
-    iDestruct (big_sepM_lookup_acc _ _ kc slk Hslk with "Hruns") as "[Hrun Hrunsback]".
-    iNamed "Hrun".
-    have HndAll : NoDup (all_cells types) := NoDup_fmap_1 ic_loc _ Hnodup.
-    have Hndrun : NoDup (client_run types kc).
-    { rewrite /client_run (merge_sort_Permutation cell_le _). apply NoDup_filter. exact HndAll. }
-    have Hinj : ∀ x y, x ∈ client_run types kc → y ∈ client_run types kc → ic_loc x = ic_loc y → x = y.
-    { move=> x y Hx Hy Hxy.
-      have Hxa : x ∈ all_cells types := proj1 (proj1 (client_run_mem types kc x) Hx).
-      have Hya : y ∈ all_cells types := proj1 (proj1 (client_run_mem types kc y) Hy).
-      apply list_elem_of_lookup_1 in Hxa as [ix Hix]. apply list_elem_of_lookup_1 in Hya as [iy Hiy].
-      have Hlix : (ic_loc <$> all_cells types) !! ix = Some (ic_loc y) by (rewrite list_lookup_fmap Hix /= Hxy //).
-      have Hliy : (ic_loc <$> all_cells types) !! iy = Some (ic_loc y) by (rewrite list_lookup_fmap Hiy //).
-      have Hijeq : ix = iy := NoDup_lookup _ _ _ _ Hnodup Hlix Hliy.
-      congruence. }
-    have Hndlocs : NoDup (ic_loc <$> client_run types kc)
-      := NoDup_fmap_2_strong ic_loc (client_run types kc) Hinj Hndrun.
-    wp_apply (wp_getNodeIndex slk (DfracOwn 1) types kc (client_run types kc) idv.(yjs.id.clock')
-                (conj (client_run_sorted types kc) (conj Hndlocs (λ c Hc, Hc))) Hpool
-                with "[$Hslice $Htypes]").
-    iIntros (i ok) "(Hslice & Htypes & %Hires)".
-    destruct ok.
-    + (* hit: the probe covers the id *)
-      destruct Hires as (cres & Hcres & Hcov).
-      wp_auto.
-      iDestruct (own_slice_len with "Hslice") as %[Hsllen Hsllen0].
-      rewrite length_fmap in Hsllen Hsllen0.
-      have Hilt : (uint.nat i < length (client_run types kc))%nat
-        by (apply lookup_lt_Some in Hcres; lia).
-      rewrite decide_True; last word.
-      have Hlocres : (ic_loc <$> client_run types kc) !! uint.nat i = Some cres.(ic_loc)
-        by rewrite list_lookup_fmap Hcres //.
-      iDestruct (own_slice_elem_acc (sint.Z i) (ic_loc cres) slk (DfracOwn 1) (ic_loc <$> client_run types kc) with "Hslice") as "[Hel Hgive]".
-      { word. }
-      { replace (Z.to_nat (sint.Z i)) with (uint.nat i) by word. exact Hlocres. }
-      wp_auto.
-      iDestruct ("Hgive" $! cres.(ic_loc) with "Hel") as "Hslice".
-      have Hinsid : (<[sint.nat i := cres.(ic_loc)]> (ic_loc <$> client_run types kc)) = (ic_loc <$> client_run types kc).
-      { apply list_insert_id. replace (sint.nat i) with (uint.nat i) by word. exact Hlocres. }
-      iEval (rewrite Hinsid) in "Hslice".
-      have Hcresmem : cres ∈ all_cells types /\ cell_client cres = kc.
-      { apply client_run_mem. exact (list_elem_of_lookup_2 _ _ _ Hcres). }
-      iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
-      iAssert (own_items_field (s .[(yjs.store.t), "items"]) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
-      { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
-        iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
-      iApply ("HΦ" $! (ic_loc cres) true).
-      iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
-        first (iApply (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
-                  with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes")).
-      iPureIntro. exists cres. split; [| done]. split; [exact (proj1 Hcresmem) |].
-      have Hb := proj1 (Hbnds cres (proj1 Hcresmem)).
-      rewrite /cell_covers /toYjsId /=. split; [| exact Hcov].
-      move: (proj2 Hcresmem). rewrite /cell_client /kc. word.
-    + (* clock miss within a known client: no run of this client covers the id *)
-      wp_auto.
-      iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
-      iAssert (own_items_field (s .[(yjs.store.t), "items"]) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
-      { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
-        iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
-      iApply ("HΦ" $! null false).
-      iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
-        first (iApply (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
-                  with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes")).
-      iPureIntro. move=> c [Hc [Hcl Hcov]].
-      have Hcc : cell_client c = kc by (rewrite /cell_client Hcl /kc /toYjsId /=; word).
-      have Hcrun : c ∈ client_run types kc by (apply client_run_mem; split; [exact Hc | exact Hcc]).
-      exact (Hires c Hcrun Hcov).
-  - (* unknown client: no cell of this author at all *)
+    rewrite decide_True; last word.
+    have Hmidlt : (uint.nat mid < length E)%nat by word.
+    destruct (E !! uint.nat mid) as [[lmid rmid]|] eqn:Hemid;
+      last by (apply lookup_ge_None in Hemid; lia).
+    have Hlocmid : E.*1 !! uint.nat mid = Some lmid
+      by rewrite list_lookup_fmap Hemid //.
+    iDestruct (own_slice_elem_acc (sint.Z mid) lmid sl dq E.*1 with "Hsl") as "[Hel Hgive]".
+    { word. }
+    { replace (Z.to_nat (sint.Z mid)) with (uint.nat mid) by word. exact Hlocmid. }
     wp_auto.
-    iAssert (own_items_field (s .[(yjs.store.t), "items"]) types)%I with "[Hitemsf Hmap Hruns]" as "Hitems".
-    { iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
-      iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
-    iApply ("HΦ" $! null false).
-    iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes";
-      first (iApply (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
-                with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes")).
-    iPureIntro. move=> c [Hc [Hcl _]].
-    have Hcc : cell_client c = kc by (rewrite /cell_client Hcl /kc /toYjsId /=; word).
-    have Hkcin : kc ∈ (cell_client <$> all_cells types).
-    { rewrite -Hcc. apply list_elem_of_fmap_2. exact Hc. }
-    destruct (Hcomplete kc Hkcin) as [slk Hslk'].
-    rewrite Hslk in Hslk'. discriminate.
+    iDestruct ("Hgive" $! lmid with "Hel") as "Hsl".
+    have Hinsid : (<[sint.nat mid := lmid]> E.*1) = E.*1.
+    { apply list_insert_id. replace (sint.nat mid) with (uint.nat mid) by word. exact Hlocmid. }
+    iEval (rewrite Hinsid) in "Hsl".
+    destruct (Hlookup_slot (uint.nat mid) lmid rmid Hemid)
+      as (parent & ls & tm & km & Hls & Hp & Hlk & Hrk).
+    iDestruct (own_type_pool_runs_node_acc locs p parent ls tm km lmid rmid Hls Hp Hlk Hrk with "Htypes")
+      as (itemVal) "Hacc". iNamed "Hacc".
+    wp_auto.
+    have Hrmid : rmid ∈ all_runs p := Hslot _ _ _ Hemid.
+    have Hfitsm : run_fits rmid := Hfits rmid Hrmid.
+    have Hwfm : run_wf (run_items rmid) := Hwfall rmid Hrmid.
+    have Hmcv : uint.Z itemVal.(yjs.item.id').(yjs.id.clock') = Z.of_nat (run_clock rmid).
+    { rewrite /run_clock Haccid /toYjsId /=. word. }
+    have Hlenpos : (1 <= Z.of_nat (length (run_items rmid)))%Z.
+    { have [Hne _] := Hwfm. destruct (run_items rmid) as [|? ?]; [done | simpl; lia]. }
+    have Hnw : (Z.of_nat (run_clock rmid) + Z.of_nat (length (run_items rmid)) < 2^64)%Z := Hfitsm.
+    wp_apply (wp_item__Len lmid (DfracOwn 1) itemVal with "[$Haccval]"). iIntros "Haccval".
+    rewrite Haccle.
+    iDestruct ("Haccback" with "Haccval") as "Htypes".
+    wp_auto.
+    destruct (bool_decide (uint.Z clk < uint.Z itemVal.(yjs.item.id').(yjs.id.clock'))) eqn:Hcmp1.
+    + (* clk < middleClock: every covering entry sits strictly left of [mid] *)
+      apply bool_decide_eq_true_1 in Hcmp1.
+      wp_auto. wp_for_post.
+      iFrame "HΦ". iExists lo, mid.
+      iFrame "Hleft Hright Hnodes Hclock Hsl Htypes".
+      iPureIntro. split.
+      { lia. }
+      move=> k l r Hk Hcov1 Hcov2.
+      have [Hlo Hhi] := Hwin k l r Hk Hcov1 Hcov2.
+      split; [exact Hlo |].
+      destruct (Nat.lt_trichotomy k (uint.nat mid)) as [Hlt | [Heq | Hgt]].
+      * lia.
+      * exfalso. subst k. rewrite Hemid in Hk. injection Hk as <- <-.
+        rewrite Hmcv in Hcmp1. lia.
+      * exfalso.
+        have Hle := StronglySorted_lookup_le entry_le E (uint.nat mid) k (lmid, rmid) (l, r) Hsort Hemid Hk Hgt.
+        rewrite /entry_le (Hclk _ _ _ Hemid) (Hclk _ _ _ Hk) in Hle.
+        rewrite Hmcv in Hcmp1. lia.
+    + apply bool_decide_eq_false_1 in Hcmp1.
+      rewrite Hmcv in Hcmp1.
+      wp_auto.
+      case_bool_decide as Hcmp2.
+      * (* clk >= middleEnd: every covering entry sits strictly right of [mid] *)
+        wp_auto. wp_for_post.
+        iFrame "HΦ". iExists (word.add mid (W64 1)), hi.
+        iFrame "Hleft Hright Hnodes Hclock Hsl Htypes".
+        have Hmide : (uint.Z (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (run_items rmid))))
+                      = Z.of_nat (run_clock rmid) + Z.of_nat (length (run_items rmid)))%Z by word.
+        rewrite Hmide in Hcmp2.
+        iPureIntro. split.
+        { word. }
+        move=> k l r Hk Hcov1 Hcov2.
+        have [Hlo Hhi] := Hwin k l r Hk Hcov1 Hcov2.
+        split; [| exact Hhi].
+        destruct (Nat.lt_trichotomy k (uint.nat mid)) as [Hlt | [Heq | Hgt]].
+        { exfalso.
+          have Hle := StronglySorted_lookup_le entry_le E k (uint.nat mid) (l, r) (lmid, rmid) Hsort Hk Hemid Hlt.
+          rewrite /entry_le (Hclk _ _ _ Hemid) (Hclk _ _ _ Hk) in Hle.
+          destruct (Hidisj k (uint.nat mid) l lmid r rmid Hk Hemid ltac:(lia)) as [Hd | Hd]; lia. }
+        { exfalso. subst k. rewrite Hemid in Hk. injection Hk as <- <-. lia. }
+        word.
+      * (* middleClock <= clk < middleEnd: the probe COVERS clk *)
+        wp_auto. wp_for_post.
+        iApply ("HΦ" $! mid true). iFrame "Hsl Htypes".
+        iExists lmid, rmid. iPureIntro. split; [exact Hemid |].
+        rewrite /run_covers_clock. split; word.
+  - (* the window is empty: no entry covers [clk] *)
+    wp_auto.
+    iApply ("HΦ" $! (W64 0) false). iFrame "Hsl Htypes".
+    iPureIntro. move=> l r Hmem [Hcov1 Hcov2].
+    apply list_elem_of_lookup in Hmem as [k Hk].
+    have Hc1 : (Z.of_nat (run_clock r) <= uint.Z clk)%Z by word.
+    have Hc2 : (uint.Z clk < Z.of_nat (run_clock r) + Z.of_nat (length (run_items r)))%Z by word.
+    have := Hwin k l r Hk Hc1 Hc2. lia.
 Qed.
 
-
-(** [store.GetNode] at run granularity (plan-item-run-split stage 2): a hit
-    returns the address at the covering type's run cursor ([sr_locs] at the
-    index [pool_run_covers] names), a miss certifies no run covers the id.
-    Derived from the cell-level spec through the projections. *)
+(** [store.GetNode] at run granularity, DIRECT: the item index's slice for
+    the id's client is [client_locs] ([client_locs_entries]), the walk
+    corners the covering entry, and the entry sits at a slot of the pool
+    ([client_entries_lookup_slot]); a miss certifies no run covers the id,
+    because every slot of that client is an entry of the walked list
+    ([pool_entries_slot]), or, for a client with no slice at all, because
+    the index is complete. *)
 Lemma wp_store__GetNode_runs (s : loc) (idv : yjs.id.t) (str : store_state_runs) :
   {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
@@ -707,20 +755,121 @@ Lemma wp_store__GetNode_runs (s : loc) (idv : yjs.id.t) (str : store_state_runs)
        else ∀ parent k, ¬ pool_run_covers (sr_pool str) parent k (toYjsId idv)⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
-  iEval (rewrite own_store_runs_as_state) in "Hruns".
-  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
-  wp_apply (wp_store__GetNode s idv st with "[$Hpkg $Hcells]").
-  iIntros (l ok) "(Hcells & %Hres)".
-  iApply ("HΦ" $! l ok).
-  iSplitL.
-  { rewrite own_store_runs_as_state. iExists st. by iFrame "Hcells". }
-  iPureIntro. subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
-  destruct ok.
-  - destruct Hres as (c & Hcov & <-).
-    exact (pool_cell_covers_to_run types c (toYjsId idv) Hcov).
-  - move=> parent k Hrc.
-    destruct (pool_run_covers_to_cell types parent k (toYjsId idv) Hrc) as (c & Hcov).
-    exact (Hres c Hcov).
+  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  iDestruct "Hruns" as "(Hfields & %Hinvs)".
+  have Hrpi : run_pool_invs p := proj1 Hinvs.
+  iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iEval (simpl) in "Hitems Htypes".
+  iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
+  iDestruct (own_type_pool_runs_id_bounds with "Htypes") as %Hbnds.
+  iAssert (⌜locs_wf locs p⌝)%I as %Hlocswf; first by iDestruct "Htypes" as "[%Hwf _]".
+  destruct Hlocswf as (Hdom & Hnd & Hlens).
+  have Hlens' : ∀ parent tm, p !! parent = Some tm ->
+      ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm).
+  { move=> parent tm Hp.
+    have His : is_Some (locs !! parent).
+    { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
+    destruct His as [ls Hls]. exists ls. split; [done | exact (Hlens parent ls tm Hls Hp)]. }
+  set (kc := idv.(yjs.id.clientId')).
+  iDestruct "Hitemmap" as (gm) "(Hmap & Hruns & %Hcomplete & %Hclkloc)".
+  have Hce : client_locs locs p kc = (client_entries locs p kc).*1 := client_locs_entries locs p kc Hclkloc.
+  (* a slot of client [kc] is an entry of the walked list *)
+  have Hslot_entry : ∀ parent k tm r, p !! parent = Some tm -> tm_runs tm !! k = Some r ->
+      run_client r = uint.nat kc ->
+      ∃ l, (l, r) ∈ client_entries locs p kc ∧ (locs !! parent) ≫= (λ ls, ls !! k) = Some l.
+  { move=> parent k tm r Hp Hrk Hcl.
+    destruct (Hlens' parent tm Hp) as (ls & Hls & Hlen).
+    have Hk : (k < length ls)%nat by (rewrite Hlen; exact (lookup_lt_Some _ _ _ Hrk)).
+    destruct (lookup_lt_is_Some_2 ls k Hk) as [l Hl].
+    exists l. split; last by rewrite Hls /=.
+    apply client_entries_mem. split.
+    - apply pool_entries_slot. by exists parent, ls, tm, k.
+    - rewrite /entry_client /= Hcl. word. }
+  wp_method_call. wp_call. wp_call. wp_auto.
+  wp_apply (wp_map_lookup2 with "Hmap"). iIntros "Hmap".
+  destruct (gm !! kc) as [slk |] eqn:Hslk; rewrite Hslk /=.
+  - (* known client: run the binary search over its entries *)
+    wp_auto.
+    iDestruct (big_sepM_lookup_acc _ _ kc slk Hslk with "Hruns") as "[Hrun Hrunsback]".
+    iNamed "Hrun".
+    iEval (rewrite -/(client_locs locs p kc) Hce) in "Hslice".
+    have Hndl : NoDup (pool_entries locs p).*1 := pool_entries_locs_NoDup locs p Hdom Hlens' Hnd.
+    wp_apply (wp_getNodeIndex_runs slk (DfracOwn 1) locs p kc idv.(yjs.id.clock') (client_entries locs p kc) Hrpi
+                (client_entries_sorted_client locs p kc Hndl)
+                with "[$Hslice $Htypes]").
+    iIntros (i ok) "(Hslice & Htypes & %Hires)".
+    destruct ok.
+    + (* hit: the probe covers the id *)
+      destruct Hires as (lres & rres & Hres & Hcov).
+      wp_auto.
+      iDestruct (own_slice_len with "Hslice") as %[Hsllen Hsllen0].
+      rewrite length_fmap in Hsllen Hsllen0.
+      have Hilt : (uint.nat i < length (client_entries locs p kc))%nat
+        by (apply lookup_lt_Some in Hres; lia).
+      rewrite decide_True; last word.
+      have Hlocres : (client_entries locs p kc).*1 !! uint.nat i = Some lres
+        by rewrite list_lookup_fmap Hres //.
+      iDestruct (own_slice_elem_acc (sint.Z i) lres slk (DfracOwn 1) (client_entries locs p kc).*1 with "Hslice") as "[Hel Hgive]".
+      { word. }
+      { replace (Z.to_nat (sint.Z i)) with (uint.nat i) by word. exact Hlocres. }
+      wp_auto.
+      iDestruct ("Hgive" $! lres with "Hel") as "Hslice".
+      have Hinsid : (<[sint.nat i := lres]> (client_entries locs p kc).*1) = (client_entries locs p kc).*1.
+      { apply list_insert_id. replace (sint.nat i) with (uint.nat i) by word. exact Hlocres. }
+      iEval (rewrite Hinsid -Hce) in "Hslice".
+      iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
+      destruct (client_entries_lookup_slot locs p kc (uint.nat i) lres rres Hres)
+        as [Hcres (parent & ls & tm & kr & Hls & Hp & Hlk & Hrk)].
+      have Hrmem : rres ∈ all_runs p.
+      { apply elem_of_all_runs. exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hrk)]. }
+      iApply ("HΦ" $! lres true).
+      iSplitL "Hclient Hclock HdeletedSet Hitemsf Hmap Hruns Hregistry Htypes Hpending Hpdeletes".
+      { iSplitL; last (iPureIntro; exact Hinvs).
+        rewrite /own_store_fields_runs /=.
+        iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
+        iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
+        iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+      iPureIntro. exists parent, kr. split.
+      * exists tm, rres. split_and!; [exact Hp | exact Hrk |].
+        rewrite /run_covers /toYjsId /=.
+        have Hb := proj1 (Hbnds rres Hrmem).
+        rewrite /entry_client /= in Hcres.
+        split; [| exact Hcov].
+        rewrite /kc in Hcres. word.
+      * rewrite Hls /=. exact Hlk.
+    + (* clock miss within a known client: no run of this client covers the id *)
+      wp_auto.
+      iEval (rewrite -Hce) in "Hslice".
+      iDestruct ("Hrunsback" with "[$Hslice $Hcap]") as "Hruns".
+      iApply ("HΦ" $! null false).
+      iSplitL "Hclient Hclock HdeletedSet Hitemsf Hmap Hruns Hregistry Htypes Hpending Hpdeletes".
+      { iSplitL; last (iPureIntro; exact Hinvs).
+        rewrite /own_store_fields_runs /=.
+        iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
+        iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
+        iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+      iPureIntro. move=> parent k [tm [r [Hp [Hrk Hcov]]]].
+      destruct Hcov as (Hcl & Hc1 & Hc2).
+      destruct (Hslot_entry parent k tm r Hp Hrk Hcl) as (l & Hmem & _).
+      exact (Hires l r Hmem (conj Hc1 Hc2)).
+  - (* unknown client: no run of this author at all *)
+    wp_auto.
+    iApply ("HΦ" $! null false).
+    iSplitL "Hclient Hclock HdeletedSet Hitemsf Hmap Hruns Hregistry Htypes Hpending Hpdeletes".
+    { iSplitL; last (iPureIntro; exact Hinvs).
+      rewrite /own_store_fields_runs /=.
+      iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
+      iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
+      iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+    iPureIntro. move=> parent k [tm [r [Hp [Hrk Hcov]]]].
+    destruct Hcov as (Hcl & _ & _).
+    destruct (Hslot_entry parent k tm r Hp Hrk Hcl) as (l & Hmem & _).
+    apply client_entries_mem in Hmem as [Hpe Hc].
+    have Hkcin : kc ∈ (entry_kp <$> pool_entries locs p).*1.
+    { rewrite -Hc. apply list_elem_of_fmap. exists (entry_kp (l, r)). split; [reflexivity |].
+      apply list_elem_of_fmap_2. exact Hpe. }
+    destruct (Hcomplete kc Hkcin) as [slk Hslk'].
+    rewrite Hslk in Hslk'. discriminate.
 Qed.
 
 End store_update.
