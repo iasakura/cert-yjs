@@ -90,7 +90,9 @@ ffiMapping entries; see the note above):
   touch no `.v`, so today the installed library happens to be identical to
   upstream's; the pin is still what CI builds, so the local switch should
   match it.) Named rather than a local `_opam`, because the repo is worked in
-  through several git worktrees that would each get their own copy:
+  through several git worktrees that would each get their own copy. The name
+  is yours to choose; this document, and `build.sh`'s error hint, write it
+  `cert-yjs`:
 
       opam switch create cert-yjs ocaml-base-compiler.5.2.0 --no-install --no-switch
       opam install ./cert-yjs.opam --deps-only --switch=cert-yjs
