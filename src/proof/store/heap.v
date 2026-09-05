@@ -61,18 +61,18 @@
       [store_inv_bridge] / [store_inv_own_store] / [own_store_hist_coh] /
       [own_store_accepted_sound] / [store_inv_excl_hist_root]: what you may
       read back out of it.
-    - the pool's laws: borrow one cell ([own_type_pool_acc]), read its pure
-      content off ([own_type_pool_runs_wf] / [_parents] / [_arr_inv] /
-      [_repr] / [_entry] / [_id_bounds] / [_cells_in_arr]), a fresh type is
-      absent from it.
+    - the pool's laws: borrow one node ([own_type_pool_runs_node_acc], with
+      its links [_node_acc_links]), read its pure content off
+      ([own_type_pool_runs_run_wf] / [_id_bounds] / [_arr] / [_arr_inv]), a
+      fresh node or type is absent from it ([own_type_pool_runs_fresh] /
+      [_fresh_concat] / [_fresh_type]).
     - [own_store_accept_batch]: the state-transition law for accepting a
       delivered batch.
     - the reader fractions form a chain: [frac_of_0] and [frac_of_split].
     - [pool_frag] splits and agrees ([pool_frag_split], [pool_frag_agree]);
       [is_type_binding] is functional ([is_type_binding_agree]).
     - the item index only sees its key list up to permutation
-      ([own_item_map_kp_keys_perm]), and a fresh node is fresh for the whole
-      registry ([all_cells_fresh]).
+      ([own_item_map_kp_keys_perm]).
 
     The lock wrappers are [store/wp_private.v]; the method proofs are
     [store/Integrate], [store/GetNode], [store/splitNode], [store/repair] and
@@ -665,25 +665,6 @@ Proof.
   iPureIntro. by apply to_agree_op_valid_L in Hv.
 Qed.
 
-(** [own_type_pool dq types]: every registered type's DLL at its cell model
-    ([own_ytype_cells], keyed by the type's [parent] loc), each satisfying the
-    document invariant. This is the store's whole item pool: the write path
-    owns it at [DfracOwn 1] (through the lock invariant), the read path holds
-    a fraction of it ([store_inv_ro]). Owning heap data, it takes a [dfrac]. *)
-Definition own_type_pool (dq : dfrac) (types : gmap loc type_state) : iProp Σ :=
-  [∗ map] parent ↦ ts ∈ types,
-    own_ytype_cells parent dq (ty_cells ts) (ty_arr ts) ∗ ⌜YjsArrInvariant (ty_arr ts)⌝.
-
-#[global] Instance own_type_pool_fractional types :
-  Fractional (λ q, own_type_pool (DfracOwn q) types).
-Proof.
-  rewrite /own_type_pool. apply fractional_big_sepM. intros parent ts.
-  apply fractional_sep; [ apply own_ytype_cells_fractional | apply _ ].
-Qed.
-
-#[global] Instance own_type_pool_timeless dq types : Timeless (own_type_pool dq types).
-Proof. rewrite /own_type_pool. apply _. Qed.
-
 (** [own_type_pool_runs dq locs p]: the pool at run granularity: every
     registered type's [own_ytype_runs] at its address list, the whole
     address map [locs_wf]. The [(locs, p)] pair is what stage 2's specs
@@ -750,181 +731,6 @@ Qed.
 
 (* ----- laws of the type pool --------------------------------------------- *)
 
-(** Borrow one pool cell's heap struct out of the pool, exposing the full
-    [own_dll_acc] translation facts (id / parent / content coupling / origins /
-    flags / [run_wf]) and a wand restoring the pool. What [GetNode] /
-    [getNodeIndex] / [splitNode] / [repair] read through. *)
-Lemma own_type_pool_acc (types : gmap loc type_state) (c : item_cell) :
-  c ∈ all_cells types ->
-  (own_type_pool (DfracOwn 1) types) -∗
-    ∃ (itemVal : yjs.item.t) (olid orid : option yjs.id.t),
-      "%Hid" ∷ ⌜item_id (run_head c) = toYjsId itemVal.(yjs.item.id')⌝ ∗
-      "%Hpar" ∷ ⌜itemVal.(yjs.item.parent') = ic_parent c⌝ ∗
-      "%Hcontent" ∷ ⌜content <$> ic_run c = explode (toContent itemVal.(yjs.item.content'))⌝ ∗
-      "%Holid" ∷ ⌜origin_id (origin (run_head c)) = toYjsId <$> olid⌝ ∗
-      "%Horid" ∷ ⌜origin_id (rightOrigin (run_head c)) = toYjsId <$> orid⌝ ∗
-      "%Hflags" ∷ ⌜itemVal.(yjs.item.flags') = (if ic_deleted c then W8 6 else W8 2)⌝ ∗
-      "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
-      "Hval" ∷ ic_loc c ↦ itemVal ∗
-      "Hcol" ∷ is_origin_id itemVal.(yjs.item.originLeftId') olid ∗
-      "Hcor" ∷ is_origin_id itemVal.(yjs.item.originRightId') orid ∗
-      "Hback" ∷ (ic_loc c ↦ itemVal -∗
-        (own_type_pool (DfracOwn 1) types)).
-Proof using Type*.
-  move=> Hc. iIntros "Htypes".
-  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
-  apply list_elem_of_lookup_1 in Hcts. destruct Hcts as [k Hk].
-  iDestruct (big_sepM_lookup_acc _ _ p ts Hp with "Htypes") as "[(Hyt & %Hinvp) Hrest]".
-  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  iDestruct (own_dll_acc_node (DfracOwn 1) (ty_cells ts) yt.(yjs.yType.start') tl k c Hk with "Hdll")
-    as (prev' nxt') "(%Hcloc & %Hcl & %Hcrn & %Hrunwf & %Hclen & %Hpc & Hnode & Hback)".
-  iDestruct "Hnode" as (itemVal olid orid)
-    "(Hval & #Hol & #Hor & %Hinl & %Hinr & %Hidn & %Hcont & %Hparf & %Hprevf & %Hnextf & %Hflagsn)".
-  have Hid : item_id (run_head c) = toYjsId itemVal.(yjs.item.id').
-  { symmetry. exact Hidn. }
-  have Hcontent : content <$> ic_run c = explode (toContent itemVal.(yjs.item.content')).
-  { have Hstr : toContent itemVal.(yjs.item.content') = items_string (ic_run c) := Hcont.
-    rewrite Hstr. exact Hpc. }
-  have Holid : origin_id (origin (run_head c)) = toYjsId <$> olid.
-  { symmetry. exact Hinl. }
-  have Horid : origin_id (rightOrigin (run_head c)) = toYjsId <$> orid.
-  { symmetry. exact Hinr. }
-  iExists itemVal, olid, orid.
-  iSplitR; [iPureIntro; exact Hid |].
-  iSplitR; [iPureIntro; exact Hparf |].
-  iSplitR; [iPureIntro; exact Hcontent |].
-  iSplitR; [iPureIntro; exact Holid |].
-  iSplitR; [iPureIntro; exact Horid |].
-  iSplitR; [iPureIntro; exact Hflagsn |].
-  iSplitR; [iPureIntro; exact Hrunwf |].
-  iFrame "Hval Hol Hor".
-  iIntros "Hval".
-  iAssert (own_item_node (ic_loc c) (DfracOwn 1) (input_of_run (cell_run c))
-             (ic_deleted c) (ic_parent c) prev' nxt') with "[Hval]" as "Hnode".
-  { iExists itemVal, olid, orid. iFrame "Hval Hol Hor".
-    iPureIntro. split_and!;
-      [exact Hinl | exact Hinr | exact Hidn | exact Hcont | exact Hparf
-      | exact Hprevf | exact Hnextf | exact Hflagsn]. }
-  iDestruct ("Hback" with "Hnode") as "Hdll".
-  iApply "Hrest". iSplitL; [| iPureIntro; exact Hinvp].
-  iExists yt, tl. iFrame "Hparent Hdll". iPureIntro.
-  split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
-Qed.
-
-(** Pure extractions read off the pool: pool-wide run well-formedness,
-    parent discipline, the per-entry document invariant, and the cells/model
-    isomorphism. *)
-Lemma own_type_pool_runs_wf (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ c, c ∈ all_cells types → run_wf (ic_run c)⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types, ⌜∀ c, c ∈ ty_cells ts → run_wf (ic_run c)⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(Hyt & _)".
-    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    iApply (own_dll_runs_wf with "Hdll"). }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> c Hc.
-  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
-  exact (Hall p ts Hp c Hcts).
-Qed.
-
-Lemma own_type_pool_parents (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ p ts c, types !! p = Some ts → c ∈ ty_cells ts → ic_parent c = p⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types, ⌜∀ c, c ∈ ty_cells ts → ic_parent c = p⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(Hyt & _)".
-    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    by iPureIntro. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> p ts c Hp Hc. exact (Hall p ts Hp c Hc).
-Qed.
-
-Lemma own_type_pool_repr (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ p ts, types !! p = Some ts -> cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types,
-      ⌜cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(Hyt & _)".
-    iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    by iPureIntro. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
-Qed.
-
-Lemma own_type_pool_entry (types : gmap loc type_state) (p : loc) (ts : type_state) :
-  types !! p = Some ts ->
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts) ∧
-   (∀ c, c ∈ ty_cells ts -> ic_parent c = p)⌝.
-Proof.
-  move=> Hp. iIntros "Htypes".
-  iDestruct (big_sepM_lookup_acc _ _ p ts Hp with "Htypes") as "[(Hyt & _) _]".
-  iDestruct "Hyt" as (yt tl) "(Hp' & Hdll & %Hlen & %Hrepr & %Hcpar)".
-  iPureIntro. split; [exact Hrepr | exact Hcpar].
-Qed.
-
-(** Every pool cell's id components round-trip through [w64] heap fields
-    ([own_dll_id_bounds], lifted over the big-sep): the glue from nat-level
-    replay facts to W64 comparisons (issue #28 stage D). *)
-Lemma own_type_pool_id_bounds (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ c, c ∈ all_cells types ->
-     (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
-     (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types,
-      ⌜∀ c, c ∈ ty_cells ts ->
-         (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
-         (Z.of_nat (clock (item_id (run_head c))) < 2^64)%Z⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "[Hyt _]".
-    iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    iApply (own_dll_id_bounds with "Hdll"). }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> c Hc.
-  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
-  exact (Hall p ts Hp c Hcts).
-Qed.
-
-(** Every char a pooled cell holds is an item of its type's model list: the
-    cell list flattens to exactly that list ([cells_repr], carried by
-    [own_ytype_cells]). This is how a delete turns "these ids sit in cells" into
-    "these ids are integrated items", the domain half of [own_delete_set_grow]. *)
-Lemma own_type_pool_cells_in_arr (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ c, c ∈ all_cells types -> ∀ y, y ∈ ic_run c ->
-     ∃ p ts, types !! p = Some ts ∧ y ∈ ty_arr ts⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types,
-      ⌜∀ c, c ∈ ty_cells ts -> ∀ y, y ∈ ic_run c -> y ∈ ty_arr ts⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "[Hyt _]".
-    iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
-    iPureIntro. move=> c Hc y Hy.
-    rewrite /cells_repr in Hrepr. rewrite Hrepr /run_flatten.
-    apply list_elem_of_join. exists (ic_run c). split; first exact Hy.
-    apply list_elem_of_fmap. exists c. split; [reflexivity | exact Hc]. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> c Hc y Hy.
-  apply all_cells_elem_of in Hc. destruct Hc as (p & ts & Hp & Hcts).
-  exists p, ts. split; [exact Hp | exact (Hall p ts Hp c Hcts y Hy)].
-Qed.
-
 (** Every run head's id components round-trip through [w64] heap fields:
     the run form of [own_type_pool_id_bounds], off the run spine. *)
 Lemma own_type_pool_runs_id_bounds (locs : gmap loc (list loc)) (p : pool) :
@@ -968,9 +774,9 @@ Proof.
 Qed.
 
 (** A fully owned node struct's address is not an address of a run-granular
-    type, nor of any type of the run-granular pool (the run forms of
-    [own_dll_fresh] / [all_cells_fresh]): the source of [locs_wf]'s [NoDup]
-    when a freshly allocated node is spliced in. *)
+    type, nor of any type of the run-granular pool (the run form of
+    [own_dll_fresh]): the source of [locs_wf]'s [NoDup] when a freshly
+    allocated node is spliced in. *)
 Lemma own_ytype_runs_fresh (q : loc) (v : yjs.item.t) (parent : loc) (dq : dfrac)
     (ls : list loc) (tm : type_model) :
   q ↦ v -∗ own_ytype_runs parent dq ls tm -∗ ⌜q ∉ ls⌝.
@@ -1904,28 +1710,6 @@ Proof.
   iDestruct "Hlinked" as (itemVal oleft oright) "(Hraw & _)".
   iDestruct "Hraw" as "(Hitem & _)".
   iApply (own_type_pool_runs_fresh_concat with "Hitem Htypes").
-Qed.
-
-(** A fully-owned node struct's location is fresh for the whole document cell
-    pool: the source of the [NoDup (ic_loc <$> all_cells types)] maintenance
-    when a freshly allocated node is spliced in (issue #28 part 6). Stated over
-    the bare [own_ytype_cells] big-sep; callers peel the pure conjuncts. *)
-Lemma all_cells_fresh (p : loc) (v : yjs.item.t) (dq : dfrac) (types : gmap loc type_state) :
-  p ↦ v -∗
-  ([∗ map] parent ↦ ts ∈ types, own_ytype_cells parent dq (ty_cells ts) (ty_arr ts)) -∗
-  ⌜p ∉ ic_loc <$> all_cells types⌝.
-Proof using ext ffi ffi_interp0 Σ hG ffi_semantics0 sem package_sem.
-  iIntros "Hp Htypes".
-  rewrite big_sepM_map_to_list /all_cells.
-  remember (map_to_list types) as L eqn:HeqL. clear HeqL.
-  iInduction L as [|[parent ts] L] "IH".
-  - iPureIntro. apply not_elem_of_nil.
-  - simpl. iDestruct "Htypes" as "[Hhd Htypes]".
-    iDestruct "Hhd" as (yt tl) "(Hyt & Hdll & _)".
-    iDestruct (own_dll_fresh with "Hp Hdll") as %H1.
-    iDestruct ("IH" with "Hp Htypes") as %H2.
-    iPureIntro. rewrite fmap_app not_elem_of_app.
-    split; [exact H1 | exact H2].
 Qed.
 
 Lemma is_type_binding_agree (γ : gname) (name : P) (p q : loc) :

@@ -810,6 +810,16 @@ vocabulary substitution table written; then C5 restates the specs at
     `own_type_pool` and its extractions, `own_ytype_cells` / `own_dll`, the
     `value_*` cell laws, `item_cell` / `type_state`.
 
+    PROGRESS 2026-09-05 (C6-4e): the cell type pool is deleted:
+    `own_type_pool` with its fractional and timeless instances, the cell
+    borrow `own_type_pool_acc`, the pure extractions
+    (`own_type_pool_runs_wf` / `_parents` / `_repr` / `_entry` /
+    `_id_bounds` / `_cells_in_arr`) and `all_cells_fresh`. 216 lines. The
+    one thing still holding `own_ytype_cells` alive is
+    `own_ytype_runs_fractional`, which splits a type's run view through its
+    cell reading; proving it directly over `own_dll_runs` is the next step
+    and frees `own_ytype_cells` / `own_dll` / `item_cell`.
+
   - **C6-5, fold `tm_arr`.** `type_model` becomes the run list alone
     (`tm_arr = runs_flatten`), if the specs read better that way.
 
