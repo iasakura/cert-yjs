@@ -31,7 +31,15 @@
       across one registry slot, [types_of_locs_pool_insert], or across
       that slot's addresses and model together,
       [types_of_locs_pool_insert_both], or of a map pair that agrees with
-      another away from one slot, [types_of_locs_pool_ext_insert]; alignment surviving a same-length
+      another away from one slot, [types_of_locs_pool_ext_insert]; the
+      per-client index at run granularity: [pool_entries] (the pool's
+      (address, run) pairs), [entry_kp] (their (client, clock, address)
+      keys), [kp_client_locs] (one client's addresses in clock order off such
+      keys, unique under [kp_clkloc]; reshuffled by [kp_client_locs_perm] /
+      [_other] / [_snoc_max] / [_insert]) and [client_locs] over the
+      entries, meeting [client_run] at [client_run_kp_locs] /
+      [client_locs_of] and the materialized registry at [entries_kp_of] /
+      [entries_kp_to_cells]; alignment surviving a same-length
       type update, [locs_aligned_insert_same_len], or a slot's addresses
       and model replaced together at equal length,
       [locs_aligned_insert_both], and giving each type a same-length
@@ -184,6 +192,13 @@ Definition client_run (types : gmap loc type_state) (client : w64) : list item_c
 Definition cell_pr (c : item_cell) : Z * loc := (uint.Z (cell_clock c), ic_loc c).
 
 Definition pr_le (p q : Z * loc) : Prop := (p.1 <= q.1)%Z.
+
+#[local] Instance pr_le_dec : RelDecision pr_le.
+Proof. rewrite /pr_le. solve_decision. Defined.
+#[local] Instance pr_le_trans : Transitive pr_le.
+Proof. rewrite /pr_le. move=> x y z. lia. Qed.
+#[local] Instance pr_le_total : Total pr_le.
+Proof. rewrite /pr_le. move=> x y. lia. Qed.
 
 (* ----- the part-6 pool invariants (issue #28): loc NoDup + range disjointness *)
 
@@ -911,21 +926,38 @@ Proof.
     done.
 Qed.
 
+(** [pool_entries locs p]: the store's nodes as [(address, run)] pairs: every
+    run of every registered type zipped with its address, in the registry's
+    order ([all_runs p] with the addresses put back). The per-client item
+    index ([own_item_map]) is built from it at run granularity. *)
+Definition pool_entries (locs : gmap loc (list loc)) (p : pool) : list (loc * ItemRun) :=
+  concat ((λ kv, zip (default [] (locs !! kv.1)) (tm_runs kv.2)) <$> map_to_list p).
+
+(** An entry's (client, clock, address) in machine words: the [cell_kp] of
+    the cell it materializes to. *)
+Definition entry_kp (e : loc * ItemRun) : w64 * (Z * loc) :=
+  (W64 (run_client e.2), (uint.Z (W64 (run_clock e.2)), e.1)).
+
+(** [kp_clkloc kps]: one client's clock names one address, over a
+    (client, clock, address) list: the uniqueness the item index relies on
+    ([own_item_map]'s [Hclkloc] clause). *)
+Definition kp_clkloc (kps : list (w64 * (Z * loc))) : Prop :=
+  ∀ a b, a ∈ kps -> b ∈ kps -> a.1 = b.1 -> a.2.1 = b.2.1 -> a.2.2 = b.2.2.
+
+(** [kp_client_locs client kps]: client [client]'s addresses in clock order
+    off a (client, clock, address) list: the item index's backing slice for
+    that client. [client_run]'s address sequence is this over
+    [cell_kp <$> all_cells types] ([client_run_kp_locs]); the run-granular
+    [client_locs] is this over the pool's entries. *)
+Definition kp_client_locs (client : w64) (kps : list (w64 * (Z * loc))) : list loc :=
+  snd <$> merge_sort pr_le ((filter (λ kp, kp.1 = client) kps).*2).
+
 (** [client_locs locs p client]: the client's clock-sorted node-address
     slice at [(locs, pool)]: [own_item_map]'s backing-slice model, read at
-    run granularity. Defined THROUGH the materialized registry (the
-    per-client index stays [client_run] over [types_of_locs_pool], per the
-    owner decision in docs/plan-item-run-split.md); [client_locs_of] is
-    the transport along the registry round-trip. *)
+    run granularity. Meets [client_run]'s address sequence at
+    [client_locs_of]. *)
 Definition client_locs (locs : gmap loc (list loc)) (p : pool) (client : w64) : list loc :=
-  ic_loc <$> client_run (types_of_locs_pool locs p) client.
-
-Lemma client_locs_of (types : gmap loc type_state) (client : w64) :
-  (∀ q ts c, types !! q = Some ts -> c ∈ ty_cells ts -> ic_parent c = q) ->
-  client_locs (locs_of types) (pool_of types) client = ic_loc <$> client_run types client.
-Proof.
-  move=> Hpar. rewrite /client_locs types_of_locs_pool_of //.
-Qed.
+  kp_client_locs client (entry_kp <$> pool_entries locs p).
 
 (** [client_run] projects onto [client_runs]: the [merge_sort cell_le] run
     list, mapped through [cell_run], is the [merge_sort run_le] of the
@@ -1671,6 +1703,219 @@ Proof.
   - rewrite fmap_cons IH /=. reflexivity.
   - exact IH.
 Qed.
+
+(** [kp_client_locs] only sees the (client, clock, address) multiset: under
+    [kp_clkloc] a permutation sorts to the same addresses, a key of another
+    client leaves the slice alone, a key at the client's newest clock lands
+    at the tail (the [addNode] step), and a key strictly between the sorted
+    clocks lands at that position (the split step). *)
+Lemma kp_client_locs_perm (client : w64) (kps1 kps2 : list (w64 * (Z * loc))) :
+  kp_clkloc kps1 -> kps1 ≡ₚ kps2 ->
+  kp_client_locs client kps1 = kp_client_locs client kps2.
+Proof.
+  move=> Hkd Hperm. rewrite /kp_client_locs. f_equal.
+  apply (StronglySorted_unique_strong pr_le).
+  - move=> p1 p2 Hp1 Hp2 H12 H21.
+    rewrite merge_sort_Permutation in Hp1. rewrite merge_sort_Permutation in Hp2.
+    apply list_elem_of_fmap in Hp1 as (a & -> & Ha).
+    apply list_elem_of_fmap in Hp2 as (b & -> & Hb).
+    apply list_elem_of_filter in Ha as [Hac Ha].
+    apply list_elem_of_filter in Hb as [Hbc Hb].
+    rewrite -Hperm in Hb.
+    rewrite /pr_le in H12 H21.
+    have Hkeq : a.2.1 = b.2.1 by lia.
+    have Hloc := Hkd a b Ha Hb ltac:(congruence) Hkeq.
+    destruct a as [ac [aclk al]], b as [bc [bclk bl]]; simpl in *. by subst.
+  - apply (StronglySorted_merge_sort pr_le).
+  - apply (StronglySorted_merge_sort pr_le).
+  - rewrite !merge_sort_Permutation. apply Permutation_map. by rewrite Hperm.
+Qed.
+
+Lemma kp_client_locs_other (client : w64) (kps : list (w64 * (Z * loc))) (kp : w64 * (Z * loc)) :
+  kp.1 ≠ client -> kp_client_locs client (kps ++ [kp]) = kp_client_locs client kps.
+Proof.
+  move=> Hne. rewrite /kp_client_locs filter_app filter_cons_False // filter_nil app_nil_r //.
+Qed.
+
+Lemma kp_client_locs_snoc_max (client : w64) (kps : list (w64 * (Z * loc))) (kp : w64 * (Z * loc)) :
+  kp_clkloc kps -> kp.1 = client ->
+  (∀ a, a ∈ kps -> a.1 = client -> (a.2.1 < kp.2.1)%Z) ->
+  kp_client_locs client (kps ++ [kp]) = kp_client_locs client kps ++ [kp.2.2].
+Proof.
+  move=> Hkd Hkc Hmax. rewrite /kp_client_locs.
+  rewrite filter_app filter_cons_True // filter_nil fmap_app /=.
+  set prs := (filter (λ kp0, kp0.1 = client) kps).*2.
+  have Hprs : ∀ a, a ∈ prs -> ∃ b, b ∈ kps ∧ b.1 = client ∧ a = b.2.
+  { move=> a Ha. apply list_elem_of_fmap in Ha as (b & -> & Hb).
+    apply list_elem_of_filter in Hb as [Hbc Hb]. by exists b. }
+  have Hmaxp : ∀ a, a ∈ prs -> (a.1 < kp.2.1)%Z.
+  { move=> a Ha. destruct (Hprs a Ha) as (b & Hb & Hbc & ->). exact (Hmax b Hb Hbc). }
+  have Hkdp : ∀ a b, a ∈ prs -> b ∈ prs -> a.1 = b.1 -> a = b.
+  { move=> a b Ha Hb Hab.
+    destruct (Hprs a Ha) as (a' & Ha' & Hac & ->).
+    destruct (Hprs b Hb) as (b' & Hb' & Hbc & ->).
+    have Hloc := Hkd a' b' Ha' Hb' ltac:(congruence) Hab.
+    destruct a' as [ac [aclk al]], b' as [bc [bclk bl]]; simpl in *. by subst. }
+  change [kp.2.2] with (snd <$> [kp.2]). rewrite -fmap_app. f_equal.
+  apply (StronglySorted_unique_strong pr_le).
+  - move=> p1 p2 Hp1 Hp2 H12 H21.
+    rewrite merge_sort_Permutation in Hp1.
+    rewrite /pr_le in H12 H21.
+    have Hkeq : p1.1 = p2.1 by lia.
+    apply elem_of_app in Hp1 as [Hp1 | Hp1]; apply elem_of_app in Hp2 as [Hp2 | Hp2].
+    + rewrite merge_sort_Permutation in Hp2. exact (Hkdp p1 p2 Hp1 Hp2 Hkeq).
+    + apply list_elem_of_singleton in Hp2 as ->. exfalso. have := Hmaxp p1 Hp1. lia.
+    + apply list_elem_of_singleton in Hp1 as ->. rewrite merge_sort_Permutation in Hp2.
+      exfalso. have := Hmaxp p2 Hp2. lia.
+    + apply list_elem_of_singleton in Hp1 as ->. apply list_elem_of_singleton in Hp2 as ->. reflexivity.
+  - apply (StronglySorted_merge_sort pr_le).
+  - apply StronglySorted_app_2.
+    + move=> a z Ha Hz. apply list_elem_of_singleton in Hz as ->.
+      rewrite merge_sort_Permutation in Ha. rewrite /pr_le. have := Hmaxp a Ha. lia.
+    + apply (StronglySorted_merge_sort pr_le).
+    + repeat constructor.
+  - rewrite merge_sort_Permutation. apply Permutation_app; [| reflexivity]. symmetry. apply merge_sort_Permutation.
+Qed.
+
+Lemma kp_client_locs_insert (client : w64) (kps : list (w64 * (Z * loc))) (kp : w64 * (Z * loc)) (i : nat) :
+  kp_clkloc kps -> kp.1 = client ->
+  (∀ a, a ∈ take i (merge_sort pr_le ((filter (λ kp0, kp0.1 = client) kps).*2)) -> (a.1 < kp.2.1)%Z) ->
+  (∀ a, a ∈ drop i (merge_sort pr_le ((filter (λ kp0, kp0.1 = client) kps).*2)) -> (kp.2.1 < a.1)%Z) ->
+  kp_client_locs client (kps ++ [kp])
+  = take i (kp_client_locs client kps) ++ kp.2.2 :: drop i (kp_client_locs client kps).
+Proof.
+  move=> Hkd Hkc Hbef Haft. rewrite /kp_client_locs.
+  rewrite filter_app filter_cons_True // filter_nil fmap_app /=.
+  set prs := (filter (λ kp0, kp0.1 = client) kps).*2.
+  set S := merge_sort pr_le prs.
+  have Hprs : ∀ a, a ∈ prs -> ∃ b, b ∈ kps ∧ b.1 = client ∧ a = b.2.
+  { move=> a Ha. apply list_elem_of_fmap in Ha as (b & -> & Hb).
+    apply list_elem_of_filter in Hb as [Hbc Hb]. by exists b. }
+  have Hkdp : ∀ a b, a ∈ prs -> b ∈ prs -> a.1 = b.1 -> a = b.
+  { move=> a b Ha Hb Hab.
+    destruct (Hprs a Ha) as (a' & Ha' & Hac & ->).
+    destruct (Hprs b Hb) as (b' & Hb' & Hbc & ->).
+    have Hloc := Hkd a' b' Ha' Hb' ltac:(congruence) Hab.
+    destruct a' as [ac [aclk al]], b' as [bc [bclk bl]]; simpl in *. by subst. }
+  have HSperm : S ≡ₚ prs := merge_sort_Permutation pr_le prs.
+  have HinS_take : ∀ z, z ∈ take i S -> z ∈ S.
+  { move=> z Hz. rewrite -(take_drop i S). apply elem_of_app. by left. }
+  have HinS_drop : ∀ z, z ∈ drop i S -> z ∈ S.
+  { move=> z Hz. rewrite -(take_drop i S). apply elem_of_app. by right. }
+  have HSS : StronglySorted pr_le S by apply (StronglySorted_merge_sort pr_le).
+  have HSSapp : StronglySorted pr_le (take i S ++ drop i S).
+  { rewrite (take_drop i S). exact HSS. }
+  rewrite -fmap_take -fmap_drop.
+  change (kp.2.2 :: (snd <$> drop i S)) with (snd <$> (kp.2 :: drop i S)).
+  rewrite -fmap_app. f_equal.
+  apply (StronglySorted_unique_strong pr_le).
+  - move=> p1 p2 Hp1 Hp2 H12 H21.
+    rewrite /pr_le in H12 H21.
+    have Hkeq : p1.1 = p2.1 by lia.
+    rewrite merge_sort_Permutation in Hp1.
+    have Hp2c : (p2 ∈ S) ∨ p2 = kp.2.
+    { apply elem_of_app in Hp2 as [Hp2 | Hp2]; [left; exact (HinS_take p2 Hp2) |].
+      apply elem_of_cons in Hp2 as [-> | Hp2]; [by right | left; exact (HinS_drop p2 Hp2)]. }
+    apply elem_of_app in Hp1 as [Hp1 | Hp1]; last apply list_elem_of_singleton in Hp1 as ->.
+    + destruct Hp2c as [Hp2S | ->].
+      * apply Hkdp; [exact Hp1 | by rewrite -HSperm | exact Hkeq].
+      * exfalso. rewrite -HSperm -(take_drop i S) in Hp1. apply elem_of_app in Hp1 as [Ht | Hd].
+        -- have := Hbef p1 Ht. lia.
+        -- have := Haft p1 Hd. lia.
+    + destruct Hp2c as [Hp2S | ->]; [| reflexivity].
+      exfalso. rewrite -(take_drop i S) in Hp2S. apply elem_of_app in Hp2S as [Ht | Hd].
+      * have := Hbef p2 Ht. lia.
+      * have := Haft p2 Hd. lia.
+  - apply (StronglySorted_merge_sort pr_le).
+  - apply StronglySorted_app_2.
+    + move=> a c Ha Hc. apply elem_of_cons in Hc as [-> | Hc].
+      * rewrite /pr_le. have := Hbef a Ha. lia.
+      * rewrite /pr_le. have := Hbef a Ha. have := Haft c Hc. lia.
+    + exact (StronglySorted_app_1_l _ _ _ HSSapp).
+    + change (kp.2 :: drop i S) with ([kp.2] ++ drop i S).
+      apply StronglySorted_app_2.
+      * move=> a c Ha Hc. apply list_elem_of_singleton in Ha as ->. rewrite /pr_le. have := Haft c Hc. lia.
+      * repeat constructor.
+      * exact (StronglySorted_app_1_r _ _ _ HSSapp).
+  - rewrite merge_sort_Permutation. rewrite -HSperm -{1}(take_drop i S).
+    change (kp.2 :: drop i S) with ([kp.2] ++ drop i S).
+    rewrite -app_assoc. apply Permutation_app; [reflexivity |]. apply Permutation_app_comm.
+Qed.
+
+(** [kp_clkloc] over a registry's keys is [own_item_map]'s [Hclkloc]
+    clause, and [client_run]'s address sequence is [kp_client_locs] over
+    those keys. *)
+Lemma kp_clkloc_cells (types : gmap loc type_state) :
+  kp_clkloc (cell_kp <$> all_cells types) <->
+  (∀ c1 c2, c1 ∈ all_cells types → c2 ∈ all_cells types →
+     cell_client c1 = cell_client c2 → (cell_pr c1).1 = (cell_pr c2).1 → ic_loc c1 = ic_loc c2).
+Proof.
+  split.
+  - move=> Hkd c1 c2 Hc1 Hc2 Hcc Hpr.
+    exact (Hkd (cell_kp c1) (cell_kp c2) (list_elem_of_fmap_2 _ _ _ Hc1) (list_elem_of_fmap_2 _ _ _ Hc2) Hcc Hpr).
+  - move=> Hkd a b Ha Hb Hab Hpr.
+    apply list_elem_of_fmap in Ha as (c1 & -> & Hc1). apply list_elem_of_fmap in Hb as (c2 & -> & Hc2).
+    exact (Hkd c1 c2 Hc1 Hc2 Hab Hpr).
+Qed.
+
+Lemma client_run_kp_locs (types : gmap loc type_state) (client : w64) :
+  kp_clkloc (cell_kp <$> all_cells types) ->
+  ic_loc <$> client_run types client = kp_client_locs client (cell_kp <$> all_cells types).
+Proof.
+  move=> Hkd. rewrite /client_run /kp_client_locs ic_loc_fmap_pr -cell_pr_filter_kp. f_equal.
+  apply (StronglySorted_unique_strong pr_le).
+  - move=> p1 p2 Hp1 Hp2 H12 H21.
+    rewrite (merge_sort_Permutation cell_le) in Hp1.
+    rewrite (merge_sort_Permutation pr_le) in Hp2.
+    apply list_elem_of_fmap in Hp1 as (x1 & -> & Hx1).
+    apply list_elem_of_fmap in Hp2 as (x2 & -> & Hx2).
+    apply list_elem_of_filter in Hx1 as [Hc1 Hx1]. apply list_elem_of_filter in Hx2 as [Hc2 Hx2].
+    rewrite /pr_le in H12 H21.
+    have Hkeq : (cell_pr x1).1 = (cell_pr x2).1 by lia.
+    have Hloc := proj1 (kp_clkloc_cells types) Hkd x1 x2 Hx1 Hx2 ltac:(congruence) Hkeq.
+    rewrite /cell_pr. f_equal; assumption.
+  - apply SS_cell_pr_merge.
+  - apply (StronglySorted_merge_sort pr_le).
+  - rewrite (merge_sort_Permutation pr_le). apply Permutation_map. apply merge_sort_Permutation.
+Qed.
+
+(** The entries of a cell registry's own addresses and runs are its cells'
+    addresses and runs, so their keys are the cells' [cell_kp]; and a
+    run-granular state's entries are those of the registry it materializes
+    to. *)
+Lemma entry_kp_cell (c : item_cell) : entry_kp (ic_loc c, cell_run c) = cell_kp c.
+Proof. reflexivity. Qed.
+
+Lemma pool_entries_of (types : gmap loc type_state) :
+  pool_entries (locs_of types) (pool_of types) = (λ c, (ic_loc c, cell_run c)) <$> all_cells types.
+Proof.
+  rewrite /pool_entries /all_cells /pool_of map_to_list_fmap fmap_concat -!list_fmap_compose.
+  f_equal. apply list_fmap_ext => i kv Hkv.
+  have Hlk : types !! kv.1 = Some kv.2.
+  { apply elem_of_map_to_list. destruct kv. exact (list_elem_of_lookup_2 _ _ _ Hkv). }
+  rewrite /= /locs_of lookup_fmap Hlk /= zip_with_fmap_l zip_with_fmap_r zip_with_diag //.
+Qed.
+
+Lemma entries_kp_of (types : gmap loc type_state) :
+  entry_kp <$> pool_entries (locs_of types) (pool_of types) = cell_kp <$> all_cells types.
+Proof. rewrite pool_entries_of -list_fmap_compose. apply list_fmap_ext => i c _. reflexivity. Qed.
+
+Lemma entries_kp_to_cells (locs : gmap loc (list loc)) (p : pool) :
+  dom locs = dom p ->
+  (∀ parent tm, p !! parent = Some tm ->
+     ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
+  entry_kp <$> pool_entries locs p = cell_kp <$> all_cells (types_of_locs_pool locs p).
+Proof.
+  move=> Hdom Hlens. rewrite -entries_kp_of.
+  rewrite (locs_of_types_of_locs_pool locs p Hdom Hlens) (pool_of_types_of_locs_pool locs p Hlens) //.
+Qed.
+
+(** The run-granular index over a cell registry's own addresses and runs is
+    [client_run]'s address sequence. *)
+Lemma client_locs_of (types : gmap loc type_state) (client : w64) :
+  kp_clkloc (cell_kp <$> all_cells types) ->
+  client_locs (locs_of types) (pool_of types) client = ic_loc <$> client_run types client.
+Proof. move=> Hkd. rewrite /client_locs entries_kp_of (client_run_kp_locs types client Hkd) //. Qed.
 
 Lemma cell_pr_filter_perm (client : w64) (l1 l2 : list item_cell) :
   cell_kp <$> l1 ≡ₚ cell_kp <$> l2 ->

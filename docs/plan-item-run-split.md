@@ -576,6 +576,59 @@ vocabulary substitution table written; then C5 restates the specs at
   and the `_to_cell` transports are removed; `own_dll_fractional` and kin
   are re-proved over the run Fixpoint (mechanical inductions).
 
+- **C6 execution order** (added 2026-09-04, after the text layer landed).
+  Every WP spec is now stated at `(locs, pool)`, but the proof BODIES still
+  open `own_store_runs` into the cell registry (`types_of_locs_pool`) and do
+  their bookkeeping with the cell laws, and three invariants are still
+  cell-shaped (`own_item_map`'s `client_run`, `own_delete_set`'s
+  tombstoned-cells clause, `store_inv` / `types_frag`'s `types`). So C6 is
+  five compiling slices, one PR each:
+  - **C6-1, run-level invariants.** `client_locs` re-implemented over the
+    `(address, run)` entries of `(locs, pool)` (merge-sorted by head clock;
+    the bridge to `ic_loc <$> client_run (types_of_locs_pool locs p)` is a
+    lemma under alignment plus same-client clock uniqueness, not the
+    definition); `own_item_map_runs mref dq locs p` over it, with its
+    transition laws proved loc-free (append at the newest clock for
+    `addNode`, the right half inserted for a split, unchanged by a flip and
+    by a type creation); `own_delete_set` over `all_runs p`
+    (`delete_set_tombstoned` at runs, refined along `runs_within`);
+    `run_pool_invs` / `locs_wf` / `pool_registry_coh` / `pool_registry_models`
+    already exist.
+    PROGRESS 2026-09-04: landed. `pool_entries` / `entry_kp` /
+    `kp_clkloc` / `kp_client_locs` (value_cells), the four reshuffle laws
+    proved once at the key level, `client_locs` over the entries with
+    `client_locs_of` / `client_run_kp_locs` / `entries_kp_of` /
+    `entries_kp_to_cells` as the bridges; `own_item_map_kp` (heap, with
+    `own_item_map_as_kp`, `own_item_map_kp_keys_perm`) and
+    `own_item_map_runs` (`_of` / `_to_cells`); `delete_set_tombstoned_runs`
+    (model) with `own_delete_set_runs` and its transports, bridged by
+    `own_delete_set_as_runs`. The witness law for `own_delete_set_grow` at
+    runs waits for C6-3's `deleteRange`.
+  - **C6-2, store heap flip.** `own_store_runs` becomes the Definition
+    (fields at `(locs, pool)`: `own_type_pool_runs`, `own_item_map_runs`,
+    `run_pool_invs`, `locs_wf`, `pool_registry_coh`); `own_store_struct st`
+    is the derived wrapper `own_store_runs s (state_runs_of st)` with
+    fold / unfold laws to the cell fields, so the cell-recipe bodies keep
+    compiling; `store_inv` / `types_frag` carry `(locs, pool)` and the read
+    API (`own_read_locked`, `text/Len`, `text/String`, `doc/*`) reads the
+    pool.
+  - **C6-3, bodies at runs.** Each transition proof drops the cell recipe
+    for the run-level laws: `splitNode` (pool bookkeeping over
+    `own_type_pool_runs` and the item-map split law), `Integrate`
+    (`wp_addNode` at runs), `deleteRange` (the flip law), `GetNode` (the
+    index walk over `client_locs`), `getOrCreateYType` / `repair` /
+    `applyUpdate` (type creation and the materialization sites), the text
+    layer (the delete-set ghost at runs, `types_of_locs_pool_ext_insert`
+    gone).
+  - **C6-4, delete the cell side.** `item_cell`, the cell `own_dll` and
+    `own_dll_cells_layout`, `own_ytype_cells`, `cells_of_locs_runs`,
+    `types_of_locs_pool` / `state_of_runs`, `type_state` / `store_state`,
+    `node_loc`, `all_cells`, `pool_invs`, `registry_coh`, `live_refine` and
+    every `value_*` cell law; `own_dll_fractional` and kin re-proved over
+    the run Fixpoint.
+  - **C6-5, fold `tm_arr`.** `type_model` becomes the run list alone
+    (`tm_arr = runs_flatten`), if the specs read better that way.
+
 Each stage ends `./build.sh make`-green and is one reviewable commit (or
 a small stack); the wrapper discipline keeps the tree compiling at every
 point, and C6 is the enforcement that the coexistence was scaffolding

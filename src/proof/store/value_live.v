@@ -23,7 +23,8 @@
       gives store-global id uniqueness out of the pool invariants alone
       ([cells_char_id_unique], via [pool_loc_inj]) and hence the obligation a
       delete must discharge to mint a certificate ([delete_set_tombstoned_char_ids],
-      [delete_set_tombstoned_of_witnesses]).
+      [delete_set_tombstoned_of_witnesses]); [delete_set_tombstoned_runs_of]
+      reads it at runs.
     - [live_refine] is reflexive, transitive, and holds of a tombstone flip
       ([live_refine_flip], over the cell-level [flip_pool_perm]) and of a
       cell-preserving permutation; [delete_set_tombstoned] travels along it
@@ -420,6 +421,15 @@ Qed.
 Lemma delete_set_tombstoned_mono (delete_set delete_set' : gset YjsId) (pool : list item_cell) :
   delete_set' ⊆ delete_set -> delete_set_tombstoned delete_set pool -> delete_set_tombstoned delete_set' pool.
 Proof. move=> Hsub Htomb c Hc y Hy Hin. exact (Htomb c Hc y Hy (Hsub _ Hin)). Qed.
+
+(** [delete_set_tombstoned] is its run form over the cells' runs. *)
+Lemma delete_set_tombstoned_runs_of (delete_set : gset YjsId) (pool : list item_cell) :
+  delete_set_tombstoned delete_set pool <-> delete_set_tombstoned_runs delete_set (cell_run <$> pool).
+Proof.
+  split.
+  - move=> Ht r Hr y Hy Hd. apply list_elem_of_fmap in Hr as (c & -> & Hc). exact (Ht c Hc y Hy Hd).
+  - move=> Ht c Hc y Hy Hd. exact (Ht (cell_run c) (list_elem_of_fmap_2 _ _ _ Hc) y Hy Hd).
+Qed.
 
 Lemma apply_live_refine_refl (m : DocModel) (pool : list item_cell) :
   apply_live_refine m pool pool.

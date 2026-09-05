@@ -5,7 +5,11 @@
     - [store_names]: the per-store ghost names (item-set authority, root-type
       registry, write-lock witness, the RWMutex reader accounting, the accepted
       set).
-    - [own_item_map]: the heap [map[Client][]*item] at the cell level.
+    - [own_item_map]: the heap [map[Client][]*item] at the cell level;
+      [own_item_map_kp] over a (client, clock, address) key list, which the
+      cell form is over a registry's keys ([own_item_map_as_kp]) and
+      [own_item_map_runs] over a run-granular state's entries
+      ([own_item_map_runs_of] / [own_item_map_runs_to_cells]).
     - [own_type_pool]: every registered type's DLL at its cell model, the
       store's whole item pool, [dfrac]-parameterized for the read path.
     - [own_store_fields s st]: every field of the struct at a [store_state]
@@ -35,7 +39,11 @@
       lock layer's closure over the public model.
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
       hands out) and [own_delete_set] (its authority, with the domain bound and the
-      tombstone-bit coherence that make the bound mean something).
+      tombstone-bit coherence that make the bound mean something);
+      [own_delete_set_runs] is the authority with the tombstone clause at
+      runs ([own_delete_set_as_runs]), with the same transports
+      ([own_delete_set_runs_mono] / [_refine] / [_perm] / [_snoc] / [_apply]
+      / [_insert] / [_ValidReplay]).
     - the lock body: [store_inv_ro] (the fractional, reader-visible part),
       [store_inv_excl] (the exclusive part) and [store_inv], carrying the
       client's ghost history; [tie_body] and [types_frag] / [frac_of] are the
@@ -67,7 +75,8 @@
     - [types_frag] splits and agrees ([tf_split], [tf_agree]);
       [is_type_binding] is functional ([is_type_binding_agree]).
     - [own_item_map] only sees cells up to [cell_kp] permutation
-      ([own_item_map_kp_perm]), and a fresh node is fresh for the whole
+      ([own_item_map_kp_perm]; the key list only up to permutation,
+      [own_item_map_kp_keys_perm]), and a fresh node is fresh for the whole
       registry ([all_cells_fresh]).
 
     The lock wrappers are [store/wp_private.v]; the method proofs are
@@ -244,6 +253,81 @@ Proof. rewrite own_slice_cap_unseal /own_slice_cap_def. apply _. Qed.
 
 #[global] Instance own_item_map_timeless mref dq types : Timeless (own_item_map mref dq types).
 Proof. rewrite /own_item_map. apply _. Qed.
+
+(** [own_item_map_kp mref dq kps]: the item index over a (client, clock,
+    address) key list: the map header at [mref] (Go [store.items]) and, per
+    client, the backing slice holding [kp_client_locs client kps] (+ cap);
+    every client with a key has a slice, and the keys are [kp_clkloc].
+    [own_item_map] is this over a registry's keys ([own_item_map_as_kp]) and
+    [own_item_map_runs] over a run-granular state's entries. *)
+Definition own_item_map_kp (mref : loc) (dq : dfrac) (kps : list (w64 * (Z * loc))) : iProp Σ :=
+  ∃ (gm : gmap w64 slice.t),
+    "Hmap" ∷ own_map mref dq gm ∗
+    "Hruns" ∷ ([∗ map] client ↦ s ∈ gm,
+        "Hslice" ∷ s ↦*{dq} kp_client_locs client kps ∗
+        "Hcap"   ∷ own_slice_cap loc s dq) ∗
+    "%Hcomplete" ∷ ⌜∀ c, c ∈ kps.*1 → is_Some (gm !! c)⌝ ∗
+    "%Hclkloc" ∷ ⌜kp_clkloc kps⌝.
+
+#[global] Instance own_item_map_kp_timeless mref dq kps : Timeless (own_item_map_kp mref dq kps).
+Proof. rewrite /own_item_map_kp. apply _. Qed.
+
+Lemma own_item_map_as_kp (mref : loc) (dq : dfrac) (types : gmap loc type_state) :
+  own_item_map mref dq types ⊣⊢ own_item_map_kp mref dq (cell_kp <$> all_cells types).
+Proof.
+  rewrite /own_item_map /own_item_map_kp.
+  have Hfst : (cell_kp <$> all_cells types).*1 = cell_client <$> all_cells types.
+  { rewrite -list_fmap_compose. apply list_fmap_ext => i c _. reflexivity. }
+  iSplit.
+  - iIntros "H". iNamed "H".
+    have Hkd : kp_clkloc (cell_kp <$> all_cells types) := proj2 (kp_clkloc_cells types) Hclkloc.
+    iExists gm. iFrame "Hmap". iSplitL "Hruns".
+    + iApply (big_sepM_impl with "Hruns"). iIntros "!>" (client s Hgm) "H". iNamed "H".
+      rewrite (client_run_kp_locs types client Hkd). iFrame "Hslice Hcap".
+    + iPureIntro. split; [| exact Hkd]. rewrite Hfst. exact Hcomplete.
+  - iIntros "H". iNamed "H".
+    have Hkd : ∀ c1 c2, c1 ∈ all_cells types → c2 ∈ all_cells types →
+        cell_client c1 = cell_client c2 → (cell_pr c1).1 = (cell_pr c2).1 → ic_loc c1 = ic_loc c2
+      := proj1 (kp_clkloc_cells types) Hclkloc.
+    iExists gm. iFrame "Hmap". iSplitL "Hruns".
+    + iApply (big_sepM_impl with "Hruns"). iIntros "!>" (client s Hgm) "H". iNamed "H".
+      rewrite (client_run_kp_locs types client Hclkloc). iFrame "Hslice Hcap".
+    + iPureIntro. split; [| exact Hkd]. rewrite -Hfst. exact Hcomplete.
+Qed.
+
+(** The index only sees the key multiset. *)
+Lemma own_item_map_kp_keys_perm (mref : loc) (dq : dfrac) (kps1 kps2 : list (w64 * (Z * loc))) :
+  kps1 ≡ₚ kps2 -> own_item_map_kp mref dq kps1 -∗ own_item_map_kp mref dq kps2.
+Proof.
+  iIntros (Hperm) "H". iNamed "H". iExists gm. iFrame "Hmap". iSplitL "Hruns".
+  - iApply (big_sepM_impl with "Hruns"). iIntros "!>" (client s Hgm) "H". iNamed "H".
+    rewrite (kp_client_locs_perm client kps1 kps2 Hclkloc Hperm). iFrame "Hslice Hcap".
+  - iPureIntro. split.
+    + move=> c Hc. apply Hcomplete. by rewrite Hperm.
+    + move=> a b Ha Hb. apply Hclkloc; by rewrite Hperm.
+Qed.
+
+(** [own_item_map_runs mref dq locs p]: the item index of a run-granular
+    store state: [own_item_map_kp] over the pool's entries. It is
+    [own_item_map] of the registry the state materializes to
+    ([own_item_map_runs_to_cells]), and a registry's own index is the index
+    of its addresses and runs ([own_item_map_runs_of]). *)
+Definition own_item_map_runs (mref : loc) (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
+  own_item_map_kp mref dq (entry_kp <$> pool_entries locs p).
+
+Lemma own_item_map_runs_of (mref : loc) (dq : dfrac) (types : gmap loc type_state) :
+  own_item_map mref dq types ⊣⊢ own_item_map_runs mref dq (locs_of types) (pool_of types).
+Proof. rewrite /own_item_map_runs entries_kp_of. apply own_item_map_as_kp. Qed.
+
+Lemma own_item_map_runs_to_cells (mref : loc) (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) :
+  dom locs = dom p ->
+  (∀ parent tm, p !! parent = Some tm ->
+     ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
+  own_item_map_runs mref dq locs p ⊣⊢ own_item_map mref dq (types_of_locs_pool locs p).
+Proof.
+  move=> Hdom Hlens. rewrite /own_item_map_runs (entries_kp_to_cells locs p Hdom Hlens).
+  symmetry. apply own_item_map_as_kp.
+Qed.
 
 (* The DLL predicate stack is timeless too (heap points-to + pure + persistent
    origin handles); register the instances so [store_inv] is timeless. *)
@@ -697,6 +781,97 @@ Lemma own_delete_set_ValidReplay (γs : store_names)
     (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel)
     (pool : list item_cell) :
   ValidReplay inputs m m' -> own_delete_set γs m pool -∗ own_delete_set γs m' pool.
+Proof.
+  iIntros (Hvr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
+  iPureIntro. split; [exact (delete_set_dom_ValidReplay delete_set inputs m m' Hvr Hdelete_set_dom) | exact Hdelete_set_tomb].
+Qed.
+
+(** [own_delete_set_runs γs m runs]: [own_delete_set] with its tombstone
+    clause at run granularity ([delete_set_tombstoned_runs]); the cell form
+    is this over the cells' runs ([own_delete_set_as_runs]). *)
+Definition own_delete_set_runs (γs : store_names) (m : DocModel) (runs : list ItemRun) : iProp Σ :=
+  ∃ delete_set : gset YjsId,
+    "Hdelete_set_auth" ∷ own γs.(sn_delete_set) (● delete_set : accUR) ∗
+    "%Hdelete_set_dom" ∷ ⌜delete_set_dom delete_set m⌝ ∗
+    "%Hdelete_set_tomb" ∷ ⌜delete_set_tombstoned_runs delete_set runs⌝.
+
+#[global] Instance own_delete_set_runs_timeless γs m runs : Timeless (own_delete_set_runs γs m runs).
+Proof. rewrite /own_delete_set_runs. apply _. Qed.
+
+Lemma own_delete_set_as_runs (γs : store_names) (m : DocModel) (pool : list item_cell) :
+  own_delete_set γs m pool ⊣⊢ own_delete_set_runs γs m (cell_run <$> pool).
+Proof.
+  rewrite /own_delete_set /own_delete_set_runs.
+  iSplit; iIntros "H"; iNamed "H"; iExists delete_set; iFrame "Hdelete_set_auth"; iPureIntro;
+    (split; [exact Hdelete_set_dom | by apply delete_set_tombstoned_runs_of]).
+Qed.
+
+(** The transports of [own_delete_set], at runs: along model growth, along
+    [runs_live_refine] (a split, a flip, a registry insert), along a
+    permutation, along an integrate (a fresh live run), along the remote
+    apply ([runs_apply_live_refine]), and along one type's list growing or a
+    whole valid replay. *)
+Lemma own_delete_set_runs_mono (γs : store_names) (m m' : DocModel) (runs : list ItemRun) :
+  (∀ i, doc_model_has m i = true -> doc_model_has m' i = true) ->
+  own_delete_set_runs γs m runs -∗ own_delete_set_runs γs m' runs.
+Proof.
+  iIntros (Hmono) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
+  iPureIntro. split; [exact (delete_set_dom_mono delete_set m m' Hmono Hdelete_set_dom) | exact Hdelete_set_tomb].
+Qed.
+
+Lemma own_delete_set_runs_refine (γs : store_names) (m : DocModel) (p p' : pool) :
+  runs_live_refine p p' ->
+  own_delete_set_runs γs m (all_runs p) -∗ own_delete_set_runs γs m (all_runs p').
+Proof.
+  iIntros (Hlr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
+  iPureIntro. split; [exact Hdelete_set_dom | exact (delete_set_tombstoned_runs_refine delete_set p p' Hlr Hdelete_set_tomb)].
+Qed.
+
+Lemma own_delete_set_runs_perm (γs : store_names) (m : DocModel) (runs runs' : list ItemRun) :
+  runs' ≡ₚ runs -> own_delete_set_runs γs m runs -∗ own_delete_set_runs γs m runs'.
+Proof.
+  iIntros (Hperm) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
+  iPureIntro. split; [exact Hdelete_set_dom | exact (delete_set_tombstoned_runs_perm delete_set runs runs' Hperm Hdelete_set_tomb)].
+Qed.
+
+Lemma own_delete_set_runs_snoc (γs : store_names) (m : DocModel) (runs runs' : list ItemRun) (r : ItemRun) :
+  runs' ≡ₚ runs ++ [r] ->
+  (∀ y, y ∈ run_items r -> doc_model_has m (item_id y) = false) ->
+  own_delete_set_runs γs m runs -∗ own_delete_set_runs γs m runs'.
+Proof.
+  iIntros (Hperm Hfresh) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
+  iPureIntro. split; [exact Hdelete_set_dom |].
+  apply (delete_set_tombstoned_runs_snoc delete_set runs runs' r Hperm); [| exact Hdelete_set_tomb].
+  move=> y Hy Hin. have Ht := Hdelete_set_dom _ Hin. have Hf := Hfresh y Hy. congruence.
+Qed.
+
+Lemma own_delete_set_runs_apply (γs : store_names) (m m' : DocModel) (runs runs' : list ItemRun) :
+  (∀ i, doc_model_has m i = true -> doc_model_has m' i = true) ->
+  runs_apply_live_refine m runs runs' ->
+  own_delete_set_runs γs m runs -∗ own_delete_set_runs γs m' runs'.
+Proof.
+  iIntros (Hmono Halr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
+  iPureIntro. split; [exact (delete_set_dom_mono delete_set m m' Hmono Hdelete_set_dom) |].
+  move=> r' Hr' y Hy Hin.
+  destruct (run_deleted r') eqn:Hlive; first done. exfalso.
+  destruct (Halr r' Hr' Hlive y Hy) as [(r & Hr & Hliver & Hy') | Hfresh].
+  - by rewrite (Hdelete_set_tomb r Hr y Hy' Hin) in Hliver.
+  - by rewrite (Hdelete_set_dom _ Hin) in Hfresh.
+Qed.
+
+Lemma own_delete_set_runs_insert (γs : store_names) (m : DocModel) (runs : list ItemRun)
+    (t : TId) (arr' : list (YjsItem A)) :
+  (∀ x, x ∈ doc_model_get m t -> x ∈ arr') ->
+  own_delete_set_runs γs m runs -∗ own_delete_set_runs γs (<[t := arr']> m) runs.
+Proof.
+  iIntros (Hgrow) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
+  iPureIntro. split; [exact (delete_set_dom_insert delete_set m t arr' Hgrow Hdelete_set_dom) | exact Hdelete_set_tomb].
+Qed.
+
+Lemma own_delete_set_runs_ValidReplay (γs : store_names)
+    (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel)
+    (runs : list ItemRun) :
+  ValidReplay inputs m m' -> own_delete_set_runs γs m runs -∗ own_delete_set_runs γs m' runs.
 Proof.
   iIntros (Hvr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
   iPureIntro. split; [exact (delete_set_dom_ValidReplay delete_set inputs m m' Hvr Hdelete_set_dom) | exact Hdelete_set_tomb].
