@@ -612,6 +612,24 @@ Proof.
     apply cell_origin_clk_run. exact (Hoc c Hc).
 Qed.
 
+(** The converse: the pool invariants at the cells, from the run-granular
+    ones and the address [NoDup] (the [locs_wf] half). The pure leg of
+    [own_store_runs_to_state]. *)
+Lemma pool_invs_of_runs (types : gmap loc type_state) :
+  (∀ c, c ∈ all_cells types -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
+  (∀ c, c ∈ all_cells types -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
+  NoDup (ic_loc <$> all_cells types) ->
+  run_pool_invs (pool_of types) ->
+  pool_invs types.
+Proof.
+  move=> Hckb Hclb Hnd. rewrite /run_pool_invs all_runs_pool_of. move=> [Hfits [Hdisj Hoc]].
+  split_and!.
+  - move=> c Hc. apply (cell_fits_run c (Hckb c Hc)). apply Hfits. exact (list_elem_of_fmap_2 _ _ _ Hc).
+  - exact Hnd.
+  - apply (cells_range_disjoint_runs _ Hckb Hclb Hnd). exact Hdisj.
+  - move=> c Hc. apply cell_origin_clk_run. apply Hoc. exact (list_elem_of_fmap_2 _ _ _ Hc).
+Qed.
+
 (** [pool_run_clock_below] read back on the cells: under the pool id bounds
     and nonempty runs, the [nat] clock bound gives [pool_clock_below]'s [w64]
     comparisons. The premise side of [wp_store__Integrate_runs]. *)

@@ -241,7 +241,7 @@ Proof.
   case_bool_decide as Hrem.
   2:{ (* budget exhausted: rebuild [store_inv] (same [ty_arr]), Unlock, return. *)
       wp_auto. rewrite decide_False; [|done]. rewrite decide_True; [|done]. wp_auto.
-      iDestruct "Hruns" as "(Hcells & %Halj')".
+      iDestruct (own_store_runs_to_state with "Hruns") as "(Hcells & %Halj')".
       have Htypes' : types_of_locs_pool locsj pj
                    = <[tv.(yjs.Text.inner') := MkTypeState (cells_of_locs_runs tv.(yjs.Text.inner') lsj runsj) ts.(ty_arr)]> types.
       { rewrite (types_of_locs_pool_ext_insert locsj locs0 pj p0 tv.(yjs.Text.inner') lsj (MkTypeModel runsj ts.(ty_arr)) Hlj Hpj Hdomlj Hdompj) /=
@@ -284,7 +284,7 @@ Proof.
       { rewrite /loc_at decide_True; [| lia]. rewrite Nat2Z.id lookup_ge_None_2; [done | lia]. }
       rewrite (bool_decide_eq_true_2 (loc_at lsj (Z.of_nat q) = null) Hnull). simpl negb.
       rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
-      iDestruct "Hruns" as "(Hcells & %Halj')".
+      iDestruct (own_store_runs_to_state with "Hruns") as "(Hcells & %Halj')".
       have Htypes' : types_of_locs_pool locsj pj
                    = <[tv.(yjs.Text.inner') := MkTypeState (cells_of_locs_runs tv.(yjs.Text.inner') lsj runsj) ts.(ty_arr)]> types.
       { rewrite (types_of_locs_pool_ext_insert locsj locs0 pj p0 tv.(yjs.Text.inner') lsj (MkTypeModel runsj ts.(ty_arr)) Hlj Hpj Hdomlj Hdompj) /=
