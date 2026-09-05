@@ -35,7 +35,7 @@
       [apply_live_refine_of_integrate]) and for [dead_chars_kept]; at the
       projected runs, [integrate_live_refine] carries over
       ([integrate_live_refine_to_runs]) and [runs_apply_live_refine] reads
-      back ([apply_live_refine_of_runs]).
+      (the cell reading; the run form is the primitive one).
 
     Sits above [store/value_cells.v] and below [store/value_split.v]. *)
 
@@ -587,17 +587,6 @@ Proof.
   apply list_elem_of_fmap in Hr' as (c' & -> & Hc').
   destruct (H c' Hc' Hlive y Hy) as [(c & Hc & Hlivec & Hyc) | Hown]; [left | by right].
   exists (cell_run c). split_and!; [apply list_elem_of_fmap; eauto | exact Hlivec | exact Hyc].
-Qed.
-
-Lemma apply_live_refine_of_runs (m : DocModel) (before after : list item_cell) :
-  runs_apply_live_refine m (cell_run <$> before) (cell_run <$> after) ->
-  apply_live_refine m before after.
-Proof.
-  move=> H c' Hc' Hlive y Hy.
-  have Hr' : cell_run c' ∈ cell_run <$> after by (apply list_elem_of_fmap; eauto).
-  destruct (H (cell_run c') Hr' Hlive y Hy) as [(r & Hr & Hliver & Hyr) | Hfresh]; [left | by right].
-  apply list_elem_of_fmap in Hr as (c & -> & Hc).
-  exists c. split_and!; [exact Hc | exact Hliver | exact Hyr].
 Qed.
 
 End store_value_live.

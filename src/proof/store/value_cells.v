@@ -100,7 +100,7 @@
       [all_cells_lookup]); under the address [NoDup] one location pins its
       type, slot and cell ([all_cells_same_loc_same_slot]); a coherent
       registry's type domain grows with its bindings
-      ([registry_coh_dom_mono]).
+      ([registry_coh_dom_mono] / [pool_registry_coh_dom_mono]).
     - [client_run] is stable under the same steps ([merge_sort_loc_*],
       [client_run_loc_tail] / [_insert] / [_other], [cellctr_locs_run_perm]),
       and [cell_kp] determines client, clock, location and [cell_pr].
@@ -1710,6 +1710,15 @@ Lemma registry_coh_dom_mono (bind bind' : gmap P loc) (types types' : gmap loc t
 Proof.
   move=> [_ [_ Htb]] [Hbt' _] Hsub p. rewrite !elem_of_dom. move=> Hp.
   destruct (Htb p Hp) as [nm Hnm]. exact (Hbt' nm p (lookup_weaken _ _ _ _ Hnm Hsub)).
+Qed.
+
+(** The same at the run pool. *)
+Lemma pool_registry_coh_dom_mono (bind bind' : gmap P loc) (p p' : pool) :
+  pool_registry_coh bind p -> pool_registry_coh bind' p' -> bind ⊆ bind' ->
+  dom p ⊆ dom p'.
+Proof.
+  move=> [_ [_ Htb]] [Hbt' _] Hsub q. rewrite !elem_of_dom. move=> Hq.
+  destruct (Htb q Hq) as [nm Hnm]. exact (Hbt' nm q (lookup_weaken _ _ _ _ Hnm Hsub)).
 Qed.
 
 Lemma registry_coh_dom_eq (bind : gmap P loc) (types types' : gmap loc type_state) :
