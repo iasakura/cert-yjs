@@ -5,12 +5,9 @@
     - [store_names]: the per-store ghost names (item-set authority, root-type
       registry, write-lock witness, the RWMutex reader accounting, the accepted
       set).
-    - [own_item_map]: the heap [map[Client][]*item] at the cell level;
-      [own_item_map_kp] over a (client, clock, address) key list, which the
-      cell form is over a registry's keys ([own_item_map_as_kp]) and
-      [own_item_map_runs] over a run-granular state's entries.
-    - [own_type_pool]: every registered type's DLL at its cell model, the
-      store's whole item pool, [dfrac]-parameterized for the read path.
+    - [own_item_map_kp]: the heap [map[Client][]*item] over a
+      (client, clock, address) key list, which [own_item_map_runs] is over a
+      run-granular state's entries.
     - [own_store_fields s st]: every field of the struct at a [store_state]
       (the item index, the root registry, the type pool, the two buffers, the
       unmodeled delete-set struct), with no predicate per field on purpose.
@@ -37,9 +34,9 @@
       reading the remaining cell-recipe bodies work in. [own_store] is the
       lock layer's closure of [own_store_runs] over the public model.
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
-      hands out) and [own_delete_set] (its authority, with the domain bound and the
-      tombstone-bit coherence that make the bound mean something);
-      [own_delete_set_runs] is the authority with the tombstone clause at
+      hands out) and [own_delete_set_runs] (its authority, with the domain
+      bound and the tombstone-bit coherence that make the bound mean
+      something), with the tombstone clause at
       runs ([own_delete_set_as_runs]), with the same transports
       ([own_delete_set_runs_mono] / [_refine] / [_perm] / [_snoc] / [_apply]
       / [_insert] / [_ValidReplay]).
@@ -73,9 +70,8 @@
     - the reader fractions form a chain: [frac_of_0] and [frac_of_split].
     - [pool_frag] splits and agrees ([pool_frag_split], [pool_frag_agree]);
       [is_type_binding] is functional ([is_type_binding_agree]).
-    - [own_item_map] only sees cells up to [cell_kp] permutation
-      ([own_item_map_kp_perm]; the key list only up to permutation,
-      [own_item_map_kp_keys_perm]), and a fresh node is fresh for the whole
+    - the item index only sees its key list up to permutation
+      ([own_item_map_kp_keys_perm]), and a fresh node is fresh for the whole
       registry ([all_cells_fresh]).
 
     The lock wrappers are [store/wp_private.v]; the method proofs are
@@ -174,7 +170,7 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 
 (* The [∷] (named) wrapper blocks [Timeless] TC resolution; unfold it (as
    [New.proof.sync_proof.rwmutex] does) so the [Timeless] instances below go
-   through the named conjuncts of [own_item_map] / [store_inv]. *)
+   through the named conjuncts of [own_item_map_kp] / [store_inv]. *)
 
 #[local] Hint Extern 100 (Timeless (?n ∷ ?P)) =>
   (change (n ∷ P) with P) : typeclass_instances.
@@ -224,41 +220,19 @@ Proof.
   rewrite pos_to_Qp_add. f_equal.
 Qed.
 
-(** [own_item_map mref dq types]: the heap map at [mref] (Go [store.items]) owns
-    the map header and, per client, the backing slice of [*item] *locations*
-    (+ cap) — but NOT the item cells (those live in the DLL, [own_ytype_cells]).
-    The slice for [client] is exactly [client_run types client]. Takes the
-    [types] map directly (not a pre-flattened list); sortedness is baked into
-    [client_run]. Owning heap data, it takes a [dfrac] ([DfracOwn 1] to append
-    in [AddNode]). *)
-Definition own_item_map (mref : loc) (dq : dfrac) (types : gmap loc type_state) : iProp Σ :=
-  ∃ (gm : gmap w64 slice.t),
-    "Hmap" ∷ own_map mref dq gm ∗
-    "Hruns" ∷ ([∗ map] client ↦ s ∈ gm,
-        "Hslice" ∷ s ↦*{dq} (ic_loc <$> client_run types client) ∗
-        "Hcap"   ∷ own_slice_cap loc s dq) ∗
-    "%Hcomplete" ∷ ⌜∀ c, c ∈ (cell_client <$> all_cells types) → is_Some (gm !! c)⌝ ∗
-    "%Hclkloc" ∷ ⌜∀ c1 c2, c1 ∈ all_cells types → c2 ∈ all_cells types →
-                    cell_client c1 = cell_client c2 → (cell_pr c1).1 = (cell_pr c2).1 →
-                    ic_loc c1 = ic_loc c2⌝.
-
 (* [own_slice_cap] (a sealed disjunction of pure facts and a [↦{dq}] array) is
    timeless, but the New.golang slice library ships no such instance; provide it
-   here (candidate upstream addition) so [own_item_map] / [store_inv] are
+   here (candidate upstream addition) so [own_item_map_kp] / [store_inv] are
    timeless. *)
 #[global] Instance own_slice_cap_timeless (V : Type) `{!ZeroVal V} `{!TypedPointsto V} (s : slice.t) (dq : dfrac) :
   Timeless (own_slice_cap V s dq).
 Proof. rewrite own_slice_cap_unseal /own_slice_cap_def. apply _. Qed.
 
-#[global] Instance own_item_map_timeless mref dq types : Timeless (own_item_map mref dq types).
-Proof. rewrite /own_item_map. apply _. Qed.
-
 (** [own_item_map_kp mref dq kps]: the item index over a (client, clock,
     address) key list: the map header at [mref] (Go [store.items]) and, per
     client, the backing slice holding [kp_client_locs client kps] (+ cap);
     every client with a key has a slice, and the keys are [kp_clkloc].
-    [own_item_map] is this over a registry's keys ([own_item_map_as_kp]) and
-    [own_item_map_runs] over a run-granular state's entries. *)
+    [own_item_map_runs] is this over a run-granular state's entries. *)
 Definition own_item_map_kp (mref : loc) (dq : dfrac) (kps : list (w64 * (Z * loc))) : iProp Σ :=
   ∃ (gm : gmap w64 slice.t),
     "Hmap" ∷ own_map mref dq gm ∗
@@ -270,29 +244,6 @@ Definition own_item_map_kp (mref : loc) (dq : dfrac) (kps : list (w64 * (Z * loc
 
 #[global] Instance own_item_map_kp_timeless mref dq kps : Timeless (own_item_map_kp mref dq kps).
 Proof. rewrite /own_item_map_kp. apply _. Qed.
-
-Lemma own_item_map_as_kp (mref : loc) (dq : dfrac) (types : gmap loc type_state) :
-  own_item_map mref dq types ⊣⊢ own_item_map_kp mref dq (cell_kp <$> all_cells types).
-Proof.
-  rewrite /own_item_map /own_item_map_kp.
-  have Hfst : (cell_kp <$> all_cells types).*1 = cell_client <$> all_cells types.
-  { rewrite -list_fmap_compose. apply list_fmap_ext => i c _. reflexivity. }
-  iSplit.
-  - iIntros "H". iNamed "H".
-    have Hkd : kp_clkloc (cell_kp <$> all_cells types) := proj2 (kp_clkloc_cells types) Hclkloc.
-    iExists gm. iFrame "Hmap". iSplitL "Hruns".
-    + iApply (big_sepM_impl with "Hruns"). iIntros "!>" (client s Hgm) "H". iNamed "H".
-      rewrite (client_run_kp_locs types client Hkd). iFrame "Hslice Hcap".
-    + iPureIntro. split; [| exact Hkd]. rewrite Hfst. exact Hcomplete.
-  - iIntros "H". iNamed "H".
-    have Hkd : ∀ c1 c2, c1 ∈ all_cells types → c2 ∈ all_cells types →
-        cell_client c1 = cell_client c2 → (cell_pr c1).1 = (cell_pr c2).1 → ic_loc c1 = ic_loc c2
-      := proj1 (kp_clkloc_cells types) Hclkloc.
-    iExists gm. iFrame "Hmap". iSplitL "Hruns".
-    + iApply (big_sepM_impl with "Hruns"). iIntros "!>" (client s Hgm) "H". iNamed "H".
-      rewrite (client_run_kp_locs types client Hclkloc). iFrame "Hslice Hcap".
-    + iPureIntro. split; [| exact Hkd]. rewrite -Hfst. exact Hcomplete.
-Qed.
 
 (** The index only sees the key multiset. *)
 Lemma own_item_map_kp_keys_perm (mref : loc) (dq : dfrac) (kps1 kps2 : list (w64 * (Z * loc))) :
@@ -462,7 +413,7 @@ Proof. apply _. Qed.
     reader's [is_type_lb] to locate its type). Fractional in [q]: the read lock
     hands each of up to [rwmutexMaxReaders] readers a share, and the write lock
     reassembles the whole ([q = 1]). The store's mutable-exclusive parts (the
-    struct fields, [own_item_map], the registry [ghost_map_auth], the ghost
+    struct fields, the item index, the registry [ghost_map_auth], the ghost
     history) are NOT here; they stay whole in the lock invariant while readers
     hold shares, since no writer runs concurrently with readers. *)
 (* ----- the decoded update buffer (issue #40) --------------------------------
@@ -610,160 +561,8 @@ Proof. iApply auth_gset_frag_union. Qed.
 Lemma is_delete_set_lb_empty (γs : store_names) : ⊢ |==> is_delete_set_lb γs ∅.
 Proof. iApply auth_gset_frag_empty. Qed.
 
-(** [own_delete_set γs m pool]: the delete-set authority with the two facts
-    that give the set its meaning. They constrain opposite things, which is
-    why neither replaces the other:
-    - [delete_set_dom] constrains the SET against the model: an id in the set
-      names an integrated item of [m]. So a freshly minted insert id can never
-      already be in the set, which is how integration re-establishes the
-      second clause when it splices a live cell ([own_delete_set_snoc]).
-    - [delete_set_tombstoned] constrains the POOL against the set: an id in
-      the set that a pool cell holds forces that cell tombstoned. Without it an [is_delete_set_lb] certificate would be a receipt that an
-      implementation whose [Delete] does nothing could still mint; with it the
-      certificate says the ids are gone from every live node, hence from the
-      visible document a reader observes (issue #125). It says nothing about
-      an id held by no cell, so it is not a domain bound.
-    The set itself stays existential, observable only through [is_delete_set_lb].
-    Carried by [store_inv_excl] / [own_store] next to their [m] and their
-    [types]. *)
-Definition own_delete_set (γs : store_names) (m : DocModel) (pool : list item_cell) : iProp Σ :=
-  ∃ delete_set : gset YjsId,
-    "Hdelete_set_auth" ∷ own γs.(sn_delete_set) (● delete_set : accUR) ∗
-    "%Hdelete_set_dom" ∷ ⌜delete_set_dom delete_set m⌝ ∗
-    "%Hdelete_set_tomb" ∷ ⌜delete_set_tombstoned delete_set pool⌝.
-
-#[global] Instance own_delete_set_timeless γs m pool : Timeless (own_delete_set γs m pool).
-Proof. rewrite /own_delete_set. apply _. Qed.
-
-(** Transport along model growth: any map that preserves id presence
-    ([Text.Insert] uses [docm_has_integrate_mono] pointwise, [applyUpdate]
-    uses [delete_set_dom_ValidReplay]'s premise via [delete_set_dom_mono]). *)
-Lemma own_delete_set_mono (γs : store_names) (m m' : DocModel) (pool : list item_cell) :
-  (∀ i, doc_model_has m i = true -> doc_model_has m' i = true) ->
-  own_delete_set γs m pool -∗ own_delete_set γs m' pool.
-Proof.
-  iIntros (Hmono) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
-  iPureIntro. split; [exact (delete_set_dom_mono delete_set m m' Hmono Hdelete_set_dom) | exact Hdelete_set_tomb].
-Qed.
-
-(** Transport along the pool surgeries: a split, a tombstone flip and a
-    registry insert all refine the live cells ([live_refine]), which is
-    exactly what [delete_set_tombstoned] travels along. *)
-Lemma own_delete_set_refine (γs : store_names) (m : DocModel)
-    (types types' : gmap loc type_state) :
-  live_refine types types' ->
-  own_delete_set γs m (all_cells types) -∗ own_delete_set γs m (all_cells types').
-Proof.
-  iIntros (Hlr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
-  iPureIntro. split; [exact Hdelete_set_dom | exact (delete_set_tombstoned_refine delete_set types types' Hlr Hdelete_set_tomb)].
-Qed.
-
-(** The registry bridge the growth steps need: an id absent from every
-    REGISTERED type's model list is absent from the model [m] altogether.
-    [store_inv_excl]'s registry coherence is what makes this true (a non-empty
-    model entry is a bound root, and a bound root's list is its type's
-    [ty_arr]), so a caller that knows its fresh id beats every type's items,
-    typically by the store's clock counter, gets [doc_model_has m i = false]
-    and hence, with [delete_set_dom], that the id is not in the delete set. *)
-Lemma docm_has_registry_false (bind : gmap P loc) (types : gmap loc type_state)
-    (m : DocModel) (i : YjsId) :
-  (∀ name p ts, bind !! name = Some p -> types !! p = Some ts ->
-     doc_model_get m (RootId name) = ty_arr ts) ->
-  (∀ t, doc_model_get m t ≠ [] ->
-     ∃ name p, t = RootId name ∧ bind !! name = Some p) ->
-  (∀ name p, bind !! name = Some p -> is_Some (types !! p)) ->
-  (∀ p ts x, types !! p = Some ts -> x ∈ ty_arr ts -> item_id x ≠ i) ->
-  doc_model_has m i = false.
-Proof.
-  move=> Hmtypes Hmdom Hbindtypes Hbeats.
-  destruct (doc_model_has m i) eqn:Hhas; last done.
-  exfalso. apply docm_has_spec in Hhas as (t & x & Hx & Hid).
-  have Hne : doc_model_get m t ≠ [].
-  { move=> Hnil. rewrite Hnil in Hx. by rewrite elem_of_nil in Hx. }
-  destruct (Hmdom t Hne) as (nm & p & -> & Hb).
-  destruct (Hbindtypes nm p Hb) as [ts Hts].
-  rewrite (Hmtypes nm p ts Hb Hts) in Hx.
-  exact (Hbeats p ts x Hts Hx Hid).
-Qed.
-
-(** Integration: the pool grows by one LIVE cell, so the invariant needs the
-    new run's ids to be outside the set. That follows from [delete_set_dom] plus the
-    caller's freshness fact, which is how [Text.Insert] and the integrate loop
-    discharge it (the new id is not yet in the model). *)
-Lemma own_delete_set_snoc (γs : store_names) (m : DocModel) (pool pool' : list item_cell)
-    (c : item_cell) :
-  pool' ≡ₚ pool ++ [c] ->
-  (∀ y, y ∈ ic_run c -> doc_model_has m (item_id y) = false) ->
-  own_delete_set γs m pool -∗ own_delete_set γs m pool'.
-Proof.
-  iIntros (Hperm Hfresh) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
-  iPureIntro. split; [exact Hdelete_set_dom |].
-  apply (delete_set_tombstoned_snoc delete_set pool pool' c Hperm Hdelete_set_tomb).
-  move=> y Hy Hin. have Ht := Hdelete_set_dom _ Hin. have Hf := Hfresh y Hy. congruence.
-Qed.
-
-(** The remote apply's transport: the model grows by the replay and the pool
-    grows by the integrated cells, so neither [live_refine] nor a plain model
-    map covers it. [apply_live_refine] is exactly the pair of escapes a char
-    of a new live cell can take, and the domain bound closes the second one. *)
-Lemma own_delete_set_apply (γs : store_names) (m m' : DocModel) (pool pool' : list item_cell) :
-  (∀ i, doc_model_has m i = true -> doc_model_has m' i = true) ->
-  apply_live_refine m pool pool' ->
-  own_delete_set γs m pool -∗ own_delete_set γs m' pool'.
-Proof.
-  iIntros (Hmono Halr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
-  iPureIntro. split; [exact (delete_set_dom_mono delete_set m m' Hmono Hdelete_set_dom) |].
-  move=> c' Hc' y Hy Hin.
-  destruct (ic_deleted c') eqn:Hlive; first done. exfalso.
-  destruct (Halr c' Hc' Hlive y Hy) as [(c & Hc & Hlivec & Hy') | Hfresh].
-  - by rewrite (Hdelete_set_tomb c Hc y Hy' Hin) in Hlivec.
-  - by rewrite (Hdelete_set_dom _ Hin) in Hfresh.
-Qed.
-
-(** Tombstone: grow the set by ids of integrated items, minting their lower
-    bound. The model is unchanged ([Text.Delete] flips flags only), and the
-    caller must show the new ids miss every live cell, which is the whole
-    point: the certificate is only obtainable by an implementation that
-    actually tombstoned them. *)
-Lemma own_delete_set_grow (γs : store_names) (m : DocModel) (pool : list item_cell)
-    (S : gset YjsId) :
-  (∀ i, i ∈ S -> doc_model_has m i = true) ->
-  delete_set_tombstoned S pool ->
-  own_delete_set γs m pool ==∗ own_delete_set γs m pool ∗ is_delete_set_lb γs S.
-Proof.
-  iIntros (HS Htomb) "H". iNamed "H".
-  iMod (auth_gset_grow γs.(sn_delete_set) delete_set S with "Hdelete_set_auth") as "[Hdelete_set_auth Hfrag]".
-  iModIntro. iSplitL "Hdelete_set_auth".
-  { iExists (delete_set ∪ S). iFrame "Hdelete_set_auth". iPureIntro.
-    split; [exact (delete_set_dom_grow delete_set S m Hdelete_set_dom HS)
-           | exact (delete_set_tombstoned_union delete_set S pool Hdelete_set_tomb Htomb)]. }
-  rewrite /is_delete_set_lb.
-  iApply (auth_gset_frag_mono with "Hfrag"). set_solver.
-Qed.
-
-(** The two model-transition forms the store ops need: one type's list grows
-    ([Text.Insert]), and a whole valid replay ([store.applyUpdate]). *)
-Lemma own_delete_set_insert (γs : store_names) (m : DocModel) (pool : list item_cell)
-    (t : TId) (arr' : list (YjsItem A)) :
-  (∀ x, x ∈ doc_model_get m t -> x ∈ arr') ->
-  own_delete_set γs m pool -∗ own_delete_set γs (<[t := arr']> m) pool.
-Proof.
-  iIntros (Hgrow) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
-  iPureIntro. split; [exact (delete_set_dom_insert delete_set m t arr' Hgrow Hdelete_set_dom) | exact Hdelete_set_tomb].
-Qed.
-
-Lemma own_delete_set_ValidReplay (γs : store_names)
-    (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel)
-    (pool : list item_cell) :
-  ValidReplay inputs m m' -> own_delete_set γs m pool -∗ own_delete_set γs m' pool.
-Proof.
-  iIntros (Hvr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
-  iPureIntro. split; [exact (delete_set_dom_ValidReplay delete_set inputs m m' Hvr Hdelete_set_dom) | exact Hdelete_set_tomb].
-Qed.
-
-(** [own_delete_set_runs γs m runs]: [own_delete_set] with its tombstone
-    clause at run granularity ([delete_set_tombstoned_runs]); the cell form
-    is this over the cells' runs ([own_delete_set_as_runs]). *)
+(** [own_delete_set_runs γs m runs]: the delete-set authority, its
+    tombstone clause at run granularity ([delete_set_tombstoned_runs]). *)
 Definition own_delete_set_runs (γs : store_names) (m : DocModel) (runs : list ItemRun) : iProp Σ :=
   ∃ delete_set : gset YjsId,
     "Hdelete_set_auth" ∷ own γs.(sn_delete_set) (● delete_set : accUR) ∗
@@ -773,15 +572,7 @@ Definition own_delete_set_runs (γs : store_names) (m : DocModel) (runs : list I
 #[global] Instance own_delete_set_runs_timeless γs m runs : Timeless (own_delete_set_runs γs m runs).
 Proof. rewrite /own_delete_set_runs. apply _. Qed.
 
-Lemma own_delete_set_as_runs (γs : store_names) (m : DocModel) (pool : list item_cell) :
-  own_delete_set γs m pool ⊣⊢ own_delete_set_runs γs m (cell_run <$> pool).
-Proof.
-  rewrite /own_delete_set /own_delete_set_runs.
-  iSplit; iIntros "H"; iNamed "H"; iExists delete_set; iFrame "Hdelete_set_auth"; iPureIntro;
-    (split; [exact Hdelete_set_dom | by apply delete_set_tombstoned_runs_of]).
-Qed.
-
-(** The transports of [own_delete_set], at runs: along model growth, along
+(** The transports of the delete set, at runs: along model growth, along
     [runs_live_refine] (a split, a flip, a registry insert), along a
     permutation, along an integrate (a fresh live run), along the remote
     apply ([runs_apply_live_refine]), and along one type's list growing or a
@@ -1248,29 +1039,6 @@ Qed.
 
 (* ----- the store's heap state --------------------------------------------- *)
 
-(** The store's field cells, one predicate per field, each taking the FIELD
-    ADDRESS (an [s .[(yjs.store.t), "<fld>"]] location) and the field's model:
-    [own_items_field l types] reads like [l ↦ …] with the model in place of
-    the raw value, folding away the intermediate reference or slice. A field
-    address never appears in a spec (CLAUDE.md "Spec shape" forbids struct
-    field points-tos there), so these are proof-layer vocabulary for
-    [own_store_fields] and the open-receiver stepping stones.
-    - [own_items_field l types]: the [items] field, a per-client run map
-      reference holding [own_item_map] at [types].
-    - [own_registry_field l bind]: the [types] field, the root registry map
-      [name -> type loc] at [bind].
-    - [own_pending_field l pend]: the [pending] field, the buffered wire
-      structs at their model list.
-    - [own_pending_deletes_field l pdel]: the [pendingDeletes] field, the
-      buffered delete spans at their model list.
-    - [own_deleted_set_field l]: the [deletedSet] field, unmodeled (no
-      verified method reads it; the delete set's ghost model is
-      [own_delete_set]). *)
-Definition own_items_field (l : loc) (types : gmap loc type_state) : iProp Σ :=
-  ∃ items_mref : loc,
-    "Hitemsf" ∷ l ↦ items_mref ∗
-    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) types.
-
 Definition own_registry_field (l : loc) (bind : gmap P loc) : iProp Σ :=
   ∃ types_mref : loc,
     "Htypesf" ∷ l ↦ types_mref ∗
@@ -1290,64 +1058,15 @@ Definition own_pending_deletes_field (l : loc) (pdel : list delete_span) : iProp
 Definition own_deleted_set_field (l : loc) : iProp Σ :=
   ∃ deletedSetVal : yjs.deletedSet.t, l ↦ deletedSetVal.
 
-(** [own_store_fields s st]: every field of the store struct [s] at the
-    cell-level state [st]: the client id and clock, the deleted-set struct
+(** The store's fields: the client id and clock, the deleted-set struct
     (not modeled: no verified method reads it through the field; the delete
-    set's ghost model is [own_delete_set]), the item index ([store.items] and
-    the per-client run map it points to, [own_item_map]), the root registry
+    set's ghost model is [own_delete_set_runs]), the item index
+    ([store.items] and the per-client run map it points to), the root registry
     ([store.types] and its name -> type-loc map), the type pool, and the two
     buffers ([store.pending], [store.pendingDeletes]) over their model lists.
     The field pointers and buffer slices are existential: no spec names them,
     and no field has a predicate of its own, so a spec can only take the
-    store whole ([own_store_struct]). *)
-
-Definition own_store_fields (s : loc) (st : store_state) : iProp Σ :=
-  "Hclient" ∷ (s .[(yjs.store.t), "client"]) ↦ ss_client st ∗
-  "Hclock" ∷ (s .[(yjs.store.t), "clock"]) ↦ ss_clock st ∗
-  "HdeletedSet" ∷ own_deleted_set_field (s .[(yjs.store.t), "deletedSet"]) ∗
-  "Hitems" ∷ own_items_field (s .[(yjs.store.t), "items"]) (ss_types st) ∗
-  "Hregistry" ∷ own_registry_field (s .[(yjs.store.t), "types"]) (ss_bind st) ∗
-  "Htypes" ∷ own_type_pool (DfracOwn 1) (ss_types st) ∗
-  "Hpending" ∷ own_pending_field (s .[(yjs.store.t), "pending"]) (ss_pending st) ∗
-  "Hpdeletes" ∷ own_pending_deletes_field (s .[(yjs.store.t), "pendingDeletes"]) (ss_pending_deletes st).
-
-(** [own_store_struct s st]: the store at a cell-level state: every field
-    ([own_store_fields]) with the invariants every method preserves
-    ([store_invs]). The reading the remaining cell-recipe proof bodies work
-    in; the specs themselves are stated over [own_store_runs]. *)
-Definition own_store_struct (s : loc) (st : store_state) : iProp Σ :=
-  "Hfields" ∷ own_store_fields s st ∗
-  "%Hinvs" ∷ ⌜store_invs st⌝.
-
-#[global] Instance own_store_fields_timeless s st : Timeless (own_store_fields s st).
-Proof.
-  rewrite /own_store_fields /own_items_field /own_registry_field /own_pending_field
-    /own_pending_deletes_field /own_deleted_set_field /own_update_structs /own_delete_spans
-    /is_update_item.
-  apply _.
-Qed.
-
-#[global] Instance own_store_struct_timeless s st : Timeless (own_store_struct s st).
-Proof. rewrite /own_store_struct. apply _. Qed.
-
-(** Assembling the store from its fields: what a method proof does once it has
-    re-established the two invariants. *)
-Lemma own_store_struct_intro (s : loc) (st : store_state) :
-  store_invs st ->
-  (s .[(yjs.store.t), "client"]) ↦ ss_client st -∗
-  (s .[(yjs.store.t), "clock"]) ↦ ss_clock st -∗
-  own_deleted_set_field (s .[(yjs.store.t), "deletedSet"]) -∗
-  own_items_field (s .[(yjs.store.t), "items"]) (ss_types st) -∗
-  own_registry_field (s .[(yjs.store.t), "types"]) (ss_bind st) -∗
-  own_type_pool (DfracOwn 1) (ss_types st) -∗
-  own_pending_field (s .[(yjs.store.t), "pending"]) (ss_pending st) -∗
-  own_pending_deletes_field (s .[(yjs.store.t), "pendingDeletes"]) (ss_pending_deletes st) -∗
-  own_store_struct s st.
-Proof.
-  move=> Hinvs. iIntros "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
-  iSplitL; last by iPureIntro.
-  iFrame.
-Qed.
+    store whole ([own_store_runs]). *)
 
 (** [own_items_field_runs l locs p]: the [items] field at run granularity:
     the index over the pool's entries ([own_item_map_runs]). *)
@@ -1357,9 +1076,8 @@ Definition own_items_field_runs (l : loc) (locs : gmap loc (list loc)) (p : pool
     "Hitemmap" ∷ own_item_map_runs items_mref (DfracOwn 1) locs p.
 
 (** [own_store_fields_runs s str]: every field of the store at its
-    run-granular state ([own_store_fields] at run granularity): the item
-    index over the pool's entries and the type pool as
-    [own_type_pool_runs]. *)
+    run-granular state: the item index over the pool's entries and the type
+    pool as [own_type_pool_runs]. *)
 Definition own_store_fields_runs (s : loc) (str : store_state_runs) : iProp Σ :=
   "Hclient" ∷ (s .[(yjs.store.t), "client"]) ↦ sr_client str ∗
   "Hclock" ∷ (s .[(yjs.store.t), "clock"]) ↦ sr_clock str ∗
@@ -1810,7 +1528,7 @@ Proof. rewrite /store_inv_excl /own_update_structs /own_delete_spans /is_update_
     - the item-set authority [own γ (●…)] per type loc (id-set), whose fragments
       are the [is_type_lb] lower bounds / registration witnesses [Text] holds;
     - each registered type's DLL (keyed by [parent]) + [YjsArrInvariant];
-    - the store's per-client item set ([own_item_map]: [store.items] holds every
+    - the store's per-client item set ([store.items] holds every
       integrated item's loc, clock-sorted — maintained by Integrate's [AddNode]);
     - the global per-client counter [Hctr] (source of [maximalId]) and its
       cell-level shadow [Hcellctr] (every same-local-client cell across ALL types
@@ -1818,8 +1536,8 @@ Proof. rewrite /store_inv_excl /own_update_structs /own_delete_spans /is_update_
       global-max side condition for the OTHER types, whose [cells_repr] is sealed
       in the [big_sepM] accumulator once THIS type is borrowed; re-established at
       each [Unlock] from the loop's carried bound (no [W64] round-trip).
-    [client]/[k]/[types] etc. are existential — the fixed lock invariant hides
-    the per-operation state. [own_item_map] and [Htypes] share the SAME [types], so
+    [client]/[k]/[types] etc. are existential; the fixed lock invariant hides
+    the per-operation state. The item index and [Htypes] share the SAME state, so
     Insert grows both consistently (DLL splice + [AddNode] tail-append).
 
     Network layer (issues #42 / #49): the lock also holds this replica's
@@ -2210,65 +1928,6 @@ Proof using ext ffi ffi_interp0 Σ hG ffi_semantics0 sem package_sem.
     split; [exact H1 | exact H2].
 Qed.
 
-(** [own_item_map] is a function of the document-global (client, clock, loc)
-    projection [cell_kp <$> all_cells] alone: two [types] with the same [cell_kp]
-    multiset carry the same run-map. [Text.Delete] flips [ic_deleted] bits, which
-    leaves every cell's [cell_kp] untouched, so the store's item set is preserved
-    verbatim across a delete — this lemma converts the item map from the
-    pre-delete [types] to the flipped-cells [types]. *)
-(* [Proof using Type] (statement variables only) instead of the file default
-   [Type*]: this pure heap/list reshuffle uses neither [seq_inG] nor
-   [ftypes_inG], so trimming them makes the lemma usable in the [store/GetNode]
-   section, which does not carry those instances (issue #54's
-   [integrateDecoded]-fresh path converts the item map across a fresh empty
-   type). *)
-Lemma own_item_map_kp_perm (mref : loc) (dq : dfrac) (M1 M2 : gmap loc type_state) :
-  cell_kp <$> all_cells M2 ≡ₚ cell_kp <$> all_cells M1 ->
-  own_item_map mref dq M1 -∗ own_item_map mref dq M2.
-Proof using Type.
-  iIntros (Hperm) "Hm". iNamed "Hm".
-  have Htwin : ∀ x, x ∈ all_cells M2 → ∃ y, y ∈ all_cells M1 ∧ cell_kp x = cell_kp y.
-  { move=> x Hx.
-    have Hin : cell_kp x ∈ cell_kp <$> all_cells M2 by apply list_elem_of_fmap_2.
-    rewrite Hperm in Hin. apply list_elem_of_fmap in Hin as (y & Hxy & Hy). by exists y. }
-  have Hrun : ∀ client, ic_loc <$> client_run M2 client = ic_loc <$> client_run M1 client.
-  { move=> client. rewrite /client_run.
-    apply merge_sort_loc_perm; [| exact (cell_pr_filter_perm client (all_cells M2) (all_cells M1) Hperm)].
-    move=> x1 x2 Hx1 Hx2 H12.
-    rewrite list_elem_of_filter in Hx1. rewrite list_elem_of_filter in Hx2.
-    destruct (Htwin x1 (proj2 Hx1)) as (y1 & Hy1 & Hkp1).
-    rewrite (cell_kp_loc x1 y1 Hkp1).
-    apply (Hclkloc y1 x2 Hy1 (proj2 Hx2)).
-    - rewrite -(cell_kp_client x1 y1 Hkp1) (proj1 Hx1) (proj1 Hx2) //.
-    - rewrite -(cell_kp_pr x1 y1 Hkp1). exact H12. }
-  iExists gm. iFrame "Hmap". iSplitL "Hruns".
-  - iApply (big_sepM_impl with "Hruns").
-    iIntros "!>" (client s Hgm) "H". iNamed "H".
-    rewrite (Hrun client). iFrame "Hslice Hcap".
-  - iPureIntro. split.
-    + move=> c Hc. apply list_elem_of_fmap in Hc as (x & -> & Hx).
-      destruct (Htwin x Hx) as (y & Hy & Hkp).
-      rewrite (cell_kp_client x y Hkp). apply Hcomplete. apply list_elem_of_fmap_2. exact Hy.
-    + move=> c1 c2 Hc1 Hc2 Hcc Hpr.
-      destruct (Htwin c1 Hc1) as (y1 & Hy1 & Hkp1).
-      destruct (Htwin c2 Hc2) as (y2 & Hy2 & Hkp2).
-      rewrite (cell_kp_loc c1 y1 Hkp1) (cell_kp_loc c2 y2 Hkp2).
-      apply (Hclkloc y1 y2 Hy1 Hy2).
-      * rewrite -(cell_kp_client c1 y1 Hkp1) -(cell_kp_client c2 y2 Hkp2). exact Hcc.
-      * rewrite -(cell_kp_pr c1 y1 Hkp1) -(cell_kp_pr c2 y2 Hkp2). exact Hpr.
-Qed.
-
-(** The item index only sees the pool's (client, clock, loc) projection, so
-    it transports along any step that keeps it ([own_item_map_kp_perm] at the
-    field level). *)
-Lemma store_items_kp_perm (s : loc) (M1 M2 : gmap loc type_state) :
-  cell_kp <$> all_cells M2 ≡ₚ cell_kp <$> all_cells M1 ->
-  own_items_field (s .[(yjs.store.t), "items"]) M1 -∗ own_items_field (s .[(yjs.store.t), "items"]) M2.
-Proof.
-  move=> Hperm. iIntros "H". iNamed "H". iExists items_mref. iFrame "Hitemsf".
-  iApply (own_item_map_kp_perm with "Hitemmap"). exact Hperm.
-Qed.
-
 Lemma is_type_binding_agree (γ : gname) (name : P) (p q : loc) :
   is_type_binding γ name p -∗ is_type_binding γ name q -∗ ⌜p = q⌝.
 Proof.
@@ -2567,7 +2226,7 @@ Proof.
 Qed.
 
 (** [store_inv] is exactly [own_store] with the model existentially closed.
-    The forward direction assembles [own_store_struct] from the exclusive
+    The forward direction assembles [own_store_runs] from the exclusive
     slice's fields and the read-shareable pool. The write lock uses this to
     hand out [own_store] ([wp_Store__wlock]) and to take it back. *)
 Lemma store_inv_own_store (s_loc : loc) (γs : store_names) (γh : history_names) :
