@@ -7,12 +7,8 @@ translated to a Rocq model with
 [goose](https://github.com/mit-pdos/perennial/tree/master/goose), and verified
 in Iris concurrent separation logic with
 [Perennial](https://github.com/mit-pdos/perennial) (`src/proof/`). The Go is a
-faithful port of [y-octo](https://github.com/y-crdt/y-octo) (Rust Yjs), each
-method citing its y-octo source in a comment, so the goal is formal
-verification of a *realistic* Yjs implementation, not a toy.
-
-Reviews of this repo are reviews of the specs and the invariants; the rules
-below are mostly about those.
+faithful port of [y-octo](https://github.com/y-crdt/y-octo) (Rust Yjs), so the
+goal is formal verification of a *realistic* Yjs implementation, not a toy.
 
 ## Build and test
 
@@ -26,11 +22,6 @@ below are mostly about those.
 
 - **After editing any `yjs/*.go`, re-run goose.** `make` alone checks the stale
   translation and the Go change silently has no effect.
-- **Run the build through the `cert-yjs` opam switch**
-  (`opam exec --switch=cert-yjs -- ./build.sh`). Its perennial pin is the
-  `iasakura` fork, whose goose carries the grovenet / wsnet `ffiMapping`;
-  translating with a goose that lacks it fails silently and only shows up much
-  later as undefined evars.
 - `make` is Rocq's vos/vok split: a `-vos` interface pass (skips Qed bodies,
   ~30s), then a `-vok` pass that checks the opaque proofs fully in parallel.
   Same assurance as `.vo`, roughly 3x faster, but it leaves no `.vo` files.
@@ -48,8 +39,9 @@ gotchas `build.sh` absorbs, and one-time environment setup. CI runs the same
 - **Spell every identifier out.** No cryptic abbreviations, in predicates,
   lemmas, binders and Go names alike: `key_pair` not `kp`, `state` not `st`,
   `leftNode` not `lft`, `delete_set` not `ds`. A reader should not have to
-  reconstruct what a name stands for. The conventional short binders of the
-  Iris and Perennial idiom (`dq`, `m`, `l`, `n`) stay.
+  reconstruct what a name stands for. Inside a proof script short forms are
+  fine, where the name lives a few lines and the goal is in view; a name in a
+  definition, a spec or the Go is spelled out.
 - **`is_X` / `own_X`**: `is_X` is persistent, duplicable knowledge (`is_Store`,
   `is_Text`, `is_text_lb`, `is_origin_id`); `own_X` is ownership,
   `dfrac`-parameterized when it is plain heap state (`own_ytype`, `own_dll`,
