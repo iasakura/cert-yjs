@@ -53,15 +53,6 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    reached from here carry it too. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 
-(* [client_run]'s merge_sort instances are [#[local]] in [store/model];
-   the run-list lemmas here need them again. *)
-#[local] Instance cell_le_dec : RelDecision cell_le.
-Proof. rewrite /cell_le. solve_decision. Defined.
-#[local] Instance cell_le_trans : Transitive cell_le.
-Proof. rewrite /cell_le. move=> x y z. lia. Qed.
-#[local] Instance cell_le_total : Total cell_le.
-Proof. rewrite /cell_le. move=> x y. lia. Qed.
-
 (** [store.getOrCreateYType], lookup-hit case: the name is already bound in
     the registry, so the creation branch is dead and the bound type comes
     back. This is the only case the verified update path needs — see

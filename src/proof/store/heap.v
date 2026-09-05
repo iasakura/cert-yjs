@@ -8,10 +8,7 @@
     - [own_item_map_kp]: the heap [map[Client][]*item] over a
       (client, clock, address) key list, which [own_item_map_runs] is over a
       run-granular state's entries.
-    - [own_store_fields s st]: every field of the struct at a [store_state]
-      (the item index, the root registry, the type pool, the two buffers, the
-      unmodeled delete-set struct), with no predicate per field on purpose.
-    - the run-granular pool (plan-item-run-split stage 2):
+    - the type pool and the store predicate:
       [own_type_pool_runs dq locs p] (over [store/value_cells]'s [locs_wf]);
       the PRIMITIVE [own_store_runs s str], the store at a
       [store_state_runs] (every field at run granularity,
@@ -29,10 +26,8 @@
       clock and client fields, [own_store_runs_clock_acc] /
       [own_store_runs_client_acc]) and
       covering-slot uniqueness ([own_store_runs_covers_unique]).
-    - [own_store_struct s st]: the store at a cell-level state, the fields
-      with the invariants every method preserves ([store_invs]); the
-      reading the remaining cell-recipe bodies work in. [own_store] is the
-      lock layer's closure of [own_store_runs] over the public model.
+      [own_store] is the lock layer's closure of [own_store_runs] over the
+      public model.
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
       hands out) and [own_delete_set_runs] (its authority, with the domain
       bound and the tombstone-bit coherence that make the bound mean
@@ -584,8 +579,8 @@ Definition own_type_pool_runs (dq : dfrac)
     ∃ ls, ⌜locs !! parent = Some ls⌝ ∗
           own_ytype_runs parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
 
-(** The run-granular type and pool are fractional (the read path holds a
-    share of the pool, [store_inv_ro]): the type through its cell reading. *)
+(** The run-granular type and pool are fractional: the read path holds a
+    share of the pool ([store_inv_ro]) while the write path holds it whole. *)
 #[global] Instance own_ytype_runs_fractional parent ls tm :
   Fractional (λ q, own_ytype_runs parent (DfracOwn q) ls tm).
 Proof.
@@ -676,9 +671,8 @@ Proof.
 Qed.
 
 (** A fully owned node struct's address is not an address of a run-granular
-    type, nor of any type of the run-granular pool (the run form of
-    [own_dll_fresh]): the source of [locs_wf]'s [NoDup] when a freshly
-    allocated node is spliced in. *)
+    type, nor of any type of the run-granular pool: the source of [locs_wf]'s
+    [NoDup] when a freshly allocated node is spliced in. *)
 Lemma own_ytype_runs_fresh (q : loc) (v : yjs.item.t) (parent : loc) (dq : dfrac)
     (ls : list loc) (tm : type_model) :
   q ↦ v -∗ own_ytype_runs parent dq ls tm -∗ ⌜q ∉ ls⌝.
@@ -796,9 +790,9 @@ Definition own_store_fields_runs (s : loc) (str : store_state_runs) : iProp Σ :
   "Hpending" ∷ own_pending_field (s .[(yjs.store.t), "pending"]) (sr_pending str) ∗
   "Hpdeletes" ∷ own_pending_deletes_field (s .[(yjs.store.t), "pendingDeletes"]) (sr_pending_deletes str).
 
-(** [store_invs_runs str]: the invariants every store method preserves, at
-    run granularity ([store_invs] with [pool_invs] read as [run_pool_invs];
-    the address [NoDup] is [own_type_pool_runs]'s [locs_wf]). *)
+(** [store_invs_runs str]: the invariants every store method preserves: the
+    pure pool invariants ([run_pool_invs]) and the registry's coherence. The
+    address [NoDup] is not here; it is [own_type_pool_runs]'s [locs_wf]. *)
 Definition store_invs_runs (str : store_state_runs) : Prop :=
   run_pool_invs (sr_pool str) ∧ pool_registry_coh (sr_bind str) (sr_pool str).
 
@@ -1239,9 +1233,9 @@ Proof. rewrite /store_inv_excl /own_update_structs /own_delete_spans /is_update_
     - the store's per-client item set ([store.items] holds every
       integrated item's loc, clock-sorted — maintained by Integrate's [AddNode]);
     - the global per-client counter [Hctr] (source of [maximalId]) and its
-      cell-level shadow [Hcellctr] (every same-local-client cell across ALL types
-      has heap clock [< k]) — what lets [Text.Insert] discharge the wrapper's
-      global-max side condition for the OTHER types, whose [cells_repr] is sealed
+      pool-wide shadow [Hcellctr] (every same-local-client run across ALL types
+      has heap clock [< k]), what lets [Text.Insert] discharge the wrapper's
+      global-max side condition for the OTHER types, whose runs are sealed
       in the [big_sepM] accumulator once THIS type is borrowed; re-established at
       each [Unlock] from the loop's carried bound (no [W64] round-trip).
     [client]/[k]/[types] etc. are existential; the fixed lock invariant hides

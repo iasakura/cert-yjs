@@ -179,8 +179,7 @@ Qed.
 
 (* [findById] is gone from the Go (issue #49): origin resolution moved to
    [store.repair], which resolves through the store-wide [GetNode] instead of
-   walking one type's list. The [findById_res] model search above is kept for
-   the [GetNode]/[repair] specs. *)
+   walking one type's list. *)
 
 (** Id uniqueness, index form: distinct positions carry distinct ids. *)
 Lemma uniqueId_lookup_ne (arr : list (YjsItem A)) (i j : nat) (x y : YjsItem A) :
@@ -198,10 +197,9 @@ Proof.
 Qed.
 
 (** [findLeftIdx]/[findRightIdx] of an element's own id resolve to its exact
-    index (ids are unique, so the first [list_find] hit is the element).
-    Companions of [findById_res] for the #49 pre-linked-item path: they let
-    [Text.Insert]/[applyUpdate] name the resolved neighbour indices the
-    Integrate spec now takes. *)
+    index (ids are unique, so the first [list_find] hit is the element). The
+    #49 pre-linked-item path uses them to let [Text.Insert] / [applyUpdate]
+    name the resolved neighbour indices the Integrate spec takes. *)
 Lemma list_find_id_at (arr : list (YjsItem A)) (kx : nat) (x : YjsItem A) :
   uniqueId arr -> arr !! kx = Some x ->
   list_find (λ item, item_id item = item_id x) arr = Some (kx, x).
@@ -2026,7 +2024,7 @@ Proof.
 Qed.
 
 (** In a valid (id-unique) array, [find_by_id] of an element's own id returns
-    that element. The reverse of [cells_repr]: locates a model item by id. *)
+    that element: how a model item is located by id. *)
 Lemma find_by_id_self (arr : list (YjsItem A)) (a : YjsItem A) :
   YjsArrInvariant arr -> a ∈ arr -> find_by_id (item_id a) arr = Some a.
 Proof.

@@ -58,15 +58,6 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    reached from here carry it too. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 
-(* [client_run]'s merge_sort instances are [#[local]] in [store/model];
-   the run-list lemmas here need them again. *)
-#[local] Instance cell_le_dec : RelDecision cell_le.
-Proof. rewrite /cell_le. solve_decision. Defined.
-#[local] Instance cell_le_trans : Transitive cell_le.
-Proof. rewrite /cell_le. move=> x y z. lia. Qed.
-#[local] Instance cell_le_total : Total cell_le.
-Proof. rewrite /cell_le. move=> x y. lia. Qed.
-
 (* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54
    weakened them off their registration resource), so [store_inv_excl] /
    [own_store] carry them as [⌜..⌝] and no Persistent/Timeless instances are
@@ -154,8 +145,6 @@ Qed.
    may address ANY char of their covering cells' runs; the clean-end /
    clean-start splits put them on run boundaries. The two splits are
    sequenced by the wrappers' transport records. *)
-
-
 
 
 (** [store.repair] at run granularity: the origin slots [(q, k)] instead of
@@ -572,10 +561,6 @@ Proof.
 Qed.
 
 
-
-
-
-
 (** The model has an id exactly when some run of the pool covers it: the
     registry's model agreement read at run granularity (the run form of
     [docm_cells_agree]). *)
@@ -767,7 +752,6 @@ Proof using Type*.
     iApply ("HΦ" with "[Hsl Hcap]").
     iExists uivs. iFrame "Hsl Hcap Hitems".
 Qed.
-
 
 
 (* ----- the arrival gate ----- *)

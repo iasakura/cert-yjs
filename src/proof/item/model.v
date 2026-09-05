@@ -282,7 +282,7 @@ Definition flip_run (r : ItemRun) : ItemRun :=
   MkItemRun (run_items r) true.
 
 (** The run's clock range [run_clock, run_clock + length) fits [w64]
-    arithmetic without wrapping: the pure content of [cell_fits]. *)
+    arithmetic without wrapping. *)
 Definition run_fits (r : ItemRun) : Prop :=
   (Z.of_nat (run_clock r) + Z.of_nat (length (run_items r)) < 2^64)%Z.
 
@@ -300,7 +300,7 @@ Definition run_covers_clock (r : ItemRun) (k : nat) : Prop :=
   (run_clock r <= k)%nat ∧ (k < run_clock r + length (run_items r))%nat.
 
 (** A run head's same-client left origin strictly precedes it in clock
-    (causal creation order): the pure content of [cell_origin_clk]. *)
+    (causal creation order). *)
 Definition run_origin_clk (r : ItemRun) : Prop :=
   ∀ originId, origin_id (origin (run_head_item r)) = Some originId →
     clientId originId = run_client r →
@@ -332,9 +332,9 @@ Proof. rewrite /run_le. move=> x y z. lia. Qed.
 Proof. rewrite /run_le. move=> x y. lia. Qed.
 
 (** Per-client clock-range disjointness of a run list, with runs told apart
-    BY INDEX (the loc-free replacement of [cells_range_disjoint], which tells
-    cells apart by [ic_loc]; the two agree when node addresses are distinct,
-    the heap-layer [NoDup]). *)
+    BY INDEX: two runs at different indices of the same client hold disjoint
+    clock ranges. (Distinct indices, not distinct node addresses: the address
+    list's [NoDup] is a heap-layer matter.) *)
 Definition runs_disjoint (runs : list ItemRun) : Prop :=
   ∀ i j r1 r2, runs !! i = Some r1 → runs !! j = Some r2 → i ≠ j →
     run_client r1 = run_client r2 →
@@ -342,7 +342,7 @@ Definition runs_disjoint (runs : list ItemRun) : Prop :=
     (run_clock r2 + length (run_items r2) <= run_clock r1)%nat.
 
 (** [runs_within before after]: every run of [after] sits inside a
-    same-client run of [before]'s clock range: the loc-free [cells_within]. *)
+    same-client run of [before]'s clock range. *)
 Definition runs_within (before after : list ItemRun) : Prop :=
   ∀ r, r ∈ after -> ∃ r0, r0 ∈ before ∧ run_client r = run_client r0 ∧
     (run_clock r0 <= run_clock r)%nat ∧
@@ -350,8 +350,8 @@ Definition runs_within (before after : list ItemRun) : Prop :=
 
 (** Splitting the [k]-th run at offset [o]: the left half keeps the first [o]
     items, the right half the rest, both inheriting the tombstone bit (the
-    yjs [splitItem] semantics). The fresh node's ADDRESS, which
-    [split_cells] threads as [r_loc], is a heap matter and does not appear. *)
+    yjs [splitItem] semantics). The fresh node's ADDRESS is a heap matter and
+    does not appear ([store/value_split]'s [split_locs] threads it). *)
 Definition split_run_left (r : ItemRun) (o : nat) : ItemRun :=
   MkItemRun (take o (run_items r)) (run_deleted r).
 
@@ -365,8 +365,8 @@ Definition split_runs (runs : list ItemRun) (k o : nat) : list ItemRun :=
   end.
 
 (** [runs_start_at runs k d] / [runs_end_at runs k d]: the [k]-th run starts
-    (ends) at the id [d]: the index-based content of [cell_starts_at] /
-    [cell_ends_at], whose node address and owning type are heap matters. *)
+    (ends) at the id [d]. The run is named by its index; its node address and
+    owning type are heap matters. *)
 Definition runs_start_at (runs : list ItemRun) (k : nat) (d : YjsId) : Prop :=
   ∃ r, runs !! k = Some r ∧ item_id (run_head_item r) = d.
 
@@ -377,9 +377,8 @@ Definition runs_end_at (runs : list ItemRun) (k : nat) (d : YjsId) : Prop :=
 (** [origins_resolved runs arr input kL kR]: the cursor indices at which the
     resolved origins of [input] in [arr] sit: the run cursor [kL] whose
     prefix sum is one past the left origin's model index ([findLeftIdx]) and
-    [kR] whose prefix sum is the right origin's ([findRightIdx]). The
-    index-based content of [origins_linked]: the linked node ADDRESSES are
-    [node_loc] of these cursors, a value-layer fact. *)
+    [kR] whose prefix sum is the right origin's ([findRightIdx]). The linked
+    node ADDRESSES are [loc_at] of these cursors, a value-layer fact. *)
 Definition origins_resolved (runs : list ItemRun) (arr : list (YjsItem A))
     (input : IntegrateInput (A := A)) (kL kR : nat) : Prop :=
   ∃ (leftIdx rightIdx : Z),
@@ -394,8 +393,8 @@ Definition origins_resolved (runs : list ItemRun) (arr : list (YjsItem A))
     integrate does, loc-free: a fresh live run is spliced into [runs] at the
     cursor [idx], and its items into [arr] at the matching model index (the
     prefix sum of the runs before it). The new node's address and type are
-    heap matters ([integrate_splice] carries them; the address list gets the
-    same splice, [store/value_cells]'s [integrate_locs]).
+    heap matters (the address list gets the same splice,
+    [store/value_cells]'s [integrate_locs]).
     [runs_integrate_splice] hides the cursor. *)
 Definition runs_integrate_splice_at (idx : nat) (runs : list ItemRun)
     (arr : list (YjsItem A)) (run : list (YjsItem A))
@@ -442,17 +441,15 @@ Definition input_of_run (r : ItemRun) : IntegrateInput (A := A) :=
 (** [run_per_char r]: each item of the run carries exactly one byte of the
     string the run spells: the per-char granularity of the model
     (issue #28). The wire view ([input_of_run]) alone cannot recover how
-    its content splits over the run's items; today the heap content pin
-    ([own_dll]'s explode equation) carries it, and the run-granular DLL
-    ([own_dll_runs]) states it per run. *)
+    its content splits over the run's items, so the DLL ([own_dll_runs])
+    states it per run, next to the node's content pin. *)
 Definition run_per_char (r : ItemRun) : Prop :=
   content <$> run_items r = explode (items_string (run_items r)).
 
 (* ===== lemmas ============================================================= *)
 
 (** The flatten and the visible count are invariant under a split, and a flip
-    only drops the flipped run's characters from the visible count: the run
-    halves of [split_cells_flatten] / [split_cells_num_visible], loc-free. *)
+    only drops the flipped run's characters from the visible count. *)
 Lemma runs_flatten_nil : runs_flatten [] = [].
 Proof. reflexivity. Qed.
 
@@ -465,8 +462,8 @@ Proof.
 Qed.
 
 (** A run whose per-char contents explode a heap content string spells exactly
-    that string (the [own_dll] node fact, consumed by the [yType.Text] walk
-    and the stage-3 node borrows). *)
+    that string (the [own_item_node] content pin, consumed by the [yType.Text]
+    walk and the node borrows). *)
 Lemma items_string_explode (r : list (YjsItem A)) (s : go_string) :
   content <$> r = explode s -> items_string r = s.
 Proof.
@@ -727,7 +724,7 @@ Proof.
 Qed.
 
 (** A run's [off]-th char sits in the flatten at that run's prefix sum plus
-    [off] (the run form of [item/value]'s [run_flatten_lookup_of_cell]). *)
+    [off]: what makes a run cursor and a character index interchangeable. *)
 Lemma runs_flatten_lookup_of_run (runs : list ItemRun) (k off : nat)
     (r : ItemRun) (it : YjsItem A) :
   runs !! k = Some r -> run_items r !! off = Some it ->

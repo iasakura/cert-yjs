@@ -832,6 +832,40 @@ vocabulary substitution table written; then C5 restates the specs at
     timeless / fractional instances (`own_dll_cells_layout_*`, `own_dll_*`,
     `own_ytype_cells_*`). `own_ytype_runs` is now THE type predicate.
 
+    PROGRESS 2026-09-06 (C6-4g): the cell DLL is deleted. `own_dll` and
+    `own_dll_cells_layout` with their whole law set (the monoid, the
+    endpoints, the borrows in both the cell and the node forms, freshness,
+    the id bounds, the runs bridge `own_dll_cells_layout_as_runs` /
+    `own_dll_unfold_layout`) and the cells-based `own_dll_runs_wf` are
+    gone: 1252 lines out of `item/heap`, which now holds `own_item_node`
+    and `own_dll_runs` alone. What is left of the cell layer is the pure
+    side: `item_cell` / `type_state` and the `value_*` laws over them.
+
+    PROGRESS 2026-09-06 (C6-4g, second half): the dead pure cell layer is
+    deleted too, in the same change (a deletion is one PR, not a stack).
+    234 declarations across `item/value`, `ytype/value`, `store/value_cells`,
+    `value_split`, `value_live` and `value_span` had no live user left:
+    the cell repr / model isomorphism, the cell pool invariants
+    (`pool_invs`, `cells_range_disjoint`, `cell_fits`, `cell_origin_clk`),
+    the cell split surgery with the four `*_types_update_rel` transport
+    records, the whole live-cell refinement file (`value_live` is now
+    empty and removed), and the cell readings of the item index. Every
+    file's header is rewritten to what it now holds.
+
+    What survives of the cells is a PROOF DEVICE, not a representation:
+    `item_cell` / `type_state` / `types_of_locs_pool` and their round-trip
+    laws pair each address with its run so that an index law
+    (`kp_client_locs_*`, `pool_entries_*`, `visible_string_runs_take_S`)
+    can be proved by induction over one list. No predicate and no spec
+    mentions a cell. Retiring that bridge means re-proving those laws
+    natively over `(locs, p)`, which is a change rather than a deletion,
+    so it is its own step (C6-4h).
+
+  - **C6-4h, retire the addressed-run bridge.** Re-prove the index and
+    read-API laws directly over the address map and the run pool, then
+    delete `item_cell`, `type_state`, `cells_of_locs_runs`,
+    `types_of_locs_pool`, `pool_of` / `locs_of` and the `cell_*` readings.
+
   - **C6-5, fold `tm_arr`.** `type_model` becomes the run list alone
     (`tm_arr = runs_flatten`), if the specs read better that way.
 

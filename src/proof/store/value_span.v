@@ -1,6 +1,5 @@
-(** The [store] VALUE layer, part 4: ID RANGES, WIRE SPANS and the by-id
-    search. Independent of the cell bookkeeping; it only needs the [item]
-    layer.
+(** The [store] VALUE layer, part 3: ID RANGES and WIRE SPANS. Independent of
+    the type pool; it only needs the [item] layer.
 
     Definitions
     - [range_ids] / [range_no_overflow]: the ids a clock range denotes and the
@@ -10,19 +9,16 @@
       conflict scan's [idSpan], and the pure wire record [delete_span] with
       [delete_span_of_val] / [delete_span_ids] / [delete_batch_ids] /
       [delete_span_no_overflow] for the wire's [deleteSpan].
-    - [cell_has_id] / [findById_res], the by-id search, and [cell_covers]: the
-      model id [d] addresses a char of cell [c]'s run.
 
     Laws
     - [span_ids] is exactly the clock-interval test ([span_ids_elem] at the
-      heap level, [range_ids_elem] / [span_ids_elem_nat] at the model level),
-      is the singleton on a length-1 span, splits at any interior point
-      ([span_ids_split]), and matches a run's char ids ([span_ids_char_ids]).
+      heap level, [range_ids_elem] at the model level), grows by one span at
+      a time ([span_union_snoc]), and matches a run's char ids
+      ([span_ids_char_ids]).
     - a batch covers each of its spans ([delete_span_ids_subseteq_batch]) and
       is monotone in them ([delete_batch_ids_mono]).
 
-    The rest of the value layer: [store/value_cells.v], [store/value_live.v],
-    [store/value_split.v]. *)
+    The rest of the value layer: [store/value_cells.v], [store/value_split.v]. *)
 
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
@@ -53,16 +49,6 @@ Local Notation Ev := (@Event Op).
 Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (* ===== definitions ======================================================== *)
-
-(** [cell_covers c d]: the model id [d] addresses a char of cell [c]'s run
-    (issue #28 U7c): same client as the run head, and clock inside the run's
-    range [head clock, head clock + run length). The per-char [run_wf] id law
-    ([run_wf_char_id]) makes this exactly "[d] is the id of some [ic_run c]
-    char". Replaces the all-singleton head-only [item_id (run_head c) = d]. *)
-Definition cell_covers (c : item_cell) (d : YjsId) : Prop :=
-  clientId (item_id (run_head c)) = clientId d ∧
-  (clock (item_id (run_head c)) <= clock d)%nat ∧
-  (clock d < clock (item_id (run_head c)) + length (ic_run c))%nat.
 
 (* ===== wire-level drain (issue #40 x issue #28 U7c) =======================
    The Go [applyUpdate] loop drains WIRE items (whole [updateItem] structs),
@@ -178,21 +164,6 @@ Definition span_no_overflow (v : yjs.idSpan.t) : Prop :=
 
 (* ----- findById: locate a node by id in the DLL ------------------------- *)
 
-(** The cell predicate [findById] decides: a cell whose model id is [toYjsId idv].
-    [findById] returns the first matching node's location, or [null]. *)
-Definition cell_has_id (idv : yjs.id.t) (c : item_cell) : Prop :=
-  item_id (run_head c) = toYjsId idv.
-
-#[local] Instance cell_has_id_dec idv c : Decision (cell_has_id idv c).
-Proof. rewrite /cell_has_id. apply _. Defined.
-
-(** Result location of [findById] over a cell list: first match, else [null]. *)
-Definition findById_res (cells : list item_cell) (idv : yjs.id.t) : loc :=
-  match list_find (cell_has_id idv) cells with
-  | Some (_, c) => ic_loc c
-  | None => null
-  end.
-
 (* ===== lemmas ============================================================= *)
 
 Lemma delete_span_ids_subseteq_batch (sp : delete_span) (spans : list delete_span) :
@@ -257,58 +228,6 @@ Proof.
     exists (clock i - uint.nat start)%nat. split.
     + destruct i as [ci ki]. simpl in *. f_equal; [done | lia].
     + apply elem_of_seq. lia.
-Qed.
-
-(** The same test on the runtime carrier, for callers that hold a model id
-    rather than a heap one. *)
-Lemma span_ids_elem_nat (v : yjs.idSpan.t) (i : YjsId) :
-  i ∈ span_ids v ↔
-    (clientId i = uint.nat v.(yjs.idSpan.id').(yjs.id.clientId') ∧
-     (uint.nat v.(yjs.idSpan.id').(yjs.id.clock') <= clock i)%nat ∧
-     (clock i < uint.nat v.(yjs.idSpan.id').(yjs.id.clock')
-                + uint.nat v.(yjs.idSpan.len'))%nat).
-Proof. rewrite /span_ids range_ids_elem //. Qed.
-
-(** A span splits at any interior point, which is how a delete loop grows its
-    "covered so far" record one node at a time. The no-wrap premise is the
-    same [w64] honesty the store's [cell_fits] provides. *)
-Lemma span_ids_split (cl clk l1 l2 : w64) :
-  (uint.Z clk + uint.Z l1 + uint.Z l2 < 2^64)%Z ->
-  span_ids (yjs.idSpan.mk (yjs.id.mk cl clk) (word.add l1 l2))
-  = span_ids (yjs.idSpan.mk (yjs.id.mk cl clk) l1)
-    ∪ span_ids (yjs.idSpan.mk (yjs.id.mk cl (word.add clk l1)) l2).
-Proof.
-  move=> Hnw. apply set_eq => i.
-  rewrite elem_of_union !span_ids_elem_nat /=.
-  have Hs : uint.Z (word.add l1 l2) = uint.Z l1 + uint.Z l2 by word.
-  have Hc : uint.Z (word.add clk l1) = uint.Z clk + uint.Z l1 by word.
-  have Hn : ∀ w : w64, Z.of_nat (uint.nat w) = uint.Z w by move=> w; word.
-  split.
-  - move=> [Hcid [Hle Hlt]].
-    destruct (decide (clock i < uint.nat clk + uint.nat l1)%nat) as [Hin | Hin].
-    + left. split_and!; [exact Hcid | exact Hle | exact Hin].
-    + right. split_and!; [exact Hcid | | ].
-      * have := Hn clk. have := Hn l1. lia.
-      * have := Hn clk. have := Hn l1. have := Hn l2. have := Hn (word.add l1 l2).
-        have := Hn (word.add clk l1). lia.
-  - move=> [[Hcid [Hle Hlt]] | [Hcid [Hle Hlt]]].
-    + split_and!; [exact Hcid | exact Hle |].
-      have := Hn clk. have := Hn l1. have := Hn l2. have := Hn (word.add l1 l2). lia.
-    + split_and!; [exact Hcid | |].
-      * have := Hn clk. have := Hn l1. have := Hn (word.add clk l1). lia.
-      * have := Hn clk. have := Hn l1. have := Hn l2. have := Hn (word.add l1 l2).
-        have := Hn (word.add clk l1). lia.
-Qed.
-
-(** A length-1 span denotes exactly its head id (the pre-#28 singleton case). *)
-Lemma span_ids_singleton (v : yjs.idSpan.t) :
-  v.(yjs.idSpan.len') = W64 1 ->
-  span_ids v = {[ toYjsId v.(yjs.idSpan.id') ]}.
-Proof.
-  move=> Hlen. rewrite /span_ids /range_ids Hlen.
-  have -> : uint.nat (W64 1) = 1%nat by word.
-  rewrite /= Nat.add_0_r /toYjsId.
-  by rewrite (right_id_L ∅ (∪)).
 Qed.
 
 (** Appending one span adds its char ids in accumulator order. *)

@@ -88,7 +88,7 @@ Definition inserted_run (L L' ins : list (YjsItem A)) (cs : A) (client k0 : nat)
 
 (** A ready item's same-client origin is older than it: the origin resolves
     to a document item ([toItem]) and the item is its client's newest
-    ([maximalId]). What [cell_origin_clk] asks of the cell it lands in. *)
+    ([maximalId]). What [run_origin_clk] asks of the run it lands in. *)
 Lemma integrate_ready_origin_clk (arr : list (YjsItem A)) (input : IntegrateInput (A := A))
     (newItem : YjsItem A) :
   integrate_ready arr input newItem ->
@@ -376,8 +376,8 @@ Notation A := go_string.
 
 (** [type_model]: one registered type, loc-free: its list of runs and the
     per-char document list they flatten to ([tm_arr = runs_flatten tm_runs]
-    wherever the heap holds it; the equation is [cells_repr]'s projection,
-    kept as a fact rather than folded away until stage 4). *)
+    wherever the heap holds it, kept as a fact rather than folded away until
+    docs/plan-item-run-split.md stage C6-5). *)
 Record type_model := MkTypeModel {
   tm_runs : list ItemRun;
   tm_arr  : list (YjsItem A);
