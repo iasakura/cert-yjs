@@ -306,6 +306,19 @@ Definition run_origin_clk (r : ItemRun) : Prop :=
     clientId originId = run_client r →
     (clock originId < run_clock r)%nat.
 
+(** [run_invs r]: what a run of a store is. Its chars are one client's
+    consecutive clocks from its head ([run_wf]); its head id round-trips
+    through the machine words the heap stores, creator and clock range alike
+    ([run_fits] plus the creator bound); and a same-client left origin was
+    created before it ([run_origin_clk]). [store/model]'s [run_pool_invs] is
+    this over every run of a pool, so a spec that needs any of these facts
+    about a run asks for [run_invs] rather than listing them. *)
+Definition run_invs (r : ItemRun) : Prop :=
+  run_wf (run_items r) ∧
+  run_fits r ∧
+  (Z.of_nat (run_client r) < 2^64)%Z ∧
+  run_origin_clk r.
+
 (** The clock order on runs: what sorts a client's run list. *)
 Definition run_le (r1 r2 : ItemRun) : Prop := (run_clock r1 <= run_clock r2)%nat.
 

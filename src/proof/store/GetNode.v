@@ -400,7 +400,9 @@ Proof using Type*.
     destruct His as [ls Hls]. exists ls. split; [done | exact (Hlens parent ls tm Hls Hp)]. }
   iDestruct (own_type_pool_runs_id_bounds with "Htypes") as %Hbnds.
   iDestruct (own_type_pool_runs_run_wf with "Htypes") as %Hwfall.
-  have [Hfits [Hdisj _]] := Hrpi.
+  have [Hinvall Hdisj] := Hrpi.
+  have Hfits : ∀ r0, r0 ∈ all_runs p -> run_fits r0
+    := λ r0 Hr0, proj1 (proj2 (Hinvall r0 Hr0)).
   have Hsort : StronglySorted entry_le E := proj1 Hsce.
   have Hndl : NoDup (pool_entries locs p).*1 := pool_entries_locs_NoDup locs p Hdom Hlens' Hnd.
   have Hidisj := sorted_client_entries_disjoint locs p kc E Hdom Hlens' Hndl (λ r Hr, proj1 (Hbnds r Hr)) Hdisj Hsce.

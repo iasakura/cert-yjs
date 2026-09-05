@@ -1617,10 +1617,12 @@ Proof.
   have Hleq : locs_of (types_of_locs_pool locs p) = locs
     := locs_of_types_of_locs_pool locs p (proj1 Haligned) Hprem.
   iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnd.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwf.
   have Hnd : NoDup (ic_loc <$> all_cells (types_of_locs_pool locs p)) := proj1 (proj2 (proj1 Hinvs)).
   have Hrp : run_pool_invs p.
   { rewrite -Hpeq.
-    exact (run_pool_invs_of _ (λ c Hc, proj2 (Hbnd c Hc)) (λ c Hc, proj1 (Hbnd c Hc)) (proj1 Hinvs)). }
+    exact (run_pool_invs_of _ Hwf (λ c Hc, proj2 (Hbnd c Hc)) (λ c Hc, proj1 (Hbnd c Hc))
+             (proj1 Hinvs)). }
   have Hreg : pool_registry_coh bind p.
   { rewrite -Hpeq. apply registry_coh_pool. exact (proj2 Hinvs). }
   iDestruct (own_type_pool_runs_of _ Hnd with "Htypes") as "Htypes".
@@ -2086,9 +2088,10 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "%Hctr"   ∷ ⌜∀ parent tm x, p !! parent = Some tm → x ∈ tm_arr tm →
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
-    (* the pool invariants (issue #28) at run granularity: clock-range
-       disjointness, [run_fits], [run_origin_clk] (the address [NoDup] is
-       [own_type_pool_runs]'s [locs_wf], in the read-shareable half) *)
+    (* the pool invariants (issue #28) at run granularity: every run
+       satisfies [run_invs] and the clock ranges are disjoint (the address
+       [NoDup] is [own_type_pool_runs]'s [locs_wf], in the read-shareable
+       half) *)
     "%Hpool" ∷ ⌜run_pool_invs p⌝ ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ q ∈ bind, is_type_binding γs.(sn_types) name q) ∗
@@ -2921,7 +2924,7 @@ Proof.
   iSplitR. { iPureIntro. move=> parent' tm' x Hlk. rewrite /p lookup_empty // in Hlk. }
   iSplitR.
   { iPureIntro. rewrite /run_pool_invs /all_runs /p map_to_list_empty /=.
-    split_and!; [by move=> r /elem_of_nil | | by move=> r /elem_of_nil].
+    split; first by move=> r /elem_of_nil.
     move=> i j r1 r2 Hi. rewrite lookup_nil // in Hi. }
   iSplitR. { rewrite big_sepM_empty //. }
   iPureIntro. split_and!.

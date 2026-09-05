@@ -336,7 +336,7 @@ Proof using Type*.
   iDestruct (own_store_runs_run_pool_invs with "Hruns") as %Hrinv1.
   have HrRmem : rR ∈ all_runs p1.
   { apply (elem_of_all_runs_lookup p1 pw tmR rR HpR). left. exact (list_elem_of_lookup_2 _ _ _ HrR). }
-  have HrRfits : run_fits rR := proj1 Hrinv1 rR HrRmem.
+  have HrRfits : run_fits rR := proj1 (proj2 (proj1 Hrinv1 rR HrRmem)).
   iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs1 p1 bind pend pdel) pw lsR tmR kR rl rR
                HlsR HpR HkRloc HrR with "Hruns") as (ivR) "H".
   iNamed "H".

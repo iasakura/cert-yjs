@@ -2130,30 +2130,41 @@ Qed.
 (** [addNode items it] at run granularity: append the freshly integrated
     node's address to its client's slice of the item index (y-octo
     [store::add_item], a [&mut self] method there; a free function here so
-    the footprint is visible, CLAUDE.md "Spec shape"). The node at [item_l]
-    is the [idx]-th of the type at [parent] after the splice, its entry is
-    the one the splice added ([pool_entries_integrate]) and its clock is
-    past every same-client run of the pool, so the append keeps the slice
-    clock-sorted ([kp_client_locs_snoc_max]). [own_ytype_runs parent] owns
-    the node, through which the function reads [it.id.clientId]. *)
+    the footprint is visible, CLAUDE.md "Spec shape").
+
+    The node at [item_l] is the [idx]-th of the type at [parent] after the
+    splice and its entry is the one the splice added, so the append lands
+    at the END of that client's slice: the new run starts past every
+    same-client run already in the pool ([pool_run_clock_below]), which is
+    what keeps the slice clock-sorted ([kp_client_locs_snoc_max]). What the
+    pool guarantees about the runs already there is [run_pool_invs], and
+    [run_invs] is the same about the new one (its key is a machine word
+    because its head id is); [run_pool_invs] carries it once the splice is
+    in. *)
 #[local] Lemma wp_addNode_runs (items_mref parent item_l : loc) (locs : gmap loc (list loc)) (p : pool)
     (ls' : list loc) (tm' : type_model) (idx : nat) (r : ItemRun) :
   ls' !! idx = Some item_l ->
   tm_runs tm' !! idx = Some r ->
   pool_entries (<[parent := ls']> locs) (<[parent := tm']> p) ≡ₚ (item_l, r) :: pool_entries locs p ->
-  (∀ r0, r0 ∈ all_runs p -> run_client r0 = run_client r ->
-     (run_clock r0 + length (run_items r0) <= run_clock r)%nat) ->
-  (∀ r0, r0 ∈ all_runs p -> (Z.of_nat (run_client r0) < 2^64)%Z ∧ (Z.of_nat (run_clock r0) < 2^64)%Z) ->
-  (∀ r0, r0 ∈ all_runs p -> run_items r0 ≠ []) ->
-  (Z.of_nat (run_client r) < 2^64)%Z ->
-  (Z.of_nat (run_clock r) < 2^64)%Z ->
+  run_pool_invs p ->
+  pool_run_clock_below p (item_id (run_head_item r)) ->
+  run_invs r ->
   {{{ is_pkg_init yjs ∗ own_ytype_runs parent (DfracOwn 1) ls' tm' ∗
       own_item_map_runs items_mref (DfracOwn 1) locs p }}}
     @! yjs.addNode #items_mref #item_l
   {{{ RET #(); own_ytype_runs parent (DfracOwn 1) ls' tm' ∗
       own_item_map_runs items_mref (DfracOwn 1) (<[parent := ls']> locs) (<[parent := tm']> p) }}}.
 Proof using Type*.
-  move=> Hlk Hrk Hperm Hbelow Hbnds Hne Hclb Hckb.
+  move=> Hlk Hrk Hperm Hrpi Hbelow Hinvr.
+  have [Hinvpool _] := Hrpi.
+  have [_ [Hfitsr Hclb]] := Hinvr.
+  have Hbnds : ∀ r0, r0 ∈ all_runs p ->
+      (Z.of_nat (run_client r0) < 2^64)%Z ∧ (Z.of_nat (run_clock r0) < 2^64)%Z.
+  { move=> r0 Hr0. have [_ [Hf [Hc _]]] := Hinvpool r0 Hr0.
+    split; [exact Hc |]. move: Hf. rewrite /run_fits. lia. }
+  have Hne : ∀ r0, r0 ∈ all_runs p -> run_items r0 ≠ [].
+  { move=> r0 Hr0. exact (proj1 (proj1 (Hinvpool r0 Hr0))). }
+  have Hckb : (Z.of_nat (run_clock r) < 2^64)%Z by (move: Hfitsr; rewrite /run_fits; lia).
   wp_start as "(Hyt & Hitemmap)".
   wp_auto.
   iDestruct "Hyt" as (yt tl) "(Hpar & Hdll & %Hlen & %Harr)".
@@ -2185,7 +2196,8 @@ Proof using Type*.
     { have H1 : W64 (run_client re) = kc := Hac.
       have H2 : W64 (run_client r) = kc := Hkc_kp.
       rewrite -H2 in H1. clear -H1 Hclbe Hclb. word. }
-    have Hb := Hbelow re Hmem Hcle.
+    have Hb : (run_clock re + length (run_items re) <= run_clock r)%nat
+      := Hbelow re Hmem Hcle.
     have Hlenpos : (1 <= length (run_items re))%nat by (destruct (run_items re); [done | simpl; lia]).
     rewrite Hkp_clock /entry_kp /entry_pr /= (entry_clock_Z le re Hckbe). lia. }
   have Hnokey : ∀ a, a ∈ kps -> a.1 = kp.1 -> a.2.1 = kp.2.1 -> False.
@@ -2318,7 +2330,11 @@ Proof using Type*.
   have Hidnew : item_id newItem = in_id input := commutativity.toItem_id input (tm_arr tm) newItem Htoitem.
   have Hrunsall : ∀ r, r ∈ tm_runs tm -> r ∈ all_runs p.
   { move=> r Hr. apply elem_of_all_runs. exists parent, tm. split; [exact Hpl | exact Hr]. }
-  have [Hfitsall [_ Hoclkall]] := Hrpi.
+  have [Hinvall _] := Hrpi.
+  have Hfitsall : ∀ r0, r0 ∈ all_runs p -> run_fits r0
+    := λ r0 Hr0, proj1 (proj2 (Hinvall r0 Hr0)).
+  have Hoclkall : ∀ r0, r0 ∈ all_runs p -> run_origin_clk r0
+    := λ r0 Hr0, proj2 (proj2 (proj2 (Hinvall r0 Hr0))).
   have Hfits : ∀ r, r ∈ tm_runs tm -> run_fits r := λ r Hr, Hfitsall r (Hrunsall r Hr).
   have Hoclk : ∀ r, r ∈ tm_runs tm -> run_origin_clk r := λ r Hr, Hoclkall r (Hrunsall r Hr).
   have Hnec : Forall (λ r, run_items r ≠ []) (tm_runs tm).
@@ -2361,24 +2377,31 @@ Proof using Type*.
     { rewrite /run_client /run_head_item /r /= (proj1 Hden) //. }
     have Hrclock : run_clock r = clock (in_id input).
     { rewrite /run_clock /run_head_item /r /= (proj1 Hden) //. }
-    have Hbelowr : ∀ r0, r0 ∈ all_runs p -> run_client r0 = run_client r ->
-        (run_clock r0 + length (run_items r0) <= run_clock r)%nat.
-    { move=> r0 Hr0 Hc. rewrite Hrclock. apply Hbelow; [exact Hr0 | rewrite -Hrclient //]. }
+    have Hbelowr : pool_run_clock_below p (item_id (run_head_item r)).
+    { have -> : item_id (run_head_item r) = in_id input
+        by rewrite /run_head_item /r /= (proj1 Hden) //.
+      exact Hbelow. }
     have Hrclb : (Z.of_nat (run_client r) < 2^64)%Z by rewrite Hrclient.
-    have Hrckb : (Z.of_nat (run_clock r) < 2^64)%Z by rewrite Hrclock.
-    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
-    wp_auto.
-    wp_apply (wp_addNode_runs items_mref parent item_l locs p ls' tm' idx r
-                Hlk' Hrk' Hperm Hbelowr Hbnds Hne Hrclb Hrckb with "[$Hpkg $Htext' $Hitemmap]").
-    iIntros "(Htext' & Hitemmap)".
-    wp_auto.
     have Hfitsr : run_fits r.
     { rewrite /run_fits Hrclock /r /= (proj2 (proj2 (proj2 Hden))). exact Hfitsin. }
     have Hoclkr : run_origin_clk r.
     { move=> originId Hoid Hcl. rewrite /run_head_item /run_client /run_clock /r /= in Hoid Hcl *.
       rewrite (proj1 (proj2 Hden)) in Hoid. rewrite (proj1 Hden) -Hidnew in Hcl *.
       exact (integrate_ready_origin_clk (tm_arr tm) input newItem (conj Htoitem (conj Hvalid Hmax)) originId Hoid Hcl). }
-    have Hrpi2 : run_pool_invs p2 := run_pool_invs_integrate p parent tm idx r arr' Hpl Hfitsr Hoclkr Hbelowr Hrpi.
+    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
+    wp_auto.
+    (* the spliced run is chained: read it off the node the type now holds *)
+    iDestruct "Htext'" as (yt' tl') "(Hparent' & Hdll' & %Hlen' & %Harr')".
+    iDestruct (own_dll_runs_acc _ _ _ _ ls' runs' idx item_l r Hlk' Hrk' with "Hdll'")
+      as (prev' nxt') "(_ & _ & %Hwfr & _ & _ & Hnode' & Hback')".
+    iDestruct ("Hback'" with "Hnode'") as "Hdll'".
+    iAssert (own_ytype_runs parent (DfracOwn 1) ls' tm') with "[Hparent' Hdll']" as "Htext'".
+    { iExists yt', tl'. iFrame "Hparent' Hdll'". iPureIntro. split; [exact Hlen' | exact Harr']. }
+    wp_apply (wp_addNode_runs items_mref parent item_l locs p ls' tm' idx r
+                Hlk' Hrk' Hperm Hrpi Hbelowr
+                (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) with "[$Hpkg $Htext' $Hitemmap]").
+    iIntros "(Htext' & Hitemmap)".
+    wp_auto.
     have Hlocswf2 : locs_wf locs2 p2
       := locs_wf_integrate locs p parent ls tm idx item_l r arr' Hlocs Hpl Hfreshloc Hlocswf0.
     have Hreg2 : pool_registry_coh bind p2 := pool_registry_coh_insert_existing bind p parent tm tm' Hpl Hreg.
@@ -2392,6 +2415,9 @@ Proof using Type*.
       iDestruct "H" as (lsq) "(%Hlsq & Hyt & %Hinvq)". iExists lsq. iFrame "Hyt".
       iPureIntro. split; [| exact Hinvq].
       apply lookup_delete_Some in Hq as [Hne' _]. rewrite /locs2 lookup_insert_ne //. }
+    have Hrpi2 : run_pool_invs p2
+      := run_pool_invs_integrate p parent tm idx r arr' Hpl
+           (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) Hbelowr Hrpi.
     iApply ("HΦ" $! runs' ls' run).
     iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes";
       last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
@@ -2433,24 +2459,31 @@ Proof using Type*.
     { rewrite /run_client /run_head_item /r /= (proj1 Hden) //. }
     have Hrclock : run_clock r = clock (in_id input).
     { rewrite /run_clock /run_head_item /r /= (proj1 Hden) //. }
-    have Hbelowr : ∀ r0, r0 ∈ all_runs p -> run_client r0 = run_client r ->
-        (run_clock r0 + length (run_items r0) <= run_clock r)%nat.
-    { move=> r0 Hr0 Hc. rewrite Hrclock. apply Hbelow; [exact Hr0 | rewrite -Hrclient //]. }
+    have Hbelowr : pool_run_clock_below p (item_id (run_head_item r)).
+    { have -> : item_id (run_head_item r) = in_id input
+        by rewrite /run_head_item /r /= (proj1 Hden) //.
+      exact Hbelow. }
     have Hrclb : (Z.of_nat (run_client r) < 2^64)%Z by rewrite Hrclient.
-    have Hrckb : (Z.of_nat (run_clock r) < 2^64)%Z by rewrite Hrclock.
-    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
-    wp_auto.
-    wp_apply (wp_addNode_runs items_mref parent item_l locs p ls' tm' idx r
-                Hlk' Hrk' Hperm Hbelowr Hbnds Hne Hrclb Hrckb with "[$Hpkg $Htext' $Hitemmap]").
-    iIntros "(Htext' & Hitemmap)".
-    wp_auto.
     have Hfitsr : run_fits r.
     { rewrite /run_fits Hrclock /r /= (proj2 (proj2 (proj2 Hden))). exact Hfitsin. }
     have Hoclkr : run_origin_clk r.
     { move=> originId Hoid Hcl. rewrite /run_head_item /run_client /run_clock /r /= in Hoid Hcl *.
       rewrite (proj1 (proj2 Hden)) in Hoid. rewrite (proj1 Hden) -Hidnew in Hcl *.
       exact (integrate_ready_origin_clk (tm_arr tm) input newItem (conj Htoitem (conj Hvalid Hmax)) originId Hoid Hcl). }
-    have Hrpi2 : run_pool_invs p2 := run_pool_invs_integrate p parent tm idx r arr' Hpl Hfitsr Hoclkr Hbelowr Hrpi.
+    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
+    wp_auto.
+    (* the spliced run is chained: read it off the node the type now holds *)
+    iDestruct "Htext'" as (yt' tl') "(Hparent' & Hdll' & %Hlen' & %Harr')".
+    iDestruct (own_dll_runs_acc _ _ _ _ ls' runs' idx item_l r Hlk' Hrk' with "Hdll'")
+      as (prev' nxt') "(_ & _ & %Hwfr & _ & _ & Hnode' & Hback')".
+    iDestruct ("Hback'" with "Hnode'") as "Hdll'".
+    iAssert (own_ytype_runs parent (DfracOwn 1) ls' tm') with "[Hparent' Hdll']" as "Htext'".
+    { iExists yt', tl'. iFrame "Hparent' Hdll'". iPureIntro. split; [exact Hlen' | exact Harr']. }
+    wp_apply (wp_addNode_runs items_mref parent item_l locs p ls' tm' idx r
+                Hlk' Hrk' Hperm Hrpi Hbelowr
+                (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) with "[$Hpkg $Htext' $Hitemmap]").
+    iIntros "(Htext' & Hitemmap)".
+    wp_auto.
     have Hlocswf2 : locs_wf locs2 p2
       := locs_wf_integrate locs p parent ls tm idx item_l r arr' Hlocs Hpl Hfreshloc Hlocswf0.
     have Hreg2 : pool_registry_coh bind p2 := pool_registry_coh_insert_existing bind p parent tm tm' Hpl Hreg.
@@ -2464,6 +2497,9 @@ Proof using Type*.
       iDestruct "H" as (lsq) "(%Hlsq & Hyt & %Hinvq)". iExists lsq. iFrame "Hyt".
       iPureIntro. split; [| exact Hinvq].
       apply lookup_delete_Some in Hq as [Hne' _]. rewrite /locs2 lookup_insert_ne //. }
+    have Hrpi2 : run_pool_invs p2
+      := run_pool_invs_integrate p parent tm idx r arr' Hpl
+           (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) Hbelowr Hrpi.
     iApply ("HΦ" $! runs' ls' run).
     iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes";
       last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).

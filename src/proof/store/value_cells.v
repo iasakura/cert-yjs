@@ -627,19 +627,22 @@ Proof.
 Qed.
 
 Lemma run_pool_invs_of (types : gmap loc type_state) :
+  (∀ c, c ∈ all_cells types -> run_wf (ic_run c)) ->
   (∀ c, c ∈ all_cells types -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
   (∀ c, c ∈ all_cells types -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
   pool_invs types ->
   run_pool_invs (pool_of types).
 Proof.
-  move=> Hckb Hclb [Hfits [Hnd [Hdisj Hoc]]].
+  move=> Hwf Hckb Hclb [Hfits [Hnd [Hdisj Hoc]]].
   rewrite /run_pool_invs all_runs_pool_of.
   split_and!.
   - intros r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
-    apply (cell_fits_run c (Hckb c Hc)). exact (Hfits c Hc).
+    split_and!.
+    + exact (Hwf c Hc).
+    + apply (cell_fits_run c (Hckb c Hc)). exact (Hfits c Hc).
+    + exact (Hclb c Hc).
+    + apply cell_origin_clk_run. exact (Hoc c Hc).
   - apply (cells_range_disjoint_runs _ Hckb Hclb Hnd). exact Hdisj.
-  - intros r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
-    apply cell_origin_clk_run. exact (Hoc c Hc).
 Qed.
 
 (** The converse: the pool invariants at the cells, from the run-granular
@@ -652,7 +655,12 @@ Lemma pool_invs_of_runs (types : gmap loc type_state) :
   run_pool_invs (pool_of types) ->
   pool_invs types.
 Proof.
-  move=> Hckb Hclb Hnd. rewrite /run_pool_invs all_runs_pool_of. move=> [Hfits [Hdisj Hoc]].
+  move=> Hckb Hclb Hnd. rewrite /run_pool_invs all_runs_pool_of.
+  move=> [Hinvall Hdisj].
+  have Hfits : ∀ r, r ∈ (cell_run <$> all_cells types) -> run_fits r
+    := λ r Hr, proj1 (proj2 (Hinvall r Hr)).
+  have Hoc : ∀ r, r ∈ (cell_run <$> all_cells types) -> run_origin_clk r
+    := λ r Hr, proj2 (proj2 (proj2 (Hinvall r Hr))).
   split_and!.
   - move=> c Hc. apply (cell_fits_run c (Hckb c Hc)). apply Hfits. exact (list_elem_of_fmap_2 _ _ _ Hc).
   - exact Hnd.

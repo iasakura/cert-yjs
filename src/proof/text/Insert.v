@@ -534,7 +534,7 @@ Proof.
       (* the produced id is the LAST char of the left run:
          head clock + run length - 1 (run_wf), no-wrap from the pool fits *)
       have Hfitslr : run_fits lr.
-      { apply (proj1 Hrpj). apply elem_of_all_runs.
+      { apply (λ H, proj1 (proj2 (proj1 Hrpj lr H))). apply elem_of_all_runs.
         exists tv.(yjs.Text.inner'), (MkTypeModel runsj arr). split; [exact Hpj | exact (list_elem_of_lookup_2 _ _ _ Hlrj)]. }
       have Hlen1lr : (1 <= length (run_items lr))%nat.
       { destruct (run_items lr) eqn:Hrc; [exact (False_ind _ (proj1 Hrun eq_refl)) | simpl; lia]. }
