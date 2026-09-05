@@ -45,11 +45,15 @@ gotchas `build.sh` absorbs, and one-time environment setup. CI runs the same
 
 ## Specs and invariants
 
+- **Spell every identifier out.** No cryptic abbreviations, in predicates,
+  lemmas, binders and Go names alike: `key_pair` not `kp`, `state` not `st`,
+  `delete_set` not `ds`. A reader should not have to reconstruct what a name
+  stands for. The conventional short binders of the Iris and Perennial idiom
+  (`dq`, `m`, `l`, `n`) stay.
 - **`is_X` / `own_X`**: `is_X` is persistent, duplicable knowledge (`is_Store`,
   `is_Text`, `is_text_lb`, `is_origin_id`); `own_X` is ownership,
   `dfrac`-parameterized when it is plain heap state (`own_ytype`, `own_dll`,
   `own_item_map`; `own_fresh_item` is exclusive and consumed by Integrate).
-  Names are spelled out, never contracted (`delete_set`, not `ds`).
 - **A predicate's name must carry its meaning.** When it cannot, the comment
   above the definition owes the reader BOTH the meaning and the places it is
   used: a qualifier naming the proof step that produces or consumes it
