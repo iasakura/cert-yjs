@@ -1,6 +1,6 @@
-(** [wp_newYType]: allocating an empty root sequence (issue #54, the storage
-    behind [getOrCreateYType]'s miss branch). The fresh [yType] has
-    [start = nil] and [len = 0], the cells-level view of an empty type. *)
+(** [wp_newYType_runs]: allocating an empty root sequence (issue #54, the
+    storage behind [getOrCreateYType]'s miss branch). The fresh [yType] has
+    [start = nil] and [len = 0]: no node addresses and no runs. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -23,41 +23,18 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 
 
-(** [newYType] allocates an empty root sequence (issue #54: the storage backing
-    [getOrCreateYType]'s miss branch). The fresh [yType] has [start = nil] and
-    [len = 0]: the cells-level view of an empty type, no cells and an empty
-    model list. *)
-Lemma wp_newYType :
-  {{{ is_pkg_init yjs }}}
-    @! yjs.newYType #()
-  {{{ (p : loc), RET #p; own_ytype_cells p (DfracOwn 1) [] [] }}}.
-Proof.
-  wp_start as "_". wp_alloc p as "Hp". wp_auto.
-  iApply "HΦ".
-  iExists {| yjs.yType.start' := null; yjs.yType.len' := W64 0 |}, null.
-  iFrame "Hp". iPureIntro. split_and!.
-  - move=> c Hc. by apply elem_of_nil in Hc.
-  - reflexivity.
-  - reflexivity.
-  - reflexivity.
-  - by rewrite /cells_repr.
-  - move=> c Hc. by apply elem_of_nil in Hc.
-Qed.
-
-(** The same at the run-granular view: an empty type has no node addresses
-    and no runs (docs/plan-item-run-split.md's cutover; the cells-level form
-    above is its stepping stone). *)
+(** [newYType] allocates an empty root sequence (issue #54: the storage
+    backing [getOrCreateYType]'s miss branch). The fresh [yType] has
+    [start = nil] and [len = 0]: no node addresses and no runs. *)
 Lemma wp_newYType_runs :
   {{{ is_pkg_init yjs }}}
     @! yjs.newYType #()
   {{{ (p : loc), RET #p; own_ytype_runs p (DfracOwn 1) [] (MkTypeModel [] []) }}}.
 Proof.
-  iIntros (Φ) "#Hpkg HΦ".
-  wp_apply (wp_newYType with "Hpkg").
-  iIntros (p) "Hnew".
-  iApply ("HΦ" $! p).
-  iDestruct (own_ytype_runs_intro with "Hnew") as "H".
-  iExact "H".
+  wp_start as "_". wp_alloc p as "Hp". wp_auto.
+  iApply "HΦ".
+  iExists {| yjs.yType.start' := null; yjs.yType.len' := W64 0 |}, null.
+  iFrame "Hp". iPureIntro. split_and!; reflexivity.
 Qed.
 
 End ytype_newYType.

@@ -758,6 +758,20 @@ vocabulary substitution table written; then C5 restates the specs at
     `node_loc`, `all_cells`, `pool_invs`, `registry_coh`, `live_refine` and
     every `value_*` cell law; `own_dll_fractional` and kin re-proved over
     the run Fixpoint.
+    PROGRESS 2026-09-05 (C6-4a): `getOrCreateYType` and `newYType` are
+    proved directly at runs, so the last derivation through the cell state
+    is gone. `wp_store__getOrCreateYType_runs` opens `own_store_runs`,
+    allocates with `wp_newYType_runs` in the miss branch and re-closes with
+    `run_pool_invs_insert_empty` (model), `locs_wf_insert_empty` and
+    `pool_registry_coh_bind_fresh` (value_cells); the fresh type holds no
+    run, so the item index keeps its key list
+    (`pool_entries_insert_empty`). `own_type_pool_runs_fresh_type` (heap)
+    is the run form of the freshness law. Deleted: the cell
+    `wp_newYType`, `wp_store__getOrCreateYType` and its hit / miss stepping
+    stones, `own_store_runs_as_state`, `own_type_pool_fresh_type`,
+    `registry_lookup_or_create` with `_to_pool`, `pool_invs_insert_empty`,
+    `registry_coh_bind_fresh`.
+
   - **C6-5, fold `tm_arr`.** `type_model` becomes the run list alone
     (`tm_arr = runs_flatten`), if the specs read better that way.
 
