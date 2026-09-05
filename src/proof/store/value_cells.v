@@ -52,7 +52,10 @@
       their slots, [pool_entries_slot] / [pool_entries_snd] /
       [pool_entries_locs_NoDup], one integrate splice adding its entry
       ([pool_entries_integrate], with [locs_wf_integrate] for the address
-      map); [entry_clock_Z], an entry's machine-word
+      map) and one tombstoning keeping every key ([pool_entries_flip_kp]);
+      what a delete step transports ([pool_after_delete_seq_map] /
+      [pool_after_delete_arr_pointwise] /
+      [pool_registry_models_after_delete]); [entry_clock_Z], an entry's machine-word
       clock under the pool's clock bound); alignment surviving a same-length
       type update, [locs_aligned_insert_same_len], or a slot's addresses
       and model replaced together at equal length,
@@ -2271,6 +2274,68 @@ Proof.
       have Hlsl := Hlens parent ls tm Hls Hp.
       rewrite /integrate_locs !length_app /= !length_take !length_drop. lia.
     + rewrite !lookup_insert_ne //. exact (Hlens q lsq tmq).
+Qed.
+
+(** A tombstoning leaves the item index alone: a flip changes no entry's
+    (client, clock, address) key. *)
+Lemma pool_entries_flip_kp (locs : gmap loc (list loc)) (p : pool) (parent : loc)
+    (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
+  locs !! parent = Some ls -> p !! parent = Some tm ->
+  ls !! k = Some lc -> tm_runs tm !! k = Some r ->
+  entry_kp <$> pool_entries locs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p)
+  ≡ₚ entry_kp <$> pool_entries locs p.
+Proof.
+  move=> Hls Hp Hlk Hrk.
+  set (F := λ (kv : loc * type_model), zip (default [] (locs !! kv.1)) (tm_runs kv.2)).
+  set (others := concat (F <$> map_to_list (delete parent p))).
+  have Hpe : ∀ (tm' : type_model),
+      pool_entries locs (<[parent := tm']> p) ≡ₚ F (parent, tm') ++ others.
+  { move=> tm'. rewrite /pool_entries.
+    have Hm : F <$> map_to_list (<[parent := tm']> p)
+            ≡ₚ F <$> ((parent, tm') :: map_to_list (delete parent p)).
+    { apply Permutation_map. exact (map_to_list_insert_existing p parent tm tm' Hp). }
+    rewrite (concat_perm _ _ Hm) fmap_cons concat_cons //. }
+  have Hkp : entry_kp (lc, flip_run r) = entry_kp (lc, r).
+  { rewrite /entry_kp /entry_client /entry_pr /entry_clock /run_client /run_clock /run_head_item /flip_run //. }
+  have Hzip : zip ls (<[k := flip_run r]> (tm_runs tm)) = <[k := (lc, flip_run r)]> (zip ls (tm_runs tm)).
+  { have H := insert_zip_with pair ls (tm_runs tm) k lc (flip_run r).
+    rewrite (list_insert_id ls k lc Hlk) in H. rewrite -H //. }
+  rewrite (Hpe _) -(insert_id p parent tm Hp) (Hpe tm) /F /= Hls /= Hzip !fmap_app.
+  rewrite list_fmap_insert Hkp list_insert_id; first done.
+  rewrite list_lookup_fmap lookup_zip_with Hlk Hrk //.
+Qed.
+
+(** What a delete step ([pool_after_delete]) transports: the per-type
+    item-set map is unchanged, a pointwise fact about the documents
+    survives, and so does the registry's model reading. *)
+Lemma pool_after_delete_seq_map (p p' : pool) :
+  pool_after_delete p p' ->
+  ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p')
+  = ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p).
+Proof.
+  intros (Harr & Hdom & _ & _ & _).
+  apply map_eq => q. rewrite !lookup_fmap.
+  destruct (p' !! q) as [tm'|] eqn:Htm'.
+  - destruct (Harr q tm' Htm') as (tm & Htm & Heq). rewrite Htm' Htm /= Heq //.
+  - destruct (p !! q) as [tm|] eqn:Htm; last (rewrite Htm' Htm //).
+    exfalso. destruct (Hdom q (mk_is_Some _ _ Htm)) as [tm0 Htm0]. rewrite Htm0 in Htm'. done.
+Qed.
+
+Lemma pool_after_delete_arr_pointwise (p p' : pool) (Q : YjsItem A -> Prop) :
+  pool_after_delete p p' ->
+  (∀ parent tm x, p !! parent = Some tm -> x ∈ tm_arr tm -> Q x) ->
+  (∀ parent tm x, p' !! parent = Some tm -> x ∈ tm_arr tm -> Q x).
+Proof.
+  intros (Harr & _) H parent tm' x Htm' Hx.
+  destruct (Harr parent tm' Htm') as (tm & Htm & Heq). rewrite Heq in Hx. exact (H parent tm x Htm Hx).
+Qed.
+
+Lemma pool_registry_models_after_delete (m : DocModel) (bind : gmap P loc) (p p' : pool) :
+  pool_after_delete p p' -> pool_registry_models m bind p -> pool_registry_models m bind p'.
+Proof.
+  intros (Harr & _) [Hmtypes Hmdom]. split; [| exact Hmdom].
+  move=> nm q tm' Hb Htm'. destruct (Harr q tm' Htm') as (tm & Htm & Heq).
+  rewrite Heq. exact (Hmtypes nm q tm Hb Htm).
 Qed.
 
 Lemma client_entries_NoDup_locs (locs : gmap loc (list loc)) (p : pool) (client : w64) :

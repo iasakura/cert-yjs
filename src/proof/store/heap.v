@@ -555,7 +555,7 @@ Definition own_update_structs (sl : slice.t) (dq : dfrac)
     mixing the model with the representation.
 
     Used as: the store's [pendingDeletes] buffer in [store_inv_excl], the
-    argument and the leftover of [wp_store__applyDeleteSpans], and (through
+    argument and the leftover of [wp_store__applyDeleteSpans_runs], and (through
     [own_delete_ids], which forgets down to the union of the ids) every public
     spec that takes a delete batch. *)
 Definition own_delete_spans (sl : slice.t) (dq : dfrac)
