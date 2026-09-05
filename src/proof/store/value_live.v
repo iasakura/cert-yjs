@@ -177,7 +177,7 @@ Definition delete_set_tombstoned (delete_set : gset YjsId) (pool : list item_cel
 
     Used as: what a delete reports about what it just did. It is the
     postcondition of [wp_store__deleteRange] (over the range it was asked to
-    cover) and of [wp_store__applyDeleteSpans] (over the union of the spans
+    cover) and of [wp_store__applyDeleteSpans_runs] (over the union of the spans
     that landed), it is carried through the latter's loop, and it is the
     premise a caller discharges to mint an [is_delete_set_lb] certificate
     through [own_delete_set_grow]. *)

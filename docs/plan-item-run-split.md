@@ -706,6 +706,17 @@ vocabulary substitution table written; then C5 restates the specs at
     `linked_item_fresh2`, `list_find_cells_repr`, `findById_res_*` and
     the local `cell_has_id_dec` (Integrate). No spec changed.
 
+    PROGRESS 2026-09-04 (C6-3d): the delete path is proved on the run
+    fields. `wp_deleteNode_store_runs` re-closes `own_store_runs` around
+    `wp_deleteNode_runs` directly (the item index is unchanged because a
+    flip keeps every entry's key, `pool_entries_flip_kp` +
+    `own_item_map_kp_keys_perm`), `wp_store__applyDeleteSpans_runs`'s loop
+    carries `own_store_runs` without the state bridge, and
+    `wp_store__applyDeleteSpans_store` is derived from it at the pool
+    (`pool_after_delete_seq_map`, `pool_after_delete_arr_pointwise`,
+    `pool_registry_models_after_delete`, `own_delete_set_runs_refine`).
+    Deleted: the cell `wp_store__applyDeleteSpans` (over `own_store_struct`).
+
   - **C6-4, delete the cell side.** `item_cell`, the cell `own_dll` and
     `own_dll_cells_layout`, `own_ytype_cells`, `cells_of_locs_runs`,
     `types_of_locs_pool` / `state_of_runs`, `type_state` / `store_state`,

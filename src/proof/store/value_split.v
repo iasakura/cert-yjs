@@ -188,9 +188,9 @@ Definition repair_types_update_rel (before after : gmap loc type_state) : Prop :
     TRANSITIVE, which is what lets the loop compose one of these per iteration
     instead of tracking the whole surgery at once.
 
-    Used as: the postcondition of [wp_store__deleteRange] and
-    [wp_store__applyDeleteSpans], and the source of the [dead_chars_kept] step
-    the delete loop needs to carry its coverage record forward. *)
+    Used as: the cell reading of the delete loop's pool step, and the source
+    of the [dead_chars_kept] step the delete loop needs to carry its coverage
+    record forward. *)
 Definition delete_types_update_rel (before after : gmap loc type_state) : Prop :=
   (∀ p ts', after !! p = Some ts' ->
      ∃ ts, before !! p = Some ts ∧ ty_arr ts' = ty_arr ts) ∧

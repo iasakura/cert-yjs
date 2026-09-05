@@ -156,7 +156,7 @@ Qed.
 
     Used as: the pure model a public spec speaks about ([own_delete_ids],
     [codec_spec], [wp_Doc__ApplySyncUpdate]) and the currency of
-    [wp_store__applyDeleteSpans]'s coverage report. *)
+    [wp_store__applyDeleteSpans_runs]'s coverage report. *)
 Definition delete_span_ids (sp : delete_span) : gset YjsId :=
   range_ids sp.(delete_span_client) sp.(delete_span_start) sp.(delete_span_length).
 
