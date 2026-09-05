@@ -547,6 +547,30 @@ vocabulary substitution table written; then C5 restates the specs at
   `splitAtAndGetLeft` / `Right`, their `_range` locals and the split-pool
   laws only they consumed are deleted.
 
+  PROGRESS 2026-09-04 (text): `Text.Insert` and `Text.Delete` are direct at
+  `(locs, pool)`. Both keep `own_store_runs` whole and reach into it only
+  through borrows: `own_store_runs_ytype_acc` (the type for `findPos` and
+  the `len` read), `own_store_runs_node_acc_links` (a node with its links
+  and flag byte, for `Indexable` / `Len` / the right-link walk),
+  `own_store_runs_clock_acc` / `_client_acc` (the store's clock bump and
+  client read). The store steps are the run-level specs
+  (`wp_store__splitNode_runs`, `wp_store__Integrate_runs`,
+  `wp_deleteNode_store_runs`, now public and shared with
+  `applyDeleteSpans`), so the Go `Text.Delete` loop tombstones through
+  `deleteNode(cur)` instead of an inline flag write plus `len` update
+  (y-octo `ListType::remove_after` -> `delete_item`). The delete-set ghost
+  still lives at cells: it follows the materialized
+  `cells_of_locs_runs inner ls runs` through `cells_of_locs_runs_split` /
+  `_flip` and the registry is lowered at Unlock by
+  `types_of_locs_pool_ext_insert`. The cell `wp_Store__Integrate` and
+  `wp_store__splitNode` and the cell laws only the text layer consumed
+  (`split_pool_subrange`, `split_cells_length` / `_lookup_right`,
+  `own_dll_update_gen_node`, `node_loc_lt_not_null(_layout)`,
+  `num_visible_flip_run`, `cells_repr_update_run`, `find_pos` /
+  `find_pos_runs_of`, `cell_kp_flip`, `wp_item__Indexable_node`,
+  `linked_item_fresh_ytype`, `node_loc_splice_ge`,
+  `run_flatten_take_length_le`) are deleted.
+
 - **C6, delete the scaffolding.** `item_cell`, `cell_*`, `cells_of_locs_*`,
   the wrappers, `node_loc`, `ty_arr` (folded: `tm_arr = runs_flatten`),
   and the `_to_cell` transports are removed; `own_dll_fractional` and kin

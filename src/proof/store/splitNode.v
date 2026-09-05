@@ -1,14 +1,14 @@
 (** store update path, split layer at run granularity: the DLL half
     [wp_splitItem_runs] (over the type's [own_ytype_runs]), [store.splitNode]
     over the whole store ([wp_store__splitNode_runs], adding the per-client
-    run-list insertion; its cell-level reading [wp_store__splitNode] is
-    derived from it for the text layer until plan-item-run-split C6), and
+    run-list insertion), and
     [wp_store__splitAtAndGetLeft_runs] / [wp_store__splitAtAndGetRight_runs]
     (proved from [wp_store__GetNode_runs] and [wp_store__splitNode_runs],
     stepping the pool and the address map by the index-explicit
     [pool_split_left_step] / [pool_split_right_step]), plus the split-pool
     bookkeeping ([pool_invs_split], [split_types_update_rel], the
-    [split_pool_*] / [split_cells_*] lemmas the text layer still consumes).
+    [split_pool_*] / [split_cells_*] laws the run-level text layer reads
+    its materialized cells through).
     Split out of [store/GetNode] so it proof-checks in parallel; same
     [Section] boilerplate and [#[local]] instances. *)
 From New.proof Require Import proof_prelude.
@@ -328,18 +328,8 @@ Proof.
   apply NoDup_cons. split; [exact Hrnotin | exact Hndrest].
 Qed.
 
-(** [split_cells] index bookkeeping (issue #28 stage D2b prep): length and
-    the four lookup regions. The general [repair] uses these to relocate its
-    second (clean-start) witness after the first (clean-end) split touched
-    the same type. *)
-Lemma split_cells_length (cells : list item_cell) (k o : nat) (rloc : loc) (cw : item_cell) :
-  cells !! k = Some cw ->
-  length (split_cells cells k o rloc) = S (length cells).
-Proof.
-  move=> Hck. rewrite /split_cells Hck !length_app /= length_take length_drop.
-  have := lookup_lt_Some _ _ _ Hck. lia.
-Qed.
-
+(** [split_cells] index bookkeeping: the left half sits at the split
+    index. *)
 Lemma split_cells_lookup_left (cells : list item_cell) (k o : nat) (rloc : loc) (cw : item_cell) :
   cells !! k = Some cw ->
   split_cells cells k o rloc !! k = Some (split_cell_left cw o).
@@ -349,19 +339,6 @@ Proof.
   have Htk : length (take k cells) = k by (rewrite length_take_le; lia).
   rewrite lookup_app_r; last lia.
   rewrite Htk Nat.sub_diag //.
-Qed.
-
-Lemma split_cells_lookup_right (cells : list item_cell) (k o : nat) (rloc : loc) (cw : item_cell) :
-  cells !! k = Some cw ->
-  split_cells cells k o rloc !! (S k) = Some (split_cell_right cw o rloc).
-Proof.
-  move=> Hck. rewrite /split_cells Hck.
-  have Hklen : (k < length cells)%nat := lookup_lt_Some _ _ _ Hck.
-  have Htk : length (take k cells) = k by (rewrite length_take_le; lia).
-  rewrite lookup_app_r; last lia.
-  rewrite Htk.
-  have -> : (S k - k)%nat = 1%nat by lia.
-  done.
 Qed.
 
 (** A split refines the live cells: both halves inherit the node's
@@ -1228,119 +1205,7 @@ Proof using Type*.
   iExists mref. iFrame "Hitemsf Hitemmap2".
 Qed.
 
-(** [store.splitNode] at cell granularity: [wp_store__splitNode_runs] read
-    back through the [pool_of] / [locs_of] projections (the pure cell effect
-    is [split_cells cells k (uint.nat diff) rloc], invisible to the flattened
-    document). Kept for the cell-level text layer until
-    plan-item-run-split C6. *)
-Lemma wp_store__splitNode (s : loc) (st : store_state)
-    (parent : loc) (cells arr : list _) (k : nat) (cw : item_cell) (diff : w64) :
-  ss_types st !! parent = Some (MkTypeState cells arr) ->
-  cells !! k = Some cw ->
-  (0 < uint.nat diff < length (ic_run cw))%nat ->
-  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
-    s @! (go.PointerType yjs.store) @! "splitNode" #(ic_loc cw) #diff
-  {{{ (rloc : loc), RET (#(ic_loc cw), #rloc);
-      own_store_struct s
-        (st <| ss_types := <[parent := MkTypeState (split_cells cells k (uint.nat diff) rloc) arr]> (ss_types st) |>) ∗
-      ⌜fresh_loc rloc (ss_types st)⌝ }}}.
-Proof using Type*.
-  move=> Hts Hck Hdiff.
-  destruct st as [client0 k0 types bind pend pdel]. simpl in *.
-  iIntros (Φ) "(#Hpkg & Hcells) HΦ".
-  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
-  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes0 & Hpending & Hpdeletes)".
-  iDestruct (own_type_pool_parents with "Htypes0") as %Hpar.
-  iDestruct (own_store_struct_intro _ (MkStoreState client0 k0 types bind pend pdel) Hinvs0
-               with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes0 Hpending Hpdeletes") as "Hcells".
-  iAssert (own_store_runs s (state_runs_of (MkStoreState client0 k0 types bind pend pdel)))
-    with "[Hcells]" as "Hruns".
-  { rewrite own_store_runs_as_state. iExists _. iFrame "Hcells". done. }
-  have Hp : pool_of types !! parent = Some (MkTypeModel (cell_run <$> cells) arr).
-  { rewrite /pool_of lookup_fmap Hts //. }
-  have Hl : locs_of types !! parent = Some (ic_loc <$> cells).
-  { rewrite /locs_of lookup_fmap Hts //. }
-  have Hr : (cell_run <$> cells) !! k = Some (cell_run cw) by rewrite list_lookup_fmap Hck //.
-  have Hlk : (ic_loc <$> cells) !! k = Some (ic_loc cw) by rewrite list_lookup_fmap Hck //.
-  have Hdiff' : (0 < uint.nat diff < length (run_items (cell_run cw)))%nat := Hdiff.
-  wp_apply (wp_store__splitNode_runs s (state_runs_of (MkStoreState client0 k0 types bind pend pdel))
-              parent (ic_loc cw) (ic_loc <$> cells) (MkTypeModel (cell_run <$> cells) arr) k (cell_run cw) diff
-              Hp Hl Hr Hlk Hdiff' with "[$Hpkg $Hruns]").
-  iIntros (rloc) "(Hruns & %Hrnn & %Hrfresh)".
-  have Hparcells : ∀ c, c ∈ cells -> ic_parent c = parent
-    := λ c Hc, Hpar parent (MkTypeState cells arr) c Hts Hc.
-  have Hlenfm : length (ic_loc <$> cells) = length (cell_run <$> cells) by rewrite !length_fmap.
-  have Hcells' : cells_of_locs_runs parent (split_locs (ic_loc <$> cells) k rloc)
-                   (split_runs (cell_run <$> cells) k (uint.nat diff))
-               = split_cells cells k (uint.nat diff) rloc.
-  { rewrite (cells_of_locs_runs_split parent (ic_loc <$> cells) (cell_run <$> cells) k (uint.nat diff)
-               (ic_loc cw) rloc (cell_run cw) Hlenfm Hlk Hr)
-      (cells_of_locs_runs_projections parent cells Hparcells) //. }
-  iApply ("HΦ" $! rloc).
-  iSplitL.
-  { iDestruct "Hruns" as "(Hstruct & _)".
-    iEval (rewrite /state_of_runs /state_runs_of /=
-             (types_of_locs_pool_insert_both (locs_of types) (pool_of types) parent
-                (split_locs (ic_loc <$> cells) k rloc)
-                (MkTypeModel (split_runs (cell_run <$> cells) k (uint.nat diff)) arr))
-             /= Hcells' (types_of_locs_pool_of types Hpar)) in "Hstruct".
-    iFrame "Hstruct". }
-  iPureIntro. split; [exact Hrnn |].
-  move: Hrfresh. rewrite /state_runs_of /= locs_of_concat //.
-Qed.
 
-
-
-(** Every post-split cell's clock range sits inside a same-client cell of the
-    original pool (the halves inside the split cell, the rest inside itself);
-    this is what transports the range-form freshness facts across a split. *)
-Lemma split_pool_subrange (types : gmap loc type_state) (parent : loc)
-    (cells : list item_cell) (arr : list (YjsItem A)) (k : nat) (cw : item_cell)
-    (o : nat) (rloc : loc) :
-  types !! parent = Some (MkTypeState cells arr) ->
-  cells !! k = Some cw ->
-  run_wf (ic_run cw) ->
-  (0 < o < length (ic_run cw))%nat ->
-  (Z.of_nat (clock (item_id (run_head cw))) < 2^64)%Z ->
-  cell_fits cw ->
-  ∀ c', c' ∈ all_cells (<[parent := MkTypeState (split_cells cells k o rloc) arr]> types) ->
-    ∃ c, c ∈ all_cells types ∧ cell_client c' = cell_client c ∧
-      (uint.Z (cell_clock c) <= uint.Z (cell_clock c'))%Z ∧
-      (uint.Z (cell_clock c') + Z.of_nat (length (ic_run c')) <=
-       uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)))%Z.
-Proof.
-  move=> Htypes Hck Hrunwf Ho Hckbnd Hfitscw c' Hc'.
-  destruct (split_pool_perm types parent cells arr k cw o rloc Htypes Hck)
-    as (rest & Hold & Hnew).
-  destruct (split_cell_facts cw o rloc Hrunwf Ho)
-    as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
-  have HclkZ : uint.Z (cell_clock cw) = Z.of_nat (clock (item_id (run_head cw))).
-  { rewrite /cell_clock. word. }
-  rewrite Hnew in Hc'.
-  apply elem_of_cons in Hc' as [-> | Hc'].
-  { exists cw. split_and!.
-    - rewrite Hold. apply list_elem_of_here.
-    - exact Hclientl.
-    - rewrite Hclockl. lia.
-    - rewrite Hclockl Hlenl. lia. }
-  apply elem_of_cons in Hc' as [-> | Hc'].
-  { have Hzr : (uint.Z (cell_clock (split_cell_right cw o rloc))
-               = Z.of_nat (clock (item_id (run_head cw)) + o))%Z.
-    { rewrite Hclockr.
-      have Hbo : (Z.of_nat (clock (item_id (run_head cw)) + o) < 2^64)%Z.
-      { rewrite /cell_fits in Hfitscw. clear -HclkZ Hfitscw Ho Hckbnd. lia. }
-      clear -Hbo. word. }
-    exists cw. split_and!.
-    - rewrite Hold. apply list_elem_of_here.
-    - exact Hclientr.
-    - rewrite Hzr. lia.
-    - rewrite Hzr Hlenr. lia. }
-  { exists c'. split_and!.
-    - rewrite Hold. apply elem_of_cons. by right.
-    - done.
-    - lia.
-    - lia. }
-Qed.
 
 (** [store.splitAtAndGetLeft] at run granularity: make the char [idv],
     covered by the [k]-th run of the type at [parent] (the node at [lc]),

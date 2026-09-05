@@ -41,7 +41,7 @@
       parameter.
     - the deletion layer: [num_visible] is additive over [app], drops by one
       when a visible cell is flipped, and is unchanged by an insert of a
-      deleted cell ([num_visible_app], [num_visible_flip(_run)],
+      deleted cell ([num_visible_app], [num_visible_flip],
       [num_visible_insert_visible(_run)]); flipping preserves [cell_repr].
     - the heap flags pin the tombstone bit exactly ([flags_if_deleted],
       [flags_if_countable], [set_deleted_flags]).
@@ -538,18 +538,6 @@ Proof.
   by rewrite (run_flatten_singletons cells Hunit) fmap_drop.
 Qed.
 
-(** Replacing a cell with one carrying the SAME run preserves the isomorphism
-    (the flatten never reads [ic_deleted] / [ic_loc]). [Text.Delete] flips a
-    cell's [ic_deleted] without touching its [ic_run]. *)
-Lemma cells_repr_update_run m cells items (k : nat) c c' :
-  cells !! k = Some c -> ic_run c' = ic_run c ->
-  cells_repr m cells items -> cells_repr m (<[k := c']> cells) items.
-Proof.
-  rewrite /cells_repr => Hck Hrun ->.
-  rewrite /run_flatten list_fmap_insert Hrun. f_equal. symmetry.
-  apply list_insert_id. rewrite list_lookup_fmap Hck //.
-Qed.
-
 (* ----- the deletion layer: tombstoning a cell ---------------------------- *)
 
 (** Visible count is additive over append. *)
@@ -592,22 +580,6 @@ Proof.
   rewrite Hins /num_visible fmap_app fmap_cons list_sum_app /flip_cell /=.
   rewrite -[in pred (list_sum _)](take_drop_middle cells k c Hk).
   rewrite fmap_app fmap_cons list_sum_app /=. rewrite Hd Hu. lia.
-Qed.
-
-(* ----- run-aware generalizations (issue #28 part 6) ----------------------- *)
-
-(** Tombstoning a visible cell drops the visible count by its run length: the
-    general form of [num_visible_flip]. *)
-Lemma num_visible_flip_run (cells : list item_cell) (k : nat) (c : item_cell) :
-  cells !! k = Some c -> ic_deleted c = false ->
-  num_visible (<[k := flip_cell c]> cells) = (num_visible cells - length (ic_run c))%nat.
-Proof.
-  move=> Hk Hd.
-  have Hins : <[k := flip_cell c]> cells = take k cells ++ flip_cell c :: drop (S k) cells
-    by (apply insert_take_drop; apply lookup_lt_Some in Hk; exact Hk).
-  rewrite Hins /num_visible fmap_app fmap_cons list_sum_app /flip_cell /=.
-  rewrite -[in X in _ = (X - _)%nat](take_drop_middle cells k c Hk).
-  rewrite fmap_app fmap_cons list_sum_app /=. rewrite Hd. lia.
 Qed.
 
 

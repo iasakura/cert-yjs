@@ -148,8 +148,10 @@ func (t *Text) Delete(index uint64, length uint64) {
 				// so the tombstone below covers precisely the range.
 				s.splitNode(cur, remaining)
 			}
-			cur.flags = cur.flags | itemDeleted
-			t.inner.len = t.inner.len - cur.Len()
+			// Tombstone the (possibly truncated) node through the store's
+			// deleteNode: cur belongs to t.inner, so it shrinks t.inner.len
+			// by cur.Len() (y-octo: ListType::remove_after -> delete_item).
+			deleteNode(cur)
 			remaining = remaining - cur.Len()
 		}
 		cur = cur.right

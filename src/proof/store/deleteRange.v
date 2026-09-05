@@ -10,7 +10,7 @@
     pool by [pool_after_delete] and recording coverage as
     [ids_tombstoned_runs]. The loops speak indices, addresses and runs;
     the store is opened and re-closed around the node-level cores by the
-    local [wp_deleteNode_store_runs] and the store's node borrow
+    [wp_deleteNode_store_runs] (shared with [text/Delete]) and the store's node borrow
     [own_store_runs_node_acc]. The cell-level
     [wp_store__applyDeleteSpans] is derived from the run-granular proof
     for [wp_store__applyDeleteSpans_store], the [own_store] form the lock
@@ -173,8 +173,9 @@ Qed.
 
 (** [deleteNode] on the store: the addressed run is tombstoned and every
     other field is untouched (the store re-closed around
-    [wp_deleteNode_runs]; a stepping stone of the two delete loops). *)
-#[local] Lemma wp_deleteNode_store_runs (s : loc) (str : store_state_runs)
+    [wp_deleteNode_runs]); what the delete loops ([applyDeleteSpans] here,
+    [Text.Delete] in [text/Delete]) step by. *)
+Lemma wp_deleteNode_store_runs (s : loc) (str : store_state_runs)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
   sr_locs str !! parent = Some ls ->
   sr_pool str !! parent = Some tm ->

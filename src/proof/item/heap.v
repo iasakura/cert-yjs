@@ -413,22 +413,6 @@ Proof.
   iFrame "Hback". by iPureIntro.
 Qed.
 
-(** Every node at an in-bounds index is a non-null location (DLL nodes are
-    non-null); the DLL resource is returned. Used to argue [node_loc cells
-    (destIdx-1) = null] forces [destIdx = 0] (head insertion). *)
-Lemma node_loc_lt_not_null_layout (dq : dfrac) (cells : list item_cell) (hd tl : loc) (k : nat) :
-  (k < length cells)%nat ->
-  own_dll_cells_layout dq hd tl null null cells -∗ ⌜node_loc cells (Z.of_nat k) ≠ null⌝ ∗ own_dll_cells_layout dq hd tl null null cells.
-Proof.
-  move=> Hk. iIntros "Hdll".
-  destruct (cells !! k) as [c|] eqn:Hc; last by (apply lookup_ge_None in Hc; lia).
-  iDestruct (own_dll_cells_layout_acc dq cells hd tl k c Hc with "Hdll") as "H". iNamed "H".
-  iDestruct (typed_pointsto_not_null with "Hcval") as %Hnn.
-  iSplitR "Hcval Hback".
-  - iPureIntro. rewrite -Hcloc. exact Hnn.
-  - iApply "Hback". iFrame "Hcval".
-Qed.
-
 (** Every cell's HEAD model id round-trips through the heap's [w64] id fields
     ([own_dll_cells_layout] pins [item_id (run_head c) = toYjsId itemVal.(id')]), so both id
     components are bounded by [2^64]. This is what lets W64-level clock
@@ -1488,8 +1472,8 @@ Proof.
   iFrame "Hnode1 Hsuf".
 Qed.
 
-(** An in-range address of a run-granular DLL is never null (the run form of
-    [node_loc_lt_not_null]); the resource is returned. *)
+(** An in-range address of a run-granular DLL is never null; the resource is
+    returned. *)
 Lemma loc_at_lt_not_null (dq : dfrac) (parent hd tl : loc)
     (ls : list loc) (runs : list ItemRun) (k : nat) :
   (k < length ls)%nat ->
@@ -1708,19 +1692,6 @@ Proof.
   iApply (own_dll_cells_layout_head_node with "H").
 Qed.
 
-Lemma node_loc_lt_not_null (dq : dfrac) {parent : loc} (cells : list item_cell)
-    (hd tl : loc) (k : nat) :
-  (k < length cells)%nat ->
-  own_dll dq parent hd tl null null cells -∗
-    ⌜node_loc cells (Z.of_nat k) ≠ null⌝ ∗ own_dll dq parent hd tl null null cells.
-Proof.
-  move=> Hk. iIntros "H". iEval (rewrite own_dll_unfold_layout) in "H". iDestruct "H" as "[%Hcoh H]".
-  iDestruct (node_loc_lt_not_null_layout dq cells hd tl k Hk with "H") as "[%Hnn H]".
-  iSplitR; first (iPureIntro; exact Hnn).
-  iEval (rewrite own_dll_unfold_layout).
-  iSplitR; first (iPureIntro; exact Hcoh). iFrame "H".
-Qed.
-
 Lemma own_dll_id_bounds (dq : dfrac) {parent : loc} (l last prev next : loc) (cells : list item_cell) :
   own_dll dq parent l last prev next cells -∗
   ⌜∀ c, c ∈ cells → (Z.of_nat (clientId (item_id (run_head c))) < 2^64)%Z ∧
@@ -1808,43 +1779,6 @@ Proof.
   iFrame "Hnode".
   iIntros "Hnode". iEval (rewrite own_dll_unfold_layout).
   iSplitR; first (iPureIntro; exact Hcoh).
-  iApply ("Hback" with "Hnode").
-Qed.
-
-Lemma own_dll_update_gen_node {parent : loc} (cells : list item_cell) (hd tl : loc)
-    (k : nat) (c : item_cell) :
-  cells !! k = Some c ->
-  own_dll (DfracOwn 1) parent hd tl null null cells -∗
-    ∃ (prev' nxt' : loc),
-      "%Hcloc" ∷ ⌜ic_loc c = node_loc cells (Z.of_nat k)⌝ ∗
-      "%Hcr" ∷ ⌜nxt' = node_loc cells (Z.of_nat k + 1)⌝ ∗
-      "%Hrun" ∷ ⌜run_wf (ic_run c)⌝ ∗
-      "%Hclen" ∷ ⌜length (items_string (ic_run c)) = length (ic_run c)⌝ ∗
-      "%Hperchar" ∷ ⌜run_per_char (cell_run c)⌝ ∗
-      "Hnode" ∷ own_item_node (ic_loc c) (DfracOwn 1) (input_of_run (cell_run c))
-                  (ic_deleted c) (ic_parent c) prev' nxt' ∗
-      "Hback" ∷ (∀ d' : bool,
-         own_item_node (ic_loc c) (DfracOwn 1) (input_of_run (cell_run c))
-           d' (ic_parent c) prev' nxt' -∗
-         own_dll (DfracOwn 1) parent hd tl null null
-           (<[k := MkItemCell (ic_loc c) (ic_run c) d' (ic_parent c)]> cells)).
-Proof.
-  move=> Hk. iIntros "H". iEval (rewrite own_dll_unfold_layout) in "H". iDestruct "H" as "[%Hcoh H]".
-  iDestruct (own_dll_cells_layout_update_gen_node cells hd tl k c Hk with "H")
-    as (prev' nxt') "(%Hcloc & %Hcr & %Hrun & %Hclen & %Hpc & Hnode & Hback)".
-  iExists prev', nxt'.
-  do 5 (iSplitR; [by iPureIntro|]).
-  iFrame "Hnode".
-  iIntros (d') "Hnode".
-  rewrite own_dll_unfold_layout.
-  iSplitR.
-  { iPureIntro. move=> c0 Hc0.
-    apply list_elem_of_lookup_1 in Hc0 as [i0 Hi0].
-    destruct (decide (i0 = k)) as [-> | Hne].
-    - rewrite list_lookup_insert_eq in Hi0; last (apply lookup_lt_Some in Hk; exact Hk).
-      injection Hi0 as <-. simpl. exact (Hcoh c (list_elem_of_lookup_2 _ _ _ Hk)).
-    - rewrite list_lookup_insert_ne in Hi0; [| congruence].
-      exact (Hcoh c0 (list_elem_of_lookup_2 _ _ _ Hi0)). }
   iApply ("Hback" with "Hnode").
 Qed.
 

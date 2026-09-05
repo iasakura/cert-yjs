@@ -7,7 +7,7 @@
       bit.
     - [find_pos_runs]: what [yType.findPos] resolves an index to, at run
       granularity (the cursor into the run list, the node addresses off the
-      address list); [find_pos] is this under the cells' projections.
+      address list).
     - [visible_items] / [visible_string]: the non-tombstoned items of such a
       sequence and the string they spell, the read API's snapshot content
       (issue #125).
@@ -21,8 +21,8 @@
       tombstoned ([visible_items_cell_models], [visible_string_take_S]).
     - [num_visible_model]: the heap [len] counter counts the model's visible
       items.
-    - [cells_model_runs] / [find_pos_runs_of]: the cells-level model and
-      cursor are the run-level ones under [cell_run] / [ic_loc]. *)
+    - [cells_model_runs]: the cells-level model is the run-level one under
+      [cell_run]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -64,26 +64,10 @@ Definition visible_items (m : list (YjsItem A * bool)) : list (YjsItem A) :=
 Definition visible_string (m : list (YjsItem A * bool)) : A :=
   items_string (visible_items m).
 
-(** [find_pos cells p lft rgt off]: what [yType.findPos] resolves a visible
-    index to: the cell cursor [p] (the cells before index [p] lie before the
-    position), the nodes around it ([lft] the cell before the cursor, [rgt] the
-    cell at it, [null] out of range) and the offset [off] of the position
-    inside [lft]: 0 on a cell boundary, otherwise strictly inside the live cell
-    before the cursor. *)
-Definition find_pos (cells : list item_cell) (p : nat) (lft rgt : loc) (off : w64) : Prop :=
-  (p <= length cells)%nat ∧
-  lft = node_loc cells (Z.of_nat p - 1) ∧
-  rgt = node_loc cells (Z.of_nat p) ∧
-  (off = W64 0 ∨
-   (0 < uint.Z off)%Z ∧ (1 <= p)%nat ∧
-   (∃ c, cells !! (p - 1)%nat = Some c ∧ ic_deleted c = false ∧
-         (uint.nat off < length (ic_run c))%nat)).
-
 (** [find_pos_runs ls runs p lft rgt off]: what [yType.findPos] resolves a
     visible index to, at run granularity: the cursor [p] into the run list,
     the node addresses around it read off the address list [ls], and the
-    offset inside the run before the cursor. [find_pos] is this under the
-    cells' projections ([find_pos_runs_of]). *)
+    offset inside the run before the cursor. *)
 Definition find_pos_runs (ls : list loc) (runs : list ItemRun)
     (p : nat) (lft rgt : loc) (off : w64) : Prop :=
   (p <= length runs)%nat ∧
@@ -170,24 +154,6 @@ Lemma cells_model_runs (cells : list item_cell) :
 Proof.
   rewrite /cells_model /runs_model -list_fmap_compose.
   f_equal.
-Qed.
-
-Lemma find_pos_runs_of (cells : list item_cell) (p : nat) (lft rgt : loc) (off : w64) :
-  find_pos cells p lft rgt off <->
-  find_pos_runs (ic_loc <$> cells) (cell_run <$> cells) p lft rgt off.
-Proof.
-  rewrite /find_pos /find_pos_runs !length_fmap -!node_loc_loc_at.
-  split; move=> [Hlen [Hl [Hr Hoff]]]; split_and!; try done.
-  - destruct Hoff as [Hz | (Hpos & Hge & c & Hc & Hd & Hlt)]; first by left.
-    right. split_and!; [exact Hpos | exact Hge |].
-    exists (cell_run c). rewrite list_lookup_fmap Hc /=.
-    split_and!; [reflexivity | exact Hd | exact Hlt].
-  - destruct Hoff as [Hz | (Hpos & Hge & r & Hr' & Hd & Hlt)]; first by left.
-    right. split_and!; [exact Hpos | exact Hge |].
-    rewrite list_lookup_fmap in Hr'.
-    destruct (cells !! (p - 1)%nat) as [c|] eqn:Hc; last by [].
-    simpl in Hr'. injection Hr' as <-.
-    exists c. split_and!; [reflexivity | exact Hd | exact Hlt].
 Qed.
 
 (** The run form of [visible_string_take_S]: one more run contributes its

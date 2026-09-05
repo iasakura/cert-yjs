@@ -45,27 +45,4 @@ Proof.
   rewrite -/(is_deleted_flag v). iApply "HΦ". iFrame "Hl".
 Qed.
 
-(** [item.Indexable] over the node predicate: "not tombstoned". The
-    [is_countable_flag] premise disappears: the node predicate pins the flag
-    byte, and every cert-yjs item is Countable
-    (docs/plan-item-run-split.md stage 3). *)
-Lemma wp_item__Indexable_node (l : loc) (dq : dfrac) (input : IntegrateInput (A := A))
-    (d : bool) (parent prev nxt : loc) :
-  {{{ is_pkg_init yjs ∗ own_item_node l dq input d parent prev nxt }}}
-    l @! (go.PointerType yjs.item) @! "Indexable" #()
-  {{{ RET #(negb d); own_item_node l dq input d parent prev nxt }}}.
-Proof.
-  iIntros (Φ) "(#Hpkg & Hnode) HΦ".
-  iDestruct "Hnode" as (v olid orid) "H". iNamed "H".
-  have Hcnt : is_countable_flag v = true.
-  { rewrite /is_countable_flag Hflags. destruct d; vm_compute; reflexivity. }
-  have Hd : is_deleted_flag v = d.
-  { rewrite /is_deleted_flag Hflags. destruct d; vm_compute; reflexivity. }
-  wp_apply (wp_item__Indexable l dq v Hcnt with "[$Hpkg $Hval]").
-  iIntros "Hval".
-  rewrite Hd.
-  iApply "HΦ". iExists v, olid, orid. iFrame "Hval Holeft Horight".
-  iPureIntro. split_and!; assumption.
-Qed.
-
 End item_Indexable.

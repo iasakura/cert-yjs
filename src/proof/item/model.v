@@ -439,8 +439,7 @@ Definition run_per_char (r : ItemRun) : Prop :=
 
 (** The flatten and the visible count are invariant under a split, and a flip
     only drops the flipped run's characters from the visible count: the run
-    halves of [split_cells_flatten] / [split_cells_num_visible] /
-    [num_visible_flip_run], loc-free. *)
+    halves of [split_cells_flatten] / [split_cells_num_visible], loc-free. *)
 Lemma runs_flatten_nil : runs_flatten [] = [].
 Proof. reflexivity. Qed.
 
@@ -689,8 +688,7 @@ Proof.
 Qed.
 
 (** A tombstone flip drops the flipped run's characters from the visible
-    count and leaves the flatten alone (the run forms of
-    [num_visible_flip_run] / [cells_repr_update_run]). *)
+    count and leaves the flatten alone. *)
 Lemma runs_visible_flip_run (runs : list ItemRun) (k : nat) (r : ItemRun) :
   runs !! k = Some r -> run_deleted r = false ->
   runs_visible (<[k := flip_run r]> runs) = (runs_visible runs - length (run_items r))%nat.
