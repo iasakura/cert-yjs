@@ -50,7 +50,9 @@
       ranges, [sorted_client_entries_disjoint], the index's own being one,
       [client_entries_sorted_client]), with the pool's entries at
       their slots, [pool_entries_slot] / [pool_entries_snd] /
-      [pool_entries_locs_NoDup]; [entry_clock_Z], an entry's machine-word
+      [pool_entries_locs_NoDup], one integrate splice adding its entry
+      ([pool_entries_integrate], with [locs_wf_integrate] for the address
+      map); [entry_clock_Z], an entry's machine-word
       clock under the pool's clock bound); alignment surviving a same-length
       type update, [locs_aligned_insert_same_len], or a slot's addresses
       and model replaced together at equal length,
@@ -625,19 +627,22 @@ Proof.
 Qed.
 
 Lemma run_pool_invs_of (types : gmap loc type_state) :
+  (∀ c, c ∈ all_cells types -> run_wf (ic_run c)) ->
   (∀ c, c ∈ all_cells types -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
   (∀ c, c ∈ all_cells types -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
   pool_invs types ->
   run_pool_invs (pool_of types).
 Proof.
-  move=> Hckb Hclb [Hfits [Hnd [Hdisj Hoc]]].
+  move=> Hwf Hckb Hclb [Hfits [Hnd [Hdisj Hoc]]].
   rewrite /run_pool_invs all_runs_pool_of.
   split_and!.
   - intros r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
-    apply (cell_fits_run c (Hckb c Hc)). exact (Hfits c Hc).
+    split_and!.
+    + exact (Hwf c Hc).
+    + apply (cell_fits_run c (Hckb c Hc)). exact (Hfits c Hc).
+    + exact (Hclb c Hc).
+    + apply cell_origin_clk_run. exact (Hoc c Hc).
   - apply (cells_range_disjoint_runs _ Hckb Hclb Hnd). exact Hdisj.
-  - intros r Hr. apply list_elem_of_fmap in Hr as (c & -> & Hc).
-    apply cell_origin_clk_run. exact (Hoc c Hc).
 Qed.
 
 (** The converse: the pool invariants at the cells, from the run-granular
@@ -650,7 +655,12 @@ Lemma pool_invs_of_runs (types : gmap loc type_state) :
   run_pool_invs (pool_of types) ->
   pool_invs types.
 Proof.
-  move=> Hckb Hclb Hnd. rewrite /run_pool_invs all_runs_pool_of. move=> [Hfits [Hdisj Hoc]].
+  move=> Hckb Hclb Hnd. rewrite /run_pool_invs all_runs_pool_of.
+  move=> [Hinvall Hdisj].
+  have Hfits : ∀ r, r ∈ (cell_run <$> all_cells types) -> run_fits r
+    := λ r Hr, proj1 (proj2 (Hinvall r Hr)).
+  have Hoc : ∀ r, r ∈ (cell_run <$> all_cells types) -> run_origin_clk r
+    := λ r Hr, proj2 (proj2 (proj2 (Hinvall r Hr))).
   split_and!.
   - move=> c Hc. apply (cell_fits_run c (Hckb c Hc)). apply Hfits. exact (list_elem_of_fmap_2 _ _ _ Hc).
   - exact Hnd.
@@ -1833,7 +1843,8 @@ Qed.
 
 (** [kp_client_locs] only sees the (client, clock, address) multiset: under
     [kp_clkloc] a permutation sorts to the same addresses, a key of another
-    client leaves the slice alone, a key at the client's newest clock lands
+    client leaves the slice alone, a client absent from the keys has the
+    empty slice, a key at the client's newest clock lands
     at the tail (the [addNode] step), and a key strictly between the sorted
     clocks lands at that position (the split step). *)
 Lemma kp_client_locs_perm (client : w64) (kps1 kps2 : list (w64 * (Z * loc))) :
@@ -1862,6 +1873,18 @@ Lemma kp_client_locs_other (client : w64) (kps : list (w64 * (Z * loc))) (kp : w
   kp.1 ≠ client -> kp_client_locs client (kps ++ [kp]) = kp_client_locs client kps.
 Proof.
   move=> Hne. rewrite /kp_client_locs filter_app filter_cons_False // filter_nil app_nil_r //.
+Qed.
+
+Lemma kp_client_locs_absent (client : w64) (kps : list (w64 * (Z * loc))) :
+  client ∉ kps.*1 -> kp_client_locs client kps = [].
+Proof.
+  move=> Hnin.
+  have Hfilt : filter (λ kp : w64 * (Z * loc), kp.1 = client) kps = [].
+  { move: Hnin. elim: kps => [| a l IH] Hnin; [reflexivity |].
+    rewrite filter_cons. case_decide as Hc.
+    - exfalso. apply Hnin. rewrite fmap_cons Hc. apply list_elem_of_here.
+    - apply IH. move=> Hin. apply Hnin. rewrite fmap_cons. apply elem_of_cons. by right. }
+  rewrite /kp_client_locs Hfilt //.
 Qed.
 
 Lemma kp_client_locs_snoc_max (client : w64) (kps : list (w64 * (Z * loc))) (kp : w64 * (Z * loc)) :
@@ -2176,6 +2199,86 @@ Proof.
       by rewrite Hkp.
     rewrite -!list_fmap_compose in H. exact H. }
   rewrite Hfst -locs_of_concat (locs_of_types_of_locs_pool locs p Hdom Hlens). exact Hnd.
+Qed.
+
+(** One integrate splice adds exactly the new entry to the pool's entries:
+    the fresh node's address at the cursor of the address list, its run at
+    the same cursor of the run list. *)
+Lemma pool_entries_integrate (locs : gmap loc (list loc)) (p : pool) (parent : loc)
+    (ls : list loc) (tm : type_model) (idx : nat) (item_l : loc) (r : ItemRun)
+    (arr' : list (YjsItem A)) :
+  locs !! parent = Some ls -> p !! parent = Some tm ->
+  length ls = length (tm_runs tm) ->
+  pool_entries (<[parent := integrate_locs ls idx item_l]> locs)
+               (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p)
+    ≡ₚ (item_l, r) :: pool_entries locs p.
+Proof.
+  move=> Hls Hp Hlen.
+  set (F := λ (locs' : gmap loc (list loc)) (kv : loc * type_model),
+              zip (default [] (locs' !! kv.1)) (tm_runs kv.2)).
+  set (others := concat (F locs <$> map_to_list (delete parent p))).
+  have Hpe : ∀ (locs' : gmap loc (list loc)) (tm' : type_model),
+      (∀ q, q ≠ parent -> locs' !! q = locs !! q) ->
+      pool_entries locs' (<[parent := tm']> p) ≡ₚ F locs' (parent, tm') ++ others.
+  { move=> locs' tm' Hq. rewrite /pool_entries.
+    have Hm : F locs' <$> map_to_list (<[parent := tm']> p)
+            ≡ₚ F locs' <$> ((parent, tm') :: map_to_list (delete parent p)).
+    { apply Permutation_map. exact (map_to_list_insert_existing p parent tm tm' Hp). }
+    rewrite (concat_perm _ _ Hm) fmap_cons concat_cons. apply Permutation_app_head. rewrite /others.
+    have -> : F locs' <$> map_to_list (delete parent p) = F locs <$> map_to_list (delete parent p);
+      last reflexivity.
+    apply list_fmap_ext. move=> i [q tmq] Hi. rewrite /F /=.
+    have Hq' : delete parent p !! q = Some tmq
+      by (apply elem_of_map_to_list; exact (list_elem_of_lookup_2 _ _ _ Hi)).
+    apply lookup_delete_Some in Hq' as [Hne _]. rewrite (Hq q (λ H, Hne (eq_sym H))) //. }
+  set (Ap := zip (take idx ls) (take idx (tm_runs tm))).
+  set (Bp := zip (drop idx ls) (drop idx (tm_runs tm))).
+  have HlenA : length (take idx ls) = length (take idx (tm_runs tm)) by rewrite !length_take Hlen.
+  have Hother : ∀ q, q ≠ parent -> <[parent := integrate_locs ls idx item_l]> locs !! q = locs !! q.
+  { move=> q Hne. rewrite lookup_insert_ne //. }
+  have Hold : pool_entries locs p ≡ₚ Ap ++ Bp ++ others.
+  { rewrite -{1}(insert_id p parent tm Hp) (Hpe locs tm (λ q _, eq_refl)) /F /= Hls /=.
+    rewrite -{1}(take_drop idx ls) -{1}(take_drop idx (tm_runs tm)).
+    rewrite zip_with_app; last exact HlenA.
+    rewrite -/Ap -/Bp -app_assoc //. }
+  have Hnew : pool_entries (<[parent := integrate_locs ls idx item_l]> locs)
+                (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p)
+              ≡ₚ Ap ++ (item_l, r) :: Bp ++ others.
+  { rewrite (Hpe _ _ Hother) /F /= lookup_insert_eq /= /integrate_locs.
+    rewrite zip_with_app; last exact HlenA.
+    simpl. rewrite -/Ap -/Bp -app_assoc //. }
+  rewrite Hnew Hold. symmetry. apply Permutation_middle.
+Qed.
+
+(** The address map stays well formed across an integrate splice landing at
+    a fresh address. *)
+Lemma locs_wf_integrate (locs : gmap loc (list loc)) (p : pool) (parent : loc)
+    (ls : list loc) (tm : type_model) (idx : nat) (item_l : loc) (r : ItemRun)
+    (arr' : list (YjsItem A)) :
+  locs !! parent = Some ls -> p !! parent = Some tm ->
+  item_l ∉ concat ((map_to_list locs).*2) ->
+  locs_wf locs p ->
+  locs_wf (<[parent := integrate_locs ls idx item_l]> locs)
+          (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p).
+Proof.
+  move=> Hls Hp Hfresh [Hdom [Hnd Hlens]].
+  have Hperm0 : concat ((map_to_list locs).*2) ≡ₚ ls ++ concat ((map_to_list (delete parent locs)).*2).
+  { rewrite -{1}(insert_id locs parent ls Hls).
+    rewrite (concat_perm _ _ (Permutation_map snd (map_to_list_insert_existing locs parent ls ls Hls))) //. }
+  have Hperm : concat ((map_to_list (<[parent := integrate_locs ls idx item_l]> locs)).*2)
+             ≡ₚ integrate_locs ls idx item_l ++ concat ((map_to_list (delete parent locs)).*2).
+  { rewrite (concat_perm _ _ (Permutation_map snd (map_to_list_insert_existing locs parent ls _ Hls))) //. }
+  have Hil : integrate_locs ls idx item_l ≡ₚ item_l :: ls.
+  { rewrite /integrate_locs -{3}(take_drop idx ls). symmetry. apply Permutation_middle. }
+  split_and!.
+  - rewrite !dom_insert_L Hdom //.
+  - rewrite Hperm Hil. rewrite Hperm0 in Hnd Hfresh.
+    apply NoDup_cons. split; [exact Hfresh | exact Hnd].
+  - move=> q lsq tmq. destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite !lookup_insert_eq. move=> [<-] [<-]. simpl.
+      have Hlsl := Hlens parent ls tm Hls Hp.
+      rewrite /integrate_locs !length_app /= !length_take !length_drop. lia.
+    + rewrite !lookup_insert_ne //. exact (Hlens q lsq tmq).
 Qed.
 
 Lemma client_entries_NoDup_locs (locs : gmap loc (list loc)) (p : pool) (client : w64) :

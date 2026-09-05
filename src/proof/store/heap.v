@@ -1324,6 +1324,24 @@ Proof.
   iApply (own_ytype_runs_fresh with "Hq Hyt").
 Qed.
 
+(** The same, over the whole pool: an owned node address is absent from
+    every address list of the map. *)
+Lemma own_type_pool_runs_fresh_concat (q : loc) (v : yjs.item.t) (dq : dfrac)
+    (locs : gmap loc (list loc)) (p : pool) :
+  q ↦ v -∗ own_type_pool_runs dq locs p -∗ ⌜q ∉ concat ((map_to_list locs).*2)⌝.
+Proof.
+  iIntros "Hq (%Hlocswf & Hpool)".
+  iDestruct (own_type_pool_runs_fresh with "Hq Hpool") as %Hfr.
+  iPureIntro. destruct Hlocswf as (Hdom & _ & _).
+  move=> Hin. apply list_elem_of_concat in Hin as (lsq & Hin & Hlsq).
+  apply list_elem_of_fmap in Hlsq as ([parent lsq'] & -> & Hq). simpl in Hin.
+  apply elem_of_map_to_list in Hq.
+  have Hqp : is_Some (p !! parent).
+  { apply elem_of_dom. rewrite -Hdom. apply elem_of_dom. by exists lsq'. }
+  destruct Hqp as [tmq Htmq].
+  exact (Hfr parent lsq' tmq Hq Htmq Hin).
+Qed.
+
 (** The [w64] cell-level shadow of the per-client clock counter: if every
     item of this client in the pool's model lists has clock below [k], then
     every cell of this client ends at or before [k] in machine arithmetic
@@ -1599,10 +1617,12 @@ Proof.
   have Hleq : locs_of (types_of_locs_pool locs p) = locs
     := locs_of_types_of_locs_pool locs p (proj1 Haligned) Hprem.
   iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnd.
+  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwf.
   have Hnd : NoDup (ic_loc <$> all_cells (types_of_locs_pool locs p)) := proj1 (proj2 (proj1 Hinvs)).
   have Hrp : run_pool_invs p.
   { rewrite -Hpeq.
-    exact (run_pool_invs_of _ (λ c Hc, proj2 (Hbnd c Hc)) (λ c Hc, proj1 (Hbnd c Hc)) (proj1 Hinvs)). }
+    exact (run_pool_invs_of _ Hwf (λ c Hc, proj2 (Hbnd c Hc)) (λ c Hc, proj1 (Hbnd c Hc))
+             (proj1 Hinvs)). }
   have Hreg : pool_registry_coh bind p.
   { rewrite -Hpeq. apply registry_coh_pool. exact (proj2 Hinvs). }
   iDestruct (own_type_pool_runs_of _ Hnd with "Htypes") as "Htypes".
@@ -2068,9 +2088,10 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "%Hctr"   ∷ ⌜∀ parent tm x, p !! parent = Some tm → x ∈ tm_arr tm →
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
-    (* the pool invariants (issue #28) at run granularity: clock-range
-       disjointness, [run_fits], [run_origin_clk] (the address [NoDup] is
-       [own_type_pool_runs]'s [locs_wf], in the read-shareable half) *)
+    (* the pool invariants (issue #28) at run granularity: every run
+       satisfies [run_invs] and the clock ranges are disjoint (the address
+       [NoDup] is [own_type_pool_runs]'s [locs_wf], in the read-shareable
+       half) *)
     "%Hpool" ∷ ⌜run_pool_invs p⌝ ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ q ∈ bind, is_type_binding γs.(sn_types) name q) ∗
@@ -2544,6 +2565,21 @@ Proof.
                 | rewrite Hc' //].
 Qed.
 
+(** A linked item's address is new to the whole address map of the pool
+    (the item is owned separately). *)
+Lemma own_linked_item_fresh_runs (item_l parent lft rgt : loc)
+    (input : IntegrateInput (A := A)) (dq : dfrac)
+    (locs : gmap loc (list loc)) (p : pool) :
+  own_linked_item item_l input parent lft rgt -∗
+  own_type_pool_runs dq locs p -∗
+  ⌜item_l ∉ concat ((map_to_list locs).*2)⌝.
+Proof.
+  iIntros "Hlinked Htypes".
+  iDestruct "Hlinked" as (itemVal oleft oright) "(Hraw & _)".
+  iDestruct "Hraw" as "(Hitem & _)".
+  iApply (own_type_pool_runs_fresh_concat with "Hitem Htypes").
+Qed.
+
 (** A fully-owned node struct's location is fresh for the whole document cell
     pool: the source of the [NoDup (ic_loc <$> all_cells types)] maintenance
     when a freshly allocated node is spliced in (issue #28 part 6). Stated over
@@ -2888,7 +2924,7 @@ Proof.
   iSplitR. { iPureIntro. move=> parent' tm' x Hlk. rewrite /p lookup_empty // in Hlk. }
   iSplitR.
   { iPureIntro. rewrite /run_pool_invs /all_runs /p map_to_list_empty /=.
-    split_and!; [by move=> r /elem_of_nil | | by move=> r /elem_of_nil].
+    split; first by move=> r /elem_of_nil.
     move=> i j r1 r2 Hi. rewrite lookup_nil // in Hi. }
   iSplitR. { rewrite big_sepM_empty //. }
   iPureIntro. split_and!.

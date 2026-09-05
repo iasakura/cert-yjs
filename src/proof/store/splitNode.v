@@ -502,7 +502,11 @@ Proof using Type*.
   iDestruct "Hruns" as "(Hfields & %Hinvs)".
   have Hrpi : run_pool_invs p := proj1 Hinvs.
   have Hreg : pool_registry_coh bind p := proj2 Hinvs.
-  have [Hfits [Hdisj Hoc]] := Hrpi.
+  have [Hinvall Hdisj] := Hrpi.
+  have Hfits : ∀ r0, r0 ∈ all_runs p -> run_fits r0
+    := λ r0 Hr0, proj1 (proj2 (Hinvall r0 Hr0)).
+  have Hoc : ∀ r0, r0 ∈ all_runs p -> run_origin_clk r0
+    := λ r0 Hr0, proj2 (proj2 (proj2 (Hinvall r0 Hr0))).
   iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iEval (simpl) in "Hitems Htypes".
   iDestruct (own_type_pool_runs_id_bounds with "Htypes") as %Hbnds.
@@ -715,7 +719,8 @@ Proof using Type*.
   iDestruct (own_type_pool_runs_id_bounds with "Htypes2") as %Hbnds2.
   have Hndl2 : NoDup (pool_entries locs2 p2).*1 := pool_entries_locs_NoDup locs2 p2 Hdom2 Hlens2' Hnd2.
   have Hidisj2 := sorted_client_entries_disjoint locs2 p2 kc E' Hdom2 Hlens2' Hndl2
-                    (λ r' Hr', proj1 (Hbnds2 r' Hr')) (proj1 (proj2 Hrpi2)) HE'.
+                    (λ r' Hr', proj1 (Hbnds2 r' Hr'))
+                    (proj2 Hrpi2) HE'.
   have Hidxkw : uint.nat idx = kw.
   { destruct (decide (uint.nat idx = kw)) as [? | Hne]; [done | exfalso].
     destruct (Hidisj2 (uint.nat idx) kw lres l rres leftRun Hres Hkw' Hne) as [Hd | Hd];
@@ -926,7 +931,7 @@ Proof using Type*.
   have Hrmem : r ∈ all_runs p.
   { apply (elem_of_all_runs p r). exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hr)]. }
   have Hrwf : run_wf (run_items r) := Hwf r Hrmem.
-  have Hrfits : run_fits r := proj1 Hrinv r Hrmem.
+  have Hrfits : run_fits r := proj1 (proj2 (proj1 Hrinv r Hrmem)).
   wp_auto.
   iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
                parent ls tm k lc r Hls Hp Hlk Hr with "Hruns") as (ivR) "H".
@@ -1020,7 +1025,7 @@ Proof using Type*.
   have Hrmem : r ∈ all_runs p.
   { apply (elem_of_all_runs p r). exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hr)]. }
   have Hrwf : run_wf (run_items r) := Hwf r Hrmem.
-  have Hrfits : run_fits r := proj1 Hrinv r Hrmem.
+  have Hrfits : run_fits r := proj1 (proj2 (proj1 Hrinv r Hrmem)).
   wp_auto.
   iDestruct (own_store_runs_node_acc s (MkStoreStateRuns client0 k0 locs p bind pend pdel)
                parent ls tm k lc r Hls Hp Hlk Hr with "Hruns") as (ivR) "H".
