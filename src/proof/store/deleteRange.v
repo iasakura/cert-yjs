@@ -65,7 +65,7 @@ Notation accUR := (authR (gsetUR YjsId)).
 
 Context {acc_inG : inG Σ accUR}.
 
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 
 (* ===== lemmas ============================================================= *)
 
@@ -780,7 +780,7 @@ Lemma wp_store__applyDeleteSpans_store (s_loc : loc) (γs : store_names)
   {{{ RET #(); own_store s_loc γs γh c h m pend ∗ own_delete_spans sp_sl dq spans }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hstore & Hsp) HΦ".
-  iNamed "Hstore".
+  iEval (rewrite own_store_as_cells) in "Hstore". iNamed "Hstore".
   have [Hmtypes Hmdom] := Hregmodel.
   wp_apply (wp_store__applyDeleteSpans s_loc (MkStoreState client k types bind pend pdel) sp_sl dq spans
               with "[$Hcells $Hsp]").
@@ -817,6 +817,7 @@ Proof using Type*.
     destruct (Harr parent ts' Hts') as (ts & Hts & Heq).
     rewrite Heq in Hx. exact (Hctr parent ts x Hts Hx). }
   iApply "HΦ". iFrame "Hsp".
+  rewrite own_store_as_cells.
   iExists client, k, rest, types', bind, acc.
   iFrame "Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set".
   iFrame "Hclientpin Hpendcert Hbinds".

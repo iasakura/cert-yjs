@@ -57,7 +57,7 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 
 Lemma wp_Doc__GetOrCreateText (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (name : P) :
@@ -68,7 +68,7 @@ Proof.
   wp_start as "(#His_doc & #Hishist)".
   iNamed "His_doc". subst s_loc. wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
-  iDestruct "Hinv" as (c0 h m pend) "Hown". iNamed "Hown". subst c0.
+  iDestruct "Hinv" as (c0 h m pend) "Hown". iEval (rewrite own_store_as_cells) in "Hown". iNamed "Hown". subst c0.
   iNamed "Hcells". iNamed "Hfields". iNamed "Hregistry". iNamed "Hpending". iNamed "Hpdeletes".
   have [Hpool Hreg] := Hinvs.
   have [Hrunfits [Hlocdup [Hrangedisj Horiginclk]]] := Hpool.
@@ -95,7 +95,7 @@ Proof.
     wp_auto.
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
                 with "[$His_store $Hwl Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set]").
-    { iExists client, k, pdel, types, bind, acc.
+    { rewrite own_store_as_cells. iExists client, k, pdel, types, bind, acc.
       iFrame "∗#". iPureIntro.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
@@ -234,7 +234,7 @@ Proof.
                 with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes") as "Hcells".
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
                 with "[$His_store $Hwl Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set]").
-    { iExists client, k, pdel, types', bind', acc.
+    { rewrite own_store_as_cells. iExists client, k, pdel, types', bind', acc.
       iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds'". iPureIntro.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh

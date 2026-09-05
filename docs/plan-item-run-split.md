@@ -626,6 +626,22 @@ vocabulary substitution table written; then C5 restates the specs at
     `own_store_runs_intro_state` (one line each). C6-2b, the lock layer
     (`own_store` / `store_inv` / `types_frag` / the read API) at
     `(locs, pool)`, is next.
+    PROGRESS 2026-09-04 (C6-2b): the lock layer is at `(locs, pool)`.
+    `own_store` carries `own_store_runs`, the item-set authority over the
+    pool, `pool_registry_models`, the counter clause over `tm_arr` and
+    `own_delete_set_runs`; `store_inv_excl` / `store_inv_ro` / `store_inv`
+    / `tie_body` the same (the W64 clock shadow `Hcellctr` is gone, the
+    address `NoDup` is `locs_wf` in the read-shareable half, which is
+    fractional through `own_ytype_runs_fractional` /
+    `own_type_pool_runs_fractional`); the reader agreement is `pool_frag`
+    over the `(locs, pool)` pair (the `ftypes_inG` context in every file).
+    The lock wrappers hand out `own_store` unchanged in shape;
+    `wp_Store__rlock` returns the pool and the read API (`Text.Len`,
+    `Text.String`) reads the type's run view (`runs_model_fst` /
+    `runs_visible_model`). The write-path consumers (`Text.Insert`,
+    `Text.Delete`, `store.applyUpdate`, `applyDeleteSpans`,
+    `GetOrCreateText`) keep their cell bodies behind `own_store_cells` /
+    `own_store_as_cells` at entry and exit: the scaffolding C6-3 removes.
   - **C6-3, bodies at runs.** Each transition proof drops the cell recipe
     for the run-level laws: `splitNode` (pool bookkeeping over
     `own_type_pool_runs` and the item-map split law), `Integrate`

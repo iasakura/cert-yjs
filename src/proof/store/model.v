@@ -27,7 +27,8 @@
     The cell bookkeeping that shadows this model is [store/value.v].
 
     The run-granular pool (plan-item-run-split stage 2): [pool], every
-    registered type at its [type_model]; [all_runs] and the clock-sorted
+    registered type at its [type_model] ([addressed_pool] pairs it with the
+    types' node addresses); [all_runs] and the clock-sorted
     [client_runs]; [run_pool_invs], the pure pool invariants at run
     granularity ([pool_invs] minus the heap-side [NoDup] of addresses);
     [pool_run_covers], the index-based [pool_cell_covers];
@@ -106,6 +107,13 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     type at its [type_model], keyed by the yType's address (the key only
     names the type; no pure lemma computes with it). *)
 Definition pool := gmap loc type_model.
+
+(** [addressed_pool]: a pool together with each registered type's node
+    addresses, the pair the whole store speaks in ([sr_locs], [sr_pool]).
+    Named because it is also the ghost value the readers agree on
+    ([store_names]'s [sn_types_agree], read by [pool_frag] /
+    [own_read_locked] and pinned by [store_inv_ro]). *)
+Definition addressed_pool := (gmap loc (list loc) * pool)%type.
 
 (** All runs across all types: the loc-free [all_cells]. *)
 Definition all_runs (p : pool) : list ItemRun :=

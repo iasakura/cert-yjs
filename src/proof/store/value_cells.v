@@ -15,7 +15,9 @@
     - the registry coherence side conditions [doc_registry_coh] and
       [inputs_rooted_in_bind]; what [getOrCreateYType] does to the registry,
       [registry_lookup_or_create] ([pool_lookup_or_create] the same at run
-      granularity, with the address map).
+      granularity, with the address map); the registry coherence and its
+      model agreement at the pool, [pool_registry_coh] /
+      [pool_registry_models] / [pool_doc_registry_coh].
     - where a step's cells come from: [cells_within] (inside an old cell) and
       [cells_within_or_from] (inside an old cell or an integrated input).
     - [type_model_of] / [pool_of] / [locs_of]: a type state and the pool at
@@ -341,6 +343,11 @@ Definition pool_registry_models (m : DocModel) (bind : gmap P loc) (p : pool) : 
      doc_model_get m (RootId nm) = tm_arr tm) /\
   (∀ t, doc_model_get m t ≠ [] -> ∃ nm q, t = RootId nm /\ bind !! nm = Some q).
 
+(** [pool_doc_registry_coh m bind p]: [doc_registry_coh] at the run pool,
+    both clauses at once (what the lock body carries). *)
+Definition pool_doc_registry_coh (m : DocModel) (bind : gmap P loc) (p : pool) : Prop :=
+  pool_registry_coh bind p /\ pool_registry_models m bind p.
+
 (** [pool_invs types]: the invariants of the document cell pool that the model
     does not determine: every cell's clock range fits in [w64] ([cell_fits]),
     node locations are distinct, same-client cells occupy disjoint clock
@@ -628,6 +635,24 @@ Proof.
   - exact Hnd.
   - apply (cells_range_disjoint_runs _ Hckb Hclb Hnd). exact Hdisj.
   - move=> c Hc. apply cell_origin_clk_run. apply Hoc. exact (list_elem_of_fmap_2 _ _ _ Hc).
+Qed.
+
+(** A registry's per-type item sets read through [pool_of]: what the item-set
+    authority ([store/heap]'s [Hseq]) carries at the two granularities; and a
+    materialized registry entry's document is its model's. *)
+Lemma pool_of_seq_map (types : gmap loc type_state) :
+  (λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> pool_of types
+  = (λ ts, (list_to_set (ty_arr ts) : gset (YjsItem A))) <$> types.
+Proof.
+  rewrite /pool_of. apply map_eq => q. rewrite !lookup_fmap.
+  destruct (types !! q) as [ts|]; reflexivity.
+Qed.
+
+Lemma types_of_locs_pool_arr (locs : gmap loc (list loc)) (p : pool) (q : loc) (ts : type_state) :
+  types_of_locs_pool locs p !! q = Some ts -> ∃ tm, p !! q = Some tm ∧ ty_arr ts = tm_arr tm.
+Proof.
+  rewrite /types_of_locs_pool map_lookup_imap. move=> /bind_Some [tm [Htm Hf]].
+  injection Hf as <-. exists tm. split; [exact Htm | reflexivity].
 Qed.
 
 (** [pool_run_clock_below] read back on the cells: under the pool id bounds

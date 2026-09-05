@@ -50,7 +50,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc type_state)))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 
 (* The ghost op-history types at the document content type; type names are Go
    strings (issue #49). *)
@@ -83,31 +83,33 @@ Proof.
   iDestruct "His_store" as "#His_store".
   wp_auto. subst s_loc.
   wp_apply (wp_Store__rlock _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
-  iIntros (types) "(Hrlo & Hro & %Hfact)".
+  iIntros (locs p) "(Hrlo & Hro & %Hfact)".
   iNamed "Hro".
   iDestruct (auth_gmap_gset_lookup_dq with "Hseq His_lb") as %(S' & HmS & HLsub).
-  rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (ts & Htsp & ->).
-  iDestruct (big_sepM_lookup_acc _ _ _ _ Htsp with "Htypes") as "[Hbody Hclose]".
-  iDestruct "Hbody" as "(Htext & %Hinvarr)".
-  iDestruct "Htext" as (yt0 tl0) "(Hparent & Hdll & %Hlen & %Hrepr & %Hcpar)".
+  rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (tm & Htmp & ->).
+  iDestruct "Htypes" as "(%Hlocswf & Hpool)".
+  iDestruct (big_sepM_lookup_acc _ _ _ _ Htmp with "Hpool") as "[Hbody Hclose]".
+  iDestruct "Hbody" as (ls) "(%Hls & Htext & %Hinvarr)".
+  iDestruct "Htext" as (yt0 tl0) "(Hparent & Hdll & %Hlen & %Harr)".
   subst parent.
   wp_auto.
-  iDestruct ("Hclose" with "[Hparent Hdll]") as "Htypes".
-  { iSplitL "Hparent Hdll"; [ iExists yt0, tl0; iFrame "Hparent Hdll"; iPureIntro; done | iPureIntro; exact Hinvarr ]. }
-  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Htypes]").
-  { iFrame "Hseq Htypes". }
+  iDestruct ("Hclose" with "[Hparent Hdll]") as "Hpool".
+  { iExists ls. iSplitR; first by iPureIntro. iSplitL; last by iPureIntro.
+    iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Harr]. }
+  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Hpool]").
+  { iFrame "Hseq". rewrite /own_type_pool_runs. iSplitR; [by iPureIntro | iFrame "Hpool"]. }
   iIntros "Hcap".
   wp_auto.
-  have Hfst : (cells_model (ty_cells ts)).*1 = ty_arr ts.
-  { rewrite cells_model_fst. rewrite /cells_repr in Hrepr. rewrite -Hrepr //. }
-  iApply ("HΦ" $! _ (cells_model (ty_cells ts))).
+  have Hfst : (runs_model (tm_runs tm)).*1 = tm_arr tm.
+  { rewrite runs_model_fst -Harr //. }
+  iApply ("HΦ" $! _ (runs_model (tm_runs tm))).
   iSplitR "Hcap"; last first.
   { iFrame "Hcap". iPureIntro. split_and!.
-    - rewrite Hlen num_visible_model //.
+    - rewrite Hlen runs_visible_model //.
     - split; rewrite Hfst; [exact HLsub | exact Hinvarr].
     - move=> input Hin.
-      destruct (Hfact input Hin) as (ts' & it & Hts' & Hitid & Hitmem).
-      rewrite Htsp in Hts'. injection Hts' as <-.
+      destruct (Hfact input Hin) as (tm' & it & Htm' & Hitid & Hitmem).
+      rewrite Htmp in Htm'. injection Htm' as <-.
       exists it. split; [exact Hitid | rewrite Hfst //]. }
   iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
   iFrame "Ht His_store His_hist Hbind His_lb".
