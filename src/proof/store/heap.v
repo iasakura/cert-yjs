@@ -177,7 +177,7 @@ Notation accUR := (authR (gsetUR YjsId)).
 
 Context {acc_inG : inG Σ accUR}.
 
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO (gmap loc (list loc) * pool)))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 
 (* The [∷] (named) wrapper blocks [Timeless] TC resolution; unfold it (as
    [New.proof.sync_proof.rwmutex] does) so the [Timeless] instances below go
@@ -2136,7 +2136,7 @@ Definition own_wlock (γs : store_names) : iProp Σ :=
 (** Fractional agreement on the store's addresses and pool between a
     reader's share and the lock invariant. *)
 Definition pool_frag (γs : store_names) (q : Qp) (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
-  own γs.(sn_types_agree) (to_frac_agree q ((locs, p) : leibnizO (gmap loc (list loc) * pool))).
+  own γs.(sn_types_agree) (to_frac_agree q ((locs, p) : leibnizO addressed_pool)).
 
 Definition storeN : namespace := nroot .@ "yjs_store".
 
@@ -2794,7 +2794,7 @@ Proof.
     as "[Hrmax Hrtoks]".
   iPersist "Hrmax".
   iMod (own_toks_0 γrmax) as "Hrtoks0".
-  iMod (own_alloc (to_frac_agree 1 ((locs, p) : leibnizO (gmap loc (list loc) * pool)))) as (γta) "Hta".
+  iMod (own_alloc (to_frac_agree 1 ((locs, p) : leibnizO addressed_pool))) as (γta) "Hta".
   { done. }
   (* the grow-only accepted-id set starts empty *)
   iMod (own_alloc (● (∅ : gset YjsId) : accUR)) as (γacc) "Hacc0".
