@@ -782,6 +782,21 @@ vocabulary substitution table written; then C5 restates the specs at
     `own_store_runs_covers_unique`; that one needs a run-level
     covering-slot uniqueness law and is the next step).
 
+    PROGRESS 2026-09-05 (C6-4c): the store no longer materializes the cell
+    state at all. `pool_run_covers_unique` (model) proves that two slots
+    covering the same id are the same slot, off `run_pool_invs`'s
+    `runs_disjoint`: the runs of one type sit at distinct indices of
+    `all_runs` (`all_runs_lookup`, and `all_runs_lookup_two` for two
+    types), so two same-client runs holding one clock would have to be one
+    run. `own_store_runs_covers_unique` is proved from it directly.
+    Deleted: `own_store_runs_to_state`, `own_store_runs_intro_state`,
+    `own_type_pool_runs_to_cells`, `own_item_map_runs_to_cells`,
+    `own_type_pool_runs_of`, `own_item_map_runs_of`. What is left of the
+    cell layer (`own_store_struct`, `own_type_pool`, `own_item_map`, the
+    cell `own_delete_set` cluster, `own_ytype_cells` / `own_dll`, the
+    `value_*` cell laws, `item_cell` / `type_state`) has no consumer above
+    it any more and goes next.
+
   - **C6-5, fold `tm_arr`.** `type_model` becomes the run list alone
     (`tm_arr = runs_flatten`), if the specs read better that way.
 

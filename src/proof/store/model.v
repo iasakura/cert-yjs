@@ -42,8 +42,9 @@
     ([pool_run_clock_below_of_arrs] reads it off a per-type clock bound on
     the flattened lists);
     [all_runs] under a registry insert or lookup ([all_runs_insert] /
-    [all_runs_lookup], membership across one slot [elem_of_all_runs_insert]
-    / [elem_of_all_runs_lookup]) and [run_pool_invs] surviving one node
+    [all_runs_lookup], two types at once [all_runs_lookup_two], membership
+    across one slot [elem_of_all_runs_insert] / [elem_of_all_runs_lookup]);
+    one id lives in one slot ([pool_run_covers_unique]) and [run_pool_invs] surviving one node
     split ([run_pool_invs_split]), one integrate splice
     ([run_pool_invs_integrate]) and one tombstoning
     ([run_pool_invs_flip]), and any reshuffle of the runs
@@ -248,6 +249,68 @@ Proof.
   move=> Hp.
   pose proof (all_runs_insert p parent tm tm Hp) as H.
   rewrite (insert_id p parent tm Hp) in H. exact H.
+Qed.
+
+(** Two types' runs decompose [all_runs] into two blocks and a rest. *)
+Lemma all_runs_lookup_two (p : pool) (q1 q2 : loc) (tm1 tm2 : type_model) :
+  q1 ≠ q2 ->
+  p !! q1 = Some tm1 -> p !! q2 = Some tm2 ->
+  ∃ rest, all_runs p ≡ₚ tm_runs tm1 ++ tm_runs tm2 ++ rest.
+Proof.
+  move=> Hne Hq1 Hq2.
+  have Hq2' : delete q1 p !! q2 = Some tm2 by (rewrite lookup_delete_ne; [exact Hq2 | congruence]).
+  exists (all_runs (delete q2 (delete q1 p))).
+  rewrite (all_runs_lookup p q1 tm1 Hq1).
+  apply Permutation_app_head.
+  exact (all_runs_lookup (delete q1 p) q2 tm2 Hq2').
+Qed.
+
+(** One id lives in one slot: two slots of the pool covering the same id are
+    the same slot. The runs of one type sit at distinct indices of
+    [all_runs], and [runs_disjoint] keeps two same-client runs' clock ranges
+    apart, so two runs both holding [d] must be the same run at the same
+    slot. *)
+Lemma pool_run_covers_unique (p : pool) (d : YjsId) (q1 q2 : loc) (k1 k2 : nat) :
+  run_pool_invs p ->
+  pool_run_covers p q1 k1 d ->
+  pool_run_covers p q2 k2 d ->
+  q1 = q2 ∧ k1 = k2.
+Proof.
+  move=> [_ Hdisj] Hc1 Hc2.
+  destruct Hc1 as (tm1 & r1 & Hq1 & Hr1 & Hcov1).
+  destruct Hc2 as (tm2 & r2 & Hq2 & Hr2 & Hcov2).
+  have [Hcl1 [Hlo1 Hhi1]] := Hcov1.
+  have [Hcl2 [Hlo2 Hhi2]] := Hcov2.
+  have Hsamecl : run_client r1 = run_client r2 by rewrite Hcl1 Hcl2.
+  destruct (decide (q1 = q2)) as [-> | Hqne].
+  - (* one type: the two runs sit at [k1] and [k2] of its own run list *)
+    rewrite Hq2 in Hq1. injection Hq1 as <-.
+    split; first done.
+    destruct (decide (k1 = k2)) as [-> | Hkne]; first done.
+    exfalso.
+    have Hperm : all_runs p ≡ₚ tm_runs tm2 ++ all_runs (delete q2 p)
+      := all_runs_lookup p q2 tm2 Hq2.
+    have Hdisj' : runs_disjoint (tm_runs tm2 ++ all_runs (delete q2 p))
+      := runs_disjoint_perm _ _ Hperm Hdisj.
+    have Hi1 : (tm_runs tm2 ++ all_runs (delete q2 p)) !! k1 = Some r1
+      by rewrite lookup_app_l; [exact Hr1 | exact (lookup_lt_Some _ _ _ Hr1)].
+    have Hi2 : (tm_runs tm2 ++ all_runs (delete q2 p)) !! k2 = Some r2
+      by rewrite lookup_app_l; [exact Hr2 | exact (lookup_lt_Some _ _ _ Hr2)].
+    destruct (Hdisj' k1 k2 r1 r2 Hi1 Hi2 Hkne Hsamecl) as [Hd | Hd]; lia.
+  - (* two types: the runs sit in different blocks of [all_runs] *)
+    exfalso.
+    destruct (all_runs_lookup_two p q1 q2 tm1 tm2 Hqne Hq1 Hq2) as (rest & Hperm).
+    have Hdisj' : runs_disjoint (tm_runs tm1 ++ tm_runs tm2 ++ rest)
+      := runs_disjoint_perm _ _ Hperm Hdisj.
+    have Hi1 : (tm_runs tm1 ++ tm_runs tm2 ++ rest) !! k1 = Some r1
+      by rewrite lookup_app_l; [exact Hr1 | exact (lookup_lt_Some _ _ _ Hr1)].
+    have Hi2 : (tm_runs tm1 ++ tm_runs tm2 ++ rest) !! (length (tm_runs tm1) + k2)%nat = Some r2.
+    { rewrite lookup_app_r; last lia.
+      have -> : (length (tm_runs tm1) + k2 - length (tm_runs tm1))%nat = k2 by lia.
+      rewrite lookup_app_l; [exact Hr2 | exact (lookup_lt_Some _ _ _ Hr2)]. }
+    have Hkne : k1 ≠ (length (tm_runs tm1) + k2)%nat.
+    { have := lookup_lt_Some _ _ _ Hr1. lia. }
+    destruct (Hdisj' k1 (length (tm_runs tm1) + k2)%nat r1 r2 Hi1 Hi2 Hkne Hsamecl) as [Hd | Hd]; lia.
 Qed.
 
 (** Membership in [all_runs] across one registry slot: a run of the new

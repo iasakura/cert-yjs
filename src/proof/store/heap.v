@@ -8,24 +8,19 @@
     - [own_item_map]: the heap [map[Client][]*item] at the cell level;
       [own_item_map_kp] over a (client, clock, address) key list, which the
       cell form is over a registry's keys ([own_item_map_as_kp]) and
-      [own_item_map_runs] over a run-granular state's entries
-      ([own_item_map_runs_of] / [own_item_map_runs_to_cells]).
+      [own_item_map_runs] over a run-granular state's entries.
     - [own_type_pool]: every registered type's DLL at its cell model, the
       store's whole item pool, [dfrac]-parameterized for the read path.
     - [own_store_fields s st]: every field of the struct at a [store_state]
       (the item index, the root registry, the type pool, the two buffers, the
       unmodeled delete-set struct), with no predicate per field on purpose.
     - the run-granular pool (plan-item-run-split stage 2):
-      [own_type_pool_runs dq locs p] (over [store/value_cells]'s [locs_wf]) and
-      the cell-level readings [own_type_pool_runs_of] /
-      [own_type_pool_runs_to_cells] (the converse, at the re-materialized
-      registry [types_of_locs_pool]); the PRIMITIVE [own_store_runs s
-      str], the store at a [store_state_runs] (every field at run
-      granularity, [own_store_fields_runs] / [own_items_field_runs], with
-      [store_invs_runs]), which every store spec is stated over; the cell
-      state it materializes to is read off it and folded back by
-      [own_store_runs_to_state] / [own_store_runs_intro_state]
-      and what it reads
+      [own_type_pool_runs dq locs p] (over [store/value_cells]'s [locs_wf]);
+      the PRIMITIVE [own_store_runs s str], the store at a
+      [store_state_runs] (every field at run granularity,
+      [own_store_fields_runs] / [own_items_field_runs], with
+      [store_invs_runs]), which every store spec is stated over, and what it
+      reads
       back at run granularity ([own_store_runs_run_pool_invs]
       / [own_store_runs_run_wf] / [own_store_runs_arr] /
       [own_store_runs_arr_inv] / [own_store_runs_registry_coh], the
@@ -312,26 +307,9 @@ Proof.
 Qed.
 
 (** [own_item_map_runs mref dq locs p]: the item index of a run-granular
-    store state: [own_item_map_kp] over the pool's entries. It is
-    [own_item_map] of the registry the state materializes to
-    ([own_item_map_runs_to_cells]), and a registry's own index is the index
-    of its addresses and runs ([own_item_map_runs_of]). *)
+    store state: [own_item_map_kp] over the pool's entries. *)
 Definition own_item_map_runs (mref : loc) (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
   own_item_map_kp mref dq (entry_kp <$> pool_entries locs p).
-
-Lemma own_item_map_runs_of (mref : loc) (dq : dfrac) (types : gmap loc type_state) :
-  own_item_map mref dq types ⊣⊢ own_item_map_runs mref dq (locs_of types) (pool_of types).
-Proof. rewrite /own_item_map_runs entries_kp_of. apply own_item_map_as_kp. Qed.
-
-Lemma own_item_map_runs_to_cells (mref : loc) (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) :
-  dom locs = dom p ->
-  (∀ parent tm, p !! parent = Some tm ->
-     ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
-  own_item_map_runs mref dq locs p ⊣⊢ own_item_map mref dq (types_of_locs_pool locs p).
-Proof.
-  move=> Hdom Hlens. rewrite /own_item_map_runs (entries_kp_to_cells locs p Hdom Hlens).
-  symmetry. apply own_item_map_as_kp.
-Qed.
 
 (* The DLL predicate stack is timeless too (heap points-to + pure + persistent
    origin handles); register the instances so [store_inv] is timeless. *)
@@ -979,68 +957,6 @@ Proof.
     iApply (own_ytype_runs_fractional parent ls1 tm q1 q2). iFrame "Hyt1 Hyt2".
 Qed.
 
-(** The run-granular pool read back at the re-materialized cell registry
-    ([types_of_locs_pool]): the converse of [own_type_pool_runs_of]. The
-    per-type lengths come off [locs_wf], and the address [NoDup] comes back
-    out of it through [locs_of_concat]. *)
-Lemma own_type_pool_runs_to_cells (locs : gmap loc (list loc)) (p : pool) :
-  own_type_pool_runs (DfracOwn 1) locs p -∗
-  own_type_pool (DfracOwn 1) (types_of_locs_pool locs p) ∗
-  ⌜pool_of (types_of_locs_pool locs p) = p⌝ ∗
-  ⌜locs_of (types_of_locs_pool locs p) = locs⌝ ∗
-  ⌜NoDup (ic_loc <$> all_cells (types_of_locs_pool locs p))⌝.
-Proof.
-  iIntros "(%Hlocswf & Hpool)".
-  destruct Hlocswf as (Hdom & Hnd & Hlens).
-  have Hprem : ∀ parent tm, p !! parent = Some tm ->
-      ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm).
-  { move=> parent tm Hp.
-    have His : is_Some (locs !! parent).
-    { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
-    destruct His as [ls Hls]. exists ls.
-    split; [done | exact (Hlens parent ls tm Hls Hp)]. }
-  have Hpeq : pool_of (types_of_locs_pool locs p) = p
-    := pool_of_types_of_locs_pool locs p Hprem.
-  have Hleq : locs_of (types_of_locs_pool locs p) = locs
-    := locs_of_types_of_locs_pool locs p Hdom Hprem.
-  iSplitL; last first.
-  { iPureIntro. split_and!; [exact Hpeq | exact Hleq |].
-    have Hcc := locs_of_concat (types_of_locs_pool locs p).
-    rewrite -Hcc Hleq. exact Hnd. }
-  rewrite /own_type_pool /types_of_locs_pool big_sepM_map_imap_total.
-  iApply (big_sepM_impl with "Hpool").
-  iIntros "!#" (parent tm Hp) "H".
-  iDestruct "H" as (ls) "(%Hls & Hruns & %Hinv)".
-  rewrite Hls /=.
-  iDestruct (own_ytype_runs_as_cells with "Hruns") as "[%Hlen Hcells]".
-  iFrame "Hcells". by iPureIntro.
-Qed.
-
-(** The cell-level pool at its run-granular reading: [own_type_pool] with
-    the address [NoDup] is [own_type_pool_runs] at [locs_of] / [pool_of]. *)
-Lemma own_type_pool_runs_of (types : gmap loc type_state) :
-  NoDup (ic_loc <$> all_cells types) ->
-  own_type_pool (DfracOwn 1) types -∗
-  own_type_pool_runs (DfracOwn 1) (locs_of types) (pool_of types).
-Proof.
-  iIntros (Hnd) "Hpool".
-  have Hloceq := locs_of_concat types.
-  iSplitR.
-  { iPureIntro. rewrite /locs_wf /locs_of /pool_of !dom_fmap_L.
-    split_and!; [done | by rewrite -/(locs_of types) Hloceq |].
-    move=> parent ls tm. rewrite !lookup_fmap.
-    destruct (types !! parent) as [ts|] eqn:Hts; simpl; [| done].
-    intros [= <-] [= <-]. rewrite !length_fmap //. }
-  rewrite /own_type_pool /pool_of big_sepM_fmap.
-  iApply (big_sepM_impl with "Hpool").
-  iIntros "!#" (parent ts Hts) "[Hcells %Hinv]".
-  iExists (ic_loc <$> ty_cells ts).
-  iSplitR. { iPureIntro. rewrite /locs_of lookup_fmap Hts //. }
-  iSplitL; [| iPureIntro; exact Hinv].
-  iApply (own_ytype_runs_intro with "Hcells").
-Qed.
-
-
 (* ----- laws of the type pool --------------------------------------------- *)
 
 (** Borrow one pool cell's heap struct out of the pool, exposing the full
@@ -1397,10 +1313,8 @@ Definition own_store_fields (s : loc) (st : store_state) : iProp Σ :=
 
 (** [own_store_struct s st]: the store at a cell-level state: every field
     ([own_store_fields]) with the invariants every method preserves
-    ([store_invs]). The reading the cell-recipe proof bodies still work in
-    ([own_store_runs_to_state] / [own_store_runs_intro_state]) and the one
-    the lock layer ([own_store]) carries until plan-item-run-split C6-2b;
-    the specs themselves are stated over [own_store_runs]. *)
+    ([store_invs]). The reading the remaining cell-recipe proof bodies work
+    in; the specs themselves are stated over [own_store_runs]. *)
 Definition own_store_struct (s : loc) (st : store_state) : iProp Σ :=
   "Hfields" ∷ own_store_fields s st ∗
   "%Hinvs" ∷ ⌜store_invs st⌝.
@@ -1464,83 +1378,10 @@ Definition store_invs_runs (str : store_state_runs) : Prop :=
 
 (** [own_store_runs s str]: THE store at its run-granular state, the
     PRIMITIVE store predicate (plan-item-run-split C6-2): every field at run
-    granularity with the invariants. The store at the cell state it
-    materializes to ([state_of_runs]) is read off it and folded back into
-    it by [own_store_runs_to_state] / [own_store_runs_intro_state], which is how the
-    cell-recipe bodies consume it until C6-3. *)
+    granularity with the invariants. *)
 Definition own_store_runs (s : loc) (str : store_state_runs) : iProp Σ :=
   "Hfields" ∷ own_store_fields_runs s str ∗
   "%Hinvs" ∷ ⌜store_invs_runs str⌝.
-
-(** The store at run granularity, read at the cell state it materializes
-    to, with the alignment that state satisfies; and the converse, the store
-    at an aligned cell state folded back to its run-granular reading. *)
-Lemma own_store_runs_to_state (s : loc) (str : store_state_runs) :
-  own_store_runs s str -∗
-  own_store_struct s (state_of_runs str) ∗ ⌜locs_aligned (sr_locs str) (sr_pool str)⌝.
-Proof.
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl.
-  iIntros "(Hfields & %Hinvs)".
-  iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iEval (simpl) in "Hitems Htypes".
-  iAssert (⌜locs_wf locs p⌝)%I as %Hlocswf; first by iDestruct "Htypes" as "[%Hwf _]".
-  destruct Hlocswf as (Hdom & Hnd & Hlens).
-  have Hprem : ∀ parent tm, p !! parent = Some tm ->
-      ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm).
-  { move=> parent tm Hp.
-    have His : is_Some (locs !! parent).
-    { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
-    destruct His as [ls Hls]. exists ls. split; [done | exact (Hlens parent ls tm Hls Hp)]. }
-  have Haligned : locs_aligned locs p by (split; [exact Hdom | exact Hlens]).
-  iDestruct (own_type_pool_runs_to_cells locs p with "Htypes") as "(Htypes & %Hpeq & %Hleq & %Hndc)".
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnd.
-  have Hpool : pool_invs (types_of_locs_pool locs p).
-  { apply (pool_invs_of_runs _ (λ c Hc, proj2 (Hbnd c Hc)) (λ c Hc, proj1 (Hbnd c Hc)) Hndc).
-    rewrite Hpeq. exact (proj1 Hinvs). }
-  have Hreg : registry_coh bind (types_of_locs_pool locs p).
-  { apply registry_coh_pool. rewrite Hpeq. exact (proj2 Hinvs). }
-  iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
-  iEval (rewrite (own_item_map_runs_to_cells items_mref (DfracOwn 1) locs p Hdom Hprem)) in "Hitemmap".
-  iSplitL; last (iPureIntro; exact Haligned).
-  iApply (own_store_struct_intro _ (MkStoreState client0 k0 (types_of_locs_pool locs p) bind pend pdel)
-            (conj Hpool Hreg)
-            with "Hclient Hclock HdeletedSet [Hitemsf Hitemmap] Hregistry Htypes Hpending Hpdeletes").
-  iExists items_mref. iFrame "Hitemsf Hitemmap".
-Qed.
-
-Lemma own_store_runs_intro_state (s : loc) (client0 k0 : w64) (locs : gmap loc (list loc))
-    (p : pool) (bind : gmap P loc) (pend : list (TId * IntegrateInput (A := A)))
-    (pdel : list delete_span) :
-  locs_aligned locs p ->
-  own_store_struct s (state_of_runs (MkStoreStateRuns client0 k0 locs p bind pend pdel)) -∗
-  own_store_runs s (MkStoreStateRuns client0 k0 locs p bind pend pdel).
-Proof.
-  simpl. move=> Haligned.
-  iIntros "(Hfields & %Hinvs)".
-  iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iEval (simpl) in "Hitems Htypes".
-  have Hprem := locs_aligned_lens _ _ Haligned.
-  have Hpeq : pool_of (types_of_locs_pool locs p) = p := pool_of_types_of_locs_pool locs p Hprem.
-  have Hleq : locs_of (types_of_locs_pool locs p) = locs
-    := locs_of_types_of_locs_pool locs p (proj1 Haligned) Hprem.
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnd.
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwf.
-  have Hnd : NoDup (ic_loc <$> all_cells (types_of_locs_pool locs p)) := proj1 (proj2 (proj1 Hinvs)).
-  have Hrp : run_pool_invs p.
-  { rewrite -Hpeq.
-    exact (run_pool_invs_of _ Hwf (λ c Hc, proj2 (Hbnd c Hc)) (λ c Hc, proj1 (Hbnd c Hc))
-             (proj1 Hinvs)). }
-  have Hreg : pool_registry_coh bind p.
-  { rewrite -Hpeq. apply registry_coh_pool. exact (proj2 Hinvs). }
-  iDestruct (own_type_pool_runs_of _ Hnd with "Htypes") as "Htypes".
-  iEval (rewrite Hpeq Hleq) in "Htypes".
-  iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
-  iEval (rewrite -(own_item_map_runs_to_cells items_mref (DfracOwn 1) locs p (proj1 Haligned) Hprem)) in "Hitemmap".
-  iSplitL; last (iPureIntro; split; [exact Hrp | exact Hreg]).
-  rewrite /own_store_fields_runs /=.
-  iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
-  iExists items_mref. iFrame "Hitemsf Hitemmap".
-Qed.
 
 (** The run-granular pool invariants, read off the store. *)
 Lemma own_store_runs_run_pool_invs (s : loc) (str : store_state_runs) :
@@ -1876,9 +1717,9 @@ Proof.
 Qed.
 
 (** One id lives in one slot: two covering slots of the store's pool are
-    the same slot (the run form of [pool_cell_covers_loc], read through
-    the materialized cells' address [NoDup]). What lets a split helper's
-    caller identify the node [GetNode] returned with the slot it holds. *)
+    the same slot ([pool_run_covers_unique] off the pool invariants). What
+    lets a split helper's caller identify the node [GetNode] returned with
+    the slot it holds. *)
 Lemma own_store_runs_covers_unique (s : loc) (str : store_state_runs) :
   own_store_runs s str -∗
   ⌜∀ (d : YjsId) (q1 q2 : loc) (k1 k2 : nat),
@@ -1887,39 +1728,9 @@ Lemma own_store_runs_covers_unique (s : loc) (str : store_state_runs) :
      q1 = q2 ∧ k1 = k2⌝.
 Proof.
   iIntros "H".
-  iDestruct (own_store_runs_to_state with "H") as "[(Hfields & %Hinvs) %Haligned]".
-  iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnd.
+  iDestruct (own_store_runs_run_pool_invs with "H") as %Hrpi.
   iPureIntro. move=> d q1 q2 k1 k2 Hcov1 Hcov2.
-  have Hpool : pool_invs (types_of_locs_pool (sr_locs str) (sr_pool str)) := proj1 Hinvs.
-  have Hprem := locs_aligned_lens _ _ Haligned.
-  (* the materialized cell of a covering slot covers the id *)
-  have Hcell : ∀ q k, pool_run_covers (sr_pool str) q k d ->
-      ∃ ts c, types_of_locs_pool (sr_locs str) (sr_pool str) !! q = Some ts ∧
-              ty_cells ts !! k = Some c ∧
-              pool_cell_covers (types_of_locs_pool (sr_locs str) (sr_pool str)) c d.
-  { move=> q k [tm [r [Hq [Hr Hrcov]]]].
-    destruct (Hprem q tm Hq) as (ls & Hls & Hlen).
-    have Hk : (k < length ls)%nat by (rewrite Hlen; exact (lookup_lt_Some _ _ _ Hr)).
-    destruct (lookup_lt_is_Some_2 ls k Hk) as [lc Hlc].
-    set (c := MkItemCell lc (run_items r) (run_deleted r) q).
-    exists (MkTypeState (cells_of_locs_runs q ls (tm_runs tm)) (tm_arr tm)), c.
-    have Hts : types_of_locs_pool (sr_locs str) (sr_pool str) !! q
-             = Some (MkTypeState (cells_of_locs_runs q ls (tm_runs tm)) (tm_arr tm)).
-    { rewrite /types_of_locs_pool map_lookup_imap Hq /= Hls //. }
-    have Hck : cells_of_locs_runs q ls (tm_runs tm) !! k = Some c.
-    { rewrite /cells_of_locs_runs lookup_zip_with Hlc Hr //. }
-    split_and!; [exact Hts | exact Hck |].
-    split.
-    - apply all_cells_elem_of. eexists _, _. split; [exact Hts | exact (list_elem_of_lookup_2 _ _ _ Hck)].
-    - apply cell_covers_run. rewrite /cell_run /c /=. by destruct r. }
-  destruct (Hcell q1 k1 Hcov1) as (ts1 & c1 & Hts1 & Hck1 & Hccov1).
-  destruct (Hcell q2 k2 Hcov2) as (ts2 & c2 & Hts2 & Hck2 & Hccov2).
-  have Hloc : ic_loc c1 = ic_loc c2
-    := pool_cell_covers_loc _ c1 c2 d Hpool (λ c Hc, proj2 (Hbnd c Hc)) Hccov1 Hccov2.
-  have := all_cells_same_loc_same_slot _ q1 q2 ts1 ts2 k1 k2 c1 c2 (proj1 (proj2 Hpool))
-            Hts1 Hck1 Hts2 Hck2 Hloc.
-  move=> [-> [-> _]]. done.
+  exact (pool_run_covers_unique (sr_pool str) d q1 q2 k1 k2 Hrpi Hcov1 Hcov2).
 Qed.
 
 Definition store_inv_ro (γs : store_names) (locs : gmap loc (list loc)) (p : pool) (q : Qp) : iProp Σ :=
