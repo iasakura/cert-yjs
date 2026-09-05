@@ -820,6 +820,18 @@ vocabulary substitution table written; then C5 restates the specs at
     cell reading; proving it directly over `own_dll_runs` is the next step
     and frees `own_ytype_cells` / `own_dll` / `item_cell`.
 
+    PROGRESS 2026-09-06 (C6-4f): the type's cell view is gone. The run
+    spine is fractional on its own (`own_dll_runs_fractional`, item/heap:
+    every node's share splits, the tail splits by induction, and combining
+    agrees on each node's struct hence on its next pointer), so
+    `own_ytype_runs_fractional` is proved directly from it and
+    `own_dll_runs_lastptr`. Deleted: `own_ytype` (the public cell
+    predicate), `own_ytype_cells` with `own_ytype_intro`,
+    `own_ytype_cells_flatten`, `own_ytype_cells_parents`,
+    `own_ytype_runs_intro`, `own_ytype_runs_as_cells`, and the cell
+    timeless / fractional instances (`own_dll_cells_layout_*`, `own_dll_*`,
+    `own_ytype_cells_*`). `own_ytype_runs` is now THE type predicate.
+
   - **C6-5, fold `tm_arr`.** `type_model` becomes the run list alone
     (`tm_arr = runs_flatten`), if the specs read better that way.
 
