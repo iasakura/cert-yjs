@@ -5,15 +5,15 @@
     closed over implementation ([yjs/ytype.go]), spec, and proof.
 
     Definitions
-    - [own_ytype_runs parent dq ls tm]: THE representation predicate. [parent]
-      is a heap [yType] whose [start] heads the run-granular DLL
-      ([own_dll_runs], from [item/heap.v]) at the node addresses [ls] and the
+    - [own_ytype parent dq ls tm]: THE representation predicate. [parent]
+      is a heap [yType] whose [start] heads the DLL
+      ([own_dll], from [item/heap.v]) at the node addresses [ls] and the
       runs of [tm], with [len] counting the visible chars. The type's
       document list is not a separate field of [tm] but its runs' flatten
       ([tm_arr]), so it cannot drift from the spine.
       [dfrac]-parameterized (idiom: plain owned heap data), and fractional
       through the spine
-      ([own_ytype_runs_fractional], in [store/heap.v] next to the pool's).
+      ([own_ytype_fractional], in [store/heap.v] next to the pool's).
 
     The method proofs are [ytype/newYType.v], [ytype/findPos.v] and
     [ytype/Text.v]. *)
@@ -40,17 +40,16 @@ Notation A := go_string.
 
 (* ===== definitions ======================================================== *)
 
-(** [own_ytype_runs parent dq ls tm]: the type at its run-granular model,
-    PRIMITIVE (plan-item-run-split stage 3c): [parent] is a heap [yType]
-    whose [start] heads the run-granular DLL [own_dll_runs] at the node
+(** [own_ytype parent dq ls tm]: THE type predicate. [parent] is a heap [yType]
+    whose [start] heads the DLL [own_dll] at the node
     addresses [ls] and the runs [tm_runs tm]; [len] counts the visible
     chars and the document list is the runs' flatten. The [(locs, p)]-keyed
-    pool ([store/heap.v]'s [own_type_pool_runs]) is a big-op of these. *)
-Definition own_ytype_runs (parent : loc) (dq : dfrac)
+    pool ([store/heap.v]'s [own_type_pool]) is a big-op of these. *)
+Definition own_ytype (parent : loc) (dq : dfrac)
     (ls : list loc) (tm : type_model) : iProp Σ :=
   ∃ (yt : yjs.yType.t) (tl : loc),
     "Hparent" ∷ parent ↦{dq} yt ∗
-    "Hdll" ∷ own_dll_runs dq parent yt.(yjs.yType.start') tl null null ls (tm_runs tm) ∗
+    "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null ls (tm_runs tm) ∗
     "%Hlen" ∷ ⌜yt.(yjs.yType.len') = W64 (runs_visible (tm_runs tm))⌝.
 
 (* ===== lemmas ============================================================= *)

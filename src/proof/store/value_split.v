@@ -1,4 +1,4 @@
-(** The [store] VALUE layer, part 2: the SPLIT SURGERY at run granularity and
+(** The [store] VALUE layer, part 2: the SPLIT SURGERY and
     the [repair] contract, over [store/value_cells.v].
 
     Definitions
@@ -67,14 +67,14 @@ Definition split_locs (ls : list loc) (k : nat) (r_loc : loc) : list loc :=
 
 (* ===== what lookups and splits say about the pool ======================= *)
 
-(** [pool_origin_covered p o or]: the optional origin id [o] resolves at run
-    granularity to the optional pool slot [or = Some (q, k)]: the [k]-th run
+(** [pool_origin_covered p o or]: the optional origin id [o] resolves to
+    the optional pool slot [or = Some (q, k)]: the [k]-th run
     of the type at [q] has the char [o]. The run is named by its slot, not by
     a node address. *)
 Definition pool_origin_covered (p : pool) (o : option YjsId)
     (or : option (loc * nat)) : Prop :=
   match o, or with
-  | Some d, Some qk => pool_run_covers p qk.1 qk.2 d
+  | Some d, Some qk => pool_covers p qk.1 qk.2 d
   | None, None => True
   | _, _ => False
   end.
@@ -116,13 +116,13 @@ Definition pool_origins_split (p' : pool) (locs' : gmap loc (list loc))
     (input : IntegrateInput (A := A)) (orL orR : option (loc * nat))
     (leftNode rightNode : loc) : Prop :=
   match in_originId input, orL with
-  | Some d, Some qk => ∃ k', pool_run_ends_at p' qk.1 k' d ∧
+  | Some d, Some qk => ∃ k', pool_ends_at p' qk.1 k' d ∧
                              (locs' !! qk.1) ≫= (λ ls, ls !! k') = Some leftNode
   | None, None => leftNode = null
   | _, _ => False
   end ∧
   match in_rightOriginId input, orR with
-  | Some d, Some qk => ∃ k', pool_run_starts_at p' qk.1 k' d ∧
+  | Some d, Some qk => ∃ k', pool_starts_at p' qk.1 k' d ∧
                              (locs' !! qk.1) ≫= (λ ls, ls !! k') = Some rightNode
   | None, None => rightNode = null
   | _, _ => False
@@ -137,7 +137,7 @@ Definition pool_origins_split (p' : pool) (locs' : gmap loc (list loc))
     address for the right half. The index-explicit form of
     [pool_after_split], which it implies ([pool_after_split_of_split_step]);
     what the two precise forms below weaken to and what
-    [store.repair]'s run-granular proof steps by. *)
+    [store.repair]'s proof steps by. *)
 Definition pool_split_step (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
     (p' : pool) (locs' : gmap loc (list loc)) : Prop :=
   (p' = p ∧ locs' = locs) ∨
@@ -224,7 +224,7 @@ Qed.
     [pool_split_step] ([pool_split_step_of_left] / [_of_right]), and both
     pin where the requested boundary now sits
     ([pool_split_left_step_ends_at], [pool_split_right_step_starts_at]).
-    What [wp_store__splitAtAndGetLeft_runs] / [_Right_runs] report. *)
+    What [wp_store__splitAtAndGetLeft] / [_Right] report. *)
 Definition pool_split_left_step (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
     (d : YjsId) (p' : pool) (locs' : gmap loc (list loc)) : Prop :=
   ∃ (tm : type_model) (ls : list loc) (r : ItemRun),
@@ -284,8 +284,8 @@ Lemma pool_split_left_step_ends_at (p : pool) (locs : gmap loc (list loc)) (pare
   run_wf (run_items r) ->
   run_covers r d ->
   pool_split_left_step p locs parent k d p' locs' ->
-  pool_run_starts_at p' parent k (item_id (run_head_item r)) ∧
-  pool_run_ends_at p' parent k d ∧
+  pool_starts_at p' parent k (item_id (run_head_item r)) ∧
+  pool_ends_at p' parent k d ∧
   (locs' !! parent) ≫= (λ ls, ls !! k) = Some lc.
 Proof.
   move=> [tm0 [Hp0 Hr0]] Hlc Hwf [Hcl [Hlo Hhi]] [tm [ls [r' [Hp [Hls [Hr Hcase]]]]]].
@@ -317,7 +317,7 @@ Lemma pool_split_right_step_starts_at (p : pool) (locs : gmap loc (list loc)) (p
   run_wf (run_items r) ->
   run_covers r d ->
   pool_split_right_step p locs parent k d l p' locs' ->
-  ∃ k', pool_run_starts_at p' parent k' d ∧ (locs' !! parent) ≫= (λ ls, ls !! k') = Some l.
+  ∃ k', pool_starts_at p' parent k' d ∧ (locs' !! parent) ≫= (λ ls, ls !! k') = Some l.
 Proof.
   move=> [tm0 [Hp0 Hr0]] Hwf [Hcl [Hlo Hhi]] [tm [ls [r' [lc [Hp [Hls [Hr [Hlk Hcase]]]]]]]].
   rewrite Hp0 in Hp. injection Hp as <-. rewrite Hr0 in Hr. injection Hr as <-.
@@ -377,7 +377,7 @@ Qed.
 
 (** The pool's entries across a node split: the split entry becomes its two
     halves (the right one at the fresh address), every other entry stays
-    (the run form of the cell-level split permutation). *)
+    (the cell-level split permutation). *)
 Lemma pool_entries_split (locs : gmap loc (list loc)) (p : pool) (parent : loc)
     (ls : list loc) (tm : type_model) (k : nat) (l : loc) (r : ItemRun) (o : nat) (rloc : loc) :
   locs !! parent = Some ls -> p !! parent = Some tm ->

@@ -6,35 +6,33 @@
       registry, write-lock witness, the RWMutex reader accounting, the accepted
       set).
     - [own_item_map_key_pairs]: the heap [map[Client][]*item] over a
-      (client, clock, address) key list, which [own_item_map_runs] is over a
-      run-granular state's entries.
+      (client, clock, address) key list, which [own_item_map] is over a
+      state's entries.
     - the type pool and the store predicate:
-      [own_type_pool_runs dq locs p] (over [store/value_cells]'s [locs_wf]);
-      the PRIMITIVE [own_store_runs s state], the store at a
-      [store_state_runs] (every field at run granularity,
-      [own_store_fields_runs] / [own_items_field_runs], with
-      [store_invs_runs]), which every store spec is stated over, and what it
-      reads back at run granularity ([own_store_runs_run_pool_invs] /
-      [own_store_runs_run_wf] / [own_store_runs_arr_inv] /
-      [own_store_runs_registry_coh], the document reader also on the pool,
-      [own_type_pool_runs_arr_inv]), the node borrows
-      ([own_type_pool_runs_node_acc] / [own_store_runs_node_acc], with the
+      [own_type_pool dq locs p] (over [store/value_cells]'s [locs_wf]);
+      the PRIMITIVE [own_store_state s state], the store at a
+      [store_state] (every field,
+      [own_store_fields] / [own_items_field], with
+      [store_invs]), which every store spec is stated over, and what it
+      reads back ([own_store_state_run_pool_invs] /
+      [own_store_state_run_wf] / [own_store_state_arr_inv] /
+      [own_store_state_registry_coh], the document reader also on the pool,
+      [own_type_pool_arr_inv]), the node borrows
+      ([own_type_pool_node_acc] / [own_store_state_node_acc], with the
       neighbour addresses and the flag byte in the [_links] forms; a whole
-      type as its run view for a read, [own_store_runs_ytype_acc]; the
-      clock and client fields, [own_store_runs_clock_acc] /
-      [own_store_runs_client_acc]) and
-      covering-slot uniqueness ([own_store_runs_covers_unique]).
-      [own_store] is the lock layer's closure of [own_store_runs] over the
+      type as its run view for a read, [own_store_state_ytype_acc]; the
+      clock and client fields, [own_store_state_clock_acc] /
+      [own_store_state_client_acc]) and
+      covering-slot uniqueness ([own_store_state_covers_unique]).
+      [own_store] is the lock layer's closure of [own_store_state] over the
       public model.
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
-      hands out) and [own_delete_set_runs] (its authority, with the domain
+      hands out) and [own_delete_set] (its authority, with the domain
       bound and the tombstone-bit coherence that make the bound mean
-      something), with the tombstone clause at
-      runs ([own_delete_set_as_runs]), with the same transports
-      ([own_delete_set_runs_mono] / [_refine] / [_perm] / [_snoc] / [_apply]
-      / [_insert] / [_ValidReplay]).
+      something), with its transports ([own_delete_set_mono] / [_refine] /
+      [_perm] / [_snoc] / [_apply] / [_insert] / [_ValidReplay]).
     - the lock body, at [(locs, pool)]: [store_inv_ro] (the fractional,
-      reader-visible part: the item-set authority and [own_type_pool_runs]),
+      reader-visible part: the item-set authority and [own_type_pool]),
       [store_inv_excl] (the exclusive part) and [store_inv], carrying the
       client's ghost history; [tie_body] and [types_frag] / [frac_of] are the
       RWMutex reader-count accounting (issue #22).
@@ -47,17 +45,17 @@
     - the Integrate-side predicates [own_fresh_item_raw], [own_linked_item]
       ([own_linked_item_as_node]: it is [item/heap]'s [own_item_node] at
       [DfracOwn 1], live, with a nonempty content) and the loop invariant
-      [integrate_loop_inv_runs].
+      [integrate_loop_inv].
 
     Laws
     - [store_inv_init]: how to build the invariant from the raw points-tos, and
       [store_inv_bridge] / [store_inv_own_store] / [own_store_hist_coh] /
       [own_store_accepted_sound] / [store_inv_excl_hist_root]: what you may
       read back out of it.
-    - the pool's laws: borrow one node ([own_type_pool_runs_node_acc], with
+    - the pool's laws: borrow one node ([own_type_pool_node_acc], with
       its links [_node_acc_links]), read its pure content off
-      ([own_type_pool_runs_run_wf] / [_id_bounds] / [_arr] / [_arr_inv]), a
-      fresh node or type is absent from it ([own_type_pool_runs_fresh] /
+      ([own_type_pool_run_wf] / [_id_bounds] / [_arr] / [_arr_inv]), a
+      fresh node or type is absent from it ([own_type_pool_fresh] /
       [_fresh_concat] / [_fresh_type]).
     - [own_store_accept_batch]: the state-transition law for accepting a
       delivered batch.
@@ -225,7 +223,7 @@ Proof. rewrite own_slice_cap_unseal /own_slice_cap_def. apply _. Qed.
     address) key list: the map header at [mref] (Go [store.items]) and, per
     client, the backing slice holding [key_pair_client_locs client key_pairs] (+ cap);
     every client with a key has a slice, and the keys are [key_pairs_clock_unique].
-    [own_item_map_runs] is this over a run-granular state's entries. *)
+    [own_item_map] is this over a state's entries. *)
 Definition own_item_map_key_pairs (mref : loc) (dq : dfrac) (key_pairs : list (w64 * (Z * loc))) : iProp Σ :=
   ∃ (gm : gmap w64 slice.t),
     "Hmap" ∷ own_map mref dq gm ∗
@@ -250,9 +248,9 @@ Proof.
     + move=> a b Ha Hb. apply Hclockunique; by rewrite Hperm.
 Qed.
 
-(** [own_item_map_runs mref dq locs p]: the item index of a run-granular
-    store state: [own_item_map_key_pairs] over the pool's entries. *)
-Definition own_item_map_runs (mref : loc) (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
+(** [own_item_map mref dq locs p]: the store's item index,
+    [own_item_map_key_pairs] over the pool's entries. *)
+Definition own_item_map (mref : loc) (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
   own_item_map_key_pairs mref dq (entry_key_pair <$> pool_entries locs p).
 
 (* The DLL predicate stack is timeless too (heap points-to + pure + persistent
@@ -264,16 +262,16 @@ Proof. rewrite /is_origin_id. by destruct originId; apply _. Qed.
   Timeless (own_item_node l dq input deleted parent prev nxt).
 Proof. rewrite /own_item_node. apply _. Qed.
 
-#[global] Instance own_dll_runs_timeless dq parent l last prev next ls runs :
-  Timeless (own_dll_runs dq parent l last prev next ls runs).
+#[global] Instance own_dll_timeless dq parent l last prev next ls runs :
+  Timeless (own_dll dq parent l last prev next ls runs).
 Proof.
   revert runs l prev.
   induction ls as [|lc ls IH]; intros [|r runs] l prev; simpl; apply _.
 Qed.
 
-#[global] Instance own_ytype_runs_timeless parent dq ls tm :
-  Timeless (own_ytype_runs parent dq ls tm).
-Proof. rewrite /own_ytype_runs. apply _. Qed.
+#[global] Instance own_ytype_timeless parent dq ls tm :
+  Timeless (own_ytype parent dq ls tm).
+Proof. rewrite /own_ytype. apply _. Qed.
 
 (* ----- per-store ghost names and the root-type registry ------------------ *)
 
@@ -383,7 +381,7 @@ Definition own_update_structs (sl : slice.t) (dq : dfrac)
     mixing the model with the representation.
 
     Used as: the store's [pendingDeletes] buffer in [store_inv_excl], the
-    argument and the leftover of [wp_store__applyDeleteSpans_runs], and (through
+    argument and the leftover of [wp_store__applyDeleteSpans], and (through
     [own_delete_ids], which forgets down to the union of the ids) every public
     spec that takes a delete batch. *)
 Definition own_delete_spans (sl : slice.t) (dq : dfrac)
@@ -462,60 +460,60 @@ Proof. iApply auth_gset_frag_union. Qed.
 Lemma is_delete_set_lb_empty (γs : store_names) : ⊢ |==> is_delete_set_lb γs ∅.
 Proof. iApply auth_gset_frag_empty. Qed.
 
-(** [own_delete_set_runs γs m runs]: the delete-set authority, its
-    tombstone clause at run granularity ([delete_set_tombstoned_runs]). *)
-Definition own_delete_set_runs (γs : store_names) (m : DocModel) (runs : list ItemRun) : iProp Σ :=
+(** [own_delete_set γs m runs]: the delete-set authority, its
+    tombstone clause ([delete_set_tombstoned]). *)
+Definition own_delete_set (γs : store_names) (m : DocModel) (runs : list ItemRun) : iProp Σ :=
   ∃ delete_set : gset YjsId,
     "Hdelete_set_auth" ∷ own γs.(sn_delete_set) (● delete_set : accUR) ∗
     "%Hdelete_set_dom" ∷ ⌜delete_set_dom delete_set m⌝ ∗
-    "%Hdelete_set_tomb" ∷ ⌜delete_set_tombstoned_runs delete_set runs⌝.
+    "%Hdelete_set_tomb" ∷ ⌜delete_set_tombstoned delete_set runs⌝.
 
-#[global] Instance own_delete_set_runs_timeless γs m runs : Timeless (own_delete_set_runs γs m runs).
-Proof. rewrite /own_delete_set_runs. apply _. Qed.
+#[global] Instance own_delete_set_timeless γs m runs : Timeless (own_delete_set γs m runs).
+Proof. rewrite /own_delete_set. apply _. Qed.
 
 (** The transports of the delete set, at runs: along model growth, along
-    [runs_live_refine] (a split, a flip, a registry insert), along a
+    [live_refine] (a split, a flip, a registry insert), along a
     permutation, along an integrate (a fresh live run), along the remote
-    apply ([runs_apply_live_refine]), and along one type's list growing or a
+    apply ([apply_live_refine]), and along one type's list growing or a
     whole valid replay. *)
-Lemma own_delete_set_runs_mono (γs : store_names) (m m' : DocModel) (runs : list ItemRun) :
+Lemma own_delete_set_mono (γs : store_names) (m m' : DocModel) (runs : list ItemRun) :
   (∀ i, doc_model_has m i = true -> doc_model_has m' i = true) ->
-  own_delete_set_runs γs m runs -∗ own_delete_set_runs γs m' runs.
+  own_delete_set γs m runs -∗ own_delete_set γs m' runs.
 Proof.
   iIntros (Hmono) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
   iPureIntro. split; [exact (delete_set_dom_mono delete_set m m' Hmono Hdelete_set_dom) | exact Hdelete_set_tomb].
 Qed.
 
-Lemma own_delete_set_runs_refine (γs : store_names) (m : DocModel) (p p' : pool) :
-  runs_live_refine p p' ->
-  own_delete_set_runs γs m (all_runs p) -∗ own_delete_set_runs γs m (all_runs p').
+Lemma own_delete_set_refine (γs : store_names) (m : DocModel) (p p' : pool) :
+  live_refine p p' ->
+  own_delete_set γs m (all_runs p) -∗ own_delete_set γs m (all_runs p').
 Proof.
   iIntros (Hlr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
-  iPureIntro. split; [exact Hdelete_set_dom | exact (delete_set_tombstoned_runs_refine delete_set p p' Hlr Hdelete_set_tomb)].
+  iPureIntro. split; [exact Hdelete_set_dom | exact (delete_set_tombstoned_refine delete_set p p' Hlr Hdelete_set_tomb)].
 Qed.
 
-Lemma own_delete_set_runs_perm (γs : store_names) (m : DocModel) (runs runs' : list ItemRun) :
-  runs' ≡ₚ runs -> own_delete_set_runs γs m runs -∗ own_delete_set_runs γs m runs'.
+Lemma own_delete_set_perm (γs : store_names) (m : DocModel) (runs runs' : list ItemRun) :
+  runs' ≡ₚ runs -> own_delete_set γs m runs -∗ own_delete_set γs m runs'.
 Proof.
   iIntros (Hperm) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
-  iPureIntro. split; [exact Hdelete_set_dom | exact (delete_set_tombstoned_runs_perm delete_set runs runs' Hperm Hdelete_set_tomb)].
+  iPureIntro. split; [exact Hdelete_set_dom | exact (delete_set_tombstoned_perm delete_set runs runs' Hperm Hdelete_set_tomb)].
 Qed.
 
-Lemma own_delete_set_runs_snoc (γs : store_names) (m : DocModel) (runs runs' : list ItemRun) (r : ItemRun) :
+Lemma own_delete_set_snoc (γs : store_names) (m : DocModel) (runs runs' : list ItemRun) (r : ItemRun) :
   runs' ≡ₚ runs ++ [r] ->
   (∀ y, y ∈ run_items r -> doc_model_has m (item_id y) = false) ->
-  own_delete_set_runs γs m runs -∗ own_delete_set_runs γs m runs'.
+  own_delete_set γs m runs -∗ own_delete_set γs m runs'.
 Proof.
   iIntros (Hperm Hfresh) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
   iPureIntro. split; [exact Hdelete_set_dom |].
-  apply (delete_set_tombstoned_runs_snoc delete_set runs runs' r Hperm); [| exact Hdelete_set_tomb].
+  apply (delete_set_tombstoned_snoc delete_set runs runs' r Hperm); [| exact Hdelete_set_tomb].
   move=> y Hy Hin. have Ht := Hdelete_set_dom _ Hin. have Hf := Hfresh y Hy. congruence.
 Qed.
 
-Lemma own_delete_set_runs_apply (γs : store_names) (m m' : DocModel) (runs runs' : list ItemRun) :
+Lemma own_delete_set_apply (γs : store_names) (m m' : DocModel) (runs runs' : list ItemRun) :
   (∀ i, doc_model_has m i = true -> doc_model_has m' i = true) ->
-  runs_apply_live_refine m runs runs' ->
-  own_delete_set_runs γs m runs -∗ own_delete_set_runs γs m' runs'.
+  apply_live_refine m runs runs' ->
+  own_delete_set γs m runs -∗ own_delete_set γs m' runs'.
 Proof.
   iIntros (Hmono Halr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
   iPureIntro. split; [exact (delete_set_dom_mono delete_set m m' Hmono Hdelete_set_dom) |].
@@ -526,19 +524,19 @@ Proof.
   - by rewrite (Hdelete_set_dom _ Hin) in Hfresh.
 Qed.
 
-Lemma own_delete_set_runs_insert (γs : store_names) (m : DocModel) (runs : list ItemRun)
+Lemma own_delete_set_insert (γs : store_names) (m : DocModel) (runs : list ItemRun)
     (t : TId) (arr' : list (YjsItem A)) :
   (∀ x, x ∈ doc_model_get m t -> x ∈ arr') ->
-  own_delete_set_runs γs m runs -∗ own_delete_set_runs γs (<[t := arr']> m) runs.
+  own_delete_set γs m runs -∗ own_delete_set γs (<[t := arr']> m) runs.
 Proof.
   iIntros (Hgrow) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
   iPureIntro. split; [exact (delete_set_dom_insert delete_set m t arr' Hgrow Hdelete_set_dom) | exact Hdelete_set_tomb].
 Qed.
 
-Lemma own_delete_set_runs_ValidReplay (γs : store_names)
+Lemma own_delete_set_ValidReplay (γs : store_names)
     (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel)
     (runs : list ItemRun) :
-  ValidReplay inputs m m' -> own_delete_set_runs γs m runs -∗ own_delete_set_runs γs m' runs.
+  ValidReplay inputs m m' -> own_delete_set γs m runs -∗ own_delete_set γs m' runs.
 Proof.
   iIntros (Hvr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
   iPureIntro. split; [exact (delete_set_dom_ValidReplay delete_set inputs m m' Hvr Hdelete_set_dom) | exact Hdelete_set_tomb].
@@ -566,52 +564,51 @@ Proof.
   iPureIntro. by apply to_agree_op_valid_L in Hv.
 Qed.
 
-(** [own_type_pool_runs dq locs p]: the pool at run granularity: every
-    registered type's [own_ytype_runs] at its address list, the whole
-    address map [locs_wf]. The [(locs, p)] pair is what stage 2's specs
-    carry in place of the cell-level [types]. *)
-Definition own_type_pool_runs (dq : dfrac)
+(** [own_type_pool dq locs p]: the whole type pool: every registered
+    type's [own_ytype] at its address list, over the address map
+    [locs_wf]. The [(locs, p)] pair is what every store spec carries. *)
+Definition own_type_pool (dq : dfrac)
     (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
   "%Hlocswf" ∷ ⌜locs_wf locs p⌝ ∗
   "Hpool" ∷ [∗ map] parent ↦ tm ∈ p,
     ∃ ls, ⌜locs !! parent = Some ls⌝ ∗
-          own_ytype_runs parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
+          own_ytype parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
 
-(** The run-granular type and pool are fractional: the read path holds a
+(** The type and pool are fractional: the read path holds a
     share of the pool ([store_inv_ro]) while the write path holds it whole. *)
-#[global] Instance own_ytype_runs_fractional parent ls tm :
-  Fractional (λ q, own_ytype_runs parent (DfracOwn q) ls tm).
+#[global] Instance own_ytype_fractional parent ls tm :
+  Fractional (λ q, own_ytype parent (DfracOwn q) ls tm).
 Proof.
   intros q1 q2. iSplit.
   - iIntros "H". iDestruct "H" as (yt tl) "(Hpar & Hdll & %Hlen)".
     iDestruct "Hpar" as "[Hp1 Hp2]".
-    iDestruct (own_dll_runs_fractional with "Hdll") as "[Hd1 Hd2]".
+    iDestruct (own_dll_fractional with "Hdll") as "[Hd1 Hd2]".
     iSplitL "Hp1 Hd1"; iExists yt, tl; iFrame; done.
   - iIntros "[H1 H2]".
     iDestruct "H1" as (yt1 tl1) "(Hp1 & Hd1 & %Hlen)".
     iDestruct "H2" as (yt2 tl2) "(Hp2 & Hd2 & _)".
     iCombine "Hp1 Hp2" gives %Hyt. subst yt2.
-    iDestruct (own_dll_runs_lastptr with "Hd1") as "[%Htl1 Hd1]".
-    iDestruct (own_dll_runs_lastptr with "Hd2") as "[%Htl2 Hd2]".
+    iDestruct (own_dll_lastptr with "Hd1") as "[%Htl1 Hd1]".
+    iDestruct (own_dll_lastptr with "Hd2") as "[%Htl2 Hd2]".
     have Htl : tl2 = tl1 by rewrite Htl1 Htl2.
     rewrite Htl.
     iCombine "Hp1 Hp2" as "Hp".
-    iDestruct (own_dll_runs_fractional with "[$Hd1 $Hd2]") as "Hdll".
+    iDestruct (own_dll_fractional with "[$Hd1 $Hd2]") as "Hdll".
     iExists yt1, tl1. iFrame "Hp Hdll". done.
 Qed.
 
-#[global] Instance own_type_pool_runs_fractional locs p :
-  Fractional (λ q, own_type_pool_runs (DfracOwn q) locs p).
+#[global] Instance own_type_pool_fractional locs p :
+  Fractional (λ q, own_type_pool (DfracOwn q) locs p).
 Proof.
-  intros q1 q2. rewrite /own_type_pool_runs /named. iSplit.
+  intros q1 q2. rewrite /own_type_pool /named. iSplit.
   - iIntros "(%Hwf & Hpool)".
     iAssert ([∗ map] parent ↦ tm ∈ p,
-        (∃ ls, ⌜locs !! parent = Some ls⌝ ∗ own_ytype_runs parent (DfracOwn q1) ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝) ∗
-        (∃ ls, ⌜locs !! parent = Some ls⌝ ∗ own_ytype_runs parent (DfracOwn q2) ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝))%I
+        (∃ ls, ⌜locs !! parent = Some ls⌝ ∗ own_ytype parent (DfracOwn q1) ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝) ∗
+        (∃ ls, ⌜locs !! parent = Some ls⌝ ∗ own_ytype parent (DfracOwn q2) ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝))%I
       with "[Hpool]" as "Hpool".
     { iApply (big_sepM_impl with "Hpool"). iIntros "!>" (parent tm Hp) "H".
       iDestruct "H" as (ls) "(%Hls & Hyt & %Hinv)".
-      iDestruct (own_ytype_runs_fractional parent ls tm q1 q2 with "Hyt") as "[H1 H2]".
+      iDestruct (own_ytype_fractional parent ls tm q1 q2 with "Hyt") as "[H1 H2]".
       iSplitL "H1"; iExists ls; iFrame; by iSplit; iPureIntro. }
     rewrite big_sepM_sep. iDestruct "Hpool" as "[H1 H2]".
     iSplitL "H1"; iFrame; by iPureIntro.
@@ -621,15 +618,15 @@ Proof.
     iDestruct "Ha" as (ls1) "(%Hls1 & Hyt1 & %Hinv)". iDestruct "Hb" as (ls2) "(%Hls2 & Hyt2 & _)".
     rewrite Hls1 in Hls2. injection Hls2 as <-.
     iExists ls1. iSplitR; first by iPureIntro. iSplitL; last by iPureIntro.
-    iApply (own_ytype_runs_fractional parent ls1 tm q1 q2). iFrame "Hyt1 Hyt2".
+    iApply (own_ytype_fractional parent ls1 tm q1 q2). iFrame "Hyt1 Hyt2".
 Qed.
 
 (* ----- laws of the type pool --------------------------------------------- *)
 
 (** Every run head's id components round-trip through [w64] heap fields:
-    the run form of [own_type_pool_id_bounds], off the run spine. *)
-Lemma own_type_pool_runs_id_bounds (locs : gmap loc (list loc)) (p : pool) :
-  own_type_pool_runs (DfracOwn 1) locs p -∗
+    [own_type_pool_id_bounds], off the run spine. *)
+Lemma own_type_pool_id_bounds (locs : gmap loc (list loc)) (p : pool) :
+  own_type_pool (DfracOwn 1) locs p -∗
   ⌜∀ r, r ∈ all_runs p ->
      (Z.of_nat (run_client r) < 2^64)%Z ∧ (Z.of_nat (run_clock r) < 2^64)%Z⌝.
 Proof.
@@ -641,17 +638,17 @@ Proof.
     iIntros "!#" (parent tm Hp) "H".
     iDestruct "H" as (ls) "(_ & Hyt & _)".
     iDestruct "Hyt" as (yt tl) "(_ & Hdll & _)".
-    iApply (own_dll_runs_id_bounds with "Hdll"). }
+    iApply (own_dll_id_bounds with "Hdll"). }
   iDestruct (big_sepM_pure with "H") as %Hall.
   iPureIntro. move=> r Hr.
   apply elem_of_all_runs in Hr as (parent & tm & Hp & Hr).
   exact (Hall parent tm Hp r Hr).
 Qed.
 
-(** Every run of the run-granular pool is chained ([run_wf]), off the run
+(** Every run of the pool is chained ([run_wf]), off the run
     spine. *)
-Lemma own_type_pool_runs_run_wf (locs : gmap loc (list loc)) (p : pool) :
-  own_type_pool_runs (DfracOwn 1) locs p -∗
+Lemma own_type_pool_run_wf (locs : gmap loc (list loc)) (p : pool) :
+  own_type_pool (DfracOwn 1) locs p -∗
   ⌜∀ r, r ∈ all_runs p -> run_wf (run_items r)⌝.
 Proof.
   iIntros "(_ & Hpool)".
@@ -661,45 +658,45 @@ Proof.
     iIntros "!#" (parent tm Hp) "H".
     iDestruct "H" as (ls) "(_ & Hyt & _)".
     iDestruct "Hyt" as (yt tl) "(_ & Hdll & _)".
-    iApply (own_dll_runs_run_wf with "Hdll"). }
+    iApply (own_dll_run_wf with "Hdll"). }
   iDestruct (big_sepM_pure with "H") as %Hall.
   iPureIntro. move=> r Hr.
   apply elem_of_all_runs in Hr as (parent & tm & Hp & Hr).
   exact (Hall parent tm Hp r Hr).
 Qed.
 
-(** A fully owned node struct's address is not an address of a run-granular
-    type, nor of any type of the run-granular pool: the source of [locs_wf]'s
+(** A fully owned node struct's address is not an address of a type, nor
+    of any type of the pool: the source of [locs_wf]'s
     [NoDup] when a freshly allocated node is spliced in. *)
-Lemma own_ytype_runs_fresh (q : loc) (v : yjs.item.t) (parent : loc) (dq : dfrac)
+Lemma own_ytype_fresh (q : loc) (v : yjs.item.t) (parent : loc) (dq : dfrac)
     (ls : list loc) (tm : type_model) :
-  q ↦ v -∗ own_ytype_runs parent dq ls tm -∗ ⌜q ∉ ls⌝.
+  q ↦ v -∗ own_ytype parent dq ls tm -∗ ⌜q ∉ ls⌝.
 Proof.
   iIntros "Hq Hyt". iDestruct "Hyt" as (yt tl) "(_ & Hdll & _)".
-  iApply (own_dll_runs_fresh with "Hq Hdll").
+  iApply (own_dll_fresh with "Hq Hdll").
 Qed.
 
-Lemma own_type_pool_runs_fresh (q : loc) (v : yjs.item.t) (dq : dfrac)
+Lemma own_type_pool_fresh (q : loc) (v : yjs.item.t) (dq : dfrac)
     (locs : gmap loc (list loc)) (p : pool) :
   q ↦ v -∗
   ([∗ map] parent ↦ tm ∈ p,
-     ∃ ls, ⌜locs !! parent = Some ls⌝ ∗ own_ytype_runs parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝) -∗
+     ∃ ls, ⌜locs !! parent = Some ls⌝ ∗ own_ytype parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝) -∗
   ⌜∀ parent ls tm, locs !! parent = Some ls -> p !! parent = Some tm -> q ∉ ls⌝.
 Proof.
   iIntros "Hq Hpool". iIntros (parent ls tm Hls Hp).
   iDestruct (big_sepM_lookup _ _ parent tm Hp with "Hpool") as (ls0) "(%Hls0 & Hyt & _)".
   rewrite Hls in Hls0. injection Hls0 as <-.
-  iApply (own_ytype_runs_fresh with "Hq Hyt").
+  iApply (own_ytype_fresh with "Hq Hyt").
 Qed.
 
 (** The same, over the whole pool: an owned node address is absent from
     every address list of the map. *)
-Lemma own_type_pool_runs_fresh_concat (q : loc) (v : yjs.item.t) (dq : dfrac)
+Lemma own_type_pool_fresh_concat (q : loc) (v : yjs.item.t) (dq : dfrac)
     (locs : gmap loc (list loc)) (p : pool) :
-  q ↦ v -∗ own_type_pool_runs dq locs p -∗ ⌜q ∉ concat ((map_to_list locs).*2)⌝.
+  q ↦ v -∗ own_type_pool dq locs p -∗ ⌜q ∉ concat ((map_to_list locs).*2)⌝.
 Proof.
   iIntros "Hq (%Hlocswf & Hpool)".
-  iDestruct (own_type_pool_runs_fresh with "Hq Hpool") as %Hfr.
+  iDestruct (own_type_pool_fresh with "Hq Hpool") as %Hfr.
   iPureIntro. destruct Hlocswf as (Hdom & _ & _).
   move=> Hin. apply list_elem_of_concat in Hin as (lsq & Hin & Hlsq).
   apply list_elem_of_fmap in Hlsq as ([parent lsq'] & -> & Hq). simpl in Hin.
@@ -713,12 +710,12 @@ Qed.
 (** A separately owned type is not in the pool: the run form of
     the cell-level freshness law, what [getOrCreateYType]'s miss branch
     registers a fresh [newYType] with. *)
-Lemma own_type_pool_runs_fresh_type (q : loc) (ls0 : list loc) (tm0 : type_model)
+Lemma own_type_pool_fresh_type (q : loc) (ls0 : list loc) (tm0 : type_model)
     (locs : gmap loc (list loc)) (p : pool) :
-  own_ytype_runs q (DfracOwn 1) ls0 tm0 -∗
-  own_type_pool_runs (DfracOwn 1) locs p -∗
-  own_ytype_runs q (DfracOwn 1) ls0 tm0 ∗
-  own_type_pool_runs (DfracOwn 1) locs p ∗
+  own_ytype q (DfracOwn 1) ls0 tm0 -∗
+  own_type_pool (DfracOwn 1) locs p -∗
+  own_ytype q (DfracOwn 1) ls0 tm0 ∗
+  own_type_pool (DfracOwn 1) locs p ∗
   ⌜p !! q = None⌝.
 Proof.
   iIntros "Hnew (%Hlocswf & Hpool)".
@@ -760,57 +757,57 @@ Definition own_deleted_set_field (l : loc) : iProp Σ :=
 
 (** The store's fields: the client id and clock, the deleted-set struct
     (not modeled: no verified method reads it through the field; the delete
-    set's ghost model is [own_delete_set_runs]), the item index
+    set's ghost model is [own_delete_set]), the item index
     ([store.items] and the per-client run map it points to), the root registry
     ([store.types] and its name -> type-loc map), the type pool, and the two
     buffers ([store.pending], [store.pendingDeletes]) over their model lists.
     The field pointers and buffer slices are existential: no spec names them,
     and no field has a predicate of its own, so a spec can only take the
-    store whole ([own_store_runs]). *)
+    store whole ([own_store_state]). *)
 
-(** [own_items_field_runs l locs p]: the [items] field at run granularity:
-    the index over the pool's entries ([own_item_map_runs]). *)
-Definition own_items_field_runs (l : loc) (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
+(** [own_items_field l locs p]: the [items] field, the index over the
+    pool's entries ([own_item_map]). *)
+Definition own_items_field (l : loc) (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
   ∃ items_mref : loc,
     "Hitemsf" ∷ l ↦ items_mref ∗
-    "Hitemmap" ∷ own_item_map_runs items_mref (DfracOwn 1) locs p.
+    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) locs p.
 
-(** [own_store_fields_runs s state]: every field of the store at its
-    run-granular state: the item index over the pool's entries and the type
-    pool as [own_type_pool_runs]. *)
-Definition own_store_fields_runs (s : loc) (state : store_state_runs) : iProp Σ :=
-  "Hclient" ∷ (s .[(yjs.store.t), "client"]) ↦ sr_client state ∗
-  "Hclock" ∷ (s .[(yjs.store.t), "clock"]) ↦ sr_clock state ∗
+(** [own_store_fields s state]: every field of the store at its
+    state: the item index over the pool's entries and the type
+    pool as [own_type_pool]. *)
+Definition own_store_fields (s : loc) (state : store_state) : iProp Σ :=
+  "Hclient" ∷ (s .[(yjs.store.t), "client"]) ↦ ss_client state ∗
+  "Hclock" ∷ (s .[(yjs.store.t), "clock"]) ↦ ss_clock state ∗
   "HdeletedSet" ∷ own_deleted_set_field (s .[(yjs.store.t), "deletedSet"]) ∗
-  "Hitems" ∷ own_items_field_runs (s .[(yjs.store.t), "items"]) (sr_locs state) (sr_pool state) ∗
-  "Hregistry" ∷ own_registry_field (s .[(yjs.store.t), "types"]) (sr_bind state) ∗
-  "Htypes" ∷ own_type_pool_runs (DfracOwn 1) (sr_locs state) (sr_pool state) ∗
-  "Hpending" ∷ own_pending_field (s .[(yjs.store.t), "pending"]) (sr_pending state) ∗
-  "Hpdeletes" ∷ own_pending_deletes_field (s .[(yjs.store.t), "pendingDeletes"]) (sr_pending_deletes state).
+  "Hitems" ∷ own_items_field (s .[(yjs.store.t), "items"]) (ss_locs state) (ss_pool state) ∗
+  "Hregistry" ∷ own_registry_field (s .[(yjs.store.t), "types"]) (ss_bind state) ∗
+  "Htypes" ∷ own_type_pool (DfracOwn 1) (ss_locs state) (ss_pool state) ∗
+  "Hpending" ∷ own_pending_field (s .[(yjs.store.t), "pending"]) (ss_pending state) ∗
+  "Hpdeletes" ∷ own_pending_deletes_field (s .[(yjs.store.t), "pendingDeletes"]) (ss_pending_deletes state).
 
-(** [store_invs_runs state]: the invariants every store method preserves: the
-    pure pool invariants ([run_pool_invs]) and the registry's coherence. The
-    address [NoDup] is not here; it is [own_type_pool_runs]'s [locs_wf]. *)
-Definition store_invs_runs (state : store_state_runs) : Prop :=
-  run_pool_invs (sr_pool state) ∧ pool_registry_coh (sr_bind state) (sr_pool state).
+(** [store_invs state]: the invariants every store method preserves: the
+    pure pool invariants ([pool_invs]) and the registry's coherence. The
+    address [NoDup] is not here; it is [own_type_pool]'s [locs_wf]. *)
+Definition store_invs (state : store_state) : Prop :=
+  pool_invs (ss_pool state) ∧ pool_registry_coh (ss_bind state) (ss_pool state).
 
-(** [own_store_runs s state]: THE store at its run-granular state, the
-    PRIMITIVE store predicate (plan-item-run-split C6-2): every field at run
-    granularity with the invariants. *)
-Definition own_store_runs (s : loc) (state : store_state_runs) : iProp Σ :=
-  "Hfields" ∷ own_store_fields_runs s state ∗
-  "%Hinvs" ∷ ⌜store_invs_runs state⌝.
+(** [own_store_state s state]: THE store at its state, the
+    PRIMITIVE store predicate: every field of the struct at [state], with
+    the invariants every method preserves. *)
+Definition own_store_state (s : loc) (state : store_state) : iProp Σ :=
+  "Hfields" ∷ own_store_fields s state ∗
+  "%Hinvs" ∷ ⌜store_invs state⌝.
 
-(** The run-granular pool invariants, read off the store. *)
-Lemma own_store_runs_run_pool_invs (s : loc) (state : store_state_runs) :
-  own_store_runs s state -∗ ⌜run_pool_invs (sr_pool state)⌝.
+(** The pool invariants, read off the store. *)
+Lemma own_store_state_run_pool_invs (s : loc) (state : store_state) :
+  own_store_state s state -∗ ⌜pool_invs (ss_pool state)⌝.
 Proof.
   iIntros "(_ & %Hinvs)". iPureIntro. exact (proj1 Hinvs).
 Qed.
 
 (** The address map is aligned with the pool: read off the store. *)
-Lemma own_store_runs_aligned (s : loc) (state : store_state_runs) :
-  own_store_runs s state -∗ ⌜locs_aligned (sr_locs state) (sr_pool state)⌝.
+Lemma own_store_state_aligned (s : loc) (state : store_state) :
+  own_store_state s state -∗ ⌜locs_aligned (ss_locs state) (ss_pool state)⌝.
 Proof.
   iIntros "(Hfields & _)".
   iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
@@ -820,19 +817,19 @@ Qed.
 
 (** Every run of the store is chained ([run_wf]): the heap pin of the run
     spine, read off the store. *)
-Lemma own_store_runs_run_wf (s : loc) (state : store_state_runs) :
-  own_store_runs s state -∗ ⌜∀ r, r ∈ all_runs (sr_pool state) -> run_wf (run_items r)⌝.
+Lemma own_store_state_run_wf (s : loc) (state : store_state) :
+  own_store_state s state -∗ ⌜∀ r, r ∈ all_runs (ss_pool state) -> run_wf (run_items r)⌝.
 Proof.
   iIntros "(Hfields & _)".
   iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
-  iApply (own_type_pool_runs_run_wf with "Htypes").
+  iApply (own_type_pool_run_wf with "Htypes").
 Qed.
 
 
 (** Every registered type's document is a valid document: the yType body's
     invariant, read off the pool and off the whole store. *)
-Lemma own_type_pool_runs_arr_inv (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) :
-  own_type_pool_runs dq locs p -∗
+Lemma own_type_pool_arr_inv (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) :
+  own_type_pool dq locs p -∗
   ⌜∀ parent tm, p !! parent = Some tm -> YjsArrInvariant (tm_arr tm)⌝.
 Proof.
   iIntros "(%Hlocswf & Hpool)".
@@ -846,46 +843,45 @@ Proof.
 Qed.
 
 (** Every registered type's document satisfies the array invariant, and the
-    registry is coherent with the pool: read off the store at run
-    granularity. *)
-Lemma own_store_runs_arr_inv (s : loc) (state : store_state_runs) :
-  own_store_runs s state -∗
-  ⌜∀ parent tm, sr_pool state !! parent = Some tm -> YjsArrInvariant (tm_arr tm)⌝.
+    registry is coherent with the pool: read off the store. *)
+Lemma own_store_state_arr_inv (s : loc) (state : store_state) :
+  own_store_state s state -∗
+  ⌜∀ parent tm, ss_pool state !! parent = Some tm -> YjsArrInvariant (tm_arr tm)⌝.
 Proof.
   iIntros "(Hfields & _)".
   iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
-  iApply (own_type_pool_runs_arr_inv with "Htypes").
+  iApply (own_type_pool_arr_inv with "Htypes").
 Qed.
 
-Lemma own_store_runs_registry_coh (s : loc) (state : store_state_runs) :
-  own_store_runs s state -∗ ⌜pool_registry_coh (sr_bind state) (sr_pool state)⌝.
+Lemma own_store_state_registry_coh (s : loc) (state : store_state) :
+  own_store_state s state -∗ ⌜pool_registry_coh (ss_bind state) (ss_pool state)⌝.
 Proof.
   iIntros "(_ & %Hinvs)". iPureIntro. exact (proj2 Hinvs).
 Qed.
 
-(** Borrow the [k]-th node of the type at [parent] out of a run-granular
+(** Borrow the [k]-th node of the type at [parent] out of a
     pool, exposing its heap struct with the id and content length the
-    loop reads (the run form of the cell borrow). *)
-Lemma own_type_pool_runs_node_acc (locs : gmap loc (list loc)) (p : pool) (parent : loc)
+    loop reads (the cell borrow). *)
+Lemma own_type_pool_node_acc (locs : gmap loc (list loc)) (p : pool) (parent : loc)
     (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
   locs !! parent = Some ls ->
   p !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
-  own_type_pool_runs (DfracOwn 1) locs p -∗
+  own_type_pool (DfracOwn 1) locs p -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
     "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
     "%Haccpar" ∷ ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
     "Haccval" ∷ lc ↦ itemVal ∗
-    "Haccback" ∷ (lc ↦ itemVal -∗ own_type_pool_runs (DfracOwn 1) locs p).
+    "Haccback" ∷ (lc ↦ itemVal -∗ own_type_pool (DfracOwn 1) locs p).
 Proof.
   move=> Hls Hp Hlk Hrk. iIntros "(%Hlocswf & Hpool)".
   iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Hpc Hrest]".
   iDestruct "Hpc" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
   rewrite Hls in Hls0. injection Hls0 as <-.
   iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
-  iDestruct (own_dll_runs_acc (DfracOwn 1) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk
+  iDestruct (own_dll_acc (DfracOwn 1) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk
                with "Hdll")
     as (prev' nxt') "(%Hcl & %Hcr & %Hrun & %Hperchar & %Hclen & Hnode & Hback)".
   iDestruct "Hnode" as (itemVal olid orid)
@@ -917,27 +913,27 @@ Qed.
 
 (** Borrow the [k]-th node of the type at [parent] out of the store, exposing
     its heap struct with the id and content length the delete loop reads
-    ([own_type_pool_runs_node_acc] behind the store's lift and lower). *)
-Lemma own_store_runs_node_acc (s : loc) (state : store_state_runs)
+    ([own_type_pool_node_acc] behind the store's lift and lower). *)
+Lemma own_store_state_node_acc (s : loc) (state : store_state)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
-  sr_locs state !! parent = Some ls ->
-  sr_pool state !! parent = Some tm ->
+  ss_locs state !! parent = Some ls ->
+  ss_pool state !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
-  own_store_runs s state -∗
+  own_store_state s state -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
     "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
     "%Haccpar" ∷ ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
     "Haccval" ∷ lc ↦ itemVal ∗
-    "Haccback" ∷ (lc ↦ itemVal -∗ own_store_runs s state).
+    "Haccback" ∷ (lc ↦ itemVal -∗ own_store_state s state).
 Proof.
   move=> Hls Hp Hlk Hrk.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iIntros "(Hfields & %Hinvs)".
   iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iEval (simpl) in "Htypes".
-  iDestruct (own_type_pool_runs_node_acc locs p parent ls tm k lc r Hls Hp Hlk Hrk with "Htypes") as (itemVal) "H".
+  iDestruct (own_type_pool_node_acc locs p parent ls tm k lc r Hls Hp Hlk Hrk with "Htypes") as (itemVal) "H".
   iNamed "H".
   iExists itemVal. iFrame "Haccval".
   iSplitR; first (iPureIntro; exact Haccid).
@@ -946,21 +942,21 @@ Proof.
   iIntros "Haccval".
   iDestruct ("Haccback" with "Haccval") as "Htypes".
   iSplitL; last (iPureIntro; exact Hinvs).
-  rewrite /own_store_fields_runs /=.
+  rewrite /own_store_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
 Qed.
 
-(** Borrow the [k]-th node of the type at [parent] out of the run-granular
-    pool with its links: [own_type_pool_runs_node_acc] plus the neighbour
+(** Borrow the [k]-th node of the type at [parent] out of the
+    pool with its links: [own_type_pool_node_acc] plus the neighbour
     addresses read off the address list and the flag byte read off the
     run's tombstone bit. What a cursor walk ([Text.Delete]) reads. *)
-Lemma own_type_pool_runs_node_acc_links (locs : gmap loc (list loc)) (p : pool) (parent : loc)
+Lemma own_type_pool_node_acc_links (locs : gmap loc (list loc)) (p : pool) (parent : loc)
     (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
   locs !! parent = Some ls ->
   p !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
-  own_type_pool_runs (DfracOwn 1) locs p -∗
+  own_type_pool (DfracOwn 1) locs p -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
     "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
@@ -969,14 +965,14 @@ Lemma own_type_pool_runs_node_acc_links (locs : gmap loc (list loc)) (p : pool) 
     "%Haccright" ∷ ⌜itemVal.(yjs.item.right') = loc_at ls (Z.of_nat k + 1)⌝ ∗
     "%Haccflags" ∷ ⌜itemVal.(yjs.item.flags') = (if run_deleted r then W8 6 else W8 2)⌝ ∗
     "Haccval" ∷ lc ↦ itemVal ∗
-    "Haccback" ∷ (lc ↦ itemVal -∗ own_type_pool_runs (DfracOwn 1) locs p).
+    "Haccback" ∷ (lc ↦ itemVal -∗ own_type_pool (DfracOwn 1) locs p).
 Proof.
   move=> Hls Hp Hlk Hrk. iIntros "(%Hlocswf & Hpool)".
   iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Hpc Hrest]".
   iDestruct "Hpc" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
   rewrite Hls in Hls0. injection Hls0 as <-.
   iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
-  iDestruct (own_dll_runs_acc (DfracOwn 1) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk
+  iDestruct (own_dll_acc (DfracOwn 1) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk
                with "Hdll")
     as (prev' nxt') "(%Hcl & %Hcr & %Hrun & %Hperchar & %Hclen & Hnode & Hback)".
   iDestruct "Hnode" as (itemVal olid orid)
@@ -1009,14 +1005,14 @@ Proof.
   iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. exact Hlen.
 Qed.
 
-(** [own_type_pool_runs_node_acc_links] behind the store's lift and lower. *)
-Lemma own_store_runs_node_acc_links (s : loc) (state : store_state_runs)
+(** [own_type_pool_node_acc_links] behind the store's lift and lower. *)
+Lemma own_store_state_node_acc_links (s : loc) (state : store_state)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
-  sr_locs state !! parent = Some ls ->
-  sr_pool state !! parent = Some tm ->
+  ss_locs state !! parent = Some ls ->
+  ss_pool state !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
-  own_store_runs s state -∗
+  own_store_state s state -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
     "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
@@ -1025,14 +1021,14 @@ Lemma own_store_runs_node_acc_links (s : loc) (state : store_state_runs)
     "%Haccright" ∷ ⌜itemVal.(yjs.item.right') = loc_at ls (Z.of_nat k + 1)⌝ ∗
     "%Haccflags" ∷ ⌜itemVal.(yjs.item.flags') = (if run_deleted r then W8 6 else W8 2)⌝ ∗
     "Haccval" ∷ lc ↦ itemVal ∗
-    "Haccback" ∷ (lc ↦ itemVal -∗ own_store_runs s state).
+    "Haccback" ∷ (lc ↦ itemVal -∗ own_store_state s state).
 Proof.
   move=> Hls Hp Hlk Hrk.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iIntros "(Hfields & %Hinvs)".
   iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iEval (simpl) in "Htypes".
-  iDestruct (own_type_pool_runs_node_acc_links locs p parent ls tm k lc r Hls Hp Hlk Hrk with "Htypes") as (itemVal) "H".
+  iDestruct (own_type_pool_node_acc_links locs p parent ls tm k lc r Hls Hp Hlk Hrk with "Htypes") as (itemVal) "H".
   iNamed "H".
   iExists itemVal. iFrame "Haccval".
   iSplitR; first (iPureIntro; exact Haccid).
@@ -1044,19 +1040,19 @@ Proof.
   iIntros "Haccval".
   iDestruct ("Haccback" with "Haccval") as "Htypes".
   iSplitL; last (iPureIntro; exact Hinvs).
-  rewrite /own_store_fields_runs /=.
+  rewrite /own_store_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
 Qed.
 
 (** Borrow the type at [parent] out of the store as its run view, for a
     read that leaves it as it is ([yType.findPos], the [len] field). *)
-Lemma own_store_runs_ytype_acc (s : loc) (state : store_state_runs)
+Lemma own_store_state_ytype_acc (s : loc) (state : store_state)
     (parent : loc) (ls : list loc) (tm : type_model) :
-  sr_locs state !! parent = Some ls ->
-  sr_pool state !! parent = Some tm ->
-  own_store_runs s state -∗
-  own_ytype_runs parent (DfracOwn 1) ls tm ∗
-  (own_ytype_runs parent (DfracOwn 1) ls tm -∗ own_store_runs s state).
+  ss_locs state !! parent = Some ls ->
+  ss_pool state !! parent = Some tm ->
+  own_store_state s state -∗
+  own_ytype parent (DfracOwn 1) ls tm ∗
+  (own_ytype parent (DfracOwn 1) ls tm -∗ own_store_state s state).
 Proof.
   move=> Hls Hp.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
@@ -1072,19 +1068,19 @@ Proof.
   iDestruct ("Hclose" with "[Hyt]") as "Hpool".
   { iExists ls. iFrame "Hyt". iPureIntro. split; [exact Hls | exact Hinv]. }
   iSplitL; last (iPureIntro; exact Hinvs).
-  rewrite /own_store_fields_runs /=.
+  rewrite /own_store_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Hpending Hpdeletes Hpool".
   by iPureIntro.
 Qed.
 
-(** The store's clock and client fields, borrowed out of the run-granular
+(** The store's clock and client fields, borrowed out of the
     store: the clock may be rewritten (the store invariants say nothing
     about it; [Text.Insert] bumps it per inserted item), the client is
     read. *)
-Lemma own_store_runs_clock_acc (s : loc) (state : store_state_runs) :
-  own_store_runs s state -∗
-  (s .[(yjs.store.t), "clock"]) ↦ sr_clock state ∗
-  (∀ k' : w64, (s .[(yjs.store.t), "clock"]) ↦ k' -∗ own_store_runs s (state <| sr_clock := k' |>)).
+Lemma own_store_state_clock_acc (s : loc) (state : store_state) :
+  own_store_state s state -∗
+  (s .[(yjs.store.t), "clock"]) ↦ ss_clock state ∗
+  (∀ k' : w64, (s .[(yjs.store.t), "clock"]) ↦ k' -∗ own_store_state s (state <| ss_clock := k' |>)).
 Proof.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl.
   iIntros "(Hfields & %Hinvs)".
@@ -1092,14 +1088,14 @@ Proof.
   iFrame "Hclock".
   iIntros (k') "Hclock".
   iSplitL; last (iPureIntro; exact Hinvs).
-  rewrite /own_store_fields_runs /=.
+  rewrite /own_store_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
 Qed.
 
-Lemma own_store_runs_client_acc (s : loc) (state : store_state_runs) :
-  own_store_runs s state -∗
-  (s .[(yjs.store.t), "client"]) ↦ sr_client state ∗
-  ((s .[(yjs.store.t), "client"]) ↦ sr_client state -∗ own_store_runs s state).
+Lemma own_store_state_client_acc (s : loc) (state : store_state) :
+  own_store_state s state -∗
+  (s .[(yjs.store.t), "client"]) ↦ ss_client state ∗
+  ((s .[(yjs.store.t), "client"]) ↦ ss_client state -∗ own_store_state s state).
 Proof.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl.
   iIntros "(Hfields & %Hinvs)".
@@ -1107,36 +1103,36 @@ Proof.
   iFrame "Hclient".
   iIntros "Hclient".
   iSplitL; last (iPureIntro; exact Hinvs).
-  rewrite /own_store_fields_runs /=.
+  rewrite /own_store_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
 Qed.
 
 (** One id lives in one slot: two covering slots of the store's pool are
-    the same slot ([pool_run_covers_unique] off the pool invariants). What
+    the same slot ([pool_covers_unique] off the pool invariants). What
     lets a split helper's caller identify the node [GetNode] returned with
     the slot it holds. *)
-Lemma own_store_runs_covers_unique (s : loc) (state : store_state_runs) :
-  own_store_runs s state -∗
+Lemma own_store_state_covers_unique (s : loc) (state : store_state) :
+  own_store_state s state -∗
   ⌜∀ (d : YjsId) (q1 q2 : loc) (k1 k2 : nat),
-     pool_run_covers (sr_pool state) q1 k1 d ->
-     pool_run_covers (sr_pool state) q2 k2 d ->
+     pool_covers (ss_pool state) q1 k1 d ->
+     pool_covers (ss_pool state) q2 k2 d ->
      q1 = q2 ∧ k1 = k2⌝.
 Proof.
   iIntros "H".
-  iDestruct (own_store_runs_run_pool_invs with "H") as %Hrpi.
+  iDestruct (own_store_state_run_pool_invs with "H") as %Hrpi.
   iPureIntro. move=> d q1 q2 k1 k2 Hcov1 Hcov2.
-  exact (pool_run_covers_unique (sr_pool state) d q1 q2 k1 k2 Hrpi Hcov1 Hcov2).
+  exact (pool_covers_unique (ss_pool state) d q1 q2 k1 k2 Hrpi Hcov1 Hcov2).
 Qed.
 
 Definition store_inv_ro (γs : store_names) (locs : gmap loc (list loc)) (p : pool) (q : Qp) : iProp Σ :=
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p) : seqUR) ∗
-  "Htypes" ∷ own_type_pool_runs (DfracOwn q) locs p.
+  "Htypes" ∷ own_type_pool (DfracOwn q) locs p.
 
 #[global] Instance store_inv_ro_fractional γs locs p : Fractional (store_inv_ro γs locs p).
 Proof.
   rewrite /store_inv_ro /named. apply fractional_sep.
   - intros q1 q2. rewrite -own_op -auth_auth_dfrac_op dfrac_op_own //.
-  - apply own_type_pool_runs_fractional.
+  - apply own_type_pool_fractional.
 Qed.
 
 (** [store_inv_excl]: the complement of [store_inv_ro] within [store_inv], the
@@ -1155,7 +1151,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "#Hclientpin" ∷ is_store_client γs (uint.nat client) ∗
     "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
     "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
-    "Hitemmap" ∷ own_item_map_runs items_mref (DfracOwn 1) locs p ∗
+    "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) locs p ∗
     "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
     "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
     "HdeletedSet"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal ∗
@@ -1174,11 +1170,11 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "%Hctr"   ∷ ⌜∀ parent tm x, p !! parent = Some tm → x ∈ tm_arr tm →
                    clientId (item_id x) = uint.nat client →
                    (clock (item_id x) < uint.nat k)%nat⌝ ∗
-    (* the pool invariants (issue #28) at run granularity: every run
+    (* the pool invariants (issue #28): every run
        satisfies [run_invs] and the clock ranges are disjoint (the address
-       [NoDup] is [own_type_pool_runs]'s [locs_wf], in the read-shareable
+       [NoDup] is [own_type_pool]'s [locs_wf], in the read-shareable
        half) *)
-    "%Hpool" ∷ ⌜run_pool_invs p⌝ ∗
+    "%Hpool" ∷ ⌜pool_invs p⌝ ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ q ∈ bind, is_type_binding γs.(sn_types) name q) ∗
     "Hhist"   ∷ own_client_history γh (uint.nat client) h ∗
@@ -1189,7 +1185,7 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
        its coherence [acc ⊆ delivered_ids h ∪ pending ids] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
     (* the monotone delete set with its model-domain bound (plan-delete-set D1) *)
-    "Hdelete_set" ∷ own_delete_set_runs γs m (all_runs p) ∗
+    "Hdelete_set" ∷ own_delete_set γs m (all_runs p) ∗
     "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
 
 #[global] Instance store_inv_ro_timeless γs locs p q : Timeless (store_inv_ro γs locs p q).
@@ -1365,15 +1361,15 @@ Proof. rewrite /is_applied_certs. apply _. Qed.
 (** [own_store s γs γh c h m pend]: the WHOLE lock-protected store state, as
     one exclusive predicate over its public model: this replica is client
     [c] with ghost op history [h], whose replayed doc model is [m], and
-    [pend] buffered wire items. Everything else (the run-granular state
-    [own_store_runs] with its addresses and pool, [bind], [pdel], the local
+    [pend] buffered wire items. Everything else (the state
+    [own_store_state] with its addresses and pool, [bind], [pdel], the local
     clock) is existential. [store_inv] is exactly its model-existential closure
     ([store_inv_own_store] below), so the write lock hands out [own_store]
     ([wp_Store__wlock]) and takes it back ([wp_Store__wunlock]); every spec
     over store state is stated [own_store] in, [own_store] out.
 
     The pool invariants and the registry coherence live inside
-    [own_store_runs]. *)
+    [own_store_state]. *)
 Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
@@ -1381,7 +1377,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (locs : gmap loc (list loc)) (p : pool) (bind : gmap P loc) (acc : gset YjsId),
     "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗
     "#Hclientpin" ∷ is_store_client γs c ∗
-    "Hcells" ∷ own_store_runs s_loc (MkStoreStateRuns client k locs p bind pend pdel) ∗
+    "Hstate" ∷ own_store_state s_loc (MkStoreState client k locs p bind pend pdel) ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
@@ -1396,7 +1392,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
                    clientId (item_id x) = c -> (clock (item_id x) < uint.nat k)%nat⌝ ∗
     (* no-loss accepted-id layer: matches [store_inv_excl] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
-    "Hdelete_set" ∷ own_delete_set_runs γs m (all_runs p) ∗
+    "Hdelete_set" ∷ own_delete_set γs m (all_runs p) ∗
     "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
@@ -1444,11 +1440,11 @@ Definition own_id_set (s : slice.t) (dq : dfrac) (gs : gset YjsId) : iProp Σ :=
     "%Hwf" ∷ ⌜Forall span_no_overflow vs⌝ ∗
     "%Hset" ∷ ⌜⋃ (span_ids <$> vs) = gs⌝.
 
-(** [integrate_loop_inv_runs parent dq ls runs arr leftIdx rightIdx curR
+(** [integrate_loop_inv parent dq ls runs arr leftIdx rightIdx curR
     originLeftId originRightId newItemId loopResult conflict_l left_l
     right_l idsBeforeOrigin_l conflictIds_l offset cur curD idsBeforeOrigin
     conflictIds destIdx]: the loop invariant of [scanConflicts] (what
-    [store/Integrate]'s [wp_scanConflicts_runs] walks), coupling the Go loop
+    [store/Integrate]'s [wp_scanConflicts] walks), coupling the Go loop
     state to a [set_find_integration_loop] run over the type at
     [(ls, runs, arr)], the anchor pointers read off the address list
     ([loc_at]) and the cursors coupled to model indices by the run prefix
@@ -1469,14 +1465,14 @@ Definition own_id_set (s : slice.t) (dq : dfrac) (gs : gset YjsId) : iProp Σ :=
       [== right] break) consume exactly the loop's fuel.
     [own_fresh_item_raw] and the [parent.len] field are loop-constant, framed
     outside. *)
-Definition integrate_loop_inv_runs
+Definition integrate_loop_inv
     (parent : loc) (dq : dfrac) (ls : list loc) (runs : list ItemRun) (arr : list (YjsItem A))
     (leftIdx rightIdx : Z) (curR : nat)
     (originLeftId originRightId : option YjsId) (newItemId : YjsId)
     (loopResult : option Z)
     (conflict_l left_l right_l idsBeforeOrigin_l conflictIds_l : loc)
     (offset cur curD : nat) (idsBeforeOrigin conflictIds : gset YjsId) (destIdx : Z) : iProp Σ :=
-  "Htext" ∷ own_ytype_runs parent dq ls (MkTypeModel runs) ∗
+  "Htext" ∷ own_ytype parent dq ls (MkTypeModel runs) ∗
   "Hconflict" ∷ conflict_l ↦ loc_at ls (Z.of_nat cur) ∗
   "Hleft" ∷ left_l ↦ loc_at ls (Z.of_nat curD - 1) ∗
   "Hright" ∷ right_l ↦ loc_at ls (Z.of_nat curR) ∗
@@ -1534,9 +1530,8 @@ Definition own_linked_item (item_l : loc) (input : IntegrateInput (A := A))
     ⌜itemVal.(yjs.item.flags') = W8 2⌝ ∗
     ⌜(1 <= length (itemVal.(yjs.item.content').(yjs.content.content')))%nat⌝.
 
-(** [own_linked_item] IS the stage-3 node predicate at [DfracOwn 1], live,
-    with a nonempty content: the fold/unfold between the two
-    (docs/plan-item-run-split.md stage 3). *)
+(** [own_linked_item] IS [own_item_node] at [DfracOwn 1], live, with a
+    nonempty content: the fold/unfold between the two. *)
 Lemma own_linked_item_as_node (item_l : loc) (input : IntegrateInput (A := A))
     (parent leftNode rightNode : loc) :
   own_linked_item item_l input parent leftNode rightNode ⊣⊢
@@ -1570,17 +1565,17 @@ Qed.
 
 (** A linked item's address is new to the whole address map of the pool
     (the item is owned separately). *)
-Lemma own_linked_item_fresh_runs (item_l parent leftNode rightNode : loc)
+Lemma own_linked_item_fresh (item_l parent leftNode rightNode : loc)
     (input : IntegrateInput (A := A)) (dq : dfrac)
     (locs : gmap loc (list loc)) (p : pool) :
   own_linked_item item_l input parent leftNode rightNode -∗
-  own_type_pool_runs dq locs p -∗
+  own_type_pool dq locs p -∗
   ⌜item_l ∉ concat ((map_to_list locs).*2)⌝.
 Proof.
   iIntros "Hlinked Htypes".
   iDestruct "Hlinked" as (itemVal oleft oright) "(Hraw & _)".
   iDestruct "Hraw" as "(Hitem & _)".
-  iApply (own_type_pool_runs_fresh_concat with "Hitem Htypes").
+  iApply (own_type_pool_fresh_concat with "Hitem Htypes").
 Qed.
 
 Lemma is_type_binding_agree (γ : gname) (name : P) (p q : loc) :
@@ -1807,13 +1802,13 @@ Proof.
   iSplitL "Hta"; first by iFrame "Hta".
   iSplitR "Hseq"; last first.
   { (* store_inv_ro over the empty pool *)
-    iFrame "Hseq". rewrite /own_type_pool_runs /p big_sepM_empty.
+    iFrame "Hseq". rewrite /own_type_pool /p big_sepM_empty.
     iSplit; last done. iPureIntro. rewrite /locs_wf /locs /p. split_and!.
     - rewrite !dom_empty_L //.
     - rewrite map_to_list_empty /=. constructor.
     - move=> parent ls tm Hls. rewrite lookup_empty // in Hls. }
   (* store_inv_excl *)
-  iAssert (own_delete_set_runs γs (∅ : DocModel) (all_runs p))
+  iAssert (own_delete_set γs (∅ : DocModel) (all_runs p))
     with "[Hdelete_set0]" as "Hdelete_set".
   { iExists (∅ : gset YjsId). iFrame "Hdelete_set0". iPureIntro. split.
     - move=> i Hi. exfalso. set_solver.
@@ -1845,7 +1840,7 @@ Proof.
   { iPureIntro. move=> typedInput Hin. by apply elem_of_nil in Hin. }
   iSplitR. { iPureIntro. move=> parent' tm' x Hlk. rewrite /p lookup_empty // in Hlk. }
   iSplitR.
-  { iPureIntro. rewrite /run_pool_invs /all_runs /p map_to_list_empty /=.
+  { iPureIntro. rewrite /pool_invs /all_runs /p map_to_list_empty /=.
     split; first by move=> r /elem_of_nil.
     move=> i j r1 r2 Hi. rewrite lookup_nil // in Hi. }
   iSplitR. { rewrite big_sepM_empty //. }
@@ -1871,7 +1866,7 @@ Lemma own_store_hist_coh (s_loc : loc) (γs : store_names) (γh : history_names)
   own_store s_loc γs γh c h m pend ∗ ⌜history_state_coh h m⌝.
 Proof.
   iIntros "H". iNamed "H".
-  iSplitL "Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set".
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
   - iExists client, k, pdel, locs, p, bind, acc.
     iFrame "∗#".
     iPureIntro. split_and!;
@@ -1881,7 +1876,7 @@ Proof.
 Qed.
 
 (** [store_inv] is exactly [own_store] with the model existentially closed.
-    The forward direction assembles [own_store_runs] from the exclusive
+    The forward direction assembles [own_store_state] from the exclusive
     slice's fields and the read-shareable pool. The write lock uses this to
     hand out [own_store] ([wp_Store__wlock]) and to take it back. *)
 Lemma store_inv_own_store (s_loc : loc) (γs : store_names) (γh : history_names) :
@@ -1893,11 +1888,11 @@ Proof.
   iSplit.
   - iIntros "H". iNamed "H". iNamed "Hexcl". iNamed "Hro".
     have [Hreg Hregmodel] := Hregcoh.
-    iAssert (own_store_runs s_loc (MkStoreStateRuns client k locs p bind pend pdel))
+    iAssert (own_store_state s_loc (MkStoreState client k locs p bind pend pdel))
       with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes]"
-      as "Hcells".
+      as "Hstate".
     { iSplitL; last by (iPureIntro; split; [exact Hpool | exact Hreg]).
-      rewrite /own_store_fields_runs /=.
+      rewrite /own_store_fields /=.
       iFrame "Hclient Hclock Htypes".
       iSplitL "HdeletedSet"; first (iExists deletedSetVal; iFrame "HdeletedSet").
       iSplitL "Hitemsf Hitemmap"; first (iExists items_mref; iFrame).
@@ -1910,7 +1905,7 @@ Proof.
     iPureIntro. split_and!;
       [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
       | exact Hctr | exact Hacccoh].
-  - iIntros "H". iDestruct "H" as (c h m pend) "H". iNamed "H". subst c. iNamed "Hcells".
+  - iIntros "H". iDestruct "H" as (c h m pend) "H". iNamed "H". subst c. iNamed "Hstate".
     have [Hpool Hreg] := Hinvs.
     iNamed "Hfields". simpl in *.
     iDestruct "HdeletedSet" as (deletedSetVal) "HdeletedSet".

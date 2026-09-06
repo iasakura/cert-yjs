@@ -69,14 +69,14 @@ Proof.
   iNamed "His_doc". subst s_loc. wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
   iDestruct "Hinv" as (c0 h m pend) "Hown". iNamed "Hown". subst c0.
-  iDestruct (own_store_runs_run_pool_invs with "Hcells") as %Hrpi.
-  iDestruct (own_store_runs_registry_coh with "Hcells") as %Hreg.
+  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hrpi.
+  iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
   have [Hmtypes Hmdom] := Hregmodel.
   wp_auto.
-  wp_apply (wp_store__getOrCreateYType_runs _ (MkStoreStateRuns client k locs p bind pend pdel) name
-              with "[$Hcells]").
-  iIntros (q p' locs' bind') "(Hcells & %Hlc)". iEval (simpl) in "Hcells". simpl in Hlc.
+  wp_apply (wp_store__getOrCreateYType _ (MkStoreState client k locs p bind pend pdel) name
+              with "[$Hstate]").
+  iIntros (q p' locs' bind') "(Hstate & %Hlc)". iEval (simpl) in "Hstate". simpl in Hlc.
   destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & Hfresh & -> & -> & ->)].
   - (* ---- hit: the root is registered; nothing changes ---- *)
     iDestruct (big_sepM_lookup _ _ name q Hb' with "Hbinds") as "#Hbindname".
@@ -87,7 +87,7 @@ Proof.
             Hmk (empty_subseteq _) with "Hseq") as "[Hseq #Hlb0]".
     wp_auto.
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
-                with "[$His_store $Hwl Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+                with "[$His_store $Hwl Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
     { iExists client, k, pdel, locs, p, bind, acc.
       iFrame "∗#". iPureIntro.
       split_and!;
@@ -195,13 +195,13 @@ Proof.
       - rewrite lookup_insert_ne //. exact (Hctr parent tm x). }
     (* registering an empty type moves no run, so the tombstone-set
        invariant transports over the same permutation *)
-    iDestruct (own_delete_set_runs_perm γs m (all_runs p) (all_runs p') Hperm
+    iDestruct (own_delete_set_perm γs m (all_runs p) (all_runs p') Hperm
                  with "Hdelete_set") as "Hdelete_set".
     wp_auto.
     have Hregmodel' : pool_registry_models m bind' p'.
     { rewrite /pool_registry_models. split; [exact Hmtypes' | exact Hmdom']. }
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
-                with "[$His_store $Hwl Hcells Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+                with "[$His_store $Hwl Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
     { iExists client, k, pdel, (<[q := []]> locs), p', bind', acc.
       iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds'". iPureIntro.
       split_and!;

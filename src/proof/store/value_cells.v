@@ -3,8 +3,8 @@
     but no Iris.
 
     Definitions
-    - [store_state_runs]: every field of the store as the invariant sees it,
-      the type pool as an address map plus a run pool ([sr_locs] / [sr_pool]);
+    - [store_state]: every field of the store as the invariant sees it,
+      the type pool as an address map plus a run pool ([ss_locs] / [ss_pool]);
       [locs_wf], the address map covering the registered types with one
       address per run and no address twice; [locs_aligned], its pure
       alignment with a run pool.
@@ -155,22 +155,22 @@ Definition pool_lookup_or_create (p : pool) (ls : gmap loc (list loc))
 
 (* ===== lemmas ============================================================= *)
 
-(** [store_state_runs]: every field of the store as the invariant sees it,
-    the type pool as an address map [sr_locs] and a run pool [sr_pool].
-    [own_store_runs] ([store/heap.v]) is the store at such a state. *)
-Record store_state_runs := MkStoreStateRuns {
-  sr_client : w64;
-  sr_clock : w64;
-  sr_locs : gmap loc (list loc);
-  sr_pool : pool;
-  sr_bind : gmap P loc;
-  sr_pending : list (TId * IntegrateInput (A := A));
-  sr_pending_deletes : list delete_span;
+(** [store_state]: every field of the store as the invariant sees it,
+    the type pool as an address map [ss_locs] and a run pool [ss_pool].
+    [own_store_state] ([store/heap.v]) is the store at such a state. *)
+Record store_state := MkStoreState {
+  ss_client : w64;
+  ss_clock : w64;
+  ss_locs : gmap loc (list loc);
+  ss_pool : pool;
+  ss_bind : gmap P loc;
+  ss_pending : list (TId * IntegrateInput (A := A));
+  ss_pending_deletes : list delete_span;
 }.
 
-#[export] Instance settable_store_state_runs : Settable store_state_runs :=
-  settable! MkStoreStateRuns
-    <sr_client; sr_clock; sr_locs; sr_pool; sr_bind; sr_pending; sr_pending_deletes>.
+#[export] Instance settable_store_state : Settable store_state :=
+  settable! MkStoreState
+    <ss_client; ss_clock; ss_locs; ss_pool; ss_bind; ss_pending; ss_pending_deletes>.
 
 (** [locs_aligned locs p]: the pure alignment of an address map with a run
     pool: same type domain, and per type as many addresses as runs. The half
@@ -183,7 +183,7 @@ Definition locs_aligned (locs : gmap loc (list loc)) (p : pool) : Prop :=
 (** [locs_wf locs p]: the well-formedness of the address map: it covers
     exactly the registered types, one node address per run, and no node is in
     two types or at two indices. This is the address half of the pool
-    invariants, the pure half being [run_pool_invs] ([store/model.v]). *)
+    invariants, the pure half being [pool_invs] ([store/model.v]). *)
 Definition locs_wf (locs : gmap loc (list loc)) (p : pool) : Prop :=
   dom locs = dom p ∧
   NoDup (concat ((map_to_list locs).*2)) ∧
@@ -290,7 +290,7 @@ Qed.
 (** [pool_entries locs p]: the store's nodes as [(address, run)] pairs: every
     run of every registered type zipped with its address, in the registry's
     order ([all_runs p] with the addresses put back). The per-client item
-    index ([own_item_map_runs]) is built from it. *)
+    index ([own_item_map]) is built from it. *)
 Definition pool_entries (locs : gmap loc (list loc)) (p : pool) : list (loc * ItemRun) :=
   concat ((λ kv, zip (default [] (locs !! kv.1)) (tm_runs kv.2)) <$> map_to_list p).
 
@@ -313,7 +313,7 @@ Definition entry_key_pair (e : loc * ItemRun) : w64 * (Z * loc) := (entry_client
 
 (** [key_pairs_clock_unique key_pairs]: one client's clock names one address, over a
     (client, clock, address) list: the uniqueness the item index relies on
-    ([own_item_map_runs]'s [Hclockunique] clause). *)
+    ([own_item_map]'s [Hclockunique] clause). *)
 Definition key_pairs_clock_unique (key_pairs : list (w64 * (Z * loc))) : Prop :=
   ∀ a b, a ∈ key_pairs -> b ∈ key_pairs -> a.1 = b.1 -> a.2.1 = b.2.1 -> a.2.2 = b.2.2.
 
@@ -325,7 +325,7 @@ Definition key_pair_client_locs (client : w64) (key_pairs : list (w64 * (Z * loc
 
 (** [client_locs locs p client]: the client's clock-sorted node-address
     slice at [(locs, p)], the model of that client's backing slice in
-    [own_item_map_runs]. *)
+    [own_item_map]. *)
 Definition client_locs (locs : gmap loc (list loc)) (p : pool) (client : w64) : list loc :=
   key_pair_client_locs client (entry_key_pair <$> pool_entries locs p).
 
@@ -339,7 +339,7 @@ Definition client_entries (locs : gmap loc (list loc)) (p : pool) (client : w64)
     [client] from the pool [(locs, p)], clock-sorted and without a repeated
     address: the index's entries for [client] ([client_entries]), or those
     with one run rewritten during a split. What the index walk
-    ([wp_getNodeIndex_runs]) searches. *)
+    ([wp_getNodeIndex]) searches. *)
 Definition sorted_client_entries (locs : gmap loc (list loc)) (p : pool) (client : w64)
     (E : list (loc * ItemRun)) : Prop :=
   StronglySorted entry_le E ∧ NoDup E.*1 ∧

@@ -30,8 +30,7 @@ Proof.
   iApply "HΦ". iFrame "Hl".
 Qed.
 
-(** [item.Deleted] over the node predicate: the tombstone bit
-    (docs/plan-item-run-split.md stage 3). *)
+(** [item.Deleted] over the node predicate: the tombstone bit. *)
 Lemma wp_item__Deleted_node (l : loc) (dq : dfrac) (input : IntegrateInput (A := A))
     (d : bool) (parent prev nxt : loc) :
   {{{ is_pkg_init yjs ∗ own_item_node l dq input d parent prev nxt }}}

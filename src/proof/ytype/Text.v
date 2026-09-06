@@ -25,29 +25,29 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 
 Lemma wp_yType__Text (parent : loc) (dq : dfrac) (ls : list loc) (tm : type_model) :
-  {{{ is_pkg_init yjs ∗ own_ytype_runs parent dq ls tm }}}
+  {{{ is_pkg_init yjs ∗ own_ytype parent dq ls tm }}}
     parent @! (go.PointerType yjs.yType) @! "Text" #()
   {{{ RET #(visible_string (runs_model (tm_runs tm)));
-      own_ytype_runs parent dq ls tm }}}.
+      own_ytype parent dq ls tm }}}.
 Proof.
   wp_start as "Hyt".
   destruct tm as [runs]. simpl.
   iNamed "Hyt".
-  iDestruct (own_dll_runs_headptr with "Hdll") as "[%Hhd Hdll]".
+  iDestruct (own_dll_headptr with "Hdll") as "[%Hhd Hdll]".
   have Hhead : yt.(yjs.yType.start') = loc_at ls 0.
   { rewrite Hhd /loc_at. case_decide as Hd0; last lia.
     rewrite /= head_lookup //. }
   wp_auto.
   iAssert (∃ (k : nat),
     "Hp" ∷ parent ↦{dq} yt ∗
-    "Hdll" ∷ own_dll_runs dq parent yt.(yjs.yType.start') tl null null ls runs ∗
+    "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null ls runs ∗
     "Hresult" ∷ result_ptr ↦ visible_string (runs_model (take k runs)) ∗
     "Hcur" ∷ cur_ptr ↦ loc_at ls (Z.of_nat k) ∗
     "%Hk" ∷ ⌜(k <= length runs)%nat⌝)%I
     with "[Hparent Hdll result cur]" as "IH".
   { iExists 0%nat. rewrite take_0 /= -Hhead. iFrame. iPureIntro; lia. }
   wp_for "IH".
-  iDestruct (own_dll_runs_length with "Hdll") as %Hlenl.
+  iDestruct (own_dll_length with "Hdll") as %Hlenl.
   destruct (decide (k < length runs)%nat) as [Hlt | Hge].
   - (* cur is not null: read the node, append its content when visible, advance *)
     iDestruct (loc_at_lt_not_null dq parent yt.(yjs.yType.start') tl ls runs k ltac:(lia) with "Hdll")
@@ -56,7 +56,7 @@ Proof.
     simpl negb.
     destruct (ls !! k) as [lk|] eqn:Hlk; [| apply lookup_ge_None in Hlk; lia].
     destruct (runs !! k) as [r|] eqn:Hrk; [| apply lookup_ge_None in Hrk; lia].
-    iDestruct (own_dll_runs_acc dq parent yt.(yjs.yType.start') tl ls runs k lk r Hlk Hrk with "Hdll")
+    iDestruct (own_dll_acc dq parent yt.(yjs.yType.start') tl ls runs k lk r Hlk Hrk with "Hdll")
       as (prevk nxtk) "(%Hcl & %Hcrn & %Hrun & %Hpck & %Hclen & Hnode & Hback)".
     iDestruct "Hnode" as (itemVal olidk oridk)
       "(Hcval & Hcol & Hcor & %Hinl & %Hinr & %Hid & %Hcontent & %Hpark & %Hprevk & %Hnextk & %Hflags)".
@@ -86,7 +86,7 @@ Proof.
       iDestruct ("Hback" with "Hnode") as "Hdll".
       wp_for_post.
       iFrame "HΦ". iExists (S k). iFrame "Hp Hdll".
-      rewrite (visible_string_runs_take_S runs k r _ Hrk Hcontold) Hd app_nil_r.
+      rewrite (visible_string_take_S runs k r _ Hrk Hcontold) Hd app_nil_r.
       iFrame "Hresult".
       rewrite Hcr. replace (Z.of_nat k + 1)%Z with (Z.of_nat (S k)) by lia.
       iFrame "Hcur". iPureIntro. lia.
@@ -101,7 +101,7 @@ Proof.
       iDestruct ("Hback" with "Hnode") as "Hdll".
       wp_for_post.
       iFrame "HΦ". iExists (S k). iFrame "Hp Hdll".
-      rewrite (visible_string_runs_take_S runs k r _ Hrk Hcontold) Hd.
+      rewrite (visible_string_take_S runs k r _ Hrk Hcontold) Hd.
       iFrame "Hresult".
       rewrite Hcr. replace (Z.of_nat k + 1)%Z with (Z.of_nat (S k)) by lia.
       iFrame "Hcur". iPureIntro. lia.

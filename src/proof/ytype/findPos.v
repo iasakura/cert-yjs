@@ -1,6 +1,6 @@
 (** [wp_yType__findPos]: the tombstone-aware walk to a visible character index,
     returning the straddling neighbours and the in-node offset
-    ([find_pos_runs], over an existential run position [p]). Feeds the [Store.Integrate] loop in
+    ([find_pos], over an existential run position [p]). Feeds the [Store.Integrate] loop in
     [Text.Insert] and [Text.Delete]; read-only, so stated at a generic [dq].
 
     Stated over the representation predicates of [ytype/heap.v]. *)
@@ -40,16 +40,16 @@ Notation A := go_string.
     the offset feeds the normalize/split path (M3). *)
 Lemma wp_yType__findPos (parent : loc) (dq : dfrac) (ls : list loc)
     (tm : type_model) (idx : w64) :
-  {{{ is_pkg_init yjs ∗ own_ytype_runs parent dq ls tm }}}
+  {{{ is_pkg_init yjs ∗ own_ytype parent dq ls tm }}}
     parent @! (go.PointerType yjs.yType) @! "findPos" #idx
   {{{ (leftNode rightNode : loc) (p : nat) (off : w64), RET (#leftNode, #rightNode, #off);
-      own_ytype_runs parent dq ls tm ∗ ⌜find_pos_runs ls (tm_runs tm) p leftNode rightNode off⌝ }}}.
+      own_ytype parent dq ls tm ∗ ⌜find_pos ls (tm_runs tm) p leftNode rightNode off⌝ }}}.
 Proof.
   wp_start as "Hyt".
   destruct tm as [runs]. simpl.
   iNamed "Hyt".
-  iDestruct (own_dll_runs_length with "Hdll") as %Hlenls.
-  iDestruct (own_dll_runs_headptr with "Hdll") as "[%Hhead Hdll]".
+  iDestruct (own_dll_length with "Hdll") as %Hlenls.
+  iDestruct (own_dll_headptr with "Hdll") as "[%Hhead Hdll]".
   destruct ls as [|l0 ls']; destruct runs as [|r0 rs'];
     [| by iDestruct "Hdll" as %[] | by iDestruct "Hdll" as %[] |].
   - (* empty document: both loops are no-ops, return (null, null, 0) at p = 0 *)
@@ -74,7 +74,7 @@ Proof.
     (* ----- skip loop invariant (runs before [remaining := index]) ----- *)
     iAssert (∃ (q : nat),
       "Hp" ∷ parent ↦{dq} yt ∗
-      "Hdll" ∷ own_dll_runs dq parent yt.(yjs.yType.start') tl null null (l0 :: ls') (r0 :: rs') ∗
+      "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null (l0 :: ls') (r0 :: rs') ∗
       "Hindex" ∷ index_ptr ↦ idx ∗
       "Hleftp" ∷ left_ptr ↦ loc_at (l0 :: ls') (Z.of_nat q - 1) ∗
       "Hrightp" ∷ right_ptr ↦ loc_at (l0 :: ls') (Z.of_nat q) ∗
@@ -87,14 +87,14 @@ Proof.
       have Hr0 : loc_at (l0 :: ls') (Z.of_nat 0) = yt.(yjs.yType.start') by rewrite Hhead.
       rewrite Hr0. iFrame "right". iPureIntro. simpl; lia. }
     wp_for "IH".
-    iDestruct (own_dll_runs_length with "Hdll") as %Hlenl.
+    iDestruct (own_dll_length with "Hdll") as %Hlenl.
     destruct (decide (q < length (l0 :: ls'))%nat) as [Hqlt | Hqge].
     + (* right ≠ null: evaluate Deleted; tombstone ⇒ advance, else exit to count *)
       iDestruct (loc_at_lt_not_null dq parent yt.(yjs.yType.start') tl (l0 :: ls') (r0 :: rs') q Hqlt with "Hdll") as "[%Hnn Hdll]".
       rewrite (bool_decide_eq_false_2 (loc_at (l0 :: ls') q = null) Hnn). simpl negb.
       destruct ((l0 :: ls') !! q) as [lq|] eqn:Hlq; [| apply lookup_ge_None in Hlq; lia].
       destruct ((r0 :: rs') !! q) as [rq|] eqn:Hrq; [| apply lookup_ge_None in Hrq; lia].
-      iDestruct (own_dll_runs_acc dq parent yt.(yjs.yType.start') tl (l0 :: ls') (r0 :: rs') q lq rq Hlq Hrq with "Hdll")
+      iDestruct (own_dll_acc dq parent yt.(yjs.yType.start') tl (l0 :: ls') (r0 :: rs') q lq rq Hlq Hrq with "Hdll")
         as (prevq nxtq) "(%Hcl & %Hcrn & %Hrun & %Hpcq & %Hclen & Hnode & Hback)".
       have Hcloc : lq = loc_at (l0 :: ls') (Z.of_nat q).
       { rewrite /loc_at decide_True; last lia. rewrite Nat2Z.id Hlq //. }
@@ -135,7 +135,7 @@ Proof.
         wp_auto.
         iAssert (∃ (q2 : nat) (rem off : w64),
           "Hp" ∷ parent ↦{dq} yt ∗
-          "Hdll" ∷ own_dll_runs dq parent yt.(yjs.yType.start') tl null null (l0 :: ls') (r0 :: rs') ∗
+          "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null (l0 :: ls') (r0 :: rs') ∗
           "Hleftp" ∷ left_ptr ↦ loc_at (l0 :: ls') (Z.of_nat q2 - 1) ∗
           "Hrightp" ∷ right_ptr ↦ loc_at (l0 :: ls') (Z.of_nat q2) ∗
           "Hrem" ∷ remaining_ptr ↦ rem ∗
@@ -149,7 +149,7 @@ Proof.
         { iExists q, idx, (W64 0). iFrame "Hp Hdll Hleftp Hrightp remaining offset".
           iPureIntro. split; [exact Hq | by left]. }
         wp_for "IH".
-        iDestruct (own_dll_runs_length with "Hdll") as %Hlenl2.
+        iDestruct (own_dll_length with "Hdll") as %Hlenl2.
         case_bool_decide as Hrem.
         2:{ wp_auto. rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
             iApply ("HΦ" $! (loc_at (l0 :: ls') (Z.of_nat q2 - 1)) (loc_at (l0 :: ls') q2) q2 off).
@@ -175,7 +175,7 @@ Proof.
         rewrite decide_True; [| done].
         destruct ((l0 :: ls') !! q2) as [l2|] eqn:Hl2; [| apply lookup_ge_None in Hl2; lia].
         destruct ((r0 :: rs') !! q2) as [r2|] eqn:Hr2; [| apply lookup_ge_None in Hr2; lia].
-        iDestruct (own_dll_runs_acc dq parent yt.(yjs.yType.start') tl (l0 :: ls') (r0 :: rs') q2 l2 r2 Hl2 Hr2 with "Hdll")
+        iDestruct (own_dll_acc dq parent yt.(yjs.yType.start') tl (l0 :: ls') (r0 :: rs') q2 l2 r2 Hl2 Hr2 with "Hdll")
           as (prev2 nxt2) "(%Hc2l & %Hc2rn & %Hc2run & %Hpc2 & %Hc2len & Hnode2 & Hback2)".
         have Hc2loc : l2 = loc_at (l0 :: ls') (Z.of_nat q2).
         { rewrite /loc_at decide_True; last lia. rewrite Nat2Z.id Hl2 //. }
@@ -256,7 +256,7 @@ Proof.
       wp_auto.
         iAssert (∃ (q2 : nat) (rem off : w64),
           "Hp" ∷ parent ↦{dq} yt ∗
-          "Hdll" ∷ own_dll_runs dq parent yt.(yjs.yType.start') tl null null (l0 :: ls') (r0 :: rs') ∗
+          "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null (l0 :: ls') (r0 :: rs') ∗
           "Hleftp" ∷ left_ptr ↦ loc_at (l0 :: ls') (Z.of_nat q2 - 1) ∗
           "Hrightp" ∷ right_ptr ↦ loc_at (l0 :: ls') (Z.of_nat q2) ∗
           "Hrem" ∷ remaining_ptr ↦ rem ∗
@@ -270,7 +270,7 @@ Proof.
         { iExists q, idx, (W64 0). iFrame "Hp Hdll Hleftp Hrightp remaining offset".
           iPureIntro. split; [exact Hq | by left]. }
         wp_for "IH".
-        iDestruct (own_dll_runs_length with "Hdll") as %Hlenl2.
+        iDestruct (own_dll_length with "Hdll") as %Hlenl2.
         case_bool_decide as Hrem.
         2:{ wp_auto. rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
             iApply ("HΦ" $! (loc_at (l0 :: ls') (Z.of_nat q2 - 1)) (loc_at (l0 :: ls') q2) q2 off).
@@ -296,7 +296,7 @@ Proof.
         rewrite decide_True; [| done].
         destruct ((l0 :: ls') !! q2) as [l2|] eqn:Hl2; [| apply lookup_ge_None in Hl2; lia].
         destruct ((r0 :: rs') !! q2) as [r2|] eqn:Hr2; [| apply lookup_ge_None in Hr2; lia].
-        iDestruct (own_dll_runs_acc dq parent yt.(yjs.yType.start') tl (l0 :: ls') (r0 :: rs') q2 l2 r2 Hl2 Hr2 with "Hdll")
+        iDestruct (own_dll_acc dq parent yt.(yjs.yType.start') tl (l0 :: ls') (r0 :: rs') q2 l2 r2 Hl2 Hr2 with "Hdll")
           as (prev2 nxt2) "(%Hc2l & %Hc2rn & %Hc2run & %Hpc2 & %Hc2len & Hnode2 & Hback2)".
         have Hc2loc : l2 = loc_at (l0 :: ls') (Z.of_nat q2).
         { rewrite /loc_at decide_True; last lia. rewrite Nat2Z.id Hl2 //. }

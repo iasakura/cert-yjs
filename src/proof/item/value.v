@@ -3,7 +3,7 @@
 
     Definitions
     - [loc_at ls k]: the node address at cursor [k] of an address list
-      ([null] outside the list), how a run-granular spec reads [sr_locs].
+      ([null] outside the list), how a spec reads [ss_locs].
     - the flag accessors [is_deleted_flag] / [is_countable_flag] reading the
       heap struct's bits, and [set_deleted] setting the tombstone.
     - [toContent] and [originId_of], the remaining scalar readings.
@@ -31,8 +31,8 @@ Notation A := go_string.
 (* ===== definitions ======================================================== *)
 
 (** [loc_at ls k]: the address at cursor [k] of an address list ([null]
-    outside [0, len)), how a run-granular spec reads a node address off the
-    [sr_locs] half of the store state. *)
+    outside [0, len)), how a spec reads a node address off the
+    [ss_locs] half of the store state. *)
 Definition loc_at (ls : list loc) (k : Z) : loc :=
   if decide (0 <= k)%Z then default null (ls !! Z.to_nat k) else null.
 
