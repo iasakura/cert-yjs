@@ -717,6 +717,16 @@ vocabulary substitution table written; then C5 restates the specs at
     `pool_registry_models_after_delete`, `own_delete_set_runs_refine`).
     Deleted: the cell `wp_store__applyDeleteSpans` (over `own_store_struct`).
 
+    PROGRESS 2026-09-04 (C6-3e): `store.applyUpdate` is proved on the run
+    fields, at both levels. `wp_store__applyUpdate_unlocked` opens and
+    re-closes `own_store_runs` directly, and the lock-layer
+    `wp_store__applyUpdate` works at `(locs, pool)` throughout: the
+    item-set authority grows over the pool (`pool_registry_coh_dom_mono`),
+    the delete set steps by `own_delete_set_runs_apply` on the reported
+    `runs_apply_live_refine`, and the counter and registry clauses are
+    read off `pool_registry_models`. Deleted: `own_type_pool_arr_inv`
+    (heap) and `apply_live_refine_of_runs` (value_live), both orphaned.
+
   - **C6-4, delete the cell side.** `item_cell`, the cell `own_dll` and
     `own_dll_cells_layout`, `own_ytype_cells`, `cells_of_locs_runs`,
     `types_of_locs_pool` / `state_of_runs`, `type_state` / `store_state`,

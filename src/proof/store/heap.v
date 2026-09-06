@@ -1175,19 +1175,6 @@ Proof.
   iPureIntro. move=> p ts c Hp Hc. exact (Hall p ts Hp c Hc).
 Qed.
 
-Lemma own_type_pool_arr_inv (types : gmap loc type_state) :
-  (own_type_pool (DfracOwn 1) types) -∗
-  ⌜∀ p ts, types !! p = Some ts -> YjsArrInvariant (ty_arr ts)⌝.
-Proof.
-  iIntros "Htypes".
-  iAssert ([∗ map] p ↦ ts ∈ types, ⌜YjsArrInvariant (ty_arr ts)⌝)%I
-    with "[Htypes]" as "H".
-  { iApply (big_sepM_impl with "Htypes").
-    iIntros "!#" (p ts Hp) "(_ & %Hi)". by iPureIntro. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> p ts Hp. exact (Hall p ts Hp).
-Qed.
-
 Lemma own_type_pool_repr (types : gmap loc type_state) :
   (own_type_pool (DfracOwn 1) types) -∗
   ⌜∀ p ts, types !! p = Some ts -> cells_repr (ty_arr ts) (ty_cells ts) (ty_arr ts)⌝.
