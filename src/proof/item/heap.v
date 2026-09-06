@@ -59,6 +59,7 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core prelude.
 From New.proof.item Require Import run_theory model value.
 From New.proof.id Require Import value heap.
+From iris.bi.lib Require Import fractional.
 
 Section item_heap.
 
@@ -1745,6 +1746,46 @@ Proof.
     iPureIntro. move=> r Hr.
     apply elem_of_cons in Hr as [-> | Hr]; last exact (Hrest r Hr).
     exact Hrun.
+Qed.
+
+(** The run spine is fractional: the share of every node splits and the
+    tail splits by induction, and combining agrees on each node's struct
+    (hence on its next pointer). What makes a type's run view, and the
+    pool's, fractional for the read path. *)
+#[global] Instance own_dll_runs_fractional parent l last prev next ls runs :
+  Fractional (λ q, own_dll_runs (DfracOwn q) parent l last prev next ls runs).
+Proof.
+  intros q1 q2. revert l prev runs.
+  induction ls as [|lc ls IH]; intros l prev runs; destruct runs as [|r runs]; simpl;
+    try (iSplit; [iIntros "[]" | iIntros "[[] _]"]).
+  - iSplit; [ iIntros "#H"; iSplit; iFrame "H" | iIntros "[H _]"; iFrame "H" ].
+  - iSplit.
+    + iIntros "H". iNamed "H". iDestruct "H" as (nxt0) "H". iNamed "H".
+      iDestruct "Hnode" as (v olid orid) "H". iNamed "H".
+      iDestruct "Holeft" as "#Holeft". iDestruct "Horight" as "#Horight".
+      iDestruct "Hval" as "[Hv1 Hv2]".
+      iDestruct (IH with "Hrest") as "[Hr1 Hr2]".
+      iSplitL "Hv1 Hr1".
+      * iSplitR; first done. iSplitR; first done. iSplitR; first done.
+        iExists nxt0. iSplitL "Hv1"; last iExact "Hr1".
+        iExists v, olid, orid. iFrame "Hv1 Holeft Horight". done.
+      * iSplitR; first done. iSplitR; first done. iSplitR; first done.
+        iExists nxt0. iSplitL "Hv2"; last iExact "Hr2".
+        iExists v, olid, orid. iFrame "Hv2 Holeft Horight". done.
+    + iIntros "[H1 H2]".
+      iNamedSuffix "H1" "1". iDestruct "H1" as (nxt1) "H1". iNamedSuffix "H1" "1".
+      iNamedSuffix "H2" "2". iDestruct "H2" as (nxt2) "H2". iNamedSuffix "H2" "2".
+      iDestruct "Hnode1" as (v1 olid1 orid1) "Hn1". iNamedSuffix "Hn1" "1".
+      iDestruct "Hnode2" as (v2 olid2 orid2) "Hn2". iNamedSuffix "Hn2" "2".
+      iDestruct "Holeft1" as "#Holeft1". iDestruct "Horight1" as "#Horight1".
+      iCombine "Hval1 Hval2" gives %Hv. subst v2.
+      have Hnxt : nxt2 = nxt1 by rewrite -Hnext1 -Hnext2.
+      rewrite Hnxt.
+      iCombine "Hval1 Hval2" as "Hval".
+      iDestruct (IH with "[$Hrest1 $Hrest2]") as "Hrest".
+      iSplitR; first done. iSplitR; first done. iSplitR; first done.
+      iExists nxt1. iSplitL "Hval"; last iExact "Hrest".
+      iExists v1, olid1, orid1. iFrame "Hval Holeft1 Horight1". done.
 Qed.
 
 Lemma own_dll_runs_id_bounds (dq : dfrac) (parent l last prev next : loc)

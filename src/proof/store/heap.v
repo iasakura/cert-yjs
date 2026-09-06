@@ -267,17 +267,6 @@ Definition own_item_map_runs (mref : loc) (dq : dfrac) (locs : gmap loc (list lo
 #[global] Instance is_origin_id_timeless p originId : Timeless (is_origin_id p originId).
 Proof. rewrite /is_origin_id. by destruct originId; apply _. Qed.
 
-#[global] Instance own_dll_cells_layout_timeless dq l last prev next cells :
-  Timeless (own_dll_cells_layout dq l last prev next cells).
-Proof.
-  revert l last prev next.
-  induction cells as [|c rest IH]; intros l last prev next; simpl.
-  - apply _.
-  - repeat (apply bi.exist_timeless; intros ?).
-    repeat (apply bi.sep_timeless; [ apply _ | ]).
-    apply IH.
-Qed.
-
 #[global] Instance own_item_node_timeless l dq input deleted parent prev nxt :
   Timeless (own_item_node l dq input deleted parent prev nxt).
 Proof. rewrite /own_item_node. apply _. Qed.
@@ -289,90 +278,9 @@ Proof.
   induction ls as [|lc ls IH]; intros [|r runs] l prev; simpl; apply _.
 Qed.
 
-#[global] Instance own_dll_timeless dq parent l last prev next cells :
-  Timeless (own_dll dq parent l last prev next cells).
-Proof. rewrite /own_dll. apply _. Qed.
-
-
-#[global] Instance own_ytype_cells_timeless parent dq cells arr :
-  Timeless (own_ytype_cells parent dq cells arr).
-Proof. rewrite /own_ytype_cells. apply _. Qed.
-
 #[global] Instance own_ytype_runs_timeless parent dq ls tm :
   Timeless (own_ytype_runs parent dq ls tm).
 Proof. rewrite /own_ytype_runs. apply _. Qed.
-
-(* ----- fractional DLL stack (for the concurrent-read share of [store_inv]) ---
-   The read lock hands each reader a fractional share of the read-only part of
-   [store_inv] (its DLLs + the item-set auth). These make that share splittable:
-   [own_dll] / [own_ytype_cells] are [Fractional] in their [DfracOwn q]. The
-   [⊣⊢]-backward direction needs the existential heap struct ([itemVal] / [yt]) and
-   the DLL tail loc ([tl]) to AGREE across the two shares; [own_dll_last_agree]
-   supplies the [tl] agreement (both DLLs over the same cells end at the same
-   node); [itemVal]/[yt] agree by [pointsto] agreement. *)
-#[global] Instance own_dll_cells_layout_fractional l last prev next cells :
-  Fractional (λ q, own_dll_cells_layout (DfracOwn q) l last prev next cells).
-Proof.
-  intros q1 q2. revert l last prev next.
-  induction cells as [|c rest IH]; intros l last prev next; simpl.
-  - iSplit; [ iIntros "#H"; iSplit; iFrame "H" | iIntros "[H _]"; iFrame "H" ].
-  - iSplit.
-    + iIntros "H". iNamed "H".
-      iDestruct "Holeft" as "#Holeft". iDestruct "Horight" as "#Horight".
-      iDestruct "Hval" as "[Hv1 Hv2]".
-      iDestruct (IH with "Hrest") as "[Hr1 Hr2]".
-      iSplitL "Hv1 Hr1".
-      * iExists itemVal, olid, orid. iFrame "Hv1 Holeft Horight Hr1". done.
-      * iExists itemVal, olid, orid. iFrame "Hv2 Holeft Horight Hr2". done.
-    + iIntros "[H1 H2]".
-      iDestruct "H1" as (iv1 olid1 orid1) "H1". iNamedSuffix "H1" "1".
-      iDestruct "H2" as (iv2 olid2 orid2) "H2". iNamedSuffix "H2" "2".
-      iCombine "Hval1 Hval2" gives %Hiv. subst iv2.
-      iCombine "Hval1 Hval2" as "Hval".
-      iDestruct (IH with "[$Hrest1 $Hrest2]") as "Hrest".
-      iExists iv1, olid1, orid1. iFrame "Hval Hrest Holeft1 Horight1". done.
-Qed.
-
-#[global] Instance own_dll_fractional parent l last prev next cells :
-  Fractional (λ q, own_dll (DfracOwn q) parent l last prev next cells).
-Proof.
-  intros q1 q2. iSplit.
-  - iIntros "H". iEval (rewrite own_dll_unfold_layout) in "H".
-    iDestruct "H" as "[%Hcoh H]".
-    iEval (rewrite (own_dll_cells_layout_fractional l last prev next cells q1 q2)) in "H".
-    iDestruct "H" as "[H1 H2]".
-    iSplitL "H1".
-    + iEval (rewrite own_dll_unfold_layout). iSplitR; first done. iFrame "H1".
-    + iEval (rewrite own_dll_unfold_layout). iSplitR; first done. iFrame "H2".
-  - iIntros "[H1 H2]".
-    iEval (rewrite own_dll_unfold_layout) in "H1".
-    iEval (rewrite own_dll_unfold_layout) in "H2".
-    iDestruct "H1" as "[%Hcoh H1]". iDestruct "H2" as "[_ H2]".
-    iEval (rewrite own_dll_unfold_layout).
-    iSplitR; first done.
-    iEval (rewrite (own_dll_cells_layout_fractional l last prev next cells q1 q2)).
-    iFrame "H1 H2".
-Qed.
-
-#[global] Instance own_ytype_cells_fractional parent cells arr :
-  Fractional (λ q, own_ytype_cells parent (DfracOwn q) cells arr).
-Proof.
-  intros q1 q2. rewrite /own_ytype_cells. iSplit.
-  - iIntros "H". iNamed "H".
-    iDestruct "Hparent" as "[Hp1 Hp2]".
-    iDestruct (own_dll_fractional _ _ _ _ _ _ q1 q2 with "Hdll") as "[Hd1 Hd2]".
-    iSplitL "Hp1 Hd1".
-    + iExists yt, tl. iFrame "Hp1 Hd1". auto.
-    + iExists yt, tl. iFrame "Hp2 Hd2". auto.
-  - iIntros "[H1 H2]".
-    iDestruct "H1" as (yt1 tl1) "H1". iNamedSuffix "H1" "1".
-    iDestruct "H2" as (yt2 tl2) "H2". iNamedSuffix "H2" "2".
-    iCombine "Hparent1 Hparent2" gives %Hyt. subst yt2.
-    iDestruct (own_dll_last_agree with "Hdll1 Hdll2") as %Htl. subst tl2.
-    iCombine "Hparent1 Hparent2" as "Hparent".
-    iDestruct (own_dll_fractional _ _ _ _ _ _ q1 q2 with "[$Hdll1 $Hdll2]") as "Hdll".
-    iExists yt1, tl1. iFrame "Hparent Hdll". auto.
-Qed.
 
 (* ----- per-store ghost names and the root-type registry ------------------ *)
 
@@ -681,28 +589,22 @@ Definition own_type_pool_runs (dq : dfrac)
 #[global] Instance own_ytype_runs_fractional parent ls tm :
   Fractional (λ q, own_ytype_runs parent (DfracOwn q) ls tm).
 Proof.
-  intros q1 q2. destruct tm as [runs arr]. iSplit.
-  - iIntros "H". iDestruct (own_ytype_runs_as_cells with "H") as "[%Hlen H]".
-    simpl in Hlen.
-    iDestruct (own_ytype_cells_fractional with "H") as "[H1 H2]".
-    iSplitL "H1".
-    + iDestruct (own_ytype_runs_intro with "H1") as "H1".
-      iEval (rewrite /= (cells_of_locs_runs_loc parent ls runs Hlen)
-                     (cells_of_locs_runs_run parent ls runs Hlen)) in "H1".
-      iExact "H1".
-    + iDestruct (own_ytype_runs_intro with "H2") as "H2".
-      iEval (rewrite /= (cells_of_locs_runs_loc parent ls runs Hlen)
-                     (cells_of_locs_runs_run parent ls runs Hlen)) in "H2".
-      iExact "H2".
+  intros q1 q2. iSplit.
+  - iIntros "H". iDestruct "H" as (yt tl) "(Hpar & Hdll & %Hlen & %Harr)".
+    iDestruct "Hpar" as "[Hp1 Hp2]".
+    iDestruct (own_dll_runs_fractional with "Hdll") as "[Hd1 Hd2]".
+    iSplitL "Hp1 Hd1"; iExists yt, tl; iFrame; done.
   - iIntros "[H1 H2]".
-    iDestruct (own_ytype_runs_as_cells with "H1") as "[%Hlen H1]".
-    iDestruct (own_ytype_runs_as_cells with "H2") as "[_ H2]".
-    simpl in Hlen.
-    iDestruct (own_ytype_cells_fractional parent _ _ q1 q2 with "[$H1 $H2]") as "H".
-    iDestruct (own_ytype_runs_intro with "H") as "H".
-    iEval (rewrite /= (cells_of_locs_runs_loc parent ls runs Hlen)
-                   (cells_of_locs_runs_run parent ls runs Hlen)) in "H".
-    iExact "H".
+    iDestruct "H1" as (yt1 tl1) "(Hp1 & Hd1 & %Hlen & %Harr)".
+    iDestruct "H2" as (yt2 tl2) "(Hp2 & Hd2 & _ & _)".
+    iCombine "Hp1 Hp2" gives %Hyt. subst yt2.
+    iDestruct (own_dll_runs_lastptr with "Hd1") as "[%Htl1 Hd1]".
+    iDestruct (own_dll_runs_lastptr with "Hd2") as "[%Htl2 Hd2]".
+    have Htl : tl2 = tl1 by rewrite Htl1 Htl2.
+    rewrite Htl.
+    iCombine "Hp1 Hp2" as "Hp".
+    iDestruct (own_dll_runs_fractional with "[$Hd1 $Hd2]") as "Hdll".
+    iExists yt1, tl1. iFrame "Hp Hdll". done.
 Qed.
 
 #[global] Instance own_type_pool_runs_fractional locs p :
