@@ -1219,35 +1219,45 @@ Proof.
 Qed.
 
 (** Every run head's id components round-trip through [w64] heap fields:
-    the run form of [own_type_pool_id_bounds], read through the
-    materialized cells. *)
+    the run form of [own_type_pool_id_bounds], off the run spine. *)
 Lemma own_type_pool_runs_id_bounds (locs : gmap loc (list loc)) (p : pool) :
   own_type_pool_runs (DfracOwn 1) locs p -∗
   ⌜∀ r, r ∈ all_runs p ->
      (Z.of_nat (run_client r) < 2^64)%Z ∧ (Z.of_nat (run_clock r) < 2^64)%Z⌝.
 Proof.
-  iIntros "H".
-  iDestruct (own_type_pool_runs_to_cells with "H") as "(Htypes & %Hpeq & _ & _)".
-  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnd.
+  iIntros "(_ & Hpool)".
+  iAssert ([∗ map] parent ↦ tm ∈ p,
+      ⌜∀ r, r ∈ tm_runs tm -> (Z.of_nat (run_client r) < 2^64)%Z ∧
+                              (Z.of_nat (run_clock r) < 2^64)%Z⌝)%I with "[Hpool]" as "H".
+  { iApply (big_sepM_impl with "Hpool").
+    iIntros "!#" (parent tm Hp) "H".
+    iDestruct "H" as (ls) "(_ & Hyt & _)".
+    iDestruct "Hyt" as (yt tl) "(_ & Hdll & _)".
+    iApply (own_dll_runs_id_bounds with "Hdll"). }
+  iDestruct (big_sepM_pure with "H") as %Hall.
   iPureIntro. move=> r Hr.
-  rewrite -Hpeq all_runs_pool_of in Hr.
-  apply list_elem_of_fmap in Hr as (c & -> & Hc).
-  exact (Hbnd c Hc).
+  apply elem_of_all_runs in Hr as (parent & tm & Hp & Hr).
+  exact (Hall parent tm Hp r Hr).
 Qed.
 
-(** Every run of the run-granular pool is chained ([run_wf]): read through
-    the materialized cells. *)
+(** Every run of the run-granular pool is chained ([run_wf]), off the run
+    spine. *)
 Lemma own_type_pool_runs_run_wf (locs : gmap loc (list loc)) (p : pool) :
   own_type_pool_runs (DfracOwn 1) locs p -∗
   ⌜∀ r, r ∈ all_runs p -> run_wf (run_items r)⌝.
 Proof.
-  iIntros "H".
-  iDestruct (own_type_pool_runs_to_cells with "H") as "(Htypes & %Hpeq & _ & _)".
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwf.
+  iIntros "(_ & Hpool)".
+  iAssert ([∗ map] parent ↦ tm ∈ p, ⌜∀ r, r ∈ tm_runs tm -> run_wf (run_items r)⌝)%I
+    with "[Hpool]" as "H".
+  { iApply (big_sepM_impl with "Hpool").
+    iIntros "!#" (parent tm Hp) "H".
+    iDestruct "H" as (ls) "(_ & Hyt & _)".
+    iDestruct "Hyt" as (yt tl) "(_ & Hdll & _)".
+    iApply (own_dll_runs_run_wf with "Hdll"). }
+  iDestruct (big_sepM_pure with "H") as %Hall.
   iPureIntro. move=> r Hr.
-  rewrite -Hpeq all_runs_pool_of in Hr.
-  apply list_elem_of_fmap in Hr as (c & -> & Hc).
-  exact (Hwf c Hc).
+  apply elem_of_all_runs in Hr as (parent & tm & Hp & Hr).
+  exact (Hall parent tm Hp r Hr).
 Qed.
 
 (** A fully owned node struct's address is not an address of a run-granular
@@ -1554,16 +1564,9 @@ Qed.
 Lemma own_store_runs_run_wf (s : loc) (str : store_state_runs) :
   own_store_runs s str -∗ ⌜∀ r, r ∈ all_runs (sr_pool str) -> run_wf (run_items r)⌝.
 Proof.
-  iIntros "H".
-  iDestruct (own_store_runs_to_state with "H") as "[(Hfields & %Hinvs) %Haligned]".
+  iIntros "(Hfields & _)".
   iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
-  iDestruct (own_type_pool_runs_wf with "Htypes") as %Hwf.
-  iPureIntro.
-  have Hprem := locs_aligned_lens _ _ Haligned.
-  move=> r Hr.
-  rewrite -(pool_of_types_of_locs_pool _ _ Hprem) all_runs_pool_of in Hr.
-  apply list_elem_of_fmap in Hr as (c & -> & Hc).
-  exact (Hwf c Hc).
+  iApply (own_type_pool_runs_run_wf with "Htypes").
 Qed.
 
 (** Every registered type's document is the flatten of its runs: the yType

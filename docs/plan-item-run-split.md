@@ -772,6 +772,16 @@ vocabulary substitution table written; then C5 restates the specs at
     `registry_lookup_or_create` with `_to_pool`, `pool_invs_insert_empty`,
     `registry_coh_bind_fresh`.
 
+    PROGRESS 2026-09-05 (C6-4b): the pool's two heap extractions are read
+    off the run spine instead of the materialized cells.
+    `own_dll_runs_run_wf` and `own_dll_runs_id_bounds` (item/heap) walk the
+    run Fixpoint directly, and `own_type_pool_runs_run_wf` /
+    `own_type_pool_runs_id_bounds` / `own_store_runs_run_wf` are proved
+    from them, so `own_type_pool_runs_to_cells` has one consumer left
+    (`own_store_runs_to_state`, whose remaining user is
+    `own_store_runs_covers_unique`; that one needs a run-level
+    covering-slot uniqueness law and is the next step).
+
   - **C6-5, fold `tm_arr`.** `type_model` becomes the run list alone
     (`tm_arr = runs_flatten`), if the specs read better that way.
 
