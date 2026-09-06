@@ -883,6 +883,24 @@ vocabulary substitution table written; then C5 restates the specs at
   - **C6-5, fold `tm_arr`.** `type_model` becomes the run list alone
     (`tm_arr = runs_flatten`), if the specs read better that way.
 
+    PROGRESS 2026-09-06 (C6-5): done, in the shape that keeps the reading:
+    `type_model` is the one-field record `{ tm_runs }` and `tm_arr` is a
+    projection over it (`runs_flatten (tm_runs tm)`), so every spec still
+    says `tm_arr tm` while a type's document can no longer drift from its
+    runs. What the fold deletes is the bookkeeping that kept the two in
+    step: `own_ytype_runs`'s `tm_arr = runs_flatten tm_runs` conjunct, the
+    reading laws that handed it out (`own_type_pool_runs_arr` /
+    `own_store_runs_arr`) and the premise of the pure lemmas that consumed
+    it (`pool_run_clock_below_of_arrs`, `docm_runs_agree`); the duplicate
+    clause of `pool_after_split` / `pool_after_repair` ("the document
+    survives" and "the flatten survives" are one clause now) goes too.
+    Where a proof used to get "the document did not move" for free from an
+    unchanged field, it now proves it from the surgery: `split_runs_flatten`
+    / `runs_flatten_flip_run` for a split or a tombstoning, and the new
+    `runs_integrate_splice_at_flatten` for an integrate splice. `Text.Insert`
+    and `Text.Delete` carry the equation across their loops as one invariant
+    conjunct.
+
 Each stage ends `./build.sh make`-green and is one reviewable commit (or
 a small stack); the wrapper discipline keeps the tree compiling at every
 point, and C6 is the enforcement that the coexistence was scaffolding

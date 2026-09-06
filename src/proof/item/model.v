@@ -849,6 +849,19 @@ Proof.
   rewrite -{3}(take_drop cur runs) runs_flatten_app drop_app_length //.
 Qed.
 
+(** A splice recorded at a run cursor flattens to the spliced document: what
+    lets a caller read the new type's document off its runs alone. *)
+Lemma runs_integrate_splice_at_flatten (idx : nat) (runs runs' : list ItemRun)
+    (run : list (YjsItem A)) (arr' : list (YjsItem A)) :
+  runs_integrate_splice_at idx runs (runs_flatten runs) run runs' arr' ->
+  runs_flatten runs' = arr'.
+Proof.
+  move=> [_ [_ [-> ->]]].
+  rewrite runs_flatten_app runs_flatten_cons /=.
+  rewrite -(runs_flatten_take_prefix runs (runs_flatten runs) idx eq_refl).
+  rewrite -(runs_flatten_drop_suffix runs (runs_flatten runs) idx eq_refl) //.
+Qed.
+
 (** The model item at a run boundary is that run's head. *)
 Lemma runs_head_at_prefix (runs : list ItemRun) (arr : list (YjsItem A))
     (i : nat) (r : ItemRun) :

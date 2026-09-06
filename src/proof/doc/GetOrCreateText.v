@@ -103,7 +103,7 @@ Proof.
     iSplitL; last (iPureIntro; constructor).
     iExact "Hlb0".
   - (* ---- miss: register a fresh empty root type ---- *)
-    set (p' := <[q := MkTypeModel [] []]> p).
+    set (p' := <[q := MkTypeModel []]> p).
     set (bind' := <[name := q]> bind).
     (* registry ghost map: mint the persistent binding *)
     iMod (ghost_map_insert_persist name q Hb' with "HtypesAuth")

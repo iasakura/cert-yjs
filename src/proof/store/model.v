@@ -107,9 +107,9 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (* ===== definitions ======================================================== *)
 
-(** The run-granular pool (plan-item-run-split stage 2): every registered
-    type at its [type_model], keyed by the yType's address (the key only
-    names the type; no pure lemma computes with it). *)
+(** The type pool: every registered type at its [type_model], keyed by the
+    yType's address (the key only names the type; no pure lemma computes
+    with it). *)
 Definition pool := gmap loc type_model.
 
 (** [addressed_pool]: a pool together with each registered type's node
@@ -173,8 +173,7 @@ Definition delete_set_tombstoned_runs (delete_set : gset YjsId) (runs : list Ite
     range, and live and dead chars refine. *)
 Definition pool_after_split (p p' : pool) (parent : loc) (k : nat) : Prop :=
   (∀ q tm', p' !! q = Some tm' ->
-     ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm ∧
-           runs_flatten (tm_runs tm') = runs_flatten (tm_runs tm)) ∧
+     ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm) ∧
   (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ∧
   (∀ q tm k' r, p !! q = Some tm -> tm_runs tm !! k' = Some r ->
      ¬ (q = parent ∧ k' = k) -> r ∈ all_runs p') ∧
@@ -199,8 +198,7 @@ Definition pool_after_split (p p' : pool) (parent : loc) (k : nat) : Prop :=
     run sits inside an old one's range, and live chars refine. *)
 Definition pool_after_repair (p p' : pool) : Prop :=
   (∀ q tm', p' !! q = Some tm' ->
-     ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm ∧
-           runs_flatten (tm_runs tm') = runs_flatten (tm_runs tm)) ∧
+     ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm) ∧
   (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ∧
   (∀ q tm tm', p !! q = Some tm -> p' !! q = Some tm' ->
      Forall (λ r, length (run_items r) = 1%nat) (tm_runs tm) -> tm' = tm) ∧
@@ -352,7 +350,7 @@ Lemma run_pool_invs_split (p : pool) (parent : loc) (tm : type_model)
   run_wf (run_items r) ->
   (0 < o < length (run_items r))%nat ->
   run_pool_invs p ->
-  run_pool_invs (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p).
+  run_pool_invs (<[parent := MkTypeModel (split_runs (tm_runs tm) k o)]> p).
 Proof.
   move=> Hp Hrk Hwf Ho [Hinvall Hdisj].
   have Hwfall : ∀ r0, r0 ∈ all_runs p -> run_wf (run_items r0)
@@ -371,7 +369,7 @@ Proof.
                 ++ [split_run_left r o; split_run_right r o] ++ drop (S k) (tm_runs tm).
   { rewrite /split_runs Hrk //. }
   have Hmid := take_drop_middle (tm_runs tm) k r Hrk.
-  have Hnew : all_runs (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p)
+  have Hnew : all_runs (<[parent := MkTypeModel (split_runs (tm_runs tm) k o)]> p)
             ≡ₚ split_run_left r o :: split_run_right r o :: rest.
   { rewrite (all_runs_insert p parent tm _ Hp) /= Hsplit /rest.
     rewrite -!app_assoc /=.
@@ -477,16 +475,16 @@ Lemma run_pool_invs_integrate (p : pool) (parent : loc) (tm : type_model)
   (∀ r0, r0 ∈ all_runs p -> run_client r0 = run_client r ->
      (run_clock r0 + length (run_items r0) <= run_clock r)%nat) ->
   run_pool_invs p ->
-  run_pool_invs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p).
+  run_pool_invs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm))]> p).
 Proof.
   move=> Hp Hinvr Hbelow [Hinvall Hdisj].
-  have Hnew : all_runs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p)
+  have Hnew : all_runs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm))]> p)
             ≡ₚ r :: all_runs p.
   { rewrite (all_runs_insert p parent tm _ Hp) /= (all_runs_lookup p parent tm Hp).
     rewrite -app_assoc /=.
     rewrite -{3}(take_drop idx (tm_runs tm)) -app_assoc.
     symmetry. apply Permutation_middle. }
-  have Hmem : ∀ r0, r0 ∈ all_runs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p)
+  have Hmem : ∀ r0, r0 ∈ all_runs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm))]> p)
                  -> r0 = r ∨ r0 ∈ all_runs p.
   { move=> r0 Hr0. rewrite Hnew in Hr0. apply elem_of_cons in Hr0. exact Hr0. }
   split_and!.
@@ -505,13 +503,13 @@ Lemma run_pool_invs_flip (p : pool) (parent : loc) (tm : type_model) (k : nat) (
   p !! parent = Some tm ->
   tm_runs tm !! k = Some r ->
   run_pool_invs p ->
-  run_pool_invs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p).
+  run_pool_invs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p).
 Proof.
   move=> Hp Hrk [Hinvall Hdisj].
   set (rest := take k (tm_runs tm) ++ drop (S k) (tm_runs tm) ++ all_runs (delete parent p)).
   have Hk : (k < length (tm_runs tm))%nat := lookup_lt_Some _ _ _ Hrk.
   have Hmid := take_drop_middle (tm_runs tm) k r Hrk.
-  have Hnew : all_runs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p)
+  have Hnew : all_runs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p)
             ≡ₚ flip_run r :: rest.
   { rewrite (all_runs_insert p parent tm _ Hp) /= /rest.
     rewrite insert_take_drop; last exact Hk.
@@ -599,7 +597,7 @@ Lemma pool_after_split_delete (p p' : pool) (parent : loc) (k : nat) :
 Proof.
   move=> [H1 [H2 [_ [_ [_ [H7 [H8 H9]]]]]]].
   split_and!; [| exact H2 | exact H8 | exact H9 | exact H7].
-  move=> q tm' Hq. destruct (H1 q tm' Hq) as (tm & Hq0 & Harr & _). eauto.
+  move=> q tm' Hq. destruct (H1 q tm' Hq) as (tm & Hq0 & Harr). eauto.
 Qed.
 
 (** [all_runs] around one split: the two halves in place of the split run,
@@ -607,7 +605,7 @@ Qed.
 Lemma all_runs_split_perm (p : pool) (parent : loc) (tm : type_model) (k o : nat) (r : ItemRun) :
   p !! parent = Some tm ->
   tm_runs tm !! k = Some r ->
-  all_runs (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p)
+  all_runs (<[parent := MkTypeModel (split_runs (tm_runs tm) k o)]> p)
     ≡ₚ split_run_left r o :: split_run_right r o
        :: (take k (tm_runs tm) ++ drop (S k) (tm_runs tm) ++ all_runs (delete parent p)) ∧
   all_runs p ≡ₚ r :: (take k (tm_runs tm) ++ drop (S k) (tm_runs tm) ++ all_runs (delete parent p)).
@@ -651,10 +649,10 @@ Lemma pool_after_split_of_split_runs (p : pool) (parent : loc) (tm : type_model)
   tm_runs tm !! k = Some r ->
   run_wf (run_items r) ->
   (0 < o < length (run_items r))%nat ->
-  pool_after_split p (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p) parent k.
+  pool_after_split p (<[parent := MkTypeModel (split_runs (tm_runs tm) k o)]> p) parent k.
 Proof.
   move=> Hp Hrk Hwf Ho.
-  set (tm' := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)).
+  set (tm' := MkTypeModel (split_runs (tm_runs tm) k o)).
   set (rest := take k (tm_runs tm) ++ drop (S k) (tm_runs tm) ++ all_runs (delete parent p)).
   destruct (all_runs_split_perm p parent tm k o r Hp Hrk) as [Hnew Hold].
   destruct (split_run_facts r o Hwf Ho)
@@ -670,7 +668,7 @@ Proof.
   - (* documents and flattens survive *)
     move=> q tmq Hq. destruct (decide (parent = q)) as [<- | Hne].
     + rewrite lookup_insert_eq in Hq. injection Hq as <-. exists tm.
-      split_and!; [done | done | exact (split_runs_flatten _ _ _ _ Hrk)].
+      split; [done | exact (split_runs_flatten _ _ _ _ Hrk)].
     + rewrite lookup_insert_ne in Hq; last exact Hne. exists tmq. done.
   - (* no type disappears *)
     move=> q Hq. destruct (decide (parent = q)) as [<- | Hne].
@@ -781,9 +779,9 @@ Lemma pool_after_repair_trans (p1 p2 p3 : pool) :
 Proof.
   move=> [A1 [A2 [A3 [A4 A5]]]] [B1 [B2 [B3 [B4 B5]]]].
   split_and!.
-  - move=> q tm3 Hq. destruct (B1 q tm3 Hq) as (tm2 & Hq2 & Harr2 & Hfl2).
-    destruct (A1 q tm2 Hq2) as (tm1 & Hq1 & Harr1 & Hfl1).
-    exists tm1. split_and!; [exact Hq1 | congruence | congruence].
+  - move=> q tm3 Hq. destruct (B1 q tm3 Hq) as (tm2 & Hq2 & Harr2).
+    destruct (A1 q tm2 Hq2) as (tm1 & Hq1 & Harr1).
+    exists tm1. split; [exact Hq1 | congruence].
   - move=> q Hq. apply B2, A2, Hq.
   - move=> q tm tm' Hq Hq' Hunit.
     destruct (A2 q (mk_is_Some _ _ Hq)) as [tm2 Hq2].
@@ -799,10 +797,10 @@ Qed.
 Lemma pool_after_delete_flip (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
   p !! parent = Some tm ->
   tm_runs tm !! k = Some r ->
-  pool_after_delete p (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p).
+  pool_after_delete p (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p).
 Proof.
   move=> Hp Hrk.
-  set (tm' := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)).
+  set (tm' := MkTypeModel (<[k := flip_run r]> (tm_runs tm))).
   have Hmem : ∀ r', r' ∈ all_runs (<[parent := tm']> p) ->
       r' = flip_run r ∨ r' ∈ all_runs p.
   { move=> r' Hr'. apply (elem_of_all_runs_insert p parent tm tm' r' Hp) in Hr'.
@@ -812,7 +810,8 @@ Proof.
     - right. apply (elem_of_all_runs_lookup p parent tm r' Hp). by right. }
   split_and!.
   - move=> q tmq Hq. destruct (decide (parent = q)) as [<- | Hne].
-    + rewrite lookup_insert_eq in Hq. injection Hq as <-. exists tm. done.
+    + rewrite lookup_insert_eq in Hq. injection Hq as <-. exists tm.
+      split; [done | rewrite /tm' /tm_arr /= (runs_flatten_flip_run (tm_runs tm) k r Hrk) //].
     + rewrite lookup_insert_ne in Hq; last exact Hne. exists tmq. done.
   - move=> q Hq. destruct (decide (parent = q)) as [<- | Hne].
     + rewrite lookup_insert_eq. done.
@@ -960,7 +959,7 @@ Qed.
 Lemma all_runs_splice_perm (p : pool) (parent : loc) (tm : type_model) (idx : nat)
     (r : ItemRun) (arr' : list (YjsItem A)) :
   p !! parent = Some tm ->
-  all_runs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p)
+  all_runs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm))]> p)
     ≡ₚ r :: all_runs p.
 Proof.
   move=> Hp.
@@ -974,10 +973,10 @@ Qed.
 (** A fresh empty type adds no run. *)
 Lemma all_runs_insert_empty (p : pool) (q : loc) (arr : list (YjsItem A)) :
   p !! q = None ->
-  all_runs (<[q := MkTypeModel [] arr]> p) ≡ₚ all_runs p.
+  all_runs (<[q := MkTypeModel []]> p) ≡ₚ all_runs p.
 Proof.
   move=> Hq. rewrite /all_runs.
-  apply (concat_perm (tm_runs <$> (map_to_list (<[q := MkTypeModel [] arr]> p)).*2)
+  apply (concat_perm (tm_runs <$> (map_to_list (<[q := MkTypeModel []]> p)).*2)
                      ([] :: (tm_runs <$> (map_to_list p).*2))).
   rewrite (map_to_list_insert p q _ Hq) /=. reflexivity.
 Qed.
@@ -985,7 +984,7 @@ Qed.
 (** ... hence [run_pool_invs] survives registering a fresh empty type. *)
 Lemma run_pool_invs_insert_empty (p : pool) (q : loc) :
   p !! q = None ->
-  run_pool_invs p -> run_pool_invs (<[q := MkTypeModel [] []]> p).
+  run_pool_invs p -> run_pool_invs (<[q := MkTypeModel []]> p).
 Proof. move=> Hq. apply run_pool_invs_perm. exact (all_runs_insert_empty p q [] Hq). Qed.
 
 (** [runs_integrate_live_refine] composes, follows from [runs_live_refine],
@@ -1303,13 +1302,12 @@ Qed.
     head clock plus its length minus one ([run_wf_char_id]), and it sits in
     the type's flatten. What [Text.Insert] feeds [wp_store__Integrate_runs]. *)
 Lemma pool_run_clock_below_of_arrs (p : pool) (c k : nat) :
-  (∀ q tm, p !! q = Some tm -> tm_arr tm = runs_flatten (tm_runs tm)) ->
   (∀ r, r ∈ all_runs p -> run_wf (run_items r)) ->
   (∀ q tm x, p !! q = Some tm -> x ∈ tm_arr tm -> clientId (item_id x) = c ->
      (clock (item_id x) < k)%nat) ->
   pool_run_clock_below p (MkYjsId c k).
 Proof.
-  move=> Harr Hwf Hb r Hr Hcl.
+  move=> Hwf Hb r Hr Hcl.
   have Hwfr := Hwf r Hr.
   destruct (proj1 (elem_of_all_runs p r) Hr) as (q & tm & Hq & Hrtm).
   have Hlen1 : (1 <= length (run_items r))%nat.
@@ -1317,7 +1315,7 @@ Proof.
   destruct (lookup_lt_is_Some_2 (run_items r) (length (run_items r) - 1)%nat ltac:(lia)) as [li Hli].
   apply list_elem_of_lookup_1 in Hrtm as [i Hi].
   have Hin : li ∈ tm_arr tm.
-  { rewrite (Harr q tm Hq).
+  { rewrite /tm_arr.
     exact (list_elem_of_lookup_2 _ _ _ (runs_flatten_lookup_of_run (tm_runs tm) i _ r li Hi Hli)). }
   have Hid := run_wf_char_id (run_items r) _ li Hwfr Hli.
   have Hcl' : clientId (item_id (hd inhabitant (run_items r))) = c := Hcl.

@@ -141,7 +141,6 @@ Proof using Type*.
   (* the INITIAL pool's run structure, read while [Hruns] is over [p]
      (pure, non-consuming): needed in the ready branch to bound an original
      run's clock range below a fresh batch item via [expand_inputs_arr_fresh]. *)
-  iDestruct (own_store_runs_arr with "Hruns") as %Harr_init.
   iDestruct (own_store_runs_run_wf with "Hruns") as %Hrunwf_init.
   iDestruct "Hruns" as "(Hfields0 & %Hinvs0)".
   iEval (simpl) in "Hfields0".
@@ -463,7 +462,7 @@ Proof using Type*.
                apply elem_of_all_runs in Hr1 as (q1 & tm1 & Hq1 & Hrt1).
                destruct (Htypesbound q1 (ex_intro _ tm1 Hq1)) as [name1 Hbnm1].
                have Hdg1 : doc_model_get m (RootId name1) = tm_arr tm1 := Hmtypes name1 q1 tm1 Hbnm1 Hq1.
-               have Hrep1 : tm_arr tm1 = runs_flatten (tm_runs tm1) := Harr_init q1 tm1 Hq1.
+               have Hrep1 : tm_arr tm1 = runs_flatten (tm_runs tm1) := eq_refl.
                apply list_elem_of_lookup_1 in Hrt1 as [ci1 Hci1].
                have Hxlmem : xl ∈ doc_model_get m (RootId name1).
                { rewrite Hdg1 Hrep1.

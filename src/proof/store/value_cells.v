@@ -150,7 +150,7 @@ Definition pool_lookup_or_create (p : pool) (ls : gmap loc (list loc))
     (p' : pool) (ls' : gmap loc (list loc)) (bind' : gmap P loc) : Prop :=
   (bind !! nm = Some q ∧ p' = p ∧ ls' = ls ∧ bind' = bind) ∨
   (bind !! nm = None ∧ p !! q = None ∧
-   p' = <[q := MkTypeModel [] []]> p ∧ ls' = <[q := []]> ls ∧
+   p' = <[q := MkTypeModel []]> p ∧ ls' = <[q := []]> ls ∧
    bind' = <[nm := q]> bind).
 
 (* ===== lemmas ============================================================= *)
@@ -225,7 +225,7 @@ Qed.
 Lemma locs_wf_insert_empty (locs : gmap loc (list loc)) (p : pool) (q : loc) :
   p !! q = None ->
   locs_wf locs p ->
-  locs_wf (<[q := []]> locs) (<[q := MkTypeModel [] []]> p).
+  locs_wf (<[q := []]> locs) (<[q := MkTypeModel []]> p).
 Proof.
   move=> Hq [Hdom [Hnd Hlens]].
   have Hlq : locs !! q = None.
@@ -691,13 +691,13 @@ Qed.
 (** A fresh empty type adds no entry to the item index. *)
 Lemma pool_entries_insert_empty (locs : gmap loc (list loc)) (p : pool) (q : loc) :
   p !! q = None ->
-  pool_entries (<[q := []]> locs) (<[q := MkTypeModel [] []]> p) ≡ₚ pool_entries locs p.
+  pool_entries (<[q := []]> locs) (<[q := MkTypeModel []]> p) ≡ₚ pool_entries locs p.
 Proof.
   move=> Hq. rewrite /pool_entries.
   have Hm : (λ kv : loc * type_model, zip (default [] (<[q := []]> locs !! kv.1)) (tm_runs kv.2))
-              <$> map_to_list (<[q := MkTypeModel [] []]> p)
+              <$> map_to_list (<[q := MkTypeModel []]> p)
           ≡ₚ (λ kv : loc * type_model, zip (default [] (<[q := []]> locs !! kv.1)) (tm_runs kv.2))
-              <$> ((q, MkTypeModel [] []) :: map_to_list p).
+              <$> ((q, MkTypeModel []) :: map_to_list p).
   { apply Permutation_map. apply map_to_list_insert. exact Hq. }
   rewrite (concat_perm _ _ Hm) fmap_cons concat_cons /= zip_with_nil_r /=.
   apply Permutation_refl'. f_equal. apply list_fmap_ext.
@@ -717,7 +717,7 @@ Lemma pool_entries_integrate (locs : gmap loc (list loc)) (p : pool) (parent : l
   locs !! parent = Some ls -> p !! parent = Some tm ->
   length ls = length (tm_runs tm) ->
   pool_entries (<[parent := integrate_locs ls idx item_l]> locs)
-               (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p)
+               (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm))]> p)
     ≡ₚ (item_l, r) :: pool_entries locs p.
 Proof.
   move=> Hls Hp Hlen.
@@ -749,7 +749,7 @@ Proof.
     rewrite zip_with_app; last exact HlenA.
     rewrite -/Ap -/Bp -app_assoc //. }
   have Hnew : pool_entries (<[parent := integrate_locs ls idx item_l]> locs)
-                (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p)
+                (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm))]> p)
               ≡ₚ Ap ++ (item_l, r) :: Bp ++ others.
   { rewrite (Hpe _ _ Hother) /F /= lookup_insert_eq /= /integrate_locs.
     rewrite zip_with_app; last exact HlenA.
@@ -766,7 +766,7 @@ Lemma locs_wf_integrate (locs : gmap loc (list loc)) (p : pool) (parent : loc)
   item_l ∉ concat ((map_to_list locs).*2) ->
   locs_wf locs p ->
   locs_wf (<[parent := integrate_locs ls idx item_l]> locs)
-          (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm)) arr']> p).
+          (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm))]> p).
 Proof.
   move=> Hls Hp Hfresh [Hdom [Hnd Hlens]].
   have Hperm0 : concat ((map_to_list locs).*2) ≡ₚ ls ++ concat ((map_to_list (delete parent locs)).*2).
@@ -794,7 +794,7 @@ Lemma pool_entries_flip_key_pairs (locs : gmap loc (list loc)) (p : pool) (paren
     (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
   locs !! parent = Some ls -> p !! parent = Some tm ->
   ls !! k = Some lc -> tm_runs tm !! k = Some r ->
-  entry_key_pair <$> pool_entries locs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p)
+  entry_key_pair <$> pool_entries locs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p)
   ≡ₚ entry_key_pair <$> pool_entries locs p.
 Proof.
   move=> Hls Hp Hlk Hrk.
