@@ -14,7 +14,7 @@
       [pool_invs].
     - the registry coherence side conditions [doc_registry_coh] and
       [inputs_rooted_in_bind]; what [getOrCreateYType] does to the registry,
-      [registry_lookup_or_create] ([pool_lookup_or_create] the same at run
+      [pool_lookup_or_create] (the registry step at run
       granularity, with the address map); the registry coherence and its
       model agreement at the pool, [pool_registry_coh] /
       [pool_registry_models] / [pool_doc_registry_coh].
@@ -52,7 +52,8 @@
       their slots, [pool_entries_slot] / [pool_entries_snd] /
       [pool_entries_locs_NoDup], one integrate splice adding its entry
       ([pool_entries_integrate], with [locs_wf_integrate] for the address
-      map) and one tombstoning keeping every key ([pool_entries_flip_kp]);
+      map), one tombstoning keeping every key ([pool_entries_flip_kp]) and a
+      fresh empty type adding none ([pool_entries_insert_empty]);
       what a delete step transports ([pool_after_delete_seq_map] /
       [pool_after_delete_arr_pointwise] /
       [pool_registry_models_after_delete]) and what a one-type run rebuild
@@ -86,8 +87,7 @@
       ([run_pool_invs_of]) and [pool_run_clock_below] reads back on the
       cells ([pool_run_clock_below_to_cell]) and [pool_clock_below] at run
       granularity ([pool_clock_below_to_run]);
-      [registry_lookup_or_create] carries to [(locs, p)]
-      ([registry_lookup_or_create_to_pool]); [pool_of] / [locs_of] under a
+      [pool_of] / [locs_of] under a
       registry insert
       and the address map's flattening ([pool_of_insert] / [locs_of_insert]
       / [locs_of_concat]); [client_run] projects onto [client_runs]
@@ -398,17 +398,8 @@ Definition cells_within_or_from (inputs : list (TId * IntegrateInput (A := A)))
        (uint.Z (cell_clock c) + Z.of_nat (length (ic_run c)) <=
         uint.Z (W64 (clock (in_id typedInput.2))) + Z.of_nat (length (in_content typedInput.2)))%Z).
 
-(** [registry_lookup_or_create types bind nm p types' bind']: what
-    [getOrCreateYType nm] does to the registry: hands back the root bound to
-    [nm] unchanged, or binds [nm] to a fresh empty type at [p]. *)
-Definition registry_lookup_or_create (types : gmap loc type_state) (bind : gmap P loc)
-    (nm : P) (p : loc) (types' : gmap loc type_state) (bind' : gmap P loc) : Prop :=
-  (bind !! nm = Some p ∧ types' = types ∧ bind' = bind) ∨
-  (bind !! nm = None ∧ types !! p = None ∧
-   types' = <[p := MkTypeState [] []]> types ∧ bind' = <[nm := p]> bind).
-
 (** [pool_lookup_or_create p ls bind nm q p' ls' bind']:
-    [registry_lookup_or_create] at run granularity, over the pool and its
+    The registry step at run granularity, over the pool and its
     address map: the root bound to [nm] handed back unchanged, or [nm] bound
     to a fresh empty type at [q] (empty run list, empty address list). *)
 Definition pool_lookup_or_create (p : pool) (ls : gmap loc (list loc))
@@ -760,25 +751,6 @@ Lemma locs_of_insert (types : gmap loc type_state) (parent : loc) (ts : type_sta
   locs_of (<[parent := ts]> types) = <[parent := ic_loc <$> ty_cells ts]> (locs_of types).
 Proof. rewrite /locs_of fmap_insert //. Qed.
 
-(** [registry_lookup_or_create] carried to [(locs, p)]: what projects
-    [getOrCreateYType]'s postcondition ([wp_store__getOrCreateYType_runs]).
-    A miss inserts the empty type model and the empty address list. *)
-Lemma registry_lookup_or_create_to_pool (types types' : gmap loc type_state)
-    (bind bind' : gmap P loc) (nm : P) (q : loc) :
-  registry_lookup_or_create types bind nm q types' bind' ->
-  pool_lookup_or_create (pool_of types) (locs_of types) bind nm q
-    (pool_of types') (locs_of types') bind'.
-Proof.
-  intros [ (Hb & -> & ->) | (Hb & Hfresh & -> & ->) ].
-  - left. by split_and!.
-  - right. split_and!.
-    + exact Hb.
-    + rewrite /pool_of lookup_fmap Hfresh //.
-    + rewrite pool_of_insert //.
-    + rewrite locs_of_insert //.
-    + done.
-Qed.
-
 Lemma locs_of_concat (types : gmap loc type_state) :
   concat ((map_to_list (locs_of types)).*2) = ic_loc <$> all_cells types.
 Proof.
@@ -827,7 +799,7 @@ Qed.
 (** The projections are always aligned; [state_runs_of] sections
     [state_of_runs] on aligned states; and on a parent-coherent registry the
     re-materialization is the identity. The three pure legs of the primitive
-    [own_store_runs]'s fold/unfold ([own_store_runs_as_state]). *)
+    [own_store_runs]'s cell reading. *)
 Lemma locs_aligned_of (types : gmap loc type_state) :
   locs_aligned (locs_of types) (pool_of types).
 Proof.
@@ -900,6 +872,25 @@ Proof.
     + rewrite lookup_insert_ne in Htmq; [| congruence]. exact (Hlens q lsq tmq Hlsq Htmq).
 Qed.
 
+(** Registering a fresh empty type keeps the address map well formed. *)
+Lemma locs_wf_insert_empty (locs : gmap loc (list loc)) (p : pool) (q : loc) :
+  p !! q = None ->
+  locs_wf locs p ->
+  locs_wf (<[q := []]> locs) (<[q := MkTypeModel [] []]> p).
+Proof.
+  move=> Hq [Hdom [Hnd Hlens]].
+  have Hlq : locs !! q = None.
+  { destruct (locs !! q) as [ls|] eqn:Hls; last done.
+    exfalso. have Hin : q ∈ dom p by (rewrite -Hdom; apply elem_of_dom; by eexists).
+    apply elem_of_dom in Hin. rewrite Hq in Hin. by destruct Hin. }
+  split_and!.
+  - rewrite !dom_insert_L Hdom //.
+  - rewrite (concat_perm _ _ (Permutation_map snd (map_to_list_insert locs q [] Hlq))) /= //.
+  - move=> q0 ls0 tm0. destruct (decide (q0 = q)) as [-> | Hne].
+    + rewrite !lookup_insert_eq. move=> [= <-] [= <-]. done.
+    + rewrite !lookup_insert_ne //. exact (Hlens q0 ls0 tm0).
+Qed.
+
 (** The pool's registry coherence only reads the pool's domain: replacing a
     registered type's model keeps it. *)
 Lemma pool_registry_coh_insert_existing (bind : gmap P loc) (p : pool) (parent : loc) (tm tm' : type_model) :
@@ -913,6 +904,38 @@ Proof.
   - move=> q Hq. destruct (decide (q = parent)) as [-> | Hne].
     + apply H3. by exists tm.
     + rewrite lookup_insert_ne in Hq; [exact (H3 q Hq) | congruence].
+Qed.
+
+(** Registering a fresh name at a fresh type keeps the registry coherent. *)
+Lemma pool_registry_coh_bind_fresh (bind : gmap P loc) (p : pool)
+    (nm : P) (q : loc) (tm : type_model) :
+  bind !! nm = None ->
+  p !! q = None ->
+  pool_registry_coh bind p ->
+  pool_registry_coh (<[nm := q]> bind) (<[q := tm]> p).
+Proof.
+  move=> Hnm Hq [Hbt [Hinj Htb]].
+  have Hqnotbound : ∀ name, bind !! name = Some q -> False.
+  { move=> name Hb. destruct (Hbt name q Hb) as [tm0 Htm0]. rewrite Hq in Htm0. done. }
+  split_and!.
+  - move=> name q0. destruct (decide (name = nm)) as [-> | Hne].
+    + rewrite lookup_insert_eq. move=> [= <-]. rewrite lookup_insert_eq. by eexists.
+    + rewrite lookup_insert_ne //. move=> Hb.
+      destruct (decide (q0 = q)) as [-> | Hqq]; first (exfalso; exact (Hqnotbound name Hb)).
+      rewrite lookup_insert_ne //. exact (Hbt name q0 Hb).
+  - move=> n1 n2 q0. destruct (decide (n1 = nm)) as [-> | Hne1];
+      destruct (decide (n2 = nm)) as [-> | Hne2].
+    + done.
+    + rewrite lookup_insert_eq lookup_insert_ne //. move=> [= <-] Hb2.
+      exfalso. exact (Hqnotbound n2 Hb2).
+    + rewrite lookup_insert_eq lookup_insert_ne //. move=> Hb1 [= Heq]. subst q0.
+      exfalso. exact (Hqnotbound n1 Hb1).
+    + rewrite !lookup_insert_ne //. exact (Hinj n1 n2 q0).
+  - move=> q0. destruct (decide (q0 = q)) as [-> | Hne].
+    + move=> _. exists nm. by rewrite lookup_insert_eq.
+    + rewrite lookup_insert_ne //. move=> Hq0.
+      destruct (Htb q0 Hq0) as [name Hb]. exists name.
+      rewrite lookup_insert_ne //. move=> Heq. subst name. rewrite Hnm in Hb. done.
 Qed.
 
 (** [cells_within_or_from] projects onto [runs_within_or_from] under the
@@ -1666,45 +1689,6 @@ Proof.
   - move=> c Hc. rewrite Hperm in Hc. exact (Horigin c Hc).
 Qed.
 
-(** Registering a fresh EMPTY type adds no cell. *)
-Lemma pool_invs_insert_empty (types : gmap loc type_state) (p : loc) :
-  types !! p = None ->
-  pool_invs types -> pool_invs (<[p := MkTypeState [] []]> types).
-Proof. move=> Hp. apply pool_invs_perm. exact (all_cells_insert_empty types p [] Hp). Qed.
-
-(** Registering a fresh name at a fresh type keeps the registry coherent. *)
-Lemma registry_coh_bind_fresh (bind : gmap P loc) (types : gmap loc type_state)
-    (nm : P) (p : loc) (ts : type_state) :
-  bind !! nm = None ->
-  types !! p = None ->
-  registry_coh bind types ->
-  registry_coh (<[nm := p]> bind) (<[p := ts]> types).
-Proof.
-  move=> Hnm Hp [Hbt [Hinj Htb]].
-  have Hpnotbound : ∀ name, bind !! name = Some p -> False.
-  { move=> name Hb. destruct (Hbt name p Hb) as [ts0 Hts0]. rewrite Hp in Hts0. done. }
-  split_and!.
-  - move=> name q. destruct (decide (name = nm)) as [-> | Hne].
-    + rewrite lookup_insert_eq. move=> [= <-]. rewrite lookup_insert_eq. by eexists.
-    + rewrite lookup_insert_ne //. move=> Hb.
-      destruct (decide (q = p)) as [-> | Hnep]; first by (exfalso; exact (Hpnotbound name Hb)).
-      rewrite lookup_insert_ne //. exact (Hbt name q Hb).
-  - move=> n1 n2 q H1 H2.
-    destruct (decide (n1 = nm)) as [-> | Hn1]; destruct (decide (n2 = nm)) as [-> | Hn2].
-    + done.
-    + exfalso. rewrite lookup_insert_eq in H1. rewrite lookup_insert_ne // in H2.
-      injection H1 as <-. exact (Hpnotbound n2 H2).
-    + exfalso. rewrite lookup_insert_ne // in H1. rewrite lookup_insert_eq in H2.
-      injection H2 as <-. exact (Hpnotbound n1 H1).
-    + rewrite lookup_insert_ne // in H1. rewrite lookup_insert_ne // in H2.
-      exact (Hinj n1 n2 q H1 H2).
-  - move=> q. destruct (decide (q = p)) as [-> | Hnep].
-    + move=> _. exists nm. by rewrite lookup_insert_eq.
-    + rewrite lookup_insert_ne //. move=> Hs.
-      destruct (Htb q Hs) as [name Hb]. exists name.
-      rewrite lookup_insert_ne //. move=> ?; subst name. by rewrite Hnm in Hb.
-Qed.
-
 (** A step that keeps the pool's domain keeps the registry coherent. *)
 (** A coherent registry's type domain grows with its bindings. *)
 Lemma registry_coh_dom_mono (bind bind' : gmap P loc) (types types' : gmap loc type_state) :
@@ -2214,6 +2198,26 @@ Proof.
       by rewrite Hkp.
     rewrite -!list_fmap_compose in H. exact H. }
   rewrite Hfst -locs_of_concat (locs_of_types_of_locs_pool locs p Hdom Hlens). exact Hnd.
+Qed.
+
+(** A fresh empty type adds no entry to the item index. *)
+Lemma pool_entries_insert_empty (locs : gmap loc (list loc)) (p : pool) (q : loc) :
+  p !! q = None ->
+  pool_entries (<[q := []]> locs) (<[q := MkTypeModel [] []]> p) ≡ₚ pool_entries locs p.
+Proof.
+  move=> Hq. rewrite /pool_entries.
+  have Hm : (λ kv : loc * type_model, zip (default [] (<[q := []]> locs !! kv.1)) (tm_runs kv.2))
+              <$> map_to_list (<[q := MkTypeModel [] []]> p)
+          ≡ₚ (λ kv : loc * type_model, zip (default [] (<[q := []]> locs !! kv.1)) (tm_runs kv.2))
+              <$> ((q, MkTypeModel [] []) :: map_to_list p).
+  { apply Permutation_map. apply map_to_list_insert. exact Hq. }
+  rewrite (concat_perm _ _ Hm) fmap_cons concat_cons /= zip_with_nil_r /=.
+  apply Permutation_refl'. f_equal. apply list_fmap_ext.
+  move=> i [q0 tm0] Hi. simpl.
+  have Hq0 : p !! q0 = Some tm0
+    by (apply elem_of_map_to_list; exact (list_elem_of_lookup_2 _ _ _ Hi)).
+  have Hne : q0 ≠ q by (move=> Heq; rewrite Heq Hq in Hq0; done).
+  rewrite lookup_insert_ne //.
 Qed.
 
 (** One integrate splice adds exactly the new entry to the pool's entries:

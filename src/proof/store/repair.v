@@ -72,118 +72,16 @@ Proof. rewrite /cell_le. move=> x y. lia. Qed.
    [own_store] carry them as [⌜..⌝] and no Persistent/Timeless instances are
    needed here. *)
 
-(** [word] does not use [0 <= Z.of_nat l] on its own, so a [clock + length <
-    2^64] bound needs the length-nonneg fact spelled out to recover the
-    per-clock [< 2^64] word conversion (issue #28 U7c). Isolated here to keep
-    [word] on clean variables. *)
-#[local] Lemma wp_store__getOrCreateYType_hit (s : loc) (st : store_state)
-    (nm : go_string) (p : loc) :
-  ss_bind st !! nm = Some p ->
-  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
-    s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
-  {{{ RET #p; own_store_struct s st }}}.
-Proof using Type*.
-  move=> Hp.
-  iIntros (Φ) "(#Hpkg & Hcells) HΦ". iNamed "Hcells". iNamed "Hfields".
-  iDestruct "Hregistry" as (types_mref) "(Htypesf & Htypesmap)".
-  wp_method_call. wp_call. wp_call. wp_auto.
-  wp_apply (wp_map_lookup2 with "Htypesmap"). iIntros "Htypesmap".
-  rewrite Hp /=.
-  wp_auto.
-  iApply "HΦ".
-  iApply (own_store_struct_intro _ _ Hinvs
-            with "Hclient Hclock HdeletedSet Hitems [Htypesf Htypesmap] Htypes Hpending Hpdeletes").
-  iExists types_mref. iFrame "Htypesf Htypesmap".
-Qed.
-
-(** [store.getOrCreateYType], creation (miss) case (issue #54): the name is NOT
-    bound, so the method allocates a fresh empty [yType] via [newYType],
-    registers it under [nm], and returns it. The registry map grows by
-    [nm -> p] and the per-type DLL big-op by a fresh EMPTY type at the
-    genuinely fresh location [p]. Local: with the hit case above, a stepping
-    stone of [wp_store__getOrCreateYType].
-
-    This proof crosses a window where no [store_state] satisfies
-    [store_invs]: around the [s.types[nm] = p] write, either the registry
-    already binds [nm] to a [p] that [own_type_pool] does not yet hold
-    (breaking [registry_coh]'s bound-names-are-live conjunct, the order
-    taken here) or the pool would hold a live [p] that no name binds
-    (breaking its live-types-are-bound conjunct). The window stays inside
-    this one proof, the fresh type carried as its own resource and refolded
-    with [pool_invs_insert_empty] / [registry_coh_bind_fresh] at the exit;
-    the lemma's pre and post sit at the closed endpoints (CLAUDE.md "Spec
-    shape", the open-receiver case). *)
-#[local] Lemma wp_store__getOrCreateYType_miss (s : loc) (st : store_state) (nm : go_string) :
-  ss_bind st !! nm = None ->
-  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
-    s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
-  {{{ (p : loc), RET #p;
-      own_store_struct s (st <| ss_types := <[p := MkTypeState [] []]> (ss_types st) |>
-                            <| ss_bind := <[nm := p]> (ss_bind st) |>) ∗
-      ⌜ss_types st !! p = None⌝ }}}.
-Proof using Type*.
-  move=> Hp.
-  destruct st as [client0 k0 types bind pend pdel]. simpl in *.
-  iIntros (Φ) "(#Hpkg & Hcells) HΦ".
-  iDestruct "Hcells" as "(Hfields0 & %Hinvs0)".
-  have Hpool : pool_invs types := proj1 Hinvs0.
-  have Hreg : registry_coh bind types := proj2 Hinvs0.
-  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iDestruct "Hregistry" as (types_mref) "(Htypesf & Htypesmap)".
-  wp_method_call. wp_call. wp_call. wp_auto.
-  wp_apply (wp_map_lookup2 with "Htypesmap"). iIntros "Htypesmap".
-  rewrite Hp /=.
-  wp_auto.
-  wp_apply wp_newYType. iIntros (p) "Hnew".
-  wp_auto.
-  iDestruct (own_type_pool_fresh_type p [] [] types with "Hnew Htypes") as "(Hnew & Htypes & %Hfresh)".
-  wp_apply (wp_map_insert with "Htypesmap"). iIntros "Htypesmap".
-  wp_auto.
-  iAssert (own_type_pool (DfracOwn 1) (<[p := MkTypeState [] []]> types))
-    with "[Htypes Hnew]" as "Htypes".
-  { rewrite /own_type_pool big_sepM_insert; last exact Hfresh. iFrame "Htypes Hnew".
-    iPureIntro. exact YjsArrInvariant_empty. }
-  (* the fresh type is empty, so the item index is the same run map *)
-  iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
-  have Hkpperm : cell_kp <$> all_cells (<[p := MkTypeState [] []]> types) ≡ₚ cell_kp <$> all_cells types
-    by rewrite (all_cells_insert_empty types p [] Hfresh) //.
-  iDestruct (own_item_map_kp_perm items_mref (DfracOwn 1) _ _ Hkpperm with "Hitemmap") as "Hitemmap".
-  iApply ("HΦ" $! p).
-  iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap Htypesf Htypesmap Htypes Hpending Hpdeletes"; last by iPureIntro.
-  simpl.
-  iApply (own_store_struct_intro _ (MkStoreState client0 k0 (<[p := MkTypeState [] []]> types) (<[nm := p]> bind) pend pdel)
-            (conj (pool_invs_insert_empty types p Hfresh Hpool)
-                  (registry_coh_bind_fresh bind types nm p _ Hp Hfresh Hreg))
-            with "Hclient Hclock HdeletedSet [Hitemsf Hitemmap] [Htypesf Htypesmap] Htypes Hpending Hpdeletes").
-  { iExists items_mref. iFrame "Hitemsf Hitemmap". }
-  iExists types_mref. iFrame "Htypesf Htypesmap".
-Qed.
-
 (** [store.getOrCreateYType nm]: the root type bound to [nm], created empty
-    and registered first when [nm] is unbound ([registry_lookup_or_create]). *)
-Lemma wp_store__getOrCreateYType (s : loc) (st : store_state) (nm : go_string) :
-  {{{ is_pkg_init yjs ∗ own_store_struct s st }}}
-    s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
-  {{{ (p : loc) (types' : gmap loc type_state) (bind' : gmap P loc), RET #p;
-      own_store_struct s (st <| ss_types := types' |> <| ss_bind := bind' |>) ∗
-      ⌜registry_lookup_or_create (ss_types st) (ss_bind st) nm p types' bind'⌝ }}}.
-Proof using Type*.
-  iIntros (Φ) "(#Hpkg & Hcells) HΦ".
-  destruct st as [client0 k0 types bind pend pdel]. simpl.
-  destruct (bind !! nm) as [p|] eqn:Hb.
-  - wp_apply (wp_store__getOrCreateYType_hit s (MkStoreState client0 k0 types bind pend pdel) nm p Hb with "[$Hcells]").
-    iIntros "Hcells". iApply ("HΦ" $! p types bind). simpl. iFrame "Hcells".
-    iPureIntro. left. split_and!; [exact Hb | reflexivity | reflexivity].
-  - wp_apply (wp_store__getOrCreateYType_miss s (MkStoreState client0 k0 types bind pend pdel) nm Hb with "[$Hcells]").
-    iIntros (p) "(Hcells & %Hfresh)".
-    iApply ("HΦ" $! p _ _). iEval (simpl) in "Hcells". simpl. iFrame "Hcells".
-    iPureIntro. right. split_and!; [exact Hb | exact Hfresh | reflexivity | reflexivity].
-Qed.
+    and registered first when [nm] is unbound ([pool_lookup_or_create]).
 
-(** [store.getOrCreateYType] at run granularity: the registry step read on
-    [(locs, p)] ([pool_lookup_or_create]). Derived from
-    [wp_store__getOrCreateYType] through the [pool_of] / [locs_of]
-    projections. *)
+    The creation branch crosses a window where no store state satisfies the
+    invariants: around the [s.types[nm] = p] write, the registry binds [nm]
+    to a type the pool does not hold yet. The window stays inside this
+    proof, the fresh type carried as its own resource and refolded with
+    [run_pool_invs_insert_empty] / [pool_registry_coh_bind_fresh] at the
+    exit; the lemma's pre and post sit at the closed endpoints (CLAUDE.md
+    "Spec shape", the open-receiver case). *)
 Lemma wp_store__getOrCreateYType_runs (s : loc) (str : store_state_runs) (nm : go_string) :
   {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
     s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
@@ -193,19 +91,62 @@ Lemma wp_store__getOrCreateYType_runs (s : loc) (str : store_state_runs) (nm : g
       ⌜pool_lookup_or_create (sr_pool str) (sr_locs str) (sr_bind str) nm q p' locs' bind'⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
-  iEval (rewrite own_store_runs_as_state) in "Hruns".
-  iDestruct "Hruns" as (st) "(%Hproj & Hcells)".
-  subst str. destruct st as [client k0 types bind pend pdel]. simpl in *.
-  wp_apply (wp_store__getOrCreateYType s (MkStoreState client k0 types bind pend pdel) nm
-              with "[$Hpkg $Hcells]").
-  iIntros (q types' bind') "(Hcells & %Hstep)".
-  iEval (simpl) in "Hcells".
-  iApply ("HΦ" $! q (pool_of types') (locs_of types') bind').
-  iSplitL.
-  { rewrite own_store_runs_as_state. iExists (MkStoreState client k0 types' bind' pend pdel).
-    iFrame "Hcells". iPureIntro. rewrite /state_runs_of //=. }
-  iPureIntro.
-  exact (registry_lookup_or_create_to_pool types types' bind bind' nm q Hstep).
+  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  iDestruct "Hruns" as "(Hfields & %Hinvs)".
+  have Hrpi : run_pool_invs p := proj1 Hinvs.
+  have Hreg : pool_registry_coh bind p := proj2 Hinvs.
+  iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iEval (simpl) in "Hitems Htypes".
+  iDestruct "Hregistry" as (types_mref) "(Htypesf & Htypesmap)".
+  wp_method_call. wp_call. wp_call. wp_auto.
+  wp_apply (wp_map_lookup2 with "Htypesmap"). iIntros "Htypesmap".
+  destruct (bind !! nm) as [q|] eqn:Hb.
+  - (* hit: the name is bound; nothing changes *)
+    rewrite Hb /=. wp_auto.
+    iApply ("HΦ" $! q p locs bind).
+    iSplitL; last (iPureIntro; left; split_and!; [exact Hb | reflexivity | reflexivity | reflexivity]).
+    iSplitL; last (iPureIntro; split; [exact Hrpi | exact Hreg]).
+    rewrite /own_store_fields_runs /=.
+    iFrame "Hclient Hclock HdeletedSet Hitems Htypes Hpending Hpdeletes".
+    iExists types_mref. iFrame "Htypesf Htypesmap".
+  - (* miss: allocate a fresh empty root type and register it *)
+    rewrite Hb /=. wp_auto.
+    wp_apply wp_newYType_runs. iIntros (q) "Hnew".
+    wp_auto.
+    iDestruct (own_type_pool_runs_fresh_type q [] (MkTypeModel [] []) locs p with "Hnew Htypes")
+      as "(Hnew & Htypes & %Hfresh)".
+    wp_apply (wp_map_insert with "Htypesmap"). iIntros "Htypesmap".
+    wp_auto.
+    iDestruct "Htypes" as "(%Hlocswf & Hpool)".
+    iAssert (own_type_pool_runs (DfracOwn 1) (<[q := []]> locs) (<[q := MkTypeModel [] []]> p))
+      with "[Hpool Hnew]" as "Htypes".
+    { iSplitR; first (iPureIntro; exact (locs_wf_insert_empty locs p q Hfresh Hlocswf)).
+      rewrite big_sepM_insert; last exact Hfresh.
+      iSplitL "Hnew".
+      { iExists []. iFrame "Hnew". iPureIntro.
+        split; [apply lookup_insert_eq | exact YjsArrInvariant_empty]. }
+      iApply (big_sepM_impl with "Hpool"). iIntros "!>" (q0 tm0 Hq0) "H".
+      iDestruct "H" as (ls0) "(%Hls0 & Hyt & %Hinv0)". iExists ls0. iFrame "Hyt".
+      iPureIntro. split; [| exact Hinv0].
+      rewrite lookup_insert_ne //. move=> Heq. rewrite -Heq Hfresh in Hq0. done. }
+    (* the fresh type holds no run, so the item index is the same key list *)
+    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
+    iEval (rewrite /own_item_map_runs) in "Hitemmap".
+    iDestruct (own_item_map_kp_keys_perm items_mref (DfracOwn 1) _
+                 (entry_kp <$> pool_entries (<[q := []]> locs) (<[q := MkTypeModel [] []]> p))
+                 (Permutation_sym (fmap_Permutation entry_kp _ _
+                    (pool_entries_insert_empty locs p q Hfresh)))
+                 with "Hitemmap") as "Hitemmap".
+    iApply ("HΦ" $! q (<[q := MkTypeModel [] []]> p) (<[q := []]> locs) (<[nm := q]> bind)).
+    iSplitL; last (iPureIntro; right; split_and!;
+                   [exact Hb | exact Hfresh | reflexivity | reflexivity | reflexivity]).
+    iSplitL; last (iPureIntro; split;
+                   [exact (run_pool_invs_insert_empty p q Hfresh Hrpi)
+                   | exact (pool_registry_coh_bind_fresh bind p nm q _ Hb Hfresh Hreg)]).
+    rewrite /own_store_fields_runs /=.
+    iFrame "Hclient Hclock HdeletedSet Htypes Hpending Hpdeletes".
+    iSplitL "Hitemsf Hitemmap"; first (iExists items_mref; iFrame "Hitemsf Hitemmap").
+    iExists types_mref. iFrame "Htypesf Htypesmap".
 Qed.
 
 (* ----- the general repair (issue #28 stage D2b) ---------------------------

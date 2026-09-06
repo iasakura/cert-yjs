@@ -25,7 +25,7 @@
       [store_invs_runs]), which every store spec is stated over; the cell
       state it materializes to is read off it and folded back by
       [own_store_runs_to_state] / [own_store_runs_intro_state]
-      ([own_store_runs_as_state] the existential form), and what it reads
+      and what it reads
       back at run granularity ([own_store_runs_run_pool_invs]
       / [own_store_runs_run_wf] / [own_store_runs_arr] /
       [own_store_runs_arr_inv] / [own_store_runs_registry_coh], the
@@ -72,7 +72,7 @@
     - the pool's laws: borrow one cell ([own_type_pool_acc]), read its pure
       content off ([own_type_pool_runs_wf] / [_parents] / [_arr_inv] /
       [_repr] / [_entry] / [_id_bounds] / [_cells_in_arr]), a fresh type is
-      absent from it ([own_type_pool_fresh_type]).
+      absent from it.
     - [own_store_accept_batch]: the state-transition law for accepting a
       delivered batch.
     - the reader fractions form a chain: [frac_of_0] and [frac_of_split].
@@ -1104,33 +1104,6 @@ Proof using Type*.
   split_and!; [exact Hlen | exact Hrepr | exact Hcpar].
 Qed.
 
-(** A freshly-allocated [yType] location is absent from the registry: its
-    exclusive [p ↦] clashes with any registered type's own [parent ↦]. This is
-    what makes [getOrCreateYType]'s miss branch (issue #54) grow [types] at a
-    genuinely fresh key. Returns the resources so the caller keeps them. *)
-Lemma own_type_pool_fresh_type (p : loc) (cells0 : list item_cell) (arr0 : list (YjsItem A))
-    (types : gmap loc type_state) :
-  own_ytype_cells p (DfracOwn 1) cells0 arr0 -∗
-  (own_type_pool (DfracOwn 1) types) -∗
-  own_ytype_cells p (DfracOwn 1) cells0 arr0 ∗
-  (own_type_pool (DfracOwn 1) types) ∗
-  ⌜types !! p = None⌝.
-Proof.
-  iIntros "Hnew Htypes".
-  destruct (types !! p) as [ts|] eqn:Hp0; last by iFrame.
-  iExFalso.
-  iDestruct (big_sepM_lookup_acc _ _ p _ Hp0 with "Htypes") as "[[Hc _] _]".
-  iDestruct "Hnew" as (yt tl) "(Hpp & _)".
-  iDestruct "Hc" as (yt' tl') "(Hpp' & _)".
-  iDestruct (typed_pointsto_split with "Hpp") as "(Hs1 & _)".
-  iDestruct (typed_pointsto_split with "Hpp'") as "(Hs2 & _)".
-  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hs1".
-  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hs2".
-  iDestruct "Hs1" as "[Hs1 _]". iDestruct "Hs2" as "[Hs2 _]".
-  iCombine "Hs1 Hs2" gives %[Hvalid _].
-  by destruct (exclusive_l (DfracOwn 1) (DfracOwn 1) Hvalid).
-Qed.
-
 (** Pure extractions read off the pool: pool-wide run well-formedness,
     parent discipline, the per-entry document invariant, and the cells/model
     isomorphism. *)
@@ -1320,6 +1293,33 @@ Proof.
   exact (Hfr parent lsq' tmq Hq Htmq Hin).
 Qed.
 
+(** A separately owned type is not in the pool: the run form of
+    the cell-level freshness law, what [getOrCreateYType]'s miss branch
+    registers a fresh [newYType] with. *)
+Lemma own_type_pool_runs_fresh_type (q : loc) (ls0 : list loc) (tm0 : type_model)
+    (locs : gmap loc (list loc)) (p : pool) :
+  own_ytype_runs q (DfracOwn 1) ls0 tm0 -∗
+  own_type_pool_runs (DfracOwn 1) locs p -∗
+  own_ytype_runs q (DfracOwn 1) ls0 tm0 ∗
+  own_type_pool_runs (DfracOwn 1) locs p ∗
+  ⌜p !! q = None⌝.
+Proof.
+  iIntros "Hnew (%Hlocswf & Hpool)".
+  destruct (p !! q) as [tm|] eqn:Hq; last by iFrame.
+  iExFalso.
+  iDestruct (big_sepM_lookup_acc _ _ q _ Hq with "Hpool") as "[Hc _]".
+  iDestruct "Hc" as (ls) "(_ & Hc & _)".
+  iDestruct "Hnew" as (yt tl) "(Hpp & _)".
+  iDestruct "Hc" as (yt' tl') "(Hpp' & _)".
+  iDestruct (typed_pointsto_split with "Hpp") as "(Hs1 & _)".
+  iDestruct (typed_pointsto_split with "Hpp'") as "(Hs2 & _)".
+  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hs1".
+  iEval (rewrite typed_pointsto_unseal_eq /=) in "Hs2".
+  iDestruct "Hs1" as "[Hs1 _]". iDestruct "Hs2" as "[Hs2 _]".
+  iCombine "Hs1 Hs2" gives %[Hvalid _].
+  by destruct (exclusive_l (DfracOwn 1) (DfracOwn 1) Hvalid).
+Qed.
+
 (* ----- the store's heap state --------------------------------------------- *)
 
 (** The store's field cells, one predicate per field, each taking the FIELD
@@ -1456,8 +1456,7 @@ Definition store_invs_runs (str : store_state_runs) : Prop :=
     PRIMITIVE store predicate (plan-item-run-split C6-2): every field at run
     granularity with the invariants. The store at the cell state it
     materializes to ([state_of_runs]) is read off it and folded back into
-    it by [own_store_runs_to_state] / [own_store_runs_intro_state]
-    ([own_store_runs_as_state] the existential form), which is how the
+    it by [own_store_runs_to_state] / [own_store_runs_intro_state], which is how the
     cell-recipe bodies consume it until C6-3. *)
 Definition own_store_runs (s : loc) (str : store_state_runs) : iProp Σ :=
   "Hfields" ∷ own_store_fields_runs s str ∗
@@ -1531,26 +1530,6 @@ Proof.
   rewrite /own_store_fields_runs /=.
   iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
   iExists items_mref. iFrame "Hitemsf Hitemmap".
-Qed.
-
-Lemma own_store_runs_as_state (s : loc) (str : store_state_runs) :
-  own_store_runs s str ⊣⊢
-  ∃ st : store_state, ⌜state_runs_of st = str⌝ ∗ own_store_struct s st.
-Proof.
-  iSplit.
-  - iIntros "H". iDestruct (own_store_runs_to_state with "H") as "[Hstruct %Haligned]".
-    iExists (state_of_runs str). iFrame "Hstruct".
-    iPureIntro. exact (state_runs_of_of_runs str Haligned).
-  - iIntros "H". iDestruct "H" as (st) "(%Hproj & Hcells)".
-    subst str. destruct st as [client k0 types bind pend pdel].
-    have Hal : locs_aligned (locs_of types) (pool_of types) := locs_aligned_of types.
-    iApply (own_store_runs_intro_state s client k0 (locs_of types) (pool_of types) bind pend pdel Hal).
-    iDestruct "Hcells" as "(Hfields & %Hinvs)".
-    iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-    iDestruct (own_type_pool_parents with "Htypes") as %Hpar.
-    rewrite /state_of_runs /state_runs_of /= (types_of_locs_pool_of types Hpar).
-    iApply (own_store_struct_intro _ (MkStoreState client k0 types bind pend pdel) Hinvs
-              with "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes").
 Qed.
 
 (** The run-granular pool invariants, read off the store. *)

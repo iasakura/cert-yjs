@@ -46,7 +46,9 @@
     / [elem_of_all_runs_lookup]) and [run_pool_invs] surviving one node
     split ([run_pool_invs_split]), one integrate splice
     ([run_pool_invs_integrate]) and one tombstoning
-    ([run_pool_invs_flip]); [pool_after_delete] is a preorder containing
+    ([run_pool_invs_flip]), and any reshuffle of the runs
+    ([run_pool_invs_perm], with [run_pool_invs_insert_empty] for a fresh
+    empty type); [pool_after_delete] is a preorder containing
     one split and one tombstoning ([pool_after_delete_refl] /
     [pool_after_delete_trans] / [pool_after_split_delete] /
     [pool_after_delete_flip]), and the tombstone record survives a step
@@ -492,6 +494,17 @@ Proof.
                ltac:(lia) Hcl12).
 Qed.
 
+(** [run_pool_invs] only sees the multiset of runs, so it survives any
+    reshuffle, in particular registering a fresh empty type. *)
+Lemma run_pool_invs_perm (p p' : pool) :
+  all_runs p' ≡ₚ all_runs p -> run_pool_invs p -> run_pool_invs p'.
+Proof.
+  move=> Hperm [Hinvall Hdisj]. split.
+  - move=> r Hr. rewrite Hperm in Hr. exact (Hinvall r Hr).
+  - exact (runs_disjoint_perm _ _ (Permutation_sym Hperm) Hdisj).
+Qed.
+
+
 (** [pool_after_delete] is a preorder, contains one split, and contains
     one tombstoning: the laws the delete loops step their invariant by. *)
 Lemma pool_after_delete_refl (p : pool) : pool_after_delete p p.
@@ -723,7 +736,6 @@ Proof.
 Qed.
 
 
-
 Lemma pool_after_delete_flip (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
   p !! parent = Some tm ->
   tm_runs tm !! k = Some r ->
@@ -911,6 +923,12 @@ Proof.
   rewrite (map_to_list_insert p q _ Hq) /=. reflexivity.
 Qed.
 
+(** ... hence [run_pool_invs] survives registering a fresh empty type. *)
+Lemma run_pool_invs_insert_empty (p : pool) (q : loc) :
+  p !! q = None ->
+  run_pool_invs p -> run_pool_invs (<[q := MkTypeModel [] []]> p).
+Proof. move=> Hq. apply run_pool_invs_perm. exact (all_runs_insert_empty p q [] Hq). Qed.
+
 (** [runs_integrate_live_refine] composes, follows from [runs_live_refine],
     and holds of a splice whose new run carries the item's own chars. *)
 Lemma runs_integrate_live_refine_trans (input : IntegrateInput (A := A))
@@ -955,7 +973,6 @@ Proof.
   move=> Hw r Hr. destruct (Hw r Hr) as (r0 & Hr0 & Hcl & Hlo & Hhi).
   left. exists r0. split_and!; [exact Hr0 | exact Hcl | exact Hlo | exact Hhi].
 Qed.
-
 
 (** [pool_run_clock_below p id]: every run of [id]'s client in the pool ends
     at or below [id]'s clock: the item about to be integrated is its client's
