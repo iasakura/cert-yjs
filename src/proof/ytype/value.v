@@ -1,29 +1,28 @@
-(** The [yType] container, VALUE layer: what a cell list denotes as a sequence.
-    Go values but no Iris.
+(** The [yType] container, VALUE layer: what a type's runs denote as a
+    sequence. Go values but no Iris.
 
     Definitions
-    - [cell_models] / [cells_model]: a cell list read as the abstract sequence
-      [list (YjsItem A * bool)], each document item paired with its tombstone
-      bit.
-    - [find_pos_runs]: what [yType.findPos] resolves an index to, at run
-      granularity (the cursor into the run list, the node addresses off the
-      address list).
-    - [visible_items] / [visible_string]: the non-tombstoned items of such a
-      sequence and the string they spell, the read API's snapshot content
-      (issue #125).
+    - [visible_items] / [visible_string]: the non-tombstoned items of a
+      sequence [list (YjsItem A * bool)] (each document item paired with its
+      tombstone bit) and the string they spell, the read API's snapshot
+      content (issue #125).
+    - [find_pos_runs]: what [yType.findPos] resolves an index to (the cursor
+      into the run list, the node addresses off the address list, the offset
+      inside the run before the cursor).
+    - [cell_models] / [cells_model]: the same sequence read off an addressed
+      run list ([item_cell]), the proof device the run-level laws below go
+      through.
 
     Laws
-    - [cells_model_fst]: its first projection is the document list
-      [run_flatten], so the public model and the cells-level model agree on
-      content and differ only by the tombstone bits.
-    - [cells_model] / [visible_items] / [visible_string] are append
-      homomorphisms; one cell contributes its run when live and nothing when
-      tombstoned ([visible_items_cell_models], [visible_string_take_S]).
-    - [num_visible_model]: the heap [len] counter counts the model's visible
-      items.
-    - [cells_model_runs]: the cells-level model is the run-level one under
-      [cell_run]; [runs_model_fst] / [runs_visible_model], the run model's
-      items and visible count. *)
+    - [visible_items] / [visible_string] are append homomorphisms; one run
+      contributes its items when live and nothing when tombstoned
+      ([visible_items_run_models]).
+    - [runs_model_fst]: the sequence's first projection is the document list
+      [runs_flatten], so the public model and this one differ only by the
+      tombstone bits; [runs_visible_model], the [len] counter counts the
+      sequence's visible items.
+    - [visible_string_runs_take_S]: one more run appends its string when live
+      and nothing when tombstoned, the step [Text.String] walks. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -41,12 +40,12 @@ Notation A := go_string.
 
 (* ===== definitions ======================================================== *)
 
-(* ----- the abstract model and the public predicate ----------------------- *)
+(* ----- the abstract sequence a type denotes ------------------------------ *)
 
-(** The abstract per-char cells a heap cell denotes: each model item of its run
-    paired with the cell's tombstone bit. The heap location is dropped — this
-    is the abstraction wall (the model stays per-char; runs are invisible,
-    issue #28). *)
+(** The per-char sequence one entry of the addressed-run bridge denotes: each
+    model item of its run paired with the entry's tombstone bit. The address
+    is dropped here (the model stays per-char and runs are invisible to it,
+    issue #28), so this is where the abstraction wall sits. *)
 Definition cell_models (c : item_cell) : list (YjsItem A * bool) :=
   (λ x, (x, ic_deleted c)) <$> ic_run c.
 
@@ -79,19 +78,6 @@ Definition find_pos_runs (ls : list loc) (runs : list ItemRun)
    (∃ r, runs !! (p - 1)%nat = Some r ∧ run_deleted r = false ∧
          (uint.nat off < length (run_items r))%nat)).
 
-(* ===== lemmas ============================================================= *)
-
-Lemma fmap_pair_fst (d : bool) (r : list (YjsItem A)) :
-  ((λ x : YjsItem A, (x, d)) <$> r).*1 = r.
-Proof. induction r as [|x r IH]; [done | by rewrite !fmap_cons IH]. Qed.
-
-Lemma cells_model_fst (cells : list item_cell) :
-  (cells_model cells).*1 = run_flatten cells.
-Proof.
-  induction cells as [|c cs IH]; first done.
-  rewrite /cells_model /run_flatten /= fmap_app IH /cell_models fmap_pair_fst //.
-Qed.
-
 Lemma cells_model_app (cs1 cs2 : list item_cell) :
   cells_model (cs1 ++ cs2) = cells_model cs1 ++ cells_model cs2.
 Proof. rewrite /cells_model fmap_app join_app //. Qed.
@@ -118,20 +104,9 @@ Proof.
       rewrite fmap_cons IH //.
 Qed.
 
-(** The visible length of the model is the heap [len] counter's value. *)
-Lemma num_visible_model (cells : list item_cell) :
-  num_visible cells = length (visible_items (cells_model cells)).
-Proof.
-  induction cells as [|c cs IH]; first done.
-  have -> : cells_model (c :: cs) = cell_models c ++ cells_model cs by done.
-  rewrite visible_items_app length_app /num_visible fmap_cons /= -/(num_visible cs) IH.
-  f_equal. rewrite visible_items_cell_models.
-  destruct (ic_deleted c); done.
-Qed.
-
-(** The walk step of [yType.Text]: extending a snapshot prefix by one cell
-    appends that cell's visible content ([s] is the cell's heap content
-    string, tied to the run by the [own_dll] node fact). *)
+(** The walk step of [yType.Text] on the addressed-run bridge: extending a
+    snapshot prefix by one entry appends that entry's visible content ([s] is
+    the node's heap content string, tied to the run by [own_item_node]). *)
 Lemma visible_string_take_S (cells : list item_cell) (k : nat) (c : item_cell)
     (s : go_string) :
   cells !! k = Some c ->
@@ -158,8 +133,8 @@ Proof.
 Qed.
 
 (** The run model's items are the runs' flatten, and its visible items are
-    counted by [runs_visible]: the run forms of [cells_model_fst] /
-    [num_visible_model], what the read API reports off a type's run view. *)
+    counted by [runs_visible]: what the read API reports off a type's run
+    view. *)
 Lemma runs_model_fst (runs : list ItemRun) : (runs_model runs).*1 = runs_flatten runs.
 Proof.
   induction runs as [|r rs IH]; first done.

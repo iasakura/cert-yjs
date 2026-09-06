@@ -66,12 +66,10 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     through [wp_deleteNode_store_runs] (reading each node's flags, length
     and right link through [own_store_runs_node_acc_links]) and splits once
     more at the range end when the budget ends inside a run; the
-    tombstone-set ghost follows the materialized cells
-    ([cells_of_locs_runs_split] / [cells_of_locs_runs_flip] under
-    [own_delete_set_refine]); lower the store to its cell registry
-    ([types_of_locs_pool_ext_insert]) with the same [ty_arr] (so the auth
-    [Hseq] / counter [Hctr] are preserved), Unlock, and return
-    [is_Text t L]. *)
+    tombstone-set ghost follows the type's runs across each surgery
+    ([own_delete_set_runs_refine]), the type's [tm_arr] is the same
+    throughout (so the auth [Hseq] / counter [Hctr] are preserved), Unlock,
+    and return [is_Text t L]. *)
 Lemma wp_Text__Delete (t : loc) (index len : w64) (γs : store_names) (γh : history_names)
     (name : P) (L : list (YjsItem A)) :
   {{{ is_pkg_init yjs ∗ is_Text t γs γh name L }}}

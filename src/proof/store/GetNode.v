@@ -46,15 +46,6 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    reached from here carry it too. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 
-(* [client_run]'s merge_sort instances are [#[local]] in [store/model];
-   the run-list lemmas here need them again. *)
-#[local] Instance cell_le_dec : RelDecision cell_le.
-Proof. rewrite /cell_le. solve_decision. Defined.
-#[local] Instance cell_le_trans : Transitive cell_le.
-Proof. rewrite /cell_le. move=> x y z. lia. Qed.
-#[local] Instance cell_le_total : Total cell_le.
-Proof. rewrite /cell_le. move=> x y. lia. Qed.
-
 (** [word] does not use [0 <= Z.of_nat l] on its own, so a [clock + length <
     2^64] bound needs the length-nonneg fact spelled out to recover the
     per-clock [< 2^64] word conversion (issue #28 U7c). Isolated here to keep

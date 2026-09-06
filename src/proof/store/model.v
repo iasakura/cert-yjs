@@ -14,8 +14,8 @@
     - [accepted_coh] / [pending_id_set] / [input_accounted]: which delivered
       ids a replica has accounted for, either integrated or still pending. This
       is what the no-loss spec is stated with.
-    - [inputs_rooted_in_bind] / [doc_registry_coh]: the pending inputs and the
-      doc model only mention registered root types.
+    - the pending inputs and the doc model only mention registered root types
+      ([store/value_cells]'s [pool_registry_coh] states this at the pool).
 
     Laws
     - [elem_of_pending_id_set]: membership in the pending id set is exactly
@@ -24,21 +24,21 @@
       applyUpdate step ([accepted_coh_applyUpdate]): the two state-transition
       laws the no-loss argument runs on.
 
-    The cell bookkeeping that shadows this model is [store/value.v].
+    The address-level bookkeeping over this model is [store/value.v].
 
-    The run-granular pool (plan-item-run-split stage 2): [pool], every
-    registered type at its [type_model] ([addressed_pool] pairs it with the
-    types' node addresses); [all_runs] and the clock-sorted
-    [client_runs]; [run_pool_invs], the pure pool invariants at run
-    granularity ([pool_invs] minus the heap-side [NoDup] of addresses);
-    [pool_run_covers], the index-based [pool_cell_covers];
+    The type pool: [pool], every registered type at its [type_model]
+    ([addressed_pool] pairs it with the types' node addresses); [all_runs]
+    and the clock-sorted [client_runs]; [run_pool_invs], the pool invariants
+    the model does not determine (the addresses' [NoDup] is not among them:
+    it is a heap fact, [locs_wf]); [pool_run_covers], the [k]-th run of a
+    type holds an id;
     [pool_run_starts_at] / [pool_run_ends_at], the run at an index begins /
     ends at an id; [runs_live_refine] / [runs_dead_kept], the pool-level
     live-character refinement and tombstone preservation; [pool_after_split],
     what one [splitNode] leaves of the pool at run granularity
     ([pool_after_repair] the same for [store.repair]'s at most two splits,
     [pool_after_delete] for the wire delete path's unbounded sweep);
-    [pool_run_clock_below], the index-based [pool_clock_below]
+    [pool_run_clock_below], the integrated item is its client's newest
     ([pool_run_clock_below_of_arrs] reads it off a per-type clock bound on
     the flattened lists);
     [all_runs] under a registry insert or lookup ([all_runs_insert] /
@@ -124,15 +124,14 @@ Definition all_runs (p : pool) : list ItemRun :=
   concat (tm_runs <$> (map_to_list p).*2).
 
 (** [client_runs p c]: client [c]'s runs across every type, clock-sorted:
-    the loc-free model of the [store.items] run list ([client_run] projects
-    onto it). *)
+    the loc-free model of the [store.items] run list. *)
 Definition client_runs (p : pool) (c : nat) : list ItemRun :=
   merge_sort run_le (filter (λ r, run_client r = c) (all_runs p)).
 
 (** [pool_run_starts_at p parent k d] / [pool_run_ends_at p parent k d]:
-    the [k]-th run of the type at [parent] starts (ends) at the id [d]: the
-    index-based [cell_starts_at] / [cell_ends_at], whose node address is the
-    address list's [k]-th entry. *)
+    the [k]-th run of the type at [parent] starts (ends) at the id [d]. The
+    run is named by its slot; its node address is the address list's [k]-th
+    entry. *)
 Definition pool_run_starts_at (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=
   ∃ tm, p !! parent = Some tm ∧ runs_start_at (tm_runs tm) k d.
 
@@ -141,9 +140,9 @@ Definition pool_run_ends_at (p : pool) (parent : loc) (k : nat) (d : YjsId) : Pr
 
 (** [run_pool_invs p]: the pure pool invariants at run granularity: every
     run's clock range fits a word, same-client ranges are disjoint (runs
-    told apart by index), and every head's same-client origin is older.
-    [pool_invs]'s [NoDup] of node addresses is a heap fact and stays with
-    the heap layer. *)
+    told apart by index), and every head's same-client origin is older. The
+    [NoDup] of node addresses is a heap fact and stays with the heap layer
+    ([locs_wf]). *)
 (** [runs_live_refine p p'] / [runs_dead_kept p p']: the tombstone-side
     refinements at run granularity (the loc-free [live_refine] /
     [dead_chars_kept]): every live char of [p'] was live in [p], and every
@@ -164,8 +163,8 @@ Definition delete_set_tombstoned_runs (delete_set : gset YjsId) (runs : list Ite
   ∀ r, r ∈ runs -> ∀ y, y ∈ run_items r -> item_id y ∈ delete_set -> run_deleted r = true.
 
 (** [pool_after_split p p' parent k]: [p'] is [p] after one node split at
-    the [k]-th run of the type at [parent]: the loc-free
-    [split_types_update_rel], its address clauses become index facts. Each
+    the [k]-th run of the type at [parent], the split spot named by its slot
+    instead of a node address. Each
     type's document and flatten survive, no type disappears, every run away from the split spot survives,
     a covered clock stays covered in the same type (the covering run is the
     survivor, or a half of the split run; which half is an address-map
@@ -193,7 +192,7 @@ Definition pool_after_split (p p' : pool) (parent : loc) (k : nat) : Prop :=
   runs_dead_kept p p'.
 
 (** [pool_after_repair p p']: [p'] is [p] after [store.repair]'s at most two
-    node splits: the loc-free [repair_types_update_rel]. The same clauses as
+    node splits. The same clauses as
     [pool_after_split] minus the ones about a single split spot: each type's
     document and flatten survive, no type disappears, a client's run list
     grows by at most two, a type of one-char runs is untouched, every new
@@ -209,8 +208,7 @@ Definition pool_after_repair (p p' : pool) : Prop :=
   runs_live_refine p p'.
 
 (** [pool_after_delete p p']: [p'] is [p] after a sweep of the wire delete
-    path ([deleteRange] / [applyDeleteSpans]): the loc-free
-    [delete_types_update_rel]. Each type's document survives, no type
+    path ([deleteRange] / [applyDeleteSpans]). Each type's document survives, no type
     disappears, live and dead chars refine, and every new run sits inside an
     old one's range. No run-count bound: the delete loop splits an unbounded
     number of times. *)
@@ -222,7 +220,7 @@ Definition pool_after_delete (p p' : pool) : Prop :=
   runs_within (all_runs p) (all_runs p').
 
 (** [pool_run_covers p parent k d]: the [k]-th run of the type at [parent]
-    has the char with id [d]: the index-based [pool_cell_covers]. *)
+    has the char with id [d]. *)
 Definition pool_run_covers (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=
   ∃ tm r, p !! parent = Some tm ∧ tm_runs tm !! k = Some r ∧ run_covers r d.
 
@@ -231,7 +229,7 @@ Definition run_pool_invs (p : pool) : Prop :=
   runs_disjoint (all_runs p).
 
 (** [all_runs] under a registry insert or lookup: one type's runs out, the
-    rest untouched (the run form of [all_cells_insert] / [all_cells_lookup]). *)
+    rest untouched. *)
 Lemma all_runs_insert (p : pool) (parent : loc) (tm tm' : type_model) :
   p !! parent = Some tm ->
   all_runs (<[parent := tm']> p) ≡ₚ tm_runs tm' ++ all_runs (delete parent p).
@@ -329,8 +327,7 @@ Proof.
   move=> Hp. rewrite (all_runs_lookup p parent tm Hp) elem_of_app //.
 Qed.
 
-(** Membership in [all_runs]: a run of some registered type (the run form
-    of [all_cells_elem_of]). *)
+(** Membership in [all_runs]: a run of some registered type. *)
 Lemma elem_of_all_runs (p : pool) (r : ItemRun) :
   r ∈ all_runs p <-> ∃ q tm, p !! q = Some tm ∧ r ∈ tm_runs tm.
 Proof.
@@ -864,9 +861,8 @@ Proof.
   rewrite /char_ids elem_of_list_to_set. apply list_elem_of_fmap. eauto.
 Qed.
 
-(** The apply path's step records at run granularity (the loc-free
-    [cells_within_or_from] / [apply_live_refine] / [integrate_live_refine]
-    of [store/value_cells] and [store/value_live]).
+(** The apply path's step records at run granularity: where a step's runs
+    come from, and the live-character refinement each store method reports.
 
     [runs_within_or_from inputs before after]: every run of [after] sits
     inside a run of [before] or inside the clock range of one of the
@@ -1038,9 +1034,8 @@ Proof.
 Qed.
 
 (** [pool_run_clock_below p id]: every run of [id]'s client in the pool ends
-    at or below [id]'s clock: the item about to be integrated is its client's
-    newest, [pool_clock_below] with the [w64] comparisons replaced by [nat]
-    ones (a run is nonempty, so the strict head bound follows). *)
+    at or below [id]'s clock, i.e. the item about to be integrated is its
+    client's newest (a run is nonempty, so the strict head bound follows). *)
 Definition pool_run_clock_below (p : pool) (id : YjsId) : Prop :=
   ∀ r, r ∈ all_runs p -> run_client r = clientId id ->
     (run_clock r + length (run_items r) <= clock id)%nat.
@@ -1061,7 +1056,7 @@ Definition expand_inputs (inputs : list (TId * IntegrateInput (A := A))) : list 
   mjoin (expand_input <$> inputs).
 
 (** [input_fits input]: the wire item's chars fit a word of clocks (the 2^64
-    no-wrap seam per struct); what lets its cell satisfy [cell_fits]. *)
+    no-wrap seam per struct); what lets its run satisfy [run_fits]. *)
 Definition input_fits (input : IntegrateInput (A := A)) : Prop :=
   (Z.of_nat (clock (in_id input)) + Z.of_nat (length (in_content input)) < 2^64)%Z.
 
