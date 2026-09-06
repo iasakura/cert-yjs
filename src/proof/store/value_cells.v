@@ -597,7 +597,7 @@ Definition locs_wf (locs : gmap loc (list loc)) (p : pool) : Prop :=
 (** [types_of_locs_pool locs p]: the cell-level registry an address map and a
     run pool determine: each type's cells re-materialized as
     [cells_of_locs_runs] (the run-granular POOL elimination,
-    [own_type_pool_runs_to_cells]). *)
+    the run-granular pool). *)
 Definition types_of_locs_pool (locs : gmap loc (list loc)) (p : pool)
     : gmap loc type_state :=
   map_imap (λ parent tm,
@@ -644,7 +644,7 @@ Qed.
 
 (** The converse: the pool invariants at the cells, from the run-granular
     ones and the address [NoDup] (the [locs_wf] half). The pure leg of
-    [own_store_runs_to_state]. *)
+    the run-granular store. *)
 Lemma pool_invs_of_runs (types : gmap loc type_state) :
   (∀ c, c ∈ all_cells types -> (Z.of_nat (run_clock (cell_run c)) < 2^64)%Z) ->
   (∀ c, c ∈ all_cells types -> (Z.of_nat (run_client (cell_run c)) < 2^64)%Z) ->
@@ -762,7 +762,7 @@ Qed.
 (** [types_of_locs_pool] round-trips: under matching domains and per-type
     address counts, its [pool_of] is the pool and its [locs_of] is the
     address map. What carries the run-granular pool back to a cell-level
-    registry ([own_type_pool_runs_to_cells]). *)
+    registry. *)
 Lemma pool_of_types_of_locs_pool (locs : gmap loc (list loc)) (p : pool) :
   (∀ parent tm, p !! parent = Some tm ->
      ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
