@@ -797,6 +797,19 @@ vocabulary substitution table written; then C5 restates the specs at
     `value_*` cell laws, `item_cell` / `type_state`) has no consumer above
     it any more and goes next.
 
+    PROGRESS 2026-09-05 (C6-4d): the store's cell predicates are deleted.
+    Gone from `store/heap`: `own_item_map` (the cell item index, with
+    `own_item_map_as_kp` / `own_item_map_kp_perm`), `own_delete_set` with
+    its whole transport cluster (`_mono` / `_refine` / `_snoc` / `_apply` /
+    `_grow` / `_insert` / `_ValidReplay` / `_as_runs`),
+    `docm_has_registry_false`, `own_items_field`, `own_store_fields`,
+    `own_store_struct` with `own_store_struct_intro` and
+    `store_items_kp_perm`, and the three timeless instances that went with
+    them. 366 lines. `own_item_map_kp` stays: it is what
+    `own_item_map_runs` is defined over. Still standing and next:
+    `own_type_pool` and its extractions, `own_ytype_cells` / `own_dll`, the
+    `value_*` cell laws, `item_cell` / `type_state`.
+
   - **C6-5, fold `tm_arr`.** `type_model` becomes the run list alone
     (`tm_arr = runs_flatten`), if the specs read better that way.
 
