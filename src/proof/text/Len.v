@@ -3,12 +3,12 @@
     etc. via [text/heap.v].
 
     The postcondition is a SNAPSHOT (issue #125): the returned counter is the
-    visible length of some tombstone-tagged array [marr] that satisfies the
+    visible length of some tombstone-tagged array [model] that satisfies the
     document invariant and contains everything the handle already knows
     ([L], the handle's grow-only lower bound), and that contains one item per
     delivered insert of the caller's history certificate [is_history_lb]
     targeting this root. The bound is at the ITEM-SET level: a
-    tombstoned item is in [marr] but not counted. The length comes back as
+    tombstoned item is in [model] but not counted. The length comes back as
     the [W64] image of the model count: the heap counter is a [w64] and
     nothing bounds a document's size, so the spec does not invent a no-wrap
     fact. *)
@@ -74,10 +74,10 @@ Lemma wp_Text__Len (t : loc) (γs : store_names) (γh : history_names)
   {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗ own_read_cap γs }}}
     t @! (go.PointerType yjs.Text) @! "Len" #()
-  {{{ (n : w64) (marr : list (YjsItem A * bool)), RET #n;
+  {{{ (n : w64) (model : list (YjsItem A * bool)), RET #n;
       is_Text t γs γh name L ∗ own_read_cap γs ∗
-      ⌜n = W64 (length (visible_items marr))⌝ ∗
-      ⌜text_snapshot L marr⌝ ∗ ⌜history_reflected h0 name marr⌝ }}}.
+      ⌜n = W64 (length (visible_items model))⌝ ∗
+      ⌜text_snapshot L model⌝ ∗ ⌜history_reflected h0 name model⌝ }}}.
 Proof.
   wp_start as "(Hpre & #Hpin & #Hlb & Hcap)". iNamed "Hpre".
   iDestruct "His_store" as "#His_store".

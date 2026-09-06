@@ -3,12 +3,12 @@
     [is_Text] etc. via [text/heap.v].
 
     The postcondition is a SNAPSHOT: the returned string spells exactly the
-    visible characters of some tombstone-tagged array [marr] that satisfies
+    visible characters of some tombstone-tagged array [model] that satisfies
     the document invariant and contains everything the handle already knows
     ([L], the handle's grow-only lower bound), and that contains one item per
     delivered insert of the caller's history certificate [is_history_lb]
     targeting this root. The bound is at the ITEM-SET
-    level: a tombstoned item is in [marr] but not in the string, so "the
+    level: a tombstoned item is in [model] but not in the string, so "the
     characters are visible" needs a no-delete side condition on top; the
     set-level statement is unconditional. *)
 From New.proof Require Import proof_prelude.
@@ -56,7 +56,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     RWMutex read lock, walks the type's DLL through a fractional
     [store_inv_ro] share ([wp_yType__Text]), then releases. The caller brings
     a prefix certificate [is_history_lb γh c h0] of THIS replica's op history
-    (with the client pin identifying it), and the snapshot is guaranteed to
+    (with the client pin identifying it), and the model is guaranteed to
     contain one item per delivered insert of [h0] targeting this root (a
     caller with no such knowledge passes [h0 = []]). This is the read
     guarantee in the network stack's own currency: whoever observed the
@@ -68,10 +68,10 @@ Lemma wp_Text__String (t : loc) (γs : store_names) (γh : history_names)
   {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗ own_read_cap γs }}}
     t @! (go.PointerType yjs.Text) @! "String" #()
-  {{{ (str : go_string) (marr : list (YjsItem A * bool)), RET #str;
+  {{{ (visible_text : go_string) (model : list (YjsItem A * bool)), RET #visible_text;
       is_Text t γs γh name L ∗ own_read_cap γs ∗
-      ⌜str = visible_string marr⌝ ∗
-      ⌜text_snapshot L marr⌝ ∗ ⌜history_reflected h0 name marr⌝ }}}.
+      ⌜visible_text = visible_string model⌝ ∗
+      ⌜text_snapshot L model⌝ ∗ ⌜history_reflected h0 name model⌝ }}}.
 Proof.
   wp_start as "(Hpre & #Hpin & #Hlb & Hcap)". iNamed "Hpre".
   iDestruct "His_store" as "#His_store".

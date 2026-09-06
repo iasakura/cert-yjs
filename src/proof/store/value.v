@@ -1,7 +1,7 @@
 (** Facade for the [store] VALUE layer: what the store invariant is stated
     over. Go values but no Iris. Three topic files, in dependency order: the
     type pool and the per-client item index ([value_cells]: [pool_entries] /
-    [kp_client_locs] / [locs_wf] and the registry coherence), the split
+    [key_pair_client_locs] / [locs_wf] and the registry coherence), the split
     surgery at run granularity ([value_split]: [split_locs] /
     [pool_split_step] and the [repair] contract), and id ranges with their
     wire carriers ([value_span]: [range_ids] / [span_ids] / [delete_span]).

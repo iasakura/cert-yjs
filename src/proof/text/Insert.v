@@ -160,7 +160,7 @@ Proof.
   wp_auto.
   iDestruct (own_store_runs_ytype_acc tv.(yjs.Text.store') (MkStoreStateRuns client k locs0 p0 bind pend pdel) tv.(yjs.Text.inner') ls0 (MkTypeModel runs0 ts.(tm_arr)) Hl0 Hp0 with "Hruns") as "[Hyt Hytback]".
   wp_apply (wp_yType__findPos tv.(yjs.Text.inner') (DfracOwn 1) ls0 (MkTypeModel runs0 ts.(tm_arr)) idx with "[$Hyt]").
-  iIntros (lft rgt p off) "(Hyt & %Hfp)".
+  iIntros (leftNode rightNode p off) "(Hyt & %Hfp)".
   iDestruct ("Hytback" with "Hyt") as "Hruns".
   simpl in Hfp.
   destruct Hfp as (Hpbound & Hlftloc & Hrgtloc & Hoff).

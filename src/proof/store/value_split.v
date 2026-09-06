@@ -107,24 +107,24 @@ Definition pool_repair_parent (bind : gmap P loc) (opn : option go_string)
             end
   end.
 
-(** [pool_origins_split p' locs' input orL orR lft rgt]: after [repair] the
+(** [pool_origins_split p' locs' input orL orR leftNode rightNode]: after [repair] the
     item's [left] is the address of a run ending at the left origin, its
     [right] of a run starting at the right origin, each in its origin slot's
     type and read off the address map [locs']; an absent origin links to
     [null]. *)
 Definition pool_origins_split (p' : pool) (locs' : gmap loc (list loc))
     (input : IntegrateInput (A := A)) (orL orR : option (loc * nat))
-    (lft rgt : loc) : Prop :=
+    (leftNode rightNode : loc) : Prop :=
   match in_originId input, orL with
   | Some d, Some qk => ∃ k', pool_run_ends_at p' qk.1 k' d ∧
-                             (locs' !! qk.1) ≫= (λ ls, ls !! k') = Some lft
-  | None, None => lft = null
+                             (locs' !! qk.1) ≫= (λ ls, ls !! k') = Some leftNode
+  | None, None => leftNode = null
   | _, _ => False
   end ∧
   match in_rightOriginId input, orR with
   | Some d, Some qk => ∃ k', pool_run_starts_at p' qk.1 k' d ∧
-                             (locs' !! qk.1) ≫= (λ ls, ls !! k') = Some rgt
-  | None, None => rgt = null
+                             (locs' !! qk.1) ≫= (λ ls, ls !! k') = Some rightNode
+  | None, None => rightNode = null
   | _, _ => False
   end.
 

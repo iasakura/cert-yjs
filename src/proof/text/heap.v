@@ -4,8 +4,8 @@
     - [is_Text t γs γh name L]: the handle is a [Text] on the store [γs] whose
       root type is called [name] and whose item list contains at least [L].
       Persistent, and grow-only in [L].
-    - what a read ([Text.Len] / [Text.String]) sees: [text_snapshot L marr]
-      (a valid document holding [L]) and [history_reflected h0 name marr]
+    - what a read ([Text.Len] / [Text.String]) sees: [text_snapshot L model]
+      (a valid document holding [L]) and [history_reflected h0 name model]
       (every insert a history prefix delivered is in it).
 
     Laws

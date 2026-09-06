@@ -174,21 +174,21 @@ Qed.
     other field is untouched (the store re-closed around
     [wp_deleteNode_runs]); what the delete loops ([applyDeleteSpans] here,
     [Text.Delete] in [text/Delete]) step by. *)
-Lemma wp_deleteNode_store_runs (s : loc) (str : store_state_runs)
+Lemma wp_deleteNode_store_runs (s : loc) (state : store_state_runs)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
-  sr_locs str !! parent = Some ls ->
-  sr_pool str !! parent = Some tm ->
+  sr_locs state !! parent = Some ls ->
+  sr_pool state !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
-  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+  {{{ is_pkg_init yjs ∗ own_store_runs s state }}}
     @! yjs.deleteNode #lc
   {{{ RET #(); own_store_runs s
-        (str <| sr_pool := <[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]>
-                             (sr_pool str) |>) }}}.
+        (state <| sr_pool := <[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]>
+                             (sr_pool state) |>) }}}.
 Proof.
   move=> Hls Hp Hlk Hrk.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iDestruct "Hruns" as "(Hfields & %Hinvs)".
   have Hrpi : run_pool_invs p := proj1 Hinvs.
   have Hreg : pool_registry_coh bind p := proj2 Hinvs.
@@ -201,11 +201,11 @@ Proof.
   have Hreg' : pool_registry_coh bind (<[parent := tm']> p)
     := pool_registry_coh_insert_existing bind p parent tm tm' Hp Hreg.
   (* the item index is unchanged: a flip keeps every entry's key *)
-  have Hkps : entry_kp <$> pool_entries locs (<[parent := tm']> p) ≡ₚ entry_kp <$> pool_entries locs p
-    := pool_entries_flip_kp locs p parent ls tm k lc r Hls Hp Hlk Hrk.
+  have Hkps : entry_key_pair <$> pool_entries locs (<[parent := tm']> p) ≡ₚ entry_key_pair <$> pool_entries locs p
+    := pool_entries_flip_key_pairs locs p parent ls tm k lc r Hls Hp Hlk Hrk.
   iDestruct "Hitems" as (mref) "(Hitemsf & Hitemmap)".
   iEval (rewrite /own_item_map_runs) in "Hitemmap".
-  iDestruct (own_item_map_kp_keys_perm mref (DfracOwn 1) _ _ (Permutation_sym Hkps) with "Hitemmap") as "Hitemmap".
+  iDestruct (own_item_map_key_pairs_keys_perm mref (DfracOwn 1) _ _ (Permutation_sym Hkps) with "Hitemmap") as "Hitemmap".
   iApply "HΦ".
   iSplitL; last (iPureIntro; split; [exact Hrpi' | exact Hreg']).
   rewrite /own_store_fields_runs /=.
@@ -236,18 +236,18 @@ Qed.
    the Go parameters are called [clock] and [length], but those are [YjsId]'s
    clock projection and [list]'s length in Rocq, and shadowing them breaks
    every [clock (item_id ...)] / [length (run_items r)] below. *)
-Lemma wp_store__deleteRange_runs (s : loc) (str : store_state_runs)
+Lemma wp_store__deleteRange_runs (s : loc) (state : store_state_runs)
     (client dclock dlen : w64) :
-  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+  {{{ is_pkg_init yjs ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "deleteRange" #client #dclock #dlen
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (covered : bool), RET #covered;
-      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
-      ⌜pool_after_delete (sr_pool str) p'⌝ ∗
+      own_store_runs s (state <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
+      ⌜pool_after_delete (sr_pool state) p'⌝ ∗
       ⌜range_no_overflow dclock dlen -> covered = true ->
          ids_tombstoned_runs (range_ids client dclock dlen) (all_runs p')⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl.
   wp_method_call. wp_call. wp_call. wp_auto.
   iAssert (∃ (cur : w64) (cov : bool) (locs_i : gmap loc (list loc)) (p_i : pool),
     "Hcur" ∷ cur_ptr ↦ cur ∗
@@ -459,22 +459,22 @@ Qed.
     The buffer's own spans and the batch's are both consumed as VALUES (a
     span is a triple of machine words), so the batch comes back untouched
     and the new buffer is a fresh slice. *)
-Lemma wp_store__applyDeleteSpans_runs (s : loc) (str : store_state_runs)
+Lemma wp_store__applyDeleteSpans_runs (s : loc) (state : store_state_runs)
     (sp_sl : slice.t) (dq : dfrac) (spans : list delete_span) :
-  {{{ is_pkg_init yjs ∗ own_store_runs s str ∗ own_delete_spans sp_sl dq spans }}}
+  {{{ is_pkg_init yjs ∗ own_store_runs s state ∗ own_delete_spans sp_sl dq spans }}}
     s @! (go.PointerType yjs.store) @! "applyDeleteSpans" #sp_sl
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (rest : list delete_span), RET #();
-      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>
+      own_store_runs s (state <| sr_pool := p' |> <| sr_locs := locs' |>
                             <| sr_pending_deletes := rest |>) ∗
       own_delete_spans sp_sl dq spans ∗
-      ⌜pool_after_delete (sr_pool str) p'⌝ ∗
+      ⌜pool_after_delete (sr_pool state) p'⌝ ∗
       ⌜∃ D : gset YjsId,
          ids_tombstoned_runs D (all_runs p') ∧
-         (∀ sp, sp ∈ sr_pending_deletes str ++ spans -> delete_span_no_overflow sp ->
+         (∀ sp, sp ∈ sr_pending_deletes state ++ spans -> delete_span_no_overflow sp ->
             delete_span_ids sp ⊆ D ∪ delete_batch_ids rest)⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns & Hsp) HΦ".
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl.
   iDestruct "Hruns" as "(Hfields0 & %Hinvs0)".
   iEval (simpl) in "Hfields0".
   have Hrpi0 : run_pool_invs p := proj1 Hinvs0.

@@ -73,16 +73,16 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
     [run_pool_invs_insert_empty] / [pool_registry_coh_bind_fresh] at the
     exit; the lemma's pre and post sit at the closed endpoints (CLAUDE.md
     "Spec shape", the open-receiver case). *)
-Lemma wp_store__getOrCreateYType_runs (s : loc) (str : store_state_runs) (nm : go_string) :
-  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+Lemma wp_store__getOrCreateYType_runs (s : loc) (state : store_state_runs) (nm : go_string) :
+  {{{ is_pkg_init yjs ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
   {{{ (q : loc) (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #q;
-      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>
+      own_store_runs s (state <| sr_pool := p' |> <| sr_locs := locs' |>
                             <| sr_bind := bind' |>) ∗
-      ⌜pool_lookup_or_create (sr_pool str) (sr_locs str) (sr_bind str) nm q p' locs' bind'⌝ }}}.
+      ⌜pool_lookup_or_create (sr_pool state) (sr_locs state) (sr_bind state) nm q p' locs' bind'⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iDestruct "Hruns" as "(Hfields & %Hinvs)".
   have Hrpi : run_pool_invs p := proj1 Hinvs.
   have Hreg : pool_registry_coh bind p := proj2 Hinvs.
@@ -123,9 +123,9 @@ Proof using Type*.
     (* the fresh type holds no run, so the item index is the same key list *)
     iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
     iEval (rewrite /own_item_map_runs) in "Hitemmap".
-    iDestruct (own_item_map_kp_keys_perm items_mref (DfracOwn 1) _
-                 (entry_kp <$> pool_entries (<[q := []]> locs) (<[q := MkTypeModel [] []]> p))
-                 (Permutation_sym (fmap_Permutation entry_kp _ _
+    iDestruct (own_item_map_key_pairs_keys_perm items_mref (DfracOwn 1) _
+                 (entry_key_pair <$> pool_entries (<[q := []]> locs) (<[q := MkTypeModel [] []]> p))
+                 (Permutation_sym (fmap_Permutation entry_key_pair _ _
                     (pool_entries_insert_empty locs p q Hfresh)))
                  with "Hitemmap") as "Hitemmap".
     iApply ("HΦ" $! q (<[q := MkTypeModel [] []]> p) (<[q := []]> locs) (<[nm := q]> bind)).
@@ -160,22 +160,22 @@ Qed.
     the right one). *)
 Lemma wp_store__repair_runs (s item_l pname : loc)
     (input : IntegrateInput (A := A)) (opn : option go_string)
-    (str : store_state_runs) (orL orR : option (loc * nat)) (p_t : loc) :
-  pool_origins_covered (sr_pool str) input orL orR ->
-  pool_repair_parent (sr_bind str) opn orL orR p_t ->
+    (state : store_state_runs) (orL orR : option (loc * nat)) (p_t : loc) :
+  pool_origins_covered (sr_pool state) input orL orR ->
+  pool_repair_parent (sr_bind state) opn orL orR p_t ->
   {{{ is_pkg_init yjs ∗
       own_linked_item item_l input null null null ∗
       is_parent_name pname opn ∗
-      own_store_runs s str }}}
+      own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
-  {{{ (lft rgt : loc) (p' : pool) (locs' : gmap loc (list loc)), RET #();
-      own_linked_item item_l input p_t lft rgt ∗
-      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
-      ⌜pool_after_repair (sr_pool str) p'⌝ ∗
-      ⌜pool_origins_split p' locs' input orL orR lft rgt⌝ }}}.
+  {{{ (leftNode rightNode : loc) (p' : pool) (locs' : gmap loc (list loc)), RET #();
+      own_linked_item item_l input p_t leftNode rightNode ∗
+      own_store_runs s (state <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
+      ⌜pool_after_repair (sr_pool state) p'⌝ ∗
+      ⌜pool_origins_split p' locs' input orL orR leftNode rightNode⌝ }}}.
 Proof using Type*.
   move=> [HwL [HwR Hsame]] Hwpar.
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   rewrite /pool_origin_covered in HwL HwR. rewrite /pool_repair_parent in Hwpar.
   iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hruns) HΦ".
   iDestruct "Hlinked" as (itemVal oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrunc)".
@@ -611,12 +611,12 @@ Qed.
     [doc_model_has m (toYjsId idv)]: [GetNode]'s covering slot is bridged to
     [doc_model_has] through the registry's model agreement
     ([pool_registry_models], [docm_runs_agree]). *)
-Lemma wp_store__hasNode_runs (s : loc) (idv : yjs.id.t) (m : DocModel) (str : store_state_runs) :
-  pool_registry_models m (sr_bind str) (sr_pool str) ->
-  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+Lemma wp_store__hasNode_runs (s : loc) (idv : yjs.id.t) (m : DocModel) (state : store_state_runs) :
+  pool_registry_models m (sr_bind state) (sr_pool state) ->
+  {{{ is_pkg_init yjs ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "hasNode" #idv
   {{{ (ok : bool), RET #ok;
-      own_store_runs s str ∗
+      own_store_runs s state ∗
       ⌜ok = true <-> doc_model_has m (toYjsId idv) = true⌝ }}}.
 Proof using Type*.
   move=> Hregmodel.
@@ -624,10 +624,10 @@ Proof using Type*.
   iDestruct (own_store_runs_registry_coh with "Hruns") as %Hpreg.
   iDestruct (own_store_runs_arr with "Hruns") as %Harr.
   iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf.
-  have Hagree : ∀ d : YjsId, doc_model_has m d = true <-> ∃ q k, pool_run_covers (sr_pool str) q k d
-    := λ d, docm_runs_agree m (sr_bind str) (sr_pool str) d Hregmodel Hpreg Harr Hwf.
+  have Hagree : ∀ d : YjsId, doc_model_has m d = true <-> ∃ q k, pool_run_covers (sr_pool state) q k d
+    := λ d, docm_runs_agree m (sr_bind state) (sr_pool state) d Hregmodel Hpreg Harr Hwf.
   wp_method_call. wp_call. wp_call. wp_auto.
-  wp_apply (wp_store__GetNode_runs s idv str with "[$Hpkg $Hruns]").
+  wp_apply (wp_store__GetNode_runs s idv state with "[$Hpkg $Hruns]").
   iIntros (l ok) "(Hruns & %Hres)".
   wp_auto.
   iApply ("HΦ" $! ok). iFrame "Hruns".
@@ -762,12 +762,12 @@ Qed.
     arrival check; a nil origin imposes no dependency. Its result is the
     model presence of the origin id (via [hasNode]). *)
 Lemma wp_store__originArrived_runs (s : loc) (p : loc)
-    (originId : option yjs.id.t) (m : DocModel) (str : store_state_runs) :
-  pool_registry_models m (sr_bind str) (sr_pool str) ->
-  {{{ is_pkg_init yjs ∗ is_origin_id p originId ∗ own_store_runs s str }}}
+    (originId : option yjs.id.t) (m : DocModel) (state : store_state_runs) :
+  pool_registry_models m (sr_bind state) (sr_pool state) ->
+  {{{ is_pkg_init yjs ∗ is_origin_id p originId ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "originArrived" #p
   {{{ (ok : bool), RET #ok;
-      own_store_runs s str ∗
+      own_store_runs s state ∗
       ⌜ok = true <-> match originId with
                      | None => True
                      | Some idv => doc_model_has m (toYjsId idv) = true
@@ -781,7 +781,7 @@ Proof using Type*.
     rewrite bool_decide_eq_false_2; last first.
     { move=> Heq. exact (Hpne Heq). }
     wp_auto.
-    wp_apply (wp_store__hasNode_runs s idv m str Hregmodel with "[$Hpkg $Hruns]").
+    wp_apply (wp_store__hasNode_runs s idv m state Hregmodel with "[$Hpkg $Hruns]").
     iIntros (ok) "(Hruns & %Hok)".
     wp_auto.
     iApply ("HΦ" $! ok).
@@ -802,11 +802,11 @@ Qed.
     returns the model presence of a dependency, so the gate composes them by
     [input_ready_true_of] / [input_ready_false_of_dep]. *)
 Lemma wp_store__depsArrived_runs (s : loc) (updateItemVal : yjs.updateItem.t)
-    (typedInput : TId * IntegrateInput (A := A)) (m : DocModel) (str : store_state_runs) :
-  pool_registry_models m (sr_bind str) (sr_pool str) ->
-  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_runs s str }}}
+    (typedInput : TId * IntegrateInput (A := A)) (m : DocModel) (state : store_state_runs) :
+  pool_registry_models m (sr_bind state) (sr_pool state) ->
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "depsArrived" #updateItemVal
-  {{{ RET #(input_ready m typedInput.2); own_store_runs s str }}}.
+  {{{ RET #(input_ready m typedInput.2); own_store_runs s state }}}.
 Proof using Type*.
   move=> Hregmodel.
   iIntros (Φ) "(#Hpkg & #Hui & Hruns) HΦ".
@@ -818,7 +818,7 @@ Proof using Type*.
   { rewrite -Hin_id /toYjsId //. }
   wp_method_call. wp_call. wp_call. wp_auto.
   (* ---- left origin ---- *)
-  wp_apply (wp_store__originArrived_runs s _ oleft m str Hregmodel with "[$Hpkg $HisL $Hruns]").
+  wp_apply (wp_store__originArrived_runs s _ oleft m state Hregmodel with "[$Hpkg $HisL $Hruns]").
   iIntros (okL) "(Hruns & %HokL)".
   wp_auto.
   destruct okL; last first.
@@ -834,7 +834,7 @@ Proof using Type*.
     iApply ("HΦ" with "[$Hruns]"). }
   wp_auto.
   (* ---- right origin ---- *)
-  wp_apply (wp_store__originArrived_runs s _ oright m str Hregmodel with "[$Hpkg $HisR $Hruns]").
+  wp_apply (wp_store__originArrived_runs s _ oright m state Hregmodel with "[$Hpkg $HisR $Hruns]").
   iIntros (okR) "(Hruns & %HokR)".
   wp_auto.
   destruct okR; last first.
@@ -866,7 +866,7 @@ Proof using Type*.
     wp_auto.
     wp_apply (wp_NewId updateItemVal.(yjs.updateItem.id').(yjs.id.clientId')
                 (word.sub updateItemVal.(yjs.updateItem.id').(yjs.id.clock') (W64 1))).
-    wp_apply (wp_store__hasNode_runs s _ m str Hregmodel with "[$Hpkg $Hruns]").
+    wp_apply (wp_store__hasNode_runs s _ m state Hregmodel with "[$Hpkg $Hruns]").
     iIntros (okP) "(Hruns & %HokP)".
     wp_auto.
     have Hpredid : toYjsId (yjs.id.mk updateItemVal.(yjs.updateItem.id').(yjs.id.clientId')
@@ -937,24 +937,24 @@ Qed.
     to null/null under the fresh type [q]. Local: a stepping stone of
     [wp_store__integrateDecoded_unbound_runs]. *)
 #[local] Lemma wp_store__repair_create_runs (s item_l pname : loc)
-    (input : IntegrateInput (A := A)) (nm : go_string) (str : store_state_runs) :
+    (input : IntegrateInput (A := A)) (nm : go_string) (state : store_state_runs) :
   in_originId input = None ->
   in_rightOriginId input = None ->
-  sr_bind str !! nm = None ->
+  sr_bind state !! nm = None ->
   {{{ is_pkg_init yjs ∗
       own_linked_item item_l input null null null ∗
       is_parent_name pname (Some nm) ∗
-      own_store_runs s str }}}
+      own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
   {{{ (q : loc), RET #();
       own_linked_item item_l input q null null ∗
-      own_store_runs s (str <| sr_pool := <[q := MkTypeModel [] []]> (sr_pool str) |>
-                            <| sr_locs := <[q := []]> (sr_locs str) |>
-                            <| sr_bind := <[nm := q]> (sr_bind str) |>) ∗
-      ⌜sr_pool str !! q = None⌝ }}}.
+      own_store_runs s (state <| sr_pool := <[q := MkTypeModel [] []]> (sr_pool state) |>
+                            <| sr_locs := <[q := []]> (sr_locs state) |>
+                            <| sr_bind := <[nm := q]> (sr_bind state) |>) ∗
+      ⌜sr_pool state !! q = None⌝ }}}.
 Proof using Type*.
   move=> HoL HoR Hnm.
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hruns) HΦ".
   iDestruct "Hlinked" as (itemVal oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrunc)".
   iNamed "Hraw".
@@ -996,27 +996,27 @@ Qed.
     Local: the bound-root case of [wp_store__integrateDecoded_runs]. *)
 #[local] Lemma wp_store__integrateDecoded_bound_runs (s : loc)
     (updateItemVal : yjs.updateItem.t) (typedInput : TId * IntegrateInput (A := A))
-    (m : DocModel) (str : store_state_runs)
+    (m : DocModel) (state : store_state_runs)
     (newItem : YjsItem A) (arr2 : list (YjsItem A)) (nm : P) (p : loc) :
   typedInput.1 = RootId nm ->
-  sr_bind str !! nm = Some p ->
+  sr_bind state !! nm = Some p ->
   toItem typedInput.2 (doc_model_get m typedInput.1) = Some newItem ->
   IsItemValid newItem ->
   maximalId newItem (doc_model_get m typedInput.1) ->
   integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) (doc_model_get m typedInput.1) = Some arr2 ->
-  pool_run_clock_below (sr_pool str) (in_id typedInput.2) ->
-  pool_registry_models m (sr_bind str) (sr_pool str) ->
+  pool_run_clock_below (sr_pool state) (in_id typedInput.2) ->
+  pool_registry_models m (sr_bind state) (sr_pool state) ->
   input_fits typedInput.2 ->
-  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_runs s str }}}
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "integrateDecoded" #updateItemVal
   {{{ (p' : pool) (locs' : gmap loc (list loc)), RET #();
-      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
-      ⌜pool_registry_models (<[typedInput.1 := arr2]> m) (sr_bind str) p'⌝ ∗
-      ⌜runs_within_or_from [typedInput] (all_runs (sr_pool str)) (all_runs p')⌝ ∗
-      ⌜runs_integrate_live_refine typedInput.2 (all_runs (sr_pool str)) (all_runs p')⌝ }}}.
+      own_store_runs s (state <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
+      ⌜pool_registry_models (<[typedInput.1 := arr2]> m) (sr_bind state) p'⌝ ∗
+      ⌜runs_within_or_from [typedInput] (all_runs (sr_pool state)) (all_runs p')⌝ ∗
+      ⌜runs_integrate_live_refine typedInput.2 (all_runs (sr_pool state)) (all_runs p')⌝ }}}.
 Proof using Type*.
   move=> Htieq Hbnm Htoit Hvld Hmax Hall Hgmax0 [Hmtypes Hmdom] Hnowrapc.
-  destruct str as [client0 k0 locs p0 bind pend pdel]. simpl in *.
+  destruct state as [client0 k0 locs p0 bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & #Hui & Hruns) HΦ".
   iDestruct "Hui" as (oleft oright opn)
     "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)".
@@ -1150,7 +1150,7 @@ Proof using Type*.
               input opn (MkStoreStateRuns client0 k0 locs p0 bind pend pdel) orL orR p
               (conj HwL (conj HwR Hsameg)) Hwpar
               with "[$Hpkg $Hfresh $HisPN $Hruns]").
-  iIntros (lft rgt p2 locs2) "(Hlinked & Hruns & %Hrep2 & %Hosplit)".
+  iIntros (leftNode rightNode p2 locs2) "(Hlinked & Hruns & %Hrep2 & %Hosplit)".
   iEval (simpl) in "Hruns".
   destruct Hosplit as [HbdL HbdR].
   iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf2.
@@ -1172,7 +1172,7 @@ Proof using Type*.
   have HcurLpack : ∃ curL2 : nat,
       (curL2 <= length (tm_runs tm2))%nat ∧
       (Z.of_nat (length (runs_flatten (take curL2 (tm_runs tm2)))) = leftIdx + 1)%Z ∧
-      lft = loc_at ls2 (Z.of_nat curL2 - 1).
+      leftNode = loc_at ls2 (Z.of_nat curL2 - 1).
   { move: HbdL HparL HfindL.
     destruct (in_originId input) as [oL|] eqn:HoinL3; destruct orL as [[qL kL]|]; try done.
     - move=> [k' [HendL Hloc']] HqL HfindL3. simpl in HendL, Hloc', HqL. subst qL.
@@ -1216,7 +1216,7 @@ Proof using Type*.
   have HcurRpack : ∃ curR2 : nat,
       (curR2 <= length (tm_runs tm2))%nat ∧
       (Z.of_nat (length (runs_flatten (take curR2 (tm_runs tm2)))) = rightIdx)%Z ∧
-      rgt = loc_at ls2 (Z.of_nat curR2).
+      rightNode = loc_at ls2 (Z.of_nat curR2).
   { move: HbdR HparR HfindR.
     destruct (in_rightOriginId input) as [oR|] eqn:HoinR3; destruct orR as [[qR kR]|]; try done.
     - move=> [k' [HstartR Hloc']] HqR HfindR3. simpl in HstartR, Hloc', HqR. subst qR.
@@ -1333,10 +1333,10 @@ Qed.
     run. Local: the unbound-root case of [wp_store__integrateDecoded_runs]. *)
 #[local] Lemma wp_store__integrateDecoded_unbound_runs (s : loc)
     (updateItemVal : yjs.updateItem.t) (typedInput : TId * IntegrateInput (A := A))
-    (m : DocModel) (str : store_state_runs)
+    (m : DocModel) (state : store_state_runs)
     (newItem : YjsItem A) (arr2 : list (YjsItem A)) (nm : P) :
   typedInput.1 = RootId nm ->
-  sr_bind str !! nm = None ->
+  sr_bind state !! nm = None ->
   in_originId typedInput.2 = None ->
   in_rightOriginId typedInput.2 = None ->
   doc_model_get m typedInput.1 = [] ->
@@ -1344,20 +1344,20 @@ Qed.
   IsItemValid newItem ->
   maximalId newItem [] ->
   integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) [] = Some arr2 ->
-  pool_run_clock_below (sr_pool str) (in_id typedInput.2) ->
-  pool_registry_models m (sr_bind str) (sr_pool str) ->
+  pool_run_clock_below (sr_pool state) (in_id typedInput.2) ->
+  pool_registry_models m (sr_bind state) (sr_pool state) ->
   input_fits typedInput.2 ->
-  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_runs s str }}}
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "integrateDecoded" #updateItemVal
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #();
-      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |> <| sr_bind := bind' |>) ∗
-      ⌜sr_bind str ⊆ bind'⌝ ∗
+      own_store_runs s (state <| sr_pool := p' |> <| sr_locs := locs' |> <| sr_bind := bind' |>) ∗
+      ⌜sr_bind state ⊆ bind'⌝ ∗
       ⌜pool_registry_models (<[typedInput.1 := arr2]> m) bind' p'⌝ ∗
-      ⌜runs_within_or_from [typedInput] (all_runs (sr_pool str)) (all_runs p')⌝ ∗
-      ⌜runs_integrate_live_refine typedInput.2 (all_runs (sr_pool str)) (all_runs p')⌝ }}}.
+      ⌜runs_within_or_from [typedInput] (all_runs (sr_pool state)) (all_runs p')⌝ ∗
+      ⌜runs_integrate_live_refine typedInput.2 (all_runs (sr_pool state)) (all_runs p')⌝ }}}.
 Proof using Type*.
   move=> Htieq Hbnm HoL HoR Hdgnil Htoit Hvld Hmax Hall Hgmax0 [Hmtypes Hmdom] Hnowrapc.
-  destruct str as [client0 k0 locs p0 bind pend pdel]. simpl in *.
+  destruct state as [client0 k0 locs p0 bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & #Hui & Hruns) HΦ".
   iDestruct "Hui" as (oleft oright opn)
     "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)".
@@ -1493,27 +1493,27 @@ Qed.
     unbound-root cases above, dispatched on the registry. *)
 Lemma wp_store__integrateDecoded_runs (s : loc)
     (updateItemVal : yjs.updateItem.t) (typedInput : TId * IntegrateInput (A := A))
-    (m : DocModel) (str : store_state_runs)
+    (m : DocModel) (state : store_state_runs)
     (newItem : YjsItem A) (arr2 : list (YjsItem A)) (nm : P) :
   typedInput.1 = RootId nm ->
   toItem typedInput.2 (doc_model_get m typedInput.1) = Some newItem ->
   IsItemValid newItem ->
   maximalId newItem (doc_model_get m typedInput.1) ->
   integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) (doc_model_get m typedInput.1) = Some arr2 ->
-  pool_run_clock_below (sr_pool str) (in_id typedInput.2) ->
-  pool_registry_models m (sr_bind str) (sr_pool str) ->
+  pool_run_clock_below (sr_pool state) (in_id typedInput.2) ->
+  pool_registry_models m (sr_bind state) (sr_pool state) ->
   input_fits typedInput.2 ->
-  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_runs s str }}}
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "integrateDecoded" #updateItemVal
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #();
-      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |> <| sr_bind := bind' |>) ∗
-      ⌜sr_bind str ⊆ bind'⌝ ∗
+      own_store_runs s (state <| sr_pool := p' |> <| sr_locs := locs' |> <| sr_bind := bind' |>) ∗
+      ⌜sr_bind state ⊆ bind'⌝ ∗
       ⌜pool_registry_models (<[typedInput.1 := arr2]> m) bind' p'⌝ ∗
-      ⌜runs_within_or_from [typedInput] (all_runs (sr_pool str)) (all_runs p')⌝ ∗
-      ⌜runs_integrate_live_refine typedInput.2 (all_runs (sr_pool str)) (all_runs p')⌝ }}}.
+      ⌜runs_within_or_from [typedInput] (all_runs (sr_pool state)) (all_runs p')⌝ ∗
+      ⌜runs_integrate_live_refine typedInput.2 (all_runs (sr_pool state)) (all_runs p')⌝ }}}.
 Proof using Type*.
   move=> Htieq Htoit Hvld Hmax Hall Hgmax0 Hregmodel Hnowrapc.
-  destruct str as [client0 k0 locs p0 bind pend pdel]. simpl in *.
+  destruct state as [client0 k0 locs p0 bind pend pdel]. simpl in *.
   have [Hmtypes Hmdom] := Hregmodel.
   iIntros (Φ) "(#Hpkg & #Hui & Hruns) HΦ".
   destruct (bind !! nm) as [p|] eqn:Hbnm.
