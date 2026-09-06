@@ -1675,8 +1675,8 @@ Proof.
 Qed.
 
 (** Converse provenance: a replayed item is an original item or carries the
-    id of some batch input (the model-level analogue of the heap-level
-    [all_cells] provenance clause of [wp_store__applyUpdate]). *)
+    id of some batch input (the model-level analogue of the pool provenance
+    clause of [wp_store__applyUpdate]). *)
 Lemma ValidReplay_prov (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
   ValidReplay inputs m m' ->
   ∀ (t : TId) x, x ∈ doc_model_get m' t ->

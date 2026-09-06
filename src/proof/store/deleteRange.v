@@ -672,7 +672,7 @@ Qed.
     at the SAME model, history and pending buffer. Deletes are model no-ops in
     the insert-only document model (they only flip tombstone bits and split
     runs), which is exactly why the whole store predicate is preserved: the
-    per-type item lists [ty_arr] do not move, so the registry coherence, the
+    per-type item lists [tm_arr] do not move, so the registry coherence, the
     item-set authority and the counter clause all transfer verbatim, and the
     pool invariants come back from the loop.
 

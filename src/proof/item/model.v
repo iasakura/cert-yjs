@@ -74,7 +74,7 @@ Notation A := go_string.
 
 (* ===== definitions ======================================================== *)
 
-(** Model items are inhabited (needed to make [run_head] total; [run_wf]
+(** Model items are inhabited (needed to make [run_head_item] total; [run_wf]
     guarantees the run is nonempty wherever the head matters). *)
 #[global] Instance YjsItem_inhabited : Inhabited (YjsItem A) :=
   populate (Item First Last (MkYjsId O O) inhabitant).
@@ -233,13 +233,12 @@ Qed.
 
 End item_model.
 
-(* ===== the run record (ItemRun), the loc-free half of item_cell ==========
-   Stage 1 of docs/plan-item-run-split.md: the pure theory of runs as data,
-   next to the [item_cell]-based one it will replace. [item_cell] pairs a run
-   with heap addresses ([ic_loc], [ic_parent]); [ItemRun] is the run alone,
-   so clock-range reasoning, splits and tombstones need no [loc] and no
-   [w64]. [item/value.v]'s [cell_run] projects a cell to its run, and each
-   cell-level definition comes with a projection lemma there. *)
+(* ===== the run record (ItemRun) ===========================================
+   The pure theory of runs as data (docs/plan-item-run-split.md): a heap node
+   carries a run of consecutive per-char model items, and [ItemRun] is that
+   run alone, so clock-range reasoning, splits and tombstones need no [loc]
+   and no [w64]. The node's address lives beside it, in the type's address
+   list ([sr_locs]). *)
 
 Section item_run.
 
@@ -261,8 +260,8 @@ Record ItemRun := MkItemRun {
 Definition run_head_item (r : ItemRun) : YjsItem A := hd inhabitant (run_items r).
 
 (** The creator and start clock of a run, off its head id. Pure [nat]s: the
-    [w64] the heap stores round-trips on the value layer ([cell_client] /
-    [cell_clock]). *)
+    [w64] the heap stores round-trips on the value layer ([entry_client] /
+    [entry_clock]). *)
 Definition run_client (r : ItemRun) : nat := clientId (item_id (run_head_item r)).
 
 Definition run_clock (r : ItemRun) : nat := clock (item_id (run_head_item r)).

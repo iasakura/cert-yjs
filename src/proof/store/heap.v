@@ -136,7 +136,7 @@ Context {sync_pkg : sync.Assumptions}.
     flag), so each item set grows monotonically under [⊆]; a recorded lower bound
     stays valid forever.
 
-    We track full ITEMS, not just ids: a membership bound [x ∈ S ⊆ ty_arr ts]
+    We track full ITEMS, not just ids: a membership bound [x ∈ S ⊆ tm_arr tm]
     then pins [x] to a *genuine* document item (same structure, not merely the
     same id), which is what lets [Text.Insert] expose the post as a real
     [sublist L L'] rather than only an id-set inclusion. [gset (YjsItem A)] needs
@@ -182,7 +182,7 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
       per-reader fraction stays positive;
     - [types_frag] ([dfrac_agree] on the [types] map) ties the readers' share to
       the store's current [types] (needed to recombine at RUnlock, since the
-      item-set auth alone does not determine the [type_state] map);
+      item-set auth alone does not determine the type pool);
     - the mutable-exclusive [store_inv_excl] whole + the shared [store_inv_ro] at
       the remaining fraction [frac_of n]. The write [Lock] linearizes at
       [RLocked 0] (fraction 1 = the whole [store_inv] via [store_inv_bridge]);
@@ -1246,7 +1246,7 @@ Proof. rewrite /store_inv_excl /own_update_structs /own_delete_spans /is_update_
     exclusive ghost-history element [own_client_history] for the store's
     client. The history's replayed *doc model* [m] is coherent with the whole
     registry, not a single governed type ([history_state_coh h m], plus
-    [Hmtypes]: each registered type's [ty_arr] equals [doc_model_get m] at its
+    [Hmtypes]: each registered type's [tm_arr] equals [doc_model_get m] at its
     bound name).
 
     The body is [store_inv_excl] (the mutable-exclusive clauses, documented

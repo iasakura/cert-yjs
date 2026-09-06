@@ -9,14 +9,11 @@
     - [find_pos_runs]: what [yType.findPos] resolves an index to (the cursor
       into the run list, the node addresses off the address list, the offset
       inside the run before the cursor).
-    - [cell_models] / [cells_model]: the same sequence read off an addressed
-      run list ([item_cell]), the proof device the run-level laws below go
-      through.
 
     Laws
     - [visible_items] / [visible_string] are append homomorphisms; one run
       contributes its items when live and nothing when tombstoned
-      ([visible_items_run_models]).
+      ([visible_items_run_models] / [visible_string_run_models]).
     - [runs_model_fst]: the sequence's first projection is the document list
       [runs_flatten], so the public model and this one differ only by the
       tombstone bits; [runs_visible_model], the [len] counter counts the
@@ -41,16 +38,6 @@ Notation A := go_string.
 (* ===== definitions ======================================================== *)
 
 (* ----- the abstract sequence a type denotes ------------------------------ *)
-
-(** The per-char sequence one entry of the addressed-run bridge denotes: each
-    model item of its run paired with the entry's tombstone bit. The address
-    is dropped here (the model stays per-char and runs are invisible to it,
-    issue #28), so this is where the abstraction wall sits. *)
-Definition cell_models (c : item_cell) : list (YjsItem A * bool) :=
-  (λ x, (x, ic_deleted c)) <$> ic_run c.
-
-Definition cells_model (cells : list item_cell) : list (YjsItem A * bool) :=
-  mjoin (cell_models <$> cells).
 
 (** The visible (non-tombstoned) items of an abstract sequence, and the string
     they spell (the concatenation of their per-char contents): what the read
@@ -78,10 +65,6 @@ Definition find_pos_runs (ls : list loc) (runs : list ItemRun)
    (∃ r, runs !! (p - 1)%nat = Some r ∧ run_deleted r = false ∧
          (uint.nat off < length (run_items r))%nat)).
 
-Lemma cells_model_app (cs1 cs2 : list item_cell) :
-  cells_model (cs1 ++ cs2) = cells_model cs1 ++ cells_model cs2.
-Proof. rewrite /cells_model fmap_app join_app //. Qed.
-
 Lemma visible_items_app (m1 m2 : list (YjsItem A * bool)) :
   visible_items (m1 ++ m2) = visible_items m1 ++ visible_items m2.
 Proof. rewrite /visible_items filter_app fmap_app //. Qed.
@@ -89,48 +72,6 @@ Proof. rewrite /visible_items filter_app fmap_app //. Qed.
 Lemma visible_string_app (m1 m2 : list (YjsItem A * bool)) :
   visible_string (m1 ++ m2) = visible_string m1 ++ visible_string m2.
 Proof. rewrite /visible_string visible_items_app items_string_app //. Qed.
-
-(** One cell's visible items: its whole run when live, nothing when
-    tombstoned. *)
-Lemma visible_items_cell_models (c : item_cell) :
-  visible_items (cell_models c) = if ic_deleted c then [] else ic_run c.
-Proof.
-  rewrite /visible_items /cell_models.
-  induction (ic_run c) as [|x r IH].
-  - destruct (ic_deleted c); done.
-  - rewrite fmap_cons. destruct (ic_deleted c) eqn:Hd.
-    + rewrite filter_cons_False; [exact IH | done].
-    + rewrite filter_cons_True; [| done].
-      rewrite fmap_cons IH //.
-Qed.
-
-(** The walk step of [yType.Text] on the addressed-run bridge: extending a
-    snapshot prefix by one entry appends that entry's visible content ([s] is
-    the node's heap content string, tied to the run by [own_item_node]). *)
-Lemma visible_string_take_S (cells : list item_cell) (k : nat) (c : item_cell)
-    (s : go_string) :
-  cells !! k = Some c ->
-  content <$> ic_run c = explode s ->
-  visible_string (cells_model (take (S k) cells))
-  = visible_string (cells_model (take k cells))
-    ++ (if ic_deleted c then [] else s).
-Proof.
-  move=> Hk Hc.
-  rewrite (take_S_r cells k c Hk) cells_model_app visible_string_app. f_equal.
-  have -> : cells_model [c] = cell_models c ++ [] by done.
-  rewrite app_nil_r /visible_string visible_items_cell_models.
-  destruct (ic_deleted c); [done | exact (items_string_explode _ _ Hc)].
-Qed.
-
-(** The cells-level model and cursor say the same thing as the run-level ones
-    under the cells' projections (docs/plan-item-run-split.md: the loc-free
-    model is [runs_model], the addresses live in the [ls] list). *)
-Lemma cells_model_runs (cells : list item_cell) :
-  cells_model cells = runs_model (cell_run <$> cells).
-Proof.
-  rewrite /cells_model /runs_model -list_fmap_compose.
-  f_equal.
-Qed.
 
 (** The run model's items are the runs' flatten, and its visible items are
     counted by [runs_visible]: what the read API reports off a type's run
@@ -166,9 +107,17 @@ Proof.
   rewrite visible_items_run_models. destruct (run_deleted r); done.
 Qed.
 
-(** The run form of [visible_string_take_S]: one more run contributes its
-    string when live and nothing when tombstoned. Proved by materializing a
-    cell list over dummy addresses, which the cells-level lemma then walks. *)
+(** One more run contributes its string when live and nothing when
+    tombstoned: the step [yType.Text]'s walk takes, with [s] the node's heap
+    content string (tied to the run by [own_item_node]'s content pin). *)
+Lemma visible_string_run_models (r : ItemRun) (s : go_string) :
+  content <$> run_items r = explode s ->
+  visible_string (run_models r) = (if run_deleted r then [] else s).
+Proof.
+  move=> Hc. rewrite /visible_string visible_items_run_models.
+  destruct (run_deleted r); [done | exact (items_string_explode _ s Hc)].
+Qed.
+
 Lemma visible_string_runs_take_S (runs : list ItemRun) (k : nat) (r : ItemRun)
     (s : go_string) :
   runs !! k = Some r ->
@@ -178,26 +127,8 @@ Lemma visible_string_runs_take_S (runs : list ItemRun) (k : nat) (r : ItemRun)
     ++ (if run_deleted r then [] else s).
 Proof.
   move=> Hk Hc.
-  set (ls := replicate (length runs) null).
-  have Hlenls : length ls = length runs by rewrite /ls length_replicate.
-  set (cells := cells_of_locs_runs null ls runs).
-  have Hcr : cell_run <$> cells = runs := cells_of_locs_runs_run null ls runs Hlenls.
-  have Hlencells : length cells = length runs by rewrite -Hcr length_fmap.
-  destruct (cells !! k) as [c|] eqn:Hck; last first.
-  { exfalso. apply lookup_ge_None in Hck. apply lookup_lt_Some in Hk. lia. }
-  have Hcrk : cell_run c = r.
-  { have Hlk : (cell_run <$> cells) !! k = runs !! k by rewrite Hcr.
-    rewrite list_lookup_fmap Hck /= Hk in Hlk. by injection Hlk. }
-  have Hmodel : ∀ j, runs_model (take j runs) = cells_model (take j cells).
-  { move=> j. rewrite cells_model_runs.
-    have -> : cell_run <$> take j cells = take j runs by rewrite fmap_take Hcr.
-    reflexivity. }
-  rewrite !Hmodel.
-  have Hdel : run_deleted r = ic_deleted c by rewrite -Hcrk.
-  rewrite Hdel.
-  apply (visible_string_take_S cells k c s Hck).
-  have Hrun : ic_run c = run_items r by rewrite -Hcrk.
-  rewrite Hrun. exact Hc.
+  rewrite (take_S_r _ _ r Hk) runs_model_app visible_string_app runs_model_singleton.
+  f_equal. exact (visible_string_run_models r s Hc).
 Qed.
 
 End ytype_value.

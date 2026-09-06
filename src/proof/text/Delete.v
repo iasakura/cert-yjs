@@ -55,7 +55,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     (persistent) document handle [is_Text t L] UNCHANGED: deletion never
     removes or reorders model items (it only flips runs to deleted, splitting
     a run when a range boundary lands inside it), so the model item list
-    [ty_arr] (hence [YjsArrInvariant] and the item-set lower bound [L]) is
+    [tm_arr] (hence [YjsArrInvariant] and the item-set lower bound [L]) is
     untouched: splits preserve the flatten, flips only the tombstone bit.
     Only the type's address list, its run list and the visible length
     [yType.len] change. Proof shape: take the store lock, lift the store to
@@ -93,7 +93,7 @@ Proof.
   rewrite lookup_fmap in HmS.
   apply fmap_Some in HmS as (ts & Htsp & ->).
   (* the registry binds [name] to this text; the history is untouched by
-     Delete ([ty_arr] is tombstone-only), so [Hhist]/[Hhcoh] just thread. *)
+     Delete ([tm_arr] is tombstone-only), so [Hhist]/[Hhcoh] just thread. *)
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
   have Hmt : doc_model_get m (RootId name) = tm_arr ts := Hmtypes name parent ts Hbindlk Htsp.
   subst parent.
@@ -195,7 +195,7 @@ Proof.
   wp_auto.
   (* Loop invariant: the cursor [q] walks the (possibly re-split) run list
      of this text, tombstoning whole visible runs through [deleteNode]; a
-     range-end split may grow the list. The flattened model [ty_arr] never
+     range-end split may grow the list. The flattened model [tm_arr] never
      changes, so the item-set auth / registry facts survive; the store
      carries the CURRENT addresses and runs of this text, every other type
      untouched. *)
@@ -226,7 +226,7 @@ Proof.
   { destruct (locs_aligned_lens _ _ Halj tv.(yjs.Text.inner') _ Hpj) as (ls' & Hls' & Hlen').
     simpl in Hls'. rewrite Hlj in Hls'. injection Hls' as <-. exact Hlen'. }
   case_bool_decide as Hrem.
-  2:{ (* budget exhausted: rebuild [store_inv] (same [ty_arr]), Unlock, return. *)
+  2:{ (* budget exhausted: rebuild [store_inv] (same [tm_arr]), Unlock, return. *)
       wp_auto. rewrite decide_False; [|done]. rewrite decide_True; [|done]. wp_auto.
       have Hregmodel_close : pool_registry_models m bind pj
         := pool_registry_models_ext m bind p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj ts.(tm_arr))
@@ -248,7 +248,7 @@ Proof.
       iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
   wp_auto.
   destruct (decide (q < length runsj)%nat) as [Hqlt | Hqge].
-  2:{ (* cursor at end: rebuild [store_inv] (same [ty_arr]), Unlock, return. *)
+  2:{ (* cursor at end: rebuild [store_inv] (same [tm_arr]), Unlock, return. *)
       have Hnull : loc_at lsj (Z.of_nat q) = null.
       { rewrite /loc_at decide_True; [| lia]. rewrite Nat2Z.id lookup_ge_None_2; [done | lia]. }
       rewrite (bool_decide_eq_true_2 (loc_at lsj (Z.of_nat q) = null) Hnull). simpl negb.
