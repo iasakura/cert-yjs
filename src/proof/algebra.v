@@ -11,7 +11,8 @@
     [concat_fmap], [list_filter_fmap], [list_filter_iff_elem_of],
     [StronglySorted_fmap_elem_of], [map_to_list_insert_existing],
     [concat_perm], [elem_of_list_insert_inv] (membership in a list with one
-    slot replaced). Map big-op:
+    slot replaced), [map_to_list_fst_perm] (two maps with the same domain
+    list the same keys). Map big-op:
     [big_sepM_map_imap_total], a big-op over a total [map_imap] is the
     big-op over the underlying map. *)
 From New.proof Require Import proof_prelude.
@@ -396,3 +397,22 @@ Lemma fmap_concat {X Y : Type} (f : X -> Y) (L : list (list X)) :
   (f <$> concat L : list Y) = concat ((λ l : list X, (f <$> l : list Y)) <$> L : list (list Y)).
 Proof. induction L as [| l L IH]; [done |]. simpl. rewrite fmap_app IH //. Qed.
 
+(** Two maps with the same domain list the same keys, up to order. *)
+Lemma map_to_list_fst_perm {K V1 V2 : Type} `{Countable K}
+    (m1 : gmap K V1) (m2 : gmap K V2) :
+  dom m1 = dom m2 -> (map_to_list m1).*1 ≡ₚ (map_to_list m2).*1.
+Proof.
+  move=> Hdom. apply NoDup_Permutation; [apply NoDup_fst_map_to_list..|].
+  move=> k. rewrite !list_elem_of_fmap.
+  split.
+  - move=> [[k' v] [-> Hin]]. simpl.
+    have Hk : k' ∈ dom m2.
+    { rewrite -Hdom. apply elem_of_dom. exists v. by apply elem_of_map_to_list. }
+    apply elem_of_dom in Hk as [v2 Hv2]. exists (k', v2). split; [done |].
+    by apply elem_of_map_to_list.
+  - move=> [[k' v] [-> Hin]]. simpl.
+    have Hk : k' ∈ dom m1.
+    { rewrite Hdom. apply elem_of_dom. exists v. by apply elem_of_map_to_list. }
+    apply elem_of_dom in Hk as [v1 Hv1]. exists (k', v1). split; [done |].
+    by apply elem_of_map_to_list.
+Qed.

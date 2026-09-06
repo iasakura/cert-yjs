@@ -119,7 +119,7 @@ Definition pool := gmap loc type_model.
     [own_read_locked] and pinned by [store_inv_ro]). *)
 Definition addressed_pool := (gmap loc (list loc) * pool)%type.
 
-(** All runs across all types: the loc-free [all_cells]. *)
+(** All runs across all types (the document-global item pool). *)
 Definition all_runs (p : pool) : list ItemRun :=
   concat (tm_runs <$> (map_to_list p).*2).
 

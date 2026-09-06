@@ -144,9 +144,9 @@ Proof. iIntros "H". iNamed "H". iExists _. iFrame "Hbind His_lb". Qed.
     ([wp_Store__wlock]), which yields [store_inv]; combine [is_type_lb] with
     [Hseq] (auth) via
     [auth_gmap_gset_lookup] to learn [parent ∈ dom types] and extract THIS text's
-    [type_state] / DLL from [Htypes]; run the findPos/Integrate loop, whose
+    type's runs / DLL from [Htypes]; run the findPos/Integrate loop, whose
     invariant accumulates [ins] with the per-byte facts (content/id/origins) plus
-    [ty_arr ts ⊆ arr]; at exit grow the auth item-set ([ty_arr ts → arr]) with
+    [tm_arr tm ⊆ arr]; at exit grow the auth item-set ([tm_arr tm → arr]) with
     [auth_gmap_gset_grow] and mint the new [is_type_lb]; reinsert the grown text
     into [Htypes] ([big_sepM_insert_acc]); rebuild [store_inv] (clock bumped,
     counter [Hctr] preserved); [Unlock]; return with [L' = arr]. The post's

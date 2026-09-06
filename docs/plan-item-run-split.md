@@ -866,6 +866,20 @@ vocabulary substitution table written; then C5 restates the specs at
     delete `item_cell`, `type_state`, `cells_of_locs_runs`,
     `types_of_locs_pool`, `pool_of` / `locs_of` and the `cell_*` readings.
 
+    PROGRESS 2026-09-06 (C6-4h): done, and it came to two lemmas. Only
+    `visible_string_runs_take_S` and `pool_entries_locs_NoDup` were still
+    proved by materializing an addressed run list; everything else had
+    already moved. The run form of the first is `take_S_r` plus
+    `runs_model_app` (new in `ytype/model`) and `visible_string_app`; the
+    second is now `pool_entries_locs_perm`, which reads a type's entry
+    addresses as its whole address list (one address per run) and
+    concludes by `map_to_list_fst_perm` (new in `algebra`: two maps with
+    the same domain list the same keys). With those, `item_cell`,
+    `run_head`, `cell_run`, `cells_of_locs_runs`, `type_state`,
+    `all_cells`, the `cell_*` readings, `type_model_of` / `pool_of` /
+    `locs_of` / `types_of_locs_pool` and their round-trip laws are gone.
+    Nothing in `src/proof` mentions a cell any more, comments included.
+
   - **C6-5, fold `tm_arr`.** `type_model` becomes the run list alone
     (`tm_arr = runs_flatten`), if the specs read better that way.
 

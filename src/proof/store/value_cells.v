@@ -20,20 +20,13 @@
       any clock-sorted address-distinct list of one client's entries.
     - what one integrate asks and does: [run_denotes] (the new run is the
       input's) and [integrate_locs] (the address-list half of the splice).
-    - the addressed-run bridge, a proof device: [type_state] / [all_cells],
-      the cell readings [cell_client] / [cell_clock] / [cell_le] / [cell_pr] /
-      [cell_kp], and [types_of_locs_pool] / [pool_of] / [locs_of] /
-      [type_model_of] between the two shapes. Pairing each address with its
-      run puts a type's state in one list, so an index law can be proved by
-      induction over it. No predicate and no spec mentions a cell
-      (docs/plan-item-run-split.md stage C6).
 
     Laws
     - the address map under the steps a store takes: a same-length type
       update ([locs_wf_insert_same_len]), a fresh empty type
       ([locs_wf_insert_empty]) and one integrate splice
       ([locs_wf_integrate]); [locs_aligned_lens] gives each type a
-      same-length address list and [locs_of_concat] flattens the map.
+      same-length address list.
     - the registry only grows: an existing binding survives a type update
       ([pool_registry_coh_insert_existing]), a fresh name extends the map
       ([pool_registry_coh_bind_fresh] / [pool_registry_coh_dom_mono]), and an
@@ -58,9 +51,9 @@
       [pool_registry_models_after_delete]) and what a one-type run rebuild
       transports ([pool_registry_models_ext] / [pool_arr_pointwise_ext] /
       [pool_seq_map_ext] / [pool_seq_map_insert_at]).
-    - the bridge round-trips ([pool_of_types_of_locs_pool] /
-      [locs_of_types_of_locs_pool]) and carries the index onto the cells
-      ([pool_entries_of] / [entries_kp_of] / [entries_kp_to_cells]).
+    - the entries' addresses are the address map's addresses up to order
+      ([pool_entries_locs_perm]), so the map's [NoDup] is the index's
+      ([pool_entries_locs_NoDup]).
 
     The rest of the value layer: [store/value_split.v] (the split surgery),
     [store/value_span.v] (id ranges and wire spans). The Iris layer over all
@@ -98,45 +91,12 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (* ===== definitions ======================================================== *)
 
-(* ----- the addressed-run bridge ------------------------------------------ *)
-
-(** One registered type on the bridge: its nodes as addressed runs, and the
-    model item list they flatten to. *)
-Record type_state := MkTypeState {
-  ty_cells : list item_cell;
-  ty_arr   : list (YjsItem A);
-}.
-
-(** The bridge's entries across all types (the document-global item pool). *)
-Definition all_cells (types : gmap loc type_state) : list item_cell :=
-  concat (ty_cells <$> (map_to_list types).*2).
-
 (* ----- the store's item index: map[Client][]*item ------------------------ *)
-
-(** Client / clock an entry's id carries, read off its head model item id (a
-    [YjsId], whose [nat] fields round-trip through [W64] from the original heap
-    id): the machine-word keys the index is sorted by. *)
-Definition cell_client (c : item_cell) : w64 := W64 (clientId (item_id (run_head c))).
-
-Definition cell_clock  (c : item_cell) : w64 := W64 (clock (item_id (run_head c))).
-
-Definition cell_le (a b : item_cell) : Prop := (uint.Z (cell_clock a) ≤ uint.Z (cell_clock b))%Z.
-
-#[local] Instance cell_le_dec : RelDecision cell_le.
-Proof. rewrite /cell_le. solve_decision. Defined.
-
-#[local] Instance cell_le_trans : Transitive cell_le.
-Proof. rewrite /cell_le. move=> x y z. lia. Qed.
-
-#[local] Instance cell_le_total : Total cell_le.
-Proof. rewrite /cell_le. move=> x y. lia. Qed.
 
 (** One client's backing slice in the index is the address sequence of a
     [merge_sort]ed run, so it depends only on each entry's (clock, address)
     pair: [pr_le] is the order that sort runs on, and [kp_client_locs] below
     is where the pair is read. *)
-Definition cell_pr (c : item_cell) : Z * loc := (uint.Z (cell_clock c), ic_loc c).
-
 Definition pr_le (p q : Z * loc) : Prop := (p.1 <= q.1)%Z.
 
 #[local] Instance pr_le_dec : RelDecision pr_le.
@@ -145,11 +105,6 @@ Proof. rewrite /pr_le. solve_decision. Defined.
 Proof. rewrite /pr_le. move=> x y z. lia. Qed.
 #[local] Instance pr_le_total : Total pr_le.
 Proof. rewrite /pr_le. move=> x y. lia. Qed.
-
-(** [cell_kp] bundles an entry's (client, clock, address). The index laws
-    consume a multiset permutation of these keys, which one integrate splice
-    or one tombstoning gives by [fmap] out of the exact list permutation. *)
-Definition cell_kp (c : item_cell) : w64 * (Z * loc) := (cell_client c, cell_pr c).
 
 (** [run_denotes input newItem run]: the run a wire item lands as: its head is
     the item the input resolves to (same id and origins) and it has one char
@@ -200,19 +155,6 @@ Definition pool_lookup_or_create (p : pool) (ls : gmap loc (list loc))
 
 (* ===== lemmas ============================================================= *)
 
-(** [type_model_of] / [pool_of]: a bridge type state and a bridge registry at
-    their run-granular models, forgetting the addresses. *)
-Definition type_model_of (ts : type_state) : type_model :=
-  MkTypeModel (cell_run <$> ty_cells ts) (ty_arr ts).
-
-Definition pool_of (types : gmap loc type_state) : pool :=
-  type_model_of <$> types.
-
-(** The address map of a bridge registry: each type's node addresses (the
-    half [pool_of] forgets). *)
-Definition locs_of (types : gmap loc type_state) : gmap loc (list loc) :=
-  (λ ts, ic_loc <$> ty_cells ts) <$> types.
-
 (** [store_state_runs]: every field of the store as the invariant sees it,
     the type pool as an address map [sr_locs] and a run pool [sr_pool].
     [own_store_runs] ([store/heap.v]) is the store at such a state. *)
@@ -232,8 +174,7 @@ Record store_state_runs := MkStoreStateRuns {
 
 (** [locs_aligned locs p]: the pure alignment of an address map with a run
     pool: same type domain, and per type as many addresses as runs. The half
-    of [locs_wf] that drops the address [NoDup]; what the
-    [types_of_locs_pool] round-trips run on. *)
+    of [locs_wf] that drops the address [NoDup]. *)
 Definition locs_aligned (locs : gmap loc (list loc)) (p : pool) : Prop :=
   dom locs = dom p ∧
   (∀ parent ls tm, locs !! parent = Some ls -> p !! parent = Some tm ->
@@ -248,60 +189,6 @@ Definition locs_wf (locs : gmap loc (list loc)) (p : pool) : Prop :=
   NoDup (concat ((map_to_list locs).*2)) ∧
   (∀ parent ls tm, locs !! parent = Some ls -> p !! parent = Some tm ->
      length ls = length (tm_runs tm)).
-
-(** [types_of_locs_pool locs p]: the bridge registry an address map and a run
-    pool determine, each type's nodes re-materialized as
-    [cells_of_locs_runs]. *)
-Definition types_of_locs_pool (locs : gmap loc (list loc)) (p : pool)
-    : gmap loc type_state :=
-  map_imap (λ parent tm,
-    Some (MkTypeState (cells_of_locs_runs parent (default [] (locs !! parent)) (tm_runs tm))
-                      (tm_arr tm))) p.
-
-Lemma locs_of_concat (types : gmap loc type_state) :
-  concat ((map_to_list (locs_of types)).*2) = ic_loc <$> all_cells types.
-Proof.
-  rewrite /locs_of /all_cells map_to_list_fmap concat_fmap.
-  f_equal. rewrite -!list_fmap_compose.
-  apply list_fmap_ext. move=> i [k ts] Hl. reflexivity.
-Qed.
-
-(** [types_of_locs_pool] round-trips: under matching domains and per-type
-    address counts, its [pool_of] is the pool and its [locs_of] is the
-    address map. What lets a bridge proof hand its result back at
-    [(locs, p)]. *)
-Lemma pool_of_types_of_locs_pool (locs : gmap loc (list loc)) (p : pool) :
-  (∀ parent tm, p !! parent = Some tm ->
-     ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
-  pool_of (types_of_locs_pool locs p) = p.
-Proof.
-  move=> Hlen. apply map_eq => parent.
-  rewrite /pool_of /types_of_locs_pool lookup_fmap map_lookup_imap.
-  destruct (p !! parent) as [tm|] eqn:Hp; rewrite Hp /=.
-  - destruct (Hlen parent tm Hp) as (ls & Hls & Hl).
-    rewrite Hls /type_model_of /=.
-    rewrite cells_of_locs_runs_run; [| exact Hl].
-    destruct tm. done.
-  - done.
-Qed.
-
-Lemma locs_of_types_of_locs_pool (locs : gmap loc (list loc)) (p : pool) :
-  dom locs = dom p ->
-  (∀ parent tm, p !! parent = Some tm ->
-     ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
-  locs_of (types_of_locs_pool locs p) = locs.
-Proof.
-  move=> Hdom Hlen. apply map_eq => parent.
-  rewrite /locs_of /types_of_locs_pool lookup_fmap map_lookup_imap.
-  destruct (p !! parent) as [tm|] eqn:Hp; rewrite Hp /=.
-  - destruct (Hlen parent tm Hp) as (ls & Hls & Hl).
-    rewrite Hls /=.
-    rewrite cells_of_locs_runs_loc; [| exact Hl].
-    done.
-  - have Hnd : parent ∉ dom p by apply not_elem_of_dom.
-    rewrite -Hdom in Hnd.
-    apply not_elem_of_dom in Hnd. rewrite Hnd //.
-Qed.
 
 (** An aligned address map has a same-length address list for every type. *)
 Lemma locs_aligned_lens (locs : gmap loc (list loc)) (p : pool) :
@@ -646,30 +533,6 @@ Proof.
     rewrite -app_assoc. apply Permutation_app; [reflexivity |]. apply Permutation_app_comm.
 Qed.
 
-Lemma pool_entries_of (types : gmap loc type_state) :
-  pool_entries (locs_of types) (pool_of types) = (λ c, (ic_loc c, cell_run c)) <$> all_cells types.
-Proof.
-  rewrite /pool_entries /all_cells /pool_of map_to_list_fmap fmap_concat -!list_fmap_compose.
-  f_equal. apply list_fmap_ext => i kv Hkv.
-  have Hlk : types !! kv.1 = Some kv.2.
-  { apply elem_of_map_to_list. destruct kv. exact (list_elem_of_lookup_2 _ _ _ Hkv). }
-  rewrite /= /locs_of lookup_fmap Hlk /= zip_with_fmap_l zip_with_fmap_r zip_with_diag //.
-Qed.
-
-Lemma entries_kp_of (types : gmap loc type_state) :
-  entry_kp <$> pool_entries (locs_of types) (pool_of types) = cell_kp <$> all_cells types.
-Proof. rewrite pool_entries_of -list_fmap_compose. apply list_fmap_ext => i c _. reflexivity. Qed.
-
-Lemma entries_kp_to_cells (locs : gmap loc (list loc)) (p : pool) :
-  dom locs = dom p ->
-  (∀ parent tm, p !! parent = Some tm ->
-     ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
-  entry_kp <$> pool_entries locs p = cell_kp <$> all_cells (types_of_locs_pool locs p).
-Proof.
-  move=> Hdom Hlens. rewrite -entries_kp_of.
-  rewrite (locs_of_types_of_locs_pool locs p Hdom Hlens) (pool_of_types_of_locs_pool locs p Hlens) //.
-Qed.
-
 (** The client's entries: a permutation of the pool's entries with that
     client tag, clock-sorted; their addresses are the index's slice
     ([client_locs_entries], under the key uniqueness); each sits at a slot of
@@ -788,20 +651,41 @@ Proof.
   destruct His as [ls Hls]. rewrite Hls /=. apply snd_zip. rewrite (Hlens parent ls tm Hls Hp). lia.
 Qed.
 
+(** The entries' addresses are the address map's addresses, up to order:
+    each type contributes its whole address list, since it has one address
+    per run. So the map's [NoDup] is the index's. *)
+Lemma pool_entries_locs_perm (locs : gmap loc (list loc)) (p : pool) :
+  dom locs = dom p ->
+  (∀ parent tm, p !! parent = Some tm ->
+     ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
+  (pool_entries locs p).*1 ≡ₚ concat ((map_to_list locs).*2).
+Proof.
+  move=> Hdom Hlens.
+  have H1 : (pool_entries locs p).*1
+          = concat ((λ parent, default [] (locs !! parent)) <$> (map_to_list p).*1).
+  { rewrite /pool_entries concat_fmap -!list_fmap_compose.
+    f_equal. apply list_fmap_ext => i kv Hkv.
+    have Hlk : p !! kv.1 = Some kv.2.
+    { apply elem_of_map_to_list. destruct kv. exact (list_elem_of_lookup_2 _ _ _ Hkv). }
+    destruct (Hlens kv.1 kv.2 Hlk) as (ls & Hls & Hlen).
+    rewrite /= Hls /=. rewrite fst_zip //. lia. }
+  have H2 : concat ((map_to_list locs).*2)
+          = concat ((λ parent, default [] (locs !! parent)) <$> (map_to_list locs).*1).
+  { f_equal. rewrite -!list_fmap_compose. apply list_fmap_ext => i kv Hkv.
+    have Hlk : locs !! kv.1 = Some kv.2.
+    { apply elem_of_map_to_list. destruct kv. exact (list_elem_of_lookup_2 _ _ _ Hkv). }
+    rewrite /= Hlk //. }
+  rewrite H1 H2. apply concat_perm. apply fmap_Permutation.
+  exact (map_to_list_fst_perm p locs (eq_sym Hdom)).
+Qed.
+
 Lemma pool_entries_locs_NoDup (locs : gmap loc (list loc)) (p : pool) :
   dom locs = dom p ->
   (∀ parent tm, p !! parent = Some tm -> ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
   NoDup (concat ((map_to_list locs).*2)) ->
   NoDup (pool_entries locs p).*1.
 Proof.
-  move=> Hdom Hlens Hnd.
-  have Hkp := entries_kp_to_cells locs p Hdom Hlens.
-  have Hfst : (pool_entries locs p).*1 = ic_loc <$> all_cells (types_of_locs_pool locs p).
-  { have H : (λ kp : w64 * (Z * loc), kp.2.2) <$> (entry_kp <$> pool_entries locs p)
-           = (λ kp : w64 * (Z * loc), kp.2.2) <$> (cell_kp <$> all_cells (types_of_locs_pool locs p))
-      by rewrite Hkp.
-    rewrite -!list_fmap_compose in H. exact H. }
-  rewrite Hfst -locs_of_concat (locs_of_types_of_locs_pool locs p Hdom Hlens). exact Hnd.
+  move=> Hdom Hlens Hnd. by rewrite (pool_entries_locs_perm locs p Hdom Hlens).
 Qed.
 
 (** A fresh empty type adds no entry to the item index. *)

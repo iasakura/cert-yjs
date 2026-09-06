@@ -76,7 +76,7 @@ Context {sync_pkg : sync.Assumptions}.
     flag), so each item set grows monotonically under [⊆]; a recorded lower bound
     stays valid forever.
 
-    We track full ITEMS, not just ids: a membership bound [x ∈ S ⊆ ty_arr ts]
+    We track full ITEMS, not just ids: a membership bound [x ∈ S ⊆ tm_arr tm]
     then pins [x] to a *genuine* document item (same structure, not merely the
     same id), which is what lets [Text.Insert] expose the post as a real
     [sublist L L'] rather than only an id-set inclusion. [gset (YjsItem A)] needs
