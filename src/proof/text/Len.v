@@ -90,18 +90,18 @@ Proof.
   iDestruct "Htypes" as "(%Hlocswf & Hpool)".
   iDestruct (big_sepM_lookup_acc _ _ _ _ Htmp with "Hpool") as "[Hbody Hclose]".
   iDestruct "Hbody" as (ls) "(%Hls & Htext & %Hinvarr)".
-  iDestruct "Htext" as (yt0 tl0) "(Hparent & Hdll & %Hlen & %Harr)".
+  iDestruct "Htext" as (yt0 tl0) "(Hparent & Hdll & %Hlen)".
   subst parent.
   wp_auto.
   iDestruct ("Hclose" with "[Hparent Hdll]") as "Hpool".
   { iExists ls. iSplitR; first by iPureIntro. iSplitL; last by iPureIntro.
-    iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Harr]. }
+    iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. exact Hlen. }
   wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Hpool]").
   { iFrame "Hseq". rewrite /own_type_pool_runs. iSplitR; [by iPureIntro | iFrame "Hpool"]. }
   iIntros "Hcap".
   wp_auto.
   have Hfst : (runs_model (tm_runs tm)).*1 = tm_arr tm.
-  { rewrite runs_model_fst -Harr //. }
+  { rewrite runs_model_fst //. }
   iApply ("HΦ" $! _ (runs_model (tm_runs tm))).
   iSplitR "Hcap"; last first.
   { iFrame "Hcap". iPureIntro. split_and!.

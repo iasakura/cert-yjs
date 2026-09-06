@@ -8,9 +8,11 @@
     - [own_ytype_runs parent dq ls tm]: THE representation predicate. [parent]
       is a heap [yType] whose [start] heads the run-granular DLL
       ([own_dll_runs], from [item/heap.v]) at the node addresses [ls] and the
-      runs of [tm], with [len] counting the visible chars and the document
-      list the runs' flatten. [dfrac]-parameterized (idiom: plain owned heap
-      data), and fractional through the spine
+      runs of [tm], with [len] counting the visible chars. The type's
+      document list is not a separate field of [tm] but its runs' flatten
+      ([tm_arr]), so it cannot drift from the spine.
+      [dfrac]-parameterized (idiom: plain owned heap data), and fractional
+      through the spine
       ([own_ytype_runs_fractional], in [store/heap.v] next to the pool's).
 
     The method proofs are [ytype/newYType.v], [ytype/findPos.v] and
@@ -49,8 +51,7 @@ Definition own_ytype_runs (parent : loc) (dq : dfrac)
   ∃ (yt : yjs.yType.t) (tl : loc),
     "Hparent" ∷ parent ↦{dq} yt ∗
     "Hdll" ∷ own_dll_runs dq parent yt.(yjs.yType.start') tl null null ls (tm_runs tm) ∗
-    "%Hlen" ∷ ⌜yt.(yjs.yType.len') = W64 (runs_visible (tm_runs tm))⌝ ∗
-    "%Harr" ∷ ⌜tm_arr tm = runs_flatten (tm_runs tm)⌝.
+    "%Hlen" ∷ ⌜yt.(yjs.yType.len') = W64 (runs_visible (tm_runs tm))⌝.
 
 (* ===== lemmas ============================================================= *)
 

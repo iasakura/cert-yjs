@@ -82,16 +82,16 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
   {{{ is_pkg_init yjs ∗ own_type_pool_runs (DfracOwn 1) locs p }}}
     @! yjs.deleteNode #lc
   {{{ RET #(); own_type_pool_runs (DfracOwn 1) locs
-        (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p) }}}.
+        (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p) }}}.
 Proof using Type*.
   move=> Hlp Hpp Hlk Hrk.
-  destruct tm as [runs arr]. simpl in *.
+  destruct tm as [runs]. simpl in *.
   wp_start as "Hpool".
   iDestruct "Hpool" as "(%Hlocswf & Hpool)".
   iDestruct (big_sepM_delete _ _ parent _ Hpp with "Hpool") as "[Hpc Hrest]".
   iDestruct "Hpc" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
   rewrite Hlp in Hls0. injection Hls0 as <-.
-  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Harr)". simpl in Hlen, Harr.
+  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)". simpl in Hlen.
   iDestruct (own_dll_runs_update parent yt.(yjs.yType.start') tl null null ls runs k lc r Hlk Hrk with "Hdll")
     as (prev' nxt') "(%Hrun & %Hpc & %Hclen & Hnode & Hback)".
   iDestruct "Hnode" as (itemVal olid orid)
@@ -116,7 +116,7 @@ Proof using Type*.
     rewrite Hr (list_insert_id runs k r Hrk).
     iApply "HΦ".
     rewrite /flip_run Hr (list_insert_id runs k r Hrk).
-    have Hpid : <[parent := MkTypeModel runs arr]> p = p by apply insert_id; exact Hpp.
+    have Hpid : <[parent := MkTypeModel runs]> p = p by apply insert_id; exact Hpp.
     rewrite Hpid.
     rewrite /own_type_pool_runs.
     iSplitR; first (iPureIntro; exact Hlocswf).
@@ -124,7 +124,7 @@ Proof using Type*.
     iFrame "Hrest".
     iExists ls. iSplitR; first (iPureIntro; exact Hlp).
     iSplitL; last (iPureIntro; exact Harrinv).
-    iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Harr].
+    iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. exact Hlen.
   - (* visible: set the bit and shrink the type's [len] by the run length *)
     wp_auto.
     rewrite Hpar. wp_auto.
@@ -155,18 +155,18 @@ Proof using Type*.
     rewrite /own_type_pool_runs.
     iSplitR.
     { iPureIntro.
-      apply (locs_wf_insert_same_len locs p parent (MkTypeModel runs arr)
-               (MkTypeModel (<[k := flip_run r]> runs) arr) Hpp); last exact Hlocswf.
+      apply (locs_wf_insert_same_len locs p parent (MkTypeModel runs)
+               (MkTypeModel (<[k := flip_run r]> runs)) Hpp); last exact Hlocswf.
       simpl. rewrite length_insert //. }
     iEval (rewrite big_sepM_insert_delete).
     iSplitR "Hrest"; last iExact "Hrest".
     iExists ls. iSplitR; first (iPureIntro; exact Hlp).
-    iSplitL; last (iPureIntro; simpl; exact Harrinv).
+    iSplitL; last first.
+    { iPureIntro. rewrite /tm_arr /= (runs_flatten_flip_run runs k r Hrk). exact Harrinv. }
     iExists (yt <| yjs.yType.len' := w64_word_instance.(word.sub) yt.(yjs.yType.len')
                      (W64 (length (itemVal.(yjs.item.content').(yjs.content.content')))) |>), tl.
-    iFrame "Hparent Hdll". iPureIntro. split.
-    + simpl. rewrite Hlen Hnv -Hrunlen. word.
-    + simpl. rewrite (runs_flatten_flip_run runs k r Hrk). exact Harr.
+    iFrame "Hparent Hdll". iPureIntro.
+    simpl. rewrite Hlen Hnv -Hrunlen. word.
 Qed.
 
 
@@ -183,7 +183,7 @@ Lemma wp_deleteNode_store_runs (s : loc) (state : store_state_runs)
   {{{ is_pkg_init yjs ∗ own_store_runs s state }}}
     @! yjs.deleteNode #lc
   {{{ RET #(); own_store_runs s
-        (state <| sr_pool := <[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]>
+        (state <| sr_pool := <[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]>
                              (sr_pool state) |>) }}}.
 Proof.
   move=> Hls Hp Hlk Hrk.
@@ -196,7 +196,7 @@ Proof.
   iEval (simpl) in "Hitems Htypes".
   wp_apply (wp_deleteNode_runs locs p parent ls tm k lc r Hls Hp Hlk Hrk with "[$Hpkg $Htypes]").
   iIntros "Htypes".
-  set (tm' := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)) in *.
+  set (tm' := MkTypeModel (<[k := flip_run r]> (tm_runs tm))) in *.
   have Hrpi' : run_pool_invs (<[parent := tm']> p) := run_pool_invs_flip p parent tm k r Hp Hrk Hrpi.
   have Hreg' : pool_registry_coh bind (<[parent := tm']> p)
     := pool_registry_coh_insert_existing bind p parent tm tm' Hp Hreg.
@@ -370,7 +370,7 @@ Proof using Type*.
                 pw lsL tmL kR rl rL HlsL HpL HkLloc HrL with "[$Hpkg $Hruns]").
     iIntros "Hruns".
     iEval (simpl) in "Hruns".
-    set (p3 := <[pw := MkTypeModel (<[kR := flip_run rL]> (tm_runs tmL)) (tm_arr tmL)]> p2).
+    set (p3 := <[pw := MkTypeModel (<[kR := flip_run rL]> (tm_runs tmL))]> p2).
     wp_auto. wp_for_post.
     iFrame "HΦ s client end".
     iExists (w64_word_instance.(word.add) dclock dlen), cov, locs2, p3.
@@ -413,7 +413,7 @@ Proof using Type*.
                 pw lsR tmR kR rl rR HlsR HpR HkRloc HrR with "[$Hpkg $Hruns]").
     iIntros "Hruns".
     iEval (simpl) in "Hruns".
-    set (p3 := <[pw := MkTypeModel (<[kR := flip_run rR]> (tm_runs tmR)) (tm_arr tmR)]> p1).
+    set (p3 := <[pw := MkTypeModel (<[kR := flip_run rR]> (tm_runs tmR))]> p1).
     wp_auto. wp_for_post.
     iFrame "HΦ s client end".
     iExists (w64_word_instance.(word.add) ivR.(yjs.item.id').(yjs.id.clock')

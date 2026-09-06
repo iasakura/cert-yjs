@@ -72,11 +72,11 @@ Lemma wp_splitItem_runs (parent lc : loc) (ls : list loc) (runs : list ItemRun)
   runs !! k = Some r ->
   (0 < uint.nat diff < length (run_items r))%nat ->
   run_fits r ->
-  {{{ is_pkg_init yjs ∗ own_ytype_runs parent (DfracOwn 1) ls (MkTypeModel runs arr) }}}
+  {{{ is_pkg_init yjs ∗ own_ytype_runs parent (DfracOwn 1) ls (MkTypeModel runs) }}}
     @! yjs.splitItem #lc #diff
   {{{ (rloc : loc), RET #rloc;
       own_ytype_runs parent (DfracOwn 1) (split_locs ls k rloc)
-        (MkTypeModel (split_runs runs k (uint.nat diff)) arr) ∗
+        (MkTypeModel (split_runs runs k (uint.nat diff))) ∗
       ⌜rloc ≠ null ∧ rloc ∉ ls⌝ }}}.
 Proof using Type*.
   move=> Hlk Hrk Hdiff Hfits.
@@ -276,9 +276,7 @@ Proof using Type*.
         - rewrite Hivr_r. exact Hrnull.
         - exact Hp18. }
       iEval (simpl). iPureIntro. split; reflexivity. }
-    iPureIntro. simpl. split.
-    + rewrite (split_runs_visible runs k o r Hrk Hole). exact Hlen.
-    + rewrite (split_runs_flatten runs k o r Hrk). exact Harr.
+    iPureIntro. simpl. rewrite (split_runs_visible runs k o r Hrk Hole). exact Hlen.
   - (* lc has a right neighbour d0: relink d0.left := right first *)
     iDestruct (own_dll_runs_cons_unfold with "Hrest") as (nxtd) "(%Hlocd & %Hpcd0 & %Hrund & Hnoded & Hrestd)".
     destruct Hlocd as [Hlocd1n Hlocdnn].
@@ -357,9 +355,7 @@ Proof using Type*.
         - exact Hivr_r.
         - exact Hp18. }
       iExact "Hsufdll". }
-    iPureIntro. simpl. split.
-    + rewrite (split_runs_visible runs k o r Hrk Hole). exact Hlen.
-    + rewrite (split_runs_flatten runs k o r Hrk). exact Harr.
+    iPureIntro. simpl. rewrite (split_runs_visible runs k o r Hrk Hole). exact Hlen.
 Qed.
 
 (** [store.splitNode] at run granularity (plan-item-run-split stage 2):
@@ -381,7 +377,7 @@ Lemma wp_store__splitNode_runs (s : loc) (state : store_state_runs)
     s @! (go.PointerType yjs.store) @! "splitNode" #l #diff
   {{{ (rloc : loc), RET (#l, #rloc);
       own_store_runs s
-        (state <| sr_pool := <[parent := MkTypeModel (split_runs (tm_runs tm) k (uint.nat diff)) (tm_arr tm)]> (sr_pool state) |>
+        (state <| sr_pool := <[parent := MkTypeModel (split_runs (tm_runs tm) k (uint.nat diff))]> (sr_pool state) |>
              <| sr_locs := <[parent := split_locs ls k rloc]> (sr_locs state) |>) ∗
       ⌜rloc ≠ null ∧ rloc ∉ concat ((map_to_list (sr_locs state)).*2)⌝ }}}.
 Proof using Type*.
@@ -425,7 +421,7 @@ Proof using Type*.
      surgery) *)
   iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Hpc Hrest]".
   iDestruct "Hpc" as (ls0) "(%Hls0 & Hyt & %Harrinv)". rewrite Hl in Hls0. injection Hls0 as <-.
-  iDestruct "Hyt" as (yt0 tl0) "(Hparent0 & Hdll0 & %Hlen0 & %Hrepr0)".
+  iDestruct "Hyt" as (yt0 tl0) "(Hparent0 & Hdll0 & %Hlen0)".
   iDestruct (own_dll_runs_acc (DfracOwn 1) parent _ tl0 ls (tm_runs tm) k l r Hlk Hr with "Hdll0")
     as (prev0 nxt0) "(%Hcl0 & %Hcr0 & %Hrun0 & %Hpc0 & %Hclen0 & Hnode0 & Hback0)".
   iDestruct "Hnode0" as (itemVal olid0 orid0)
@@ -437,9 +433,9 @@ Proof using Type*.
     split_and!; [exact Hinl0 | exact Hinr0 | exact Hidn0 | exact Hcont0 | exact Hpar0
                 | exact Hprev0 | exact Hnext0 | exact Hflags0]. }
   iDestruct ("Hback0" with "Hnode0") as "Hdll0".
-  iAssert (own_ytype_runs parent (DfracOwn 1) ls (MkTypeModel (tm_runs tm) (tm_arr tm)))
+  iAssert (own_ytype_runs parent (DfracOwn 1) ls (MkTypeModel (tm_runs tm)))
     with "[Hparent0 Hdll0]" as "Hyt".
-  { iExists yt0, tl0. iFrame "Hparent0 Hdll0". iPureIntro. split; [exact Hlen0 | exact Hrepr0]. }
+  { iExists yt0, tl0. iFrame "Hparent0 Hdll0". iPureIntro. exact Hlen0. }
   wp_method_call. wp_call. wp_call. wp_auto.
   (* the DLL half *)
   wp_apply (wp_splitItem_runs parent l ls (tm_runs tm) (tm_arr tm) k r diff Hlk Hr Hdiff Hfitsr
@@ -450,7 +446,7 @@ Proof using Type*.
   have Hlk' : split_locs ls k rs !! S k = Some rs := split_locs_lookup_right ls k rs l Hlk.
   have Hrk' : split_runs (tm_runs tm) k (uint.nat diff) !! S k = Some (split_run_right r (uint.nat diff))
     := split_runs_lookup_right _ _ _ _ Hr.
-  iDestruct "Hyt2" as (yt2 tl2) "(Hparent2 & Hdll2 & %Hlen2 & %Hrepr2)".
+  iDestruct "Hyt2" as (yt2 tl2) "(Hparent2 & Hdll2 & %Hlen2)".
   iEval (cbn [tm_runs]) in "Hdll2".
   iDestruct (own_dll_runs_lookup_acc _ _ _ _ _ _ _ _ _ _ _ Hlk' Hrk' with "Hdll2") as (pr nr) "(Hnoder & Hbackr)".
   iDestruct "Hnoder" as (ivr olr orr) "(Hrsval & Hrsol & Hrsor & %Hf1 & %Hf2 & %Hf3 & %Hf4 & %Hf5 & %Hf6 & %Hf7 & %Hf8)".
@@ -477,14 +473,14 @@ Proof using Type*.
   set (o := uint.nat diff) in *.
   set (ls2 := split_locs ls k rs) in *.
   set (runs2 := split_runs (tm_runs tm) k o) in *.
-  set (tm2 := MkTypeModel runs2 (tm_arr tm)) in *.
+  set (tm2 := MkTypeModel runs2) in *.
   set (locs2 := <[parent := ls2]> locs) in *.
   set (p2 := <[parent := tm2]> p) in *.
   set (leftRun := split_run_left r o) in *.
   set (rightRun := split_run_right r o) in *.
   (* the pool at (locs2, p2) *)
   iAssert (own_ytype_runs parent (DfracOwn 1) ls2 tm2) with "[Hparent2 Hdll2]" as "Hyt2".
-  { iExists yt2, tl2. iFrame "Hparent2 Hdll2". iPureIntro. split; [exact Hlen2 | exact Hrepr2]. }
+  { iExists yt2, tl2. iFrame "Hparent2 Hdll2". iPureIntro. exact Hlen2. }
   have Hlocswf2 : locs_wf locs2 p2 := locs_wf_split locs p parent ls tm k l r o rs Hl Hp Hlk Hr Hrsfresh Hlocswf0.
   have Hrpi2 : run_pool_invs p2 := run_pool_invs_split p parent tm k o r Hp Hr Hwfr Hob Hrpi.
   have Hreg2 : pool_registry_coh bind p2 := pool_registry_coh_insert_existing bind p parent tm tm2 Hp Hreg.
@@ -492,11 +488,13 @@ Proof using Type*.
   have Hl2 : locs2 !! parent = Some ls2 by apply lookup_insert_eq.
   have Hlk2 : ls2 !! k = Some l := split_locs_lookup_left ls k rs l Hlk.
   have Hrk2 : runs2 !! k = Some leftRun := split_runs_lookup_left _ _ _ _ Hr.
+  have Harrinv2 : YjsArrInvariant (tm_arr tm2).
+  { rewrite /tm2 /tm_arr /= /runs2 (split_runs_flatten (tm_runs tm) k o r Hr). exact Harrinv. }
   iAssert (own_type_pool_runs (DfracOwn 1) locs2 p2)%I with "[Hyt2 Hrest]" as "Htypes2".
   { iSplitR; first (iPureIntro; exact Hlocswf2).
     rewrite /p2 big_sepM_insert_delete.
     iSplitL "Hyt2".
-    { iExists ls2. iFrame "Hyt2". iPureIntro. split; [exact Hl2 | exact Harrinv]. }
+    { iExists ls2. iFrame "Hyt2". iPureIntro. split; [exact Hl2 | exact Harrinv2]. }
     iApply (big_sepM_impl with "Hrest"). iIntros "!>" (q tmq Hq) "H".
     iDestruct "H" as (lsq) "(%Hlsq & Hyt & %Hinv)". iExists lsq. iFrame "Hyt".
     iPureIntro. split; [| exact Hinv].

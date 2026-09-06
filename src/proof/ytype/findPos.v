@@ -46,7 +46,7 @@ Lemma wp_yType__findPos (parent : loc) (dq : dfrac) (ls : list loc)
       own_ytype_runs parent dq ls tm ∗ ⌜find_pos_runs ls (tm_runs tm) p leftNode rightNode off⌝ }}}.
 Proof.
   wp_start as "Hyt".
-  destruct tm as [runs arr]. simpl.
+  destruct tm as [runs]. simpl.
   iNamed "Hyt".
   iDestruct (own_dll_runs_length with "Hdll") as %Hlenls.
   iDestruct (own_dll_runs_headptr with "Hdll") as "[%Hhead Hdll]".
@@ -64,10 +64,10 @@ Proof.
     wp_for "IH".
     wp_if_destruct.
     + wp_auto. iApply ("HΦ" $! null null 0%nat (W64 0)). iSplitL "Hp".
-      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen | exact Harr]. }
+      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen]. }
       iPureIntro. split_and!; [lia | rewrite /loc_at; case_decide; reflexivity | rewrite /loc_at; case_decide; reflexivity | by left].
     + iApply ("HΦ" $! null null 0%nat (W64 0)). iSplitL "Hp".
-      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen | exact Harr]. }
+      { iExists yt, null. iFrame "Hp". iPureIntro. split_and!; [exact Hs | reflexivity | exact Hlen]. }
       iPureIntro. split_and!; [lia | rewrite /loc_at; case_decide; reflexivity | rewrite /loc_at; case_decide; reflexivity | by left].
   - (* non-empty: skip leading tombstones, then count visible nodes to [idx] *)
     wp_auto.
@@ -154,7 +154,7 @@ Proof.
         2:{ wp_auto. rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
             iApply ("HΦ" $! (loc_at (l0 :: ls') (Z.of_nat q2 - 1)) (loc_at (l0 :: ls') q2) q2 off).
             iSplitR "".
-            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Harr]. }
+            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. exact Hlen. }
             iPureIntro. split_and!; [lia | reflexivity | reflexivity |].
             destruct Hoffinv as [-> | (Hpos & _ & Hq21 & Hc)]; [by left | right; exact (conj Hpos (conj Hq21 Hc))]. }
         wp_auto.
@@ -168,7 +168,7 @@ Proof.
             rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
             iApply ("HΦ" $! (loc_at (l0 :: ls') (Z.of_nat q2 - 1)) (loc_at (l0 :: ls') q2) q2 (W64 0)).
             iSplitR "".
-            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Harr]. }
+            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. exact Hlen. }
             iPureIntro. split_and!; [lia | reflexivity | reflexivity | by left]. }
         iDestruct (loc_at_lt_not_null dq parent yt.(yjs.yType.start') tl (l0 :: ls') (r0 :: rs') q2 Hq2lt with "Hdll") as "[%Hnn2 Hdll]".
         rewrite (bool_decide_eq_false_2 (loc_at (l0 :: ls') q2 = null) Hnn2). simpl negb.
@@ -275,7 +275,7 @@ Proof.
         2:{ wp_auto. rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
             iApply ("HΦ" $! (loc_at (l0 :: ls') (Z.of_nat q2 - 1)) (loc_at (l0 :: ls') q2) q2 off).
             iSplitR "".
-            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Harr]. }
+            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. exact Hlen. }
             iPureIntro. split_and!; [lia | reflexivity | reflexivity |].
             destruct Hoffinv as [-> | (Hpos & _ & Hq21 & Hc)]; [by left | right; exact (conj Hpos (conj Hq21 Hc))]. }
         wp_auto.
@@ -289,7 +289,7 @@ Proof.
             rewrite decide_False; [| done]. rewrite decide_True; [| done]. wp_auto.
             iApply ("HΦ" $! (loc_at (l0 :: ls') (Z.of_nat q2 - 1)) (loc_at (l0 :: ls') q2) q2 (W64 0)).
             iSplitR "".
-            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. split_and!; [exact Hlen | exact Harr]. }
+            { iExists yt, tl. iFrame "Hp Hdll". iPureIntro. exact Hlen. }
             iPureIntro. split_and!; [lia | reflexivity | reflexivity | by left]. }
         iDestruct (loc_at_lt_not_null dq parent yt.(yjs.yType.start') tl (l0 :: ls') (r0 :: rs') q2 Hq2lt with "Hdll") as "[%Hnn2 Hdll]".
         rewrite (bool_decide_eq_false_2 (loc_at (l0 :: ls') q2 = null) Hnn2). simpl negb.

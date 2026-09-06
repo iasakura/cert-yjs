@@ -19,9 +19,11 @@
     - [sorted_subseteq_sublist]: set inclusion between two sorted document
       lists is a [sublist].
 
-    Second section ([ytype_run_model], plan-item-run-split stage 2):
-    [type_model], the type at run granularity: its runs as data ([tm_runs])
-    and the per-char document list they flatten to ([tm_arr]). *)
+    Second section ([ytype_run_model]): [type_model], one registered type as
+    its run list ([tm_runs]), with the per-char document list it flattens to
+    read off it ([tm_arr]) and the tombstone-tagged sequence it denotes
+    ([run_models] / [runs_model], read one run at a time by
+    [runs_model_app] / [runs_model_singleton]). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -373,14 +375,14 @@ Notation A := go_string.
 
 (* ===== definitions ======================================================== *)
 
-(** [type_model]: one registered type, loc-free: its list of runs and the
-    per-char document list they flatten to ([tm_arr = runs_flatten tm_runs]
-    wherever the heap holds it, kept as a fact rather than folded away until
-    docs/plan-item-run-split.md stage C6-5). *)
+(** [type_model]: one registered type, loc-free: its list of runs.
+    [tm_arr] is the per-char document list they flatten to, a projection and
+    not a field, so a type's document cannot drift from its runs. *)
 Record type_model := MkTypeModel {
   tm_runs : list ItemRun;
-  tm_arr  : list (YjsItem A);
 }.
+
+Definition tm_arr (tm : type_model) : list (YjsItem A) := runs_flatten (tm_runs tm).
 
 (** [run_models r] / [runs_model runs]: a run list read as the abstract
     per-char sequence [list (YjsItem A * bool)], each document item paired

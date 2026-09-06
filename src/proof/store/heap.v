@@ -14,11 +14,9 @@
       [store_state_runs] (every field at run granularity,
       [own_store_fields_runs] / [own_items_field_runs], with
       [store_invs_runs]), which every store spec is stated over, and what it
-      reads
-      back at run granularity ([own_store_runs_run_pool_invs]
-      / [own_store_runs_run_wf] / [own_store_runs_arr] /
-      [own_store_runs_arr_inv] / [own_store_runs_registry_coh], the
-      document readers also on the pool, [own_type_pool_runs_arr] /
+      reads back at run granularity ([own_store_runs_run_pool_invs] /
+      [own_store_runs_run_wf] / [own_store_runs_arr_inv] /
+      [own_store_runs_registry_coh], the document reader also on the pool,
       [own_type_pool_runs_arr_inv]), the node borrows
       ([own_type_pool_runs_node_acc] / [own_store_runs_node_acc], with the
       neighbour addresses and the flag byte in the [_links] forms; a whole
@@ -585,13 +583,13 @@ Definition own_type_pool_runs (dq : dfrac)
   Fractional (λ q, own_ytype_runs parent (DfracOwn q) ls tm).
 Proof.
   intros q1 q2. iSplit.
-  - iIntros "H". iDestruct "H" as (yt tl) "(Hpar & Hdll & %Hlen & %Harr)".
+  - iIntros "H". iDestruct "H" as (yt tl) "(Hpar & Hdll & %Hlen)".
     iDestruct "Hpar" as "[Hp1 Hp2]".
     iDestruct (own_dll_runs_fractional with "Hdll") as "[Hd1 Hd2]".
     iSplitL "Hp1 Hd1"; iExists yt, tl; iFrame; done.
   - iIntros "[H1 H2]".
-    iDestruct "H1" as (yt1 tl1) "(Hp1 & Hd1 & %Hlen & %Harr)".
-    iDestruct "H2" as (yt2 tl2) "(Hp2 & Hd2 & _ & _)".
+    iDestruct "H1" as (yt1 tl1) "(Hp1 & Hd1 & %Hlen)".
+    iDestruct "H2" as (yt2 tl2) "(Hp2 & Hd2 & _)".
     iCombine "Hp1 Hp2" gives %Hyt. subst yt2.
     iDestruct (own_dll_runs_lastptr with "Hd1") as "[%Htl1 Hd1]".
     iDestruct (own_dll_runs_lastptr with "Hd2") as "[%Htl2 Hd2]".
@@ -677,7 +675,7 @@ Lemma own_ytype_runs_fresh (q : loc) (v : yjs.item.t) (parent : loc) (dq : dfrac
     (ls : list loc) (tm : type_model) :
   q ↦ v -∗ own_ytype_runs parent dq ls tm -∗ ⌜q ∉ ls⌝.
 Proof.
-  iIntros "Hq Hyt". iDestruct "Hyt" as (yt tl) "(_ & Hdll & _ & _)".
+  iIntros "Hq Hyt". iDestruct "Hyt" as (yt tl) "(_ & Hdll & _)".
   iApply (own_dll_runs_fresh with "Hq Hdll").
 Qed.
 
@@ -830,23 +828,9 @@ Proof.
   iApply (own_type_pool_runs_run_wf with "Htypes").
 Qed.
 
-(** Every registered type's document is the flatten of its runs: the yType
-    pin, read off the run-granular pool and off the store. *)
-Lemma own_type_pool_runs_arr (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) :
-  own_type_pool_runs dq locs p -∗
-  ⌜∀ parent tm, p !! parent = Some tm -> tm_arr tm = runs_flatten (tm_runs tm)⌝.
-Proof.
-  iIntros "(%Hlocswf & Hpool)".
-  iAssert ([∗ map] parent ↦ tm ∈ p, ⌜tm_arr tm = runs_flatten (tm_runs tm)⌝)%I
-    with "[Hpool]" as "H".
-  { iApply (big_sepM_impl with "Hpool").
-    iIntros "!#" (parent tm Hp) "H".
-    iDestruct "H" as (ls) "(_ & Hyt & _)".
-    iDestruct "Hyt" as (yt tl) "(_ & _ & _ & %Harr)". by iPureIntro. }
-  iDestruct (big_sepM_pure with "H") as %Hall.
-  iPureIntro. move=> parent tm Hp. exact (Hall parent tm Hp).
-Qed.
 
+(** Every registered type's document is a valid document: the yType body's
+    invariant, read off the pool and off the whole store. *)
 Lemma own_type_pool_runs_arr_inv (dq : dfrac) (locs : gmap loc (list loc)) (p : pool) :
   own_type_pool_runs dq locs p -∗
   ⌜∀ parent tm, p !! parent = Some tm -> YjsArrInvariant (tm_arr tm)⌝.
@@ -859,15 +843,6 @@ Proof.
     iDestruct "H" as (ls) "(_ & _ & %Hinv)". by iPureIntro. }
   iDestruct (big_sepM_pure with "H") as %Hall.
   iPureIntro. move=> parent tm Hp. exact (Hall parent tm Hp).
-Qed.
-
-Lemma own_store_runs_arr (s : loc) (state : store_state_runs) :
-  own_store_runs s state -∗
-  ⌜∀ parent tm, sr_pool state !! parent = Some tm -> tm_arr tm = runs_flatten (tm_runs tm)⌝.
-Proof.
-  iIntros "(Hfields & _)".
-  iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
-  iApply (own_type_pool_runs_arr with "Htypes").
 Qed.
 
 (** Every registered type's document satisfies the array invariant, and the
@@ -909,7 +884,7 @@ Proof.
   iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Hpc Hrest]".
   iDestruct "Hpc" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
   rewrite Hls in Hls0. injection Hls0 as <-.
-  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Harr)".
+  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
   iDestruct (own_dll_runs_acc (DfracOwn 1) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk
                with "Hdll")
     as (prev' nxt') "(%Hcl & %Hcr & %Hrun & %Hperchar & %Hclen & Hnode & Hback)".
@@ -937,7 +912,7 @@ Proof.
   iApply big_sepM_delete; first exact Hp.
   iFrame "Hrest". iExists ls. iSplitR; first (iPureIntro; exact Hls).
   iSplitL; last (iPureIntro; exact Harrinv).
-  iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Harr].
+  iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. exact Hlen.
 Qed.
 
 (** Borrow the [k]-th node of the type at [parent] out of the store, exposing
@@ -1000,7 +975,7 @@ Proof.
   iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Hpc Hrest]".
   iDestruct "Hpc" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
   rewrite Hls in Hls0. injection Hls0 as <-.
-  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen & %Harr)".
+  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
   iDestruct (own_dll_runs_acc (DfracOwn 1) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk
                with "Hdll")
     as (prev' nxt') "(%Hcl & %Hcr & %Hrun & %Hperchar & %Hclen & Hnode & Hback)".
@@ -1031,7 +1006,7 @@ Proof.
   iApply big_sepM_delete; first exact Hp.
   iFrame "Hrest". iExists ls. iSplitR; first (iPureIntro; exact Hls).
   iSplitL; last (iPureIntro; exact Harrinv).
-  iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. split; [exact Hlen | exact Harr].
+  iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. exact Hlen.
 Qed.
 
 (** [own_type_pool_runs_node_acc_links] behind the store's lift and lower. *)
@@ -1501,7 +1476,7 @@ Definition integrate_loop_inv_runs
     (loopResult : option Z)
     (conflict_l left_l right_l idsBeforeOrigin_l conflictIds_l : loc)
     (offset cur curD : nat) (idsBeforeOrigin conflictIds : gset YjsId) (destIdx : Z) : iProp Σ :=
-  "Htext" ∷ own_ytype_runs parent dq ls (MkTypeModel runs arr) ∗
+  "Htext" ∷ own_ytype_runs parent dq ls (MkTypeModel runs) ∗
   "Hconflict" ∷ conflict_l ↦ loc_at ls (Z.of_nat cur) ∗
   "Hleft" ∷ left_l ↦ loc_at ls (Z.of_nat curD - 1) ∗
   "Hright" ∷ right_l ↦ loc_at ls (Z.of_nat curR) ∗

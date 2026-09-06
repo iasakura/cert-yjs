@@ -85,8 +85,7 @@ Proof.
   (* borrow the type's run view and run the verified walk *)
   iDestruct (big_sepM_lookup_acc _ _ _ _ Htmp with "Hpool") as "[Hbody Hclose]".
   iDestruct "Hbody" as (ls) "(%Hls & Htextr & %Hinvarr)".
-  iAssert (⌜tm_arr tm = runs_flatten (tm_runs tm)⌝)%I as %Harr;
-    first by iDestruct "Htextr" as (yt tl) "(_ & _ & _ & %Harr)".
+  have Harr : tm_arr tm = runs_flatten (tm_runs tm) := eq_refl.
   wp_auto.
   wp_apply (wp_yType__Text (tv.(yjs.Text.inner')) (DfracOwn rwmutex_guard.rfrac) ls tm with "[$Htextr]").
   iIntros "Htextr".

@@ -31,7 +31,7 @@ Lemma wp_yType__Text (parent : loc) (dq : dfrac) (ls : list loc) (tm : type_mode
       own_ytype_runs parent dq ls tm }}}.
 Proof.
   wp_start as "Hyt".
-  destruct tm as [runs arr]. simpl.
+  destruct tm as [runs]. simpl.
   iNamed "Hyt".
   iDestruct (own_dll_runs_headptr with "Hdll") as "[%Hhd Hdll]".
   have Hhead : yt.(yjs.yType.start') = loc_at ls 0.
@@ -116,7 +116,7 @@ Proof.
     rewrite Hkeq take_ge; [| lia].
     iApply "HΦ".
     iExists yt, tl. iFrame "Hp Hdll".
-    iPureIntro. split_and!; [exact Hlen | exact Harr].
+    iPureIntro. exact Hlen.
 Qed.
 
 End ytype.

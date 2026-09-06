@@ -104,12 +104,12 @@ Proof using Type*.
     rewrite Hb /=. wp_auto.
     wp_apply wp_newYType_runs. iIntros (q) "Hnew".
     wp_auto.
-    iDestruct (own_type_pool_runs_fresh_type q [] (MkTypeModel [] []) locs p with "Hnew Htypes")
+    iDestruct (own_type_pool_runs_fresh_type q [] (MkTypeModel []) locs p with "Hnew Htypes")
       as "(Hnew & Htypes & %Hfresh)".
     wp_apply (wp_map_insert with "Htypesmap"). iIntros "Htypesmap".
     wp_auto.
     iDestruct "Htypes" as "(%Hlocswf & Hpool)".
-    iAssert (own_type_pool_runs (DfracOwn 1) (<[q := []]> locs) (<[q := MkTypeModel [] []]> p))
+    iAssert (own_type_pool_runs (DfracOwn 1) (<[q := []]> locs) (<[q := MkTypeModel []]> p))
       with "[Hpool Hnew]" as "Htypes".
     { iSplitR; first (iPureIntro; exact (locs_wf_insert_empty locs p q Hfresh Hlocswf)).
       rewrite big_sepM_insert; last exact Hfresh.
@@ -124,11 +124,11 @@ Proof using Type*.
     iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
     iEval (rewrite /own_item_map_runs) in "Hitemmap".
     iDestruct (own_item_map_key_pairs_keys_perm items_mref (DfracOwn 1) _
-                 (entry_key_pair <$> pool_entries (<[q := []]> locs) (<[q := MkTypeModel [] []]> p))
+                 (entry_key_pair <$> pool_entries (<[q := []]> locs) (<[q := MkTypeModel []]> p))
                  (Permutation_sym (fmap_Permutation entry_key_pair _ _
                     (pool_entries_insert_empty locs p q Hfresh)))
                  with "Hitemmap") as "Hitemmap".
-    iApply ("HΦ" $! q (<[q := MkTypeModel [] []]> p) (<[q := []]> locs) (<[nm := q]> bind)).
+    iApply ("HΦ" $! q (<[q := MkTypeModel []]> p) (<[q := []]> locs) (<[nm := q]> bind)).
     iSplitL; last (iPureIntro; right; split_and!;
                    [exact Hb | exact Hfresh | reflexivity | reflexivity | reflexivity]).
     iSplitL; last (iPureIntro; split;
@@ -567,18 +567,17 @@ Qed.
 Lemma docm_runs_agree (m : DocModel) (bind : gmap P loc) (p : pool) (d : YjsId) :
   pool_registry_models m bind p ->
   pool_registry_coh bind p ->
-  (∀ parent tm, p !! parent = Some tm -> tm_arr tm = runs_flatten (tm_runs tm)) ->
   (∀ r, r ∈ all_runs p -> run_wf (run_items r)) ->
   (doc_model_has m d = true <-> ∃ q k, pool_run_covers p q k d).
 Proof.
-  move=> [Hmtypes Hmdom] [Hbindtypes [_ Htypesbound]] Harr Hrunwf. split.
+  move=> [Hmtypes Hmdom] [Hbindtypes [_ Htypesbound]] Hrunwf. split.
   - move=> /docm_has_spec [t [x [Hx Hid]]].
     have Hne : doc_model_get m t ≠ [].
     { move=> Heq. move: Hx. rewrite Heq elem_of_nil //. }
     destruct (Hmdom t Hne) as (nm & q & -> & Hbnm).
     destruct (Hbindtypes nm q Hbnm) as [tm Htm].
     have Hdg : doc_model_get m (RootId nm) = tm_arr tm := Hmtypes nm q tm Hbnm Htm.
-    rewrite Hdg (Harr q tm Htm) in Hx.
+    rewrite Hdg /tm_arr in Hx.
     apply list_elem_of_lookup_1 in Hx as [kn Hkn].
     destruct (runs_flatten_lookup_run (tm_runs tm) kn x Hkn) as (k & off & r & Hk & Hoff & _).
     have Hrall : r ∈ all_runs p.
@@ -599,7 +598,7 @@ Proof.
     have Hdg : doc_model_get m (RootId nm) = tm_arr tm := Hmtypes nm q tm Hbnm Htm.
     destruct (run_wf_char_at_clock (run_items r) d Hwf Hcl Hle Hlt) as (ch & Hch & Hchid).
     exists (RootId nm), ch. split; [| exact Hchid].
-    rewrite Hdg (Harr q tm Htm).
+    rewrite Hdg /tm_arr.
     apply (list_elem_of_lookup_2 _
              (length (runs_flatten (take k (tm_runs tm))) +
               (clock d - clock (item_id (hd inhabitant (run_items r)))))%nat).
@@ -622,10 +621,9 @@ Proof using Type*.
   move=> Hregmodel.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
   iDestruct (own_store_runs_registry_coh with "Hruns") as %Hpreg.
-  iDestruct (own_store_runs_arr with "Hruns") as %Harr.
   iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf.
   have Hagree : ∀ d : YjsId, doc_model_has m d = true <-> ∃ q k, pool_run_covers (sr_pool state) q k d
-    := λ d, docm_runs_agree m (sr_bind state) (sr_pool state) d Hregmodel Hpreg Harr Hwf.
+    := λ d, docm_runs_agree m (sr_bind state) (sr_pool state) d Hregmodel Hpreg Hwf.
   wp_method_call. wp_call. wp_call. wp_auto.
   wp_apply (wp_store__GetNode_runs s idv state with "[$Hpkg $Hruns]").
   iIntros (l ok) "(Hruns & %Hres)".
@@ -948,7 +946,7 @@ Qed.
     s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
   {{{ (q : loc), RET #();
       own_linked_item item_l input q null null ∗
-      own_store_runs s (state <| sr_pool := <[q := MkTypeModel [] []]> (sr_pool state) |>
+      own_store_runs s (state <| sr_pool := <[q := MkTypeModel []]> (sr_pool state) |>
                             <| sr_locs := <[q := []]> (sr_locs state) |>
                             <| sr_bind := <[nm := q]> (sr_bind state) |>) ∗
       ⌜sr_pool state !! q = None⌝ }}}.
@@ -1022,7 +1020,6 @@ Proof using Type*.
     "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)".
   destruct typedInput as [typedInput2 input]. simpl in *. subst typedInput2.
   iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf0.
-  iDestruct (own_store_runs_arr with "Hruns") as %Harr0.
   iDestruct (own_store_runs_arr_inv with "Hruns") as %Harrinv0.
   iDestruct (own_store_runs_registry_coh with "Hruns") as %Hpreg0.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hpreg0.
@@ -1030,7 +1027,7 @@ Proof using Type*.
   have Hdgj : doc_model_get m (RootId nm) = tm_arr tmj := Hmtypes nm p tmj Hbnm Htmj.
   set (arrj := doc_model_get m (RootId nm)) in *.
   have Hinvj : YjsArrInvariant arrj by (rewrite Hdgj; exact (Harrinv0 p tmj Htmj)).
-  have Hreprj : arrj = runs_flatten (tm_runs tmj) by (rewrite Hdgj; exact (Harr0 p tmj Htmj)).
+  have Hreprj : arrj = runs_flatten (tm_runs tmj) by rewrite Hdgj.
   destruct (integrate_some input arrj newItem Hinvj Htoit) as [arrinput Hintginput].
   destruct (integrate_finds input arrj arrinput Hintginput) as (leftIdx & rightIdx & HfindL & HfindR).
   have Hwfj : ∀ r, r ∈ tm_runs tmj -> run_wf (run_items r).
@@ -1155,16 +1152,15 @@ Proof using Type*.
   destruct Hosplit as [HbdL HbdR].
   iDestruct (own_store_runs_run_wf with "Hruns") as %Hwf2.
   iDestruct (own_store_runs_aligned with "Hruns") as %Haligned2.
-  iDestruct (own_store_runs_arr with "Hruns") as %Harr2.
   have Hpres2 := proj1 Hrep2.
   have Hdom2 := proj1 (proj2 Hrep2).
   have Hwithin2 := proj1 (proj2 (proj2 (proj2 Hrep2))).
   have Hlive2 := proj2 (proj2 (proj2 (proj2 Hrep2))).
   destruct (Hdom2 p (mk_is_Some _ _ Htmj)) as [tm2 Htm2].
-  destruct (Hpres2 p tm2 Htm2) as (tm0e & Htm0e & Harr2p & Hflat2p).
+  destruct (Hpres2 p tm2 Htm2) as (tm0e & Htm0e & Harr2p).
   rewrite Htmj in Htm0e. injection Htm0e as <-.
   have Harrj2 : tm_arr tm2 = arrj by rewrite Harr2p Hdgj //.
-  have Hreprj2 : arrj = runs_flatten (tm_runs tm2) by rewrite -Harrj2; exact (Harr2 p tm2 Htm2).
+  have Hreprj2 : arrj = runs_flatten (tm_runs tm2) by rewrite -Harrj2.
   destruct (locs_aligned_lens _ _ Haligned2 p tm2 Htm2) as (ls2 & Hls2 & Hlen2).
   have Hwf2j : ∀ r, r ∈ tm_runs tm2 -> run_wf (run_items r).
   { move=> r Hr. apply Hwf2. apply (elem_of_all_runs p2 r). by exists p, tm2. }
@@ -1267,8 +1263,11 @@ Proof using Type*.
   iEval (simpl) in "Hruns".
   destruct Hsplice as (idx & Hsp & Hls'eq).
   destruct Hsp as (Hidxb & Hile & Hruns'eq & Harr2eq).
+  have Hflat' : runs_flatten runs' = arr2.
+  { apply (runs_integrate_splice_at_flatten idx (tm_runs tm2) runs' run arr2).
+    split_and!; [exact Hidxb | exact Hile | exact Hruns'eq | exact Harr2eq]. }
   set (rn := MkItemRun run false).
-  have Hperm : all_runs (<[p := MkTypeModel runs' arr2]> p2) ≡ₚ rn :: all_runs p2.
+  have Hperm : all_runs (<[p := MkTypeModel runs']> p2) ≡ₚ rn :: all_runs p2.
   { rewrite Hruns'eq. exact (all_runs_splice_perm p2 p tm2 idx rn arr2 Htm2). }
   destruct Hden as (Hrnid & Hrnorig & Hrnrorig & Hrnlen).
   have Hrnhead : item_id (run_head_item rn) = in_id input := Hrnid.
@@ -1279,7 +1278,7 @@ Proof using Type*.
   have Hrnwf : run_wf (run_items rn).
   { apply Hwf3. simpl. rewrite Hperm. apply list_elem_of_here. }
   wp_auto.
-  iApply ("HΦ" $! (<[p := MkTypeModel runs' arr2]> p2) (<[p := ls']> locs2)). simpl.
+  iApply ("HΦ" $! (<[p := MkTypeModel runs']> p2) (<[p := ls']> locs2)). simpl.
   iFrame "Hruns".
   iPureIntro. split_and!.
   - (* registry coherence at <[RootId nm := arr2]> m *)
@@ -1300,7 +1299,7 @@ Proof using Type*.
         have : Some q0 = Some p by rewrite -Hbnm0 -Hbnm //.
         by move=> [=]. }
       rewrite docm_get_insert_ne //.
-      destruct (Hpres2 q0 tm Htm) as (tmold & Hpold & Harrp & _).
+      destruct (Hpres2 q0 tm Htm) as (tmold & Hpold & Harrp).
       rewrite Harrp.
       exact (Hmtypes nm0 q0 tmold Hbnm0 Hpold).
   - (* provenance: an old run (inside a repaired one) or the new run *)
@@ -1398,9 +1397,9 @@ Proof using Type*.
   (* [q] is not in the range of [bind] (it did not exist as a type) *)
   have Hpnotbound : ∀ name, bind !! name ≠ Some q.
   { move=> name Hb. have Hs := Hbindtypes name q Hb. rewrite Hfresh in Hs. by destruct Hs. }
-  set (p2 := <[q := MkTypeModel [] []]> p0).
+  set (p2 := <[q := MkTypeModel []]> p0).
   set (locs2 := <[q := []]> locs).
-  have Htm2 : p2 !! q = Some (MkTypeModel [] []) by rewrite /p2 lookup_insert_eq.
+  have Htm2 : p2 !! q = Some (MkTypeModel []) by rewrite /p2 lookup_insert_eq.
   have Hls2 : locs2 !! q = Some [] by rewrite /locs2 lookup_insert_eq.
   have Hac_empty : all_runs p2 ≡ₚ all_runs p0 := all_runs_insert_empty p0 q [] Hfresh.
   (* Integrate premises for the empty type *)
@@ -1416,19 +1415,22 @@ Proof using Type*.
   have HlinkR : (null : loc) = loc_at [] (Z.of_nat 0).
   { rewrite /loc_at. case_decide as Hd; [reflexivity | exfalso; lia]. }
   iEval (rewrite {1}HlinkL {1}HlinkR) in "Hlinked".
-  have Hready : integrate_ready (tm_arr (MkTypeModel [] [])) input newItem := conj Htoit (conj Hvld Hmax).
+  have Hready : integrate_ready (tm_arr (MkTypeModel [])) input newItem := conj Htoit (conj Hvld Hmax).
   wp_auto.
   wp_apply (wp_store__Integrate_runs s q null itv (MkStoreStateRuns client0 k0 locs2 p2 (<[nm := q]> bind) pend pdel)
-              (MkTypeModel [] []) [] arr2 input newItem 0 0
+              (MkTypeModel []) [] arr2 input newItem 0 0
               (or_intror eq_refl) Htm2 Hls2 Hready Hnowrapc Hall Hres Hgmaxj'
               with "[$Hpkg $Hruns $Hlinked]").
   iIntros (runs' ls' run) "(Hruns & %Hinv3 & %Hsplice & %Hden)".
   iEval (simpl) in "Hruns".
   destruct Hsplice as (idx & Hsp & Hls'eq).
   destruct Hsp as (Hidxb & Hile & Hruns'eq & Harr2eq).
+  have Hflat' : runs_flatten runs' = arr2.
+  { apply (runs_integrate_splice_at_flatten idx [] runs' run arr2).
+    split_and!; [exact Hidxb | exact Hile | exact Hruns'eq | exact Harr2eq]. }
   set (rn := MkItemRun run false).
-  have Hperm : all_runs (<[q := MkTypeModel runs' arr2]> p2) ≡ₚ rn :: all_runs p0.
-  { rewrite Hruns'eq. rewrite (all_runs_splice_perm p2 q (MkTypeModel [] []) idx rn arr2 Htm2).
+  have Hperm : all_runs (<[q := MkTypeModel runs']> p2) ≡ₚ rn :: all_runs p0.
+  { rewrite Hruns'eq. rewrite (all_runs_splice_perm p2 q (MkTypeModel []) idx rn arr2 Htm2).
     rewrite Hac_empty //. }
   destruct Hden as (Hrnid & Hrnorig & Hrnrorig & Hrnlen).
   have Hrnhead : item_id (run_head_item rn) = in_id input := Hrnid.
@@ -1439,7 +1441,7 @@ Proof using Type*.
   have Hrnwf : run_wf (run_items rn).
   { apply Hwf3. simpl. rewrite Hperm. apply list_elem_of_here. }
   wp_auto.
-  iApply ("HΦ" $! (<[q := MkTypeModel runs' arr2]> p2) (<[q := ls']> locs2) (<[nm := q]> bind)). simpl.
+  iApply ("HΦ" $! (<[q := MkTypeModel runs']> p2) (<[q := ls']> locs2) (<[nm := q]> bind)). simpl.
   iFrame "Hruns".
   iPureIntro. split_and!.
   - exact (insert_subseteq bind nm q Hbnm).

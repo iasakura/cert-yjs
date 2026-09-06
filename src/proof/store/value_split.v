@@ -145,7 +145,7 @@ Definition pool_split_step (p : pool) (locs : gmap loc (list loc)) (parent : loc
      p !! parent = Some tm ∧ locs !! parent = Some ls ∧ tm_runs tm !! k = Some r ∧
      (0 < o < length (run_items r))%nat ∧
      rloc ≠ null ∧ rloc ∉ concat ((map_to_list locs).*2) ∧
-     p' = <[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p ∧
+     p' = <[parent := MkTypeModel (split_runs (tm_runs tm) k o)]> p ∧
      locs' = <[parent := split_locs ls k rloc]> locs).
 
 Lemma pool_after_split_of_split_step (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
@@ -232,7 +232,7 @@ Definition pool_split_left_step (p : pool) (locs : gmap loc (list loc)) (parent 
     (((clock d - run_clock r)%nat = (length (run_items r) - 1)%nat ∧ p' = p ∧ locs' = locs) ∨
      ((clock d - run_clock r < length (run_items r) - 1)%nat ∧
       ∃ rloc : loc, rloc ≠ null ∧ rloc ∉ concat ((map_to_list locs).*2) ∧
-        p' = <[parent := MkTypeModel (split_runs (tm_runs tm) k (clock d - run_clock r + 1)) (tm_arr tm)]> p ∧
+        p' = <[parent := MkTypeModel (split_runs (tm_runs tm) k (clock d - run_clock r + 1))]> p ∧
         locs' = <[parent := split_locs ls k rloc]> locs)).
 
 Definition pool_split_right_step (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
@@ -241,7 +241,7 @@ Definition pool_split_right_step (p : pool) (locs : gmap loc (list loc)) (parent
     p !! parent = Some tm ∧ locs !! parent = Some ls ∧ tm_runs tm !! k = Some r ∧ ls !! k = Some lc ∧
     (((clock d - run_clock r)%nat = 0%nat ∧ l = lc ∧ p' = p ∧ locs' = locs) ∨
      ((0 < clock d - run_clock r)%nat ∧ l ≠ null ∧ l ∉ concat ((map_to_list locs).*2) ∧
-      p' = <[parent := MkTypeModel (split_runs (tm_runs tm) k (clock d - run_clock r)) (tm_arr tm)]> p ∧
+      p' = <[parent := MkTypeModel (split_runs (tm_runs tm) k (clock d - run_clock r))]> p ∧
       locs' = <[parent := split_locs ls k l]> locs)).
 
 Lemma pool_split_step_of_left (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
@@ -300,11 +300,11 @@ Proof.
     destruct (split_run_facts r _ Hwf Ho)
       as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
     split_and!.
-    + exists (MkTypeModel (split_runs (tm_runs tm0) k (clock d - run_clock r + 1)) (tm_arr tm0)).
+    + exists (MkTypeModel (split_runs (tm_runs tm0) k (clock d - run_clock r + 1))).
       rewrite lookup_insert_eq. split; first done.
       exists (split_run_left r (clock d - run_clock r + 1)). simpl.
       split; [exact (split_runs_lookup_left _ _ _ _ Hr0) | rewrite Hheadl //].
-    + exists (MkTypeModel (split_runs (tm_runs tm0) k (clock d - run_clock r + 1)) (tm_arr tm0)).
+    + exists (MkTypeModel (split_runs (tm_runs tm0) k (clock d - run_clock r + 1))).
       rewrite lookup_insert_eq. split; first done.
       exists (split_run_left r (clock d - run_clock r + 1)). simpl.
       split_and!; [exact (split_runs_lookup_left _ _ _ _ Hr0) | rewrite Hclientl // | rewrite Hclockl Hlenl; lia].
@@ -330,7 +330,7 @@ Proof.
     destruct (split_run_facts r _ Hwf Ho)
       as (Hheadl & Hlenl & Hlenr & Hclientl & Hclientr & Hclockl & Hclockr).
     exists (S k). split.
-    + exists (MkTypeModel (split_runs (tm_runs tm0) k (clock d - run_clock r)) (tm_arr tm0)).
+    + exists (MkTypeModel (split_runs (tm_runs tm0) k (clock d - run_clock r))).
       rewrite lookup_insert_eq. split; first done.
       exists (split_run_right r (clock d - run_clock r)). simpl.
       split; first exact (split_runs_lookup_right _ _ _ _ Hr0).
@@ -362,12 +362,12 @@ Proof.
   injection Hls0 as <-.
   rewrite !lookup_insert_eq /=.
   destruct (decide (j < k)%nat) as [Hlt | Hge].
-  - exists j, (MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)). simpl.
+  - exists j, (MkTypeModel (split_runs (tm_runs tm) k o)). simpl.
     split_and!; [done | rewrite (split_runs_lookup_before _ _ _ _ _ Hr0 Hlt) // |
                  rewrite (split_locs_lookup_before _ _ _ _ Hlt) // | by left].
   - have Hgt : (k < j)%nat.
     { destruct (decide (j = k)) as [-> | Hne']; [exfalso; apply Hnot; done | lia]. }
-    exists (S j), (MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)). simpl.
+    exists (S j), (MkTypeModel (split_runs (tm_runs tm) k o)). simpl.
     destruct (ls !! k) as [lk|] eqn:Hlk; last first.
     { exfalso. apply lookup_ge_None in Hlk.
       have := lookup_lt_Some _ _ _ Hl. lia. }
@@ -386,7 +386,7 @@ Lemma pool_entries_split (locs : gmap loc (list loc)) (p : pool) (parent : loc)
   ∃ rest : list (loc * ItemRun),
     pool_entries locs p ≡ₚ (l, r) :: rest ∧
     pool_entries (<[parent := split_locs ls k rloc]> locs)
-                 (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p)
+                 (<[parent := MkTypeModel (split_runs (tm_runs tm) k o)]> p)
       ≡ₚ (l, split_run_left r o) :: (rloc, split_run_right r o) :: rest.
 Proof.
   move=> Hls Hp Hlk Hrk Hlen.
@@ -435,7 +435,7 @@ Lemma locs_wf_split (locs : gmap loc (list loc)) (p : pool) (parent : loc)
   rloc ∉ concat ((map_to_list locs).*2) ->
   locs_wf locs p ->
   locs_wf (<[parent := split_locs ls k rloc]> locs)
-          (<[parent := MkTypeModel (split_runs (tm_runs tm) k o) (tm_arr tm)]> p).
+          (<[parent := MkTypeModel (split_runs (tm_runs tm) k o)]> p).
 Proof.
   move=> Hls Hp Hlk Hrk Hfresh [Hdom [Hnd Hlens]].
   have Hklt : (k < length ls)%nat := lookup_lt_Some _ _ _ Hlk.
