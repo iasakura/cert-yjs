@@ -42,8 +42,8 @@ Lemma wp_yType__findPos (parent : loc) (dq : dfrac) (ls : list loc)
     (tm : type_model) (idx : w64) :
   {{{ is_pkg_init yjs ∗ own_ytype_runs parent dq ls tm }}}
     parent @! (go.PointerType yjs.yType) @! "findPos" #idx
-  {{{ (lft rgt : loc) (p : nat) (off : w64), RET (#lft, #rgt, #off);
-      own_ytype_runs parent dq ls tm ∗ ⌜find_pos_runs ls (tm_runs tm) p lft rgt off⌝ }}}.
+  {{{ (leftNode rightNode : loc) (p : nat) (off : w64), RET (#leftNode, #rightNode, #off);
+      own_ytype_runs parent dq ls tm ∗ ⌜find_pos_runs ls (tm_runs tm) p leftNode rightNode off⌝ }}}.
 Proof.
   wp_start as "Hyt".
   destruct tm as [runs arr]. simpl.

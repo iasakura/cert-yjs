@@ -13,9 +13,9 @@
       spell the document model), and [pool_lookup_or_create], what
       [getOrCreateYType] does to it.
     - the per-client item index: [pool_entries], the pool's (address, run)
-      pairs, read by [entry_client] / [entry_clock] / [entry_pr] / [entry_le]
-      / [entry_kp]; [kp_client_locs], one client's addresses in clock order
-      off those keys (unique under [kp_clkloc]); [client_locs] /
+      pairs, read by [entry_client] / [entry_clock] / [entry_clock_loc] / [entry_le]
+      / [entry_key_pair]; [key_pair_client_locs], one client's addresses in clock order
+      off those keys (unique under [key_pairs_clock_unique]); [client_locs] /
       [client_entries], the same over the entries; [sorted_client_entries],
       any clock-sorted address-distinct list of one client's entries.
     - what one integrate asks and does: [run_denotes] (the new run is the
@@ -32,14 +32,14 @@
       ([pool_registry_coh_bind_fresh] / [pool_registry_coh_dom_mono]), and an
       id no registered type holds is absent from the document model
       ([pool_docm_has_registry_false]).
-    - the index under those same steps: [kp_client_locs] is stable under any
-      key permutation ([kp_client_locs_perm]), ignores another client's keys
+    - the index under those same steps: [key_pair_client_locs] is stable under any
+      key permutation ([key_pair_client_locs_perm]), ignores another client's keys
       ([_other]) and an absent address ([_absent]), and grows by one address
       at a maximal clock ([_snoc_max] / [_insert]); the pool's entries sit at
       their slots ([pool_entries_slot] / [pool_entries_snd] /
       [pool_entries_locs_NoDup]), one integrate splice adds its entry
       ([pool_entries_integrate]), a tombstoning keeps every key
-      ([pool_entries_flip_kp]) and a fresh empty type adds none
+      ([pool_entries_flip_key_pairs]) and a fresh empty type adds none
       ([pool_entries_insert_empty]).
     - [client_entries] is that index as entries ([client_entries_mem] /
       [_prs] / [_sorted] / [_lookup_slot] / [_NoDup_locs],
@@ -95,16 +95,16 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (** One client's backing slice in the index is the address sequence of a
     [merge_sort]ed run, so it depends only on each entry's (clock, address)
-    pair: [pr_le] is the order that sort runs on, and [kp_client_locs] below
+    pair: [clock_loc_le] is the order that sort runs on, and [key_pair_client_locs] below
     is where the pair is read. *)
-Definition pr_le (p q : Z * loc) : Prop := (p.1 <= q.1)%Z.
+Definition clock_loc_le (p q : Z * loc) : Prop := (p.1 <= q.1)%Z.
 
-#[local] Instance pr_le_dec : RelDecision pr_le.
-Proof. rewrite /pr_le. solve_decision. Defined.
-#[local] Instance pr_le_trans : Transitive pr_le.
-Proof. rewrite /pr_le. move=> x y z. lia. Qed.
-#[local] Instance pr_le_total : Total pr_le.
-Proof. rewrite /pr_le. move=> x y. lia. Qed.
+#[local] Instance clock_loc_le_dec : RelDecision clock_loc_le.
+Proof. rewrite /clock_loc_le. solve_decision. Defined.
+#[local] Instance clock_loc_le_trans : Transitive clock_loc_le.
+Proof. rewrite /clock_loc_le. move=> x y z. lia. Qed.
+#[local] Instance clock_loc_le_total : Total clock_loc_le.
+Proof. rewrite /clock_loc_le. move=> x y. lia. Qed.
 
 (** [run_denotes input newItem run]: the run a wire item lands as: its head is
     the item the input resolves to (same id and origins) and it has one char
@@ -295,11 +295,11 @@ Definition pool_entries (locs : gmap loc (list loc)) (p : pool) : list (loc * It
   concat ((λ kv, zip (default [] (locs !! kv.1)) (tm_runs kv.2)) <$> map_to_list p).
 
 (** An entry's client and clock in machine words, its (clock, address) key
-    and the clock order the item index sorts by; [entry_kp] bundles the
+    and the clock order the item index sorts by; [entry_key_pair] bundles the
     (client, clock, address) key. *)
 Definition entry_client (e : loc * ItemRun) : w64 := W64 (run_client e.2).
 Definition entry_clock (e : loc * ItemRun) : w64 := W64 (run_clock e.2).
-Definition entry_pr (e : loc * ItemRun) : Z * loc := (uint.Z (entry_clock e), e.1).
+Definition entry_clock_loc (e : loc * ItemRun) : Z * loc := (uint.Z (entry_clock e), e.1).
 Definition entry_le (a b : loc * ItemRun) : Prop := (uint.Z (entry_clock a) <= uint.Z (entry_clock b))%Z.
 
 #[local] Instance entry_le_dec : RelDecision entry_le.
@@ -309,25 +309,25 @@ Proof. rewrite /entry_le. move=> x y z. lia. Qed.
 #[local] Instance entry_le_total : Total entry_le.
 Proof. rewrite /entry_le. move=> x y. lia. Qed.
 
-Definition entry_kp (e : loc * ItemRun) : w64 * (Z * loc) := (entry_client e, entry_pr e).
+Definition entry_key_pair (e : loc * ItemRun) : w64 * (Z * loc) := (entry_client e, entry_clock_loc e).
 
-(** [kp_clkloc kps]: one client's clock names one address, over a
+(** [key_pairs_clock_unique key_pairs]: one client's clock names one address, over a
     (client, clock, address) list: the uniqueness the item index relies on
-    ([own_item_map_runs]'s [Hclkloc] clause). *)
-Definition kp_clkloc (kps : list (w64 * (Z * loc))) : Prop :=
-  ∀ a b, a ∈ kps -> b ∈ kps -> a.1 = b.1 -> a.2.1 = b.2.1 -> a.2.2 = b.2.2.
+    ([own_item_map_runs]'s [Hclockunique] clause). *)
+Definition key_pairs_clock_unique (key_pairs : list (w64 * (Z * loc))) : Prop :=
+  ∀ a b, a ∈ key_pairs -> b ∈ key_pairs -> a.1 = b.1 -> a.2.1 = b.2.1 -> a.2.2 = b.2.2.
 
-(** [kp_client_locs client kps]: client [client]'s addresses in clock order
+(** [key_pair_client_locs client key_pairs]: client [client]'s addresses in clock order
     off a (client, clock, address) list: the item index's backing slice for
     that client. [client_locs] is this over the pool's entries. *)
-Definition kp_client_locs (client : w64) (kps : list (w64 * (Z * loc))) : list loc :=
-  snd <$> merge_sort pr_le ((filter (λ kp, kp.1 = client) kps).*2).
+Definition key_pair_client_locs (client : w64) (key_pairs : list (w64 * (Z * loc))) : list loc :=
+  snd <$> merge_sort clock_loc_le ((filter (λ key_pair, key_pair.1 = client) key_pairs).*2).
 
 (** [client_locs locs p client]: the client's clock-sorted node-address
     slice at [(locs, p)], the model of that client's backing slice in
     [own_item_map_runs]. *)
 Definition client_locs (locs : gmap loc (list loc)) (p : pool) (client : w64) : list loc :=
-  kp_client_locs client (entry_kp <$> pool_entries locs p).
+  key_pair_client_locs client (entry_key_pair <$> pool_entries locs p).
 
 (** [client_entries locs p client]: the client's entries in clock order, the
     index's addresses with their runs ([client_locs_entries]); what the
@@ -382,18 +382,18 @@ Proof.
   destruct (Htb q Hq) as [nm Hnm]. exact (Hbt' nm q (lookup_weaken _ _ _ _ Hnm Hsub)).
 Qed.
 
-(** [kp_client_locs] only sees the (client, clock, address) multiset: under
-    [kp_clkloc] a permutation sorts to the same addresses, a key of another
+(** [key_pair_client_locs] only sees the (client, clock, address) multiset: under
+    [key_pairs_clock_unique] a permutation sorts to the same addresses, a key of another
     client leaves the slice alone, a client absent from the keys has the
     empty slice, a key at the client's newest clock lands
     at the tail (the [addNode] step), and a key strictly between the sorted
     clocks lands at that position (the split step). *)
-Lemma kp_client_locs_perm (client : w64) (kps1 kps2 : list (w64 * (Z * loc))) :
-  kp_clkloc kps1 -> kps1 ≡ₚ kps2 ->
-  kp_client_locs client kps1 = kp_client_locs client kps2.
+Lemma key_pair_client_locs_perm (client : w64) (key_pairs1 key_pairs2 : list (w64 * (Z * loc))) :
+  key_pairs_clock_unique key_pairs1 -> key_pairs1 ≡ₚ key_pairs2 ->
+  key_pair_client_locs client key_pairs1 = key_pair_client_locs client key_pairs2.
 Proof.
-  move=> Hkd Hperm. rewrite /kp_client_locs. f_equal.
-  apply (StronglySorted_unique_strong pr_le).
+  move=> Hkd Hperm. rewrite /key_pair_client_locs. f_equal.
+  apply (StronglySorted_unique_strong clock_loc_le).
   - move=> p1 p2 Hp1 Hp2 H12 H21.
     rewrite merge_sort_Permutation in Hp1. rewrite merge_sort_Permutation in Hp2.
     apply list_elem_of_fmap in Hp1 as (a & -> & Ha).
@@ -401,57 +401,57 @@ Proof.
     apply list_elem_of_filter in Ha as [Hac Ha].
     apply list_elem_of_filter in Hb as [Hbc Hb].
     rewrite -Hperm in Hb.
-    rewrite /pr_le in H12 H21.
+    rewrite /clock_loc_le in H12 H21.
     have Hkeq : a.2.1 = b.2.1 by lia.
     have Hloc := Hkd a b Ha Hb ltac:(congruence) Hkeq.
     destruct a as [ac [aclk al]], b as [bc [bclk bl]]; simpl in *. by subst.
-  - apply (StronglySorted_merge_sort pr_le).
-  - apply (StronglySorted_merge_sort pr_le).
+  - apply (StronglySorted_merge_sort clock_loc_le).
+  - apply (StronglySorted_merge_sort clock_loc_le).
   - rewrite !merge_sort_Permutation. apply Permutation_map. by rewrite Hperm.
 Qed.
 
-Lemma kp_client_locs_other (client : w64) (kps : list (w64 * (Z * loc))) (kp : w64 * (Z * loc)) :
-  kp.1 ≠ client -> kp_client_locs client (kps ++ [kp]) = kp_client_locs client kps.
+Lemma key_pair_client_locs_other (client : w64) (key_pairs : list (w64 * (Z * loc))) (key_pair : w64 * (Z * loc)) :
+  key_pair.1 ≠ client -> key_pair_client_locs client (key_pairs ++ [key_pair]) = key_pair_client_locs client key_pairs.
 Proof.
-  move=> Hne. rewrite /kp_client_locs filter_app filter_cons_False // filter_nil app_nil_r //.
+  move=> Hne. rewrite /key_pair_client_locs filter_app filter_cons_False // filter_nil app_nil_r //.
 Qed.
 
-Lemma kp_client_locs_absent (client : w64) (kps : list (w64 * (Z * loc))) :
-  client ∉ kps.*1 -> kp_client_locs client kps = [].
+Lemma key_pair_client_locs_absent (client : w64) (key_pairs : list (w64 * (Z * loc))) :
+  client ∉ key_pairs.*1 -> key_pair_client_locs client key_pairs = [].
 Proof.
   move=> Hnin.
-  have Hfilt : filter (λ kp : w64 * (Z * loc), kp.1 = client) kps = [].
-  { move: Hnin. elim: kps => [| a l IH] Hnin; [reflexivity |].
+  have Hfilt : filter (λ key_pair : w64 * (Z * loc), key_pair.1 = client) key_pairs = [].
+  { move: Hnin. elim: key_pairs => [| a l IH] Hnin; [reflexivity |].
     rewrite filter_cons. case_decide as Hc.
     - exfalso. apply Hnin. rewrite fmap_cons Hc. apply list_elem_of_here.
     - apply IH. move=> Hin. apply Hnin. rewrite fmap_cons. apply elem_of_cons. by right. }
-  rewrite /kp_client_locs Hfilt //.
+  rewrite /key_pair_client_locs Hfilt //.
 Qed.
 
-Lemma kp_client_locs_snoc_max (client : w64) (kps : list (w64 * (Z * loc))) (kp : w64 * (Z * loc)) :
-  kp_clkloc kps -> kp.1 = client ->
-  (∀ a, a ∈ kps -> a.1 = client -> (a.2.1 < kp.2.1)%Z) ->
-  kp_client_locs client (kps ++ [kp]) = kp_client_locs client kps ++ [kp.2.2].
+Lemma key_pair_client_locs_snoc_max (client : w64) (key_pairs : list (w64 * (Z * loc))) (key_pair : w64 * (Z * loc)) :
+  key_pairs_clock_unique key_pairs -> key_pair.1 = client ->
+  (∀ a, a ∈ key_pairs -> a.1 = client -> (a.2.1 < key_pair.2.1)%Z) ->
+  key_pair_client_locs client (key_pairs ++ [key_pair]) = key_pair_client_locs client key_pairs ++ [key_pair.2.2].
 Proof.
-  move=> Hkd Hkc Hmax. rewrite /kp_client_locs.
+  move=> Hkd Hkc Hmax. rewrite /key_pair_client_locs.
   rewrite filter_app filter_cons_True // filter_nil fmap_app /=.
-  set prs := (filter (λ kp0, kp0.1 = client) kps).*2.
-  have Hprs : ∀ a, a ∈ prs -> ∃ b, b ∈ kps ∧ b.1 = client ∧ a = b.2.
+  set clock_locs := (filter (λ key_pair0, key_pair0.1 = client) key_pairs).*2.
+  have Hprs : ∀ a, a ∈ clock_locs -> ∃ b, b ∈ key_pairs ∧ b.1 = client ∧ a = b.2.
   { move=> a Ha. apply list_elem_of_fmap in Ha as (b & -> & Hb).
     apply list_elem_of_filter in Hb as [Hbc Hb]. by exists b. }
-  have Hmaxp : ∀ a, a ∈ prs -> (a.1 < kp.2.1)%Z.
+  have Hmaxp : ∀ a, a ∈ clock_locs -> (a.1 < key_pair.2.1)%Z.
   { move=> a Ha. destruct (Hprs a Ha) as (b & Hb & Hbc & ->). exact (Hmax b Hb Hbc). }
-  have Hkdp : ∀ a b, a ∈ prs -> b ∈ prs -> a.1 = b.1 -> a = b.
+  have Hkdp : ∀ a b, a ∈ clock_locs -> b ∈ clock_locs -> a.1 = b.1 -> a = b.
   { move=> a b Ha Hb Hab.
     destruct (Hprs a Ha) as (a' & Ha' & Hac & ->).
     destruct (Hprs b Hb) as (b' & Hb' & Hbc & ->).
     have Hloc := Hkd a' b' Ha' Hb' ltac:(congruence) Hab.
     destruct a' as [ac [aclk al]], b' as [bc [bclk bl]]; simpl in *. by subst. }
-  change [kp.2.2] with (snd <$> [kp.2]). rewrite -fmap_app. f_equal.
-  apply (StronglySorted_unique_strong pr_le).
+  change [key_pair.2.2] with (snd <$> [key_pair.2]). rewrite -fmap_app. f_equal.
+  apply (StronglySorted_unique_strong clock_loc_le).
   - move=> p1 p2 Hp1 Hp2 H12 H21.
     rewrite merge_sort_Permutation in Hp1.
-    rewrite /pr_le in H12 H21.
+    rewrite /clock_loc_le in H12 H21.
     have Hkeq : p1.1 = p2.1 by lia.
     apply elem_of_app in Hp1 as [Hp1 | Hp1]; apply elem_of_app in Hp2 as [Hp2 | Hp2].
     + rewrite merge_sort_Permutation in Hp2. exact (Hkdp p1 p2 Hp1 Hp2 Hkeq).
@@ -459,52 +459,52 @@ Proof.
     + apply list_elem_of_singleton in Hp1 as ->. rewrite merge_sort_Permutation in Hp2.
       exfalso. have := Hmaxp p2 Hp2. lia.
     + apply list_elem_of_singleton in Hp1 as ->. apply list_elem_of_singleton in Hp2 as ->. reflexivity.
-  - apply (StronglySorted_merge_sort pr_le).
+  - apply (StronglySorted_merge_sort clock_loc_le).
   - apply StronglySorted_app_2.
     + move=> a z Ha Hz. apply list_elem_of_singleton in Hz as ->.
-      rewrite merge_sort_Permutation in Ha. rewrite /pr_le. have := Hmaxp a Ha. lia.
-    + apply (StronglySorted_merge_sort pr_le).
+      rewrite merge_sort_Permutation in Ha. rewrite /clock_loc_le. have := Hmaxp a Ha. lia.
+    + apply (StronglySorted_merge_sort clock_loc_le).
     + repeat constructor.
   - rewrite merge_sort_Permutation. apply Permutation_app; [| reflexivity]. symmetry. apply merge_sort_Permutation.
 Qed.
 
-Lemma kp_client_locs_insert (client : w64) (kps : list (w64 * (Z * loc))) (kp : w64 * (Z * loc)) (i : nat) :
-  kp_clkloc kps -> kp.1 = client ->
-  (∀ a, a ∈ take i (merge_sort pr_le ((filter (λ kp0, kp0.1 = client) kps).*2)) -> (a.1 < kp.2.1)%Z) ->
-  (∀ a, a ∈ drop i (merge_sort pr_le ((filter (λ kp0, kp0.1 = client) kps).*2)) -> (kp.2.1 < a.1)%Z) ->
-  kp_client_locs client (kps ++ [kp])
-  = take i (kp_client_locs client kps) ++ kp.2.2 :: drop i (kp_client_locs client kps).
+Lemma key_pair_client_locs_insert (client : w64) (key_pairs : list (w64 * (Z * loc))) (key_pair : w64 * (Z * loc)) (i : nat) :
+  key_pairs_clock_unique key_pairs -> key_pair.1 = client ->
+  (∀ a, a ∈ take i (merge_sort clock_loc_le ((filter (λ key_pair0, key_pair0.1 = client) key_pairs).*2)) -> (a.1 < key_pair.2.1)%Z) ->
+  (∀ a, a ∈ drop i (merge_sort clock_loc_le ((filter (λ key_pair0, key_pair0.1 = client) key_pairs).*2)) -> (key_pair.2.1 < a.1)%Z) ->
+  key_pair_client_locs client (key_pairs ++ [key_pair])
+  = take i (key_pair_client_locs client key_pairs) ++ key_pair.2.2 :: drop i (key_pair_client_locs client key_pairs).
 Proof.
-  move=> Hkd Hkc Hbef Haft. rewrite /kp_client_locs.
+  move=> Hkd Hkc Hbef Haft. rewrite /key_pair_client_locs.
   rewrite filter_app filter_cons_True // filter_nil fmap_app /=.
-  set prs := (filter (λ kp0, kp0.1 = client) kps).*2.
-  set S := merge_sort pr_le prs.
-  have Hprs : ∀ a, a ∈ prs -> ∃ b, b ∈ kps ∧ b.1 = client ∧ a = b.2.
+  set clock_locs := (filter (λ key_pair0, key_pair0.1 = client) key_pairs).*2.
+  set S := merge_sort clock_loc_le clock_locs.
+  have Hprs : ∀ a, a ∈ clock_locs -> ∃ b, b ∈ key_pairs ∧ b.1 = client ∧ a = b.2.
   { move=> a Ha. apply list_elem_of_fmap in Ha as (b & -> & Hb).
     apply list_elem_of_filter in Hb as [Hbc Hb]. by exists b. }
-  have Hkdp : ∀ a b, a ∈ prs -> b ∈ prs -> a.1 = b.1 -> a = b.
+  have Hkdp : ∀ a b, a ∈ clock_locs -> b ∈ clock_locs -> a.1 = b.1 -> a = b.
   { move=> a b Ha Hb Hab.
     destruct (Hprs a Ha) as (a' & Ha' & Hac & ->).
     destruct (Hprs b Hb) as (b' & Hb' & Hbc & ->).
     have Hloc := Hkd a' b' Ha' Hb' ltac:(congruence) Hab.
     destruct a' as [ac [aclk al]], b' as [bc [bclk bl]]; simpl in *. by subst. }
-  have HSperm : S ≡ₚ prs := merge_sort_Permutation pr_le prs.
+  have HSperm : S ≡ₚ clock_locs := merge_sort_Permutation clock_loc_le clock_locs.
   have HinS_take : ∀ z, z ∈ take i S -> z ∈ S.
   { move=> z Hz. rewrite -(take_drop i S). apply elem_of_app. by left. }
   have HinS_drop : ∀ z, z ∈ drop i S -> z ∈ S.
   { move=> z Hz. rewrite -(take_drop i S). apply elem_of_app. by right. }
-  have HSS : StronglySorted pr_le S by apply (StronglySorted_merge_sort pr_le).
-  have HSSapp : StronglySorted pr_le (take i S ++ drop i S).
+  have HSS : StronglySorted clock_loc_le S by apply (StronglySorted_merge_sort clock_loc_le).
+  have HSSapp : StronglySorted clock_loc_le (take i S ++ drop i S).
   { rewrite (take_drop i S). exact HSS. }
   rewrite -fmap_take -fmap_drop.
-  change (kp.2.2 :: (snd <$> drop i S)) with (snd <$> (kp.2 :: drop i S)).
+  change (key_pair.2.2 :: (snd <$> drop i S)) with (snd <$> (key_pair.2 :: drop i S)).
   rewrite -fmap_app. f_equal.
-  apply (StronglySorted_unique_strong pr_le).
+  apply (StronglySorted_unique_strong clock_loc_le).
   - move=> p1 p2 Hp1 Hp2 H12 H21.
-    rewrite /pr_le in H12 H21.
+    rewrite /clock_loc_le in H12 H21.
     have Hkeq : p1.1 = p2.1 by lia.
     rewrite merge_sort_Permutation in Hp1.
-    have Hp2c : (p2 ∈ S) ∨ p2 = kp.2.
+    have Hp2c : (p2 ∈ S) ∨ p2 = key_pair.2.
     { apply elem_of_app in Hp2 as [Hp2 | Hp2]; [left; exact (HinS_take p2 Hp2) |].
       apply elem_of_cons in Hp2 as [-> | Hp2]; [by right | left; exact (HinS_drop p2 Hp2)]. }
     apply elem_of_app in Hp1 as [Hp1 | Hp1]; last apply list_elem_of_singleton in Hp1 as ->.
@@ -517,19 +517,19 @@ Proof.
       exfalso. rewrite -(take_drop i S) in Hp2S. apply elem_of_app in Hp2S as [Ht | Hd].
       * have := Hbef p2 Ht. lia.
       * have := Haft p2 Hd. lia.
-  - apply (StronglySorted_merge_sort pr_le).
+  - apply (StronglySorted_merge_sort clock_loc_le).
   - apply StronglySorted_app_2.
     + move=> a c Ha Hc. apply elem_of_cons in Hc as [-> | Hc].
-      * rewrite /pr_le. have := Hbef a Ha. lia.
-      * rewrite /pr_le. have := Hbef a Ha. have := Haft c Hc. lia.
+      * rewrite /clock_loc_le. have := Hbef a Ha. lia.
+      * rewrite /clock_loc_le. have := Hbef a Ha. have := Haft c Hc. lia.
     + exact (StronglySorted_app_1_l _ _ _ HSSapp).
-    + change (kp.2 :: drop i S) with ([kp.2] ++ drop i S).
+    + change (key_pair.2 :: drop i S) with ([key_pair.2] ++ drop i S).
       apply StronglySorted_app_2.
-      * move=> a c Ha Hc. apply list_elem_of_singleton in Ha as ->. rewrite /pr_le. have := Haft c Hc. lia.
+      * move=> a c Ha Hc. apply list_elem_of_singleton in Ha as ->. rewrite /clock_loc_le. have := Haft c Hc. lia.
       * repeat constructor.
       * exact (StronglySorted_app_1_r _ _ _ HSSapp).
   - rewrite merge_sort_Permutation. rewrite -HSperm -{1}(take_drop i S).
-    change (kp.2 :: drop i S) with ([kp.2] ++ drop i S).
+    change (key_pair.2 :: drop i S) with ([key_pair.2] ++ drop i S).
     rewrite -app_assoc. apply Permutation_app; [reflexivity |]. apply Permutation_app_comm.
 Qed.
 
@@ -540,16 +540,16 @@ Qed.
     entries carry the pool's runs ([pool_entries_snd]) and, under the
     address [NoDup], distinct entries of one client have disjoint clock
     ranges ([client_entries_disjoint]). *)
-Lemma entry_kp_split (e : loc * ItemRun) : entry_kp e = (entry_client e, entry_pr e).
+Lemma entry_key_pair_split (e : loc * ItemRun) : entry_key_pair e = (entry_client e, entry_clock_loc e).
 Proof. reflexivity. Qed.
 
 (** The left half of a split keeps the run's head, so its keys are the
     split run's. *)
-Lemma entry_kp_split_left (l : loc) (r : ItemRun) (o : nat) :
-  (0 < o)%nat -> entry_kp (l, split_run_left r o) = entry_kp (l, r).
+Lemma entry_key_pair_split_left (l : loc) (r : ItemRun) (o : nat) :
+  (0 < o)%nat -> entry_key_pair (l, split_run_left r o) = entry_key_pair (l, r).
 Proof.
   move=> Ho. destruct o as [|o']; [lia |]. destruct r as [items d].
-  rewrite /entry_kp /entry_client /entry_pr /entry_clock /run_client /run_clock /run_head_item
+  rewrite /entry_key_pair /entry_client /entry_clock_loc /entry_clock /run_client /run_clock /run_head_item
           /split_run_left /=.
   destruct items; reflexivity.
 Qed.
@@ -568,54 +568,54 @@ Lemma client_entries_sorted (locs : gmap loc (list loc)) (p : pool) (client : w6
   StronglySorted entry_le (client_entries locs p client).
 Proof. apply StronglySorted_merge_sort; apply _. Qed.
 
-Lemma entry_pr_filter_kp (client : w64) (l : list (loc * ItemRun)) :
-  entry_pr <$> filter (λ e, entry_client e = client) l
-  = (filter (λ kp : w64 * (Z * loc), kp.1 = client) (entry_kp <$> l)).*2.
+Lemma entry_clock_locs_filter_client (client : w64) (l : list (loc * ItemRun)) :
+  entry_clock_loc <$> filter (λ e, entry_client e = client) l
+  = (filter (λ key_pair : w64 * (Z * loc), key_pair.1 = client) (entry_key_pair <$> l)).*2.
 Proof.
   induction l as [|e l IH]; [reflexivity|].
-  rewrite fmap_cons filter_cons filter_cons entry_kp_split /=.
+  rewrite fmap_cons filter_cons filter_cons entry_key_pair_split /=.
   case_decide as Hc.
   - rewrite fmap_cons IH /=. reflexivity.
   - exact IH.
 Qed.
 
-Lemma SS_entry_pr_merge (l : list (loc * ItemRun)) :
-  StronglySorted pr_le (entry_pr <$> merge_sort entry_le l).
+Lemma entry_clock_locs_merge_sorted (l : list (loc * ItemRun)) :
+  StronglySorted clock_loc_le (entry_clock_loc <$> merge_sort entry_le l).
 Proof.
-  apply (StronglySorted_fmap entry_pr entry_le pr_le).
-  - move=> x y Hxy. rewrite /pr_le /entry_pr /entry_le in Hxy |- *. exact Hxy.
+  apply (StronglySorted_fmap entry_clock_loc entry_le clock_loc_le).
+  - move=> x y Hxy. rewrite /clock_loc_le /entry_clock_loc /entry_le in Hxy |- *. exact Hxy.
   - apply (StronglySorted_merge_sort entry_le).
 Qed.
 
-Lemma client_entries_prs (locs : gmap loc (list loc)) (p : pool) (client : w64) :
-  kp_clkloc (entry_kp <$> pool_entries locs p) ->
-  merge_sort pr_le ((filter (λ kp : w64 * (Z * loc), kp.1 = client) (entry_kp <$> pool_entries locs p)).*2)
-  = entry_pr <$> client_entries locs p client.
+Lemma client_entries_clock_locs (locs : gmap loc (list loc)) (p : pool) (client : w64) :
+  key_pairs_clock_unique (entry_key_pair <$> pool_entries locs p) ->
+  merge_sort clock_loc_le ((filter (λ key_pair : w64 * (Z * loc), key_pair.1 = client) (entry_key_pair <$> pool_entries locs p)).*2)
+  = entry_clock_loc <$> client_entries locs p client.
 Proof.
-  move=> Hkd. rewrite /client_entries -entry_pr_filter_kp.
-  apply (StronglySorted_unique_strong pr_le).
+  move=> Hkd. rewrite /client_entries -entry_clock_locs_filter_client.
+  apply (StronglySorted_unique_strong clock_loc_le).
   - move=> p1 p2 Hp1 Hp2 H12 H21.
-    rewrite (merge_sort_Permutation pr_le) in Hp1.
+    rewrite (merge_sort_Permutation clock_loc_le) in Hp1.
     rewrite (merge_sort_Permutation entry_le) in Hp2.
     apply list_elem_of_fmap in Hp1 as (x1 & -> & Hx1).
     apply list_elem_of_fmap in Hp2 as (x2 & -> & Hx2).
     apply list_elem_of_filter in Hx1 as [Hc1 Hx1]. apply list_elem_of_filter in Hx2 as [Hc2 Hx2].
-    rewrite /pr_le in H12 H21.
-    have Hkeq : (entry_pr x1).1 = (entry_pr x2).1 by lia.
-    have Hcc : (entry_kp x1).1 = (entry_kp x2).1.
-    { rewrite !entry_kp_split /=. congruence. }
-    have Hloc := Hkd (entry_kp x1) (entry_kp x2) (list_elem_of_fmap_2 _ _ _ Hx1) (list_elem_of_fmap_2 _ _ _ Hx2) Hcc Hkeq.
-    rewrite /entry_pr. f_equal; [exact Hkeq | exact Hloc].
-  - apply (StronglySorted_merge_sort pr_le).
-  - apply SS_entry_pr_merge.
-  - rewrite (merge_sort_Permutation pr_le). apply Permutation_map. symmetry. apply merge_sort_Permutation.
+    rewrite /clock_loc_le in H12 H21.
+    have Hkeq : (entry_clock_loc x1).1 = (entry_clock_loc x2).1 by lia.
+    have Hcc : (entry_key_pair x1).1 = (entry_key_pair x2).1.
+    { rewrite !entry_key_pair_split /=. congruence. }
+    have Hloc := Hkd (entry_key_pair x1) (entry_key_pair x2) (list_elem_of_fmap_2 _ _ _ Hx1) (list_elem_of_fmap_2 _ _ _ Hx2) Hcc Hkeq.
+    rewrite /entry_clock_loc. f_equal; [exact Hkeq | exact Hloc].
+  - apply (StronglySorted_merge_sort clock_loc_le).
+  - apply entry_clock_locs_merge_sorted.
+  - rewrite (merge_sort_Permutation clock_loc_le). apply Permutation_map. symmetry. apply merge_sort_Permutation.
 Qed.
 
 Lemma client_locs_entries (locs : gmap loc (list loc)) (p : pool) (client : w64) :
-  kp_clkloc (entry_kp <$> pool_entries locs p) ->
+  key_pairs_clock_unique (entry_key_pair <$> pool_entries locs p) ->
   client_locs locs p client = (client_entries locs p client).*1.
 Proof.
-  move=> Hkd. rewrite /client_locs /kp_client_locs (client_entries_prs locs p client Hkd).
+  move=> Hkd. rewrite /client_locs /key_pair_client_locs (client_entries_clock_locs locs p client Hkd).
   rewrite -list_fmap_compose. apply list_fmap_ext. move=> i e _. reflexivity.
 Qed.
 
@@ -790,12 +790,12 @@ Qed.
 
 (** A tombstoning leaves the item index alone: a flip changes no entry's
     (client, clock, address) key. *)
-Lemma pool_entries_flip_kp (locs : gmap loc (list loc)) (p : pool) (parent : loc)
+Lemma pool_entries_flip_key_pairs (locs : gmap loc (list loc)) (p : pool) (parent : loc)
     (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
   locs !! parent = Some ls -> p !! parent = Some tm ->
   ls !! k = Some lc -> tm_runs tm !! k = Some r ->
-  entry_kp <$> pool_entries locs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p)
-  ≡ₚ entry_kp <$> pool_entries locs p.
+  entry_key_pair <$> pool_entries locs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm)) (tm_arr tm)]> p)
+  ≡ₚ entry_key_pair <$> pool_entries locs p.
 Proof.
   move=> Hls Hp Hlk Hrk.
   set (F := λ (kv : loc * type_model), zip (default [] (locs !! kv.1)) (tm_runs kv.2)).
@@ -807,8 +807,8 @@ Proof.
             ≡ₚ F <$> ((parent, tm') :: map_to_list (delete parent p)).
     { apply Permutation_map. exact (map_to_list_insert_existing p parent tm tm' Hp). }
     rewrite (concat_perm _ _ Hm) fmap_cons concat_cons //. }
-  have Hkp : entry_kp (lc, flip_run r) = entry_kp (lc, r).
-  { rewrite /entry_kp /entry_client /entry_pr /entry_clock /run_client /run_clock /run_head_item /flip_run //. }
+  have Hkp : entry_key_pair (lc, flip_run r) = entry_key_pair (lc, r).
+  { rewrite /entry_key_pair /entry_client /entry_clock_loc /entry_clock /run_client /run_clock /run_head_item /flip_run //. }
   have Hzip : zip ls (<[k := flip_run r]> (tm_runs tm)) = <[k := (lc, flip_run r)]> (zip ls (tm_runs tm)).
   { have H := insert_zip_with pair ls (tm_runs tm) k lc (flip_run r).
     rewrite (list_insert_id ls k lc Hlk) in H. rewrite -H //. }

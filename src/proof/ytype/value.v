@@ -51,15 +51,15 @@ Definition visible_items (m : list (YjsItem A * bool)) : list (YjsItem A) :=
 Definition visible_string (m : list (YjsItem A * bool)) : A :=
   items_string (visible_items m).
 
-(** [find_pos_runs ls runs p lft rgt off]: what [yType.findPos] resolves a
+(** [find_pos_runs ls runs p leftNode rightNode off]: what [yType.findPos] resolves a
     visible index to, at run granularity: the cursor [p] into the run list,
     the node addresses around it read off the address list [ls], and the
     offset inside the run before the cursor. *)
 Definition find_pos_runs (ls : list loc) (runs : list ItemRun)
-    (p : nat) (lft rgt : loc) (off : w64) : Prop :=
+    (p : nat) (leftNode rightNode : loc) (off : w64) : Prop :=
   (p <= length runs)%nat ∧
-  lft = loc_at ls (Z.of_nat p - 1) ∧
-  rgt = loc_at ls (Z.of_nat p) ∧
+  leftNode = loc_at ls (Z.of_nat p - 1) ∧
+  rightNode = loc_at ls (Z.of_nat p) ∧
   (off = W64 0 ∨
    (0 < uint.Z off)%Z ∧ (1 <= p)%nat ∧
    (∃ r, runs !! (p - 1)%nat = Some r ∧ run_deleted r = false ∧

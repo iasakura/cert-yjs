@@ -114,29 +114,29 @@ Qed.
     [wp_store__applyUpdate] below, which is the spec. *)
 #[local] Lemma wp_store__applyUpdate_unlocked (s : loc) (sl : slice.t) (dq : dfrac)
     (inputs pend0 applied rest : list (TId * IntegrateInput (A := A)))
-    (m m' : DocModel) (str : store_state_runs) :
-  sr_pending str = pend0 ->
+    (m m' : DocModel) (state : store_state_runs) :
+  sr_pending state = pend0 ->
   wire_drain m (pend0 ++ inputs) = (applied, rest, m') ->
   ValidReplay (expand_inputs applied) m m' ->
   wire_ready_total m (pend0 ++ inputs) applied ->
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ applied -> typedInput ∈ pend0 ++ inputs) ->
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend0 ++ inputs ->
      (1 <= length (in_content typedInput.2))%nat) ->
-  pool_registry_models m (sr_bind str) (sr_pool str) ->
+  pool_registry_models m (sr_bind state) (sr_pool state) ->
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend0 ++ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
-  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_runs s str }}}
+  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "applyUpdate" #sl
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #();
       own_update_structs sl dq inputs ∗
-      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>
+      own_store_runs s (state <| sr_pool := p' |> <| sr_locs := locs' |>
                             <| sr_bind := bind' |> <| sr_pending := rest |>) ∗
-      ⌜sr_bind str ⊆ bind'⌝ ∗
+      ⌜sr_bind state ⊆ bind'⌝ ∗
       ⌜pool_registry_models m' bind' p'⌝ ∗
-      ⌜runs_apply_live_refine m (all_runs (sr_pool str)) (all_runs p')⌝ }}}.
+      ⌜runs_apply_live_refine m (all_runs (sr_pool state)) (all_runs p')⌝ }}}.
 Proof using Type*.
   move=> Hpend0 Hdrain Hvr Hrtot Happliedsub Hnonempty [Hmtypes Hmdom] Hkb1.
-  destruct str as [client0 k0 locs p bind pend1 pdel]. simpl in *. subst pend1.
+  destruct state as [client0 k0 locs p bind pend1 pdel]. simpl in *. subst pend1.
   iIntros (Φ) "(#Hpkg & Hupd & Hruns) HΦ".
   (* the INITIAL pool's run structure, read while [Hruns] is over [p]
      (pure, non-consuming): needed in the ready branch to bound an original

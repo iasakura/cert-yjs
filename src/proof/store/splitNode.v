@@ -370,23 +370,23 @@ Qed.
     address slice ([own_item_map_runs]) gets the right half's address
     inserted after the split node's, the pool and address-map laws being
     [run_pool_invs_split] / [locs_wf_split] / [pool_entries_split]. *)
-Lemma wp_store__splitNode_runs (s : loc) (str : store_state_runs)
+Lemma wp_store__splitNode_runs (s : loc) (state : store_state_runs)
     (parent l : loc) (ls : list loc) (tm : type_model) (k : nat) (r : ItemRun) (diff : w64) :
-  sr_pool str !! parent = Some tm ->
-  sr_locs str !! parent = Some ls ->
+  sr_pool state !! parent = Some tm ->
+  sr_locs state !! parent = Some ls ->
   tm_runs tm !! k = Some r ->
   ls !! k = Some l ->
   (0 < uint.nat diff < length (run_items r))%nat ->
-  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+  {{{ is_pkg_init yjs ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "splitNode" #l #diff
   {{{ (rloc : loc), RET (#l, #rloc);
       own_store_runs s
-        (str <| sr_pool := <[parent := MkTypeModel (split_runs (tm_runs tm) k (uint.nat diff)) (tm_arr tm)]> (sr_pool str) |>
-             <| sr_locs := <[parent := split_locs ls k rloc]> (sr_locs str) |>) ∗
-      ⌜rloc ≠ null ∧ rloc ∉ concat ((map_to_list (sr_locs str)).*2)⌝ }}}.
+        (state <| sr_pool := <[parent := MkTypeModel (split_runs (tm_runs tm) k (uint.nat diff)) (tm_arr tm)]> (sr_pool state) |>
+             <| sr_locs := <[parent := split_locs ls k rloc]> (sr_locs state) |>) ∗
+      ⌜rloc ≠ null ∧ rloc ∉ concat ((map_to_list (sr_locs state)).*2)⌝ }}}.
 Proof using Type*.
   move=> Hp Hl Hr Hlk Hdiff.
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
   iDestruct "Hruns" as "(Hfields & %Hinvs)".
   have Hrpi : run_pool_invs p := proj1 Hinvs.
@@ -510,17 +510,17 @@ Proof using Type*.
     destruct His as [ls' Hls']. exists ls'. split; [done | exact (Hlens2 parent' ls' tm' Hls' Hp')]. }
   (* ----- the item-map surgery ----- *)
   iDestruct "Hitems" as (mref) "(Hitemsf & Hitemmap)".
-  iDestruct "Hitemmap" as (gm) "(Hmap & Hruns & %Hcomplete & %Hclkloc)".
+  iDestruct "Hitemmap" as (gm) "(Hmap & Hruns & %Hcomplete & %Hclockunique)".
   set (kc := itemVal.(yjs.item.id').(yjs.id.clientId')) in *.
   have Hecl : entry_client (l, r) = kc.
   { rewrite /entry_client /= /run_client Hid /toYjsId /=. rewrite /kc. word. }
   have Hlr_mem : (l, r) ∈ pool_entries locs p by (rewrite Hperm1; apply list_elem_of_here).
   set (E := client_entries locs p kc) in *.
-  set (kps := entry_kp <$> pool_entries locs p) in *.
-  set (kps2 := entry_kp <$> pool_entries locs2 p2) in *.
-  have Hce : client_locs locs p kc = E.*1 := client_locs_entries locs p kc Hclkloc.
-  have Hprs : merge_sort pr_le ((filter (λ kp0 : w64 * (Z * loc), kp0.1 = kc) kps).*2) = entry_pr <$> E
-    := client_entries_prs locs p kc Hclkloc.
+  set (key_pairs := entry_key_pair <$> pool_entries locs p) in *.
+  set (key_pairs2 := entry_key_pair <$> pool_entries locs2 p2) in *.
+  have Hce : client_locs locs p kc = E.*1 := client_locs_entries locs p kc Hclockunique.
+  have Hprs : merge_sort clock_loc_le ((filter (λ key_pair0 : w64 * (Z * loc), key_pair0.1 = kc) key_pairs).*2) = entry_clock_loc <$> E
+    := client_entries_clock_locs locs p kc Hclockunique.
   have Hndl : NoDup (pool_entries locs p).*1 := pool_entries_locs_NoDup locs p Hdom Hlens' Hnd.
   have HE : sorted_client_entries locs p kc E := client_entries_sorted_client locs p kc Hndl.
   have HndE : NoDup E.*1 := proj1 (proj2 HE).
@@ -534,8 +534,8 @@ Proof using Type*.
   have Hlr_E : (l, r) ∈ E by (apply client_entries_mem; split; [exact Hlr_mem | exact Hecl]).
   apply list_elem_of_lookup in Hlr_E as [kw Hkw].
   have Hkwlt : (kw < length E)%nat := lookup_lt_Some _ _ _ Hkw.
-  have Hkcin : kc ∈ kps.*1.
-  { rewrite -Hecl. apply list_elem_of_fmap. exists (entry_kp (l, r)).
+  have Hkcin : kc ∈ key_pairs.*1.
+  { rewrite -Hecl. apply list_elem_of_fmap. exists (entry_key_pair (l, r)).
     split; [reflexivity | apply list_elem_of_fmap_2; exact Hlr_mem]. }
   destruct (Hcomplete kc Hkcin) as [slk Hslk].
   iDestruct (big_sepM_lookup_acc _ _ kc slk Hslk with "Hruns") as "[Hrunslk Hrunsback]".
@@ -672,33 +672,33 @@ Proof using Type*.
   iDestruct ("Haccback" with "Haccval") as "Htypes2".
   (* the item-map model surgery: the right half's address lands at position
      kw+1 of the client's slice *)
-  have Hkp_left : entry_kp (l, leftRun) = entry_kp (l, r) := entry_kp_split_left l r o Hopos.
-  set (kp := entry_kp (rs, rightRun)) in *.
-  have Hkps2 : kps2 ≡ₚ kps ++ [kp].
-  { rewrite /kps2 /kps Hperm2 Hperm1 !fmap_cons Hkp_left /kp.
+  have Hkp_left : entry_key_pair (l, leftRun) = entry_key_pair (l, r) := entry_key_pair_split_left l r o Hopos.
+  set (key_pair := entry_key_pair (rs, rightRun)) in *.
+  have Hkps2 : key_pairs2 ≡ₚ key_pairs ++ [key_pair].
+  { rewrite /key_pairs2 /key_pairs Hperm2 Hperm1 !fmap_cons Hkp_left /key_pair.
     apply perm_skip. apply Permutation_cons_append. }
-  have Hkc_kp : kp.1 = kc.
-  { rewrite /kp /entry_kp /entry_client /= /rightRun Hclientr. exact Hecl. }
-  have Hkp_clock : kp.2.1 = (Z.of_nat (run_clock r) + Z.of_nat o)%Z.
-  { rewrite /kp /entry_kp /entry_pr /entry_clock /= /rightRun Hclockr. word. }
+  have Hkc_kp : key_pair.1 = kc.
+  { rewrite /key_pair /entry_key_pair /entry_client /= /rightRun Hclientr. exact Hecl. }
+  have Hkp_clock : key_pair.2.1 = (Z.of_nat (run_clock r) + Z.of_nat o)%Z.
+  { rewrite /key_pair /entry_key_pair /entry_clock_loc /entry_clock /= /rightRun Hclockr. word. }
   have Hdisj_E : ∀ j e, E !! j = Some e -> j ≠ kw ->
       (run_clock e.2 + length (run_items e.2) <= run_clock r)%nat ∨
       (run_clock r + length (run_items r) <= run_clock e.2)%nat.
   { move=> j [le re] Hj Hne. exact (HidisjE j kw le l re r Hj Hkw Hne). }
-  (* [pr_le]'s decision instance is local to [store/value_cells], so the
+  (* [clock_loc_le]'s decision instance is local to [store/value_cells], so the
      two order premises are stated over the sorted entries and carried to
      [merge_sort]'s form through [Hprs] *)
-  have Hbef : ∀ a, a ∈ take (kw + 1) (entry_pr <$> E) -> (a.1 < kp.2.1)%Z.
+  have Hbef : ∀ a, a ∈ take (kw + 1) (entry_clock_loc <$> E) -> (a.1 < key_pair.2.1)%Z.
   { rewrite -fmap_take. move=> a Ha. apply list_elem_of_fmap in Ha as (e & -> & He).
     apply list_elem_of_lookup_1 in He as [j Hj]. apply lookup_take_Some in Hj as [Hj Hjlt].
     have Hbe : (Z.of_nat (run_clock e.2) < 2^64)%Z := proj2 (Hbnds e.2 (HEmem e (list_elem_of_lookup_2 _ _ _ Hj))).
     destruct e as [le re]. simpl in Hbe.
-    rewrite Hkp_clock /entry_pr /= (entry_clock_Z le re Hbe).
+    rewrite Hkp_clock /entry_clock_loc /= (entry_clock_Z le re Hbe).
     destruct (decide (j = kw)) as [-> | Hne].
     - rewrite Hkw in Hj. injection Hj as <- <-. lia.
     - have Hle := StronglySorted_lookup_le entry_le E j kw (le, re) (l, r) HsortE Hj Hkw ltac:(lia).
       rewrite /entry_le (entry_clock_Z le re Hbe) (entry_clock_Z l r Hckb) in Hle. lia. }
-  have Haft : ∀ a, a ∈ drop (kw + 1) (entry_pr <$> E) -> (kp.2.1 < a.1)%Z.
+  have Haft : ∀ a, a ∈ drop (kw + 1) (entry_clock_loc <$> E) -> (key_pair.2.1 < a.1)%Z.
   { rewrite -fmap_drop. move=> a Ha. apply list_elem_of_fmap in Ha as (e & -> & He).
     apply list_elem_of_lookup_1 in He as [j Hj]. rewrite lookup_drop in Hj.
     have Hmem := HEmem e (list_elem_of_lookup_2 _ _ _ Hj).
@@ -706,44 +706,44 @@ Proof using Type*.
     have Hwe : run_wf (run_items e.2) := Hwfall e.2 Hmem.
     destruct e as [le re]. simpl in Hbe, Hwe, Hmem.
     have Hne : (kw + 1 + j)%nat ≠ kw by lia.
-    rewrite Hkp_clock /entry_pr /= (entry_clock_Z le re Hbe).
+    rewrite Hkp_clock /entry_clock_loc /= (entry_clock_Z le re Hbe).
     destruct (Hdisj_E (kw + 1 + j)%nat (le, re) Hj Hne) as [Hd | Hd]; simpl in Hd.
     - exfalso.
       have Hle := StronglySorted_lookup_le entry_le E kw (kw + 1 + j)%nat (l, r) (le, re) HsortE Hkw Hj ltac:(lia).
       rewrite /entry_le (entry_clock_Z l r Hckb) (entry_clock_Z le re Hbe) in Hle.
       have [Hne0 _] := Hwe. destruct (run_items re); [done | simpl in Hd; lia].
     - lia. }
-  have Hnokey : ∀ a, a ∈ kps -> a.1 = kp.1 -> a.2.1 = kp.2.1 -> False.
+  have Hnokey : ∀ a, a ∈ key_pairs -> a.1 = key_pair.1 -> a.2.1 = key_pair.2.1 -> False.
   { move=> a Ha Hac Hapr. apply list_elem_of_fmap in Ha as (e & -> & He).
     destruct e as [le re].
     have HeE : (le, re) ∈ E.
-    { apply client_entries_mem. split; [exact He |]. rewrite Hkc_kp entry_kp_split /= in Hac. exact Hac. }
+    { apply client_entries_mem. split; [exact He |]. rewrite Hkc_kp entry_key_pair_split /= in Hac. exact Hac. }
     have Hmem := HEmem (le, re) HeE. simpl in Hmem.
     have Hbe : (Z.of_nat (run_clock re) < 2^64)%Z := proj2 (Hbnds re Hmem).
     apply list_elem_of_lookup in HeE as [j Hj].
-    rewrite Hkp_clock entry_kp_split /= /entry_pr /= (entry_clock_Z le re Hbe) in Hapr.
+    rewrite Hkp_clock entry_key_pair_split /= /entry_clock_loc /= (entry_clock_Z le re Hbe) in Hapr.
     destruct (decide (j = kw)) as [-> | Hne].
     - rewrite Hkw in Hj. injection Hj as <- <-. lia.
     - destruct (Hdisj_E j (le, re) Hj Hne) as [Hd | Hd]; simpl in Hd; lia. }
-  have Hkpc : kp_clkloc (kps ++ [kp]).
+  have Hkpc : key_pairs_clock_unique (key_pairs ++ [key_pair]).
   { move=> a b Ha Hb Hab Hpr.
     apply elem_of_app in Ha as [Ha | Ha]; apply elem_of_app in Hb as [Hb | Hb].
-    - exact (Hclkloc a b Ha Hb Hab Hpr).
+    - exact (Hclockunique a b Ha Hb Hab Hpr).
     - apply list_elem_of_singleton in Hb as ->. exfalso. exact (Hnokey a Ha Hab Hpr).
     - apply list_elem_of_singleton in Ha as ->. exfalso. apply (Hnokey b Hb); [symmetry; exact Hab | symmetry; exact Hpr].
     - apply list_elem_of_singleton in Ha as ->. apply list_elem_of_singleton in Hb as ->. reflexivity. }
-  have Hclkloc2 : kp_clkloc kps2.
+  have Hclockunique2 : key_pairs_clock_unique key_pairs2.
   { move=> a b Ha Hb. rewrite Hkps2 in Ha Hb. exact (Hkpc a b Ha Hb). }
   have Hbef' := Hbef. rewrite -Hprs in Hbef'.
   have Haft' := Haft. rewrite -Hprs in Haft'.
-  have Hnew_kc : kp_client_locs kc kps2 = take (kw + 1) E.*1 ++ rs :: drop (kw + 1) E.*1.
-  { rewrite (kp_client_locs_perm kc kps2 (kps ++ [kp]) Hclkloc2 Hkps2).
-    rewrite (kp_client_locs_insert kc kps kp (kw + 1) Hclkloc Hkc_kp Hbef' Haft').
+  have Hnew_kc : key_pair_client_locs kc key_pairs2 = take (kw + 1) E.*1 ++ rs :: drop (kw + 1) E.*1.
+  { rewrite (key_pair_client_locs_perm kc key_pairs2 (key_pairs ++ [key_pair]) Hclockunique2 Hkps2).
+    rewrite (key_pair_client_locs_insert kc key_pairs key_pair (kw + 1) Hclockunique Hkc_kp Hbef' Haft').
     rewrite -/(client_locs locs p kc) Hce. reflexivity. }
-  have Hnew_other : ∀ c', c' ≠ kc -> kp_client_locs c' kps2 = kp_client_locs c' kps.
-  { move=> c' Hne. rewrite (kp_client_locs_perm c' kps2 (kps ++ [kp]) Hclkloc2 Hkps2).
-    apply kp_client_locs_other. rewrite Hkc_kp. exact (λ H, Hne (eq_sym H)). }
-  have Hcomplete2 : ∀ c, c ∈ kps2.*1 -> is_Some (<[kc := newSl]> gm !! c).
+  have Hnew_other : ∀ c', c' ≠ kc -> key_pair_client_locs c' key_pairs2 = key_pair_client_locs c' key_pairs.
+  { move=> c' Hne. rewrite (key_pair_client_locs_perm c' key_pairs2 (key_pairs ++ [key_pair]) Hclockunique2 Hkps2).
+    apply key_pair_client_locs_other. rewrite Hkc_kp. exact (λ H, Hne (eq_sym H)). }
+  have Hcomplete2 : ∀ c, c ∈ key_pairs2.*1 -> is_Some (<[kc := newSl]> gm !! c).
   { move=> c Hc. rewrite Hkps2 fmap_app in Hc. apply elem_of_app in Hc as [Hc | Hc].
     - destruct (decide (c = kc)) as [-> | Hne].
       + rewrite lookup_insert_eq. eauto.
@@ -757,14 +757,14 @@ Proof using Type*.
   { iExists (<[kc := newSl]> gm). iFrame "Hmap".
     iSplitL "HnewNodes HnewCap Hruns".
     - rewrite big_sepM_insert_delete. iSplitL "HnewNodes HnewCap".
-      { rewrite -/kps2 Hnew_kc. iFrame. }
+      { rewrite -/key_pairs2 Hnew_kc. iFrame. }
       iDestruct (big_sepM_delete _ _ kc slk Hslk with "Hruns") as "[_ Hrest]".
       iApply (big_sepM_impl with "Hrest").
       iIntros "!#" (client s0 Hcs) "H". iNamed "H".
       have Hne2 : client ≠ kc.
       { move=> Heqc. rewrite Heqc lookup_delete_eq in Hcs. discriminate. }
-      rewrite -/kps2 (Hnew_other client Hne2). iFrame.
-    - iPureIntro. split; [exact Hcomplete2 | exact Hclkloc2]. }
+      rewrite -/key_pairs2 (Hnew_other client Hne2). iFrame.
+    - iPureIntro. split; [exact Hcomplete2 | exact Hclockunique2]. }
   wp_auto.
   iAssert (own_store_runs s (MkStoreStateRuns client0 k0 locs2 p2 bind pend pdel))
     with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap2 Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
@@ -788,21 +788,21 @@ Qed.
     boundary it pins is [pool_split_left_step_ends_at], and it weakens to
     [pool_after_split] through [pool_split_step_of_left]). Proved directly
     from [wp_store__GetNode_runs] and [wp_store__splitNode_runs]. *)
-Lemma wp_store__splitAtAndGetLeft_runs (s : loc) (idv : yjs.id.t) (str : store_state_runs)
+Lemma wp_store__splitAtAndGetLeft_runs (s : loc) (idv : yjs.id.t) (state : store_state_runs)
     (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc) :
-  sr_pool str !! parent = Some tm ->
-  sr_locs str !! parent = Some ls ->
+  sr_pool state !! parent = Some tm ->
+  sr_locs state !! parent = Some ls ->
   tm_runs tm !! k = Some r ->
   ls !! k = Some lc ->
   run_covers r (toYjsId idv) ->
-  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+  {{{ is_pkg_init yjs ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
   {{{ (p' : pool) (locs' : gmap loc (list loc)), RET (#lc, #true);
-      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
-      ⌜pool_split_left_step (sr_pool str) (sr_locs str) parent k (toYjsId idv) p' locs'⌝ }}}.
+      own_store_runs s (state <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
+      ⌜pool_split_left_step (sr_pool state) (sr_locs state) parent k (toYjsId idv) p' locs'⌝ }}}.
 Proof using Type*.
   move=> Hp Hls Hr Hlk Hcov.
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
   wp_method_call. wp_call. wp_call. wp_auto.
   have Hcovp : pool_run_covers p parent k (toYjsId idv) by (exists tm, r).
@@ -882,21 +882,21 @@ Qed.
     [pool_split_right_step] (the boundary it pins is
     [pool_split_right_step_starts_at]). Proved directly from
     [wp_store__GetNode_runs] and [wp_store__splitNode_runs]. *)
-Lemma wp_store__splitAtAndGetRight_runs (s : loc) (idv : yjs.id.t) (str : store_state_runs)
+Lemma wp_store__splitAtAndGetRight_runs (s : loc) (idv : yjs.id.t) (state : store_state_runs)
     (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc) :
-  sr_pool str !! parent = Some tm ->
-  sr_locs str !! parent = Some ls ->
+  sr_pool state !! parent = Some tm ->
+  sr_locs state !! parent = Some ls ->
   tm_runs tm !! k = Some r ->
   ls !! k = Some lc ->
   run_covers r (toYjsId idv) ->
-  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+  {{{ is_pkg_init yjs ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
   {{{ (l : loc) (p' : pool) (locs' : gmap loc (list loc)), RET (#l, #true);
-      own_store_runs s (str <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
-      ⌜pool_split_right_step (sr_pool str) (sr_locs str) parent k (toYjsId idv) l p' locs'⌝ }}}.
+      own_store_runs s (state <| sr_pool := p' |> <| sr_locs := locs' |>) ∗
+      ⌜pool_split_right_step (sr_pool state) (sr_locs state) parent k (toYjsId idv) l p' locs'⌝ }}}.
 Proof using Type*.
   move=> Hp Hls Hr Hlk Hcov.
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
   wp_method_call. wp_call. wp_call. wp_auto.
   have Hcovp : pool_run_covers p parent k (toYjsId idv) by (exists tm, r).

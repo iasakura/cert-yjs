@@ -528,17 +528,17 @@ Qed.
     because every slot of that client is an entry of the walked list
     ([pool_entries_slot]), or, for a client with no slice at all, because
     the index is complete. *)
-Lemma wp_store__GetNode_runs (s : loc) (idv : yjs.id.t) (str : store_state_runs) :
-  {{{ is_pkg_init yjs ∗ own_store_runs s str }}}
+Lemma wp_store__GetNode_runs (s : loc) (idv : yjs.id.t) (state : store_state_runs) :
+  {{{ is_pkg_init yjs ∗ own_store_runs s state }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store_runs s str ∗
-      ⌜if ok then ∃ parent k, pool_run_covers (sr_pool str) parent k (toYjsId idv) ∧
-                    (sr_locs str !! parent) ≫= (λ ls, ls !! k) = Some l
-       else ∀ parent k, ¬ pool_run_covers (sr_pool str) parent k (toYjsId idv)⌝ }}}.
+      own_store_runs s state ∗
+      ⌜if ok then ∃ parent k, pool_run_covers (sr_pool state) parent k (toYjsId idv) ∧
+                    (sr_locs state !! parent) ≫= (λ ls, ls !! k) = Some l
+       else ∀ parent k, ¬ pool_run_covers (sr_pool state) parent k (toYjsId idv)⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
-  destruct str as [client0 k0 locs p bind pend pdel]. simpl in *.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iDestruct "Hruns" as "(Hfields & %Hinvs)".
   have Hrpi : run_pool_invs p := proj1 Hinvs.
   iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
@@ -554,8 +554,8 @@ Proof using Type*.
     { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
     destruct His as [ls Hls]. exists ls. split; [done | exact (Hlens parent ls tm Hls Hp)]. }
   set (kc := idv.(yjs.id.clientId')).
-  iDestruct "Hitemmap" as (gm) "(Hmap & Hruns & %Hcomplete & %Hclkloc)".
-  have Hce : client_locs locs p kc = (client_entries locs p kc).*1 := client_locs_entries locs p kc Hclkloc.
+  iDestruct "Hitemmap" as (gm) "(Hmap & Hruns & %Hcomplete & %Hclockunique)".
+  have Hce : client_locs locs p kc = (client_entries locs p kc).*1 := client_locs_entries locs p kc Hclockunique.
   (* a slot of client [kc] is an entry of the walked list *)
   have Hslot_entry : ∀ parent k tm r, p !! parent = Some tm -> tm_runs tm !! k = Some r ->
       run_client r = uint.nat kc ->
@@ -611,7 +611,7 @@ Proof using Type*.
         rewrite /own_store_fields_runs /=.
         iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
         iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
-        iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+        iPureIntro. split; [exact Hcomplete | exact Hclockunique]. }
       iPureIntro. exists parent, kr. split.
       * exists tm, rres. split_and!; [exact Hp | exact Hrk |].
         rewrite /run_covers /toYjsId /=.
@@ -630,7 +630,7 @@ Proof using Type*.
         rewrite /own_store_fields_runs /=.
         iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
         iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
-        iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+        iPureIntro. split; [exact Hcomplete | exact Hclockunique]. }
       iPureIntro. move=> parent k [tm [r [Hp [Hrk Hcov]]]].
       destruct Hcov as (Hcl & Hc1 & Hc2).
       destruct (Hslot_entry parent k tm r Hp Hrk Hcl) as (l & Hmem & _).
@@ -643,13 +643,13 @@ Proof using Type*.
       rewrite /own_store_fields_runs /=.
       iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
       iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
-      iPureIntro. split; [exact Hcomplete | exact Hclkloc]. }
+      iPureIntro. split; [exact Hcomplete | exact Hclockunique]. }
     iPureIntro. move=> parent k [tm [r [Hp [Hrk Hcov]]]].
     destruct Hcov as (Hcl & _ & _).
     destruct (Hslot_entry parent k tm r Hp Hrk Hcl) as (l & Hmem & _).
     apply client_entries_mem in Hmem as [Hpe Hc].
-    have Hkcin : kc ∈ (entry_kp <$> pool_entries locs p).*1.
-    { rewrite -Hc. apply list_elem_of_fmap. exists (entry_kp (l, r)). split; [reflexivity |].
+    have Hkcin : kc ∈ (entry_key_pair <$> pool_entries locs p).*1.
+    { rewrite -Hc. apply list_elem_of_fmap. exists (entry_key_pair (l, r)). split; [reflexivity |].
       apply list_elem_of_fmap_2. exact Hpe. }
     destruct (Hcomplete kc Hkcin) as [slk Hslk'].
     rewrite Hslk in Hslk'. discriminate.

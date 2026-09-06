@@ -1,10 +1,10 @@
 (** The [Text] handle, PURE model layer: what a reader's walk means.
 
     Definitions
-    - [text_snapshot L marr]: the walked list [marr] is a valid document
+    - [text_snapshot L model]: the walked list [model] is a valid document
       holding every item of the handle's model [L].
-    - [history_reflected h0 name marr]: every insert into the root [name]
-      that the history prefix [h0] delivered has its item in [marr].
+    - [history_reflected h0 name model]: every insert into the root [name]
+      that the history prefix [h0] delivered has its item in [model].
 
     Laws: none; [Text.Len] / [Text.String] state their reads over these
     directly. *)
@@ -27,18 +27,18 @@ Local Notation Ev := (@Event Op).
 
 (* ===== definitions ======================================================== *)
 
-(** [text_snapshot L marr]: the list a reader walked, with tombstones
-    ([marr]), is a valid document holding every item of the handle's model
+(** [text_snapshot L model]: the list a reader walked, with tombstones
+    ([model]), is a valid document holding every item of the handle's model
     [L] (the handle's list is a lower bound of what the reader sees). *)
-Definition text_snapshot (L : list (YjsItem A)) (marr : list (YjsItem A * bool)) : Prop :=
-  list_to_set L ⊆ (list_to_set marr.*1 : gset (YjsItem A)) ∧
-  YjsArrInvariant marr.*1.
+Definition text_snapshot (L : list (YjsItem A)) (model : list (YjsItem A * bool)) : Prop :=
+  list_to_set L ⊆ (list_to_set model.*1 : gset (YjsItem A)) ∧
+  YjsArrInvariant model.*1.
 
-(** [history_reflected h0 name marr]: every insert into the root [name] that
+(** [history_reflected h0 name model]: every insert into the root [name] that
     the history prefix [h0] delivered has its item in the walked list. *)
-Definition history_reflected (h0 : list Ev) (name : P) (marr : list (YjsItem A * bool)) : Prop :=
+Definition history_reflected (h0 : list Ev) (name : P) (model : list (YjsItem A * bool)) : Prop :=
   ∀ input : IntegrateInput (A := A),
     (RootId name, OpInsert input) ∈ delivered_ops h0 ->
-    ∃ it, item_id it = in_id input ∧ it ∈ marr.*1.
+    ∃ it, item_id it = in_id input ∧ it ∈ model.*1.
 
 End text_model.
