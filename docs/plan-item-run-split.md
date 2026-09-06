@@ -1,6 +1,18 @@
 # Plan: split `item_cell` into a pure `ItemRun` and a location list
 
-Status: proposal (2026-08-22), written after the spec refactor
+Status: COMPLETE (2026-09-06). Every stage landed; `item_cell` and the
+whole cell layer are gone, and nothing under `src/proof` mentions a cell.
+The last PRs are #191 (delete the cell layer), #192 (retire the
+addressed-run bridge), #194 (`tm_arr` becomes a projection of `tm_runs`)
+and #195 (drop the `_runs` granularity marks the coexistence needed).
+What the store now speaks in: a pool of `type_model`s (a run list, with
+the document read off it), an address map beside it (`locs_wf`), and the
+per-client item index over the pool's entries. The stage-by-stage record
+below is kept for the archaeology, so it still uses the names of its own
+time (`own_store_runs`, `pool_run_covers`, ...); the PROGRESS paragraphs
+say what actually happened.
+
+Original status: proposal (2026-08-22), written after the spec refactor
 (`docs/plan-spec-refactor.md`, PRs #143 to #151). Stage 1 in progress
 (2026-08-27): `ItemRun`, its vocabulary and split surgery, `cell_run` and
 the projection laws for flatten / visible / flip / split / covers / fits /
