@@ -1,5 +1,5 @@
 (** Text handle: the top-level [wp_Text__Insert] (lock-based per-byte
-    Integrate loop at run granularity over [own_store_runs], one op
+    Integrate loop over [own_store_state], one op
     certificate per inserted item). Split out of [text/text]; shares
     [is_Text] etc. via [text/heap]. *)
 From New.proof Require Import proof_prelude.
@@ -73,9 +73,9 @@ Proof.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
   iDestruct "Hinv" as (c0 h m pend) "Hown".
   iDestruct "Hown" as (client k pdel locs0 p0 bind acc) "Hown". iNamed "Hown". subst c0.
-  iDestruct (own_store_runs_registry_coh with "Hcells") as %Hreg.
-  iDestruct (own_store_runs_aligned with "Hcells") as %Haligned.
-  iDestruct (own_store_runs_run_wf with "Hcells") as %Hwf0.
+  iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
+  iDestruct (own_store_state_aligned with "Hstate") as %Haligned.
+  iDestruct (own_store_state_run_wf with "Hstate") as %Hwf0.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
   have [Hmtypes Hmdom] := Hregmodel.
   (* snapshot the lock-time history: only appends happen under the lock, so at
@@ -89,7 +89,7 @@ Proof.
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
   have Hmt : doc_model_get m (RootId name) = (tm_arr ts) := Hmtypes name parent ts Hbindlk Htsp.
   subst parent.
-  iRename "Hcells" into "Hruns".
+  iRename "Hstate" into "Hruns".
   set (runs0 := tm_runs ts).
   have Hp0 : p0 !! tv.(yjs.Text.inner') = Some (MkTypeModel runs0).
   { rewrite /runs0. destruct ts; exact Htsp. }
@@ -97,13 +97,13 @@ Proof.
   { apply elem_of_dom. rewrite (proj1 Haligned). apply elem_of_dom. by exists ts. }
   have Hlsl0 : length ls0 = length runs0 := proj2 Haligned _ _ _ Hl0 Htsp.
   (* the type's [len] field *)
-  iDestruct (own_store_runs_ytype_acc tv.(yjs.Text.store') (MkStoreStateRuns client k locs0 p0 bind pend pdel) tv.(yjs.Text.inner') ls0 (MkTypeModel runs0) Hl0 Hp0 with "Hruns") as "[Hyt Hytback]".
+  iDestruct (own_store_state_ytype_acc tv.(yjs.Text.store') (MkStoreState client k locs0 p0 bind pend pdel) tv.(yjs.Text.inner') ls0 (MkTypeModel runs0) Hl0 Hp0 with "Hruns") as "[Hyt Hytback]".
   iDestruct "Hyt" as (yt0 tl0) "(Hparent & Hdll & %Hlen)".
   wp_auto.
   case_bool_decide as Hbound.
   { (* ---- out-of-range: index past the visible length, nothing inserted. ---- *)
     wp_auto.
-    iAssert (own_ytype_runs tv.(yjs.Text.inner') (DfracOwn 1) ls0 (MkTypeModel runs0))
+    iAssert (own_ytype tv.(yjs.Text.inner') (DfracOwn 1) ls0 (MkTypeModel runs0))
       with "[Hparent Hdll]" as "Hyt".
     { iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. exact Hlen. }
     iDestruct ("Hytback" with "Hyt") as "Hruns".
@@ -123,12 +123,12 @@ Proof.
       intros i it b Hii. rewrite lookup_nil in Hii. inversion Hii. }
     rewrite big_sepL_nil. done. }
   (* ---- in-range: insert one 1-char item per byte. ---- *)
-  iAssert (own_ytype_runs tv.(yjs.Text.inner') (DfracOwn 1) ls0 (MkTypeModel runs0))
+  iAssert (own_ytype tv.(yjs.Text.inner') (DfracOwn 1) ls0 (MkTypeModel runs0))
     with "[Hparent Hdll]" as "Hyt".
   { iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. exact Hlen. }
   iDestruct ("Hytback" with "Hyt") as "Hruns".
   (* the clock-overflow guard reads the store's clock *)
-  iDestruct (own_store_runs_clock_acc with "Hruns") as "[Hclock Hclockback]".
+  iDestruct (own_store_state_clock_acc with "Hruns") as "[Hclock Hclockback]".
   iEval (simpl) in "Hclock".
   wp_auto.
   wp_apply strings.wp_string_len. iIntros "%Hlcb".
@@ -158,7 +158,7 @@ Proof.
   iDestruct ("Hclockback" with "Hclock") as "Hruns".
   iEval (simpl) in "Hruns".
   wp_auto.
-  iDestruct (own_store_runs_ytype_acc tv.(yjs.Text.store') (MkStoreStateRuns client k locs0 p0 bind pend pdel) tv.(yjs.Text.inner') ls0 (MkTypeModel runs0) Hl0 Hp0 with "Hruns") as "[Hyt Hytback]".
+  iDestruct (own_store_state_ytype_acc tv.(yjs.Text.store') (MkStoreState client k locs0 p0 bind pend pdel) tv.(yjs.Text.inner') ls0 (MkTypeModel runs0) Hl0 Hp0 with "Hruns") as "[Hyt Hytback]".
   wp_apply (wp_yType__findPos tv.(yjs.Text.inner') (DfracOwn 1) ls0 (MkTypeModel runs0) idx with "[$Hyt]").
   iIntros (leftNode rightNode p off) "(Hyt & %Hfp)".
   iDestruct ("Hytback" with "Hyt") as "Hruns".
@@ -173,7 +173,7 @@ Proof.
   wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗
       ∃ (locs1 : gmap loc (list loc)) (p1 : pool) (ls1 : list loc) (runs1 : list ItemRun) (p1i : nat),
       "s" ∷ s_ptr ↦ tv.(yjs.Text.store') ∗
-      "Hruns" ∷ own_store_runs tv.(yjs.Text.store') (MkStoreStateRuns client k locs1 p1 bind pend pdel) ∗
+      "Hruns" ∷ own_store_state tv.(yjs.Text.store') (MkStoreState client k locs1 p1 bind pend pdel) ∗
       "left" ∷ left_ptr ↦ loc_at ls1 (Z.of_nat p1i - 1) ∗
       "right" ∷ right_ptr ↦ loc_at ls1 (Z.of_nat p1i) ∗
       "%Hp1" ∷ ⌜p1 !! tv.(yjs.Text.inner') = Some (MkTypeModel runs1)⌝ ∗
@@ -195,7 +195,7 @@ Proof.
     { rewrite /loc_at decide_True; last lia.
       have -> : Z.to_nat (Z.of_nat p - 1) = (p - 1)%nat by lia.
       destruct (ls0 !! (p - 1)%nat) as [l0|] eqn:Hl0k; [done | apply lookup_ge_None in Hl0k; lia]. }
-    wp_apply (wp_store__splitNode_runs tv.(yjs.Text.store') (MkStoreStateRuns client k locs0 p0 bind pend pdel)
+    wp_apply (wp_store__splitNode tv.(yjs.Text.store') (MkStoreState client k locs0 p0 bind pend pdel)
                 tv.(yjs.Text.inner') (loc_at ls0 (Z.of_nat p - 1)) ls0 (MkTypeModel runs0) (p - 1)%nat r off
                 Hp0 Hl0 Hr Hlk Hdiffb with "[$Hruns]").
     iIntros (rloc) "(Hruns & %Hrlocfresh)".
@@ -245,24 +245,24 @@ Proof.
   have Harr1 : (tm_arr ts) = runs_flatten runs1.
   { destruct (proj1 Hlr1 tv.(yjs.Text.inner') (MkTypeModel runs1) Hp1) as (tm0 & Htm0 & Harr0).
     rewrite Htsp in Htm0. injection Htm0 as <-. by rewrite -Harr0. }
-  iDestruct (own_store_runs_arr_inv with "Hruns") as %Harrinvs1.
+  iDestruct (own_store_state_arr_inv with "Hruns") as %Harrinvs1.
   have Hinvarr : YjsArrInvariant (tm_arr ts).
   { rewrite Harr1. exact (Harrinvs1 _ _ Hp1). }
-  iDestruct (own_store_runs_run_wf with "Hruns") as %Hwfall1.
+  iDestruct (own_store_state_run_wf with "Hruns") as %Hwfall1.
   have Hwf1 : ∀ r, r ∈ runs1 -> run_wf (run_items r).
   { move=> r Hr. apply Hwfall1. apply elem_of_all_runs.
     exists tv.(yjs.Text.inner'), (MkTypeModel runs1). split; [exact Hp1 | exact Hr]. }
   have Hnec1 : Forall (λ r, run_items r ≠ []) runs1.
   { apply Forall_forall. move=> r Hr. exact (proj1 (Hwf1 r Hr)). }
-  iDestruct (own_store_runs_aligned with "Hruns") as %Hal1.
+  iDestruct (own_store_state_aligned with "Hruns") as %Hal1.
   have Hlsl1 : length ls1 = length runs1.
   { destruct (locs_aligned_lens _ _ Hal1 tv.(yjs.Text.inner') _ Hp1) as (ls' & Hls' & Hlen').
     simpl in Hls'. rewrite Hl1 in Hls'. injection Hls' as <-. exact Hlen'. }
   (* the tombstone-set invariant follows the normalization: a split only
      refines the live cells (plan-delete-set.md section 3) *)
-  iDestruct (own_delete_set_runs_refine γs m p0 p1 (proj1 (proj2 (proj2 Hlr1))) with "Hdelete_set") as "Hdelete_set".
+  iDestruct (own_delete_set_refine γs m p0 p1 (proj1 (proj2 (proj2 Hlr1))) with "Hdelete_set") as "Hdelete_set".
   (* [client := s.client] *)
-  iDestruct (own_store_runs_client_acc with "Hruns") as "[Hclient Hclientback]".
+  iDestruct (own_store_state_client_acc with "Hruns") as "[Hclient Hclientback]".
   iEval (simpl) in "Hclient".
   wp_auto.
   iDestruct ("Hclientback" with "Hclient") as "Hruns".
@@ -272,7 +272,7 @@ Proof.
   (* shared right origin *)
   wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗ ∃ (oRptr : loc) (in_rO : option yjs.id.t),
       "HoR" ∷ originRightId_ptr ↦ oRptr ∗ "HisR" ∷ is_origin_id oRptr in_rO ∗
-      "Hruns" ∷ own_store_runs tv.(yjs.Text.store') (MkStoreStateRuns client k locs1 p1 bind pend pdel) ∗
+      "Hruns" ∷ own_store_state tv.(yjs.Text.store') (MkStoreState client k locs1 p1 bind pend pdel) ∗
       "Hright" ∷ right_ptr ↦ loc_at ls1 (Z.of_nat p1i) ∗
       "%Hrightinit" ∷ ⌜(in_rO = None ∧ (p1i = length runs1)%nat) ∨
         (∃ (ri : YjsItem A) (rightOriginId : yjs.id.t), (tm_arr ts) !! mp = Some ri ∧ in_rO = Some rightOriginId ∧ item_id ri = toYjsId rightOriginId)⌝)%I
@@ -284,7 +284,7 @@ Proof.
     - have Hlt : (p1i < length runs1)%nat by lia.
       destruct (runs1 !! p1i) as [rr|] eqn:Hrr; [| apply lookup_ge_None in Hrr; lia].
       destruct (ls1 !! p1i) as [lr|] eqn:Hlr; [| apply lookup_ge_None in Hlr; lia].
-      iDestruct (own_store_runs_node_acc _ (MkStoreStateRuns _ _ _ _ _ _ _) _ _ _ _ _ _ Hl1 Hp1 Hlr Hrr with "Hruns") as (itemVal) "H".
+      iDestruct (own_store_state_node_acc _ (MkStoreState _ _ _ _ _ _ _) _ _ _ _ _ _ Hl1 Hp1 Hlr Hrr with "Hruns") as (itemVal) "H".
       iNamed "H".
       iDestruct (typed_pointsto_not_null with "Haccval") as %Hnn.
       exfalso. apply Hnn. rewrite -e /loc_at decide_True; last lia. rewrite Nat2Z.id Hlr //. }
@@ -297,7 +297,7 @@ Proof.
     destruct (ls1 !! p1i) as [lr|] eqn:Hlr; [| apply lookup_ge_None in Hlr; lia].
     have Hlrloc : loc_at ls1 (Z.of_nat p1i) = lr.
     { rewrite /loc_at decide_True; last lia. rewrite Nat2Z.id Hlr //. }
-    iDestruct (own_store_runs_node_acc _ (MkStoreStateRuns _ _ _ _ _ _ _) _ _ _ _ _ _ Hl1 Hp1 Hlr Hrr with "Hruns") as (itemVal) "H".
+    iDestruct (own_store_state_node_acc _ (MkStoreState _ _ _ _ _ _ _) _ _ _ _ _ _ Hl1 Hp1 Hlr Hrr with "Hruns") as (itemVal) "H".
     iNamed "H".
     iEval (rewrite -Hlrloc) in "Haccval".
     wp_load. wp_pures. wp_store.
@@ -365,7 +365,7 @@ Proof.
      one unit run per item at the cursor, [ins] is the run; the ghost history
      [hj] grows by one mint per inserted item, staying coherent with [arr], and
      the certificates of the run accumulate in [Hcertsj]. The store is carried
-     whole ([own_store_runs]); the delete-set ghost still speaks of the
+     whole ([own_store_state]); the delete-set ghost still speaks of the
      materialized cells until C6. *)
   iAssert (∃ (j : nat) (arr : list (YjsItem A)) (locsj : gmap loc (list loc)) (pj : pool)
              (lsj : list loc) (runsj : list ItemRun) (ins : list (YjsItem A)) (hj : list Ev),
@@ -376,9 +376,9 @@ Proof.
     "HoRp" ∷ originRightId_ptr ↦ oRptr ∗
     "Hleftp" ∷ left_ptr ↦ loc_at lsj (Z.of_nat (p1i + j) - 1) ∗
     "Hsp" ∷ s_ptr ↦ tv.(yjs.Text.store') ∗
-    "Hruns" ∷ own_store_runs tv.(yjs.Text.store') (MkStoreStateRuns client (W64 (uint.Z k + Z.of_nat j)) locsj pj bind pend pdel) ∗
+    "Hruns" ∷ own_store_state tv.(yjs.Text.store') (MkStoreState client (W64 (uint.Z k + Z.of_nat j)) locsj pj bind pend pdel) ∗
     "Hlk" ∷ own_wlock γs ∗
-    "Hdelete_set" ∷ own_delete_set_runs γs m (all_runs pj) ∗
+    "Hdelete_set" ∷ own_delete_set γs m (all_runs pj) ∗
     "Hseq" ∷ own γs.(sn_seq) (● ((λ tm : type_model, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p0) : authR (gmapUR loc (gsetUR (YjsItem A)))) ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "Hrightp" ∷ right_ptr ↦ loc_at lsj (Z.of_nat (p1i + j)) ∗
@@ -455,20 +455,20 @@ Proof.
     have Hjpos : (j < length cs)%nat by word.
     rewrite decide_True; [| reflexivity].
     (* [clk := s.clock; s.clock = clk + 1] through the clock borrow *)
-    iDestruct (own_store_runs_clock_acc with "Hruns") as "[Hclock Hclockback]".
+    iDestruct (own_store_state_clock_acc with "Hruns") as "[Hclock Hclockback]".
     iEval (simpl) in "Hclock".
     wp_auto.
     iDestruct ("Hclockback" with "Hclock") as "Hruns".
     iEval (simpl) in "Hruns".
     (* the store's readings of the current type *)
-    iDestruct (own_store_runs_run_wf with "Hruns") as %Hwfallj.
+    iDestruct (own_store_state_run_wf with "Hruns") as %Hwfallj.
     have Hwfj : ∀ r, r ∈ runsj -> run_wf (run_items r).
     { move=> r Hr. apply Hwfallj. apply elem_of_all_runs.
       exists tv.(yjs.Text.inner'), (MkTypeModel runsj). split; [exact Hpj | exact Hr]. }
     have Hnecj : Forall (λ r, run_items r ≠ []) runsj.
     { apply Forall_forall. move=> r Hr. exact (proj1 (Hwfj r Hr)). }
-    iDestruct (own_store_runs_run_pool_invs with "Hruns") as %Hrpj.
-    iDestruct (own_store_runs_aligned with "Hruns") as %Halj.
+    iDestruct (own_store_state_run_pool_invs with "Hruns") as %Hrpj.
+    iDestruct (own_store_state_aligned with "Hruns") as %Halj.
     have Hlslj : length lsj = length runsj.
     { destruct (locs_aligned_lens _ _ Halj tv.(yjs.Text.inner') _ Hpj) as (ls' & Hls' & Hlen').
       simpl in Hls'. rewrite Hlj in Hls'. injection Hls' as <-. exact Hlen'. }
@@ -477,7 +477,7 @@ Proof.
       ∃ (oLptr : loc) (olo : option yjs.id.t),
         "HoL" ∷ originLeftId_ptr ↦ oLptr ∗
         "HisL" ∷ is_origin_id oLptr olo ∗
-        "Hruns" ∷ own_store_runs tv.(yjs.Text.store') (MkStoreStateRuns client (w64_word_instance.(word.add) (W64 (uint.Z k + Z.of_nat j)) (W64 1)) locsj pj bind pend pdel) ∗
+        "Hruns" ∷ own_store_state tv.(yjs.Text.store') (MkStoreState client (w64_word_instance.(word.add) (W64 (uint.Z k + Z.of_nat j)) (W64 1)) locsj pj bind pend pdel) ∗
         "Hleftp" ∷ left_ptr ↦ loc_at lsj (Z.of_nat (p1i + j) - 1) ∗
         "%Hleftspec" ∷ ⌜(olo = None ∧ (p1i + length ins = 0)%nat) ∨
            (∃ (li : YjsItem A), (1 <= p1i + length ins)%nat ∧ arr !! (mp + length ins - 1)%nat = Some li ∧ (toYjsId <$> olo) = Some (item_id li))⌝)%I
@@ -487,7 +487,7 @@ Proof.
         iSplit; [by rewrite /is_origin_id|]. iPureIntro. left. split; [reflexivity | exact Hpe0].
       - have Hlrlt : (p1i + length ins - 1 < length lsj)%nat by (rewrite Hlslj; exact (lookup_lt_Some _ _ _ Hlrj)).
         destruct (lsj !! (p1i + length ins - 1)%nat) as [lc|] eqn:Hlcj; [| apply lookup_ge_None in Hlcj; lia].
-        iDestruct (own_store_runs_node_acc _ (MkStoreStateRuns _ _ _ _ _ _ _) _ _ _ _ _ _ Hlj Hpj Hlcj Hlrj with "Hruns") as (itemVal) "H".
+        iDestruct (own_store_state_node_acc _ (MkStoreState _ _ _ _ _ _ _) _ _ _ _ _ _ Hlj Hpj Hlcj Hlrj with "Hruns") as (itemVal) "H".
         iNamed "H".
         iDestruct (typed_pointsto_not_null with "Haccval") as %Hlcnn.
         exfalso. apply Hlcnn. rewrite -e /loc_at decide_True; last lia.
@@ -501,7 +501,7 @@ Proof.
       { rewrite /loc_at decide_True; last lia.
         have -> : Z.to_nat (Z.of_nat (p1i + length ins) - 1) = (p1i + length ins - 1)%nat by lia.
         rewrite Hlcj //. }
-      iDestruct (own_store_runs_node_acc _ (MkStoreStateRuns _ _ _ _ _ _ _) _ _ _ _ _ _ Hlj Hpj Hlcj Hlrj with "Hruns") as (itemVal) "H".
+      iDestruct (own_store_state_node_acc _ (MkStoreState _ _ _ _ _ _ _) _ _ _ _ _ _ Hlj Hpj Hlcj Hlrj with "Hruns") as (itemVal) "H".
       iNamed "H".
       have Hrun : run_wf (run_items lr) := Hwfj lr (list_elem_of_lookup_2 _ _ _ Hlrj).
       iEval (rewrite -Hlcloc) in "Haccval".
@@ -617,10 +617,10 @@ Proof.
     { rewrite /input_fits /input /in_id1 /=. rewrite Hclocknit. word. }
     (* the pool-level client clock bound the splice needs, from the
        model-level bounds (this text's [Hctrj], the others' lock-time [Hctr]) *)
-    have Hbelowj : pool_run_clock_below pj (in_id input).
+    have Hbelowj : pool_clock_below pj (in_id input).
     { have -> : in_id input = MkYjsId (uint.nat client) (uint.nat k + j)%nat.
       { rewrite /input /in_id1 /= Hclocknit //. }
-      apply (pool_run_clock_below_of_arrs pj (uint.nat client) (uint.nat k + j)%nat Hwfallj).
+      apply (pool_clock_below_of_arrs pj (uint.nat client) (uint.nat k + j)%nat Hwfallj).
       move=> q tm x Hq Hx Hcx.
       destruct (decide (q = tv.(yjs.Text.inner'))) as [-> | Hne].
       - rewrite Hpj in Hq. injection Hq as <-. simpl in Hx.
@@ -637,8 +637,8 @@ Proof.
     have Hresj : origins_resolved (tm_runs (MkTypeModel runsj)) (tm_arr (MkTypeModel runsj))
                    input (p1i + j)%nat (p1i + j)%nat.
     { rewrite /tm_arr /= -Harrj. exact Hres. }
-    wp_apply (wp_store__Integrate_runs tv.(yjs.Text.store') tv.(yjs.Text.inner') tv.(yjs.Text.inner') oL2
-                (MkStoreStateRuns client (w64_word_instance.(word.add) (W64 (uint.Z k + Z.of_nat j)) (W64 1)) locsj pj bind pend pdel)
+    wp_apply (wp_store__Integrate tv.(yjs.Text.store') tv.(yjs.Text.inner') tv.(yjs.Text.inner') oL2
+                (MkStoreState client (w64_word_instance.(word.add) (W64 (uint.Z k + Z.of_nat j)) (W64 1)) locsj pj bind pend pdel)
                 (MkTypeModel runsj) lsj arr' input newItem (p1i + j)%nat (p1i + j)%nat
                 (or_introl eq_refl) Hpj Hlj Hreadyj Hfitsin Hallj Hresj Hbelowj
                 with "[$Hfresh $Hruns]").
@@ -761,7 +761,7 @@ Proof.
         by rewrite Hid /newItem /in_id1 /=.
       have := Hctr q tq x Hq Hx Hxcl.
       rewrite Hid /newItem /in_id1 /=. rewrite Hclocknit. lia. }
-    iDestruct (own_delete_set_runs_snoc γs m _ _ (MkItemRun [newItem] false) Hac_ds Hfresh_ds
+    iDestruct (own_delete_set_snoc γs m _ _ (MkItemRun [newItem] false) Hac_ds Hfresh_ds
                  with "Hdelete_set") as "Hdelete_set".
     wp_for_post.
     (* re-establish the loop invariant for [S j] with [ins ++ [newItem]] *)
@@ -884,7 +884,7 @@ Proof.
   { eapply accepted_coh_hist_grow; [exact Hacccoh | exact (delivered_ids_prefix _ _ Hpref_hj)]. }
   (* the delete set's model-domain bound survives the insert: the type's list
      only grew (Hsubarr), so every id present before is still present *)
-  iDestruct (own_delete_set_runs_insert γs m (all_runs pj) (RootId name) arr with "Hdelete_set") as "Hdelete_set".
+  iDestruct (own_delete_set_insert γs m (all_runs pj) (RootId name) arr with "Hdelete_set") as "Hdelete_set".
   { move=> x Hx.
     rewrite Hmt in Hx.
     have Hxg : x ∈ (list_to_set arr : gset (YjsItem A)).

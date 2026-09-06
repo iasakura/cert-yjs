@@ -3,7 +3,7 @@
 
     Definitions
     - [expand_input] / [expand_inputs]: one wire item expands to its per-char
-      integrate inputs, which is how a run-granular update refines the
+      integrate inputs, which is how a update refines the
       per-char model.
     - what a decoded batch must satisfy: [input_fits] per struct,
       [pending_item_rooted] / [is_pending_rooted], bundled as [update_wf].
@@ -28,57 +28,57 @@
 
     The type pool: [pool], every registered type at its [type_model]
     ([addressed_pool] pairs it with the types' node addresses); [all_runs]
-    and the clock-sorted [client_runs]; [run_pool_invs], the pool invariants
+    and the clock-sorted [client_runs]; [pool_invs], the pool invariants
     the model does not determine (the addresses' [NoDup] is not among them:
-    it is a heap fact, [locs_wf]); [pool_run_covers], the [k]-th run of a
+    it is a heap fact, [locs_wf]); [pool_covers], the [k]-th run of a
     type holds an id;
-    [pool_run_starts_at] / [pool_run_ends_at], the run at an index begins /
-    ends at an id; [runs_live_refine] / [runs_dead_kept], the pool-level
+    [pool_starts_at] / [pool_ends_at], the run at an index begins /
+    ends at an id; [live_refine] / [dead_kept], the pool-level
     live-character refinement and tombstone preservation; [pool_after_split],
-    what one [splitNode] leaves of the pool at run granularity
+    what one [splitNode] leaves of the pool
     ([pool_after_repair] the same for [store.repair]'s at most two splits,
     [pool_after_delete] for the wire delete path's unbounded sweep);
-    [pool_run_clock_below], the integrated item is its client's newest
-    ([pool_run_clock_below_of_arrs] reads it off a per-type clock bound on
+    [pool_clock_below], the integrated item is its client's newest
+    ([pool_clock_below_of_arrs] reads it off a per-type clock bound on
     the flattened lists);
     [all_runs] under a registry insert or lookup ([all_runs_insert] /
     [all_runs_lookup], two types at once [all_runs_lookup_two], membership
     across one slot [elem_of_all_runs_insert] / [elem_of_all_runs_lookup]);
-    one id lives in one slot ([pool_run_covers_unique]) and [run_pool_invs] surviving one node
-    split ([run_pool_invs_split]), one integrate splice
-    ([run_pool_invs_integrate]) and one tombstoning
-    ([run_pool_invs_flip]), and any reshuffle of the runs
-    ([run_pool_invs_perm], with [run_pool_invs_insert_empty] for a fresh
+    one id lives in one slot ([pool_covers_unique]) and [pool_invs] surviving one node
+    split ([pool_invs_split]), one integrate splice
+    ([pool_invs_integrate]) and one tombstoning
+    ([pool_invs_flip]), and any reshuffle of the runs
+    ([pool_invs_perm], with [pool_invs_insert_empty] for a fresh
     empty type); [pool_after_delete] is a preorder containing
     one split and one tombstoning ([pool_after_delete_refl] /
     [pool_after_delete_trans] / [pool_after_split_delete] /
     [pool_after_delete_flip]), and the tombstone record survives a step
-    that keeps dead chars dead ([ids_tombstoned_runs_dead_kept]);
-    [delete_set_tombstoned_runs], the tombstone-set clause at runs, refined
-    along [runs_live_refine] ([delete_set_tombstoned_runs_refine]) and
+    that keeps dead chars dead ([ids_tombstoned_dead_kept]);
+    [delete_set_tombstoned], the tombstone-set clause at runs, refined
+    along [live_refine] ([delete_set_tombstoned_refine]) and
     transported along a permutation, a growth by a fresh run, a set union
     or shrink;
     membership in [all_runs] is membership in some type
     ([elem_of_all_runs]) and [all_runs] around one split is the two halves
     in place of the split run ([all_runs_split_perm]); [pool_after_split]
     holds of no change and of one [split_runs] surgery
-    ([pool_after_split_refl] / [pool_after_split_of_split_runs]). The apply path's step records at run
-    granularity: [runs_within_or_from] (every new run sits inside an old
+    ([pool_after_split_refl] / [pool_after_split_of_split_runs]). The apply
+    path's step records: [runs_within_or_from] (every new run sits inside an old
     one or inside an integrated input's range; reflexive and composing
     across appended inputs, [runs_within_or_from_refl] / [_trans]),
-    [runs_apply_live_refine] (live chars are old live chars or chars the
+    [apply_live_refine] (live chars are old live chars or chars the
     model did not have; reflexive, transitive against a growing model,
     and following from one integrate step under the replay's client bound,
-    [runs_apply_live_refine_refl] / [_trans] / [_of_integrate]) and
-    [runs_integrate_live_refine] (what one integrate step reports;
-    transitive, implied by [runs_live_refine], and holding of a splice
+    [apply_live_refine_refl] / [_trans] / [_of_integrate]) and
+    [integrate_live_refine] (what one integrate step reports;
+    transitive, implied by [live_refine], and holding of a splice
     whose new run carries the item's own chars,
-    [runs_integrate_live_refine_trans] / [_of_live_refine] / [_snoc]);
+    [integrate_live_refine_trans] / [_of_live_refine] / [_snoc]);
     [runs_within] is the origin-free half of [runs_within_or_from]
     ([runs_within_or_from_of_within]); [all_runs] around an integrate
     splice and a fresh empty type ([all_runs_splice_perm] /
     [all_runs_insert_empty]); the per-client clock bound survives a step
-    whose runs sit inside old ones ([pool_run_clock_below_within]). *)
+    whose runs sit inside old ones ([pool_clock_below_within]). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -113,7 +113,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 Definition pool := gmap loc type_model.
 
 (** [addressed_pool]: a pool together with each registered type's node
-    addresses, the pair the whole store speaks in ([sr_locs], [sr_pool]).
+    addresses, the pair the whole store speaks in ([ss_locs], [ss_pool]).
     Named because it is also the ghost value the readers agree on
     ([store_names]'s [sn_types_agree], read by [pool_frag] /
     [own_read_locked] and pinned by [store_inv_ro]). *)
@@ -128,38 +128,38 @@ Definition all_runs (p : pool) : list ItemRun :=
 Definition client_runs (p : pool) (c : nat) : list ItemRun :=
   merge_sort run_le (filter (λ r, run_client r = c) (all_runs p)).
 
-(** [pool_run_starts_at p parent k d] / [pool_run_ends_at p parent k d]:
+(** [pool_starts_at p parent k d] / [pool_ends_at p parent k d]:
     the [k]-th run of the type at [parent] starts (ends) at the id [d]. The
     run is named by its slot; its node address is the address list's [k]-th
     entry. *)
-Definition pool_run_starts_at (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=
+Definition pool_starts_at (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=
   ∃ tm, p !! parent = Some tm ∧ runs_start_at (tm_runs tm) k d.
 
-Definition pool_run_ends_at (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=
+Definition pool_ends_at (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=
   ∃ tm, p !! parent = Some tm ∧ runs_end_at (tm_runs tm) k d.
 
-(** [run_pool_invs p]: the pure pool invariants at run granularity: every
+(** [pool_invs p]: the pure pool invariants: every
     run's clock range fits a word, same-client ranges are disjoint (runs
     told apart by index), and every head's same-client origin is older. The
     [NoDup] of node addresses is a heap fact and stays with the heap layer
     ([locs_wf]). *)
-(** [runs_live_refine p p'] / [runs_dead_kept p p']: the tombstone-side
-    refinements at run granularity (the loc-free [live_refine] /
+(** [live_refine p p'] / [dead_kept p p']: the tombstone-side
+    refinements (the loc-free [live_refine] /
     [dead_chars_kept]): every live char of [p'] was live in [p], and every
     dead char of [p] stays dead in [p']. *)
-Definition runs_live_refine (p p' : pool) : Prop :=
+Definition live_refine (p p' : pool) : Prop :=
   ∀ r', r' ∈ all_runs p' -> run_deleted r' = false ->
     ∃ r, r ∈ all_runs p ∧ run_deleted r = false ∧
          (∀ y, y ∈ run_items r' -> y ∈ run_items r).
 
-Definition runs_dead_kept (p p' : pool) : Prop :=
+Definition dead_kept (p p' : pool) : Prop :=
   ∀ r, r ∈ all_runs p -> run_deleted r = true -> ∀ y, y ∈ run_items r ->
     ∃ r', r' ∈ all_runs p' ∧ run_deleted r' = true ∧ y ∈ run_items r'.
 
-(** [delete_set_tombstoned_runs delete_set runs]: no live run of [runs]
-    holds a char whose id is in [delete_set]: the tombstone-set clause at
-    run granularity (what [own_delete_set_runs] carries). *)
-Definition delete_set_tombstoned_runs (delete_set : gset YjsId) (runs : list ItemRun) : Prop :=
+(** [delete_set_tombstoned delete_set runs]: no live run of [runs]
+    holds a char whose id is in [delete_set]: the tombstone-set clause
+    (what [own_delete_set] carries). *)
+Definition delete_set_tombstoned (delete_set : gset YjsId) (runs : list ItemRun) : Prop :=
   ∀ r, r ∈ runs -> ∀ y, y ∈ run_items r -> item_id y ∈ delete_set -> run_deleted r = true.
 
 (** [pool_after_split p p' parent k]: [p'] is [p] after one node split at
@@ -168,7 +168,7 @@ Definition delete_set_tombstoned_runs (delete_set : gset YjsId) (runs : list Ite
     type's document and flatten survive, no type disappears, every run away from the split spot survives,
     a covered clock stays covered in the same type (the covering run is the
     survivor, or a half of the split run; which half is an address-map
-    matter the spec states on [sr_locs]), a type of
+    matter the spec states on [ss_locs]), a type of
     one-char runs is untouched, every new run sits inside an old one's
     range, and live and dead chars refine. *)
 Definition pool_after_split (p p' : pool) (parent : loc) (k : nat) : Prop :=
@@ -187,8 +187,8 @@ Definition pool_after_split (p p' : pool) (parent : loc) (k : nat) : Prop :=
   (∀ q tm tm', p !! q = Some tm -> p' !! q = Some tm' ->
      Forall (λ r, length (run_items r) = 1%nat) (tm_runs tm) -> tm' = tm) ∧
   runs_within (all_runs p) (all_runs p') ∧
-  runs_live_refine p p' ∧
-  runs_dead_kept p p'.
+  live_refine p p' ∧
+  dead_kept p p'.
 
 (** [pool_after_repair p p']: [p'] is [p] after [store.repair]'s at most two
     node splits. The same clauses as
@@ -203,7 +203,7 @@ Definition pool_after_repair (p p' : pool) : Prop :=
   (∀ q tm tm', p !! q = Some tm -> p' !! q = Some tm' ->
      Forall (λ r, length (run_items r) = 1%nat) (tm_runs tm) -> tm' = tm) ∧
   runs_within (all_runs p) (all_runs p') ∧
-  runs_live_refine p p'.
+  live_refine p p'.
 
 (** [pool_after_delete p p']: [p'] is [p] after a sweep of the wire delete
     path ([deleteRange] / [applyDeleteSpans]). Each type's document survives, no type
@@ -213,16 +213,16 @@ Definition pool_after_repair (p p' : pool) : Prop :=
 Definition pool_after_delete (p p' : pool) : Prop :=
   (∀ q tm', p' !! q = Some tm' -> ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm) ∧
   (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ∧
-  runs_live_refine p p' ∧
-  runs_dead_kept p p' ∧
+  live_refine p p' ∧
+  dead_kept p p' ∧
   runs_within (all_runs p) (all_runs p').
 
-(** [pool_run_covers p parent k d]: the [k]-th run of the type at [parent]
+(** [pool_covers p parent k d]: the [k]-th run of the type at [parent]
     has the char with id [d]. *)
-Definition pool_run_covers (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=
+Definition pool_covers (p : pool) (parent : loc) (k : nat) (d : YjsId) : Prop :=
   ∃ tm r, p !! parent = Some tm ∧ tm_runs tm !! k = Some r ∧ run_covers r d.
 
-Definition run_pool_invs (p : pool) : Prop :=
+Definition pool_invs (p : pool) : Prop :=
   (∀ r, r ∈ all_runs p -> run_invs r) ∧
   runs_disjoint (all_runs p).
 
@@ -266,10 +266,10 @@ Qed.
     [all_runs], and [runs_disjoint] keeps two same-client runs' clock ranges
     apart, so two runs both holding [d] must be the same run at the same
     slot. *)
-Lemma pool_run_covers_unique (p : pool) (d : YjsId) (q1 q2 : loc) (k1 k2 : nat) :
-  run_pool_invs p ->
-  pool_run_covers p q1 k1 d ->
-  pool_run_covers p q2 k2 d ->
+Lemma pool_covers_unique (p : pool) (d : YjsId) (q1 q2 : loc) (k1 k2 : nat) :
+  pool_invs p ->
+  pool_covers p q1 k1 d ->
+  pool_covers p q2 k2 d ->
   q1 = q2 ∧ k1 = k2.
 Proof.
   move=> [_ Hdisj] Hc1 Hc2.
@@ -340,17 +340,17 @@ Proof.
     by apply elem_of_map_to_list.
 Qed.
 
-(** [run_pool_invs] survives one node split: the pure half of the
+(** [pool_invs] survives one node split: the pure half of the
     [splitNode] surgery (fits, range disjointness and origin-clock in one
     bundle; runs are told apart by index, so no address [NoDup] premise). *)
-Lemma run_pool_invs_split (p : pool) (parent : loc) (tm : type_model)
+Lemma pool_invs_split (p : pool) (parent : loc) (tm : type_model)
     (k o : nat) (r : ItemRun) :
   p !! parent = Some tm ->
   tm_runs tm !! k = Some r ->
   run_wf (run_items r) ->
   (0 < o < length (run_items r))%nat ->
-  run_pool_invs p ->
-  run_pool_invs (<[parent := MkTypeModel (split_runs (tm_runs tm) k o)]> p).
+  pool_invs p ->
+  pool_invs (<[parent := MkTypeModel (split_runs (tm_runs tm) k o)]> p).
 Proof.
   move=> Hp Hrk Hwf Ho [Hinvall Hdisj].
   have Hwfall : ∀ r0, r0 ∈ all_runs p -> run_wf (run_items r0)
@@ -464,18 +464,18 @@ Proof.
       done.
 Qed.
 
-(** [run_pool_invs] survives one integrate splice: the new run fits, its
+(** [pool_invs] survives one integrate splice: the new run fits, its
     same-client origin precedes it, and every same-client run of the pool
     ends at or before its clock (the pure half of [store.Integrate]'s
     [addNode] step). *)
-Lemma run_pool_invs_integrate (p : pool) (parent : loc) (tm : type_model)
+Lemma pool_invs_integrate (p : pool) (parent : loc) (tm : type_model)
     (idx : nat) (r : ItemRun) (arr' : list (YjsItem A)) :
   p !! parent = Some tm ->
   run_invs r ->
   (∀ r0, r0 ∈ all_runs p -> run_client r0 = run_client r ->
      (run_clock r0 + length (run_items r0) <= run_clock r)%nat) ->
-  run_pool_invs p ->
-  run_pool_invs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm))]> p).
+  pool_invs p ->
+  pool_invs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm))]> p).
 Proof.
   move=> Hp Hinvr Hbelow [Hinvall Hdisj].
   have Hnew : all_runs (<[parent := MkTypeModel (take idx (tm_runs tm) ++ r :: drop idx (tm_runs tm))]> p)
@@ -497,13 +497,13 @@ Proof.
     + exact (Hdisj i' j' r1 r2 Hi Hj ltac:(lia) Hcl).
 Qed.
 
-(** [run_pool_invs] survives one tombstoning: a flip changes no run's id,
+(** [pool_invs] survives one tombstoning: a flip changes no run's id,
     client, clock, or chars. *)
-Lemma run_pool_invs_flip (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
+Lemma pool_invs_flip (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
   p !! parent = Some tm ->
   tm_runs tm !! k = Some r ->
-  run_pool_invs p ->
-  run_pool_invs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p).
+  pool_invs p ->
+  pool_invs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p).
 Proof.
   move=> Hp Hrk [Hinvall Hdisj].
   set (rest := take k (tm_runs tm) ++ drop (S k) (tm_runs tm) ++ all_runs (delete parent p)).
@@ -552,10 +552,10 @@ Proof.
                ltac:(lia) Hcl12).
 Qed.
 
-(** [run_pool_invs] only sees the multiset of runs, so it survives any
+(** [pool_invs] only sees the multiset of runs, so it survives any
     reshuffle, in particular registering a fresh empty type. *)
-Lemma run_pool_invs_perm (p p' : pool) :
-  all_runs p' ≡ₚ all_runs p -> run_pool_invs p -> run_pool_invs p'.
+Lemma pool_invs_perm (p p' : pool) :
+  all_runs p' ≡ₚ all_runs p -> pool_invs p -> pool_invs p'.
 Proof.
   move=> Hperm [Hinvall Hdisj]. split.
   - move=> r Hr. rewrite Hperm in Hr. exact (Hinvall r Hr).
@@ -627,7 +627,7 @@ Proof.
 Qed.
 
 (** [pool_after_split] holds of no change, and of one [split_runs] surgery
-    at a proper offset of a chained run: what the direct run-granular
+    at a proper offset of a chained run: what the direct
     proofs of the split helpers report. *)
 Lemma pool_after_split_refl (p : pool) (parent : loc) (k : nat) :
   pool_after_split p p parent k.
@@ -847,10 +847,10 @@ Proof.
 Qed.
 
 (** The tombstone record survives a step that keeps dead chars dead. *)
-Lemma ids_tombstoned_runs_dead_kept (ids : gset YjsId) (p p' : pool) :
-  runs_dead_kept p p' ->
-  ids_tombstoned_runs ids (all_runs p) ->
-  ids_tombstoned_runs ids (all_runs p').
+Lemma ids_tombstoned_dead_kept (ids : gset YjsId) (p p' : pool) :
+  dead_kept p p' ->
+  ids_tombstoned ids (all_runs p) ->
+  ids_tombstoned ids (all_runs p').
 Proof.
   move=> Hkept H i Hi. destruct (H i Hi) as (r & Hr & Hd & Hin).
   rewrite /char_ids elem_of_list_to_set in Hin.
@@ -860,19 +860,19 @@ Proof.
   rewrite /char_ids elem_of_list_to_set. apply list_elem_of_fmap. eauto.
 Qed.
 
-(** The apply path's step records at run granularity: where a step's runs
+(** The apply path's step records: where a step's runs
     come from, and the live-character refinement each store method reports.
 
     [runs_within_or_from inputs before after]: every run of [after] sits
     inside a run of [before] or inside the clock range of one of the
-    integrated [inputs]. [runs_apply_live_refine m before after]: every char
+    integrated [inputs]. [apply_live_refine m before after]: every char
     of a live run of [after] sat in a live run of [before] or is an id the
     model [m] did not have (a char this apply integrated).
-    [runs_integrate_live_refine input before after]: the same with "is one
+    [integrate_live_refine input before after]: the same with "is one
     of [input]'s own chars" as the escape, what one integrate step reports.
     Used as: the loop invariant and the postcondition of
     [wp_store__applyUpdate_unlocked] and the postcondition of
-    [wp_store__integrateDecoded_runs]. *)
+    [wp_store__integrateDecoded]. *)
 Definition runs_within_or_from (inputs : list (TId * IntegrateInput (A := A)))
     (before after : list ItemRun) : Prop :=
   ∀ r, r ∈ after ->
@@ -885,12 +885,12 @@ Definition runs_within_or_from (inputs : list (TId * IntegrateInput (A := A)))
        (run_clock r + length (run_items r) <=
         clock (in_id typedInput.2) + length (in_content typedInput.2))%nat).
 
-Definition runs_apply_live_refine (m : DocModel) (before after : list ItemRun) : Prop :=
+Definition apply_live_refine (m : DocModel) (before after : list ItemRun) : Prop :=
   ∀ r', r' ∈ after -> run_deleted r' = false -> ∀ y, y ∈ run_items r' ->
     (∃ r, r ∈ before ∧ run_deleted r = false ∧ y ∈ run_items r)
     ∨ doc_model_has m (item_id y) = false.
 
-Definition runs_integrate_live_refine (input : IntegrateInput (A := A))
+Definition integrate_live_refine (input : IntegrateInput (A := A))
     (before after : list ItemRun) : Prop :=
   ∀ r', r' ∈ after -> run_deleted r' = false -> ∀ y, y ∈ run_items r' ->
     (∃ r, r ∈ before ∧ run_deleted r = false ∧ y ∈ run_items r)
@@ -898,7 +898,7 @@ Definition runs_integrate_live_refine (input : IntegrateInput (A := A))
        (clock (in_id input) <= clock (item_id y))%nat).
 
 (** [runs_within_or_from] is reflexive and composes across a step whose
-    inputs are appended; [runs_apply_live_refine] is reflexive, transitive
+    inputs are appended; [apply_live_refine] is reflexive, transitive
     against a growing model, and follows from one integrate step under the
     replay's client bound. *)
 Lemma runs_within_or_from_refl (inputs : list (TId * IntegrateInput (A := A)))
@@ -922,15 +922,15 @@ Proof.
   - right. exists ti. split_and!; [apply elem_of_app; by right | exact Hcl | exact Hlo | exact Hhi].
 Qed.
 
-Lemma runs_apply_live_refine_refl (m : DocModel) (runs : list ItemRun) :
-  runs_apply_live_refine m runs runs.
+Lemma apply_live_refine_refl (m : DocModel) (runs : list ItemRun) :
+  apply_live_refine m runs runs.
 Proof. move=> r' Hr' Hlive y Hy. left. by exists r'. Qed.
 
-Lemma runs_apply_live_refine_trans (m m1 : DocModel) (r0 r1 r2 : list ItemRun) :
+Lemma apply_live_refine_trans (m m1 : DocModel) (r0 r1 r2 : list ItemRun) :
   (∀ i, doc_model_has m i = true -> doc_model_has m1 i = true) ->
-  runs_apply_live_refine m r0 r1 ->
-  runs_apply_live_refine m1 r1 r2 ->
-  runs_apply_live_refine m r0 r2.
+  apply_live_refine m r0 r1 ->
+  apply_live_refine m1 r1 r2 ->
+  apply_live_refine m r0 r2.
 Proof.
   move=> Hmono H01 H12 r Hr Hlive y Hy.
   destruct (H12 r Hr Hlive y Hy) as [(r' & Hr' & Hlive' & Hy') | Hfresh].
@@ -939,13 +939,13 @@ Proof.
     rewrite (Hmono _ Hm) in Hfresh. discriminate.
 Qed.
 
-Lemma runs_apply_live_refine_of_integrate (input : IntegrateInput (A := A))
+Lemma apply_live_refine_of_integrate (input : IntegrateInput (A := A))
     (mc : DocModel) (before after : list ItemRun) :
   (∀ (t' : TId) x, x ∈ doc_model_get mc t' ->
      clientId (item_id x) = clientId (in_id input) ->
      (clock (item_id x) < clock (in_id input))%nat) ->
-  runs_integrate_live_refine input before after ->
-  runs_apply_live_refine mc before after.
+  integrate_live_refine input before after ->
+  apply_live_refine mc before after.
 Proof.
   move=> Hbound Hilr r Hr Hlive y Hy.
   destruct (Hilr r Hr Hlive y Hy) as [Hold | [Hcl Hclk]]; [by left | right].
@@ -981,40 +981,40 @@ Proof.
   rewrite (map_to_list_insert p q _ Hq) /=. reflexivity.
 Qed.
 
-(** ... hence [run_pool_invs] survives registering a fresh empty type. *)
-Lemma run_pool_invs_insert_empty (p : pool) (q : loc) :
+(** ... hence [pool_invs] survives registering a fresh empty type. *)
+Lemma pool_invs_insert_empty (p : pool) (q : loc) :
   p !! q = None ->
-  run_pool_invs p -> run_pool_invs (<[q := MkTypeModel []]> p).
-Proof. move=> Hq. apply run_pool_invs_perm. exact (all_runs_insert_empty p q [] Hq). Qed.
+  pool_invs p -> pool_invs (<[q := MkTypeModel []]> p).
+Proof. move=> Hq. apply pool_invs_perm. exact (all_runs_insert_empty p q [] Hq). Qed.
 
-(** [runs_integrate_live_refine] composes, follows from [runs_live_refine],
+(** [integrate_live_refine] composes, follows from [live_refine],
     and holds of a splice whose new run carries the item's own chars. *)
-Lemma runs_integrate_live_refine_trans (input : IntegrateInput (A := A))
+Lemma integrate_live_refine_trans (input : IntegrateInput (A := A))
     (r0 r1 r2 : list ItemRun) :
-  runs_integrate_live_refine input r0 r1 ->
-  runs_integrate_live_refine input r1 r2 ->
-  runs_integrate_live_refine input r0 r2.
+  integrate_live_refine input r0 r1 ->
+  integrate_live_refine input r1 r2 ->
+  integrate_live_refine input r0 r2.
 Proof.
   move=> H01 H12 r Hr Hlive y Hy.
   destruct (H12 r Hr Hlive y Hy) as [(r' & Hr' & Hlive' & Hy') | Hnew]; last by right.
   exact (H01 r' Hr' Hlive' y Hy').
 Qed.
 
-Lemma runs_integrate_live_refine_of_live_refine (input : IntegrateInput (A := A)) (p p' : pool) :
-  runs_live_refine p p' ->
-  runs_integrate_live_refine input (all_runs p) (all_runs p').
+Lemma integrate_live_refine_of_live_refine (input : IntegrateInput (A := A)) (p p' : pool) :
+  live_refine p p' ->
+  integrate_live_refine input (all_runs p) (all_runs p').
 Proof.
   move=> Hlr r' Hr' Hlive y Hy. left.
   destruct (Hlr r' Hr' Hlive) as (r & Hr & Hliver & Hin).
   exists r. split_and!; [exact Hr | exact Hliver | exact (Hin y Hy)].
 Qed.
 
-Lemma runs_integrate_live_refine_snoc (input : IntegrateInput (A := A))
+Lemma integrate_live_refine_snoc (input : IntegrateInput (A := A))
     (runs runs' : list ItemRun) (r : ItemRun) :
   runs' ≡ₚ r :: runs ->
   (∀ y, y ∈ run_items r -> clientId (item_id y) = clientId (in_id input) ∧
      (clock (in_id input) <= clock (item_id y))%nat) ->
-  runs_integrate_live_refine input runs runs'.
+  integrate_live_refine input runs runs'.
 Proof.
   move=> Hperm Hnew r' Hr' Hlive y Hy. rewrite Hperm in Hr'.
   apply elem_of_cons in Hr' as [-> | Hr'].
@@ -1032,10 +1032,10 @@ Proof.
   left. exists r0. split_and!; [exact Hr0 | exact Hcl | exact Hlo | exact Hhi].
 Qed.
 
-(** [pool_run_clock_below p id]: every run of [id]'s client in the pool ends
+(** [pool_clock_below p id]: every run of [id]'s client in the pool ends
     at or below [id]'s clock, i.e. the item about to be integrated is its
     client's newest (a run is nonempty, so the strict head bound follows). *)
-Definition pool_run_clock_below (p : pool) (id : YjsId) : Prop :=
+Definition pool_clock_below (p : pool) (id : YjsId) : Prop :=
   ∀ r, r ∈ all_runs p -> run_client r = clientId id ->
     (run_clock r + length (run_items r) <= clock id)%nat.
 
@@ -1287,25 +1287,25 @@ Qed.
 
 (** The per-client clock bound survives a step whose runs sit inside old
     ones. *)
-Lemma pool_run_clock_below_within (p p' : pool) (d : YjsId) :
+Lemma pool_clock_below_within (p p' : pool) (d : YjsId) :
   runs_within (all_runs p) (all_runs p') ->
-  pool_run_clock_below p d ->
-  pool_run_clock_below p' d.
+  pool_clock_below p d ->
+  pool_clock_below p' d.
 Proof.
   move=> Hw Hb r' Hr' Hcl.
   destruct (Hw r' Hr') as (r & Hr & Hcl0 & Hlo & Hhi).
   have := Hb r Hr ltac:(congruence). lia.
 Qed.
 
-(** The per-client clock bound of a pool at run granularity, from the
+(** The per-client clock bound of a pool, from the
     model-level bound on every type's document: a run's last char is its
     head clock plus its length minus one ([run_wf_char_id]), and it sits in
-    the type's flatten. What [Text.Insert] feeds [wp_store__Integrate_runs]. *)
-Lemma pool_run_clock_below_of_arrs (p : pool) (c k : nat) :
+    the type's flatten. What [Text.Insert] feeds [wp_store__Integrate]. *)
+Lemma pool_clock_below_of_arrs (p : pool) (c k : nat) :
   (∀ r, r ∈ all_runs p -> run_wf (run_items r)) ->
   (∀ q tm x, p !! q = Some tm -> x ∈ tm_arr tm -> clientId (item_id x) = c ->
      (clock (item_id x) < k)%nat) ->
-  pool_run_clock_below p (MkYjsId c k).
+  pool_clock_below p (MkYjsId c k).
 Proof.
   move=> Hwf Hb r Hr Hcl.
   have Hwfr := Hwf r Hr.
@@ -1326,14 +1326,14 @@ Proof.
   change ((clock (item_id (hd inhabitant (run_items r))) + length (run_items r) <= k)%nat). lia.
 Qed.
 
-(** The tombstone-set clause travels along [runs_live_refine] (a split, a
+(** The tombstone-set clause travels along [live_refine] (a split, a
     flip, a registry insert), a permutation of the runs, a growth by a run
     none of whose ids the set holds (an integrate), and a set union or
     shrink. *)
-Lemma delete_set_tombstoned_runs_refine (delete_set : gset YjsId) (p p' : pool) :
-  runs_live_refine p p' ->
-  delete_set_tombstoned_runs delete_set (all_runs p) ->
-  delete_set_tombstoned_runs delete_set (all_runs p').
+Lemma delete_set_tombstoned_refine (delete_set : gset YjsId) (p p' : pool) :
+  live_refine p p' ->
+  delete_set_tombstoned delete_set (all_runs p) ->
+  delete_set_tombstoned delete_set (all_runs p').
 Proof.
   move=> Hlr Ht r' Hr' y Hy Hd.
   destruct (run_deleted r') eqn:Hdel; [done |].
@@ -1341,32 +1341,32 @@ Proof.
   have := Ht r Hr y (Hsub y Hy) Hd. congruence.
 Qed.
 
-Lemma delete_set_tombstoned_runs_perm (delete_set : gset YjsId) (runs runs' : list ItemRun) :
+Lemma delete_set_tombstoned_perm (delete_set : gset YjsId) (runs runs' : list ItemRun) :
   runs' ≡ₚ runs ->
-  delete_set_tombstoned_runs delete_set runs -> delete_set_tombstoned_runs delete_set runs'.
+  delete_set_tombstoned delete_set runs -> delete_set_tombstoned delete_set runs'.
 Proof. move=> Hperm Ht r Hr. apply Ht. by rewrite -Hperm. Qed.
 
-Lemma delete_set_tombstoned_runs_snoc (delete_set : gset YjsId) (runs runs' : list ItemRun) (r : ItemRun) :
+Lemma delete_set_tombstoned_snoc (delete_set : gset YjsId) (runs runs' : list ItemRun) (r : ItemRun) :
   runs' ≡ₚ runs ++ [r] ->
   (∀ y, y ∈ run_items r -> item_id y ∉ delete_set) ->
-  delete_set_tombstoned_runs delete_set runs -> delete_set_tombstoned_runs delete_set runs'.
+  delete_set_tombstoned delete_set runs -> delete_set_tombstoned delete_set runs'.
 Proof.
   move=> Hperm Hfresh Ht r0 Hr0 y Hy Hd. rewrite Hperm in Hr0.
   apply elem_of_app in Hr0 as [Hr0 | Hr0]; [exact (Ht r0 Hr0 y Hy Hd) |].
   apply list_elem_of_singleton in Hr0 as ->. exfalso. exact (Hfresh y Hy Hd).
 Qed.
 
-Lemma delete_set_tombstoned_runs_union (delete_set S : gset YjsId) (runs : list ItemRun) :
-  delete_set_tombstoned_runs delete_set runs -> delete_set_tombstoned_runs S runs ->
-  delete_set_tombstoned_runs (delete_set ∪ S) runs.
+Lemma delete_set_tombstoned_union (delete_set S : gset YjsId) (runs : list ItemRun) :
+  delete_set_tombstoned delete_set runs -> delete_set_tombstoned S runs ->
+  delete_set_tombstoned (delete_set ∪ S) runs.
 Proof.
   move=> H1 H2 r Hr y Hy Hin. apply elem_of_union in Hin as [Hin | Hin];
     [exact (H1 r Hr y Hy Hin) | exact (H2 r Hr y Hy Hin)].
 Qed.
 
-Lemma delete_set_tombstoned_runs_mono (delete_set delete_set' : gset YjsId) (runs : list ItemRun) :
+Lemma delete_set_tombstoned_mono (delete_set delete_set' : gset YjsId) (runs : list ItemRun) :
   delete_set' ⊆ delete_set ->
-  delete_set_tombstoned_runs delete_set runs -> delete_set_tombstoned_runs delete_set' runs.
+  delete_set_tombstoned delete_set runs -> delete_set_tombstoned delete_set' runs.
 Proof. move=> Hsub Ht r Hr y Hy Hin. exact (Ht r Hr y Hy (Hsub _ Hin)). Qed.
 
 End store_model.

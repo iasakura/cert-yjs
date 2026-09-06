@@ -33,7 +33,7 @@ Proof.
 Qed.
 
 (** [item.Len] over the node predicate: the byte length of the wire item's
-    content (docs/plan-item-run-split.md stage 3). *)
+    content. *)
 Lemma wp_item__Len_node (l : loc) (dq : dfrac) (input : IntegrateInput (A := A))
     (d : bool) (parent prev nxt : loc) :
   {{{ is_pkg_init yjs ∗ own_item_node l dq input d parent prev nxt }}}

@@ -6,7 +6,7 @@
       sequence [list (YjsItem A * bool)] (each document item paired with its
       tombstone bit) and the string they spell, the read API's snapshot
       content (issue #125).
-    - [find_pos_runs]: what [yType.findPos] resolves an index to (the cursor
+    - [find_pos]: what [yType.findPos] resolves an index to (the cursor
       into the run list, the node addresses off the address list, the offset
       inside the run before the cursor).
 
@@ -18,7 +18,7 @@
       [runs_flatten], so the public model and this one differ only by the
       tombstone bits; [runs_visible_model], the [len] counter counts the
       sequence's visible items.
-    - [visible_string_runs_take_S]: one more run appends its string when live
+    - [visible_string_take_S]: one more run appends its string when live
       and nothing when tombstoned, the step [Text.String] walks. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
@@ -51,11 +51,11 @@ Definition visible_items (m : list (YjsItem A * bool)) : list (YjsItem A) :=
 Definition visible_string (m : list (YjsItem A * bool)) : A :=
   items_string (visible_items m).
 
-(** [find_pos_runs ls runs p leftNode rightNode off]: what [yType.findPos] resolves a
-    visible index to, at run granularity: the cursor [p] into the run list,
+(** [find_pos ls runs p leftNode rightNode off]: what [yType.findPos] resolves a
+    visible index to,: the cursor [p] into the run list,
     the node addresses around it read off the address list [ls], and the
     offset inside the run before the cursor. *)
-Definition find_pos_runs (ls : list loc) (runs : list ItemRun)
+Definition find_pos (ls : list loc) (runs : list ItemRun)
     (p : nat) (leftNode rightNode : loc) (off : w64) : Prop :=
   (p <= length runs)%nat ∧
   leftNode = loc_at ls (Z.of_nat p - 1) ∧
@@ -118,7 +118,7 @@ Proof.
   destruct (run_deleted r); [done | exact (items_string_explode _ s Hc)].
 Qed.
 
-Lemma visible_string_runs_take_S (runs : list ItemRun) (k : nat) (r : ItemRun)
+Lemma visible_string_take_S (runs : list ItemRun) (k : nat) (r : ItemRun)
     (s : go_string) :
   runs !! k = Some r ->
   content <$> run_items r = explode s ->

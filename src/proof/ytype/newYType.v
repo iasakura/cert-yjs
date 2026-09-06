@@ -1,4 +1,4 @@
-(** [wp_newYType_runs]: allocating an empty root sequence (issue #54, the
+(** [wp_newYType]: allocating an empty root sequence (issue #54, the
     storage behind [getOrCreateYType]'s miss branch). The fresh [yType] has
     [start = nil] and [len = 0]: no node addresses and no runs. *)
 From New.proof Require Import proof_prelude.
@@ -26,10 +26,10 @@ Notation A := go_string.
 (** [newYType] allocates an empty root sequence (issue #54: the storage
     backing [getOrCreateYType]'s miss branch). The fresh [yType] has
     [start = nil] and [len = 0]: no node addresses and no runs. *)
-Lemma wp_newYType_runs :
+Lemma wp_newYType :
   {{{ is_pkg_init yjs }}}
     @! yjs.newYType #()
-  {{{ (p : loc), RET #p; own_ytype_runs p (DfracOwn 1) [] (MkTypeModel []) }}}.
+  {{{ (p : loc), RET #p; own_ytype p (DfracOwn 1) [] (MkTypeModel []) }}}.
 Proof.
   wp_start as "_". wp_alloc p as "Hp". wp_auto.
   iApply "HΦ".

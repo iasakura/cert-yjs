@@ -20,7 +20,7 @@
     - [explode] preserves length and is the singleton list on a one-char
       string.
 
-    Second section ([item_run], docs/plan-item-run-split.md stage 1): the
+    Second section ([item_run]): the
     run as pure DATA.
     - [ItemRun]: a node's run of items and its tombstone bit, no [loc].
     - its vocabulary: [run_head_item], [run_client] / [run_clock] (pure
@@ -34,7 +34,7 @@
       cursor-explicit [runs_integrate_splice_at] under an exists), and
       [runs_within]: every run after a step sits inside a run before it
       (a preorder, [runs_within_refl] / [runs_within_trans]),
-      and [ids_tombstoned_runs]: a set of ids all covered by tombstoned
+      and [ids_tombstoned]: a set of ids all covered by tombstoned
       runs; a chained run holds every id it covers
       ([run_covers_char_ids]); [items_string], the string a run of per-char items spells
       (append-homomorphic, [items_string_app], and recovering an exploded
@@ -238,7 +238,7 @@ End item_model.
    carries a run of consecutive per-char model items, and [ItemRun] is that
    run alone, so clock-range reasoning, splits and tombstones need no [loc]
    and no [w64]. The node's address lives beside it, in the type's address
-   list ([sr_locs]). *)
+   list ([ss_locs]). *)
 
 Section item_run.
 
@@ -309,7 +309,7 @@ Definition run_origin_clk (r : ItemRun) : Prop :=
     consecutive clocks from its head ([run_wf]); its head id round-trips
     through the machine words the heap stores, creator and clock range alike
     ([run_fits] plus the creator bound); and a same-client left origin was
-    created before it ([run_origin_clk]). [store/model]'s [run_pool_invs] is
+    created before it ([run_origin_clk]). [store/model]'s [pool_invs] is
     this over every run of a pool, so a spec that needs any of these facts
     about a run asks for [run_invs] rather than listing them. *)
 Definition run_invs (r : ItemRun) : Prop :=
@@ -408,10 +408,10 @@ Definition runs_integrate_splice (runs : list ItemRun) (arr : list (YjsItem A))
     (run : list (YjsItem A)) (runs' : list ItemRun) (arr' : list (YjsItem A)) : Prop :=
   ∃ idx : nat, runs_integrate_splice_at idx runs arr run runs' arr'.
 
-(** [ids_tombstoned_runs ids runs]: every id of [ids] is a char of some
+(** [ids_tombstoned ids runs]: every id of [ids] is a char of some
     tombstoned run of [runs]: the loc-free [ids_tombstoned], what a
-    run-granular delete reports about what it just did. *)
-Definition ids_tombstoned_runs (ids : gset YjsId) (runs : list ItemRun) : Prop :=
+    delete reports about what it just did. *)
+Definition ids_tombstoned (ids : gset YjsId) (runs : list ItemRun) : Prop :=
   ∀ i, i ∈ ids -> ∃ r, r ∈ runs ∧ run_deleted r = true ∧ i ∈ char_ids (run_items r).
 
 (** [items_string l]: the string a list of per-char items spells (the
@@ -423,7 +423,7 @@ Definition ids_tombstoned_runs (ids : gset YjsId) (runs : list ItemRun) : Prop :
     contradicts [syntax.cmra]'s universe bound (the [IsCmra] instances for
     [gset (YjsItem A)] then fail with "no instance found"). The
     fully-applied [content x] avoids the entanglement. Moved here from
-    [ytype/value.v] for [input_of_run] (stage 3). *)
+    [ytype/value.v] for [input_of_run]. *)
 Definition items_string (l : list (YjsItem A)) : A :=
   foldr (λ x acc, content x ++ acc) [] l.
 
@@ -440,7 +440,7 @@ Definition input_of_run (r : ItemRun) : IntegrateInput (A := A) :=
 (** [run_per_char r]: each item of the run carries exactly one byte of the
     string the run spells: the per-char granularity of the model
     (issue #28). The wire view ([input_of_run]) alone cannot recover how
-    its content splits over the run's items, so the DLL ([own_dll_runs])
+    its content splits over the run's items, so the DLL ([own_dll])
     states it per run, next to the node's content pin. *)
 Definition run_per_char (r : ItemRun) : Prop :=
   content <$> run_items r = explode (items_string (run_items r)).
@@ -576,7 +576,7 @@ Proof.
 Qed.
 
 (** [run_per_char] survives the split surgery: each half of a split run is
-    per-char again (the premises of [own_dll_runs_split], discharged from
+    per-char again (the premises of [own_dll_split], discharged from
     the split node's original pin). *)
 Lemma run_per_char_split_left (r : ItemRun) (o : nat) :
   run_per_char r -> run_per_char (split_run_left r o).

@@ -1,6 +1,6 @@
-(** store update path, node layer: the id lookups, [wp_getNodeIndex_runs]
-    (the binary search over one client's entries) and [wp_store__GetNode_runs]
-    (direct, over [own_store_runs]) and the
+(** store update path, node layer: the id lookups, [wp_getNodeIndex]
+    (the binary search over one client's entries) and [wp_store__GetNode]
+    (direct, over [own_store_state]) and the
     applyUpdate input-expansion helpers ([expand_inputs_*],
     [ValidReplay_chunk_extract], the [types_*] accessors). The heavier
     [splitNode] and repair/applyUpdate proofs live in [store/splitNode]
@@ -368,14 +368,14 @@ Qed.
     ([run_covers_clock]); the clock ranges of distinct entries are disjoint
     ([client_entries_disjoint]), so the binary search corners the covering
     one, and the empty-window exit certifies that no entry covers [clk]. *)
-Lemma wp_getNodeIndex_runs (sl : slice.t) (dq : dfrac) (locs : gmap loc (list loc)) (p : pool)
+Lemma wp_getNodeIndex (sl : slice.t) (dq : dfrac) (locs : gmap loc (list loc)) (p : pool)
     (kc clk : w64) (E : list (loc * ItemRun)) :
-  run_pool_invs p ->
+  pool_invs p ->
   sorted_client_entries locs p kc E ->
-  {{{ is_pkg_init yjs ∗ sl ↦*{dq} E.*1 ∗ own_type_pool_runs (DfracOwn 1) locs p }}}
+  {{{ is_pkg_init yjs ∗ sl ↦*{dq} E.*1 ∗ own_type_pool (DfracOwn 1) locs p }}}
     @! yjs.getNodeIndex #sl #clk
   {{{ (i : w64) (ok : bool), RET (#i, #ok);
-      sl ↦*{dq} E.*1 ∗ own_type_pool_runs (DfracOwn 1) locs p ∗
+      sl ↦*{dq} E.*1 ∗ own_type_pool (DfracOwn 1) locs p ∗
       ⌜if ok then ∃ l r, E !! uint.nat i = Some (l, r) ∧ run_covers_clock r (uint.nat clk)
        else ∀ l r, (l, r) ∈ E -> ¬ run_covers_clock r (uint.nat clk)⌝ }}}.
 Proof using Type*.
@@ -389,8 +389,8 @@ Proof using Type*.
     have His : is_Some (locs !! parent).
     { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. by exists tm. }
     destruct His as [ls Hls]. exists ls. split; [done | exact (Hlens parent ls tm Hls Hp)]. }
-  iDestruct (own_type_pool_runs_id_bounds with "Htypes") as %Hbnds.
-  iDestruct (own_type_pool_runs_run_wf with "Htypes") as %Hwfall.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds.
+  iDestruct (own_type_pool_run_wf with "Htypes") as %Hwfall.
   have [Hinvall Hdisj] := Hrpi.
   have Hfits : ∀ r0, r0 ∈ all_runs p -> run_fits r0
     := λ r0 Hr0, proj1 (proj2 (Hinvall r0 Hr0)).
@@ -415,7 +415,7 @@ Proof using Type*.
     "Hleft" ∷ left_ptr ↦ lo ∗ "Hright" ∷ right_ptr ↦ hi ∗
     "Hnodes" ∷ nodes_ptr ↦ sl ∗ "Hclock" ∷ clock_ptr ↦ clk ∗
     "Hsl" ∷ sl ↦*{dq} E.*1 ∗
-    "Htypes" ∷ own_type_pool_runs (DfracOwn 1) locs p ∗
+    "Htypes" ∷ own_type_pool (DfracOwn 1) locs p ∗
     "%Hbnd" ∷ ⌜(0 <= uint.Z lo /\ uint.Z hi <= Z.of_nat (length E))%Z⌝ ∗
     "%Hwin" ∷ ⌜∀ (k : nat) (l : loc) (r : ItemRun), E !! k = Some (l, r) ->
                 (Z.of_nat (run_clock r) <= uint.Z clk)%Z ->
@@ -449,7 +449,7 @@ Proof using Type*.
     iEval (rewrite Hinsid) in "Hsl".
     destruct (Hlookup_slot (uint.nat mid) lmid rmid Hemid)
       as (parent & ls & tm & km & Hls & Hp & Hlk & Hrk).
-    iDestruct (own_type_pool_runs_node_acc locs p parent ls tm km lmid rmid Hls Hp Hlk Hrk with "Htypes")
+    iDestruct (own_type_pool_node_acc locs p parent ls tm km lmid rmid Hls Hp Hlk Hrk with "Htypes")
       as (itemVal) "Hacc". iNamed "Hacc".
     wp_auto.
     have Hrmid : rmid ∈ all_runs p := Hslot _ _ _ Hemid.
@@ -521,30 +521,30 @@ Proof using Type*.
     have := Hwin k l r Hk Hc1 Hc2. lia.
 Qed.
 
-(** [store.GetNode] at run granularity, DIRECT: the item index's slice for
+(** [store.GetNode], DIRECT: the item index's slice for
     the id's client is [client_locs] ([client_locs_entries]), the walk
     corners the covering entry, and the entry sits at a slot of the pool
     ([client_entries_lookup_slot]); a miss certifies no run covers the id,
     because every slot of that client is an entry of the walked list
     ([pool_entries_slot]), or, for a client with no slice at all, because
     the index is complete. *)
-Lemma wp_store__GetNode_runs (s : loc) (idv : yjs.id.t) (state : store_state_runs) :
-  {{{ is_pkg_init yjs ∗ own_store_runs s state }}}
+Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (state : store_state) :
+  {{{ is_pkg_init yjs ∗ own_store_state s state }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store_runs s state ∗
-      ⌜if ok then ∃ parent k, pool_run_covers (sr_pool state) parent k (toYjsId idv) ∧
-                    (sr_locs state !! parent) ≫= (λ ls, ls !! k) = Some l
-       else ∀ parent k, ¬ pool_run_covers (sr_pool state) parent k (toYjsId idv)⌝ }}}.
+      own_store_state s state ∗
+      ⌜if ok then ∃ parent k, pool_covers (ss_pool state) parent k (toYjsId idv) ∧
+                    (ss_locs state !! parent) ≫= (λ ls, ls !! k) = Some l
+       else ∀ parent k, ¬ pool_covers (ss_pool state) parent k (toYjsId idv)⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iDestruct "Hruns" as "(Hfields & %Hinvs)".
-  have Hrpi : run_pool_invs p := proj1 Hinvs.
+  have Hrpi : pool_invs p := proj1 Hinvs.
   iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iEval (simpl) in "Hitems Htypes".
   iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
-  iDestruct (own_type_pool_runs_id_bounds with "Htypes") as %Hbnds.
+  iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds.
   iAssert (⌜locs_wf locs p⌝)%I as %Hlocswf; first by iDestruct "Htypes" as "[%Hwf _]".
   destruct Hlocswf as (Hdom & Hnd & Hlens).
   have Hlens' : ∀ parent tm, p !! parent = Some tm ->
@@ -577,7 +577,7 @@ Proof using Type*.
     iNamed "Hrun".
     iEval (rewrite -/(client_locs locs p kc) Hce) in "Hslice".
     have Hndl : NoDup (pool_entries locs p).*1 := pool_entries_locs_NoDup locs p Hdom Hlens' Hnd.
-    wp_apply (wp_getNodeIndex_runs slk (DfracOwn 1) locs p kc idv.(yjs.id.clock') (client_entries locs p kc) Hrpi
+    wp_apply (wp_getNodeIndex slk (DfracOwn 1) locs p kc idv.(yjs.id.clock') (client_entries locs p kc) Hrpi
                 (client_entries_sorted_client locs p kc Hndl)
                 with "[$Hslice $Htypes]").
     iIntros (i ok) "(Hslice & Htypes & %Hires)".
@@ -608,7 +608,7 @@ Proof using Type*.
       iApply ("HΦ" $! lres true).
       iSplitL "Hclient Hclock HdeletedSet Hitemsf Hmap Hruns Hregistry Htypes Hpending Hpdeletes".
       { iSplitL; last (iPureIntro; exact Hinvs).
-        rewrite /own_store_fields_runs /=.
+        rewrite /own_store_fields /=.
         iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
         iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
         iPureIntro. split; [exact Hcomplete | exact Hclockunique]. }
@@ -627,7 +627,7 @@ Proof using Type*.
       iApply ("HΦ" $! null false).
       iSplitL "Hclient Hclock HdeletedSet Hitemsf Hmap Hruns Hregistry Htypes Hpending Hpdeletes".
       { iSplitL; last (iPureIntro; exact Hinvs).
-        rewrite /own_store_fields_runs /=.
+        rewrite /own_store_fields /=.
         iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
         iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
         iPureIntro. split; [exact Hcomplete | exact Hclockunique]. }
@@ -640,7 +640,7 @@ Proof using Type*.
     iApply ("HΦ" $! null false).
     iSplitL "Hclient Hclock HdeletedSet Hitemsf Hmap Hruns Hregistry Htypes Hpending Hpdeletes".
     { iSplitL; last (iPureIntro; exact Hinvs).
-      rewrite /own_store_fields_runs /=.
+      rewrite /own_store_fields /=.
       iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
       iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
       iPureIntro. split; [exact Hcomplete | exact Hclockunique]. }
