@@ -35,8 +35,10 @@
       [runs_within]: every run after a step sits inside a run before it
       (a preorder, [runs_within_refl] / [runs_within_trans]),
       and [ids_tombstoned]: a set of ids all covered by tombstoned
-      runs; a chained run holds every id it covers
-      ([run_covers_char_ids]); [items_string], the string a run of per-char items spells
+      runs; a chained run holds exactly the ids it covers
+      ([run_covers_char_ids] and its converse [char_ids_run_covers]), a run of
+      a list holds only ids of the flatten ([char_ids_flatten]) and
+      truncating one only drops ids ([char_ids_take]); [items_string], the string a run of per-char items spells
       (append-homomorphic, [items_string_app], and recovering an exploded
       string, [items_string_explode]); [input_of_run], the wire item a run
       denotes, and [run_per_char]: each of the run's items carries exactly
@@ -931,6 +933,45 @@ Proof.
   rewrite Hid. destruct i as [ci ki].
   rewrite /run_client in Hcl. rewrite /run_clock in Hlo Hhi. simpl in *.
   rewrite /o /run_clock. f_equal; lia.
+Qed.
+
+(** A run of the list holds only ids the flatten holds, and truncating a run
+    only drops ids: the two ways a delete loop's record of what it tombstoned
+    stays inside the document it walked. *)
+Lemma char_ids_flatten (runs : list ItemRun) (k : nat) (r : ItemRun) :
+  runs !! k = Some r -> char_ids (run_items r) ⊆ char_ids (runs_flatten runs).
+Proof.
+  move=> Hk. apply char_ids_mono => y Hy.
+  apply list_elem_of_lookup_1 in Hy as [off Hoff].
+  exact (list_elem_of_lookup_2 _ _ _ (runs_flatten_lookup_of_run runs k off r y Hk Hoff)).
+Qed.
+
+Lemma char_ids_take (n : nat) (l : list (YjsItem A)) :
+  char_ids (take n l) ⊆ char_ids l.
+Proof.
+  apply char_ids_mono => y Hy.
+  have Hy' : y ∈ take n l ++ drop n l by apply elem_of_app; left.
+  by rewrite take_drop in Hy'.
+Qed.
+
+(** ... and covers every id it holds: the converse direction. What turns a
+    record of tombstoned ids into a statement about the runs' coordinates,
+    where [pool_covers_unique] can pin the run holding an id. *)
+Lemma char_ids_run_covers (r : ItemRun) (i : YjsId) :
+  run_wf (run_items r) ->
+  i ∈ char_ids (run_items r) ->
+  run_covers r i.
+Proof.
+  move=> Hwf Hi.
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hi.
+  destruct Hi as (y & -> & Hy).
+  apply list_elem_of_lookup_1 in Hy as [o Ho].
+  have Hhd : run_items r !! 0%nat = Some (run_head_item r).
+  { rewrite /run_head_item. move: Hwf => [Hne _]. by destruct (run_items r). }
+  have Hid := run_wf_lookup_clock (run_items r) o (run_head_item r) y Hwf Hhd Ho.
+  have Holt : (o < length (run_items r))%nat := lookup_lt_Some _ _ _ Ho.
+  rewrite /run_covers /run_client /run_clock Hid /=.
+  split_and!; [reflexivity | lia | lia].
 Qed.
 
 End item_run.

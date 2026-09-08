@@ -64,21 +64,26 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     sync-protocol certificate) can replay that knowledge against a concurrent
     read. *)
 Lemma wp_Text__String (t : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (name : P) (L : list (YjsItem A)) (h0 : list Ev) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L ∗
+    (c : ClientId) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
+    (h0 : list Ev) :
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗ own_read_cap γs }}}
     t @! (go.PointerType yjs.Text) @! "String" #()
   {{{ (visible_text : go_string) (model : list (YjsItem A * bool)), RET #visible_text;
-      is_Text t γs γh name L ∗ own_read_cap γs ∗
+      is_Text t γs γh name L deleted_ids ∗ own_read_cap γs ∗
       ⌜visible_text = visible_string model⌝ ∗
-      ⌜text_snapshot L model⌝ ∗ ⌜history_reflected h0 name model⌝ }}}.
+      ⌜text_snapshot L model⌝ ∗ ⌜history_reflected h0 name model⌝ ∗
+      ⌜visible_excludes deleted_ids model⌝ }}}.
 Proof.
   wp_start as "(Hpre & #Hpin & #Hlb & Hcap)". iNamed "Hpre".
   iDestruct "His_store" as "#His_store".
   wp_auto. subst s_loc. subst parent.
   wp_apply (wp_Store__rlock _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
-  iIntros (locs p) "(Hrlo & Hro & %Hfact)".
+  iIntros (locs p delete_set) "(Hrlo & Hro & %Hfact)".
   iNamed "Hro".
+  (* the handle's certificate against the shared authority: the ids it knows
+     deleted are in the store's delete set, hence tombstoned in this pool *)
+  iDestruct (auth_gset_frag_sub_dq with "Hdelete_set_auth Hdeleted_lb") as %Hdelsub.
   iDestruct (auth_gmap_gset_lookup_dq with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (tm & Htmp & ->).
   iDestruct "Htypes" as "(%Hlocswf & Hpool)".
@@ -92,12 +97,22 @@ Proof.
   iDestruct ("Hclose" with "[Htextr]") as "Hpool".
   { iExists ls. iSplitR; first by iPureIntro. iFrame "Htextr". by iPureIntro. }
   wp_auto.
-  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Hpool]").
-  { iFrame "Hseq". rewrite /own_type_pool. iSplitR; [by iPureIntro | iFrame "Hpool"]. }
+  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Hdelete_set_auth Hpool]").
+  { iFrame "Hseq Hdelete_set_auth". iSplitR; first by iPureIntro.
+    rewrite /own_type_pool. iSplitR; [by iPureIntro | iFrame "Hpool"]. }
   iIntros "Hcap".
   wp_auto.
   have Hfst : (runs_model (tm_runs tm)).*1 = tm_arr tm.
   { rewrite runs_model_fst -Harr //. }
+  (* what the read now says about the handle's deleted ids: each such char of
+     the snapshot carries the tombstone bit, so the visible chars exclude it *)
+  have Hexcl : visible_excludes deleted_ids (runs_model (tm_runs tm)).
+  { apply visible_excludes_of_bits => x b Hin Hid.
+    destruct (runs_model_elem_of _ _ _ Hin) as (r & Hr & Hx & ->).
+    have Hrall : r ∈ all_runs p.
+    { apply elem_of_all_runs. exists tv.(yjs.Text.inner'), tm.
+      split; [exact Htmp | exact Hr]. }
+    exact (Hdelete_set_tomb r Hrall x Hx (Hdelsub (item_id x) Hid)). }
   iApply ("HΦ" $! _ (runs_model (tm_runs tm))).
   iSplitR "Hcap"; last first.
   { iFrame "Hcap". iPureIntro. split_and!.
@@ -106,10 +121,11 @@ Proof.
     - move=> input Hin.
       destruct (Hfact input Hin) as (tm' & it & Htm' & Hitid & Hitmem).
       rewrite Htmp in Htm'. injection Htm' as <-.
-      exists it. split; [exact Hitid | rewrite Hfst //]. }
-  iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
-  iFrame "Ht His_store His_hist Hbind His_lb".
-  iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted].
+      exists it. split; [exact Hitid | rewrite Hfst //].
+    - exact Hexcl. }
+  iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
+  iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
+  iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted].
 Qed.
 
 End text.

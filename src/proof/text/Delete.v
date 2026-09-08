@@ -71,10 +71,11 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     throughout (so the auth [Hseq] / counter [Hctr] are preserved), Unlock,
     and return [is_Text t L]. *)
 Lemma wp_Text__Delete (t : loc) (index len : w64) (γs : store_names) (γh : history_names)
-    (name : P) (L : list (YjsItem A)) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L }}}
+    (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids }}}
     t @! (go.PointerType yjs.Text) @! "Delete" #index #len
-  {{{ RET #(); is_Text t γs γh name L }}}.
+  {{{ (deleted_ids' : gset YjsId), RET #();
+      is_Text t γs γh name L deleted_ids' ∗ ⌜deleted_ids ⊆ deleted_ids'⌝ }}}.
 Proof.
   (* ---- Prologue: take the store lock, extract THIS text. ---- *)
   wp_start as "Hpre". iNamed "Hpre".
@@ -94,6 +95,14 @@ Proof.
   apply fmap_Some in HmS as (ts & Htsp & ->).
   (* the registry binds [name] to this text; the history is untouched by
      Delete ([tm_arr] is tombstone-only), so [Hhist]/[Hhcoh] just thread. *)
+  (* the handle's deleted-id witness sits at the same key, so the same
+     comparison places it in THIS type's document *)
+  iDestruct (auth_gmap_gset_lookup with "Hseq Hdeleted_items") as %(Sd & HmSd & Hdelitemssub).
+  rewrite lookup_fmap Htsp /= in HmSd. injection HmSd as <-.
+  have Hdelitems_arr : ∀ x, x ∈ deleted_items -> x ∈ tm_arr ts.
+  { intros x Hx. have Hxg : x ∈ (list_to_set (tm_arr ts) : gset (YjsItem A)).
+    { apply Hdelitemssub. rewrite elem_of_list_to_set. exact Hx. }
+    rewrite elem_of_list_to_set in Hxg. exact Hxg. }
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
   have Hmt : doc_model_get m (RootId name) = (tm_arr ts) := Hmtypes name parent ts Hbindlk Htsp.
   subst parent.
@@ -199,7 +208,8 @@ Proof.
      changes, so the item-set auth / registry facts survive; the store
      carries the CURRENT addresses and runs of this text, every other type
      untouched. *)
-  iAssert (∃ (q : nat) (rem : w64) (locsj : gmap loc (list loc)) (pj : pool) (lsj : list loc) (runsj : list ItemRun),
+  iAssert (∃ (q : nat) (rem : w64) (locsj : gmap loc (list loc)) (pj : pool) (lsj : list loc) (runsj : list ItemRun)
+             (dels : gset YjsId),
     "Hsp" ∷ s_ptr ↦ tv.(yjs.Text.store') ∗
     "Hcur" ∷ cur_ptr ↦ loc_at lsj (Z.of_nat q) ∗
     "Hrem" ∷ remaining_ptr ↦ rem ∗
@@ -214,11 +224,16 @@ Proof.
     "%Hdompj" ∷ ⌜∀ q', q' ≠ tv.(yjs.Text.inner') → pj !! q' = p0 !! q'⌝ ∗
     "%Hdomlj" ∷ ⌜∀ q', q' ≠ tv.(yjs.Text.inner') → locsj !! q' = locs0 !! q'⌝ ∗
     "%Harrj" ∷ ⌜tm_arr (MkTypeModel runsj) = tm_arr ts⌝ ∗
+    (* what this call has tombstoned so far: every id of [dels] sits in a run
+       whose deleted bit is now set, and all of them are chars of THIS text *)
+    "%Hdelstomb" ∷ ⌜ids_tombstoned dels (all_runs pj)⌝ ∗
+    "%Hdelsarr" ∷ ⌜dels ⊆ char_ids (tm_arr ts)⌝ ∗
     "%Hqlen" ∷ ⌜(q <= length runsj)%nat⌝)%I
     with "[s cur remaining Hruns Hlk Hseq Hhist Hdelete_set HtypesAuth]" as "IH".
-  { iExists p1i, len, locs1, p1, ls1, runs1.
+  { iExists p1i, len, locs1, p1, ls1, runs1, ∅.
     iFrame "s cur remaining Hruns Hlk Hseq Hhist Hdelete_set HtypesAuth".
-    iPureIntro. split_and!; [exact Hp1 | exact Hl1 | exact Hdomp1 | exact Hdoml1 | | exact Hpb1].
+    iPureIntro. split_and!; [exact Hp1 | exact Hl1 | exact Hdomp1 | exact Hdoml1 | |
+      move=> i Hi; exfalso; exact (not_elem_of_empty i Hi) | exact (empty_subseteq _) | exact Hpb1].
     destruct (proj1 Hlr1 tv.(yjs.Text.inner') (MkTypeModel runs1) Hp1) as (tm0 & Htm0 & Harr0).
     rewrite Harr0 Htsp in Htm0 |- *. by injection Htm0 as <-. }
   clear Hp1 Hl1 Hdomp1 Hdoml1 Hpb1 Hlr1 locs1 p1 ls1 runs1 p1i.
@@ -239,6 +254,32 @@ Proof.
         := pool_arr_pointwise_ext p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj)
              (λ x, clientId (item_id x) = uint.nat client -> (clock (item_id x) < uint.nat k)%nat)
              Hdompj Htsp Hpj Harrj Hctr.
+      (* ---- the delete's certificate ----
+         the ids the loop tombstoned join the store's delete set: each is a
+         char of THIS text's document ([Hdelsarr] and the registry), and the
+         loop's record says each sits in a run whose deleted bit is now set,
+         which is what [own_delete_set_grow] demands. *)
+      iDestruct (own_store_state_run_pool_invs with "Hruns") as %Hpoolj.
+      have Hdelsdom : ∀ i, i ∈ dels -> doc_model_has m i = true.
+      { move=> i Hi. apply docm_has_spec.
+        have Hi' := Hdelsarr i Hi.
+        rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hi'.
+        destruct Hi' as (x & -> & Hx).
+        exists (RootId name), x. split; [rewrite Hmt; exact Hx | reflexivity]. }
+      iMod (own_delete_set_grow γs m pj dels Hpoolj Hdelsdom Hdelstomb with "Hdelete_set")
+        as "[Hdelete_set #Hdelslb]".
+      iDestruct (is_delete_set_lb_union with "Hdeleted_lb Hdelslb") as "#Hdelsunion".
+      (* the witness for the grown delete set: this text's whole document, which
+         holds the chars the handle already knew deleted and the ones just
+         deleted alike. [Delete] never touches [tm_arr], so the item-set
+         authority already holds it *)
+      have Hseqlk : ((λ tm : type_model, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p0)
+                      !! tv.(yjs.Text.inner') = Some (list_to_set (tm_arr ts)).
+      { rewrite lookup_fmap Htsp //. }
+      iMod (auth_gmap_gset_grow γs.(sn_seq) _ tv.(yjs.Text.inner')
+              (list_to_set (tm_arr ts)) (list_to_set (tm_arr ts)) Hseqlk (reflexivity _)
+              with "Hseq") as "[Hseq #Hfulllb]".
+      iEval (rewrite (insert_id _ _ _ Hseqlk)) in "Hseq".
       iEval (rewrite -(pool_seq_map_ext p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj)
                          Hdompj Htsp Hpj Harrj)) in "Hseq".
       wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
@@ -247,8 +288,18 @@ Proof.
         iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close
           | exact Hhcoh | exact Hctr_close | exact Hacccoh]. }
-      iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
-      iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
+      iApply ("HΦ" $! (deleted_ids ∪ dels)).
+      iSplitL "Ht His_store His_lb".
+      { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), (tm_arr ts).
+        iFrame "Ht His_store His_hist Hbind His_lb Hfulllb Hdelsunion".
+        iPureIntro. split_and!;
+          [reflexivity | reflexivity
+          | apply union_least;
+              [etrans; [exact Hdeleted_known
+                       | exact (char_ids_mono deleted_items (tm_arr ts) Hdelitems_arr)]
+              | exact Hdelsarr]
+          | exact Hsorted]. }
+      iPureIntro. apply union_subseteq_l. }
   wp_auto.
   destruct (decide (q < length runsj)%nat) as [Hqlt | Hqge].
   2:{ (* cursor at end: rebuild [store_inv] (same [tm_arr]), Unlock, return. *)
@@ -264,6 +315,32 @@ Proof.
         := pool_arr_pointwise_ext p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj)
              (λ x, clientId (item_id x) = uint.nat client -> (clock (item_id x) < uint.nat k)%nat)
              Hdompj Htsp Hpj Harrj Hctr.
+      (* ---- the delete's certificate ----
+         the ids the loop tombstoned join the store's delete set: each is a
+         char of THIS text's document ([Hdelsarr] and the registry), and the
+         loop's record says each sits in a run whose deleted bit is now set,
+         which is what [own_delete_set_grow] demands. *)
+      iDestruct (own_store_state_run_pool_invs with "Hruns") as %Hpoolj.
+      have Hdelsdom : ∀ i, i ∈ dels -> doc_model_has m i = true.
+      { move=> i Hi. apply docm_has_spec.
+        have Hi' := Hdelsarr i Hi.
+        rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hi'.
+        destruct Hi' as (x & -> & Hx).
+        exists (RootId name), x. split; [rewrite Hmt; exact Hx | reflexivity]. }
+      iMod (own_delete_set_grow γs m pj dels Hpoolj Hdelsdom Hdelstomb with "Hdelete_set")
+        as "[Hdelete_set #Hdelslb]".
+      iDestruct (is_delete_set_lb_union with "Hdeleted_lb Hdelslb") as "#Hdelsunion".
+      (* the witness for the grown delete set: this text's whole document, which
+         holds the chars the handle already knew deleted and the ones just
+         deleted alike. [Delete] never touches [tm_arr], so the item-set
+         authority already holds it *)
+      have Hseqlk : ((λ tm : type_model, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p0)
+                      !! tv.(yjs.Text.inner') = Some (list_to_set (tm_arr ts)).
+      { rewrite lookup_fmap Htsp //. }
+      iMod (auth_gmap_gset_grow γs.(sn_seq) _ tv.(yjs.Text.inner')
+              (list_to_set (tm_arr ts)) (list_to_set (tm_arr ts)) Hseqlk (reflexivity _)
+              with "Hseq") as "[Hseq #Hfulllb]".
+      iEval (rewrite (insert_id _ _ _ Hseqlk)) in "Hseq".
       iEval (rewrite -(pool_seq_map_ext p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj)
                          Hdompj Htsp Hpj Harrj)) in "Hseq".
       wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend
@@ -272,8 +349,18 @@ Proof.
         iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close
           | exact Hhcoh | exact Hctr_close | exact Hacccoh]. }
-      iApply "HΦ". iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
-      iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
+      iApply ("HΦ" $! (deleted_ids ∪ dels)).
+      iSplitL "Ht His_store His_lb".
+      { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), (tm_arr ts).
+        iFrame "Ht His_store His_hist Hbind His_lb Hfulllb Hdelsunion".
+        iPureIntro. split_and!;
+          [reflexivity | reflexivity
+          | apply union_least;
+              [etrans; [exact Hdeleted_known
+                       | exact (char_ids_mono deleted_items (tm_arr ts) Hdelitems_arr)]
+              | exact Hdelsarr]
+          | exact Hsorted]. }
+      iPureIntro. apply union_subseteq_l. }
   (* cursor in range: read node [q] through the store (a single borrow
      exposing [itemVal] and its links), decide visible/deleted via
      [Indexable], advance to [q+1]. *)
@@ -301,10 +388,11 @@ Proof.
     iDestruct ("Haccback" with "Haccval") as "Hruns".
     wp_for_post.
     iFrame "Hacc".
-    iFrame "Ht His_lb HΦ". iExists (S q), rem, locsj, pj, lsj, runsj.
+    iFrame "Ht His_lb HΦ". iExists (S q), rem, locsj, pj, lsj, runsj, dels.
     iFrame "Hsp Hrem Hruns Hlk Hseq Hhist Hdelete_set HtypesAuth".
     rewrite Hnextq -Haccright. iFrame "Hcur".
-    iPureIntro. split_and!; [exact Hpj | exact Hlj | exact Hdompj | exact Hdomlj | exact Harrj | lia].
+    iPureIntro. split_and!; [exact Hpj | exact Hlj | exact Hdompj | exact Hdomlj | exact Harrj
+      | exact Hdelstomb | exact Hdelsarr | lia].
   - (* visible node: spend the whole run, or split at the range end first *)
     simpl negb. wp_auto.
     wp_apply (wp_item__Len lc (DfracOwn 1) itemVal with "[$Haccval]"). iIntros "Haccval".
@@ -359,28 +447,47 @@ Proof.
       rewrite Haccle0 Hlenl. wp_auto.
       iDestruct ("Haccback" with "Haccval") as "Hruns".
       wp_for_post.
+      (* this step's pool move, once: a range-end split followed by the flip of
+         the truncated left half *)
+      set (p2 := <[tv.(yjs.Text.inner') := MkTypeModel runs2]> pj).
+      have Hsplit2 : pool_after_delete pj p2.
+      { apply pool_after_split_delete with (parent := tv.(yjs.Text.inner')) (k := q).
+        exact (pool_after_split_of_split_runs pj tv.(yjs.Text.inner') (MkTypeModel runsj)
+                 q (uint.nat rem) rq Hpj Hrq (Hwfj rq Hrqmem) Hdiffb). }
+      have Hp2 : p2 !! tv.(yjs.Text.inner') = Some (MkTypeModel runs2)
+        by apply lookup_insert_eq.
+      have Hflip2 : pool_after_delete p2 (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> p2)
+        := pool_after_delete_flip p2 tv.(yjs.Text.inner') (MkTypeModel runs2) q leftRun Hp2 Hrl2.
+      have Hstep : pool_after_delete pj (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj).
+      { have H := pool_after_delete_trans _ _ _ Hsplit2 Hflip2.
+        rewrite /p2 insert_insert_eq in H. exact H. }
+      (* the chars just tombstoned: the left half's, which are chars of the run
+         the cursor was on, hence of this text's document *)
+      have Hdelstomb' : ids_tombstoned (dels ∪ char_ids (run_items (flip_run leftRun)))
+                          (all_runs (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj)).
+      { move=> i Hi. apply elem_of_union in Hi as [Hi | Hi].
+        - exact (ids_tombstoned_dead_kept dels pj _ (proj1 (proj2 (proj2 (proj2 Hstep))))
+                   Hdelstomb i Hi).
+        - exists (flip_run leftRun). split_and!; [| reflexivity | exact Hi].
+          apply elem_of_all_runs. exists tv.(yjs.Text.inner'), (MkTypeModel runs3).
+          split; [apply lookup_insert_eq | exact (list_elem_of_lookup_2 _ _ _ Hrl3)]. }
+      have Hdelsarr' : dels ∪ char_ids (run_items (flip_run leftRun)) ⊆ char_ids (tm_arr ts).
+      { apply union_least; [exact Hdelsarr |].
+        rewrite /flip_run /leftRun /split_run_left /=.
+        etrans; [exact (char_ids_take (uint.nat rem) (run_items rq)) |].
+        rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
       iFrame "Hacc".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (uint.nat rem))),
-        (<[tv.(yjs.Text.inner') := ls2]> locsj), (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), ls2, runs3.
+        (<[tv.(yjs.Text.inner') := ls2]> locsj), (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), ls2, runs3,
+        (dels ∪ char_ids (run_items (flip_run leftRun))).
       iFrame "Hsp Hrem Hruns Hlk Hseq Hhist HtypesAuth".
       have Hnext2 : loc_at ls2 (Z.of_nat (S q)) = loc_at ls2 (Z.of_nat q + 1) by (f_equal; lia).
       rewrite Hnext2 -Haccright0. iFrame "Hcur".
-      (* the tombstone-set invariant across this step: the range-end split
-         refines the live cells, and so does the flip that follows it *)
+      (* the tombstone-set invariant across this step: both surgeries only
+         refine the live cells *)
       iSplitL "Hdelete_set".
       { iApply (own_delete_set_refine with "Hdelete_set").
-        set (p2 := <[tv.(yjs.Text.inner') := MkTypeModel runs2]> pj).
-        have Hsplit2 : pool_after_delete pj p2.
-        { apply pool_after_split_delete with (parent := tv.(yjs.Text.inner')) (k := q).
-          exact (pool_after_split_of_split_runs pj tv.(yjs.Text.inner') (MkTypeModel runsj)
-                   q (uint.nat rem) rq Hpj Hrq (Hwfj rq Hrqmem) Hdiffb). }
-        have Hp2 : p2 !! tv.(yjs.Text.inner') = Some (MkTypeModel runs2)
-          by apply lookup_insert_eq.
-        have Hflip2 : pool_after_delete p2 (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> p2)
-          := pool_after_delete_flip p2 tv.(yjs.Text.inner') (MkTypeModel runs2) q leftRun Hp2 Hrl2.
-        have Hstep := pool_after_delete_trans _ _ _ Hsplit2 Hflip2.
-        rewrite /p2 insert_insert_eq in Hstep.
         exact (proj1 (proj2 (proj2 Hstep))). }
       iPureIntro. split_and!.
       * apply lookup_insert_eq.
@@ -389,6 +496,8 @@ Proof.
       * move=> q' Hne. rewrite lookup_insert_ne //. exact (Hdomlj q' Hne).
       * rewrite -Harrj /tm_arr /= /runs3 (runs_flatten_flip_run runs2 q leftRun Hrl2)
           /runs2 (split_runs_flatten runsj q (uint.nat rem) rq Hrq) //.
+      * exact Hdelstomb'.
+      * exact Hdelsarr'.
       * rewrite /runs3 length_insert Hlen2. lia.
     + (* Len <= remaining: tombstone the WHOLE run and spend its length *)
       wp_apply (wp_deleteNode_store tv.(yjs.Text.store') (MkStoreState client k locsj pj bind pend pdel)
@@ -409,24 +518,40 @@ Proof.
       rewrite Haccle0 Hlenf. wp_auto.
       iDestruct ("Haccback" with "Haccval") as "Hruns".
       wp_for_post.
+      have Hstep : pool_after_delete pj (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj)
+        := pool_after_delete_flip pj tv.(yjs.Text.inner') (MkTypeModel runsj) q rq Hpj Hrq.
+      (* the chars just tombstoned: the whole run the cursor was on *)
+      have Hdelstomb' : ids_tombstoned (dels ∪ char_ids (run_items rq))
+                          (all_runs (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj)).
+      { move=> i Hi. apply elem_of_union in Hi as [Hi | Hi].
+        - exact (ids_tombstoned_dead_kept dels pj _ (proj1 (proj2 (proj2 (proj2 Hstep))))
+                   Hdelstomb i Hi).
+        - exists (flip_run rq). split_and!; [| reflexivity | exact Hi].
+          apply elem_of_all_runs. exists tv.(yjs.Text.inner'), (MkTypeModel runs3).
+          split; [apply lookup_insert_eq | exact (list_elem_of_lookup_2 _ _ _ Hrl3)]. }
+      have Hdelsarr' : dels ∪ char_ids (run_items rq) ⊆ char_ids (tm_arr ts).
+      { apply union_least; [exact Hdelsarr |].
+        rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
       iFrame "Hacc".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (length (run_items rq)))),
-        locsj, (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), lsj, runs3.
+        locsj, (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), lsj, runs3,
+        (dels ∪ char_ids (run_items rq)).
       iFrame "Hsp Hrem Hruns Hlk Hseq Hhist HtypesAuth".
       rewrite Hnextq -Haccright0. iFrame "Hcur".
       (* the tombstone-set invariant across this step: a flip only turns bits
          ON, so the live cells refine *)
       iSplitL "Hdelete_set".
       { iApply (own_delete_set_refine with "Hdelete_set").
-        exact (proj1 (proj2 (proj2 (pool_after_delete_flip pj tv.(yjs.Text.inner')
-                 (MkTypeModel runsj) q rq Hpj Hrq)))). }
+        exact (proj1 (proj2 (proj2 Hstep))). }
       iPureIntro. split_and!.
       * apply lookup_insert_eq.
       * exact Hlj.
       * move=> q' Hne. rewrite lookup_insert_ne //. exact (Hdompj q' Hne).
       * exact Hdomlj.
       * rewrite -Harrj /tm_arr /= /runs3 (runs_flatten_flip_run runsj q rq Hrq) //.
+      * exact Hdelstomb'.
+      * exact Hdelsarr'.
       * rewrite /runs3 length_insert. lia.
 Qed.
 

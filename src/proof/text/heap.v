@@ -1,16 +1,20 @@
 (** The [Text] handle, Iris layer.
 
     Definitions
-    - [is_Text t γs γh name L]: the handle is a [Text] on the store [γs] whose
-      root type is called [name] and whose item list contains at least [L].
-      Persistent, and grow-only in [L].
+    - [is_Text t γs γh name L deleted_ids]: the handle is a [Text] on the store
+      [γs] whose root type is called [name], whose item list contains at least
+      [L], and at least [deleted_ids] of whose item ids are tombstoned.
+      Persistent, and grow-only in both [L] and [deleted_ids]: the document
+      state a handle holder knows is the pair, since a [Text]'s content is its
+      items MINUS its deleted ids.
     - what a read ([Text.Len] / [Text.String]) sees: [text_snapshot L model]
       (a valid document holding [L]) and [history_reflected h0 name model]
       (every insert a history prefix delivered is in it).
 
     Laws
-    - [is_Text_root] / [is_Text_root_lb]: the root witnesses a reader may
-      project out of the handle, which is all the store layer exposes about it.
+    - [is_Text_root] / [is_Text_root_lb] / [is_Text_delete_set_lb]: the root and
+      delete-set witnesses a reader may project out of the handle, which is all
+      the store layer exposes about it.
 
     The [Text] handle has no model of its own: the sequence it exposes is the
     [yType] model, so its list-level theory is [ytype/model.v]. The method
@@ -53,6 +57,10 @@ Notation A := go_string.
 
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
+(* The store-global grow-only id sets (the accepted set and the delete set);
+   [is_Text] carries a lower bound of the latter. *)
+Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
+
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
@@ -79,7 +87,14 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
    [wp_Text__Insert] is proved (Lock → store_inv → findPos/Integrate loop → grow
    the item-set auth → Unlock). *)
 
-(** Text handle (persistent), parameterized by a SORTED list [L] of known items:
+(** Text handle (persistent), parameterized by a SORTED list [L] of known items
+    and a set [deleted_ids] of known-tombstoned ids of THIS root (a lower bound
+    of the store's monotone delete set, so a handle holder that deleted chars
+    keeps the knowledge that they are gone; both components only grow). The
+    deleted ids are ids of this root's items by the same mechanism that makes
+    [L] this root's items: a witness item set carried as a lower bound at the
+    same key [parent] ([deleted_items], hidden, and NOT required to be inside
+    [L], which is only what the holder happens to know):
     reads ONLY its OWN fields ([store]/[inner], immutable ⇒ [↦□]) and delegates
     straight to [is_Store] (no Doc hop — Text holds [store] directly). The ghost
     is fed the item-SET of [L] ([is_type_lb] over [gset (YjsItem A)], a subset
@@ -96,8 +111,9 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     [is_type_binding] — the handle's text is the one the store's registry
     binds to [name], which is what ties the store's per-type history view to
     THIS text under the lock. *)
-Definition is_Text (t : loc) (γs : store_names) (γh : history_names) (name : P) (L : list (YjsItem A)) : iProp Σ :=
-  ∃ (tv : yjs.Text.t) (s_loc parent : loc),
+Definition is_Text (t : loc) (γs : store_names) (γh : history_names) (name : P)
+    (L : list (YjsItem A)) (deleted_ids : gset YjsId) : iProp Σ :=
+  ∃ (tv : yjs.Text.t) (s_loc parent : loc) (deleted_items : list (YjsItem A)),
     "Ht" ∷ t ↦□ tv ∗
     "%Hstore" ∷ ⌜tv.(yjs.Text.store') = s_loc⌝ ∗
     "%Hinner" ∷ ⌜tv.(yjs.Text.inner') = parent⌝ ∗
@@ -105,9 +121,13 @@ Definition is_Text (t : loc) (γs : store_names) (γh : history_names) (name : P
     "#His_hist" ∷ is_history (A := A) (P := P) γh ∗
     "#Hbind" ∷ is_type_binding γs.(sn_types) name parent ∗
     "His_lb" ∷ is_type_lb γs.(sn_seq) parent (list_to_set L) ∗
+    "#Hdeleted_lb" ∷ is_delete_set_lb γs deleted_ids ∗
+    "#Hdeleted_items" ∷ is_type_lb γs.(sn_seq) parent (list_to_set deleted_items) ∗
+    "%Hdeleted_known" ∷ ⌜deleted_ids ⊆ char_ids deleted_items⌝ ∗
     "%Hsorted" ∷ ⌜StronglySorted (λ x y : YjsItem A, YjsLt' (itemPtr x) (itemPtr y)) L⌝.
 
-#[global] Instance is_Text_persistent t γs γh name L : Persistent (is_Text t γs γh name L).
+#[global] Instance is_Text_persistent t γs γh name L deleted_ids :
+  Persistent (is_Text t γs γh name L deleted_ids).
 Proof. apply _. Qed.
 
 (* ===== lemmas ============================================================= *)
@@ -122,14 +142,22 @@ Proof. apply _. Qed.
     binding and the lower bound as separate conjuncts because it must also
     pin the binding's loc to the handle's [inner] field. *)
 Lemma is_Text_root (t : loc) (γs : store_names) (γh : history_names)
-    (name : P) (L : list (YjsItem A)) :
-  is_Text t γs γh name L -∗ is_root γs name.
+    (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
+  is_Text t γs γh name L deleted_ids -∗ is_root γs name.
 Proof. iIntros "H". iNamed "H". iExists _. iFrame "Hbind". Qed.
 
 Lemma is_Text_root_lb (t : loc) (γs : store_names) (γh : history_names)
-    (name : P) (L : list (YjsItem A)) :
-  is_Text t γs γh name L -∗ is_root_lb γs name (list_to_set L).
+    (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
+  is_Text t γs γh name L deleted_ids -∗ is_root_lb γs name (list_to_set L).
 Proof. iIntros "H". iNamed "H". iExists _. iFrame "Hbind His_lb". Qed.
+
+(** The handle's delete-set component, on its own: the ids it knows are
+    tombstoned are tombstoned store-wide. What a reader combines with the
+    store's tombstone coherence to conclude those chars are invisible. *)
+Lemma is_Text_delete_set_lb (t : loc) (γs : store_names) (γh : history_names)
+    (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
+  is_Text t γs γh name L deleted_ids -∗ is_delete_set_lb γs deleted_ids.
+Proof. iIntros "H". iNamed "H". iFrame "Hdeleted_lb". Qed.
 
 (** [Text.Insert] preserves the (persistent) document handle, grows the known
     content ([L ⊑ L']), AND exposes the inserted run [ins]: one fresh item per

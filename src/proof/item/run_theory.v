@@ -680,6 +680,15 @@ Lemma char_ids_cons (c : YjsItem A) (r : list (YjsItem A)) :
   char_ids (c :: r) = {[item_id c]} ∪ char_ids r.
 Proof. rewrite /char_ids fmap_cons list_to_set_cons //. Qed.
 
+(** More chars, more ids: what lets a known-id set survive the growth of the
+    list it was read off (the [Text] handle's known items). *)
+Lemma char_ids_mono (r r' : list (YjsItem A)) :
+  (∀ x, x ∈ r -> x ∈ r') -> char_ids r ⊆ char_ids r'.
+Proof.
+  move=> Hsub i. rewrite /char_ids !elem_of_list_to_set !list_elem_of_fmap.
+  move=> [x [-> Hx]]. exists x. split; [reflexivity | exact (Hsub x Hx)].
+Qed.
+
 (** The chaining discipline of a run's chars, as this module consumes it (the
     WP layer's [run_wf] destructs to exactly this; stated inline so this file
     stays below the heap layer). *)

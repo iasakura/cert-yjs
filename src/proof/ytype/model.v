@@ -6,6 +6,8 @@
     paths need.
 
     Laws
+    - [runs_model_elem_of]: a char of the per-char sequence comes from a run
+      of the list and carries that run's tombstone bit.
     - validity at a straddle point: an item whose origins are the neighbours at
       position [p] is valid, in each of the four boundary cases and in the
       unified form ([item_valid_empty] / [_head] / [_tail] / [_adjacent],
@@ -395,6 +397,23 @@ Definition runs_model (runs : list ItemRun) : list (YjsItem A * bool) :=
   mjoin (run_models <$> runs).
 
 (* ===== lemmas ============================================================= *)
+
+(** Where a char of the per-char sequence comes from: a run of the list, paired
+    with that run's tombstone bit. What turns a fact about the runs' bits (the
+    store's tombstone coherence) into one about what a read returns. *)
+Lemma runs_model_elem_of (runs : list ItemRun) (x : YjsItem A) (b : bool) :
+  (x, b) ∈ runs_model runs -> ∃ r, r ∈ runs ∧ x ∈ run_items r ∧ b = run_deleted r.
+Proof.
+  elim: runs => [| r runs IH] Hin.
+  - rewrite /runs_model /= in Hin. by apply elem_of_nil in Hin.
+  - rewrite /runs_model fmap_cons /= in Hin.
+    apply elem_of_app in Hin as [Hin | Hin].
+    + rewrite /run_models in Hin. apply list_elem_of_fmap in Hin as (y & Heq & Hy).
+      injection Heq as Hxy Hbr. subst y b.
+      exists r. split_and!; [by left | exact Hy | reflexivity].
+    + destruct (IH Hin) as (r' & Hr' & Hx' & Hb').
+      exists r'. split_and!; [by right | exact Hx' | exact Hb'].
+Qed.
 
 (** The per-char sequence of a run list is read one run at a time. *)
 Lemma runs_model_app (runs1 runs2 : list ItemRun) :
