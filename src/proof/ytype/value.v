@@ -6,6 +6,9 @@
       sequence [list (YjsItem A * bool)] (each document item paired with its
       tombstone bit) and the string they spell, the read API's snapshot
       content (issue #125).
+    - [visible_excludes deleted_ids m]: none of the ids a reader knows
+      deleted is among [m]'s visible chars ([visible_excludes_of_bits] reads
+      it off the tombstone bits), the delete-side guarantee of a read.
     - [find_pos]: what [yType.findPos] resolves an index to (the cursor
       into the run list, the node addresses off the address list, the offset
       inside the run before the cursor).
@@ -51,6 +54,14 @@ Definition visible_items (m : list (YjsItem A * bool)) : list (YjsItem A) :=
 Definition visible_string (m : list (YjsItem A * bool)) : A :=
   items_string (visible_items m).
 
+(** [visible_excludes deleted_ids m]: none of the ids the reader knows deleted
+    is among the snapshot's visible chars, so [visible_string m] does not
+    spell them. What a read adds for a handle that has deleted: the ids its
+    [is_delete_set_lb] certificate names are gone from what the read
+    returns. *)
+Definition visible_excludes (deleted_ids : gset YjsId) (m : list (YjsItem A * bool)) : Prop :=
+  ∀ x, x ∈ visible_items m -> item_id x ∉ deleted_ids.
+
 (** [find_pos ls runs p leftNode rightNode off]: what [yType.findPos] resolves a
     visible index to,: the cursor [p] into the run list,
     the node addresses around it read off the address list [ls], and the
@@ -64,6 +75,19 @@ Definition find_pos (ls : list loc) (runs : list ItemRun)
    (0 < uint.Z off)%Z ∧ (1 <= p)%nat ∧
    (∃ r, runs !! (p - 1)%nat = Some r ∧ run_deleted r = false ∧
          (uint.nat off < length (run_items r))%nat)).
+
+(** Read [visible_excludes] off the tombstone bits: a char whose id the reader
+    knows deleted carries the bit, so the visible filter drops it. *)
+Lemma visible_excludes_of_bits (deleted_ids : gset YjsId) (m : list (YjsItem A * bool)) :
+  (∀ x b, (x, b) ∈ m -> item_id x ∈ deleted_ids -> b = true) ->
+  visible_excludes deleted_ids m.
+Proof.
+  move=> Hbits x Hx Hid.
+  rewrite /visible_items in Hx.
+  apply list_elem_of_fmap in Hx as ([y b] & Heq & Hmem). simpl in Heq. subst y.
+  apply list_elem_of_filter in Hmem as [Hb Hmem]. simpl in Hb.
+  have Hb' := Hbits x b Hmem Hid. congruence.
+Qed.
 
 Lemma visible_items_app (m1 m2 : list (YjsItem A * bool)) :
   visible_items (m1 ++ m2) = visible_items m1 ++ visible_items m2.

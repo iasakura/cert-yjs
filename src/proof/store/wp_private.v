@@ -141,14 +141,14 @@ Proof.
   iIntros "%Hst Hlocked". subst st.
   iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(Hrauth & Htoks0 & Hwl & Hrest)".
-  iDestruct "Hrest" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel) "(Hfrag & Hexcl & Hro)".
+  iDestruct "Hrest" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set) "(Hfrag & Hexcl & Hro)".
   rewrite frac_of_0.
   iMod "Hmask" as "_".
   iMod ("Hclose" with "[Hlocked Hrauth Hfrag]") as "_".
   { iExists Locked. iFrame "Hlocked". iExists locs, p. iFrame "Hrauth Hfrag". }
   iModIntro. iApply "HΦ". iFrame "Hwl".
   iApply store_inv_own_store. iApply store_inv_bridge.
-  iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, locs, p, bind, h, m, pend, pdel. iFrame "Hexcl Hro".
+  iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, locs, p, bind, h, m, pend, pdel, delete_set. iFrame "Hexcl Hro".
 Qed.
 
 
@@ -183,12 +183,12 @@ Proof.
     iAssert (store_inv s_loc γs γh) with "[HR]" as "HR".
     { iApply store_inv_own_store. iExists c, h, m, pend. iFrame "HR". }
     iEval (rewrite store_inv_bridge) in "HR".
-    iDestruct "HR" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs' p' bind h' m' pend' pdel) "[Hexcl Hro]".
+    iDestruct "HR" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs' p' bind h' m' pend' pdel delete_set) "[Hexcl Hro]".
     iMod (own_update _ _ (to_frac_agree 1 ((locs', p') : leibnizO _)) with "Hfrag") as "Hfrag".
     { apply cmra_update_exclusive. done. }
     iMod ("Hclose" with "[Hrl0 Hrauth Htoks0 Hwl Hfrag Hexcl Hro]") as "_".
     { iExists (RLocked 0). iFrame "Hrl0". iEval (cbn [tie_body]). iFrame "Hrauth Htoks0 Hwl".
-      iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, locs', p', bind, h', m', pend', pdel.
+      iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, locs', p', bind, h', m', pend', pdel, delete_set.
       rewrite frac_of_0. iFrame "Hfrag Hexcl Hro". }
     iModIntro. by iApply "HΦ".
 Qed.
@@ -211,8 +211,8 @@ Lemma wp_Store__rlock (s_loc : loc) (γs : store_names) (γh : history_names)
       is_store_client γs c ∗ is_history_lb γh c h0 ∗
       is_type_binding γs.(sn_types) name parent }}}
     (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "RLock" #()
-  {{{ locs p, RET #();
-      own_read_locked γs locs p ∗ store_inv_ro γs locs p rwmutex_guard.rfrac ∗
+  {{{ locs p delete_set, RET #();
+      own_read_locked γs locs p ∗ store_inv_ro γs locs p delete_set rwmutex_guard.rfrac ∗
       ⌜∀ input : IntegrateInput (A := A),
          (RootId name, OpInsert input) ∈ delivered_ops h0 ->
          ∃ tm it, p !! parent = Some tm ∧ item_id it = in_id input ∧ it ∈ tm_arr tm⌝ }}}.
@@ -226,7 +226,7 @@ Proof.
   iIntros (n) "%Hst Hrl". subst st.
   iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(Hrauth & Hmaxn & Hwl & Hrest)".
-  iDestruct "Hrest" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel) "(Hfrag & Hexcl & Hro)".
+  iDestruct "Hrest" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set) "(Hfrag & Hexcl & Hro)".
   (* the conversion, at the one moment the exclusive slice is visible *)
   iDestruct (store_inv_excl_hist_root with "Hexcl Hpin Hlb Hbind") as "[Hexcl %Hfact]".
   iCombine "Hmaxn Hmaxtok" as "Hmaxn1".
@@ -235,15 +235,15 @@ Proof.
   assert (Z.of_nat n < rwmutex.actualMaxReaders)%Z as Hlt by (rewrite rwmutex.actualMaxReaders_unseal in Hbound |- *; lia).
   rewrite (frac_of_split n Hlt).
   iDestruct (pool_frag_split with "Hfrag") as "[Hfrag_r Hfrag_i]".
-  iDestruct (store_inv_ro_fractional γs locs p with "Hro") as "[Hro_r Hro_i]".
+  iDestruct (store_inv_ro_fractional γs locs p delete_set with "Hro") as "[Hro_r Hro_i]".
   iMod "Hmask" as "_".
   iMod ("Hclose" with "[Hrl Hrauth Hmaxn1 Hwl Hfrag_i Hexcl Hro_i]") as "_".
   { iExists (RLocked (S n)). iFrame "Hrl". iEval (cbn [tie_body]).
     replace (S n) with (n + 1)%nat by lia.
     iFrame "Hrauth Hmaxn1 Hwl".
-    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, locs, p, bind, h, m, pend, pdel.
+    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, locs, p, bind, h, m, pend, pdel, delete_set.
     iFrame "Hfrag_i Hexcl Hro_i". }
-  iModIntro. iApply ("HΦ" $! locs p). iFrame "Hrtok Hfrag_r Hro_r".
+  iModIntro. iApply ("HΦ" $! locs p delete_set). iFrame "Hrtok Hfrag_r Hro_r".
   iPureIntro. exact Hfact.
 Qed.
 
@@ -252,9 +252,9 @@ Qed.
     that the store's [types] is unchanged since the [RLock], so the share
     recombines) and the reader slot; returns [own_read_cap]. *)
 Lemma wp_Store__runlock (s_loc : loc) (γs : store_names) (γh : history_names)
-    (locs_r : gmap loc (list loc)) (p_r : pool) :
+    (locs_r : gmap loc (list loc)) (p_r : pool) (delete_set_r : gset YjsId) :
   {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_read_locked γs locs_r p_r ∗
-        store_inv_ro γs locs_r p_r rwmutex_guard.rfrac }}}
+        store_inv_ro γs locs_r p_r delete_set_r rwmutex_guard.rfrac }}}
     (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "RUnlock" #()
   {{{ RET #(); own_read_cap γs }}}.
 Proof.
@@ -271,8 +271,11 @@ Proof.
     iCombine "Hrauth Hrtok" gives %Hbad. exfalso. lia. }
   iDestruct "Hbody" as ">Hbody". iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(Hrauth & Hmaxsn & Hwl & Hrest)".
-  iDestruct "Hrest" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs_i p_i bind h m pend pdel) "(Hfrag_i & Hexcl & Hro_i)".
+  iDestruct "Hrest" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs_i p_i bind h m pend pdel delete_set) "(Hfrag_i & Hexcl & Hro_i)".
   iDestruct (pool_frag_agree with "Hfrag_r Hfrag_i") as %[Heql Heqp]. subst locs_r p_r.
+  (* the delete set has not moved either: a writer would have needed the write
+     lock, and the two authority shares agree by validity *)
+  iDestruct (store_inv_ro_delete_set_agree with "Hro_r Hro_i") as %->.
   iCombine "Hmax Hmaxsn" gives %Hbound.
   assert (Z.of_nat n < rwmutex.actualMaxReaders)%Z as Hlt by (rewrite rwmutex.actualMaxReaders_unseal in Hbound |- *; lia).
   iExists n. iFrame "Hown".
@@ -283,11 +286,11 @@ Proof.
   iEval (rewrite -Nat.add_1_r) in "Hmaxsn".
   iDestruct (own_toks_add_1 1 n γs.(sn_rmax) with "Hmaxsn") as "[Hmaxn Hmaxtok]".
   iDestruct (pool_frag_split γs rwmutex_guard.rfrac (frac_of (S n)) locs_i p_i with "[$Hfrag_r $Hfrag_i]") as "Hfrag".
-  iDestruct (store_inv_ro_fractional γs locs_i p_i rwmutex_guard.rfrac (frac_of (S n)) with "[$Hro_r $Hro_i]") as "Hro".
+  iDestruct (store_inv_ro_fractional γs locs_i p_i delete_set rwmutex_guard.rfrac (frac_of (S n)) with "[$Hro_r $Hro_i]") as "Hro".
   rewrite -(frac_of_split n Hlt).
   iMod ("Hclose" with "[Hrln Hrauth Hmaxn Hwl Hfrag Hexcl Hro]") as "_".
   { iExists (RLocked n). iFrame "Hrln". iEval (cbn [tie_body]). iFrame "Hrauth Hmaxn Hwl".
-    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, locs_i, p_i, bind, h, m, pend, pdel.
+    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, locs_i, p_i, bind, h, m, pend, pdel, delete_set.
     iFrame "Hfrag Hexcl Hro". }
   iModIntro. iApply "HΦ". iFrame "Htok Hmaxtok".
 Qed.

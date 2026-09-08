@@ -333,6 +333,15 @@ Proof.
 Qed.
 
 
+(** The same comparison under a SHARED authority: a reader holding a [●{dq}]
+    share of the delete set still learns that its certificate's ids are in it. *)
+Lemma auth_gset_frag_sub_dq (γ : gname) (dq : dfrac) (S T : gset YjsId) :
+  own γ (●{dq} S : accUR) -∗ own γ (◯ T : accUR) -∗ ⌜T ⊆ S⌝.
+Proof.
+  iIntros "Ha Hf". iDestruct (own_valid_2 with "Ha Hf") as %Hv. iPureIntro.
+  apply auth_both_dfrac_valid_discrete in Hv as (_ & Hincl & _). by apply gset_included.
+Qed.
+
 (** Grow the accepted set (adding [T]) and mint the matching whole-set
     fragment, out of which each [◯ {[i]}] projects. *)
 Lemma auth_gset_grow (γ : gname) (S T : gset YjsId) :

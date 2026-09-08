@@ -53,11 +53,11 @@ Local Notation Ev := (@Event Op).
 Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (γs : store_names) (γh : history_names)
-    (name : P) (L : list (YjsItem A)) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L }}}
+    (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids }}}
     t @! (go.PointerType yjs.Text) @! "Insert" #idx #cs
   {{{ (L' ins : list (YjsItem A)) (client k0 : nat) (originLeft originRight : YjsPtr A), RET #();
-      is_Text t γs γh name L' ∗
+      is_Text t γs γh name L' deleted_ids ∗
       ⌜inserted_run L L' ins cs client k0 originLeft originRight⌝ ∗
       (* the op certificates: one broadcast fragment per inserted item
          (issues #42/#49; the doc-level op an item denotes is
@@ -116,8 +116,8 @@ Proof.
         | exact Hctr | exact Hacccoh]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
-    { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
-      iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
+    { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
+      iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted]. }
     iSplit.
     { iPureIntro. split_and!; [reflexivity | left; reflexivity |].
       intros i it b Hii. rewrite lookup_nil in Hii. inversion Hii. }
@@ -147,8 +147,8 @@ Proof.
         | exact Hctr | exact Hacccoh]. }
     iApply ("HΦ" $! L [] 0%nat 0%nat First Last).
     iSplit.
-    { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner').
-      iFrame "Ht His_store His_hist Hbind His_lb". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hsorted]. }
+    { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
+      iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted]. }
     iSplit.
     { iPureIntro. split_and!; [reflexivity | left; reflexivity |].
       intros i it b Hii. rewrite lookup_nil in Hii. inversion Hii. }
@@ -923,15 +923,21 @@ Proof.
     iFrame "∗#". iPureIntro. split_and!;
       [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close
       | exact Hhcohj | exact Hctr_close | exact Hacccoh']. }
+  (* the handle's known items are still there, which is what carries both its
+     content bound and its known-deleted ids over to the grown list *)
+  have HLarr : ∀ x, x ∈ L -> x ∈ arr.
+  { intros x Hx. have Hxg : x ∈ (list_to_set arr : gset (YjsItem A)).
+    { apply Hsubarr. apply HLsub. rewrite elem_of_list_to_set. exact Hx. }
+    rewrite elem_of_list_to_set in Hxg. exact Hxg. }
   iApply ("HΦ" $! arr ins (uint.nat client) (uint.nat k) originLeft originRight).
   iSplitL "Hfrag Ht".
-  { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'). iFrame "Ht His_store His_hist Hbind Hfrag". iPureIntro. split_and!; [reflexivity | reflexivity | exact (yai_sorted _ Hinvj)]. }
+  { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
+    iFrame "Ht His_store His_hist Hbind Hfrag Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
+      [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvj)]. }
   iSplit.
   { iPureIntro. split_and!.
     - apply (sorted_subseteq_sublist L arr Hinvj Hsorted (yai_sorted _ Hinvj)).
-      intros x Hx. have Hxg : x ∈ (list_to_set arr : gset (YjsItem A)).
-      { apply Hsubarr. apply HLsub. rewrite elem_of_list_to_set. exact Hx. }
-      rewrite elem_of_list_to_set in Hxg. exact Hxg.
+      exact HLarr.
     - right. rewrite Hinslen. exact Hjend.
     - intros i it b Hii Hcsb.
       have [Hitin [Hcont [Hid [Hror [Horg Hchain]]]]] := Hins i it Hii.

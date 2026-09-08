@@ -63,7 +63,7 @@ Lemma wp_Doc__GetOrCreateText (dv s_loc : loc) (γs : store_names) (γh : histor
     (name : P) :
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh }}}
     dv @! (go.PointerType yjs.Doc) @! "GetOrCreateText" #name
-  {{{ (t : loc), RET #t; is_Text t γs γh name [] }}}.
+  {{{ (t : loc), RET #t; is_Text t γs γh name [] ∅ }}}.
 Proof.
   wp_start as "(#His_doc & #Hishist)".
   iNamed "His_doc". subst s_loc. wp_auto.
@@ -93,15 +93,18 @@ Proof.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
         | exact Hctr | exact Hacccoh]. }
+    (* a fresh handle knows of no deleted char: the empty lower bound of the
+       store's delete set *)
+    iMod (is_delete_set_lb_empty γs) as "#Hdel0".
     wp_alloc t as "Ht".
     iPersist "Ht".
     wp_auto.
     iApply ("HΦ" $! t).
-    iExists _, (dvv.(yjs.Doc.store')), q. iFrame "Ht His_store Hishist Hbindname".
+    iExists _, (dvv.(yjs.Doc.store')), q, []. iFrame "Ht His_store Hishist Hbindname".
     iSplitR; first done.
     iSplitR; first done.
-    iSplitL; last (iPureIntro; constructor).
-    iExact "Hlb0".
+    iFrame "Hlb0 Hdel0".
+    iPureIntro. split; [apply empty_subseteq | constructor].
   - (* ---- miss: register a fresh empty root type ---- *)
     set (p' := <[q := MkTypeModel []]> p).
     set (bind' := <[name := q]> bind).
@@ -207,15 +210,18 @@ Proof.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh
         | exact Hctr' | exact Hacccoh]. }
+    (* a fresh handle knows of no deleted char: the empty lower bound of the
+       store's delete set *)
+    iMod (is_delete_set_lb_empty γs) as "#Hdel0".
     wp_alloc t as "Ht".
     iPersist "Ht".
     wp_auto.
     iApply ("HΦ" $! t).
-    iExists _, (dvv.(yjs.Doc.store')), q. iFrame "Ht His_store Hishist Hbindname".
+    iExists _, (dvv.(yjs.Doc.store')), q, []. iFrame "Ht His_store Hishist Hbindname".
     iSplitR; first done.
     iSplitR; first done.
-    iSplitL; last (iPureIntro; constructor).
-    iExact "Hlb0".
+    iFrame "Hlb0 Hdel0".
+    iPureIntro. split; [apply empty_subseteq | constructor].
 Qed.
 
 End doc_GetText.

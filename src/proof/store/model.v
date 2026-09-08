@@ -57,7 +57,9 @@
     [delete_set_tombstoned], the tombstone-set clause at runs, refined
     along [live_refine] ([delete_set_tombstoned_refine]) and
     transported along a permutation, a growth by a fresh run, a set union
-    or shrink;
+    or shrink, and read off a delete loop's own record of what it tombstoned
+    ([delete_set_tombstoned_of_ids_tombstoned], where one id living in one
+    slot rules out a live run holding it);
     membership in [all_runs] is membership in some type
     ([elem_of_all_runs]) and [all_runs] around one split is the two halves
     in place of the split run ([all_runs_split_perm]); [pool_after_split]
@@ -1368,5 +1370,37 @@ Lemma delete_set_tombstoned_mono (delete_set delete_set' : gset YjsId) (runs : l
   delete_set' ⊆ delete_set ->
   delete_set_tombstoned delete_set runs -> delete_set_tombstoned delete_set' runs.
 Proof. move=> Hsub Ht r Hr y Hy Hin. exact (Ht r Hr y Hy (Hsub _ Hin)). Qed.
+
+(** A delete's own record of what it tombstoned IS the tombstone-set clause:
+    if every id of [ids] sits in some tombstoned run, then no LIVE run holds
+    one, because one id lives in one slot ([pool_covers_unique]). This is what
+    lets [own_delete_set_grow] take a delete loop's [ids_tombstoned] report and
+    put those ids in the store's delete set. *)
+Lemma delete_set_tombstoned_of_ids_tombstoned (ids : gset YjsId) (p : pool) :
+  pool_invs p ->
+  ids_tombstoned ids (all_runs p) ->
+  delete_set_tombstoned ids (all_runs p).
+Proof.
+  move=> Hinvs Htomb r Hr y Hy Hid.
+  have Hwf : ∀ r0, r0 ∈ all_runs p -> run_wf (run_items r0).
+  { move=> r0 Hr0. exact (proj1 (proj1 Hinvs r0 Hr0)). }
+  destruct (Htomb (item_id y) Hid) as (r' & Hr' & Hdel' & Hin').
+  have Hcov : run_covers r (item_id y).
+  { apply (char_ids_run_covers r _ (Hwf r Hr)).
+    rewrite /char_ids elem_of_list_to_set list_elem_of_fmap.
+    exists y. split; [reflexivity | exact Hy]. }
+  have Hcov' : run_covers r' (item_id y) := char_ids_run_covers r' _ (Hwf r' Hr') Hin'.
+  destruct (proj1 (elem_of_all_runs p r) Hr) as (q & tm & Hq & Hrtm).
+  destruct (proj1 (elem_of_all_runs p r') Hr') as (q' & tm' & Hq' & Hrtm').
+  apply list_elem_of_lookup_1 in Hrtm as [k Hk].
+  apply list_elem_of_lookup_1 in Hrtm' as [k' Hk'].
+  have Hc : pool_covers p q k (item_id y) by exists tm, r.
+  have Hc' : pool_covers p q' k' (item_id y) by exists tm', r'.
+  destruct (pool_covers_unique p (item_id y) q q' k k' Hinvs Hc Hc') as [Hqq Hkk].
+  subst q' k'.
+  rewrite Hq in Hq'. injection Hq' as <-.
+  rewrite Hk in Hk'. injection Hk' as <-.
+  exact Hdel'.
+Qed.
 
 End store_model.
