@@ -842,7 +842,7 @@ Proof using Type*.
              = Z.of_nat (uint.nat idv.(yjs.id.clock') - run_clock r)%nat.
   { move: Hivclk Hlo. word. }
   wp_auto.
-  wp_apply (wp_item__Len lc (DfracOwn 1) ivR with "[$Haccval]"). iIntros "Haccval".
+  wp_apply (wp_item__Len lc (DfracOwn 1) ivR with "[$Haccval]"). iIntros "[Haccval _]".
   iDestruct ("Haccback" with "Haccval") as "Hruns".
   rewrite Haccle.
   wp_auto.

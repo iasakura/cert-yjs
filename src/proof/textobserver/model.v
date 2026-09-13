@@ -27,6 +27,9 @@
       of the observed snapshot.
     - [app_synced app observed]: the application invariant, its state spells
       the observed snapshot.
+    - [delta_fits delta]: every retain and delete count is below [2^64], the
+      bound up to which a Go delta (counts as [uint64] words) denotes its
+      model.
 
     Laws
     - [apply_text_delta]: THE patch law: under [snapshot_grows_to], the delta
@@ -44,7 +47,16 @@
       snapshot inherits it from the current one).
     - [snapshot_grows_to_nil], [text_delta_refl], [text_delta_from_empty]:
       the empty observation grows to anything, an unchanged snapshot has the
-      empty delta, the first poll inserts the whole visible text. *)
+      empty delta, the first poll inserts the whole visible text.
+    - [apply_delta_fits]: a delta that patches a string shorter than [2^64]
+      fits (how the application discharges [ApplyDelta]'s bound).
+    - [elem_of_snapshot_deleted_ids]: a deleted id is a tombstoned char's.
+    - the walk's laws: [snapshot_state_vector_app] / [snapshot_deleted_ids_app]
+      / [per_char_delta_app] / [per_char_delta_singleton] /
+      [delta_merge_snoc_option] (a snapshot is walked one char at a time)
+      and [snapshot_state_vector_run_models] / [snapshot_deleted_ids_run_models]
+      (the token of one run's chars: its client's next clock, its ids when
+      tombstoned). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -172,6 +184,18 @@ Definition snapshot_deleted_ids (observed : snapshot) : gset YjsId :=
     observed. *)
 Definition app_synced (app : A) (observed : snapshot) : Prop :=
   app = visible_string observed.
+
+(** [delta_fits delta]: every retain and delete count is below [2^64]. The
+    Go carries counts as [uint64] words, so a Go delta denotes its model
+    only up to this bound ([value.v]'s [delta_op_denotes]); a delta that
+    patches a Go string fits ([apply_delta_fits]). *)
+Definition delta_op_fits (op : DeltaOp) : Prop :=
+  match op with
+  | Retain n | Delete n => (Z.of_nat n < 2^64)%Z
+  | Insert _ => True
+  end.
+
+Definition delta_fits (delta : list DeltaOp) : Prop := Forall delta_op_fits delta.
 
 (* ===== lemmas ============================================================= *)
 
@@ -605,5 +629,146 @@ Proof.
   - rewrite Hnil //.
   - rewrite (Hstring _ Hnil) //.
 Qed.
+
+(** A retain or a delete that ran is no longer than the string it ran on. *)
+Lemma delta_run_counts_bounded (d : list DeltaOp) (s : A) (p : A * A) :
+  delta_run d s = Some p ->
+  Forall (λ op, match op with
+                | Retain n | Delete n => (n <= length s)%nat
+                | Insert _ => True
+                end) d.
+Proof.
+  elim: d s p => [| op d IH] s p /=; first by move=> _; apply Forall_nil.
+  destruct op as [n | t | n].
+  - case_decide as Hle; last done.
+    destruct (delta_run d (drop n s)) as [p' |] eqn:Hrun; last done.
+    move=> _. constructor; first exact Hle.
+    eapply Forall_impl; first exact (IH _ _ Hrun).
+    move=> [k | u | k] //=; rewrite length_drop; lia.
+  - destruct (delta_run d s) as [p' |] eqn:Hrun; last done.
+    move=> _. constructor; first done. exact (IH _ _ Hrun).
+  - case_decide as Hle; last done.
+    move=> Hrun. constructor; first exact Hle.
+    eapply Forall_impl; first exact (IH _ _ Hrun).
+    move=> [k | u | k] //=; rewrite length_drop; lia.
+Qed.
+
+Lemma apply_delta_fits (d : list DeltaOp) (s s' : A) :
+  apply_delta d s = Some s' -> (Z.of_nat (length s) < 2^64)%Z -> delta_fits d.
+Proof.
+  rewrite /apply_delta. destruct (delta_run d s) as [p |] eqn:Hrun; last done.
+  move=> _ Hlen.
+  eapply Forall_impl; first exact (delta_run_counts_bounded d s p Hrun).
+  move=> [k | u | k] //=; lia.
+Qed.
+
+(** A deleted id of a snapshot is the id of one of its tombstoned chars. *)
+Lemma elem_of_snapshot_deleted_ids (m : snapshot) (i : YjsId) :
+  i ∈ snapshot_deleted_ids m <-> ∃ x, (x, true) ∈ m ∧ item_id x = i.
+Proof.
+  rewrite /snapshot_deleted_ids /char_ids elem_of_list_to_set list_elem_of_fmap.
+  split.
+  - intros (x & -> & Hx). rewrite list_elem_of_fmap in Hx.
+    destruct Hx as ([y b] & -> & Hy). rewrite list_elem_of_filter /= in Hy.
+    destruct Hy as [-> Hy]. exists y. split; [exact Hy | reflexivity].
+  - intros (x & Hx & <-). exists x. split; first reflexivity.
+    rewrite list_elem_of_fmap. exists (x, true). split; first reflexivity.
+    rewrite list_elem_of_filter /=. split; [reflexivity | exact Hx].
+Qed.
+
+(** The token over an append: the state vectors join, the deleted ids
+    union; the per-char delta over an append, and over one char. *)
+Lemma snapshot_state_vector_app (m1 m2 : snapshot) :
+  snapshot_state_vector (m1 ++ m2) =
+  sv_join (snapshot_state_vector m1) (snapshot_state_vector m2).
+Proof.
+  rewrite /snapshot_state_vector fmap_app.
+  elim: m1.*1 => [| x l IH] /=; first by rewrite sv_join_empty_l.
+  rewrite IH sv_join_assoc //.
+Qed.
+
+Lemma snapshot_deleted_ids_app (m1 m2 : snapshot) :
+  snapshot_deleted_ids (m1 ++ m2) = snapshot_deleted_ids m1 ∪ snapshot_deleted_ids m2.
+Proof.
+  rewrite /snapshot_deleted_ids /char_ids filter_app !fmap_app list_to_set_app_L //.
+Qed.
+
+Lemma per_char_delta_app (observed m1 m2 : snapshot) :
+  per_char_delta observed (m1 ++ m2) =
+  per_char_delta observed m1 ++ per_char_delta observed m2.
+Proof. rewrite /per_char_delta omap_app //. Qed.
+
+Lemma per_char_delta_singleton (observed : snapshot) (x : YjsItem A * bool) :
+  per_char_delta observed [x] = option_list (delta_step observed x).
+Proof. rewrite /per_char_delta /=. by destruct (delta_step observed x). Qed.
+
+(** The merge over one more char: nothing, or one [delta_snoc]. *)
+Lemma delta_merge_snoc_option (d : list DeltaOp) (o : option DeltaOp) :
+  delta_merge (d ++ option_list o) =
+  match o with Some op => delta_snoc (delta_merge d) op | None => delta_merge d end.
+Proof. destruct o as [op |]; [exact (delta_merge_snoc d op) | rewrite app_nil_r //]. Qed.
+
+(** The token of one run's chars ([run_models r], the per-char sequence of a
+    heap node): the run's client is at its next clock and no other client is
+    known; the run's ids are deleted iff the run is tombstoned. *)
+Lemma run_models_fst (r : ItemRun) : (run_models r).*1 = run_items r.
+Proof.
+  rewrite /run_models -list_fmap_compose -{2}(list_fmap_id (run_items r)).
+  apply list_fmap_ext. move=> i x _. reflexivity.
+Qed.
+
+Lemma snapshot_state_vector_run_models (r : ItemRun) (c : ClientId) :
+  run_wf (run_items r) ->
+  sv_get (snapshot_state_vector (run_models r)) c =
+    (if decide (c = run_client r) then run_clock r + length (run_items r) else 0)%nat.
+Proof.
+  move=> Hwf.
+  have Hids : ∀ y, y ∈ run_items r ->
+      ∃ o, (o < length (run_items r))%nat ∧
+           item_id y = MkYjsId (run_client r) (run_clock r + o).
+  { move=> y Hy. apply list_elem_of_lookup_1 in Hy as [o Ho].
+    exists o. split; [exact (lookup_lt_Some _ _ _ Ho) | exact (run_wf_char_id _ o y Hwf Ho)]. }
+  have Hwit : ∀ k, (k < sv_get (snapshot_state_vector (run_models r)) c)%nat ->
+      ∃ o, (o < length (run_items r))%nat ∧ c = run_client r ∧ (k <= run_clock r + o)%nat.
+  { move=> k Hk.
+    destruct (snapshot_state_vector_witness (run_models r) c k Hk) as (y & Hy & Hc & Hle).
+    rewrite run_models_fst in Hy.
+    destruct (Hids y Hy) as (o & Ho & Hidy).
+    rewrite Hidy /= in Hc Hle. exists o. split_and!; [exact Ho | by rewrite Hc | exact Hle]. }
+  case_decide as Hc.
+  - subst c.
+    have Hne : run_items r ≠ [] := proj1 Hwf.
+    have Hlen : (0 < length (run_items r))%nat.
+    { destruct (run_items r) as [| h l]; [done | simpl; lia]. }
+    (* the last char is observed: the bound is reached *)
+    destruct (lookup_lt_is_Some_2 (run_items r) (length (run_items r) - 1) ltac:(lia)) as [z Hz].
+    have Hzin : z ∈ run_items r := list_elem_of_lookup_2 _ _ _ Hz.
+    have Hzid := run_wf_char_id (run_items r) _ z Hwf Hz.
+    have Hlow := snapshot_state_vector_bound (run_models r) z ltac:(rewrite run_models_fst; exact Hzin).
+    rewrite Hzid /= in Hlow.
+    apply Nat.le_antisymm.
+    + apply Nat.nlt_ge => Hgt.
+      destruct (Hwit _ Hgt) as (o & Ho & _ & Hle). lia.
+    + (* [Hlow] spells [run_clock] / [run_client] out; restate it so lia sees one atom *)
+      have Hlow' : (run_clock r + (length (run_items r) - 1)
+                    < sv_get (snapshot_state_vector (run_models r)) (run_client r))%nat := Hlow.
+      lia.
+  - apply Nat.le_antisymm; last lia.
+    apply Nat.nlt_ge => Hgt.
+    destruct (Hwit _ Hgt) as (o & _ & Heq & _). done.
+Qed.
+
+Lemma snapshot_deleted_ids_run_models (r : ItemRun) :
+  snapshot_deleted_ids (run_models r) =
+    if run_deleted r then char_ids (run_items r) else ∅.
+Proof.
+  rewrite /snapshot_deleted_ids /run_models.
+  destruct (run_deleted r).
+  - elim: (run_items r) => [| x l IH]; first done.
+    simpl. rewrite !char_ids_cons IH //.
+  - elim: (run_items r) => [| x l IH]; first done.
+    simpl. exact IH.
+Qed.
+
 
 End text_observer_model.

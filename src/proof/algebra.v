@@ -270,6 +270,27 @@ Proof.
 Qed.
 
 
+(** A whole-map fragment (the snapshot [auth_gmap_gset_grow_snap] mints)
+    sits pointwise below the authority, at ANY fraction: every key it has is
+    registered and its set is a lower bound of the current one. *)
+Lemma auth_gmap_gset_included {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (dq : dfrac)
+    (m M : gmap K (gset V)) :
+  own γ (●{dq} m) -∗ own γ (◯ M) -∗
+  ⌜∀ (k : K) (S : gset V), M !! k = Some S -> ∃ S', m !! k = Some S' ∧ S ⊆ S'⌝.
+Proof.
+  iIntros "Ha Hf".
+  iDestruct (own_valid_2 with "Ha Hf") as %Hv.
+  iPureIntro.
+  apply auth_both_dfrac_valid_discrete in Hv as [_ [Hincl _]].
+  move=> k S Hk.
+  have Hk' := proj1 (lookup_included M m) Hincl k.
+  rewrite Hk in Hk'.
+  destruct (Some_included_is_Some _ _ Hk') as [S' HS'].
+  rewrite HS' Some_included_total gset_included in Hk'.
+  exists S'. split; [exact HS' | exact Hk'].
+Qed.
+
 (** A singleton fragment weakens to any subset (the lower bound only loses
     information). *)
 Lemma auth_gmap_gset_frag_weaken {K V : Type} `{Countable K} `{Countable V}

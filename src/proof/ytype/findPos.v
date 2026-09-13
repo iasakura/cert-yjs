@@ -191,7 +191,7 @@ Proof.
         rewrite Hdel2.
         destruct (run_deleted r2) eqn:Hd2; simpl negb; wp_auto.
         2:{ (* visible node: spend the budget, or record the in-run offset *)
-            wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
+            wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "[Hc2val _]".
             wp_auto.
             case_bool_decide as Hcmp; wp_auto.
             - (* remaining < Len: the index lands inside this run (issue #28) *)
@@ -218,7 +218,7 @@ Proof.
               split_and!; [exact Hr2 | exact Hd2 | rewrite Hrlen; word].
             - (* Len <= remaining: spend the whole node (the else branch
                  re-reads right.Len(), a second method call) *)
-              wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
+              wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "[Hc2val _]".
               wp_auto.
               iAssert (own_item_node l2 dq (input_of_run r2) false
                          parent prev2 nxt2) with "[Hc2val Hc2ol Hc2or]" as "Hnode2".
@@ -312,7 +312,7 @@ Proof.
         rewrite Hdel2.
         destruct (run_deleted r2) eqn:Hd2; simpl negb; wp_auto.
         2:{ (* visible node: spend the budget, or record the in-run offset *)
-            wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
+            wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "[Hc2val _]".
             wp_auto.
             case_bool_decide as Hcmp; wp_auto.
             - (* remaining < Len: the index lands inside this run (issue #28) *)
@@ -339,7 +339,7 @@ Proof.
               split_and!; [exact Hr2 | exact Hd2 | rewrite Hrlen; word].
             - (* Len <= remaining: spend the whole node (the else branch
                  re-reads right.Len(), a second method call) *)
-              wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "Hc2val".
+              wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "[Hc2val _]".
               wp_auto.
               iAssert (own_item_node l2 dq (input_of_run r2) false
                          parent prev2 nxt2) with "[Hc2val Hc2ol Hc2or]" as "Hnode2".
