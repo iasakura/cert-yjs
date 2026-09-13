@@ -66,7 +66,8 @@ func (t *Text) NewObserver() *TextObserver {
 // the last Poll.
 func (o *TextObserver) deletedContains(client Client, clock Clock) bool {
 	spans := o.deleted[client]
-	for _, sp := range spans {
+	for i := 0; i < len(spans); i++ {
+		sp := spans[i]
 		if clock >= sp.start && clock < sp.end {
 			return true
 		}
@@ -168,7 +169,8 @@ func ApplyDelta(s string, delta []DeltaOp) (string, bool) {
 	result := ""
 	position := uint64(0)
 	remaining := uint64(len(s))
-	for _, op := range delta {
+	for k := 0; k < len(delta); k++ {
+		op := delta[k]
 		if op.Kind == DeltaInsert {
 			result = result + op.Content
 		} else {
