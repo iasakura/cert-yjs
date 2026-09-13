@@ -185,9 +185,18 @@ Files per the layout: `src/proof/textobserver/{model,value,heap,NewObserver,Poll
 and the `textobserver.v` facade; the Require order gains `textobserver`
 after `text`.
 
-`value.v`: `own_delta sl delta` (the `[]DeltaOp` slice denoting a
-`list DeltaOp`), and the state-vector map and the delete set as the values
-of `snapshot_state_vector` / `snapshot_deleted_ids`.
+`value.v`: what a `DeltaOp` struct, the state-vector map and the
+deleted-span lists denote (`delta_op_denotes`, `state_vector_denotes`,
+`spans_cover`); `heap.v` builds `own_delta sl dq delta` (the `[]DeltaOp`
+slice denoting a `list DeltaOp`) and `own_deleted_spans` on them. A count
+denotes the model's `nat` as a machine word (`Length' = W64 n`, the way
+`yType.len` denotes `runs_visible`): the walk adds `uint64` counts and
+nothing in the model bounds a text below `2^64` chars, so the exact
+denotation is not provable for `Poll` while the word-level one is,
+unconditionally. `delta_fits delta` (every retain and delete count below
+`2^64`) is the bound under which the words are the counts; a delta that
+patches a Go string fits (`apply_delta_fits`), which is how the
+application discharges `ApplyDelta`'s precondition for a `Poll` result.
 
 `heap.v`, the observer predicate (exclusive: the token fields are mutable):
 
@@ -236,12 +245,18 @@ Lemma wp_TextObserver__Poll … (observed : snapshot) (h0 : list Ev) :
       ⌜text_snapshot L current⌝ ∗ ⌜history_reflected h0 name current⌝ ∗
       ⌜visible_excludes deleted_ids current⌝ }}}.
 
-Lemma wp_ApplyDelta (s : go_string) (sl : slice.t) (delta : list DeltaOp) :
-  {{{ is_pkg_init yjs ∗ own_delta sl delta }}}
+Lemma wp_ApplyDelta (s : go_string) (sl : slice.t) (dq : dfrac) (delta : list DeltaOp) :
+  {{{ is_pkg_init yjs ∗ own_delta sl dq delta ∗ ⌜delta_fits delta⌝ }}}
     @! yjs.ApplyDelta #s #sl
   {{{ RET (#(default "" (apply_delta delta s)), #(bool_decide (is_Some (apply_delta delta s))));
-      own_delta sl delta }}}.
+      own_delta sl dq delta }}}.
 ```
+
+`Poll`'s walk indexes a node's content by a `uint64` offset
+(`string(cur.content.content[i])`), which is a valid `int` index only
+because a Go string is shorter than `2^63`: the bound Perennial's string
+model grants when `len` is called (an angelic assumption). `wp_item__Len`
+passes it on in its postcondition, since `Poll` calls `cur.Len()` first.
 
 The `Poll` postcondition is the read API's (`text_snapshot`,
 `history_reflected`, `visible_excludes`, all about `current`) plus the two
@@ -357,9 +372,11 @@ the ghost set.
 - O1 the pure model (section 3), rocq-mcp only. DONE (PR #200).
 - O2 Go + goose + tests (section 2): `./build.sh go`, `./build.sh goose`,
   `go test ./yjs/`. DONE (PR #201).
-- O3 P1 (section 6.1): the store invariant and its transports, full build. DONE.
+- O3 P1 (section 6.1): the store invariant and its transports, full build. DONE (PR #202).
 - O4 `wp_Text__NewObserver`, `wp_TextObserver__Poll` (write lock),
-  `wp_ApplyDelta`.
+  `wp_ApplyDelta`. DONE: O4a (value, heap, `NewObserver`, `ApplyDelta`) is
+  PR #203, O4b (`Poll` and its helpers `deltaSnoc` / `deletedContains`) is
+  PR #204.
 - O5 the demo and the application theorem (section 4), the composition with
   `ApplySyncUpdate`.
 - O6 the read-locked `Poll`: the wire delete path grows the ghost set (the
@@ -409,6 +426,10 @@ O1 and O2 are independent of O3; O4 needs all three.
   in O6.
 - P1 states a property the Go already has (`depsArrived` and the local
   clock), matching Yjs's `addStruct` assertion; no behaviour change.
+- The Go's delta counts are `uint64` and wrap at `2^64` chars, where Yjs's
+  JavaScript numbers do not; the spec denotes them modulo `2^64` and
+  `ApplyDelta`'s spec carries the `delta_fits` bound (section 4). No
+  behaviour change; a text that long does not exist.
 
 ## 10. Out of scope
 
