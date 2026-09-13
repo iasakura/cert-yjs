@@ -817,10 +817,12 @@ Definition own_store_fields (s : loc) (state : store_state) : iProp Σ :=
   "Hpdeletes" ∷ own_pending_deletes_field (s .[(yjs.store.t), "pendingDeletes"]) (ss_pending_deletes state).
 
 (** [store_invs state]: the invariants every store method preserves: the
-    pure pool invariants ([pool_invs]) and the registry's coherence. The
-    address [NoDup] is not here; it is [own_type_pool]'s [locs_wf]. *)
+    pure pool invariants ([pool_invs]), the registry's coherence, and every
+    client's clocks gap-free from 0 ([pool_clocks_contiguous], issue #198).
+    The address [NoDup] is not here; it is [own_type_pool]'s [locs_wf]. *)
 Definition store_invs (state : store_state) : Prop :=
-  pool_invs (ss_pool state) ∧ pool_registry_coh (ss_bind state) (ss_pool state).
+  pool_invs (ss_pool state) ∧ pool_registry_coh (ss_bind state) (ss_pool state) ∧
+  pool_clocks_contiguous (ss_pool state).
 
 (** [own_store_state s state]: THE store at its state, the
     PRIMITIVE store predicate: every field of the struct at [state], with
@@ -887,7 +889,14 @@ Qed.
 Lemma own_store_state_registry_coh (s : loc) (state : store_state) :
   own_store_state s state -∗ ⌜pool_registry_coh (ss_bind state) (ss_pool state)⌝.
 Proof.
-  iIntros "(_ & %Hinvs)". iPureIntro. exact (proj2 Hinvs).
+  iIntros "(_ & %Hinvs)". iPureIntro. exact (proj1 (proj2 Hinvs)).
+Qed.
+
+(** Every client's clocks are gap-free: read off the store. *)
+Lemma own_store_state_clocks_contiguous (s : loc) (state : store_state) :
+  own_store_state s state -∗ ⌜pool_clocks_contiguous (ss_pool state)⌝.
+Proof.
+  iIntros "(_ & %Hinvs)". iPureIntro. exact (proj2 (proj2 Hinvs)).
 Qed.
 
 (** Borrow the [k]-th node of the type at [parent] out of a
@@ -1204,14 +1213,13 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
     "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
                     (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
-    "%Hctr"   ∷ ⌜∀ parent tm x, p !! parent = Some tm → x ∈ tm_arr tm →
-                   clientId (item_id x) = uint.nat client →
-                   (clock (item_id x) < uint.nat k)%nat⌝ ∗
+    "%Hctr"   ∷ ⌜pool_next_clock p (uint.nat client) (uint.nat k)⌝ ∗
     (* the pool invariants (issue #28): every run
        satisfies [run_invs] and the clock ranges are disjoint (the address
        [NoDup] is [own_type_pool]'s [locs_wf], in the read-shareable
        half) *)
     "%Hpool" ∷ ⌜pool_invs p⌝ ∗
+    "%Hcontig" ∷ ⌜pool_clocks_contiguous p⌝ ∗
     "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 bind ∗
     "#Hbinds" ∷ ([∗ map] name ↦ q ∈ bind, is_type_binding γs.(sn_types) name q) ∗
     "Hhist"   ∷ own_client_history γh (uint.nat client) h ∗
@@ -1429,8 +1437,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "Hhist"   ∷ own_client_history γh c h ∗
     "%Hregmodel" ∷ ⌜pool_registry_models m bind p⌝ ∗
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
-    "%Hctr"   ∷ ⌜∀ parent tm x, p !! parent = Some tm -> x ∈ tm_arr tm ->
-                   clientId (item_id x) = c -> (clock (item_id x) < uint.nat k)%nat⌝ ∗
+    "%Hctr"   ∷ ⌜pool_next_clock p c (uint.nat k)⌝ ∗
     (* no-loss accepted-id layer: matches [store_inv_excl] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
     "Hdelete_set" ∷ own_delete_set γs m (all_runs p) ∗
@@ -1696,7 +1703,7 @@ Proof.
   iSplitR ""; last (iPureIntro; exact Hfact).
   iExists acc.
   iFrame "∗#". iPureIntro. split_and!;
-    [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hpool
+    [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hpool | exact Hcontig
     | exact Hhcoh | exact Hregcoh | exact Hdelete_set_dom | exact Hacccoh].
 Qed.
 
@@ -1793,11 +1800,11 @@ Qed.
     and has [is_Store]. The reader-bound TOKENS come back too (issue #125):
     zipped with [init_RWMutex]'s RLock tokens they are the document's
     [own_read_cap] read capabilities, one per reader slot. *)
-Lemma store_tie_init (s_loc : loc) (γh : history_names) (client k : w64)
+Lemma store_tie_init (s_loc : loc) (γh : history_names) (client : w64)
     (items_mref types_mref : loc) (deletedSetVal : yjs.deletedSet.t)
     (γrw : RWMutex_names) :
   "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client -∗
-  "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k -∗
+  "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ W64 0 -∗
   "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref -∗
   "Hmap"    ∷ own_map items_mref (DfracOwn 1) (∅ : gmap w64 slice.t) -∗
   "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref -∗
@@ -1852,7 +1859,7 @@ Proof.
   iSplitL; last by iFrame "Hclpin".
   rewrite /tie_body.
   iFrame "Hrrlocked Hrtoks0 Hwl".
-  iExists client, k, items_mref, types_mref, deletedSetVal, slice.nil, slice.nil, locs, p,
+  iExists client, (W64 0), items_mref, types_mref, deletedSetVal, slice.nil, slice.nil, locs, p,
     (∅ : gmap P loc), ([] : list Ev), (∅ : DocModel),
     ([] : list (TId * IntegrateInput (A := A))), ([] : list delete_span), (∅ : gset YjsId).
   rewrite frac_of_0.
@@ -1893,11 +1900,17 @@ Proof.
   { iPureIntro. move=> typedInput Hin. by apply elem_of_nil in Hin. }
   iSplitR.
   { iPureIntro. move=> typedInput Hin. by apply elem_of_nil in Hin. }
-  iSplitR. { iPureIntro. move=> parent' tm' x Hlk. rewrite /p lookup_empty // in Hlk. }
+  iSplitR.
+  { (* the counter: nothing integrated, next clock 0 *)
+    iPureIntro. split; [| by left; word].
+    move=> parent' tm' x Hlk. rewrite /p lookup_empty // in Hlk. }
   iSplitR.
   { iPureIntro. rewrite /pool_invs /all_runs /p map_to_list_empty /=.
     split; first by move=> r /elem_of_nil.
     move=> i j r1 r2 Hi. rewrite lookup_nil // in Hi. }
+  iSplitR.
+  { (* contiguity, vacuous over the empty pool *)
+    iPureIntro. intros d (q & tm & x & Hq & _). rewrite /p lookup_empty // in Hq. }
   iSplitR. { rewrite big_sepM_empty //. }
   iPureIntro. split_and!.
   - exact history_state_coh_nil.
@@ -1947,7 +1960,7 @@ Proof.
     iAssert (own_store_state s_loc (MkStoreState client k locs p bind pend pdel))
       with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes]"
       as "Hstate".
-    { iSplitL; last by (iPureIntro; split; [exact Hpool | exact Hreg]).
+    { iSplitL; last by (iPureIntro; split_and!; [exact Hpool | exact Hreg | exact Hcontig]).
       rewrite /own_store_fields /=.
       iFrame "Hclient Hclock Htypes".
       iSplitL "HdeletedSet"; first (iExists deletedSetVal; iFrame "HdeletedSet").
@@ -1965,7 +1978,7 @@ Proof.
       [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
       | exact Hctr | exact Hacccoh].
   - iIntros "H". iDestruct "H" as (c h m pend) "H". iNamed "H". subst c. iNamed "Hstate".
-    have [Hpool Hreg] := Hinvs.
+    have [Hpool [Hreg Hcontig]] := Hinvs.
     iNamed "Hfields". simpl in *.
     iDestruct "HdeletedSet" as (deletedSetVal) "HdeletedSet".
     iNamed "Hitems". iNamed "Hregistry". iNamed "Hpending". iNamed "Hpdeletes".
@@ -1976,7 +1989,7 @@ Proof.
     iExists acc.
     iFrame "Hclient Hclientpin Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hpendcert HtypesAuth Hbinds Hhist Hacc".
     iPureIntro. split_and!;
-      [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hpool
+      [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hpool | exact Hcontig
       | exact Hhcoh | (split; [exact Hreg | exact Hregmodel]) | exact Hdelete_set_dom
       | exact Hacccoh].
 Qed.
