@@ -2271,8 +2271,9 @@ Qed.
     lands at one shared cursor of the run list and the address list
     ([runs_integrate_splice_at] / [integrate_locs]), denotes the input
     ([run_denotes]), and the store's invariants survive: the item's chars
-    fit ([input_fits]) and its id is its client's newest in the whole pool
-    ([pool_clock_below]). Proved on the run core. *)
+    fit ([input_fits]) and its id is its client's next clock in the whole pool
+    ([pool_next_clock]: newest, and right after the client's last one, so the
+    clocks stay gap-free). Proved on the run core. *)
 Lemma wp_store__Integrate (s parent parent_arg item_l : loc)
     (state : store_state) (tm : type_model) (ls : list loc)
     (arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
@@ -2284,7 +2285,7 @@ Lemma wp_store__Integrate (s parent parent_arg item_l : loc)
   input_fits input ->
   integrate_all (ops_of_input input (explode (in_content input))) (tm_arr tm) = Some arr' ->
   origins_resolved (tm_runs tm) (tm_arr tm) input kL kR ->
-  pool_clock_below (ss_pool state) (in_id input) ->
+  pool_next_clock (ss_pool state) (clientId (in_id input)) (clock (in_id input)) ->
   {{{ is_pkg_init yjs ∗ own_store_state s state ∗
       own_linked_item item_l input parent
         (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) }}}
@@ -2297,16 +2298,21 @@ Lemma wp_store__Integrate (s parent parent_arg item_l : loc)
                     ls' = integrate_locs ls idx item_l⌝ ∗
       ⌜run_denotes input newItem run⌝ }}}.
 Proof using Type*.
-  move=> Hparg Hpl Hlocs Hready Hfitsin Hall Hres Hbelow.
+  move=> Hparg Hpl Hlocs Hready Hfitsin Hall Hres Hnext.
   iIntros (Φ) "(#Hpkg & Hruns & Hfresh) HΦ".
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
+  have Hideta : in_id input = MkYjsId (clientId (in_id input)) (clock (in_id input))
+    by destruct (in_id input).
   iDestruct "Hruns" as "(Hfields & %Hinvs)".
   have Hrpi : pool_invs p := proj1 Hinvs.
-  have Hreg : pool_registry_coh bind p := proj2 Hinvs.
+  have Hreg : pool_registry_coh bind p := proj1 (proj2 Hinvs).
+  have Hcontig : pool_clocks_contiguous p := proj2 (proj2 Hinvs).
   iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iEval (simpl) in "Hitems Htypes".
   iDestruct (own_type_pool_id_bounds with "Htypes") as %Hbnds.
   iDestruct (own_type_pool_run_wf with "Htypes") as %Hwfall.
+  have Hbelow : pool_clock_below p (in_id input).
+  { rewrite Hideta. exact (pool_next_clock_below p _ _ Hwfall Hnext). }
   iDestruct (own_linked_item_fresh with "Hfresh Htypes") as %Hfreshloc.
   iDestruct "Htypes" as "(%Hlocswf & Hpool)".
   have Hlocswf0 := Hlocswf. destruct Hlocswf as (Hdom & Hnd & Hlens).
@@ -2414,12 +2420,17 @@ Proof using Type*.
     have Hrpi2 : pool_invs p2
       := pool_invs_integrate p parent tm idx r arr' Hpl
            (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) Hbelowr Hrpi.
+    have Hhead : item_id (hd inhabitant run) = MkYjsId (clientId (in_id input)) (clock (in_id input))
+      by rewrite (proj1 Hden) //.
+    have Hcontig2 : pool_clocks_contiguous p2
+      := pool_clocks_contiguous_integrate p parent tm idx run runs' arr' _ _ Hpl Hsplice Hwfr Hhead
+           (proj2 Hnext) Hcontig.
     iApply ("HΦ" $! runs' ls' run).
     iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes";
       last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
     iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
       with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
-    { iSplitL; last (iPureIntro; split; [exact Hrpi2 | exact Hreg2]).
+    { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
       rewrite /own_store_fields /=.
       iFrame "Hclient Hclock HdeletedSet Hregistry Htypes2 Hpending Hpdeletes".
       iExists items_mref. iFrame "Hitemsf Hitemmap". }
@@ -2498,12 +2509,17 @@ Proof using Type*.
     have Hrpi2 : pool_invs p2
       := pool_invs_integrate p parent tm idx r arr' Hpl
            (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) Hbelowr Hrpi.
+    have Hhead : item_id (hd inhabitant run) = MkYjsId (clientId (in_id input)) (clock (in_id input))
+      by rewrite (proj1 Hden) //.
+    have Hcontig2 : pool_clocks_contiguous p2
+      := pool_clocks_contiguous_integrate p parent tm idx run runs' arr' _ _ Hpl Hsplice Hwfr Hhead
+           (proj2 Hnext) Hcontig.
     iApply ("HΦ" $! runs' ls' run).
     iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes";
       last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
     iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
       with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
-    { iSplitL; last (iPureIntro; split; [exact Hrpi2 | exact Hreg2]).
+    { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
       rewrite /own_store_fields /=.
       iFrame "Hclient Hclock HdeletedSet Hregistry Htypes2 Hpending Hpdeletes".
       iExists items_mref. iFrame "Hitemsf Hitemmap". }

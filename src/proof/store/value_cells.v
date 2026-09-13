@@ -31,7 +31,8 @@
       ([pool_registry_coh_insert_existing]), a fresh name extends the map
       ([pool_registry_coh_bind_fresh] / [pool_registry_coh_dom_mono]), and an
       id no registered type holds is absent from the document model
-      ([pool_docm_has_registry_false]).
+      ([pool_docm_has_registry_false]); a pool's chars are the model's through
+      the registry ([pool_has_doc_model_has]).
     - the index under those same steps: [key_pair_client_locs] is stable under any
       key permutation ([key_pair_client_locs_perm]), ignores another client's keys
       ([_other]) and an absent address ([_absent]), and grows by one address
@@ -930,6 +931,23 @@ Proof.
   destruct (Hbindtypes nm q Hb) as [tm Htm].
   rewrite (Hmtypes nm q tm Hb Htm) in Hx.
   exact (Hbeats q tm x Htm Hx Hid).
+Qed.
+
+(** A pool's chars are the doc model's, through the registry: the bridge
+    between [pool_has] and [doc_model_has]. *)
+Lemma pool_has_doc_model_has (m : DocModel) (bind : gmap P loc) (p : pool) (d : YjsId) :
+  pool_registry_coh bind p -> pool_registry_models m bind p ->
+  pool_has p d <-> doc_model_has m d = true.
+Proof.
+  move=> [Hbindtypes [_ Htypesbound]] [Hmtypes Hmdom]. rewrite docm_has_spec. split.
+  - intros (q & tm & x & Hq & Hx & Hid).
+    destruct (Htypesbound q (ex_intro _ tm Hq)) as [nm Hbnm].
+    exists (RootId nm), x. rewrite (Hmtypes nm q tm Hbnm Hq). done.
+  - intros (t & x & Hx & Hid).
+    have Hne : doc_model_get m t ≠ [] by move=> Heq; rewrite Heq elem_of_nil in Hx.
+    destruct (Hmdom t Hne) as (nm & q & -> & Hbnm).
+    destruct (Hbindtypes nm q Hbnm) as [tm Htm].
+    exists q, tm, x. rewrite -(Hmtypes nm q tm Hbnm Htm). done.
 Qed.
 
 Lemma client_entries_NoDup_locs (locs : gmap loc (list loc)) (p : pool) (client : w64) :

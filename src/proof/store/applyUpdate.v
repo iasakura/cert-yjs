@@ -145,7 +145,8 @@ Proof using Type*.
   iDestruct "Hruns" as "(Hfields0 & %Hinvs0)".
   iEval (simpl) in "Hfields0".
   have Hrpi0 : pool_invs p := proj1 Hinvs0.
-  have Hpreg0 : pool_registry_coh bind p := proj2 Hinvs0.
+  have Hpreg0 : pool_registry_coh bind p := proj1 (proj2 Hinvs0).
+  have Hcontig0 : pool_clocks_contiguous p := proj2 (proj2 Hinvs0).
   have [Hbindtypes [Hbindinj Htypesbound]] := Hpreg0.
   iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iDestruct "Hpending" as (pend_sl) "(Hpendf & Hpend)".
@@ -244,7 +245,7 @@ Proof using Type*.
       iFrame "progress Hpendingp HslA HcapA".
       iFrame "HitemsA".
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpendf Hpdeletes".
-      { iSplitL; last (iPureIntro; split; [exact Hrpi0 | exact Hpreg0]).
+      { iSplitL; last (iPureIntro; split_and!; [exact Hrpi0 | exact Hpreg0 | exact Hcontig0]).
         rewrite /own_store_fields /=.
         iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpdeletes".
         iExists slice.nil. iFrame "Hpendf". iExists [].
@@ -449,6 +450,9 @@ Proof using Type*.
            { rewrite Happdec (app_assoc appliedj appacc) lookup_app_r; last done.
              rewrite Nat.sub_diag /=. done. }
            (* freshness: existing same-client runs lie below this item's clock *)
+           have Hideta : in_id input = MkYjsId (clientId (in_id input)) (clock (in_id input))
+             by destruct (in_id input).
+           iDestruct (own_store_state_registry_coh with "Hruns") as %Hregc.
            have Hbelow : pool_clock_below p_c (in_id input).
            { move=> r0 Hr0 Hcc0.
              have Hwfr0 : run_wf (run_items r0) := Hrunwfc r0 Hr0.
@@ -497,10 +501,24 @@ Proof using Type*.
                                Hcln Hnei Hne1.
                change ((targetType, input).2) with input in Htifr.
                lia. }
+           (* the item is its client's NEXT clock: newest ([Hbelow]), and its
+              predecessor has arrived ([depsArrived]'s own-predecessor clause,
+              read off [input_ready] through the registry) *)
+           have Hnext : pool_next_clock p_c (clientId (in_id input)) (clock (in_id input)).
+           { split.
+             - apply (pool_clock_below_arrs p_c _ _ Hrunwfc). rewrite -Hideta. exact Hbelow.
+             - destruct (clock (in_id input)) as [| k'] eqn:Hck; [by left | right].
+               have Hdep : MkYjsId (clientId (in_id input)) k' ∈ input_deps input.
+               { rewrite /input_deps Hck /=.
+                 apply elem_of_app. right. apply elem_of_app. right. apply list_elem_of_here. }
+               have Hhas : doc_model_has m_c (MkYjsId (clientId (in_id input)) k') = true.
+               { apply (proj1 (input_ready_spec m_c input) Hready _ Hdep). }
+               rewrite (pool_has_doc_model_has m_c bind_c p_c _ Hregc (conj Hmtypesc Hmdomc)).
+               replace (S k' - 1)%nat with k' by lia. exact Hhas. }
            simpl. rewrite Hready. wp_auto.
            wp_apply (wp_store__integrateDecoded s updateItemVal (targetType, input)
                        m_c (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) newItem arr' nm
-                       Htjeq Htoit Hvld Hmax Hall Hbelow (conj Hmtypesc Hmdomc) Hnwc
+                       Htjeq Htoit Hvld Hmax Hall Hnext (conj Hmtypesc Hmdomc) Hnwc
                        with "[$Hui $Hruns]").
            iIntros (p'' locs'' bind'') "(Hruns & %Hbindsub'' & %Hregmodel'' & %Hprov'' & %Hilr'')".
            iEval (simpl) in "Hruns".
@@ -650,7 +668,8 @@ Proof using Type*.
       iDestruct "Hruns" as "(Hfieldsj & %Hinvsj)".
       iEval (simpl) in "Hfieldsj".
       have Hrpij : pool_invs p_j := proj1 Hinvsj.
-      have Hregj : pool_registry_coh bindj p_j := proj2 Hinvsj.
+      have Hregj : pool_registry_coh bindj p_j := proj1 (proj2 Hinvsj).
+      have Hcontigj : pool_clocks_contiguous p_j := proj2 (proj2 Hinvsj).
       iDestruct "Hfieldsj" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
       iDestruct "Hpending" as (pnil) "(Hpendf & _)".
       wp_auto.
@@ -660,7 +679,7 @@ Proof using Type*.
       iSplitL "Hslin Hcapin".
       { iExists uivs_in. iFrame "Hslin Hcapin Hitemsin". }
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
-      { iSplitL; last (iPureIntro; split; [exact Hrpij | exact Hregj]).
+      { iSplitL; last (iPureIntro; split_and!; [exact Hrpij | exact Hregj | exact Hcontigj]).
         rewrite /own_store_fields /=.
         iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes". }
       iPureIntro. split_and!.
@@ -1665,7 +1684,8 @@ Proof using Type*.
   iNamed "Hstore".
   iDestruct "Hstate" as "(Hfields0 & %Hinvs0)".
   have Hrpi : pool_invs p := proj1 Hinvs0.
-  have Hreg : pool_registry_coh bind p := proj2 Hinvs0.
+  have Hreg : pool_registry_coh bind p := proj1 (proj2 Hinvs0).
+  have Hcontig : pool_clocks_contiguous p := proj2 (proj2 Hinvs0).
   iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iDestruct "Hpending" as (pend_sl) "(Hpendf & Hpend)".
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
@@ -1713,7 +1733,7 @@ Proof using Type*.
   { iExists pend_sl. iFrame "Hpendf Hpend". }
   iAssert (own_store_state s_loc (MkStoreState client k locs p bind pend pdel))
     with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes]" as "Hruns".
-  { iSplitL; last (iPureIntro; split; [exact Hrpi | exact Hreg]).
+  { iSplitL; last (iPureIntro; split_and!; [exact Hrpi | exact Hreg | exact Hcontig]).
     rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes". }
   wp_apply (wp_store__applyUpdate_unlocked s_loc sl dq
@@ -1727,7 +1747,8 @@ Proof using Type*.
   iDestruct "Hruns" as "(Hfields' & %Hinvs')".
   iEval (simpl) in "Hfields'".
   have Hrpi' : pool_invs p' := proj1 Hinvs'.
-  have Hreg' : pool_registry_coh bind' p' := proj2 Hinvs'.
+  have Hreg' : pool_registry_coh bind' p' := proj1 (proj2 Hinvs').
+  have Hcontig' : pool_clocks_contiguous p' := proj2 (proj2 Hinvs').
   iDestruct "Hfields'" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   have Hdom' : dom p ⊆ dom p' := pool_registry_coh_dom_mono bind bind' p p' Hreg Hreg' Hbindsub'.
   have [Hbindtypes' [Hbindinj' Htypesbound']] := Hreg'.
@@ -1798,7 +1819,7 @@ Proof using Type*.
     destruct (Hmdom t Hne) as (nm & q & -> & Hbnm).
     destruct (Hbindtypes nm q Hbnm) as [tm Htm].
     rewrite (Hmtypes nm q tm Hbnm Htm) in Hx.
-    exact (Hctr q tm x Htm Hx Hcx). }
+    exact ((proj1 Hctr) q tm x Htm Hx Hcx). }
   have Hctrm' : ∀ (t : TId) x, x ∈ doc_model_get m' t -> clientId (item_id x) = c ->
       (clock (item_id x) < uint.nat k)%nat.
   { move=> t x Hx Hcx.
@@ -1806,12 +1827,20 @@ Proof using Type*.
       as [Hold | (i & typedInput & Hi & Hid)].
     - exact (Hctrm t x Hold Hcx).
     - exfalso. apply (Hnoc typedInput (list_elem_of_lookup_2 _ _ _ Hi)). by rewrite -Hid. }
-  have Hctr' : ∀ parent tm x, p' !! parent = Some tm -> x ∈ tm_arr tm ->
+  have Hctr'_bound : ∀ parent tm x, p' !! parent = Some tm -> x ∈ tm_arr tm ->
       clientId (item_id x) = c -> (clock (item_id x) < uint.nat k)%nat.
   { move=> parent tm x Htm Hx Hcx.
     destruct (Htypesbound' parent (ex_intro _ tm Htm)) as [nm Hbnm].
     rewrite -(Hmtypes' nm parent tm Hbnm Htm) in Hx.
     exact (Hctrm' (RootId nm) x Hx Hcx). }
+  (* and the clock just below the counter is still taken: the char survives
+     the replay (the model only grows) and the registry maps it back *)
+  have Hctr' : pool_next_clock p' c (uint.nat k).
+  { split; first exact Hctr'_bound.
+    destruct (proj2 Hctr) as [Hk0 | Hprev]; [by left | right].
+    rewrite (pool_has_doc_model_has m' bind' p' _ Hreg' Hregmodelp).
+    apply (docm_has_mono m m' _ (ValidReplay_mem (expand_inputs applied) m m' Hvr)).
+    rewrite -(pool_has_doc_model_has m bind p _ Hreg Hregmodel). exact Hprev. }
   (* no input is lost: each is delivered into the new history (applied this
      batch, or already present) or buffered by id in the new pending [rest'] *)
   have Hnoloss : ∀ x, x ∈ pend ++ inputs ->
@@ -1871,7 +1900,7 @@ Proof using Type*.
   { rewrite /pool_registry_models. split; [exact Hmtypes' | exact Hmdom']. }
   iAssert (own_store_state s_loc (MkStoreState client k locs' p' bind' rest' pdel))
     with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes]" as "Hstate".
-  { iSplitL; last (iPureIntro; split; [exact Hrpi' | exact Hreg']).
+  { iSplitL; last (iPureIntro; split_and!; [exact Hrpi' | exact Hreg' | exact Hcontig']).
     rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes". }
   iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set";

@@ -40,7 +40,18 @@
     [pool_after_delete] for the wire delete path's unbounded sweep);
     [pool_clock_below], the integrated item is its client's newest
     ([pool_clock_below_of_arrs] reads it off a per-type clock bound on
-    the flattened lists);
+    the flattened lists, [pool_clock_below_arrs] the bound back);
+    [pool_has], a char is in some type's document; [pool_clocks_contiguous],
+    every client's clocks are gap-free from 0, and [pool_next_clock], a
+    client's next clock ([pool_next_clock_below] is its run reading); both
+    survive a step that keeps every type's document
+    ([pool_clocks_contiguous_same_docs] / [pool_next_clock_same_docs], over
+    [pool_has_same_docs]; one type at a time, [_ext] over [pool_has_ext], and
+    a char survives one type's growth, [pool_has_grow_one]), a fresh empty
+    type ([_insert_empty]) and an
+    integrate splice at the client's next clock
+    ([pool_clocks_contiguous_integrate] / [pool_next_clock_integrate_same] /
+    [pool_next_clock_integrate_other], over [pool_has_integrate]);
     [all_runs] under a registry insert or lookup ([all_runs_insert] /
     [all_runs_lookup], two types at once [all_runs_lookup_two], membership
     across one slot [elem_of_all_runs_insert] / [elem_of_all_runs_lookup]);
@@ -1041,6 +1052,29 @@ Definition pool_clock_below (p : pool) (id : YjsId) : Prop :=
   ∀ r, r ∈ all_runs p -> run_client r = clientId id ->
     (run_clock r + length (run_items r) <= clock id)%nat.
 
+(** [pool_has p d]: some type's document has the char with id [d]. *)
+Definition pool_has (p : pool) (d : YjsId) : Prop :=
+  ∃ q tm x, p !! q = Some tm ∧ x ∈ tm_arr tm ∧ item_id x = d.
+
+(** [pool_clocks_contiguous p]: a client's clocks in the pool are gap-free
+    from 0: below any char a client has, every clock of that client is
+    taken. What [depsArrived]'s predecessor clause and the local clock
+    counter maintain (Yjs's [StructStore.addStruct] assertion, y-octo's
+    [state.contains] gate); what lets a state vector stand for the set of
+    observed ids (issue #198). *)
+Definition pool_clocks_contiguous (p : pool) : Prop :=
+  ∀ d, pool_has p d -> ∀ j, (j < clock d)%nat -> pool_has p (MkYjsId (clientId d) j).
+
+(** [pool_next_clock p c n]: [n] is client [c]'s next clock in the pool:
+    every char of [c] is below it, and the clock just below it is taken
+    unless [n] is 0 (with [pool_clocks_contiguous], [c] holds exactly the
+    clocks below [n]). The lock body's counter clause, and what an integrate
+    asks of its item's id. *)
+Definition pool_next_clock (p : pool) (c n : nat) : Prop :=
+  (∀ q tm x, p !! q = Some tm -> x ∈ tm_arr tm -> clientId (item_id x) = c ->
+     (clock (item_id x) < n)%nat) ∧
+  (n = 0%nat ∨ pool_has p (MkYjsId c (n - 1))).
+
 (** Per-char op expansion of a wire batch (issue #28 U7c), lifted here from
     [store/GetNode] (which had defined it downstream). The pending-buffer
     certificate [Hpendcert] must be stated PER-CHAR
@@ -1326,6 +1360,300 @@ Proof.
   have Hlt' : (clock (item_id (hd inhabitant (run_items r))) + (length (run_items r) - 1) < k)%nat
     by rewrite Hid in Hlt; exact Hlt.
   change ((clock (item_id (hd inhabitant (run_items r))) + length (run_items r) <= k)%nat). lia.
+Qed.
+
+(** [pool_clock_below] from [pool_next_clock]'s per-type bound, and that
+    bound back from [pool_clock_below] (a char's clock is below its run's
+    end): the two readings of "the client's newest" agree under [run_wf]. *)
+Lemma pool_next_clock_below (p : pool) (c n : nat) :
+  (∀ r, r ∈ all_runs p -> run_wf (run_items r)) ->
+  pool_next_clock p c n -> pool_clock_below p (MkYjsId c n).
+Proof. move=> Hwf [Hb _]. exact (pool_clock_below_of_arrs p c n Hwf Hb). Qed.
+
+Lemma pool_clock_below_arrs (p : pool) (c n : nat) :
+  (∀ r, r ∈ all_runs p -> run_wf (run_items r)) ->
+  pool_clock_below p (MkYjsId c n) ->
+  ∀ q tm x, p !! q = Some tm -> x ∈ tm_arr tm -> clientId (item_id x) = c ->
+    (clock (item_id x) < n)%nat.
+Proof.
+  move=> Hwf Hb q tm x Hq Hx Hcx.
+  apply list_elem_of_lookup_1 in Hx as [kn Hkn].
+  destruct (runs_flatten_lookup_run (tm_runs tm) kn x Hkn) as (k & o & r & Hk & Ho & _).
+  have Hrall : r ∈ all_runs p.
+  { apply elem_of_all_runs. exists q, tm. split; [exact Hq | exact (list_elem_of_lookup_2 _ _ _ Hk)]. }
+  have Hwfr := Hwf r Hrall.
+  have Hid := run_wf_char_id (run_items r) o x Hwfr Ho.
+  have Hlt : (o < length (run_items r))%nat := lookup_lt_Some _ _ _ Ho.
+  have Hcl : run_client r = c.
+  { have Hcx' : clientId (item_id x) = c := Hcx. rewrite Hid /= in Hcx'. exact Hcx'. }
+  have Hend : (run_clock r + length (run_items r) <= n)%nat := Hb r Hrall Hcl.
+  have Hclk : clock (item_id x) = (run_clock r + o)%nat by rewrite Hid //.
+  lia.
+Qed.
+
+(** The chars of a pool across a step that keeps every type's document (a
+    split, a repair, a delete sweep): the same; so contiguity and a client's
+    next clock survive it. *)
+Lemma pool_has_same_docs (p p' : pool) (d : YjsId) :
+  (∀ q tm', p' !! q = Some tm' -> ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm) ->
+  (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ->
+  pool_has p' d <-> pool_has p d.
+Proof.
+  move=> Hsame Hdom. split.
+  - intros (q & tm' & x & Hq' & Hx & Hid).
+    destruct (Hsame q tm' Hq') as (tm & Hq & Harr).
+    exists q, tm, x. rewrite -Harr. done.
+  - intros (q & tm & x & Hq & Hx & Hid).
+    destruct (Hdom q (ex_intro _ tm Hq)) as [tm' Hq'].
+    destruct (Hsame q tm' Hq') as (tm0 & Hq0 & Harr).
+    rewrite Hq in Hq0. injection Hq0 as <-.
+    exists q, tm', x. rewrite Harr. done.
+Qed.
+
+Lemma pool_clocks_contiguous_same_docs (p p' : pool) :
+  (∀ q tm', p' !! q = Some tm' -> ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm) ->
+  (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ->
+  pool_clocks_contiguous p -> pool_clocks_contiguous p'.
+Proof.
+  move=> Hsame Hdom Hcontig d Hd j Hj.
+  rewrite (pool_has_same_docs p p' d Hsame Hdom) in Hd.
+  rewrite (pool_has_same_docs p p' _ Hsame Hdom).
+  exact (Hcontig d Hd j Hj).
+Qed.
+
+Lemma pool_next_clock_same_docs (p p' : pool) (c n : nat) :
+  (∀ q tm', p' !! q = Some tm' -> ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm) ->
+  (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ->
+  pool_next_clock p c n -> pool_next_clock p' c n.
+Proof.
+  move=> Hsame Hdom [Hb Hprev]. split.
+  - move=> q tm' x Hq' Hx Hcx.
+    destruct (Hsame q tm' Hq') as (tm & Hq & Harr). rewrite Harr in Hx.
+    exact (Hb q tm x Hq Hx Hcx).
+  - destruct Hprev as [-> | Hprev]; [by left | right].
+    by rewrite (pool_has_same_docs p p' _ Hsame Hdom).
+Qed.
+
+(** One type rebuilt with the same document (a split, a flip) keeps the
+    chars; one type rebuilt with a larger document keeps every char it had.
+    The hypotheses are [pool_arr_pointwise_ext]'s. *)
+Lemma pool_has_ext (p p' : pool) (parent : loc) (tm tm' : type_model) (d : YjsId) :
+  (∀ q, q ≠ parent -> p' !! q = p !! q) ->
+  p !! parent = Some tm -> p' !! parent = Some tm' -> tm_arr tm' = tm_arr tm ->
+  pool_has p' d <-> pool_has p d.
+Proof.
+  move=> Hext Hp Hp' Harr. split.
+  - intros (q & tmq & x & Hq & Hx & Hid).
+    destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite Hp' in Hq. injection Hq as <-. rewrite Harr in Hx. by exists parent, tm, x.
+    + rewrite (Hext q Hne) in Hq. by exists q, tmq, x.
+  - intros (q & tmq & x & Hq & Hx & Hid).
+    destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite Hp in Hq. injection Hq as <-. exists parent, tm', x. rewrite Harr. done.
+    + exists q, tmq, x. rewrite (Hext q Hne). done.
+Qed.
+
+Lemma pool_clocks_contiguous_ext (p p' : pool) (parent : loc) (tm tm' : type_model) :
+  (∀ q, q ≠ parent -> p' !! q = p !! q) ->
+  p !! parent = Some tm -> p' !! parent = Some tm' -> tm_arr tm' = tm_arr tm ->
+  pool_clocks_contiguous p -> pool_clocks_contiguous p'.
+Proof.
+  move=> Hext Hp Hp' Harr Hcontig d Hd j Hj.
+  rewrite (pool_has_ext p p' parent tm tm' d Hext Hp Hp' Harr) in Hd.
+  rewrite (pool_has_ext p p' parent tm tm' _ Hext Hp Hp' Harr).
+  exact (Hcontig d Hd j Hj).
+Qed.
+
+Lemma pool_next_clock_ext (p p' : pool) (parent : loc) (tm tm' : type_model) (c n : nat) :
+  (∀ q, q ≠ parent -> p' !! q = p !! q) ->
+  p !! parent = Some tm -> p' !! parent = Some tm' -> tm_arr tm' = tm_arr tm ->
+  pool_next_clock p c n -> pool_next_clock p' c n.
+Proof.
+  move=> Hext Hp Hp' Harr [Hb Hprev]. split.
+  - move=> q tmq x Hq Hx Hcx.
+    destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite Hp' in Hq. injection Hq as <-. rewrite Harr in Hx. exact (Hb parent tm x Hp Hx Hcx).
+    + rewrite (Hext q Hne) in Hq. exact (Hb q tmq x Hq Hx Hcx).
+  - destruct Hprev as [-> | Hprev]; [by left | right].
+    by rewrite (pool_has_ext p p' parent tm tm' _ Hext Hp Hp' Harr).
+Qed.
+
+Lemma pool_has_grow_one (p p' : pool) (parent : loc) (tm tm' : type_model) (d : YjsId) :
+  (∀ q, q ≠ parent -> p' !! q = p !! q) ->
+  p !! parent = Some tm -> p' !! parent = Some tm' ->
+  (∀ x, x ∈ tm_arr tm -> x ∈ tm_arr tm') ->
+  pool_has p d -> pool_has p' d.
+Proof.
+  move=> Hext Hp Hp' Hgrow. intros (q & tmq & x & Hq & Hx & Hid).
+  destruct (decide (q = parent)) as [-> | Hne].
+  - rewrite Hp in Hq. injection Hq as <-. exists parent, tm', x. split_and!; [done | exact (Hgrow x Hx) | done].
+  - exists q, tmq, x. rewrite (Hext q Hne). done.
+Qed.
+
+(** A fresh empty type adds no char. *)
+Lemma pool_has_insert_empty (p : pool) (q : loc) (d : YjsId) :
+  p !! q = None ->
+  pool_has (<[q := MkTypeModel []]> p) d <-> pool_has p d.
+Proof.
+  move=> Hq. split.
+  - intros (q' & tm & x & Hq' & Hx & Hid).
+    destruct (decide (q' = q)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Hq'. injection Hq' as <-.
+      exfalso. move: Hx. rewrite /tm_arr /= runs_flatten_nil elem_of_nil //.
+    + rewrite lookup_insert_ne in Hq'; last done. by exists q', tm, x.
+  - intros (q' & tm & x & Hq' & Hx & Hid).
+    exists q', tm, x. split_and!; [| done | done].
+    rewrite lookup_insert_ne; first done. move=> Heq. rewrite Heq in Hq. rewrite Hq in Hq'. done.
+Qed.
+
+Lemma pool_clocks_contiguous_insert_empty (p : pool) (q : loc) :
+  p !! q = None -> pool_clocks_contiguous p -> pool_clocks_contiguous (<[q := MkTypeModel []]> p).
+Proof.
+  move=> Hq Hcontig d Hd j Hj.
+  rewrite (pool_has_insert_empty p q d Hq) in Hd. rewrite (pool_has_insert_empty p q _ Hq).
+  exact (Hcontig d Hd j Hj).
+Qed.
+
+Lemma pool_next_clock_insert_empty (p : pool) (q : loc) (c n : nat) :
+  p !! q = None -> pool_next_clock p c n -> pool_next_clock (<[q := MkTypeModel []]> p) c n.
+Proof.
+  move=> Hq [Hb Hprev]. split.
+  - move=> q' tm x Hq' Hx Hcx.
+    destruct (decide (q' = q)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Hq'. injection Hq' as <-.
+      exfalso. move: Hx. rewrite /tm_arr /= runs_flatten_nil elem_of_nil //.
+    + rewrite lookup_insert_ne in Hq'; last done. exact (Hb q' tm x Hq' Hx Hcx).
+  - destruct Hprev as [-> | Hprev]; [by left | right]. by rewrite (pool_has_insert_empty p q _ Hq).
+Qed.
+
+(** The chars of a pool after an integrate splice of [run] into the type at
+    [parent]: the old ones and the run's. Contiguity survives the splice
+    when the run starts at its client's next clock (its chars are
+    consecutive from there and everything below was already in), and the
+    next clock moves past the run for its client and stays put for every
+    other. *)
+Lemma pool_has_integrate (p : pool) (parent : loc) (tm : type_model)
+    (idx : nat) (run : list (YjsItem A)) (runs' : list ItemRun) (arr' : list (YjsItem A))
+    (d : YjsId) :
+  p !! parent = Some tm ->
+  runs_integrate_splice_at idx (tm_runs tm) (tm_arr tm) run runs' arr' ->
+  pool_has (<[parent := MkTypeModel runs']> p) d <->
+    pool_has p d ∨ ∃ x, x ∈ run ∧ item_id x = d.
+Proof.
+  move=> Hp Hsp.
+  have Hflat : tm_arr (MkTypeModel runs') = arr'.
+  { rewrite /tm_arr /=. exact (runs_integrate_splice_at_flatten idx _ _ _ _ Hsp). }
+  have Harr' : ∀ x, x ∈ arr' <-> x ∈ tm_arr tm ∨ x ∈ run.
+  { destruct Hsp as (_ & _ & _ & Heq). move=> x. rewrite Heq !elem_of_app.
+    set (n := length (runs_flatten (take idx (tm_runs tm)))).
+    split.
+    - move=> [Hx | [Hx | Hx]]; [left | by right | left].
+      + exact (elem_of_submseteq _ _ _ Hx (sublist_submseteq _ _ (sublist_take _ _))).
+      + exact (elem_of_submseteq _ _ _ Hx (sublist_submseteq _ _ (sublist_drop _ _))).
+    - move=> [Hx | Hx]; [| by right; left].
+      rewrite -(take_drop n (tm_arr tm)) elem_of_app in Hx.
+      destruct Hx as [Hx | Hx]; [by left | by right; right]. }
+  split.
+  - intros (q & tm' & x & Hq & Hx & Hid).
+    destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Hq. injection Hq as <-. rewrite Hflat in Hx.
+      apply Harr' in Hx as [Hx | Hx].
+      * left. by exists parent, tm, x.
+      * right. by exists x.
+    + rewrite lookup_insert_ne in Hq; last done. left. by exists q, tm', x.
+  - intros [(q & tm' & x & Hq & Hx & Hid) | (x & Hx & Hid)].
+    + destruct (decide (q = parent)) as [-> | Hne].
+      * rewrite Hp in Hq. injection Hq as <-.
+        exists parent, (MkTypeModel runs'), x. rewrite lookup_insert_eq Hflat.
+        split_and!; [done | apply Harr'; by left | done].
+      * exists q, tm', x. rewrite lookup_insert_ne; last done. done.
+    + exists parent, (MkTypeModel runs'), x. rewrite lookup_insert_eq Hflat.
+      split_and!; [done | apply Harr'; by right | done].
+Qed.
+
+Lemma pool_clocks_contiguous_integrate (p : pool) (parent : loc) (tm : type_model)
+    (idx : nat) (run : list (YjsItem A)) (runs' : list ItemRun) (arr' : list (YjsItem A))
+    (c n : nat) :
+  p !! parent = Some tm ->
+  runs_integrate_splice_at idx (tm_runs tm) (tm_arr tm) run runs' arr' ->
+  run_wf run ->
+  item_id (hd inhabitant run) = MkYjsId c n ->
+  (n = 0%nat ∨ pool_has p (MkYjsId c (n - 1))) ->
+  pool_clocks_contiguous p ->
+  pool_clocks_contiguous (<[parent := MkTypeModel runs']> p).
+Proof.
+  move=> Hp Hsp Hwf Hhead Hprev Hcontig d Hd j Hj.
+  apply (pool_has_integrate p parent tm idx run runs' arr' _ Hp Hsp).
+  apply (pool_has_integrate p parent tm idx run runs' arr' _ Hp Hsp) in Hd.
+  destruct Hd as [Hold | (x & Hx & Hid)].
+  - left. exact (Hcontig d Hold j Hj).
+  - apply list_elem_of_lookup_1 in Hx as [o Ho].
+    have Hido := run_wf_char_id run o x Hwf Ho. rewrite Hhead /= in Hido.
+    rewrite -Hid Hido /=. rewrite -Hid Hido /= in Hj.
+    destruct (decide (n <= j)%nat) as [Hge | Hlt].
+    + right.
+      have Hlt' : (o < length run)%nat := lookup_lt_Some _ _ _ Ho.
+      destruct (lookup_lt_is_Some_2 run (j - n)%nat ltac:(lia)) as [y Hy].
+      exists y. split; [exact (list_elem_of_lookup_2 _ _ _ Hy) |].
+      rewrite (run_wf_char_id run (j - n) y Hwf Hy) Hhead /=. f_equal. lia.
+    + left.
+      destruct Hprev as [Hn0 | Hpred]; first lia.
+      destruct (decide (j = n - 1)%nat) as [-> | Hne]; first exact Hpred.
+      have Hj' : (j < clock (MkYjsId c (n - 1)))%nat by simpl; lia.
+      exact (Hcontig _ Hpred j Hj').
+Qed.
+
+Lemma pool_next_clock_integrate_same (p : pool) (parent : loc) (tm : type_model)
+    (idx : nat) (run : list (YjsItem A)) (runs' : list ItemRun) (arr' : list (YjsItem A))
+    (c n : nat) :
+  p !! parent = Some tm ->
+  runs_integrate_splice_at idx (tm_runs tm) (tm_arr tm) run runs' arr' ->
+  run_wf run ->
+  item_id (hd inhabitant run) = MkYjsId c n ->
+  pool_next_clock p c n ->
+  pool_next_clock (<[parent := MkTypeModel runs']> p) c (n + length run).
+Proof.
+  move=> Hp Hsp Hwf Hhead [Hb Hprev].
+  have Hiff := pool_has_integrate p parent tm idx run runs' arr'.
+  split.
+  - move=> q tm' x Hq Hx Hcx.
+    have Hhas : pool_has (<[parent := MkTypeModel runs']> p) (item_id x) by exists q, tm', x.
+    apply (Hiff _ Hp Hsp) in Hhas.
+    destruct Hhas as [(q0 & tm0 & y & Hq0 & Hy & Hid) | (y & Hy & Hid)].
+    + have Hcy : clientId (item_id y) = c by rewrite Hid.
+      have Hy' := Hb q0 tm0 y Hq0 Hy Hcy. rewrite Hid in Hy'. lia.
+    + apply list_elem_of_lookup_1 in Hy as [o Ho].
+      have Hido := run_wf_char_id run o y Hwf Ho. rewrite Hhead /= in Hido.
+      have Hlt := lookup_lt_Some _ _ _ Ho.
+      rewrite -Hid Hido /=. lia.
+  - right. apply (Hiff _ Hp Hsp). right.
+    have Hne : run ≠ [] := proj1 Hwf.
+    have Hlen : (1 <= length run)%nat by destruct run; [done | simpl; lia].
+    destruct (lookup_lt_is_Some_2 run (length run - 1)%nat ltac:(lia)) as [y Hy].
+    exists y. split; [exact (list_elem_of_lookup_2 _ _ _ Hy) |].
+    rewrite (run_wf_char_id run _ y Hwf Hy) Hhead /=. f_equal. lia.
+Qed.
+
+Lemma pool_next_clock_integrate_other (p : pool) (parent : loc) (tm : type_model)
+    (idx : nat) (run : list (YjsItem A)) (runs' : list ItemRun) (arr' : list (YjsItem A))
+    (c n : nat) :
+  p !! parent = Some tm ->
+  runs_integrate_splice_at idx (tm_runs tm) (tm_arr tm) run runs' arr' ->
+  (∀ x, x ∈ run -> clientId (item_id x) ≠ c) ->
+  pool_next_clock p c n ->
+  pool_next_clock (<[parent := MkTypeModel runs']> p) c n.
+Proof.
+  move=> Hp Hsp Hother [Hb Hprev].
+  have Hiff := pool_has_integrate p parent tm idx run runs' arr'.
+  split.
+  - move=> q tm' x Hq Hx Hcx.
+    have Hhas : pool_has (<[parent := MkTypeModel runs']> p) (item_id x) by exists q, tm', x.
+    apply (Hiff _ Hp Hsp) in Hhas.
+    destruct Hhas as [(q0 & tm0 & y & Hq0 & Hy & Hid) | (y & Hy & Hid)].
+    + have Hcy : clientId (item_id y) = c by rewrite Hid.
+      have Hy' := Hb q0 tm0 y Hq0 Hy Hcy. rewrite Hid in Hy'. exact Hy'.
+    + exfalso. apply (Hother y Hy). rewrite Hid. exact Hcx.
+  - destruct Hprev as [-> | Hprev]; [by left | right]. apply (Hiff _ Hp Hsp). by left.
 Qed.
 
 (** The tombstone-set clause travels along [live_refine] (a split, a

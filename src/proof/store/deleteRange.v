@@ -190,7 +190,8 @@ Proof.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iDestruct "Hruns" as "(Hfields & %Hinvs)".
   have Hrpi : pool_invs p := proj1 Hinvs.
-  have Hreg : pool_registry_coh bind p := proj2 Hinvs.
+  have Hreg : pool_registry_coh bind p := proj1 (proj2 Hinvs).
+  have Hcontig : pool_clocks_contiguous p := proj2 (proj2 Hinvs).
   iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iEval (simpl) in "Hitems Htypes".
   wp_apply (wp_deleteNode locs p parent ls tm k lc r Hls Hp Hlk Hrk with "[$Hpkg $Htypes]").
@@ -199,6 +200,10 @@ Proof.
   have Hrpi' : pool_invs (<[parent := tm']> p) := pool_invs_flip p parent tm k r Hp Hrk Hrpi.
   have Hreg' : pool_registry_coh bind (<[parent := tm']> p)
     := pool_registry_coh_insert_existing bind p parent tm tm' Hp Hreg.
+  have Hcontig' : pool_clocks_contiguous (<[parent := tm']> p).
+  { apply (pool_clocks_contiguous_ext p _ parent tm tm'); [| exact Hp | apply lookup_insert_eq | | exact Hcontig].
+    - move=> q Hne. rewrite lookup_insert_ne //.
+    - rewrite /tm' /tm_arr /=. exact (runs_flatten_flip_run (tm_runs tm) k r Hrk). }
   (* the item index is unchanged: a flip keeps every entry's key *)
   have Hkps : entry_key_pair <$> pool_entries locs (<[parent := tm']> p) ≡ₚ entry_key_pair <$> pool_entries locs p
     := pool_entries_flip_key_pairs locs p parent ls tm k lc r Hls Hp Hlk Hrk.
@@ -206,7 +211,7 @@ Proof.
   iEval (rewrite /own_item_map) in "Hitemmap".
   iDestruct (own_item_map_key_pairs_keys_perm mref (DfracOwn 1) _ _ (Permutation_sym Hkps) with "Hitemmap") as "Hitemmap".
   iApply "HΦ".
-  iSplitL; last (iPureIntro; split; [exact Hrpi' | exact Hreg']).
+  iSplitL; last (iPureIntro; split_and!; [exact Hrpi' | exact Hreg' | exact Hcontig']).
   rewrite /own_store_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
   iExists mref. iFrame "Hitemsf Hitemmap".
@@ -477,7 +482,8 @@ Proof using Type*.
   iDestruct "Hruns" as "(Hfields0 & %Hinvs0)".
   iEval (simpl) in "Hfields0".
   have Hrpi0 : pool_invs p := proj1 Hinvs0.
-  have Hreg0 : pool_registry_coh bind p := proj2 Hinvs0.
+  have Hreg0 : pool_registry_coh bind p := proj1 (proj2 Hinvs0).
+  have Hcontig0 : pool_clocks_contiguous p := proj2 (proj2 Hinvs0).
   iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iDestruct "Hpdeletes" as (pdel_sl) "(Hpddelf & Hpddel)".
   (* open the pure model: the decoded structs live only inside this proof *)
@@ -529,7 +535,7 @@ Proof using Type*.
     { iExists (W64 0), _, [], locs, p, (∅ : gset YjsId).
       iFrame "i rest Hrest Hrestcap Hall".
       iSplitL.
-      { iSplitL; last (iPureIntro; split; [exact Hrpi0 | exact Hreg0]).
+      { iSplitL; last (iPureIntro; split_and!; [exact Hrpi0 | exact Hreg0 | exact Hcontig0]).
         rewrite /own_store_fields /=.
         iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending".
         iExists slice.nil. iFrame "Hpddelf". iExists [].
@@ -545,7 +551,8 @@ Proof using Type*.
     iDestruct "Hruns" as "(Hfieldsj & %Hinvsj)".
     iEval (simpl) in "Hfieldsj".
     have Hrpij : pool_invs p_j := proj1 Hinvsj.
-    have Hregj : pool_registry_coh bind p_j := proj2 Hinvsj.
+    have Hregj : pool_registry_coh bind p_j := proj1 (proj2 Hinvsj).
+    have Hcontigj : pool_clocks_contiguous p_j := proj2 (proj2 Hinvsj).
     iDestruct "Hfieldsj" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
     iDestruct "Hpdeletes" as (pd_sl) "(Hpddelf & Hpdnil)".
     wp_if_destruct; last first.
@@ -556,7 +563,7 @@ Proof using Type*.
         with "[Hpddelf Hrest Hrestcap]" as "Hpdeletes".
       { iExists rest_sl. iFrame "Hpddelf". iExists rest_vs. by iFrame "Hrest Hrestcap". }
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
-      { simpl. iSplitL; last (iPureIntro; split; [exact Hrpij | exact Hregj]).
+      { simpl. iSplitL; last (iPureIntro; split_and!; [exact Hrpij | exact Hregj | exact Hcontigj]).
         rewrite /own_store_fields /=.
         iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes". }
       iSplitL "Hspsl2 Hspcap2"; first (iExists spans_vs; by iFrame "Hspsl2 Hspcap2").
@@ -582,7 +589,7 @@ Proof using Type*.
     { replace (Z.to_nat (sint.Z j)) with (uint.nat j) by word. exact Hsp. }
     wp_apply (wp_store__deleteRange s (MkStoreState client0 k0 locs_j p_j bind pend []) _ _ _
                 with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpddelf Hpdnil]").
-    { iFrame "#". iSplitL; last (iPureIntro; split; [exact Hrpij | exact Hregj]).
+    { iFrame "#". iSplitL; last (iPureIntro; split_and!; [exact Hrpij | exact Hregj | exact Hcontigj]).
       rewrite /own_store_fields /=.
       iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending".
       iExists pd_sl. iFrame "Hpddelf Hpdnil". }
@@ -713,10 +720,8 @@ Proof using Type*.
   (* the registry still describes the same documents *)
   have Hregmodel' : pool_registry_models m bind p'
     := pool_registry_models_after_delete m bind p p' Hfacts Hregmodel.
-  have Hctr' : ∀ parent tm x, p' !! parent = Some tm -> x ∈ tm_arr tm ->
-      clientId (item_id x) = c -> (clock (item_id x) < uint.nat k)%nat
-    := pool_after_delete_arr_pointwise p p'
-         (λ x, clientId (item_id x) = c -> (clock (item_id x) < uint.nat k)%nat) Hfacts Hctr.
+  have Hctr' : pool_next_clock p' c (uint.nat k)
+    := pool_next_clock_same_docs p p' c (uint.nat k) (proj1 Hfacts) (proj1 (proj2 Hfacts)) Hctr.
   iApply "HΦ". iFrame "Hsp".
   iExists client, k, rest, locs', p', bind, acc.
   iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".

@@ -190,12 +190,8 @@ Proof.
       exists nm, q0. split; first exact Heq.
       rewrite /bind' lookup_insert_ne //.
       move=> Heq2. subst nm. rewrite Hb' in Hq. done. }
-    have Hctr' : ∀ parent tm x, p' !! parent = Some tm → x ∈ tm_arr tm →
-        clientId (item_id x) = uint.nat client → (clock (item_id x) < uint.nat k)%nat.
-    { move=> parent tm x. rewrite /p'.
-      destruct (decide (parent = q)) as [-> | Hne].
-      - rewrite lookup_insert_eq. move=> [= <-] Hx. by apply elem_of_nil in Hx.
-      - rewrite lookup_insert_ne //. exact (Hctr parent tm x). }
+    have Hctr' : pool_next_clock p' (uint.nat client) (uint.nat k)
+      := pool_next_clock_insert_empty p q _ _ Hfresh Hctr.
     (* registering an empty type moves no run, so the tombstone-set
        invariant transports over the same permutation *)
     iDestruct (own_delete_set_perm γs m (all_runs p) (all_runs p') Hperm
