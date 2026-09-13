@@ -306,21 +306,35 @@ The observer needs it because the token is a state vector:
 `clock x < stateVector[c]` must mean "x was in the observed snapshot", the
 contiguity conjunct of `snapshot_grows_to`.
 
-Where: `pool_invs p` (store/model.v) gains
+Where (DONE, O3): `store/model.v` states it over the pool's documents,
 
 ```
+Definition pool_has (p : pool) (d : YjsId) : Prop :=
+  ∃ q tm x, p !! q = Some tm ∧ x ∈ tm_arr tm ∧ item_id x = d.
 Definition pool_clocks_contiguous (p : pool) : Prop :=
-  ∀ q k d, pool_covers p q k d -> ∀ j, (j < clock d)%nat ->
-    ∃ q' k', pool_covers p q' k' (MkYjsId (clientId d) j).
+  ∀ d, pool_has p d -> ∀ j, (j < clock d)%nat -> pool_has p (MkYjsId (clientId d) j).
+Definition pool_next_clock (p : pool) (c n : nat) : Prop :=
+  (∀ q tm x, p !! q = Some tm -> x ∈ tm_arr tm -> clientId (item_id x) = c ->
+     (clock (item_id x) < n)%nat) ∧
+  (n = 0%nat ∨ pool_has p (MkYjsId c (n - 1))).
 ```
 
-and `own_store`'s `Hctr` becomes two-sided for the local client (every
-`j < uint.nat k` is covered). Maintenance: `addNode` / Integrate for a local
-item (`clock = k`, the two-sided `Hctr`) and for a remote one (`input_ready`
-gives `doc_model_has m (c, k-1)`, hence covered, hence everything below);
-`splitNode`, `deleteRange`, `Text.Delete` (coverage unchanged, the same
-no-op transports the delete set uses); `getOrCreateYType` (an empty type).
-One store-invariant addition with its transport lemmas, no Go change.
+`store_invs` (and the lock body `store_inv_excl`) carry
+`pool_clocks_contiguous`; the counter clause `Hctr` of `own_store` /
+`store_inv_excl` is `pool_next_clock p c (uint.nat k)` (two-sided: nothing at
+or above the counter, the clock just below it taken unless the counter is
+0); `wp_store__Integrate` and `wp_store__integrateDecoded` take
+`pool_next_clock (ss_pool state) (clientId (in_id input)) (clock (in_id input))`
+where they took `pool_clock_below`. Transports: a step that keeps every
+type's document (`pool_after_split` / `pool_after_repair` /
+`pool_after_delete`, or one type rebuilt with the same document) keeps both
+facts (`_same_docs` / `_ext`), a fresh empty type too (`_insert_empty`), and
+an integrate splice at the client's next clock keeps contiguity
+(`pool_clocks_contiguous_integrate`) and moves the next clock past the run
+(`_integrate_same`, `_integrate_other`). The remote case reads the
+predecessor off `input_ready` through the registry
+(`pool_has_doc_model_has`); the local case off the counter clause. The
+document starts at clock 0 (`store_tie_init`). No Go change.
 
 ### 6.2 The delete-set half: write lock first
 
@@ -340,10 +354,10 @@ the ghost set.
 
 ## 7. Milestones
 
-- O1 the pure model (section 3), rocq-mcp only.
+- O1 the pure model (section 3), rocq-mcp only. DONE (PR #200).
 - O2 Go + goose + tests (section 2): `./build.sh go`, `./build.sh goose`,
-  `go test ./yjs/`.
-- O3 P1 (section 6.1): the store invariant and its transports, full build.
+  `go test ./yjs/`. DONE (PR #201).
+- O3 P1 (section 6.1): the store invariant and its transports, full build. DONE.
 - O4 `wp_Text__NewObserver`, `wp_TextObserver__Poll` (write lock),
   `wp_ApplyDelta`.
 - O5 the demo and the application theorem (section 4), the composition with
