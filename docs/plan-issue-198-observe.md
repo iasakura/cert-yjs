@@ -378,7 +378,14 @@ the ghost set.
   PR #203, O4b (`Poll` and its helpers `deltaSnoc` / `deletedContains`) is
   PR #204.
 - O5 the demo and the application theorem (section 4), the composition with
-  `ApplySyncUpdate`.
+  `ApplySyncUpdate`. DONE (PR #205): `observeapp/` (`Mirror`, `Sync` = one
+  `Poll` and one `ApplyDelta`) and `src/proof/demo/observe_app.v`
+  (`own_mirror`, `wp_NewMirror`, `wp_Mirror__Sync`). The theorem states the
+  new mirror directly, `own_mirror m (visible_string current)`, instead of
+  `∃ app', own_mirror m app' ∗ ⌜app_synced app' current⌝` (the same fact,
+  one conjunct fewer), and returns the read API's three facts about
+  `current`, so the composition with `wp_Doc__ApplySyncUpdate`'s history
+  certificate is by instantiating `h0`.
 - O6 the read-locked `Poll`: the wire delete path grows the ghost set (the
   `deleteRange.v` milestone), the converse tombstone clause in
   `store_inv_ro`, `Poll` over `wp_Store__rlock`.
