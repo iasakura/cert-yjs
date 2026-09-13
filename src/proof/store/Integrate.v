@@ -579,7 +579,7 @@ Proof using Type*.
       iDestruct "Hibo_setf" as (vs_ibo) "(Hibo_sl & Hibo_cap & %Hibo_wf & %Hibo_set)".
       iDestruct "Hconflict_ids" as (ci_s) "[Hci_ref Hci_setf]".
       iDestruct "Hci_setf" as (vs_ci) "(Hci_sl & Hci_cap & %Hci_wf & %Hci_set)".
-      wp_apply (wp_item__Len with "[$Hcival]"). iIntros "Hcival". wp_auto.
+      wp_apply (wp_item__Len with "[$Hcival]"). iIntros "[Hcival _]". wp_auto.
       destruct (run_items rc) as [|hh tl2] eqn:Hrun; first by (exfalso; exact (proj1 Hrunwf_ci eq_refl)).
       rewrite -Hrun in Hccont_ci Hrunwf_ci.
       have Hrhead : run_head_item rc = hh by rewrite /run_head_item Hrun.

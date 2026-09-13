@@ -1,6 +1,10 @@
 (** [wp_ApplyDelta]: the application-side patch (issue #198). Pure over its
     two arguments: it returns [apply_delta delta s] and whether it succeeded;
-    a delta a [Poll] returned always does ([apply_text_delta]). *)
+    a delta a [Poll] returned always does ([apply_text_delta]). The delta
+    must fit ([delta_fits]: the Go compares [uint64] counts) once the string
+    is known to be a Go string (shorter than [2^63], which [len] observes),
+    and a delta that patches such a string does fit ([apply_delta_fits]):
+    the caller supplies the implication, not the bound. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -67,16 +71,18 @@ Proof.
 Qed.
 
 Lemma wp_ApplyDelta (str : go_string) (sl : slice.t) (dq : dfrac) (delta : list DeltaOp) :
-  {{{ is_pkg_init yjs ∗ own_delta sl dq delta }}}
+  {{{ is_pkg_init yjs ∗ own_delta sl dq delta ∗
+      ⌜(Z.of_nat (length str) < 2^63)%Z -> delta_fits delta⌝ }}}
     @! yjs.ApplyDelta #str #sl
   {{{ RET (#(default ""%go (apply_delta delta str)), #(bool_decide (is_Some (apply_delta delta str))));
       own_delta sl dq delta }}}.
 Proof.
-  wp_start as "Hdelta". iNamed "Hdelta".
+  wp_start as "[Hdelta %Hfits_if]". iNamed "Hdelta".
   iDestruct (own_slice_len with "Hsl") as %[Hsllen Hsllen0].
   have Hlenvs : length vs = length delta := Forall2_length Hdenote.
   wp_auto.
   wp_apply wp_string_len. iIntros "%Hstrlen".
+  have Hfits : delta_fits delta := Hfits_if Hstrlen.
   wp_auto.
   (* the outer loop: the ops before [k] ran the string to [drop pos str] *)
   iAssert (∃ (k pos : nat) (out : go_string),
@@ -108,8 +114,10 @@ Proof.
     wp_auto.
     iDestruct ("Hgive" $! opv with "Hel") as "Hsl".
     rewrite list_insert_id; last (replace (Z.to_nat (sint.Z (W64 k))) with k by word; exact Hopv).
-    destruct op as [n | t | n]; destruct Hden as [Hkind Hval].
+    have Hopfits : delta_op_fits op := Forall_lookup_1 _ _ _ _ Hfits Hop.
+    destruct op as [n | t | n]; destruct Hden as [Hkind Hval]; simpl in Hopfits.
     + (* retain [n] chars *)
+      have HL : uint.Z opv.(yjs.DeltaOp.Length') = Z.of_nat n by rewrite Hval; word.
       rewrite Hkind. wp_auto.
       destruct (decide (n <= length str - pos)%nat) as [Hle | Hgt]; last first.
       { (* overrun: the patch fails *)
@@ -171,6 +179,7 @@ Proof.
       iPureIntro. split_and!; [lia | lia |].
       exact (delta_run_take_insert delta k t out (drop pos str) str Hop Hrun).
     + (* delete [n] chars *)
+      have HL : uint.Z opv.(yjs.DeltaOp.Length') = Z.of_nat n by rewrite Hval; word.
       rewrite Hkind. wp_auto.
       destruct (decide (n <= length str - pos)%nat) as [Hle | Hgt]; last first.
       { rewrite (bool_decide_eq_true_2 (uint.Z (W64 (length str - pos)%nat) < uint.Z opv.(yjs.DeltaOp.Length'))); last word.

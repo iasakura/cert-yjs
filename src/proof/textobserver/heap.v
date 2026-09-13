@@ -15,8 +15,14 @@
       below its observed state vector present in it), the observed deleted
       ids as a delete-set lower bound, and [observed]'s document invariant.
 
-    Laws: none yet; the method proofs are [NewObserver.v] and
-    [ApplyDelta.v], with [Poll.v] to follow (issue #198, O4b). *)
+    Laws
+    - [own_delta_nil] / [own_deleted_spans_empty]: the nil slice is the
+      empty delta, an empty map covers no id.
+    - [own_deleted_spans_snoc]: borrow a client's span slice (the nil slice
+      when absent) to append one span; the map then covers that span too.
+
+    The method proofs are [NewObserver.v], [Poll.v] and [ApplyDelta.v]; the
+    helpers of [Poll] are in [wp_private.v]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -93,5 +99,62 @@ Definition own_TextObserver (obs t : loc) (γs : store_names) (γh : history_nam
     "%Hsorted" ∷ ⌜YjsArrInvariant observed.*1⌝.
 
 (* ===== lemmas ============================================================= *)
+
+Lemma own_delta_nil : ⊢ own_delta slice.nil (DfracOwn 1) [].
+Proof.
+  iExists []. iSplitR; [iApply own_slice_nil | iSplitR; [iApply own_slice_cap_nil | done]].
+Qed.
+
+Lemma own_deleted_spans_empty (dref : loc) :
+  own_map dref (DfracOwn 1) (∅ : gmap w64 slice.t) -∗ own_deleted_spans dref ∅.
+Proof.
+  iIntros "Hdm". iExists ∅, ∅. iFrame "Hdm". rewrite big_sepM2_empty. iSplit; first done.
+  iPureIntro. move=> d. split.
+  - move=> Hd. exfalso. move: Hd. rewrite elem_of_empty //.
+  - intros (client & sps & sp & Hlk & _). rewrite lookup_empty in Hlk. discriminate.
+Qed.
+
+(** Appending one span to a client's list: borrow the client's slice (the nil
+    slice when the client is absent), and give the map back with the appended
+    slice at that client; the covered ids gain the span's. *)
+Lemma own_deleted_spans_snoc (dref : loc) (D D' : gset YjsId) (client : w64)
+    (sp : yjs.span.t w64) :
+  (∀ d, d ∈ D' <-> d ∈ D ∨ span_covers client sp d) ->
+  own_deleted_spans dref D -∗
+  ∃ (dm : gmap w64 slice.t) (sps : list (yjs.span.t w64)),
+    own_map dref (DfracOwn 1) dm ∗
+    default slice.nil (dm !! client) ↦* sps ∗
+    own_slice_cap (yjs.span.t w64) (default slice.nil (dm !! client)) (DfracOwn 1) ∗
+    (∀ ssl' : slice.t,
+       ssl' ↦* (sps ++ [sp]) -∗ own_slice_cap (yjs.span.t w64) ssl' (DfracOwn 1) -∗
+       own_map dref (DfracOwn 1) (<[client := ssl']> dm) -∗
+       own_deleted_spans dref D').
+Proof.
+  iIntros (HD') "H". iNamed "H".
+  iDestruct (big_sepM2_lookup_iff with "Hspans") as %Hiff.
+  destruct (dm !! client) as [ssl |] eqn:Hdmc.
+  - have [sps Hspc] : is_Some (spans !! client) by apply Hiff; eauto.
+    iDestruct (big_sepM2_insert_acc _ _ _ client ssl sps Hdmc Hspc with "Hspans") as "[[Hsl Hcap] Hback]".
+    iExists dm, sps. rewrite Hdmc /=. iFrame "Hdm Hsl Hcap".
+    iIntros (ssl') "Hsl' Hcap' Hdm".
+    iDestruct ("Hback" $! ssl' (sps ++ [sp]) with "[$Hsl' $Hcap']") as "Hspans".
+    iExists (<[client := ssl']> dm), (<[client := sps ++ [sp]]> spans). iFrame "Hdm Hspans".
+    iPureIntro. move=> d. rewrite HD' Hcover.
+    have -> : sps = default [] (spans !! client) by rewrite Hspc.
+    symmetry. exact (spans_cover_insert spans client sp d).
+  - have Hspc : spans !! client = None.
+    { destruct (spans !! client) as [sps |] eqn:E; last done.
+      exfalso. have Hsome : is_Some (dm !! client) by apply Hiff; eauto.
+      rewrite Hdmc in Hsome. destruct Hsome as [? Habs]. discriminate. }
+    iExists dm, []. rewrite Hdmc /=. iFrame "Hdm".
+    iSplitR; first iApply own_slice_nil. iSplitR; first iApply own_slice_cap_nil.
+    iIntros (ssl') "Hsl' Hcap' Hdm".
+    iExists (<[client := ssl']> dm), (<[client := [sp]]> spans). iFrame "Hdm".
+    iSplitL "Hspans Hsl' Hcap'".
+    { rewrite big_sepM2_insert; [| exact Hdmc | exact Hspc]. iFrame "Hspans Hsl' Hcap'". }
+    iPureIntro. move=> d. rewrite HD' Hcover.
+    have Heq : [sp] = default [] (spans !! client) ++ [sp] by rewrite Hspc.
+    rewrite Heq. symmetry. exact (spans_cover_insert spans client sp d).
+Qed.
 
 End text_observer_heap.

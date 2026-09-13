@@ -66,10 +66,7 @@ Proof.
   iSplitR.
   { iPureIntro. move=> client. rewrite lookup_empty /sv_get lookup_empty //. }
   iSplitL.
-  { iExists ∅, ∅. iFrame "Hdm". rewrite big_sepM2_empty. iSplit; first done.
-    iPureIntro. move=> d. split.
-    - move=> Hd. exfalso. move: Hd. rewrite /snapshot_deleted_ids /= elem_of_empty //.
-    - intros (client & sps & sp & Hlk & _). rewrite lookup_empty in Hlk. discriminate. }
+  { iApply (own_deleted_spans_empty with "Hdm"). }
   iPureIntro. split_and!.
   - rewrite lookup_insert_eq //.
   - move=> c j. rewrite /sv_get lookup_empty /=. lia.
