@@ -155,7 +155,8 @@ it.
   a given file.
 
 Require order is `core -> prelude -> algebra -> id -> item -> ytype ->
-doc/model -> network_model -> history -> store -> text -> doc`. The pure layers
+doc/model -> network_model -> history -> store -> text -> textobserver -> doc`.
+The pure layers
 form their own sub-DAG below the Iris one, and each file's `.vok` is an
 independent job, so no single heavy proof serializes the build.
 
