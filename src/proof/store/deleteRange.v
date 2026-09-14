@@ -128,7 +128,7 @@ Proof using Type*.
     wp_auto.
     rewrite Hpar. wp_auto.
     wp_apply (wp_item__Len lc (DfracOwn 1) (set_deleted itemVal) with "[$Hval]").
-    iIntros "Hval".
+    iIntros "[Hval _]".
     wp_auto. rewrite Hpar. wp_auto.
     have Hflagspin : itemVal.(yjs.item.flags') = (if false then W8 6 else W8 2)
       by rewrite Hflags ?Hd.
@@ -323,7 +323,7 @@ Proof using Type*.
   clear Haccpar.
   wp_auto.
   wp_apply (wp_item__Len rl (DfracOwn 1) ivR with "[$Haccval]").
-  iIntros "Haccval".
+  iIntros "[Haccval _]".
   iDestruct ("Haccback" with "Haccval") as "Hruns".
   (* kept at the [uint.Z] level on purpose: [wp_if_destruct]'s bare [subst]
      would consume a [clock' = cur] equation and take [cur] with it *)

@@ -55,7 +55,7 @@
     [all_runs] under a registry insert or lookup ([all_runs_insert] /
     [all_runs_lookup], two types at once [all_runs_lookup_two], membership
     across one slot [elem_of_all_runs_insert] / [elem_of_all_runs_lookup]);
-    one id lives in one slot ([pool_covers_unique]) and [pool_invs] surviving one node
+    one id lives in one slot ([pool_covers_unique], [pool_item_unique]) and [pool_invs] surviving one node
     split ([pool_invs_split]), one integrate splice
     ([pool_invs_integrate]) and one tombstoning
     ([pool_invs_flip]), and any reshuffle of the runs
@@ -351,6 +351,51 @@ Proof.
     apply list_elem_of_fmap. exists tm. split; first done.
     apply list_elem_of_fmap. exists (q, tm). split; first done.
     by apply elem_of_map_to_list.
+Qed.
+
+(** One id, one item: two items of the pool with the same id are one item
+    of one type ([pool_covers_unique] at the item level). *)
+Lemma pool_item_unique (p : pool) (q1 q2 : loc) (tm1 tm2 : type_model) (x y : YjsItem A) :
+  pool_invs p ->
+  p !! q1 = Some tm1 -> x ∈ tm_arr tm1 ->
+  p !! q2 = Some tm2 -> y ∈ tm_arr tm2 ->
+  item_id x = item_id y ->
+  q1 = q2 ∧ x = y.
+Proof.
+  move=> Hinvs Hq1 Hx Hq2 Hy Hid.
+  have Hwf : ∀ r, r ∈ all_runs p -> run_wf (run_items r).
+  { move=> r Hr. exact (proj1 (proj1 Hinvs r Hr)). }
+  apply list_elem_of_lookup_1 in Hx as [n1 Hn1].
+  apply list_elem_of_lookup_1 in Hy as [n2 Hn2].
+  destruct (runs_flatten_lookup_run (tm_runs tm1) n1 x Hn1) as (k1 & o1 & r1 & Hk1 & Ho1 & _).
+  destruct (runs_flatten_lookup_run (tm_runs tm2) n2 y Hn2) as (k2 & o2 & r2 & Hk2 & Ho2 & _).
+  have Hr1 : r1 ∈ all_runs p.
+  { apply elem_of_all_runs. exists q1, tm1.
+    split; [exact Hq1 | exact (list_elem_of_lookup_2 _ _ _ Hk1)]. }
+  have Hr2 : r2 ∈ all_runs p.
+  { apply elem_of_all_runs. exists q2, tm2.
+    split; [exact Hq2 | exact (list_elem_of_lookup_2 _ _ _ Hk2)]. }
+  have Hcov1 : run_covers r1 (item_id x).
+  { apply (char_ids_run_covers r1 _ (Hwf r1 Hr1)).
+    rewrite /char_ids elem_of_list_to_set list_elem_of_fmap.
+    exists x. split; [reflexivity | exact (list_elem_of_lookup_2 _ _ _ Ho1)]. }
+  have Hcov2 : run_covers r2 (item_id x).
+  { rewrite Hid. apply (char_ids_run_covers r2 _ (Hwf r2 Hr2)).
+    rewrite /char_ids elem_of_list_to_set list_elem_of_fmap.
+    exists y. split; [reflexivity | exact (list_elem_of_lookup_2 _ _ _ Ho2)]. }
+  have Hc1 : pool_covers p q1 k1 (item_id x) by exists tm1, r1.
+  have Hc2 : pool_covers p q2 k2 (item_id x) by exists tm2, r2.
+  destruct (pool_covers_unique p (item_id x) q1 q2 k1 k2 Hinvs Hc1 Hc2) as [Hqq Hkk].
+  subst q2 k2.
+  rewrite Hq1 in Hq2. injection Hq2 as <-.
+  rewrite Hk1 in Hk2. injection Hk2 as <-.
+  split; first done.
+  (* one run: the offsets agree, a run's clocks being its head's plus the offset *)
+  have Hid1 := run_wf_char_id (run_items r1) o1 x (Hwf r1 Hr1) Ho1.
+  have Hid2 := run_wf_char_id (run_items r1) o2 y (Hwf r1 Hr1) Ho2.
+  have Hoo : o1 = o2.
+  { rewrite Hid1 Hid2 in Hid. injection Hid as Heq. lia. }
+  subst o2. rewrite Ho1 in Ho2. injection Ho2 as <-. done.
 Qed.
 
 (** [pool_invs] survives one node split: the pure half of the

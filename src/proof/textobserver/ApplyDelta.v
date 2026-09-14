@@ -1,6 +1,11 @@
-(** [wp_ApplyDelta]: the application-side patch (issue #198). Pure over its
-    two arguments: it returns [apply_delta delta s] and whether it succeeded;
-    a delta a [Poll] returned always does ([apply_text_delta]). *)
+(** [wp_ApplyDelta]: the application-side patch (issue #198). The spec is
+    the model's fact alone: a delta that patches [str] to [str'] ([apply_delta])
+    makes the Go return [str'] and [true]; a delta a [Poll] returned patches
+    the observed text ([apply_text_delta]). The counts fit a [uint64] because
+    they are at most the string's length, which the Go's own [len] call
+    bounds ([apply_delta_fits], inside the proof). The failing case (a retain
+    or a delete past the end, [("", false)]) has no verified caller and is
+    not specified. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -66,17 +71,19 @@ Proof.
     rewrite decide_False //. lia.
 Qed.
 
-Lemma wp_ApplyDelta (str : go_string) (sl : slice.t) (dq : dfrac) (delta : list DeltaOp) :
+Lemma wp_ApplyDelta (str str' : go_string) (sl : slice.t) (dq : dfrac) (delta : list DeltaOp) :
+  apply_delta delta str = Some str' ->
   {{{ is_pkg_init yjs ∗ own_delta sl dq delta }}}
     @! yjs.ApplyDelta #str #sl
-  {{{ RET (#(default ""%go (apply_delta delta str)), #(bool_decide (is_Some (apply_delta delta str))));
-      own_delta sl dq delta }}}.
+  {{{ RET (#str', #true); own_delta sl dq delta }}}.
 Proof.
+  move=> Hpatch.
   wp_start as "Hdelta". iNamed "Hdelta".
   iDestruct (own_slice_len with "Hsl") as %[Hsllen Hsllen0].
   have Hlenvs : length vs = length delta := Forall2_length Hdenote.
   wp_auto.
   wp_apply wp_string_len. iIntros "%Hstrlen".
+  have Hfits : delta_fits delta := apply_delta_fits _ _ _ Hpatch ltac:(lia).
   wp_auto.
   (* the outer loop: the ops before [k] ran the string to [drop pos str] *)
   iAssert (∃ (k pos : nat) (out : go_string),
@@ -108,8 +115,10 @@ Proof.
     wp_auto.
     iDestruct ("Hgive" $! opv with "Hel") as "Hsl".
     rewrite list_insert_id; last (replace (Z.to_nat (sint.Z (W64 k))) with k by word; exact Hopv).
-    destruct op as [n | t | n]; destruct Hden as [Hkind Hval].
+    have Hopfits : delta_op_fits op := Forall_lookup_1 _ _ _ _ Hfits Hop.
+    destruct op as [n | t | n]; destruct Hden as [Hkind Hval]; simpl in Hopfits.
     + (* retain [n] chars *)
+      have HL : uint.Z opv.(yjs.DeltaOp.Length') = Z.of_nat n by rewrite Hval; word.
       rewrite Hkind. wp_auto.
       destruct (decide (n <= length str - pos)%nat) as [Hle | Hgt]; last first.
       { (* overrun: the patch fails *)
@@ -118,8 +127,7 @@ Proof.
         have Hnone : apply_delta delta str = None.
         { rewrite /apply_delta (delta_run_overrun delta k n out (drop pos str) str (or_introl Hop) Hrun) //.
           rewrite length_drop. lia. }
-        iEval (rewrite Hnone (bool_decide_eq_false_2 (is_Some (@None A)) ltac:(by move=> [x Hx])) /=) in "HΦ".
-        iApply "HΦ". iExists vs. iFrame "Hsl Hcap". done. }
+        rewrite Hnone in Hpatch. discriminate. }
       rewrite (bool_decide_eq_false_2 (uint.Z (W64 (length str - pos)%nat) < uint.Z opv.(yjs.DeltaOp.Length'))); last word.
       wp_auto.
       rewrite Hkind (bool_decide_eq_true_2 (W8 0 = W8 0)); last done.
@@ -171,6 +179,7 @@ Proof.
       iPureIntro. split_and!; [lia | lia |].
       exact (delta_run_take_insert delta k t out (drop pos str) str Hop Hrun).
     + (* delete [n] chars *)
+      have HL : uint.Z opv.(yjs.DeltaOp.Length') = Z.of_nat n by rewrite Hval; word.
       rewrite Hkind. wp_auto.
       destruct (decide (n <= length str - pos)%nat) as [Hle | Hgt]; last first.
       { rewrite (bool_decide_eq_true_2 (uint.Z (W64 (length str - pos)%nat) < uint.Z opv.(yjs.DeltaOp.Length'))); last word.
@@ -178,8 +187,7 @@ Proof.
         have Hnone : apply_delta delta str = None.
         { rewrite /apply_delta (delta_run_overrun delta k n out (drop pos str) str (or_intror Hop) Hrun) //.
           rewrite length_drop. lia. }
-        iEval (rewrite Hnone (bool_decide_eq_false_2 (is_Some (@None A)) ltac:(by move=> [x Hx])) /=) in "HΦ".
-        iApply "HΦ". iExists vs. iFrame "Hsl Hcap". done. }
+        rewrite Hnone in Hpatch. discriminate. }
       rewrite (bool_decide_eq_false_2 (uint.Z (W64 (length str - pos)%nat) < uint.Z opv.(yjs.DeltaOp.Length'))); last word.
       wp_auto.
       rewrite Hkind (bool_decide_eq_false_2 (W8 2 = W8 0)); last done.
@@ -226,8 +234,9 @@ Proof.
       wp_auto.
       have Hsome : apply_delta delta str = Some (out ++ drop pos str).
       { rewrite /apply_delta Hrun //. }
+      rewrite Hsome in Hpatch. injection Hpatch as Hstr'.
       rewrite take_ge; last (rewrite length_drop; lia).
-      iEval (rewrite Hsome (bool_decide_eq_true_2 (is_Some (Some (out ++ drop pos str))) ltac:(by eexists)) /=) in "HΦ".
+      rewrite Hstr'.
       iApply "HΦ". iExists vs. iFrame "Hsl Hcap". done.
 Qed.
 

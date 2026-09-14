@@ -195,8 +195,10 @@ nothing in the model bounds a text below `2^64` chars, so the exact
 denotation is not provable for `Poll` while the word-level one is,
 unconditionally. `delta_fits delta` (every retain and delete count below
 `2^64`) is the bound under which the words are the counts; a delta that
-patches a Go string fits (`apply_delta_fits`), which is how the
-application discharges `ApplyDelta`'s precondition for a `Poll` result.
+patches a Go string fits (`apply_delta_fits`), which is how `ApplyDelta`'s
+proof recovers exact counts from its own `len` call. Its spec does not
+mention the bound: it is the success triple below, stated on the model's
+fact alone.
 
 `heap.v`, the observer predicate (exclusive: the token fields are mutable):
 
@@ -245,12 +247,16 @@ Lemma wp_TextObserver__Poll … (observed : snapshot) (h0 : list Ev) :
       ⌜text_snapshot L current⌝ ∗ ⌜history_reflected h0 name current⌝ ∗
       ⌜visible_excludes deleted_ids current⌝ }}}.
 
-Lemma wp_ApplyDelta (s : go_string) (sl : slice.t) (dq : dfrac) (delta : list DeltaOp) :
-  {{{ is_pkg_init yjs ∗ own_delta sl dq delta ∗ ⌜delta_fits delta⌝ }}}
+Lemma wp_ApplyDelta (s s' : go_string) (sl : slice.t) (dq : dfrac) (delta : list DeltaOp) :
+  apply_delta delta s = Some s' ->
+  {{{ is_pkg_init yjs ∗ own_delta sl dq delta }}}
     @! yjs.ApplyDelta #s #sl
-  {{{ RET (#(default "" (apply_delta delta s)), #(bool_decide (is_Some (apply_delta delta s))));
-      own_delta sl dq delta }}}.
+  {{{ RET (#s', #true); own_delta sl dq delta }}}.
 ```
+
+The failing case (a retain or a delete past the end returns `("", false)`)
+has no verified caller and is not specified; a `Poll` result patches the
+observed text (`apply_text_delta`), which is the premise.
 
 `Poll`'s walk indexes a node's content by a `uint64` offset
 (`string(cur.content.content[i])`), which is a valid `int` index only
@@ -435,8 +441,8 @@ O1 and O2 are independent of O3; O4 needs all three.
   clock), matching Yjs's `addStruct` assertion; no behaviour change.
 - The Go's delta counts are `uint64` and wrap at `2^64` chars, where Yjs's
   JavaScript numbers do not; the spec denotes them modulo `2^64` and
-  `ApplyDelta`'s spec carries the `delta_fits` bound (section 4). No
-  behaviour change; a text that long does not exist.
+  `ApplyDelta`'s proof recovers the counts under the Go string bound
+  (section 4). No behaviour change; a text that long does not exist.
 
 ## 10. Out of scope
 
