@@ -270,6 +270,15 @@ Proof.
 Qed.
 
 
+(** A singleton fragment weakens to any subset (the lower bound only loses
+    information). *)
+Lemma auth_gmap_gset_frag_weaken {K V : Type} `{Countable K} `{Countable V}
+    `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (k : K) (S S' : gset V) :
+  S ⊆ S' -> own γ (◯ {[k := S']}) ⊢ own γ (◯ {[k := S]}).
+Proof.
+  intros Hsub. apply own_mono, auth_frag_mono, singleton_included_mono. by apply gset_included.
+Qed.
+
 (** Mint a fragment below the CURRENT set at a key, under ANY authority
     fraction (a [gset] fragment is core-id, so nothing is transferred): how a
     holder of a [●{dq}] share (a reader's [store_inv_ro], or the write-lock
