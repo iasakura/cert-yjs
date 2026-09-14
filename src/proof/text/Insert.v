@@ -432,7 +432,7 @@ Proof.
     - lia.
     - lia.
     - lia.
-    - intros x Hx Hc. have := Hctr tv.(yjs.Text.inner') ts x Htsp Hx Hc. lia.
+    - intros x Hx Hc. have := (proj1 Hctr) tv.(yjs.Text.inner') ts x Htsp Hx Hc. lia.
     - destruct HoLspec as [[HoLF Hidx0] | (lr & li & Hge1 & Hlr0 & Hlast & Hli & HoLi)].
       + left. exact Hidx0.
       + right. exists lr, li. split_and!;
@@ -615,18 +615,31 @@ Proof.
     have Hidnew_in : item_id newItem = in_id input := commutativity.toItem_id input arr newItem Htoitem.
     have Hfitsin : input_fits input.
     { rewrite /input_fits /input /in_id1 /=. rewrite Hclocknit. word. }
-    (* the pool-level client clock bound the splice needs, from the
-       model-level bounds (this text's [Hctrj], the others' lock-time [Hctr]) *)
-    have Hbelowj : pool_clock_below pj (in_id input).
-    { have -> : in_id input = MkYjsId (uint.nat client) (uint.nat k + j)%nat.
-      { rewrite /input /in_id1 /= Hclocknit //. }
-      apply (pool_clock_below_of_arrs pj (uint.nat client) (uint.nat k + j)%nat Hwfallj).
-      move=> q tm x Hq Hx Hcx.
-      destruct (decide (q = tv.(yjs.Text.inner'))) as [-> | Hne].
-      - rewrite Hpj in Hq. injection Hq as <-. simpl in Hx.
-        rewrite /tm_arr /= -Harrj in Hx. exact (Hctrj x Hx Hcx).
-      - rewrite (Hdompj q Hne) in Hq.
-        have := Hctr _ _ x Hq Hx Hcx. lia. }
+    have Hidin : in_id input = MkYjsId (uint.nat client) (uint.nat k + j)%nat.
+    { rewrite /input /in_id1 /= Hclocknit //. }
+    (* the pool-level next-clock fact the splice needs: the bound from this
+       text's [Hctrj] and the others' lock-time [Hctr]; the clock just below
+       is the previous char of this insert, or the lock-time counter's *)
+    have Hnextj : pool_next_clock pj (clientId (in_id input)) (clock (in_id input)).
+    { rewrite Hidin /=. split.
+      - move=> q tm x Hq Hx Hcx.
+        destruct (decide (q = tv.(yjs.Text.inner'))) as [-> | Hne].
+        + rewrite Hpj in Hq. injection Hq as <-. simpl in Hx.
+          rewrite /tm_arr /= -Harrj in Hx. exact (Hctrj x Hx Hcx).
+        + rewrite (Hdompj q Hne) in Hq.
+          have := (proj1 Hctr) _ _ x Hq Hx Hcx. lia.
+      - destruct j as [| j'].
+        + rewrite Nat.add_0_r.
+          destruct (proj2 Hctr) as [Hk0 | Hprev]; [by left | right].
+          apply (pool_has_grow_one p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj) _ Hdompj Htsp Hpj);
+            last exact Hprev.
+          move=> x Hx. rewrite /tm_arr /= -Harrj. exact (Hsubold x Hx).
+        + right.
+          destruct (lookup_lt_is_Some_2 ins j' ltac:(rewrite Hinslen; lia)) as [it Hit].
+          destruct (Hins j' it Hit) as (Hitarr & _ & Hitid & _).
+          exists tv.(yjs.Text.inner'), (MkTypeModel runsj), it.
+          split_and!; [exact Hpj | rewrite /tm_arr /= -Harrj; exact Hitarr |].
+          rewrite Hitid. f_equal. lia. }
     (* the type's document is its runs' flatten, so the spec's readings of it
        are the loop's [arr] *)
     have Hreadyj : integrate_ready (tm_arr (MkTypeModel runsj)) input newItem.
@@ -640,7 +653,7 @@ Proof.
     wp_apply (wp_store__Integrate tv.(yjs.Text.store') tv.(yjs.Text.inner') tv.(yjs.Text.inner') oL2
                 (MkStoreState client (w64_word_instance.(word.add) (W64 (uint.Z k + Z.of_nat j)) (W64 1)) locsj pj bind pend pdel)
                 (MkTypeModel runsj) lsj arr' input newItem (p1i + j)%nat (p1i + j)%nat
-                (or_introl eq_refl) Hpj Hlj Hreadyj Hfitsin Hallj Hresj Hbelowj
+                (or_introl eq_refl) Hpj Hlj Hreadyj Hfitsin Hallj Hresj Hnextj
                 with "[$Hfresh $Hruns]").
     iIntros (runs' ls' run) "(Hruns & %Hinv' & %Hsp & %Hden)".
     iEval (simpl) in "Hruns".
@@ -685,7 +698,7 @@ Proof.
         destruct (Hmdom t' Hnem) as (name' & p' & -> & Hbind').
         destruct (Hbindtypes name' p' Hbind') as [ts' Hts'].
         rewrite (Hmtypes name' p' ts' Hbind' Hts') in Hx.
-        have := Hctr p' ts' x Hts' Hx Hcx. lia. }
+        have := (proj1 Hctr) p' ts' x Hts' Hx Hcx. lia. }
     iMod (history_broadcast γh (uint.nat client) (uint.nat (W64 (uint.Z k + j))) hj
             (<[RootId name := arr]> m) (RootId name) arr'
             input newItem ⊤ HmaskN Htoitem2 Hvalid Hmax2 eq_refl Hboundj Hsi2' Hhcohj
@@ -759,7 +772,7 @@ Proof.
       move=> q tq x Hq Hx Hid.
       have Hxcl : clientId (item_id x) = uint.nat client
         by rewrite Hid /newItem /in_id1 /=.
-      have := Hctr q tq x Hq Hx Hxcl.
+      have := (proj1 Hctr) q tq x Hq Hx Hxcl.
       rewrite Hid /newItem /in_id1 /=. rewrite Hclocknit. lia. }
     iDestruct (own_delete_set_snoc γs m _ _ (MkItemRun [newItem] false) Hac_ds Hfresh_ds
                  with "Hdelete_set") as "Hdelete_set".
@@ -907,14 +920,26 @@ Proof.
       + exists name, tv.(yjs.Text.inner'). split; [reflexivity | exact Hbindlk].
       + rewrite docm_get_insert_ne // in Hne'. exact (Hmdom t' Hne'). }
   }
-  have Hctr_close : ∀ parent' tm' x, pj !! parent' = Some tm' → x ∈ (tm_arr tm') →
-      clientId (item_id x) = uint.nat client → (clock (item_id x) < uint.nat (W64 (uint.Z k + j)))%nat.
-  { intros parent' tm' x Hlook Hxin Hxc. rewrite Hk'val.
+  have Hctr_close : pool_next_clock pj (uint.nat client) (uint.nat (W64 (uint.Z k + j))).
+  { rewrite Hk'val. split.
+    - intros parent' tm' x Hlook Hxin Hxc.
       destruct (decide (parent' = tv.(yjs.Text.inner'))) as [-> | Hne].
       + rewrite Hpj in Hlook. injection Hlook as <-.
         rewrite /tm_arr /= -Harrj in Hxin. exact (Hctrj x Hxin Hxc).
       + rewrite (Hdompj parent' Hne) in Hlook.
-        have := Hctr parent' tm' x Hlook Hxin Hxc. lia. }
+        have := (proj1 Hctr) parent' tm' x Hlook Hxin Hxc. lia.
+    - destruct j as [| j'].
+      + rewrite Nat.add_0_r.
+        destruct (proj2 Hctr) as [Hk0 | Hprev]; [by left | right].
+        apply (pool_has_grow_one p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj) _ Hdompj Htsp Hpj);
+          last exact Hprev.
+        move=> x Hx. rewrite /tm_arr /= -Harrj. exact (Hsubold x Hx).
+      + right.
+        destruct (lookup_lt_is_Some_2 ins j' ltac:(rewrite Hinslen; lia)) as [it Hit].
+        destruct (Hins j' it Hit) as (Hitarr & _ & Hitid & _).
+        exists tv.(yjs.Text.inner'), (MkTypeModel runsj), it.
+        split_and!; [exact Hpj | rewrite /tm_arr /= -Harrj; exact Hitarr |].
+        rewrite Hitid. f_equal. lia. }
   wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) hj (<[RootId name := arr]> m) pend
               with "[$His_store $Hlk Hruns Hseq HtypesAuth Hhistj Hacc Hdelete_set]").
   { iExists client, (W64 (uint.Z k + j)), pdel, locsj, pj, bind, acc.
@@ -947,7 +972,7 @@ Proof.
         { have Htg : it ∈ (list_to_set (tm_arr ts) : gset (YjsItem A)).
           { apply HLsub. rewrite elem_of_list_to_set. exact HinL. }
           rewrite elem_of_list_to_set in Htg. exact Htg. }
-        have Hclk := Hctr tv.(yjs.Text.inner') ts it Htsp HitTs. rewrite Hid in Hclk. simpl in Hclk. specialize (Hclk eq_refl). lia.
+        have Hclk := (proj1 Hctr) tv.(yjs.Text.inner') ts it Htsp HitTs. rewrite Hid in Hclk. simpl in Hclk. specialize (Hclk eq_refl). lia.
       + exact (Hcont b Hcsb).
       + exact Hid.
       + exact Hror.

@@ -85,7 +85,8 @@ Proof using Type*.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   iDestruct "Hruns" as "(Hfields & %Hinvs)".
   have Hrpi : pool_invs p := proj1 Hinvs.
-  have Hreg : pool_registry_coh bind p := proj2 Hinvs.
+  have Hreg : pool_registry_coh bind p := proj1 (proj2 Hinvs).
+  have Hcontig : pool_clocks_contiguous p := proj2 (proj2 Hinvs).
   iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iEval (simpl) in "Hitems Htypes".
   iDestruct "Hregistry" as (types_mref) "(Htypesf & Htypesmap)".
@@ -96,7 +97,7 @@ Proof using Type*.
     rewrite Hb /=. wp_auto.
     iApply ("HΦ" $! q p locs bind).
     iSplitL; last (iPureIntro; left; split_and!; [exact Hb | reflexivity | reflexivity | reflexivity]).
-    iSplitL; last (iPureIntro; split; [exact Hrpi | exact Hreg]).
+    iSplitL; last (iPureIntro; split_and!; [exact Hrpi | exact Hreg | exact Hcontig]).
     rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hitems Htypes Hpending Hpdeletes".
     iExists types_mref. iFrame "Htypesf Htypesmap".
@@ -131,9 +132,10 @@ Proof using Type*.
     iApply ("HΦ" $! q (<[q := MkTypeModel []]> p) (<[q := []]> locs) (<[nm := q]> bind)).
     iSplitL; last (iPureIntro; right; split_and!;
                    [exact Hb | exact Hfresh | reflexivity | reflexivity | reflexivity]).
-    iSplitL; last (iPureIntro; split;
+    iSplitL; last (iPureIntro; split_and!;
                    [exact (pool_invs_insert_empty p q Hfresh Hrpi)
-                   | exact (pool_registry_coh_bind_fresh bind p nm q _ Hb Hfresh Hreg)]).
+                   | exact (pool_registry_coh_bind_fresh bind p nm q _ Hb Hfresh Hreg)
+                   | exact (pool_clocks_contiguous_insert_empty p q Hfresh Hcontig)]).
     rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Htypes Hpending Hpdeletes".
     iSplitL "Hitemsf Hitemmap"; first (iExists items_mref; iFrame "Hitemsf Hitemmap").
@@ -1002,7 +1004,7 @@ Qed.
   IsItemValid newItem ->
   maximalId newItem (doc_model_get m typedInput.1) ->
   integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) (doc_model_get m typedInput.1) = Some arr2 ->
-  pool_clock_below (ss_pool state) (in_id typedInput.2) ->
+  pool_next_clock (ss_pool state) (clientId (in_id typedInput.2)) (clock (in_id typedInput.2)) ->
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   input_fits typedInput.2 ->
   {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s state }}}
@@ -1013,7 +1015,7 @@ Qed.
       ⌜runs_within_or_from [typedInput] (all_runs (ss_pool state)) (all_runs p')⌝ ∗
       ⌜integrate_live_refine typedInput.2 (all_runs (ss_pool state)) (all_runs p')⌝ }}}.
 Proof using Type*.
-  move=> Htieq Hbnm Htoit Hvld Hmax Hall Hgmax0 [Hmtypes Hmdom] Hnowrapc.
+  move=> Htieq Hbnm Htoit Hvld Hmax Hall Hnext0 [Hmtypes Hmdom] Hnowrapc.
   destruct state as [client0 k0 locs p0 bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & #Hui & Hruns) HΦ".
   iDestruct "Hui" as (oleft oright opn)
@@ -1247,7 +1249,10 @@ Proof using Type*.
   destruct HcurRpack as (curR2 & HcurR2b & HcurR2 & HrgtND).
   iEval (rewrite HlftND HrgtND) in "Hlinked".
   wp_auto.
-  have Hgmaxj' : pool_clock_below p2 (in_id input) := pool_clock_below_within _ _ _ Hwithin2 Hgmax0.
+  (* the item is still its client's next clock in the split pool: the
+     splits keep every type's document *)
+  have Hnextj' : pool_next_clock p2 (clientId (in_id input)) (clock (in_id input))
+    := pool_next_clock_same_docs p0 p2 _ _ (proj1 Hrep2) (proj1 (proj2 Hrep2)) Hnext0.
   have Hres : origins_resolved (tm_runs tm2) (tm_arr tm2) input curL2 curR2.
   { exists leftIdx, rightIdx. rewrite Harrj2.
     split_and!; [exact HfindL | exact HfindR | exact HcurL2 | exact HcurL2b | exact HcurR2 | exact HcurR2b]. }
@@ -1257,7 +1262,7 @@ Proof using Type*.
     by rewrite Harrj2; exact Hall.
   wp_apply (wp_store__Integrate s p null itv (MkStoreState client0 k0 locs2 p2 bind pend pdel)
               tm2 ls2 arr2 input newItem curL2 curR2
-              (or_intror eq_refl) Htm2 Hls2 Hready Hnowrapc Hall' Hres Hgmaxj'
+              (or_intror eq_refl) Htm2 Hls2 Hready Hnowrapc Hall' Hres Hnextj'
               with "[$Hpkg $Hruns $Hlinked]").
   iIntros (runs' ls' run) "(Hruns & %Hinv3 & %Hsplice & %Hden)".
   iEval (simpl) in "Hruns".
@@ -1343,7 +1348,7 @@ Qed.
   IsItemValid newItem ->
   maximalId newItem [] ->
   integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) [] = Some arr2 ->
-  pool_clock_below (ss_pool state) (in_id typedInput.2) ->
+  pool_next_clock (ss_pool state) (clientId (in_id typedInput.2)) (clock (in_id typedInput.2)) ->
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   input_fits typedInput.2 ->
   {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s state }}}
@@ -1355,7 +1360,7 @@ Qed.
       ⌜runs_within_or_from [typedInput] (all_runs (ss_pool state)) (all_runs p')⌝ ∗
       ⌜integrate_live_refine typedInput.2 (all_runs (ss_pool state)) (all_runs p')⌝ }}}.
 Proof using Type*.
-  move=> Htieq Hbnm HoL HoR Hdgnil Htoit Hvld Hmax Hall Hgmax0 [Hmtypes Hmdom] Hnowrapc.
+  move=> Htieq Hbnm HoL HoR Hdgnil Htoit Hvld Hmax Hall Hnext0 [Hmtypes Hmdom] Hnowrapc.
   destruct state as [client0 k0 locs p0 bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & #Hui & Hruns) HΦ".
   iDestruct "Hui" as (oleft oright opn)
@@ -1406,8 +1411,8 @@ Proof using Type*.
   have Hidnew_in : item_id newItem = in_id input := commutativity.toItem_id input [] newItem Htoit.
   have HfindL : findLeftIdx (in_originId input) (@nil (YjsItem A)) = Some (-1)%Z by rewrite HoL /findLeftIdx //.
   have HfindR : findRightIdx (in_rightOriginId input) (@nil (YjsItem A)) = Some 0%Z by rewrite HoR /findRightIdx /=.
-  have Hgmaxj' : pool_clock_below p2 (in_id input).
-  { move=> r Hr Hcl. apply Hgmax0; [| exact Hcl]. rewrite -Hac_empty. exact Hr. }
+  have Hnextj' : pool_next_clock p2 (clientId (in_id input)) (clock (in_id input))
+    := pool_next_clock_insert_empty p0 q _ _ Hfresh Hnext0.
   have Hres : origins_resolved (@nil ItemRun) (@nil (YjsItem A)) input 0 0.
   { exists (-1)%Z, 0%Z. split_and!; [exact HfindL | exact HfindR | rewrite take_nil /runs_flatten /=; lia | lia | rewrite take_nil /runs_flatten /=; lia | lia]. }
   have HlinkL : (null : loc) = loc_at [] (Z.of_nat 0 - 1).
@@ -1419,7 +1424,7 @@ Proof using Type*.
   wp_auto.
   wp_apply (wp_store__Integrate s q null itv (MkStoreState client0 k0 locs2 p2 (<[nm := q]> bind) pend pdel)
               (MkTypeModel []) [] arr2 input newItem 0 0
-              (or_intror eq_refl) Htm2 Hls2 Hready Hnowrapc Hall Hres Hgmaxj'
+              (or_intror eq_refl) Htm2 Hls2 Hready Hnowrapc Hall Hres Hnextj'
               with "[$Hpkg $Hruns $Hlinked]").
   iIntros (runs' ls' run) "(Hruns & %Hinv3 & %Hsplice & %Hden)".
   iEval (simpl) in "Hruns".
@@ -1502,7 +1507,7 @@ Lemma wp_store__integrateDecoded (s : loc)
   IsItemValid newItem ->
   maximalId newItem (doc_model_get m typedInput.1) ->
   integrate_all (ops_of_input typedInput.2 (explode (in_content typedInput.2))) (doc_model_get m typedInput.1) = Some arr2 ->
-  pool_clock_below (ss_pool state) (in_id typedInput.2) ->
+  pool_next_clock (ss_pool state) (clientId (in_id typedInput.2)) (clock (in_id typedInput.2)) ->
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   input_fits typedInput.2 ->
   {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s state }}}
@@ -1514,7 +1519,7 @@ Lemma wp_store__integrateDecoded (s : loc)
       ⌜runs_within_or_from [typedInput] (all_runs (ss_pool state)) (all_runs p')⌝ ∗
       ⌜integrate_live_refine typedInput.2 (all_runs (ss_pool state)) (all_runs p')⌝ }}}.
 Proof using Type*.
-  move=> Htieq Htoit Hvld Hmax Hall Hgmax0 Hregmodel Hnowrapc.
+  move=> Htieq Htoit Hvld Hmax Hall Hnext0 Hregmodel Hnowrapc.
   destruct state as [client0 k0 locs p0 bind pend pdel]. simpl in *.
   have [Hmtypes Hmdom] := Hregmodel.
   iIntros (Φ) "(#Hpkg & #Hui & Hruns) HΦ".
@@ -1522,7 +1527,7 @@ Proof using Type*.
   - (* HIT: reuse the bound-root integrateDecoded; registry unchanged *)
     wp_apply (wp_store__integrateDecoded_bound s updateItemVal typedInput m
                 (MkStoreState client0 k0 locs p0 bind pend pdel)
-                newItem arr2 nm p Htieq Hbnm Htoit Hvld Hmax Hall Hgmax0 Hregmodel Hnowrapc
+                newItem arr2 nm p Htieq Hbnm Htoit Hvld Hmax Hall Hnext0 Hregmodel Hnowrapc
                 with "[$Hpkg $Hui $Hruns]").
     iIntros (p' locs') "(Hruns & %Hregmodel' & %Hprov' & %Hilr')".
     iApply ("HΦ" $! p' locs' bind). simpl.
@@ -1548,7 +1553,7 @@ Proof using Type*.
     rewrite Hdgnil in Htoit Hmax Hall.
     wp_apply (wp_store__integrateDecoded_unbound s updateItemVal typedInput m
                 (MkStoreState client0 k0 locs p0 bind pend pdel)
-                newItem arr2 nm Htieq Hbnm HoL HoR Hdgnil Htoit Hvld Hmax Hall Hgmax0
+                newItem arr2 nm Htieq Hbnm HoL HoR Hdgnil Htoit Hvld Hmax Hall Hnext0
                 Hregmodel Hnowrapc
                 with "[$Hpkg $Hui $Hruns]").
     iIntros (p' locs' bind') "Hpost".

@@ -249,10 +249,8 @@ Proof.
       have Hregmodel_close : pool_registry_models m bind pj
         := pool_registry_models_ext m bind p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj)
              Hdompj Htsp Hpj Harrj Hregmodel.
-      have Hctr_close : ∀ parent' tm' x, pj !! parent' = Some tm' →
-          x ∈ (tm_arr tm') → clientId (item_id x) = uint.nat client → (clock (item_id x) < uint.nat k)%nat
-        := pool_arr_pointwise_ext p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj)
-             (λ x, clientId (item_id x) = uint.nat client -> (clock (item_id x) < uint.nat k)%nat)
+      have Hctr_close : pool_next_clock pj (uint.nat client) (uint.nat k)
+        := pool_next_clock_ext p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj) _ _
              Hdompj Htsp Hpj Harrj Hctr.
       (* ---- the delete's certificate ----
          the ids the loop tombstoned join the store's delete set: each is a
@@ -310,10 +308,8 @@ Proof.
       have Hregmodel_close : pool_registry_models m bind pj
         := pool_registry_models_ext m bind p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj)
              Hdompj Htsp Hpj Harrj Hregmodel.
-      have Hctr_close : ∀ parent' tm' x, pj !! parent' = Some tm' →
-          x ∈ (tm_arr tm') → clientId (item_id x) = uint.nat client → (clock (item_id x) < uint.nat k)%nat
-        := pool_arr_pointwise_ext p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj)
-             (λ x, clientId (item_id x) = uint.nat client -> (clock (item_id x) < uint.nat k)%nat)
+      have Hctr_close : pool_next_clock pj (uint.nat client) (uint.nat k)
+        := pool_next_clock_ext p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj) _ _
              Hdompj Htsp Hpj Harrj Hctr.
       (* ---- the delete's certificate ----
          the ids the loop tombstoned join the store's delete set: each is a

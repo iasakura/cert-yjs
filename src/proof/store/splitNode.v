@@ -386,7 +386,8 @@ Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
   iDestruct "Hruns" as "(Hfields & %Hinvs)".
   have Hrpi : pool_invs p := proj1 Hinvs.
-  have Hreg : pool_registry_coh bind p := proj2 Hinvs.
+  have Hreg : pool_registry_coh bind p := proj1 (proj2 Hinvs).
+  have Hcontig : pool_clocks_contiguous p := proj2 (proj2 Hinvs).
   have [Hinvall Hdisj] := Hrpi.
   have Hfits : ∀ r0, r0 ∈ all_runs p -> run_fits r0
     := λ r0 Hr0, proj1 (proj2 (Hinvall r0 Hr0)).
@@ -764,9 +765,13 @@ Proof using Type*.
       rewrite -/key_pairs2 (Hnew_other client Hne2). iFrame.
     - iPureIntro. split; [exact Hcomplete2 | exact Hclockunique2]. }
   wp_auto.
+  have Hcontig2 : pool_clocks_contiguous p2.
+  { apply (pool_clocks_contiguous_ext p p2 parent tm tm2); [| exact Hp | apply lookup_insert_eq | | exact Hcontig].
+    - move=> q Hne. rewrite /p2 lookup_insert_ne //.
+    - rewrite /tm2 /runs2 /tm_arr /=. exact (split_runs_flatten (tm_runs tm) k o r Hr). }
   iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
     with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap2 Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
-  { iSplitL; last (iPureIntro; split; [exact Hrpi2 | exact Hreg2]).
+  { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
     rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hregistry Htypes2 Hpending Hpdeletes".
     iExists mref. iFrame "Hitemsf Hitemmap2". }

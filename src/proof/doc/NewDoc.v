@@ -79,7 +79,7 @@ Proof.
   iStructNamed "Hs". simpl.
   iMod (init_RWMutex (storeN .@ "rw") with "mu") as (γrw) "(#Hrw0 & Hst & Hltoks)".
   (* the ghost layer, at the real lock names *)
-  iMod (store_tie_init s_loc γh client (W64 0) items_mref types_mref _ γrw
+  iMod (store_tie_init s_loc γh client items_mref types_mref _ γrw
           with "client clock items [Hitemsmap] types [Htypesmap] deletedSet
                 pending pendingDeletes Hhist") as (γs) "Hst0".
   { iFrame "Hitemsmap". }
