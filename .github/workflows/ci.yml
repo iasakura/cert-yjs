@@ -108,6 +108,9 @@ jobs:
             _opam
           key: opam-${{ runner.os }}-ocaml-5.2.0-${{ hashFiles('cert-yjs.opam') }}-${{ github.run_id }}
 
+      - name: Go tests (race detector)
+        run: go test -race ./...
+
       - name: Build (go build → goose → proof check)
         # goose comes from _opam/.opam-switch/sources/perennial, the pinned
         # source opam kept after installing it

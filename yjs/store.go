@@ -55,8 +55,8 @@ type store struct {
 // newStore creates an empty store owned by the given client.
 func newStore(client Client) *store {
 	return &store{
-		client:     client,
-		clock:      0,
+		client:         client,
+		clock:          0,
 		items:          make(map[Client][]*item),
 		types:          make(map[string]*yType),
 		deletedSet:     deletedSet{deletedSet: make(map[Client]orderRange)},
@@ -124,8 +124,9 @@ func (s *store) GetNode(id id) (*item, bool) {
 // A char with no integrated node is skipped: its struct has not arrived, and
 // the caller re-applies the span later (the pending discipline of issue #40).
 // An already-tombstoned node is skipped too, which is what makes
-// re-application harmless. Callers hold s.mu.
-func (s *store) deleteRange(client Client, clock uint64, length uint64) bool {
+// re-application harmless. Callers hold s.mu inside the transaction tr,
+// which records what gets tombstoned (deleteNode).
+func (s *store) deleteRange(tr *Transaction, client Client, clock uint64, length uint64) bool {
 	covered := true
 	end := clock + length
 	cur := clock
@@ -149,7 +150,7 @@ func (s *store) deleteRange(client Client, clock uint64, length uint64) bool {
 				s.splitAtAndGetLeft(newId(client, end-1))
 				next = end
 			}
-			deleteNode(it)
+			deleteNode(tr, it)
 			cur = next
 		}
 	}
@@ -160,8 +161,9 @@ func (s *store) deleteRange(client Client, clock uint64, length uint64) bool {
 // buffered ones, keeping the spans that did not land in full because their
 // target structs have not arrived (y-octo: the pending half of
 // Update::delete_set). Re-applying a span that already landed is harmless:
-// deleteRange skips tombstoned nodes. Callers hold s.mu.
-func (s *store) applyDeleteSpans(spans []deleteSpan) {
+// deleteRange skips tombstoned nodes. Callers hold s.mu inside the
+// transaction tr.
+func (s *store) applyDeleteSpans(tr *Transaction, spans []deleteSpan) {
 	all := s.pendingDeletes
 	// Take the buffer out before retrying it (y-octo's mem::take of the
 	// pending set): while the retry loop runs, the store holds no buffered
@@ -173,7 +175,7 @@ func (s *store) applyDeleteSpans(spans []deleteSpan) {
 	rest := []deleteSpan{}
 	for i := 0; i < len(all); i++ {
 		sp := all[i]
-		if !s.deleteRange(sp.client, sp.clock, sp.length) {
+		if !s.deleteRange(tr, sp.client, sp.clock, sp.length) {
 			rest = append(rest, sp)
 		}
 	}
@@ -181,15 +183,20 @@ func (s *store) applyDeleteSpans(spans []deleteSpan) {
 }
 
 // deleteNode tombstones one whole node: sets its Deleted flag and shrinks its
-// type's visible length (y-octo: DocStore::delete_item_inner). A node that is
-// already tombstoned is left alone, which is what makes a re-delivered delete
+// type's visible length (y-octo: DocStore::delete_item_inner; Yjs
+// v14.0.0-rc.18 Item.delete, src/structs/Item.js:366; yrs 0.27.2
+// src/block.rs:635), and records the node in the transaction (its ids join
+// tr.deleteSet, its parent is marked changed), as Yjs and yrs do at this
+// point and y-octo, having no transaction, does not. A node that is already
+// tombstoned is left alone, which is what makes a re-delivered delete
 // idempotent. The node must be integrated (reached through the store's run
 // lists); callers hold s.mu. A free function, not a *store method as in
 // y-octo (whose &mut self borrows the whole store either way): it touches
-// only the node and its parent type, and the footprint must be visible in
-// the program (CLAUDE.md "Spec shape").
-func deleteNode(it *item) {
+// only the node, its parent type and the transaction's record, and the
+// footprint must be visible in the program (CLAUDE.md "Spec shape").
+func deleteNode(tr *Transaction, it *item) {
 	if it.Indexable() {
+		tr.recordDelete(it)
 		it.flags = it.flags | itemDeleted
 		it.parent.len = it.parent.len - it.Len()
 	}
@@ -524,9 +531,12 @@ func (s *store) integrateCore(parent *yType, item *item) {
 // working on, while the update path passes nil and the item's own parent
 // (resolved by store.repair) is used; an item whose parent did not resolve is
 // dropped, as in y-octo. On return item is spliced into the doubly linked
-// list at its conflict-resolved position, parent.len is updated, and
-// s.items[item.id.clientId] holds item at its tail.
-func (s *store) Integrate(parent *yType, item *item) {
+// list at its conflict-resolved position, parent.len is updated,
+// s.items[item.id.clientId] holds item at its tail, and the transaction
+// records the item (its ids join tr.insertSet and parent is marked changed:
+// Yjs v14.0.0-rc.18 Item.integrate, src/structs/Item.js:270-274; yrs 0.27.2
+// src/block.rs:1085-1090; y-octo has no transaction and records nothing).
+func (s *store) Integrate(tr *Transaction, parent *yType, item *item) {
 	if parent == nil {
 		if item.parent == nil {
 			return
@@ -535,6 +545,7 @@ func (s *store) Integrate(parent *yType, item *item) {
 	}
 	s.integrateCore(parent, item)
 	addNode(s.items, item)
+	tr.recordInsert(parent, item)
 }
 
 // hasNode reports whether the struct with the given id has been integrated.
@@ -589,10 +600,10 @@ func (s *store) depsArrived(ui updateItem) bool {
 // dependencies have arrived: the ready branch of applyUpdate's drain,
 // extracted so the per-struct integration contract is provable in isolation
 // (mirrors the findIntegrationLeft / integrateCore extractions).
-func (s *store) integrateDecoded(ui updateItem) {
+func (s *store) integrateDecoded(tr *Transaction, ui updateItem) {
 	it := newItem(ui.id, ui.content, ui.originLeftId, ui.originRightId)
 	s.repair(it, ui.parentName)
-	s.Integrate(nil, it)
+	s.Integrate(tr, nil, it)
 }
 
 // applyUpdate integrates a decoded batch of insert structs, in any order and
@@ -626,8 +637,9 @@ func (s *store) integrateDecoded(ui updateItem) {
 //     locking wrapper and the codec-level Doc.ApplyUpdate (codec.go) the
 //     decode rind.
 //
-// Callers hold s.mu.
-func (s *store) applyUpdate(structs []updateItem) {
+// Callers hold s.mu inside the transaction tr, which records every struct
+// this call integrates.
+func (s *store) applyUpdate(tr *Transaction, structs []updateItem) {
 	pending := s.pending
 	for i := 0; i < len(structs); i++ {
 		pending = append(pending, structs[i])
@@ -644,7 +656,7 @@ func (s *store) applyUpdate(structs []updateItem) {
 				continue
 			}
 			if s.depsArrived(ui) {
-				s.integrateDecoded(ui)
+				s.integrateDecoded(tr, ui)
 				progress = true
 			} else if !containsUpdateItemId(rest, ui.id) {
 				rest = append(rest, ui)
