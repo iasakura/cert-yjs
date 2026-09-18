@@ -130,8 +130,8 @@ Lemma wp_Store__wlock (s_loc : loc) (γs : store_names) (γh : history_names) :
     (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Lock" #()
   {{{ RET #(); own_wlock γs ∗
       ∃ (c : ClientId) (h : list Ev) (m : DocModel)
-        (pend : list (TId * IntegrateInput (A := A))),
-        own_store s_loc γs γh c h m pend }}}.
+        (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId),
+        own_store s_loc γs γh c h m pend deleted }}}.
 Proof.
   wp_start_folded as "His". iNamed "His".
   wp_apply (rwmutex.wp_RWMutex__Lock with "[$Hrw]").
@@ -160,8 +160,9 @@ Qed.
     the [own_wlock] clash. *)
 Lemma wp_Store__wunlock (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) :
-  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_wlock γs ∗ own_store s_loc γs γh c h m pend }}}
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
+  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_wlock γs ∗
+      own_store s_loc γs γh c h m pend deleted }}}
     (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Unlock" #()
   {{{ RET #(); True }}}.
 Proof.
@@ -181,7 +182,7 @@ Proof.
     iMod "Hmask" as "_".
     iMod (own_toks_0 γs.(sn_rmax)) as "Htoks0".
     iAssert (store_inv s_loc γs γh) with "[HR]" as "HR".
-    { iApply store_inv_own_store. iExists c, h, m, pend. iFrame "HR". }
+    { iApply store_inv_own_store. iExists c, h, m, pend, deleted. iFrame "HR". }
     iEval (rewrite store_inv_bridge) in "HR".
     iDestruct "HR" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs' p' bind h' m' pend' pdel delete_set) "[Hexcl Hro]".
     iMod (own_update _ _ (to_frac_agree 1 ((locs', p') : leibnizO _)) with "Hfrag") as "Hfrag".

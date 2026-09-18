@@ -11,6 +11,13 @@
       [wire_pass] one sweep over the pending list, [wire_drain(_aux)] the fixed
       point, [WireReplay] the resulting replay relation and [wire_ready_total]
       the readiness gate.
+    - [run_tombstoned_ids] / [runs_tombstoned] / [pool_tombstoned]: the EXACT
+      tombstone state of a run list / of the pool (what [own_store]'s
+      [deleted] denotes), and how a step moves it: a split or an integrate
+      splice keeps it, a flip adds the run's chars, a fresh type adds
+      nothing, a sweep never clears one ([runs_tombstoned_split] /
+      [_integrate] / [_flip], [pool_tombstoned_insert_empty] /
+      [_dead_kept]), read per type by [pool_tombstoned_lookup] / [_insert].
     - [accepted_coh] / [pending_id_set] / [input_accounted]: which delivered
       ids a replica has accounted for, either integrated or still pending. This
       is what the no-loss spec is stated with.
@@ -1775,5 +1782,139 @@ Proof.
   rewrite Hk in Hk'. injection Hk' as <-.
   exact Hdel'.
 Qed.
+
+(* ----- the exact tombstone state (issue #198 Part II, #206 T1) ------------ *)
+
+(** [run_tombstoned_ids r]: the char ids of [r] when it is tombstoned, none
+    when it is live; [runs_tombstoned runs] and [pool_tombstoned p] collect
+    them over a run list and over the whole pool. This is the EXACT tombstone
+    state of a store (the ghost delete set is a lower bound of it), what
+    [own_store]'s [deleted] parameter denotes; a step of the store moves it
+    by the laws below: a split or an integrate splice keeps it
+    ([runs_tombstoned_split] / [runs_tombstoned_integrate]), a flip adds the
+    flipped run's chars ([runs_tombstoned_flip]), a fresh empty type adds
+    nothing ([pool_tombstoned_insert_empty]), and a sweep never clears a
+    tombstone ([pool_tombstoned_dead_kept]). *)
+Definition run_tombstoned_ids (r : ItemRun) : gset YjsId :=
+  if run_deleted r then char_ids (run_items r) else ∅.
+
+Definition runs_tombstoned (runs : list ItemRun) : gset YjsId :=
+  ⋃ (run_tombstoned_ids <$> runs).
+
+Definition pool_tombstoned (p : pool) : gset YjsId :=
+  runs_tombstoned (all_runs p).
+
+Lemma elem_of_runs_tombstoned (runs : list ItemRun) (i : YjsId) :
+  i ∈ runs_tombstoned runs <->
+    ∃ r, r ∈ runs ∧ run_deleted r = true ∧ i ∈ char_ids (run_items r).
+Proof.
+  rewrite /runs_tombstoned elem_of_union_list. split.
+  - move=> [S [HS Hi]]. apply list_elem_of_fmap in HS as (r & -> & Hr).
+    rewrite /run_tombstoned_ids in Hi. destruct (run_deleted r) eqn:Hd; last set_solver.
+    by exists r.
+  - move=> [r [Hr [Hd Hi]]]. exists (run_tombstoned_ids r). split.
+    + apply list_elem_of_fmap. by exists r.
+    + by rewrite /run_tombstoned_ids Hd.
+Qed.
+
+Lemma runs_tombstoned_cons (r : ItemRun) (runs : list ItemRun) :
+  runs_tombstoned (r :: runs) = run_tombstoned_ids r ∪ runs_tombstoned runs.
+Proof. done. Qed.
+
+Lemma runs_tombstoned_app (runs1 runs2 : list ItemRun) :
+  runs_tombstoned (runs1 ++ runs2) = runs_tombstoned runs1 ∪ runs_tombstoned runs2.
+Proof. by rewrite /runs_tombstoned fmap_app union_list_app_L. Qed.
+
+Lemma runs_tombstoned_perm (runs runs' : list ItemRun) :
+  runs ≡ₚ runs' -> runs_tombstoned runs = runs_tombstoned runs'.
+Proof.
+  move=> Hperm. apply set_eq => i. rewrite !elem_of_runs_tombstoned.
+  split; move=> [r [Hr Hrest]]; exists r; (split; [| exact Hrest]).
+  - by rewrite -Hperm.
+  - by rewrite Hperm.
+Qed.
+
+Lemma pool_tombstoned_lookup (p : pool) (parent : loc) (tm : type_model) :
+  p !! parent = Some tm ->
+  pool_tombstoned p = runs_tombstoned (tm_runs tm) ∪ pool_tombstoned (delete parent p).
+Proof.
+  move=> Hp.
+  rewrite /pool_tombstoned (runs_tombstoned_perm _ _ (all_runs_lookup p parent tm Hp)).
+  apply runs_tombstoned_app.
+Qed.
+
+Lemma pool_tombstoned_insert (p : pool) (parent : loc) (tm tm' : type_model) :
+  p !! parent = Some tm ->
+  pool_tombstoned (<[parent := tm']> p) =
+    runs_tombstoned (tm_runs tm') ∪ pool_tombstoned (delete parent p).
+Proof.
+  move=> Hp.
+  rewrite /pool_tombstoned (runs_tombstoned_perm _ _ (all_runs_insert p parent tm tm' Hp)).
+  apply runs_tombstoned_app.
+Qed.
+
+Lemma run_tombstoned_ids_split (r : ItemRun) (o : nat) :
+  run_tombstoned_ids (split_run_left r o) ∪ run_tombstoned_ids (split_run_right r o) =
+    run_tombstoned_ids r.
+Proof.
+  rewrite /run_tombstoned_ids /split_run_left /split_run_right /=.
+  destruct (run_deleted r); last set_solver.
+  by rewrite /char_ids -{3}(take_drop o (run_items r)) fmap_app list_to_set_app_L.
+Qed.
+
+Lemma runs_tombstoned_split (runs : list ItemRun) (k o : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  runs_tombstoned (split_runs runs k o) = runs_tombstoned runs.
+Proof.
+  move=> Hk. rewrite /split_runs Hk -[X in _ = runs_tombstoned X](take_drop_middle runs k r Hk).
+  rewrite !runs_tombstoned_app /= !runs_tombstoned_cons.
+  rewrite -(run_tombstoned_ids_split r o).
+  have -> : runs_tombstoned [] = (∅ : gset YjsId) by done.
+  set_solver.
+Qed.
+
+Lemma runs_tombstoned_integrate (idx : nat) (runs : list ItemRun) (run : list (YjsItem A)) :
+  runs_tombstoned (take idx runs ++ MkItemRun run false :: drop idx runs) = runs_tombstoned runs.
+Proof.
+  rewrite runs_tombstoned_app runs_tombstoned_cons {1}/run_tombstoned_ids /= (left_id_L ∅ (∪)).
+  by rewrite -runs_tombstoned_app take_drop.
+Qed.
+
+Lemma runs_tombstoned_flip (runs : list ItemRun) (k : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  runs_tombstoned (<[k := flip_run r]> runs) = runs_tombstoned runs ∪ char_ids (run_items r).
+Proof.
+  move=> Hk.
+  rewrite insert_take_drop; last by apply lookup_lt_Some in Hk.
+  rewrite -[X in _ = runs_tombstoned X ∪ _](take_drop_middle runs k r Hk).
+  rewrite !runs_tombstoned_app !runs_tombstoned_cons.
+  rewrite {1}/run_tombstoned_ids /flip_run /= /run_tombstoned_ids.
+  destruct (run_deleted r); set_solver.
+Qed.
+
+Lemma pool_tombstoned_insert_empty (p : pool) (parent : loc) :
+  p !! parent = None ->
+  pool_tombstoned (<[parent := MkTypeModel []]> p) = pool_tombstoned p.
+Proof.
+  move=> Hp. apply set_eq => i. rewrite !elem_of_runs_tombstoned.
+  split; move=> [r [Hr Hrest]]; exists r; (split; [| exact Hrest]); move: Hr;
+    rewrite !elem_of_all_runs.
+  - move=> [q [tm [Hq Hr]]]. destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Hq. injection Hq as <-. simpl in Hr. by apply elem_of_nil in Hr.
+    + rewrite lookup_insert_ne // in Hq. by exists q, tm.
+  - move=> [q [tm [Hq Hr]]]. exists q, tm. split; [| done].
+    rewrite lookup_insert_ne //. move=> Heq. subst q. by rewrite Hp in Hq.
+Qed.
+
+Lemma pool_tombstoned_dead_kept (p p' : pool) :
+  dead_kept p p' -> pool_tombstoned p ⊆ pool_tombstoned p'.
+Proof.
+  move=> Hdk i. rewrite !elem_of_runs_tombstoned. move=> [r [Hr [Hd Hi]]].
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hi. destruct Hi as (y & -> & Hy).
+  destruct (Hdk r Hr Hd y Hy) as (r' & Hr' & Hd' & Hy').
+  exists r'. split_and!; [done | done |].
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap. by exists y.
+Qed.
+
 
 End store_model.
