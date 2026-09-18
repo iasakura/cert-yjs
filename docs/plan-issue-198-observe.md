@@ -1,7 +1,11 @@
 # Plan: a verified Text observer, the observe / diff / patch pattern (issue #198)
 
-Status: proposal, 2026-09-13. Nothing implemented; the pure model (O1) and
-the Go (O2) can start independently.
+Status: Part I (sections 0 to 10, proposed 2026-09-13) is done: O1 to O5 are
+merged (main 35193f3, 2026-09-15). Part II (sections 11 to 18, 2026-09-19)
+revises O7 and after into synchronous callbacks at the end of a
+`Doc.Transact` (issue #206, T1 and T4), retiring the pull API Part I built;
+Part I stays as the record of the model, the Go delta and the store
+prerequisite it still relies on.
 
 ## 0. TL;DR
 
@@ -32,9 +36,11 @@ app_synced app observed -> snapshot_grows_to observed current ->
   ∃ app', apply_delta (text_delta observed current) app = Some app' ∧ app_synced app' current
 ```
 
-Pull rather than callback: the callback flavour (y-octo `subscribe`, Yjs
-`observe`) is a goroutine loop over `Poll` plus a spec for the callback, and
-adds nothing to the theorem (section 7, O7).
+Pull first, then the callback: Part I is the pull API, `Poll` and the
+theorem in `apply_delta`; Part II (section 11 onwards) is the callback
+flavour, synchronous at the end of a `Doc.Transact`, whose theorem is that
+the application's view is the document's at every transaction boundary
+(`wp_Mirror__Check`). Part II supersedes the O6 / O7 of section 7.
 
 ## 1. Upstream survey
 
@@ -392,16 +398,11 @@ the ghost set.
   one conjunct fewer), and returns the read API's three facts about
   `current`, so the composition with `wp_Doc__ApplySyncUpdate`'s history
   certificate is by instantiating `h0`.
-- O6 the read-locked `Poll`: the wire delete path grows the ghost set (the
-  `deleteRange.v` milestone), the converse tombstone clause in
-  `store_inv_ro`, `Poll` over `wp_Store__rlock`.
-- O7 (optional) the callback layer: `Text.Subscribe(callback)` as a
-  goroutine loop over `Poll`, with the callback spec
-  `{{{ own_app a ∗ ⌜app_synced a observed⌝ ∗ own_delta sl delta ∗
-  ⌜delta = text_delta observed current⌝ ∗ ⌜snapshot_grows_to observed current⌝ }}}
-  callback sl {{{ own_app a' ∗ ⌜app_synced a' current⌝ }}}` (goose passes
-  function values: `Codec` in `ApplyEncodedUpdate`); it needs a sleep or a
-  wake-up channel and nothing else.
+- O6 (the read-locked `Poll`) and O7 (a callback loop over `Poll`) are
+  superseded by Part II: under a transaction the observer keeps no token
+  between transactions, so the read-locked walk has no purpose, and the
+  callback is not a loop over `Poll` but the end of every transaction
+  (section 11).
 
 O1 and O2 are independent of O3; O4 needs all three.
 
@@ -454,3 +455,587 @@ O1 and O2 are independent of O3; O4 needs all three.
   types (#23 to #27).
 - GC of tombstones (the token's delete set only grows, as y-octo's
   `last_deletes`).
+- Part II adds: nested transactions and reentrant writes from a callback
+  (#206 item 2), provenance (`origin`, `local`, T5), the cleanup after the
+  observers (run merge, gc, the `update` emit, T3), and `Unobserve`.
+
+## 11. Part II: synchronous callbacks at the end of a transaction
+
+Revision of 2026-09-19, after O1 to O5 merged, with two facts in hand: the
+reference base is now Yjs v14, yrs and y-octo (issue #208), and the
+Transaction of issue #206 is the boundary the observer wants.
+
+What changes. The document gets Yjs's write scope, `Doc.Transact(f)`: the
+store's write lock is taken once, `f` makes its writes with the transaction
+handle, and at the end the observers of every type the transaction changed
+are called once, synchronously, with that type's delta. `Text.Observe(cb)`
+registers a callback. The pull API of Part I (`TextObserver`, `Poll`) is
+retired: under a transaction the observer needs no token of its own, since
+the transaction records what it inserted and deleted (Yjs v14's
+`insertSet` and `deleteSet`); `ApplyDelta`, the delta model and the patch
+law stay.
+
+Why callbacks under the lock and not a poll loop: with the callback run
+before the transaction releases the lock, the application's view moves
+whenever the document moves (a remote update applied by `ApplySyncUpdate`
+reaches the application before the next transaction can start), the
+lockstep Yjs gets from its single thread; and the transaction gives the
+same boundary in the write direction: an index read from the application's
+view and the `InsertIn` that uses it happen inside one transaction, so no
+remote callback moves the view in between.
+
+The theorem. Per observer a ghost token `own_observed γo s`, "this observer
+has been told everything up to the snapshot `s`", split in halves between
+the store's lock invariant and the application. The store's half sits at
+the type's current snapshot (the lock invariant), the application's half at
+the snapshot its state was built from (its own invariant), and the callback
+is the only thing that moves either. So inside a transaction, before it
+writes, the application's snapshot is the document's:
+
+```
+wp_Mirror__Check : {{{ is_Mirror m … }}} m.Check() {{{ RET #true; True }}}
+  where Check() = d.Transact(func(tr) { ok = t.StringIn(tr) == m.Text() })
+```
+
+The store holds no application predicate: the callback's contract
+`is_text_callback` is a first-order specification over the ghost token and
+the delta, and the application's state lives under the application's own
+lock.
+
+## 12. References
+
+Cited by implementation and version (issue #208): Yjs v14.0.0-rc.18
+(`~/ghq/github.com/yjs/yjs`, `git show v14.0.0-rc.18:<path>`), yrs 0.27.2
+(`~/ghq/github.com/y-crdt/y-crdt`, commit 03e14a0), y-octo 0.1.0
+(`~/ghq/github.com/y-crdt/y-octo`, commit 0241c52). Every place where the
+three differ is in section 18 and is reported again at the milestone that
+meets it.
+
+**The transaction.** Yjs v14 `src/utils/Transaction.js`: the class (:45)
+and its fields `deleteSet` (:60), `insertSet` (:69), `changed` (:86),
+`_mergeStructs` (:96), `origin` (:100), `meta` (:105), `local` (:110);
+`beforeState` and `afterState` are getters derived from `insertSet` (:136,
+:153), no longer recorded. `transact` (:391): a nested call reuses
+`doc._transaction` (:398), only the outermost runs `cleanupTransactions`
+(:422). yrs `src/transaction.rs`: `TransactionMut` (:445) with
+`before_state`, `after_state`, `merge_blocks`, `delete_set`, `insert_set`,
+`cleanups`, `changed`, `changed_parent_types`, `subdocs`, `origin`, `local`,
+`committed`, `needs_cleanup`; `Doc::transact_mut` takes the store's write
+lock and keeps the guard inside the transaction (`src/transact.rs:131-134`);
+`commit` runs on drop (`src/transaction.rs:488-492`). y-octo has no
+transaction: each operation takes the store's `RwLock` on its own.
+
+**Recording the change.** Yjs `src/structs/Item.js`: `integrate` adds the
+item to `transaction.insertSet` (:270) and its parent to `changed` (:274);
+`delete` adds to `deleteSet` and `changed` (:366-375).
+`addChangedTypeToTransaction` (`src/utils/transaction-helpers.js:211-216`)
+skips a type whose own item was inserted in this transaction; a root type
+(`_item === null`) is always marked. yrs `src/block.rs`: `insert_set`
+(:1085, :1115), `add_changed_type` (:1090), `delete_set` (:635, :864);
+`TransactionMut::add_changed_type` (`src/transaction.rs:1314-1324`) applies
+the same skip through `before_state`.
+
+**Dispatch.** Yjs `cleanupTransactions` (`src/utils/Transaction.js:211`):
+sort the delete set, then for each entry of `changed` call `_callObserver`
+(:231-236), which builds a `YEvent` and calls the type's listeners
+(`src/ytype.js:760-762`, `callTypeObservers` :619-631); merge, gc and the
+`update` emit follow (:266-301). `observe` adds a listener to the type's
+handler `_eH` (`src/ytype.js:779-782`). yrs `commit`
+(`src/transaction.rs:1031-1045`) calls `call_observers` (:978), which
+triggers each changed branch's observers; `Observable::observe`
+(`src/types/mod.rs:299`) registers on the branch. y-octo `DocPublisher`
+(`src/doc/publisher.rs`): a thread wakes every 100 ms (:13, :60), compares
+the state vector and the delete set with `last_update` / `last_deletes`
+(:73-75) and hands the subscribers (an `Arc<RwLock<Vec<_>>>`, :18) an
+encoded diff (:90, :116); `Doc::subscribe` is `src/doc/document.rs:510`.
+
+**The delta.** Yjs v14 `YEvent.getDelta` (`src/utils/YEvent.js:95-123`)
+renders the items in `(insertSet ∖ deleteSet) ∪ (deleteSet ∖ insertSet)`
+through `toDelta` with `retainDeletes`; `adds` and `deletes` are membership
+in the two sets (:70, :82). yrs `TextEvent::get_delta`
+(`src/types/text.rs:1243`, the walk :1315-1340): per item, `txn.has_added`
+gives an insert unless also `has_deleted`, `has_deleted` a delete, a live
+item a retain. y-octo has no positional delta.
+
+**Bindings.** y-codemirror.next `src/y-sync.js` at `main`: the update hook
+forwards editor changes inside `doc.transact(…, this.conf)` and the observer
+skips `tr.origin === this.conf`. Provenance (`origin`, `local`) is #206 T5,
+out of scope here.
+
+## 13. The Go
+
+Files: `yjs/transaction.go` (new: `Transaction`, `store.transact`,
+`Doc.Transact`, `notify`, `textDelta`), `yjs/text.go` (`InsertIn`,
+`DeleteIn`, `StringIn`, `Observe`, the wrappers), `yjs/observe.go` (loses
+`TextObserver`, `NewObserver`, `Poll`), `yjs/store.go` (the `observers`
+field; `tr` on `Integrate` and on the delete path), `yjs/sync.go`,
+`yjs/range.go` (`deletedSet` becomes `idSet`).
+
+```go
+// Transaction is the scope of one write to the document (Yjs v14 Transaction,
+// src/utils/Transaction.js:45; yrs TransactionMut, src/transaction.rs:445;
+// y-octo has none): created by transact under the store's write lock, passed
+// to every write inside, closed by transact, which notifies the observers of
+// the types it changed. Of Yjs's fields this milestone keeps the three the
+// observer reads; merge, gc and the update emit (#206 T3) and origin / local
+// (T5) come later.
+type Transaction struct {
+	insertSet idSet           // ids integrated in this transaction (Yjs transaction.insertSet)
+	deleteSet idSet           // ids tombstoned in this transaction (Yjs transaction.deleteSet)
+	changed   map[*yType]bool // types written in this transaction (Yjs transaction.changed)
+}
+```
+
+`idSet` is `range.go`'s per-client span list (today's `deletedSet`, with
+`Contains` and `addRange`), the shape of Yjs's `IdSet` and yrs's `IdSet`;
+renamed because it now records inserts too.
+
+```go
+// transact runs f as one transaction: lock, f, notify, unlock (Yjs transact,
+// src/utils/Transaction.js:391-422, without the reentrant branch; yrs
+// transact_mut with commit on drop). Go has no goroutine identity, so a
+// nested Transact cannot be recognised and deadlocks (#206 item 2): f, and
+// the callbacks it triggers, use the In-variants and never lock the document.
+func (s *store) transact(f func(tr *Transaction)) {
+	s.mu.Lock()
+	tr := &Transaction{insertSet: newIdSet(), deleteSet: newIdSet(), changed: make(map[*yType]bool)}
+	f(tr)
+	s.notify(tr)
+	s.mu.Unlock()
+}
+
+func (d *Doc) Transact(f func(tr *Transaction)) { d.store.transact(f) }
+```
+
+Recording, at the two mutation points, where Yjs and yrs record:
+`store.Integrate(tr, parent, item)` adds the item's ids to `tr.insertSet`
+and `parent` to `tr.changed` (Item.js:270, :274; block.rs:1085, :1090);
+`deleteNode(tr, item)` adds to `tr.deleteSet` and marks `item.parent`
+(Item.js:366-375; block.rs:635). `tr` is threaded through their callers,
+`integrateDecoded`, `applyUpdate`, `deleteRange` and `applyDeleteSpans`. A
+split (`splitNode`) records nothing: the right half carries ids that were
+already integrated (Yjs pushes it to `_mergeStructs`, T3).
+
+The in-transaction API and the one-write wrappers:
+
+```go
+func (t *Text) InsertIn(tr *Transaction, index uint64, content string) // today's Insert body, s.Integrate(tr, …)
+func (t *Text) DeleteIn(tr *Transaction, index uint64, length uint64)  // today's Delete body, deleteNode(tr, …)
+func (t *Text) StringIn(tr *Transaction) string                        // t.inner.Text()
+
+func (t *Text) Insert(index uint64, content string) {
+	t.store.transact(func(tr *Transaction) { t.InsertIn(tr, index, content) })
+}
+func (t *Text) Delete(index uint64, length uint64) {
+	t.store.transact(func(tr *Transaction) { t.DeleteIn(tr, index, length) })
+}
+func (d *Doc) ApplySyncUpdate(structs []updateItem, deletes []deleteSpan) {
+	d.store.transact(func(tr *Transaction) {
+		d.store.applyUpdate(tr, structs)
+		d.store.applyDeleteSpans(tr, deletes)
+	})
+}
+```
+
+`Insert`, `Delete` and `ApplySyncUpdate` keep their specs. `String`, `Len`
+and `GetOrCreateText` keep taking the lock directly: they change no type's
+snapshot, so they notify nobody. `Doc.applyUpdate` (the codec route) becomes
+a `transact` too.
+
+The observers:
+
+```go
+// store.observers: per type, the callbacks Text.Observe registered (Yjs keeps
+// the list on the type, ytype.js:779; yrs on the branch, types/mod.rs:299;
+// y-octo on the publisher, publisher.rs:18). On the store rather than on the
+// yType so that the pool's type cells, the heaviest proof machinery, keep
+// their shape: reported as a divergence.
+observers map[*yType][]func(delta []DeltaOp)
+
+// Observe registers callback on t (Yjs YType.observe). Under the store lock:
+// one immediate call with the whole visible text as inserts (the initial
+// load a Yjs binding does with toString() before observing, here atomic with
+// the registration), then one call at the end of every transaction that
+// changed t, with that transaction's delta (Yjs YEvent.getDelta). Callbacks
+// run under the store's write lock: a callback must not lock the document
+// again (no Transact, Insert, Delete, ApplySyncUpdate, Observe, String, Len:
+// deadlock) and a lock it takes is ordered after the store's. Not callable
+// inside a transaction, for the same reason.
+func (t *Text) Observe(callback func(delta []DeltaOp)) {
+	s := t.store
+	s.mu.Lock()
+	initial := []DeltaOp{}
+	text := t.inner.Text()
+	if len(text) > 0 {
+		initial = append(initial, DeltaOp{Kind: DeltaInsert, Content: text})
+	}
+	callback(initial)
+	s.observers[t.inner] = append(s.observers[t.inner], callback)
+	s.mu.Unlock()
+}
+
+// notify is the observer half of Yjs cleanupTransactions
+// (Transaction.js:231-236; yrs call_observers, transaction.rs:978): for every
+// type the transaction changed and somebody observes, one walk yields the
+// delta, shared by that type's callbacks. Go map order: the types are
+// notified in no particular order (Yjs: the insertion order of changed).
+func (s *store) notify(tr *Transaction) {
+	for ty := range tr.changed {
+		callbacks := s.observers[ty]
+		if len(callbacks) > 0 {
+			delta := textDelta(ty, tr.insertSet, tr.deleteSet)
+			for i := 0; i < len(callbacks); i++ {
+				callbacks[i](delta)
+			}
+		}
+	}
+}
+
+// textDelta is Yjs YEvent.getDelta for a text (YEvent.js:95-123; yrs
+// TextEvent::get_delta, text.rs:1315-1340): one walk of ty's runs, char by
+// char. An id in insertSet is an insert when live and nothing when already
+// tombstoned; a known char in deleteSet is a delete; a known tombstoned char
+// not in deleteSet was invisible before and after; a known live char is a
+// retain. deltaSnoc merges and the trailing retain is dropped: the merged
+// normal form, text_delta in the model.
+func textDelta(ty *yType, insertSet idSet, deleteSet idSet) []DeltaOp
+```
+
+Poll's walk (Part I, section 2) is this walk with the observer's token in
+place of the transaction's sets; the loop, `deltaSnoc` and the trailing
+retain are reused verbatim.
+
+Tests (`yjs/transaction_test.go`, `yjs/observe_test.go`, `observeapp`), run
+with `-race` locally and in CI: several `InsertIn` / `DeleteIn` in one
+`Transact` reach a callback as one merged delta; `Observe` on a non-empty
+text gets the whole text first; a remote `ApplySyncUpdate` (inserts, delete
+spans, a pending drain) reaches the callback once with the batch's delta;
+editing one text leaves the other text's observers silent; a mirror patched
+by its callback equals the text after every public operation and after a
+random sequence; editors on goroutines racing `Observe` and `Check` (the
+initial delta and the later ones compose); `ApplyDelta`'s tests stay.
+
+## 14. The Iris layer
+
+The exact model. `own_store s γs γh c h m pend deleted` gains the exact set
+of tombstoned ids `deleted` (pinned to the pool's flags, as `m` is pinned to
+its items), so that a type's snapshot is a function of the public model:
+
+```
+type_snapshot m deleted name := (λ x, (x, bool_decide (item_id x ∈ deleted))) <$> doc_model_get m name
+```
+
+the read API's `model`, made exact. The store-internal specs are stated
+over `own_store_state` (the pool explicit) and do not change for this; the
+public method proofs bind one more existential at the lock.
+
+The transaction. The record, `transaction/heap.v`:
+
+```
+own_transaction_changes tr inserted tombstoned changed
+  (* the three fields as sets: gset YjsId, gset YjsId, gset loc *)
+```
+
+threaded through `wp_store__Integrate` (`inserted ∪ run ids`,
+`changed ∪ {parent}`), `wp_deleteNode`, `wp_store__deleteRange`,
+`wp_store__applyDeleteSpans` and `wp_store__applyUpdate` (`changed ∪` the
+parent of every applied input). The public predicate, `store/heap.v`:
+
+```
+own_transaction tr γs γh c h m pend deleted inserted tombstoned changed :=
+  own_transaction_changes tr inserted tombstoned changed_locs ∗
+  own_store s γs γh c h m pend deleted ∗
+  own_observer_registry s γs γh (m ∖ inserted) (deleted ∖ tombstoned) ∗
+  ⌜(m ∖ inserted, deleted ∖ tombstoned) is per-client contiguous⌝ ∗
+  ⌜changed and changed_locs are one set through the type registry⌝
+```
+
+where `m ∖ inserted` drops the items inserted in this transaction and
+`deleted ∖ tombstoned` the tombstones it set: the state at the start of the
+transaction, what the observers were last told (the registry sits there
+until notify). `changed` is what the transaction touched, in type names; a
+type outside it has no id in either set, so its snapshot now is its
+snapshot at the start, the fact that lets notify skip it. The
+in-transaction specs are exact transitions:
+
+```
+wp_Text__InsertIn :
+  {{{ own_transaction tr γs γh c h m pend deleted I T C ∗ is_Text t γs γh name L D }}}
+    t.InsertIn(tr, idx, cs)
+  {{{ L' ins h' k0 originLeft originRight, RET #();
+      own_transaction tr γs γh c h' (<[RootId name := L']> m) pend deleted (I ∪ char_ids ins) T (C ∪ {[name]}) ∗
+      ⌜inserted_run (doc_model_get m name) L' ins cs c k0 originLeft originRight⌝ ∗
+      is_Text t γs γh name L' D ∗
+      ([∗ list] it ∈ ins, is_op_cert γh (RootId name, OpInsert (input_of_item it))) }}}
+
+wp_Text__DeleteIn :
+  … own_transaction … deleted' … T ∪ (deleted' ∖ deleted) … (C ∪ {[name]}) ∗
+  ⌜deleted' = deleted ∪ delete_range_ids (type_snapshot m deleted name) idx len⌝ …
+    (* delete_range_ids: the ids of the visible chars the Go tombstones, the
+       model of findPos plus the split at both ends *)
+
+wp_Text__StringIn :
+  {{{ own_transaction tr γs γh c h m pend deleted I T C ∗ is_Text t γs γh name L D }}}
+    t.StringIn(tr)
+  {{{ RET #(visible_string (type_snapshot m deleted name)); own_transaction tr γs γh c h m pend deleted I T C }}}
+```
+
+and the transaction wrapper is higher-order in `f`, as `wp_Once__Do` is:
+
+```
+wp_store__transact (f : func.t) (Q : ClientId → list Ev → DocModel → list Input → gset YjsId → iProp Σ) :
+  {{{ is_Store s γs γh ∗
+      (∀ tr c h m pend deleted,
+         {{{ own_transaction tr γs γh c h m pend deleted ∅ ∅ ∅ }}}
+           #f #tr
+         {{{ h' m' pend' deleted' I T C, RET #();
+             own_transaction tr γs γh c h' m' pend' deleted' I T C ∗ Q c h' m' pend' deleted' }}}) }}}
+    s.transact(f)
+  {{{ RET #(); ∃ c h' m' pend' deleted', Q c h' m' pend' deleted' }}}
+```
+
+`wp_Doc__Transact` is the same over `is_Doc`; `wp_Text__Insert` and the
+other wrappers are proven by instantiating `f` with the closure and `Q`
+with today's postcondition, so the public specs do not change.
+
+The observers. Per observer a ghost token, `own_observed γo s :=
+ghost_var γo (1/2) s`: the store's half in the lock invariant, the
+application's half wherever it keeps its state. The callback's contract, a
+first-order persistent specification:
+
+```
+is_text_snapshot γs γh name s :=
+  ∃ parent c h,
+    is_type_binding γs.(sn_types) name parent ∗ is_type_lb γs.(sn_seq) parent (list_to_set s.*1) ∗
+    is_store_client γs c ∗ is_history_lb γh c h ∗ is_delete_set_lb γs (snapshot_deleted_ids s) ∗
+    ⌜YjsArrInvariant s.*1⌝ ∗ ⌜history_reflected h name s⌝
+  (* what String / Poll say about a snapshot, minted by the writer at call time; persistent *)
+
+is_text_callback γs γh name cb γo :=
+  □ ∀ sl dq observed current,
+    {{{ own_observed γo observed ∗ own_delta sl dq (text_delta observed current) ∗
+        ⌜snapshot_grows_to observed current⌝ ∗ is_text_snapshot γs γh name current }}}
+      #cb #sl
+    {{{ RET #(); own_observed γo current ∗ own_delta sl dq (text_delta observed current) }}}
+
+wp_Text__Observe :
+  {{{ is_Text t γs γh name L D ∗ is_text_callback γs γh name cb γo ∗ own_observed γo [] }}}
+    t.Observe(cb)
+  {{{ RET #(); is_text_observed γs name γo }}}
+```
+
+`is_text_observed γs name γo` is the persistent registration witness ("γo is
+one of name's observers": a `□` element of a ghost map `γs.(sn_observers)`
+whose authority the registry holds). It is what lets a transaction read the
+registry's half without opening it:
+
+```
+own_transaction_observed_agree :
+  own_transaction tr γs γh c h m pend deleted I T C -∗ is_text_observed γs name γo -∗ own_observed γo s -∗
+    ⌜name ∉ C -> s = type_snapshot m deleted name⌝ ∗ own_transaction tr γs γh c h m pend deleted I T C ∗ own_observed γo s
+```
+
+The lock invariant clause, `store/heap.v`, in `store_inv_excl` at the
+current `(m, deleted)`:
+
+```
+own_observer_registry s γs γh m deleted :=
+  ∃ observers,
+    s.[store, "observers"] ↦ mref ∗ own_map mref (DfracOwn 1) observers ∗
+    ghost_map_auth γs.(sn_observers) 1 (the γo of every entry, keyed to its type) ∗
+    [∗ map] parent ↦ cbs_sl ∈ observers, ∃ name cbs γos,
+      is_type_binding γs.(sn_types) name parent ∗ own_slice cbs_sl (DfracOwn 1) cbs ∗
+      [∗ list] (cb, γo) ∈ zip cbs γos,
+        is_text_callback γs γh name cb γo ∗ own_observed γo (type_snapshot m deleted name)
+```
+
+Every registered observer has been told everything up to the type's current
+snapshot: the lockstep invariant, in one clause. Its `□` WPs are not
+timeless, so it leaves `wp_Store__wlock` under a `▷` (stripped by the next
+program step, `wp_auto_lc`), while the rest of `store_inv` keeps the
+`tie_body` timeless trick as it is; `wp_Store__wunlock` takes the registry
+at the new `(m, deleted)`, `rlock` and `runlock` pass it through, readers
+never touch it.
+
+`wp_store__transact`'s proof: lock; strip the `▷`; build `own_transaction`
+at the start state; run `f`; notify: iterate `changed` (`wp_map_for_range`),
+and for a type with callbacks run `wp_textDelta` (over `own_store` whole and
+the two id sets: `own_delta sl (DfracOwn 1) (text_delta before now)` with
+`before = type_snapshot (m' ∖ I) (deleted' ∖ T) name` and
+`now = type_snapshot m' deleted' name`, `snapshot_grows_to before now` from
+the contiguity clause), mint `is_text_snapshot γs γh name now`, and call
+each callback with the entry's half, which comes back at `now`; a changed
+type without callbacks and an unchanged type need nothing; close the
+registry at `(m', deleted')`; unlock. The model laws this needs
+(`textobserver/model.v`): `snapshot_before` (the filter by the two sets),
+`delta_step` characterised by membership in them,
+`snapshot_grows_to (snapshot_before …) …` from contiguity, and
+`text_delta_from_empty` for `Observe`'s initial call.
+
+Layering. `textobserver/{model,value,heap}.v` mention nothing of the store
+and move below it in the Require order (`… history -> textobserver -> store
+-> text -> doc`); `textobserver/heap.v` keeps `own_delta` and the id-set
+predicate (`own_deleted_spans`, renamed `own_id_set`), `own_TextObserver`
+goes with the pull API, `ApplyDelta.v` and `wp_deltaSnoc` stay. The observer
+predicates above are conjuncts of the lock body and are defined in
+`store/heap.v` next to it; they cannot mention `is_Text` (it contains
+`is_Store`, whose invariant would contain them: a cycle), so
+`is_text_snapshot` is stated over the store witnesses that `is_Text`
+projects to. The transaction record is `transaction/heap.v` (below the
+store: it is what the store specs mark); `own_transaction` and
+`wp_store__transact` are the store's (`store/heap.v`, `store/transact.v`),
+the walk `wp_textDelta` is `store/wp_private.v`, `wp_Doc__Transact` is
+`doc/Transact.v`, the In-methods and `Observe` are `text/`. The adequacy
+theorem (`ws_server_dist_adequate`) gains the `ghost_var` and `ghost_map`
+functors.
+
+## 15. The demo and the final theorem
+
+`observeapp`, with Part I's `Mirror` replaced:
+
+```go
+type Mirror struct {
+	mu   sync.Mutex
+	doc  *yjs.Doc
+	text *yjs.Text
+	view string
+}
+
+func NewMirror(d *yjs.Doc, t *yjs.Text) *Mirror // registers the callback; the initial call fills view
+//   the callback: m.mu.Lock(); view, ok := yjs.ApplyDelta(m.view, delta); if ok { m.view = view }; m.mu.Unlock()
+func (m *Mirror) Text() string  // m.mu.Lock(); v := m.view; m.mu.Unlock(); return v
+func (m *Mirror) Check() bool   // m.doc.Transact(func(tr) { ok = m.text.StringIn(tr) == m.Text() })
+```
+
+```
+is_Mirror m d t γs γh name γo :=
+  is_Doc d s_loc γs γh ∗ is_Text t γs γh name [] ∅ ∗ is_text_observed γs name γo ∗
+  is_Mutex (m.[Mirror, "mu"]) (∃ s, m.[Mirror, "view"] ↦ visible_string s ∗ own_observed γo s ∗ is_text_snapshot γs γh name s)
+
+wp_NewMirror :
+  {{{ is_Doc d s_loc γs γh ∗ is_Text t γs γh name L D }}} NewMirror(d, t) {{{ m γo, RET #m; is_Mirror m d t γs γh name γo }}}
+wp_Mirror__Text :
+  {{{ is_Mirror m d t γs γh name γo }}} m.Text() {{{ s, RET #(visible_string s); is_text_snapshot γs γh name s }}}
+wp_Mirror__Check :
+  {{{ is_Mirror m d t γs γh name γo }}} m.Check() {{{ RET #true; True }}}
+```
+
+`NewMirror` allocates `γo` with both halves at `[]` (the mirror is `""`,
+which is `visible_string []`), proves the closure meets `is_text_callback`
+(lock the mirror, agree the halves, `apply_text_delta` gives `ApplyDelta`'s
+premise, move both halves to `current`, unlock with the snapshot handed in)
+and calls `Observe`. `Check`'s closure: `StringIn` is exact, `Text` returns
+the mirror's snapshot with its half, and `own_transaction_observed_agree`
+with `C = ∅` makes the two snapshots one. Not provable and not needed:
+`m.Text() == t.String()` from outside a transaction (the handles are
+monotone, and a remote update may land between the two reads).
+
+## 16. Milestones
+
+Stacked PRs, each green under `./build.sh` and `go test -race`, each
+described as what, why and how with the spec and invariant changes before
+and after; merged only on explicit instruction.
+
+- C1 the transaction. Go: `Transaction`, `idSet`, `transact` / `Transact`
+  (no observers yet), `tr` threaded, `InsertIn` / `DeleteIn` / `StringIn`,
+  the wrappers, `Doc.applyUpdate`; tests. Proofs: `own_store` gains
+  `deleted`, `own_transaction_changes` through the store specs,
+  `own_transaction`, `wp_store__transact` (notify empty), the In-specs, the
+  wrappers over `transact` with the public specs unchanged,
+  `wp_Doc__Transact`. About four days.
+- C2 the observers. Go: `store.observers`, `Observe`, `notify`,
+  `textDelta`, the pull API removed with its tests folded into the callback
+  tests; tests with `-race`. Proofs: `textobserver` below the store, the
+  observer predicates and the lock clause with the `▷` handling in the lock
+  lemmas, `wp_textDelta`, notify in `wp_store__transact`,
+  `wp_Text__Observe`, `is_text_observed`, `own_transaction_observed_agree`.
+  About five days.
+- C3 the application. `observeapp`'s `Mirror` (callback, mutex, `Check`),
+  `wp_NewMirror`, `wp_Mirror__Text`, `wp_Mirror__Check`, the adequacy
+  functors. About two days.
+
+Issue #206: T1 (the transaction) and T4 (the observer over it) are this
+plan; T2 (`own_transaction` and the rethreaded write path) is C1's proof
+half; T3 (merge, gc, the `update` emit) and T5 (provenance) come after and
+are out of scope here.
+
+## 17. Decisions and open points
+
+Decided, with the rejected alternatives:
+
+- Synchronous callbacks at the end of the transaction, not a goroutine loop
+  over `Poll` (Part I's O7): the loop is asynchronous, so nothing ties the
+  application's view to the document's, and it is throwaway under #206.
+- The observer's token is the transaction's record (`insertSet` and
+  `deleteSet`, Yjs v14), not a per-type snapshot token kept between
+  transactions (v13's `beforeState`, rendered per type) and not the pull
+  observer's state vector: the transaction knows exactly what it did, the
+  proof carries no certificate across a lock gap, and `changed` says which
+  types to walk.
+- The pull API goes: with the transaction the callback is the API, y-octo's
+  polling publisher is the only reference for a pull, and keeping
+  `TextObserver` would keep a second walk, its certificates and a heap
+  layer above the store for no theorem. `ApplyDelta`, the delta model and
+  the patch law stay.
+- A ghost token per observer and no application predicate in the store: the
+  store's invariant says what every observer was told, the application's
+  says what it did with it, and they meet in the callback. A single-writer
+  "writer token" is subsumed by `own_transaction`; observer-relative writes
+  (Yjs `RelativePosition` on inserts) are unnecessary once writes live in
+  transactions.
+- `changed` recorded at `Integrate` and `deleteNode` (the Yjs and yrs
+  points), not at the In-methods: `ApplySyncUpdate` then marks exactly the
+  types the batch touched. The alternative, walk every observed type at
+  every transaction end and call when the snapshot moved, needs no marking
+  and is observationally the same, but costs a walk of every observed type
+  per transaction; and T3 threads `tr` through the same functions anyway.
+- The registry in the store's lock invariant (the store lock protects it in
+  Go, as the document lock does in Yjs and yrs), at the cost of a
+  non-timeless lock body and of the observer predicates living in
+  `store/heap.v`. The alternative, a second Go mutex for the registry
+  (y-octo's `RwLock<Vec<_>>`) with a ghost map linking its snapshots to the
+  store's, keeps the store layer ignorant of observers but adds a lock to
+  the Go and two ghost structures to the proof.
+- `Observe` takes the lock itself and is not callable inside a transaction:
+  a registration mid-transaction would be at the transaction's current
+  state while the registry entry must be at its start state.
+
+To confirm in the plan PR (names spelled out; the defaults are what the
+code will use unless told otherwise):
+
+1. `InsertIn(tr, index, content)`, `DeleteIn(tr, index, length)` and
+   `StringIn(tr)` for the in-transaction variants; alternatives
+   `InsertWith(tr, …)`, or methods on the transaction, `tr.Insert(t, …)`.
+   yrs puts the transaction first (`text.insert(&mut txn, index, chunk)`),
+   Yjs keeps it implicit; the public one-write `Insert` keeps its name and
+   spec, so the variant needs a suffix.
+2. `Transaction`, `Doc.Transact(f)`, `store.transact(f)`,
+   `Text.Observe(callback)`, `store.observers`, `notify`, `textDelta`,
+   `idSet` (today's `deletedSet`).
+3. The callback signature `func(delta []DeltaOp)`: the event's payload
+   only, no transaction handle (Yjs passes `(event, transaction)`, yrs
+   `(&TransactionMut, &TextEvent)`), since a callback must not write until
+   reentrancy is designed (#206 item 2).
+4. The pull API's removal (C2), and the name of the `textobserver/`
+   directory, which afterwards holds the delta type and the observation
+   model.
+5. `Mirror`'s API: `NewMirror(d, t)`, `Text()`, `Check()`.
+
+## 18. Faithfulness notes: the three-way differences
+
+Reported here, again in each PR that meets them, and in a comment at the
+divergence in the Go.
+
+| where | Yjs v14.0.0-rc.18 | yrs 0.27.2 | y-octo 0.1.0 | the Go |
+|---|---|---|---|---|
+| the transaction | `Transaction` with `insertSet`, `deleteSet`, `changed`, `_mergeStructs`, `origin`, `meta`, `local`, subdocs (Transaction.js:45-110) | `TransactionMut`, the same plus the `before_state` / `after_state` caches, `cleanups`, `committed`, `needs_cleanup` (transaction.rs:445-468) | none: each op locks the store | `insertSet`, `deleteSet`, `changed`; the rest at T3 / T5 |
+| the scope | `transact` reentrant through `doc._transaction`, cleanup on the outermost (Transaction.js:391-422) | `transact_mut` holds the store's write guard, `commit` on drop (transact.rs:131, transaction.rs:488) | n/a | `transact`: lock, `f`, notify, unlock; no reentrancy, `tr` explicit (#206 item 2) |
+| the in-transaction write API | implicit transaction (`ytext.insert(index, text)`) | transaction first (`text.insert(&mut txn, index, chunk)`) | `text.insert(index, str)`, locks inside | `t.InsertIn(tr, index, content)` and the one-write wrappers |
+| recording | `Item.integrate` / `Item.delete` (Item.js:270-274, :366-375); a type inserted in this transaction is not marked (transaction-helpers.js:211) | block.rs:1085-1090, :635; the same skip via `before_state` (transaction.rs:1314) | n/a | `Integrate` / `deleteNode`; only root types exist, always marked |
+| dispatch | the end of `cleanupTransactions`, before merge and gc (Transaction.js:211-301) | `commit`, then `call_observers` (transaction.rs:1031, :978) | a thread every 100 ms with an encoded diff (publisher.rs:13-116) | the end of `transact`, synchronous, under the lock |
+| the registry | on the type (`_eH`, ytype.js:779) | on the branch (types/mod.rs:299) | on the publisher, `RwLock<Vec<_>>` (publisher.rs:18) | `store.observers` keyed by type: the pool's type cells keep their shape |
+| the delta | `getDelta` over `insertSet` / `deleteSet` through `toDelta` (YEvent.js:95-123) | the `get_delta` walk with `has_added` / `has_deleted` (text.rs:1315-1340) | none (no positional observe) | `textDelta`: the same walk per char, verified as `text_delta before now` |
+| the callback | `(event, transaction)` | `(&TransactionMut, &TextEvent)` | `(&[u8], &[History])` | `func(delta []DeltaOp)` |
+| the initial load | the binding reads `toString()` then observes; atomic by the single thread | the same | n/a | `Observe` calls back with the whole text, under the lock |
+| the order of notification | the insertion order of `changed` (a `Map`) | `HashMap` order | n/a | Go map order |
+| cleanup after the observers | merge (`tryToMergeWithLefts`), gc, the `update` emit (Transaction.js:266-301) | the same, in `commit` | n/a | none (T3) |
