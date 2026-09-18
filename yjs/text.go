@@ -76,9 +76,10 @@ func (t *Text) Insert(index uint64, content string) {
 // same right origin, matching how Yjs splits a run (y-octo:
 // ListType::insert_after via store::create_item + integrate). The transaction
 // holds the store's write lock; each character's id comes from the store's
-// local clock counter, and every integrated char is recorded in tr.
+// local clock counter, read through tr (yrs reaches the store through the
+// transaction the same way), and every integrated char is recorded in tr.
 func (t *Text) InsertIn(tr *Transaction, index uint64, content string) {
-	s := t.store
+	s := tr.store
 	if index > t.inner.len {
 		return
 	}
@@ -152,15 +153,15 @@ func (t *Text) Delete(index uint64, length uint64) {
 // store::delete_item, splitting at both range boundaries when they land
 // inside a run). Tombstoning keeps the items in the list and the document
 // order, so it preserves the integrate invariant -- only visibility changes.
-// The transaction holds the store's write lock and records every tombstoned
-// node.
+// The transaction holds the store's write lock, reached through tr, and
+// records every tombstoned node.
 //
 // The Deleted flag is the source of truth for visibility; the store's DeleteSet
 // (a serialization cache, y-octo derives it from the flags in generate_delete_set)
 // is regenerated at encode time (codec.go: generateDeleteSet), so DeleteIn only
 // flips flags and shrinks the visible length.
 func (t *Text) DeleteIn(tr *Transaction, index uint64, length uint64) {
-	s := t.store
+	s := tr.store
 	// Normalize the range start (split [left] when the index lands inside a
 	// run), then tombstone forward, splitting once more when the budget ends
 	// inside a run (y-octo: ListType::remove_after; both splits are dead code

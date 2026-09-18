@@ -31,8 +31,14 @@ package yjs
 // The value is the proof of being inside the transaction: Go has no
 // goroutine identity, so Yjs's doc._transaction reentrancy check
 // (Transaction.js:398) has no counterpart, and the internal API takes tr
-// explicitly, as Yjs's internals and yrs do (#206, item 2).
+// explicitly, as Yjs's internals and yrs do (#206, item 2). It carries the
+// store it is a transaction of (Yjs transaction.doc, Transaction.js:56; yrs
+// TransactionMut.store, the write guard itself): a write inside the
+// transaction reaches the store's clock and run lists through tr, and the
+// type it edits through its Text handle. Nothing checks that the two belong
+// to the same document (Yjs and yrs do not either).
 type Transaction struct {
+	store     *store
 	insertSet []idSpan
 	deleteSet []idSpan
 	changed   map[*yType]bool
@@ -65,7 +71,7 @@ func (tr *Transaction) recordDelete(it *item) {
 // unlock once they exist (issue #198, Part II C2).
 func (s *store) transact(f func(tr *Transaction)) {
 	s.mu.Lock()
-	tr := newTransaction()
+	tr := newTransaction(s)
 	f(tr)
 	s.mu.Unlock()
 }
@@ -74,8 +80,8 @@ func (s *store) transact(f func(tr *Transaction)) {
 // constructor, src/utils/Transaction.js:51). Only transact opens one; the
 // tests call the store's internals with a fresh record where a transaction
 // would have handed theirs.
-func newTransaction() *Transaction {
-	return &Transaction{insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool)}
+func newTransaction(s *store) *Transaction {
+	return &Transaction{store: s, insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool)}
 }
 
 // Transact runs f as one transaction on the document (Yjs doc.transact,
