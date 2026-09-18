@@ -3,9 +3,9 @@
 Status: Part I (sections 0 to 10, proposed 2026-09-13) is done: O1 to O5 are
 merged (main 35193f3, 2026-09-15). Part II (sections 11 to 18, 2026-09-19)
 revises O7 and after into synchronous callbacks at the end of a
-`Doc.Transact` (issue #206, T1 and T4), retiring the pull API Part I built;
-Part I stays as the record of the model, the Go delta and the store
-prerequisite it still relies on.
+`Doc.Transact` (issue #206, T1 and T4). Part I's pull API stays as it is;
+Part I is the record of the model, the Go delta and the store prerequisite
+that both APIs rely on.
 
 ## 0. TL;DR
 
@@ -469,11 +469,12 @@ What changes. The document gets Yjs's write scope, `Doc.Transact(f)`: the
 store's write lock is taken once, `f` makes its writes with the transaction
 handle, and at the end the observers of every type the transaction changed
 are called once, synchronously, with that type's delta. `Text.Observe(cb)`
-registers a callback. The pull API of Part I (`TextObserver`, `Poll`) is
-retired: under a transaction the observer needs no token of its own, since
-the transaction records what it inserted and deleted (Yjs v14's
-`insertSet` and `deleteSet`); `ApplyDelta`, the delta model and the patch
-law stay.
+registers a callback. The callback needs no token of its own: the
+transaction records what it inserted and deleted (Yjs v14's `insertSet` and
+`deleteSet`), and the walk classifies against those. The pull API of Part I
+(`TextObserver`, `Poll`) stays as it is, a read under the write lock with a
+token per observer; `ApplyDelta`, the delta model and the patch law are
+shared by both.
 
 Why callbacks under the lock and not a poll loop: with the callback run
 before the transaction releases the lock, the application's view moves
@@ -566,10 +567,9 @@ out of scope here.
 
 Files: `yjs/transaction.go` (new: `Transaction`, `store.transact`,
 `Doc.Transact`, `notify`, `textDelta`), `yjs/text.go` (`InsertIn`,
-`DeleteIn`, `StringIn`, `Observe`, the wrappers), `yjs/observe.go` (loses
-`TextObserver`, `NewObserver`, `Poll`), `yjs/store.go` (the `observers`
-field; `tr` on `Integrate` and on the delete path), `yjs/sync.go`,
-`yjs/range.go` (`deletedSet` becomes `idSet`).
+`DeleteIn`, `StringIn`, `Observe`, the wrappers), `yjs/observe.go`
+(`textDelta`, next to `Poll`'s walk), `yjs/store.go` (the `observers` field;
+`tr` on `Integrate` and on the delete path), `yjs/sync.go`.
 
 ```go
 // Transaction is the scope of one write to the document (Yjs v14 Transaction,
@@ -580,15 +580,17 @@ field; `tr` on `Integrate` and on the delete path), `yjs/sync.go`,
 // observer reads; merge, gc and the update emit (#206 T3) and origin / local
 // (T5) come later.
 type Transaction struct {
-	insertSet idSet           // ids integrated in this transaction (Yjs transaction.insertSet)
-	deleteSet idSet           // ids tombstoned in this transaction (Yjs transaction.deleteSet)
+	insertSet []idSpan        // ids integrated in this transaction (Yjs transaction.insertSet)
+	deleteSet []idSpan        // ids tombstoned in this transaction (Yjs transaction.deleteSet)
 	changed   map[*yType]bool // types written in this transaction (Yjs transaction.changed)
 }
 ```
 
-`idSet` is `range.go`'s per-client span list (today's `deletedSet`, with
-`Contains` and `addRange`), the shape of Yjs's `IdSet` and yrs's `IdSet`;
-renamed because it now records inserts too.
+The two sets are `store.go`'s `[]idSpan` with `containsId` (a head id and a
+length per span, the shape `scanConflicts` keeps its candidate sets in);
+Yjs's `IdSet` and yrs's `IdSet` keep per-client sorted ranges, a difference
+reported. `range.go`'s `deletedSet` is the serialization cache of the codec
+and is not touched.
 
 ```go
 // transact runs f as one transaction: lock, f, notify, unlock (Yjs transact,
@@ -598,7 +600,7 @@ renamed because it now records inserts too.
 // the callbacks it triggers, use the In-variants and never lock the document.
 func (s *store) transact(f func(tr *Transaction)) {
 	s.mu.Lock()
-	tr := &Transaction{insertSet: newIdSet(), deleteSet: newIdSet(), changed: make(map[*yType]bool)}
+	tr := &Transaction{changed: make(map[*yType]bool)}
 	f(tr)
 	s.notify(tr)
 	s.mu.Unlock()
@@ -698,12 +700,14 @@ func (s *store) notify(tr *Transaction) {
 // not in deleteSet was invisible before and after; a known live char is a
 // retain. deltaSnoc merges and the trailing retain is dropped: the merged
 // normal form, text_delta in the model.
-func textDelta(ty *yType, insertSet idSet, deleteSet idSet) []DeltaOp
+func textDelta(ty *yType, insertSet []idSpan, deleteSet []idSpan) []DeltaOp
 ```
 
 Poll's walk (Part I, section 2) is this walk with the observer's token in
 place of the transaction's sets; the loop, `deltaSnoc` and the trailing
-retain are reused verbatim.
+retain are shared. `Poll` itself does not change: it takes the write lock,
+walks with its own token and unlocks, changing no type's snapshot, so it
+notifies nobody.
 
 Tests (`yjs/transaction_test.go`, `yjs/observe_test.go`, `observeapp`), run
 with `-race` locally and in CI: several `InsertIn` / `DeleteIn` in one
@@ -713,7 +717,8 @@ spans, a pending drain) reaches the callback once with the batch's delta;
 editing one text leaves the other text's observers silent; a mirror patched
 by its callback equals the text after every public operation and after a
 random sequence; editors on goroutines racing `Observe` and `Check` (the
-initial delta and the later ones compose); `ApplyDelta`'s tests stay.
+initial delta and the later ones compose); `Poll`'s and `ApplyDelta`'s
+tests stay.
 
 ## 14. The Iris layer
 
@@ -733,7 +738,9 @@ The transaction. The record, `transaction/heap.v`:
 
 ```
 own_transaction_changes tr inserted tombstoned changed
-  (* the three fields as sets: gset YjsId, gset YjsId, gset loc *)
+  (* the three fields as sets: gset YjsId, gset YjsId, gset loc; the two
+     span slices through the union of their spans, as own_delete_ids reads
+     a []idSpan *)
 ```
 
 threaded through `wp_store__Integrate` (`inserted ∪ run ids`,
@@ -872,22 +879,30 @@ registry at `(m', deleted')`; unlock. The model laws this needs
 `snapshot_grows_to (snapshot_before …) …` from contiguity, and
 `text_delta_from_empty` for `Observe`'s initial call.
 
-Layering. `textobserver/{model,value,heap}.v` mention nothing of the store
-and move below it in the Require order (`… history -> textobserver -> store
--> text -> doc`); `textobserver/heap.v` keeps `own_delta` and the id-set
-predicate (`own_deleted_spans`, renamed `own_id_set`), `own_TextObserver`
-goes with the pull API, `ApplyDelta.v` and `wp_deltaSnoc` stay. The observer
-predicates above are conjuncts of the lock body and are defined in
-`store/heap.v` next to it; they cannot mention `is_Text` (it contains
+Layering. The observer predicates above are conjuncts of the lock body, so
+they are defined in `store/heap.v` next to it, and everything they mention
+must sit below the store. They cannot mention `is_Text` (it contains
 `is_Store`, whose invariant would contain them: a cycle), so
 `is_text_snapshot` is stated over the store witnesses that `is_Text`
-projects to. The transaction record is `transaction/heap.v` (below the
-store: it is what the store specs mark); `own_transaction` and
-`wp_store__transact` are the store's (`store/heap.v`, `store/transact.v`),
-the walk `wp_textDelta` is `store/wp_private.v`, `wp_Doc__Transact` is
-`doc/Transact.v`, the In-methods and `Observe` are `text/`. The adequacy
-theorem (`ws_server_dist_adequate`) gains the `ghost_var` and `ghost_map`
-functors.
+projects to; the application pairs it with its own `is_Text`, so nothing is
+lost. They mention `own_delta`, `text_delta` and `snapshot_grows_to`, which
+today live in `textobserver/` above the store: the delta gets its own type
+directory below the store, `delta/{model,value,heap,ApplyDelta,wp_private}.v`
+(`DeltaOp`, `apply_delta`, `text_delta`, `snapshot_grows_to`, the per-char
+classification laws, `delta_op_denotes`, `own_delta`, `wp_ApplyDelta`,
+`wp_deltaSnoc`), and `textobserver/` keeps the pull observer above `text`
+(its token model `snapshot_state_vector` / `snapshot_deleted_ids`,
+`own_deleted_spans`, `own_TextObserver`, `NewObserver.v`, `Poll.v`). The
+Require order becomes `… history -> delta -> store -> text -> textobserver
+-> doc`, recorded in CLAUDE.md's Proof layout in the PR that moves the
+files. The transaction record is `transaction/heap.v` (below the store: it
+is what the store specs mark); `own_transaction` and `wp_store__transact`
+are the store's (`store/heap.v`, `store/transact.v`), the walk
+`wp_textDelta` is `store/wp_private.v`, `wp_Doc__Transact` is
+`doc/Transact.v`, the In-methods and `Observe` are `text/`. `Poll.v`'s lock
+prologue binds `own_store`'s new `deleted` and passes the registry through,
+nothing else. The adequacy theorem (`ws_server_dist_adequate`) gains the
+`ghost_var` and `ghost_map` functors.
 
 ## 15. The demo and the final theorem
 
@@ -944,12 +959,11 @@ and after; merged only on explicit instruction.
   wrappers over `transact` with the public specs unchanged,
   `wp_Doc__Transact`. About four days.
 - C2 the observers. Go: `store.observers`, `Observe`, `notify`,
-  `textDelta`, the pull API removed with its tests folded into the callback
-  tests; tests with `-race`. Proofs: `textobserver` below the store, the
-  observer predicates and the lock clause with the `▷` handling in the lock
-  lemmas, `wp_textDelta`, notify in `wp_store__transact`,
-  `wp_Text__Observe`, `is_text_observed`, `own_transaction_observed_agree`.
-  About five days.
+  `textDelta`; tests with `-race`. Proofs: the `delta/` directory below the
+  store (a file move), the observer predicates and the lock clause with the
+  `▷` handling in the lock lemmas, `wp_textDelta`, notify in
+  `wp_store__transact`, `wp_Text__Observe`, `is_text_observed`,
+  `own_transaction_observed_agree`. About five days.
 - C3 the application. `observeapp`'s `Mirror` (callback, mutex, `Check`),
   `wp_NewMirror`, `wp_Mirror__Text`, `wp_Mirror__Check`, the adequacy
   functors. About two days.
@@ -972,11 +986,15 @@ Decided, with the rejected alternatives:
   observer's state vector: the transaction knows exactly what it did, the
   proof carries no certificate across a lock gap, and `changed` says which
   types to walk.
-- The pull API goes: with the transaction the callback is the API, y-octo's
-  polling publisher is the only reference for a pull, and keeping
-  `TextObserver` would keep a second walk, its certificates and a heap
-  layer above the store for no theorem. `ApplyDelta`, the delta model and
-  the patch law stay.
+- The pull API stays. Its token is per observer (the state vector and
+  deleted spans of that observer's last `Poll`), not a per-type token kept
+  between transactions, so the v14 argument does not touch it: `Poll` is a
+  read that notifies nobody and its proof only binds `own_store`'s new
+  parameter. It is verified and merged, y-octo's polling publisher is its
+  reference, and an application that receives updates but applies them at
+  its own sync points is a use for it. Removing it (with `Poll.v` and
+  `wp_Mirror__Sync`) would save a second walk and the `delta/` split's
+  counterpart above the store, and is offered as an option, not taken.
 - A ghost token per observer and no application predicate in the store: the
   store's invariant says what every observer was told, the application's
   says what it did with it, and they meet in the callback. A single-writer
@@ -1016,9 +1034,8 @@ code will use unless told otherwise):
    only, no transaction handle (Yjs passes `(event, transaction)`, yrs
    `(&TransactionMut, &TextEvent)`), since a callback must not write until
    reentrancy is designed (#206 item 2).
-4. The pull API's removal (C2), and the name of the `textobserver/`
-   directory, which afterwards holds the delta type and the observation
-   model.
+4. Keeping the pull API (the default) or removing it, and the `delta/`
+   directory below the store for what both APIs share.
 5. `Mirror`'s API: `NewMirror(d, t)`, `Text()`, `Check()`.
 
 ## 18. Faithfulness notes: the three-way differences
