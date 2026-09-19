@@ -18,7 +18,7 @@ func TestApplyDeleteSpansBuffersUncovered(t *testing.T) {
 	// B hears the delete of "bc" BEFORE the inserts arrive: nothing to
 	// tombstone, so the span is buffered.
 	docB.store.mu.Lock()
-	docB.store.applyDeleteSpans([]deleteSpan{{client: 1, clock: 1, length: 2}})
+	docB.store.applyDeleteSpans(newTransaction(docB.store), []deleteSpan{{client: 1, clock: 1, length: 2}})
 	buffered := len(docB.store.pendingDeletes)
 	docB.store.mu.Unlock()
 	if buffered != 1 {
@@ -28,7 +28,7 @@ func TestApplyDeleteSpansBuffersUncovered(t *testing.T) {
 	// now the inserts arrive; the drain re-applies the buffered span.
 	docB.ApplySyncUpdate(structsOf(docA, "root"), nil)
 	docB.store.mu.Lock()
-	docB.store.applyDeleteSpans(nil)
+	docB.store.applyDeleteSpans(newTransaction(docB.store), nil)
 	left := len(docB.store.pendingDeletes)
 	docB.store.mu.Unlock()
 
@@ -53,7 +53,7 @@ func TestApplyDeleteSpansConverges(t *testing.T) {
 	txtA.Delete(5, 6) // " world", clocks 5..10
 
 	docB.store.mu.Lock()
-	docB.store.applyDeleteSpans([]deleteSpan{{client: 1, clock: 5, length: 6}})
+	docB.store.applyDeleteSpans(newTransaction(docB.store), []deleteSpan{{client: 1, clock: 5, length: 6}})
 	docB.store.mu.Unlock()
 
 	if got, want := txtB.String(), txtA.String(); got != want {
@@ -71,8 +71,8 @@ func TestApplyDeleteSpansIdempotentAcrossCalls(t *testing.T) {
 
 	span := []deleteSpan{{client: 1, clock: 0, length: 2}}
 	doc.store.mu.Lock()
-	doc.store.applyDeleteSpans(span)
-	doc.store.applyDeleteSpans(span)
+	doc.store.applyDeleteSpans(newTransaction(doc.store), span)
+	doc.store.applyDeleteSpans(newTransaction(doc.store), span)
 	doc.store.mu.Unlock()
 
 	if got := txt.String(); got != "c" {

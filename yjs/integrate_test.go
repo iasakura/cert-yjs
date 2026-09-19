@@ -14,7 +14,7 @@ func runIntegrate(items []*item) string {
 			parentName = &name
 		}
 		s.repair(it, parentName)
-		s.Integrate(nil, it)
+		s.Integrate(newTransaction(s), nil, it)
 	}
 	return s.getOrCreateYType(name).Text()
 }
@@ -93,7 +93,7 @@ func TestSplitNode(t *testing.T) {
 	y := s.getOrCreateYType("text")
 	it := newItem(newId(1, 0), "abc", nil, nil)
 	it.parent = y
-	s.Integrate(y, it)
+	s.Integrate(newTransaction(s), y, it)
 
 	left, right := s.splitNode(it, 1)
 	if got := y.Text(); got != "abc" {
@@ -129,7 +129,7 @@ func TestSplitNode(t *testing.T) {
 	y2 := s2.getOrCreateYType("text")
 	dead := newItem(newId(2, 0), "xy", nil, nil)
 	dead.parent = y2
-	s2.Integrate(y2, dead)
+	s2.Integrate(newTransaction(s2), y2, dead)
 	dead.flags = dead.flags | itemDeleted
 	y2.len = y2.len - dead.Len()
 	_, r2 := s2.splitNode(dead, 1)

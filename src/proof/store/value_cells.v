@@ -1025,4 +1025,53 @@ Proof.
   move=> e He. by apply client_entries_mem.
 Qed.
 
+(** [bound_names bind C]: the names the registry binds to the types [C]. *)
+Definition bound_names (bind : gmap P loc) (C : gset loc) : gset P :=
+  list_to_set ((λ nq : P * loc, nq.1) <$> filter (λ nq : P * loc, nq.2 ∈ C) (map_to_list bind)).
+
+Lemma elem_of_bound_names (bind : gmap P loc) (C : gset loc) (nm : P) :
+  nm ∈ bound_names bind C <-> ∃ q, bind !! nm = Some q ∧ q ∈ C.
+Proof.
+  rewrite /bound_names elem_of_list_to_set list_elem_of_fmap. split.
+  - move=> [[nm' q] [-> Hin]]. simpl. apply list_elem_of_filter in Hin as [Hq Hin]. simpl in Hq.
+    exists q. split; [by apply elem_of_map_to_list | exact Hq].
+  - move=> [q [Hlk Hq]]. exists (nm, q). split; first done.
+    apply list_elem_of_filter. split; [exact Hq | by apply elem_of_map_to_list].
+Qed.
+
+(** The transaction record's coverage, read through the registry: ids that
+    sit in the marked types ([ids_in_types]) are chars of the documents of
+    the names those types are bound to. *)
+Lemma ids_in_types_model (m : DocModel) (bind : gmap P loc) (p : pool)
+    (S : gset YjsId) (C : gset loc) (changed : gset P) :
+  pool_registry_models m bind p ->
+  ids_in_types p S C ->
+  (∀ q, q ∈ C -> ∃ nm, nm ∈ changed ∧ bind !! nm = Some q) ->
+  ∀ i, i ∈ S -> ∃ (name : P) (x : YjsItem A), name ∈ changed ∧
+                  x ∈ doc_model_get m (RootId name) ∧ item_id x = i.
+Proof.
+  move=> [Hmtypes _] Hids Hnames i Hi.
+  destruct (Hids i Hi) as (q & tm & x & Hq & Hp & Hx & Hid).
+  destruct (Hnames q Hq) as (nm & Hnm & Hb).
+  exists nm, x. split_and!; [exact Hnm | rewrite (Hmtypes nm q tm Hb Hp); exact Hx | exact Hid].
+Qed.
+
+(** An integrated run's chars are the wire item's ids ([input_char_ids]):
+    the run starts at the item's id and steps by one clock per char. *)
+Lemma run_denotes_char_ids (input : IntegrateInput (A := A)) (newItem : YjsItem A)
+    (run : list (YjsItem A)) :
+  run_wf run -> run_denotes input newItem run -> char_ids run = input_char_ids input.
+Proof.
+  move=> Hwf [Hhead [_ [_ Hlen]]]. apply sets.set_eq => i.
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap elem_of_input_char_ids. split.
+  - move=> [x [-> Hx]]. apply list_elem_of_lookup in Hx as [o Ho].
+    rewrite (run_wf_char_id run o x Hwf Ho) Hhead /=.
+    have := lookup_lt_Some _ _ _ Ho. rewrite Hlen. move=> Hlt. split_and!; [done | lia | lia].
+  - move=> [Hcid [Hle Hlt]].
+    destruct (lookup_lt_is_Some_2 run (clock i - clock (in_id input))%nat ltac:(rewrite Hlen; lia)) as [x Hx].
+    exists x. split; [| exact (list_elem_of_lookup_2 _ _ _ Hx)].
+    rewrite (run_wf_char_id run _ x Hwf Hx) Hhead. destruct i as [ci ki]. simpl in *. f_equal; [done | lia].
+Qed.
+
+
 End store_value_cells.
