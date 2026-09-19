@@ -1084,44 +1084,44 @@ Proof.
   (* an item of another type is not the run's and, with the run's client, is
      below the counter: the other types' filters are untouched and the run's
      chars are above every older char of their client *)
-  have Hother : ∀ (t : TId) (x : YjsItem A), t ≠ RootId name -> x ∈ doc_model_get m t ->
+  have Hother : ∀ (tid : TId) (x : YjsItem A), tid ≠ RootId name -> x ∈ doc_model_get m tid ->
       clientId (item_id x) = uint.nat client -> (clock (item_id x) < uint.nat k)%nat.
-  { move=> t x Hne Hx Hcl.
-    have Hnem : doc_model_get m t ≠ [] by (move=> Hnil; rewrite Hnil in Hx; by apply elem_of_nil in Hx).
-    destruct (Hmdom t Hnem) as (name' & p' & -> & Hbind').
+  { move=> tid x Hne Hx Hcl.
+    have Hnem : doc_model_get m tid ≠ [] by (move=> Hnil; rewrite Hnil in Hx; by apply elem_of_nil in Hx).
+    destruct (Hmdom tid Hnem) as (name' & p' & -> & Hbind').
     destruct (Hbindtypes name' p' Hbind') as [ts' Hts'].
     rewrite (Hmtypes name' p' ts' Hbind' Hts') in Hx.
     exact ((proj1 Hctr) p' ts' x Hts' Hx Hcl). }
   have Hstart' : transaction_start (<[RootId name := arr]> m) deleted (inserted ∪ char_ids ins) tombstoned m0 deleted0.
   { destruct Hstart as (Hfilter & Hdel & Hdisj & Htop). split_and!; [| exact Hdel | exact Hdisj |].
-    - move=> t. destruct (decide (t = RootId name)) as [-> | Hne].
+    - move=> tid. destruct (decide (tid = RootId name)) as [-> | Hne].
       + rewrite docm_get_insert_eq Hfilterj (Hfilter (RootId name)) Hmt //.
-      + rewrite docm_get_insert_ne // (Hfilter t).
-        apply filter_not_in_union. move=> x Hx Hin.
+      + rewrite docm_get_insert_ne // (Hfilter tid).
+        symmetry. apply filter_not_in_union. move=> x Hx Hin.
         apply elem_of_char_ids in Hin as (y & Hy & Hid).
         apply list_elem_of_lookup in Hy as [i Hi]. destruct (Hins i y Hi) as (_ & _ & Hidy & _).
         have Hcl : clientId (item_id x) = uint.nat client by rewrite -Hid Hidy //.
-        have := Hother t x Hne Hx Hcl. rewrite -Hid Hidy /=. lia.
+        have := Hother tid x Hne Hx Hcl. rewrite -Hid Hidy /=. lia.
     - move=> i j0 Hi Hj Hcl Hlt. apply elem_of_union in Hi as [Hi | Hi].
-      + apply docm_has_spec in Hj as (t & y & Hy & <-).
-        destruct (decide (t = RootId name)) as [-> | Hne].
+      + apply docm_has_spec in Hj as (tid & y & Hy & <-).
+        destruct (decide (tid = RootId name)) as [-> | Hne].
         * rewrite docm_get_insert_eq in Hy. destruct (Harrsplit y Hy) as [Ho | Hin].
           -- apply elem_of_union_l. apply (Htop i (item_id y) Hi); [| exact Hcl | exact Hlt].
              apply docm_has_spec. exists (RootId name), y. split; [rewrite Hmt; exact Ho | reflexivity].
           -- apply elem_of_union_r. apply elem_of_char_ids. by exists y.
         * rewrite docm_get_insert_ne // in Hy. apply elem_of_union_l.
           apply (Htop i (item_id y) Hi); [| exact Hcl | exact Hlt].
-          apply docm_has_spec. by exists t, y.
+          apply docm_has_spec. by exists tid, y.
       + apply elem_of_char_ids in Hi as (y & Hy & <-).
         apply list_elem_of_lookup in Hy as [iy Hiy]. destruct (Hins iy y Hiy) as (_ & _ & Hidy & _).
-        apply docm_has_spec in Hj as (t & z & Hz & <-).
+        apply docm_has_spec in Hj as (tid & z & Hz & <-).
         rewrite Hidy /= in Hcl Hlt.
-        destruct (decide (t = RootId name)) as [-> | Hne].
+        destruct (decide (tid = RootId name)) as [-> | Hne].
         * rewrite docm_get_insert_eq in Hz. destruct (Harrsplit z Hz) as [Ho | Hin].
           -- exfalso. have := (proj1 Hctr) tv.(yjs.Text.inner') ts z Htsp Ho Hcl. lia.
           -- apply elem_of_union_r. apply elem_of_char_ids. by exists z.
         * rewrite docm_get_insert_ne // in Hz. exfalso.
-          have := Hother t z Hne Hz Hcl. lia. }
+          have := Hother tid z Hne Hz Hcl. lia. }
   iApply ("HΦ" $! arr ins hj (<[RootId name := arr]> m) (uint.nat k) originLeft originRight).
   iSplitL "Hfrag Ht".
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.

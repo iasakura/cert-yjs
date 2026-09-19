@@ -1784,7 +1784,7 @@ Proof using Type*.
   have Hrpi : pool_invs p := proj1 Hinvs0.
   have Hreg : pool_registry_coh bind p := proj1 (proj2 Hinvs0).
   have Hcontig : pool_clocks_contiguous p := proj2 (proj2 Hinvs0).
-  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct "Hfields0" as "(Hclient & Hclock & HdeletedSet & Hitems & Htypesfield & Htypes & Hpending & Hpdeletes)".
   iDestruct "Hpending" as (pend_sl) "(Hpendf & Hpend)".
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
   have [Hmtypes Hmdom] := Hregmodel.
@@ -1830,10 +1830,10 @@ Proof using Type*.
   iAssert (own_pending_field (s_loc .[(yjs.store.t), "pending"]) pend)%I with "[Hpendf Hpend]" as "Hpending".
   { iExists pend_sl. iFrame "Hpendf Hpend". }
   iAssert (own_store_state s_loc (MkStoreState client k locs p bind pend pdel))
-    with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes]" as "Hruns".
+    with "[Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes]" as "Hruns".
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi | exact Hreg | exact Hcontig]).
     rewrite /own_store_fields /=.
-    iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes". }
+    iFrame "Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes". }
   wp_apply (wp_store__applyUpdate_unlocked s_loc tr sl dq
               inputs pend applied rest' m m' (MkStoreState client k locs p bind pend pdel)
               inserted tombstoned changed_locs eq_refl
@@ -1849,7 +1849,7 @@ Proof using Type*.
   have Hrpi' : pool_invs p' := proj1 Hinvs'.
   have Hreg' : pool_registry_coh bind' p' := proj1 (proj2 Hinvs').
   have Hcontig' : pool_clocks_contiguous p' := proj2 (proj2 Hinvs').
-  iDestruct "Hfields'" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iDestruct "Hfields'" as "(Hclient & Hclock & HdeletedSet & Hitems & Htypesfield & Htypes & Hpending & Hpdeletes)".
   have Hdom' : dom p ⊆ dom p' := pool_registry_coh_dom_mono bind bind' p p' Hreg Hreg' Hbindsub'.
   have [Hbindtypes' [Hbindinj' Htypesbound']] := Hreg'.
   (* grow the item-set authority to the (possibly larger) pool and snapshot it;
@@ -2014,10 +2014,10 @@ Proof using Type*.
   have Hregmodel' : pool_registry_models m' bind' p'.
   { rewrite /pool_registry_models. split; [exact Hmtypes' | exact Hmdom']. }
   iAssert (own_store_state s_loc (MkStoreState client k locs' p' bind' rest' pdel))
-    with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes]" as "Hstate".
+    with "[Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes]" as "Hstate".
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi' | exact Hreg' | exact Hcontig']).
     rewrite /own_store_fields /=.
-    iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes". }
+    iFrame "Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes". }
   iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hchanges Hregistry";
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoloss_in | apply union_subseteq_l]).
   iExists changed_locs', m0, deleted0.

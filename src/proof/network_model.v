@@ -3287,21 +3287,13 @@ Qed.
 
 (* ----- what a replay does to the filter of its inputs (issue #198 Part II) ----- *)
 
-Lemma filter_id_not_in_empty (l : list (YjsItem A)) :
-  filter (λ x : YjsItem A, item_id x ∉ (∅ : gset YjsId)) l = l.
-Proof.
-  elim: l => [| x l IH]; first done.
-  rewrite filter_cons_True; [by rewrite IH | apply not_elem_of_empty].
-Qed.
-
-Lemma filter_id_not_in_singleton (l : list (YjsItem A)) (i : YjsId) :
-  (∀ x, x ∈ l -> item_id x ≠ i) ->
-  filter (λ x : YjsItem A, item_id x ∉ ({[i]} : gset YjsId)) l = l.
+(** A filter every element passes is the identity (any decision instance). *)
+Lemma filter_all (Q : YjsItem A -> Prop) `{∀ x, Decision (Q x)} (l : list (YjsItem A)) :
+  (∀ x, x ∈ l -> Q x) -> filter Q l = l.
 Proof.
   elim: l => [| x l IH] Hl; first done.
-  rewrite filter_cons_True.
-  - rewrite IH //. move=> y Hy. exact (Hl y (list_elem_of_further _ _ _ Hy)).
-  - move=> Hin. apply elem_of_singleton in Hin. exact (Hl x (list_elem_of_here _ _) Hin).
+  rewrite filter_cons_True; last exact (Hl x (list_elem_of_here _ _)).
+  rewrite IH //. move=> y Hy. exact (Hl y (list_elem_of_further _ _ _ Hy)).
 Qed.
 
 (** The ids a replay's inputs carry. *)
@@ -3315,8 +3307,9 @@ Lemma ValidReplay_filter_new (inputs : list (TId * IntegrateInput (A := A))) (m 
   ValidReplay inputs m m' ->
   ∀ t : TId, filter (λ x : YjsItem A, item_id x ∉ replay_ids inputs) (doc_model_get m' t) = doc_model_get m t.
 Proof.
-  elim => [m0 t | t0 input rest m0 arr2 m1 newItem Htoit Hvld Hmax Hglob Hint Hvr IH] t.
-  - rewrite /replay_ids fmap_nil list_to_set_nil. apply filter_id_not_in_empty.
+  elim => [m0 | t0 input rest m0 arr2 m1 newItem Htoit Hvld Hmax Hglob Hint Hvr IH] t.
+  - have -> : replay_ids [] = ∅ by rewrite /replay_ids fmap_nil list_to_set_nil.
+    apply filter_all => x _. apply not_elem_of_empty.
   - rewrite /replay_ids fmap_cons list_to_set_cons.
     rewrite (list_filter_iff _ (λ x : YjsItem A, item_id x ∉ ({[in_id input]} : gset YjsId) ∧
                                    item_id x ∉ (list_to_set ((λ y : TId * IntegrateInput (A := A), in_id y.2) <$> rest) : gset YjsId)));
@@ -3331,9 +3324,11 @@ Proof.
       rewrite /insertIdxIfInBounds. case_decide as Hle.
       * rewrite filter_app filter_cons_False; last first.
         { move=> Hnot. apply Hnot. apply elem_of_singleton. exact Hitem. }
-        rewrite -filter_app take_drop. apply filter_id_not_in_singleton. exact (Hfresh t0).
-      * apply filter_id_not_in_singleton. exact (Hfresh t0).
-    + rewrite docm_get_insert_ne //. apply filter_id_not_in_singleton. exact (Hfresh t).
+        rewrite -filter_app take_drop. apply filter_all => x Hx Hin.
+        apply elem_of_singleton in Hin. exact (Hfresh t0 x Hx Hin).
+      * apply filter_all => x Hx Hin. apply elem_of_singleton in Hin. exact (Hfresh t0 x Hx Hin).
+    + rewrite docm_get_insert_ne //. apply filter_all => x Hx Hin.
+      apply elem_of_singleton in Hin. exact (Hfresh t x Hx Hin).
 Qed.
 
 (** A replay's ids sit above every older char of their client, and keep
