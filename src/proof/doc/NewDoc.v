@@ -69,6 +69,10 @@ Proof.
   wp_auto.
   wp_apply wp_map_make1. iIntros (deletedSet_mref) "HdeletedSetMap".
   wp_auto.
+  (* the observer registry (issue #198 Part II): empty at birth; its
+     invariant clause is C2's *)
+  wp_apply wp_map_make1. iIntros (observers_mref) "HobserversMap".
+  wp_auto.
   wp_alloc s_loc as "Hs".
   wp_auto.
   wp_alloc dv as "Hd".

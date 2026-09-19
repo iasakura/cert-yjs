@@ -15,6 +15,11 @@ package yjs
 // the current one. It is an ADDITION to the y-octo port (Yjs-derived), not a
 // port of y-octo code.
 //
+// Part II (issue #206): the same classification driven by the transaction's
+// own record is the push API: Text.Observe registers a callback, notify
+// (transaction.go) calls it at the end of every transaction that changed the
+// text with textDelta (below), Yjs's YTextEvent.delta proper.
+//
 // Verified model: src/proof/textobserver (text_delta, apply_delta,
 // snapshot_grows_to and the patch law apply_text_delta).
 
@@ -153,6 +158,46 @@ func (o *TextObserver) Poll() []DeltaOp {
 	o.stateVector = stateVector
 	o.deleted = deleted
 	s.mu.Unlock()
+	// a trailing retain is implicit
+	n := len(delta)
+	if n > 0 && delta[n-1].Kind == DeltaRetain {
+		delta = delta[:n-1]
+	}
+	return delta
+}
+
+// textDelta is Yjs's YTextEvent delta for the type ty and one transaction's
+// record (YEvent.getDelta, src/utils/YEvent.js:95-123; yrs
+// TextEvent::get_delta, src/types/text.rs:1315-1340): one walk of ty's runs,
+// char by char. A char this transaction integrated (insertSet) is an insert
+// when live and nothing when the same transaction tombstoned it; a char from
+// before it is a delete when this transaction tombstoned it (deleteSet),
+// invisible before and after when it was already a tombstone, and a retain
+// when live. Adjacent entries of one kind merge (deltaSnoc) and a trailing
+// retain is dropped: the merged normal form, text_delta in the model. Poll's
+// walk (above) is the same classification against the observer's token; the
+// two loops stay separate so that Poll keeps its proof, which is why the
+// trailing-retain trim is repeated rather than shared.
+func textDelta(ty *yType, insertSet []idSpan, deleteSet []idSpan) []DeltaOp {
+	var delta []DeltaOp
+	cur := ty.start
+	for cur != nil {
+		length := cur.Len()
+		tombstoned := cur.Deleted()
+		for i := uint64(0); i < length; i++ {
+			charId := newId(cur.id.clientId, cur.id.clock+i)
+			if containsId(insertSet, charId) {
+				if !tombstoned {
+					delta = deltaSnoc(delta, DeltaOp{Kind: DeltaInsert, Content: string(cur.content.content[i])})
+				}
+			} else if containsId(deleteSet, charId) {
+				delta = deltaSnoc(delta, DeltaOp{Kind: DeltaDelete, Length: 1})
+			} else if !tombstoned {
+				delta = deltaSnoc(delta, DeltaOp{Kind: DeltaRetain, Length: 1})
+			}
+		}
+		cur = cur.right
+	}
 	// a trailing retain is implicit
 	n := len(delta)
 	if n > 0 && delta[n-1].Kind == DeltaRetain {
