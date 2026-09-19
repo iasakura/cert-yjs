@@ -162,6 +162,19 @@ Proof.
     split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hr)].
 Qed.
 
+(** A split step keeps the exact tombstone state: both halves inherit the
+    bit ([runs_tombstoned_split]), and the identity step changes nothing. *)
+Lemma pool_tombstoned_split_step (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
+    (p' : pool) (locs' : gmap loc (list loc)) :
+  pool_split_step p locs parent k p' locs' ->
+  pool_tombstoned p' = pool_tombstoned p.
+Proof.
+  move=> Hstep.
+  destruct Hstep as [[-> ->] | (tm & ls & r & o & rloc & Hp & Hls & Hr & Ho & _ & _ & -> & ->)];
+    first done.
+  exact (pool_tombstoned_split p parent tm k o r Hp Hr).
+Qed.
+
 (** Where the address surgery leaves each slot: the split node's address at
     [k], the fresh right address at [S k] (the address half of
     [split_runs_lookup_left] / [_right]). *)

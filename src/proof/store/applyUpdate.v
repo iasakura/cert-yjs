@@ -20,6 +20,7 @@ From New.proof.ytype Require Import ytype.
 From New.proof.item Require Import run_theory model value heap.
 From New.proof Require Import history.
 From New.proof.store Require Import model value heap Integrate.
+From New.proof.transaction Require Import transaction.
 From RecordUpdate Require Import RecordSet.
 Import RecordSetNotations.
 From iris.algebra Require Import auth gmap gset.
@@ -112,9 +113,10 @@ Qed.
     ([pool_registry_models]) and the live chars refine up to the chars this
     apply integrated ([apply_live_refine]). Local: the stepping stone of
     [wp_store__applyUpdate] below, which is the spec. *)
-#[local] Lemma wp_store__applyUpdate_unlocked (s : loc) (sl : slice.t) (dq : dfrac)
+#[local] Lemma wp_store__applyUpdate_unlocked (s tr : loc) (sl : slice.t) (dq : dfrac)
     (inputs pend0 applied rest : list (TId * IntegrateInput (A := A)))
-    (m m' : DocModel) (state : store_state) :
+    (m m' : DocModel) (state : store_state)
+    (inserted tombstoned : gset YjsId) (changed : gset loc) :
   ss_pending state = pend0 ->
   wire_drain m (pend0 ++ inputs) = (applied, rest, m') ->
   ValidReplay (expand_inputs applied) m m' ->
@@ -125,19 +127,27 @@ Qed.
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend0 ++ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
-  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_state s state }}}
-    s @! (go.PointerType yjs.store) @! "applyUpdate" #sl
-  {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #();
+  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_state s state ∗
+      own_transaction_changes tr s inserted tombstoned changed }}}
+    s @! (go.PointerType yjs.store) @! "applyUpdate" #tr #sl
+  {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc) (changed' : gset loc), RET #();
       own_update_structs sl dq inputs ∗
       own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>
                             <| ss_bind := bind' |> <| ss_pending := rest |>) ∗
+      (* the transaction records the applied items' chars, and marks exactly
+         the types they went into (bound in the grown registry) *)
+      own_transaction_changes tr s (inserted ∪ inputs_char_ids applied) tombstoned changed' ∗
       ⌜ss_bind state ⊆ bind'⌝ ∗
       ⌜pool_registry_models m' bind' p'⌝ ∗
-      ⌜apply_live_refine m (all_runs (ss_pool state)) (all_runs p')⌝ }}}.
+      ⌜apply_live_refine m (all_runs (ss_pool state)) (all_runs p')⌝ ∗
+      ⌜changed ⊆ changed'⌝ ∗
+      ⌜∀ q, q ∈ changed' -> q ∈ changed ∨ ∃ nm x, bind' !! nm = Some q ∧ x ∈ applied ∧ x.1 = RootId nm⌝ ∗
+      ⌜∀ x, x ∈ applied -> ∃ nm q, x.1 = RootId nm ∧ bind' !! nm = Some q ∧ q ∈ changed'⌝ ∗
+      ⌜pool_tombstoned p' = pool_tombstoned (ss_pool state)⌝ }}}.
 Proof using Type*.
   move=> Hpend0 Hdrain Hvr Hrtot Happliedsub Hnonempty [Hmtypes Hmdom] Hkb1.
   destruct state as [client0 k0 locs p bind pend1 pdel]. simpl in *. subst pend1.
-  iIntros (Φ) "(#Hpkg & Hupd & Hruns) HΦ".
+  iIntros (Φ) "(#Hpkg & Hupd & Hruns & Hchanges) HΦ".
   (* the INITIAL pool's run structure, read while [Hruns] is over [p]
      (pure, non-consuming): needed in the ready branch to bound an original
      run's clock range below a fresh batch item via [expand_inputs_arr_fresh]. *)
@@ -197,7 +207,7 @@ Proof using Type*.
     wp_apply (wp_slice_append with "[$HslA $HcapA $Hsing]").
     iIntros (pslA') "(HslA' & HcapA' & _)". wp_auto.
     wp_for_post.
-    iFrame "Hcapin Hpendf Hclient Hclock HdeletedSet Hpdeletes Hitems Hregistry Htypes HΦ s structs".
+    iFrame "Hcapin Hpendf Hclient Hclock HdeletedSet Hpdeletes Hitems Hregistry Htypes HΦ s structs tr Hchanges".
     iExists (S j), pslA', (uivsA ++ [updateItemVal]).
     replace (word.add (W64 j) (W64 1)) with (W64 (S j)) by word.
     have H00 : sint.nat (W64 0) = 0%nat by word.
@@ -218,13 +228,15 @@ Proof using Type*.
     (* ----- phase B: the drain loop ----- *)
     iAssert (∃ (pv : bool) (pendingS : slice.t) (uivsP : list yjs.updateItem.t)
                (pendingj appliedj suffix : list (TId * IntegrateInput (A := A)))
-               (locs_j : gmap loc (list loc)) (p_j : pool) (bindj : gmap P loc) (mj : DocModel),
+               (locs_j : gmap loc (list loc)) (p_j : pool) (bindj : gmap P loc) (mj : DocModel)
+               (inserted_j : gset YjsId) (changed_j : gset loc),
         "Hprog" ∷ progress_ptr ↦ pv ∗
         "Hpendingp" ∷ pending_ptr ↦ pendingS ∗
         "HslP" ∷ pendingS ↦* uivsP ∗
         "HcapP" ∷ own_slice_cap yjs.updateItem.t pendingS (DfracOwn 1) ∗
         "#HitemsPj" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsP;pendingj, is_update_item updateItemVal typedInput) ∗
         "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_j p_j bindj [] pdel) ∗
+        "Hchanges" ∷ own_transaction_changes tr s inserted_j tombstoned changed_j ∗
         "%Hpendingsubj" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A),
             typedInput ∈ pendingj -> typedInput ∈ pend0 ++ inputs⌝ ∗
         "%Hprj" ∷ ⌜WireReplay m appliedj mj⌝ ∗
@@ -238,10 +250,15 @@ Proof using Type*.
         "%Hmid" ∷ ⌜pv = true ->
             wire_drain mj pendingj = (suffix, rest, m') ∧
             applied = appliedj ++ suffix ∧ ValidReplay (expand_inputs suffix) mj m'⌝ ∗
-        "%Hfin" ∷ ⌜pv = false -> pendingj = rest ∧ mj = m' ∧ applied = appliedj⌝)%I
-      with "[progress Hpendingp HslA HcapA Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpendf Hpdeletes]"
+        "%Hfin" ∷ ⌜pv = false -> pendingj = rest ∧ mj = m' ∧ applied = appliedj⌝ ∗
+        "%Hinsj" ∷ ⌜inserted_j = inserted ∪ inputs_char_ids appliedj⌝ ∗
+        "%Hcsubj" ∷ ⌜changed ⊆ changed_j⌝ ∗
+        "%Hmarksj" ∷ ⌜∀ q, q ∈ changed_j -> q ∈ changed ∨ ∃ nm x, bindj !! nm = Some q ∧ x ∈ appliedj ∧ x.1 = RootId nm⌝ ∗
+        "%Hmarkedj" ∷ ⌜∀ x, x ∈ appliedj -> ∃ nm q, x.1 = RootId nm ∧ bindj !! nm = Some q ∧ q ∈ changed_j⌝ ∗
+        "%Htombj" ∷ ⌜pool_tombstoned p_j = pool_tombstoned p⌝)%I
+      with "[progress Hpendingp HslA HcapA Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpendf Hpdeletes Hchanges]"
       as "IH".
-    { iExists true, pslA, uivsA, (pend0 ++ inputs), [], applied, locs, p, bind, m.
+    { iExists true, pslA, uivsA, (pend0 ++ inputs), [], applied, locs, p, bind, m, inserted, changed.
       iFrame "progress Hpendingp HslA HcapA".
       iFrame "HitemsA".
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpendf Hpdeletes".
@@ -250,6 +267,7 @@ Proof using Type*.
         iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpdeletes".
         iExists slice.nil. iFrame "Hpendf". iExists [].
         iSplitL; [iApply own_slice_nil | iSplitL; [iApply own_slice_cap_nil | by rewrite big_sepL2_nil]]. }
+      iFrame "Hchanges".
       iPureIntro. split_and!.
       - done.
       - constructor.
@@ -259,7 +277,12 @@ Proof using Type*.
       - exact (runs_within_or_from_refl [] (all_runs p)).
       - exact (apply_live_refine_refl m (all_runs p)).
       - move=> _. split_and!; [exact Hdrain | done | exact Hvr].
-      - move=> Hf. discriminate. }
+      - move=> Hf. discriminate.
+      - rewrite inputs_char_ids_nil (right_id_L ∅ (∪)) //.
+      - done.
+      - move=> q Hq. by left.
+      - move=> x Hx. by apply elem_of_nil in Hx.
+      - done. }
     wp_for "IH".
     destruct pv.
     + (* progress: run one more pass *)
@@ -295,7 +318,8 @@ Proof using Type*.
       iAssert (∃ (i : nat) (pvi : bool) (restS : slice.t)
                  (uivsR : list yjs.updateItem.t)
                  (keptacc appacc app_rem af2 : list (TId * IntegrateInput (A := A)))
-                 (locs_c : gmap loc (list loc)) (p_c : pool) (bind_c : gmap P loc) (m_c : DocModel),
+                 (locs_c : gmap loc (list loc)) (p_c : pool) (bind_c : gmap P loc) (m_c : DocModel)
+                 (inserted_c : gset YjsId) (changed_c : gset loc),
           "Hii" ∷ i_ptr ↦ W64 i ∗
           "Hprog" ∷ progress_ptr ↦ pvi ∗
           "Hrestp" ∷ rest_ptr ↦ restS ∗
@@ -303,6 +327,7 @@ Proof using Type*.
           "HcapR" ∷ own_slice_cap yjs.updateItem.t restS (DfracOwn 1) ∗
           "#HitemsR" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsR;keptacc, is_update_item updateItemVal typedInput) ∗
           "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) ∗
+          "Hchanges" ∷ own_transaction_changes tr s inserted_c tombstoned changed_c ∗
           "%Hilen" ∷ ⌜(i <= length pendingj)%nat⌝ ∗
           "%Hpassa" ∷ ⌜wire_pass m_c (drop i pendingj) keptacc =
               (app_rem, keptfin0, m_pend0)⌝ ∗
@@ -320,11 +345,16 @@ Proof using Type*.
               ∃ name pl, t = RootId name ∧ bind_c !! name = Some pl⌝ ∗
           "%Hprovc" ∷ ⌜runs_within_or_from (appliedj ++ appacc) (all_runs p) (all_runs p_c)⌝ ∗
           "%Hgrowc" ∷ ⌜∀ (t : TId) x, x ∈ doc_model_get m t -> x ∈ doc_model_get m_c t⌝ ∗
-          "%Halrc" ∷ ⌜apply_live_refine m (all_runs p) (all_runs p_c)⌝)%I
-        with "[i Hprog rest Hrsl0 Hrcap0 Hruns]"
+          "%Halrc" ∷ ⌜apply_live_refine m (all_runs p) (all_runs p_c)⌝ ∗
+          "%Hinsc" ∷ ⌜inserted_c = inserted ∪ inputs_char_ids (appliedj ++ appacc)⌝ ∗
+          "%Hcsubc" ∷ ⌜changed ⊆ changed_c⌝ ∗
+          "%Hmarksc" ∷ ⌜∀ q, q ∈ changed_c -> q ∈ changed ∨ ∃ nm x, bind_c !! nm = Some q ∧ x ∈ appliedj ++ appacc ∧ x.1 = RootId nm⌝ ∗
+          "%Hmarkedc" ∷ ⌜∀ x, x ∈ appliedj ++ appacc -> ∃ nm q, x.1 = RootId nm ∧ bind_c !! nm = Some q ∧ q ∈ changed_c⌝ ∗
+          "%Htombc" ∷ ⌜pool_tombstoned p_c = pool_tombstoned p⌝)%I
+        with "[i Hprog rest Hrsl0 Hrcap0 Hruns Hchanges]"
         as "IHin".
-      { iExists 0%nat, false, _, [], [], [], app_rem0, af, locs_j, p_j, bindj, mj.
-        iFrame "i Hprog rest Hrsl0 Hrcap0 Hruns".
+      { iExists 0%nat, false, _, [], [], [], app_rem0, af, locs_j, p_j, bindj, mj, inserted_j, changed_j.
+        iFrame "i Hprog rest Hrsl0 Hrcap0 Hruns Hchanges".
         iSplit; first by rewrite big_sepL2_nil.
         iPureIntro. split_and!.
         - lia.
@@ -340,7 +370,12 @@ Proof using Type*.
         - exact Hmdomj.
         - rewrite app_nil_r. exact Hprovj.
         - exact (WireReplay_mem m mj appliedj Hprj).
-        - exact Halrj. }
+        - exact Halrj.
+        - rewrite app_nil_r. exact Hinsj.
+        - exact Hcsubj.
+        - rewrite app_nil_r. exact Hmarksj.
+        - rewrite app_nil_r. exact Hmarkedj.
+        - exact Htombj. }
       wp_for "IHin".
       case_bool_decide as Hcondi.
       * (* scan struct i *)
@@ -385,11 +420,11 @@ Proof using Type*.
         destruct (doc_model_has m_c (in_id input)) eqn:Hd; subst ok.
         { (* duplicate: continue *)
           wp_auto. wp_for_post.
-          iFrame "Hcapin HΦ s Hslin Hpendingp HslP HcapP".
+          iFrame "Hcapin HΦ s tr Hslin Hpendingp HslP HcapP".
           iExists (S i), pvi, restS, uivsR, keptacc, appacc, app_rem, af2,
-            locs_c, p_c, bind_c, m_c.
+            locs_c, p_c, bind_c, m_c, inserted_c, changed_c.
           replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
-          iFrame "Hii Hprog Hrestp HslR HcapR Hruns".
+          iFrame "Hii Hprog Hrestp HslR HcapR Hruns Hchanges".
           iFrame "HitemsR".
           iPureIntro. split_and!; try done.
           - apply (lookup_lt_Some _ _ _ Hpi).
@@ -516,11 +551,12 @@ Proof using Type*.
                rewrite (pool_has_doc_model_has m_c bind_c p_c _ Hregc (conj Hmtypesc Hmdomc)).
                replace (S k' - 1)%nat with k' by lia. exact Hhas. }
            simpl. rewrite Hready. wp_auto.
-           wp_apply (wp_store__integrateDecoded s updateItemVal (targetType, input)
+           wp_apply (wp_store__integrateDecoded s tr updateItemVal (targetType, input)
                        m_c (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) newItem arr' nm
+                       inserted_c tombstoned changed_c
                        Htjeq Htoit Hvld Hmax Hall Hnext (conj Hmtypesc Hmdomc) Hnwc
-                       with "[$Hui $Hruns]").
-           iIntros (p'' locs'' bind'') "(Hruns & %Hbindsub'' & %Hregmodel'' & %Hprov'' & %Hilr'')".
+                       with "[$Hui $Hruns $Hchanges]").
+           iIntros (p'' locs'' bind'' q'') "(Hruns & Hchanges & %Hbindsub'' & %Hregmodel'' & %Hprov'' & %Hilr'' & %Hbq'' & %Htomb'')".
            iEval (simpl) in "Hruns".
            have [Hmtypes'' Hmdom''] := Hregmodel''.
            have Hstep1 : WireReplay m_c [(targetType, input)] (<[targetType := arr']> m_c)
@@ -530,11 +566,12 @@ Proof using Type*.
            have Hgrowc_has : ∀ i0, doc_model_has m i0 = true -> doc_model_has m_c i0 = true
              := λ i0, docm_has_mono m m_c i0 Hgrowc.
            wp_auto. wp_for_post.
-           iFrame "Hcapin HΦ s Hslin Hpendingp HslP HcapP".
+           iFrame "Hcapin HΦ s tr Hslin Hpendingp HslP HcapP".
            iExists (S i), true, restS, uivsR, keptacc, (appacc ++ [(targetType, input)]),
-             app2, af2, locs'', p'', bind'', (<[targetType := arr']> m_c).
+             app2, af2, locs'', p'', bind'', (<[targetType := arr']> m_c),
+             (inserted_c ∪ input_char_ids input), (changed_c ∪ {[q'']}).
            replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
-           iFrame "Hii Hprog Hrestp HslR HcapR Hruns".
+           iFrame "Hii Hprog Hrestp HslR HcapR Hruns Hchanges".
            iFrame "HitemsR".
            iPureIntro. split_and!.
            ++ apply (lookup_lt_Some _ _ _ Hpi).
@@ -562,6 +599,27 @@ Proof using Type*.
                        (all_runs p_c) (all_runs p'') Hgrowc_has Halrc).
               exact (apply_live_refine_of_integrate input m_c
                        (all_runs p_c) (all_runs p'') Hclkbound Hilr'').
+           ++ (* the record: the item's chars join the inserted set *)
+              rewrite Hinsc app_assoc
+                (inputs_char_ids_app (appliedj ++ appacc) [(targetType, input)]) inputs_char_ids_singleton.
+              rewrite (assoc_L (∪)). reflexivity.
+           ++ etrans; [exact Hcsubc | apply union_subseteq_l].
+           ++ (* every mark is an old one or an applied item's type *)
+              move=> q Hq. apply elem_of_union in Hq as [Hq | Hq].
+              { destruct (Hmarksc q Hq) as [Hold | (nm0 & x0 & Hb & Hx & Hx1)]; [by left | right].
+                exists nm0, x0. split_and!;
+                  [exact (lookup_weaken _ _ _ _ Hb Hbindsub'') | rewrite app_assoc; apply elem_of_app; by left | exact Hx1]. }
+              apply elem_of_singleton in Hq as ->. right.
+              exists nm, (targetType, input). split_and!;
+                [exact Hbq'' | rewrite app_assoc; apply elem_of_app; right; apply list_elem_of_here | exact Htjeq].
+           ++ (* every applied item's type is marked *)
+              move=> x Hx. rewrite app_assoc in Hx. apply elem_of_app in Hx as [Hx | Hx].
+              { destruct (Hmarkedc x Hx) as (nm0 & q0 & Hx1 & Hb & Hq0).
+                exists nm0, q0. split_and!;
+                  [exact Hx1 | exact (lookup_weaken _ _ _ _ Hb Hbindsub'') | apply elem_of_union_l; exact Hq0]. }
+              apply list_elem_of_singleton in Hx as ->.
+              exists nm, q''. split_and!; [exact Htjeq | exact Hbq'' | apply elem_of_union_r; by apply elem_of_singleton].
+           ++ rewrite Htomb''. exact Htombc.
         -- (* blocked: keep (deduplicated by id) *)
            rewrite (drop_S pendingj (targetType, input) i Hpi) /= Hd Hready in Hpassa.
            simpl. rewrite Hready. wp_auto.
@@ -574,11 +632,11 @@ Proof using Type*.
                        keptacc) eqn:Hex.
            ** (* already kept: skip *)
               wp_auto. wp_for_post.
-              iFrame "Hcapin HΦ s Hslin Hpendingp HslP HcapP".
+              iFrame "Hcapin HΦ s tr Hslin Hpendingp HslP HcapP".
               iExists (S i), pvi, restS, uivsR2, keptacc, appacc, app_rem, af2,
-                locs_c, p_c, bind_c, m_c.
+                locs_c, p_c, bind_c, m_c, inserted_c, changed_c.
               replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
-              iFrame "Hii Hprog Hrestp HslR HcapR Hruns".
+              iFrame "Hii Hprog Hrestp HslR HcapR Hruns Hchanges".
               iFrame "HitemsR2".
               iPureIntro. split_and!; try done.
               --- apply (lookup_lt_Some _ _ _ Hpi).
@@ -590,13 +648,14 @@ Proof using Type*.
               wp_apply (wp_slice_append with "[$HslR $HcapR $Hsing]").
               iIntros (restS') "(HslR' & HcapR' & _)". wp_auto.
               wp_for_post.
-              iFrame "Hcapin HΦ s Hslin Hpendingp HslP HcapP".
+              iFrame "Hcapin HΦ s tr Hslin Hpendingp HslP HcapP".
               iExists (S i), pvi, restS', (uivsR2 ++ [updateItemVal]),
-                (keptacc ++ [(targetType, input)]), appacc, app_rem, af2, locs_c, p_c, bind_c, m_c.
+                (keptacc ++ [(targetType, input)]), appacc, app_rem, af2, locs_c, p_c, bind_c, m_c,
+                inserted_c, changed_c.
               replace (word.add (W64 i) (W64 1)) with (W64 (S i)) by word.
               have H00 : sint.nat (W64 0) = 0%nat by word.
               iEval (rewrite H00 /=) in "HslR'".
-              iFrame "Hii Hprog Hrestp HslR' HcapR' Hruns".
+              iFrame "Hii Hprog Hrestp HslR' HcapR' Hruns Hchanges".
               iSplit.
               { rewrite big_sepL2_snoc.
                 iSplit; [iFrame "HitemsR2" | iFrame "Hui"]. }
@@ -620,10 +679,10 @@ Proof using Type*.
         { apply (app_inv_head appliedj). rewrite -Happj.
           rewrite Happdec /= //. }
         wp_auto. wp_for_post.
-        iFrame "Hcapin HΦ s Hslin".
+        iFrame "Hcapin HΦ s tr Hslin".
         iExists pvi, restS, uivsR, keptacc, (appliedj ++ appacc), af2,
-          locs_c, p_c, bind_c, m_c.
-        iFrame "Hprog Hpendingp HslR HcapR Hruns".
+          locs_c, p_c, bind_c, m_c, inserted_c, changed_c.
+        iFrame "Hprog Hpendingp HslR HcapR Hruns Hchanges".
         iFrame "HitemsR".
         iPureIntro. split_and!.
         ** move=> typedInput Hti. apply Hpendingsubj. exact (Hkeptsub typedInput Hti).
@@ -660,6 +719,11 @@ Proof using Type*.
            --- by rewrite Hrest2.
            --- by rewrite Hm2.
            --- rewrite Happj Hsuf app_nil_r //.
+        ** exact Hinsc.
+        ** exact Hcsubc.
+        ** exact Hmarksc.
+        ** exact Hmarkedc.
+        ** exact Htombc.
     + (* drain complete: write back the pending and return *)
       rewrite decide_False; last done.
       rewrite decide_True; last done.
@@ -673,7 +737,8 @@ Proof using Type*.
       iDestruct "Hfieldsj" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
       iDestruct "Hpending" as (pnil) "(Hpendf & _)".
       wp_auto.
-      iApply ("HΦ" $! p_j locs_j bindj). simpl.
+      rewrite Happeq.
+      iApply ("HΦ" $! p_j locs_j bindj changed_j). simpl.
       iAssert (own_pending_field (s .[(yjs.store.t), "pending"]) rest)%I with "[Hpendf HslP HcapP]" as "Hpending".
       { iExists pendingS. iFrame "Hpendf". iExists uivsP. iFrame "HslP HcapP HitemsPj". }
       iSplitL "Hslin Hcapin".
@@ -682,10 +747,15 @@ Proof using Type*.
       { iSplitL; last (iPureIntro; split_and!; [exact Hrpij | exact Hregj | exact Hcontigj]).
         rewrite /own_store_fields /=.
         iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes". }
+      iSplitL "Hchanges"; first (iEval (rewrite Hinsj) in "Hchanges"; iExact "Hchanges").
       iPureIntro. split_and!.
       * exact Hbindsubj.
       * exact (conj Hmtypesj Hmdomj).
       * exact Halrj.
+      * exact Hcsubj.
+      * exact Hmarksj.
+      * exact Hmarkedj.
+      * exact Htombj.
 Qed.
 
 (* ===== wire-drain bridge lemmas (issue #40 x issue #28 U7c) ===============
@@ -1658,30 +1728,55 @@ Qed.
     post-delivery item set. Finally, the batch is not lost: every input is
     accounted for ([input_accounted]) -- delivered into the new history or
     buffered by id in the new pending [rest] -- so nothing silently vanishes. *)
-Lemma wp_store__applyUpdate (s_loc : loc) (sl : slice.t) (dq : dfrac)
+(** The applied items' chars are delivered into the replayed model: each is
+    the id of a per-char op the replay integrated. *)
+#[local] Lemma inputs_char_ids_delivered (applied : list (TId * IntegrateInput (A := A)))
+    (m m' : DocModel) :
+  ValidReplay (expand_inputs applied) m m' ->
+  ∀ i, i ∈ inputs_char_ids applied ->
+    ∃ y, y ∈ applied ∧ ∃ x, x ∈ doc_model_get m' y.1 ∧ item_id x = i.
+Proof.
+  move=> Hvr i Hi. apply elem_of_inputs_char_ids in Hi as (y & Hy & Hiy).
+  destruct (input_char_ids_expand y i Hiy) as (op & Hop & Hid).
+  have Hmem : op ∈ expand_inputs applied.
+  { rewrite /expand_inputs. apply list_elem_of_join. exists (expand_input y).
+    split; [exact Hop | by apply list_elem_of_fmap_2]. }
+  destruct (ValidReplay_input_mem _ _ _ Hvr op Hmem) as (it & Hitid & Hitmem).
+  have Hop1 : op.1 = y.1.
+  { rewrite /expand_input in Hop. apply list_elem_of_fmap in Hop as (op0 & -> & _). done. }
+  exists y. split; [exact Hy |]. exists it. split; [rewrite -Hop1; exact Hitmem | rewrite Hitid Hid //].
+Qed.
+
+Lemma wp_store__applyUpdate (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
     (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend inputs : list (TId * IntegrateInput (A := A))) :
+    (pend inputs : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
   update_wf inputs ->
   {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
-      own_store s_loc γs γh c h m pend ∗
+      own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
       own_update_structs sl dq inputs ∗
       is_pending_certified γh (expand_inputs inputs) }}}
-    s_loc @! (go.PointerType yjs.store) @! "applyUpdate" #sl
-  {{{ (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel),
+    s_loc @! (go.PointerType yjs.store) @! "applyUpdate" #tr #sl
+  {{{ (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel) (changed' : gset P),
       RET #();
       own_update_structs sl dq inputs ∗
-      own_store s_loc γs γh c (h ++ (deliver_ev <$> expand_inputs applied)) m' rest ∗
+      own_transaction tr s_loc γs γh c (h ++ (deliver_ev <$> expand_inputs applied)) m' rest
+        deleted (inserted ∪ inputs_char_ids applied) tombstoned changed' ∗
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
       ⌜wire_drain m (pend ++ inputs) = (applied, rest, m')⌝ ∗
       ⌜ValidReplay (expand_inputs applied) m m'⌝ ∗
       ⌜∀ x, x ∈ inputs ->
          input_accounted (h ++ (deliver_ev <$> expand_inputs applied)) rest x⌝ ∗
-      is_applied_certs γs applied m' }}}.
+      is_applied_certs γs applied m' ∗
+      ⌜changed ⊆ changed'⌝ }}}.
 Proof using Type*.
   move=> [Hnowrapb Hrooted].
-  iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hupd & #Hcertsin) HΦ".
-  iNamed "Hstore".
+  iIntros (Φ) "(#Hpkg & #Hishist & Htx & Hupd & #Hcertsin) HΦ".
+  iNamed "Htx". iNamed "Hstore".
+  (* the old marks name their types: read the bindings off the registry
+     while the authority is at hand *)
+  iDestruct (changed_types_bound_registered with "HtypesAuth Hchanged_bound") as %Hlocs_bound.
   iDestruct "Hstate" as "(Hfields0 & %Hinvs0)".
   have Hrpi : pool_invs p := proj1 Hinvs0.
   have Hreg : pool_registry_coh bind p := proj1 (proj2 Hinvs0).
@@ -1736,11 +1831,13 @@ Proof using Type*.
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi | exact Hreg | exact Hcontig]).
     rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes". }
-  wp_apply (wp_store__applyUpdate_unlocked s_loc sl dq
-              inputs pend applied rest' m m' (MkStoreState client k locs p bind pend pdel) eq_refl
+  wp_apply (wp_store__applyUpdate_unlocked s_loc tr sl dq
+              inputs pend applied rest' m m' (MkStoreState client k locs p bind pend pdel)
+              inserted tombstoned changed_locs eq_refl
               Hdrainc Hvr Hrtot Happsub Hnonemptyb (conj Hmtypes Hmdom) Hkb1c
-              with "[$Hupd $Hruns]").
-  iIntros (p' locs' bind') "(Hupd & Hruns & %Hbindsub' & %Hregmodelp & %Halrp)".
+              with "[$Hupd $Hruns $Hchanges]").
+  iIntros (p' locs' bind' changed_locs')
+    "(Hupd & Hruns & Hchanges & %Hbindsub' & %Hregmodelp & %Halrp & %Hcsub' & %Hmarks' & %Hmarked' & %Htomb')".
   iEval (simpl) in "Hruns".
   simpl in Hregmodelp, Halrp.
   have [Hmtypes' Hmdom'] := Hregmodelp.
@@ -1892,7 +1989,13 @@ Proof using Type*.
     := λ i, docm_has_mono m m' i (ValidReplay_mem (expand_inputs applied) m m' Hvr).
   iDestruct (own_delete_set_apply γs m m' (all_runs p) (all_runs p')
                Hmono' Halrp with "Hdelete_set") as "Hdelete_set".
-  iModIntro. iApply ("HΦ" $! applied rest' m').
+  set (changed' := changed ∪ bound_names bind' changed_locs').
+  have Hnames : ∀ q, q ∈ changed_locs' -> ∃ nm, nm ∈ changed' ∧ bind' !! nm = Some q.
+  { move=> q Hq. destruct (Hmarks' q Hq) as [Hold | (nm & x & Hb & _ & _)].
+    - destruct (Hlocs_bound q Hold) as (nm & Hnm & Hb). exists nm.
+      split; [apply elem_of_union_l; exact Hnm | exact (lookup_weaken _ _ _ _ Hb Hbindsub')].
+    - exists nm. split; [| exact Hb]. apply elem_of_union_r. apply elem_of_bound_names. by exists q. }
+  iModIntro. iApply ("HΦ" $! applied rest' m' changed').
   iAssert (is_applied_certs γs applied m') with "[Hlbs]" as "#Hcerts".
   { iFrame "Hlbs". iPureIntro. exact (ValidReplay_input_mem (expand_inputs applied) m m' Hvr). }
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hcerts".
@@ -1903,14 +2006,48 @@ Proof using Type*.
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi' | exact Hreg' | exact Hcontig']).
     rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes". }
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set";
-    last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoloss_in]).
-  iExists client, k, pdel, locs', p', bind', acc.
-  iFrame "Hstate Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set".
-  iFrame "Hpendcert' Hclientpin".
-  iPureIntro. split_and!;
-    [exact Hclientc | exact Hpendroot' | exact Hpendbnd' | exact Hregmodel' | exact Hcoh'
-    | exact Hctr' | exact Hacccoh'].
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hchanges";
+    last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoloss_in | apply union_subseteq_l]).
+  iExists changed_locs'.
+  iFrame "Hchanges".
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
+  { iExists client, k, pdel, locs', p', bind', acc.
+    iFrame "Hstate Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set".
+    iFrame "Hpendcert' Hclientpin".
+    iPureIntro. split_and!;
+      [exact Hclientc | exact Hpendroot' | exact Hpendbnd' | exact Hregmodel' | exact Hcoh'
+      | exact Hctr' | exact Hacccoh' | rewrite Htomb'; exact Hdeleted]. }
+  iSplitR.
+  { iApply (changed_types_bound_grow _ _ _ _ bind' Hcsub' with "Hbinds' Hchanged_bound").
+    move=> q Hq. destruct (Hmarks' q Hq) as [Hold | (nm & x & Hb & _ & _)]; [by left | right].
+    by exists nm. }
+  iPureIntro. split_and!.
+  - (* every inserted id is in the grown model: the old ones by growth, the
+       applied items' chars by the replay *)
+    move=> i Hi. apply elem_of_union in Hi as [Hi | Hi].
+    + exact (Hmono' i (Hinserted_dom i Hi)).
+    + destruct (inputs_char_ids_delivered applied m m' Hvr i Hi) as (y & Hy & it & Hit & Hid).
+      apply docm_has_spec. by exists y.1, it.
+  - exact Htombstoned_sub.
+  - (* every recorded id sits in a changed type: the old ones by growth, the
+       applied items' chars in the types the drain marked *)
+    move=> i Hi.
+    destruct (decide (i ∈ inserted ∪ tombstoned)) as [Hold | Hnew].
+    + destruct (Hrecorded i Hold) as (name & x & Hn & Hx & Hid).
+      exists name, x. split_and!;
+        [apply elem_of_union_l; exact Hn
+        | exact (ValidReplay_mem (expand_inputs applied) m m' Hvr (RootId name) x Hx)
+        | exact Hid].
+    + have Hi' : i ∈ inputs_char_ids applied.
+      { apply elem_of_union in Hi as [Hi | Hi]; [apply elem_of_union in Hi as [Hi | Hi] | ].
+        - exfalso. apply Hnew. apply elem_of_union_l. exact Hi.
+        - exact Hi.
+        - exfalso. apply Hnew. apply elem_of_union_r. exact Hi. }
+      destruct (inputs_char_ids_delivered applied m m' Hvr i Hi') as (y & Hy & it & Hit & Hid).
+      destruct (Hmarked' y Hy) as (nm & q & Hy1 & Hbq & Hq).
+      exists nm, it. split_and!;
+        [apply elem_of_union_r; apply elem_of_bound_names; by exists q
+        | rewrite -Hy1; exact Hit | exact Hid].
 Qed.
 
 End store_update.

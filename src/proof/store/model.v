@@ -1917,4 +1917,258 @@ Proof.
 Qed.
 
 
+Lemma pool_tombstoned_flip (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
+  p !! parent = Some tm ->
+  tm_runs tm !! k = Some r ->
+  pool_tombstoned (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p) =
+    pool_tombstoned p ∪ char_ids (run_items r).
+Proof.
+  move=> Hp Hk.
+  rewrite (pool_tombstoned_insert p parent tm _ Hp) /= (runs_tombstoned_flip _ _ _ Hk).
+  rewrite (pool_tombstoned_lookup p parent tm Hp). set_solver.
+Qed.
+
+Lemma pool_tombstoned_split (p : pool) (parent : loc) (tm : type_model) (k o : nat) (r : ItemRun) :
+  p !! parent = Some tm ->
+  tm_runs tm !! k = Some r ->
+  pool_tombstoned (<[parent := MkTypeModel (split_runs (tm_runs tm) k o)]> p) = pool_tombstoned p.
+Proof.
+  move=> Hp Hk.
+  rewrite (pool_tombstoned_insert p parent tm _ Hp) /= (runs_tombstoned_split _ _ o _ Hk).
+  by rewrite (pool_tombstoned_lookup p parent tm Hp).
+Qed.
+
+(** [ids_in_types p S C]: every id of [S] is the id of a char of one of the
+    types [C] in [p]. What the transaction record's coverage says: a
+    recorded id sits in a recorded type, so a type the record does not name
+    has none of the recorded ids. *)
+Definition ids_in_types (p : pool) (S : gset YjsId) (C : gset loc) : Prop :=
+  ∀ i, i ∈ S -> ∃ q tm x, q ∈ C ∧ p !! q = Some tm ∧ x ∈ tm_arr tm ∧ item_id x = i.
+
+Lemma ids_in_types_empty (p : pool) (C : gset loc) : ids_in_types p ∅ C.
+Proof. move=> i Hi. set_solver. Qed.
+
+Lemma ids_in_types_union (p : pool) (S1 S2 : gset YjsId) (C : gset loc) :
+  ids_in_types p S1 C -> ids_in_types p S2 C -> ids_in_types p (S1 ∪ S2) C.
+Proof. move=> H1 H2 i /elem_of_union [Hi | Hi]; [exact (H1 i Hi) | exact (H2 i Hi)]. Qed.
+
+Lemma ids_in_types_mono (p : pool) (S S' : gset YjsId) (C C' : gset loc) :
+  S' ⊆ S -> C ⊆ C' -> ids_in_types p S C -> ids_in_types p S' C'.
+Proof.
+  move=> HS HC H i Hi. destruct (H i (HS i Hi)) as (q & tm & x & Hq & Hp & Hx & Hid).
+  exists q, tm, x. split_and!; [exact (HC q Hq) | exact Hp | exact Hx | exact Hid].
+Qed.
+
+(** A step that keeps every type's document keeps the coverage. *)
+Lemma ids_in_types_same_docs (p p' : pool) (S : gset YjsId) (C : gset loc) :
+  (∀ q, is_Some (p !! q) -> is_Some (p' !! q)) ->
+  (∀ q tm', p' !! q = Some tm' -> ∃ tm, p !! q = Some tm ∧ tm_arr tm' = tm_arr tm) ->
+  ids_in_types p S C -> ids_in_types p' S C.
+Proof.
+  move=> Hdom Harr H i Hi. destruct (H i Hi) as (q & tm & x & Hq & Hp & Hx & Hid).
+  destruct (Hdom q (ex_intro _ tm Hp)) as [tm' Hp'].
+  destruct (Harr q tm' Hp') as (tm0 & Hp0 & Heq). rewrite Hp in Hp0. injection Hp0 as <-.
+  exists q, tm', x. split_and!; [exact Hq | exact Hp' | by rewrite Heq | exact Hid].
+Qed.
+
+(** The chars of the [k]-th run of the type at [parent] are in [parent]. *)
+Lemma ids_in_types_run (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun)
+    (C : gset loc) :
+  p !! parent = Some tm ->
+  tm_runs tm !! k = Some r ->
+  parent ∈ C ->
+  ids_in_types p (char_ids (run_items r)) C.
+Proof.
+  move=> Hp Hk Hin i Hi.
+  have Hi' : i ∈ char_ids (tm_arr tm) := char_ids_flatten (tm_runs tm) k r Hk i Hi.
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap in Hi'. destruct Hi' as (x & -> & Hx).
+  exists parent, tm, x. split_and!; [exact Hin | exact Hp | exact Hx | done].
+Qed.
+
+
+(** The two record steps of a tombstoning loop, on the pool's tombstone set
+    and on the record's coverage: a flip of a live run adds the run's chars
+    and marks its type, a flip of a tombstoned run records nothing. *)
+Lemma pool_tombstoned_flip_record (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun)
+    (base T : gset YjsId) :
+  p !! parent = Some tm -> tm_runs tm !! k = Some r ->
+  pool_tombstoned p = base ∪ T ->
+  pool_tombstoned (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p)
+    = base ∪ (if run_deleted r then T else T ∪ char_ids (run_items r)).
+Proof.
+  move=> Hp Hk Heq. rewrite (pool_tombstoned_flip p parent tm k r Hp Hk) Heq.
+  destruct (run_deleted r) eqn:Hd; last set_solver.
+  have Hsub : char_ids (run_items r) ⊆ pool_tombstoned p.
+  { move=> i Hi. apply elem_of_runs_tombstoned. exists r. split_and!; [| exact Hd | exact Hi].
+    apply (elem_of_all_runs_lookup p parent tm r Hp). left. exact (list_elem_of_lookup_2 _ _ _ Hk). }
+  rewrite Heq in Hsub. set_solver.
+Qed.
+
+Lemma ids_in_types_flip_record (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun)
+    (T0 T : gset YjsId) (C : gset loc) :
+  p !! parent = Some tm -> tm_runs tm !! k = Some r ->
+  ids_in_types p (T ∖ T0) C ->
+  ids_in_types (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p)
+    ((if run_deleted r then T else T ∪ char_ids (run_items r)) ∖ T0)
+    (if run_deleted r then C else C ∪ {[parent]}).
+Proof.
+  move=> Hp Hk Hcov.
+  set (p' := <[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p).
+  have Hstep : pool_after_delete p p' := pool_after_delete_flip p parent tm k r Hp Hk.
+  have Hcov' : ids_in_types p' (T ∖ T0) C
+    := ids_in_types_same_docs p p' _ _ (proj1 (proj2 Hstep)) (proj1 Hstep) Hcov.
+  destruct (run_deleted r) eqn:Hd; first exact Hcov'.
+  apply (ids_in_types_mono p' ((T ∖ T0) ∪ char_ids (run_items r)) _ (C ∪ {[parent]}));
+    [set_solver | done |].
+  apply ids_in_types_union.
+  - apply (ids_in_types_mono p' (T ∖ T0) (T ∖ T0) C (C ∪ {[parent]})); [done | set_solver | exact Hcov'].
+  - rewrite -(flip_run_items r).
+    apply (ids_in_types_run p' parent (MkTypeModel (<[k := flip_run r]> (tm_runs tm))) k (flip_run r));
+      [apply lookup_insert_eq | simpl; apply list_lookup_insert_eq; exact (lookup_lt_Some _ _ _ Hk) | set_solver].
+Qed.
+
+
+Lemma pool_tombstoned_insert_fresh (p : pool) (parent : loc) (tm : type_model) :
+  p !! parent = None ->
+  pool_tombstoned (<[parent := tm]> p) = runs_tombstoned (tm_runs tm) ∪ pool_tombstoned p.
+Proof.
+  move=> Hp. apply set_eq => i. rewrite elem_of_union !elem_of_runs_tombstoned. split.
+  - move=> [r [Hr Hrest]]. move: Hr. rewrite elem_of_all_runs. move=> [q [tm' [Hq Hr]]].
+    destruct (decide (q = parent)) as [-> | Hne].
+    + rewrite lookup_insert_eq in Hq. injection Hq as <-. left. by exists r.
+    + rewrite lookup_insert_ne // in Hq. right. exists r. split; [| exact Hrest].
+      rewrite elem_of_all_runs. by exists q, tm'.
+  - move=> [[r [Hr Hrest]] | [r [Hr Hrest]]]; exists r; (split; [| exact Hrest]); rewrite elem_of_all_runs.
+    + exists parent, tm. split; [apply lookup_insert_eq | exact Hr].
+    + move: Hr. rewrite elem_of_all_runs. move=> [q [tm' [Hq Hr]]]. exists q, tm'. split; [| exact Hr].
+      rewrite lookup_insert_ne //. move=> Heq. subst q. by rewrite Hp in Hq.
+Qed.
+
+Lemma pool_tombstoned_integrate_splice (p : pool) (parent : loc) (tm : type_model) (idx : nat)
+    (runs' : list ItemRun) (run : list (YjsItem A)) :
+  p !! parent = Some tm ->
+  runs' = take idx (tm_runs tm) ++ MkItemRun run false :: drop idx (tm_runs tm) ->
+  pool_tombstoned (<[parent := MkTypeModel runs']> p) = pool_tombstoned p.
+Proof.
+  move=> Hp ->.
+  rewrite (pool_tombstoned_insert p parent tm _ Hp) /= runs_tombstoned_integrate.
+  by rewrite (pool_tombstoned_lookup p parent tm Hp).
+Qed.
+
+(** [input_char_ids input]: the ids of a wire item's chars, its head id and
+    the following clocks; what a transaction records for an integrated
+    item ([run_denotes_char_ids] in [store/value_cells]). *)
+Definition input_char_ids (input : IntegrateInput (A := A)) : gset YjsId :=
+  list_to_set ((λ o, MkYjsId (clientId (in_id input)) (clock (in_id input) + o)%nat)
+                 <$> seq 0 (length (in_content input))).
+
+Lemma elem_of_input_char_ids (input : IntegrateInput (A := A)) (i : YjsId) :
+  i ∈ input_char_ids input <->
+    clientId i = clientId (in_id input) ∧
+    (clock (in_id input) <= clock i)%nat ∧ (clock i < clock (in_id input) + length (in_content input))%nat.
+Proof.
+  rewrite /input_char_ids elem_of_list_to_set list_elem_of_fmap. split.
+  - move=> [o [-> Ho]]. apply elem_of_seq in Ho. simpl. split_and!; [done | lia | lia].
+  - move=> [Hcid [Hle Hlt]]. exists (clock i - clock (in_id input))%nat. split.
+    + destruct i as [ci ki]. simpl in *. f_equal; [done | lia].
+    + apply elem_of_seq. lia.
+Qed.
+
+
+(** [inputs_char_ids l]: the char ids of a batch of wire items, what a
+    transaction records for the items an apply integrated. *)
+Definition inputs_char_ids (l : list (TId * IntegrateInput (A := A))) : gset YjsId :=
+  ⋃ ((λ x, input_char_ids x.2) <$> l).
+
+Lemma inputs_char_ids_nil : inputs_char_ids [] = ∅.
+Proof. done. Qed.
+
+Lemma inputs_char_ids_app (l1 l2 : list (TId * IntegrateInput (A := A))) :
+  inputs_char_ids (l1 ++ l2) = inputs_char_ids l1 ∪ inputs_char_ids l2.
+Proof. by rewrite /inputs_char_ids fmap_app union_list_app_L. Qed.
+
+Lemma inputs_char_ids_singleton (x : TId * IntegrateInput (A := A)) :
+  inputs_char_ids [x] = input_char_ids x.2.
+Proof. rewrite /inputs_char_ids /= (right_id_L ∅ (∪)) //. Qed.
+
+Lemma elem_of_inputs_char_ids (l : list (TId * IntegrateInput (A := A))) (i : YjsId) :
+  i ∈ inputs_char_ids l <-> ∃ x, x ∈ l ∧ i ∈ input_char_ids x.2.
+Proof.
+  rewrite /inputs_char_ids elem_of_union_list. split.
+  - move=> [S [HS Hi]]. apply list_elem_of_fmap in HS as (x & -> & Hx). by exists x.
+  - move=> [x [Hx Hi]]. exists (input_char_ids x.2). split; [| exact Hi].
+    apply list_elem_of_fmap. by exists x.
+Qed.
+
+(** A wire item's char ids are the ids of its per-char ops. *)
+Lemma input_char_ids_expand (x : TId * IntegrateInput (A := A)) (i : YjsId) :
+  i ∈ input_char_ids x.2 -> ∃ op, op ∈ expand_input x ∧ in_id op.2 = i.
+Proof.
+  rewrite elem_of_input_char_ids. move=> [Hcid [Hle Hlt]].
+  set (k := (clock i - clock (in_id x.2))%nat).
+  have Hklt : (k < length (explode (in_content x.2)))%nat by (rewrite explode_length /k; lia).
+  have Hlen : length (ops_of_input x.2 (explode (in_content x.2))) = length (explode (in_content x.2))
+    := ops_from_length _ _ _ _ _.
+  destruct (lookup_lt_is_Some_2 (ops_of_input x.2 (explode (in_content x.2))) k ltac:(lia)) as [op Hop].
+  exists (x.1, op). split.
+  - rewrite /expand_input. apply list_elem_of_fmap. exists op. split; [done | exact (list_elem_of_lookup_2 _ _ _ Hop)].
+  - simpl. rewrite (proj1 (ops_from_lookup _ _ _ _ _ _ _ Hop)).
+    destruct i as [ci ki]. simpl in *. f_equal; [done | rewrite /k; lia].
+Qed.
+
+
+(** The exact snapshot of a type, read off the public model: its items tagged
+    by membership in the tombstone set. [runs_model_tombstoned] is the bridge
+    to the run view a walk sees: a run's bit is the membership of any of its
+    chars, by covering-slot uniqueness ([run_deleted_tombstoned]). *)
+Definition type_snapshot (m : DocModel) (deleted : gset YjsId) (name : P) : list (YjsItem A * bool) :=
+  (λ x, (x, bool_decide (item_id x ∈ deleted))) <$> doc_model_get m (RootId name).
+
+Lemma run_deleted_tombstoned (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun)
+    (x : YjsItem A) :
+  pool_invs p -> p !! parent = Some tm -> tm_runs tm !! k = Some r -> x ∈ run_items r ->
+  run_deleted r = bool_decide (item_id x ∈ pool_tombstoned p).
+Proof.
+  move=> Hinvs Hp Hk Hx.
+  have Hrmem : r ∈ all_runs p.
+  { apply (elem_of_all_runs_lookup p parent tm r Hp). left. exact (list_elem_of_lookup_2 _ _ _ Hk). }
+  have Hwf : run_wf (run_items r) := proj1 (proj1 Hinvs r Hrmem).
+  have Hxc : item_id x ∈ char_ids (run_items r).
+  { rewrite /char_ids elem_of_list_to_set list_elem_of_fmap. by exists x. }
+  case_bool_decide as Hd.
+  - apply elem_of_runs_tombstoned in Hd as (r' & Hr' & Hd' & Hi').
+    apply elem_of_all_runs in Hr' as (q & tm' & Hq & Hr').
+    apply list_elem_of_lookup in Hr' as [k' Hk'].
+    have Hr'mem : r' ∈ all_runs p.
+    { apply (elem_of_all_runs_lookup p q tm' r' Hq). left. exact (list_elem_of_lookup_2 _ _ _ Hk'). }
+    have Hwf' : run_wf (run_items r') := proj1 (proj1 Hinvs r' Hr'mem).
+    have Hc1 : pool_covers p parent k (item_id x).
+    { exists tm, r. split_and!; [exact Hp | exact Hk | exact (char_ids_run_covers r _ Hwf Hxc)]. }
+    have Hc2 : pool_covers p q k' (item_id x).
+    { exists tm', r'. split_and!; [exact Hq | exact Hk' | exact (char_ids_run_covers r' _ Hwf' Hi')]. }
+    destruct (pool_covers_unique p (item_id x) parent q k k' Hinvs Hc1 Hc2) as [Hqq Hkk].
+    subst q k'. rewrite Hp in Hq. injection Hq as <-. rewrite Hk in Hk'. injection Hk' as <-. exact Hd'.
+  - destruct (run_deleted r) eqn:Hdr; last done. exfalso. apply Hd.
+    apply elem_of_runs_tombstoned. exists r. split_and!; [exact Hrmem | exact Hdr | exact Hxc].
+Qed.
+
+Lemma runs_model_tombstoned (p : pool) (parent : loc) (tm : type_model) :
+  pool_invs p -> p !! parent = Some tm ->
+  runs_model (tm_runs tm) = (λ x, (x, bool_decide (item_id x ∈ pool_tombstoned p))) <$> tm_arr tm.
+Proof.
+  move=> Hinvs Hp. rewrite /tm_arr.
+  have Hgen : ∀ (k : nat) (runs : list ItemRun),
+      (∀ j r, runs !! j = Some r -> tm_runs tm !! (k + j)%nat = Some r) ->
+      runs_model runs = (λ x, (x, bool_decide (item_id x ∈ pool_tombstoned p))) <$> runs_flatten runs.
+  { move=> k runs. elim: runs k => [| r runs IH] k Hlk; first done.
+    rewrite /runs_model /= -/(runs_model runs) runs_flatten_cons fmap_app. f_equal.
+    - have Hk := Hlk 0%nat r eq_refl. rewrite Nat.add_0_r in Hk.
+      rewrite /run_models. apply list_fmap_ext. move=> i x Hx. f_equal.
+      exact (run_deleted_tombstoned p parent tm k r x Hinvs Hp Hk (list_elem_of_lookup_2 _ _ _ Hx)).
+    - apply (IH (S k)). move=> j r' Hj.
+      replace (S k + j)%nat with (k + S j)%nat by lia. exact (Hlk (S j) r' Hj). }
+  apply (Hgen 0%nat). move=> j r Hj. rewrite Nat.add_0_l. exact Hj.
+Qed.
+
+
 End store_model.

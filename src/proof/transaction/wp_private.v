@@ -34,10 +34,6 @@ Set Default Proof Using "Type*".
 
 Notation A := go_string.
 
-(** The span a node contributes to a record: its head id and its length. *)
-Local Definition node_span (v : yjs.item.t) : yjs.idSpan.t :=
-  yjs.idSpan.mk v.(yjs.item.id') (W64 (length v.(yjs.item.content').(yjs.content.content'))).
-
 Lemma wp_newTransaction (s_loc : loc) :
   {{{ is_pkg_init yjs }}}
     @! yjs.newTransaction #s_loc

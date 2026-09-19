@@ -1,6 +1,7 @@
 (** The [Transaction] record, Iris layer (issue #206 T1, issue #198 Part II).
 
     Definitions
+    - [node_span v]: the span a node contributes to a record (head id, length).
     - [own_transaction_changes tr s_loc inserted tombstoned changed]: the
       transaction record at [tr] belongs to the store at [s_loc] and has
       recorded exactly the char ids [inserted] (its [insertSet]), the char
@@ -11,6 +12,7 @@
       range test needs.
 
     Laws
+    - [node_span_char_ids]: a node's span fits and denotes its run's chars.
     - [own_transaction_changes_store]: the record names its store.
 
     The record's WPs ([newTransaction], [recordInsert], [recordDelete]) are
@@ -47,6 +49,12 @@ Proof. rewrite own_slice_cap_unseal /own_slice_cap_def. apply _. Qed.
 
 (* ===== definitions ======================================================== *)
 
+(** [node_span v]: the span a node contributes to the record, its head id
+    and its length as one [idSpan] (what [recordInsert] / [recordDelete]
+    append). *)
+Definition node_span (v : yjs.item.t) : yjs.idSpan.t :=
+  yjs.idSpan.mk v.(yjs.item.id') (W64 (length v.(yjs.item.content').(yjs.content.content'))).
+
 (** The transaction record: its store, and what it recorded so far. The
     [changed] map holds [true] at every recorded type (a Go set). *)
 Definition own_transaction_changes (tr s_loc : loc)
@@ -69,6 +77,34 @@ Definition own_transaction_changes (tr s_loc : loc)
 Proof. rewrite /own_transaction_changes. apply _. Qed.
 
 (* ===== lemmas ============================================================= *)
+
+(** What a node's span records is its run: a node whose id, content length
+    and run agree ([own_item_node]'s pins) contributes a span that fits a
+    word and denotes exactly the run's char ids. *)
+Lemma node_span_char_ids (v : yjs.item.t) (r : ItemRun) :
+  run_wf (run_items r) ->
+  toYjsId v.(yjs.item.id') = item_id (run_head_item r) ->
+  length v.(yjs.item.content').(yjs.content.content') = length (run_items r) ->
+  run_fits r ->
+  span_no_overflow (node_span v) ∧ span_ids (node_span v) = char_ids (run_items r).
+Proof.
+  move=> Hwf Hid Hlen Hfits.
+  have Hclk : uint.nat v.(yjs.item.id').(yjs.id.clock') = run_clock r.
+  { rewrite /run_clock -Hid //. }
+  have Hlen64 : (Z.of_nat (length (run_items r)) < 2^64)%Z.
+  { move: Hfits. rewrite /run_fits. lia. }
+  split.
+  { rewrite /span_no_overflow /node_span /range_no_overflow /= Hlen.
+    move: Hfits. rewrite /run_fits -Hclk. word. }
+  have Hstep : run_step (run_items r) := run_wf_run_step _ Hwf.
+  have Hhead : item_id (run_head_item r) = toYjsId v.(yjs.item.id') by rewrite Hid.
+  have Hlenw : length (run_items r) = uint.nat (W64 (length v.(yjs.item.content').(yjs.content.content'))).
+  { rewrite Hlen. word. }
+  have Hcons : run_items r = run_head_item r :: List.tl (run_items r).
+  { rewrite /run_head_item. destruct (run_items r); [by destruct Hwf | reflexivity]. }
+  rewrite Hcons in Hstep Hlenw *.
+  rewrite /node_span. exact (span_ids_char_ids _ _ _ _ Hhead Hstep Hlenw).
+Qed.
 
 Lemma own_transaction_changes_store (tr s_loc : loc)
     (inserted tombstoned : gset YjsId) (changed : gset loc) :

@@ -1,6 +1,6 @@
 (** [wp_Doc__ApplySyncUpdate]: the Doc-level entry point of the sync protocol,
-    applying a peer's update batch under the store's write lock and reporting
-    the resulting growth of the ghost history. *)
+    applying a peer's update batch as one transaction (the structs, then the
+    delete spans) and reporting the resulting growth of the ghost history. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -10,6 +10,7 @@ From New.proof Require Import history.
 From New.proof.id Require Import id.
 From New.proof.item Require Import item.
 From New.proof.ytype Require Import ytype.
+From New.proof.transaction Require Import transaction.
 From New.proof.store Require Import store.
 From New.proof.text Require Import text.
 From New.proof.sync_proof Require Import mutex.
@@ -112,40 +113,58 @@ Proof.
   (* open the pure model: the wire records live only inside this proof *)
   iDestruct "Hdel" as (spans) "[Hspans %Hdeleted]".
   iNamed "His_doc". subst s_loc. wp_auto.
-  (* take the write lock, reveal the store's current (c0, h, m, pend); the
-     client pin identifies c0 with the caller's c *)
-  wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
-  iDestruct "Hinv" as (c0 h m pend) "Hstore".
-  iDestruct (own_store_client_pin with "Hstore") as "[Hstore #Hpin0]".
-  iDestruct (is_store_client_agree with "Hpin0 Hpin") as %->.
-  iDestruct (own_store_hist_coh with "Hstore") as "[Hstore %Hhcoh]".
+  (* the batch is one transaction: the structs, then the delete spans *)
+  wp_apply (wp_store__transact dvv.(yjs.Doc.store') γs γh _
+              (λ c0 h' m' pend' tombs',
+                 ∃ (h : list Ev) (applied : list (TId * IntegrateInput (A := A))) (m'' : DocModel),
+                   ⌜c0 = c⌝ ∗
+                   own_update_structs sl dq inputs ∗ own_delete_spans sldel dqd spans ∗
+                   is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
+                   ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
+                   is_applied_certs γs applied m'')%I
+              with "[$His_store Hupd Hspans s structs deletes]").
+  { rewrite /closure_runs_transaction.
+    iIntros (tr c0 h m pend tombs Ψ) "Htx HΨ".
+    wp_auto.
+    (* the transaction reveals the store's current (c0, h, m, pend); the
+       client pin identifies c0 with the caller's c *)
+    iDestruct "Htx" as (changed_locs) "Htx". iNamed "Htx".
+    iDestruct (own_store_client_pin with "Hstore") as "[Hstore #Hpin0]".
+    iDestruct (is_store_client_agree with "Hpin0 Hpin") as %->.
+    iAssert (own_transaction tr dvv.(yjs.Doc.store') γs γh c h m pend tombs ∅ ∅ ∅)
+      with "[Hchanges Hstore]" as "Htx".
+    { iExists changed_locs. iFrame "Hchanges Hstore Hchanged_bound". iPureIntro.
+      split_and!; [exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
+    (* run the total certificate-based applyUpdate on the real store: no
+       causal-closure obligation; the pending plus the batch drain to the
+       structural fixpoint, delivering only the applied structs (per char) *)
+    wp_apply (wp_store__applyUpdate tr _ sl dq γs γh c h m pend inputs tombs ∅ ∅ ∅ Hwf
+                with "[$Hishist $Htx $Hupd $Hcerts]").
+    iIntros (applied rest m' changed') "(Hupd & Htx & #Hlb & %Hdrain & %Hvr & %Hnoloss & #Happlied & %Hcsub)".
+    wp_auto.
+    (* the delete spans, second: a span may target a struct that just arrived
+       in this very batch. Deletes are model no-ops, so the model, history and
+       pending buffer come back unchanged; the tombstone state grows. *)
+    wp_apply (wp_store__applyDeleteSpans_transaction with "[$Htx $Hspans]").
+    iIntros (tombs' tombstoned' changed'') "(Htx & Hspans & %Htsub & %Htsub2 & %Hcsub2 & %Htombs')".
+    (* mint the ENFORCEABLE no-loss receipts: every input's id is accepted, hence
+       (by the store invariant) forever delivered-or-buffered; a discarding
+       implementation could not produce these fragments *)
+    iDestruct "Htx" as (changed_locs') "Htx". iNamedSuffix "Htx" "'".
+    iMod (own_store_accept_batch _ _ _ _ _ _ _ _ inputs
+            ltac:(move=> x Hx; exact (input_accounted_id _ _ _ (Hnoloss x Hx)))
+            with "Hstore'") as "[Hstore' #Haccepts]".
+    wp_auto.
+    iApply ("HΨ" $! (h ++ (deliver_ev <$> expand_inputs applied)) m' rest tombs'
+              (∅ ∪ inputs_char_ids applied) tombstoned' changed'').
+    iSplitL "Hchanges' Hstore'".
+    { iExists changed_locs'. iFrame "Hchanges' Hstore' Hchanged_bound'". iPureIntro.
+      split_and!; assumption. }
+    iExists h, applied, m'. iFrame "Hupd Hspans Hlb Haccepts Happlied". done. }
+  iIntros "HQ". iDestruct "HQ" as (c0 h' m' pend' tombs') "HQ".
+  iDestruct "HQ" as (h applied m'') "(-> & Hupd & Hspans & #Hlb & #Haccepts & #Happlied)".
   wp_auto.
-  (* run the total certificate-based applyUpdate on the real store: no
-     causal-closure obligation; the pending plus the batch drain to the
-     structural fixpoint, delivering only the applied structs (per char) *)
-  wp_apply (wp_store__applyUpdate _ sl dq γs γh c h m pend inputs Hwf
-              with "[$Hishist $Hstore $Hupd $Hcerts]").
-  iIntros (applied rest m') "(Hupd & Hstore & #Hlb & %Hdrain & %Hvr & %Hnoloss & #Happlied)".
-  wp_auto.
-  (* the delete spans, second: a span may target a struct that just arrived
-     in this very batch. Deletes are model no-ops, so the store's model,
-     history and pending buffer come back unchanged (the tombstones and the
-     splits live under the [types] existential). *)
-  wp_apply (wp_store__applyDeleteSpans_store (dvv.(yjs.Doc.store')) γs γh c
-              (h ++ (deliver_ev <$> expand_inputs applied)) m' rest sldel dqd spans
-              with "[$Hstore $Hspans]").
-  iIntros "[Hstore Hspans]".
-  wp_auto.
-  (* mint the ENFORCEABLE no-loss receipts: every input's id is accepted, hence
-     (by the store invariant) forever delivered-or-buffered; a discarding
-     implementation could not produce these fragments *)
-  iMod (own_store_accept_batch _ _ _ _ _ _ _ inputs
-          ltac:(move=> x Hx; exact (input_accounted_id _ _ _ (Hnoloss x Hx)))
-          with "Hstore") as "[Hstore #Haccepts]".
-  (* release the lock at the advanced history (delivered = expand_inputs applied)
-     with the leftover as the new pending *)
-  wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hstore]").
-  iApply ("HΦ" $! h applied m'). iFrame "Hupd Hlb Haccepts Happlied".
+  iApply ("HΦ" $! h applied m''). iFrame "Hupd Hlb Haccepts Happlied".
   iExists spans. by iFrame "Hspans".
 Qed.
 
