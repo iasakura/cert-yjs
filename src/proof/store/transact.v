@@ -21,7 +21,7 @@ From New.proof.sync_proof Require Import base mutex rwmutex rwmutex_guard.
 From New.proof Require Import tok_set.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
-From New.proof.store Require Import model value heap wp_private.
+From New.proof.store Require Import model value heap wp_private notify.
 From New.proof.transaction Require Import transaction.
 
 Section store_transact.

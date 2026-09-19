@@ -27,8 +27,9 @@
     - [app_synced app observed]: the application invariant, its state spells
       the observed snapshot.
     - [snapshot_before inserted tombstoned now] / [record_step inserted
-      tombstoned x]: a transaction's start snapshot read off its current one
-      and its record, and the record's classification of one char (the push
+      tombstoned x] / [record_delta inserted tombstoned now]: a transaction's
+      start snapshot read off its current one and its record, the record's
+      classification of one char, and of a whole snapshot (the push
       observer, issue #198 Part II).
     - [snapshot_deleted_ids s]: the tombstoned ids of a snapshot.
     - [history_reflected h0 name s]: every insert into the root [name] that
@@ -56,7 +57,9 @@
       fits (how the application discharges [ApplyDelta]'s bound).
     - [text_delta_before] / [snapshot_before_grows_to]: the delta from the
       start snapshot is the record's classification merged, and the start
-      snapshot grows to the current one ([delta_step_before] per char).
+      snapshot grows to the current one ([delta_step_before] per char);
+      [record_delta_app] / [record_delta_singleton] take the classification
+      one char at a time, as the walk does.
     - [elem_of_snapshot_deleted_ids]: a deleted id is a tombstoned char's;
       [snapshot_deleted_ids_app] / [snapshot_deleted_ids_run_models]: over a
       walk, and over one run's chars (its ids when tombstoned).
@@ -221,6 +224,12 @@ Definition record_step (inserted tombstoned : gset YjsId) (x : YjsItem A * bool)
   if decide (item_id x.1 ∈ inserted) then (if x.2 then None else Some (Insert (content x.1)))
   else if decide (item_id x.1 ∈ tombstoned) then Some (Delete (length (content x.1)))
   else if x.2 then None else Some (Retain (length (content x.1))).
+
+(** [record_delta inserted tombstoned now]: the record's classification over
+    a whole snapshot, what the Go walk ([textDelta]) emits before merging;
+    its normal form is the delta a push observer is told. *)
+Definition record_delta (inserted tombstoned : gset YjsId) (now : snapshot) : list DeltaOp :=
+  omap (record_step inserted tombstoned) now.
 
 (** [delta_fits delta]: every retain and delete count is below [2^64]. The
     Go carries counts as [uint64] words, so a Go delta denotes its model
@@ -753,12 +762,21 @@ Qed.
 
 (** The delta from the start snapshot to the current one is the record's
     classification of the current snapshot, merged: what [textDelta] walks. *)
+Lemma record_delta_app (inserted tombstoned : gset YjsId) (m1 m2 : snapshot) :
+  record_delta inserted tombstoned (m1 ++ m2) =
+  record_delta inserted tombstoned m1 ++ record_delta inserted tombstoned m2.
+Proof. rewrite /record_delta omap_app //. Qed.
+
+Lemma record_delta_singleton (inserted tombstoned : gset YjsId) (x : YjsItem A * bool) :
+  record_delta inserted tombstoned [x] = option_list (record_step inserted tombstoned x).
+Proof. rewrite /record_delta /=. by destruct (record_step inserted tombstoned x). Qed.
+
 Lemma text_delta_before (inserted tombstoned : gset YjsId) (now : snapshot) :
   NoDup now.*1 -> (∀ x, x ∈ now -> item_id x.1 ∈ tombstoned -> x.2 = true) ->
   text_delta (snapshot_before inserted tombstoned now) now =
-  delta_normal_form (omap (record_step inserted tombstoned) now).
+  delta_normal_form (record_delta inserted tombstoned now).
 Proof.
-  move=> Hnodup Htomb. rewrite /text_delta /per_char_delta. f_equal.
+  move=> Hnodup Htomb. rewrite /text_delta /per_char_delta /record_delta. f_equal.
   apply list_omap_ext. apply Forall_Forall2_diag. apply Forall_forall => x Hx.
   apply (delta_step_before inserted tombstoned now x Hnodup Hx (Htomb x Hx)).
 Qed.

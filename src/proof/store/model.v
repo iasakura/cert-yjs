@@ -2243,7 +2243,7 @@ Lemma text_delta_transaction (m : DocModel) (deleted inserted tombstoned : gset 
   tombstoned ⊆ deleted ->
   YjsArrInvariant (doc_model_get m (RootId name)) ->
   text_delta (type_snapshot m0 deleted0 name) (type_snapshot m deleted name) =
-    delta_normal_form (omap (record_step inserted tombstoned) (type_snapshot m deleted name)) ∧
+    delta_normal_form (record_delta inserted tombstoned (type_snapshot m deleted name)) ∧
   snapshot_grows_to (type_snapshot m0 deleted0 name) (type_snapshot m deleted name).
 Proof.
   move=> Hstart Hsub Hinv.
