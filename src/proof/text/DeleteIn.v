@@ -45,6 +45,9 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* The ghost op-history types at the document content type; type names are Go
    strings (issue #49). *)
@@ -115,7 +118,7 @@ Proof.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
   iDestruct "His_store" as "#His_store".
   subst text_store.
-  iDestruct "Htx" as (changed_locs) "Htx". iNamed "Htx".
+  iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as (client k pdel locs0 p0 bind acc) "Hown". iNamed "Hown". subst c.
   (* [s := tr.store]: the record names the store *)
   iDestruct (own_transaction_changes_store with "Hchanges") as (trv) "(Htr & %Htrstore & Hchangesback)".
@@ -272,6 +275,9 @@ Proof.
     "%Hdelstomb" ∷ ⌜ids_tombstoned dels (all_runs pj)⌝ ∗
     "%Hdelsarr" ∷ ⌜dels ⊆ char_ids (tm_arr ts)⌝ ∗
     "%Htombj" ∷ ⌜pool_tombstoned pj = pool_tombstoned p0 ∪ dels⌝ ∗
+    (* what this call tombstoned was live: the transaction's start state
+       keeps its tombstones *)
+    "%Hdelsfresh" ∷ ⌜dels ## pool_tombstoned p0⌝ ∗
     "%Hqlen" ∷ ⌜(q <= length runsj)%nat⌝)%I
     with "[s cur remaining Hruns Hchanges tr Hseq Hhist Hdelete_set HtypesAuth]" as "IH".
   { iExists p1i, len, locs1, p1, ls1, runs1, ∅.
@@ -279,7 +285,8 @@ Proof.
     rewrite ?(right_id_L (∅ : gset YjsId) (∪)) ?(right_id_L (∅ : gset loc) (∪)).
     iFrame "s cur remaining Hruns Hchanges tr Hseq Hhist Hdelete_set HtypesAuth".
     iPureIntro. split_and!; [exact Hp1 | exact Hl1 | exact Hdomp1 | exact Hdoml1 | |
-      move=> i Hi; exfalso; exact (not_elem_of_empty i Hi) | exact (empty_subseteq _) | exact Htomb1 | exact Hpb1].
+      move=> i Hi; exfalso; exact (not_elem_of_empty i Hi) | exact (empty_subseteq _) | exact Htomb1
+      | apply disjoint_empty_l | exact Hpb1].
     destruct (proj1 Hlr1 tv.(yjs.Text.inner') (MkTypeModel runs1) Hp1) as (tm0 & Htm0 & Harr0).
     rewrite Harr0 Htsp in Htm0 |- *. by injection Htm0 as <-. }
   clear Hp1 Hl1 Hdomp1 Hdoml1 Hpb1 Hlr1 Htomb1 locs1 p1 ls1 runs1 p1i.
@@ -336,6 +343,15 @@ Proof.
         iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close
           | exact Hhcoh | exact Hctr_close | exact Hacccoh | rewrite Htombj Hdeleted //]. }
+      (* the transaction's start state, over this delete: the same documents,
+         the tombstones grown by this call's, which were live *)
+      have Hstart' : transaction_start m (deleted ∪ dels) inserted (tombstoned ∪ dels) m0 deleted0.
+      { destruct Hstart as (Hfilter & Hdel & Hdisj & Htop). split_and!; [exact Hfilter | | | exact Htop].
+        - rewrite Hdel -assoc_L //.
+        - rewrite elem_of_disjoint => i Hi Hi0. apply elem_of_union in Hi as [Hi | Hi].
+          + exact (proj1 (elem_of_disjoint _ _) Hdisj i Hi Hi0).
+          + apply (proj1 (elem_of_disjoint _ _) Hdelsfresh i Hi).
+            rewrite -Hdeleted Hdel. apply elem_of_union_l. exact Hi0. }
       iModIntro.
       iApply ("HΦ" $! dels).
       iSplitL "Ht His_store His_lb".
@@ -350,9 +366,10 @@ Proof.
           | exact Hsorted]. }
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
-      iSplitL "Hchanges Hstore".
-      { iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
-        iFrame "Hchanges Hstore".
+      iSplitL "Hchanges Hstore Hregistry".
+      { iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})), m0, deleted0.
+        iFrame "Hchanges Hstore Hregistry".
+        iSplitR; first (iPureIntro; exact Hstart').
         iSplitR.
         { destruct (decide (dels = ∅)) as [-> | Hne].
           - repeat (rewrite decide_True; last reflexivity).
@@ -428,6 +445,15 @@ Proof.
         iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close
           | exact Hhcoh | exact Hctr_close | exact Hacccoh | rewrite Htombj Hdeleted //]. }
+      (* the transaction's start state, over this delete: the same documents,
+         the tombstones grown by this call's, which were live *)
+      have Hstart' : transaction_start m (deleted ∪ dels) inserted (tombstoned ∪ dels) m0 deleted0.
+      { destruct Hstart as (Hfilter & Hdel & Hdisj & Htop). split_and!; [exact Hfilter | | | exact Htop].
+        - rewrite Hdel -assoc_L //.
+        - rewrite elem_of_disjoint => i Hi Hi0. apply elem_of_union in Hi as [Hi | Hi].
+          + exact (proj1 (elem_of_disjoint _ _) Hdisj i Hi Hi0).
+          + apply (proj1 (elem_of_disjoint _ _) Hdelsfresh i Hi).
+            rewrite -Hdeleted Hdel. apply elem_of_union_l. exact Hi0. }
       iModIntro.
       iApply ("HΦ" $! dels).
       iSplitL "Ht His_store His_lb".
@@ -442,9 +468,10 @@ Proof.
           | exact Hsorted]. }
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
-      iSplitL "Hchanges Hstore".
-      { iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
-        iFrame "Hchanges Hstore".
+      iSplitL "Hchanges Hstore Hregistry".
+      { iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})), m0, deleted0.
+        iFrame "Hchanges Hstore Hregistry".
+        iSplitR; first (iPureIntro; exact Hstart').
         iSplitR.
         { destruct (decide (dels = ∅)) as [-> | Hne].
           - repeat (rewrite decide_True; last reflexivity).
@@ -496,12 +523,12 @@ Proof.
     simpl negb. wp_auto.
     iDestruct ("Haccback" with "Haccval") as "Hruns".
     wp_for_post.
-    iFrame "Hacc".
+    iFrame "Hacc Hregistry".
     iFrame "Ht His_lb HΦ". iExists (S q), rem, locsj, pj, lsj, runsj, dels.
     iFrame "Hsp Hrem Hruns Hchanges Htrp Hseq Hhist Hdelete_set HtypesAuth".
     rewrite Hnextq -Haccright. iFrame "Hcur".
     iPureIntro. split_and!; [exact Hpj | exact Hlj | exact Hdompj | exact Hdomlj | exact Harrj
-      | exact Hdelstomb | exact Hdelsarr | exact Htombj | lia].
+      | exact Hdelstomb | exact Hdelsarr | exact Htombj | exact Hdelsfresh | lia].
   - (* visible node: spend the whole run, or split at the range end first *)
     simpl negb. wp_auto.
     wp_apply (wp_item__Len lc (DfracOwn 1) itemVal with "[$Haccval]"). iIntros "[Haccval _]".
@@ -510,6 +537,7 @@ Proof.
     (* the node goes back to the store before the store methods run *)
     iDestruct ("Haccback" with "Haccval") as "Hruns".
     iDestruct (own_store_state_run_wf with "Hruns") as %Hwfj.
+    iDestruct (own_store_state_run_pool_invs with "Hruns") as %Hpoolj0.
     have Hrqmem : rq ∈ all_runs pj.
     { apply elem_of_all_runs. exists tv.(yjs.Text.inner'), (MkTypeModel runsj).
       split; [exact Hpj | exact (list_elem_of_lookup_2 _ _ _ Hrq)]. }
@@ -523,6 +551,7 @@ Proof.
                   Hpj Hlj Hrq Hlc Hdiffb with "[$Hruns]").
       iIntros (rloc) "(Hruns & %Hrlocfresh)".
       iEval (simpl) in "Hruns".
+      iDestruct (own_store_state_run_pool_invs with "Hruns") as %Hpool2.
       wp_auto.
       set (runs2 := split_runs runsj q (uint.nat rem)).
       set (ls2 := split_locs lsj q rloc).
@@ -591,7 +620,7 @@ Proof.
         rewrite /flip_run /leftRun /split_run_left /=.
         etrans; [exact (char_ids_take (uint.nat rem) (run_items rq)) |].
         rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
-      iFrame "Hacc".
+      iFrame "Hacc Hregistry".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (uint.nat rem))),
         (<[tv.(yjs.Text.inner') := ls2]> locsj), (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), ls2, runs3,
@@ -619,6 +648,14 @@ Proof.
         rewrite /p2 insert_insert_eq /= in Hflip.
         rewrite Hflip (pool_tombstoned_split pj tv.(yjs.Text.inner') (MkTypeModel runsj) q (uint.nat rem) rq Hpj Hrq)
           Htombj -assoc_L //.
+      * (* freshness: the left half was live *)
+        have Hp2tomb : pool_tombstoned p2 = pool_tombstoned pj
+          := pool_tombstoned_split pj tv.(yjs.Text.inner') (MkTypeModel runsj) q (uint.nat rem) rq Hpj Hrq.
+        rewrite elem_of_disjoint => i Hi Hi0. apply elem_of_union in Hi as [Hi | Hi].
+        -- exact (proj1 (elem_of_disjoint _ _) Hdelsfresh i Hi Hi0).
+        -- apply (proj1 (elem_of_disjoint _ _)
+                    (live_run_chars_not_tombstoned p2 tv.(yjs.Text.inner') (MkTypeModel runs2) q leftRun Hpool2 Hp2 Hrl2 Hdl) i Hi).
+           rewrite Hp2tomb Htombj. apply elem_of_union_l. exact Hi0.
       * rewrite /runs3 length_insert Hlen2. lia.
     + (* Len <= remaining: tombstone the WHOLE run and spend its length *)
       wp_apply (wp_deleteNode_store tr s_loc (MkStoreState client k locsj pj bind pend pdel)
@@ -656,7 +693,7 @@ Proof.
       have Hdelsarr' : dels ∪ char_ids (run_items rq) ⊆ char_ids (tm_arr ts).
       { apply union_least; [exact Hdelsarr |].
         rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
-      iFrame "Hacc".
+      iFrame "Hacc Hregistry".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (length (run_items rq)))),
         locsj, (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), lsj, runs3,
@@ -679,6 +716,12 @@ Proof.
       * (* the tombstone state: the flip added the run's chars *)
         rewrite /runs3 (pool_tombstoned_flip pj tv.(yjs.Text.inner') (MkTypeModel runsj) q rq Hpj Hrq)
           Htombj -assoc_L //.
+      * (* freshness: the run was live *)
+        rewrite elem_of_disjoint => i Hi Hi0. apply elem_of_union in Hi as [Hi | Hi].
+        -- exact (proj1 (elem_of_disjoint _ _) Hdelsfresh i Hi Hi0).
+        -- apply (proj1 (elem_of_disjoint _ _)
+                    (live_run_chars_not_tombstoned pj tv.(yjs.Text.inner') (MkTypeModel runsj) q rq Hpoolj0 Hpj Hrq Hdq) i Hi).
+           rewrite Htombj. apply elem_of_union_l. exact Hi0.
       * rewrite /runs3 length_insert. lia.
 Qed.
 

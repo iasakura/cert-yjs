@@ -49,6 +49,9 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Store]. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 
 (** [Doc.ApplySyncUpdate]: the receiving half of the Yjs sync protocol
@@ -128,13 +131,13 @@ Proof.
     wp_auto.
     (* the transaction reveals the store's current (c0, h, m, pend); the
        client pin identifies c0 with the caller's c *)
-    iDestruct "Htx" as (changed_locs) "Htx". iNamed "Htx".
+    iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx".
     iDestruct (own_store_client_pin with "Hstore") as "[Hstore #Hpin0]".
     iDestruct (is_store_client_agree with "Hpin0 Hpin") as %->.
     iAssert (own_transaction tr dvv.(yjs.Doc.store') γs γh c h m pend tombs ∅ ∅ ∅)
-      with "[Hchanges Hstore]" as "Htx".
-    { iExists changed_locs. iFrame "Hchanges Hstore Hchanged_bound". iPureIntro.
-      split_and!; [exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
+      with "[Hchanges Hstore Hregistry]" as "Htx".
+    { iExists changed_locs, m0, deleted0. iFrame "Hchanges Hstore Hregistry Hchanged_bound". iPureIntro.
+      split_and!; [exact Hstart | exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
     (* run the total certificate-based applyUpdate on the real store: no
        causal-closure obligation; the pending plus the batch drain to the
        structural fixpoint, delivering only the applied structs (per char) *)
@@ -150,15 +153,15 @@ Proof.
     (* mint the ENFORCEABLE no-loss receipts: every input's id is accepted, hence
        (by the store invariant) forever delivered-or-buffered; a discarding
        implementation could not produce these fragments *)
-    iDestruct "Htx" as (changed_locs') "Htx". iNamedSuffix "Htx" "'".
+    iDestruct "Htx" as (changed_locs' m0' deleted0') "Htx". iNamedSuffix "Htx" "'".
     iMod (own_store_accept_batch _ _ _ _ _ _ _ _ inputs
             ltac:(move=> x Hx; exact (input_accounted_id _ _ _ (Hnoloss x Hx)))
             with "Hstore'") as "[Hstore' #Haccepts]".
     wp_auto.
     iApply ("HΨ" $! (h ++ (deliver_ev <$> expand_inputs applied)) m' rest tombs'
               (∅ ∪ inputs_char_ids applied) tombstoned' changed'').
-    iSplitL "Hchanges' Hstore'".
-    { iExists changed_locs'. iFrame "Hchanges' Hstore' Hchanged_bound'". iPureIntro.
+    iSplitL "Hchanges' Hstore' Hregistry'".
+    { iExists changed_locs', m0', deleted0'. iFrame "Hchanges' Hstore' Hregistry' Hchanged_bound'". iPureIntro.
       split_and!; assumption. }
     iExists h, applied, m'. iFrame "Hupd Hspans Hlb Haccepts Happlied". done. }
   iIntros "HQ". iDestruct "HQ" as (c0 h' m' pend' tombs') "HQ".

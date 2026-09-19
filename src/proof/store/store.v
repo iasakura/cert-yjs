@@ -7,4 +7,4 @@
     [deleteRange]). Downstream
     files Require THIS module only; the split is an internal build-time
     concern. *)
-From New.proof.store Require Export model value heap wp_private Integrate GetNode splitNode repair applyUpdate deleteRange transact.
+From New.proof.store Require Export model value heap wp_private Integrate GetNode splitNode repair applyUpdate deleteRange notify transact.
