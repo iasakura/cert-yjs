@@ -135,7 +135,7 @@ Proof.
     iDestruct (own_store_client_pin with "Hstore") as "[Hstore #Hpin0]".
     iDestruct (is_store_client_agree with "Hpin0 Hpin") as %->.
     iAssert (own_transaction tr dvv.(yjs.Doc.store') γs γh c h m pend tombs ∅ ∅ ∅)
-      with "[Hchanges Hstore]" as "Htx".
+      with "[Hchanges Hstore Hregistry]" as "Htx".
     { iExists changed_locs, m0, deleted0. iFrame "Hchanges Hstore Hregistry Hchanged_bound". iPureIntro.
       split_and!; [exact Hstart | exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
     (* run the total certificate-based applyUpdate on the real store: no
@@ -160,7 +160,7 @@ Proof.
     wp_auto.
     iApply ("HΨ" $! (h ++ (deliver_ev <$> expand_inputs applied)) m' rest tombs'
               (∅ ∪ inputs_char_ids applied) tombstoned' changed'').
-    iSplitL "Hchanges' Hstore'".
+    iSplitL "Hchanges' Hstore' Hregistry'".
     { iExists changed_locs', m0', deleted0'. iFrame "Hchanges' Hstore' Hregistry' Hchanged_bound'". iPureIntro.
       split_and!; assumption. }
     iExists h, applied, m'. iFrame "Hupd Hspans Hlb Haccepts Happlied". done. }
