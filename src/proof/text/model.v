@@ -6,6 +6,10 @@
     - [history_reflected h0 name model]: every insert into the root [name]
       that the history prefix [h0] delivered has its item in [model].
 
+    [history_reflected h0 name model] (every insert a history prefix
+    delivered is in the walked list) is [delta/model]'s, shared with the
+    observers below the store.
+
     Laws: none; [Text.Len] / [Text.String] state their reads over these
     directly. *)
 From New.proof Require Import proof_prelude.
@@ -13,6 +17,7 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core network_model.
 From New.proof.doc Require Import model.
+From New.proof.delta Require Import model.
 From stdpp Require Import gmap.
 
 Section text_model.
@@ -33,12 +38,5 @@ Local Notation Ev := (@Event Op).
 Definition text_snapshot (L : list (YjsItem A)) (model : list (YjsItem A * bool)) : Prop :=
   list_to_set L ⊆ (list_to_set model.*1 : gset (YjsItem A)) ∧
   YjsArrInvariant model.*1.
-
-(** [history_reflected h0 name model]: every insert into the root [name] that
-    the history prefix [h0] delivered has its item in the walked list. *)
-Definition history_reflected (h0 : list Ev) (name : P) (model : list (YjsItem A * bool)) : Prop :=
-  ∀ input : IntegrateInput (A := A),
-    (RootId name, OpInsert input) ∈ delivered_ops h0 ->
-    ∃ it, item_id it = in_id input ∧ it ∈ model.*1.
 
 End text_model.

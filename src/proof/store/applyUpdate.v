@@ -52,6 +52,9 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    map via a [dfrac_agree]; [store/heap] declares it up front, so the specs
    reached from here carry it too. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54), so
    [store_inv_excl] / [own_store] carry them as [⌜..⌝] and no Persistent /
@@ -1773,7 +1776,7 @@ Lemma wp_store__applyUpdate (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
 Proof using Type*.
   move=> [Hnowrapb Hrooted].
   iIntros (Φ) "(#Hpkg & #Hishist & Htx & Hupd & #Hcertsin) HΦ".
-  iNamed "Htx". iNamed "Hstore".
+  iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx". iNamed "Hstore".
   (* the old marks name their types: read the bindings off the registry
      while the authority is at hand *)
   iDestruct (changed_types_bound_registered with "HtypesAuth Hchanged_bound") as %Hlocs_bound.
@@ -1995,6 +1998,15 @@ Proof using Type*.
     - destruct (Hlocs_bound q Hold) as (nm & Hnm & Hb). exists nm.
       split; [apply elem_of_union_l; exact Hnm | exact (lookup_weaken _ _ _ _ Hb Hbindsub')].
     - exists nm. split; [| exact Hb]. apply elem_of_union_r. apply elem_of_bound_names. by exists q. }
+  (* the transaction's start state, over the batch: the documents filtered of
+     the batch's chars are the ones before, and its chars sit above every
+     older char of their client *)
+  have Hstart' : transaction_start m' deleted (inserted ∪ inputs_char_ids applied) tombstoned m0 deleted0.
+  { destruct Hstart as (Hfilter & Hdel & Hdisj & Htop). rewrite inputs_char_ids_replay.
+    split_and!; [| exact Hdel | exact Hdisj |].
+    - move=> t. rewrite (Hfilter t) -(ValidReplay_filter_new _ _ _ Hvr t) list_filter_filter.
+      apply list_filter_iff => x. rewrite not_elem_of_union. tauto.
+    - exact (ValidReplay_inserted_top _ _ _ inserted Hvr Htop). }
   iModIntro. iApply ("HΦ" $! applied rest' m' changed').
   iAssert (is_applied_certs γs applied m') with "[Hlbs]" as "#Hcerts".
   { iFrame "Hlbs". iPureIntro. exact (ValidReplay_input_mem (expand_inputs applied) m m' Hvr). }
@@ -2006,10 +2018,10 @@ Proof using Type*.
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi' | exact Hreg' | exact Hcontig']).
     rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes". }
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hchanges";
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hchanges Hregistry";
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoloss_in | apply union_subseteq_l]).
-  iExists changed_locs'.
-  iFrame "Hchanges".
+  iExists changed_locs', m0, deleted0.
+  iFrame "Hchanges Hregistry".
   iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
   { iExists client, k, pdel, locs', p', bind', acc.
     iFrame "Hstate Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set".
@@ -2017,6 +2029,7 @@ Proof using Type*.
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot' | exact Hpendbnd' | exact Hregmodel' | exact Hcoh'
       | exact Hctr' | exact Hacccoh' | rewrite Htomb'; exact Hdeleted]. }
+  iSplitR; first (iPureIntro; exact Hstart').
   iSplitR.
   { iApply (changed_types_bound_grow _ _ _ _ bind' Hcsub' with "Hbinds' Hchanged_bound").
     move=> q Hq. destruct (Hmarks' q Hq) as [Hold | (nm & x & Hb & _ & _)]; [by left | right].

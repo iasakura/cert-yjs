@@ -12,9 +12,9 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core.
 From New.proof Require Import prelude.
 From New.proof.github_com.mit_pdos.perennial.goose.model Require Import strings.
-From New.proof.textobserver Require Import model value heap.
+From New.proof.delta Require Import model value heap.
 
-Section text_observer.
+Section delta_apply.
 
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 
@@ -240,4 +240,4 @@ Proof.
       iApply "HΦ". iExists vs. iFrame "Hsl Hcap". done.
 Qed.
 
-End text_observer.
+End delta_apply.

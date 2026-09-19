@@ -58,6 +58,9 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 Lemma wp_Doc__GetOrCreateText (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (name : P) :
@@ -68,7 +71,7 @@ Proof.
   wp_start as "(#His_doc & #Hishist)".
   iNamed "His_doc". subst s_loc. wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
-  iDestruct "Hinv" as (c0 h m pend deleted) "Hown". iNamed "Hown". subst c0.
+  iDestruct "Hinv" as (c0 h m pend deleted) "[Hown Hreg]". iNamed "Hown". subst c0.
   iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hrpi.
   iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
@@ -87,7 +90,7 @@ Proof.
             Hmk (empty_subseteq _) with "Hseq") as "[Hseq #Hlb0]".
     wp_auto.
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend deleted
-                with "[$His_store $Hwl Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+                with "[$His_store $Hwl $Hreg Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
     { iExists client, k, pdel, locs, p, bind, acc.
       iFrame "∗#". iPureIntro.
       split_and!;
@@ -202,7 +205,7 @@ Proof.
     (* registering an empty type tombstones nothing *)
     have Htomb' : pool_tombstoned p' = pool_tombstoned p := pool_tombstoned_insert_empty p q Hfresh.
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend deleted
-                with "[$His_store $Hwl Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+                with "[$His_store $Hwl $Hreg Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
     { iExists client, k, pdel, (<[q := []]> locs), p', bind', acc.
       iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds'". iPureIntro.
       split_and!;

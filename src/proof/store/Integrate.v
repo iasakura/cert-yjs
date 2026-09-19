@@ -81,6 +81,9 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (** [containsId] decides membership of the span slice's char-id set (issue #28:
     an id addresses any char of a scanned run, so the Go test is a clock-range
