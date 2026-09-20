@@ -14,6 +14,7 @@ From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import observeapp.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import observeapp.
 From New.proof Require Import core.
+From New.proof Require Import algebra.
 From New.proof Require Import prelude.
 From New.proof Require Import history.
 From New.proof.sync_proof Require Import mutex.
@@ -126,18 +127,22 @@ Proof.
   iMod (own_observed_alloc []) as (γo) "[Hhalf_app Hhalf_store]".
   iMod (is_text_snapshot_nil with "His_text Hpin Hlb") as "#Hsnap_nil".
   iStructNamed "Hm".
+  (* the closure reads the local [m]; the fields it does not write and the
+     local itself become read-only *)
   iPersist "doc text".
+  iPersist "m".
   iMod (init_Mutex (mirror_inv m γs γh name γo) with "[$mu] [view Hhalf_app]") as "#Hmu".
   { iNext. iExists []. iFrame "view Hhalf_app Hsnap_nil". }
-  (* the callback's contract, from the mirror's lock alone *)
-  iAssert (is_text_callback γs γh name _ γo) with "[]" as "#Hcb".
-  { rewrite /is_text_callback.
-    iIntros (sl dq observed current Φ') "!> (Hobs & Hdelta & %Hgrows & #Hsnap) HΦ'".
+  wp_apply (wp_Text__Observe with "[$His_text $Hhalf_store]").
+  { (* the callback's contract, from the mirror's lock alone *)
+    rewrite /is_text_callback.
+    iIntros (sl dq observed current Φ') "!> (Hobs & Hdelta & %Hgrows & #Hsnap_current) HΦ'".
     wp_auto.
-    wp_apply (wp_Mutex__Lock with "[$Hmu]"). iIntros "[Hlocked Hinv]". iNamed "Hinv".
+    wp_apply (wp_Mutex__Lock with "[$Hmu]"). iIntros "[Hlocked Hinv]".
+    iEval (rewrite /mirror_inv) in "Hinv". iDestruct "Hinv" as (s) "(Hview & Hown_half & #Hsnap)".
     iDestruct (own_observed_agree with "Hown_half Hobs") as %<-.
     wp_auto.
-    iDestruct "Hsnap" as (parent c' h) "Hsnap'". iNamed "Hsnap'".
+    iDestruct "Hsnap_current" as (parent c' h) "Hsnap'". iNamed "Hsnap'".
     have Huniq : uniqueId current.*1 := yai_unique _ Hsnapshot_invariant.
     have Hpatch : apply_delta (text_delta s current) (visible_string s) = Some (visible_string current)
       := apply_text_delta s current Hgrows Huniq.
@@ -148,7 +153,6 @@ Proof.
     { iNext. iExists current. iFrame "Hview Hown_half".
       iExists parent, c', h. iFrame "#". iPureIntro. split; assumption. }
     iApply "HΦ'". iFrame "Hobs Hdelta". }
-  wp_apply (wp_Text__Observe with "[$His_text $Hcb $Hhalf_store]").
   iIntros "#Hobserved".
   wp_auto.
   iModIntro. iApply ("HΦ" $! m γo).
@@ -169,12 +173,12 @@ Lemma wp_Mirror__Text (m d t : loc) (γs : store_names) (γh : history_names) (n
 Proof.
   wp_start as "(#Hmirror & Hwand)". iNamed "Hmirror".
   wp_auto.
-  wp_apply (wp_Mutex__Lock with "[$Hmu]"). iIntros "[Hlocked Hinv]". iNamed "Hinv".
+  wp_apply (wp_Mutex__Lock with "[$Hmu]"). iIntros "[Hlocked Hinv]".
+  iEval (rewrite /mirror_inv) in "Hinv". iDestruct "Hinv" as (s) "(Hview & Hown_half & #Hsnap)".
   iDestruct ("Hwand" $! s with "Hown_half") as "[Hown_half HΨ]".
   wp_auto.
   wp_apply (wp_Mutex__Unlock with "[$Hmu $Hlocked Hview Hown_half]").
   { iNext. iExists s. iFrame "Hview Hown_half Hsnap". }
-  wp_auto.
   iApply ("HΦ" $! s). iFrame "Hsnap HΨ".
 Qed.
 
@@ -187,14 +191,17 @@ Lemma wp_Mirror__Check (m d t : loc) (γs : store_names) (γh : history_names) (
     m @! (go.PointerType observeapp.Mirror) @! "Check" #()
   {{{ RET #true; True }}}.
 Proof.
-  wp_start as "#Hmirror". iNamed "Hmirror".
+  wp_start as "#Hmirror".
+  iPoseProof "Hmirror" as (s_loc L deleted_ids) "Hparts". iNamed "Hparts".
   wp_auto.
-  wp_apply (wp_Doc__Transact _ _ _ _ _ (λ _ _ _ _ _, ok_ptr ↦ true)%I with "[$His_doc ok]").
+  wp_apply (wp_Doc__Transact _ _ _ _ _ (λ _ _ _ _ _, ok_ptr ↦ true)%I with "[$His_doc ok m]").
   { rewrite /closure_runs_transaction.
     iIntros (tr c h m0 pend deleted Ψ') "Htx HΨ'".
     wp_auto.
     wp_apply (wp_Text__StringIn with "[$His_text $Htx]"). iIntros "[_ Htx]".
     wp_auto.
+    (* the mirror's view, its snapshot tied to the transaction's at the
+       lock's linearization point *)
     wp_apply (wp_Mirror__Text _ _ _ _ _ _ _
                 (λ s, own_transaction tr s_loc γs γh c h m0 pend deleted ∅ ∅ ∅ ∗
                       ⌜s = type_snapshot m0 deleted name⌝)%I
@@ -205,8 +212,8 @@ Proof.
       iFrame "Hhalf Htx". iPureIntro. exact Heq. }
     iIntros (s) "(#Hsnap_s & Htx & %Heq)". subst s.
     wp_auto.
+    (* the stored comparison is of one string with itself *)
     rewrite bool_decide_eq_true_2; last reflexivity.
-    wp_auto.
     iApply ("HΨ'" $! h m0 pend deleted ∅ ∅ ∅). iFrame "Htx ok". }
   iIntros "HQ". iDestruct "HQ" as (c h' m' pend' deleted') "ok".
   wp_auto.
