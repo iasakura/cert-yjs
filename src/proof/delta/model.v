@@ -52,14 +52,17 @@
       snapshot inherits it from the current one).
     - [snapshot_grows_to_nil], [text_delta_refl], [text_delta_from_empty]:
       the empty observation grows to anything, an unchanged snapshot has the
-      empty delta, the first observation inserts the whole visible text.
+      empty delta, the first observation inserts the whole visible text
+      ([text_delta_from_empty_string]: decided on the visible string when
+      every char carries content, as the Go does).
     - [apply_delta_fits]: a delta that patches a string shorter than [2^64]
       fits (how the application discharges [ApplyDelta]'s bound).
     - [text_delta_before] / [snapshot_before_grows_to]: the delta from the
       start snapshot is the record's classification merged, and the start
       snapshot grows to the current one ([delta_step_before] per char);
       [record_delta_app] / [record_delta_singleton] take the classification
-      one char at a time, as the walk does.
+      one char at a time, as the walk does; [snapshot_before_untouched]: a
+      snapshot the record never touched is its own start snapshot.
     - [elem_of_snapshot_deleted_ids]: a deleted id is a tombstoned char's;
       [snapshot_deleted_ids_app] / [snapshot_deleted_ids_run_models]: over a
       walk, and over one run's chars (its ids when tombstoned).
@@ -612,6 +615,27 @@ Proof.
   - rewrite (Hstring _ Hnil) //.
 Qed.
 
+(** The same, decided on the visible string, which is empty exactly when
+    no char is visible once every char carries content (a store's chars
+    are one byte each). [Text.Observe] tests the string's length. *)
+Lemma text_delta_from_empty_string (current : snapshot) :
+  (∀ x, x ∈ visible_items current -> content x ≠ []) ->
+  text_delta [] current =
+    (if decide (visible_string current = []) then [] else [Insert (visible_string current)]).
+Proof.
+  move=> Hnonempty. rewrite text_delta_from_empty.
+  have Hiff : visible_string current = [] <-> visible_items current = [].
+  { rewrite /visible_string. destruct (visible_items current) as [| x l] eqn:Hv; first done.
+    split; last (move=> H; discriminate H).
+    have Hx : content x ≠ [] := Hnonempty x (list_elem_of_here _ _).
+    rewrite /items_string /=. move=> Happ. exfalso.
+    apply app_eq_nil in Happ as [Hc _]. exact (Hx Hc). }
+  destruct (decide (visible_items current = [])) as [Hn | Hn];
+    destruct (decide (visible_string current = [])) as [Hs | Hs]; try done.
+  - exfalso. apply Hs. by apply Hiff.
+  - exfalso. apply Hn. by apply Hiff.
+Qed.
+
 (** A retain or a delete that ran is no longer than the string it ran on. *)
 Lemma delta_run_counts_bounded (d : list DeltaOp) (s : A) (p : A * A) :
   delta_run d s = Some p ->
@@ -796,6 +820,23 @@ Proof.
     apply elem_of_snapshot_before_fst in Hy as [Hy Hny].
     apply elem_of_snapshot_before_fst. split; first exact Hx.
     move=> Hxi. apply Hny. exact (Htop x y Hx Hy Hcl Hxi Hlt).
+Qed.
+
+(** A snapshot none of whose chars the record mentions started as itself:
+    what the observers of the types a transaction did not write are told
+    nothing about. *)
+Lemma snapshot_before_untouched (inserted tombstoned : gset YjsId) (now : snapshot) :
+  (∀ x, x ∈ now -> item_id x.1 ∉ inserted ∧ item_id x.1 ∉ tombstoned) ->
+  snapshot_before inserted tombstoned now = now.
+Proof.
+  move=> Hout. rewrite /snapshot_before.
+  elim: now Hout => [| x l IH] Hout; first done.
+  have [Hxi Hxt] := Hout x (list_elem_of_here _ _).
+  have Hl : ∀ y, y ∈ l -> item_id y.1 ∉ inserted ∧ item_id y.1 ∉ tombstoned
+    := λ y Hy, Hout y (list_elem_of_further _ _ _ Hy).
+  rewrite filter_cons_True; last exact Hxi.
+  rewrite fmap_cons (IH Hl). f_equal.
+  rewrite bool_decide_eq_true_2; last exact Hxt. rewrite andb_true_r. by destruct x.
 Qed.
 
 (** A run's per-char sequence lists its items. *)

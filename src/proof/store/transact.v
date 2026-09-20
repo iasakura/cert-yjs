@@ -4,9 +4,9 @@
     higher-order in [f] ([closure_runs_transaction], a one-shot wand, so the
     closure may carry the caller's resources in): the caller proves [f]'s
     body against [own_transaction] at whatever state the store is in, and
-    chooses what it wants to know afterwards ([Q]). The observers of the changed
-    types are notified here before the unlock once they exist (Part II C2);
-    until then the transaction only records. *)
+    chooses what it wants to know afterwards ([Q]). The observers of the
+    changed types are notified before the unlock ([wp_store__notify], Part
+    II C2), which is where the registry moves to the end state. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -94,8 +94,9 @@ Proof.
   wp_apply ("Hf" with "[$Htx]").
   iIntros (h' m' pend' deleted' inserted tombstoned changed) "[Htx HQ]".
   wp_auto.
-  iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx".
-  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore]").
+  wp_apply (wp_store__notify with "[$Htx]"). iIntros "[Hstore Hreg]".
+  wp_auto.
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore $Hreg]").
   iApply "HΦ". iExists c, h', m', pend', deleted'. iFrame "HQ".
 Qed.
 

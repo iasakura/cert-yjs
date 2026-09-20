@@ -10,7 +10,13 @@
       current snapshot classified by the record and merged. The walk is
       [Poll]'s ([textobserver/Poll.v]) with the record in place of the
       observer's token: the two proofs share [wp_deltaSnoc] and the
-      trailing-retain trim, and stay separate as the Go loops do. *)
+      trailing-retain trim, and stay separate as the Go loops do.
+    - [wp_store__notify]: the transaction handle in, the store and the
+      registry at the transaction's end state out: every observer of a
+      changed root is called once with the delta from the root's start
+      snapshot to its current one ([text_delta_transaction]), certified
+      ([own_store_text_snapshot]); the other roots' observers have nothing
+      to hear ([type_snapshot_untouched]). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -345,6 +351,247 @@ Proof.
       wp_auto.
       iApply ("HΦ" $! dsl). iFrame "Hyt Hins Hdel".
       rewrite Htd /delta_drop_trailing_retain Hlastdm. iExists vs. iFrame "Hsl Hcap". iPureIntro. exact Hdenote.
+Qed.
+
+(** Moving an address the registry does not hold into the told set changes
+    nothing for its entries. *)
+#[local] Lemma type_observers_told_grow (γs : store_names) (γh : history_names)
+    (registry : gmap loc slice.t) (registered : gmap loc (P * list gname))
+    (m m0 : DocModel) (deleted deleted0 : gset YjsId) (done : gset loc) (key : loc) :
+  registry !! key = None ->
+  ([∗ map] parent ↦ cbs_sl; entry ∈ registry; registered,
+     own_type_observers γs γh entry.1
+       (if decide (parent ∈ done) then type_snapshot m deleted entry.1
+        else type_snapshot m0 deleted0 entry.1) cbs_sl entry.2) -∗
+  ([∗ map] parent ↦ cbs_sl; entry ∈ registry; registered,
+     own_type_observers γs γh entry.1
+       (if decide (parent ∈ done ∪ {[key]}) then type_snapshot m deleted entry.1
+        else type_snapshot m0 deleted0 entry.1) cbs_sl entry.2).
+Proof.
+  move=> Hnone. iApply big_sepM2_mono. iIntros (parent cbs_sl entry Hr Hd) "H".
+  have Hne : parent ≠ key.
+  { move=> Heq. rewrite Heq Hnone in Hr. discriminate. }
+  destruct (decide (parent ∈ done)) as [Hin | Hnin].
+  - rewrite decide_True; [iExact "H" | apply elem_of_union_l; exact Hin].
+  - rewrite decide_False; [iExact "H" |].
+    move=> Hu. apply elem_of_union in Hu as [Hu | Hu]; [exact (Hnin Hu) | apply elem_of_singleton in Hu; exact (Hne Hu)].
+Qed.
+
+(** [store.notify]: every observer of a root the transaction changed is told
+    the delta from the transaction's start snapshot of that root to its
+    current one, with the current snapshot's certificate; the registry
+    moves to the current state, the observers of the other roots having
+    nothing new to hear. The transaction's record is consumed:
+    [transact] releases the lock right after. *)
+Lemma wp_store__notify (s_loc tr : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input)
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
+  {{{ is_pkg_init yjs ∗ own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
+    s_loc @! (go.PointerType yjs.store) @! "notify" #tr
+  {{{ RET #(); own_store s_loc γs γh c h m pend deleted ∗ own_observer_registry s_loc γs γh m deleted }}}.
+Proof.
+  wp_start as "Htx".
+  iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx".
+  iNamed "Hchanges". iNamed "Hregistry".
+  iAssert (own_id_spans trv.(yjs.Transaction.insertSet') (DfracOwn 1) inserted) with "[Hinsert]" as "Hinsert".
+  { iExists insert_vs. iFrame "Hinsert". done. }
+  iAssert (own_id_spans trv.(yjs.Transaction.deleteSet') (DfracOwn 1) tombstoned) with "[Hdelete]" as "Hdelete".
+  { iExists delete_vs. iFrame "Hdelete". done. }
+  iClear "Hinsertcap Hdeletecap".
+  wp_auto.
+  (* the walk over the changed types: after [i] of them, their observers are
+     at the end state and the others still at the start state *)
+  wp_apply (wp_map_for_range (λ (keys : list loc) (i : Z),
+    ∃ (done : gset loc) (tyv : loc),
+      "%Hdone" ∷ ⌜done = list_to_set (take (Z.to_nat i) keys) ∧ (0 ≤ i)%Z⌝ ∗
+      "ty" ∷ ty_ptr ↦ tyv ∗
+      "tr" ∷ tr_ptr ↦ tr ∗
+      "s" ∷ s_ptr ↦ s_loc ∗
+      "Htr" ∷ tr ↦ trv ∗
+      "Hinsert" ∷ own_id_spans trv.(yjs.Transaction.insertSet') (DfracOwn 1) inserted ∗
+      "Hdelete" ∷ own_id_spans trv.(yjs.Transaction.deleteSet') (DfracOwn 1) tombstoned ∗
+      "Hstore" ∷ own_store s_loc γs γh c h m pend deleted ∗
+      "Hobserversf" ∷ (s_loc .[(yjs.store.t), "observers"]) ↦ observers_mref ∗
+      "Hobserversmap" ∷ own_map observers_mref (DfracOwn 1) registry ∗
+      "Hobserversauth" ∷ own γs.(sn_observers) (● registered_tokens registered : authR (gsetUR (gname * P))) ∗
+      "Hobservers" ∷ ([∗ map] parent ↦ cbs_sl; entry ∈ registry; registered,
+         own_type_observers γs γh entry.1
+           (if decide (parent ∈ done) then type_snapshot m deleted entry.1
+            else type_snapshot m0 deleted0 entry.1) cbs_sl entry.2))%I
+    with "Hchanged").
+  iIntros (keys) "%Hkeys". destruct Hkeys as (Hkeysdom & Hkeyslen & Hkeysnodup).
+  rewrite dom_gset_to_gmap in Hkeysdom.
+  iSplitL "ty tr s Htr Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth Hobservers".
+  { iExists ∅, _. iFrame "ty tr s Htr Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth".
+    iSplitR. { iPureIntro. split; [rewrite /= ?take_0 ?list_to_set_nil // | lia]. }
+    iApply (big_sepM2_mono with "Hobservers"). iIntros (parent cbs_sl entry Hr Hd) "H".
+    first [iExact "H" | rewrite decide_False; [iExact "H" | apply not_elem_of_empty]]. }
+  iSplitR "HΦ".
+  { (* ---- one changed type ---- *)
+    iModIntro. iIntros (i key v [Hkey Hval]) "HP".
+    iDestruct "HP" as (done tyv) "HP". iNamed "HP". destruct Hdone as [Hdone Hi0].
+    have Hkeyin : key ∈ changed_locs.
+    { rewrite -Hkeysdom elem_of_list_to_set. exact (list_elem_of_lookup_2 _ _ _ Hkey). }
+    have Hkeynot : key ∉ done.
+    { rewrite Hdone elem_of_list_to_set. move=> Hin.
+      apply list_elem_of_lookup in Hin as [j Hj].
+      apply lookup_take_Some in Hj as [Hj Hjlt].
+      have := NoDup_lookup _ _ _ _ Hkeysnodup Hj Hkey. lia. }
+    have Hdone' : (list_to_set (take (Z.to_nat (i + 1)) keys) : gset loc) = done ∪ {[key]}.
+    { rewrite Hdone. replace (Z.to_nat (i + 1)) with (S (Z.to_nat i)) by lia.
+      rewrite (take_S_r _ _ _ Hkey) list_to_set_app_L list_to_set_cons list_to_set_nil (right_id_L ∅ (∪)) //. }
+    wp_auto.
+    wp_apply (wp_map_lookup1 with "Hobserversmap"). iIntros "Hobserversmap".
+    wp_auto.
+    iDestruct (big_sepM2_dom with "Hobservers") as %Hdomeq.
+    destruct (registry !! key) as [cbs_sl |] eqn:Hrkey; last first.
+    { (* nobody observes this type *)
+      have Hdkey : registered !! key = None.
+      { apply not_elem_of_dom. rewrite -Hdomeq. apply not_elem_of_dom. exact Hrkey. }
+      rewrite (bool_decide_eq_false_2 (sint.Z (W64 0) < sint.Z (default slice.nil None).(slice.len))%Z); last (simpl; word).
+      wp_auto.
+      unfold for_map_postcondition. iRight. iLeft. iSplitR; first done.
+      iExists (done ∪ {[key]}), key.
+      iFrame "ty tr s Htr Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth".
+      iSplitR; first (iPureIntro; split; [symmetry; exact Hdone' | lia]).
+      iApply (type_observers_told_grow with "Hobservers"). exact Hrkey. }
+    (* the type is observed: its callbacks hear the delta *)
+    have [entry Hdkey] : is_Some (registered !! key).
+    { apply elem_of_dom. rewrite -Hdomeq. apply elem_of_dom. by exists cbs_sl. }
+    iEval (rewrite (big_sepM2_delete _ _ _ key cbs_sl entry Hrkey Hdkey)) in "Hobservers".
+    iDestruct "Hobservers" as "[Hentry Hobservers]".
+    destruct (decide (key ∈ done)) as [Hbad | _]; first (exfalso; exact (Hkeynot Hbad)).
+    iDestruct "Hentry" as (cbs) "Hentry". iNamed "Hentry".
+    iDestruct (own_slice_len with "Hentry_slice") as %[Hcbslen Hcbslen0].
+    iDestruct (big_sepL2_length with "Hentry_callbacks") as %Hlencbs.
+    destruct (decide (0 < length cbs)%nat) as [Hpos | Hzero]; last first.
+    { (* no callbacks: nothing to tell *)
+      rewrite (bool_decide_eq_false_2 (sint.Z (W64 0) < sint.Z (default slice.nil (Some cbs_sl)).(slice.len))%Z); last (simpl; word).
+      have Hcbs : cbs = [] by (destruct cbs; [done | simpl in Hzero; lia]).
+      subst cbs.
+      iDestruct (big_sepL2_nil_inv_l with "Hentry_callbacks") as %Hγos.
+      wp_auto.
+      unfold for_map_postcondition. iRight. iLeft. iSplitR; first done.
+      iExists (done ∪ {[key]}), key.
+      iFrame "ty tr s Htr Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth".
+      iSplitR; first (iPureIntro; split; [symmetry; exact Hdone' | lia]).
+      rewrite (big_sepM2_delete _ _ _ key cbs_sl entry Hrkey Hdkey).
+      iSplitL "Hentry_slice Hentry_cap".
+      { rewrite decide_True; last (apply elem_of_union_r; by apply elem_of_singleton).
+        iExists []. iFrame "Hentry_slice Hentry_cap". rewrite Hγos big_sepL2_nil //. }
+      iApply (type_observers_told_grow with "Hobservers"). apply lookup_delete_eq. }
+    rewrite (bool_decide_eq_true_2 (sint.Z (W64 0) < sint.Z (default slice.nil (Some cbs_sl)).(slice.len))%Z); last (simpl; word).
+    wp_auto.
+    (* ---- the walk over this type ---- *)
+    iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
+    iDestruct (big_sepM_lookup _ _ key entry Hdkey with "Hregistered_bind") as "#Hbind_key".
+    iDestruct (ghost_map_lookup with "HtypesAuth Hbind_key") as %Hbindlk.
+    iDestruct (own_store_state_registry_coh with "Hstate") as %Hregcoh.
+    iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpoolinv.
+    iDestruct (own_store_state_arr_inv with "Hstate") as %Harrinv.
+    iDestruct (own_store_state_aligned with "Hstate") as %Haligned.
+    simpl in Hregcoh, Hpoolinv, Harrinv, Haligned.
+    destruct (proj1 Hregcoh entry.1 key Hbindlk) as [tm Htmp].
+    have [ls Hls] : is_Some (locs !! key).
+    { apply elem_of_dom. rewrite (proj1 Haligned). apply elem_of_dom. by exists tm. }
+    have Hdoc : doc_model_get m (RootId entry.1) = tm_arr tm := proj1 Hregmodel entry.1 key tm Hbindlk Htmp.
+    have Hfits_all : ∀ r, r ∈ tm_runs tm -> run_fits r.
+    { move=> r Hr. have Hrall : r ∈ all_runs p by (apply elem_of_all_runs; exists key, tm).
+      exact (proj1 (proj2 (proj1 Hpoolinv r Hrall))). }
+    iDestruct (own_store_state_ytype_acc s_loc (MkStoreState client k locs p bind pend pdel) key ls tm Hls Htmp with "Hstate") as "[Hyt Hclose]".
+    wp_apply (wp_textDelta with "[$Hyt $Hinsert $Hdelete]").
+    { iPureIntro. exact Hfits_all. }
+    iIntros (dsl) "(Hyt & Hinsert & Hdelete & Hdelta)".
+    iDestruct ("Hclose" with "Hyt") as "Hstate".
+    (* the delta is the one the callbacks are told, from the start snapshot *)
+    have Hrm : runs_model (tm_runs tm) = type_snapshot m deleted entry.1.
+    { rewrite Hdeleted. exact (type_snapshot_runs_model m bind p entry.1 key tm Hpoolinv Hregmodel Hbindlk Htmp). }
+    have Harr : YjsArrInvariant (doc_model_get m (RootId entry.1)) by (rewrite Hdoc; exact (Harrinv _ _ Htmp)).
+    destruct (text_delta_transaction m deleted inserted tombstoned m0 deleted0 entry.1 Hstart Htombstoned_sub Harr) as [Hdeltaeq Hgrows].
+    iEval (rewrite Hrm -Hdeltaeq) in "Hdelta".
+    iAssert (own_store s_loc γs γh c h m pend deleted) with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hstore".
+    { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro.
+      split_and!; [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
+    iMod (own_store_text_snapshot with "Hbind_key Hstore") as "[Hstore #Hsnap]".
+    wp_auto.
+    (* ---- every callback of this type, in the slice's order ---- *)
+    iAssert (∃ (j : nat),
+      "Hj" ∷ i_ptr ↦ W64 j ∗
+      "Hdelta" ∷ own_delta dsl (DfracOwn 1) (text_delta (type_snapshot m0 deleted0 entry.1) (type_snapshot m deleted entry.1)) ∗
+      "Htold" ∷ ([∗ list] cb; γo ∈ take j cbs; take j entry.2,
+                   is_text_callback γs γh entry.1 cb γo ∗ own_observed γo (type_snapshot m deleted entry.1)) ∗
+      "Htotell" ∷ ([∗ list] cb; γo ∈ drop j cbs; drop j entry.2,
+                   is_text_callback γs γh entry.1 cb γo ∗ own_observed γo (type_snapshot m0 deleted0 entry.1)) ∗
+      "%Hjle" ∷ ⌜(j <= length cbs)%nat⌝)%I
+      with "[i Hdelta Hentry_callbacks]" as "IH".
+    { iExists 0%nat. rewrite !take_0 !drop_0. iFrame "i Hdelta Hentry_callbacks".
+      iSplitR; [rewrite big_sepL2_nil // | iPureIntro; lia]. }
+    wp_for "IH".
+    destruct (decide (j < length cbs)%nat) as [Hjlt | Hjge].
+    - (* one callback *)
+      rewrite (bool_decide_eq_true_2 (sint.Z (W64 j) < sint.Z cbs_sl.(slice.len))%Z); last word.
+      wp_auto.
+      rewrite decide_True; last (split; word).
+      destruct (lookup_lt_is_Some_2 cbs j Hjlt) as [cb Hcb].
+      destruct (lookup_lt_is_Some_2 entry.2 j ltac:(lia)) as [γo Hγo].
+      iDestruct (own_slice_elem_acc (sint.Z (W64 j)) cb cbs_sl (DfracOwn 1) cbs with "Hentry_slice") as "[Hel Hgive]".
+      { word. }
+      { replace (Z.to_nat (sint.Z (W64 j))) with j by word. exact Hcb. }
+      wp_auto.
+      iDestruct ("Hgive" $! cb with "Hel") as "Hentry_slice".
+      rewrite list_insert_id; last (replace (Z.to_nat (sint.Z (W64 j))) with j by word; exact Hcb).
+      rewrite (drop_S cbs cb j Hcb) (drop_S entry.2 γo j Hγo).
+      iDestruct (big_sepL2_cons with "Htotell") as "[[#Hcb Hobs] Htotell]".
+      wp_apply ("Hcb" $! dsl (DfracOwn 1) (type_snapshot m0 deleted0 entry.1) (type_snapshot m deleted entry.1) with "[Hobs Hdelta]").
+      { iFrame "Hobs Hdelta Hsnap". iPureIntro. exact Hgrows. }
+      iIntros "[Hobs Hdelta]".
+      wp_auto. wp_for_post.
+      iFrame "ty tr s Htr Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth Hobservers Hentry_slice Hentry_cap callbacks delta".
+      iExists (S j).
+      replace (w64_word_instance.(word.add) (W64 j) (W64 1)) with (W64 (S j)) by word.
+      iFrame "Hj Hdelta Htotell".
+      rewrite (take_S_r cbs j cb Hcb) (take_S_r entry.2 j γo Hγo).
+      iSplitL; last (iPureIntro; lia).
+      rewrite big_sepL2_snoc. iFrame "Htold Hcb Hobs".
+    - (* every callback told: the type's observers are at the end state *)
+      rewrite (bool_decide_eq_false_2 (sint.Z (W64 j) < sint.Z cbs_sl.(slice.len))%Z); last word.
+      have Hjeq : j = length cbs by lia.
+      wp_auto.
+      unfold for_map_postcondition. iRight. iLeft. iSplitR; first done.
+      iExists (done ∪ {[key]}), key.
+      iFrame "ty tr s Htr Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth".
+      iSplitR; first (iPureIntro; split; [symmetry; exact Hdone' | lia]).
+      rewrite (big_sepM2_delete _ _ _ key cbs_sl entry Hrkey Hdkey).
+      iSplitL "Hentry_slice Hentry_cap Htold".
+      { rewrite decide_True; last (apply elem_of_union_r; by apply elem_of_singleton).
+        iExists cbs. iFrame "Hentry_slice Hentry_cap".
+        rewrite Hjeq (take_ge cbs (length cbs)); last lia.
+        rewrite (take_ge entry.2 (length cbs)); last lia.
+        iFrame "Htold". }
+      iApply (type_observers_told_grow with "Hobservers"). apply lookup_delete_eq. }
+  (* ---- every changed type told: the registry is at the end state ---- *)
+  iIntros "HP". iDestruct "HP" as (done tyv) "HP". iNamed "HP". destruct Hdone as [Hdone _].
+  have Hdoneall : done = changed_locs.
+  { rewrite Hdone Nat2Z.id -Hkeyslen take_ge; [exact Hkeysdom | lia]. }
+  iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
+  iDestruct (registered_bindings_lookup with "HtypesAuth Hregistered_bind") as %Hregbind.
+  iDestruct (changed_types_bound_names with "HtypesAuth Hchanged_bound") as %Hbound.
+  iDestruct (own_store_state_registry_coh with "Hstate") as %Hregcoh.
+  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpoolinv.
+  simpl in Hregcoh, Hpoolinv.
+  wp_auto.
+  iApply "HΦ".
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
+  { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro.
+    split_and!; [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
+  iExists observers_mref, registry, registered.
+  iFrame "Hobserversf Hobserversmap Hobserversauth Hregistered_bind".
+  iApply (big_sepM2_mono with "Hobservers"). iIntros (parent cbs_sl entry Hr Hd) "H".
+  destruct (decide (parent ∈ done)) as [Hin | Hnin]; first iExact "H".
+  rewrite (type_snapshot_untouched m deleted inserted tombstoned m0 deleted0 entry.1 Hstart); first iExact "H".
+  apply (type_untouched_by_record m bind p inserted tombstoned changed changed_locs entry.1 parent
+           Hpoolinv Hregcoh Hregmodel Hrecorded Hbound (Hregbind parent entry Hd)).
+  rewrite -Hdoneall. exact Hnin.
 Qed.
 
 End store_notify.

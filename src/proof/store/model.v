@@ -23,8 +23,10 @@
       tombstoned m0 deleted0]: the state a transaction started from, read off
       where it is and its record ([type_snapshot_start] / [text_delta_transaction]:
       the start snapshot through [snapshot_before], the record's delta and
-      growth; [live_run_chars_not_tombstoned] / [fresh_tombstones_flip]: a
-      sweep records only live chars).
+      growth; [type_snapshot_untouched]: a type none of whose chars the
+      record mentions has the snapshot it started with;
+      [live_run_chars_not_tombstoned] / [fresh_tombstones_flip]: a sweep
+      records only live chars).
     - [accepted_coh] / [pending_id_set] / [input_accounted]: which delivered
       ids a replica has accounted for, either integrated or still pending. This
       is what the no-loss spec is stated with.
@@ -2235,6 +2237,15 @@ Proof.
   apply bool_decide_eq_true_2. exact Hd.
 Qed.
 
+Lemma elem_of_type_snapshot (m : DocModel) (deleted : gset YjsId) (name : P) (x : YjsItem A) (b : bool) :
+  (x, b) ∈ type_snapshot m deleted name <->
+  x ∈ doc_model_get m (RootId name) ∧ b = bool_decide (item_id x ∈ deleted).
+Proof.
+  rewrite /type_snapshot list_elem_of_fmap. split.
+  - move=> [y [Heq Hy]]. injection Heq as <- <-. done.
+  - move=> [Hx ->]. by exists x.
+Qed.
+
 (** What [store.notify] tells an observer of [name]: the record's delta,
     and that the start snapshot grew to the current one. *)
 Lemma text_delta_transaction (m : DocModel) (deleted inserted tombstoned : gset YjsId)
@@ -2258,6 +2269,19 @@ Proof.
     move=> x y Hx Hy Hcl Hxi Hlt. rewrite type_snapshot_fst in Hx Hy.
     apply (Htop (item_id x) (item_id y) Hxi); [| exact (eq_sym Hcl) | exact Hlt].
     apply docm_has_spec. exists (RootId name), y. split; [exact Hy | reflexivity].
+Qed.
+
+(** Such a type's snapshot is the one it started with: what lets [notify]
+    leave its observers alone. *)
+Lemma type_snapshot_untouched (m : DocModel) (deleted inserted tombstoned : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) (name : P) :
+  transaction_start m deleted inserted tombstoned m0 deleted0 ->
+  (∀ x, x ∈ doc_model_get m (RootId name) -> item_id x ∉ inserted ∧ item_id x ∉ tombstoned) ->
+  type_snapshot m0 deleted0 name = type_snapshot m deleted name.
+Proof.
+  move=> Hstart Hout. rewrite (type_snapshot_start _ _ _ _ _ _ name Hstart).
+  apply snapshot_before_untouched. move=> x Hx. apply Hout.
+  rewrite -(type_snapshot_fst m deleted name). apply list_elem_of_fmap. exists x. split; [reflexivity | exact Hx].
 Qed.
 
 Lemma transaction_start_fresh (m : DocModel) (deleted : gset YjsId) :

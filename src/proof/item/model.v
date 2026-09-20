@@ -44,8 +44,9 @@
       denotes, and [run_per_char]: each of the run's items carries exactly
       one byte of that wire content ([explode] is append-homomorphic,
       [explode_app], [run_per_char_intro] introduces the per-char fact
-      from an explode coupling, and [run_per_char] survives the split
-      surgery, [run_per_char_split_left] / [run_per_char_split_right]);
+      from an explode coupling, [run_per_char_content] reads one byte off
+      each item, and [run_per_char] survives the split surgery,
+      [run_per_char_split_left] / [run_per_char_split_right]);
       the split
       halves' head / length / client / clock facts in one bundle
       ([split_run_facts], over [hd_inhabitant_take] / [_drop]), and
@@ -559,7 +560,6 @@ Proof.
     destruct (items_string l) as [|b' s'].
     + discriminate Hpc.
     + have He : explode (b' :: s') = [b'] :: explode s' by reflexivity.
-      idtac "B1C". Set Printing All. Show.
       rewrite He in Hpc. injection Hpc as Hh _. discriminate Hh.
   - have He : explode (b :: bs) = [b] :: explode bs by reflexivity.
     rewrite He in Hpc. simpl in Hpc.
@@ -575,6 +575,15 @@ Lemma run_per_char_intro (l : list (YjsItem A)) (d : bool) (s : A) :
 Proof.
   move=> H. rewrite /run_per_char /=.
   by rewrite (items_string_explode _ _ H).
+Qed.
+
+(** Every item of a per-char run carries one byte. *)
+Lemma run_per_char_content (l : list (YjsItem A)) (x : YjsItem A) :
+  content <$> l = explode (items_string l) -> x ∈ l -> ∃ b, content x = [b].
+Proof.
+  elim: l => [| y l IH] Hpc Hx; first by apply elem_of_nil in Hx.
+  destruct (per_char_cons_inv y l Hpc) as [Hy Hl].
+  apply elem_of_cons in Hx as [-> | Hx]; [exact Hy | exact (IH Hl Hx)].
 Qed.
 
 (** [run_per_char] survives the split surgery: each half of a split run is

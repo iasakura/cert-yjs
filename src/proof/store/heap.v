@@ -53,9 +53,11 @@
       observer's token), [is_text_snapshot γs γh name s] (what a read
       certifies about a snapshot, over store witnesses), [is_text_callback
       γs γh name cb γo] (a callback's contract), [is_text_observed γs name γo]
-      (the registration witness) and [own_observer_registry s γs γh m deleted]
-      (every observer told everything up to its type's snapshot at
-      [(m, deleted)]); [tie_store] is the lock body's store part beside it.
+      (the registration witness), [own_type_observers γs γh name told cbs_sl
+      γos] (one root's observers, every one told [told]) and
+      [own_observer_registry s γs γh m deleted] (every observer told
+      everything up to its type's snapshot at [(m, deleted)]); [tie_store]
+      is the lock body's store part beside it.
     - the persistent witnesses [is_Store], [is_type_binding], [is_root],
       [is_type_lb], [is_root_lb], [is_applied_root_lb] / [is_applied_certs],
       [is_accepted],
@@ -79,12 +81,20 @@
     - [own_store_accept_batch]: the state-transition law for accepting a
       delivered batch.
     - the observers' tokens: [own_observed_alloc] / [_agree] / [_update]
-      (both halves move together); [elem_of_registered_tokens].
+      (both halves move together); [elem_of_registered_tokens];
+      [registered_bindings_lookup] (the registered names are bound to their
+      addresses); [registered_tokens_register] / [observers_register] (one
+      more observer of a type, in the token set and at the authority);
+      [own_store_text_snapshot] (the store mints a root's snapshot
+      certificate, what [notify] hands a callback);
+      [own_transaction_observed_agree] (inside a transaction that did not
+      change a root, an observer's half is at the root's current snapshot).
     - the transaction's changed types: [changed_types_bound_empty],
       [changed_types_bound_mark] (one more type), [changed_types_bound_grow]
       (a sweep's types, by [bound_names]) and
-      [changed_types_bound_registered] (the marked addresses are registered
-      under the marked names).
+      [changed_types_bound_registered] / [changed_types_bound_names] (the
+      marked addresses are registered under the marked names, and the marked
+      names bound to marked addresses).
     - the reader fractions form a chain: [frac_of_0] and [frac_of_split].
     - [pool_frag] splits and agrees ([pool_frag_split], [pool_frag_agree]);
       [is_type_binding] is functional ([is_type_binding_agree]).
@@ -1419,13 +1429,25 @@ Proof. rewrite /is_text_observed. apply _. Qed.
 Definition registered_tokens (registered : gmap loc (P * list gname)) : gset (gname * P) :=
   list_to_set (mjoin ((λ e : loc * (P * list gname), (λ γo, (γo, e.2.1)) <$> e.2.2) <$> map_to_list registered)).
 
+(** [own_type_observers γs γh name told cbs_sl γos]: the observers of root
+    [name] registered in the callback slice at [cbs_sl], their tokens [γos]
+    in the slice's order: per callback its contract and the store's half of
+    its token, every one told everything up to the snapshot [told]. *)
+Definition own_type_observers (γs : store_names) (γh : history_names) (name : P)
+    (told : snapshot) (cbs_sl : slice.t) (γos : list gname) : iProp Σ :=
+  ∃ (cbs : list func.t),
+    "Hentry_slice" ∷ cbs_sl ↦* cbs ∗
+    "Hentry_cap" ∷ own_slice_cap func.t cbs_sl (DfracOwn 1) ∗
+    "Hentry_callbacks" ∷ ([∗ list] cb; γo ∈ cbs; γos,
+       is_text_callback γs γh name cb γo ∗ own_observed γo told).
+
 (** [own_observer_registry s_loc γs γh m deleted]: the store's observers, every
     one told everything up to its type's snapshot at [(m, deleted)]: the
-    [observers] field's map, per registered type its callback slice, and per
-    callback its contract and the store's half of its token at that
-    snapshot; the registered tokens' authority. Held by the lock between
-    transactions ([tie_body]) at the store's state, and by the writer during
-    one ([own_transaction]) at the transaction's start state, until
+    [observers] field's map, per registered type (by address, bound to its
+    root name) its observers ([own_type_observers]) at that snapshot; the
+    registered tokens' authority. Held by the lock between transactions
+    ([tie_body]) at the store's state, and by the writer during one
+    ([own_transaction]) at the transaction's start state, until
     [store.notify] moves it. *)
 Definition own_observer_registry (s_loc : loc) (γs : store_names) (γh : history_names)
     (m : DocModel) (deleted : gset YjsId) : iProp Σ :=
@@ -1433,14 +1455,10 @@ Definition own_observer_registry (s_loc : loc) (γs : store_names) (γh : histor
     "Hobserversf" ∷ (s_loc .[(yjs.store.t), "observers"]) ↦ observers_mref ∗
     "Hobserversmap" ∷ own_map observers_mref (DfracOwn 1) registry ∗
     "Hobserversauth" ∷ own γs.(sn_observers) (● registered_tokens registered : observersUR) ∗
+    "#Hregistered_bind" ∷ ([∗ map] parent ↦ entry ∈ registered,
+       is_type_binding γs.(sn_types) entry.1 parent) ∗
     "Hobservers" ∷ ([∗ map] parent ↦ cbs_sl; entry ∈ registry; registered,
-       ∃ (cbs : list func.t),
-         "#Hentry_bind" ∷ is_type_binding γs.(sn_types) entry.1 parent ∗
-         "Hentry_slice" ∷ cbs_sl ↦* cbs ∗
-         "Hentry_cap" ∷ own_slice_cap func.t cbs_sl (DfracOwn 1) ∗
-         "Hentry_callbacks" ∷ ([∗ list] cb; γo ∈ cbs; entry.2,
-            is_text_callback γs γh entry.1 cb γo ∗
-            own_observed γo (type_snapshot m deleted entry.1))).
+       own_type_observers γs γh entry.1 (type_snapshot m deleted entry.1) cbs_sl entry.2).
 
 (** The exclusive write-lock witness (mirrors [own_Mutex]). *)
 Definition own_wlock (γs : store_names) : iProp Σ :=
@@ -2079,7 +2097,7 @@ Proof.
   { (* the empty registry *)
     iExists observers_mref, ∅, ∅. iFrame "Hobserversf Hobserversmap".
     rewrite /registered_tokens map_to_list_empty /=. iFrame "Hobsauth".
-    rewrite big_sepM2_empty //. }
+    iSplitR; [rewrite big_sepM_empty // | rewrite big_sepM2_empty //]. }
   rewrite /tie_store.
   iExists client, (W64 0), items_mref, types_mref, deletedSetVal, slice.nil, slice.nil,
     (∅ : gmap P loc), ([] : list Ev),
@@ -2301,6 +2319,83 @@ Lemma own_observed_update (γo : gname) (s1 s2 s' : snapshot) :
   own_observed γo s1 -∗ own_observed γo s2 ==∗ own_observed γo s' ∗ own_observed γo s'.
 Proof. iIntros "H1 H2". iMod (ghost_var_update_halves s' with "H1 H2") as "[$ $]". done. Qed.
 
+(** The registered names are bound, by the type registry, to the addresses
+    they are registered under. *)
+Lemma registered_bindings_lookup (γ : gname) (bind : gmap P loc) (registered : gmap loc (P * list gname)) :
+  ghost_map_auth γ 1 bind -∗
+  ([∗ map] parent ↦ entry ∈ registered, is_type_binding γ entry.1 parent) -∗
+  ⌜∀ parent entry, registered !! parent = Some entry -> bind !! entry.1 = Some parent⌝.
+Proof.
+  iIntros "Hauth #Hbinds". iIntros (parent entry Hlk).
+  iDestruct (big_sepM_lookup _ _ parent entry Hlk with "Hbinds") as "#Hb".
+  iDestruct (ghost_map_lookup with "Hauth Hb") as %Hb. iPureIntro. exact Hb.
+Qed.
+
+(** The store mints the certificate of a bound root's current snapshot: its
+    items and tombstoned ids from the item-set and delete-set authorities,
+    the client and history from the store's own, the document's validity
+    and the history's reflection from the store invariants. *)
+Lemma own_store_text_snapshot (s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
+    (deleted : gset YjsId) (name : P) (parent : loc) :
+  is_type_binding γs.(sn_types) name parent -∗
+  own_store s_loc γs γh c h m pend deleted ==∗
+  own_store s_loc γs γh c h m pend deleted ∗
+  is_text_snapshot γs γh name (type_snapshot m deleted name).
+Proof.
+  iIntros "#Hbind Hown". iDestruct "Hown" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
+  iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
+  iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
+  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpoolinv.
+  iDestruct (own_store_state_arr_inv with "Hstate") as %Harrinv.
+  simpl in Hreg, Hpoolinv, Harrinv.
+  destruct (proj1 Hreg name parent Hbindlk) as [tm Htmp].
+  have Hdoc : doc_model_get m (RootId name) = tm_arr tm := proj1 Hregmodel name parent tm Hbindlk Htmp.
+  (* the items *)
+  set (M := (λ tm0 : type_model, (list_to_set (tm_arr tm0) : gset (YjsItem A))) <$> p).
+  have HMsub : ∀ (q : loc) (S1 S2 : gset (YjsItem A)), M !! q = Some S1 -> M !! q = Some S2 -> S1 ⊆ S2.
+  { move=> q S1 S2 H1 H2. rewrite H1 in H2. injection H2 as <-. done. }
+  iMod (auth_gmap_gset_grow_snap γs.(sn_seq) M M (reflexivity _) HMsub with "Hseq") as "[Hseq #Hitems]".
+  iDestruct (auth_gmap_gset_frag_lookup γs.(sn_seq) M parent (list_to_set (tm_arr tm)) with "Hitems") as "#Hitems_this".
+  { rewrite /M lookup_fmap Htmp //. }
+  (* the tombstoned ids *)
+  iMod (own_delete_set_grow γs m p (snapshot_deleted_ids (type_snapshot m deleted name)) Hpoolinv with "Hdelete_set") as "[Hdelete_set #Hdellb]".
+  { move=> i Hi. apply elem_of_snapshot_deleted_ids in Hi as (x & Hx & <-).
+    apply elem_of_type_snapshot in Hx as [Hx _].
+    apply docm_has_spec. exists (RootId name), x. split; [exact Hx | reflexivity]. }
+  { move=> i Hi. apply elem_of_snapshot_deleted_ids in Hi as (x & Hx & <-).
+    apply elem_of_type_snapshot in Hx as [_ Hbit].
+    have Hd : item_id x ∈ deleted := bool_decide_eq_true_1 _ (eq_sym Hbit).
+    rewrite Hdeleted /pool_tombstoned in Hd. apply elem_of_runs_tombstoned in Hd. exact Hd. }
+  (* the history *)
+  iDestruct (own_client_history_lb with "Hhist") as "[Hhist #Hhlb]".
+  iModIntro. iSplitL.
+  { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro.
+    split_and!; [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
+  iExists parent, c, h. iFrame "Hbind Hclientpin Hhlb Hdellb".
+  iSplit.
+  { rewrite /is_type_lb type_snapshot_fst Hdoc. iFrame "Hitems_this". }
+  iPureIntro. split.
+  - rewrite type_snapshot_fst Hdoc. exact (Harrinv _ _ Htmp).
+  - move=> input Hin.
+    destruct (delivered_docm_mem h m (RootId name) input Hhcoh Hin) as (it & Hitid & Hitmem).
+    exists it. split; [exact Hitid | rewrite type_snapshot_fst; exact Hitmem].
+Qed.
+
+(** The authority admits one more (token, name) pair and hands out its
+    registration witness. *)
+Lemma observers_register (γs : store_names) (S : gset (gname * P)) (γo : gname) (name : P) :
+  own γs.(sn_observers) (● S : observersUR) ==∗
+  own γs.(sn_observers) (● (S ∪ {[(γo, name)]}) : observersUR) ∗ is_text_observed γs name γo.
+Proof.
+  iIntros "Ha".
+  iMod (own_update _ _ (● (S ∪ {[(γo, name)]}) ⋅ ◯ {[(γo, name)]}) with "Ha") as "H".
+  { apply auth_update_alloc. apply local_update_unital_discrete.
+    intros z _ Heq. rewrite left_id in Heq. split; first done.
+    rewrite -Heq gset_op. set_solver. }
+  iModIntro. iDestruct "H" as "[$ $]".
+Qed.
+
 Lemma elem_of_registered_tokens (registered : gmap loc (P * list gname)) (γo : gname) (name : P) :
   (γo, name) ∈ registered_tokens registered <->
   ∃ (parent : loc) (γos : list gname), registered !! parent = Some (name, γos) ∧ γo ∈ γos.
@@ -2313,6 +2408,33 @@ Proof.
     exists ((λ γo0, (γo0, name)) <$> γos). split.
     + apply list_elem_of_fmap. by exists γo.
     + apply list_elem_of_fmap. exists (parent, (name, γos)). split; [done | by apply elem_of_map_to_list].
+Qed.
+
+(** Registering one more observer of a type: the token set grows by its
+    (token, name) pair, whether the type had observers or not. *)
+Lemma registered_tokens_register (registered : gmap loc (P * list gname)) (parent : loc)
+    (name : P) (γos : list gname) (γo : gname) :
+  (registered !! parent = Some (name, γos) ∨ (registered !! parent = None ∧ γos = [])) ->
+  registered_tokens (<[parent := (name, γos ++ [γo])]> registered) =
+  registered_tokens registered ∪ {[(γo, name)]}.
+Proof.
+  move=> Hcase. apply sets.set_eq. move=> [γo' name'].
+  rewrite elem_of_union elem_of_singleton !elem_of_registered_tokens. split.
+  - move=> [q [γos' [Hlk Hin]]]. destruct (decide (parent = q)) as [<- | Hne].
+    + rewrite lookup_insert_eq in Hlk. injection Hlk as <- <-.
+      apply elem_of_app in Hin as [Hin | Hin].
+      * left. destruct Hcase as [Hc | [_ Hnil]]; first by exists parent, γos.
+        rewrite Hnil in Hin. exfalso. by apply elem_of_nil in Hin.
+      * right. apply list_elem_of_singleton in Hin. by subst.
+    + rewrite lookup_insert_ne in Hlk; last exact Hne. left. by exists q, γos'.
+  - move=> [[q [γos' [Hlk Hin]]] | Heq].
+    + destruct (decide (parent = q)) as [<- | Hne].
+      * destruct Hcase as [Hc | [Hc _]]; last (rewrite Hc in Hlk; discriminate).
+        rewrite Hc in Hlk. injection Hlk as <- <-.
+        exists parent, (γos ++ [γo]). rewrite lookup_insert_eq. split; [done | apply elem_of_app; by left].
+      * exists q, γos'. rewrite lookup_insert_ne; last exact Hne. done.
+    + injection Heq as -> ->. exists parent, (γos ++ [γo]). rewrite lookup_insert_eq.
+      split; [done | apply elem_of_app; right; by apply list_elem_of_singleton].
 Qed.
 
 (* ----- the transaction's changed types ---------------------------------- *)
@@ -2357,6 +2479,20 @@ Proof.
   iPureIntro. by exists nm.
 Qed.
 
+(** The marked names are bound to marked addresses: what a transaction reads
+    off the registry authority for the types it did not mark. *)
+Lemma changed_types_bound_names (γs : store_names) (changed : gset P) (changed_locs : gset loc)
+    (bind : gmap P loc) :
+  ghost_map_auth γs.(sn_types) 1 bind -∗
+  changed_types_bound γs changed changed_locs -∗
+  ⌜∀ nm, nm ∈ changed -> ∃ q, bind !! nm = Some q ∧ q ∈ changed_locs⌝.
+Proof.
+  iIntros "Hauth [#Hnames _]". iIntros (nm Hnm).
+  iDestruct (big_sepS_elem_of _ _ nm Hnm with "Hnames") as (q) "[#Hb %Hin]".
+  iDestruct (ghost_map_lookup with "Hauth Hb") as %Hlk.
+  iPureIntro. by exists q.
+Qed.
+
 (** Marking a sweep's types: the addresses grow to [changed_locs'], every
     new one registered under [bind], and the names grow by the names [bind]
     gives the new addresses ([bound_names]). *)
@@ -2383,6 +2519,59 @@ Proof.
     + iDestruct (big_sepM_lookup _ _ nm q Hb with "Hbinds") as "#Hbnd".
       iExists nm. iFrame "Hbnd". iPureIntro. apply elem_of_union_r.
       apply elem_of_bound_names. by exists q.
+Qed.
+
+(** An observer's own half agrees with the registry's inside a transaction
+    that did not change its root: the snapshot it was last told is the
+    root's current one, the record having no char of that root. What
+    [Mirror.Check] reads off ([demo/observe_app]). *)
+Lemma own_transaction_observed_agree (tr s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P)
+    (name : P) (γo : gname) (s : snapshot) :
+  name ∉ changed ->
+  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed -∗
+  is_text_observed γs name γo -∗
+  own_observed γo s -∗
+  ⌜s = type_snapshot m deleted name⌝.
+Proof.
+  move=> Hnot. iIntros "Htx #Hobserved Hobs".
+  iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx". iNamed "Hregistry".
+  (* the token is registered under [name], at some address *)
+  iDestruct (own_valid_2 with "Hobserversauth Hobserved") as %Hincl.
+  apply auth_both_valid_discrete in Hincl as [Hincl _].
+  apply gset_included in Hincl.
+  have Htok : (γo, name) ∈ registered_tokens registered.
+  { apply Hincl. apply elem_of_singleton. reflexivity. }
+  apply elem_of_registered_tokens in Htok as (parent & γos & Hreglk & Hγo).
+  (* its entry holds the registry's half at the start snapshot *)
+  iDestruct (big_sepM2_dom with "Hobservers") as %Hdomeq.
+  have [cbs_sl Hrlk] : is_Some (registry !! parent).
+  { apply elem_of_dom. rewrite Hdomeq. apply elem_of_dom. by exists (name, γos). }
+  iDestruct (big_sepM2_lookup _ _ _ parent cbs_sl (name, γos) Hrlk Hreglk with "Hobservers") as "Hentry".
+  iDestruct "Hentry" as (cbs) "Hentry". iNamed "Hentry". simpl.
+  apply list_elem_of_lookup in Hγo as [j Hj].
+  iDestruct (big_sepL2_length with "Hentry_callbacks") as %Hlen.
+  have Hjlt : (j < length cbs)%nat by (rewrite Hlen; exact (lookup_lt_Some _ _ _ Hj)).
+  destruct (lookup_lt_is_Some_2 cbs j Hjlt) as [cb Hcb].
+  iDestruct (big_sepL2_lookup _ _ _ j cb γo Hcb Hj with "Hentry_callbacks") as "[_ Hstore_half]".
+  iDestruct (own_observed_agree with "Hstore_half Hobs") as %<-.
+  (* the root is outside the record, so its snapshot did not move *)
+  iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
+  iDestruct (registered_bindings_lookup with "HtypesAuth Hregistered_bind") as %Hregbind.
+  have Hbindlk : bind !! name = Some parent := Hregbind parent (name, γos) Hreglk.
+  iDestruct (changed_types_bound_names with "HtypesAuth Hchanged_bound") as %Hbound.
+  iDestruct (changed_types_bound_registered with "HtypesAuth Hchanged_bound") as %Hmarked.
+  iDestruct (own_store_state_registry_coh with "Hstate") as %Hregcoh.
+  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpoolinv.
+  simpl in Hregcoh, Hpoolinv.
+  iPureIntro.
+  apply (type_snapshot_untouched _ _ _ _ _ _ name Hstart).
+  apply (type_untouched_by_record m bind p inserted tombstoned changed changed_locs name parent
+           Hpoolinv Hregcoh Hregmodel Hrecorded Hbound Hbindlk).
+  move=> Hin. apply Hnot.
+  destruct (Hmarked parent Hin) as (nm & Hnm & Hnmlk).
+  rewrite (proj1 (proj2 Hregcoh) nm name parent Hnmlk Hbindlk) in Hnm. exact Hnm.
 Qed.
 
 End store_heap.
