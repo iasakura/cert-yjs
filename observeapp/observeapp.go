@@ -57,7 +57,9 @@ func (m *Mirror) Text() string {
 func (m *Mirror) Check() bool {
 	ok := false
 	m.doc.Transact(func(tr *yjs.Transaction) {
-		ok = m.text.StringIn(tr) == m.Text()
+		text := m.text.StringIn(tr)
+		view := m.Text()
+		ok = text == view
 	})
 	return ok
 }
