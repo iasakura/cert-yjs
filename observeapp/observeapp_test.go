@@ -9,30 +9,37 @@ import (
 	"github.com/iasakura/cert-yjs/yjs"
 )
 
-// TestMirrorTracksText: after every Sync the mirror spells the text, through
-// inserts and deletes of every shape (the theorem of
-// src/proof/demo/observe_app.v, exercised).
+// TestMirrorTracksText: after every transaction the mirror spells the text,
+// through inserts and deletes of every shape (the theorem of
+// src/proof/demo/observe_app.v, exercised). Check reads both inside one
+// transaction; the plain comparison is sound here because the test is the
+// only writer.
 func TestMirrorTracksText(t *testing.T) {
 	doc := yjs.NewDoc(1)
 	txt := doc.GetOrCreateText("text")
-	observer := txt.NewObserver()
-	mirror := NewMirror()
+	txt.Insert(0, "before the mirror")
+	mirror := NewMirror(doc, txt)
 
-	if !mirror.Sync(observer) || mirror.Text() != "" {
-		t.Fatalf("empty sync: ok/text = %q", mirror.Text())
+	if !mirror.Check() || mirror.Text() != txt.String() {
+		t.Fatalf("initial: mirror %q, text %q", mirror.Text(), txt.String())
 	}
-	txt.Insert(0, "hello world")
-	if !mirror.Sync(observer) || mirror.Text() != txt.String() {
+	txt.Insert(0, "hello world ")
+	if !mirror.Check() || mirror.Text() != txt.String() {
 		t.Fatalf("after insert: mirror %q, text %q", mirror.Text(), txt.String())
 	}
 	txt.Delete(5, 6)
 	txt.Insert(5, ", there")
-	if !mirror.Sync(observer) || mirror.Text() != txt.String() {
+	if !mirror.Check() || mirror.Text() != txt.String() {
 		t.Fatalf("after edits: mirror %q, text %q", mirror.Text(), txt.String())
 	}
-	// no change: an empty delta, the mirror stays
-	if !mirror.Sync(observer) || mirror.Text() != txt.String() {
-		t.Fatalf("idle sync: mirror %q, text %q", mirror.Text(), txt.String())
+	// one transaction of several writes: one delta
+	doc.Transact(func(tr *yjs.Transaction) {
+		txt.DeleteIn(tr, 0, 3)
+		txt.InsertIn(tr, 0, "HEL")
+		txt.InsertIn(tr, uint64(len(txt.StringIn(tr))), "!")
+	})
+	if !mirror.Check() || mirror.Text() != txt.String() {
+		t.Fatalf("after a transaction: mirror %q, text %q", mirror.Text(), txt.String())
 	}
 
 	rng := rand.New(rand.NewSource(198))
@@ -46,13 +53,8 @@ func TestMirrorTracksText(t *testing.T) {
 			at := uint64(rng.Intn(int(n) + 1))
 			txt.Insert(at, string(rune('a'+rng.Intn(26))))
 		}
-		if rng.Intn(4) == 0 {
-			if !mirror.Sync(observer) || mirror.Text() != txt.String() {
-				t.Fatalf("step %d: mirror %q, text %q", step, mirror.Text(), txt.String())
-			}
+		if !mirror.Check() || mirror.Text() != txt.String() {
+			t.Fatalf("step %d: mirror %q, text %q", step, mirror.Text(), txt.String())
 		}
-	}
-	if !mirror.Sync(observer) || mirror.Text() != txt.String() {
-		t.Fatalf("final: mirror %q, text %q", mirror.Text(), txt.String())
 	}
 }

@@ -19,6 +19,9 @@
       set_find_integration_loop, setintegrate, Couple,  yjs.algorithm.insert_set
         setintegrate_eq_integrate, ...
       integrate_some (integrate totality) yjs.algorithm.commutativity
+
+    and proves one fact of its own about them, [YjsArrInvariant_nil]: the
+    empty document is valid.
 *)
 From yjs.crdt Require Export client_id.
 From yjs Require Export item item_set util.
@@ -88,3 +91,22 @@ Qed.
 Global Instance YjsItem_countable : Countable (YjsItem A) :=
   inj_countable YjsItem_enc YjsItem_dec YjsItem_dec_enc.
 End item_countable.
+
+(** The empty document is valid: what a fresh root spells, and what an
+    observer's empty snapshot certifies ([demo/observe_app],
+    [ws_env_smoke]). *)
+Section empty_document.
+Context {A : Type}.
+
+Lemma YjsArrInvariant_nil : YjsArrInvariant ([] : list (YjsItem A)).
+Proof.
+  split.
+  - split => //=; move=> o r id c; rewrite /ArrSet /= => /elem_of_nil [].
+  - split; move=> *;
+      match goal with
+      | H : ArrSet [] _ |- _ => move: H; rewrite /ArrSet /= => /elem_of_nil []
+      end.
+  - by constructor.
+  - by constructor.
+Qed.
+End empty_document.

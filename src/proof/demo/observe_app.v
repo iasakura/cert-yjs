@@ -1,12 +1,15 @@
-(** The application theorem of issue #198 (docs/plan-issue-198-observe.md,
-    section 4): a [Mirror] that syncs by one [Poll] and one [ApplyDelta]
-    keeps the application invariant [app_synced], the mirror spells the last
-    observed snapshot. After a sync the mirror is the visible text of the
-    snapshot the poll took, a document state that holds every item a history
-    certificate the caller brings has delivered ([history_reflected]), as a
-    concurrent read would. The patch never fails: the delta is
-    [text_delta observed current] and the mirror is the observed text, so
-    [apply_text_delta] gives exactly the premise of [wp_ApplyDelta]. *)
+(** The application theorem of issue #198, Part II
+    (docs/plan-issue-198-observe.md, section 15): a [Mirror] that registers
+    a callback on a text ([Text.Observe]) and patches its view with every
+    delta it is told keeps the application invariant [app_synced]: the view
+    spells the snapshot the callback was last told, a certified document
+    state ([is_text_snapshot]). [wp_Mirror__Check] is the final theorem:
+    read inside one transaction, the view IS the text, since a transaction
+    that wrote nothing left the text's snapshot where the last notification
+    put it ([own_transaction_observed_agree]). The patch never fails: the
+    delta is [text_delta observed current] and the view is the observed
+    text, so [apply_text_delta] gives exactly the premise of
+    [wp_ApplyDelta]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import observeapp.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import observeapp.
@@ -19,9 +22,11 @@ From iris.algebra.lib Require Import dfrac_agree.
 From New.proof.id Require Import id.
 From New.proof.item Require Import item.
 From New.proof.ytype Require Import ytype.
+From New.proof.delta Require Import delta.
+From New.proof.transaction Require Import transaction.
 From New.proof.store Require Import store.
 From New.proof.text Require Import text.
-From New.proof.textobserver Require Import textobserver.
+From New.proof.doc Require Import doc.
 
 Section observe_app.
 
@@ -57,52 +62,155 @@ Local Notation Op := (TId * @YjsOperation A)%type.
 
 Local Notation Ev := (@Event Op).
 
+Local Notation DocModel := (gmap TId (list (YjsItem A))).
+
 Local Notation snapshot := (list (YjsItem A * bool)).
 
-(** [own_mirror m app]: the mirror at [m] holds the string [app]. *)
-Definition own_mirror (m : loc) (app : go_string) : iProp Σ :=
-  m ↦ observeapp.Mirror.mk app.
+(** [mirror_inv m γs γh name γo]: the mirror's lock invariant: its view
+    spells the snapshot the callback was last told, held with the
+    application's half of the observer's token and the snapshot's
+    certificate. *)
+Definition mirror_inv (m : loc) (γs : store_names) (γh : history_names) (name : P) (γo : gname) : iProp Σ :=
+  ∃ (s : snapshot),
+    "Hview" ∷ (m .[(observeapp.Mirror.t), "view"]) ↦ visible_string s ∗
+    "Hown_half" ∷ own_observed γo s ∗
+    "#Hsnap" ∷ is_text_snapshot γs γh name s.
 
-Lemma wp_NewMirror :
-  {{{ is_pkg_init observeapp }}}
-    @! observeapp.NewMirror #()
-  {{{ (m : loc), RET #m; own_mirror m ""%go }}}.
+(** [is_Mirror m d t γs γh name γo]: a mirror of the text [t] (root [name])
+    of the document [d], registered as observer [γo] of that root. *)
+Definition is_Mirror (m d t : loc) (γs : store_names) (γh : history_names) (name : P) (γo : gname) : iProp Σ :=
+  ∃ (s_loc : loc) (L : list (YjsItem A)) (deleted_ids : gset YjsId),
+    "#Hdocf" ∷ (m .[(observeapp.Mirror.t), "doc"]) ↦□ d ∗
+    "#Htextf" ∷ (m .[(observeapp.Mirror.t), "text"]) ↦□ t ∗
+    "#His_doc" ∷ is_Doc d s_loc γs γh ∗
+    "#His_text" ∷ is_Text t γs γh name L deleted_ids ∗
+    "#Hobserved" ∷ is_text_observed γs name γo ∗
+    "#Hmu" ∷ is_Mutex (m .[(observeapp.Mirror.t), "mu"]) (mirror_inv m γs γh name γo).
+
+#[global] Instance is_Mirror_persistent m d t γs γh name γo : Persistent (is_Mirror m d t γs γh name γo).
+Proof. rewrite /is_Mirror. apply _. Qed.
+
+(** The empty snapshot of a root is certified by an empty history: what the
+    mirror's view is before the callback hears the current text. *)
+#[local] Lemma is_text_snapshot_nil (t : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
+  is_Text t γs γh name L deleted_ids -∗
+  is_store_client γs c -∗
+  is_history_lb γh c ([] : list Ev) -∗
+  |==> is_text_snapshot γs γh name [].
 Proof.
-  wp_start. wp_alloc m as "Hm". wp_auto.
-  iApply "HΦ". iFrame "Hm".
+  iIntros "Htext #Hpin #Hlb".
+  iDestruct "Htext" as (tv s_loc parent deleted_items) "Htext". iNamed "Htext".
+  iMod (auth_gset_frag_empty γs.(sn_delete_set)) as "#Hdellb".
+  iModIntro. iExists parent, c, []. iFrame "Hbind Hpin Hlb".
+  iSplit.
+  { rewrite /is_type_lb /=. iApply (auth_gmap_gset_frag_weaken _ _ ∅ (list_to_set L) with "His_lb").
+    apply empty_subseteq. }
+  iSplit; first iExact "Hdellb".
+  iPureIntro. split; [exact YjsArrInvariant_nil | move=> input Hin; by apply elem_of_nil in Hin].
 Qed.
 
-(** One sync: the mirror spelled the observed snapshot ([app_synced app
-    observed]) and spells the current one afterwards; the current snapshot
-    is what a read of the text sees ([text_snapshot], [history_reflected],
-    [visible_excludes]), and it grows from the observed one. *)
-Lemma wp_Mirror__Sync (m obs t : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
-    (app : go_string) (observed : snapshot) (h0 : list Ev) :
-  {{{ is_pkg_init observeapp ∗ own_mirror m app ∗ ⌜app_synced app observed⌝ ∗
-      own_TextObserver obs t γs γh name observed ∗
-      is_Text t γs γh name L deleted_ids ∗ is_store_client γs c ∗ is_history_lb γh c h0 }}}
-    m @! (go.PointerType observeapp.Mirror) @! "Sync" #obs
-  {{{ (current : snapshot), RET #true;
-      own_mirror m (visible_string current) ∗
-      own_TextObserver obs t γs γh name current ∗
-      ⌜snapshot_grows_to observed current⌝ ∗
-      ⌜text_snapshot L current⌝ ∗ ⌜history_reflected h0 name current⌝ ∗
-      ⌜visible_excludes deleted_ids current⌝ }}}.
+(** [NewMirror]: the mirror's callback meets [is_text_callback] with a fresh
+    token, both halves at the empty snapshot; [Observe] then tells it the
+    current text and registers it. *)
+Lemma wp_NewMirror (d t s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
+  {{{ is_pkg_init observeapp ∗ is_Doc d s_loc γs γh ∗ is_Text t γs γh name L deleted_ids ∗
+      is_store_client γs c ∗ is_history_lb γh c ([] : list Ev) }}}
+    @! observeapp.NewMirror #d #t
+  {{{ (m : loc) (γo : gname), RET #m; is_Mirror m d t γs γh name γo }}}.
 Proof.
-  wp_start as "(Hm & %Hsync & Hobs & #Htext & #Hpin & #Hlb)".
-  have Happ : app = visible_string observed := Hsync.
+  wp_start as "(#His_doc & #His_text & #Hpin & #Hlb)".
+  iApply wp_fupd.
+  wp_auto. wp_alloc m as "Hm". wp_auto.
+  iMod (own_observed_alloc []) as (γo) "[Hhalf_app Hhalf_store]".
+  iMod (is_text_snapshot_nil with "His_text Hpin Hlb") as "#Hsnap_nil".
+  iStructNamed "Hm".
+  iPersist "doc text".
+  iMod (init_Mutex (mirror_inv m γs γh name γo) with "[$mu] [view Hhalf_app]") as "#Hmu".
+  { iNext. iExists []. iFrame "view Hhalf_app Hsnap_nil". }
+  (* the callback's contract, from the mirror's lock alone *)
+  iAssert (is_text_callback γs γh name _ γo) with "[]" as "#Hcb".
+  { rewrite /is_text_callback.
+    iIntros (sl dq observed current Φ') "!> (Hobs & Hdelta & %Hgrows & #Hsnap) HΦ'".
+    wp_auto.
+    wp_apply (wp_Mutex__Lock with "[$Hmu]"). iIntros "[Hlocked Hinv]". iNamed "Hinv".
+    iDestruct (own_observed_agree with "Hown_half Hobs") as %<-.
+    wp_auto.
+    iDestruct "Hsnap" as (parent c' h) "Hsnap'". iNamed "Hsnap'".
+    have Huniq : uniqueId current.*1 := yai_unique _ Hsnapshot_invariant.
+    have Hpatch : apply_delta (text_delta s current) (visible_string s) = Some (visible_string current)
+      := apply_text_delta s current Hgrows Huniq.
+    wp_apply (wp_ApplyDelta _ _ _ _ _ Hpatch with "[$Hdelta]"). iIntros "Hdelta".
+    wp_auto.
+    iMod (own_observed_update _ _ _ current with "Hown_half Hobs") as "[Hown_half Hobs]".
+    wp_apply (wp_Mutex__Unlock with "[$Hmu $Hlocked Hview Hown_half]").
+    { iNext. iExists current. iFrame "Hview Hown_half".
+      iExists parent, c', h. iFrame "#". iPureIntro. split; assumption. }
+    iApply "HΦ'". iFrame "Hobs Hdelta". }
+  wp_apply (wp_Text__Observe with "[$His_text $Hcb $Hhalf_store]").
+  iIntros "#Hobserved".
   wp_auto.
-  wp_apply (wp_TextObserver__Poll with "[$Hobs $Htext $Hpin $Hlb]").
-  iIntros (sl current) "(Hobs & Hdelta & %Hgrows & %Hsnap & %Hhist & %Hexcl)".
+  iModIntro. iApply ("HΦ" $! m γo).
+  iExists s_loc, L, deleted_ids. iFrame "#".
+Qed.
+
+(** [Mirror.Text] reads the view under the mirror's lock: the visible string
+    of the snapshot the callback was last told, certified. At that moment
+    the caller may learn what it likes from the mirror's token half
+    ([Ψ], through the wand): what [Check] uses to tie the view's snapshot to
+    the transaction's. *)
+Lemma wp_Mirror__Text (m d t : loc) (γs : store_names) (γh : history_names) (name : P) (γo : gname)
+    (Ψ : snapshot -> iProp Σ) :
+  {{{ is_pkg_init observeapp ∗ is_Mirror m d t γs γh name γo ∗
+      (∀ s, own_observed γo s -∗ own_observed γo s ∗ Ψ s) }}}
+    m @! (go.PointerType observeapp.Mirror) @! "Text" #()
+  {{{ (s : snapshot), RET #(visible_string s); is_text_snapshot γs γh name s ∗ Ψ s }}}.
+Proof.
+  wp_start as "(#Hmirror & Hwand)". iNamed "Hmirror".
   wp_auto.
-  have Huniq : uniqueId current.*1 := yai_unique _ (proj2 Hsnap).
-  have Hpatch : apply_delta (text_delta observed current) app = Some (visible_string current).
-  { rewrite Happ. exact (apply_text_delta observed current Hgrows Huniq). }
-  wp_apply (wp_ApplyDelta _ _ _ _ _ Hpatch with "[$Hdelta]").
-  iIntros "Hdelta".
+  wp_apply (wp_Mutex__Lock with "[$Hmu]"). iIntros "[Hlocked Hinv]". iNamed "Hinv".
+  iDestruct ("Hwand" $! s with "Hown_half") as "[Hown_half HΨ]".
   wp_auto.
-  iApply "HΦ". iFrame "Hm Hobs". iPureIntro. split_and!; assumption.
+  wp_apply (wp_Mutex__Unlock with "[$Hmu $Hlocked Hview Hown_half]").
+  { iNext. iExists s. iFrame "Hview Hown_half Hsnap". }
+  wp_auto.
+  iApply ("HΦ" $! s). iFrame "Hsnap HΨ".
+Qed.
+
+(** THE theorem: inside one transaction the view equals the text. The
+    transaction writes nothing, so the text's snapshot is the one the last
+    notification told the mirror ([own_transaction_observed_agree]), and
+    [StringIn] reads exactly that snapshot's visible string. *)
+Lemma wp_Mirror__Check (m d t : loc) (γs : store_names) (γh : history_names) (name : P) (γo : gname) :
+  {{{ is_pkg_init observeapp ∗ is_Mirror m d t γs γh name γo }}}
+    m @! (go.PointerType observeapp.Mirror) @! "Check" #()
+  {{{ RET #true; True }}}.
+Proof.
+  wp_start as "#Hmirror". iNamed "Hmirror".
+  wp_auto.
+  wp_apply (wp_Doc__Transact _ _ _ _ _ (λ _ _ _ _ _, ok_ptr ↦ true)%I with "[$His_doc ok]").
+  { rewrite /closure_runs_transaction.
+    iIntros (tr c h m0 pend deleted Ψ') "Htx HΨ'".
+    wp_auto.
+    wp_apply (wp_Text__StringIn with "[$His_text $Htx]"). iIntros "[_ Htx]".
+    wp_auto.
+    wp_apply (wp_Mirror__Text _ _ _ _ _ _ _
+                (λ s, own_transaction tr s_loc γs γh c h m0 pend deleted ∅ ∅ ∅ ∗
+                      ⌜s = type_snapshot m0 deleted name⌝)%I
+                with "[$Hmirror Htx]").
+    { iIntros (s) "Hhalf".
+      iDestruct (own_transaction_observed_agree _ _ _ _ _ _ _ _ _ _ _ _ name γo s
+                   (not_elem_of_empty name) with "Htx Hobserved Hhalf") as %Heq.
+      iFrame "Hhalf Htx". iPureIntro. exact Heq. }
+    iIntros (s) "(#Hsnap_s & Htx & %Heq)". subst s.
+    wp_auto.
+    rewrite bool_decide_eq_true_2; last reflexivity.
+    wp_auto.
+    iApply ("HΨ'" $! h m0 pend deleted ∅ ∅ ∅). iFrame "Htx ok". }
+  iIntros "HQ". iDestruct "HQ" as (c h' m' pend' deleted') "ok".
+  wp_auto.
+  iApply "HΦ". done.
 Qed.
 
 End observe_app.

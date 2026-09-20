@@ -621,18 +621,6 @@ Record stream_ok (cl : ClientId) (bs : list w8) : Prop := {
   so_nosucc : forall z, z ∈ stream_doc cl bs -> origin z ≠ stream_tail cl bs;
 }.
 
-Lemma YjsArrInvariant_nil : YjsArrInvariant ([] : list (YjsItem A)).
-Proof.
-  split.
-  - split => //=; move=> o r id c; rewrite /ArrSet /= => /elem_of_nil [].
-  - split; move=> *;
-      match goal with
-      | H : ArrSet [] _ |- _ => move: H; rewrite /ArrSet /= => /elem_of_nil []
-      end.
-  - by constructor.
-  - by constructor.
-Qed.
-
 Lemma stream_ok_nil (cl : ClientId) : stream_ok cl [].
 Proof.
   split; simpl.
