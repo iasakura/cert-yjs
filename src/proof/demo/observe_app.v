@@ -67,13 +67,13 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 Local Notation snapshot := (list (YjsItem A * bool)).
 
-(** [mirror_inv m γs γh name γo]: the mirror's lock invariant: its view
-    spells the snapshot the callback was last told, held with the
-    application's half of the observer's token and the snapshot's
-    certificate. *)
-Definition mirror_inv (m : loc) (γs : store_names) (γh : history_names) (name : P) (γo : gname) : iProp Σ :=
+(** [mirror_inv view γs γh name γo]: the mirror's lock invariant, over the
+    one field the mutex protects, the [view] string at [view]: it spells the
+    snapshot the callback was last told, held with the application's half of
+    the observer's token and the snapshot's certificate. *)
+Definition mirror_inv (view : loc) (γs : store_names) (γh : history_names) (name : P) (γo : gname) : iProp Σ :=
   ∃ (s : snapshot),
-    "Hview" ∷ (m .[(observeapp.Mirror.t), "view"]) ↦ visible_string s ∗
+    "Hview" ∷ view ↦ visible_string s ∗
     "Hown_half" ∷ own_observed γo s ∗
     "#Hsnap" ∷ is_text_snapshot γs γh name s.
 
@@ -86,7 +86,8 @@ Definition is_Mirror (m d t : loc) (γs : store_names) (γh : history_names) (na
     "#His_doc" ∷ is_Doc d s_loc γs γh ∗
     "#His_text" ∷ is_Text t γs γh name L deleted_ids ∗
     "#Hobserved" ∷ is_text_observed γs name γo ∗
-    "#Hmu" ∷ is_Mutex (m .[(observeapp.Mirror.t), "mu"]) (mirror_inv m γs γh name γo).
+    "#Hmu" ∷ is_Mutex (m .[(observeapp.Mirror.t), "mu"])
+              (mirror_inv (m .[(observeapp.Mirror.t), "view"]) γs γh name γo).
 
 #[global] Instance is_Mirror_persistent m d t γs γh name γo : Persistent (is_Mirror m d t γs γh name γo).
 Proof. rewrite /is_Mirror. apply _. Qed.
@@ -131,7 +132,7 @@ Proof.
      local itself become read-only *)
   iPersist "doc text".
   iPersist "m".
-  iMod (init_Mutex (mirror_inv m γs γh name γo) with "[$mu] [view Hhalf_app]") as "#Hmu".
+  iMod (init_Mutex (mirror_inv (m .[(observeapp.Mirror.t), "view"]) γs γh name γo) with "[$mu] [view Hhalf_app]") as "#Hmu".
   { iNext. iExists []. iFrame "view Hhalf_app Hsnap_nil". }
   wp_apply (wp_Text__Observe with "[$His_text $Hhalf_store]").
   { (* the callback's contract, from the mirror's lock alone *)
