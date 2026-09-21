@@ -6,9 +6,14 @@ A formally verified Yjs. A Yjs-style CRDT is hand-written in Go (`yjs/`),
 translated to a Rocq model with
 [goose](https://github.com/mit-pdos/perennial/tree/master/goose), and verified
 in Iris concurrent separation logic with
-[Perennial](https://github.com/mit-pdos/perennial) (`src/proof/`). The Go is a
-faithful port of [y-octo](https://github.com/y-crdt/y-octo) (Rust Yjs), so the
-goal is formal verification of a *realistic* Yjs implementation, not a toy.
+[Perennial](https://github.com/mit-pdos/perennial) (`src/proof/`). The Go is
+written after the three Yjs implementations: [Yjs](https://github.com/yjs/yjs)
+(v14, the primary reference for structure and naming),
+[yrs](https://github.com/y-crdt/y-crdt) and
+[y-octo](https://github.com/y-crdt/y-octo) (the Rust ports, the reference for
+the typed rendering: containers, ownership), so the goal is formal verification
+of a *realistic* Yjs implementation, not a toy. Where the three differ, the
+difference is reported (see Reporting).
 
 ## Build and test
 
@@ -111,7 +116,7 @@ gotchas `build.sh` absorbs, and one-time environment setup. CI runs the same
 
 | path | contents | edit? |
 |---|---|---|
-| `yjs/*.go` | the CRDT, hand-written port of y-octo | yes |
+| `yjs/*.go` | the CRDT, hand-written after Yjs / yrs / y-octo | yes |
 | `grovenet/`, `pingpong/`, `wsnet/`, `wsecho/` | Go network FFI realizations (TCP grove, WebSocket ws) and their demos | yes |
 | `src/goose_lang/ffi/ws_ffi/`, `src/trusted_code/`, `src/manualproof/` | the ws FFI (semantics, lifting, adequacy) and the trusted FFI models with their WP wrappers | yes |
 | `src/proof/<type>/*.v` | the proofs, one directory per Go type | yes |
@@ -173,9 +178,15 @@ independent job, so no single heavy proof serializes the build.
 - **Report unrequested changes** in the conversation as well: any change to
   `yjs/*.go` behavior, to a public function's spec or signature, or to a
   proof-layer contract that was not explicitly asked for. Any simplification
-  that diverges from y-octo must carry a clear code comment too. Mirror
-  y-octo's containers faithfully (HashSet/HashMap to Go map, Vec to slice);
-  don't downgrade a set to a slice for proof convenience.
+  that diverges from the references must carry a clear code comment too.
+  Mirror the references' containers faithfully (HashSet/HashMap to Go map,
+  Vec to slice); don't downgrade a set to a slice for proof convenience.
+- **Report every three-way difference.** The references are Yjs v14, yrs and
+  y-octo. Each place where they differ is reported every time it is met: the
+  PR description says which one the Go follows and why, and a code comment at
+  the divergence says the same. A citation names the implementation and its
+  version (`Yjs v14.0.0-rc.18 src/utils/Transaction.js:…`, `yrs 0.x src/…`,
+  `y-octo src/doc/store.rs:…`).
 - **Library bugs**: apparent bugs in the toolchain (Rocq, Iris, Perennial,
   goose) may be worked around to keep moving, but report them afterwards.
 - **No unsolicited upstream activity**: never open pull requests, issues, or
