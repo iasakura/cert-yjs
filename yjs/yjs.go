@@ -1,10 +1,14 @@
 // Package yjs is a Yjs-style CRDT implementation in Go, intended to be
 // translated to Rocq with goose and verified with Perennial.
 //
-// The data structures and the integrate algorithm are a port of y-octo
-// (https://github.com/y-crdt/y-octo), the Rust Yjs implementation by the
-// Toeverything / AFFiNE team, used here under the MIT License. See the NOTICE
-// file at the repository root for the full y-octo copyright and license.
+// The package is written after three implementations of the Yjs CRDT: Yjs
+// (https://github.com/yjs/yjs), yrs (https://github.com/y-crdt/y-crdt) and
+// y-octo (https://github.com/y-crdt/y-octo). The data structures and the
+// integrate algorithm are a port of y-octo (the Toeverything / AFFiNE team)
+// and the text observer follows Yjs's YTextEvent.delta, both used here under
+// the MIT License; see the NOTICE file at the repository root. Where the three
+// implementations differ, the code comment at the divergence says which one is
+// followed and why.
 //
 // The package is split into files that mirror y-octo's module layout:
 //
@@ -15,6 +19,7 @@
 //	store.go     store + Integrate          (y-octo: doc/store.rs DocStore)
 //	ytype.go     yType (lock-guarded inner) (y-octo: doc/types YType)
 //	text.go      Text API (unlocked handle) (y-octo: doc/types/text.rs)
+//	observe.go   TextObserver / ApplyDelta  (Yjs: src/utils/YEvent.js delta)
 //	doc.go       Doc handle + GetOrCreateText       (y-octo: doc/document.rs)
 //	transaction.go Transaction + Doc.Transact  (Yjs: src/utils/Transaction.js; y-octo has none)
 //	refs.go      node / GC / Skip tombstones (y-octo: codec/refs.rs)     [not translated]
