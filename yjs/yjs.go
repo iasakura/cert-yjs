@@ -21,6 +21,7 @@
 //	text.go      Text API (unlocked handle) (y-octo: doc/types/text.rs)
 //	observe.go   TextObserver / ApplyDelta  (Yjs: src/utils/YEvent.js delta)
 //	doc.go       Doc handle + GetOrCreateText       (y-octo: doc/document.rs)
+//	transaction.go Transaction + Doc.Transact  (Yjs: src/utils/Transaction.js; y-octo has none)
 //	refs.go      node / GC / Skip tombstones (y-octo: codec/refs.rs)     [not translated]
 //	delete.go    Delete                     (y-octo: doc/types/text.rs)  [not translated]
 //	codec.go     v1 update encode/decode    (y-octo: codec/{update,...}) [not translated]

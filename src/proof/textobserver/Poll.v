@@ -190,7 +190,7 @@ Proof.
   wp_auto.
   (* ---- the write lock: the store at its current model ---- *)
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
-  iDestruct "Hinv" as (c0 h m pend) "Hown".
+  iDestruct "Hinv" as (c0 h m pend deleted) "Hown".
   iDestruct "Hown" as (client k pdel locs p bind acc) "Hown". iNamed "Hown". subst c0.
   wp_auto.
   wp_apply wp_map_make1. iIntros (sv_mref) "Hsvm". wp_auto.
@@ -552,9 +552,9 @@ Proof.
     (* the store goes back whole, and the lock is released *)
     iDestruct ("Hclose" with "[Hparent Hdll]") as "Hstate".
     { iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. exact Hlen. }
-    wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend with "[$His_store $Hlk Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+    wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend deleted with "[$His_store $Hlk Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
     { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro.
-      split_and!; [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh]. }
+      split_and!; [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
     iAssert (own_TextObserver obs ov.(yjs.TextObserver.text') γs γh name (runs_model tm.(tm_runs)))
       with "[Hobs Hsvm Hdel]" as "Hobs_new".
     { iExists (ov <| yjs.TextObserver.stateVector' := sv_mref |> <| yjs.TextObserver.deleted' := del_mref |>),

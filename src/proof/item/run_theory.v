@@ -680,6 +680,30 @@ Lemma char_ids_cons (c : YjsItem A) (r : list (YjsItem A)) :
   char_ids (c :: r) = {[item_id c]} ∪ char_ids r.
 Proof. rewrite /char_ids fmap_cons list_to_set_cons //. Qed.
 
+Lemma char_ids_nil : char_ids [] = ∅.
+Proof. done. Qed.
+
+Lemma char_ids_app (r1 r2 : list (YjsItem A)) :
+  char_ids (r1 ++ r2) = char_ids r1 ∪ char_ids r2.
+Proof. rewrite /char_ids fmap_app list_to_set_app_L //. Qed.
+
+Lemma elem_of_char_ids (r : list (YjsItem A)) (i : YjsId) :
+  i ∈ char_ids r <-> ∃ x, x ∈ r ∧ item_id x = i.
+Proof.
+  rewrite /char_ids elem_of_list_to_set list_elem_of_fmap. split.
+  - move=> [x [-> Hx]]. by exists x.
+  - move=> [x [Hx <-]]. by exists x.
+Qed.
+
+(** A nonempty run has a char id. *)
+Lemma char_ids_nonempty (r : list (YjsItem A)) :
+  r ≠ [] -> char_ids r ≠ ∅.
+Proof.
+  destruct r as [| x r]; first done.
+  move=> _ Habs. have : item_id x ∈ (∅ : gset YjsId) by (rewrite -Habs char_ids_cons; set_solver).
+  set_solver.
+Qed.
+
 (** More chars, more ids: what lets a known-id set survive the growth of the
     list it was read off (the [Text] handle's known items). *)
 Lemma char_ids_mono (r r' : list (YjsItem A)) :
