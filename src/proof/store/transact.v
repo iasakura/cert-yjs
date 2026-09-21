@@ -60,14 +60,15 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 (** A fresh transaction on the locked store: the record has recorded nothing,
     so every clause of [own_transaction] is vacuous. *)
 Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input) (deleted : gset YjsId) :
+    (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input) (deleted : gset YjsId)
+    (observers_mref : loc) :
   own_transaction_changes tr s_loc ∅ ∅ ∅ -∗
   own_store s_loc γs γh c h m pend deleted -∗
-  own_observer_registry s_loc γs γh m deleted -∗
+  own_observer_registry observers_mref γs γh m deleted -∗
   own_transaction tr s_loc γs γh c h m pend deleted ∅ ∅ ∅.
 Proof.
   iIntros "Hchanges Hstore Hreg".
-  iExists ∅, m, deleted. iFrame "Hchanges Hstore Hreg".
+  iExists ∅, m, deleted, observers_mref. iFrame "Hchanges Hstore Hreg".
   iSplit; first (iPureIntro; apply transaction_start_fresh).
   iSplit; first iApply changed_types_bound_empty.
   iPureIntro. split_and!.
@@ -86,7 +87,7 @@ Proof.
   wp_start as "(#His_store & Hf)". rewrite /closure_runs_transaction.
   wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
-  iDestruct "Hinv" as (c h m pend deleted) "[Hstore Hreg]".
+  iDestruct "Hinv" as (c h m pend deleted observers_mref) "[Hstore Hreg]".
   wp_auto.
   wp_apply wp_newTransaction. iIntros (tr) "Hchanges".
   wp_auto.
@@ -95,6 +96,7 @@ Proof.
   iIntros (h' m' pend' deleted' inserted tombstoned changed) "[Htx HQ]".
   wp_auto.
   wp_apply (wp_store__notify with "[$Htx]"). iIntros "[Hstore Hreg]".
+  iDestruct "Hreg" as (observers_mref') "Hreg".
   wp_auto.
   wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore $Hreg]").
   iApply "HΦ". iExists c, h', m', pend', deleted'. iFrame "HQ".

@@ -881,7 +881,7 @@ Lemma wp_store__applyDeleteSpans_transaction (tr s_loc : loc) (γs : store_names
       ⌜deleted' = deleted ∪ tombstoned'⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Htx & Hsp) HΦ".
-  iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx". iNamed "Hstore".
+  iDestruct "Htx" as (changed_locs m0 deleted0 registry_mref) "Htx". iNamed "Htx". iNamed "Hstore".
   have Hsub : tombstoned ⊆ pool_tombstoned p by (rewrite -Hdeleted; exact Htombstoned_sub).
   (* the old marks name their types: read the bindings off the registry
      while the authority is at hand *)
@@ -923,18 +923,18 @@ Proof using Type*.
         * apply elem_of_difference. split; assumption.
         * rewrite -Hdeleted Hdel. apply elem_of_union_l. exact Hi0. }
   iApply ("HΦ" $! (pool_tombstoned p') tombstoned' changed'). iFrame "Hsp".
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hchanges Hregistry"; last first.
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hchanges Hregistry Hobserversf"; last first.
   { iPureIntro. split_and!.
     - rewrite Hdeleted Htomb. apply union_subseteq_l.
     - exact Htsub.
     - apply union_subseteq_l.
     - rewrite Htomb Hdeleted //. }
-  iExists changed_locs', m0, deleted0.
+  iExists changed_locs', m0, deleted0, registry_mref.
   iFrame "Hchanges Hregistry".
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
-  { iExists client, k, rest, locs', p', bind, acc.
-    iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
-    iFrame "Hclientpin Hpendcert Hbinds".
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf".
+  { iExists client, k, rest, locs', p', bind, acc, observers_mref.
+    iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf".
+    iFrame "Hclientpin Hpendcert Hbinds Hobserverspin".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh
       | exact Hctr' | exact Hacccoh | reflexivity]. }

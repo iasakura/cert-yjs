@@ -118,8 +118,8 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
    beside [tie_store] is not timeless: it stays under the later). *)
 #[local] Instance rwmutex_inhabited : Inhabited rwmutex := populate Locked.
 
-#[local] Instance tie_store_timeless s_loc γs γh n locs p m deleted :
-  Timeless (tie_store s_loc γs γh n locs p m deleted).
+#[local] Instance tie_store_timeless s_loc γs γh n locs p m deleted observers_mref :
+  Timeless (tie_store s_loc γs γh n locs p m deleted observers_mref).
 Proof.
   rewrite /tie_store;
     repeat first [ apply sep_timeless | apply exist_timeless; intros ? ]; apply _.
@@ -135,12 +135,13 @@ Lemma wp_Store__wlock (s_loc : loc) (γs : store_names) (γh : history_names) :
     (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Lock" #()
   {{{ RET #(); own_wlock γs ∗
       ∃ (c : ClientId) (h : list Ev) (m : DocModel)
-        (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId),
+        (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId)
+        (observers_mref : loc),
         own_store s_loc γs γh c h m pend deleted ∗
         (* the observers, told everything up to this state; under a later
            since their contracts are not timeless (the next program step
            strips it) *)
-        ▷ own_observer_registry s_loc γs γh m deleted }}}.
+        ▷ own_observer_registry observers_mref γs γh m deleted }}}.
 Proof.
   wp_start_folded as "His". iNamed "His".
   wp_apply (rwmutex.wp_RWMutex__Lock with "[$Hrw]").
@@ -150,7 +151,7 @@ Proof.
   iIntros "%Hst Hlocked". subst st.
   iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(>Hrauth & >Htoks0 & >Hwl & Hrest)".
-  iDestruct "Hrest" as (locs p m deleted) "[>Hstore Hreg]".
+  iDestruct "Hrest" as (locs p m deleted observers_mref) "[>Hstore Hreg]".
   iEval (rewrite /tie_store) in "Hstore".
   iDestruct "Hstore" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl bind h pend pdel delete_set) "(%Hdel & Hfrag & Hexcl & Hro)".
   rewrite frac_of_0.
@@ -158,7 +159,7 @@ Proof.
   iMod ("Hclose" with "[Hlocked Hrauth Hfrag]") as "_".
   { iExists Locked. iFrame "Hlocked". iExists locs, p. iFrame "Hrauth Hfrag". }
   iModIntro. iApply "HΦ". iFrame "Hwl".
-  iExists (uint.nat client), h, m, pend, deleted. iFrame "Hreg".
+  iExists (uint.nat client), h, m, pend, deleted, observers_mref. iFrame "Hreg".
   rewrite Hdel. iApply store_slices_own_store. iFrame "Hexcl Hro".
 Qed.
 
@@ -171,10 +172,11 @@ Qed.
     the [own_wlock] clash. *)
 Lemma wp_Store__wunlock (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId)
+    (observers_mref : loc) :
   {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_wlock γs ∗
       own_store s_loc γs γh c h m pend deleted ∗
-      own_observer_registry s_loc γs γh m deleted }}}
+      own_observer_registry observers_mref γs γh m deleted }}}
     (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Unlock" #()
   {{{ RET #(); True }}}.
 Proof.
@@ -193,12 +195,15 @@ Proof.
     iIntros "Hrl0".
     iMod "Hmask" as "_".
     iMod (own_toks_0 γs.(sn_rmax)) as "Htoks0".
-    iDestruct (own_store_store_slices with "HR") as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs' p' bind pdel delete_set) "(%Hc & %Hdel & Hexcl & Hro)".
+    iDestruct (own_store_store_slices with "HR") as (client k items_mref types_mref observers_mref' deletedSetVal pend_sl pdel_sl locs' p' bind pdel delete_set) "(%Hc & %Hdel & #Hpin' & Hexcl & Hro)".
+    (* the registry's map is the store's [observers] field *)
+    iDestruct (own_observer_registry_pin with "Hreg") as "[#Hpin Hreg]".
+    iDestruct (is_store_observers_agree with "Hpin' Hpin") as %Heqref. subst observers_mref'.
     iMod (own_update _ _ (to_frac_agree 1 ((locs', p') : leibnizO _)) with "Hfrag") as "Hfrag".
     { apply cmra_update_exclusive. done. }
     iMod ("Hclose" with "[Hrl0 Hrauth Htoks0 Hwl Hfrag Hexcl Hro Hreg]") as "_".
     { iExists (RLocked 0). iFrame "Hrl0". iEval (cbn [tie_body]). iFrame "Hrauth Htoks0 Hwl".
-      iExists locs', p', m, deleted. iFrame "Hreg". rewrite /tie_store.
+      iExists locs', p', m, deleted, observers_mref. iFrame "Hreg". rewrite /tie_store.
       iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, bind, h, pend, pdel, delete_set.
       rewrite frac_of_0. iFrame "Hfrag Hexcl Hro". done. }
     iModIntro. by iApply "HΦ".
@@ -237,7 +242,7 @@ Proof.
   iIntros (n) "%Hst Hrl". subst st.
   iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(>Hrauth & >Hmaxn & >Hwl & Hrest)".
-  iDestruct "Hrest" as (locs p m deleted) "[>Hstore Hreg]".
+  iDestruct "Hrest" as (locs p m deleted observers_mref) "[>Hstore Hreg]".
   iEval (rewrite /tie_store) in "Hstore".
   iDestruct "Hstore" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl bind h pend pdel delete_set) "(%Hdel & Hfrag & Hexcl & Hro)".
   (* the conversion, at the one moment the exclusive slice is visible *)
@@ -254,7 +259,7 @@ Proof.
   { iExists (RLocked (S n)). iFrame "Hrl". iEval (cbn [tie_body]).
     replace (S n) with (n + 1)%nat by lia.
     iFrame "Hrauth Hmaxn1 Hwl".
-    iExists locs, p, m, deleted. iFrame "Hreg". rewrite /tie_store.
+    iExists locs, p, m, deleted, observers_mref. iFrame "Hreg". rewrite /tie_store.
     iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, bind, h, pend, pdel, delete_set.
     iFrame "Hfrag_i Hexcl Hro_i". done. }
   iModIntro. iApply ("HΦ" $! locs p delete_set). iFrame "Hrtok Hfrag_r Hro_r".
@@ -285,7 +290,7 @@ Proof.
     iCombine "Hrauth Hrtok" gives %Hbad. exfalso. lia. }
   iEval (cbn [tie_body]) in "Hbody".
   iDestruct "Hbody" as "(>Hrauth & >Hmaxsn & >Hwl & Hrest)".
-  iDestruct "Hrest" as (locs_i p_i m deleted) "[>Hstore Hreg]".
+  iDestruct "Hrest" as (locs_i p_i m deleted observers_mref) "[>Hstore Hreg]".
   iEval (rewrite /tie_store) in "Hstore".
   iDestruct "Hstore" as (client k items_mref types_mref deletedSetVal pend_sl pdel_sl bind h pend pdel delete_set) "(%Hdel & Hfrag_i & Hexcl & Hro_i)".
   iDestruct (pool_frag_agree with "Hfrag_r Hfrag_i") as %[Heql Heqp]. subst locs_r p_r.
@@ -306,7 +311,7 @@ Proof.
   rewrite -(frac_of_split n Hlt).
   iMod ("Hclose" with "[Hrln Hrauth Hmaxn Hwl Hfrag Hexcl Hro Hreg]") as "_".
   { iExists (RLocked n). iFrame "Hrln". iEval (cbn [tie_body]). iFrame "Hrauth Hmaxn Hwl".
-    iExists locs_i, p_i, m, deleted. iFrame "Hreg". rewrite /tie_store.
+    iExists locs_i, p_i, m, deleted, observers_mref. iFrame "Hreg". rewrite /tie_store.
     iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, bind, h, pend, pdel, delete_set.
     iFrame "Hfrag Hexcl Hro". done. }
   iModIntro. iApply "HΦ". iFrame "Htok Hmaxtok".

@@ -92,7 +92,7 @@ Proof.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
   iDestruct "His_store" as "#His_store".
   subst text_store.
-  iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Htx" as (changed_locs m0 deleted0 registry_mref) "Htx". iNamed "Htx".
   iDestruct "Hstore" as (client k pdel locs0 p0 bind acc) "Hown". iNamed "Hown". subst c.
   (* [s := tr.store]: the record names the store *)
   iDestruct (own_transaction_changes_store with "Hchanges") as (trv) "(Htr & %Htrstore & Hchangesback)".
@@ -157,10 +157,10 @@ Proof.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
         [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
-    iSplitL "Hchanges Hregistry Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
-    { iExists changed_locs, m0, deleted0. iFrame "Hchanges Hregistry Hchanged_bound".
+    iSplitL "Hchanges Hregistry Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf".
+    { iExists changed_locs, m0, deleted0, registry_mref. iFrame "Hchanges Hregistry Hchanged_bound".
       iSplitL.
-      { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
+      { iExists client, k, pdel, locs0, p0, bind, acc, observers_mref. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
           | exact Hctr | exact Hacccoh | exact Hdeleted]. }
       iPureIntro. split_and!; [exact Hstart | exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
@@ -199,10 +199,10 @@ Proof.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
         [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
-    iSplitL "Hchanges Hregistry Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
-    { iExists changed_locs, m0, deleted0. iFrame "Hchanges Hregistry Hchanged_bound".
+    iSplitL "Hchanges Hregistry Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf".
+    { iExists changed_locs, m0, deleted0, registry_mref. iFrame "Hchanges Hregistry Hchanged_bound".
       iSplitL.
-      { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
+      { iExists client, k, pdel, locs0, p0, bind, acc, observers_mref. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
           | exact Hctr | exact Hacccoh | exact Hdeleted]. }
       iPureIntro. split_and!; [exact Hstart | exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
@@ -868,7 +868,7 @@ Proof.
     iEval (rewrite Hinsstep Hchstep) in "Hchanges".
     wp_for_post.
     (* re-establish the loop invariant for [S j] with [ins ++ [newItem]] *)
-    iFrame "Ht His_lb HΦ HisRp Hacc Hregistry".
+    iFrame "Ht His_lb HΦ HisRp Hacc Hregistry Hobserversf".
     iExists (S j), arr', (<[tv.(yjs.Text.inner') := ls']> locsj), (<[tv.(yjs.Text.inner') := MkTypeModel runs']> pj), ls', runs', (ins ++ [newItem]),
       (hj ++ [EvBroadcast (RootId name, OpInsert input);
               EvDeliver (RootId name, OpInsert input)]).
@@ -1059,8 +1059,8 @@ Proof.
   (* the store after the insert, at the grown model: what the transaction
      carries on *)
   iAssert (own_store s_loc γs γh (uint.nat client) hj (<[RootId name := arr]> m) pend deleted)
-    with "[Hruns Hseq HtypesAuth Hhistj Hacc Hdelete_set]" as "Hstore".
-  { iExists client, (W64 (uint.Z k + j)), pdel, locsj, pj, bind, acc.
+    with "[Hruns Hseq HtypesAuth Hhistj Hacc Hdelete_set Hobserversf]" as "Hstore".
+  { iExists client, (W64 (uint.Z k + j)), pdel, locsj, pj, bind, acc, observers_mref.
     rewrite (pool_seq_map_insert_at p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj) Hdompj Htsp Hpj) /=.
     rewrite /tm_arr /= -Harrj.
     iFrame "∗#". iPureIntro. split_and!;
@@ -1130,7 +1130,7 @@ Proof.
   (* the transaction after the insert: the record's meaning at the grown
      model, this text now among the changed types (unless the run is empty) *)
   iSplitL "Hchanges Hstore Hregistry".
-  { iExists (changed_locs ∪ (if decide (ins = []) then ∅ else {[tv.(yjs.Text.inner')]})), m0, deleted0.
+  { iExists (changed_locs ∪ (if decide (ins = []) then ∅ else {[tv.(yjs.Text.inner')]})), m0, deleted0, registry_mref.
     iFrame "Hchanges Hstore Hregistry".
     iSplitR; first (iPureIntro; exact Hstart').
     iSplitR.

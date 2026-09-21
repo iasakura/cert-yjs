@@ -71,7 +71,7 @@ Proof.
   wp_start as "(#His_doc & #Hishist)".
   iNamed "His_doc". subst s_loc. wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
-  iDestruct "Hinv" as (c0 h m pend deleted) "[Hown Hreg]". iNamed "Hown". subst c0.
+  iDestruct "Hinv" as (c0 h m pend deleted registry_mref) "[Hown Hreg]". iNamed "Hown". subst c0.
   iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hrpi.
   iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
@@ -90,8 +90,8 @@ Proof.
             Hmk (empty_subseteq _) with "Hseq") as "[Hseq #Hlb0]".
     wp_auto.
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend deleted
-                with "[$His_store $Hwl $Hreg Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
-    { iExists client, k, pdel, locs, p, bind, acc.
+                with "[$His_store $Hwl $Hreg Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf]").
+    { iExists client, k, pdel, locs, p, bind, acc, observers_mref.
       iFrame "∗#". iPureIntro.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
@@ -205,9 +205,9 @@ Proof.
     (* registering an empty type tombstones nothing *)
     have Htomb' : pool_tombstoned p' = pool_tombstoned p := pool_tombstoned_insert_empty p q Hfresh.
     wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend deleted
-                with "[$His_store $Hwl $Hreg Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
-    { iExists client, k, pdel, (<[q := []]> locs), p', bind', acc.
-      iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds'". iPureIntro.
+                with "[$His_store $Hwl $Hreg Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf]").
+    { iExists client, k, pdel, (<[q := []]> locs), p', bind', acc, observers_mref.
+      iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds' Hobserverspin". iPureIntro.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh
         | exact Hctr' | exact Hacccoh | rewrite Htomb'; exact Hdeleted]. }
