@@ -143,7 +143,7 @@ Consequences that shape everything below:
   other manualproof files). Tracked as issue #45 (also covers recovering the
   removed urpc/memkv mailbox-invariant precedents from perennial history).
 - Deployment: `gokv/grove_ffi` is a real Go package (TCP underneath), so
-  verified binaries run unmodified. cert-yjs proofs are FFI-parametric
+  verified binaries run unmodified. Cert-Yjs proofs are FFI-parametric
   (`Context {hG: heapGS Σ, !ffi_semantics _ _}`), so existing results transfer
   to the grove instantiation; only closed top-level theorems fix the FFI.
 
@@ -414,7 +414,7 @@ p2p-layer document's milestones and precede the in-process hub.
 
 | milestone | contents | acceptance | risk |
 |---|---|---|---|
-| **Grove spike** (issue #45) | feasibility spike: a hello-world Go file importing `gokv/grove_ffi` through cert-yjs's goose pipeline; New WP wrappers (`wp_Send`/`wp_Receive`/`wp_Connect`/`wp_Listen`/`wp_Accept`); PR upstream (`new/manualproof/...`) | wrappers Qed; 20-line ping-pong verified end-to-end | new-goose trusted-package wiring unexercised upstream — may surface translator gaps; timebox and report |
+| **Grove spike** (issue #45) | feasibility spike: a hello-world Go file importing `gokv/grove_ffi` through Cert-Yjs's goose pipeline; New WP wrappers (`wp_Send`/`wp_Receive`/`wp_Connect`/`wp_Listen`/`wp_Accept`); PR upstream (`new/manualproof/...`) | wrappers Qed; 20-line ping-pong verified end-to-end | new-goose trusted-package wiring unexercised upstream — may surface translator gaps; timebox and report |
 | **In-process hub** | protocol core, decoded, in-process hub: `sync.go` + diff correctness + the stream-induction lemma's in-process analog + per-connection stream ghosts against the heap mailbox; end-to-end theorem: server + 2 clients in one process, quiescent exchange ⇒ both client docs equal the server's (via #40) | theorem Qed, axiom-clean; `go test` convergence through the real handler code | the stream-induction lemma is where surprises live; relay-obligation bookkeeping |
 | **Grove transport** | framing + `is_inbox` + escrowed connection setup (§5.3) + the stream-induction lemma proper; byte payloads via the #31 codec relation; stretch: closed-system statement via grove adequacy | end-to-end theorem restated over grove; stretch: adequacy-style closed theorem | #31 is a hard dependency for bytes; escrow bookkeeping fiddly but standard |
 | **Non-goals** | recorded non-goals: liveness/retransmission & fairness; reconnection spec; multi-room; awareness protocol (ephemeral, never touches the doc) | — | — |
@@ -430,5 +430,5 @@ p2p-layer document's milestones and precede the in-process hub.
 3. **Trust boundary**: accept trusted peers for the verified theorems
    (byzantine handling = future receiver-side validation)?
 4. **Grove-spike upstream**: contribute the New grove wrapper file to
-   Perennial, or vendor it in cert-yjs first? Recommendation: try upstream —
+   Perennial, or vendor it in Cert-Yjs first? Recommendation: try upstream —
    it is exactly the `manualproof` file they stubbed.

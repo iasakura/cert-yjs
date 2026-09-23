@@ -1,4 +1,4 @@
-(** The pure bridge to the rocq-yjs network model (issues #42, #49).
+(** The pure bridge to the Rocq-Yjs network model (issues #42, #49).
 
     Everything here is Iris-free: it re-states the network-model records
     ([NodeHistories] / [NetworkBase] / [CausalNetwork] / [OperationNetwork] /

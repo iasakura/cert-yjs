@@ -17,8 +17,8 @@ users inserting at the same place at the same time: every replica has to put
 the two insertions in the same order, whichever it received first. Yjs's
 algorithm, YATA ([Nicolai, Jahns et al., GROUP 2016][yata]), decides where each
 new character goes. It has been proven to converge, for the algorithm written
-as functions on lists, in [lean-yjs][lean-yjs] and in its Rocq port
-[rocq-yjs][rocq-yjs]. Cert-Yjs builds on rocq-yjs: its proofs show that the Go
+as functions on lists, in [Lean-Yjs][lean-yjs] and in its Rocq port
+[Rocq-Yjs][rocq-yjs]. Cert-Yjs builds on Rocq-Yjs: its proofs show that the Go
 code, which is built the way the real implementations are, computes what the
 algorithm computes. The remaining step, convergence of the Go replicas
 themselves, is not proven yet, for a reason given under
@@ -30,7 +30,7 @@ clients, with a theorem about every run of the complete server program.
 
 ## Why verify an implementation
 
-The proofs in rocq-yjs are about insertion written as a function from a list
+The proofs in Rocq-Yjs are about insertion written as a function from a list
 of characters to a new list. They say nothing about code built the way real
 implementations are, and the Go here is built that way, after [Yjs][yjs] and
 its Rust ports [yrs][yrs] and [y-octo][y-octo]. A text is a doubly linked
@@ -100,7 +100,7 @@ specifications.
   clients follow the protocol, every message on the network decodes to a batch
   of insertions and none of the server's goroutines fails.
 
-Convergence of the Go replicas is not proven yet. rocq-yjs proves that the
+Convergence of the Go replicas is not proven yet. Rocq-Yjs proves that the
 algorithm converges when every replica applies each insertion after everything
 its author had seen when making it (causal order). The Go, like y-octo, applies
 an insertion as soon as the two characters it was inserted between and its
@@ -147,7 +147,7 @@ application in `demo/observe_app.v`, and the server in `ws_relay.v` and
 ## How the proof works
 
 The proofs in this repository connect the Go code to Yjs's algorithm. The
-algorithm and its convergence theorem come from rocq-yjs:
+algorithm and its convergence theorem come from Rocq-Yjs:
 
 ```
 Go source                         in yjs/
@@ -156,7 +156,7 @@ Go source                         in yjs/
 Rocq model of the Go program      generated into src/code/
    │  computes what the algorithm computes (proofs in src/proof/)
    ▼
-Yjs's algorithm on lists          in rocq-yjs, proven there to converge
+Yjs's algorithm on lists          in Rocq-Yjs, proven there to converge
                                   under causal delivery
 ```
 
@@ -168,12 +168,12 @@ are always about the current code.
 The proofs in `src/proof/` give the translated Go functions specifications and
 prove that the functions meet them. Specifications are written in
 [Iris][iris], a separation logic for programs with pointers and concurrency, on
-which Perennial is built. A specification says which value of rocq-yjs's model
+which Perennial is built. A specification says which value of Rocq-Yjs's model
 the Go data structures stand for (for a text, which list of items its linked
 list represents), and how a call changes that value. The central one is about
 Yjs's integrate, the function that decides where a new character goes among
 concurrent insertions at the same position: the Go version produces the same
-list as rocq-yjs's integrate function (`wp_store__Integrate` in
+list as Rocq-Yjs's integrate function (`wp_store__Integrate` in
 `src/proof/store/Integrate.v`). A document's state lives in the invariant of
 its read-write lock, and every write re-establishes that invariant before it
 releases the lock.
@@ -185,7 +185,7 @@ re-establishes two facts about this history. First, every replica has applied
 only insertions that some replica created, each once, and each only after the
 characters it was inserted between and its author's previous insertion.
 Second, each replica's list of characters, deleted ones included, is the list
-its history computes. rocq-yjs's convergence theorem asks for causal delivery
+its history computes. Rocq-Yjs's convergence theorem asks for causal delivery
 where the first fact gives only the weaker order described under
 [What is proven](#what-is-proven), so the theorem does not yet apply to the Go
 replicas.
@@ -221,7 +221,7 @@ The theorems rely on the following, which are not proven here.
   replica that sends fabricated updates, so this is a hypothesis of the
   theorems.
 
-No proof in this repository or in rocq-yjs is admitted. The only axioms beyond
+No proof in this repository or in Rocq-Yjs is admitted. The only axioms beyond
 those Perennial itself relies on are the declarations goose generates for the
 untranslated network packages `wsnet/` and `grovenet/`.
 
@@ -245,7 +245,7 @@ untranslated network packages `wsnet/` and `grovenet/`.
 GOTOOLCHAIN=go1.26.0 go test ./...  # Go tests
 ```
 
-`./build.sh` needs an opam switch with the pinned Perennial and rocq-yjs.
+`./build.sh` needs an opam switch with the pinned Perennial and Rocq-Yjs.
 [WORKFLOW.md](WORKFLOW.md) describes the one-time setup and the day-to-day
 loop, including `JOBS=N`, which caps how many proof files are checked in
 parallel and so the memory the check uses. CI runs the same script on every

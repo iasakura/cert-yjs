@@ -371,7 +371,7 @@ The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
    `runs' = insert_at idx run runs`, the location of the new run living in
    the heap layer.
 5. **Run-granular model (issue #105).** The remaining awkwardness of the
-   Integrate spec is rocq-yjs's one-char `YjsItem`: a wire item explodes into
+   Integrate spec is Rocq-Yjs's one-char `YjsItem`: a wire item explodes into
    `length (in_content input)` items, `toItem` resolves only the head, and
    `run_denotes input newItem run` (head id and origins, length) plus the
    premise `integrate_all (ops_of_input input (explode …)) arr = Some arr'`
@@ -380,7 +380,7 @@ The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
    `toItem input runs = Some newRun`, the post is
    `runs' = integrate_run newRun runs` (no `∃ idx`, no `run_denotes`), and
    the store post is `own_store_struct s (st <| ss_types := <[parent :=
-   store_integrate …]> … |>)`. Upstream work in rocq-yjs: define the run
+   store_integrate …]> … |>)`. Upstream work in Rocq-Yjs: define the run
    model, prove `runs_flatten (integrate_run r runs) = integrate_all
    (explode r) (runs_flatten runs)` so the per-char convergence theorems
    transfer. Done after stage 4, when there is one run list to refine.
@@ -389,7 +389,7 @@ The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
    notion, as `text_snapshot`'s `list (YjsItem A * bool)` already shows).
    On `run_wf` runs this is an isomorphism with stage 1's `ItemRun` (a run
    is its head's origin / rightOrigin / id plus its contents), it makes
-   well-formedness structural, and because rocq-yjs's order theory never
+   well-formedness structural, and because Rocq-Yjs's order theory never
    reads the content, instantiating the generic `integrate` /
    `YjsArrInvariant` / convergence theorems at `list A` gives the
    run-granular algorithm and its theorems outright; the flatten bridge
@@ -400,7 +400,7 @@ The public layer (`is_Text`, `own_store`, `own_ytype` at its model,
 Stages 1 and 2 are where the user-visible improvement is (loc-free pure
 lemmas, specs over `(p, locs)`); stage 3 is the part shared with the spec
 refactor's step 3 and is the most expensive (it touches every DLL borrow);
-stage 5 is the only one that changes rocq-yjs.
+stage 5 is the only one that changes Rocq-Yjs.
 
 ## 4. Cost
 

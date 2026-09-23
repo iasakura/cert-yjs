@@ -105,7 +105,7 @@ gotchas `build.sh` absorbs, and one-time environment setup. CI runs the same
   be derived from the first. Specs that are unused, or that are a stepping
   stone of one proof, are deleted or made `#[local]` in that proof's file:
   Integrate's stepping stone is folded into `wp_Store__Integrate`.
-- **Reuse the rocq-yjs model, don't invent independent proofs.** State WP specs
+- **Reuse the Rocq-Yjs model, don't invent independent proofs.** State WP specs
   as refinements of the pure model and compose with its lemmas
   (`YjsArrInvariant_integrate`, `setintegrate_eq_integrate`,
   `integrate_commutative`, `yjs_strong_convergence`). Extract algorithmic cores
@@ -130,7 +130,7 @@ it.
 
 | layer | file | holds | may mention |
 |---|---|---|---|
-| model | `model.v` | the pure model and its theory | rocq-yjs only |
+| model | `model.v` | the pure model and its theory | Rocq-Yjs only |
 | value | `value.v` | Go-level values and what they denote | + `yjs.*`, `loc`, `w64` |
 | heap | `heap.v` | representation predicates, invariants, ghost state | + Iris |
 | wp | `<Method>.v`, `wp_private.v` | the WP proofs | + the code |
@@ -139,7 +139,7 @@ it.
   unexported helpers' specs; `<type>.v` a `Require Export` facade, the only
   name downstream files Require. A layer a type does not need is absent (`id`
   has no model of its own; `Text` is a handle over a store type, so it starts
-  at `heap.v`). Type-less files stay at the top level: `core.v` (rocq-yjs
+  at `heap.v`). Type-less files stay at the top level: `core.v` (Rocq-Yjs
   re-export), `prelude.v` (goose package-init instances), `algebra.v` (generic
   Iris RA laws), `network_model.v` and `history.v` (the pure op-history model
   and its ghost layer), `ws_prelude.v` and `ws_relay.v` (WebSocket, issue #107).
@@ -148,7 +148,7 @@ it.
   predicates, relations between predicates (coherence, projection,
   observation), state-transition laws. Everything else belongs in the WP file
   that needs it; "the WP proof uses it" is not a reason. A fact mentioning no
-  cert-yjs definition goes to `algebra.v`.
+  Cert-Yjs definition goes to `algebra.v`.
 - **Shape.** Section boilerplate first, then every definition, then every
   lemma, under `(* ===== definitions ===== *)` / `(* ===== lemmas ===== *)`.
   Never declare a `Context` mid-section: under `Set Default Proof Using "Type*"`
@@ -199,6 +199,6 @@ independent job, so no single heavy proof serializes the build.
 ## Reference
 
 - `docs/proof-engineering.md`: the working technique reference (Rocq +
-  ssreflect, Iris proof mode, Perennial/goose WP, rocq-mcp, cert-yjs gotchas).
+  ssreflect, Iris proof mode, Perennial/goose WP, rocq-mcp, Cert-Yjs gotchas).
   Read it before nontrivial proof work.
 - `WORKFLOW.md`: build loop plus one-time environment setup.

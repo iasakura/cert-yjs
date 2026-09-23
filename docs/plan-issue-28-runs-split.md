@@ -121,7 +121,7 @@ bumps `parent.len` by `Len()` and `Delete` shrinks it by `Len()`. But:
   in-place trick) the still-held node reference IS the truncated left half,
   which is then tombstoned via `delete_item`.
 - No stored clock counter: `get_state` derives `clock + len` from the last
-  node of the per-client list; `add_node` enforces contiguity. (cert-yjs
+  node of the per-client list; `add_node` enforces contiguity. (Cert-Yjs
   keeps an explicit `store.clock`, an already-documented deviation; with runs
   it advances by `Len` per created item.)
 
@@ -134,7 +134,7 @@ bumps `parent.len` by `Len()` and `Delete` shrinks it by `Len()`. But:
    clones the whole flag word). The left half only survives because
    `split_node_at` mutates the original in place. Reachable: `repair` or
    `delete_range` splitting a tombstoned run leaves the right half visible.
-   cert-yjs MUST inherit the deleted bit on both halves; otherwise the split
+   Cert-Yjs MUST inherit the deleted bit on both halves; otherwise the split
    changes the visible document and is not a model no-op (see 3.4).
 
 2. **Conflict-scan origin membership at raw-id granularity**
@@ -146,7 +146,7 @@ bumps `parent.len` by `Len()` and `Delete` shrinks it by `Len()`. But:
    >= 2, so the test answers "no" where yjs (`getItem` + item set) and yrs
    (`ItemPtr` set) answer "yes", and the scan breaks early instead of taking
    case 2: a genuine convergence divergence for multi-element runs.
-   cert-yjs's `scanConflicts` must instead test containment of the origin id
+   Cert-Yjs's `scanConflicts` must instead test containment of the origin id
    in the clock RANGE `[id.clock, id.clock + Len)` of scanned nodes (node
    granularity, equivalent to yjs's because scans always cover whole nodes:
    window boundaries are node-aligned after repair). This matches our
@@ -155,7 +155,7 @@ bumps `parent.len` by `Len()` and `Delete` shrinks it by `Len()`. But:
 Both should be reported upstream (y-octo repo) after approval; the Go port
 carries a comment at each divergence site per the repo rules.
 
-Also kept, already documented: cert-yjs counts String clock length in BYTES
+Also kept, already documented: Cert-Yjs counts String clock length in BYTES
 under an ASCII assumption, where the references count UTF-16 code units (so
 yjs's surrogate-pair guard in `ContentString.splice` has no counterpart).
 
@@ -166,7 +166,7 @@ over a per-element document: split and merge occur at arbitrary times
 (transaction cleanup, gc-on-apply, snapshot handling) and are unobservable.
 An abstract spec stated over nodes would not even be stable across a
 transaction boundary. The stable observable is the per-element sequence with
-per-element ids, which is exactly the rocq-yjs model cert-yjs already uses
+per-element ids, which is exactly the Rocq-Yjs model Cert-Yjs already uses
 (`YjsItem A` with one content `A` per clock; origins resolved by id via
 `find_by_id`, insert_basic.v). This confirms the roadmap decision: the model
 stays per-char forever; runs live purely in the heap-to-model representation
@@ -185,7 +185,7 @@ Unchanged, statement for statement:
 - the ghost history: events, `is_op_cert`, `ValidReplay`, the network model
   (one wire run struct DECODES to n per-char ops; causal order inside the run
   holds because char k's origin is char k-1, its predecessor in the batch);
-- the rocq-yjs order theory (`YjsArrInvariant`, `integrate`, `setintegrate`,
+- the Rocq-Yjs order theory (`YjsArrInvariant`, `integrate`, `setintegrate`,
   commutativity, convergence). New pure lemmas are additive (3.6).
 
 `wp_Text__Insert` / `wp_Text__Delete` / `wp_store__applyUpdate(_certs)` keep
@@ -365,9 +365,9 @@ are needed, both Iris-free, both about the existing `integrate`/`setintegrate`:
    node granularity because scans cover whole blocks (window boundaries are
    node-aligned after repair).
 
-Home: develop these next to `core` in cert-yjs first (fast iteration),
-upstream to rocq-yjs once stable (same flow as the deliver_locally fix).
-Nothing here exists in lean-yjs or rocq-yjs; it is the "genuinely novel
+Home: develop these next to `core` in Cert-Yjs first (fast iteration),
+upstream to Rocq-Yjs once stable (same flow as the deliver_locally fix).
+Nothing here exists in Lean-Yjs or Rocq-Yjs; it is the "genuinely novel
 formalization" the roadmap anticipated for item ⑤.
 
 ### 3.7 Out of scope, recorded

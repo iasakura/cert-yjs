@@ -1,4 +1,4 @@
-(** General Iris resource-algebra laws the cert-yjs proofs use.
+(** General Iris resource-algebra laws the Cert-Yjs proofs use.
 
     They live here rather than in a type's [heap.v] because they say nothing
     about any of our definitions: growth, lookup and fragment minting for an
@@ -7,7 +7,7 @@
     [ghost_map] (the root-type registry), and replication laws for [tok_set]
     token bundles (the reader capabilities).
 
-    List facts free of cert-yjs definitions: [fmap_concat], [list_elem_of_concat],
+    List facts free of Cert-Yjs definitions: [fmap_concat], [list_elem_of_concat],
     [concat_fmap], [list_filter_fmap], [list_filter_iff_elem_of],
     [StronglySorted_fmap_elem_of], [map_to_list_insert_existing],
     [concat_perm], [elem_of_list_insert_inv] (membership in a list with one

@@ -42,7 +42,7 @@
       left to right, one op at a time.
     - [state_vector_classifies] / [deleted_ids_classify]: the token tests the
       Go performs are membership in the observed snapshot.
-    - [uniqueId_NoDup] / [uniqueId_sublist]: rocq-yjs's id uniqueness of a
+    - [uniqueId_NoDup] / [uniqueId_sublist]: Rocq-Yjs's id uniqueness of a
       document gives [NoDup] and is inherited by a sublist (how the observed
       snapshot inherits it from the current one).
     - [snapshot_grows_to_nil], [text_delta_refl], [text_delta_from_empty]:

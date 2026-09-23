@@ -42,7 +42,7 @@ Decision:
   contiguity.
 - The yrs / yjs-v14 "skip hole" semantics (integrate even with a gap in the
   author's own sequence) is NOT portable to the verified model today: every
-  integrate lemma of the rocq-yjs stack (`maximalId`, `ValidReplay`'s
+  integrate lemma of the Rocq-Yjs stack (`maximalId`, `ValidReplay`'s
   per-client clock conditions, `yjs_concurrent_commute`'s distinct-client
   hypothesis) requires items of one client to be applied in clock order.
   Dropping contiguity admits same-client concurrent application, and for

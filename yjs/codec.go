@@ -4,7 +4,7 @@ package yjs
 
 import "sort"
 
-// v1 update codec: a port of y-octo's src/doc/codec for the cert-yjs subset.
+// v1 update codec: a port of y-octo's src/doc/codec for the Cert-Yjs subset.
 //
 // Layout mirrors y-octo:
 //   - encoder / decoder            <- codec/io/{writer,reader}.rs (lib0 varint)

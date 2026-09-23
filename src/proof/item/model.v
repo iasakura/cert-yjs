@@ -419,7 +419,7 @@ Definition ids_tombstoned (ids : gset YjsId) (runs : list ItemRun) : Prop :=
 (** [items_string l]: the string a list of per-char items spells (the
     concatenation of their contents). A bespoke [foldr], NOT
     [mjoin (content <$> ...)]: using [content] as [fmap]'s function argument
-    together with [mjoin] entangles rocq-yjs's [YjsPtr.u0] universe with
+    together with [mjoin] entangles Rocq-Yjs's [YjsPtr.u0] universe with
     stdpp's monad-class universes, and in any file that also loads
     Perennial's [New.ghost] universal-[own] syntax codes that chain
     contradicts [syntax.cmra]'s universe bound (the [IsCmra] instances for

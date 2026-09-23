@@ -245,7 +245,7 @@ func itemPtrEqual(a *item, b *item) bool {
 // item's run), so membership is clock-range membership. y-octo instead stores
 // raw head ids and tests raw-id equality (HashSet<Id>::contains), which
 // misses an origin pointing into the middle of a multi-char run (candidate
-// upstream bug, see docs/plan-issue-28-runs-split.md); cert-yjs follows the
+// upstream bug, see docs/plan-issue-28-runs-split.md); Cert-Yjs follows the
 // yjs semantics. The (head id, run length) span carries exactly what the
 // range test needs without holding an item reference.
 type idSpan struct {
