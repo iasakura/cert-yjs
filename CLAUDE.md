@@ -97,7 +97,9 @@ gotchas `build.sh` absorbs, and one-time environment setup. CI runs the same
   predicate (`pool_invs`, `doc_registry_coh`, `cell_covers`), not listed as
   loose clauses. When a proof needs a new fact, first find the predicate it
   belongs to and add it there; a new top-level conjunct is the last resort, for
-  a fact no existing predicate is about.
+  a fact no existing predicate is about. The `spec-shape` skill has the
+  procedure; before pushing a change to a spec, predicate or invariant, run
+  its fresh-context review.
 - **No over-specification.** A postcondition states each fact once (not
   `setintegrate input arr = Some arr'` next to its unfolding
   `arr' = take midx arr ++ …`) and states only what the function means. A fact
@@ -179,8 +181,8 @@ independent job, so no single heavy proof serializes the build.
   that re-establishing the invariant is the callee's job", not "rethreaded the
   Integrate proof". Each new conjunct names the existing predicate it was tried
   in and why it does not fit there (no reason: move it there); each new
-  `own_X` / `is_X` says what its argument owns and what its name means. The
-  `pr-description` skill has the full check.
+  `own_X` / `is_X` says what its argument owns and what its name means (the
+  `spec-shape` skill; `pr-description` for the rest of the body).
 - **Report unrequested changes** in the conversation as well: any change to
   `yjs/*.go` behavior, to a public function's spec or signature, or to a
   proof-layer contract that was not explicitly asked for. Any simplification

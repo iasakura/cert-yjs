@@ -22,6 +22,7 @@
 .claude/skills/*
 !.claude/skills/quiz/
 !.claude/skills/pr-description/
+!.claude/skills/spec-shape/
 .vscode/
 .idea/
 # rocq-mcp scratch buffers (one per session, named by pid)
