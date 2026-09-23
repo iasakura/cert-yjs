@@ -1,6 +1,6 @@
-# cert-yjs
+# Cert-Yjs
 
-cert-yjs implements the text type of [Yjs][yjs] in Go, with a machine-checked
+Cert-Yjs implements the text type of [Yjs][yjs] in Go, with a machine-checked
 proof that the Go code places every character exactly where Yjs's algorithm
 places it. The proof is written with [Perennial][perennial], a framework for
 verifying concurrent and distributed Go programs, in the [Rocq][rocq] proof
@@ -18,7 +18,7 @@ the two insertions in the same order, whichever it received first. Yjs's
 algorithm, YATA ([Nicolai, Jahns et al., GROUP 2016][yata]), decides where each
 new character goes. It has been proven to converge, for the algorithm written
 as functions on lists, in [lean-yjs][lean-yjs] and in its Rocq port
-[rocq-yjs][rocq-yjs]. cert-yjs builds on rocq-yjs: its proofs show that the Go
+[rocq-yjs][rocq-yjs]. Cert-Yjs builds on rocq-yjs: its proofs show that the Go
 code, which is built the way the real implementations are, computes what the
 algorithm computes. The remaining step, convergence of the Go replicas
 themselves, is not proven yet, for a reason given under
@@ -262,7 +262,7 @@ one it follows where they differ.
 
 ## License
 
-cert-yjs is released under the [MIT License](LICENSE). It includes software
+Cert-Yjs is released under the [MIT License](LICENSE). It includes software
 derived from y-octo and Yjs (both MIT); see [NOTICE](NOTICE) for the required
 third-party copyright and license notices.
 
