@@ -40,8 +40,15 @@
       holding the delete set's model-domain bound) and [store_inv], carrying
       the client's ghost history; [tie_body] and [types_frag] / [frac_of] are
       the RWMutex reader-count accounting (issue #22).
-    - the public state predicate [own_store s c h m pend]: the WHOLE
-      lock-protected state as one exclusive predicate over its model.
+    - the public state predicate [own_store s c h m pend deleted]: the WHOLE
+      lock-protected state as one exclusive predicate over its model, the
+      tombstone state [deleted] exact ([pool_tombstoned]).
+    - [own_transaction tr s c h m pend deleted inserted tombstoned changed]:
+      the store inside a transaction, its record next to [own_store] with
+      the record's meaning (issue #206 T1); [changed_types_bound γs changed
+      changed_locs] ties the changed names to the record's addresses.
+    - [closure_runs_transaction s γs γh f Q]: what [store.transact] asks of
+      its closure: run the fresh transaction to an end state where [Q] holds.
     - the persistent witnesses [is_Store], [is_type_binding], [is_root],
       [is_type_lb], [is_root_lb], [is_applied_root_lb] / [is_applied_certs],
       [is_accepted],
@@ -63,6 +70,11 @@
       [_fresh_concat] / [_fresh_type]).
     - [own_store_accept_batch]: the state-transition law for accepting a
       delivered batch.
+    - the transaction's changed types: [changed_types_bound_empty],
+      [changed_types_bound_mark] (one more type), [changed_types_bound_grow]
+      (a sweep's types, by [bound_names]) and
+      [changed_types_bound_registered] (the marked addresses are registered
+      under the marked names).
     - the reader fractions form a chain: [frac_of_0] and [frac_of_split].
     - [pool_frag] splits and agrees ([pool_frag_split], [pool_frag_agree]);
       [is_type_binding] is functional ([is_type_binding_agree]).
@@ -97,6 +109,7 @@ From New.proof.store Require Import model value.
 From New.proof.id Require Import value heap.
 From New.proof.item Require Import run_theory model value heap.
 From New.proof.ytype Require Import model value heap.
+From New.proof.transaction Require Import heap.
 
 Section store_heap.
 
@@ -1421,7 +1434,7 @@ Proof. rewrite /is_applied_certs. apply _. Qed.
     [own_store_state]. *)
 Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) : iProp Σ :=
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) : iProp Σ :=
   ∃ (client k : w64) (pdel : list delete_span)
     (locs : gmap loc (list loc)) (p : pool) (bind : gmap P loc) (acc : gset YjsId),
     "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗
@@ -1441,7 +1454,73 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (* no-loss accepted-id layer: matches [store_inv_excl] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
     "Hdelete_set" ∷ own_delete_set γs m (all_runs p) ∗
-    "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
+    "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝ ∗
+    (* the exact tombstone state (issue #198 Part II): [deleted] is the set
+       of tombstoned char ids of the pool, which the ghost delete set is a
+       lower bound of; a type's snapshot is then a function of the public
+       model, [type_snapshot m deleted name] *)
+    "%Hdeleted" ∷ ⌜deleted = pool_tombstoned p⌝.
+
+(** [changed_types_bound γs changed changed_locs]: the transaction's changed
+    root types by name and by address are the same types: every name in
+    [changed] is bound by the type registry to an address in [changed_locs],
+    and every address in [changed_locs] to a name in [changed]. *)
+Definition changed_types_bound (γs : store_names) (changed : gset P) (changed_locs : gset loc) : iProp Σ :=
+  ([∗ set] name ∈ changed, ∃ parent : loc,
+     is_type_binding γs.(sn_types) name parent ∗ ⌜parent ∈ changed_locs⌝) ∗
+  ([∗ set] parent ∈ changed_locs, ∃ name : P,
+     is_type_binding γs.(sn_types) name parent ∗ ⌜name ∈ changed⌝).
+
+#[global] Instance changed_types_bound_persistent γs changed changed_locs :
+  Persistent (changed_types_bound γs changed changed_locs).
+Proof. rewrite /changed_types_bound. apply _. Qed.
+
+(** [own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed]:
+    the store inside a transaction (issue #206 T1, issue #198 Part II): the
+    transaction record at [tr] next to [own_store] at the exact model
+    [(m, deleted)], with what the record says about that model. [inserted]
+    and [tombstoned] are the char ids the transaction integrated and
+    tombstoned so far ([m ∖ inserted], [deleted ∖ tombstoned] is the state
+    it started from), [changed] the root types it wrote, by name (the Go
+    map holds their addresses, bound to the names by the type registry).
+    The clauses: every inserted id is in the model, every tombstoned id is
+    tombstoned, and every recorded id is a char of a changed type's document;
+    with the pool's uniqueness of ids that says a type outside [changed] has
+    no id in either set, so its snapshot now is its snapshot at the start,
+    which is what lets the end of the transaction skip it (Part II C2). Held by the writer for the
+    transaction's duration; [wp_store__transact] opens and closes it. *)
+Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P) : iProp Σ :=
+  ∃ (changed_locs : gset loc),
+    "Hchanges" ∷ own_transaction_changes tr s_loc inserted tombstoned changed_locs ∗
+    "Hstore" ∷ own_store s_loc γs γh c h m pend deleted ∗
+    "#Hchanged_bound" ∷ changed_types_bound γs changed changed_locs ∗
+    "%Hinserted_dom" ∷ ⌜∀ i, i ∈ inserted -> doc_model_has m i = true⌝ ∗
+    "%Htombstoned_sub" ∷ ⌜tombstoned ⊆ deleted⌝ ∗
+    "%Hrecorded" ∷ ⌜∀ i, i ∈ inserted ∪ tombstoned ->
+                     ∃ (name : P) (x : YjsItem A), name ∈ changed ∧
+                       x ∈ doc_model_get m (RootId name) ∧ item_id x = i⌝.
+
+(** [closure_runs_transaction s_loc γs γh f Q]: the closure [f] runs one
+    transaction of the store at [s_loc] ([store.transact]'s argument, issue
+    #206 T1): handed the fresh transaction, it returns it, changed as it
+    may be, with [Q] holding of the end state (client, history, model,
+    pending, tombstones). A one-shot wand, not a persistent triple: the
+    closure runs once and may carry the caller's resources (the locals it
+    captured) into the transaction. *)
+Definition closure_runs_transaction (s_loc : loc) (γs : store_names) (γh : history_names)
+    (f : func.t)
+    (Q : ClientId -> list Ev -> DocModel -> list (TId * IntegrateInput (A := A)) -> gset YjsId -> iProp Σ) : iProp Σ :=
+  ∀ (tr : loc) (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) (Ψ : val -> iProp Σ),
+    own_transaction tr s_loc γs γh c h m pend deleted ∅ ∅ ∅ -∗
+    (∀ (h' : list Ev) (m' : DocModel) (pend' : list (TId * IntegrateInput (A := A)))
+       (deleted' inserted tombstoned : gset YjsId) (changed : gset P),
+       own_transaction tr s_loc γs γh c h' m' pend' deleted' inserted tombstoned changed ∗
+       Q c h' m' pend' deleted' -∗ Ψ #()) -∗
+    WP #f #tr {{ Ψ }}.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
    Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked
@@ -1724,9 +1803,9 @@ Qed.
     silently dropped. *)
 Lemma own_store_accepted_sound (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) (i : YjsId) :
-  own_store s_loc γs γh c h m pend -∗ is_accepted γs i -∗
-  own_store s_loc γs γh c h m pend ∗ ⌜i ∈ delivered_ids h ∪ pending_id_set pend⌝.
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) (i : YjsId) :
+  own_store s_loc γs γh c h m pend deleted -∗ is_accepted γs i -∗
+  own_store s_loc γs γh c h m pend deleted ∗ ⌜i ∈ delivered_ids h ∪ pending_id_set pend⌝.
 Proof.
   iIntros "H #Hi". iNamed "H".
   iDestruct (auth_gset_frag_sub with "Hacc Hi") as %Hsub.
@@ -1736,7 +1815,7 @@ Proof.
   iExists client, k, pdel, locs, p, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
-    | exact Hacccoh].
+    | exact Hacccoh | exact Hdeleted].
 Qed.
 
 (** The client pin comes out of the store without consuming it (the clause is
@@ -1744,16 +1823,16 @@ Qed.
     already holds a pin for is THIS store's. *)
 Lemma own_store_client_pin (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) :
-  own_store s_loc γs γh c h m pend -∗
-  own_store s_loc γs γh c h m pend ∗ is_store_client γs c.
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
+  own_store s_loc γs γh c h m pend deleted -∗
+  own_store s_loc γs γh c h m pend deleted ∗ is_store_client γs c.
 Proof.
   iIntros "H". iNamed "H".
   iSplitR ""; last by iFrame "Hclientpin".
   iExists client, k, pdel, locs, p, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
-    | exact Hacccoh].
+    | exact Hacccoh | exact Hdeleted].
 Qed.
 
 (** No-loss MINT: given the store and a proof that each id in [L] is already
@@ -1763,11 +1842,11 @@ Qed.
     produce the receipts its postcondition promises. *)
 Lemma own_store_accept_batch (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A)))
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId)
     (L : list (TId * IntegrateInput (A := A))) :
   (∀ x, x ∈ L -> in_id x.2 ∈ delivered_ids h ∪ pending_id_set pend) ->
-  own_store s_loc γs γh c h m pend ==∗
-  own_store s_loc γs γh c h m pend ∗ [∗ list] x ∈ L, is_accepted γs (in_id x.2).
+  own_store s_loc γs γh c h m pend deleted ==∗
+  own_store s_loc γs γh c h m pend deleted ∗ [∗ list] x ∈ L, is_accepted γs (in_id x.2).
 Proof.
   iIntros (HL) "H". iNamed "H".
   set (T := list_to_set ((λ x, in_id x.2) <$> L) : gset YjsId).
@@ -1785,7 +1864,8 @@ Proof.
   iModIntro. iFrame "Haccepts".
   iExists client, k, pdel, locs, p, bind, (acc ∪ T).
   iFrame "∗#". iPureIntro. split_and!;
-    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr |].
+    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
+    | | exact Hdeleted].
   rewrite /accepted_coh. apply union_least; [exact Hacccoh | exact HTsub].
 Qed.
 
@@ -1930,9 +2010,9 @@ Qed.
     the history the lock reveals. *)
 Lemma own_store_hist_coh (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) :
-  own_store s_loc γs γh c h m pend -∗
-  own_store s_loc γs γh c h m pend ∗ ⌜history_state_coh h m⌝.
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
+  own_store s_loc γs γh c h m pend deleted -∗
+  own_store s_loc γs γh c h m pend deleted ∗ ⌜history_state_coh h m⌝.
 Proof.
   iIntros "H". iNamed "H".
   iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
@@ -1940,7 +2020,7 @@ Proof.
     iFrame "∗#".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
-      | exact Hacccoh].
+      | exact Hacccoh | exact Hdeleted].
   - iPureIntro. exact Hhcoh.
 Qed.
 
@@ -1951,8 +2031,8 @@ Qed.
 Lemma store_inv_own_store (s_loc : loc) (γs : store_names) (γh : history_names) :
   store_inv s_loc γs γh ⊣⊢
   ∃ (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))),
-    own_store s_loc γs γh c h m pend.
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId),
+    own_store s_loc γs γh c h m pend deleted.
 Proof.
   iSplit.
   - iIntros "H". iNamed "H". iNamed "Hexcl". iNamed "Hro".
@@ -1971,13 +2051,13 @@ Proof.
     iAssert (own_delete_set γs m (all_runs p)) with "[Hdelete_set_auth]" as "Hdelete_set".
     { iExists delete_set. iFrame "Hdelete_set_auth". iPureIntro.
       split; [exact Hdelete_set_dom | exact Hdelete_set_tomb]. }
-    iExists (uint.nat client), h, m, pend.
+    iExists (uint.nat client), h, m, pend, (pool_tombstoned p).
     iExists client, k, pdel, locs, p, bind, acc.
     iFrame "∗#".
     iPureIntro. split_and!;
       [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
-      | exact Hctr | exact Hacccoh].
-  - iIntros "H". iDestruct "H" as (c h m pend) "H". iNamed "H". subst c. iNamed "Hstate".
+      | exact Hctr | exact Hacccoh | reflexivity].
+  - iIntros "H". iDestruct "H" as (c h m pend deleted) "H". iNamed "H". subst c. iNamed "Hstate".
     have [Hpool [Hreg Hcontig]] := Hinvs.
     iNamed "Hfields". simpl in *.
     iDestruct "HdeletedSet" as (deletedSetVal) "HdeletedSet".
@@ -1992,6 +2072,77 @@ Proof.
       [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hpool | exact Hcontig
       | exact Hhcoh | (split; [exact Hreg | exact Hregmodel]) | exact Hdelete_set_dom
       | exact Hacccoh].
+Qed.
+
+
+(* ----- the transaction's changed types ---------------------------------- *)
+
+Lemma changed_types_bound_empty (γs : store_names) :
+  ⊢ changed_types_bound γs ∅ ∅.
+Proof. rewrite /changed_types_bound !big_sepS_empty. auto. Qed.
+
+(** Marking one more type: the name and its address join together. *)
+Lemma changed_types_bound_mark (γs : store_names) (changed : gset P) (changed_locs : gset loc)
+    (name : P) (parent : loc) :
+  is_type_binding γs.(sn_types) name parent -∗
+  changed_types_bound γs changed changed_locs -∗
+  changed_types_bound γs (changed ∪ {[name]}) (changed_locs ∪ {[parent]}).
+Proof.
+  iIntros "#Hbind [#Hnames #Hlocs]". iSplit.
+  - iApply big_sepS_intro. iIntros "!>" (nm Hnm).
+    apply elem_of_union in Hnm as [Hnm | Hnm].
+    + iDestruct (big_sepS_elem_of _ _ nm Hnm with "Hnames") as (q) "[#Hb %Hin]".
+      iExists q. iFrame "Hb". iPureIntro. apply elem_of_union_l. exact Hin.
+    + apply elem_of_singleton in Hnm as ->.
+      iExists parent. iFrame "Hbind". iPureIntro. apply elem_of_union_r. by apply elem_of_singleton.
+  - iApply big_sepS_intro. iIntros "!>" (q Hq).
+    apply elem_of_union in Hq as [Hq | Hq].
+    + iDestruct (big_sepS_elem_of _ _ q Hq with "Hlocs") as (nm) "[#Hb %Hin]".
+      iExists nm. iFrame "Hb". iPureIntro. apply elem_of_union_l. exact Hin.
+    + apply elem_of_singleton in Hq as ->.
+      iExists name. iFrame "Hbind". iPureIntro. apply elem_of_union_r. by apply elem_of_singleton.
+Qed.
+
+(** The marked addresses are registered, under the marked names: what a
+    transaction reads off the registry authority. *)
+Lemma changed_types_bound_registered (γs : store_names) (changed : gset P) (changed_locs : gset loc)
+    (bind : gmap P loc) :
+  ghost_map_auth γs.(sn_types) 1 bind -∗
+  changed_types_bound γs changed changed_locs -∗
+  ⌜∀ q, q ∈ changed_locs -> ∃ nm, nm ∈ changed ∧ bind !! nm = Some q⌝.
+Proof.
+  iIntros "Hauth [_ #Hlocs]". iIntros (q Hq).
+  iDestruct (big_sepS_elem_of _ _ q Hq with "Hlocs") as (nm) "[#Hb %Hin]".
+  iDestruct (ghost_map_lookup with "Hauth Hb") as %Hlk.
+  iPureIntro. by exists nm.
+Qed.
+
+(** Marking a sweep's types: the addresses grow to [changed_locs'], every
+    new one registered under [bind], and the names grow by the names [bind]
+    gives the new addresses ([bound_names]). *)
+Lemma changed_types_bound_grow (γs : store_names) (changed : gset P)
+    (changed_locs changed_locs' : gset loc) (bind : gmap P loc) :
+  changed_locs ⊆ changed_locs' ->
+  (∀ q, q ∈ changed_locs' -> q ∈ changed_locs ∨ ∃ nm, bind !! nm = Some q) ->
+  ([∗ map] name ↦ q ∈ bind, is_type_binding γs.(sn_types) name q) -∗
+  changed_types_bound γs changed changed_locs -∗
+  changed_types_bound γs (changed ∪ bound_names bind changed_locs') changed_locs'.
+Proof.
+  move=> Hsub Hnew. iIntros "#Hbinds [#Hnames #Hlocs]". iSplit.
+  - iApply big_sepS_intro. iIntros "!>" (nm Hnm).
+    apply elem_of_union in Hnm as [Hnm | Hnm].
+    + iDestruct (big_sepS_elem_of _ _ nm Hnm with "Hnames") as (q) "[#Hb %Hin]".
+      iExists q. iFrame "Hb". iPureIntro. exact (Hsub q Hin).
+    + apply elem_of_bound_names in Hnm as (q & Hbq & Hq).
+      iDestruct (big_sepM_lookup _ _ nm q Hbq with "Hbinds") as "#Hb".
+      iExists q. iFrame "Hb". iPureIntro. exact Hq.
+  - iApply big_sepS_intro. iIntros "!>" (q Hq).
+    destruct (Hnew q Hq) as [Hold | (nm & Hb)].
+    + iDestruct (big_sepS_elem_of _ _ q Hold with "Hlocs") as (nm) "[#Hb %Hin]".
+      iExists nm. iFrame "Hb". iPureIntro. apply elem_of_union_l. exact Hin.
+    + iDestruct (big_sepM_lookup _ _ nm q Hb with "Hbinds") as "#Hbnd".
+      iExists nm. iFrame "Hbnd". iPureIntro. apply elem_of_union_r.
+      apply elem_of_bound_names. by exists q.
 Qed.
 
 End store_heap.

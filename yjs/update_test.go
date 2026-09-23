@@ -20,7 +20,7 @@ func mkHeadUpdateItem(client, clock uint64, content string, name string) updateI
 func applyUpdateTo(structs []updateItem) string {
 	s := newStore(0)
 	u := Update{structs: structs}
-	s.applyUpdate(u.structs)
+	s.applyUpdate(newTransaction(s), u.structs)
 	return s.getOrCreateYType("text").Text()
 }
 
@@ -83,7 +83,7 @@ func TestApplyUpdatePendingDrain(t *testing.T) {
 	h := mkHeadUpdateItem(1, 0, "H", "text")
 	i := mkUpdateItem(1, 1, "I", mkIdp(1, 0), nil)
 
-	s.applyUpdate([]updateItem{i})
+	s.applyUpdate(newTransaction(s), []updateItem{i})
 	if got := s.getOrCreateYType("text").Text(); got != "" {
 		t.Fatalf("expected empty text while pending, got %q", got)
 	}
@@ -91,7 +91,7 @@ func TestApplyUpdatePendingDrain(t *testing.T) {
 		t.Fatalf("expected 1 pending struct, got %d", len(s.pending))
 	}
 
-	s.applyUpdate([]updateItem{h})
+	s.applyUpdate(newTransaction(s), []updateItem{h})
 	if got := s.getOrCreateYType("text").Text(); got != "HI" {
 		t.Fatalf("expected HI after drain, got %q", got)
 	}
@@ -115,14 +115,14 @@ func TestApplyUpdateOwnPredecessorGate(t *testing.T) {
 	k := mkUpdateItem(1, 2, "K", mkIdp(1, 0), mkIdp(2, 0))
 
 	s := newStore(0)
-	s.applyUpdate([]updateItem{h, x, k})
+	s.applyUpdate(newTransaction(s), []updateItem{h, x, k})
 	if got := s.getOrCreateYType("text").Text(); got != "HX" {
 		t.Fatalf("expected HX while K pends, got %q", got)
 	}
 	if len(s.pending) != 1 {
 		t.Fatalf("expected K pending, got %d structs", len(s.pending))
 	}
-	s.applyUpdate([]updateItem{i})
+	s.applyUpdate(newTransaction(s), []updateItem{i})
 	if got := s.getOrCreateYType("text").Text(); got != "HKXI" {
 		t.Fatalf("expected HKXI after drain, got %q", got)
 	}
@@ -139,8 +139,8 @@ func TestApplyUpdateDuplicatesDropped(t *testing.T) {
 	i := mkUpdateItem(1, 1, "I", mkIdp(1, 0), nil)
 
 	s := newStore(0)
-	s.applyUpdate([]updateItem{h, i, h, i})
-	s.applyUpdate([]updateItem{h, i})
+	s.applyUpdate(newTransaction(s), []updateItem{h, i, h, i})
+	s.applyUpdate(newTransaction(s), []updateItem{h, i})
 	if got := s.getOrCreateYType("text").Text(); got != "HI" {
 		t.Fatalf("expected HI, got %q", got)
 	}
@@ -148,8 +148,8 @@ func TestApplyUpdateDuplicatesDropped(t *testing.T) {
 	// an unappliable struct re-delivered while pending stays a single entry
 	s2 := newStore(0)
 	orphan := mkUpdateItem(1, 1, "I", mkIdp(1, 0), nil)
-	s2.applyUpdate([]updateItem{orphan})
-	s2.applyUpdate([]updateItem{orphan})
+	s2.applyUpdate(newTransaction(s2), []updateItem{orphan})
+	s2.applyUpdate(newTransaction(s2), []updateItem{orphan})
 	if len(s2.pending) != 1 {
 		t.Fatalf("expected 1 pending struct after re-delivery, got %d", len(s2.pending))
 	}
@@ -162,8 +162,8 @@ func TestApplyUpdateUnresolvableStaysPending(t *testing.T) {
 	ghostDep := mkUpdateItem(3, 5, "G", mkIdp(9, 9), nil)
 	h := mkHeadUpdateItem(1, 0, "H", "text")
 
-	s.applyUpdate([]updateItem{ghostDep})
-	s.applyUpdate([]updateItem{h})
+	s.applyUpdate(newTransaction(s), []updateItem{ghostDep})
+	s.applyUpdate(newTransaction(s), []updateItem{h})
 	if got := s.getOrCreateYType("text").Text(); got != "H" {
 		t.Fatalf("expected H, got %q", got)
 	}
@@ -192,7 +192,7 @@ func TestApplyUpdateFragmentedDeliveryConverges(t *testing.T) {
 	for oi, ord := range orders {
 		s := newStore(0)
 		for _, ui := range ord {
-			s.applyUpdate([]updateItem{ui})
+			s.applyUpdate(newTransaction(s), []updateItem{ui})
 		}
 		if got := s.getOrCreateYType("text").Text(); got != want {
 			t.Fatalf("order %d diverged: %q vs %q", oi, got, want)
@@ -210,7 +210,7 @@ func TestApplyUpdateMultipleRoots(t *testing.T) {
 	h := mkHeadUpdateItem(1, 0, "H", "title")
 	i := mkUpdateItem(1, 1, "I", mkIdp(1, 0), nil)
 	b := mkHeadUpdateItem(1, 2, "B", "body")
-	s.applyUpdate([]updateItem{h, i, b})
+	s.applyUpdate(newTransaction(s), []updateItem{h, i, b})
 	if got := s.getOrCreateYType("title").Text(); got != "HI" {
 		t.Fatalf("title: expected HI, got %q", got)
 	}

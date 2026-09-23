@@ -23,6 +23,8 @@
       (consumed at the ghost boundary by #40).
     - [history_state_coh h m]: the lock-side tie — the events of [h] replay to
       a document whose per-type item lists are [m : gmap TypeId (list item)].
+    - [doc_model_replaced m m' t L']: [m'] is [m] with the document of [t]
+      replaced by [L'] (what one write to one type does to the model).
     - the lemma stack: happens-before append-stability, freshness, receiver
       clock safety, the broadcast / deliver steps, and [certs_ValidReplay] (the
       certificate-based justification of [applyUpdate]'s [ValidReplay]).
@@ -399,6 +401,21 @@ Proof. rewrite /doc_model_get lookup_insert_eq //. Qed.
 Lemma docm_get_insert_ne (m : DocModel) t t' arr :
   t' ≠ t -> doc_model_get (<[t := arr]> m) t' = doc_model_get m t'.
 Proof. move=> Hne. rewrite /doc_model_get lookup_insert_ne //. Qed.
+
+(** [doc_model_replaced m m' t L']: [m'] is [m] with the document of [t]
+    replaced by [L'], every other type's document as it was. What one write
+    to one type does to the document model ([Text.InsertIn]'s
+    postcondition). *)
+Definition doc_model_replaced (m m' : DocModel) (t : TId) (L' : list (YjsItem A)) : Prop :=
+  doc_model_get m' t = L' ∧ ∀ q, q ≠ t -> doc_model_get m' q = doc_model_get m q.
+
+Lemma doc_model_replaced_insert (m : DocModel) (t : TId) (L' : list (YjsItem A)) :
+  doc_model_replaced m (<[t := L']> m) t L'.
+Proof. split; [apply docm_get_insert_eq | move=> q Hq; by apply docm_get_insert_ne]. Qed.
+
+Lemma doc_model_replaced_same (m : DocModel) (t : TId) :
+  doc_model_replaced m m t (doc_model_get m t).
+Proof. split; [reflexivity | move=> q _; reflexivity]. Qed.
 
 (** The events of [h] replay (delivers only) to a doc state whose per-type item
     lists are [m]. Tombstone flags are NOT tracked by the history (plan §8.4),

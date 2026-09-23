@@ -26,6 +26,7 @@ From New.proof.item Require Import item.
 From New.proof.ytype Require Import ytype.
 From New.proof Require Import history.
 From New.proof.store Require Import model value heap.
+From New.proof.transaction Require Import transaction.
 From RecordUpdate Require Import RecordSet.
 Import RecordSetNotations.
 From iris.algebra Require Import auth gmap gset.
@@ -2274,10 +2275,11 @@ Qed.
     fit ([input_fits]) and its id is its client's next clock in the whole pool
     ([pool_next_clock]: newest, and right after the client's last one, so the
     clocks stay gap-free). Proved on the run core. *)
-Lemma wp_store__Integrate (s parent parent_arg item_l : loc)
+Lemma wp_store__Integrate (s tr parent parent_arg item_l : loc)
     (state : store_state) (tm : type_model) (ls : list loc)
     (arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
-    (newItem : YjsItem A) (kL kR : nat) :
+    (newItem : YjsItem A) (kL kR : nat)
+    (inserted tombstoned : gset YjsId) (changed : gset loc) :
   parent_arg = parent ∨ parent_arg = null ->
   ss_pool state !! parent = Some tm ->
   ss_locs state !! parent = Some ls ->
@@ -2288,18 +2290,21 @@ Lemma wp_store__Integrate (s parent parent_arg item_l : loc)
   pool_next_clock (ss_pool state) (clientId (in_id input)) (clock (in_id input)) ->
   {{{ is_pkg_init yjs ∗ own_store_state s state ∗
       own_linked_item item_l input parent
-        (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) }}}
-    s @! (go.PointerType yjs.store) @! "Integrate" #parent_arg #item_l
+        (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) ∗
+      own_transaction_changes tr s inserted tombstoned changed }}}
+    s @! (go.PointerType yjs.store) @! "Integrate" #tr #parent_arg #item_l
   {{{ (runs' : list ItemRun) (ls' : list loc) (run : list (YjsItem A)), RET #();
       own_store_state s (state <| ss_pool := <[parent := MkTypeModel runs']> (ss_pool state) |>
                             <| ss_locs := <[parent := ls']> (ss_locs state) |>) ∗
+      (* the transaction records the new run: its chars and its type *)
+      own_transaction_changes tr s (inserted ∪ char_ids run) tombstoned (changed ∪ {[parent]}) ∗
       ⌜YjsArrInvariant arr'⌝ ∗
       ⌜∃ idx : nat, runs_integrate_splice_at idx (tm_runs tm) (tm_arr tm) run runs' arr' ∧
                     ls' = integrate_locs ls idx item_l⌝ ∗
       ⌜run_denotes input newItem run⌝ }}}.
 Proof using Type*.
   move=> Hparg Hpl Hlocs Hready Hfitsin Hall Hres Hnext.
-  iIntros (Φ) "(#Hpkg & Hruns & Hfresh) HΦ".
+  iIntros (Φ) "(#Hpkg & Hruns & Hfresh & Hchanges) HΦ".
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
   have Hideta : in_id input = MkYjsId (clientId (in_id input)) (clock (in_id input))
     by destruct (in_id input).
@@ -2402,6 +2407,28 @@ Proof using Type*.
                 (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) with "[$Hpkg $Htext' $Hitemmap]").
     iIntros "(Htext' & Hitemmap)".
     wp_auto.
+    (* the transaction records the new node: borrow it from the type again *)
+    iDestruct "Htext'" as (ytRec tlRec) "(HparentRec & HdllRec & %HlenRec)".
+    iDestruct (own_dll_acc _ _ _ _ ls' runs' idx item_l r Hlk' Hrk' with "HdllRec")
+      as (prevRec nxtRec) "(_ & _ & _ & _ & %HclenRec & HnodeRec & HbackRec)".
+    iDestruct "HnodeRec" as (itemValRec olidRec oridRec)
+      "(HvalRec & HolRec & HorRec & %HinlRec & %HinrRec & %HidRec & %HcontRec & %HparRec & %HprevRec & %HnextRec & %HflagsRec)".
+    have HidRec' : toYjsId itemValRec.(yjs.item.id') = item_id (run_head_item r) := HidRec.
+    have HlenRec' : length itemValRec.(yjs.item.content').(yjs.content.content') = length (run_items r).
+    { have Hstr : itemValRec.(yjs.item.content').(yjs.content.content') = in_content (input_of_run r) := HcontRec.
+      rewrite Hstr. exact HclenRec. }
+    destruct (node_span_char_ids itemValRec r Hwfr HidRec' HlenRec' Hfitsr) as [HfitsRec HspanRec].
+    wp_apply (wp_Transaction__recordInsert tr s parent item_l (DfracOwn 1) itemValRec inserted tombstoned changed
+                HfitsRec with "[$Hchanges $HvalRec]").
+    iIntros "[Hchanges HvalRec]".
+    iAssert (own_item_node item_l (DfracOwn 1) (input_of_run r) (run_deleted r) parent prevRec nxtRec)
+      with "[HvalRec HolRec HorRec]" as "HnodeRec".
+    { iExists itemValRec, olidRec, oridRec. iFrame "HvalRec HolRec HorRec". iPureIntro. split_and!;
+        [exact HinlRec | exact HinrRec | exact HidRec | exact HcontRec | exact HparRec | exact HprevRec | exact HnextRec | exact HflagsRec]. }
+    iDestruct ("HbackRec" with "HnodeRec") as "HdllRec".
+    iAssert (own_ytype parent (DfracOwn 1) ls' tm') with "[HparentRec HdllRec]" as "Htext'".
+    { iExists ytRec, tlRec. iFrame "HparentRec HdllRec". iPureIntro. exact HlenRec. }
+    wp_auto.
     have Hlocswf2 : locs_wf locs2 p2
       := locs_wf_integrate locs p parent ls tm idx item_l r arr' Hlocs Hpl Hfreshloc Hlocswf0.
     have Hreg2 : pool_registry_coh bind p2 := pool_registry_coh_insert_existing bind p parent tm tm' Hpl Hreg.
@@ -2427,7 +2454,9 @@ Proof using Type*.
            (proj2 Hnext) Hcontig.
     iApply ("HΦ" $! runs' ls' run).
     iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes";
-      last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
+      last (iSplitL "Hchanges";
+              [iEval (rewrite HspanRec) in "Hchanges"; iExact "Hchanges"
+              | by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden])]).
     iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
       with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
     { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
@@ -2491,6 +2520,28 @@ Proof using Type*.
                 (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) with "[$Hpkg $Htext' $Hitemmap]").
     iIntros "(Htext' & Hitemmap)".
     wp_auto.
+    (* the transaction records the new node: borrow it from the type again *)
+    iDestruct "Htext'" as (ytRec tlRec) "(HparentRec & HdllRec & %HlenRec)".
+    iDestruct (own_dll_acc _ _ _ _ ls' runs' idx item_l r Hlk' Hrk' with "HdllRec")
+      as (prevRec nxtRec) "(_ & _ & _ & _ & %HclenRec & HnodeRec & HbackRec)".
+    iDestruct "HnodeRec" as (itemValRec olidRec oridRec)
+      "(HvalRec & HolRec & HorRec & %HinlRec & %HinrRec & %HidRec & %HcontRec & %HparRec & %HprevRec & %HnextRec & %HflagsRec)".
+    have HidRec' : toYjsId itemValRec.(yjs.item.id') = item_id (run_head_item r) := HidRec.
+    have HlenRec' : length itemValRec.(yjs.item.content').(yjs.content.content') = length (run_items r).
+    { have Hstr : itemValRec.(yjs.item.content').(yjs.content.content') = in_content (input_of_run r) := HcontRec.
+      rewrite Hstr. exact HclenRec. }
+    destruct (node_span_char_ids itemValRec r Hwfr HidRec' HlenRec' Hfitsr) as [HfitsRec HspanRec].
+    wp_apply (wp_Transaction__recordInsert tr s parent item_l (DfracOwn 1) itemValRec inserted tombstoned changed
+                HfitsRec with "[$Hchanges $HvalRec]").
+    iIntros "[Hchanges HvalRec]".
+    iAssert (own_item_node item_l (DfracOwn 1) (input_of_run r) (run_deleted r) parent prevRec nxtRec)
+      with "[HvalRec HolRec HorRec]" as "HnodeRec".
+    { iExists itemValRec, olidRec, oridRec. iFrame "HvalRec HolRec HorRec". iPureIntro. split_and!;
+        [exact HinlRec | exact HinrRec | exact HidRec | exact HcontRec | exact HparRec | exact HprevRec | exact HnextRec | exact HflagsRec]. }
+    iDestruct ("HbackRec" with "HnodeRec") as "HdllRec".
+    iAssert (own_ytype parent (DfracOwn 1) ls' tm') with "[HparentRec HdllRec]" as "Htext'".
+    { iExists ytRec, tlRec. iFrame "HparentRec HdllRec". iPureIntro. exact HlenRec. }
+    wp_auto.
     have Hlocswf2 : locs_wf locs2 p2
       := locs_wf_integrate locs p parent ls tm idx item_l r arr' Hlocs Hpl Hfreshloc Hlocswf0.
     have Hreg2 : pool_registry_coh bind p2 := pool_registry_coh_insert_existing bind p parent tm tm' Hpl Hreg.
@@ -2516,7 +2567,9 @@ Proof using Type*.
            (proj2 Hnext) Hcontig.
     iApply ("HΦ" $! runs' ls' run).
     iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes";
-      last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
+      last (iSplitL "Hchanges";
+              [iEval (rewrite HspanRec) in "Hchanges"; iExact "Hchanges"
+              | by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden])]).
     iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
       with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
     { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
