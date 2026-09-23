@@ -105,7 +105,7 @@ gotchas `build.sh` absorbs, and one-time environment setup. CI runs the same
   be derived from the first. Specs that are unused, or that are a stepping
   stone of one proof, are deleted or made `#[local]` in that proof's file:
   Integrate's stepping stone is folded into `wp_Store__Integrate`.
-- **Reuse the Rocq-Yjs model, don't invent independent proofs.** State WP specs
+- **Reuse the rocq-yjs model, don't invent independent proofs.** State WP specs
   as refinements of the pure model and compose with its lemmas
   (`YjsArrInvariant_integrate`, `setintegrate_eq_integrate`,
   `integrate_commutative`, `yjs_strong_convergence`). Extract algorithmic cores
@@ -139,7 +139,7 @@ it.
   unexported helpers' specs; `<type>.v` a `Require Export` facade, the only
   name downstream files Require. A layer a type does not need is absent (`id`
   has no model of its own; `Text` is a handle over a store type, so it starts
-  at `heap.v`). Type-less files stay at the top level: `core.v` (Rocq-Yjs
+  at `heap.v`). Type-less files stay at the top level: `core.v` (rocq-yjs
   re-export), `prelude.v` (goose package-init instances), `algebra.v` (generic
   Iris RA laws), `network_model.v` and `history.v` (the pure op-history model
   and its ghost layer), `ws_prelude.v` and `ws_relay.v` (WebSocket, issue #107).
