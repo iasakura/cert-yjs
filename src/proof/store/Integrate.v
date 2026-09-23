@@ -2125,7 +2125,8 @@ Qed.
 (** [addNode items it]: append the freshly integrated
     node's address to its client's slice of the item index (y-octo
     [store::add_item], a [&mut self] method there; a free function here so
-    the footprint is visible, CLAUDE.md "Spec shape").
+    the footprint is visible, spec-shape skill, "The footprint is the whole
+    receiver").
 
     The node at [item_l] is the [idx]-th of the type at [parent] after the
     splice and its entry is the one the splice added, so the append lands
