@@ -69,7 +69,9 @@ gotchas `build.sh` absorbs, and one-time environment setup. CI runs the same
   of it. If a proof only needs a part, the Go must say so (`s.fld.Method()`,
   `Method(s.fld, …)`), so the footprint is visible in the program and not only
   deep in the spec. Re-establishing `X`'s invariant is the callee's job, not
-  something a postcondition hands to the caller.
+  something a postcondition hands to the caller. Likewise a predicate about
+  one field takes that field's reference, not the address of the struct
+  around it.
   - An unexported method that is only an internal step of one public method,
     called while the receiver is open, cannot take `own_X` whole. First narrow
     the Go footprint so it can (a free function over the fields it touches, as
@@ -168,31 +170,17 @@ independent job, so no single heavy proof serializes the build.
 
 ## Reporting
 
-- **Spec and invariant changes belong in the PR description.** A PR that
-  changes a WP spec, a representation predicate, or an invariant says which one
-  and how, before and after, and why; that is what the review is about. A PR
-  that changes none says so. So: "`wp_Store__Integrate` takes
+- **Spec and invariant changes belong in the PR description**, which is
+  written for a reader who has not opened the diff. A PR that changes a WP
+  spec, a representation predicate, or an invariant says which one, before
+  and after, and why, in full sentences, every project term explained at first
+  use; a PR that changes none says so. So: "`wp_Store__Integrate` takes
   `own_store_struct` whole where it took `own_store_items ∗ own_type_pool`, so
   that re-establishing the invariant is the callee's job", not "rethreaded the
-  Integrate proof".
-- **Every new conjunct and every new predicate is accounted for before the
-  PR is opened.** The description's spec section lists, for each conjunct
-  added to a spec or to a predicate, the existing predicate it was tried in
-  and why it does not belong there (when that sentence cannot be written, it
-  belongs there: move it; and when the fact and its neighbours are one
-  meaning, name them as one predicate), and, for each new `own_X` / `is_X`,
-  the part of the heap its argument names (the reference of what it owns,
-  never the address of the struct around it) and the meaning its name
-  carries. This is where the rules of "Specs and invariants" are checked: a
-  proof in progress adds whatever closes the goal, and the grouping is done
-  by the author before the PR, not by the reviewer.
-- **A PR description stands on its own.** It is written for a reader who has
-  not opened the diff: every project term gets its meaning at first use
-  (which file, predicate or line it is), and every change is told as what is
-  there today, what the PR makes of it, and why, in full sentences; a table
-  is an index of that prose, not a substitute for it. A description that only
-  lists a diff, or that points at a plan section instead of saying the thing,
-  is rewritten before review is asked.
+  Integrate proof". Each new conjunct names the existing predicate it was tried
+  in and why it does not fit there (no reason: move it there); each new
+  `own_X` / `is_X` says what its argument owns and what its name means. The
+  `pr-description` skill has the full check.
 - **Report unrequested changes** in the conversation as well: any change to
   `yjs/*.go` behavior, to a public function's spec or signature, or to a
   proof-layer contract that was not explicitly asked for. Any simplification
