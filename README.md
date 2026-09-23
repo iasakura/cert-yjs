@@ -106,7 +106,7 @@ its author had seen when making it (causal order). The Go, like y-octo, applies
 an insertion as soon as the two characters it was inserted between and its
 author's previous insertion are present, which allows more orders than that.
 Yjs and yrs also apply insertions in such orders. Extending the theorem to
-these orders is planned in section 5 of
+these orders is outlined in section 5 of
 [docs/plan-issue-40-pending.md][plan-40], and a theorem stating convergence for
 a running system of several replicas is [#132][i132]. That replicas agree on
 which characters are deleted needs the specification of remote deletions
