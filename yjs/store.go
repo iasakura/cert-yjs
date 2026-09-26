@@ -372,8 +372,7 @@ func (s *store) splitAtAndGetRight(id id) (*item, bool) {
 // repair resolves a decoded item's references before integration (y-octo:
 // DocStore::repair). The origin ids resolve to live items through the store's
 // per-client run lists, splitting a run when an origin points inside it
-// (split_at_and_get_left/right; with 1-char contents the split branches are
-// dead and the origin ids never move), and the parent is recovered:
+// (split_at_and_get_left/right), and the parent is recovered:
 //   - parentName != nil is Parent::String: look up / create the root type by
 //     name (y-octo: get_or_create_type);
 //   - parentName == nil is Parent::None: borrow the parent from the resolved
@@ -482,13 +481,17 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 // isolated from the item-set bookkeeping added by addNode (mirrors the
 // findIntegrationLeft extraction).
 //
-// Faithful port of y-octo store::integrate (src/doc/store.rs) under the
-// Phase-2 simplifications:
-//   - content is always a 1-char string type (so an item never needs to be
-//     split: len == 1, last_id == id), hence the offset>0 path is dropped;
+// Port of y-octo store::integrate (src/doc/store.rs), with these differences:
+//   - the offset>0 path, which integrates only the part of a struct past the
+//     characters the store already has, is dropped: store.applyUpdate skips a
+//     struct whose first character is present, where Yjs, yrs and y-octo
+//     integrate the rest of it (Yjs v14.0.0-rc.18 src/structs/Item.js:168;
+//     yrs 0.27.2 src/update.rs:341; y-octo 0.1.0 src/doc/store.rs:423; #207).
+//     The byte decoder hands over one-character structs, so no such struct
+//     arrives today;
 //   - parent_sub is always None (root sequence), so the map branches are dropped;
-//   - no concurrency control (single-threaded model), so the unsafe shared-ref
-//     dance becomes plain pointer mutation;
+//   - the caller holds the store's write lock, so y-octo's unsafe shared-reference
+//     handling becomes plain pointer mutation;
 //   - the parent type is never deleted.
 //
 // item.left / item.right are taken as given (y-octo reads this.left/this.right

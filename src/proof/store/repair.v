@@ -652,13 +652,6 @@ Proof using Type*.
     exact (Hres q k Hcov).
 Qed.
 
-(** [store.splitAtAndGetLeft] / [store.splitAtAndGetRight], unit fast path
-    (issue #28 M2): with every run 1-char (the M1 all-singleton invariant) the
-    found node already ends (resp. starts) at the requested id — the offset is
-    0 and [Len() - 1] is 0 — so the split branch is dead and each helper
-    coincides with [GetNode]. The general (actually splitting) specs arrive
-    with the run-integrate milestone (M4), where runs become reachable. *)
-
 (* ===== #40 pending stack (issue #40) ===== *)
 Lemma own_update_id_bounds (sl : slice.t) (dq : dfrac)
     (inputs : list (TId * IntegrateInput (A := A))) :
