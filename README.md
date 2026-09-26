@@ -4,18 +4,19 @@
 
 Cert-Yjs is a project to build a realistic, [Yjs][yjs]-compatible
 implementation in Go and to formally verify all of its features. Besides the
-basic CRDT operations of inserting and deleting, the features include more
-advanced ones: applying updates from other replicas, exporting local updates,
-transactions, update observers, and undo and redo.
+basic CRDT operations of [inserting and deleting][yjs-text], the features
+include more advanced ones: [applying updates from other replicas and
+exporting local updates][yjs-updates], [transactions][yjs-transactions],
+[update observers][yjs-observe], and [undo and redo][yjs-undo].
 [Current status](#current-status) says which of them are done.
 
 Cert-Yjs is verified with [Perennial][perennial] in [Rocq][rocq], which
 reasons about the Go source itself through its translation into Rocq by goose.
-The proofs mainly show that the Go code follows the pure model of Yjs
-formalized in [Rocq-Yjs][rocq-yjs], in which basic properties such as
-convergence are proven. Beyond that, they use Iris's ghost state and
-invariants to verify deeper specifications, such as the global protocol that
-every replica must follow.
+At its core, the verification shows that the Go code follows the pure model
+of Yjs formalized in [Rocq-Yjs][rocq-yjs], in which basic properties such as
+convergence are proven. Beyond that, it uses Iris's ghost state and invariants
+to verify deeper specifications, such as the global protocol that every
+replica must follow.
 
 ## Current status
 
@@ -103,6 +104,11 @@ derived from y-octo and Yjs (both MIT); see [NOTICE](NOTICE) for the required
 third-party copyright and license notices.
 
 [yjs]: https://github.com/yjs/yjs
+[yjs-text]: https://docs.yjs.dev/api/shared-types/y.text#api
+[yjs-updates]: https://docs.yjs.dev/api/document-updates#update-api
+[yjs-transactions]: https://docs.yjs.dev/getting-started/working-with-shared-types#transactions
+[yjs-observe]: https://docs.yjs.dev/api/shared-types/y.text#observing-changes-y.textevent
+[yjs-undo]: https://docs.yjs.dev/api/undo-manager
 [yrs]: https://github.com/y-crdt/y-crdt
 [y-octo]: https://github.com/y-crdt/y-octo
 [rocq]: https://rocq-prover.org
