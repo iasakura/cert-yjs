@@ -72,8 +72,8 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
     to a type the pool does not hold yet. The window stays inside this
     proof, the fresh type carried as its own resource and refolded with
     [pool_invs_insert_empty] / [pool_registry_coh_bind_fresh] at the
-    exit; the lemma's pre and post sit at the closed endpoints (CLAUDE.md
-    "Spec shape", the open-receiver case). *)
+    exit; the lemma's pre and post sit at the closed endpoints (spec-shape
+    skill, "The footprint is the whole receiver", the open-receiver case). *)
 Lemma wp_store__getOrCreateYType (s : loc) (state : store_state) (nm : go_string) :
   {{{ is_pkg_init yjs ∗ own_store_state s state }}}
     s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
