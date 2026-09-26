@@ -1,4 +1,4 @@
-(** The shared base every cert-yjs proof file sits on.
+(** The shared base every Cert-Yjs proof file sits on.
 
     Deliberately tiny, and it holds no definitions on purpose: its whole job is
     to declare the goose package-init instances once, so that every WP file

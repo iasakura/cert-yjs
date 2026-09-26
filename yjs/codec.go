@@ -4,7 +4,7 @@ package yjs
 
 import "sort"
 
-// v1 update codec: a port of y-octo's src/doc/codec for the cert-yjs subset.
+// v1 update codec: a port of y-octo's src/doc/codec for the Cert-Yjs subset.
 //
 // Layout mirrors y-octo:
 //   - encoder / decoder            <- codec/io/{writer,reader}.rs (lib0 varint)
@@ -312,10 +312,10 @@ func readStructSection(d *decoder) []decodedStruct {
 	return structs
 }
 
-// WireCodec is the deployment's Codec (wire.go): the v1 decode of an
-// update's structs section, split into 1-char items exactly as ApplyUpdate
-// splits them. The delete-set section is outside the verified subset and is
-// ignored here; a relayed update still carries it verbatim. Malformed input
+// WireCodec is the deployment's Codec (the type is in doc.go): the v1 decode
+// of an update's structs section, split into 1-char items exactly as
+// ApplyUpdate splits them, and of its delete set, as the spans that
+// Doc.ApplySyncUpdate applies after the structs. Malformed input
 // reports ok=false (the wire protocol makes that branch dead for the
 // verified server, but the codec is total either way).
 func WireCodec() Codec {

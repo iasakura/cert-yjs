@@ -26,7 +26,7 @@ A good question lives in a narrow band:
 - **Too general** → either common knowledge the user already has (generic CRDT
   facts like "a deterministic tie-break is needed for convergence", generic Iris
   facts) OR not specific to this project at all.
-- **The target**: a fact that is **specific to cert-yjs and non-ad-hoc** (a real
+- **The target**: a fact that is **specific to Cert-Yjs and non-ad-hoc** (a real
   design decision the project made, not an incidental detail) **and carries
   meaning** (knowing it changes how you understand the system).
 

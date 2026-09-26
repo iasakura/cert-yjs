@@ -1,27 +1,29 @@
-(** The pure bridge to the rocq-yjs network model (issues #42, #49).
+(** The pure bridge to the Rocq-Yjs network model (issues #42, #49).
 
-    Everything here is Iris-free: it re-states the network-model records
-    ([NodeHistories] / [NetworkBase] / [CausalNetwork] / [OperationNetwork] /
-    [DocOperationNetwork]) over a raw [gmap ClientId (list Event)] — the shape a
-    Perennial [ghost_map] carries — and proves the append-preservation and
-    certificate lemmas the ghost layer ([history]) consumes.
+    Everything here is Iris-free: it re-states the network-model records that
+    still apply ([NodeHistories] / [NetworkBase]) over a raw
+    [gmap ClientId (list Event)] (the shape a Perennial [ghost_map] carries)
+    and proves the append-preservation and certificate lemmas the ghost layer
+    ([history]) consumes.
 
     Since #49 the operations are *doc-level*: [TypeId * YjsOperation]
     ([doc/model]), one history per document with doc-global
     clocks/causality, integration per type. Per-type facts (validity of a
-    delivered insert, item membership) are obtained by projecting the packaged
-    doc network to a [YjsOperationNetwork] ([to_proj_network] =
-    [proj_network ∘ to_doc_network]) and applying the upstream theorems.
+    delivered insert, item membership) are proven over the raw histories
+    directly, by ports of the upstream lemmas (below).
 
-    - [history_wf N]: the conjunction of the model's network axioms over the raw
-      map, plus the two disciplines of our instantiation (immediate
-      self-delivery, insert-only history). Re-establishing it at each ghost
-      append IS the proof that the WP state refines the network model.
-    - [to_doc_network N wf : DocOperationNetwork]: packaging, so the model's
-      endgame theorems ([doc_strong_convergence],
-      [DocOperationNetwork_converge_final]) apply to the ghost state directly
-      (consumed at the ghost boundary by #40).
-    - [history_state_coh h m]: the lock-side tie — the events of [h] replay to
+    - [history_wf N]: the model's network axioms over the raw map except
+      causal delivery, plus the disciplines of our instantiation (immediate
+      self-delivery, insert-only history, per-author FIFO delivery).
+      Re-establishing it at each ghost append is the proof that the WP state
+      stays within this relaxed network model. Since #40 an insert is
+      delivered as soon as its origins and its author's previous insert have
+      arrived, which is weaker than causal delivery, so the histories do not
+      form the model's [CausalNetwork] and its convergence theorems
+      ([doc_strong_convergence], [DocOperationNetwork_converge_final]) do not
+      apply to them; only the [NetworkBase] packaging ([to_network_base])
+      remains.
+    - [history_state_coh h m]: the lock-side tie: the events of [h] replay to
       a document whose per-type item lists are [m : gmap TypeId (list item)].
     - [doc_model_replaced m m' t L']: [m'] is [m] with the document of [t]
       replaced by [L'] (what one write to one type does to the model).

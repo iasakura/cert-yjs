@@ -130,7 +130,7 @@ it.
 
 | layer | file | holds | may mention |
 |---|---|---|---|
-| model | `model.v` | the pure model and its theory | rocq-yjs only |
+| model | `model.v` | the pure model and its theory | Rocq-Yjs only |
 | value | `value.v` | Go-level values and what they denote | + `yjs.*`, `loc`, `w64` |
 | heap | `heap.v` | representation predicates, invariants, ghost state | + Iris |
 | wp | `<Method>.v`, `wp_private.v` | the WP proofs | + the code |
@@ -148,7 +148,7 @@ it.
   predicates, relations between predicates (coherence, projection,
   observation), state-transition laws. Everything else belongs in the WP file
   that needs it; "the WP proof uses it" is not a reason. A fact mentioning no
-  cert-yjs definition goes to `algebra.v`.
+  Cert-Yjs definition goes to `algebra.v`.
 - **Shape.** Section boilerplate first, then every definition, then every
   lemma, under `(* ===== definitions ===== *)` / `(* ===== lemmas ===== *)`.
   Never declare a `Context` mid-section: under `Set Default Proof Using "Type*"`
@@ -199,6 +199,6 @@ independent job, so no single heavy proof serializes the build.
 ## Reference
 
 - `docs/proof-engineering.md`: the working technique reference (Rocq +
-  ssreflect, Iris proof mode, Perennial/goose WP, rocq-mcp, cert-yjs gotchas).
+  ssreflect, Iris proof mode, Perennial/goose WP, rocq-mcp, Cert-Yjs gotchas).
   Read it before nontrivial proof work.
 - `WORKFLOW.md`: build loop plus one-time environment setup.

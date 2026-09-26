@@ -62,7 +62,7 @@ check_goose() {
   done
   if [ -n "$missing" ]; then
     echo "error: goose at $GOOSE_SRC has no ffiMapping entry for:$missing" >&2
-    echo "  cert-yjs needs the iasakura/perennial fork (upstream plus those" >&2
+    echo "  Cert-Yjs needs the iasakura/perennial fork (upstream plus those" >&2
     echo "  entries); this goose would translate the package with no ffi" >&2
     echo "  prelude and the generated Assumptions class would not typecheck." >&2
     exit 1

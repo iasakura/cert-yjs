@@ -23,12 +23,12 @@
 //	doc.go       Doc handle + GetOrCreateText       (y-octo: doc/document.rs)
 //	transaction.go Transaction + Doc.Transact  (Yjs: src/utils/Transaction.js; y-octo has none)
 //	refs.go      node / GC / Skip tombstones (y-octo: codec/refs.rs)     [not translated]
-//	delete.go    Delete                     (y-octo: doc/types/text.rs)  [not translated]
+//	delete.go    delete-set range merge     (y-octo: codec/delete_set.rs) [not translated]
 //	codec.go     v1 update encode/decode    (y-octo: codec/{update,...}) [not translated]
 //
 // refs.go, delete.go and codec.go carry the `//go:build !goose` constraint: the
-// node enum is used only by the byte-level v1 codec, and Delete / the codec are
-// the runtime interop layer -- all excluded from goose translation so the
-// verified core (store.go's Integrate, text.go's Insert) stays the proof
-// surface. Normal `go build` / `go test` compile every file.
+// node enum and the delete-set range merge are used only by the byte-level v1
+// codec, which is the runtime interop layer. They are excluded from goose
+// translation, and the rest of the package is the verified code. Normal
+// `go build` / `go test` compile every file.
 package yjs

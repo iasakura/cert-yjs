@@ -2,10 +2,12 @@ package yjs
 
 type flags = uint8
 
-// item is a single CRDT insertion (y-octo: codec/item.rs). The Phase-1/2
-// simplification keeps the content to a single 1-char string, so an item never
-// needs to split (len == 1, last_id == id), and drops parent_sub (sequence
-// types only).
+// item is a single CRDT insertion (y-octo: codec/item.rs): a run of one or
+// more consecutive characters of one client, which the store splits when an
+// edit or an origin lands inside it. Local inserts and the byte decoder create
+// one-character items for now (Text.InsertIn in text.go, splitStructs in
+// codec.go), where Yjs, yrs and y-octo keep a run typed or sent together as
+// one item. parent_sub is dropped (sequence types only).
 type item struct {
 	id id
 	// null means no left origin when generated
@@ -32,7 +34,7 @@ const (
 	itemDeleted   flags = 0x04
 )
 
-// newItem builds an item carrying 1-char string content. It is countable
+// newItem builds an item carrying the string content str. It is countable
 // (y-octo: string content sets ITEM_COUNTABLE) and starts unlinked and
 // parentless: the update path resolves left/right/parent with store.repair,
 // the local-edit path fills them in at creation (y-octo: store::create_item).

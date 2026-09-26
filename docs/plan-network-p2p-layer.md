@@ -3,14 +3,14 @@
 Companion to `docs/plan-issue-42-ghost-history.md` (the ghost op-history,
 issue #42) and `docs/plan-network-yjs-protocol.md` (the Yjs sync-protocol
 transport). This document specifies the **logical delivery layer**: what any
-transport must do so that a system of replicas refines the rocq-yjs network
+transport must do so that a system of replicas refines the Rocq-Yjs network
 model. It deliberately contains **no wire, no topology, no FFI** — those are
 implementation choices, and the Yjs protocol document is *one* implementation
 of the interface defined here.
 
 ## 0. TL;DR
 
-- The rocq-yjs model (`YjsOperationNetwork`) is **peer-to-peer**: per-node
+- The Rocq-Yjs model (`YjsOperationNetwork`) is **peer-to-peer**: per-node
   event histories, causal delivery, no distinguished server. The #42 ghost
   history refines exactly this, with **no topology constraints anywhere** —
   `history_wf` never mentions who talks to whom.
@@ -151,7 +151,7 @@ The `batch_ok`-preconditioned deliver entry point assumes the *caller* only
 ever hands over applicable batches. No deployed Yjs-family implementation asks
 that of its callers — all three make `apply_update` **total** and absorb
 inapplicable input into store state (local checkouts; y-octo is normative for
-cert-yjs):
+Cert-Yjs):
 
 - **y-octo** (`y-octo/src/doc/document.rs:242`): `apply_update` iterates
   `update.iter(store.get_state_vector())`; the `UpdateIterator` yields only
@@ -397,7 +397,7 @@ minimal witness).
 The route: weaken `hwf_causal_delivery` (equivalently the model's
 `causal_delivery` axiom) from hb-past coverage to **`deps`-past coverage**
 (transitive closure of origin/rightOrigin/author-predecessor edges), and
-re-prove the rocq-yjs network-level convergence (`effect_list_reorder` and
+re-prove the Rocq-Yjs network-level convergence (`effect_list_reorder` and
 everything above it) under delivery orders that are `deps`-consistent but not
 hb-consistent. Consequences worth recording now:
 
@@ -419,7 +419,7 @@ hb-consistent. Consequences worth recording now:
   so the exercise has ecosystem value beyond our deployment. It is also where
   a genuinely new counterexample would surface if the folklore is wrong.
 
-Substantial lean-yjs/rocq-yjs work — its own upstream project, sequenced
+Substantial Lean-Yjs/Rocq-Yjs work — its own upstream project, sequenced
 **after** the star line (the guard toolkit and two-replica demo here, the
 in-process hub in the protocol doc) proves the covered-case system end to end.
 Until then the star deployment needs none of it; after it, the pending-buffer

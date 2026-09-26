@@ -1,7 +1,7 @@
-cert-yjs
+Cert-Yjs
 ========
 
-cert-yjs is written after three implementations of the Yjs CRDT: Yjs
+Cert-Yjs is written after three implementations of the Yjs CRDT: Yjs
 (https://github.com/yjs/yjs, Kevin Jahns and contributors), yrs
 (https://github.com/y-crdt/y-crdt, Bartosz Sypytkowski and contributors) and
 y-octo (https://github.com/y-crdt/y-octo, the Toeverything / AFFiNE team), all

@@ -4,7 +4,7 @@
 
     Staging note: this file belongs in the perennial fork at
     [new/ws_prelude.v], whose logical path is [New.ws_prelude] -- the same as
-    here, since cert-yjs maps [src] to [New]. Only the [impl] require below
+    here, since Cert-Yjs maps [src] to [New]. Only the [impl] require below
     changes on the move. Modeled on perennial's [new/grove_prelude.v]. *)
 From New.goose_lang.ffi.ws_ffi Require Import impl.
 #[global]
