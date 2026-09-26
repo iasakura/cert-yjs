@@ -65,9 +65,13 @@ code never panics and has no data races.
   types, and rich-text formatting are not implemented.
 - **UTF-16.** Text is handled as bytes, one byte per character, so only ASCII
   text is supported. Yjs counts positions in UTF-16 code units.
-- **Merging consecutive characters.** Yjs keeps characters typed together as
-  one item and merges neighbouring items. Here every character is its own
-  item.
+- **Creating and merging runs.** Yjs keeps a run of characters typed together
+  as one item and merges neighbouring items. Items here can hold runs too, and
+  the verified code integrates a run as one item and splits an item when an
+  edit lands inside it. What is missing is creating and merging them: `Insert`
+  creates one item per character, the decoder of updates splits every received
+  run into single characters before applying it, and neighbouring items are
+  never merged.
 - **Garbage collection, undo and redo** are not implemented.
 - **Encoding updates as bytes.** Exporting local updates and reading received
   ones use Yjs's v1 update format, but this encoding is not verified. The
