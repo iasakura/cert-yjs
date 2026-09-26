@@ -150,7 +150,7 @@ func (o *TextObserver) Poll() []DeltaOp {
 					}
 				}
 			} else if !tombstoned {
-				delta = deltaSnoc(delta, DeltaOp{Kind: DeltaInsert, Content: string(cur.content.content[i])})
+				delta = deltaSnoc(delta, DeltaOp{Kind: DeltaInsert, Content: byteString(cur.content.content[i])})
 			}
 		}
 		cur = cur.right
@@ -188,7 +188,7 @@ func textDelta(ty *yType, insertSet []idSpan, deleteSet []idSpan) []DeltaOp {
 			charId := newId(cur.id.clientId, cur.id.clock+i)
 			if containsId(insertSet, charId) {
 				if !tombstoned {
-					delta = deltaSnoc(delta, DeltaOp{Kind: DeltaInsert, Content: string(cur.content.content[i])})
+					delta = deltaSnoc(delta, DeltaOp{Kind: DeltaInsert, Content: byteString(cur.content.content[i])})
 				}
 			} else if containsId(deleteSet, charId) {
 				delta = deltaSnoc(delta, DeltaOp{Kind: DeltaDelete, Length: 1})
@@ -224,7 +224,7 @@ func ApplyDelta(s string, delta []DeltaOp) (string, bool) {
 			}
 			if op.Kind == DeltaRetain {
 				for i := uint64(0); i < op.Length; i++ {
-					result = result + string(s[position+i])
+					result = result + byteString(s[position+i])
 				}
 			}
 			position = position + op.Length
@@ -232,7 +232,7 @@ func ApplyDelta(s string, delta []DeltaOp) (string, bool) {
 		}
 	}
 	for position < uint64(len(s)) {
-		result = result + string(s[position])
+		result = result + byteString(s[position])
 		position = position + 1
 	}
 	return result, true
