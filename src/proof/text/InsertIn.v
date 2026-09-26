@@ -622,7 +622,8 @@ Proof.
     destruct (cs !! sint.nat (W64 j)) as [b|] eqn:Hb;
       [ wp_auto | exfalso; apply lookup_ge_None in Hb; revert Hb Hjlt Hlcb2; word ].
     wp_alloc client_l as "Hcl2". wp_auto.
-    rewrite Hb. wp_auto. wp_func_call. wp_call.
+    rewrite Hb. wp_auto.
+    wp_apply wp_byteString. wp_func_call. wp_call.
     wp_alloc oR2 as "HoR2". wp_auto. wp_alloc oL2 as "HoL2". wp_auto.
     (* build the model item [newItem] and integrate *)
     have Hclocknit : uint.nat (W64 (uint.Z k + j)) = (uint.nat k + j)%nat by word.

@@ -114,3 +114,35 @@ func TestConcurrentMergeConverges(t *testing.T) {
 		t.Fatalf("merged text: got %q, want %q", a, "abcxyz")
 	}
 }
+
+// Non-ASCII text is stored byte for byte (issue #216): each byte of "é" is its
+// own item holding exactly that byte, so the text reads back unchanged and its
+// length is its byte count.
+func TestNonASCIIInsertKeepsBytes(t *testing.T) {
+	doc := NewDoc(1)
+	txt := doc.GetOrCreateText("root")
+	txt.Insert(0, "héllo")
+	if got := txt.String(); got != "héllo" {
+		t.Fatalf("got %q, want %q", got, "héllo")
+	}
+	if txt.Len() != uint64(len("héllo")) {
+		t.Fatalf("len: got %d, want %d", txt.Len(), len("héllo"))
+	}
+}
+
+// With non-ASCII text, splitting an item and sending the document to another
+// replica keep every id unique, so both replicas read the same text (issue
+// #216: when a byte became two, a split gave its right half an id another item
+// already had, and the replicas diverged).
+func TestNonASCIIReplicasConverge(t *testing.T) {
+	a := NewDoc(1)
+	ta := a.GetOrCreateText("root")
+	ta.Insert(0, "éa")
+	ta.Delete(1, 1)
+	ta.Insert(2, "z")
+	b := NewDoc(2)
+	b.ApplyUpdate(a.EncodeUpdate())
+	if got, want := b.GetOrCreateText("root").String(), ta.String(); got != want {
+		t.Fatalf("replica B reads %q, replica A reads %q", got, want)
+	}
+}
