@@ -58,3 +58,15 @@ func TestMirrorTracksText(t *testing.T) {
 		}
 	}
 }
+
+// The mirror stays equal to a text holding non-ASCII bytes (issue #216).
+func TestMirrorTracksNonASCII(t *testing.T) {
+	doc := yjs.NewDoc(1)
+	txt := doc.GetOrCreateText("text")
+	mirror := NewMirror(doc, txt)
+	txt.Insert(0, "héllo")
+	txt.Delete(1, 1)
+	if !mirror.Check() || mirror.Text() != txt.String() {
+		t.Fatalf("mirror %q, text %q", mirror.Text(), txt.String())
+	}
+}

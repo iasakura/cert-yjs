@@ -1,6 +1,8 @@
 (** Specs of the package's unexported helpers over [item]: [itemPtrEqual]
     (yjs/store.go), which compares two item pointers by identity, i.e. by model
-    id, with the null cases of y-octo's [Somr] comparison.
+    id, with the null cases of y-octo's [Somr] comparison; [byteString]
+    (yjs/content.go), which returns the one-byte string [[b]] of a byte [b],
+    the content of a one-character item.
 
     The exported methods have a file each ([item/Indexable.v], [item/Len.v],
     [item/Deleted.v]). *)
@@ -61,6 +63,20 @@ Proof.
     iSplit; iPureIntro; [reflexivity | assumption].
   - iDestruct "Ha" as "%Hpa". iDestruct "Hb" as "%Hpb". subst pa pb.
     wp_auto. iApply "HΦ". rewrite /item_or_null. iSplit; iPureIntro; reflexivity.
+Qed.
+
+(** [byteString b] is the one-byte string [[b]] (built from a byte slice, so
+    that a byte from 0x80 up stays one byte, issue #216). *)
+Lemma wp_byteString (b : w8) :
+  {{{ is_pkg_init yjs }}}
+    @! yjs.byteString #b
+  {{{ RET #([b] : go_string); True }}}.
+Proof.
+  wp_start. wp_auto.
+  wp_bind (CompositeLiteral _ _). wp_apply wp_slice_literal.
+  iSplitR; first done. iIntros (sl_ptr) "[Hsl _]".
+  wp_apply (wp_bytes_to_string with "Hsl"). iIntros "_". wp_auto.
+  by iApply "HΦ".
 Qed.
 
 End item_wp_private.

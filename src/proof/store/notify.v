@@ -198,6 +198,7 @@ Proof.
         replace (sint.nat (W64 i)) with i by word.
         rewrite Hb.
         wp_auto.
+        wp_apply wp_byteString.
         wp_apply (wp_deltaSnoc _ _ _ (Insert (content x)) with "[$Hdelta]").
         { iPureIntro. split; [reflexivity | rewrite Hxb //]. }
         iIntros (dsl') "Hdelta". wp_auto. wp_for_post.

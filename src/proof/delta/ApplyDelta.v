@@ -12,6 +12,7 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core.
 From New.proof Require Import prelude.
 From New.proof.github_com.mit_pdos.perennial.goose.model Require Import strings.
+From New.proof.item Require Import wp_private.
 From New.proof.delta Require Import model value heap.
 
 Section delta_apply.
@@ -150,7 +151,8 @@ Proof.
         wp_auto.
         replace (sint.nat (w64_word_instance.(word.add) (W64 pos) (W64 i))) with (pos + i)%nat by word.
         rewrite Hb.
-        wp_auto. wp_for_post.
+        wp_auto.
+        wp_apply wp_byteString. wp_for_post.
         iFrame "Hcap HΦ Hk Hremaining Hdelta Hsl".
         iExists (S i).
         replace (w64_word_instance.(word.add) (W64 i) (W64 1)) with (W64 (S i)) by word.
@@ -223,7 +225,8 @@ Proof.
       wp_auto.
       replace (sint.nat (W64 (pos + j)%nat)) with (pos + j)%nat by word.
       rewrite Hb.
-      wp_auto. wp_for_post.
+      wp_auto.
+      wp_apply wp_byteString. wp_for_post.
       iFrame "Hcap HΦ Hsl".
       iExists (S j).
       replace (w64_word_instance.(word.add) (W64 (pos + j)%nat) (W64 1)) with (W64 (pos + S j)%nat) by word.

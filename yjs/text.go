@@ -149,7 +149,7 @@ func (t *Text) InsertIn(tr *Transaction, index uint64, content string) {
 		// carrying its parent (y-octo: store::create_item receives pos.left /
 		// pos.right / Some(Parent::Type)); the update path resolves the same
 		// fields with store.repair instead.
-		newit := newItem(newId(client, clk), string(content[i]), originLeftId, originRightId)
+		newit := newItem(newId(client, clk), byteString(content[i]), originLeftId, originRightId)
 		newit.left = left
 		newit.right = right
 		newit.parent = t.inner
