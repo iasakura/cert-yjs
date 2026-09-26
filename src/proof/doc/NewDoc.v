@@ -49,6 +49,9 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 Lemma wp_NewDoc (γh : history_names) (client : w64) :
   {{{ is_pkg_init yjs ∗
@@ -69,6 +72,10 @@ Proof.
   wp_auto.
   wp_apply wp_map_make1. iIntros (deletedSet_mref) "HdeletedSetMap".
   wp_auto.
+  (* the observer registry (issue #198 Part II): empty at birth; its
+     invariant clause is C2's *)
+  wp_apply wp_map_make1. iIntros (observers_mref) "HobserversMap".
+  wp_auto.
   wp_alloc s_loc as "Hs".
   wp_auto.
   wp_alloc dv as "Hd".
@@ -79,11 +86,12 @@ Proof.
   iStructNamed "Hs". simpl.
   iMod (init_RWMutex (storeN .@ "rw") with "mu") as (γrw) "(#Hrw0 & Hst & Hltoks)".
   (* the ghost layer, at the real lock names *)
-  iMod (store_tie_init s_loc γh client items_mref types_mref _ γrw
+  iMod (store_tie_init s_loc γh client items_mref types_mref observers_mref _ γrw
           with "client clock items [Hitemsmap] types [Htypesmap] deletedSet
-                pending pendingDeletes Hhist") as (γs) "Hst0".
+                pending pendingDeletes observers [HobserversMap] Hhist") as (γs) "Hst0".
   { iFrame "Hitemsmap". }
   { iFrame "Htypesmap". }
+  { iFrame "HobserversMap". }
   iNamed "Hst0".
   (* the tie invariant, at RLocked 0 *)
   iMod (inv_alloc (storeN .@ "tie") _

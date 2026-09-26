@@ -27,6 +27,10 @@
       a document whose per-type item lists are [m : gmap TypeId (list item)].
     - [doc_model_replaced m m' t L']: [m'] is [m] with the document of [t]
       replaced by [L'] (what one write to one type does to the model).
+    - [replay_ids inputs], with [ValidReplay_filter_new] (a replay only
+      inserts: filtered of its ids, every document is the initial one) and
+      [ValidReplay_inserted_top] (its ids sit above every older char of
+      their client): the transaction's start state across [applyUpdate].
     - the lemma stack: happens-before append-stability, freshness, receiver
       clock safety, the broadcast / deliver steps, and [certs_ValidReplay] (the
       certificate-based justification of [applyUpdate]'s [ValidReplay]).
@@ -3282,4 +3286,74 @@ Proof.
     + rewrite option_guard_False //= elem_of_nil //.
 Qed.
 
+
+(* ----- what a replay does to the filter of its inputs (issue #198 Part II) ----- *)
+
+(** A filter every element passes is the identity (any decision instance). *)
+Lemma filter_all (Q : YjsItem A -> Prop) `{∀ x, Decision (Q x)} (l : list (YjsItem A)) :
+  (∀ x, x ∈ l -> Q x) -> filter Q l = l.
+Proof.
+  elim: l => [| x l IH] Hl; first done.
+  rewrite filter_cons_True; last exact (Hl x (list_elem_of_here _ _)).
+  rewrite IH //. move=> y Hy. exact (Hl y (list_elem_of_further _ _ _ Hy)).
+Qed.
+
+(** The ids a replay's inputs carry. *)
+Definition replay_ids (inputs : list (TId * IntegrateInput (A := A))) : gset YjsId :=
+  list_to_set ((λ y : TId * IntegrateInput (A := A), in_id y.2) <$> inputs).
+
+(** A replay only inserts: without its inputs' ids, every type's document
+    is the initial one (each integrate splices one fresh item in, keeping
+    the order of the others). *)
+Lemma ValidReplay_filter_new (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
+  ValidReplay inputs m m' ->
+  ∀ t : TId, filter (λ x : YjsItem A, item_id x ∉ replay_ids inputs) (doc_model_get m' t) = doc_model_get m t.
+Proof.
+  elim => [m0 | t0 input rest m0 arr2 m1 newItem Htoit Hvld Hmax Hglob Hint Hvr IH] t.
+  - have -> : replay_ids [] = ∅ by rewrite /replay_ids fmap_nil list_to_set_nil.
+    apply filter_all => x _. apply not_elem_of_empty.
+  - rewrite /replay_ids fmap_cons list_to_set_cons.
+    rewrite (list_filter_iff _ (λ x : YjsItem A, item_id x ∉ ({[in_id input]} : gset YjsId) ∧
+                                   item_id x ∉ (list_to_set ((λ y : TId * IntegrateInput (A := A), in_id y.2) <$> rest) : gset YjsId)));
+      last first.
+    { move=> x. rewrite not_elem_of_union. tauto. }
+    rewrite -list_filter_filter. rewrite -/(replay_ids rest) (IH t).
+    have Hfresh : ∀ (t' : TId) x, x ∈ doc_model_get m0 t' -> item_id x ≠ in_id input.
+    { move=> t' x Hx Heq. have := Hglob t' x Hx. rewrite Heq. move=> H. have := H eq_refl. lia. }
+    destruct (decide (t = t0)) as [-> | Hne].
+    + rewrite docm_get_insert_eq.
+      destruct (integrate_insertIdx_form input _ arr2 Hint) as (didx & item & Hitem & ->).
+      rewrite /insertIdxIfInBounds. case_decide as Hle.
+      * rewrite filter_app filter_cons_False; last first.
+        { move=> Hnot. apply Hnot. apply elem_of_singleton. exact Hitem. }
+        rewrite -filter_app take_drop. apply filter_all => x Hx Hin.
+        apply elem_of_singleton in Hin. exact (Hfresh t0 x Hx Hin).
+      * apply filter_all => x Hx Hin. apply elem_of_singleton in Hin. exact (Hfresh t0 x Hx Hin).
+    + rewrite docm_get_insert_ne //. apply filter_all => x Hx Hin.
+      apply elem_of_singleton in Hin. exact (Hfresh t x Hx Hin).
+Qed.
+
+(** A replay's ids sit above every older char of their client, and keep
+    an id set that already did: what the transaction's start state needs
+    across [applyUpdate]. *)
+Lemma ValidReplay_inserted_top (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel)
+    (inserted : gset YjsId) :
+  ValidReplay inputs m m' ->
+  (∀ i j : YjsId, i ∈ inserted -> doc_model_has m j = true ->
+     clientId j = clientId i -> (clock i < clock j)%nat -> j ∈ inserted) ->
+  ∀ i j : YjsId, i ∈ inserted ∪ replay_ids inputs -> doc_model_has m' j = true ->
+    clientId j = clientId i -> (clock i < clock j)%nat -> j ∈ inserted ∪ replay_ids inputs.
+Proof.
+  move=> Hvr Htop i j Hi Hj Hcl Hlt.
+  apply docm_has_spec in Hj as (t & y & Hy & <-).
+  destruct (ValidReplay_prov _ _ _ Hvr t y Hy) as [Hold | (k & op & Hk & Hid)].
+  - apply elem_of_union in Hi as [Hi | Hi].
+    + apply elem_of_union_l. apply (Htop i (item_id y) Hi); [| exact Hcl | exact Hlt].
+      apply docm_has_spec. by exists t, y.
+    + exfalso. rewrite /replay_ids elem_of_list_to_set in Hi.
+      apply list_elem_of_fmap in Hi as [op [-> Hop]]. apply list_elem_of_lookup in Hop as [k Hk].
+      have := ValidReplay_arr_fresh _ _ _ Hvr k op Hk t y Hold Hcl. lia.
+  - apply elem_of_union_r. rewrite /replay_ids elem_of_list_to_set Hid.
+    apply list_elem_of_fmap. exists op. split; [done | exact (list_elem_of_lookup_2 _ _ _ Hk)].
+Qed.
 End network_model.

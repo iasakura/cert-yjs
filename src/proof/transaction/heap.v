@@ -2,6 +2,10 @@
 
     Definitions
     - [node_span v]: the span a node contributes to a record (head id, length).
+    - [own_id_spans sl dq ids]: the [[]idSpan] at [sl] denotes the char-id
+      set [ids] (the union of its spans' ids), every span fitting [w64]
+      (what [containsId]'s range test needs): a record's slice as
+      [textDelta] reads it.
     - [own_transaction_changes tr s_loc inserted tombstoned changed]: the
       transaction record at [tr] belongs to the store at [s_loc] and has
       recorded exactly the char ids [inserted] (its [insertSet]), the char
@@ -14,6 +18,8 @@
     Laws
     - [node_span_char_ids]: a node's span fits and denotes its run's chars.
     - [own_transaction_changes_store]: the record names its store.
+    - [own_transaction_changes_spans_acc]: borrow the record's two span
+      slices as the sets they denote ([store.notify]'s walk reads them).
 
     The record's WPs ([newTransaction], [recordInsert], [recordDelete]) are
     [transaction/wp_private.v]; the transaction handle a caller holds,
@@ -54,6 +60,12 @@ Proof. rewrite own_slice_cap_unseal /own_slice_cap_def. apply _. Qed.
     append). *)
 Definition node_span (v : yjs.item.t) : yjs.idSpan.t :=
   yjs.idSpan.mk v.(yjs.item.id') (W64 (length v.(yjs.item.content').(yjs.content.content'))).
+
+Definition own_id_spans (sl : slice.t) (dq : dfrac) (ids : gset YjsId) : iProp Σ :=
+  ∃ (vs : list yjs.idSpan.t),
+    "Hspans" ∷ sl ↦*{dq} vs ∗
+    "%Hspans_wf" ∷ ⌜Forall span_no_overflow vs⌝ ∗
+    "%Hspans_ids" ∷ ⌜ids = ⋃ (span_ids <$> vs)⌝.
 
 (** The transaction record: its store, and what it recorded so far. The
     [changed] map holds [true] at every recorded type (a Go set). *)
@@ -114,6 +126,26 @@ Lemma own_transaction_changes_store (tr s_loc : loc)
 Proof.
   iIntros "H". iNamed "H". iExists trv. iFrame "Htr". iSplit; first done.
   iIntros "Htr". iExists trv, insert_vs, delete_vs. iFrame "∗". done.
+Qed.
+
+Lemma own_transaction_changes_spans_acc (tr s_loc : loc)
+    (inserted tombstoned : gset YjsId) (changed : gset loc) :
+  own_transaction_changes tr s_loc inserted tombstoned changed -∗
+  ∃ (trv : yjs.Transaction.t), tr ↦ trv ∗ ⌜trv.(yjs.Transaction.store') = s_loc⌝ ∗
+    own_id_spans trv.(yjs.Transaction.insertSet') (DfracOwn 1) inserted ∗
+    own_id_spans trv.(yjs.Transaction.deleteSet') (DfracOwn 1) tombstoned ∗
+    (tr ↦ trv -∗
+     own_id_spans trv.(yjs.Transaction.insertSet') (DfracOwn 1) inserted -∗
+     own_id_spans trv.(yjs.Transaction.deleteSet') (DfracOwn 1) tombstoned -∗
+     own_transaction_changes tr s_loc inserted tombstoned changed).
+Proof.
+  iIntros "H". iNamed "H". iExists trv. iFrame "Htr". iSplit; first done.
+  iSplitL "Hinsert". { iExists insert_vs. iFrame "Hinsert". done. }
+  iSplitL "Hdelete". { iExists delete_vs. iFrame "Hdelete". done. }
+  iIntros "Htr Hins Hdel".
+  iDestruct "Hins" as (insert_vs') "(Hinsert' & %Hinsertwf' & %Hinserted')".
+  iDestruct "Hdel" as (delete_vs') "(Hdelete' & %Hdeletewf' & %Htombstoned')".
+  iExists trv, insert_vs', delete_vs'. iFrame "∗". done.
 Qed.
 
 End transaction_heap.

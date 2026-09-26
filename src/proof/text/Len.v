@@ -22,6 +22,7 @@ From New.proof Require Import history.
 From New.proof.id Require Import id.
 From New.proof.item Require Import item.
 From New.proof.ytype Require Import ytype.
+From New.proof.delta Require Import delta.
 From New.proof.store Require Import store.
 From New.proof.sync_proof Require Import mutex.
 From iris.algebra Require Import auth gmap gset.
@@ -51,6 +52,9 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* The ghost op-history types at the document content type; type names are Go
    strings (issue #49). *)

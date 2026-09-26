@@ -4,9 +4,9 @@
     higher-order in [f] ([closure_runs_transaction], a one-shot wand, so the
     closure may carry the caller's resources in): the caller proves [f]'s
     body against [own_transaction] at whatever state the store is in, and
-    chooses what it wants to know afterwards ([Q]). The observers of the changed
-    types are notified here before the unlock once they exist (Part II C2);
-    until then the transaction only records. *)
+    chooses what it wants to know afterwards ([Q]). The observers of the
+    changed types are notified before the unlock ([wp_store__notify], Part
+    II C2), which is where the registry moves to the end state. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -21,7 +21,7 @@ From New.proof.sync_proof Require Import base mutex rwmutex rwmutex_guard.
 From New.proof Require Import tok_set.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
-From New.proof.store Require Import model value heap wp_private.
+From New.proof.store Require Import model value heap wp_private notify.
 From New.proof.transaction Require Import transaction.
 
 Section store_transact.
@@ -53,17 +53,23 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (** A fresh transaction on the locked store: the record has recorded nothing,
     so every clause of [own_transaction] is vacuous. *)
 Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input) (deleted : gset YjsId) :
+    (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input) (deleted : gset YjsId)
+    (observers_mref : loc) :
   own_transaction_changes tr s_loc ∅ ∅ ∅ -∗
   own_store s_loc γs γh c h m pend deleted -∗
+  own_observer_registry observers_mref γs γh m deleted -∗
   own_transaction tr s_loc γs γh c h m pend deleted ∅ ∅ ∅.
 Proof.
-  iIntros "Hchanges Hstore".
-  iExists ∅. iFrame "Hchanges Hstore".
+  iIntros "Hchanges Hstore Hreg".
+  iExists ∅, m, deleted, observers_mref. iFrame "Hchanges Hstore Hreg".
+  iSplit; first (iPureIntro; apply transaction_start_fresh).
   iSplit; first iApply changed_types_bound_empty.
   iPureIntro. split_and!.
   - move=> i Hi. set_solver.
@@ -81,16 +87,18 @@ Proof.
   wp_start as "(#His_store & Hf)". rewrite /closure_runs_transaction.
   wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
-  iDestruct "Hinv" as (c h m pend deleted) "Hstore".
+  iDestruct "Hinv" as (c h m pend deleted observers_mref) "[Hstore Hreg]".
   wp_auto.
   wp_apply wp_newTransaction. iIntros (tr) "Hchanges".
   wp_auto.
-  iDestruct (own_transaction_fresh with "Hchanges Hstore") as "Htx".
+  iDestruct (own_transaction_fresh with "Hchanges Hstore Hreg") as "Htx".
   wp_apply ("Hf" with "[$Htx]").
   iIntros (h' m' pend' deleted' inserted tombstoned changed) "[Htx HQ]".
   wp_auto.
-  iDestruct "Htx" as (changed_locs) "Htx". iNamed "Htx".
-  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore]").
+  wp_apply (wp_store__notify with "[$Htx]"). iIntros "[Hstore Hreg]".
+  iDestruct "Hreg" as (observers_mref') "Hreg".
+  wp_auto.
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore $Hreg]").
   iApply "HΦ". iExists c, h', m', pend', deleted'. iFrame "HQ".
 Qed.
 

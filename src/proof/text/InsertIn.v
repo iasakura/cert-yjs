@@ -46,6 +46,9 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* The ghost op-history types at the document content type; type names are Go
    strings (issue #49). *)
@@ -89,7 +92,7 @@ Proof.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
   iDestruct "His_store" as "#His_store".
   subst text_store.
-  iDestruct "Htx" as (changed_locs) "Htx". iNamed "Htx".
+  iDestruct "Htx" as (changed_locs m0 deleted0 registry_mref) "Htx". iNamed "Htx".
   iDestruct "Hstore" as (client k pdel locs0 p0 bind acc) "Hown". iNamed "Hown". subst c.
   (* [s := tr.store]: the record names the store *)
   iDestruct (own_transaction_changes_store with "Hchanges") as (trv) "(Htr & %Htrstore & Hchangesback)".
@@ -154,13 +157,13 @@ Proof.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
         [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
-    iSplitL "Hchanges Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
-    { iExists changed_locs. iFrame "Hchanges Hchanged_bound".
+    iSplitL "Hchanges Hregistry Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf".
+    { iExists changed_locs, m0, deleted0, registry_mref. iFrame "Hchanges Hregistry Hchanged_bound".
       iSplitL.
-      { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
+      { iExists client, k, pdel, locs0, p0, bind, acc, observers_mref. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
           | exact Hctr | exact Hacccoh | exact Hdeleted]. }
-      iPureIntro. split_and!; [exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
+      iPureIntro. split_and!; [exact Hstart | exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
     iSplit.
     { iPureIntro. split_and!; [| left; reflexivity |].
       - apply (sorted_subseteq_sublist L (tm_arr ts) Hinvarr0 Hsorted (yai_sorted _ Hinvarr0)). exact HLts.
@@ -196,13 +199,13 @@ Proof.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
         [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
-    iSplitL "Hchanges Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
-    { iExists changed_locs. iFrame "Hchanges Hchanged_bound".
+    iSplitL "Hchanges Hregistry Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf".
+    { iExists changed_locs, m0, deleted0, registry_mref. iFrame "Hchanges Hregistry Hchanged_bound".
       iSplitL.
-      { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
+      { iExists client, k, pdel, locs0, p0, bind, acc, observers_mref. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
           | exact Hctr | exact Hacccoh | exact Hdeleted]. }
-      iPureIntro. split_and!; [exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
+      iPureIntro. split_and!; [exact Hstart | exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
     iSplit.
     { iPureIntro. split_and!; [| left; reflexivity |].
       - apply (sorted_subseteq_sublist L (tm_arr ts) Hinvarr0 Hsorted (yai_sorted _ Hinvarr0)). exact HLts.
@@ -474,6 +477,12 @@ Proof.
        (i = 0%nat → origin it = originLeft) ∧
        (∀ (j' : nat) (itj : YjsItem A), i = S j' → ins !! j' = Some itj → origin it = itemPtr itj)⌝ ∗
     "%Hsubold" ∷ ⌜∀ x : YjsItem A, x ∈ (tm_arr ts) → x ∈ arr⌝ ∗
+    (* the transaction's start state, over this insert: every char of the
+       grown list is an old one or the run's, and without the run's chars
+       (and the ones inserted before this call) the list is the old one *)
+    "%Harrsplit" ∷ ⌜∀ x : YjsItem A, x ∈ arr -> x ∈ tm_arr ts ∨ x ∈ ins⌝ ∗
+    "%Hfilterj" ∷ ⌜filter (λ x : YjsItem A, item_id x ∉ inserted ∪ char_ids ins) arr
+                   = filter (λ x : YjsItem A, item_id x ∉ inserted) (tm_arr ts)⌝ ∗
     "%Hcoupj" ∷ ⌜length (runs_flatten (take (p1i + j)%nat runsj)) = (mp + j)%nat⌝ ∗
     "%Hpjb" ∷ ⌜(p1i + j <= length runsj)%nat⌝ ∗
     "Hhistj" ∷ own_client_history γh (uint.nat client) hj ∗
@@ -510,6 +519,8 @@ Proof.
     - reflexivity.
     - intros i it Hii. rewrite lookup_nil in Hii. inversion Hii.
     - intros x Hx. exact Hx.
+    - intros x Hx. by left.
+    - reflexivity.
     - rewrite Hmpdef //.
     - exact Hpb1.
     - destruct Hhcoh as (sdoc & Hsd & Hmd). exists sdoc. split; [exact Hsd|].
@@ -857,7 +868,7 @@ Proof.
     iEval (rewrite Hinsstep Hchstep) in "Hchanges".
     wp_for_post.
     (* re-establish the loop invariant for [S j] with [ins ++ [newItem]] *)
-    iFrame "Ht His_lb HΦ HisRp Hacc".
+    iFrame "Ht His_lb HΦ HisRp Hacc Hregistry Hobserversf".
     iExists (S j), arr', (<[tv.(yjs.Text.inner') := ls']> locsj), (<[tv.(yjs.Text.inner') := MkTypeModel runs']> pj), ls', runs', (ins ++ [newItem]),
       (hj ++ [EvBroadcast (RootId name, OpInsert input);
               EvDeliver (RootId name, OpInsert input)]).
@@ -950,6 +961,28 @@ Proof.
           destruct Horig as [(_ & _ & Hp0') | (li & Hge & Hla & _ & Hmo)]; [lia |].
           rewrite Hmo. destruct Hleftj as [Hp0'' | (lr2 & li2 & _ & Hla2 & _ & _ & _ & Hlk)]; [lia |]. have -> : li = li2 by (rewrite Hla in Hla2; injection Hla2 as ->; reflexivity). have Hli2 := Hlk j' Hisj. rewrite Hli2 in Hlookj'. injection Hlookj' as <-. reflexivity.
     - intros x Hx. have Hxa := Hsubold x Hx. rewrite Hplace. rewrite -(take_drop (mp + j)%nat arr) in Hxa. apply elem_of_app in Hxa as [H1 | H2]; [apply elem_of_app; left; exact H1 | apply elem_of_app; right; apply elem_of_cons; right; exact H2].
+    - (* every char of the grown list is an old one, the run's so far, or the new one *)
+      move=> x Hx. rewrite Hplace in Hx.
+      have Hold : x ∈ arr -> x ∈ tm_arr ts ∨ x ∈ ins ++ [newItem].
+      { move=> Hxa. destruct (Harrsplit x Hxa) as [Ho | Hi]; [by left | right; apply elem_of_app; by left]. }
+      apply elem_of_app in Hx as [Hx | Hx].
+      + apply Hold. rewrite -(take_drop (mp + j)%nat arr). apply elem_of_app. by left.
+      + apply elem_of_cons in Hx as [-> | Hx].
+        * right. apply elem_of_app. right. apply list_elem_of_singleton. reflexivity.
+        * apply Hold. rewrite -(take_drop (mp + j)%nat arr). apply elem_of_app. by right.
+    - (* the filter equation: the new char is the run's, the rest is as before *)
+      have Hfreshid : ∀ x, x ∈ arr -> item_id x ∉ ({[item_id newItem]} : gset YjsId).
+      { move=> x Hx Hin. apply elem_of_singleton in Hin.
+        have Hcl : clientId (item_id x) = uint.nat client by rewrite Hin /newItem /in_id1 //.
+        have Hclk : clock (item_id x) = (uint.nat k + j)%nat by rewrite Hin /newItem /in_id1 /= Hclocknit //.
+        destruct (Harrsplit x Hx) as [Ho | Hi].
+        - have := (proj1 Hctr) tv.(yjs.Text.inner') ts x Htsp Ho Hcl. lia.
+        - apply list_elem_of_lookup in Hi as [i Hi]. destruct (Hins i x Hi) as (_ & _ & Hid & _).
+          have Hlti := lookup_lt_Some _ _ _ Hi. rewrite Hid /= in Hclk. lia. }
+      rewrite (char_ids_app ins [newItem]) char_ids_cons char_ids_nil (right_id_L ∅ (∪)) (assoc_L (∪)).
+      rewrite Hplace filter_app filter_cons_False; last first.
+      { move=> Hnot. apply Hnot. apply elem_of_union_r. by apply elem_of_singleton. }
+      rewrite -filter_app take_drop (filter_not_in_union _ _ arr Hfreshid). exact Hfilterj.
     - (* Hcoupj at S j: the splice adds one unit run at the cursor *)
       replace (p1i + S j)%nat with (S (p1i + j))%nat by lia.
       rewrite Hruns'eq.
@@ -1026,8 +1059,8 @@ Proof.
   (* the store after the insert, at the grown model: what the transaction
      carries on *)
   iAssert (own_store s_loc γs γh (uint.nat client) hj (<[RootId name := arr]> m) pend deleted)
-    with "[Hruns Hseq HtypesAuth Hhistj Hacc Hdelete_set]" as "Hstore".
-  { iExists client, (W64 (uint.Z k + j)), pdel, locsj, pj, bind, acc.
+    with "[Hruns Hseq HtypesAuth Hhistj Hacc Hdelete_set Hobserversf]" as "Hstore".
+  { iExists client, (W64 (uint.Z k + j)), pdel, locsj, pj, bind, acc, observers_mref.
     rewrite (pool_seq_map_insert_at p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj) Hdompj Htsp Hpj) /=.
     rewrite /tm_arr /= -Harrj.
     iFrame "∗#". iPureIntro. split_and!;
@@ -1048,6 +1081,47 @@ Proof.
     - rewrite docm_get_insert_eq. apply Hsubold. rewrite -Hmt. exact Hx.
     - rewrite docm_get_insert_ne //. }
   iModIntro.
+  (* an item of another type is not the run's and, with the run's client, is
+     below the counter: the other types' filters are untouched and the run's
+     chars are above every older char of their client *)
+  have Hother : ∀ (tid : TId) (x : YjsItem A), tid ≠ RootId name -> x ∈ doc_model_get m tid ->
+      clientId (item_id x) = uint.nat client -> (clock (item_id x) < uint.nat k)%nat.
+  { move=> tid x Hne Hx Hcl.
+    have Hnem : doc_model_get m tid ≠ [] by (move=> Hnil; rewrite Hnil in Hx; by apply elem_of_nil in Hx).
+    destruct (Hmdom tid Hnem) as (name' & p' & -> & Hbind').
+    destruct (Hbindtypes name' p' Hbind') as [ts' Hts'].
+    rewrite (Hmtypes name' p' ts' Hbind' Hts') in Hx.
+    exact ((proj1 Hctr) p' ts' x Hts' Hx Hcl). }
+  have Hstart' : transaction_start (<[RootId name := arr]> m) deleted (inserted ∪ char_ids ins) tombstoned m0 deleted0.
+  { destruct Hstart as (Hfilter & Hdel & Hdisj & Htop). split_and!; [| exact Hdel | exact Hdisj |].
+    - move=> tid. destruct (decide (tid = RootId name)) as [-> | Hne].
+      + rewrite docm_get_insert_eq Hfilterj (Hfilter (RootId name)) Hmt //.
+      + rewrite docm_get_insert_ne // (Hfilter tid).
+        symmetry. apply filter_not_in_union. move=> x Hx Hin.
+        apply elem_of_char_ids in Hin as (y & Hy & Hid).
+        apply list_elem_of_lookup in Hy as [i Hi]. destruct (Hins i y Hi) as (_ & _ & Hidy & _).
+        have Hcl : clientId (item_id x) = uint.nat client by rewrite -Hid Hidy //.
+        have := Hother tid x Hne Hx Hcl. rewrite -Hid Hidy /=. lia.
+    - move=> i j0 Hi Hj Hcl Hlt. apply elem_of_union in Hi as [Hi | Hi].
+      + apply docm_has_spec in Hj as (tid & y & Hy & <-).
+        destruct (decide (tid = RootId name)) as [-> | Hne].
+        * rewrite docm_get_insert_eq in Hy. destruct (Harrsplit y Hy) as [Ho | Hin].
+          -- apply elem_of_union_l. apply (Htop i (item_id y) Hi); [| exact Hcl | exact Hlt].
+             apply docm_has_spec. exists (RootId name), y. split; [rewrite Hmt; exact Ho | reflexivity].
+          -- apply elem_of_union_r. apply elem_of_char_ids. by exists y.
+        * rewrite docm_get_insert_ne // in Hy. apply elem_of_union_l.
+          apply (Htop i (item_id y) Hi); [| exact Hcl | exact Hlt].
+          apply docm_has_spec. by exists tid, y.
+      + apply elem_of_char_ids in Hi as (y & Hy & <-).
+        apply list_elem_of_lookup in Hy as [iy Hiy]. destruct (Hins iy y Hiy) as (_ & _ & Hidy & _).
+        apply docm_has_spec in Hj as (tid & z & Hz & <-).
+        rewrite Hidy /= in Hcl Hlt.
+        destruct (decide (tid = RootId name)) as [-> | Hne].
+        * rewrite docm_get_insert_eq in Hz. destruct (Harrsplit z Hz) as [Ho | Hin].
+          -- exfalso. have := (proj1 Hctr) tv.(yjs.Text.inner') ts z Htsp Ho Hcl. lia.
+          -- apply elem_of_union_r. apply elem_of_char_ids. by exists z.
+        * rewrite docm_get_insert_ne // in Hz. exfalso.
+          have := Hother tid z Hne Hz Hcl. lia. }
   iApply ("HΦ" $! arr ins hj (<[RootId name := arr]> m) (uint.nat k) originLeft originRight).
   iSplitL "Hfrag Ht".
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
@@ -1055,9 +1129,10 @@ Proof.
       [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvj)]. }
   (* the transaction after the insert: the record's meaning at the grown
      model, this text now among the changed types (unless the run is empty) *)
-  iSplitL "Hchanges Hstore".
-  { iExists (changed_locs ∪ (if decide (ins = []) then ∅ else {[tv.(yjs.Text.inner')]})).
-    iFrame "Hchanges Hstore".
+  iSplitL "Hchanges Hstore Hregistry".
+  { iExists (changed_locs ∪ (if decide (ins = []) then ∅ else {[tv.(yjs.Text.inner')]})), m0, deleted0, registry_mref.
+    iFrame "Hchanges Hstore Hregistry".
+    iSplitR; first (iPureIntro; exact Hstart').
     iSplitR.
     { destruct (decide (ins = [])) as [-> | Hne].
       - repeat (rewrite decide_True; last reflexivity).

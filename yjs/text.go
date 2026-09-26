@@ -62,6 +62,30 @@ func (t *Text) Len() uint64 {
 // (Yjs ytext.insert outside a transact, which opens one of its own; yrs
 // TextRef::insert with a transact_mut). One write, one transaction: the
 // observers of this text are notified once, at its end.
+// Observe registers callback on t (Yjs YText.observe, src/types/AbstractType.js
+// observe; yrs TextRef::observe, src/types/text.rs). Under the store's write
+// lock: one immediate call with the whole visible text as one insert (the
+// initial load a Yjs binding does with toString() before observing, here
+// atomic with the registration), then one call at the end of every
+// transaction that changed t, with that transaction's delta (notify,
+// transaction.go). Callbacks run under the store's write lock: a callback
+// must not lock the document again (no Transact, Insert, Delete,
+// ApplySyncUpdate, Observe, String, Len: deadlock) and a lock it takes is
+// ordered after the store's. Not callable inside a transaction, for the same
+// reason (#206 item 2).
+func (t *Text) Observe(callback func(delta []DeltaOp)) {
+	s := t.store
+	s.mu.Lock()
+	var initial []DeltaOp
+	text := t.inner.Text()
+	if len(text) > 0 {
+		initial = append(initial, DeltaOp{Kind: DeltaInsert, Content: text})
+	}
+	callback(initial)
+	s.observers[t.inner] = append(s.observers[t.inner], callback)
+	s.mu.Unlock()
+}
+
 func (t *Text) Insert(index uint64, content string) {
 	t.store.transact(func(tr *Transaction) {
 		t.InsertIn(tr, index, content)

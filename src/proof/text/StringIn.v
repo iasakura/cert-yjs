@@ -37,6 +37,9 @@ Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 Local Notation P := go_string.
 Local Notation TId := (TypeId P).
@@ -64,8 +67,8 @@ Proof.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
   iDestruct "His_store" as "#His_store". iDestruct "Ht" as "#Ht". iDestruct "His_lb" as "#His_lb".
   subst text_store parent.
-  iDestruct "Htx" as (changed_locs) "Htx". iNamed "Htx".
-  iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
+  iDestruct "Htx" as (changed_locs m0 deleted0 registry_mref) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as (client k pdel locs p bind acc observers_mref) "Hown". iNamed "Hown".
   (* the registry binds [name] to this text, whose document is the model's *)
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
   iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
@@ -92,12 +95,12 @@ Proof.
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
     iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
     iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted]. }
-  iExists changed_locs. iFrame "Hchanges Hchanged_bound".
+  iExists changed_locs, m0, deleted0, registry_mref. iFrame "Hchanges Hregistry Hchanged_bound".
   iSplitL.
-  { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro. split_and!;
+  { iExists client, k, pdel, locs, p, bind, acc, observers_mref. iFrame "∗#". iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
       | exact Hctr | exact Hacccoh | exact Hdeleted]. }
-  iPureIntro. split_and!; [exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded].
+  iPureIntro. split_and!; [exact Hstart | exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded].
 Qed.
 
 End text.

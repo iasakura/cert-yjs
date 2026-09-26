@@ -60,20 +60,39 @@ func (tr *Transaction) recordDelete(it *item) {
 	tr.changed[it.parent] = true
 }
 
-// transact runs f as one transaction: lock, f, unlock (Yjs transact,
+// transact runs f as one transaction: lock, f, notify, unlock (Yjs transact,
 // src/utils/Transaction.js:391-422, without the reentrant branch; yrs
 // transact_mut takes the store's write guard and commits on drop,
 // src/transact.rs:131, src/transaction.rs:488). The store's write lock is the
 // transaction's critical section. Go has no goroutine identity, so a nested
-// transact cannot be recognised and deadlocks (#206, item 2): f uses the
-// In-variants (Text.InsertIn / DeleteIn / StringIn) and never locks the
-// document. The observers of the changed types are notified here before the
-// unlock once they exist (issue #198, Part II C2).
+// transact cannot be recognised and deadlocks (#206, item 2): f, and the
+// callbacks notify runs, use the In-variants (Text.InsertIn / DeleteIn /
+// StringIn) and never lock the document.
 func (s *store) transact(f func(tr *Transaction)) {
 	s.mu.Lock()
 	tr := newTransaction(s)
 	f(tr)
+	s.notify(tr)
 	s.mu.Unlock()
+}
+
+// notify is the observer half of Yjs's cleanupTransactions
+// (src/utils/Transaction.js:231-236; yrs call_observers,
+// src/transaction.rs:978): for every type the transaction changed and somebody
+// observes, one walk yields the delta (textDelta), shared by that type's
+// callbacks. Go map order: the types are notified in no particular order
+// (Yjs: the insertion order of changed). Runs under the store's write lock,
+// which the callbacks inherit (Text.Observe).
+func (s *store) notify(tr *Transaction) {
+	for ty := range tr.changed {
+		callbacks := s.observers[ty]
+		if len(callbacks) > 0 {
+			delta := textDelta(ty, tr.insertSet, tr.deleteSet)
+			for i := 0; i < len(callbacks); i++ {
+				callbacks[i](delta)
+			}
+		}
+	}
 }
 
 // newTransaction is an empty transaction record (Yjs's Transaction

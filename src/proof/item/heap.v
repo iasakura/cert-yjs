@@ -33,8 +33,8 @@
       ([own_dll_fresh], via [item_pointsto_conflict]), which is where
       the [NoDup] of addresses comes from.
     - the pure content of the spine, read off it: every run is chained
-      ([own_dll_run_wf]) and every head id fits a machine word
-      ([own_dll_id_bounds]).
+      ([own_dll_run_wf]), every run is per-char ([own_dll_run_per_char])
+      and every head id fits a machine word ([own_dll_id_bounds]).
 
     The per-node method specs are [item/wp_private.v]. *)
 From New.proof Require Import proof_prelude.
@@ -605,6 +605,22 @@ Proof.
     iPureIntro. move=> r Hr.
     apply elem_of_cons in Hr as [-> | Hr]; last exact (Hrest r Hr).
     exact Hrun.
+Qed.
+
+Lemma own_dll_run_per_char (dq : dfrac) (parent l last prev next : loc)
+    (ls : list loc) (runs : list ItemRun) :
+  own_dll dq parent l last prev next ls runs -∗
+  ⌜∀ r, r ∈ runs -> run_per_char r⌝.
+Proof.
+  iInduction ls as [|lc ls] "IH" forall (l prev runs).
+  - destruct runs as [|r runs]; last (iIntros "[]").
+    iIntros "_". iPureIntro. move=> r Hr. by apply elem_of_nil in Hr.
+  - destruct runs as [|r0 runs]; first (iIntros "[]").
+    iIntros "H". iNamed "H". iDestruct "H" as (nxt0) "H". iNamed "H".
+    iDestruct ("IH" with "Hrest") as %Hrest.
+    iPureIntro. move=> r Hr.
+    apply elem_of_cons in Hr as [-> | Hr]; last exact (Hrest r Hr).
+    exact Hperchar.
 Qed.
 
 (** The run spine is fractional: the share of every node splits and the

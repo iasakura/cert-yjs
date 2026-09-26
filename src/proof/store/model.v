@@ -18,6 +18,15 @@
       nothing, a sweep never clears one ([runs_tombstoned_split] /
       [_integrate] / [_flip], [pool_tombstoned_insert_empty] /
       [_dead_kept]), read per type by [pool_tombstoned_lookup] / [_insert].
+    - [type_snapshot m deleted name]: a type's tombstone-tagged char sequence
+      as a function of the public model; [transaction_start m deleted inserted
+      tombstoned m0 deleted0]: the state a transaction started from, read off
+      where it is and its record ([type_snapshot_start] / [text_delta_transaction]:
+      the start snapshot through [snapshot_before], the record's delta and
+      growth; [type_snapshot_untouched]: a type none of whose chars the
+      record mentions has the snapshot it started with;
+      [live_run_chars_not_tombstoned] / [fresh_tombstones_flip]: a sweep
+      records only live chars).
     - [accepted_coh] / [pending_id_set] / [input_accounted]: which delivered
       ids a replica has accounted for, either integrated or still pending. This
       is what the no-loss spec is stated with.
@@ -107,6 +116,7 @@ From iris.algebra Require Import auth gmap gset.
 From stdpp Require Import sorting.
 From New.proof.item Require Import run_theory model value heap.
 From New.proof.ytype Require Import model value heap.
+From New.proof.delta Require Import model.
 Local Open Scope Z_scope.
 
 Section store_model.
@@ -2117,12 +2127,173 @@ Proof.
 Qed.
 
 
+(** A wire item's per-char ops carry its char ids, so a batch's char ids are
+    the ids its per-char replay inserts ([replay_ids]). *)
+Lemma expand_input_char_ids (x op : TId * IntegrateInput (A := A)) :
+  op ∈ expand_input x -> in_id op.2 ∈ input_char_ids x.2.
+Proof.
+  rewrite /expand_input list_elem_of_fmap. move=> [o [-> Ho]]. simpl.
+  apply list_elem_of_lookup in Ho as [k Hk].
+  have Hlen : length (ops_of_input x.2 (explode (in_content x.2))) = length (explode (in_content x.2))
+    := ops_from_length _ _ _ _ _.
+  have Hklt : (k < length (in_content x.2))%nat.
+  { have := lookup_lt_Some _ _ _ Hk. rewrite Hlen explode_length. lia. }
+  rewrite (proj1 (ops_from_lookup _ _ _ _ _ _ _ Hk)).
+  apply elem_of_input_char_ids. simpl. split_and!; [done | lia | lia].
+Qed.
+
+Lemma inputs_char_ids_replay (l : list (TId * IntegrateInput (A := A))) :
+  inputs_char_ids l = replay_ids (expand_inputs l).
+Proof.
+  apply set_eq => i. rewrite elem_of_inputs_char_ids /replay_ids elem_of_list_to_set list_elem_of_fmap. split.
+  - move=> [x [Hx Hi]]. destruct (input_char_ids_expand x i Hi) as (op & Hop & Hid).
+    exists op. split; [by rewrite Hid |].
+    rewrite /expand_inputs list_elem_of_join. exists (expand_input x). split; [exact Hop |].
+    apply list_elem_of_fmap. by exists x.
+  - move=> [op [-> Hop]]. rewrite /expand_inputs list_elem_of_join in Hop.
+    destruct Hop as [l0 [Hop Hl0]]. apply list_elem_of_fmap in Hl0 as [x [-> Hx]].
+    exists x. split; [exact Hx | exact (expand_input_char_ids x op Hop)].
+Qed.
+
 (** The exact snapshot of a type, read off the public model: its items tagged
     by membership in the tombstone set. [runs_model_tombstoned] is the bridge
     to the run view a walk sees: a run's bit is the membership of any of its
     chars, by covering-slot uniqueness ([run_deleted_tombstoned]). *)
 Definition type_snapshot (m : DocModel) (deleted : gset YjsId) (name : P) : list (YjsItem A * bool) :=
   (λ x, (x, bool_decide (item_id x ∈ deleted))) <$> doc_model_get m (RootId name).
+
+(** [transaction_start m deleted inserted tombstoned m0 deleted0]: [(m0, deleted0)]
+    is the state a transaction started from, given the state it is at,
+    [(m, deleted)], and what it recorded: every type's document was the
+    current one without the chars inserted here (integration keeps the
+    order of the others); the tombstones were the current ones without those
+    tombstoned here, which were live; and a char inserted here is above every
+    older char of its client (every integrate takes its client's next clock).
+    What makes a type's start snapshot grow to its current one
+    ([snapshot_grows_to]) and the transaction's record classify the current
+    snapshot's chars ([text_delta]). [own_transaction]'s clause; the
+    registry of observers sits at the start state until [notify]. *)
+Definition transaction_start (m : DocModel) (deleted inserted tombstoned : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) : Prop :=
+  (∀ t : TId, doc_model_get m0 t = filter (λ x : YjsItem A, item_id x ∉ inserted) (doc_model_get m t)) ∧
+  deleted = deleted0 ∪ tombstoned ∧
+  tombstoned ## deleted0 ∧
+  (∀ i j : YjsId, i ∈ inserted -> doc_model_has m j = true ->
+     clientId j = clientId i -> (clock i < clock j)%nat -> j ∈ inserted).
+
+
+(** Chars outside a set are filtered the same with that set added: what
+    lets a write's fresh chars leave the other types' filters alone. *)
+Lemma filter_not_in_union (S T : gset YjsId) (l : list (YjsItem A)) :
+  (∀ x, x ∈ l -> item_id x ∉ T) ->
+  filter (λ x : YjsItem A, item_id x ∉ S ∪ T) l = filter (λ x : YjsItem A, item_id x ∉ S) l.
+Proof.
+  elim: l => [| y l IH] Hl; first done.
+  have Hy : item_id y ∉ T := Hl y (list_elem_of_here _ _).
+  have Hl' : ∀ x, x ∈ l -> item_id x ∉ T := λ x Hx, Hl x (list_elem_of_further _ _ _ Hx).
+  rewrite !filter_cons (IH Hl').
+  have Hiff : item_id y ∉ S ∪ T ↔ item_id y ∉ S.
+  { split.
+    - move=> Hn Hin. apply Hn. apply elem_of_union_l. exact Hin.
+    - move=> Hn Hin. apply elem_of_union in Hin as [Hin | Hin]; [exact (Hn Hin) | exact (Hy Hin)]. }
+  destruct (decide (item_id y ∉ S ∪ T)) as [Hd | Hd]; destruct (decide (item_id y ∉ S)) as [Hd' | Hd'];
+    [done | exfalso; apply Hd'; by apply Hiff | exfalso; apply Hd; by apply Hiff | done].
+Qed.
+
+(** A type's start snapshot is its current one read through the record
+    ([snapshot_before]), so the record classifies the current snapshot's
+    chars ([text_delta_before]) and the start snapshot grows to the current
+    one ([snapshot_before_grows_to]): what [store.notify] tells an observer. *)
+Lemma type_snapshot_start (m : DocModel) (deleted inserted tombstoned : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) (name : P) :
+  transaction_start m deleted inserted tombstoned m0 deleted0 ->
+  type_snapshot m0 deleted0 name = snapshot_before inserted tombstoned (type_snapshot m deleted name).
+Proof.
+  move=> [Hfilter [Hdel [Hdisj _]]]. rewrite /type_snapshot /snapshot_before Hfilter.
+  elim: (doc_model_get m (RootId name)) => [| x l IH]; first done.
+  rewrite fmap_cons filter_cons filter_cons. simpl.
+  destruct (decide (item_id x ∉ inserted)) as [Hni | Hi]; last exact IH.
+  rewrite !fmap_cons -IH. f_equal. f_equal.
+  rewrite Hdel. case_bool_decide as H0.
+  - rewrite bool_decide_eq_true_2; last (apply elem_of_union_l; exact H0).
+    rewrite bool_decide_eq_true_2; first done.
+    move=> Ht. exact (Hdisj _ Ht H0).
+  - case_bool_decide as Hd; last done.
+    apply elem_of_union in Hd as [Hd | Hd]; first done.
+    rewrite bool_decide_eq_false_2; first done. move=> Hnt. exact (Hnt Hd).
+Qed.
+
+Lemma type_snapshot_fst (m : DocModel) (deleted : gset YjsId) (name : P) :
+  (type_snapshot m deleted name).*1 = doc_model_get m (RootId name).
+Proof.
+  rewrite /type_snapshot -list_fmap_compose -{2}(list_fmap_id (doc_model_get m (RootId name))).
+  apply list_fmap_ext. move=> i x _. reflexivity.
+Qed.
+
+Lemma type_snapshot_tombstoned_bit (m : DocModel) (deleted : gset YjsId) (name : P) (x : YjsItem A * bool) :
+  x ∈ type_snapshot m deleted name -> item_id x.1 ∈ deleted -> x.2 = true.
+Proof.
+  rewrite /type_snapshot list_elem_of_fmap. move=> [y [-> Hy]] Hd. simpl in *.
+  apply bool_decide_eq_true_2. exact Hd.
+Qed.
+
+Lemma elem_of_type_snapshot (m : DocModel) (deleted : gset YjsId) (name : P) (x : YjsItem A) (b : bool) :
+  (x, b) ∈ type_snapshot m deleted name <->
+  x ∈ doc_model_get m (RootId name) ∧ b = bool_decide (item_id x ∈ deleted).
+Proof.
+  rewrite /type_snapshot list_elem_of_fmap. split.
+  - move=> [y [Heq Hy]]. injection Heq as <- <-. done.
+  - move=> [Hx ->]. by exists x.
+Qed.
+
+(** What [store.notify] tells an observer of [name]: the record's delta,
+    and that the start snapshot grew to the current one. *)
+Lemma text_delta_transaction (m : DocModel) (deleted inserted tombstoned : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) (name : P) :
+  transaction_start m deleted inserted tombstoned m0 deleted0 ->
+  tombstoned ⊆ deleted ->
+  YjsArrInvariant (doc_model_get m (RootId name)) ->
+  text_delta (type_snapshot m0 deleted0 name) (type_snapshot m deleted name) =
+    delta_normal_form (record_delta inserted tombstoned (type_snapshot m deleted name)) ∧
+  snapshot_grows_to (type_snapshot m0 deleted0 name) (type_snapshot m deleted name).
+Proof.
+  move=> Hstart Hsub Hinv.
+  have Htop := proj2 (proj2 (proj2 Hstart)).
+  rewrite (type_snapshot_start _ _ _ _ _ _ name Hstart).
+  have Hnodup : NoDup (type_snapshot m deleted name).*1.
+  { rewrite type_snapshot_fst. exact (uniqueId_NoDup _ (yai_unique _ Hinv)). }
+  split.
+  - apply text_delta_before; first exact Hnodup.
+    move=> x Hx Ht. exact (type_snapshot_tombstoned_bit m deleted name x Hx (Hsub _ Ht)).
+  - apply snapshot_before_grows_to.
+    move=> x y Hx Hy Hcl Hxi Hlt. rewrite type_snapshot_fst in Hx Hy.
+    apply (Htop (item_id x) (item_id y) Hxi); [| exact (eq_sym Hcl) | exact Hlt].
+    apply docm_has_spec. exists (RootId name), y. split; [exact Hy | reflexivity].
+Qed.
+
+(** Such a type's snapshot is the one it started with: what lets [notify]
+    leave its observers alone. *)
+Lemma type_snapshot_untouched (m : DocModel) (deleted inserted tombstoned : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) (name : P) :
+  transaction_start m deleted inserted tombstoned m0 deleted0 ->
+  (∀ x, x ∈ doc_model_get m (RootId name) -> item_id x ∉ inserted ∧ item_id x ∉ tombstoned) ->
+  type_snapshot m0 deleted0 name = type_snapshot m deleted name.
+Proof.
+  move=> Hstart Hout. rewrite (type_snapshot_start _ _ _ _ _ _ name Hstart).
+  apply snapshot_before_untouched. move=> x Hx. apply Hout.
+  rewrite -(type_snapshot_fst m deleted name). apply list_elem_of_fmap. exists x. split; [reflexivity | exact Hx].
+Qed.
+
+Lemma transaction_start_fresh (m : DocModel) (deleted : gset YjsId) :
+  transaction_start m deleted ∅ ∅ m deleted.
+Proof.
+  split_and!.
+  - move=> t. elim: (doc_model_get m t) => [| x l IH]; first done.
+    rewrite filter_cons_True; [by rewrite -IH | apply not_elem_of_empty].
+  - rewrite (right_id_L ∅ (∪)) //.
+  - apply disjoint_empty_l.
+  - move=> i j Hi. exfalso. exact (not_elem_of_empty i Hi).
+Qed.
 
 Lemma run_deleted_tombstoned (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun)
     (x : YjsItem A) :
@@ -2170,5 +2341,32 @@ Proof.
   apply (Hgen 0%nat). move=> j r Hj. rewrite Nat.add_0_l. exact Hj.
 Qed.
 
+
+(** The chars of a live run are not tombstoned: what a flip adds to the
+    record is fresh. *)
+Lemma live_run_chars_not_tombstoned (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
+  pool_invs p -> p !! parent = Some tm -> tm_runs tm !! k = Some r -> run_deleted r = false ->
+  char_ids (run_items r) ## pool_tombstoned p.
+Proof.
+  move=> Hinv Hp Hk Hd. rewrite elem_of_disjoint => i Hi Hip.
+  apply elem_of_char_ids in Hi as (x & Hx & <-).
+  have := run_deleted_tombstoned p parent tm k r x Hinv Hp Hk Hx.
+  rewrite Hd bool_decide_eq_true_2 //.
+Qed.
+
+(** A sweep's record stays fresh over a flip: the flipped run was live. *)
+Lemma fresh_tombstones_flip (p p2 : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun)
+    (tombstoned tombstoned_i : gset YjsId) :
+  pool_invs p2 -> p2 !! parent = Some tm -> tm_runs tm !! k = Some r -> run_deleted r = false ->
+  pool_tombstoned p ⊆ pool_tombstoned p2 ->
+  (tombstoned_i ∖ tombstoned) ## pool_tombstoned p ->
+  ((tombstoned_i ∪ char_ids (run_items r)) ∖ tombstoned) ## pool_tombstoned p.
+Proof.
+  move=> Hinv Hp Hk Hd Hsub Hfresh. rewrite elem_of_disjoint => i Hi Hip.
+  apply elem_of_difference in Hi as [Hi Hni].
+  apply elem_of_union in Hi as [Hi | Hi].
+  - exact (proj1 (elem_of_disjoint _ _) Hfresh i (proj2 (elem_of_difference _ _ _) (conj Hi Hni)) Hip).
+  - exact (proj1 (elem_of_disjoint _ _) (live_run_chars_not_tombstoned p2 parent tm k r Hinv Hp Hk Hd) i Hi (Hsub i Hip)).
+Qed.
 
 End store_model.
