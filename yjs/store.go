@@ -322,8 +322,7 @@ func splitItem(n *item, diff uint64) *item {
 	// Split the content through a []byte round-trip rather than slicing the
 	// string directly: Perennial's goose model has no reduction for slicing a
 	// Go string (Slice go.string), whereas byte-slice slicing steps normally
-	// (byteString in content.go builds one-byte strings from a byte slice for
-	// the same reason).
+	// (same reason Insert uses string(content[i]) instead of content[i:i+1]).
 	cb := []byte(n.content.content)
 	right := &item{
 		id:            newId(n.id.clientId, n.id.clock+diff),
