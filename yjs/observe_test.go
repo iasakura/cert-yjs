@@ -502,3 +502,14 @@ func TestObserveConcurrentEditors(t *testing.T) {
 		t.Fatalf("the editors reached the callback %d times", len(r.deltas)-1)
 	}
 }
+
+// An observer's delta carries non-ASCII bytes as they are (issue #216).
+func TestObserverNonASCII(t *testing.T) {
+	doc := NewDoc(1)
+	txt := doc.GetOrCreateText("text")
+	obs := txt.NewObserver()
+	txt.Insert(0, "é")
+	app := patch(t, "", obs.Poll(), txt)
+	txt.Insert(1, "ü")
+	patch(t, app, obs.Poll(), txt)
+}
