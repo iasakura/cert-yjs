@@ -6,7 +6,7 @@
     from [YjsArrInvariant_integrate]), the item-validity / insertion helper
     lemmas ([item_valid_*], [insert_*], [toItem_at]), the DLL-splice core
     [integrateCore], and the top-level [Store.Integrate]:
-    [wp_store__Integrate] over [own_store_state] (splicing the run and
+    [wp_dataStore__Integrate] over [own_dataStore_state] (splicing the run and
     the fresh address at one shared cursor, with the per-client item-map
     maintenance).
 
@@ -1222,11 +1222,11 @@ Proof.
 Qed.
 
 (** The raw refinement of [store.integrateCore]: the
-    run-level statement of [wp_Store__integrateCore_aux]. The fresh run lands
+    run-level statement of [wp_dataStore__integrateCore_aux]. The fresh run lands
     at the cursor [idx] of the address list and the run list, its chars at
     the matching model index. Local: a stepping stone of
-    [wp_store__integrateCore]. *)
-#[local] Lemma wp_Store__integrateCore_aux (s parent item_l : loc) (arr' : list (YjsItem A))
+    [wp_dataStore__integrateCore]. *)
+#[local] Lemma wp_dataStore__integrateCore_aux (s parent item_l : loc) (arr' : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A)
     (ls : list loc) (runs : list ItemRun)
     (itemVal : yjs.item.t) (oleft oright : option yjs.id.t) (leftIdx rightIdx : Z)
@@ -1252,7 +1252,7 @@ Qed.
   integrate_all (ops_of_input input (explode (toContent itemVal.(yjs.item.content')))) (runs_flatten runs) = Some arr' ->
   {{{ is_pkg_init yjs ∗ own_ytype parent (DfracOwn 1) ls (MkTypeModel runs) ∗
       own_fresh_item_raw item_l input itemVal oleft oright }}}
-    s @! (go.PointerType yjs.store) @! "integrateCore" #parent #item_l
+    s @! (go.PointerType yjs.dataStore) @! "integrateCore" #parent #item_l
   {{{ (idx : nat) (run : list (YjsItem A)), RET #();
       own_ytype parent (DfracOwn 1) (integrate_locs ls idx item_l)
         (MkTypeModel (take idx runs ++ MkItemRun run false :: drop idx runs)) ∗
@@ -2061,8 +2061,8 @@ Qed.
     the fresh live run lands at one cursor of the address list and the run
     list ([runs_integrate_splice_at] / [integrate_locs]) and denotes the
     input ([run_denotes]). Local: a stepping stone of
-    [wp_store__Integrate]. *)
-#[local] Lemma wp_store__integrateCore (s parent item_l : loc)
+    [wp_dataStore__Integrate]. *)
+#[local] Lemma wp_dataStore__integrateCore (s parent item_l : loc)
     (arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
     (newItem : YjsItem A) (ls : list loc) (runs : list ItemRun)
     (leftIdx rightIdx : Z) (curL curR : nat) :
@@ -2082,7 +2082,7 @@ Qed.
   integrate_all (ops_of_input input (explode (in_content input))) (runs_flatten runs) = Some arr' ->
   {{{ is_pkg_init yjs ∗ own_ytype parent (DfracOwn 1) ls (MkTypeModel runs) ∗
       own_linked_item item_l input parent (loc_at ls (Z.of_nat curL - 1)) (loc_at ls (Z.of_nat curR)) }}}
-    s @! (go.PointerType yjs.store) @! "integrateCore" #parent #item_l
+    s @! (go.PointerType yjs.dataStore) @! "integrateCore" #parent #item_l
   {{{ (idx : nat) (run : list (YjsItem A)), RET #();
       own_ytype parent (DfracOwn 1) (integrate_locs ls idx item_l)
         (MkTypeModel (take idx runs ++ MkItemRun run false :: drop idx runs)) ∗
@@ -2103,7 +2103,7 @@ Proof using Type*.
   iAssert (own_fresh_item_raw item_l input itemVal oleft oright) with "[Hitem Holeft Horight]" as "Hraw".
   { iFrame "Hitem Holeft Horight". iPureIntro.
     split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent]. }
-  wp_apply (wp_Store__integrateCore_aux s parent item_l arr' input newItem ls runs itemVal oleft oright
+  wp_apply (wp_dataStore__integrateCore_aux s parent item_l arr' input newItem ls runs itemVal oleft oright
               leftIdx rightIdx curL curR
               Hinv Htoitem Hvalid Hmax HfindL HfindR Hfl Hfr Hfpar Hflags Hlen1 Hnec Hfits Hoclk
               HcurL HcurLb HcurR HcurRb Hall'
@@ -2117,11 +2117,11 @@ Proof using Type*.
   - split_and!; [exact Hcid | exact Horig | exact Hrorig | rewrite Hclen Hcc explode_length //].
 Qed.
 
-(* The former public model-level [wp_Store__integrateCore] (over [own_ytype])
+(* The former public model-level [wp_dataStore__integrateCore] (over [own_ytype])
    is retired by #49: the core's precondition now mentions the resolved origin
    neighbours' node locations (the item arrives pre-linked), which a pure
    model-level footprint cannot state. The public story lives one level up
-   ([wp_store__Integrate] and the doc-level [applyUpdate] specs). *)
+   ([wp_dataStore__Integrate] and the doc-level [applyUpdate] specs). *)
 
 
 
@@ -2278,8 +2278,8 @@ Qed.
     fit ([input_fits]) and its id is its client's next clock in the whole pool
     ([pool_next_clock]: newest, and right after the client's last one, so the
     clocks stay gap-free). Proved on the run core. *)
-Lemma wp_store__Integrate (s tr parent parent_arg item_l : loc)
-    (state : store_state) (tm : type_model) (ls : list loc)
+Lemma wp_dataStore__Integrate {tr_store : loc} (s tr parent parent_arg item_l : loc)
+    (state : dataStore_state) (tm : type_model) (ls : list loc)
     (arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
     (newItem : YjsItem A) (kL kR : nat)
     (inserted tombstoned : gset YjsId) (changed : gset loc) :
@@ -2291,16 +2291,16 @@ Lemma wp_store__Integrate (s tr parent parent_arg item_l : loc)
   integrate_all (ops_of_input input (explode (in_content input))) (tm_arr tm) = Some arr' ->
   origins_resolved (tm_runs tm) (tm_arr tm) input kL kR ->
   pool_next_clock (ss_pool state) (clientId (in_id input)) (clock (in_id input)) ->
-  {{{ is_pkg_init yjs ∗ own_store_state s state ∗
+  {{{ is_pkg_init yjs ∗ own_dataStore_state s state ∗
       own_linked_item item_l input parent
         (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) ∗
-      own_transaction_changes tr s inserted tombstoned changed }}}
-    s @! (go.PointerType yjs.store) @! "Integrate" #tr #parent_arg #item_l
+      own_transaction_changes tr tr_store inserted tombstoned changed }}}
+    s @! (go.PointerType yjs.dataStore) @! "Integrate" #tr #parent_arg #item_l
   {{{ (runs' : list ItemRun) (ls' : list loc) (run : list (YjsItem A)), RET #();
-      own_store_state s (state <| ss_pool := <[parent := MkTypeModel runs']> (ss_pool state) |>
+      own_dataStore_state s (state <| ss_pool := <[parent := MkTypeModel runs']> (ss_pool state) |>
                             <| ss_locs := <[parent := ls']> (ss_locs state) |>) ∗
       (* the transaction records the new run: its chars and its type *)
-      own_transaction_changes tr s (inserted ∪ char_ids run) tombstoned (changed ∪ {[parent]}) ∗
+      own_transaction_changes tr tr_store (inserted ∪ char_ids run) tombstoned (changed ∪ {[parent]}) ∗
       ⌜YjsArrInvariant arr'⌝ ∗
       ⌜∃ idx : nat, runs_integrate_splice_at idx (tm_runs tm) (tm_arr tm) run runs' arr' ∧
                     ls' = integrate_locs ls idx item_l⌝ ∗
@@ -2363,7 +2363,7 @@ Proof using Type*.
       iFrame "Hitem Holeft Horight". iPureIntro.
       split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
                   | exact Hfl2 | exact Hfr2 | exact Hfpar2 | exact Hflags2 | exact Hrun2]. }
-    wp_apply (wp_store__integrateCore s parent item_l arr' input newItem ls (tm_runs tm)
+    wp_apply (wp_dataStore__integrateCore s parent item_l arr' input newItem ls (tm_runs tm)
                 leftIdx rightIdx kL kR
                 Hinv Htoitem Hvalid Hmax HfindL HfindR Hnec Hfits Hoclk
                 HcurL HcurLb HcurR HcurRb Hall with "[$Hpkg $Htext $Hfresh]").
@@ -2460,10 +2460,10 @@ Proof using Type*.
       last (iSplitL "Hchanges";
               [iEval (rewrite HspanRec) in "Hchanges"; iExact "Hchanges"
               | by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden])]).
-    iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
+    iAssert (own_dataStore_state s (MkDataStoreState client0 k0 locs2 p2 bind pend pdel))
       with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
     { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
-      rewrite /own_store_fields /=.
+      rewrite /own_dataStore_fields /=.
       iFrame "Hclient Hclock HdeletedSet Hregistry Htypes2 Hpending Hpdeletes".
       iExists items_mref. iFrame "Hitemsf Hitemmap". }
     iExact "Hfinal".
@@ -2476,7 +2476,7 @@ Proof using Type*.
       split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
                   | exact Hfl2 | exact Hfr2 | exact Hfpar2 | exact Hflags2 | exact Hrun2]. }
     rewrite Hfpar2.
-    wp_apply (wp_store__integrateCore s parent item_l arr' input newItem ls (tm_runs tm)
+    wp_apply (wp_dataStore__integrateCore s parent item_l arr' input newItem ls (tm_runs tm)
                 leftIdx rightIdx kL kR
                 Hinv Htoitem Hvalid Hmax HfindL HfindR Hnec Hfits Hoclk
                 HcurL HcurLb HcurR HcurRb Hall with "[$Hpkg $Htext $Hfresh]").
@@ -2573,10 +2573,10 @@ Proof using Type*.
       last (iSplitL "Hchanges";
               [iEval (rewrite HspanRec) in "Hchanges"; iExact "Hchanges"
               | by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden])]).
-    iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
+    iAssert (own_dataStore_state s (MkDataStoreState client0 k0 locs2 p2 bind pend pdel))
       with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
     { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
-      rewrite /own_store_fields /=.
+      rewrite /own_dataStore_fields /=.
       iFrame "Hclient Hclock HdeletedSet Hregistry Htypes2 Hpending Hpdeletes".
       iExists items_mref. iFrame "Hitemsf Hitemmap". }
     iExact "Hfinal".

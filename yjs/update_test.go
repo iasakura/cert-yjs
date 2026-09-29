@@ -15,12 +15,13 @@ func mkHeadUpdateItem(client, clock uint64, content string, name string) updateI
 }
 
 // applyUpdateTo integrates a decoded update (any order, issue #40) into a
-// fresh store via the verified core store.applyUpdate — each struct resolves
-// its own parent — and returns the visible text of the root type "text".
+// fresh store via the verified core dataStore.applyUpdate (each struct resolves
+// its own parent) and returns the visible text of the root type "text".
 func applyUpdateTo(structs []updateItem) string {
-	s := newStore(0)
+	st := newStore(0)
+	s := st.data
 	u := Update{structs: structs}
-	s.applyUpdate(newTransaction(s), u.structs)
+	s.applyUpdate(newTransaction(st), u.structs)
 	return s.getOrCreateYType("text").Text()
 }
 
@@ -79,11 +80,12 @@ func TestApplyUpdateOutOfOrderWithinUpdate(t *testing.T) {
 // Missing dependency across updates (issue #40): the dependent struct pends
 // in the store and drains when the dependency arrives later.
 func TestApplyUpdatePendingDrain(t *testing.T) {
-	s := newStore(0)
+	st := newStore(0)
+	s := st.data
 	h := mkHeadUpdateItem(1, 0, "H", "text")
 	i := mkUpdateItem(1, 1, "I", mkIdp(1, 0), nil)
 
-	s.applyUpdate(newTransaction(s), []updateItem{i})
+	s.applyUpdate(newTransaction(st), []updateItem{i})
 	if got := s.getOrCreateYType("text").Text(); got != "" {
 		t.Fatalf("expected empty text while pending, got %q", got)
 	}
@@ -91,7 +93,7 @@ func TestApplyUpdatePendingDrain(t *testing.T) {
 		t.Fatalf("expected 1 pending struct, got %d", len(s.pending))
 	}
 
-	s.applyUpdate(newTransaction(s), []updateItem{h})
+	s.applyUpdate(newTransaction(st), []updateItem{h})
 	if got := s.getOrCreateYType("text").Text(); got != "HI" {
 		t.Fatalf("expected HI after drain, got %q", got)
 	}
@@ -114,15 +116,17 @@ func TestApplyUpdateOwnPredecessorGate(t *testing.T) {
 	i := mkUpdateItem(1, 1, "I", mkIdp(2, 0), nil)
 	k := mkUpdateItem(1, 2, "K", mkIdp(1, 0), mkIdp(2, 0))
 
-	s := newStore(0)
-	s.applyUpdate(newTransaction(s), []updateItem{h, x, k})
+	st := newStore(0)
+
+	s := st.data
+	s.applyUpdate(newTransaction(st), []updateItem{h, x, k})
 	if got := s.getOrCreateYType("text").Text(); got != "HX" {
 		t.Fatalf("expected HX while K pends, got %q", got)
 	}
 	if len(s.pending) != 1 {
 		t.Fatalf("expected K pending, got %d structs", len(s.pending))
 	}
-	s.applyUpdate(newTransaction(s), []updateItem{i})
+	s.applyUpdate(newTransaction(st), []updateItem{i})
 	if got := s.getOrCreateYType("text").Text(); got != "HKXI" {
 		t.Fatalf("expected HKXI after drain, got %q", got)
 	}
@@ -138,18 +142,21 @@ func TestApplyUpdateDuplicatesDropped(t *testing.T) {
 	h := mkHeadUpdateItem(1, 0, "H", "text")
 	i := mkUpdateItem(1, 1, "I", mkIdp(1, 0), nil)
 
-	s := newStore(0)
-	s.applyUpdate(newTransaction(s), []updateItem{h, i, h, i})
-	s.applyUpdate(newTransaction(s), []updateItem{h, i})
+	st := newStore(0)
+
+	s := st.data
+	s.applyUpdate(newTransaction(st), []updateItem{h, i, h, i})
+	s.applyUpdate(newTransaction(st), []updateItem{h, i})
 	if got := s.getOrCreateYType("text").Text(); got != "HI" {
 		t.Fatalf("expected HI, got %q", got)
 	}
 
 	// an unappliable struct re-delivered while pending stays a single entry
-	s2 := newStore(0)
+	st2 := newStore(0)
+	s2 := st2.data
 	orphan := mkUpdateItem(1, 1, "I", mkIdp(1, 0), nil)
-	s2.applyUpdate(newTransaction(s2), []updateItem{orphan})
-	s2.applyUpdate(newTransaction(s2), []updateItem{orphan})
+	s2.applyUpdate(newTransaction(st2), []updateItem{orphan})
+	s2.applyUpdate(newTransaction(st2), []updateItem{orphan})
 	if len(s2.pending) != 1 {
 		t.Fatalf("expected 1 pending struct after re-delivery, got %d", len(s2.pending))
 	}
@@ -158,12 +165,13 @@ func TestApplyUpdateDuplicatesDropped(t *testing.T) {
 // A struct whose dependency never arrives pends forever without blocking
 // later, unrelated updates (issue #40: applyUpdate is total).
 func TestApplyUpdateUnresolvableStaysPending(t *testing.T) {
-	s := newStore(0)
+	st := newStore(0)
+	s := st.data
 	ghostDep := mkUpdateItem(3, 5, "G", mkIdp(9, 9), nil)
 	h := mkHeadUpdateItem(1, 0, "H", "text")
 
-	s.applyUpdate(newTransaction(s), []updateItem{ghostDep})
-	s.applyUpdate(newTransaction(s), []updateItem{h})
+	s.applyUpdate(newTransaction(st), []updateItem{ghostDep})
+	s.applyUpdate(newTransaction(st), []updateItem{h})
 	if got := s.getOrCreateYType("text").Text(); got != "H" {
 		t.Fatalf("expected H, got %q", got)
 	}
@@ -190,9 +198,10 @@ func TestApplyUpdateFragmentedDeliveryConverges(t *testing.T) {
 	}
 	want := applyUpdateTo([]updateItem{a, c, x, y})
 	for oi, ord := range orders {
-		s := newStore(0)
+		st := newStore(0)
+		s := st.data
 		for _, ui := range ord {
-			s.applyUpdate(newTransaction(s), []updateItem{ui})
+			s.applyUpdate(newTransaction(st), []updateItem{ui})
 		}
 		if got := s.getOrCreateYType("text").Text(); got != want {
 			t.Fatalf("order %d diverged: %q vs %q", oi, got, want)
@@ -206,11 +215,12 @@ func TestApplyUpdateFragmentedDeliveryConverges(t *testing.T) {
 // One update touching two root types: each struct resolves its own parent, so
 // a single doc-level batch fills both texts (issue #49).
 func TestApplyUpdateMultipleRoots(t *testing.T) {
-	s := newStore(0)
+	st := newStore(0)
+	s := st.data
 	h := mkHeadUpdateItem(1, 0, "H", "title")
 	i := mkUpdateItem(1, 1, "I", mkIdp(1, 0), nil)
 	b := mkHeadUpdateItem(1, 2, "B", "body")
-	s.applyUpdate(newTransaction(s), []updateItem{h, i, b})
+	s.applyUpdate(newTransaction(st), []updateItem{h, i, b})
 	if got := s.getOrCreateYType("title").Text(); got != "HI" {
 		t.Fatalf("title: expected HI, got %q", got)
 	}

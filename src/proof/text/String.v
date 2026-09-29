@@ -58,7 +58,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (** [Text.String]: a CONCURRENT functional read (issue #125). Takes the
     RWMutex read lock, walks the type's DLL through a fractional
-    [store_inv_ro] share ([wp_yType__Text]), then releases. The caller brings
+    [dataStore_inv_ro] share ([wp_yType__Text]), then releases. The caller brings
     a prefix certificate [is_history_lb γh c h0] of THIS replica's op history
     (with the client pin identifying it), and the model is guaranteed to
     contain one item per delivered insert of [h0] targeting this root (a
@@ -80,9 +80,9 @@ Lemma wp_Text__String (t : loc) (γs : store_names) (γh : history_names)
       ⌜visible_excludes deleted_ids model⌝ }}}.
 Proof.
   wp_start as "(Hpre & #Hpin & #Hlb & Hcap)". iNamed "Hpre".
-  iDestruct "His_store" as "#His_store".
-  wp_auto. subst s_loc. subst parent.
-  wp_apply (wp_Store__rlock _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
+  iDestruct "His_doc" as "#His_doc".
+  wp_auto. subst dv. subst parent.
+  wp_apply (wp_Doc__rlock _ _ _ _ c h0 name _ with "[$His_doc $Hcap $Hpin $Hlb $Hbind]").
   iIntros (locs p delete_set) "(Hrlo & Hro & %Hfact)".
   iNamed "Hro".
   (* the handle's certificate against the shared authority: the ids it knows
@@ -101,7 +101,7 @@ Proof.
   iDestruct ("Hclose" with "[Htextr]") as "Hpool".
   { iExists ls. iSplitR; first by iPureIntro. iFrame "Htextr". by iPureIntro. }
   wp_auto.
-  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Hdelete_set_auth Hpool]").
+  wp_apply (wp_Doc__runlock with "[$His_doc $Hrlo Hseq Hdelete_set_auth Hpool]").
   { iFrame "Hseq Hdelete_set_auth". iSplitR; first by iPureIntro.
     rewrite /own_type_pool. iSplitR; [by iPureIntro | iFrame "Hpool"]. }
   iIntros "Hcap".
@@ -127,8 +127,8 @@ Proof.
       rewrite Htmp in Htm'. injection Htm' as <-.
       exists it. split; [exact Hitid | rewrite Hfst //].
     - exact Hexcl. }
-  iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
-  iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
+  iExists tv, tv.(yjs.Text.doc'), s_loc, tv.(yjs.Text.inner'), deleted_items.
+  iFrame "Ht His_doc His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
   iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted].
 Qed.
 

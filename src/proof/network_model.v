@@ -1623,7 +1623,7 @@ Qed.
     items (the receiver-side freshness that used to be a leftover hypothesis
     of [applyUpdate]'s certificate spec; with doc-global clocks it is a fact
     of the replay) — and the pure [integrate] advances that type's list. This
-    is exactly the chain of preconditions [wp_store__Integrate] needs at each
+    is exactly the chain of preconditions [wp_dataStore__Integrate] needs at each
     loop step; it coincides with a valid replay of doc-level [OpInsert]s in
     the network model, so a proof against it inherits the model's invariant
     preservation and strong convergence.
@@ -1697,7 +1697,7 @@ Qed.
 
 (** Converse provenance: a replayed item is an original item or carries the
     id of some batch input (the model-level analogue of the pool provenance
-    clause of [wp_store__applyUpdate]). *)
+    clause of [wp_dataStore__applyUpdate]). *)
 Lemma ValidReplay_prov (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
   ValidReplay inputs m m' ->
   ∀ (t : TId) x, x ∈ doc_model_get m' t ->
@@ -1743,7 +1743,7 @@ Qed.
 
 (** Every batch item's clock strictly exceeds all same-client items already in
     the initial documents — any type (the heap-level freshness side condition
-    of [wp_store__applyUpdate], at the model level). *)
+    of [wp_dataStore__applyUpdate], at the model level). *)
 Lemma ValidReplay_arr_fresh (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
   ValidReplay inputs m m' ->
   ∀ (i : nat) (typedInput : TId * IntegrateInput (A := A)), inputs !! i = Some typedInput ->
@@ -1764,7 +1764,7 @@ Proof.
 Qed.
 
 (** Earlier same-client batch items have strictly smaller clocks (the
-    intra-batch causal-order side condition of [wp_store__applyUpdate]). *)
+    intra-batch causal-order side condition of [wp_dataStore__applyUpdate]). *)
 Lemma ValidReplay_batch_causal (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel) :
   ValidReplay inputs m m' ->
   ∀ (i j : nat) (typedInput typedInput2 : TId * IntegrateInput (A := A)),

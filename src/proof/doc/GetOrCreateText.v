@@ -69,15 +69,17 @@ Lemma wp_Doc__GetOrCreateText (dv s_loc : loc) (γs : store_names) (γh : histor
   {{{ (t : loc), RET #t; is_Text t γs γh name [] ∅ }}}.
 Proof.
   wp_start as "(#His_doc & #Hishist)".
-  iNamed "His_doc". subst s_loc. wp_auto.
-  wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
-  iDestruct "Hinv" as (c0 h m pend deleted registry_mref) "[Hown Hreg]". iNamed "Hown". subst c0.
-  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hrpi.
-  iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
+  iPoseProof "His_doc" as "Hdoc_fields". iNamed "Hdoc_fields". wp_auto.
+  wp_apply (wp_Doc__wlock with "[$His_doc]"). iIntros "[Hwl Hinv]".
+  iDestruct "Hinv" as (c0 h m pend deleted) "Hstore". wp_auto.
+  iEval (rewrite /own_store) in "Hstore".
+  iDestruct "Hstore" as (ds observers_mref) "Hstore". iNamed "Hstore". iNamed "Hstore". subst c0.
+  iDestruct (own_dataStore_state_run_pool_invs with "Hstate") as %Hrpi.
+  iDestruct (own_dataStore_state_registry_coh with "Hstate") as %Hreg.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
   have [Hmtypes Hmdom] := Hregmodel.
   wp_auto.
-  wp_apply (wp_store__getOrCreateYType _ (MkStoreState client k locs p bind pend pdel) name
+  wp_apply (wp_dataStore__getOrCreateYType _ (MkDataStoreState client k locs p bind pend pdel) name
               with "[$Hstate]").
   iIntros (q p' locs' bind') "(Hstate & %Hlc)". iEval (simpl) in "Hstate". simpl in Hlc.
   destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & Hfresh & -> & -> & ->)].
@@ -89,9 +91,10 @@ Proof.
     iMod (auth_gmap_gset_frag_alloc γs.(sn_seq) (DfracOwn 1) _ q ∅ _
             Hmk (empty_subseteq _) with "Hseq") as "[Hseq #Hlb0]".
     wp_auto.
-    wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend deleted
-                with "[$His_store $Hwl $Hreg Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf]").
-    { iExists client, k, pdel, locs, p, bind, acc, observers_mref.
+    wp_apply (wp_Doc__wunlock _ _ _ _ (uint.nat client) h m pend deleted
+                with "[$His_doc $Hwl Hregistry Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+    { rewrite /own_store. iExists ds, observers_mref. iFrame "Hdata_field Hobservers_field Hregistry".
+      iExists client, k, pdel, locs, p, bind, acc.
       iFrame "∗#". iPureIntro.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
@@ -103,7 +106,7 @@ Proof.
     iPersist "Ht".
     wp_auto.
     iApply ("HΦ" $! t).
-    iExists _, (dvv.(yjs.Doc.store')), q, []. iFrame "Ht His_store Hishist Hbindname".
+    iExists _, dv, s_loc, q, []. iFrame "Ht His_doc Hishist Hbindname".
     iSplitR; first done.
     iSplitR; first done.
     iFrame "Hlb0 Hdel0".
@@ -204,10 +207,11 @@ Proof.
     { rewrite /pool_registry_models. split; [exact Hmtypes' | exact Hmdom']. }
     (* registering an empty type tombstones nothing *)
     have Htomb' : pool_tombstoned p' = pool_tombstoned p := pool_tombstoned_insert_empty p q Hfresh.
-    wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend deleted
-                with "[$His_store $Hwl $Hreg Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf]").
-    { iExists client, k, pdel, (<[q := []]> locs), p', bind', acc, observers_mref.
-      iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds' Hobserverspin". iPureIntro.
+    wp_apply (wp_Doc__wunlock _ _ _ _ (uint.nat client) h m pend deleted
+                with "[$His_doc $Hwl Hregistry Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+    { rewrite /own_store. iExists ds, observers_mref. iFrame "Hdata_field Hobservers_field Hregistry".
+      iExists client, k, pdel, (<[q := []]> locs), p', bind', acc.
+      iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds'". iPureIntro.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh
         | exact Hctr' | exact Hacccoh | rewrite Htomb'; exact Hdeleted]. }
@@ -218,7 +222,7 @@ Proof.
     iPersist "Ht".
     wp_auto.
     iApply ("HΦ" $! t).
-    iExists _, (dvv.(yjs.Doc.store')), q, []. iFrame "Ht His_store Hishist Hbindname".
+    iExists _, dv, s_loc, q, []. iFrame "Ht His_doc Hishist Hbindname".
     iSplitR; first done.
     iSplitR; first done.
     iFrame "Hlb0 Hdel0".

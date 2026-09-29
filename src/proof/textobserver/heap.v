@@ -74,14 +74,14 @@ Definition own_deleted_spans (dref : loc) (deleted_ids : gset YjsId) : iProp Σ 
 
 Definition own_TextObserver (obs t : loc) (γs : store_names) (γh : history_names)
     (name : P) (observed : snapshot) : iProp Σ :=
-  ∃ (ov : yjs.TextObserver.t) (tv : yjs.Text.t) (s_loc parent : loc)
+  ∃ (ov : yjs.TextObserver.t) (tv : yjs.Text.t) (dv s_loc parent : loc)
     (state_vector : gmap w64 w64) (pool_items : gmap loc (gset (YjsItem A))),
     "Hobs" ∷ obs ↦ ov ∗
     "%Hotext" ∷ ⌜ov.(yjs.TextObserver.text') = t⌝ ∗
     "#Ht" ∷ t ↦□ tv ∗
-    "%Hstore" ∷ ⌜tv.(yjs.Text.store') = s_loc⌝ ∗
+    "%Hdoc" ∷ ⌜tv.(yjs.Text.doc') = dv⌝ ∗
     "%Hinner" ∷ ⌜tv.(yjs.Text.inner') = parent⌝ ∗
-    "#His_store" ∷ is_Store s_loc γs γh ∗
+    "#His_doc" ∷ is_Doc dv s_loc γs γh ∗
     "#Hbind" ∷ is_type_binding γs.(sn_types) name parent ∗
     "Hstate_vector" ∷ own_map ov.(yjs.TextObserver.stateVector') (DfracOwn 1) state_vector ∗
     "%Hstate_vector" ∷ ⌜state_vector_denotes state_vector (snapshot_state_vector observed)⌝ ∗

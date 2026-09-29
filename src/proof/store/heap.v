@@ -10,21 +10,21 @@
       state's entries.
     - the type pool and the store predicate:
       [own_type_pool dq locs p] (over [store/value_cells]'s [locs_wf]);
-      the PRIMITIVE [own_store_state s state], the store at a
-      [store_state] (every field,
-      [own_store_fields] / [own_items_field], with
-      [store_invs]), which every store spec is stated over, and what it
-      reads back ([own_store_state_run_pool_invs] /
-      [own_store_state_run_wf] / [own_store_state_arr_inv] /
-      [own_store_state_registry_coh], the document reader also on the pool,
+      the PRIMITIVE [own_dataStore_state s state], the store at a
+      [dataStore_state] (every field,
+      [own_dataStore_fields] / [own_items_field], with
+      [dataStore_invs]), which every store spec is stated over, and what it
+      reads back ([own_dataStore_state_run_pool_invs] /
+      [own_dataStore_state_run_wf] / [own_dataStore_state_arr_inv] /
+      [own_dataStore_state_registry_coh], the document reader also on the pool,
       [own_type_pool_arr_inv]), the node borrows
-      ([own_type_pool_node_acc] / [own_store_state_node_acc], with the
+      ([own_type_pool_node_acc] / [own_dataStore_state_node_acc], with the
       neighbour addresses and the flag byte in the [_links] forms; a whole
-      type as its run view for a read, [own_store_state_ytype_acc]; the
-      clock and client fields, [own_store_state_clock_acc] /
-      [own_store_state_client_acc]) and
-      covering-slot uniqueness ([own_store_state_covers_unique]).
-      [own_store] is the lock layer's closure of [own_store_state] over the
+      type as its run view for a read, [own_dataStore_state_ytype_acc]; the
+      clock and client fields, [own_dataStore_state_clock_acc] /
+      [own_dataStore_state_client_acc]) and
+      covering-slot uniqueness ([own_dataStore_state_covers_unique]).
+      [own_dataStore] is the lock layer's closure of [own_dataStore_state] over the
       public model.
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
       hands out) and [own_delete_set] (its authority, with the domain
@@ -32,22 +32,23 @@
       something), with its transports ([own_delete_set_mono] / [_refine] /
       [_perm] / [_snoc] / [_apply] / [_insert] / [_ValidReplay]) and the one
       law that grows it, [own_delete_set_grow].
-    - the lock body, at [(locs, pool, delete_set)]: [store_inv_ro] (the
+    - the lock body, at [(locs, pool, delete_set)]: [dataStore_inv_ro] (the
       fractional, reader-visible part: the item-set and delete-set
       authorities, the delete set's tombstone-bit clause, and
       [own_type_pool]; two shares are at the same delete set,
-      [store_inv_ro_delete_set_agree]), [store_inv_excl] (the exclusive part,
-      holding the delete set's model-domain bound) and [store_inv], carrying
+      [dataStore_inv_ro_delete_set_agree]), [dataStore_inv_excl] (the exclusive part,
+      holding the delete set's model-domain bound) and [dataStore_inv], carrying
       the client's ghost history; [tie_body] and [types_frag] / [frac_of] are
       the RWMutex reader-count accounting (issue #22).
-    - the public state predicate [own_store s c h m pend deleted]: the WHOLE
+    - the public state predicate [own_dataStore s c h m pend deleted]: the WHOLE
       lock-protected state as one exclusive predicate over its model, the
       tombstone state [deleted] exact ([pool_tombstoned]).
     - [own_transaction tr s c h m pend deleted inserted tombstoned changed]:
-      the store inside a transaction, its record next to [own_store] with
+      the store inside a transaction, its record next to
+      [own_store_observers_behind] with
       the record's meaning (issue #206 T1); [changed_types_bound γs changed
       changed_locs] ties the changed names to the record's addresses.
-    - [closure_runs_transaction s γs γh f Q]: what [store.transact] asks of
+    - [closure_runs_transaction s γs γh f Q]: what [Doc.Transact] asks of
       its closure: run the fresh transaction to an end state where [Q] holds.
     - the observers (issue #198 Part II): [own_observed γo s] (one half of an
       observer's token), [is_text_snapshot γs γh name s] (what a read
@@ -55,13 +56,17 @@
       γs γh name cb γo] (a callback's contract), [is_text_observed γs name γo]
       (the registration witness), [own_type_observers γs γh name told cbs_sl
       γos] (one root's observers, every one told [told]),
-      [is_store_observers γs observers_mref] (the store's [observers] field
-      holds the map at [observers_mref], the pin the store's predicates and
-      the registry share) and [own_observer_registry observers_mref γs γh m
-      deleted] (that map's contents: every observer told everything up to
-      its type's snapshot at [(m, deleted)]); [tie_store] is the lock body's
-      store part beside it.
-    - the persistent witnesses [is_Store], [is_type_binding], [is_root],
+      [is_store_data s ds] / [is_store_observers s observers_mref] (the
+      store's two fields, never reassigned) and [own_observer_registry
+      observers_mref γs γh m deleted] (the observers map's contents: every
+      observer told everything up to its type's snapshot at [(m, deleted)]);
+      [own_store s γs γh c h m pend deleted] is THE predicate of a store, the
+      data at [(m, deleted)] and the observers told up to it, and
+      [own_store_observers_behind s γs γh c h m pend deleted m0 deleted0] its
+      one relaxation, the observers still at [(m0, deleted0)] (inside a
+      transaction); [tie_dataStore] is the lock body's data part.
+    - the persistent witnesses [is_Doc] (the document: its store and the
+      lock guarding it), [is_type_binding], [is_root],
       [is_type_lb], [is_root_lb], [is_applied_root_lb] / [is_applied_certs],
       [is_accepted],
       [is_update_item], and the read capability [own_read_cap].
@@ -71,27 +76,29 @@
       [integrate_loop_inv].
 
     Laws
-    - [store_inv_init]: how to build the invariant from the raw points-tos, and
-      [store_inv_bridge] / [store_inv_own_store] / [store_slices_own_store] /
-      [own_store_store_slices] / [own_store_hist_coh] /
-      [own_store_accepted_sound] / [store_inv_excl_hist_root]: what you may
+    - [dataStore_inv_init]: how to build the invariant from the raw points-tos, and
+      [dataStore_inv_bridge] / [dataStore_inv_own_dataStore] / [dataStore_slices_own_dataStore] /
+      [own_dataStore_dataStore_slices] / [own_dataStore_hist_coh] /
+      [own_dataStore_accepted_sound] / [dataStore_inv_excl_hist_root]: what you may
       read back out of it.
     - the pool's laws: borrow one node ([own_type_pool_node_acc], with
       its links [_node_acc_links]), read its pure content off
       ([own_type_pool_run_wf] / [_id_bounds] / [_arr] / [_arr_inv]), a
       fresh node or type is absent from it ([own_type_pool_fresh] /
       [_fresh_concat] / [_fresh_type]).
-    - [own_store_accept_batch]: the state-transition law for accepting a
+    - [own_dataStore_accept_batch]: the state-transition law for accepting a
       delivered batch.
     - the observers' tokens: [own_observed_alloc] / [_agree] / [_update]
-      (both halves move together); [is_store_observers_agree] /
-      [own_observer_registry_pin] / [own_store_observers_acc] (the pin on
-      both sides, and the field borrowed out of the store);
+      (both halves move together); [is_store_data_agree] /
+      [is_store_observers_agree] (the store's two fields are functional);
+      [own_store_observers_behind_intro] (the relaxed store from its four
+      parts) and [own_transaction_fresh] (a transaction that recorded
+      nothing, from [own_store]);
       [elem_of_registered_tokens];
       [registered_bindings_lookup] (the registered names are bound to their
       addresses); [registered_tokens_register] / [observers_register] (one
       more observer of a type, in the token set and at the authority);
-      [own_store_text_snapshot] (the store mints a root's snapshot
+      [own_dataStore_text_snapshot] (the store mints a root's snapshot
       certificate, what [notify] hands a callback);
       [own_transaction_observed_agree] (inside a transaction that did not
       change a root, an observer's half is at the root's current snapshot).
@@ -168,7 +175,7 @@ Context {sync_pkg : sync.Assumptions}.
 (** Item-SET RA: [auth (gmap loc (gset (YjsItem A)))] — the AUTH wraps the whole
     map (NOT [gmap (auth gset)], where a per-key frag would be valid even for an
     absent key and so would NOT witness registration). The authority [● m] (per
-    type-loc item set) sits in [store_inv]; a persistent fragment
+    type-loc item set) sits in [dataStore_inv]; a persistent fragment
     [◯ {[parent := S]}] held by [is_Text] gives, when combined with [● m],
     gmap-inclusion [{[parent := S]} ≼ m] = [∃ S', m !! parent = Some S' ∧ S ⊆ S']
     — i.e. it BOTH witnesses [parent ∈ dom m] (= the type is registered) AND
@@ -189,7 +196,7 @@ Context {seq_inG : inG Σ seqUR}.
 
 (** Accepted-id RA (this branch): a GROW-ONLY set of ids the store has
     "accepted", i.e. promised not to lose. [authR (gsetUR YjsId)] — the
-    authority [● acc] sits in [store_inv], and a persistent lower-bound
+    authority [● acc] sits in [dataStore_inv], and a persistent lower-bound
     fragment [◯ {[i]}] (gset elements are core-id) is the [is_accepted]
     receipt every applyUpdate hands back per input. The store invariant ties
     [acc ⊆ delivered_ids h ∪ pending ids], so an accepted id is forever
@@ -215,7 +222,7 @@ Context {observers_inG : inG Σ observersUR}.
 
 (* The [∷] (named) wrapper blocks [Timeless] TC resolution; unfold it (as
    [New.proof.sync_proof.rwmutex] does) so the [Timeless] instances below go
-   through the named conjuncts of [own_item_map_key_pairs] / [store_inv]. *)
+   through the named conjuncts of [own_item_map_key_pairs] / [dataStore_inv]. *)
 
 #[local] Hint Extern 100 (Timeless (?n ∷ ?P)) =>
   (change (n ∷ P) with P) : typeclass_instances.
@@ -225,7 +232,7 @@ Context {observers_inG : inG Σ observersUR}.
 
 (** ---------- reader-count accounting (concurrent read API) ----------------
     The tie invariant carries [rwmutex_guard]-style accounting so multiple readers
-    can each hold a fractional [store_inv_ro] share:
+    can each hold a fractional [dataStore_inv_ro] share:
     - [own_tok_auth γs.(sn_rrlocked) n]: the active reader count [n];
     - [own_toks γs.(sn_rmax) n] bounded by the persistent
       [own_tok_auth_dfrac γs.(sn_rmax) □ (max)]: [n ≤ actualMaxReaders], so the
@@ -233,9 +240,9 @@ Context {observers_inG : inG Σ observersUR}.
     - [types_frag] ([dfrac_agree] on the [types] map) ties the readers' share to
       the store's current [types] (needed to recombine at RUnlock, since the
       item-set auth alone does not determine the type pool);
-    - the mutable-exclusive [store_inv_excl] whole + the shared [store_inv_ro] at
+    - the mutable-exclusive [dataStore_inv_excl] whole + the shared [dataStore_inv_ro] at
       the remaining fraction [frac_of n]. The write [Lock] linearizes at
-      [RLocked 0] (fraction 1 = the whole [store_inv] via [store_inv_bridge]);
+      [RLocked 0] (fraction 1 = the whole [dataStore_inv] via [dataStore_inv_bridge]);
       each read [RLock] peels off one [rfrac] share. The fraction arithmetic
       mirrors [rwmutex_guard.rfrac]. ------------------------------------------ *)
 
@@ -267,7 +274,7 @@ Qed.
 
 (* [own_slice_cap] (a sealed disjunction of pure facts and a [↦{dq}] array) is
    timeless, but the New.golang slice library ships no such instance; provide it
-   here (candidate upstream addition) so [own_item_map_key_pairs] / [store_inv] are
+   here (candidate upstream addition) so [own_item_map_key_pairs] / [dataStore_inv] are
    timeless. *)
 #[global] Instance own_slice_cap_timeless (V : Type) `{!ZeroVal V} `{!TypedPointsto V} (s : slice.t) (dq : dfrac) :
   Timeless (own_slice_cap V s dq).
@@ -308,7 +315,7 @@ Definition own_item_map (mref : loc) (dq : dfrac) (locs : gmap loc (list loc)) (
   own_item_map_key_pairs mref dq (entry_key_pair <$> pool_entries locs p).
 
 (* The DLL predicate stack is timeless too (heap points-to + pure + persistent
-   origin handles); register the instances so [store_inv] is timeless. *)
+   origin handles); register the instances so [dataStore_inv] is timeless. *)
 #[global] Instance is_origin_id_timeless p originId : Timeless (is_origin_id p originId).
 Proof. rewrite /is_origin_id. by destruct originId; apply _. Qed.
 
@@ -346,12 +353,11 @@ Record store_names := StoreNames {
   sn_client : gname; (* agreeR (leibnizO ClientId): the store's client pin, [is_store_client] *)
   sn_delete_set : gname;     (* authR (gsetUR YjsId): the monotone delete set (plan-delete-set.md D1) *)
   sn_observers : gname;      (* authR (gsetUR (gname * P)): the registered observer tokens, by root name (issue #198 Part II) *)
-  sn_observers_ref : gname;  (* agreeR (leibnizO loc): the observers map's reference, [is_store_observers] *)
 }.
 
 (** The root-type binding: [name] is bound to the type at [p], forever
     (bindings are insert-only — [getOrCreateYType] never rebinds a name).
-    Persistent (a discarded ghost-map element), so both [store_inv] and every
+    Persistent (a discarded ghost-map element), so both [dataStore_inv] and every
     [is_Text] handle carry a copy; combining them under the lock identifies
     the handle's type with the one the registry binds to its name. *)
 Definition is_type_binding (γ : gname) (name : P) (p : loc) : iProp Σ :=
@@ -362,7 +368,7 @@ Proof. apply _. Qed.
 
 (* ----- the lock invariant ----------------------------------------------- *)
 
-(** [store_inv_ro γs types q]: the read-only-shareable slice of [store_inv] that a
+(** [dataStore_inv_ro γs types q]: the read-only-shareable slice of [dataStore_inv] that a
     concurrent reader needs: the per-type DLLs (from which [Text.String]/[Len]
     read visible content / length) and the item-set authority (combined with a
     reader's [is_type_lb] to locate its type). Fractional in [q]: the read lock
@@ -436,8 +442,8 @@ Definition own_update_structs (sl : slice.t) (dq : dfrac)
     that a span is a goose record, and a spec that mentioned one would be
     mixing the model with the representation.
 
-    Used as: the store's [pendingDeletes] buffer in [store_inv_excl], the
-    argument and the leftover of [wp_store__applyDeleteSpans], and (through
+    Used as: the store's [pendingDeletes] buffer in [dataStore_inv_excl], the
+    argument and the leftover of [wp_dataStore__applyDeleteSpans], and (through
     [own_delete_ids], which forgets down to the union of the ids) every public
     spec that takes a delete batch. *)
 Definition own_delete_spans (sl : slice.t) (dq : dfrac)
@@ -627,7 +633,7 @@ Qed.
 
 (** [is_store_client γs c]: the persistent witness that this store IS client
     [c] (the [store.client] field, set once at [newStore] and never written).
-    An [agree] ghost: any two witnesses agree, and [own_store] carries one, so
+    An [agree] ghost: any two witnesses agree, and [own_dataStore] carries one, so
     a spec over a store it only holds handles to can name the store's client
     instead of leaving it existential (the server proofs pin the server
     replica's [ClientId] this way, issue #107). *)
@@ -647,30 +653,6 @@ Proof.
   iPureIntro. by apply to_agree_op_valid_L in Hv.
 Qed.
 
-(** [is_store_observers γs observers_mref]: the store's [observers] field holds
-    the map at [observers_mref], forever (the map is made once, in [newStore],
-    and never reassigned). The store's own predicates ([own_store],
-    [store_inv_excl]) hold the field points-to and this pin; the registry
-    ([own_observer_registry observers_mref …]) owns the map's contents beside
-    the store and holds the same pin, which is how the two meet
-    ([is_store_observers_agree]). *)
-Definition is_store_observers (γs : store_names) (observers_mref : loc) : iProp Σ :=
-  own γs.(sn_observers_ref) (to_agree (observers_mref : leibnizO loc)).
-
-#[global] Instance is_store_observers_persistent γs observers_mref : Persistent (is_store_observers γs observers_mref).
-Proof. rewrite /is_store_observers. apply _. Qed.
-
-#[global] Instance is_store_observers_timeless γs observers_mref : Timeless (is_store_observers γs observers_mref).
-Proof. rewrite /is_store_observers. apply _. Qed.
-
-Lemma is_store_observers_agree γs observers_mref1 observers_mref2 :
-  is_store_observers γs observers_mref1 -∗ is_store_observers γs observers_mref2 -∗
-  ⌜observers_mref1 = observers_mref2⌝.
-Proof.
-  iIntros "H1 H2". iCombine "H1 H2" gives %Hv.
-  iPureIntro. by apply to_agree_op_valid_L in Hv.
-Qed.
-
 (** [own_type_pool dq locs p]: the whole type pool: every registered
     type's [own_ytype] at its address list, over the address map
     [locs_wf]. The [(locs, p)] pair is what every store spec carries. *)
@@ -682,7 +664,7 @@ Definition own_type_pool (dq : dfrac)
           own_ytype parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
 
 (** The type and pool are fractional: the read path holds a
-    share of the pool ([store_inv_ro]) while the write path holds it whole. *)
+    share of the pool ([dataStore_inv_ro]) while the write path holds it whole. *)
 #[global] Instance own_ytype_fractional parent ls tm :
   Fractional (λ q, own_ytype parent (DfracOwn q) ls tm).
 Proof.
@@ -870,7 +852,7 @@ Definition own_deleted_set_field (l : loc) : iProp Σ :=
     buffers ([store.pending], [store.pendingDeletes]) over their model lists.
     The field pointers and buffer slices are existential: no spec names them,
     and no field has a predicate of its own, so a spec can only take the
-    store whole ([own_store_state]). *)
+    store whole ([own_dataStore_state]). *)
 
 (** [own_items_field l locs p]: the [items] field, the index over the
     pool's entries ([own_item_map]). *)
@@ -879,44 +861,44 @@ Definition own_items_field (l : loc) (locs : gmap loc (list loc)) (p : pool) : i
     "Hitemsf" ∷ l ↦ items_mref ∗
     "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) locs p.
 
-(** [own_store_fields s state]: every field of the store at its
+(** [own_dataStore_fields s state]: every field of the store at its
     state: the item index over the pool's entries and the type
     pool as [own_type_pool]. *)
-Definition own_store_fields (s : loc) (state : store_state) : iProp Σ :=
-  "Hclient" ∷ (s .[(yjs.store.t), "client"]) ↦ ss_client state ∗
-  "Hclock" ∷ (s .[(yjs.store.t), "clock"]) ↦ ss_clock state ∗
-  "HdeletedSet" ∷ own_deleted_set_field (s .[(yjs.store.t), "deletedSet"]) ∗
-  "Hitems" ∷ own_items_field (s .[(yjs.store.t), "items"]) (ss_locs state) (ss_pool state) ∗
-  "Hregistry" ∷ own_registry_field (s .[(yjs.store.t), "types"]) (ss_bind state) ∗
+Definition own_dataStore_fields (s : loc) (state : dataStore_state) : iProp Σ :=
+  "Hclient" ∷ (s .[(yjs.dataStore.t), "client"]) ↦ ss_client state ∗
+  "Hclock" ∷ (s .[(yjs.dataStore.t), "clock"]) ↦ ss_clock state ∗
+  "HdeletedSet" ∷ own_deleted_set_field (s .[(yjs.dataStore.t), "deletedSet"]) ∗
+  "Hitems" ∷ own_items_field (s .[(yjs.dataStore.t), "items"]) (ss_locs state) (ss_pool state) ∗
+  "Hregistry" ∷ own_registry_field (s .[(yjs.dataStore.t), "types"]) (ss_bind state) ∗
   "Htypes" ∷ own_type_pool (DfracOwn 1) (ss_locs state) (ss_pool state) ∗
-  "Hpending" ∷ own_pending_field (s .[(yjs.store.t), "pending"]) (ss_pending state) ∗
-  "Hpdeletes" ∷ own_pending_deletes_field (s .[(yjs.store.t), "pendingDeletes"]) (ss_pending_deletes state).
+  "Hpending" ∷ own_pending_field (s .[(yjs.dataStore.t), "pending"]) (ss_pending state) ∗
+  "Hpdeletes" ∷ own_pending_deletes_field (s .[(yjs.dataStore.t), "pendingDeletes"]) (ss_pending_deletes state).
 
-(** [store_invs state]: the invariants every store method preserves: the
+(** [dataStore_invs state]: the invariants every store method preserves: the
     pure pool invariants ([pool_invs]), the registry's coherence, and every
     client's clocks gap-free from 0 ([pool_clocks_contiguous], issue #198).
     The address [NoDup] is not here; it is [own_type_pool]'s [locs_wf]. *)
-Definition store_invs (state : store_state) : Prop :=
+Definition dataStore_invs (state : dataStore_state) : Prop :=
   pool_invs (ss_pool state) ∧ pool_registry_coh (ss_bind state) (ss_pool state) ∧
   pool_clocks_contiguous (ss_pool state).
 
-(** [own_store_state s state]: THE store at its state, the
+(** [own_dataStore_state s state]: THE store at its state, the
     PRIMITIVE store predicate: every field of the struct at [state], with
     the invariants every method preserves. *)
-Definition own_store_state (s : loc) (state : store_state) : iProp Σ :=
-  "Hfields" ∷ own_store_fields s state ∗
-  "%Hinvs" ∷ ⌜store_invs state⌝.
+Definition own_dataStore_state (s : loc) (state : dataStore_state) : iProp Σ :=
+  "Hfields" ∷ own_dataStore_fields s state ∗
+  "%Hinvs" ∷ ⌜dataStore_invs state⌝.
 
 (** The pool invariants, read off the store. *)
-Lemma own_store_state_run_pool_invs (s : loc) (state : store_state) :
-  own_store_state s state -∗ ⌜pool_invs (ss_pool state)⌝.
+Lemma own_dataStore_state_run_pool_invs (s : loc) (state : dataStore_state) :
+  own_dataStore_state s state -∗ ⌜pool_invs (ss_pool state)⌝.
 Proof.
   iIntros "(_ & %Hinvs)". iPureIntro. exact (proj1 Hinvs).
 Qed.
 
 (** The address map is aligned with the pool: read off the store. *)
-Lemma own_store_state_aligned (s : loc) (state : store_state) :
-  own_store_state s state -∗ ⌜locs_aligned (ss_locs state) (ss_pool state)⌝.
+Lemma own_dataStore_state_aligned (s : loc) (state : dataStore_state) :
+  own_dataStore_state s state -∗ ⌜locs_aligned (ss_locs state) (ss_pool state)⌝.
 Proof.
   iIntros "(Hfields & _)".
   iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
@@ -926,8 +908,8 @@ Qed.
 
 (** Every run of the store is chained ([run_wf]): the heap pin of the run
     spine, read off the store. *)
-Lemma own_store_state_run_wf (s : loc) (state : store_state) :
-  own_store_state s state -∗ ⌜∀ r, r ∈ all_runs (ss_pool state) -> run_wf (run_items r)⌝.
+Lemma own_dataStore_state_run_wf (s : loc) (state : dataStore_state) :
+  own_dataStore_state s state -∗ ⌜∀ r, r ∈ all_runs (ss_pool state) -> run_wf (run_items r)⌝.
 Proof.
   iIntros "(Hfields & _)".
   iDestruct "Hfields" as "(_ & _ & _ & _ & _ & Htypes & _ & _)".
@@ -953,8 +935,8 @@ Qed.
 
 (** Every registered type's document satisfies the array invariant, and the
     registry is coherent with the pool: read off the store. *)
-Lemma own_store_state_arr_inv (s : loc) (state : store_state) :
-  own_store_state s state -∗
+Lemma own_dataStore_state_arr_inv (s : loc) (state : dataStore_state) :
+  own_dataStore_state s state -∗
   ⌜∀ parent tm, ss_pool state !! parent = Some tm -> YjsArrInvariant (tm_arr tm)⌝.
 Proof.
   iIntros "(Hfields & _)".
@@ -962,15 +944,15 @@ Proof.
   iApply (own_type_pool_arr_inv with "Htypes").
 Qed.
 
-Lemma own_store_state_registry_coh (s : loc) (state : store_state) :
-  own_store_state s state -∗ ⌜pool_registry_coh (ss_bind state) (ss_pool state)⌝.
+Lemma own_dataStore_state_registry_coh (s : loc) (state : dataStore_state) :
+  own_dataStore_state s state -∗ ⌜pool_registry_coh (ss_bind state) (ss_pool state)⌝.
 Proof.
   iIntros "(_ & %Hinvs)". iPureIntro. exact (proj1 (proj2 Hinvs)).
 Qed.
 
 (** Every client's clocks are gap-free: read off the store. *)
-Lemma own_store_state_clocks_contiguous (s : loc) (state : store_state) :
-  own_store_state s state -∗ ⌜pool_clocks_contiguous (ss_pool state)⌝.
+Lemma own_dataStore_state_clocks_contiguous (s : loc) (state : dataStore_state) :
+  own_dataStore_state s state -∗ ⌜pool_clocks_contiguous (ss_pool state)⌝.
 Proof.
   iIntros "(_ & %Hinvs)". iPureIntro. exact (proj2 (proj2 Hinvs)).
 Qed.
@@ -1030,19 +1012,19 @@ Qed.
 (** Borrow the [k]-th node of the type at [parent] out of the store, exposing
     its heap struct with the id and content length the delete loop reads
     ([own_type_pool_node_acc] behind the store's lift and lower). *)
-Lemma own_store_state_node_acc (s : loc) (state : store_state)
+Lemma own_dataStore_state_node_acc (s : loc) (state : dataStore_state)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
   ss_locs state !! parent = Some ls ->
   ss_pool state !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
-  own_store_state s state -∗
+  own_dataStore_state s state -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
     "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
     "%Haccpar" ∷ ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
     "Haccval" ∷ lc ↦ itemVal ∗
-    "Haccback" ∷ (lc ↦ itemVal -∗ own_store_state s state).
+    "Haccback" ∷ (lc ↦ itemVal -∗ own_dataStore_state s state).
 Proof.
   move=> Hls Hp Hlk Hrk.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
@@ -1058,7 +1040,7 @@ Proof.
   iIntros "Haccval".
   iDestruct ("Haccback" with "Haccval") as "Htypes".
   iSplitL; last (iPureIntro; exact Hinvs).
-  rewrite /own_store_fields /=.
+  rewrite /own_dataStore_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
 Qed.
 
@@ -1122,13 +1104,13 @@ Proof.
 Qed.
 
 (** [own_type_pool_node_acc_links] behind the store's lift and lower. *)
-Lemma own_store_state_node_acc_links (s : loc) (state : store_state)
+Lemma own_dataStore_state_node_acc_links (s : loc) (state : dataStore_state)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
   ss_locs state !! parent = Some ls ->
   ss_pool state !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
-  own_store_state s state -∗
+  own_dataStore_state s state -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
     "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
@@ -1137,7 +1119,7 @@ Lemma own_store_state_node_acc_links (s : loc) (state : store_state)
     "%Haccright" ∷ ⌜itemVal.(yjs.item.right') = loc_at ls (Z.of_nat k + 1)⌝ ∗
     "%Haccflags" ∷ ⌜itemVal.(yjs.item.flags') = (if run_deleted r then W8 6 else W8 2)⌝ ∗
     "Haccval" ∷ lc ↦ itemVal ∗
-    "Haccback" ∷ (lc ↦ itemVal -∗ own_store_state s state).
+    "Haccback" ∷ (lc ↦ itemVal -∗ own_dataStore_state s state).
 Proof.
   move=> Hls Hp Hlk Hrk.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
@@ -1156,19 +1138,19 @@ Proof.
   iIntros "Haccval".
   iDestruct ("Haccback" with "Haccval") as "Htypes".
   iSplitL; last (iPureIntro; exact Hinvs).
-  rewrite /own_store_fields /=.
+  rewrite /own_dataStore_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
 Qed.
 
 (** Borrow the type at [parent] out of the store as its run view, for a
     read that leaves it as it is ([yType.findPos], the [len] field). *)
-Lemma own_store_state_ytype_acc (s : loc) (state : store_state)
+Lemma own_dataStore_state_ytype_acc (s : loc) (state : dataStore_state)
     (parent : loc) (ls : list loc) (tm : type_model) :
   ss_locs state !! parent = Some ls ->
   ss_pool state !! parent = Some tm ->
-  own_store_state s state -∗
+  own_dataStore_state s state -∗
   own_ytype parent (DfracOwn 1) ls tm ∗
-  (own_ytype parent (DfracOwn 1) ls tm -∗ own_store_state s state).
+  (own_ytype parent (DfracOwn 1) ls tm -∗ own_dataStore_state s state).
 Proof.
   move=> Hls Hp.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
@@ -1184,7 +1166,7 @@ Proof.
   iDestruct ("Hclose" with "[Hyt]") as "Hpool".
   { iExists ls. iFrame "Hyt". iPureIntro. split; [exact Hls | exact Hinv]. }
   iSplitL; last (iPureIntro; exact Hinvs).
-  rewrite /own_store_fields /=.
+  rewrite /own_dataStore_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Hpending Hpdeletes Hpool".
   by iPureIntro.
 Qed.
@@ -1193,10 +1175,10 @@ Qed.
     store: the clock may be rewritten (the store invariants say nothing
     about it; [Text.Insert] bumps it per inserted item), the client is
     read. *)
-Lemma own_store_state_clock_acc (s : loc) (state : store_state) :
-  own_store_state s state -∗
-  (s .[(yjs.store.t), "clock"]) ↦ ss_clock state ∗
-  (∀ k' : w64, (s .[(yjs.store.t), "clock"]) ↦ k' -∗ own_store_state s (state <| ss_clock := k' |>)).
+Lemma own_dataStore_state_clock_acc (s : loc) (state : dataStore_state) :
+  own_dataStore_state s state -∗
+  (s .[(yjs.dataStore.t), "clock"]) ↦ ss_clock state ∗
+  (∀ k' : w64, (s .[(yjs.dataStore.t), "clock"]) ↦ k' -∗ own_dataStore_state s (state <| ss_clock := k' |>)).
 Proof.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl.
   iIntros "(Hfields & %Hinvs)".
@@ -1204,14 +1186,14 @@ Proof.
   iFrame "Hclock".
   iIntros (k') "Hclock".
   iSplitL; last (iPureIntro; exact Hinvs).
-  rewrite /own_store_fields /=.
+  rewrite /own_dataStore_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
 Qed.
 
-Lemma own_store_state_client_acc (s : loc) (state : store_state) :
-  own_store_state s state -∗
-  (s .[(yjs.store.t), "client"]) ↦ ss_client state ∗
-  ((s .[(yjs.store.t), "client"]) ↦ ss_client state -∗ own_store_state s state).
+Lemma own_dataStore_state_client_acc (s : loc) (state : dataStore_state) :
+  own_dataStore_state s state -∗
+  (s .[(yjs.dataStore.t), "client"]) ↦ ss_client state ∗
+  ((s .[(yjs.dataStore.t), "client"]) ↦ ss_client state -∗ own_dataStore_state s state).
 Proof.
   destruct state as [client0 k0 locs p bind pend pdel]. simpl.
   iIntros "(Hfields & %Hinvs)".
@@ -1219,7 +1201,7 @@ Proof.
   iFrame "Hclient".
   iIntros "Hclient".
   iSplitL; last (iPureIntro; exact Hinvs).
-  rewrite /own_store_fields /=.
+  rewrite /own_dataStore_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
 Qed.
 
@@ -1227,67 +1209,63 @@ Qed.
     the same slot ([pool_covers_unique] off the pool invariants). What
     lets a split helper's caller identify the node [GetNode] returned with
     the slot it holds. *)
-Lemma own_store_state_covers_unique (s : loc) (state : store_state) :
-  own_store_state s state -∗
+Lemma own_dataStore_state_covers_unique (s : loc) (state : dataStore_state) :
+  own_dataStore_state s state -∗
   ⌜∀ (d : YjsId) (q1 q2 : loc) (k1 k2 : nat),
      pool_covers (ss_pool state) q1 k1 d ->
      pool_covers (ss_pool state) q2 k2 d ->
      q1 = q2 ∧ k1 = k2⌝.
 Proof.
   iIntros "H".
-  iDestruct (own_store_state_run_pool_invs with "H") as %Hrpi.
+  iDestruct (own_dataStore_state_run_pool_invs with "H") as %Hrpi.
   iPureIntro. move=> d q1 q2 k1 k2 Hcov1 Hcov2.
   exact (pool_covers_unique (ss_pool state) d q1 q2 k1 k2 Hrpi Hcov1 Hcov2).
 Qed.
 
-Definition store_inv_ro (γs : store_names) (locs : gmap loc (list loc)) (p : pool)
+Definition dataStore_inv_ro (γs : store_names) (locs : gmap loc (list loc)) (p : pool)
     (delete_set : gset YjsId) (q : Qp) : iProp Σ :=
   "Hseq" ∷ own γs.(sn_seq) (●{DfracOwn q} ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p) : seqUR) ∗
   "Hdelete_set_auth" ∷ own γs.(sn_delete_set) (●{DfracOwn q} delete_set : accUR) ∗
   "%Hdelete_set_tomb" ∷ ⌜delete_set_tombstoned delete_set (all_runs p)⌝ ∗
   "Htypes" ∷ own_type_pool (DfracOwn q) locs p.
 
-#[global] Instance store_inv_ro_fractional γs locs p delete_set :
-  Fractional (store_inv_ro γs locs p delete_set).
+#[global] Instance dataStore_inv_ro_fractional γs locs p delete_set :
+  Fractional (dataStore_inv_ro γs locs p delete_set).
 Proof.
-  rewrite /store_inv_ro /named. apply fractional_sep.
+  rewrite /dataStore_inv_ro /named. apply fractional_sep.
   - intros q1 q2. rewrite -own_op -auth_auth_dfrac_op dfrac_op_own //.
   - apply fractional_sep.
     + intros q1 q2. rewrite -own_op -auth_auth_dfrac_op dfrac_op_own //.
     + apply fractional_sep; [apply _ | apply own_type_pool_fractional].
 Qed.
 
-(** [store_inv_excl]: the complement of [store_inv_ro] within [store_inv], the
+(** [dataStore_inv_excl]: the complement of [dataStore_inv_ro] within [dataStore_inv], the
     mutable-exclusive state the read lock does NOT share (struct fields, the
     per-client item map, the registry [ghost_map_auth], the ghost history, and
     the counter / registry side conditions). It stays whole in the lock
-    invariant while readers hold fractional shares of [store_inv_ro]. *)
-Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names)
-    (client k : w64) (items_mref types_mref observers_mref : loc) (deletedSetVal : yjs.deletedSet.t)
+    invariant while readers hold fractional shares of [dataStore_inv_ro]. *)
+Definition dataStore_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names)
+    (client k : w64) (items_mref types_mref : loc) (deletedSetVal : yjs.deletedSet.t)
     (pend_sl pdel_sl : slice.t)
     (locs : gmap loc (list loc)) (p : pool) (bind : gmap P loc) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
     (pdel : list delete_span) (delete_set : gset YjsId) : iProp Σ :=
     ∃ (acc : gset YjsId),
-    "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client ∗
+    "Hclient" ∷ (s_loc .[(yjs.dataStore.t), "client"]) ↦ client ∗
     "#Hclientpin" ∷ is_store_client γs (uint.nat client) ∗
-    "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ k ∗
-    "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref ∗
+    "Hclock"  ∷ (s_loc .[(yjs.dataStore.t), "clock"]) ↦ k ∗
+    "Hitemsf" ∷ (s_loc .[(yjs.dataStore.t), "items"]) ↦ items_mref ∗
     "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) locs p ∗
-    "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref ∗
+    "Htypesf" ∷ (s_loc .[(yjs.dataStore.t), "types"]) ↦ types_mref ∗
     "Htypesmap" ∷ own_map types_mref (DfracOwn 1) bind ∗
-    (* the observers map's reference, pinned; its contents are the
-       registry's, beside the store in the lock body (issue #198 Part II) *)
-    "Hobserversf" ∷ (s_loc .[(yjs.store.t), "observers"]) ↦ observers_mref ∗
-    "#Hobserverspin" ∷ is_store_observers γs observers_mref ∗
-    "HdeletedSet"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal ∗
+    "HdeletedSet"   ∷ (s_loc .[(yjs.dataStore.t), "deletedSet"]) ↦ deletedSetVal ∗
     (* the pending buffer (issue #40): the buffered structs whose dependencies
        have not arrived, with their certificates (persistent), so the next
        applyUpdate can re-certify the whole drained buffer without the caller
        knowing what is buffered. *)
-    "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ pend_sl ∗
+    "Hpendf"  ∷ (s_loc .[(yjs.dataStore.t), "pending"]) ↦ pend_sl ∗
     "Hpend"   ∷ own_update_structs pend_sl (DfracOwn 1) pend ∗
-    "Hpddelf" ∷ (s_loc .[(yjs.store.t), "pendingDeletes"]) ↦ pdel_sl ∗
+    "Hpddelf" ∷ (s_loc .[(yjs.dataStore.t), "pendingDeletes"]) ↦ pdel_sl ∗
     "Hpddel"  ∷ own_delete_spans pdel_sl (DfracOwn 1) pdel ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
@@ -1310,22 +1288,22 @@ Definition store_inv_excl (s_loc : loc) (γs : store_names) (γh : history_names
        its coherence [acc ⊆ delivered_ids h ∪ pending ids] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
     (* the delete set's model-domain bound (plan-delete-set D1); its authority
-       and its tombstone-bit clause are in [store_inv_ro], where a reader can
+       and its tombstone-bit clause are in [dataStore_inv_ro], where a reader can
        compare an [is_delete_set_lb] against them *)
     "%Hdelete_set_dom" ∷ ⌜delete_set_dom delete_set m⌝ ∗
     "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝.
 
-#[global] Instance store_inv_ro_timeless γs locs p delete_set q :
-  Timeless (store_inv_ro γs locs p delete_set q).
-Proof. rewrite /store_inv_ro. apply _. Qed.
+#[global] Instance dataStore_inv_ro_timeless γs locs p delete_set q :
+  Timeless (dataStore_inv_ro γs locs p delete_set q).
+Proof. rewrite /dataStore_inv_ro. apply _. Qed.
 
-#[global] Instance store_inv_excl_timeless s_loc γs γh client k im tm om deletedSetVal psl pdsl locs p bind h m pend pdel delete_set :
-  Timeless (store_inv_excl s_loc γs γh client k im tm om deletedSetVal psl pdsl locs p bind h m pend pdel delete_set).
-Proof. rewrite /store_inv_excl /own_update_structs /own_delete_spans /is_update_item. apply _. Qed.
+#[global] Instance dataStore_inv_excl_timeless s_loc γs γh client k im tm deletedSetVal psl pdsl locs p bind h m pend pdel delete_set :
+  Timeless (dataStore_inv_excl s_loc γs γh client k im tm deletedSetVal psl pdsl locs p bind h m pend pdel delete_set).
+Proof. rewrite /dataStore_inv_excl /own_update_structs /own_delete_spans /is_update_item. apply _. Qed.
 
-(** [store_inv s_loc γs γh]: everything the store lock protects.
+(** [dataStore_inv s_loc γs γh]: everything the store lock protects.
     - store struct NON-mu fields (client/clock/items/types/deletedSet field ptrs;
-      [mu] is owned by the [sync.RWMutex] ([rwmutex.is_RWMutex] in [is_Store]), not here);
+      [mu] is the document's, owned by its [sync.RWMutex] ([rwmutex.is_RWMutex] in [is_Doc]), not here);
     - the item-set authority [own γ (●…)] per type loc (id-set), whose fragments
       are the [is_type_lb] lower bounds / registration witnesses [Text] holds;
     - each registered type's DLL (keyed by [parent]) + [YjsArrInvariant];
@@ -1348,50 +1326,50 @@ Proof. rewrite /store_inv_excl /own_update_structs /own_delete_spans /is_update_
     [Hmtypes]: each registered type's [tm_arr] equals [doc_model_get m] at its
     bound name).
 
-    The body is [store_inv_excl] (the mutable-exclusive clauses, documented
-    there) next to [store_inv_ro] at full fraction: exactly the two halves
+    The body is [dataStore_inv_excl] (the mutable-exclusive clauses, documented
+    there) next to [dataStore_inv_ro] at full fraction: exactly the two halves
     the RWMutex tie invariant tracks separately while readers hold shares,
-    so [store_inv_bridge] is definitional. *)
-Definition store_inv (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
-  ∃ (client k : w64) (items_mref types_mref observers_mref : loc) (deletedSetVal : yjs.deletedSet.t)
+    so [dataStore_inv_bridge] is definitional. *)
+Definition dataStore_inv (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
+  ∃ (client k : w64) (items_mref types_mref : loc) (deletedSetVal : yjs.deletedSet.t)
     (pend_sl pdel_sl : slice.t)
     (locs : gmap loc (list loc)) (p : pool) (bind : gmap P loc) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (pdel : list delete_span)
     (delete_set : gset YjsId),
-    "Hexcl" ∷ store_inv_excl s_loc γs γh client k items_mref types_mref observers_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
-    "Hro"   ∷ store_inv_ro γs locs p delete_set 1.
+    "Hexcl" ∷ dataStore_inv_excl s_loc γs γh client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
+    "Hro"   ∷ dataStore_inv_ro γs locs p delete_set 1.
 
-(** [store_inv] is timeless (heap points-to + ghost state over discrete cameras +
+(** [dataStore_inv] is timeless (heap points-to + ghost state over discrete cameras +
     pure facts), so the write [Lock] wrapper hands it back WITHOUT a [▷] even
     though it is extracted from the tie invariant — the Insert/Delete proofs use
     it immediately (no intervening program step to strip a later). *)
-#[global] Instance store_inv_timeless s_loc γs γh : Timeless (store_inv s_loc γs γh).
-Proof. rewrite /store_inv. apply _. Qed.
+#[global] Instance dataStore_inv_timeless s_loc γs γh : Timeless (dataStore_inv s_loc γs γh).
+Proof. rewrite /dataStore_inv. apply _. Qed.
 
 (** ---------------------------------------------------------------------------
     Store lock = a [sync.RWMutex] (y-octo's [Arc<RwLock<DocStore>>]).
 
     Writers (Insert/Delete/GetOrCreateText/applyUpdate) take the write lock; the pure
     readers (String/Len) take the read lock, so concurrent reads are allowed.
-    [is_Store] is a PERSISTENT handle built over Perennial's logically-atomic
+    [is_Doc] is a PERSISTENT handle built over Perennial's logically-atomic
     RWMutex ([New.proof.sync_proof.rwmutex]): a tying [inv] relates the RWMutex's
-    abstract lock state to [store_inv]. The RWMutex ghost names [γrw] are hidden
-    (existential) inside [is_Store], so [is_Store]'s signature is unchanged.
+    abstract lock state to [dataStore_inv]. The RWMutex ghost names [γrw] are hidden
+    (existential) inside [is_Doc], so [is_Doc]'s signature is unchanged.
 
     Write path (this port): the write [Lock] linearizes only at [RLocked 0] (no
-    readers outstanding), where it can take the WHOLE [store_inv]; [Unlock]
-    returns it. So [store_lock_res] maps [RLocked _ ↦ store_inv ∗ own_wlock] and
+    readers outstanding), where it can take the WHOLE [dataStore_inv]; [Unlock]
+    returns it. So [store_lock_res] maps [RLocked _ ↦ dataStore_inv ∗ own_wlock] and
     [Locked ↦ True]; a writer never observes [RLocked (S _)]. [own_wlock] is the
     exclusive "I hold the write lock" witness (like [own_Mutex]); it makes the
     [Unlock] proof's "not actually locked" case a clean [ghost_var] clash.
     Concurrent readers (the verified String/Len read API) only REFINE the
-    [RLocked (S _)] branch to a fractional share of [store_inv]; that is a
+    [RLocked (S _)] branch to a fractional share of [dataStore_inv]; that is a
     follow-on and does not touch these write proofs. --------------------------- *)
 
 (** [is_type_lb γ parent S]: a persistent SUBSET (membership) lower bound on the
     type at [parent] — [S ⊆] its current item set (of full [YjsItem]s) — AND the
     registration witness (the key [parent] exists in the store's auth). [Insert]
-    combines it with [store_inv]'s [Hseq] (auth) under the lock to (a) learn
+    combines it with [dataStore_inv]'s [Hseq] (auth) under the lock to (a) learn
     [parent ∈ dom types] and extract its DLL, and (b) grow the lower bound. Each
     [x ∈ S] is thereby pinned to a genuine document item, so the sorted [S]
     yields a [sublist] (hence string) lower bound. *)
@@ -1415,7 +1393,7 @@ Definition own_observed (γo : gname) (s : snapshot) : iProp Σ := ghost_var γo
     in the store's delete set, [s] is a valid document, and it holds every
     insert into [name] that a history prefix of this replica delivered.
     Minted by the writer when it notifies; persistent. Never mentions
-    [is_Text], whose [is_Store] would contain this predicate (a cycle); an
+    [is_Text], whose [is_Doc] would contain this predicate (a cycle); an
     application pairs it with its own handle. *)
 Definition is_text_snapshot (γs : store_names) (γh : history_names) (name : P) (s : snapshot) : iProp Σ :=
   ∃ (parent : loc) (c : ClientId) (h : list Ev),
@@ -1479,8 +1457,7 @@ Definition own_type_observers (γs : store_names) (γh : history_names) (name : 
 (** [own_observer_registry observers_mref γs γh m deleted]: the store's
     observers, every one told everything up to its type's snapshot at
     [(m, deleted)]: the contents of the [observers] map at [observers_mref]
-    (the store's [observers] field, pinned by [is_store_observers]; the field
-    itself is the store's, [own_store] / [store_inv_excl]), per registered
+    (the store's [observers] field, [is_store_observers]), per registered
     type (by address, bound to its root name) its observers
     ([own_type_observers]) at that snapshot; the registered tokens'
     authority. Held by the lock between transactions ([tie_body]) beside the
@@ -1490,7 +1467,6 @@ Definition own_type_observers (γs : store_names) (γh : history_names) (name : 
 Definition own_observer_registry (observers_mref : loc) (γs : store_names) (γh : history_names)
     (m : DocModel) (deleted : gset YjsId) : iProp Σ :=
   ∃ (registry : gmap loc slice.t) (registered : gmap loc (P * list gname)),
-    "#Hregistrypin" ∷ is_store_observers γs observers_mref ∗
     "Hobserversmap" ∷ own_map observers_mref (DfracOwn 1) registry ∗
     "Hobserversauth" ∷ own γs.(sn_observers) (● registered_tokens registered : observersUR) ∗
     "#Hregistered_bind" ∷ ([∗ map] parent ↦ entry ∈ registered,
@@ -1507,41 +1483,68 @@ Definition own_wlock (γs : store_names) : iProp Σ :=
 Definition pool_frag (γs : store_names) (q : Qp) (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
   own γs.(sn_types_agree) (to_frac_agree q ((locs, p) : leibnizO addressed_pool)).
 
-Definition storeN : namespace := nroot .@ "yjs_store".
+Definition docN : namespace := nroot .@ "yjs_store".
 
-(** [tie_store s γs γh n locs p m deleted]: the store's state inside the lock
-    invariant with [n] readers outstanding: the pool agreement at the readers'
-    share, the exclusive slice and the readers' share of the read-only
-    slice, at the public model [(m, deleted)] the observers' registry beside
-    it refers to. Sealed for typeclass resolution and timeless as one
-    instance (see the compile-time note below). *)
-Definition tie_store (s_loc : loc) (γs : store_names) (γh : history_names) (n : nat)
-    (locs : gmap loc (list loc)) (p : pool) (m : DocModel) (deleted : gset YjsId)
-    (observers_mref : loc) : iProp Σ :=
+(** [is_store_data s ds] / [is_store_observers s observers_mref]: the store
+    at [s] holds its data at [ds] and its observers map at [observers_mref],
+    forever (both fields are set in [newStore] and never reassigned): the
+    persistent facts through which a method reaches the data
+    ([tr.store.data]) and the map ([Text.Observe], [store.notify]). *)
+Definition is_store_data (s_loc ds : loc) : iProp Σ :=
+  (s_loc .[(yjs.store.t), "data"]) ↦□ ds.
+
+Definition is_store_observers (s_loc observers_mref : loc) : iProp Σ :=
+  (s_loc .[(yjs.store.t), "observers"]) ↦□ observers_mref.
+
+#[global] Instance is_store_data_persistent s_loc ds : Persistent (is_store_data s_loc ds).
+Proof. rewrite /is_store_data. apply _. Qed.
+
+#[global] Instance is_store_data_timeless s_loc ds : Timeless (is_store_data s_loc ds).
+Proof. rewrite /is_store_data. apply _. Qed.
+
+#[global] Instance is_store_observers_persistent s_loc observers_mref : Persistent (is_store_observers s_loc observers_mref).
+Proof. rewrite /is_store_observers. apply _. Qed.
+
+#[global] Instance is_store_observers_timeless s_loc observers_mref : Timeless (is_store_observers s_loc observers_mref).
+Proof. rewrite /is_store_observers. apply _. Qed.
+
+(** [tie_dataStore ds γs γh n locs p m deleted]: the data's state inside the
+    lock invariant with [n] readers outstanding: the pool agreement at the
+    readers' share, the exclusive slice and the readers' share of the
+    read-only slice, at the public model [(m, deleted)] the observers'
+    registry beside it refers to. Sealed for typeclass resolution and
+    timeless as one instance (see the compile-time note below). *)
+Definition tie_dataStore (ds : loc) (γs : store_names) (γh : history_names) (n : nat)
+    (locs : gmap loc (list loc)) (p : pool) (m : DocModel) (deleted : gset YjsId) : iProp Σ :=
   ∃ client k items_mref types_mref deletedSetVal pend_sl pdel_sl bind h pend pdel delete_set,
     ⌜deleted = pool_tombstoned p⌝ ∗
     pool_frag γs (frac_of n) locs p ∗
-    store_inv_excl s_loc γs γh client k items_mref types_mref observers_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
-    store_inv_ro γs locs p delete_set (frac_of n).
+    dataStore_inv_excl ds γs γh client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
+    dataStore_inv_ro γs locs p delete_set (frac_of n).
 
 Definition tie_body (s_loc : loc) (γs : store_names) (γh : history_names) (st : rwmutex) : iProp Σ :=
   match st with
   | Locked => ∃ locs p, own_tok_auth γs.(sn_rrlocked) 0 ∗ pool_frag γs 1 locs p
   | RLocked n =>
       own_tok_auth γs.(sn_rrlocked) n ∗ own_toks γs.(sn_rmax) n ∗ own_wlock γs ∗
-      (∃ locs p m deleted observers_mref,
-         tie_store s_loc γs γh n locs p m deleted observers_mref ∗
+      (∃ ds observers_mref locs p m deleted,
+         is_store_data s_loc ds ∗ is_store_observers s_loc observers_mref ∗
+         tie_dataStore ds γs γh n locs p m deleted ∗
          own_observer_registry observers_mref γs γh m deleted)
   end.
 
-(** Store handle (persistent): the [sync.RWMutex] at [&store.mu] with the
-    reader-count accounting invariant. The lock ghost names live in [γs] (see
-    [store_names]); ALL store-field / item-set / DLL references are sealed here or
-    in [store_inv]. *)
-Definition is_Store (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
-  "#Hrw" ∷ rwmutex.is_RWMutex (s_loc .[(yjs.store.t), "mu"]) γs.(sn_rw) (storeN .@ "rw") ∗
+(** [is_Doc dv s_loc γs γh]: the document's persistent handle: its [store]
+    field, set in [NewDoc] and never reassigned, holds the store at [s_loc]
+    (Yjs [Doc.store], y-octo [Doc.store]), and its [mu] is the
+    [sync.RWMutex] guarding that store, with the reader-count accounting
+    invariant [tie_body]; the lock ghost names live in [γs]. Defined here,
+    below [doc/], because the lock lemmas ([store/wp_private]) and the
+    [Text] handle are stated over it. *)
+Definition is_Doc (dv s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
+  "#Hdoc_store" ∷ (dv .[(yjs.Doc.t), "store"]) ↦□ s_loc ∗
+  "#Hrw" ∷ rwmutex.is_RWMutex (dv .[(yjs.Doc.t), "mu"]) γs.(sn_rw) (docN .@ "rw") ∗
   "#Hmax" ∷ own_tok_auth_dfrac γs.(sn_rmax) DfracDiscarded (Z.to_nat rwmutex.actualMaxReaders) ∗
-  "#Htie" ∷ inv (storeN .@ "tie") (∃ st, rwmutex.own_RWMutex γs.(sn_rw) st ∗ tie_body s_loc γs γh st).
+  "#Htie" ∷ inv (docN .@ "tie") (∃ st, rwmutex.own_RWMutex γs.(sn_rw) st ∗ tie_body s_loc γs γh st).
 
 (** The read capability (one reader slot) and the post-RLock reader state. *)
 Definition own_read_cap (γs : store_names) : iProp Σ :=
@@ -1550,7 +1553,7 @@ Definition own_read_cap (γs : store_names) : iProp Σ :=
 Definition own_read_locked (γs : store_names) (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
   own_toks γs.(sn_rrlocked) 1 ∗ pool_frag γs rwmutex_guard.rfrac locs p.
 
-#[global] Instance is_Store_persistent s_loc γs γh : Persistent (is_Store s_loc γs γh).
+#[global] Instance is_Doc_persistent dv s_loc γs γh : Persistent (is_Doc dv s_loc γs γh).
 Proof. apply _. Qed.
 
 #[global] Instance own_wlock_timeless γs : Timeless (own_wlock γs).
@@ -1601,31 +1604,27 @@ Definition is_applied_certs (γs : store_names)
   Persistent (is_applied_certs γs applied m).
 Proof. rewrite /is_applied_certs. apply _. Qed.
 
-(** [own_store s γs γh c h m pend]: the WHOLE lock-protected store state, as
+(** [own_dataStore s γs γh c h m pend]: the WHOLE lock-protected store state, as
     one exclusive predicate over its public model: this replica is client
     [c] with ghost op history [h], whose replayed doc model is [m], and
     [pend] buffered wire items. Everything else (the state
-    [own_store_state] with its addresses and pool, [bind], [pdel], the local
-    clock) is existential. [store_inv] is exactly its model-existential closure
-    ([store_inv_own_store] below), so the write lock hands out [own_store]
-    ([wp_Store__wlock]) and takes it back ([wp_Store__wunlock]); every spec
-    over store state is stated [own_store] in, [own_store] out.
+    [own_dataStore_state] with its addresses and pool, [bind], [pdel], the local
+    clock) is existential. [dataStore_inv] is exactly its model-existential closure
+    ([dataStore_inv_own_dataStore] below), so the write lock hands it out
+    inside [own_store] ([wp_Doc__wlock]) and takes it back
+    ([wp_Doc__wunlock]); every spec over the data is stated [own_dataStore]
+    in, [own_dataStore] out.
 
     The pool invariants and the registry coherence live inside
-    [own_store_state]. *)
-Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
+    [own_dataStore_state]. *)
+Definition own_dataStore (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) : iProp Σ :=
   ∃ (client k : w64) (pdel : list delete_span)
-    (locs : gmap loc (list loc)) (p : pool) (bind : gmap P loc) (acc : gset YjsId)
-    (observers_mref : loc),
+    (locs : gmap loc (list loc)) (p : pool) (bind : gmap P loc) (acc : gset YjsId),
     "%Hclientc" ∷ ⌜uint.nat client = c⌝ ∗
     "#Hclientpin" ∷ is_store_client γs c ∗
-    "Hstate" ∷ own_store_state s_loc (MkStoreState client k locs p bind pend pdel) ∗
-    (* the observers map's reference (issue #198 Part II): the field is the
-       store's, the map's contents are the registry's beside it *)
-    "Hobserversf" ∷ (s_loc .[(yjs.store.t), "observers"]) ↦ observers_mref ∗
-    "#Hobserverspin" ∷ is_store_observers γs observers_mref ∗
+    "Hstate" ∷ own_dataStore_state s_loc (MkDataStoreState client k locs p bind pend pdel) ∗
     "#Hpendcert" ∷ is_pending_certified γh (expand_inputs pend) ∗
     "%Hpendroot" ∷ ⌜is_pending_rooted pend⌝ ∗
     "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend ->
@@ -1637,7 +1636,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     "%Hregmodel" ∷ ⌜pool_registry_models m bind p⌝ ∗
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
     "%Hctr"   ∷ ⌜pool_next_clock p c (uint.nat k)⌝ ∗
-    (* no-loss accepted-id layer: matches [store_inv_excl] *)
+    (* no-loss accepted-id layer: matches [dataStore_inv_excl] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
     "Hdelete_set" ∷ own_delete_set γs m (all_runs p) ∗
     "%Hacccoh" ∷ ⌜accepted_coh acc h pend⌝ ∗
@@ -1646,6 +1645,32 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
        lower bound of; a type's snapshot is then a function of the public
        model, [type_snapshot m deleted name] *)
     "%Hdeleted" ∷ ⌜deleted = pool_tombstoned p⌝.
+
+(** [own_store_observers_behind s γs γh c h m pend deleted m0 deleted0]: the
+    store at [s] inside a transaction: its data at the current model
+    [(m, deleted)], its observers still told everything up to
+    [(m0, deleted0)], the state the transaction started from, until
+    [store.notify] tells them the rest. The one relaxation of [own_store]
+    (which is it at [m0 = m], [deleted0 = deleted]); [own_transaction]'s
+    store clause, and what [store.notify] takes. *)
+Definition own_store_observers_behind (s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) : iProp Σ :=
+  ∃ (ds observers_mref : loc),
+    "#Hdata_field" ∷ is_store_data s_loc ds ∗
+    "Hstore" ∷ own_dataStore ds γs γh c h m pend deleted ∗
+    "#Hobservers_field" ∷ is_store_observers s_loc observers_mref ∗
+    "Hregistry" ∷ own_observer_registry observers_mref γs γh m0 deleted0.
+
+(** [own_store s γs γh c h m pend deleted]: THE predicate of the store at [s],
+    what the document's write lock guards: its data at [(m, deleted)] and
+    every observer told everything up to that state. What [wp_Doc__wlock]
+    hands out and [wp_Doc__wunlock] takes back. *)
+Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) : iProp Σ :=
+  own_store_observers_behind s_loc γs γh c h m pend deleted m deleted.
 
 (** [changed_types_bound γs changed changed_locs]: the transaction's changed
     root types by name and by address are the same types: every name in
@@ -1663,7 +1688,7 @@ Proof. rewrite /changed_types_bound. apply _. Qed.
 
 (** [own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed]:
     the store inside a transaction (issue #206 T1, issue #198 Part II): the
-    transaction record at [tr] next to [own_store] at the exact model
+    transaction record at [tr] next to [own_dataStore] at the exact model
     [(m, deleted)], with what the record says about that model. [inserted]
     and [tombstoned] are the char ids the transaction integrated and
     tombstoned so far ([m ∖ inserted], [deleted ∖ tombstoned] is the state
@@ -1673,18 +1698,19 @@ Proof. rewrite /changed_types_bound. apply _. Qed.
     tombstoned, and every recorded id is a char of a changed type's document;
     with the pool's uniqueness of ids that says a type outside [changed] has
     no id in either set, so its snapshot now is its snapshot at the start,
-    which is what lets the end of the transaction skip it (Part II C2). Held by the writer for the
-    transaction's duration; [wp_store__transact] opens and closes it. *)
+    which is what lets the end of the transaction skip it (Part II C2). Held by
+    the writer for the transaction's duration; [wp_Doc__Transact] opens it
+    ([own_transaction_fresh]) and [wp_store__notify] closes it. *)
 Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) : iProp Σ :=
-  ∃ (changed_locs : gset loc) (m0 : DocModel) (deleted0 : gset YjsId) (observers_mref : loc),
+  ∃ (changed_locs : gset loc) (m0 : DocModel) (deleted0 : gset YjsId),
     "Hchanges" ∷ own_transaction_changes tr s_loc inserted tombstoned changed_locs ∗
-    "Hstore" ∷ own_store s_loc γs γh c h m pend deleted ∗
-    (* the observers, at the state the transaction started from: what they
-       were last told, until [notify] (issue #198 Part II) *)
-    "Hregistry" ∷ own_observer_registry observers_mref γs γh m0 deleted0 ∗
+    (* the store: its data at the current state, its observers at the state
+       the transaction started from, what they were last told, until
+       [notify] (issue #198 Part II) *)
+    "Hstore" ∷ own_store_observers_behind s_loc γs γh c h m pend deleted m0 deleted0 ∗
     "%Hstart" ∷ ⌜transaction_start m deleted inserted tombstoned m0 deleted0⌝ ∗
     "#Hchanged_bound" ∷ changed_types_bound γs changed changed_locs ∗
     "%Hinserted_dom" ∷ ⌜∀ i, i ∈ inserted -> doc_model_has m i = true⌝ ∗
@@ -1694,7 +1720,7 @@ Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_n
                        x ∈ doc_model_get m (RootId name) ∧ item_id x = i⌝.
 
 (** [closure_runs_transaction s_loc γs γh f Q]: the closure [f] runs one
-    transaction of the store at [s_loc] ([store.transact]'s argument, issue
+    transaction of the store at [s_loc] ([Doc.Transact]'s argument, issue
     #206 T1): handed the fresh transaction, it returns it, changed as it
     may be, with [Q] holding of the end state (client, history, model,
     pending, tombstones). A one-shot wand, not a persistent triple: the
@@ -1714,7 +1740,7 @@ Definition closure_runs_transaction (s_loc : loc) (γs : store_names) (γh : his
 
 (* ---- lock-layer compile-time fix -------------------------------------------
    Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked
-   n)], whose payload nests [store_inv_excl ∗ store_inv_ro] (the latter an auth
+   n)], whose payload nests [dataStore_inv_excl ∗ dataStore_inv_ro] (the latter an auth
    plus a [big_sepM] of the DLL fixpoint). Stripping the [▷] off the payload
    conjunct-by-conjunct with those predicates TRANSPARENT makes the [Timeless]
    search unfold that whole structure into its normal form: ~750 s per lock
@@ -1726,23 +1752,23 @@ Definition closure_runs_transaction (s_loc : loc) (γs : store_names) (γh : his
    (delta reduction ignores [Typeclasses Opaque]). Only [tie_body] is sealed for
    typeclass resolution (nothing frames into or [iNamed]s it, so this is safe);
    the payload predicates stay transparent so [iFrame] / [iNamed] on them keep
-   working (store_inv_init, store_inv_own_store, Insert / Delete). The one-off
+   working (dataStore_inv_init, dataStore_inv_own_dataStore, Insert / Delete). The one-off
    [tie_body_timeless] proof decomposes the [∗]/[∃] by hand so each leaf
-   [Timeless] goal is a flat instance lookup (store_inv_excl_timeless etc.);
+   [Timeless] goal is a flat instance lookup (dataStore_inv_excl_timeless etc.);
    letting [apply _] tackle the whole nested goal instead costs ~85 s of TC
    backtracking. Each lock proof drops from ~750 s to sub-second, and the file
    from ~37 min to well under a minute. *)
 #[global] Instance pool_frag_timeless γs q locs p : Timeless (pool_frag γs q locs p).
 Proof. rewrite /pool_frag. apply _. Qed.
 
-#[local] Instance tie_store_timeless s_loc γs γh n locs p m deleted observers_mref :
-  Timeless (tie_store s_loc γs γh n locs p m deleted observers_mref).
+#[local] Instance tie_dataStore_timeless ds γs γh n locs p m deleted :
+  Timeless (tie_dataStore ds γs γh n locs p m deleted).
 Proof.
-  rewrite /tie_store;
+  rewrite /tie_dataStore;
     repeat first [ apply sep_timeless | apply exist_timeless; intros ? ]; apply _.
 Qed.
 
-#[global] Typeclasses Opaque tie_store.
+#[global] Typeclasses Opaque tie_dataStore.
 #[global] Typeclasses Opaque tie_body.
 
 (** A heap [[]idSpan] abstracts to a [gset YjsId]: the union of its spans'
@@ -1908,9 +1934,9 @@ Qed.
     authority's validity says so, which is what lets a reader's share
     recombine with the lock's at [RUnlock] (the pool is pinned separately, by
     [pool_frag_agree]). *)
-Lemma store_inv_ro_delete_set_agree (γs : store_names) (locs1 locs2 : gmap loc (list loc))
+Lemma dataStore_inv_ro_delete_set_agree (γs : store_names) (locs1 locs2 : gmap loc (list loc))
     (p1 p2 : pool) (delete_set1 delete_set2 : gset YjsId) (q1 q2 : Qp) :
-  store_inv_ro γs locs1 p1 delete_set1 q1 -∗ store_inv_ro γs locs2 p2 delete_set2 q2 -∗
+  dataStore_inv_ro γs locs1 p1 delete_set1 q1 -∗ dataStore_inv_ro γs locs2 p2 delete_set2 q2 -∗
   ⌜delete_set1 = delete_set2⌝.
 Proof.
   iIntros "H1 H2".
@@ -1920,15 +1946,15 @@ Proof.
   exact (leibniz_equiv _ _ Heq).
 Qed.
 
-(** [store_inv] partitions into its exclusive part and the read-shareable part
+(** [dataStore_inv] partitions into its exclusive part and the read-shareable part
     at full fraction; since the body IS that split, the bridge is definitional
     (kept as a lemma for the lock-layer proofs that rewrite with it). *)
-Lemma store_inv_bridge (s_loc : loc) (γs : store_names) (γh : history_names) :
-  store_inv s_loc γs γh ⊣⊢
-  ∃ client k items_mref types_mref observers_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set,
-    store_inv_excl s_loc γs γh client k items_mref types_mref observers_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
-    store_inv_ro γs locs p delete_set 1.
-Proof. rewrite /store_inv /named //. Qed.
+Lemma dataStore_inv_bridge (s_loc : loc) (γs : store_names) (γh : history_names) :
+  dataStore_inv s_loc γs γh ⊣⊢
+  ∃ client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set,
+    dataStore_inv_excl s_loc γs γh client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
+    dataStore_inv_ro γs locs p delete_set 1.
+Proof. rewrite /dataStore_inv /named //. Qed.
 
 (** What a reader's certificates read back out of the exclusive slice at a
     lock transition (issue #125): the client pin identifies the caller's
@@ -1936,20 +1962,20 @@ Proof. rewrite /store_inv /named //. Qed.
     routes a root name to its type slot, and [history_state_coh] turns every
     delivered insert of the certified prefix into an item of that type's
     CURRENT list ([delivered_ops_prefix] + [delivered_docm_mem]). The slice
-    comes back untouched; [wp_Store__rlock] applies this at the read
+    comes back untouched; [wp_Doc__rlock] applies this at the read
     lock's linearization point, which is the only moment a reader sees the
     exclusive slice. *)
-Lemma store_inv_excl_hist_root (s_loc : loc) (γs : store_names) (γh : history_names)
-    (client k : w64) (items_mref types_mref observers_mref : loc) (deletedSetVal : yjs.deletedSet.t)
+Lemma dataStore_inv_excl_hist_root (s_loc : loc) (γs : store_names) (γh : history_names)
+    (client k : w64) (items_mref types_mref : loc) (deletedSetVal : yjs.deletedSet.t)
     (pend_sl pdel_sl : slice.t) (locs : gmap loc (list loc)) (p : pool) (bind : gmap P loc)
     (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
     (pdel : list delete_span) (delete_set : gset YjsId)
     (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
-  store_inv_excl s_loc γs γh client k items_mref types_mref observers_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set -∗
+  dataStore_inv_excl s_loc γs γh client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set -∗
   is_store_client γs c -∗
   is_history_lb γh c h0 -∗
   is_type_binding γs.(sn_types) name parent -∗
-  store_inv_excl s_loc γs γh client k items_mref types_mref observers_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
+  dataStore_inv_excl s_loc γs γh client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
   ⌜∀ input : IntegrateInput (A := A),
      (RootId name, OpInsert input) ∈ delivered_ops h0 ->
      ∃ tm it, p !! parent = Some tm ∧ item_id it = in_id input ∧ it ∈ tm_arr tm⌝.
@@ -1993,18 +2019,18 @@ Qed.
     store proves [i] is delivered-or-buffered right now. A client re-acquires
     the lock and applies this: the accepted id it was handed cannot have been
     silently dropped. *)
-Lemma own_store_accepted_sound (s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_dataStore_accepted_sound (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) (i : YjsId) :
-  own_store s_loc γs γh c h m pend deleted -∗ is_accepted γs i -∗
-  own_store s_loc γs γh c h m pend deleted ∗ ⌜i ∈ delivered_ids h ∪ pending_id_set pend⌝.
+  own_dataStore s_loc γs γh c h m pend deleted -∗ is_accepted γs i -∗
+  own_dataStore s_loc γs γh c h m pend deleted ∗ ⌜i ∈ delivered_ids h ∪ pending_id_set pend⌝.
 Proof.
   iIntros "H #Hi". iNamed "H".
   iDestruct (auth_gset_frag_sub with "Hacc Hi") as %Hsub.
   have Hin : i ∈ acc.
   { apply Hsub. by apply elem_of_singleton. }
   iSplitR ""; last (iPureIntro; exact (elem_of_weaken _ _ _ Hin Hacccoh)).
-  iExists client, k, pdel, locs, p, bind, acc, observers_mref.
+  iExists client, k, pdel, locs, p, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
     | exact Hacccoh | exact Hdeleted].
@@ -2013,34 +2039,15 @@ Qed.
 (** The client pin comes out of the store without consuming it (the clause is
     persistent): how a caller that reveals a store state learns the client it
     already holds a pin for is THIS store's. *)
-Lemma own_store_client_pin (s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_dataStore_client_pin (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
-  own_store s_loc γs γh c h m pend deleted -∗
-  own_store s_loc γs γh c h m pend deleted ∗ is_store_client γs c.
+  own_dataStore s_loc γs γh c h m pend deleted -∗
+  own_dataStore s_loc γs γh c h m pend deleted ∗ is_store_client γs c.
 Proof.
   iIntros "H". iNamed "H".
   iSplitR ""; last by iFrame "Hclientpin".
-  iExists client, k, pdel, locs, p, bind, acc, observers_mref.
-  iFrame "∗#". iPureIntro. split_and!;
-    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
-    | exact Hacccoh | exact Hdeleted].
-Qed.
-
-(** The [observers] field, borrowed out of the store with its pin: what
-    [store.notify] and [Text.Observe] load to reach the registry's map. *)
-Lemma own_store_observers_acc (s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
-  own_store s_loc γs γh c h m pend deleted -∗
-  ∃ observers_mref : loc,
-    is_store_observers γs observers_mref ∗
-    (s_loc .[(yjs.store.t), "observers"]) ↦ observers_mref ∗
-    ((s_loc .[(yjs.store.t), "observers"]) ↦ observers_mref -∗
-     own_store s_loc γs γh c h m pend deleted).
-Proof.
-  iIntros "H". iNamed "H". iExists observers_mref. iFrame "Hobserverspin Hobserversf".
-  iIntros "Hobserversf". iExists client, k, pdel, locs, p, bind, acc, observers_mref.
+  iExists client, k, pdel, locs, p, bind, acc.
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
     | exact Hacccoh | exact Hdeleted].
@@ -2051,13 +2058,13 @@ Qed.
     element. This is what [applyUpdate] calls (with [L = inputs]) so a
     discarding implementation, which delivers/buffers nothing, could not
     produce the receipts its postcondition promises. *)
-Lemma own_store_accept_batch (s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_dataStore_accept_batch (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId)
     (L : list (TId * IntegrateInput (A := A))) :
   (∀ x, x ∈ L -> in_id x.2 ∈ delivered_ids h ∪ pending_id_set pend) ->
-  own_store s_loc γs γh c h m pend deleted ==∗
-  own_store s_loc γs γh c h m pend deleted ∗ [∗ list] x ∈ L, is_accepted γs (in_id x.2).
+  own_dataStore s_loc γs γh c h m pend deleted ==∗
+  own_dataStore s_loc γs γh c h m pend deleted ∗ [∗ list] x ∈ L, is_accepted γs (in_id x.2).
 Proof.
   iIntros (HL) "H". iNamed "H".
   set (T := list_to_set ((λ x, in_id x.2) <$> L) : gset YjsId).
@@ -2073,7 +2080,7 @@ Proof.
     rewrite elem_of_list_to_set list_elem_of_fmap.
     exists x. split; [done | exact (list_elem_of_lookup_2 _ _ _ Hx)]. }
   iModIntro. iFrame "Haccepts".
-  iExists client, k, pdel, locs, p, bind, (acc ∪ T), observers_mref.
+  iExists client, k, pdel, locs, p, bind, (acc ∪ T).
   iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
     | | exact Hdeleted].
@@ -2085,24 +2092,25 @@ Qed.
     [RLocked 0], over caller-provided RWMutex names (the physical lock is set
     up by [init_RWMutex] at the call site), allocating the store's ghost
     names for real: the write-lock witness, the reader count at zero, the
-    DISCARDED reader-bound authority ([is_Store]'s [Hmax]) and the types
+    DISCARDED reader-bound authority ([is_Doc]'s [Hmax]) and the types
     agreement all go into the payload rather than being dropped. The caller
     wraps the result in the tie invariant next to [own_RWMutex (RLocked 0)]
-    and has [is_Store]. The reader-bound TOKENS come back too (issue #125):
+    and has [is_Doc]. The reader-bound TOKENS come back too (issue #125):
     zipped with [init_RWMutex]'s RLock tokens they are the document's
     [own_read_cap] read capabilities, one per reader slot. *)
-Lemma store_tie_init (s_loc : loc) (γh : history_names) (client : w64)
+Lemma doc_tie_init (s_loc ds : loc) (γh : history_names) (client : w64)
     (items_mref types_mref observers_mref : loc) (deletedSetVal : yjs.deletedSet.t)
     (γrw : RWMutex_names) :
-  "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client -∗
-  "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ W64 0 -∗
-  "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref -∗
+  "Hclient" ∷ (ds .[(yjs.dataStore.t), "client"]) ↦ client -∗
+  "Hclock"  ∷ (ds .[(yjs.dataStore.t), "clock"]) ↦ W64 0 -∗
+  "Hitemsf" ∷ (ds .[(yjs.dataStore.t), "items"]) ↦ items_mref -∗
   "Hmap"    ∷ own_map items_mref (DfracOwn 1) (∅ : gmap w64 slice.t) -∗
-  "Htypesf" ∷ (s_loc .[(yjs.store.t), "types"]) ↦ types_mref -∗
+  "Htypesf" ∷ (ds .[(yjs.dataStore.t), "types"]) ↦ types_mref -∗
   "Htypesmap" ∷ own_map types_mref (DfracOwn 1) (∅ : gmap P loc) -∗
-  "HdeletedSet"   ∷ (s_loc .[(yjs.store.t), "deletedSet"]) ↦ deletedSetVal -∗
-  "Hpendf"  ∷ (s_loc .[(yjs.store.t), "pending"]) ↦ slice.nil -∗
-  "Hpddelf" ∷ (s_loc .[(yjs.store.t), "pendingDeletes"]) ↦ slice.nil -∗
+  "HdeletedSet"   ∷ (ds .[(yjs.dataStore.t), "deletedSet"]) ↦ deletedSetVal -∗
+  "Hpendf"  ∷ (ds .[(yjs.dataStore.t), "pending"]) ↦ slice.nil -∗
+  "Hpddelf" ∷ (ds .[(yjs.dataStore.t), "pendingDeletes"]) ↦ slice.nil -∗
+  "Hdata" ∷ (s_loc .[(yjs.store.t), "data"]) ↦ ds -∗
   "Hobserversf" ∷ (s_loc .[(yjs.store.t), "observers"]) ↦ observers_mref -∗
   "Hobserversmap" ∷ own_map observers_mref (DfracOwn 1) (∅ : gmap loc slice.t) -∗
   "Hhist"   ∷ own_client_history γh (uint.nat client) ([] : list Ev) ==∗
@@ -2114,14 +2122,14 @@ Lemma store_tie_init (s_loc : loc) (γh : history_names) (client : w64)
     "Htie"        ∷ tie_body s_loc γs γh (RLocked 0) ∗
     "#Hclientpin" ∷ is_store_client γs (uint.nat client).
 Proof.
-  iIntros "Hclient Hclock Hitemsf Hmap Htypesf Htypesmap HdeletedSet Hpendf Hpddelf Hobserversf Hobserversmap Hhist".
+  iIntros "Hclient Hclock Hitemsf Hmap Htypesf Htypesmap HdeletedSet Hpendf Hpddelf Hdata Hobserversf Hobserversmap Hhist".
   set (p := ∅ : pool). set (locs := ∅ : gmap loc (list loc)).
   iMod (own_alloc (● ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p) : seqUR))
     as (γseq) "Hseq".
   { apply auth_auth_valid. rewrite /p fmap_empty //. }
   iMod (ghost_map_alloc_empty (K := P) (V := loc)) as (γtypes) "HtypesAuth".
   (* the lock-layer ghosts, for real: the write-lock witness, the reader
-     count at zero, the reader bound (discarded, so it can sit in [is_Store]
+     count at zero, the reader bound (discarded, so it can sit in [is_Doc]
      persistently; its tokens are the read capabilities, handed back to the
      caller) and the pool agreement at the empty store *)
   iMod (ghost_var_alloc ()) as (γwl) "Hwl".
@@ -2142,29 +2150,29 @@ Proof.
   (* the client pin (issue #107): one agree, fixed at birth *)
   iMod (own_alloc (to_agree ((uint.nat client) : leibnizO ClientId))) as (γcl) "#Hclpin".
   { done. }
-  (* no observer yet (issue #198 Part II); the observers map's reference is
-     pinned at birth *)
+  (* no observer yet (issue #198 Part II) *)
   iMod (own_alloc (● (∅ : gset (gname * P)) : observersUR)) as (γobs) "Hobsauth".
   { apply auth_auth_valid. done. }
-  iMod (own_alloc (to_agree (observers_mref : leibnizO loc))) as (γobsref) "#Hobsrefpin".
-  { done. }
+  (* the store's two fields are never reassigned *)
+  iPersist "Hdata". iPersist "Hobserversf".
   set (γs := {| sn_seq := γseq; sn_types := γtypes; sn_wl := γwl;
                 sn_rw := γrw; sn_rmax := γrmax; sn_rrlocked := γrrlocked;
                 sn_types_agree := γta; sn_accepted := γacc; sn_client := γcl;
-                sn_delete_set := γds; sn_observers := γobs; sn_observers_ref := γobsref |}).
+                sn_delete_set := γds; sn_observers := γobs |}).
   iModIntro. iExists γs.
   iSplitR; first done.
   iFrame "Hrmax". iFrame "Hrtoks".
   iSplitL; last by iFrame "Hclpin".
   rewrite /tie_body.
   iFrame "Hrrlocked Hrtoks0 Hwl".
-  iExists locs, p, (∅ : DocModel), (∅ : gset YjsId), observers_mref.
+  iExists ds, observers_mref, locs, p, (∅ : DocModel), (∅ : gset YjsId).
+  rewrite /is_store_data /is_store_observers. iFrame "Hdata Hobserversf".
   iSplitR "Hobserversmap Hobsauth"; last first.
   { (* the empty registry *)
-    iExists ∅, ∅. iFrame "Hobsrefpin Hobserversmap".
+    iExists ∅, ∅. iFrame "Hobserversmap".
     rewrite /registered_tokens map_to_list_empty /=. iFrame "Hobsauth".
     iSplitR; [rewrite big_sepM_empty // | rewrite big_sepM2_empty //]. }
-  rewrite /tie_store.
+  rewrite /tie_dataStore.
   iExists client, (W64 0), items_mref, types_mref, deletedSetVal, slice.nil, slice.nil,
     (∅ : gmap P loc), ([] : list Ev),
     ([] : list (TId * IntegrateInput (A := A))), ([] : list delete_span), (∅ : gset YjsId).
@@ -2173,7 +2181,7 @@ Proof.
   { iPureIntro. rewrite /p /pool_tombstoned /all_runs map_to_list_empty //. }
   iSplitL "Hta"; first by iFrame "Hta".
   iSplitR "Hseq Hdelete_set0"; last first.
-  { (* store_inv_ro over the empty pool: no runs, so nothing is deleted *)
+  { (* dataStore_inv_ro over the empty pool: no runs, so nothing is deleted *)
     iFrame "Hseq Hdelete_set0".
     iSplitR.
     { iPureIntro. move=> r Hr y _ Hin. exfalso. set_solver. }
@@ -2182,9 +2190,9 @@ Proof.
     - rewrite !dom_empty_L //.
     - rewrite map_to_list_empty /=. constructor.
     - move=> parent ls tm Hls. rewrite lookup_empty // in Hls. }
-  (* store_inv_excl *)
+  (* dataStore_inv_excl *)
   iExists (∅ : gset YjsId).
-  iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap Hobserversf HdeletedSet Hpendf Hpddelf Hhist HtypesAuth Hacc0 Hclpin Hobsrefpin".
+  iFrame "Hclient Hclock Hitemsf Htypesf Htypesmap HdeletedSet Hpendf Hpddelf Hhist HtypesAuth Hacc0 Hclpin".
   iSplitL "Hmap".
   { (* the item index over the empty pool *)
     iExists (∅ : gmap w64 slice.t). iFrame "Hmap".
@@ -2231,19 +2239,19 @@ Proof.
   - rewrite /accepted_coh. apply empty_subseteq.
 Qed.
 
-(** Peek [own_store]'s coherence fact while keeping the resource: the replayed
+(** Peek [own_dataStore]'s coherence fact while keeping the resource: the replayed
     doc model [m] is coherent with the store's current history [h]. Used to
     instantiate the receiver-side obligation of [wp_Doc__ApplySyncUpdate] at
     the history the lock reveals. *)
-Lemma own_store_hist_coh (s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_dataStore_hist_coh (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
-  own_store s_loc γs γh c h m pend deleted -∗
-  own_store s_loc γs γh c h m pend deleted ∗ ⌜history_state_coh h m⌝.
+  own_dataStore s_loc γs γh c h m pend deleted -∗
+  own_dataStore s_loc γs γh c h m pend deleted ∗ ⌜history_state_coh h m⌝.
 Proof.
   iIntros "H". iNamed "H".
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf".
-  - iExists client, k, pdel, locs, p, bind, acc, observers_mref.
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
+  - iExists client, k, pdel, locs, p, bind, acc.
     iFrame "∗#".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr
@@ -2251,30 +2259,30 @@ Proof.
   - iPureIntro. exact Hhcoh.
 Qed.
 
-(** [store_inv] is exactly [own_store] with the model existentially closed.
-    The forward direction assembles [own_store_state] from the exclusive
+(** [dataStore_inv] is exactly [own_dataStore] with the model existentially closed.
+    The forward direction assembles [own_dataStore_state] from the exclusive
     slice's fields and the read-shareable pool. The write lock uses this to
-    hand out [own_store] ([wp_Store__wlock]) and to take it back. *)
+    hand out [own_dataStore] ([wp_Doc__wlock]) and to take it back. *)
 (** The store's public state from the lock's two slices at their model, and
-    back: what the write lock hands out and takes back ([wp_Store__wlock] /
-    [wp_Store__wunlock]), next to the observers' registry at the same
+    back: what the write lock hands out and takes back ([wp_Doc__wlock] /
+    [wp_Doc__wunlock]), next to the observers' registry at the same
     [(m, deleted)]. *)
-Lemma store_slices_own_store (s_loc : loc) (γs : store_names) (γh : history_names)
-    (client k : w64) (items_mref types_mref observers_mref : loc) (deletedSetVal : yjs.deletedSet.t)
+Lemma dataStore_slices_own_dataStore (s_loc : loc) (γs : store_names) (γh : history_names)
+    (client k : w64) (items_mref types_mref : loc) (deletedSetVal : yjs.deletedSet.t)
     (pend_sl pdel_sl : slice.t) (locs : gmap loc (list loc)) (p : pool) (bind : gmap P loc)
     (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
     (pdel : list delete_span) (delete_set : gset YjsId) :
-  store_inv_excl s_loc γs γh client k items_mref types_mref observers_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
-  store_inv_ro γs locs p delete_set 1 -∗
-  own_store s_loc γs γh (uint.nat client) h m pend (pool_tombstoned p).
+  dataStore_inv_excl s_loc γs γh client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
+  dataStore_inv_ro γs locs p delete_set 1 -∗
+  own_dataStore s_loc γs γh (uint.nat client) h m pend (pool_tombstoned p).
 Proof.
   iIntros "[Hexcl Hro]". iNamed "Hexcl". iNamed "Hro".
   have [Hreg Hregmodel] := Hregcoh.
-  iAssert (own_store_state s_loc (MkStoreState client k locs p bind pend pdel))
+  iAssert (own_dataStore_state s_loc (MkDataStoreState client k locs p bind pend pdel))
     with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes]"
     as "Hstate".
   { iSplitL; last by (iPureIntro; split_and!; [exact Hpool | exact Hreg | exact Hcontig]).
-    rewrite /own_store_fields /=.
+    rewrite /own_dataStore_fields /=.
     iFrame "Hclient Hclock Htypes".
     iSplitL "HdeletedSet"; first (iExists deletedSetVal; iFrame "HdeletedSet").
     iSplitL "Hitemsf Hitemmap"; first (iExists items_mref; iFrame).
@@ -2284,24 +2292,23 @@ Proof.
   iAssert (own_delete_set γs m (all_runs p)) with "[Hdelete_set_auth]" as "Hdelete_set".
   { iExists delete_set. iFrame "Hdelete_set_auth". iPureIntro.
     split; [exact Hdelete_set_dom | exact Hdelete_set_tomb]. }
-  iExists client, k, pdel, locs, p, bind, acc, observers_mref.
+  iExists client, k, pdel, locs, p, bind, acc.
   iFrame "∗#".
   iPureIntro. split_and!;
     [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
     | exact Hctr | exact Hacccoh | reflexivity].
 Qed.
 
-Lemma own_store_store_slices (s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_dataStore_dataStore_slices (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
-  own_store s_loc γs γh c h m pend deleted -∗
-  ∃ (client k : w64) (items_mref types_mref observers_mref : loc) (deletedSetVal : yjs.deletedSet.t)
+  own_dataStore s_loc γs γh c h m pend deleted -∗
+  ∃ (client k : w64) (items_mref types_mref : loc) (deletedSetVal : yjs.deletedSet.t)
     (pend_sl pdel_sl : slice.t) (locs : gmap loc (list loc)) (p : pool) (bind : gmap P loc)
     (pdel : list delete_span) (delete_set : gset YjsId),
     ⌜uint.nat client = c⌝ ∗ ⌜deleted = pool_tombstoned p⌝ ∗
-    is_store_observers γs observers_mref ∗
-    store_inv_excl s_loc γs γh client k items_mref types_mref observers_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
-    store_inv_ro γs locs p delete_set 1.
+    dataStore_inv_excl s_loc γs γh client k items_mref types_mref deletedSetVal pend_sl pdel_sl locs p bind h m pend pdel delete_set ∗
+    dataStore_inv_ro γs locs p delete_set 1.
 Proof.
   iIntros "H". iNamed "H". subst c. iNamed "Hstate".
   have [Hpool [Hreg Hcontig]] := Hinvs.
@@ -2309,32 +2316,32 @@ Proof.
   iDestruct "HdeletedSet" as (deletedSetVal) "HdeletedSet".
   iNamed "Hitems". iNamed "Hregistry". iNamed "Hpending". iNamed "Hpdeletes".
   iNamed "Hdelete_set".
-  iExists client, k, items_mref, types_mref, observers_mref, deletedSetVal, pend_sl, pdel_sl, locs, p, bind, pdel, delete_set.
-  iSplitR; first done. iSplitR; first done. iSplitR; first iFrame "Hobserverspin".
+  iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, locs, p, bind, pdel, delete_set.
+  iSplitR; first done. iSplitR; first done.
   iSplitR "Hseq Htypes Hdelete_set_auth"; last first.
   { iFrame "Hseq Hdelete_set_auth Htypes". iPureIntro. exact Hdelete_set_tomb. }
   iExists acc.
-  iFrame "Hclient Hclientpin Hclock Hitemsf Hitemmap Htypesf Htypesmap Hobserversf Hobserverspin HdeletedSet Hpendf Hpend Hpddelf Hpddel Hpendcert HtypesAuth Hbinds Hhist Hacc".
+  iFrame "Hclient Hclientpin Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hpendcert HtypesAuth Hbinds Hhist Hacc".
   iPureIntro. split_and!;
     [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hpool | exact Hcontig
     | exact Hhcoh | (split; [exact Hreg | exact Hregmodel]) | exact Hdelete_set_dom
     | exact Hacccoh].
 Qed.
 
-Lemma store_inv_own_store (s_loc : loc) (γs : store_names) (γh : history_names) :
-  store_inv s_loc γs γh ⊣⊢
+Lemma dataStore_inv_own_dataStore (s_loc : loc) (γs : store_names) (γh : history_names) :
+  dataStore_inv s_loc γs γh ⊣⊢
   ∃ (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId),
-    own_store s_loc γs γh c h m pend deleted.
+    own_dataStore s_loc γs γh c h m pend deleted.
 Proof.
   iSplit.
   - iIntros "H". iNamed "H". iNamed "Hexcl". iNamed "Hro".
     have [Hreg Hregmodel] := Hregcoh.
-    iAssert (own_store_state s_loc (MkStoreState client k locs p bind pend pdel))
+    iAssert (own_dataStore_state s_loc (MkDataStoreState client k locs p bind pend pdel))
       with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Htypesf Htypesmap Hpendf Hpend Hpddelf Hpddel Htypes]"
       as "Hstate".
     { iSplitL; last by (iPureIntro; split_and!; [exact Hpool | exact Hreg | exact Hcontig]).
-      rewrite /own_store_fields /=.
+      rewrite /own_dataStore_fields /=.
       iFrame "Hclient Hclock Htypes".
       iSplitL "HdeletedSet"; first (iExists deletedSetVal; iFrame "HdeletedSet").
       iSplitL "Hitemsf Hitemmap"; first (iExists items_mref; iFrame).
@@ -2345,7 +2352,7 @@ Proof.
     { iExists delete_set. iFrame "Hdelete_set_auth". iPureIntro.
       split; [exact Hdelete_set_dom | exact Hdelete_set_tomb]. }
     iExists (uint.nat client), h, m, pend, (pool_tombstoned p).
-    iExists client, k, pdel, locs, p, bind, acc, observers_mref.
+    iExists client, k, pdel, locs, p, bind, acc.
     iFrame "∗#".
     iPureIntro. split_and!;
       [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
@@ -2356,11 +2363,11 @@ Proof.
     iDestruct "HdeletedSet" as (deletedSetVal) "HdeletedSet".
     iNamed "Hitems". iNamed "Hregistry". iNamed "Hpending". iNamed "Hpdeletes".
     iNamed "Hdelete_set".
-    iExists client, k, items_mref, types_mref, observers_mref, deletedSetVal, pend_sl, pdel_sl, locs, p, bind, h, m, pend, pdel, delete_set.
+    iExists client, k, items_mref, types_mref, deletedSetVal, pend_sl, pdel_sl, locs, p, bind, h, m, pend, pdel, delete_set.
     iSplitR "Hseq Htypes Hdelete_set_auth"; last first.
     { iFrame "Hseq Hdelete_set_auth Htypes". iPureIntro. exact Hdelete_set_tomb. }
     iExists acc.
-    iFrame "Hclient Hclientpin Hclock Hitemsf Hitemmap Htypesf Htypesmap Hobserversf Hobserverspin HdeletedSet Hpendf Hpend Hpddelf Hpddel Hpendcert HtypesAuth Hbinds Hhist Hacc".
+    iFrame "Hclient Hclientpin Hclock Hitemsf Hitemmap Htypesf Htypesmap HdeletedSet Hpendf Hpend Hpddelf Hpddel Hpendcert HtypesAuth Hbinds Hhist Hacc".
     iPureIntro. split_and!;
       [exact Hpendroot | exact Hpendbnd | exact Hctr | exact Hpool | exact Hcontig
       | exact Hhcoh | (split; [exact Hreg | exact Hregmodel]) | exact Hdelete_set_dom
@@ -2401,19 +2408,19 @@ Qed.
     items and tombstoned ids from the item-set and delete-set authorities,
     the client and history from the store's own, the document's validity
     and the history's reflection from the store invariants. *)
-Lemma own_store_text_snapshot (s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_dataStore_text_snapshot (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
     (deleted : gset YjsId) (name : P) (parent : loc) :
   is_type_binding γs.(sn_types) name parent -∗
-  own_store s_loc γs γh c h m pend deleted ==∗
-  own_store s_loc γs γh c h m pend deleted ∗
+  own_dataStore s_loc γs γh c h m pend deleted ==∗
+  own_dataStore s_loc γs γh c h m pend deleted ∗
   is_text_snapshot γs γh name (type_snapshot m deleted name).
 Proof.
-  iIntros "#Hbind Hown". iDestruct "Hown" as (client k pdel locs p bind acc observers_mref) "Hown". iNamed "Hown".
+  iIntros "#Hbind Hown". iDestruct "Hown" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
-  iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
-  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpoolinv.
-  iDestruct (own_store_state_arr_inv with "Hstate") as %Harrinv.
+  iDestruct (own_dataStore_state_registry_coh with "Hstate") as %Hreg.
+  iDestruct (own_dataStore_state_run_pool_invs with "Hstate") as %Hpoolinv.
+  iDestruct (own_dataStore_state_arr_inv with "Hstate") as %Harrinv.
   simpl in Hreg, Hpoolinv, Harrinv.
   destruct (proj1 Hreg name parent Hbindlk) as [tm Htmp].
   have Hdoc : doc_model_get m (RootId name) = tm_arr tm := proj1 Hregmodel name parent tm Hbindlk Htmp.
@@ -2436,7 +2443,7 @@ Proof.
   (* the history *)
   iDestruct (own_client_history_lb with "Hhist") as "[Hhist #Hhlb]".
   iModIntro. iSplitL.
-  { iExists client, k, pdel, locs, p, bind, acc, observers_mref. iFrame "∗#". iPureIntro.
+  { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro.
     split_and!; [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
   iExists parent, c, h. iFrame "Hbind Hclientpin Hhlb Hdellb".
   iSplit.
@@ -2460,15 +2467,6 @@ Proof.
     intros z _ Heq. rewrite left_id in Heq. split; first done.
     rewrite -Heq gset_op. set_solver. }
   iModIntro. iDestruct "H" as "[$ $]".
-Qed.
-
-(** The registry's pin comes out without consuming it. *)
-Lemma own_observer_registry_pin (observers_mref : loc) (γs : store_names) (γh : history_names)
-    (m : DocModel) (deleted : gset YjsId) :
-  own_observer_registry observers_mref γs γh m deleted -∗
-  is_store_observers γs observers_mref ∗ own_observer_registry observers_mref γs γh m deleted.
-Proof.
-  iIntros "H". iNamed "H". iFrame "Hregistrypin". iExists registry, registered. iFrame "∗#".
 Qed.
 
 Lemma elem_of_registered_tokens (registered : gmap loc (P * list gname)) (γo : gname) (name : P) :
@@ -2611,7 +2609,8 @@ Lemma own_transaction_observed_agree (tr s_loc : loc) (γs : store_names) (γh :
   ⌜s = type_snapshot m deleted name⌝.
 Proof.
   move=> Hnot. iIntros "Htx #Hobserved Hobs".
-  iDestruct "Htx" as (changed_locs m0 deleted0 observers_mref) "Htx". iNamed "Htx". iNamed "Hregistry".
+  iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as (ds observers_mref) "Hstore". iNamed "Hstore". iNamed "Hregistry".
   (* the token is registered under [name], at some address *)
   iDestruct (own_valid_2 with "Hobserversauth Hobserved") as %Hincl.
   apply auth_both_valid_discrete in Hincl as [Hincl _].
@@ -2632,13 +2631,13 @@ Proof.
   iDestruct (big_sepL2_lookup _ _ _ j cb γo Hcb Hj with "Hentry_callbacks") as "[_ Hstore_half]".
   iDestruct (own_observed_agree with "Hstore_half Hobs") as %<-.
   (* the root is outside the record, so its snapshot did not move *)
-  iDestruct "Hstore" as (client k pdel locs p bind acc observers_mref') "Hown". iNamed "Hown".
+  iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
   iDestruct (registered_bindings_lookup with "HtypesAuth Hregistered_bind") as %Hregbind.
   have Hbindlk : bind !! name = Some parent := Hregbind parent (name, γos) Hreglk.
   iDestruct (changed_types_bound_names with "HtypesAuth Hchanged_bound") as %Hbound.
   iDestruct (changed_types_bound_registered with "HtypesAuth Hchanged_bound") as %Hmarked.
-  iDestruct (own_store_state_registry_coh with "Hstate") as %Hregcoh.
-  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpoolinv.
+  iDestruct (own_dataStore_state_registry_coh with "Hstate") as %Hregcoh.
+  iDestruct (own_dataStore_state_run_pool_invs with "Hstate") as %Hpoolinv.
   simpl in Hregcoh, Hpoolinv.
   iPureIntro.
   apply (type_snapshot_untouched _ _ _ _ _ _ name Hstart).
@@ -2647,6 +2646,56 @@ Proof.
   move=> Hin. apply Hnot.
   destruct (Hmarked parent Hin) as (nm & Hnm & Hnmlk).
   rewrite (proj1 (proj2 Hregcoh) nm name parent Hnmlk Hbindlk) in Hnm. exact Hnm.
+Qed.
+
+(** The store's two fields are functional: what identifies the data a
+    method was handed with the data the transaction holds. *)
+Lemma is_store_data_agree (s_loc ds1 ds2 : loc) :
+  is_store_data s_loc ds1 -∗ is_store_data s_loc ds2 -∗ ⌜ds1 = ds2⌝.
+Proof.
+  rewrite /is_store_data. iIntros "H1 H2". iCombine "H1 H2" gives %Heq. iPureIntro. exact Heq.
+Qed.
+
+Lemma is_store_observers_agree (s_loc observers_mref1 observers_mref2 : loc) :
+  is_store_observers s_loc observers_mref1 -∗ is_store_observers s_loc observers_mref2 -∗
+  ⌜observers_mref1 = observers_mref2⌝.
+Proof.
+  rewrite /is_store_observers. iIntros "H1 H2". iCombine "H1 H2" gives %Heq. iPureIntro. exact Heq.
+Qed.
+
+(** The relaxed store from its four parts: what a write proof rebuilds after
+    moving the data. *)
+Lemma own_store_observers_behind_intro (s_loc ds observers_mref : loc) (γs : store_names)
+    (γh : history_names) (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) :
+  is_store_data s_loc ds -∗
+  is_store_observers s_loc observers_mref -∗
+  own_dataStore ds γs γh c h m pend deleted -∗
+  own_observer_registry observers_mref γs γh m0 deleted0 -∗
+  own_store_observers_behind s_loc γs γh c h m pend deleted m0 deleted0.
+Proof.
+  iIntros "#Hdata #Hobs Hstore Hregistry". iExists ds, observers_mref. iFrame "∗#".
+Qed.
+
+(** A fresh transaction on the locked store: the record has recorded nothing,
+    so every clause of [own_transaction] is vacuous and the observers are at
+    the store's state ([own_store] is [own_store_observers_behind] at it). *)
+Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
+  own_transaction_changes tr s_loc ∅ ∅ ∅ -∗
+  own_store s_loc γs γh c h m pend deleted -∗
+  own_transaction tr s_loc γs γh c h m pend deleted ∅ ∅ ∅.
+Proof.
+  iIntros "Hchanges Hstore". rewrite /own_store.
+  iExists ∅, m, deleted. iFrame "Hchanges Hstore".
+  iSplit; first (iPureIntro; apply transaction_start_fresh).
+  iSplit; first iApply changed_types_bound_empty.
+  iPureIntro. split_and!.
+  - move=> i Hi. set_solver.
+  - set_solver.
+  - move=> i Hi. set_solver.
 Qed.
 
 End store_heap.

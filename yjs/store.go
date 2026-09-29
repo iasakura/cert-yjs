@@ -1,28 +1,47 @@
 package yjs
 
-import "sync"
-
 // ---------------------------------------------------------------------------
-// store: the document's struct store (per-client run lists + delete set) and
-// the integrate algorithm.
+// store: what the document's lock guards (the data and the observers);
+// dataStore: the document's data (per-client run lists, root types, delete
+// set, pending buffers) and the integrate algorithm over it.
 //
-// These methods mirror the core data-structure operations of y-octo
+// The dataStore methods mirror the core data-structure operations of y-octo
 // (y-crdt/y-octo, src/doc): the store's node lookup by id and the Yjs integrate
 // conflict resolution + linked-list wiring. They are written in a
 // goose-translatable subset of Go so that build.sh can emit a Rocq model and
 // the proofs in src/proof can reason about them.
 // ---------------------------------------------------------------------------
 
-// store is the document's struct store (y-octo: doc/store.rs DocStore). Like
-// y-octo's Arc<RwLock<DocStore>>, the store carries everything mutable and
-// shared: the lock, the local client's next clock, the per-client run lists, the
-// root-type registry, and the delete set. The Doc is just a handle around it.
+// store is everything the document's write lock (Doc.mu) guards: the data and
+// the observers of its types. It is yrs's Store (src/store.rs:29), the one
+// value under StoreInner's RwLock<Store> (src/store.rs:509-512), whose
+// Branches carry the observers; Yjs has no lock and keeps the observers on the
+// types; y-octo's RwLock guards DocStore alone and its publisher sits beside
+// it on the Doc. The data is a separate struct so that the integrate
+// algorithm's receiver holds no observers: inside a transaction the data moves
+// with every write while the observers are told nothing until the
+// transaction ends (notify, transaction.go), so a dataStore method takes the
+// whole dataStore, and only Doc.Transact and notify see the pair.
 type store struct {
-	// mu guards every other field (and the YTypes' DLLs reached via types):
-	// y-octo's RwLock<DocStore>. Writers (Insert/Delete/GetOrCreateText/apply_update)
-	// take the write lock (Lock); pure readers (String/Len) take the read lock
-	// (RLock) so concurrent reads are allowed, matching Arc<RwLock<DocStore>>.
-	mu sync.RWMutex
+	// data is the document's data, made once and never reassigned.
+	data *dataStore
+	// observers is, per type, the callbacks Text.Observe registered (issue
+	// #198, Part II). Yjs keeps the list on the type (src/ytype.js:667, _eH),
+	// yrs on the branch (src/types/mod.rs:299), y-octo on its publisher
+	// (src/doc/publisher.rs:18); here it sits beside the data so that the
+	// pool's type cells, the heaviest proof machinery, keep their shape (a
+	// divergence, docs/plan-issue-198-observe.md section 18). Made once, never
+	// reassigned; notify walks it at the end of every transaction.
+	observers map[*yType][]func(delta []DeltaOp)
+}
+
+// dataStore is the document's data (y-octo: doc/store.rs DocStore, field for
+// field; Yjs: StructStore plus Doc.share and Doc.clientID; yrs: Store without
+// its Branches' observers): the local client's next clock, the per-client run
+// lists, the root-type registry, the delete set and the pending buffers.
+// Every method runs under the document's write lock (Doc.mu) and touches
+// nothing outside the dataStore.
+type dataStore struct {
 	// client is the local replica id.
 	client Client
 	// clock is the next clock for the local client (state-vector head). Each
@@ -40,7 +59,7 @@ type store struct {
 	// re-drains it. Deliberate container deviation from y-octo (reported):
 	// y-octo keeps per-client queues (Update.structs
 	// ClientMap<VecDeque<Node>>) while this is the decoded flat batch shape
-	// store.applyUpdate already consumes; the flattening preserves each
+	// dataStore.applyUpdate already consumes; the flattening preserves each
 	// client's clock order (see docs/plan-issue-40-pending.md, section 3).
 	pending []updateItem
 	// pendingDeletes buffers delete spans that were not fully covered when
@@ -50,19 +69,20 @@ type store struct {
 	// issue #40). Every later applyDeleteSpans re-drains it, which is sound
 	// because tombstoning is idempotent.
 	pendingDeletes []deleteSpan
-	// observers is, per type, the callbacks Text.Observe registered (issue
-	// #198, Part II). Yjs keeps the list on the type (src/types/AbstractType.js,
-	// _eH), yrs on the branch (src/types/mod.rs:299), y-octo on its publisher
-	// (src/doc/publisher.rs:18); here it sits on the store so that the pool's
-	// type cells, the heaviest proof machinery, keep their shape (a divergence,
-	// docs/plan-issue-198-observe.md section 18). Guarded by mu; notify walks
-	// it at the end of every transaction.
-	observers map[*yType][]func(delta []DeltaOp)
 }
 
-// newStore creates an empty store owned by the given client.
+// newStore creates an empty store owned by the given client: empty data and
+// no observer.
 func newStore(client Client) *store {
 	return &store{
+		data:      newDataStore(client),
+		observers: make(map[*yType][]func(delta []DeltaOp)),
+	}
+}
+
+// newDataStore creates the empty data of a document owned by the given client.
+func newDataStore(client Client) *dataStore {
+	return &dataStore{
 		client:         client,
 		clock:          0,
 		items:          make(map[Client][]*item),
@@ -70,13 +90,12 @@ func newStore(client Client) *store {
 		deletedSet:     deletedSet{deletedSet: make(map[Client]orderRange)},
 		pending:        nil,
 		pendingDeletes: nil,
-		observers:      make(map[*yType][]func(delta []DeltaOp)),
 	}
 }
 
 // getOrCreateYType returns the internal sequence for name, creating it on first
-// use (y-octo: DocStore::get_or_create_type). Callers hold s.mu.
-func (s *store) getOrCreateYType(name string) *yType {
+// use (y-octo: DocStore::get_or_create_type). Callers hold the document's write lock (Doc.mu).
+func (s *dataStore) getOrCreateYType(name string) *yType {
 	y, ok := s.types[name]
 	if !ok {
 		y = newYType()
@@ -108,7 +127,7 @@ func getNodeIndex(nodes []*item, clock uint64) (uint64, bool) {
 
 // GetNode returns the item containing id, if any (y-octo: store::get_node). The
 // verified store only holds items, so this returns *item directly.
-func (s *store) GetNode(id id) (*item, bool) {
+func (s *dataStore) GetNode(id id) (*item, bool) {
 	nodes, ok := s.items[id.clientId]
 	if !ok {
 		return nil, false
@@ -133,9 +152,9 @@ func (s *store) GetNode(id id) (*item, bool) {
 // A char with no integrated node is skipped: its struct has not arrived, and
 // the caller re-applies the span later (the pending discipline of issue #40).
 // An already-tombstoned node is skipped too, which is what makes
-// re-application harmless. Callers hold s.mu inside the transaction tr,
+// re-application harmless. Callers hold the document's write lock (Doc.mu) inside the transaction tr,
 // which records what gets tombstoned (deleteNode).
-func (s *store) deleteRange(tr *Transaction, client Client, clock uint64, length uint64) bool {
+func (s *dataStore) deleteRange(tr *Transaction, client Client, clock uint64, length uint64) bool {
 	covered := true
 	end := clock + length
 	cur := clock
@@ -170,9 +189,9 @@ func (s *store) deleteRange(tr *Transaction, client Client, clock uint64, length
 // buffered ones, keeping the spans that did not land in full because their
 // target structs have not arrived (y-octo: the pending half of
 // Update::delete_set). Re-applying a span that already landed is harmless:
-// deleteRange skips tombstoned nodes. Callers hold s.mu inside the
+// deleteRange skips tombstoned nodes. Callers hold the document's write lock (Doc.mu) inside the
 // transaction tr.
-func (s *store) applyDeleteSpans(tr *Transaction, spans []deleteSpan) {
+func (s *dataStore) applyDeleteSpans(tr *Transaction, spans []deleteSpan) {
 	all := s.pendingDeletes
 	// Take the buffer out before retrying it (y-octo's mem::take of the
 	// pending set): while the retry loop runs, the store holds no buffered
@@ -199,7 +218,7 @@ func (s *store) applyDeleteSpans(tr *Transaction, spans []deleteSpan) {
 // point and y-octo, having no transaction, does not. A node that is already
 // tombstoned is left alone, which is what makes a re-delivered delete
 // idempotent. The node must be integrated (reached through the store's run
-// lists); callers hold s.mu. A free function, not a *store method as in
+// lists); callers hold the document's write lock (Doc.mu). A free function, not a *dataStore method as in
 // y-octo (whose &mut self borrows the whole store either way): it touches
 // only the node, its parent type and the transaction's record, and the
 // footprint must be visible in the program (CLAUDE.md "Spec shape").
@@ -287,7 +306,7 @@ func containsId(s []idSpan, id id) bool {
 // halves; yjs's splitItem and yrs's ItemPtr::splice both inherit). Dropping
 // the bit resurrects tombstoned content when repair splits a deleted run
 // (candidate upstream bug, see docs/plan-issue-28-runs-split.md).
-func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
+func (s *dataStore) splitNode(n *item, diff uint64) (*item, *item) {
 	right := splitItem(n, diff)
 	// Insert the right node into the client's run list just after n
 	// (y-octo: items.insert(index + 1, right)), keeping it clock-sorted.
@@ -314,7 +333,7 @@ func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 // DocStore::split_node_at): n is truncated in place to its first diff clocks
 // and the fresh right node covering the rest is spliced after it, its left
 // origin the last id of the truncated half and its right origin copied from
-// n. A free function, not a *store method: it touches only the node and its
+// n. A free function, not a *dataStore method: it touches only the node and its
 // neighbours, and the footprint must be visible in the program (CLAUDE.md
 // "Spec shape"); splitNode adds the per-client run-list insertion.
 func splitItem(n *item, diff uint64) *item {
@@ -347,7 +366,7 @@ func splitItem(n *item, diff uint64) *item {
 // its node, the node is split just after id and the left half is returned.
 // Resolves a decoded item's LEFT origin, which names the element it sits
 // after (clean-end semantics, yjs: getItemCleanEnd).
-func (s *store) splitAtAndGetLeft(id id) (*item, bool) {
+func (s *dataStore) splitAtAndGetLeft(id id) (*item, bool) {
 	n, ok := s.GetNode(id)
 	if !ok {
 		return nil, false
@@ -365,7 +384,7 @@ func (s *store) splitAtAndGetLeft(id id) (*item, bool) {
 // is split at id and the right half is returned. Resolves a decoded item's
 // RIGHT origin, which names the element it sits before (clean-start
 // semantics, yjs: getItemCleanStart).
-func (s *store) splitAtAndGetRight(id id) (*item, bool) {
+func (s *dataStore) splitAtAndGetRight(id id) (*item, bool) {
 	n, ok := s.GetNode(id)
 	if !ok {
 		return nil, false
@@ -390,8 +409,8 @@ func (s *store) splitAtAndGetRight(id id) (*item, bool) {
 //
 // Parent::Id (type-as-item) is out of the verified subset (#43). parentName is
 // passed alongside the item because the decoded wire form lives on updateItem,
-// not on item (see item.parent). Callers hold s.mu.
-func (s *store) repair(it *item, parentName *string) {
+// not on item (see item.parent). Callers hold the document's write lock (Doc.mu).
+func (s *dataStore) repair(it *item, parentName *string) {
 	// After the clean-end/clean-start splits the origin ids already sit on
 	// node boundaries (the left origin IS the left node's LastId, the right
 	// origin IS the right node's id), so y-octo's re-normalization
@@ -503,7 +522,7 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 // item.left / item.right are taken as given (y-octo reads this.left/this.right
 // directly): the update path resolves them with store.repair beforehand, the
 // local-edit path creates the item already linked to its neighbours.
-func (s *store) integrateCore(parent *yType, item *item) {
+func (s *dataStore) integrateCore(parent *yType, item *item) {
 	left := item.left
 	right := item.right
 
@@ -545,7 +564,7 @@ func (s *store) integrateCore(parent *yType, item *item) {
 // records the item (its ids join tr.insertSet and parent is marked changed:
 // Yjs v14.0.0-rc.18 Item.integrate, src/structs/Item.js:270-274; yrs 0.27.2
 // src/block.rs:1085-1090; y-octo has no transaction and records nothing).
-func (s *store) Integrate(tr *Transaction, parent *yType, item *item) {
+func (s *dataStore) Integrate(tr *Transaction, parent *yType, item *item) {
 	if parent == nil {
 		if item.parent == nil {
 			return
@@ -558,7 +577,7 @@ func (s *store) Integrate(tr *Transaction, parent *yType, item *item) {
 }
 
 // hasNode reports whether the struct with the given id has been integrated.
-func (s *store) hasNode(id id) bool {
+func (s *dataStore) hasNode(id id) bool {
 	_, ok := s.GetNode(id)
 	return ok
 }
@@ -575,7 +594,7 @@ func containsUpdateItemId(items []updateItem, id id) bool {
 
 // originArrived reports whether an optional origin dependency has been
 // integrated; a nil origin imposes none.
-func (s *store) originArrived(p *id) bool {
+func (s *dataStore) originArrived(p *id) bool {
 	if p == nil {
 		return true
 	}
@@ -592,7 +611,7 @@ func (s *store) originArrived(p *id) bool {
 // subset: a parentName resolves by getOrCreateYType (creating on first use)
 // and a nil parentName borrows the parent from a resolved origin
 // (Parent::Id, which y-octo also gates on, is out of the subset, #43).
-func (s *store) depsArrived(ui updateItem) bool {
+func (s *dataStore) depsArrived(ui updateItem) bool {
 	if !s.originArrived(ui.originLeftId) {
 		return false
 	}
@@ -609,7 +628,7 @@ func (s *store) depsArrived(ui updateItem) bool {
 // dependencies have arrived: the ready branch of applyUpdate's drain,
 // extracted so the per-struct integration contract is provable in isolation
 // (mirrors the findIntegrationLeft / integrateCore extractions).
-func (s *store) integrateDecoded(tr *Transaction, ui updateItem) {
+func (s *dataStore) integrateDecoded(tr *Transaction, ui updateItem) {
 	it := newItem(ui.id, ui.content, ui.originLeftId, ui.originRightId)
 	s.repair(it, ui.parentName)
 	s.Integrate(tr, nil, it)
@@ -646,9 +665,9 @@ func (s *store) integrateDecoded(tr *Transaction, ui updateItem) {
 //     locking wrapper and the codec-level Doc.ApplyUpdate (codec.go) the
 //     decode rind.
 //
-// Callers hold s.mu inside the transaction tr, which records every struct
+// Callers hold the document's write lock (Doc.mu) inside the transaction tr, which records every struct
 // this call integrates.
-func (s *store) applyUpdate(tr *Transaction, structs []updateItem) {
+func (s *dataStore) applyUpdate(tr *Transaction, structs []updateItem) {
 	pending := s.pending
 	for i := 0; i < len(structs); i++ {
 		pending = append(pending, structs[i])

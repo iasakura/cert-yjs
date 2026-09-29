@@ -1,5 +1,5 @@
 (** Text handle: the top-level [wp_Text__Insert], one write as one
-    transaction ([store.transact] around [Text.InsertIn], issue #206 T1).
+    transaction ([Doc.Transact] around [Text.InsertIn], issue #206 T1).
     The per-byte Integrate loop is [text/InsertIn]; this file only wraps it
     and hides the transaction. Shares [is_Text] etc. via [text/heap]. *)
 From New.proof Require Import proof_prelude.
@@ -30,7 +30,7 @@ Local Open Scope Z_scope.
 Section text.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
-(** The store's write lock is taken by the transaction ([wp_store__transact]);
+(** The store's write lock is taken by the transaction ([wp_Doc__Transact]);
     the per-text item set lives in a grow-only auth (the same RA as
     [store/store], used by [is_type_lb]). *)
 Context {sync_pkg : sync.Assumptions}.
@@ -40,8 +40,8 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-(* [is_Store]'s reader-count accounting ties the readers' share to the store's
-   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
+(* [is_Doc]'s reader-count accounting ties the readers' share to the store's
+   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Doc] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
@@ -70,18 +70,18 @@ Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (γs : store_names)
          is_op_cert γh (RootId name, OpInsert (input_of_item it))) }}}.
 Proof.
   wp_start as "#Htext".
-  iPoseProof "Htext" as (tv text_store parent deleted_items) "Hhandle". iNamed "Hhandle".
-  subst text_store.
+  iPoseProof "Htext" as (tv dv text_store parent deleted_items) "Hhandle". iNamed "Hhandle".
+  subst dv.
   wp_auto.
   (* the one write, as one transaction: the closure runs [InsertIn] on the
      transaction it is handed and reports what the handle learns *)
-  wp_apply (wp_store__transact tv.(yjs.Text.store') γs γh _
+  wp_apply (wp_Doc__Transact tv.(yjs.Text.doc') text_store γs γh _
               (λ c h' m' pend' deleted',
                  ∃ (L' ins : list (YjsItem A)) (k0 : nat) (originLeft originRight : YjsPtr A),
                    is_Text t γs γh name L' deleted_ids ∗
                    ⌜inserted_run L L' ins cs c k0 originLeft originRight⌝ ∗
                    [∗ list] it ∈ ins, is_op_cert γh (RootId name, OpInsert (input_of_item it)))%I
-              with "[$His_store t index content]").
+              with "[$His_doc t index content]").
   { rewrite /closure_runs_transaction.
     iIntros (tr c h m pend deleted Ψ) "Htx HΨ".
     wp_auto.

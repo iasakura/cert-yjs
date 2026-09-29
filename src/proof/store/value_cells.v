@@ -3,7 +3,7 @@
     but no Iris.
 
     Definitions
-    - [store_state]: every field of the store as the invariant sees it,
+    - [dataStore_state]: every field of the store as the invariant sees it,
       the type pool as an address map plus a run pool ([ss_locs] / [ss_pool]);
       [locs_wf], the address map covering the registered types with one
       address per run and no address twice; [locs_aligned], its pure
@@ -159,10 +159,10 @@ Definition pool_lookup_or_create (p : pool) (ls : gmap loc (list loc))
 
 (* ===== lemmas ============================================================= *)
 
-(** [store_state]: every field of the store as the invariant sees it,
+(** [dataStore_state]: every field of the store as the invariant sees it,
     the type pool as an address map [ss_locs] and a run pool [ss_pool].
-    [own_store_state] ([store/heap.v]) is the store at such a state. *)
-Record store_state := MkStoreState {
+    [own_dataStore_state] ([store/heap.v]) is the store at such a state. *)
+Record dataStore_state := MkDataStoreState {
   ss_client : w64;
   ss_clock : w64;
   ss_locs : gmap loc (list loc);
@@ -172,8 +172,8 @@ Record store_state := MkStoreState {
   ss_pending_deletes : list delete_span;
 }.
 
-#[export] Instance settable_store_state : Settable store_state :=
-  settable! MkStoreState
+#[export] Instance settable_store_state : Settable dataStore_state :=
+  settable! MkDataStoreState
     <ss_client; ss_clock; ss_locs; ss_pool; ss_bind; ss_pending; ss_pending_deletes>.
 
 (** [locs_aligned locs p]: the pure alignment of an address map with a run

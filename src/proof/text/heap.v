@@ -46,8 +46,8 @@ Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
-(** Store lock = a [sync.RWMutex] (write path here, via [wp_Store__wlock] /
-    [wp_Store__wunlock]); the per-text item set lives in a grow-only auth
+(** Store lock = a [sync.RWMutex] (write path here, via [wp_Doc__wlock] /
+    [wp_Doc__wunlock]); the per-text item set lives in a grow-only auth
     (the same RA as [store/store], used by [is_type_lb]). *)
 Context {sync_pkg : sync.Assumptions}.
 
@@ -61,8 +61,8 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
    [is_Text] carries a lower bound of the latter. *)
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
-(* [is_Store]'s reader-count accounting ties the readers' share to the store's
-   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
+(* [is_Doc]'s reader-count accounting ties the readers' share to the store's
+   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Doc] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
@@ -86,8 +86,8 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 (* ----- the Text handle invariant ----------------------------------------
    [is_Text] lives here; the Doc-layer predicate [is_Doc] lives in doc/heap.v
    (mirrors doc.go). [is_Text] delegates straight to the store invariants
-   ([is_Store] / [is_type_lb]) in store/heap, referencing only Text's own fields.
-   [wp_Text__Insert] is proved (Lock → store_inv → findPos/Integrate loop → grow
+   ([is_Doc] / [is_type_lb]) in store/heap, referencing only Text's own fields.
+   [wp_Text__Insert] is proved (Lock → dataStore_inv → findPos/Integrate loop → grow
    the item-set auth → Unlock). *)
 
 (** Text handle (persistent), parameterized by a SORTED list [L] of known items
@@ -98,8 +98,8 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     [L] this root's items: a witness item set carried as a lower bound at the
     same key [parent] ([deleted_items], hidden, and NOT required to be inside
     [L], which is only what the holder happens to know):
-    reads ONLY its OWN fields ([store]/[inner], immutable ⇒ [↦□]) and delegates
-    straight to [is_Store] (no Doc hop — Text holds [store] directly). The ghost
+    reads ONLY its OWN fields ([doc]/[inner], immutable ⇒ [↦□]) and delegates
+    to the document's handle [is_Doc] (the lock and, under it, the store). The ghost
     is fed the item-SET of [L] ([is_type_lb] over [gset (YjsItem A)], a subset
     lower bound — grow-only, no [mra] needed), while [L] is required
     [StronglySorted] by the document order [YjsLt'] (the order
@@ -116,11 +116,11 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     THIS text under the lock. *)
 Definition is_Text (t : loc) (γs : store_names) (γh : history_names) (name : P)
     (L : list (YjsItem A)) (deleted_ids : gset YjsId) : iProp Σ :=
-  ∃ (tv : yjs.Text.t) (s_loc parent : loc) (deleted_items : list (YjsItem A)),
+  ∃ (tv : yjs.Text.t) (dv s_loc parent : loc) (deleted_items : list (YjsItem A)),
     "Ht" ∷ t ↦□ tv ∗
-    "%Hstore" ∷ ⌜tv.(yjs.Text.store') = s_loc⌝ ∗
+    "%Hdoc" ∷ ⌜tv.(yjs.Text.doc') = dv⌝ ∗
     "%Hinner" ∷ ⌜tv.(yjs.Text.inner') = parent⌝ ∗
-    "His_store" ∷ is_Store s_loc γs γh ∗
+    "His_doc" ∷ is_Doc dv s_loc γs γh ∗
     "#His_hist" ∷ is_history (A := A) (P := P) γh ∗
     "#Hbind" ∷ is_type_binding γs.(sn_types) name parent ∗
     "His_lb" ∷ is_type_lb γs.(sn_seq) parent (list_to_set L) ∗
@@ -171,15 +171,15 @@ Proof. iIntros "H". iNamed "H". iFrame "Hdeleted_lb". Qed.
     This says exactly "the characters you inserted are in [L'−L], with these
     content / id / left / right".
 
-    Proof shape: peel [is_Text → is_Store] and take the RWMutex write lock
-    ([wp_Store__wlock]), which yields [store_inv]; combine [is_type_lb] with
+    Proof shape: peel [is_Text → is_Doc] and take the RWMutex write lock
+    ([wp_Doc__wlock]), which yields [dataStore_inv]; combine [is_type_lb] with
     [Hseq] (auth) via
     [auth_gmap_gset_lookup] to learn [parent ∈ dom types] and extract THIS text's
     type's runs / DLL from [Htypes]; run the findPos/Integrate loop, whose
     invariant accumulates [ins] with the per-byte facts (content/id/origins) plus
     [tm_arr tm ⊆ arr]; at exit grow the auth item-set ([tm_arr tm → arr]) with
     [auth_gmap_gset_grow] and mint the new [is_type_lb]; reinsert the grown text
-    into [Htypes] ([big_sepM_insert_acc]); rebuild [store_inv] (clock bumped,
+    into [Htypes] ([big_sepM_insert_acc]); rebuild [dataStore_inv] (clock bumped,
     counter [Hctr] preserved); [Unlock]; return with [L' = arr]. The post's
     [sublist L L'] follows from [sorted_subseteq_sublist] (both sorted, [L ⊆ L']
     as items via the item-set ghost), and [it ∉ L] from the fresh clocks vs the

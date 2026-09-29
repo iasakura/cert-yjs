@@ -12,8 +12,8 @@ package yjs
 
 // Transaction is the scope of one write to the document (Yjs v14 Transaction,
 // src/utils/Transaction.js:45; yrs TransactionMut, src/transaction.rs:445;
-// y-octo has none): created by store.transact under the store's write lock,
-// passed to every write made inside, closed by transact, which notifies the
+// y-octo has none): created by Doc.Transact under the document's write lock,
+// passed to every write made inside, closed by Transact, which notifies the
 // observers of the types the transaction changed (issue #198, Part II C2).
 //
 // Of Yjs's fields this milestone keeps the three the observer reads:
@@ -34,9 +34,9 @@ package yjs
 // explicitly, as Yjs's internals and yrs do (#206, item 2). It carries the
 // store it is a transaction of (Yjs transaction.doc, Transaction.js:56; yrs
 // TransactionMut.store, the write guard itself): a write inside the
-// transaction reaches the store's clock and run lists through tr, and the
-// type it edits through its Text handle. Nothing checks that the two belong
-// to the same document (Yjs and yrs do not either).
+// transaction reaches the data's clock and run lists through tr.store.data,
+// and the type it edits through its Text handle. Nothing checks that the two
+// belong to the same document (Yjs and yrs do not either).
 type Transaction struct {
 	store     *store
 	insertSet []idSpan
@@ -60,29 +60,14 @@ func (tr *Transaction) recordDelete(it *item) {
 	tr.changed[it.parent] = true
 }
 
-// transact runs f as one transaction: lock, f, notify, unlock (Yjs transact,
-// src/utils/Transaction.js:391-422, without the reentrant branch; yrs
-// transact_mut takes the store's write guard and commits on drop,
-// src/transact.rs:131, src/transaction.rs:488). The store's write lock is the
-// transaction's critical section. Go has no goroutine identity, so a nested
-// transact cannot be recognised and deadlocks (#206, item 2): f, and the
-// callbacks notify runs, use the In-variants (Text.InsertIn / DeleteIn /
-// StringIn) and never lock the document.
-func (s *store) transact(f func(tr *Transaction)) {
-	s.mu.Lock()
-	tr := newTransaction(s)
-	f(tr)
-	s.notify(tr)
-	s.mu.Unlock()
-}
-
 // notify is the observer half of Yjs's cleanupTransactions
 // (src/utils/Transaction.js:231-236; yrs call_observers,
 // src/transaction.rs:978): for every type the transaction changed and somebody
 // observes, one walk yields the delta (textDelta), shared by that type's
 // callbacks. Go map order: the types are notified in no particular order
-// (Yjs: the insertion order of changed). Runs under the store's write lock,
-// which the callbacks inherit (Text.Observe).
+// (Yjs: the insertion order of changed). Runs under the document's write
+// lock, which the callbacks inherit (Text.Observe); the only reader of the
+// observers beside Text.Observe.
 func (s *store) notify(tr *Transaction) {
 	for ty := range tr.changed {
 		callbacks := s.observers[ty]
@@ -96,19 +81,29 @@ func (s *store) notify(tr *Transaction) {
 }
 
 // newTransaction is an empty transaction record (Yjs's Transaction
-// constructor, src/utils/Transaction.js:51). Only transact opens one; the
-// tests call the store's internals with a fresh record where a transaction
+// constructor, src/utils/Transaction.js:51). Only Doc.Transact opens one; the
+// tests call the data's internals with a fresh record where a transaction
 // would have handed theirs.
 func newTransaction(s *store) *Transaction {
 	return &Transaction{store: s, insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool)}
 }
 
-// Transact runs f as one transaction on the document (Yjs doc.transact,
-// src/utils/Doc.js:179; yrs Doc::transact_mut): every write inside is one
-// unit, and the observers of the types it changed are called once at its end.
-// f must not lock the document again (no Transact, Insert, Delete,
-// ApplySyncUpdate, String or Len on the same document: deadlock, #206 item
-// 2); it uses the In-variants with tr.
+// Transact runs f as one transaction on the document: lock, f, notify, unlock
+// (Yjs transact, src/utils/Transaction.js:391-422, without the reentrant
+// branch, reached from doc.transact, src/utils/Doc.js:179; yrs transact_mut
+// takes the store's write guard and commits on drop, src/transact.rs:131,
+// src/transaction.rs:488). The document's write lock is the transaction's
+// critical section: every write inside is one unit, and the observers of the
+// types it changed are called once at its end, before the unlock. Go has no
+// goroutine identity, so a nested Transact cannot be recognised and deadlocks
+// (#206, item 2): f uses the In-variants (Text.InsertIn / DeleteIn / StringIn)
+// with tr, and neither f nor the callbacks notify runs may lock the document
+// (no Transact, Insert, Delete, ApplySyncUpdate, Observe, String or Len on
+// the same document).
 func (d *Doc) Transact(f func(tr *Transaction)) {
-	d.store.transact(f)
+	d.mu.Lock()
+	tr := newTransaction(d.store)
+	f(tr)
+	d.store.notify(tr)
+	d.mu.Unlock()
 }

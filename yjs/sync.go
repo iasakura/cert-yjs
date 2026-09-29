@@ -5,7 +5,7 @@ package yjs
 // A decoded Step2/Update batch is integrated into the document's own store,
 // as one transaction (Yjs applyUpdate runs inside transact with local =
 // false, src/utils/encoding.js; yrs apply_update on a TransactionMut), with
-// the proven conflict-resolving integrate loop (store.applyUpdate). There is NO shadow item list: the structs go through the
+// the proven conflict-resolving integrate loop (dataStore.applyUpdate). There is NO shadow item list: the structs go through the
 // real CRDT integration against the real store, so the replica's history
 // advances for real. The verified spec (wp_Doc__ApplySyncUpdate, in
 // src/proof/doc/doc.v) reports that change as growth of the ghost history
@@ -17,8 +17,8 @@ package yjs
 // into []updateItem is the unverified codec (codec.go, //go:build !goose); the
 // sender-side diff (Step1) against the real store is separate follow-on work.
 func (d *Doc) ApplySyncUpdate(structs []updateItem, deletes []deleteSpan) {
-	s := d.store
-	s.transact(func(tr *Transaction) {
+	d.Transact(func(tr *Transaction) {
+		s := tr.store.data
 		s.applyUpdate(tr, structs)
 		// deletes go second: a span may target a struct that just arrived in
 		// this very batch (y-octo applies the delete set after the structs).

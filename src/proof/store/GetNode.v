@@ -1,6 +1,6 @@
 (** store update path, node layer: the id lookups, [wp_getNodeIndex]
-    (the binary search over one client's entries) and [wp_store__GetNode]
-    (direct, over [own_store_state]) and the
+    (the binary search over one client's entries) and [wp_dataStore__GetNode]
+    (direct, over [own_dataStore_state]) and the
     applyUpdate input-expansion helpers ([expand_inputs_*],
     [ValidReplay_chunk_extract], the [types_*] accessors). The heavier
     [splitNode] and repair/applyUpdate proofs live in [store/splitNode]
@@ -73,7 +73,7 @@ Proof. move=> H. have Hlp : (0 <= Z.of_nat l)%Z by lia. clear -H Hlp. word. Qed.
    spec strictly refines the single-char one. *)
 
 (** [expand_input] / [expand_inputs] are defined UPSTREAM in [store/model]
-    (so [own_store]'s per-char [Hpendcert] can name them); this file only adds
+    (so [own_dataStore]'s per-char [Hpendcert] can name them); this file only adds
     their theory. *)
 
 (** Flattening a concatenation: [expand_inputs] distributes over [++]. *)
@@ -350,7 +350,7 @@ Qed.
    [GetNode] (per-client clock-sorted run lists + binary search) instead of
    walking one type's DLL. The heap cells backing the probes live in the
    per-type DLLs, so the lookup specs borrow single cells out of the
-   document-wide big-sep (what [store_inv] holds as [Htypes]) via
+   document-wide big-sep (what [dataStore_inv] holds as [Htypes]) via
    [own_type_pool_acc]. *)
 
 (** Sortedness, index form. *)
@@ -531,11 +531,11 @@ Qed.
     because every slot of that client is an entry of the walked list
     ([pool_entries_slot]), or, for a client with no slice at all, because
     the index is complete. *)
-Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (state : store_state) :
-  {{{ is_pkg_init yjs ∗ own_store_state s state }}}
-    s @! (go.PointerType yjs.store) @! "GetNode" #idv
+Lemma wp_dataStore__GetNode (s : loc) (idv : yjs.id.t) (state : dataStore_state) :
+  {{{ is_pkg_init yjs ∗ own_dataStore_state s state }}}
+    s @! (go.PointerType yjs.dataStore) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store_state s state ∗
+      own_dataStore_state s state ∗
       ⌜if ok then ∃ parent k, pool_covers (ss_pool state) parent k (toYjsId idv) ∧
                     (ss_locs state !! parent) ≫= (λ ls, ls !! k) = Some l
        else ∀ parent k, ¬ pool_covers (ss_pool state) parent k (toYjsId idv)⌝ }}}.
@@ -611,7 +611,7 @@ Proof using Type*.
       iApply ("HΦ" $! lres true).
       iSplitL "Hclient Hclock HdeletedSet Hitemsf Hmap Hruns Hregistry Htypes Hpending Hpdeletes".
       { iSplitL; last (iPureIntro; exact Hinvs).
-        rewrite /own_store_fields /=.
+        rewrite /own_dataStore_fields /=.
         iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
         iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
         iPureIntro. split; [exact Hcomplete | exact Hclockunique]. }
@@ -630,7 +630,7 @@ Proof using Type*.
       iApply ("HΦ" $! null false).
       iSplitL "Hclient Hclock HdeletedSet Hitemsf Hmap Hruns Hregistry Htypes Hpending Hpdeletes".
       { iSplitL; last (iPureIntro; exact Hinvs).
-        rewrite /own_store_fields /=.
+        rewrite /own_dataStore_fields /=.
         iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
         iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
         iPureIntro. split; [exact Hcomplete | exact Hclockunique]. }
@@ -643,7 +643,7 @@ Proof using Type*.
     iApply ("HΦ" $! null false).
     iSplitL "Hclient Hclock HdeletedSet Hitemsf Hmap Hruns Hregistry Htypes Hpending Hpdeletes".
     { iSplitL; last (iPureIntro; exact Hinvs).
-      rewrite /own_store_fields /=.
+      rewrite /own_dataStore_fields /=.
       iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
       iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns".
       iPureIntro. split; [exact Hcomplete | exact Hclockunique]. }

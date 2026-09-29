@@ -23,8 +23,8 @@
 
     The record's WPs ([newTransaction], [recordInsert], [recordDelete]) are
     [transaction/wp_private.v]; the transaction handle a caller holds,
-    [own_transaction], wraps the record around [own_store] and is the
-    store's ([store/heap.v]), as is [wp_store__transact]. *)
+    [own_transaction], wraps the record around [own_dataStore] and is the
+    store's ([store/heap.v]), as is [wp_Doc__Transact]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.

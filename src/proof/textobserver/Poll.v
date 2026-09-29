@@ -185,26 +185,28 @@ Lemma wp_TextObserver__Poll (obs t : loc) (γs : store_names) (γh : history_nam
 Proof.
   wp_start as "(Hobs & #Htext & #Hpin & #Hlb)".
   iNamed "Hobs".
-  iDestruct "Htext" as (tv' s_loc' parent' deleted_items)
-    "(#Ht' & %Hstore' & %Hinner' & #His_store' & #His_hist & #Hbind' & #His_lb & #Hdeleted_lb' & #Hdeleted_items & %Hdeleted_known & %HsortedL)".
+  iDestruct "Htext" as (tv' dv' s_loc' parent' deleted_items)
+    "(#Ht' & %Hdoc' & %Hinner' & #His_doc' & #His_hist & #Hbind' & #His_lb & #Hdeleted_lb' & #Hdeleted_items & %Hdeleted_known & %HsortedL)".
   iCombine "Ht Ht'" gives %Heqtv. subst tv'.
-  subst s_loc' parent'.
+  subst dv' parent'.
   wp_auto.
-  rewrite Hotext. subst s_loc parent.
+  rewrite Hotext. subst dv parent.
   wp_auto.
   (* ---- the write lock: the store at its current model ---- *)
-  wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
-  iDestruct "Hinv" as (c0 h m pend deleted registry_mref) "[Hown Hreg]".
-  iDestruct "Hown" as (client k pdel locs p bind acc observers_mref) "Hown". iNamed "Hown". subst c0.
+  wp_apply (wp_Doc__wlock with "[$His_doc]"). iIntros "[Hlk Hinv]".
+  iDestruct "Hinv" as (c0 h m pend deleted) "Hstore".
   wp_auto.
+  iEval (rewrite /own_store) in "Hstore".
+  iDestruct "Hstore" as (ds observers_mref) "Hstore". iNamed "Hstore". iRename "Hregistry" into "Hreg".
+  iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown". subst c0.
   wp_apply wp_map_make1. iIntros (sv_mref) "Hsvm". wp_auto.
   wp_apply wp_map_make1. iIntros (del_mref) "Hdm". wp_auto.
   (* ---- what the locked store says, and what the certificates say against it ---- *)
-  iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
-  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpoolinv.
-  iDestruct (own_store_state_arr_inv with "Hstate") as %Harrinv.
-  iDestruct (own_store_state_clocks_contiguous with "Hstate") as %Hcontig.
-  iDestruct (own_store_state_aligned with "Hstate") as %[Hdom Hlens].
+  iDestruct (own_dataStore_state_registry_coh with "Hstate") as %Hreg.
+  iDestruct (own_dataStore_state_run_pool_invs with "Hstate") as %Hpoolinv.
+  iDestruct (own_dataStore_state_arr_inv with "Hstate") as %Harrinv.
+  iDestruct (own_dataStore_state_clocks_contiguous with "Hstate") as %Hcontig.
+  iDestruct (own_dataStore_state_aligned with "Hstate") as %[Hdom Hlens].
   iDestruct (auth_gmap_gset_frag_lookup γs.(sn_seq) pool_items tv.(yjs.Text.inner') _ Hthis with "Hitems") as "#Hitems_this".
   iDestruct (auth_gmap_gset_lookup with "Hseq Hitems_this") as %(S' & HmS & Hobssub).
   rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (tm & Htmp & ->).
@@ -223,7 +225,7 @@ Proof.
   { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. eauto. }
   simpl in Hreg, Hpoolinv, Harrinv, Hcontig, Hdom, Hlens.
   (* ---- borrow this type's spine for the walk ---- *)
-  iDestruct (own_store_state_ytype_acc tv.(yjs.Text.store') (MkStoreState client k locs p bind pend pdel) tv.(yjs.Text.inner') ls tm Hls Htmp with "Hstate") as "[Hyt Hclose]".
+  iDestruct (own_dataStore_state_ytype_acc ds (MkDataStoreState client k locs p bind pend pdel) tv.(yjs.Text.inner') ls tm Hls Htmp with "Hstate") as "[Hyt Hclose]".
   iNamed "Hyt".
   subst t.
   wp_auto.
@@ -414,7 +416,7 @@ Proof.
         { (* known and already tombstoned: nothing *)
           rewrite (bool_decide_eq_true_2 (item_id x ∈ snapshot_deleted_ids observed)); last by apply Hdelclass.
           wp_auto. wp_for_post.
-          iFrame "Hobs Hdeleted HΦ o s Hlk Hreg Hobserversf Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
+          iFrame "Hobs Hdeleted HΦ o d Hlk Hreg Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
           iExists (S i), dsl0.
           replace (w64_word_instance.(word.add) (W64 i) (W64 1)) with (W64 (S i)) by word.
           iFrame "Hi Hdelta_ptr".
@@ -431,7 +433,7 @@ Proof.
           wp_apply (wp_deltaSnoc _ _ _ (Delete 1) with "[$Hdelta]").
           { iPureIntro. split; reflexivity. }
           iIntros (dsl') "Hdelta". wp_auto. wp_for_post.
-          iFrame "Hobs Hdeleted HΦ o s Hlk Hreg Hobserversf Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
+          iFrame "Hobs Hdeleted HΦ o d Hlk Hreg Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
           iExists (S i), dsl'.
           replace (w64_word_instance.(word.add) (W64 i) (W64 1)) with (W64 (S i)) by word.
           iFrame "Hi Hdelta_ptr".
@@ -445,7 +447,7 @@ Proof.
           wp_apply (wp_deltaSnoc _ _ _ (Retain 1) with "[$Hdelta]").
           { iPureIntro. split; reflexivity. }
           iIntros (dsl') "Hdelta". wp_auto. wp_for_post.
-          iFrame "Hobs Hdeleted HΦ o s Hlk Hreg Hobserversf Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
+          iFrame "Hobs Hdeleted HΦ o d Hlk Hreg Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
           iExists (S i), dsl'.
           replace (w64_word_instance.(word.add) (W64 i) (W64 1)) with (W64 (S i)) by word.
           iFrame "Hi Hdelta_ptr".
@@ -462,7 +464,7 @@ Proof.
         destruct (run_deleted r) eqn:Hdel.
         { (* new and already tombstoned: nothing *)
           wp_auto. wp_for_post.
-          iFrame "Hobs Hdeleted HΦ o s Hlk Hreg Hobserversf Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
+          iFrame "Hobs Hdeleted HΦ o d Hlk Hreg Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
           iExists (S i), dsl0.
           replace (w64_word_instance.(word.add) (W64 i) (W64 1)) with (W64 (S i)) by word.
           iFrame "Hi Hdelta_ptr".
@@ -481,7 +483,7 @@ Proof.
         wp_apply (wp_deltaSnoc _ _ _ (Insert (content x)) with "[$Hdelta]").
         { iPureIntro. split; [reflexivity | rewrite Hxb //]. }
         iIntros (dsl') "Hdelta". wp_auto. wp_for_post.
-        iFrame "Hobs Hdeleted HΦ o s Hlk Hreg Hobserversf Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
+        iFrame "Hobs Hdeleted HΦ o d Hlk Hreg Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
         iExists (S i), dsl'.
         replace (w64_word_instance.(word.add) (W64 i) (W64 1)) with (W64 (S i)) by word.
         iFrame "Hi Hdelta_ptr".
@@ -500,7 +502,7 @@ Proof.
       { iExists itemVal, olidk, oridk. iFrame "Hcval Hcol Hcor". iPureIntro.
         split_and!; [exact Hinl | exact Hinr | exact Hid | exact Hcontent | exact Hpark | exact Hprevk | exact Hnextk | exact Hflags]. }
       iDestruct ("Hback" with "Hnode") as "Hdll".
-      iFrame "Hobs Hstate_vector Hdeleted HΦ o s Hlk Hreg Hobserversf Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose".
+      iFrame "Hobs Hstate_vector Hdeleted HΦ o d Hlk Hreg Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hparent Hclose".
       iExists (S kk), dsl0, svm'.
       rewrite Hcr. replace (Z.of_nat kk + 1)%Z with (Z.of_nat (S kk)) by lia.
       iFrame "Hcur Hdll Hdelta_ptr Hsv_ptr Hsvm Hdel_ptr Hdel".
@@ -556,14 +558,15 @@ Proof.
     (* the store goes back whole, and the lock is released *)
     iDestruct ("Hclose" with "[Hparent Hdll]") as "Hstate".
     { iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. exact Hlen. }
-    wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend deleted with "[$His_store $Hlk $Hreg Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf]").
-    { iExists client, k, pdel, locs, p, bind, acc, observers_mref. iFrame "∗#". iPureIntro.
+    wp_apply (wp_Doc__wunlock _ _ _ _ (uint.nat client) h m pend deleted with "[$His_doc $Hlk Hreg Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+    { rewrite /own_store. iExists ds, observers_mref. iFrame "Hdata_field Hobservers_field Hreg".
+      iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro.
       split_and!; [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
     iAssert (own_TextObserver obs ov.(yjs.TextObserver.text') γs γh name (runs_model tm.(tm_runs)))
       with "[Hobs Hsvm Hdel]" as "Hobs_new".
     { iExists (ov <| yjs.TextObserver.stateVector' := sv_mref |> <| yjs.TextObserver.deleted' := del_mref |>),
-        tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), svm, M.
-      iFrame "Hobs Ht His_store Hbind Hitems_new Hdellb_new". simpl. iFrame "Hsvm Hdel".
+        tv, tv.(yjs.Text.doc'), s_loc, tv.(yjs.Text.inner'), svm, M.
+      iFrame "Hobs Ht His_doc Hbind Hitems_new Hdellb_new". simpl. iFrame "Hsvm Hdel".
       iPureIntro. split_and!;
         [reflexivity | reflexivity | reflexivity | exact Hsvm
         | rewrite /M lookup_fmap Htmp /= runs_model_fst //

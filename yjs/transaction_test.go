@@ -108,8 +108,8 @@ func TestTransactionRecordsRemoteBatch(t *testing.T) {
 	txtB := docB.GetOrCreateText("text")
 	otherB := docB.GetOrCreateText("other")
 	tr := newTransaction(docB.store)
-	docB.store.applyUpdate(tr, structs)
-	docB.store.applyDeleteSpans(tr, deletes)
+	docB.store.data.applyUpdate(tr, structs)
+	docB.store.data.applyDeleteSpans(tr, deletes)
 	if txtB.String() != "hello" || otherB.String() != "o" {
 		t.Fatalf("texts after apply: %q %q", txtB.String(), otherB.String())
 	}
@@ -126,7 +126,7 @@ func TestTransactionRecordsRemoteBatch(t *testing.T) {
 	// one type they belong to; a span for a char not yet integrated records
 	// nothing and stays pending
 	tr2 := newTransaction(docB.store)
-	docB.store.applyDeleteSpans(tr2, []deleteSpan{{client: 1, clock: 1, length: 2}, {client: 9, clock: 0, length: 1}})
+	docB.store.data.applyDeleteSpans(tr2, []deleteSpan{{client: 1, clock: 1, length: 2}, {client: 9, clock: 0, length: 1}})
 	if txtB.String() != "hlo" {
 		t.Fatalf("text after delete spans: %q", txtB.String())
 	}
@@ -139,7 +139,7 @@ func TestTransactionRecordsRemoteBatch(t *testing.T) {
 	}
 	// re-applying the same spans tombstones nothing new
 	tr3 := newTransaction(docB.store)
-	docB.store.applyDeleteSpans(tr3, []deleteSpan{{client: 1, clock: 1, length: 2}})
+	docB.store.data.applyDeleteSpans(tr3, []deleteSpan{{client: 1, clock: 1, length: 2}})
 	if len(tr3.deleteSet) != 0 || len(tr3.changed) != 0 {
 		t.Fatalf("re-applied spans recorded %v %v", tr3.deleteSet, tr3.changed)
 	}

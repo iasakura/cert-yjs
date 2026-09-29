@@ -237,7 +237,7 @@ Qed.
     [pool_split_step] ([pool_split_step_of_left] / [_of_right]), and both
     pin where the requested boundary now sits
     ([pool_split_left_step_ends_at], [pool_split_right_step_starts_at]).
-    What [wp_store__splitAtAndGetLeft] / [_Right] report. *)
+    What [wp_dataStore__splitAtAndGetLeft] / [_Right] report. *)
 Definition pool_split_left_step (p : pool) (locs : gmap loc (list loc)) (parent : loc) (k : nat)
     (d : YjsId) (p' : pool) (locs' : gmap loc (list loc)) : Prop :=
   ∃ (tm : type_model) (ls : list loc) (r : ItemRun),
