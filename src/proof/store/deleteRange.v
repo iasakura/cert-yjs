@@ -149,7 +149,7 @@ Proof using Type*.
     have Hfits : span_no_overflow (node_span itemVal).
     { rewrite /span_no_overflow /node_span /range_no_overflow /= Hrunlen0.
       move: Hrfits. rewrite /run_fits -Hclk. word. }
-    wp_apply (wp_Transaction__recordDelete tr s_loc lc (DfracOwn 1) itemVal inserted tombstoned changed
+    wp_apply (wp_Transaction__recordDelete tr tr_store lc (DfracOwn 1) itemVal inserted tombstoned changed
                 Hfits with "[$Hchanges $Hval]").
     iIntros "[Hchanges Hval]".
     (* the recorded span is exactly the run's chars *)

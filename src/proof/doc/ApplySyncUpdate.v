@@ -125,7 +125,7 @@ Proof.
                    is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
                    ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
                    is_applied_certs γs applied m'')%I
-              with "[$His_doc Hupd Hspans s structs deletes]").
+              with "[$His_doc Hupd Hspans structs deletes]").
   { rewrite /closure_runs_transaction.
     iIntros (tr c0 h m pend tombs Ψ) "Htx HΨ".
     (* [s := tr.store.data]: the transaction names the store, whose [data]
@@ -149,13 +149,13 @@ Proof.
        causal-closure obligation; the pending plus the batch drain to the
        structural fixpoint, delivering only the applied structs (per char) *)
     wp_apply (wp_dataStore__applyUpdate tr s_loc ds sl dq γs γh c h m pend inputs tombs ∅ ∅ ∅ Hwf
-                with "[$Hishist $Hdata_field $Htx $Hupd $Hcerts]").
+                with "[$Hishist $Htx $Hdata_field $Hupd $Hcerts]").
     iIntros (applied rest m' changed') "(Hupd & Htx & #Hlb & %Hdrain & %Hvr & %Hnoloss & #Happlied & %Hcsub)".
     wp_auto.
     (* the delete spans, second: a span may target a struct that just arrived
        in this very batch. Deletes are model no-ops, so the model, history and
        pending buffer come back unchanged; the tombstone state grows. *)
-    wp_apply (wp_dataStore__applyDeleteSpans_transaction with "[$Hdata_field $Htx $Hspans]").
+    wp_apply (wp_dataStore__applyDeleteSpans_transaction with "[$Htx $Hdata_field $Hspans]").
     iIntros (tombs' tombstoned' changed'') "(Htx & Hspans & %Htsub & %Htsub2 & %Hcsub2 & %Htombs')".
     (* mint the ENFORCEABLE no-loss receipts: every input's id is accepted, hence
        (by the store invariant) forever delivered-or-buffered; a discarding
