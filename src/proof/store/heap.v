@@ -92,8 +92,6 @@
       more observer of a type, in the token set and at the authority);
       [own_store_data_text_snapshot] (the store mints a root's snapshot
       certificate, what [notify] hands a callback);
-      [own_transaction_unfold] (the transaction is its parts: data,
-      observers at the start state, record, start relation);
       [own_transaction_observed_agree] (inside a transaction that did not
       change a root, an observer's half is at the root's current snapshot).
     - the transaction's changed types: [changed_types_bound_empty],
@@ -2561,32 +2559,6 @@ Proof.
       apply elem_of_bound_names. by exists q.
 Qed.
 
-(** [own_transaction] is its parts: the record's store field, the store's
-    data at the current state, its observers at the start state, the record
-    with its meaning, and the start relation. What a method running inside a
-    transaction works on (the data and the record for [applyUpdate] /
-    [applyDeleteSpans], the observers left aside), and what its caller folds
-    back. *)
-Lemma own_transaction_unfold (tr s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A)))
-    (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
-  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ⊣⊢
-  ∃ (m0 : DocModel) (deleted0 : gset YjsId),
-    (tr .[(yjs.Transaction.t), "store"]) ↦ s_loc ∗
-    own_store_data s_loc γs γh c h m pend deleted ∗
-    own_observers s_loc γs γh m0 deleted0 ∗
-    own_transaction_record tr γs m deleted inserted tombstoned changed ∗
-    ⌜transaction_start m deleted inserted tombstoned m0 deleted0⌝.
-Proof.
-  iSplit.
-  - iIntros "Htx". iDestruct "Htx" as (m0 deleted0) "Htx". iNamed "Htx".
-    iDestruct "Hstore" as "[Hdata Hobservers]".
-    iExists m0, deleted0. iFrame "Htrstore Hdata Hobservers Hrecord". done.
-  - iIntros "H". iDestruct "H" as (m0 deleted0) "(Htrstore & Hdata & Hobservers & Hrecord & %Hstart)".
-    iExists m0, deleted0. iFrame "Htrstore Hdata Hobservers Hrecord". done.
-Qed.
-
 (** An observer's own half agrees with the registry's inside a transaction
     that did not change its root: the snapshot it was last told is the
     root's current one, the record having no char of that root. What
@@ -2602,7 +2574,7 @@ Lemma own_transaction_observed_agree (tr s_loc : loc) (γs : store_names) (γh :
   ⌜s = type_snapshot m deleted name⌝.
 Proof.
   move=> Hnot. iIntros "Htx #Hobserved Hobs".
-  iDestruct (own_transaction_unfold with "Htx") as (m0 deleted0) "(Htrstore & Hdata & Hobservers & Hrecord & %Hstart)".
+  iDestruct "Htx" as (m0 deleted0) "Htx". iNamed "Htx". iDestruct "Hstore" as "[Hdata Hobservers]".
   iNamed "Hobservers". iNamed "Hregistry".
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord".
   (* the token is registered under [name], at some address *)

@@ -12,10 +12,9 @@
     order: the write lock hands out [own_store] with its two states
     coincident ([wp_Store__wlock]); [own_transaction_fresh] (below) wraps it
     with the fresh record into [own_transaction], the predicate the closure
-    runs on (inside, a method takes it apart and puts it back with
-    [own_transaction_unfold]); [wp_store__notify] turns [own_transaction]
-    back into [own_store] with coincident states, which the write lock takes
-    back ([wp_Store__wunlock]). *)
+    runs on; [wp_store__notify] turns [own_transaction] back into
+    [own_store] with coincident states, which the write lock takes back
+    ([wp_Store__wunlock]). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.

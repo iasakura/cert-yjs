@@ -392,7 +392,7 @@ Lemma wp_store__notify (s_loc tr : loc) (γs : store_names) (γh : history_names
   {{{ RET #(); own_store s_loc γs γh c h m pend deleted m deleted }}}.
 Proof.
   wp_start as "Htx".
-  iDestruct (own_transaction_unfold with "Htx") as (m0 deleted0) "(Htrstore & Hstore & Hobservers & Hrecord & %Hstart)".
+  iDestruct "Htx" as (m0 deleted0) "Htx". iNamed "Htx". iDestruct "Hstore" as "[Hstore Hobservers]".
   iNamed "Hobservers". iNamed "Hregistry".
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord". iNamed "Hchanges".
   iAssert (own_id_spans insert_sl (DfracOwn 1) inserted) with "[Hinsert]" as "Hinsert".

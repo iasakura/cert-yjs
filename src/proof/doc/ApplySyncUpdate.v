@@ -130,9 +130,9 @@ Proof.
     iIntros (tr c0 h m pend tombs Ψ) "Htx HΨ".
     wp_auto.
     (* the transaction is the store's data, the observers at the start
-       state and the record ([own_transaction_unfold]); the client pin
-       identifies c0 with the caller's c *)
-    iDestruct (own_transaction_unfold with "Htx") as (m0 deleted0) "(Htrstore & Hstore & Hobservers & Hrecord & %Hstart)".
+       state and the record; the client pin identifies c0 with the
+       caller's c *)
+    iDestruct "Htx" as (m0 deleted0) "Htx". iNamed "Htx". iDestruct "Hstore" as "[Hstore Hobservers]".
     iDestruct (own_store_data_client_pin with "Hstore") as "[Hstore #Hpin0]".
     iDestruct (is_store_client_agree with "Hpin0 Hpin") as %->.
     (* run the total certificate-based applyUpdate on the real store: no
@@ -158,7 +158,7 @@ Proof.
               (∅ ∪ inputs_char_ids applied) tombstoned' changed'').
     (* the transaction closes back over the two steps' start relation *)
     iSplitL "Htrstore Hstore Hobservers Hrecord".
-    { iApply own_transaction_unfold. iExists m0, deleted0. iFrame "Htrstore Hstore Hobservers Hrecord".
+    { iExists m0, deleted0. iFrame "Htrstore Hstore Hobservers Hrecord".
       iPureIntro.
       apply (transaction_start_tombstone m' tombs tombs' (∅ ∪ inputs_char_ids applied) ∅ tombstoned' m0 deleted0);
         [| exact Htsub2 | exact Htombs' | exact Hfresh].

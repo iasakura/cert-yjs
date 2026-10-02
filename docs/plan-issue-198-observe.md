@@ -877,17 +877,13 @@ and the caller reassembles `own_transaction` with the two pure laws that
 carry `transaction_start` across a replay and a sweep
 (`transaction_start_replay`, `transaction_start_tombstone`, `store/model.v`).
 
-How the public predicate comes apart into the parts a method works on is
-its definition, stated once as an equivalence (`own_transaction_unfold`,
-`store/heap.v`: `own_transaction` is the store field, `own_store_data`,
-`own_observers` at the start state, `own_transaction_record` and
-`transaction_start`); a method proof destructs it on the way in and
-refolds it on the way out. The transitions with content are program
-steps, so they are WP specs: `wp_store__notify` takes `own_transaction`
-back to `own_store` with its two states coincident, and the write lock
-hands `own_store` out and takes it back so. `own_transaction_fresh`
-(`store/transact.v`) builds the transaction at the lock from the empty
-record. The transaction wrapper is higher-order in `f`, as `wp_Once__Do`
+A method proof takes `own_transaction` apart by its definition on the way
+in and refolds it on the way out. The transitions with content are
+program steps, so they are WP specs: `wp_store__notify` takes
+`own_transaction` back to `own_store` with its two states coincident, and
+the write lock hands `own_store` out and takes it back so.
+`own_transaction_fresh` (`store/transact.v`) builds the transaction at the
+lock from the empty record. The transaction wrapper is higher-order in `f`, as `wp_Once__Do`
 is:
 
 ```
@@ -1143,10 +1139,9 @@ Decided, with the rejected alternatives:
   store (`own_store_state` and the record for the cell-level steps,
   `own_store_data` and `own_transaction_record` for `applyUpdate` and
   `applyDeleteSpans`), never over the observers, and the transitions
-  from the public predicates to those parts is the definition
-  (`own_transaction_unfold`, an equivalence), while the transition that
-  re-establishes the coincident states is a program step and so a WP spec
-  (`wp_store__notify`). Moving the methods to the
+  from the public predicates to those parts is the definition, while the
+  transition that re-establishes the coincident states is a program step
+  and so a WP spec (`wp_store__notify`). Moving the methods to the
   transaction (yrs) was considered and dropped: the ghost history can only
   be extended by the callers that know whether a batch is local or remote,
   so the cell-level steps would have stayed where they are either way.
