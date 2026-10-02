@@ -32,38 +32,22 @@ bullet title (`spec-shape "Public specs take the whole type"`).
   takes `own_X s` whole and gives `own_X s` back whole, never a selection
   of its parts, so re-establishing `X`'s invariant is the method's job and
   not something its postcondition hands to the caller.
-- **Private specs may take parts reached by lemmas.** The specification of
-  an unexported function may be stated over non-public predicates: a part
-  of a public predicate, or a predicate for a state in which one of the
-  public predicate's invariants is suspended, whose model parameters track
-  what is suspended. Such a predicate is legitimate when explicit lemmas
-  reach it from a public predicate and lead from it back to one. A part is
-  a predicate obtained that way, not a list of resources gathered at one
-  call site. A part about one field takes that field's reference (the map
-  reference, the slice, the node address), not the address of the struct
-  around it.
-  - An exported method's proof file `<Method>.v`, when the proof goes
-    through non-public predicates, opens, before its WP proof, with the
-    lemmas that state the predicate-level state changes the proof goes
-    through: separating implications or updates from the public predicate
-    into the non-public ones, possibly through several non-public
-    predicates in sequence, and from them back to the public predicate.
-    There is always at least the entry (public to non-public) and the exit
-    (non-public to public). These lemmas are what a review reads first: the
-    abstract state changes the proof makes are readable from them, without
-    the proof body or `heap.v`.
+- **Private specs may take parts.** The specification of an unexported
+  function may be stated over non-public predicates: a part of a public
+  predicate, or a predicate for a state in which one of the public
+  predicate's invariants is suspended, whose model parameters track what is
+  suspended. A part is not a list of resources gathered at one call site. A
+  part about one field takes that field's reference (the map reference, the
+  slice, the node address), not the address of the struct around it.
   - Definitions stay in `model.v` / `value.v` / `heap.v`, never in a WP
-    file; the opening of `<Method>.v` holds lemmas. A non-public predicate
-    that several methods go through is defined in `heap.v` with its laws;
-    a lemma specific to one method's proof sits at the opening of that
-    method's file.
+    file. A non-public predicate that several methods go through is defined
+    in `heap.v` with its laws.
   - Why: a method's proof splits the public predicate into the parts it
     touches, steps the private functions over them, and reassembles it.
-    The design of the proof is in the split and the reassembly, so those
-    are what a reviewer sees first. Taking the whole type everywhere would
-    push that structure into the Go instead (structs split, or methods
-    turned into free functions, only so that a part can stand as a
-    receiver) and would produce partial predicates in disguise.
+    Taking the whole type everywhere would push that structure into the Go
+    instead (structs split, or methods turned into free functions, only so
+    that a part can stand as a receiver) and would produce partial
+    predicates in disguise.
 - **Everything a spec says about a value goes through a model parameter.**
   Forbidden in a spec: struct field points-tos (`s .[store, "items"] ↦ …`), raw
   slices or maps of internal records, goose struct values and their fields
@@ -131,8 +115,7 @@ not a later cleanup: at the moment a fact is needed, find where it belongs.
 
 Check it against the Rules above, in particular "`is_X` / `own_X`", "A
 predicate's name must carry its meaning", "Public specs take the whole
-type", "Private specs may take parts reached by lemmas" and "No
-over-specification".
+type", "Private specs may take parts" and "No over-specification".
 
 ## Fresh-context review before push
 
@@ -153,11 +136,8 @@ criteria, with a prompt like:
 > should be one named predicate (propose the name); (c) a predicate whose
 > argument is a struct address while it owns or describes only one field;
 > (d) a new predicate whose name does not carry its meaning; (e) a fact
-> stated twice, or derivable from the other conjuncts; (f) an unexported
-> function's spec over resources that no lemma reaches from a public
-> predicate, or an exported method's `<Method>.v` that does not open with
-> its entry and exit lemmas. Do not report proof-script style. If nothing
-> qualifies, say so.
+> stated twice, or derivable from the other conjuncts. Do not report
+> proof-script style. If nothing qualifies, say so.
 
 Fix each finding, or record in the PR's "Specs and invariants" section why
 it stands. A reviewer asked for gaps usually reports some; a finding that

@@ -75,9 +75,7 @@ it.
 | heap | `heap.v` | representation predicates, invariants, ghost state | + Iris |
 | wp | `<Method>.v`, `wp_private.v` | the WP proofs | + the code |
 
-- **Files.** `<Method>.v` is one exported Go method's `wp_`, opened by the
-  entry and exit lemmas between the public predicate and the non-public
-  ones its proof steps over (the `spec-shape` skill); `wp_private.v` the
+- **Files.** `<Method>.v` is one exported Go method's `wp_`; `wp_private.v` the
   unexported helpers' specs; `<type>.v` a `Require Export` facade, the only
   name downstream files Require. A layer a type does not need is absent (`id`
   has no model of its own; `Text` is a handle over a store type, so it starts
