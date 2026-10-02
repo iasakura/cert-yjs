@@ -118,7 +118,7 @@ Proof.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
   iDestruct "His_store" as "#His_store".
   subst text_store.
-  iDestruct (own_transaction_open with "Htx") as (m0 deleted0) "(Htrstore & Hstore & Hobservers & Hrecord & %Hstart)".
+  iDestruct (own_transaction_unfold with "Htx") as (m0 deleted0) "(Htrstore & Hstore & Hobservers & Hrecord & %Hstart)".
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord".
   iDestruct "Hstore" as (client k pdel locs0 p0 bind acc) "Hown". iNamed "Hown". subst c.
   (* [s := tr.store]: the transaction names the store *)
@@ -365,8 +365,8 @@ Proof.
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
       iSplitL "Htrstore Hchanges Hstore Hobservers".
-      { iApply (own_transaction_close with "Htrstore Hstore Hobservers [Hchanges]");
-          last (iPureIntro; exact Hstart').
+      { iApply own_transaction_unfold. iExists m0, deleted0. iFrame "Htrstore Hstore Hobservers".
+        iSplitL; last (iPureIntro; exact Hstart').
         iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
         iFrame "Hchanges".
         iSplitR.
@@ -468,8 +468,8 @@ Proof.
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
       iSplitL "Htrstore Hchanges Hstore Hobservers".
-      { iApply (own_transaction_close with "Htrstore Hstore Hobservers [Hchanges]");
-          last (iPureIntro; exact Hstart').
+      { iApply own_transaction_unfold. iExists m0, deleted0. iFrame "Htrstore Hstore Hobservers".
+        iSplitL; last (iPureIntro; exact Hstart').
         iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
         iFrame "Hchanges".
         iSplitR.

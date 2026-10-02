@@ -92,7 +92,7 @@ Proof.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
   iDestruct "His_store" as "#His_store".
   subst text_store.
-  iDestruct (own_transaction_open with "Htx") as (m0 deleted0) "(Htrstore & Hstore & Hobservers & Hrecord & %Hstart)".
+  iDestruct (own_transaction_unfold with "Htx") as (m0 deleted0) "(Htrstore & Hstore & Hobservers & Hrecord & %Hstart)".
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord".
   iDestruct "Hstore" as (client k pdel locs0 p0 bind acc) "Hown". iNamed "Hown". subst c.
   (* [s := tr.store]: the transaction names the store *)
@@ -156,11 +156,12 @@ Proof.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
         [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
     iSplitL "Htrstore Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
-    { iApply (own_transaction_close with "Htrstore [Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set] Hobservers [Hchanges]");
-        last (iPureIntro; exact Hstart).
+    { iApply own_transaction_unfold. iExists m0, deleted0. iFrame "Htrstore Hobservers".
+      iSplitL "Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
       { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
           | exact Hctr | exact Hacccoh | exact Hdeleted]. }
+      iSplitL; last (iPureIntro; exact Hstart).
       iExists changed_locs. iFrame "Hchanges Hchanged_bound". iPureIntro.
       split_and!; [exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
     iSplit.
@@ -199,11 +200,12 @@ Proof.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
         [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
     iSplitL "Htrstore Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
-    { iApply (own_transaction_close with "Htrstore [Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set] Hobservers [Hchanges]");
-        last (iPureIntro; exact Hstart).
+    { iApply own_transaction_unfold. iExists m0, deleted0. iFrame "Htrstore Hobservers".
+      iSplitL "Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
       { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
           | exact Hctr | exact Hacccoh | exact Hdeleted]. }
+      iSplitL; last (iPureIntro; exact Hstart).
       iExists changed_locs. iFrame "Hchanges Hchanged_bound". iPureIntro.
       split_and!; [exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
     iSplit.
@@ -1130,8 +1132,8 @@ Proof.
   (* the transaction after the insert: the record's meaning at the grown
      model, this text now among the changed types (unless the run is empty) *)
   iSplitL "Htrstore Hchanges Hstore Hobservers".
-  { iApply (own_transaction_close with "Htrstore Hstore Hobservers [Hchanges]");
-      last (iPureIntro; exact Hstart').
+  { iApply own_transaction_unfold. iExists m0, deleted0. iFrame "Htrstore Hstore Hobservers".
+    iSplitL; last (iPureIntro; exact Hstart').
     iExists (changed_locs ∪ (if decide (ins = []) then ∅ else {[tv.(yjs.Text.inner')]})).
     iFrame "Hchanges".
     iSplitR.

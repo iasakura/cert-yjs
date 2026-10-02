@@ -67,7 +67,7 @@ Proof.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
   iDestruct "His_store" as "#His_store". iDestruct "Ht" as "#Ht". iDestruct "His_lb" as "#His_lb".
   subst text_store parent.
-  iDestruct (own_transaction_open with "Htx") as (m0 deleted0) "(Htrstore & Hstore & Hobservers & Hrecord & %Hstart)".
+  iDestruct (own_transaction_unfold with "Htx") as (m0 deleted0) "(Htrstore & Hstore & Hobservers & Hrecord & %Hstart)".
   iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
   (* the registry binds [name] to this text, whose document is the model's *)
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
@@ -95,7 +95,8 @@ Proof.
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
     iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
     iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted]. }
-  iApply (own_transaction_close with "Htrstore [-Hobservers Hrecord] Hobservers Hrecord"); last done.
+  iApply own_transaction_unfold. iExists m0, deleted0. iFrame "Htrstore Hobservers Hrecord".
+  iSplitL; last (iPureIntro; exact Hstart).
   iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
     | exact Hctr | exact Hacccoh | exact Hdeleted].

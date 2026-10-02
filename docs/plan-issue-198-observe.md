@@ -879,13 +879,12 @@ carry `transaction_start` across a replay and a sweep
 
 The transitions between the public predicate and the parts a method works
 on are lemmas, stated once in `store/heap.v` and used at the top of every
-method proof: `own_transaction_open` / `own_transaction_close`
-(`own_transaction` to and from the store field, `own_store_data`,
-`own_observers` at the start state, `own_transaction_record` and
-`transaction_start`), `own_transaction_fresh` (`own_store` with coincident
-states and the empty record to `own_transaction`, `store/transact.v`), and
-`wp_store__notify` (`own_transaction` back to `own_store` with coincident
-states). The transaction wrapper is higher-order in `f`, as `wp_Once__Do`
+method proof: `own_transaction_unfold` (`own_transaction` is, as an
+equivalence, the store field, `own_store_data`, `own_observers` at the
+start state, `own_transaction_record` and `transaction_start`),
+`own_transaction_fresh` (`own_store` with coincident states and the empty
+record to `own_transaction`, `store/transact.v`), and `wp_store__notify`
+(`own_transaction` back to `own_store` with coincident states). The transaction wrapper is higher-order in `f`, as `wp_Once__Do`
 is:
 
 ```
@@ -1142,7 +1141,7 @@ Decided, with the rejected alternatives:
   `own_store_data` and `own_transaction_record` for `applyUpdate` and
   `applyDeleteSpans`), never over the observers, and the transitions
   between the public predicates and those parts are lemmas each public
-  method's proof opens with (`own_transaction_open` / `_close`,
+  method's proof opens with (`own_transaction_unfold`,
   `own_transaction_fresh`, `wp_store__notify`). Moving the methods to the
   transaction (yrs) was considered and dropped: the ghost history can only
   be extended by the callers that know whether a batch is local or remote,
