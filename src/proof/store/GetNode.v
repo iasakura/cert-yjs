@@ -73,7 +73,7 @@ Proof. move=> H. have Hlp : (0 <= Z.of_nat l)%Z by lia. clear -H Hlp. word. Qed.
    spec strictly refines the single-char one. *)
 
 (** [expand_input] / [expand_inputs] are defined UPSTREAM in [store/model]
-    (so [own_store]'s per-char [Hpendcert] can name them); this file only adds
+    (so [own_store_data]'s per-char [Hpendcert] can name them); this file only adds
     their theory. *)
 
 (** Flattening a concatenation: [expand_inputs] distributes over [++]. *)

@@ -85,11 +85,11 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
   tm_runs tm !! k = Some r ->
   run_fits r ->
   {{{ is_pkg_init yjs ∗ own_type_pool (DfracOwn 1) locs p ∗
-      own_transaction_changes tr s_loc inserted tombstoned changed }}}
+      own_transaction_changes tr inserted tombstoned changed }}}
     @! yjs.deleteNode #tr #lc
   {{{ RET #(); own_type_pool (DfracOwn 1) locs
         (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p) ∗
-      own_transaction_changes tr s_loc inserted
+      own_transaction_changes tr inserted
         (if run_deleted r then tombstoned else tombstoned ∪ char_ids (run_items r))
         (if run_deleted r then changed else changed ∪ {[parent]}) }}}.
 Proof using Type*.
@@ -149,7 +149,7 @@ Proof using Type*.
     have Hfits : span_no_overflow (node_span itemVal).
     { rewrite /span_no_overflow /node_span /range_no_overflow /= Hrunlen0.
       move: Hrfits. rewrite /run_fits -Hclk. word. }
-    wp_apply (wp_Transaction__recordDelete tr s_loc lc (DfracOwn 1) itemVal inserted tombstoned changed
+    wp_apply (wp_Transaction__recordDelete tr lc (DfracOwn 1) itemVal inserted tombstoned changed
                 Hfits with "[$Hchanges $Hval]").
     iIntros "[Hchanges Hval]".
     (* the recorded span is exactly the run's chars *)
@@ -221,12 +221,12 @@ Lemma wp_deleteNode_store (tr s : loc) (state : store_state)
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
   {{{ is_pkg_init yjs ∗ own_store_state s state ∗
-      own_transaction_changes tr s inserted tombstoned changed }}}
+      own_transaction_changes tr inserted tombstoned changed }}}
     @! yjs.deleteNode #tr #lc
   {{{ RET #(); own_store_state s
         (state <| ss_pool := <[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]>
                              (ss_pool state) |>) ∗
-      own_transaction_changes tr s inserted
+      own_transaction_changes tr inserted
         (if run_deleted r then tombstoned else tombstoned ∪ char_ids (run_items r))
         (if run_deleted r then changed else changed ∪ {[parent]}) }}}.
 Proof.
@@ -294,12 +294,12 @@ Lemma wp_store__deleteRange (tr s : loc) (state : store_state)
     (client dclock dlen : w64) (inserted tombstoned : gset YjsId) (changed : gset loc) :
   tombstoned ⊆ pool_tombstoned (ss_pool state) ->
   {{{ is_pkg_init yjs ∗ own_store_state s state ∗
-      own_transaction_changes tr s inserted tombstoned changed }}}
+      own_transaction_changes tr inserted tombstoned changed }}}
     s @! (go.PointerType yjs.store) @! "deleteRange" #tr #client #dclock #dlen
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (covered : bool)
       (tombstoned' : gset YjsId) (changed' : gset loc), RET #covered;
       own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
-      own_transaction_changes tr s inserted tombstoned' changed' ∗
+      own_transaction_changes tr inserted tombstoned' changed' ∗
       ⌜pool_after_delete (ss_pool state) p'⌝ ∗
       ⌜range_no_overflow dclock dlen -> covered = true ->
          ids_tombstoned (range_ids client dclock dlen) (all_runs p')⌝ ∗
@@ -321,7 +321,7 @@ Proof using Type*.
     "Hcur" ∷ cur_ptr ↦ cur ∗
     "Hcov" ∷ covered_ptr ↦ cov ∗
     "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_i p_i bind pend pdel) ∗
-    "Hchanges" ∷ own_transaction_changes tr s inserted tombstoned_i changed_i ∗
+    "Hchanges" ∷ own_transaction_changes tr inserted tombstoned_i changed_i ∗
     "%Hcurb" ∷ ⌜(uint.Z dclock <= uint.Z cur)%Z⌝ ∗
     "%Hcovj" ∷ ⌜range_no_overflow dclock dlen -> cov = true ->
         ids_tombstoned (range_ids client dclock (w64_word_instance.(word.sub) cur dclock))
@@ -587,14 +587,14 @@ Lemma wp_store__applyDeleteSpans (tr s : loc) (state : store_state)
     (inserted tombstoned : gset YjsId) (changed : gset loc) :
   tombstoned ⊆ pool_tombstoned (ss_pool state) ->
   {{{ is_pkg_init yjs ∗ own_store_state s state ∗ own_delete_spans sp_sl dq spans ∗
-      own_transaction_changes tr s inserted tombstoned changed }}}
+      own_transaction_changes tr inserted tombstoned changed }}}
     s @! (go.PointerType yjs.store) @! "applyDeleteSpans" #tr #sp_sl
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (rest : list delete_span)
       (tombstoned' : gset YjsId) (changed' : gset loc), RET #();
       own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>
                             <| ss_pending_deletes := rest |>) ∗
       own_delete_spans sp_sl dq spans ∗
-      own_transaction_changes tr s inserted tombstoned' changed' ∗
+      own_transaction_changes tr inserted tombstoned' changed' ∗
       ⌜pool_after_delete (ss_pool state) p'⌝ ∗
       ⌜∃ D : gset YjsId,
          ids_tombstoned D (all_runs p') ∧
@@ -656,7 +656,7 @@ Proof using Type*.
       "Hrestcap" ∷ own_slice_cap yjs.deleteSpan.t rest_sl (DfracOwn 1) ∗
       "Hall" ∷ all_sl ↦* (pdel_vs ++ spans_vs) ∗
       "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_j p_j bind pend []) ∗
-      "Hchanges" ∷ own_transaction_changes tr s inserted tombstoned_j changed_j ∗
+      "Hchanges" ∷ own_transaction_changes tr inserted tombstoned_j changed_j ∗
       "%Hjb" ∷ ⌜(uint.nat j <= length (pdel_vs ++ spans_vs))%nat⌝ ∗
       "%HdelDj" ∷ ⌜ids_tombstoned Dj (all_runs p_j)⌝ ∗
       "%HspanDj" ∷ ⌜∀ sp, sp ∈ take (uint.nat j) (pdel_vs ++ spans_vs) ->
@@ -848,17 +848,18 @@ Proof using Type*.
   iFrame "Hall". iPureIntro. word.
 Qed.
 
-(** The public form of the wire delete step: the transaction handle in, the
-    transaction handle out, the tombstone state grown by exactly what the
-    record says. Deletes are model no-ops in the insert-only document model
-    (they only flip tombstone bits and split runs), which is why the rest of
-    the store predicate is preserved: the per-type item lists [tm_arr] do not
-    move, so the registry coherence, the item-set authority and the counter
-    clause all transfer verbatim, and the pool invariants come back from the
-    loop. The types the sweep marked get their names from the registry (a
-    marked type is a pool key), so the record's [changed] grows by exactly
-    those names and the coverage clause of [own_transaction] survives
-    ([changed_cover_extend]).
+(** The public form of the wire delete step: the store's data and the
+    transaction's record in, both out, the tombstone state grown by exactly
+    what the record says, the fresh tombstones live before (what the
+    transaction's start relation needs, [transaction_start_tombstone]).
+    Deletes are model no-ops in the insert-only document model (they only
+    flip tombstone bits and split runs), which is why the rest of the data
+    predicate is preserved: the per-type item lists [tm_arr] do not move, so
+    the registry coherence, the item-set authority and the counter clause all
+    transfer verbatim, and the pool invariants come back from the loop. The
+    types the sweep marked get their names from the registry (a marked type
+    is a pool key), so the record's [changed] grows by exactly those names
+    and the record's coverage clause survives.
 
     The inner loop's per-span coverage record is dropped here, deliberately:
     with the leftover buffer hidden it says only "there is a set the landed
@@ -871,17 +872,19 @@ Lemma wp_store__applyDeleteSpans_transaction (tr s_loc : loc) (γs : store_names
     (deleted inserted tombstoned : gset YjsId) (changed : gset P)
     (sp_sl : slice.t) (dq : dfrac) (spans : list delete_span) :
   {{{ is_pkg_init yjs ∗
-      own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+      own_store_data s_loc γs γh c h m pend deleted ∗
+      own_transaction_record tr γs m deleted inserted tombstoned changed ∗
       own_delete_spans sp_sl dq spans }}}
     s_loc @! (go.PointerType yjs.store) @! "applyDeleteSpans" #tr #sp_sl
   {{{ (deleted' tombstoned' : gset YjsId) (changed' : gset P), RET #();
-      own_transaction tr s_loc γs γh c h m pend deleted' inserted tombstoned' changed' ∗
+      own_store_data s_loc γs γh c h m pend deleted' ∗
+      own_transaction_record tr γs m deleted' inserted tombstoned' changed' ∗
       own_delete_spans sp_sl dq spans ∗
       ⌜deleted ⊆ deleted'⌝ ∗ ⌜tombstoned ⊆ tombstoned'⌝ ∗ ⌜changed ⊆ changed'⌝ ∗
-      ⌜deleted' = deleted ∪ tombstoned'⌝ }}}.
+      ⌜deleted' = deleted ∪ tombstoned'⌝ ∗ ⌜(tombstoned' ∖ tombstoned) ## deleted⌝ }}}.
 Proof using Type*.
-  iIntros (Φ) "(#Hpkg & Htx & Hsp) HΦ".
-  iDestruct "Htx" as (changed_locs m0 deleted0 registry_mref) "Htx". iNamed "Htx". iNamed "Hstore".
+  iIntros (Φ) "(#Hpkg & Hstore & Hrecord & Hsp) HΦ".
+  iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord". iNamed "Hstore".
   have Hsub : tombstoned ⊆ pool_tombstoned p by (rewrite -Hdeleted; exact Htombstoned_sub).
   (* the old marks name their types: read the bindings off the registry
      while the authority is at hand *)
@@ -911,34 +914,22 @@ Proof using Type*.
     - destruct (Hlocs_bound q Hold) as (nm & Hnm & Hb). exists nm. split; [apply elem_of_union_l; exact Hnm | exact Hb].
     - destruct (proj2 (proj2 Hreg') q Hsome) as [nm Hb]. exists nm. split; [| exact Hb].
       apply elem_of_union. right. apply elem_of_bound_names. by exists q. }
-  (* the transaction's start state, over the sweep: the same documents, the
-     tombstones grown by the sweep's fresh ones *)
-  have Hstart' : transaction_start m (pool_tombstoned p') inserted tombstoned' m0 deleted0.
-  { destruct Hstart as (Hfilter & Hdel & Hdisj & Htop). split_and!; [exact Hfilter | | | exact Htop].
-    - rewrite Htomb -Hdeleted Hdel -assoc_L. f_equal. apply subseteq_union_1_L. exact Htsub.
-    - rewrite elem_of_disjoint => i Hi Hi0.
-      destruct (decide (i ∈ tombstoned)) as [Hin | Hnin].
-      + exact (proj1 (elem_of_disjoint _ _) Hdisj i Hin Hi0).
-      + apply (proj1 (elem_of_disjoint _ _) Hfresh i).
-        * apply elem_of_difference. split; assumption.
-        * rewrite -Hdeleted Hdel. apply elem_of_union_l. exact Hi0. }
   iApply ("HΦ" $! (pool_tombstoned p') tombstoned' changed'). iFrame "Hsp".
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hchanges Hregistry Hobserversf"; last first.
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
+  { iExists client, k, rest, locs', p', bind, acc.
+    iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
+    iFrame "Hclientpin Hpendcert Hbinds".
+    iPureIntro. split_and!;
+      [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh
+      | exact Hctr' | exact Hacccoh | reflexivity]. }
+  iSplitL "Hchanges"; last first.
   { iPureIntro. split_and!.
     - rewrite Hdeleted Htomb. apply union_subseteq_l.
     - exact Htsub.
     - apply union_subseteq_l.
-    - rewrite Htomb Hdeleted //. }
-  iExists changed_locs', m0, deleted0, registry_mref.
-  iFrame "Hchanges Hregistry".
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf".
-  { iExists client, k, rest, locs', p', bind, acc, observers_mref.
-    iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf".
-    iFrame "Hclientpin Hpendcert Hbinds Hobserverspin".
-    iPureIntro. split_and!;
-      [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh
-      | exact Hctr' | exact Hacccoh | reflexivity]. }
-  iSplitR; first (iPureIntro; exact Hstart').
+    - rewrite Htomb Hdeleted //.
+    - rewrite Hdeleted. exact Hfresh. }
+  iExists changed_locs'. iFrame "Hchanges".
   iSplitR.
   { iApply (changed_types_bound_grow _ _ _ _ bind Hcsub with "Hbinds Hchanged_bound").
     move=> q Hq. destruct (Hckeys q Hq) as [Hold | Hsome]; [by left | right].

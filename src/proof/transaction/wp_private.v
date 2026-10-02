@@ -37,15 +37,16 @@ Notation A := go_string.
 Lemma wp_newTransaction (s_loc : loc) :
   {{{ is_pkg_init yjs }}}
     @! yjs.newTransaction #s_loc
-  {{{ (tr : loc), RET #tr; own_transaction_changes tr s_loc ∅ ∅ ∅ }}}.
+  {{{ (tr : loc), RET #tr;
+      (tr .[(yjs.Transaction.t), "store"]) ↦ s_loc ∗ own_transaction_changes tr ∅ ∅ ∅ }}}.
 Proof.
   wp_start. wp_auto.
   wp_apply wp_map_make1. iIntros (changed_mref) "Hchanged". wp_auto.
   wp_alloc tr as "Htr". wp_auto.
   iApply "HΦ".
-  iExists _, [], []. iFrame "Htr".
+  iStructNamed "Htr". simpl. iFrame "store".
+  iExists slice.nil, slice.nil, changed_mref, [], []. iFrame "insertSet deleteSet changed".
   rewrite gset_to_gmap_empty. iFrame "Hchanged".
-  iSplitR; first done.
   iSplitL; first iApply own_slice_nil.
   iSplitL; first iApply own_slice_cap_nil.
   iSplitR; first done.
@@ -55,13 +56,13 @@ Proof.
   done.
 Qed.
 
-Lemma wp_Transaction__recordInsert (tr s_loc parent lc : loc) (dq : dfrac) (v : yjs.item.t)
+Lemma wp_Transaction__recordInsert (tr parent lc : loc) (dq : dfrac) (v : yjs.item.t)
     (inserted tombstoned : gset YjsId) (changed : gset loc) :
   span_no_overflow (node_span v) ->
-  {{{ is_pkg_init yjs ∗ own_transaction_changes tr s_loc inserted tombstoned changed ∗ lc ↦{dq} v }}}
+  {{{ is_pkg_init yjs ∗ own_transaction_changes tr inserted tombstoned changed ∗ lc ↦{dq} v }}}
     tr @! (go.PointerType yjs.Transaction) @! "recordInsert" #parent #lc
   {{{ RET #();
-      own_transaction_changes tr s_loc (inserted ∪ span_ids (node_span v)) tombstoned
+      own_transaction_changes tr (inserted ∪ span_ids (node_span v)) tombstoned
         (changed ∪ {[parent]}) ∗
       lc ↦{dq} v }}}.
 Proof.
@@ -73,21 +74,21 @@ Proof.
   iIntros (sl') "(Hinsert & Hinsertcap & _)". wp_auto.
   wp_apply (wp_map_insert with "Hchanged"). iIntros "Hchanged". wp_auto.
   iApply "HΦ". iFrame "Hv".
-  iExists _, (insert_vs ++ [node_span v]), delete_vs. simpl.
-  iFrame "Htr Hinsert Hinsertcap Hdelete Hdeletecap".
+  iExists sl', delete_sl, changed_mref, (insert_vs ++ [node_span v]), delete_vs. simpl.
+  iFrame "Hinsertf Hinsert Hinsertcap Hdeletef Hdelete Hdeletecap Hchangedf".
   rewrite (union_comm_L changed) gset_to_gmap_union_singleton. iFrame "Hchanged".
-  iPureIntro. split_and!; [done | | | done | done].
+  iPureIntro. split_and!; [ | | done | done].
   - apply Forall_app. split; [exact Hinsertwf | by apply Forall_singleton].
   - rewrite span_union_snoc Hinserted. apply union_comm_L.
 Qed.
 
-Lemma wp_Transaction__recordDelete (tr s_loc lc : loc) (dq : dfrac) (v : yjs.item.t)
+Lemma wp_Transaction__recordDelete (tr lc : loc) (dq : dfrac) (v : yjs.item.t)
     (inserted tombstoned : gset YjsId) (changed : gset loc) :
   span_no_overflow (node_span v) ->
-  {{{ is_pkg_init yjs ∗ own_transaction_changes tr s_loc inserted tombstoned changed ∗ lc ↦{dq} v }}}
+  {{{ is_pkg_init yjs ∗ own_transaction_changes tr inserted tombstoned changed ∗ lc ↦{dq} v }}}
     tr @! (go.PointerType yjs.Transaction) @! "recordDelete" #lc
   {{{ RET #();
-      own_transaction_changes tr s_loc inserted (tombstoned ∪ span_ids (node_span v))
+      own_transaction_changes tr inserted (tombstoned ∪ span_ids (node_span v))
         (changed ∪ {[v.(yjs.item.parent')]}) ∗
       lc ↦{dq} v }}}.
 Proof.
@@ -99,10 +100,10 @@ Proof.
   iIntros (sl') "(Hdelete & Hdeletecap & _)". wp_auto.
   wp_apply (wp_map_insert with "Hchanged"). iIntros "Hchanged". wp_auto.
   iApply "HΦ". iFrame "Hv".
-  iExists _, insert_vs, (delete_vs ++ [node_span v]). simpl.
-  iFrame "Htr Hinsert Hinsertcap Hdelete Hdeletecap".
+  iExists insert_sl, sl', changed_mref, insert_vs, (delete_vs ++ [node_span v]). simpl.
+  iFrame "Hinsertf Hinsert Hinsertcap Hdeletef Hdelete Hdeletecap Hchangedf".
   rewrite (union_comm_L changed) gset_to_gmap_union_singleton. iFrame "Hchanged".
-  iPureIntro. split_and!; [done | done | done | | ].
+  iPureIntro. split_and!; [done | done | | ].
   - apply Forall_app. split; [exact Hdeletewf | by apply Forall_singleton].
   - rewrite span_union_snoc Htombstoned. apply union_comm_L.
 Qed.

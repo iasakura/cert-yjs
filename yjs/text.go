@@ -19,10 +19,15 @@ package yjs
 //   - content is assumed single-byte (ASCII): a clock unit is one byte, which
 //     keeps id arithmetic consistent with content.Len (byte length).
 
-// Text is the public handle for a root text type (y-octo: Text is a YTypeRef
-// newtype). It carries the store (for the lock / client / clock) and the inner
-// YType it edits; the type name is only needed at GetOrCreateText time, so it is not
-// stored in the handle.
+// Text is the public handle for a root text type. It carries the store (for
+// the lock / client / clock / observers) and the inner yType it edits; the
+// type name is only needed at GetOrCreateText time, so it is not stored in
+// the handle. What a handle holds differs across the references: Yjs v14's
+// type holds its document (YType.doc, src/ytype.js:661), yrs 0.27's TextRef
+// is a bare branch pointer (src/types/text.rs:91) and the lock arrives with
+// the transaction, y-octo's YTypeRef holds the store (src/doc/types/mod.rs:45).
+// The Go follows y-octo: the store is where the lock and the observers live,
+// and Doc is only the store's owner (doc.go).
 type Text struct {
 	store *store
 	inner *yType
@@ -62,8 +67,8 @@ func (t *Text) Len() uint64 {
 // (Yjs ytext.insert outside a transact, which opens one of its own; yrs
 // TextRef::insert with a transact_mut). One write, one transaction: the
 // observers of this text are notified once, at its end.
-// Observe registers callback on t (Yjs YText.observe, src/types/AbstractType.js
-// observe; yrs TextRef::observe, src/types/text.rs). Under the store's write
+// Observe registers callback on t (Yjs v14 YType.observe, src/ytype.js:779;
+// yrs 0.27 Observable::observe on TextRef, src/types/text.rs:112). Under the store's write
 // lock: one immediate call with the whole visible text as one insert (the
 // initial load a Yjs binding does with toString() before observing, here
 // atomic with the registration), then one call at the end of every

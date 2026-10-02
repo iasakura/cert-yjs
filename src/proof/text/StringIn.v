@@ -50,7 +50,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (** [Text.StringIn] reads the text inside a transaction: the visible string
     of this text's snapshot at the transaction's model and tombstone state,
-    which is exact (the tombstone set is [own_store]'s, not a lower bound).
+    which is exact (the tombstone set is [own_store_data]'s, not a lower bound).
     Nothing changes: the handle and the transaction come back as they were. *)
 Lemma wp_Text__StringIn (t tr s_loc : loc) (γs : store_names) (γh : history_names)
     (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
@@ -67,8 +67,8 @@ Proof.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
   iDestruct "His_store" as "#His_store". iDestruct "Ht" as "#Ht". iDestruct "His_lb" as "#His_lb".
   subst text_store parent.
-  iDestruct "Htx" as (changed_locs m0 deleted0 registry_mref) "Htx". iNamed "Htx".
-  iDestruct "Hstore" as (client k pdel locs p bind acc observers_mref) "Hown". iNamed "Hown".
+  iDestruct (own_transaction_open with "Htx") as (m0 deleted0) "(Htrstore & Hstore & Hobservers & Hrecord & %Hstart)".
+  iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
   (* the registry binds [name] to this text, whose document is the model's *)
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
   iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
@@ -95,12 +95,10 @@ Proof.
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
     iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
     iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted]. }
-  iExists changed_locs, m0, deleted0, registry_mref. iFrame "Hchanges Hregistry Hchanged_bound".
-  iSplitL.
-  { iExists client, k, pdel, locs, p, bind, acc, observers_mref. iFrame "∗#". iPureIntro. split_and!;
-      [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
-      | exact Hctr | exact Hacccoh | exact Hdeleted]. }
-  iPureIntro. split_and!; [exact Hstart | exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded].
+  iApply (own_transaction_close with "Htrstore [-Hobservers Hrecord] Hobservers Hrecord"); last done.
+  iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro. split_and!;
+    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
+    | exact Hctr | exact Hacccoh | exact Hdeleted].
 Qed.
 
 End text.

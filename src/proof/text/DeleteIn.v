@@ -118,13 +118,11 @@ Proof.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
   iDestruct "His_store" as "#His_store".
   subst text_store.
-  iDestruct "Htx" as (changed_locs m0 deleted0 registry_mref) "Htx". iNamed "Htx".
+  iDestruct (own_transaction_open with "Htx") as (m0 deleted0) "(Htrstore & Hstore & Hobservers & Hrecord & %Hstart)".
+  iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord".
   iDestruct "Hstore" as (client k pdel locs0 p0 bind acc) "Hown". iNamed "Hown". subst c.
-  (* [s := tr.store]: the record names the store *)
-  iDestruct (own_transaction_changes_store with "Hchanges") as (trv) "(Htr & %Htrstore & Hchangesback)".
+  (* [s := tr.store]: the transaction names the store *)
   wp_auto.
-  iDestruct ("Hchangesback" with "Htr") as "Hchanges".
-  iEval (rewrite Htrstore) in "s". clear Htrstore.
   iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
   iDestruct (own_store_state_aligned with "Hstate") as %Haligned.
   iDestruct (own_store_state_run_wf with "Hstate") as %Hwf0.
@@ -258,7 +256,7 @@ Proof.
     "Hruns" ∷ own_store_state s_loc (MkStoreState client k locsj pj bind pend pdel) ∗
     (* the transaction's record so far: the chars tombstoned here and, once
        one is, this text *)
-    "Hchanges" ∷ own_transaction_changes tr s_loc inserted (tombstoned ∪ dels)
+    "Hchanges" ∷ own_transaction_changes tr inserted (tombstoned ∪ dels)
                    (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})) ∗
     "Htrp" ∷ tr_ptr ↦ tr ∗
     "Hseq" ∷ own γs.(sn_seq) (● ((λ tm : type_model, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p0) : authR (gmapUR loc (gsetUR (YjsItem A)))) ∗
@@ -337,9 +335,9 @@ Proof.
                          Hdompj Htsp Hpj Harrj)) in "Hseq".
       (* the store after the delete, the tombstone state grown by [dels]:
          what the transaction carries on *)
-      iAssert (own_store s_loc γs γh (uint.nat client) h m pend (deleted ∪ dels))
-        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf]" as "Hstore".
-      { iExists client, k, pdel, locsj, pj, bind, acc, observers_mref.
+      iAssert (own_store_data s_loc γs γh (uint.nat client) h m pend (deleted ∪ dels))
+        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hstore".
+      { iExists client, k, pdel, locsj, pj, bind, acc.
         iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close
           | exact Hhcoh | exact Hctr_close | exact Hacccoh | rewrite Htombj Hdeleted //]. }
@@ -366,10 +364,11 @@ Proof.
           | exact Hsorted]. }
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
-      iSplitL "Hchanges Hstore Hregistry".
-      { iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})), m0, deleted0, registry_mref.
-        iFrame "Hchanges Hstore Hregistry".
-        iSplitR; first (iPureIntro; exact Hstart').
+      iSplitL "Htrstore Hchanges Hstore Hobservers".
+      { iApply (own_transaction_close with "Htrstore Hstore Hobservers [Hchanges]");
+          last (iPureIntro; exact Hstart').
+        iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
+        iFrame "Hchanges".
         iSplitR.
         { destruct (decide (dels = ∅)) as [-> | Hne].
           - repeat (rewrite decide_True; last reflexivity).
@@ -439,9 +438,9 @@ Proof.
                          Hdompj Htsp Hpj Harrj)) in "Hseq".
       (* the store after the delete, the tombstone state grown by [dels]:
          what the transaction carries on *)
-      iAssert (own_store s_loc γs γh (uint.nat client) h m pend (deleted ∪ dels))
-        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf]" as "Hstore".
-      { iExists client, k, pdel, locsj, pj, bind, acc, observers_mref.
+      iAssert (own_store_data s_loc γs γh (uint.nat client) h m pend (deleted ∪ dels))
+        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hstore".
+      { iExists client, k, pdel, locsj, pj, bind, acc.
         iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close
           | exact Hhcoh | exact Hctr_close | exact Hacccoh | rewrite Htombj Hdeleted //]. }
@@ -468,10 +467,11 @@ Proof.
           | exact Hsorted]. }
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
-      iSplitL "Hchanges Hstore Hregistry".
-      { iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})), m0, deleted0, registry_mref.
-        iFrame "Hchanges Hstore Hregistry".
-        iSplitR; first (iPureIntro; exact Hstart').
+      iSplitL "Htrstore Hchanges Hstore Hobservers".
+      { iApply (own_transaction_close with "Htrstore Hstore Hobservers [Hchanges]");
+          last (iPureIntro; exact Hstart').
+        iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
+        iFrame "Hchanges".
         iSplitR.
         { destruct (decide (dels = ∅)) as [-> | Hne].
           - repeat (rewrite decide_True; last reflexivity).
@@ -523,7 +523,7 @@ Proof.
     simpl negb. wp_auto.
     iDestruct ("Haccback" with "Haccval") as "Hruns".
     wp_for_post.
-    iFrame "Hacc Hregistry Hobserversf".
+    iFrame "Hacc Hobservers Htrstore".
     iFrame "Ht His_lb HΦ". iExists (S q), rem, locsj, pj, lsj, runsj, dels.
     iFrame "Hsp Hrem Hruns Hchanges Htrp Hseq Hhist Hdelete_set HtypesAuth".
     rewrite Hnextq -Haccright. iFrame "Hcur".
@@ -620,7 +620,7 @@ Proof.
         rewrite /flip_run /leftRun /split_run_left /=.
         etrans; [exact (char_ids_take (uint.nat rem) (run_items rq)) |].
         rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
-      iFrame "Hacc Hregistry Hobserversf".
+      iFrame "Hacc Hobservers Htrstore".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (uint.nat rem))),
         (<[tv.(yjs.Text.inner') := ls2]> locsj), (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), ls2, runs3,
@@ -693,7 +693,7 @@ Proof.
       have Hdelsarr' : dels ∪ char_ids (run_items rq) ⊆ char_ids (tm_arr ts).
       { apply union_least; [exact Hdelsarr |].
         rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
-      iFrame "Hacc Hregistry Hobserversf".
+      iFrame "Hacc Hobservers Htrstore".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (length (run_items rq)))),
         locsj, (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), lsj, runs3,

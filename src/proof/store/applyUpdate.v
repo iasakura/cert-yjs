@@ -1,12 +1,12 @@
 (** The top of the [store] update path: the [applyUpdate] stack, from the
     [ValidReplay] refinement [wp_store__applyUpdate] through the wire-drain
     subset / replay lemmas and the certificate machinery up to the public
-    [own_store]-level spec [wp_store__applyUpdate] (delivered content
+    [own_store_data]-level spec [wp_store__applyUpdate] (delivered content
     comes back as [is_root_lb] fragments).
 
     The layers it stands on are [store/GetNode] (node lookup, input expansion),
     [store/splitNode] and [store/repair] (registry, repair, the [store_inv ⊣⊢
-    own_store] bridge); downstream files see everything through the
+    own_store_data] bridge); downstream files see everything through the
     [store/store] facade. Same [Section] boilerplate; [Type*] footprints. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
@@ -57,7 +57,7 @@ Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54), so
-   [store_inv_excl] / [own_store] carry them as [⌜..⌝] and no Persistent /
+   [store_inv_excl] / [own_store_data] carry them as [⌜..⌝] and no Persistent /
    Timeless instances are needed here. *)
 
 
@@ -131,7 +131,7 @@ Qed.
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend0 ++ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
   {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_state s state ∗
-      own_transaction_changes tr s inserted tombstoned changed }}}
+      own_transaction_changes tr inserted tombstoned changed }}}
     s @! (go.PointerType yjs.store) @! "applyUpdate" #tr #sl
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc) (changed' : gset loc), RET #();
       own_update_structs sl dq inputs ∗
@@ -139,7 +139,7 @@ Qed.
                             <| ss_bind := bind' |> <| ss_pending := rest |>) ∗
       (* the transaction records the applied items' chars, and marks exactly
          the types they went into (bound in the grown registry) *)
-      own_transaction_changes tr s (inserted ∪ inputs_char_ids applied) tombstoned changed' ∗
+      own_transaction_changes tr (inserted ∪ inputs_char_ids applied) tombstoned changed' ∗
       ⌜ss_bind state ⊆ bind'⌝ ∗
       ⌜pool_registry_models m' bind' p'⌝ ∗
       ⌜apply_live_refine m (all_runs (ss_pool state)) (all_runs p')⌝ ∗
@@ -239,7 +239,7 @@ Proof using Type*.
         "HcapP" ∷ own_slice_cap yjs.updateItem.t pendingS (DfracOwn 1) ∗
         "#HitemsPj" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsP;pendingj, is_update_item updateItemVal typedInput) ∗
         "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_j p_j bindj [] pdel) ∗
-        "Hchanges" ∷ own_transaction_changes tr s inserted_j tombstoned changed_j ∗
+        "Hchanges" ∷ own_transaction_changes tr inserted_j tombstoned changed_j ∗
         "%Hpendingsubj" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A),
             typedInput ∈ pendingj -> typedInput ∈ pend0 ++ inputs⌝ ∗
         "%Hprj" ∷ ⌜WireReplay m appliedj mj⌝ ∗
@@ -330,7 +330,7 @@ Proof using Type*.
           "HcapR" ∷ own_slice_cap yjs.updateItem.t restS (DfracOwn 1) ∗
           "#HitemsR" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsR;keptacc, is_update_item updateItemVal typedInput) ∗
           "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) ∗
-          "Hchanges" ∷ own_transaction_changes tr s inserted_c tombstoned changed_c ∗
+          "Hchanges" ∷ own_transaction_changes tr inserted_c tombstoned changed_c ∗
           "%Hilen" ∷ ⌜(i <= length pendingj)%nat⌝ ∗
           "%Hpassa" ∷ ⌜wire_pass m_c (drop i pendingj) keptacc =
               (app_rem, keptfin0, m_pend0)⌝ ∗
@@ -1718,7 +1718,7 @@ Proof.
 Qed.
 
 (** [applyUpdate], the PUBLIC certificate spec (issue #40): the whole store
-    state is ONE [own_store] before and after. The incoming batch carries its
+    state is ONE [own_store_data] before and after. The incoming batch carries its
     persistent certificates and its rooted-head witnesses; there is NO
     causal-order assumption, not even within the batch, and no state-vector
     tracking -- the heap drains the pending buffer plus the batch to the
@@ -1757,15 +1757,16 @@ Lemma wp_store__applyUpdate (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
   update_wf inputs ->
   {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
-      own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+      own_store_data s_loc γs γh c h m pend deleted ∗
+      own_transaction_record tr γs m deleted inserted tombstoned changed ∗
       own_update_structs sl dq inputs ∗
       is_pending_certified γh (expand_inputs inputs) }}}
     s_loc @! (go.PointerType yjs.store) @! "applyUpdate" #tr #sl
   {{{ (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel) (changed' : gset P),
       RET #();
       own_update_structs sl dq inputs ∗
-      own_transaction tr s_loc γs γh c (h ++ (deliver_ev <$> expand_inputs applied)) m' rest
-        deleted (inserted ∪ inputs_char_ids applied) tombstoned changed' ∗
+      own_store_data s_loc γs γh c (h ++ (deliver_ev <$> expand_inputs applied)) m' rest deleted ∗
+      own_transaction_record tr γs m' deleted (inserted ∪ inputs_char_ids applied) tombstoned changed' ∗
       is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
       ⌜wire_drain m (pend ++ inputs) = (applied, rest, m')⌝ ∗
       ⌜ValidReplay (expand_inputs applied) m m'⌝ ∗
@@ -1775,8 +1776,8 @@ Lemma wp_store__applyUpdate (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
       ⌜changed ⊆ changed'⌝ }}}.
 Proof using Type*.
   move=> [Hnowrapb Hrooted].
-  iIntros (Φ) "(#Hpkg & #Hishist & Htx & Hupd & #Hcertsin) HΦ".
-  iDestruct "Htx" as (changed_locs m0 deleted0 registry_mref) "Htx". iNamed "Htx". iNamed "Hstore".
+  iIntros (Φ) "(#Hpkg & #Hishist & Hstore & Hrecord & Hupd & #Hcertsin) HΦ".
+  iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord". iNamed "Hstore".
   (* the old marks name their types: read the bindings off the registry
      while the authority is at hand *)
   iDestruct (changed_types_bound_registered with "HtypesAuth Hchanged_bound") as %Hlocs_bound.
@@ -1998,15 +1999,6 @@ Proof using Type*.
     - destruct (Hlocs_bound q Hold) as (nm & Hnm & Hb). exists nm.
       split; [apply elem_of_union_l; exact Hnm | exact (lookup_weaken _ _ _ _ Hb Hbindsub')].
     - exists nm. split; [| exact Hb]. apply elem_of_union_r. apply elem_of_bound_names. by exists q. }
-  (* the transaction's start state, over the batch: the documents filtered of
-     the batch's chars are the ones before, and its chars sit above every
-     older char of their client *)
-  have Hstart' : transaction_start m' deleted (inserted ∪ inputs_char_ids applied) tombstoned m0 deleted0.
-  { destruct Hstart as (Hfilter & Hdel & Hdisj & Htop). rewrite inputs_char_ids_replay.
-    split_and!; [| exact Hdel | exact Hdisj |].
-    - move=> t. rewrite (Hfilter t) -(ValidReplay_filter_new _ _ _ Hvr t) list_filter_filter.
-      apply list_filter_iff => x. rewrite not_elem_of_union. tauto.
-    - exact (ValidReplay_inserted_top _ _ _ inserted Hvr Htop). }
   iModIntro. iApply ("HΦ" $! applied rest' m' changed').
   iAssert (is_applied_certs γs applied m') with "[Hlbs]" as "#Hcerts".
   { iFrame "Hlbs". iPureIntro. exact (ValidReplay_input_mem (expand_inputs applied) m m' Hvr). }
@@ -2018,18 +2010,16 @@ Proof using Type*.
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi' | exact Hreg' | exact Hcontig']).
     rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes". }
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hchanges Hregistry Hobserversf";
-    last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoloss_in | apply union_subseteq_l]).
-  iExists changed_locs', m0, deleted0, registry_mref.
-  iFrame "Hchanges Hregistry".
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf".
-  { iExists client, k, pdel, locs', p', bind', acc, observers_mref.
-    iFrame "Hstate Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set Hobserversf".
-    iFrame "Hpendcert' Hclientpin Hobserverspin".
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
+  { iExists client, k, pdel, locs', p', bind', acc.
+    iFrame "Hstate Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set".
+    iFrame "Hpendcert' Hclientpin".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot' | exact Hpendbnd' | exact Hregmodel' | exact Hcoh'
       | exact Hctr' | exact Hacccoh' | rewrite Htomb'; exact Hdeleted]. }
-  iSplitR; first (iPureIntro; exact Hstart').
+  iSplitL "Hchanges";
+    last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoloss_in | apply union_subseteq_l]).
+  iExists changed_locs'. iFrame "Hchanges".
   iSplitR.
   { iApply (changed_types_bound_grow _ _ _ _ bind' Hcsub' with "Hbinds' Hchanged_bound").
     move=> q Hq. destruct (Hmarks' q Hq) as [Hold | (nm & x & Hb & _ & _)]; [by left | right].

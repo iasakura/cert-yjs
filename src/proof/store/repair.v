@@ -11,7 +11,7 @@
     [wp_store__hasNode] / [wp_store__originArrived] /
     [wp_store__depsArrived], read against [pool_registry_models]
     through [docm_agree]), the [wire_*] drain machinery and the
-    [own_store]-level certificate specs. Split out of [store/GetNode]; Requires the
+    [own_store_data]-level certificate specs. Split out of [store/GetNode]; Requires the
     [store/splitNode] pool lemmas. Same boilerplate / [#[local]]
     instances. *)
 From New.proof Require Import proof_prelude.
@@ -64,7 +64,7 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54
    weakened them off their registration resource), so [store_inv_excl] /
-   [own_store] carry them as [⌜..⌝] and no Persistent/Timeless instances are
+   [own_store_data] carry them as [⌜..⌝] and no Persistent/Timeless instances are
    needed here. *)
 
 (** [store.getOrCreateYType nm]: the root type bound to [nm], created empty
@@ -1024,11 +1024,11 @@ Qed.
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   input_fits typedInput.2 ->
   {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s state ∗
-      own_transaction_changes tr s inserted tombstoned changed }}}
+      own_transaction_changes tr inserted tombstoned changed }}}
     s @! (go.PointerType yjs.store) @! "integrateDecoded" #tr #updateItemVal
   {{{ (p' : pool) (locs' : gmap loc (list loc)), RET #();
       own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
-      own_transaction_changes tr s (inserted ∪ input_char_ids typedInput.2) tombstoned (changed ∪ {[p]}) ∗
+      own_transaction_changes tr (inserted ∪ input_char_ids typedInput.2) tombstoned (changed ∪ {[p]}) ∗
       ⌜pool_registry_models (<[typedInput.1 := arr2]> m) (ss_bind state) p'⌝ ∗
       ⌜runs_within_or_from [typedInput] (all_runs (ss_pool state)) (all_runs p')⌝ ∗
       ⌜integrate_live_refine typedInput.2 (all_runs (ss_pool state)) (all_runs p')⌝ ∗
@@ -1377,11 +1377,11 @@ Qed.
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   input_fits typedInput.2 ->
   {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s state ∗
-      own_transaction_changes tr s inserted tombstoned changed }}}
+      own_transaction_changes tr inserted tombstoned changed }}}
     s @! (go.PointerType yjs.store) @! "integrateDecoded" #tr #updateItemVal
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc) (q : loc), RET #();
       own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |> <| ss_bind := bind' |>) ∗
-      own_transaction_changes tr s (inserted ∪ input_char_ids typedInput.2) tombstoned (changed ∪ {[q]}) ∗
+      own_transaction_changes tr (inserted ∪ input_char_ids typedInput.2) tombstoned (changed ∪ {[q]}) ∗
       ⌜ss_bind state ⊆ bind'⌝ ∗
       ⌜pool_registry_models (<[typedInput.1 := arr2]> m) bind' p'⌝ ∗
       ⌜runs_within_or_from [typedInput] (all_runs (ss_pool state)) (all_runs p')⌝ ∗
@@ -1548,13 +1548,13 @@ Lemma wp_store__integrateDecoded (s tr : loc)
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   input_fits typedInput.2 ->
   {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s state ∗
-      own_transaction_changes tr s inserted tombstoned changed }}}
+      own_transaction_changes tr inserted tombstoned changed }}}
     s @! (go.PointerType yjs.store) @! "integrateDecoded" #tr #updateItemVal
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc) (q : loc), RET #();
       own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |> <| ss_bind := bind' |>) ∗
       (* the transaction records the item's chars and its type, the one
          bound to [nm] afterwards *)
-      own_transaction_changes tr s (inserted ∪ input_char_ids typedInput.2) tombstoned (changed ∪ {[q]}) ∗
+      own_transaction_changes tr (inserted ∪ input_char_ids typedInput.2) tombstoned (changed ∪ {[q]}) ∗
       ⌜ss_bind state ⊆ bind'⌝ ∗
       ⌜pool_registry_models (<[typedInput.1 := arr2]> m) bind' p'⌝ ∗
       ⌜runs_within_or_from [typedInput] (all_runs (ss_pool state)) (all_runs p')⌝ ∗

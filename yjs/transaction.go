@@ -65,9 +65,10 @@ func (tr *Transaction) recordDelete(it *item) {
 // transact_mut takes the store's write guard and commits on drop,
 // src/transact.rs:131, src/transaction.rs:488). The store's write lock is the
 // transaction's critical section. Go has no goroutine identity, so a nested
-// transact cannot be recognised and deadlocks (#206, item 2): f, and the
-// callbacks notify runs, use the In-variants (Text.InsertIn / DeleteIn /
-// StringIn) and never lock the document.
+// transact cannot be recognised and deadlocks (#206, item 2): f uses the
+// In-variants (Text.InsertIn / DeleteIn / StringIn) with tr and never locks
+// the document, and the callbacks notify runs receive their delta and must
+// not touch the document at all (Text.Observe).
 func (s *store) transact(f func(tr *Transaction)) {
 	s.mu.Lock()
 	tr := newTransaction(s)

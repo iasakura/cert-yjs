@@ -2294,13 +2294,13 @@ Lemma wp_store__Integrate (s tr parent parent_arg item_l : loc)
   {{{ is_pkg_init yjs ∗ own_store_state s state ∗
       own_linked_item item_l input parent
         (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) ∗
-      own_transaction_changes tr s inserted tombstoned changed }}}
+      own_transaction_changes tr inserted tombstoned changed }}}
     s @! (go.PointerType yjs.store) @! "Integrate" #tr #parent_arg #item_l
   {{{ (runs' : list ItemRun) (ls' : list loc) (run : list (YjsItem A)), RET #();
       own_store_state s (state <| ss_pool := <[parent := MkTypeModel runs']> (ss_pool state) |>
                             <| ss_locs := <[parent := ls']> (ss_locs state) |>) ∗
       (* the transaction records the new run: its chars and its type *)
-      own_transaction_changes tr s (inserted ∪ char_ids run) tombstoned (changed ∪ {[parent]}) ∗
+      own_transaction_changes tr (inserted ∪ char_ids run) tombstoned (changed ∪ {[parent]}) ∗
       ⌜YjsArrInvariant arr'⌝ ∗
       ⌜∃ idx : nat, runs_integrate_splice_at idx (tm_runs tm) (tm_arr tm) run runs' arr' ∧
                     ls' = integrate_locs ls idx item_l⌝ ∗
@@ -2421,7 +2421,7 @@ Proof using Type*.
     { have Hstr : itemValRec.(yjs.item.content').(yjs.content.content') = in_content (input_of_run r) := HcontRec.
       rewrite Hstr. exact HclenRec. }
     destruct (node_span_char_ids itemValRec r Hwfr HidRec' HlenRec' Hfitsr) as [HfitsRec HspanRec].
-    wp_apply (wp_Transaction__recordInsert tr s parent item_l (DfracOwn 1) itemValRec inserted tombstoned changed
+    wp_apply (wp_Transaction__recordInsert tr parent item_l (DfracOwn 1) itemValRec inserted tombstoned changed
                 HfitsRec with "[$Hchanges $HvalRec]").
     iIntros "[Hchanges HvalRec]".
     iAssert (own_item_node item_l (DfracOwn 1) (input_of_run r) (run_deleted r) parent prevRec nxtRec)
@@ -2534,7 +2534,7 @@ Proof using Type*.
     { have Hstr : itemValRec.(yjs.item.content').(yjs.content.content') = in_content (input_of_run r) := HcontRec.
       rewrite Hstr. exact HclenRec. }
     destruct (node_span_char_ids itemValRec r Hwfr HidRec' HlenRec' Hfitsr) as [HfitsRec HspanRec].
-    wp_apply (wp_Transaction__recordInsert tr s parent item_l (DfracOwn 1) itemValRec inserted tombstoned changed
+    wp_apply (wp_Transaction__recordInsert tr parent item_l (DfracOwn 1) itemValRec inserted tombstoned changed
                 HfitsRec with "[$Hchanges $HvalRec]").
     iIntros "[Hchanges HvalRec]".
     iAssert (own_item_node item_l (DfracOwn 1) (input_of_run r) (run_deleted r) parent prevRec nxtRec)

@@ -51,10 +51,12 @@ type store struct {
 	// because tombstoning is idempotent.
 	pendingDeletes []deleteSpan
 	// observers is, per type, the callbacks Text.Observe registered (issue
-	// #198, Part II). Yjs keeps the list on the type (src/types/AbstractType.js,
-	// _eH), yrs on the branch (src/types/mod.rs:299), y-octo on its publisher
-	// (src/doc/publisher.rs:18); here it sits on the store so that the pool's
-	// type cells, the heaviest proof machinery, keep their shape (a divergence,
+	// #198, Part II). The three references keep them in three places: Yjs
+	// v14 on the type (YType._eH, src/ytype.js:667), yrs 0.27 on the branch
+	// (Branch.observers, src/branch.rs:214), y-octo on a per-document
+	// publisher that polls the store (DocPublisher, src/doc/publisher.rs:15).
+	// Here they sit on the store, keyed by type, so that the pool's type
+	// cells, the heaviest proof machinery, keep their shape (a divergence,
 	// docs/plan-issue-198-observe.md section 18). Guarded by mu; notify walks
 	// it at the end of every transaction.
 	observers map[*yType][]func(delta []DeltaOp)

@@ -12,7 +12,7 @@
       point, [WireReplay] the resulting replay relation and [wire_ready_total]
       the readiness gate.
     - [run_tombstoned_ids] / [runs_tombstoned] / [pool_tombstoned]: the EXACT
-      tombstone state of a run list / of the pool (what [own_store]'s
+      tombstone state of a run list / of the pool (what [own_store_data]'s
       [deleted] denotes), and how a step moves it: a split or an integrate
       splice keeps it, a flip adds the run's chars, a fresh type adds
       nothing, a sweep never clears one ([runs_tombstoned_split] /
@@ -25,6 +25,9 @@
       the start snapshot through [snapshot_before], the record's delta and
       growth; [type_snapshot_untouched]: a type none of whose chars the
       record mentions has the snapshot it started with;
+      [transaction_start_fresh] / [transaction_start_replay] /
+      [transaction_start_tombstone]: how the start relation is born and how
+      it survives a replay of delivered inputs and a tombstone sweep;
       [live_run_chars_not_tombstoned] / [fresh_tombstones_flip]: a sweep
       records only live chars).
     - [accepted_coh] / [pending_id_set] / [input_accounted]: which delivered
@@ -1144,7 +1147,7 @@ Definition pool_next_clock (p : pool) (c n : nat) : Prop :=
     one certificate per character, so a multi-char wire item's head-id op is
     not itself in the log, only its per-char ops are. The bulk of the
     [expand_input] theory (lookup / length / singleton / chunk chaining) stays
-    in [store/GetNode]; only the two definitions live here so [own_store] and
+    in [store/GetNode]; only the two definitions live here so [own_store_data] and
     [store_inv_excl] can name them. *)
 Definition expand_input (typedInput : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
   (λ op, (typedInput.1, op)) <$> ops_of_input typedInput.2 (explode (in_content typedInput.2)).
@@ -1799,7 +1802,7 @@ Qed.
     when it is live; [runs_tombstoned runs] and [pool_tombstoned p] collect
     them over a run list and over the whole pool. This is the EXACT tombstone
     state of a store (the ghost delete set is a lower bound of it), what
-    [own_store]'s [deleted] parameter denotes; a step of the store moves it
+    [own_store_data]'s [deleted] parameter denotes; a step of the store moves it
     by the laws below: a split or an integrate splice keeps it
     ([runs_tombstoned_split] / [runs_tombstoned_integrate]), a flip adds the
     flipped run's chars ([runs_tombstoned_flip]), a fresh empty type adds
@@ -2293,6 +2296,44 @@ Proof.
   - rewrite (right_id_L ∅ (∪)) //.
   - apply disjoint_empty_l.
   - move=> i j Hi. exfalso. exact (not_elem_of_empty i Hi).
+Qed.
+
+(** The start relation survives a replay of delivered inputs
+    ([store.applyUpdate]): the documents filtered of the batch's chars are
+    the ones before, and its chars sit above every older char of their
+    client. *)
+Lemma transaction_start_replay (m m' : DocModel) (deleted inserted tombstoned : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) (applied : list (TId * IntegrateInput (A := A))) :
+  ValidReplay (expand_inputs applied) m m' ->
+  transaction_start m deleted inserted tombstoned m0 deleted0 ->
+  transaction_start m' deleted (inserted ∪ inputs_char_ids applied) tombstoned m0 deleted0.
+Proof.
+  move=> Hvr [Hfilter [Hdel [Hdisj Htop]]]. rewrite inputs_char_ids_replay.
+  split_and!; [| exact Hdel | exact Hdisj |].
+  - move=> t. rewrite (Hfilter t) -(ValidReplay_filter_new _ _ _ Hvr t) list_filter_filter.
+    apply list_filter_iff => x. rewrite not_elem_of_union. tauto.
+  - exact (ValidReplay_inserted_top _ _ _ inserted Hvr Htop).
+Qed.
+
+(** The start relation survives a tombstone sweep ([store.applyDeleteSpans]):
+    the same documents, the tombstones grown by the sweep's fresh ones, which
+    were live before. *)
+Lemma transaction_start_tombstone (m : DocModel) (deleted deleted' inserted tombstoned tombstoned' : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) :
+  transaction_start m deleted inserted tombstoned m0 deleted0 ->
+  tombstoned ⊆ tombstoned' ->
+  deleted' = deleted ∪ tombstoned' ->
+  (tombstoned' ∖ tombstoned) ## deleted ->
+  transaction_start m deleted' inserted tombstoned' m0 deleted0.
+Proof.
+  move=> [Hfilter [Hdel [Hdisj Htop]]] Htsub Hdel' Hfresh. split_and!; [exact Hfilter | | | exact Htop].
+  - rewrite Hdel' Hdel -assoc_L. f_equal. apply subseteq_union_1_L. exact Htsub.
+  - rewrite elem_of_disjoint => i Hi Hi0.
+    destruct (decide (i ∈ tombstoned)) as [Hin | Hnin].
+    + exact (proj1 (elem_of_disjoint _ _) Hdisj i Hin Hi0).
+    + apply (proj1 (elem_of_disjoint _ _) Hfresh i).
+      * apply elem_of_difference. split; assumption.
+      * rewrite Hdel. apply elem_of_union_l. exact Hi0.
 Qed.
 
 Lemma run_deleted_tombstoned (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun)

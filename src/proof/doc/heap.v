@@ -59,7 +59,7 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 (* ===== definitions ======================================================== *)
 
 (* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54), so
-   [own_store]'s [Hpendroot] conjunct is a [⌜..⌝] and needs no instances. *)
+   [own_store_data]'s [Hpendroot] conjunct is a [⌜..⌝] and needs no instances. *)
 
 (** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
     delegates to [is_Store]. Since [Text] holds the store directly (y-octo: the
