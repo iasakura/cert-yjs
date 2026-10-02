@@ -2421,7 +2421,7 @@ Proof using Type*.
     { have Hstr : itemValRec.(yjs.item.content').(yjs.content.content') = in_content (input_of_run r) := HcontRec.
       rewrite Hstr. exact HclenRec. }
     destruct (node_span_char_ids itemValRec r Hwfr HidRec' HlenRec' Hfitsr) as [HfitsRec HspanRec].
-    wp_apply (wp_Transaction__recordInsert tr tr_store parent item_l (DfracOwn 1) itemValRec inserted tombstoned changed
+    wp_apply (wp_Transaction__recordInsert tr s parent item_l (DfracOwn 1) itemValRec inserted tombstoned changed
                 HfitsRec with "[$Hchanges $HvalRec]").
     iIntros "[Hchanges HvalRec]".
     iAssert (own_item_node item_l (DfracOwn 1) (input_of_run r) (run_deleted r) parent prevRec nxtRec)
@@ -2534,7 +2534,7 @@ Proof using Type*.
     { have Hstr : itemValRec.(yjs.item.content').(yjs.content.content') = in_content (input_of_run r) := HcontRec.
       rewrite Hstr. exact HclenRec. }
     destruct (node_span_char_ids itemValRec r Hwfr HidRec' HlenRec' Hfitsr) as [HfitsRec HspanRec].
-    wp_apply (wp_Transaction__recordInsert tr tr_store parent item_l (DfracOwn 1) itemValRec inserted tombstoned changed
+    wp_apply (wp_Transaction__recordInsert tr s parent item_l (DfracOwn 1) itemValRec inserted tombstoned changed
                 HfitsRec with "[$Hchanges $HvalRec]").
     iIntros "[Hchanges HvalRec]".
     iAssert (own_item_node item_l (DfracOwn 1) (input_of_run r) (run_deleted r) parent prevRec nxtRec)
