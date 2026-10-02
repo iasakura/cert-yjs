@@ -1,4 +1,4 @@
-(** [wp_Text__Delete]: one write as one transaction ([Doc.Transact] around
+(** [wp_Text__Delete]: one write as one transaction ([store.transact] around
     [Text.DeleteIn], issue #206 T1). The tombstoning loop is [text/DeleteIn];
     this file only wraps it and hides the transaction. Shares [is_Text] etc.
     via [text/heap]. *)
@@ -30,7 +30,7 @@ Local Open Scope Z_scope.
 Section text.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
-(** The store's write lock is taken by the transaction ([wp_Doc__Transact]);
+(** The store's write lock is taken by the transaction ([wp_store__transact]);
     the per-text item set lives in a grow-only auth (the same RA as
     [store/store], used by [is_type_lb]). *)
 Context {sync_pkg : sync.Assumptions}.
@@ -40,8 +40,8 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-(* [is_Doc]'s reader-count accounting ties the readers' share to the store's
-   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Doc] uses
+(* [is_Store]'s reader-count accounting ties the readers' share to the store's
+   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
@@ -68,15 +68,15 @@ Lemma wp_Text__Delete (t : loc) (index len : w64) (γs : store_names) (γh : his
       is_Text t γs γh name L deleted_ids' ∗ ⌜deleted_ids ⊆ deleted_ids'⌝ }}}.
 Proof.
   wp_start as "#Htext".
-  iPoseProof "Htext" as (tv dv text_store parent deleted_items) "Hhandle". iNamed "Hhandle".
-  subst dv.
+  iPoseProof "Htext" as (tv text_store parent deleted_items) "Hhandle". iNamed "Hhandle".
+  subst text_store.
   wp_auto.
   (* the one write, as one transaction: the closure runs [DeleteIn] on the
      transaction it is handed and reports what the handle learns *)
-  wp_apply (wp_Doc__Transact tv.(yjs.Text.doc') text_store γs γh _
+  wp_apply (wp_store__transact tv.(yjs.Text.store') γs γh _
               (λ c h' m' pend' deleted',
                  ∃ (dels : gset YjsId), is_Text t γs γh name L (deleted_ids ∪ dels))%I
-              with "[$His_doc t index length]").
+              with "[$His_store t index length]").
   { rewrite /closure_runs_transaction.
     iIntros (tr c h m pend deleted Ψ) "Htx HΨ".
     wp_auto.

@@ -4,7 +4,7 @@ package yjs
 // the inner lock-guarded sequence type [yType] in ytype.go.
 //
 // These ops are goose-translated (part of the verified model): InsertIn is a
-// loop over the proven dataStore.Integrate and DeleteIn tombstones a visible run,
+// loop over the proven store.Integrate and DeleteIn tombstones a visible run,
 // so both preserve the document invariant is_ytype (see wp_Text__InsertIn /
 // wp_Text__DeleteIn in src/proof/text/text.v); Insert and Delete are the
 // one-write transactions around them (transaction.go). The byte-level v1
@@ -15,17 +15,16 @@ package yjs
 //   - the store owns the root types by name (no nested types, no maps/arrays);
 //   - the local client's next clock lives in the store (state-vector head); an
 //     edit takes the store lock, integrates, and registers the new item into the
-//     document's item set -- faithful to y-octo's Arc<RwLock<DocStore>>;
+//     store's item set -- faithful to y-octo's Arc<RwLock<DocStore>>;
 //   - content is assumed single-byte (ASCII): a clock unit is one byte, which
 //     keeps id arithmetic consistent with content.Len (byte length).
 
 // Text is the public handle for a root text type (y-octo: Text is a YTypeRef
-// newtype). It carries the document (for its lock and, under it, the data:
-// Yjs YType.doc, src/ytype.js:661) and the inner YType it edits; the type
-// name is only needed at GetOrCreateText time, so it is not stored in the
-// handle.
+// newtype). It carries the store (for the lock / client / clock) and the inner
+// YType it edits; the type name is only needed at GetOrCreateText time, so it is not
+// stored in the handle.
 type Text struct {
-	doc   *Doc
+	store *store
 	inner *yType
 }
 
@@ -33,15 +32,15 @@ type Text struct {
 // (RLock) so it runs concurrently with other readers (y-octo reads the type
 // under the RwLock read guard).
 func (t *Text) String() string {
-	d := t.doc
-	d.mu.RLock()
+	s := t.store
+	s.mu.RLock()
 	r := t.inner.Text()
-	d.mu.RUnlock()
+	s.mu.RUnlock()
 	return r
 }
 
 // StringIn returns the visible text inside the transaction tr, which holds
-// the document's write lock (Yjs ytext.toString() inside doc.transact; yrs
+// the store's write lock (Yjs ytext.toString() inside doc.transact; yrs
 // text.get_string(&txn)). What it returns is the text as this transaction
 // sees it: exact, where String from outside a transaction reads a state
 // some other writer may already have moved on from.
@@ -52,10 +51,10 @@ func (t *Text) StringIn(tr *Transaction) string {
 // Len returns the visible (countable, non-deleted) length. A pure read: takes
 // the read lock (RLock) so it runs concurrently with other readers.
 func (t *Text) Len() uint64 {
-	d := t.doc
-	d.mu.RLock()
+	s := t.store
+	s.mu.RLock()
 	n := t.inner.len
-	d.mu.RUnlock()
+	s.mu.RUnlock()
 	return n
 }
 
@@ -63,31 +62,32 @@ func (t *Text) Len() uint64 {
 // (Yjs ytext.insert outside a transact, which opens one of its own; yrs
 // TextRef::insert with a transact_mut). One write, one transaction: the
 // observers of this text are notified once, at its end.
-// Observe registers callback on t (Yjs YType.observe, src/ytype.js:779; yrs
-// TextRef::observe, src/types/text.rs). Under the document's write lock: one immediate call with the whole visible text as one insert (the
+// Observe registers callback on t (Yjs YText.observe, src/types/AbstractType.js
+// observe; yrs TextRef::observe, src/types/text.rs). Under the store's write
+// lock: one immediate call with the whole visible text as one insert (the
 // initial load a Yjs binding does with toString() before observing, here
 // atomic with the registration), then one call at the end of every
 // transaction that changed t, with that transaction's delta (notify,
-// transaction.go). Callbacks run under the document's write lock: a callback
+// transaction.go). Callbacks run under the store's write lock: a callback
 // must not lock the document again (no Transact, Insert, Delete,
 // ApplySyncUpdate, Observe, String, Len: deadlock) and a lock it takes is
 // ordered after the store's. Not callable inside a transaction, for the same
 // reason (#206 item 2).
 func (t *Text) Observe(callback func(delta []DeltaOp)) {
-	d := t.doc
-	d.mu.Lock()
+	s := t.store
+	s.mu.Lock()
 	var initial []DeltaOp
 	text := t.inner.Text()
 	if len(text) > 0 {
 		initial = append(initial, DeltaOp{Kind: DeltaInsert, Content: text})
 	}
 	callback(initial)
-	d.store.observers[t.inner] = append(d.store.observers[t.inner], callback)
-	d.mu.Unlock()
+	s.observers[t.inner] = append(s.observers[t.inner], callback)
+	s.mu.Unlock()
 }
 
 func (t *Text) Insert(index uint64, content string) {
-	t.doc.Transact(func(tr *Transaction) {
+	t.store.transact(func(tr *Transaction) {
 		t.InsertIn(tr, index, content)
 	})
 }
@@ -99,11 +99,11 @@ func (t *Text) Insert(index uint64, content string) {
 // item's left origin chains to the previous one and every item shares the
 // same right origin, matching how Yjs splits a run (y-octo:
 // ListType::insert_after via store::create_item + integrate). The transaction
-// holds the document's write lock; each character's id comes from the store's
+// holds the store's write lock; each character's id comes from the store's
 // local clock counter, read through tr (yrs reaches the store through the
 // transaction the same way), and every integrated char is recorded in tr.
 func (t *Text) InsertIn(tr *Transaction, index uint64, content string) {
-	s := tr.store.data
+	s := tr.store
 	if index > t.inner.len {
 		return
 	}
@@ -165,7 +165,7 @@ func (t *Text) InsertIn(tr *Transaction, index uint64, content string) {
 // TextRef::remove_range with a transact_mut). One write, one transaction: the
 // observers of this text are notified once, at its end.
 func (t *Text) Delete(index uint64, length uint64) {
-	t.doc.Transact(func(tr *Transaction) {
+	t.store.transact(func(tr *Transaction) {
 		t.DeleteIn(tr, index, length)
 	})
 }
@@ -177,7 +177,7 @@ func (t *Text) Delete(index uint64, length uint64) {
 // store::delete_item, splitting at both range boundaries when they land
 // inside a run). Tombstoning keeps the items in the list and the document
 // order, so it preserves the integrate invariant -- only visibility changes.
-// The transaction holds the document's write lock, reached through tr, and
+// The transaction holds the store's write lock, reached through tr, and
 // records every tombstoned node.
 //
 // The Deleted flag is the source of truth for visibility; the store's DeleteSet
@@ -185,7 +185,7 @@ func (t *Text) Delete(index uint64, length uint64) {
 // is regenerated at encode time (codec.go: generateDeleteSet), so DeleteIn only
 // flips flags and shrinks the visible length.
 func (t *Text) DeleteIn(tr *Transaction, index uint64, length uint64) {
-	s := tr.store.data
+	s := tr.store
 	// Normalize the range start (split [left] when the index lands inside a
 	// run), then tombstone forward, splitting once more when the budget ends
 	// inside a run (y-octo: ListType::remove_after; both splits are dead code

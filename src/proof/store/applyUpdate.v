@@ -1,12 +1,12 @@
 (** The top of the [store] update path: the [applyUpdate] stack, from the
-    [ValidReplay] refinement [wp_dataStore__applyUpdate] through the wire-drain
+    [ValidReplay] refinement [wp_store__applyUpdate] through the wire-drain
     subset / replay lemmas and the certificate machinery up to the public
-    [own_dataStore]-level spec [wp_dataStore__applyUpdate] (delivered content
+    [own_store]-level spec [wp_store__applyUpdate] (delivered content
     comes back as [is_root_lb] fragments).
 
     The layers it stands on are [store/GetNode] (node lookup, input expansion),
-    [store/splitNode] and [store/repair] (registry, repair, the [dataStore_inv ⊣⊢
-    own_dataStore] bridge); downstream files see everything through the
+    [store/splitNode] and [store/repair] (registry, repair, the [store_inv ⊣⊢
+    own_store] bridge); downstream files see everything through the
     [store/store] facade. Same [Section] boilerplate; [Type*] footprints. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
@@ -57,7 +57,7 @@ Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54), so
-   [dataStore_inv_excl] / [own_dataStore] carry them as [⌜..⌝] and no Persistent /
+   [store_inv_excl] / [own_store] carry them as [⌜..⌝] and no Persistent /
    Timeless instances are needed here. *)
 
 
@@ -112,13 +112,13 @@ Qed.
 
 (** [store.applyUpdate] over the unlocked store fields: the drain loop's
     contract stated on the raw registry / run pool / pending buffer
-    ([own_dataStore_state]). The registry follows the model
+    ([own_store_state]). The registry follows the model
     ([pool_registry_models]) and the live chars refine up to the chars this
     apply integrated ([apply_live_refine]). Local: the stepping stone of
-    [wp_dataStore__applyUpdate] below, which is the spec. *)
-#[local] Lemma wp_dataStore__applyUpdate_unlocked {tr_store : loc} (s tr : loc) (sl : slice.t) (dq : dfrac)
+    [wp_store__applyUpdate] below, which is the spec. *)
+#[local] Lemma wp_store__applyUpdate_unlocked (s tr : loc) (sl : slice.t) (dq : dfrac)
     (inputs pend0 applied rest : list (TId * IntegrateInput (A := A)))
-    (m m' : DocModel) (state : dataStore_state)
+    (m m' : DocModel) (state : store_state)
     (inserted tombstoned : gset YjsId) (changed : gset loc) :
   ss_pending state = pend0 ->
   wire_drain m (pend0 ++ inputs) = (applied, rest, m') ->
@@ -130,16 +130,16 @@ Qed.
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend0 ++ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
-  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_dataStore_state s state ∗
-      own_transaction_changes tr tr_store inserted tombstoned changed }}}
-    s @! (go.PointerType yjs.dataStore) @! "applyUpdate" #tr #sl
+  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_state s state ∗
+      own_transaction_changes tr s inserted tombstoned changed }}}
+    s @! (go.PointerType yjs.store) @! "applyUpdate" #tr #sl
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc) (changed' : gset loc), RET #();
       own_update_structs sl dq inputs ∗
-      own_dataStore_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>
+      own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>
                             <| ss_bind := bind' |> <| ss_pending := rest |>) ∗
       (* the transaction records the applied items' chars, and marks exactly
          the types they went into (bound in the grown registry) *)
-      own_transaction_changes tr tr_store (inserted ∪ inputs_char_ids applied) tombstoned changed' ∗
+      own_transaction_changes tr s (inserted ∪ inputs_char_ids applied) tombstoned changed' ∗
       ⌜ss_bind state ⊆ bind'⌝ ∗
       ⌜pool_registry_models m' bind' p'⌝ ∗
       ⌜apply_live_refine m (all_runs (ss_pool state)) (all_runs p')⌝ ∗
@@ -154,7 +154,7 @@ Proof using Type*.
   (* the INITIAL pool's run structure, read while [Hruns] is over [p]
      (pure, non-consuming): needed in the ready branch to bound an original
      run's clock range below a fresh batch item via [expand_inputs_arr_fresh]. *)
-  iDestruct (own_dataStore_state_run_wf with "Hruns") as %Hrunwf_init.
+  iDestruct (own_store_state_run_wf with "Hruns") as %Hrunwf_init.
   iDestruct "Hruns" as "(Hfields0 & %Hinvs0)".
   iEval (simpl) in "Hfields0".
   have Hrpi0 : pool_invs p := proj1 Hinvs0.
@@ -238,8 +238,8 @@ Proof using Type*.
         "HslP" ∷ pendingS ↦* uivsP ∗
         "HcapP" ∷ own_slice_cap yjs.updateItem.t pendingS (DfracOwn 1) ∗
         "#HitemsPj" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsP;pendingj, is_update_item updateItemVal typedInput) ∗
-        "Hruns" ∷ own_dataStore_state s (MkDataStoreState client0 k0 locs_j p_j bindj [] pdel) ∗
-        "Hchanges" ∷ own_transaction_changes tr tr_store inserted_j tombstoned changed_j ∗
+        "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_j p_j bindj [] pdel) ∗
+        "Hchanges" ∷ own_transaction_changes tr s inserted_j tombstoned changed_j ∗
         "%Hpendingsubj" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A),
             typedInput ∈ pendingj -> typedInput ∈ pend0 ++ inputs⌝ ∗
         "%Hprj" ∷ ⌜WireReplay m appliedj mj⌝ ∗
@@ -266,7 +266,7 @@ Proof using Type*.
       iFrame "HitemsA".
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpendf Hpdeletes".
       { iSplitL; last (iPureIntro; split_and!; [exact Hrpi0 | exact Hpreg0 | exact Hcontig0]).
-        rewrite /own_dataStore_fields /=.
+        rewrite /own_store_fields /=.
         iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpdeletes".
         iExists slice.nil. iFrame "Hpendf". iExists [].
         iSplitL; [iApply own_slice_nil | iSplitL; [iApply own_slice_cap_nil | by rewrite big_sepL2_nil]]. }
@@ -329,8 +329,8 @@ Proof using Type*.
           "HslR" ∷ restS ↦* uivsR ∗
           "HcapR" ∷ own_slice_cap yjs.updateItem.t restS (DfracOwn 1) ∗
           "#HitemsR" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsR;keptacc, is_update_item updateItemVal typedInput) ∗
-          "Hruns" ∷ own_dataStore_state s (MkDataStoreState client0 k0 locs_c p_c bind_c [] pdel) ∗
-          "Hchanges" ∷ own_transaction_changes tr tr_store inserted_c tombstoned changed_c ∗
+          "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) ∗
+          "Hchanges" ∷ own_transaction_changes tr s inserted_c tombstoned changed_c ∗
           "%Hilen" ∷ ⌜(i <= length pendingj)%nat⌝ ∗
           "%Hpassa" ∷ ⌜wire_pass m_c (drop i pendingj) keptacc =
               (app_rem, keptfin0, m_pend0)⌝ ∗
@@ -411,8 +411,8 @@ Proof using Type*.
           replace (sint.nat (W64 i)) with i by word. exact Huiv. }
         iEval (rewrite Hinsid) in "HslP".
         (* the arrival probe: hasNode *)
-        wp_apply (wp_dataStore__hasNode s (updateItemVal.(yjs.updateItem.id')) m_c
-                    (MkDataStoreState client0 k0 locs_c p_c bind_c [] pdel) (conj Hmtypesc Hmdomc)
+        wp_apply (wp_store__hasNode s (updateItemVal.(yjs.updateItem.id')) m_c
+                    (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) (conj Hmtypesc Hmdomc)
                     with "[$Hruns]").
         iIntros (ok) "(Hruns & %Hok)".
         rewrite Hin_id in Hok.
@@ -435,8 +435,8 @@ Proof using Type*.
             exact Hpassa. }
         (* fresh: probe the structural gate *)
         wp_auto.
-        wp_apply (wp_dataStore__depsArrived s updateItemVal (targetType, input) m_c
-                    (MkDataStoreState client0 k0 locs_c p_c bind_c [] pdel) (conj Hmtypesc Hmdomc)
+        wp_apply (wp_store__depsArrived s updateItemVal (targetType, input) m_c
+                    (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) (conj Hmtypesc Hmdomc)
                     with "[$Hui $Hruns]").
         iIntros "Hruns".
         destruct (input_ready m_c input) eqn:Hready.
@@ -482,7 +482,7 @@ Proof using Type*.
                destruct (Hmdomc targetType Hne) as (nm & pl & Heq & Hb). by exists nm. }
            have Hnwc : (Z.of_nat (clock (in_id input)) + Z.of_nat (length (in_content input)) < 2^64)%Z
              := Hkb1 (targetType, input) Hpending0in.
-           iDestruct (own_dataStore_state_run_wf with "Hruns") as %Hrunwfc.
+           iDestruct (own_store_state_run_wf with "Hruns") as %Hrunwfc.
            (* the current item's flat position in [applied] *)
            have HKlk : applied !! (length (appliedj ++ appacc)) = Some (targetType, input).
            { rewrite Happdec (app_assoc appliedj appacc) lookup_app_r; last done.
@@ -490,7 +490,7 @@ Proof using Type*.
            (* freshness: existing same-client runs lie below this item's clock *)
            have Hideta : in_id input = MkYjsId (clientId (in_id input)) (clock (in_id input))
              by destruct (in_id input).
-           iDestruct (own_dataStore_state_registry_coh with "Hruns") as %Hregc.
+           iDestruct (own_store_state_registry_coh with "Hruns") as %Hregc.
            have Hbelow : pool_clock_below p_c (in_id input).
            { move=> r0 Hr0 Hcc0.
              have Hwfr0 : run_wf (run_items r0) := Hrunwfc r0 Hr0.
@@ -554,8 +554,8 @@ Proof using Type*.
                rewrite (pool_has_doc_model_has m_c bind_c p_c _ Hregc (conj Hmtypesc Hmdomc)).
                replace (S k' - 1)%nat with k' by lia. exact Hhas. }
            simpl. rewrite Hready. wp_auto.
-           wp_apply (wp_dataStore__integrateDecoded s tr updateItemVal (targetType, input)
-                       m_c (MkDataStoreState client0 k0 locs_c p_c bind_c [] pdel) newItem arr' nm
+           wp_apply (wp_store__integrateDecoded s tr updateItemVal (targetType, input)
+                       m_c (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) newItem arr' nm
                        inserted_c tombstoned changed_c
                        Htjeq Htoit Hvld Hmax Hall Hnext (conj Hmtypesc Hmdomc) Hnwc
                        with "[$Hui $Hruns $Hchanges]").
@@ -742,13 +742,13 @@ Proof using Type*.
       wp_auto.
       rewrite Happeq.
       iApply ("HΦ" $! p_j locs_j bindj changed_j). simpl.
-      iAssert (own_pending_field (s .[(yjs.dataStore.t), "pending"]) rest)%I with "[Hpendf HslP HcapP]" as "Hpending".
+      iAssert (own_pending_field (s .[(yjs.store.t), "pending"]) rest)%I with "[Hpendf HslP HcapP]" as "Hpending".
       { iExists pendingS. iFrame "Hpendf". iExists uivsP. iFrame "HslP HcapP HitemsPj". }
       iSplitL "Hslin Hcapin".
       { iExists uivs_in. iFrame "Hslin Hcapin Hitemsin". }
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
       { iSplitL; last (iPureIntro; split_and!; [exact Hrpij | exact Hregj | exact Hcontigj]).
-        rewrite /own_dataStore_fields /=.
+        rewrite /own_store_fields /=.
         iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes". }
       iSplitL "Hchanges"; first (iEval (rewrite Hinsj) in "Hchanges"; iExact "Hchanges").
       iPureIntro. split_and!.
@@ -882,7 +882,7 @@ Qed.
    model ([doc_model_has], a re-delivered struct). These lemmas prove none of
    the three loses the item: EVERY pending item is accounted for at the id
    level -- some applied item shares its id, some kept item shares its id, or
-   the final model already carries its id. [wp_dataStore__applyUpdate] turns
+   the final model already carries its id. [wp_store__applyUpdate] turns
    this into the per-input guarantee that each input is either delivered into
    the history or buffered in the new pending: no input silently vanishes. *)
 
@@ -1718,7 +1718,7 @@ Proof.
 Qed.
 
 (** [applyUpdate], the PUBLIC certificate spec (issue #40): the whole store
-    state is ONE [own_dataStore] before and after. The incoming batch carries its
+    state is ONE [own_store] before and after. The incoming batch carries its
     persistent certificates and its rooted-head witnesses; there is NO
     causal-order assumption, not even within the batch, and no state-vector
     tracking -- the heap drains the pending buffer plus the batch to the
@@ -1750,17 +1750,17 @@ Proof.
   exists y. split; [exact Hy |]. exists it. split; [rewrite -Hop1; exact Hitmem | rewrite Hitid Hid //].
 Qed.
 
-Lemma wp_dataStore__applyUpdate (tr s_loc ds : loc) (sl : slice.t) (dq : dfrac)
+Lemma wp_store__applyUpdate (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
     (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend inputs : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
   update_wf inputs ->
-  {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗ is_store_data s_loc ds ∗
+  {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
       own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
       own_update_structs sl dq inputs ∗
       is_pending_certified γh (expand_inputs inputs) }}}
-    ds @! (go.PointerType yjs.dataStore) @! "applyUpdate" #tr #sl
+    s_loc @! (go.PointerType yjs.store) @! "applyUpdate" #tr #sl
   {{{ (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel) (changed' : gset P),
       RET #();
       own_update_structs sl dq inputs ∗
@@ -1775,11 +1775,8 @@ Lemma wp_dataStore__applyUpdate (tr s_loc ds : loc) (sl : slice.t) (dq : dfrac)
       ⌜changed ⊆ changed'⌝ }}}.
 Proof using Type*.
   move=> [Hnowrapb Hrooted].
-  iIntros (Φ) "(#Hpkg & #Hishist & #Hdata & Htx & Hupd & #Hcertsin) HΦ".
-  iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx".
-  iDestruct "Hstore" as (ds' observers_mref) "Hstore". iNamed "Hstore".
-  iDestruct (is_store_data_agree with "Hdata Hdata_field") as %<-.
-  iNamed "Hstore".
+  iIntros (Φ) "(#Hpkg & #Hishist & Htx & Hupd & #Hcertsin) HΦ".
+  iDestruct "Htx" as (changed_locs m0 deleted0 registry_mref) "Htx". iNamed "Htx". iNamed "Hstore".
   (* the old marks name their types: read the bindings off the registry
      while the authority is at hand *)
   iDestruct (changed_types_bound_registered with "HtypesAuth Hchanged_bound") as %Hlocs_bound.
@@ -1830,15 +1827,15 @@ Proof using Type*.
           Hdrainc Hhcoh Harrinv Hnonemptyb with "Hishist Hhist Hcertpending")
     as "(Hhist & #Hlbnew & %Hvr & %Hcoh' & %Hnoc)".
   iModIntro.
-  iAssert (own_pending_field (ds .[(yjs.dataStore.t), "pending"]) pend)%I with "[Hpendf Hpend]" as "Hpending".
+  iAssert (own_pending_field (s_loc .[(yjs.store.t), "pending"]) pend)%I with "[Hpendf Hpend]" as "Hpending".
   { iExists pend_sl. iFrame "Hpendf Hpend". }
-  iAssert (own_dataStore_state ds (MkDataStoreState client k locs p bind pend pdel))
+  iAssert (own_store_state s_loc (MkStoreState client k locs p bind pend pdel))
     with "[Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes]" as "Hruns".
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi | exact Hreg | exact Hcontig]).
-    rewrite /own_dataStore_fields /=.
+    rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes". }
-  wp_apply (wp_dataStore__applyUpdate_unlocked ds tr sl dq
-              inputs pend applied rest' m m' (MkDataStoreState client k locs p bind pend pdel)
+  wp_apply (wp_store__applyUpdate_unlocked s_loc tr sl dq
+              inputs pend applied rest' m m' (MkStoreState client k locs p bind pend pdel)
               inserted tombstoned changed_locs eq_refl
               Hdrainc Hvr Hrtot Happsub Hnonemptyb (conj Hmtypes Hmdom) Hkb1c
               with "[$Hupd $Hruns $Hchanges]").
@@ -2016,20 +2013,19 @@ Proof using Type*.
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hcerts".
   have Hregmodel' : pool_registry_models m' bind' p'.
   { rewrite /pool_registry_models. split; [exact Hmtypes' | exact Hmdom']. }
-  iAssert (own_dataStore_state ds (MkDataStoreState client k locs' p' bind' rest' pdel))
+  iAssert (own_store_state s_loc (MkStoreState client k locs' p' bind' rest' pdel))
     with "[Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes]" as "Hstate".
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi' | exact Hreg' | exact Hcontig']).
-    rewrite /own_dataStore_fields /=.
+    rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes". }
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hchanges Hregistry";
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hchanges Hregistry Hobserversf";
     last by (iPureIntro; split_and!; [done | exact Hvr | exact Hnoloss_in | apply union_subseteq_l]).
-  iExists changed_locs', m0, deleted0.
-  iFrame "Hchanges".
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hregistry".
-  { iExists ds, observers_mref. iFrame "Hdata_field Hobservers_field Hregistry".
-    iExists client, k, pdel, locs', p', bind', acc.
-    iFrame "Hstate Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set".
-    iFrame "Hpendcert' Hclientpin".
+  iExists changed_locs', m0, deleted0, registry_mref.
+  iFrame "Hchanges Hregistry".
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hobserversf".
+  { iExists client, k, pdel, locs', p', bind', acc, observers_mref.
+    iFrame "Hstate Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set Hobserversf".
+    iFrame "Hpendcert' Hclientpin Hobserverspin".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot' | exact Hpendbnd' | exact Hregmodel' | exact Hcoh'
       | exact Hctr' | exact Hacccoh' | rewrite Htomb'; exact Hdeleted]. }

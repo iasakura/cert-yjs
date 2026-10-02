@@ -644,44 +644,15 @@ and `GetOrCreateText` keep taking the lock directly: they change no type's
 snapshot, so they notify nobody. `Doc.applyUpdate` (the codec route) becomes
 a `transact` too.
 
-The observers, and where they live (decided in review, 2026-09-29: the
-lock guards one struct, and the integrate algorithm's receiver holds no
-observers):
+The observers:
 
 ```go
-// Doc: the lock and, under it, the store (yrs Doc -> StoreInner.store:
-// RwLock<Store>, y-octo Doc -> Arc<RwLock<DocStore>>); Yjs is
-// single-threaded and has none.
-type Doc struct {
-	mu    sync.RWMutex
-	store *store
-}
-
-// store: what mu guards, the data and the observers (yrs Store, whose
-// Branches carry the observers). The data is a separate struct so that the
-// integrate algorithm's receiver holds no observers: inside a transaction
-// the data moves with every write while the observers are told nothing
-// until notify, so a dataStore method takes the whole dataStore.
-type store struct {
-	data      *dataStore
-	observers map[*yType][]func(delta []DeltaOp)
-}
-
-// dataStore: the document's data, field for field y-octo's DocStore (Yjs:
-// StructStore plus Doc.share and Doc.clientID; yrs: Store without its
-// Branches' observers).
-type dataStore struct { client; clock; items; types; deletedSet; pending; pendingDeletes }
-```
-
-`store.observers` is, per type, the callbacks `Text.Observe` registered
-(Yjs keeps the list on the type, ytype.js:779; yrs on the branch,
-types/mod.rs:299; y-octo on the publisher, publisher.rs:18); beside the data
-rather than on the `yType` so that the pool's type cells, the heaviest proof
-machinery, keep their shape: reported as a divergence. `Text` carries the
-`Doc` (Yjs `YType.doc`, ytype.js:661) and `Transaction` the `store` it is a
-transaction of; a write inside reaches the data as `tr.store.data`.
-
-```go
+// store.observers: per type, the callbacks Text.Observe registered (Yjs keeps
+// the list on the type, ytype.js:779; yrs on the branch, types/mod.rs:299;
+// y-octo on the publisher, publisher.rs:18). On the store rather than on the
+// yType so that the pool's type cells, the heaviest proof machinery, keep
+// their shape: reported as a divergence.
+observers map[*yType][]func(delta []DeltaOp)
 
 // Observe registers callback on t (Yjs YType.observe). Under the store lock:
 // one immediate call with the whole visible text as inserts (the initial
@@ -778,19 +749,18 @@ threaded through `wp_store__Integrate` (`inserted ∪ run ids`,
 parent of every applied input). The public predicate, `store/heap.v`:
 
 ```
-own_transaction tr s γs γh c h m pend deleted inserted tombstoned changed :=
-  own_transaction_changes tr s inserted tombstoned changed_locs ∗
-  own_store_observers_behind s γs γh c h m pend deleted m0 deleted0 ∗
-  ⌜transaction_start m deleted inserted tombstoned m0 deleted0⌝ ∗
+own_transaction tr γs γh c h m pend deleted inserted tombstoned changed :=
+  own_transaction_changes tr inserted tombstoned changed_locs ∗
+  own_store s γs γh c h m pend deleted ∗
+  own_observer_registry s γs γh (m ∖ inserted) (deleted ∖ tombstoned) ∗
+  ⌜(m ∖ inserted, deleted ∖ tombstoned) is per-client contiguous⌝ ∗
   ⌜changed and changed_locs are one set through the type registry⌝
 ```
 
-where `own_store_observers_behind` is `own_store` (below) with its observers
-still at `(m0, deleted0)`, the state the transaction started from
-(`transaction_start`: `m0` is `m` without the items inserted here,
-`deleted0` is `deleted` without the tombstones set here, which were live):
-what the observers were last told, until notify. It is the one relaxation
-of `own_store`, the temporary break of its invariant that a transaction is. `changed` is what the transaction touched, in type names; a
+where `m ∖ inserted` drops the items inserted in this transaction and
+`deleted ∖ tombstoned` the tombstones it set: the state at the start of the
+transaction, what the observers were last told (the registry sits there
+until notify). `changed` is what the transaction touched, in type names; a
 type outside it has no id in either set, so its snapshot now is its
 snapshot at the start, the fact that lets notify skip it. The
 in-transaction specs are exact transitions:
@@ -872,41 +842,32 @@ own_transaction_observed_agree :
     ⌜name ∉ C -> s = type_snapshot m deleted name⌝ ∗ own_transaction tr γs γh c h m pend deleted I T C ∗ own_observed γo s
 ```
 
-The store's predicates, `store/heap.v`:
+The lock invariant clause, `store/heap.v`, in `store_inv_excl` at the
+current `(m, deleted)`:
 
 ```
-own_store s γs γh c h m pend deleted :=
-  own_store_observers_behind s γs γh c h m pend deleted m deleted
-own_store_observers_behind s γs γh c h m pend deleted m0 deleted0 :=
-  ∃ ds mref,
-    is_store_data s ds ∗ own_dataStore ds γs γh c h m pend deleted ∗
-    is_store_observers s mref ∗ own_observer_registry mref γs γh m0 deleted0
-own_observer_registry mref γs γh m deleted :=
-  ∃ observers registered,
-    own_map mref (DfracOwn 1) observers ∗
-    own γs.(sn_observers) (● registered_tokens registered) ∗
-    [∗ map] parent ↦ entry ∈ registered, is_type_binding γs.(sn_types) entry.1 parent ∗
-    [∗ map] parent ↦ cbs_sl; entry ∈ observers; registered,
-      own_type_observers γs γh entry.1 (type_snapshot m deleted entry.1) cbs_sl entry.2
+own_observer_registry s γs γh m deleted :=
+  ∃ observers,
+    s.[store, "observers"] ↦ mref ∗ own_map mref (DfracOwn 1) observers ∗
+    ghost_map_auth γs.(sn_observers) 1 (the γo of every entry, keyed to its type) ∗
+    [∗ map] parent ↦ cbs_sl ∈ observers, ∃ name cbs γos,
+      is_type_binding γs.(sn_types) name parent ∗ own_slice cbs_sl (DfracOwn 1) cbs ∗
+      [∗ list] (cb, γo) ∈ zip cbs γos,
+        is_text_callback γs γh name cb γo ∗ own_observed γo (type_snapshot m deleted name)
 ```
 
-`own_dataStore ds …` is THE predicate of the data (what `own_store` was
-before C2: the fields, the pool and the ghost authorities at the public
-model), `is_store_data s ds` / `is_store_observers s mref` are the store's
-two fields, set once, and `own_store` is THE predicate of the store: every
-registered observer has been told everything up to its type's current
-snapshot, the lockstep invariant. The lock body (`tie_body`) holds it as
-the data's timeless slices beside the registry, for the reader accounting.
-The registry's `□` WPs are not timeless, so `wp_Doc__wlock` hands
-`own_store` out under a `▷` (stripped by the next program step);
-`wp_Doc__wunlock` takes `own_store` back whole at the new `(m, deleted)`;
-`rlock` and `runlock` pass the registry through, readers never touch it.
+Every registered observer has been told everything up to the type's current
+snapshot: the lockstep invariant, in one clause. Its `□` WPs are not
+timeless, so it leaves `wp_Store__wlock` under a `▷` (stripped by the next
+program step, `wp_auto_lc`), while the rest of `store_inv` keeps the
+`tie_body` timeless trick as it is; `wp_Store__wunlock` takes the registry
+at the new `(m, deleted)`, `rlock` and `runlock` pass it through, readers
+never touch it.
 
-`wp_Doc__Transact`'s proof: lock; strip the `▷`; `own_transaction_fresh`
-(the transaction at the store's state); run `f`; `wp_store__notify`, over
-`own_transaction`, giving `own_store` back whole: iterate `changed`
-(`wp_map_for_range`), and for a type with callbacks run `wp_textDelta`
-(over the type's `own_ytype` and the two id sets: `own_delta sl (DfracOwn 1) (text_delta before now)` with
+`wp_store__transact`'s proof: lock; strip the `▷`; build `own_transaction`
+at the start state; run `f`; notify: iterate `changed` (`wp_map_for_range`),
+and for a type with callbacks run `wp_textDelta` (over `own_store` whole and
+the two id sets: `own_delta sl (DfracOwn 1) (text_delta before now)` with
 `before = type_snapshot (m' ∖ I) (deleted' ∖ T) name` and
 `now = type_snapshot m' deleted' name`, `snapshot_grows_to before now` from
 the contiguity clause), mint `is_text_snapshot γs γh name now`, and call
@@ -921,7 +882,7 @@ registry at `(m', deleted')`; unlock. The model laws this needs
 Layering. The observer predicates above are conjuncts of the lock body, so
 they are defined in `store/heap.v` next to it, and everything they mention
 must sit below the store. They cannot mention `is_Text` (it contains
-`is_Doc`, whose lock invariant would contain them: a cycle), so
+`is_Store`, whose invariant would contain them: a cycle), so
 `is_text_snapshot` is stated over the store witnesses that `is_Text`
 projects to; the application pairs it with its own `is_Text`, so nothing is
 lost. They mention `own_delta`, `text_delta` and `snapshot_grows_to`, which
@@ -935,12 +896,10 @@ classification laws, `delta_op_denotes`, `own_delta`, `wp_ApplyDelta`,
 Require order becomes `… history -> delta -> store -> text -> textobserver
 -> doc`, recorded in CLAUDE.md's Proof layout in the PR that moves the
 files. The transaction record is `transaction/heap.v` (below the store: it
-is what the store specs mark); `own_transaction` is the store's (`store/heap.v`),
-`wp_store__notify` and the walk `wp_textDelta` are `store/notify.v`,
-`wp_Doc__Transact` is `store/Transact.v` (the lock is the document's, so
-`is_Doc`, the lock lemmas `wp_Doc__wlock` and friends, and the transaction
-live in `store/`, below the `text/` wrappers that use them), the In-methods
-and `Observe` are `text/`. `Poll.v`'s lock
+is what the store specs mark); `own_transaction` and `wp_store__transact`
+are the store's (`store/heap.v`, `store/transact.v`), the walk
+`wp_textDelta` is `store/wp_private.v`, `wp_Doc__Transact` is
+`doc/Transact.v`, the In-methods and `Observe` are `text/`. `Poll.v`'s lock
 prologue binds `own_store`'s new `deleted` and passes the registry through,
 nothing else. The adequacy theorem (`ws_server_dist_adequate`) gains the
 `ghost_var` and `ghost_map` functors.
@@ -1048,19 +1007,10 @@ Decided, with the rejected alternatives:
   every transaction end and call when the snapshot moved, needs no marking
   and is observationally the same, but costs a walk of every observed type
   per transaction; and T3 threads `tr` through the same functions anyway.
-- The observers beside the data, under the document's lock: `Doc.mu`
-  guards one struct, `store`, which holds the data (`dataStore`) and the
-  observers map; the integrate algorithm's receiver is the `dataStore`, so
-  every data method takes its receiver whole (CLAUDE.md's footprint rule)
-  while the observers lag behind the data inside a transaction
-  (`own_store_observers_behind`, the one relaxation of `own_store`). This
-  is yrs's shape (`Doc` -> `RwLock<Store>`, the observers inside `Store`'s
-  Branches), at the cost of a non-timeless lock body and of the observer
-  predicates living in `store/heap.v`. The first C2 draft kept the
-  observers a field of the one `store` struct beside the data and put the
-  registry beside `own_store` instead of inside it, which made every store
-  method's spec a partial footprint of its receiver; rejected in review
-  (2026-09-29). The alternative, a second Go mutex for the registry
+- The registry in the store's lock invariant (the store lock protects it in
+  Go, as the document lock does in Yjs and yrs), at the cost of a
+  non-timeless lock body and of the observer predicates living in
+  `store/heap.v`. The alternative, a second Go mutex for the registry
   (y-octo's `RwLock<Vec<_>>`) with a ghost map linking its snapshots to the
   store's, keeps the store layer ignorant of observers but adds a lock to
   the Go and two ghost structures to the proof.
@@ -1100,7 +1050,7 @@ divergence in the Go.
 | the in-transaction write API | implicit transaction (`ytext.insert(index, text)`) | transaction first (`text.insert(&mut txn, index, chunk)`) | `text.insert(index, str)`, locks inside | `t.InsertIn(tr, index, content)` and the one-write wrappers |
 | recording | `Item.integrate` / `Item.delete` (Item.js:270-274, :366-375); a type inserted in this transaction is not marked (transaction-helpers.js:211) | block.rs:1085-1090, :635; the same skip via `before_state` (transaction.rs:1314) | n/a | `Integrate` / `deleteNode`; only root types exist, always marked |
 | dispatch | the end of `cleanupTransactions`, before merge and gc (Transaction.js:211-301) | `commit`, then `call_observers` (transaction.rs:1031, :978) | a thread every 100 ms with an encoded diff (publisher.rs:13-116) | the end of `transact`, synchronous, under the lock |
-| the registry | on the type (`_eH`, ytype.js:667) | on the branch (types/mod.rs:299) | on the publisher, `RwLock<Vec<_>>` (publisher.rs:18) | `store.observers` keyed by type, beside the data under `Doc.mu`: the pool's type cells keep their shape |
+| the registry | on the type (`_eH`, ytype.js:779) | on the branch (types/mod.rs:299) | on the publisher, `RwLock<Vec<_>>` (publisher.rs:18) | `store.observers` keyed by type: the pool's type cells keep their shape |
 | the delta | `getDelta` over `insertSet` / `deleteSet` through `toDelta` (YEvent.js:95-123) | the `get_delta` walk with `has_added` / `has_deleted` (text.rs:1315-1340) | none (no positional observe) | `textDelta`: the same walk per char, verified as `text_delta before now` |
 | the callback | `(event, transaction)` | `(&TransactionMut, &TextEvent)` | `(&[u8], &[History])` | `func(delta []DeltaOp)` |
 | the initial load | the binding reads `toString()` then observes; atomic by the single thread | the same | n/a | `Observe` calls back with the whole text, under the lock |

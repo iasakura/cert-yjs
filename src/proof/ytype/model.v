@@ -47,7 +47,7 @@ Notation A := go_string.
     document invariant [is_valid_ytype] already carries [YjsArrInvariant], so it
     pins [arr'] uniquely given the item set; the caller's item is encapsulated in
     [own_fresh_item]; the document/input side conditions are the only premises.
-    Proven from [wp_dataStore__Integrate_aux]: integration succeeds ([integrate_some]),
+    Proven from [wp_Store__Integrate_aux]: integration succeeds ([integrate_some]),
     bridges to [setintegrate] ([setintegrate_eq_integrate]); the insertion
     position and the post-state's validity come from the rocq-yjs preservation
     theorem [YjsArrInvariant_integrate]. *)
@@ -288,7 +288,7 @@ Qed.
 
 (** The fresh item is maximal among same-client items of [arr]: its clock [clk]
     exceeds every same-client clock already present. This is the [maximalId] side
-    condition of [wp_dataStore__Integrate], read off the Doc clock-counter invariant. *)
+    condition of [wp_store__Integrate], read off the Doc clock-counter invariant. *)
 Lemma insert_maximalId (arr : list (YjsItem A)) (o r : YjsPtr A) (client clk : nat) (c : A) :
   (∀ x, ArrSet arr (itemPtr x) -> clientId (item_id x) = client -> (clock (item_id x) < clk)%nat) ->
   maximalId (Item o r (MkYjsId client clk) c) arr.

@@ -139,12 +139,7 @@ it.
   unexported helpers' specs; `<type>.v` a `Require Export` facade, the only
   name downstream files Require. A layer a type does not need is absent (`id`
   has no model of its own; `Text` is a handle over a store type, so it starts
-  at `heap.v`). `store/` holds the pair the document's lock guards, the Go
-  types `store` (the data beside the observers) and `dataStore` (the data,
-  the integrate algorithm's receiver), and, because the `text/` wrappers
-  below `doc/` use them, the document's handle `is_Doc` with the lock lemmas
-  (`heap.v`, `wp_private.v`) and `Doc.Transact` (`Transact.v`). Type-less
-  files stay at the top level: `core.v` (rocq-yjs
+  at `heap.v`). Type-less files stay at the top level: `core.v` (rocq-yjs
   re-export), `prelude.v` (goose package-init instances), `algebra.v` (generic
   Iris RA laws), `network_model.v` and `history.v` (the pure op-history model
   and its ghost layer), `ws_prelude.v` and `ws_relay.v` (WebSocket, issue #107).

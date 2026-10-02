@@ -152,7 +152,7 @@ them, since the APIs drift.
 - **A Persistent-typed hyp sitting in the SPATIAL context is consumed by `$H`
   framing.** If you Lock then later Unlock with the same `is_Mutex`, move it to the
   `□` context first: `iDestruct "Hmu" as "#Hmu"`. (The type being `Persistent` does
-  not save a spatial occurrence from `$`.) Same for any reused `is_Doc` / witness.
+  not save a spatial occurrence from `$`.) Same for any reused `is_Store` / witness.
 - **Align goose field reads with your invariant before `wp_apply`**: the body reads
   `(tv.store').[store.t, "mu"]` while your `is_Mutex` is stated at `s_loc.[…]`;
   `subst` the field equality (`s_loc = tv.store'`) so they are syntactically equal.
@@ -297,12 +297,11 @@ is registered, and at least item-set `S` is present"), use the RA
 - **`gset X` needs `Countable X`.** rocq-yjs gives `Countable YjsId` (basic.v) but
   NOT `Countable (YjsItem A)` (mutually recursive with `YjsPtr`) — track a
   `gset YjsId`, not a `gset (YjsItem A)`.
-- **Two-layer handle, lock owns the mutable state**: model y-octo's
-  `Arc<RwLock<DocStore>>` as `is_Text → is_Doc` where
-  `is_Doc dv s γs γh` is the `RWMutex` at `dv.mu` guarding `tie_body s` (the
-  lock invariant), which owns the store at `s` whole (`own_store`: the data
-  `own_dataStore` and the observers' registry), existentially hiding the
-  per-op state. Each layer dereferences only its own struct's fields
+- **Three-layer handle, lock owns the mutable state**: model y-octo's
+  `Arc<RwLock<DocStore>>` as `is_Text → is_Doc → is_Store` where
+  `is_Store s γ := is_Mutex (&s.mu) (store_inv s γ)` and `store_inv` (the lock
+  invariant) owns the mutable store fields + DLLs + the `● …` ghost (existentially
+  hiding the per-op state). Each layer dereferences only its own struct's fields
   and delegates downward (so `is_Text` never mentions store fields); a method like
   `Insert` `Lock`s, pulls its slice out of `store_inv` (a `big_sepM_lookup_acc`
   keyed by the registration witness), works, rebuilds, `Unlock`s.

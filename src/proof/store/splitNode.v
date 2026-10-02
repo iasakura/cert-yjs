@@ -1,9 +1,9 @@
 (** store update path, split layer: the DLL half
     [wp_splitItem] (over the type's [own_ytype]), [store.splitNode]
-    over the whole store ([wp_dataStore__splitNode], adding the per-client
+    over the whole store ([wp_store__splitNode], adding the per-client
     run-list insertion), and
-    [wp_dataStore__splitAtAndGetLeft] / [wp_dataStore__splitAtAndGetRight]
-    (proved from [wp_dataStore__GetNode] and [wp_dataStore__splitNode],
+    [wp_store__splitAtAndGetLeft] / [wp_store__splitAtAndGetRight]
+    (proved from [wp_store__GetNode] and [wp_store__splitNode],
     stepping the pool and the address map by the index-explicit
     [pool_split_left_step] / [pool_split_right_step]).
     Split out of [store/GetNode] so it proof-checks in parallel; same
@@ -59,7 +59,7 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 (** [store.getOrCreateYType], lookup-hit case: the name is already bound in
     the registry, so the creation branch is dead and the bound type comes
     back. This is the only case the verified update path needs — see
-    [wp_dataStore__applyUpdate]'s bound-names precondition (the on-the-fly type
+    [wp_store__applyUpdate]'s bound-names precondition (the on-the-fly type
     creation of y-octo's update path is outside the verified subset for now:
     it would grow [types]/[bind]/[m] with a fresh empty type mid-batch). *)
 
@@ -369,17 +369,17 @@ Qed.
     address slice ([own_item_map]) gets the right half's address
     inserted after the split node's, the pool and address-map laws being
     [pool_invs_split] / [locs_wf_split] / [pool_entries_split]. *)
-Lemma wp_dataStore__splitNode (s : loc) (state : dataStore_state)
+Lemma wp_store__splitNode (s : loc) (state : store_state)
     (parent l : loc) (ls : list loc) (tm : type_model) (k : nat) (r : ItemRun) (diff : w64) :
   ss_pool state !! parent = Some tm ->
   ss_locs state !! parent = Some ls ->
   tm_runs tm !! k = Some r ->
   ls !! k = Some l ->
   (0 < uint.nat diff < length (run_items r))%nat ->
-  {{{ is_pkg_init yjs ∗ own_dataStore_state s state }}}
-    s @! (go.PointerType yjs.dataStore) @! "splitNode" #l #diff
+  {{{ is_pkg_init yjs ∗ own_store_state s state }}}
+    s @! (go.PointerType yjs.store) @! "splitNode" #l #diff
   {{{ (rloc : loc), RET (#l, #rloc);
-      own_dataStore_state s
+      own_store_state s
         (state <| ss_pool := <[parent := MkTypeModel (split_runs (tm_runs tm) k (uint.nat diff))]> (ss_pool state) |>
              <| ss_locs := <[parent := split_locs ls k rloc]> (ss_locs state) |>) ∗
       ⌜rloc ≠ null ∧ rloc ∉ concat ((map_to_list (ss_locs state)).*2)⌝ }}}.
@@ -772,10 +772,10 @@ Proof using Type*.
   { apply (pool_clocks_contiguous_ext p p2 parent tm tm2); [| exact Hp | apply lookup_insert_eq | | exact Hcontig].
     - move=> q Hne. rewrite /p2 lookup_insert_ne //.
     - rewrite /tm2 /runs2 /tm_arr /=. exact (split_runs_flatten (tm_runs tm) k o r Hr). }
-  iAssert (own_dataStore_state s (MkDataStoreState client0 k0 locs2 p2 bind pend pdel))
+  iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
     with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap2 Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
-    rewrite /own_dataStore_fields /=.
+    rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hregistry Htypes2 Hpending Hpdeletes".
     iExists mref. iFrame "Hitemsf Hitemmap2". }
   iApply ("HΦ" $! rs).
@@ -793,18 +793,18 @@ Qed.
     address map step by [pool_split_left_step] (index-explicit; the
     boundary it pins is [pool_split_left_step_ends_at], and it weakens to
     [pool_after_split] through [pool_split_step_of_left]). Proved directly
-    from [wp_dataStore__GetNode] and [wp_dataStore__splitNode]. *)
-Lemma wp_dataStore__splitAtAndGetLeft (s : loc) (idv : yjs.id.t) (state : dataStore_state)
+    from [wp_store__GetNode] and [wp_store__splitNode]. *)
+Lemma wp_store__splitAtAndGetLeft (s : loc) (idv : yjs.id.t) (state : store_state)
     (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc) :
   ss_pool state !! parent = Some tm ->
   ss_locs state !! parent = Some ls ->
   tm_runs tm !! k = Some r ->
   ls !! k = Some lc ->
   run_covers r (toYjsId idv) ->
-  {{{ is_pkg_init yjs ∗ own_dataStore_state s state }}}
-    s @! (go.PointerType yjs.dataStore) @! "splitAtAndGetLeft" #idv
+  {{{ is_pkg_init yjs ∗ own_store_state s state }}}
+    s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
   {{{ (p' : pool) (locs' : gmap loc (list loc)), RET (#lc, #true);
-      own_dataStore_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
+      own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
       ⌜pool_split_left_step (ss_pool state) (ss_locs state) parent k (toYjsId idv) p' locs'⌝ }}}.
 Proof using Type*.
   move=> Hp Hls Hr Hlk Hcov.
@@ -812,23 +812,23 @@ Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
   wp_method_call. wp_call. wp_call. wp_auto.
   have Hcovp : pool_covers p parent k (toYjsId idv) by (exists tm, r).
-  wp_apply (wp_dataStore__GetNode s idv (MkDataStoreState client0 k0 locs p bind pend pdel)
+  wp_apply (wp_store__GetNode s idv (MkStoreState client0 k0 locs p bind pend pdel)
               with "[$Hpkg $Hruns]").
   iIntros (nl ok) "(Hruns & %Hres)". simpl in Hres.
   destruct ok; last first.
   { exfalso. exact (Hres parent k Hcovp). }
   destruct Hres as (q' & k' & Hcov' & Hloc').
-  iDestruct (own_dataStore_state_covers_unique with "Hruns") as %Huniq.
+  iDestruct (own_store_state_covers_unique with "Hruns") as %Huniq.
   destruct (Huniq _ _ _ _ _ Hcov' Hcovp) as [-> ->].
   rewrite Hls /= Hlk in Hloc'. injection Hloc' as <-.
-  iDestruct (own_dataStore_state_run_wf with "Hruns") as %Hwf.
-  iDestruct (own_dataStore_state_run_pool_invs with "Hruns") as %Hrinv.
+  iDestruct (own_store_state_run_wf with "Hruns") as %Hwf.
+  iDestruct (own_store_state_run_pool_invs with "Hruns") as %Hrinv.
   have Hrmem : r ∈ all_runs p.
   { apply (elem_of_all_runs p r). exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hr)]. }
   have Hrwf : run_wf (run_items r) := Hwf r Hrmem.
   have Hrfits : run_fits r := proj1 (proj2 (proj1 Hrinv r Hrmem)).
   wp_auto.
-  iDestruct (own_dataStore_state_node_acc s (MkDataStoreState client0 k0 locs p bind pend pdel)
+  iDestruct (own_store_state_node_acc s (MkStoreState client0 k0 locs p bind pend pdel)
                parent ls tm k lc r Hls Hp Hlk Hr with "Hruns") as (ivR) "H".
   iNamed "H".
   (* the parent pin names [parent]; [wp_if_destruct]'s bare [subst] would take it *)
@@ -868,7 +868,7 @@ Proof using Type*.
                       (w64_word_instance.(word.sub) idv.(yjs.id.clock') ivR.(yjs.item.id').(yjs.id.clock'))
                       (W64 1)) < length (run_items r))%nat.
     { rewrite Hdiffnat. lia. }
-    wp_apply (wp_dataStore__splitNode s (MkDataStoreState client0 k0 locs p bind pend pdel)
+    wp_apply (wp_store__splitNode s (MkStoreState client0 k0 locs p bind pend pdel)
                 parent lc ls tm k r _ Hp Hls Hr Hlk Hdiffb with "[$Hpkg $Hruns]").
     iIntros (rloc) "(Hruns & %Hfresh)". simpl in Hfresh.
     wp_auto.
@@ -887,18 +887,18 @@ Qed.
     half comes back. The returned address and the step are
     [pool_split_right_step] (the boundary it pins is
     [pool_split_right_step_starts_at]). Proved directly from
-    [wp_dataStore__GetNode] and [wp_dataStore__splitNode]. *)
-Lemma wp_dataStore__splitAtAndGetRight (s : loc) (idv : yjs.id.t) (state : dataStore_state)
+    [wp_store__GetNode] and [wp_store__splitNode]. *)
+Lemma wp_store__splitAtAndGetRight (s : loc) (idv : yjs.id.t) (state : store_state)
     (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc) :
   ss_pool state !! parent = Some tm ->
   ss_locs state !! parent = Some ls ->
   tm_runs tm !! k = Some r ->
   ls !! k = Some lc ->
   run_covers r (toYjsId idv) ->
-  {{{ is_pkg_init yjs ∗ own_dataStore_state s state }}}
-    s @! (go.PointerType yjs.dataStore) @! "splitAtAndGetRight" #idv
+  {{{ is_pkg_init yjs ∗ own_store_state s state }}}
+    s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
   {{{ (l : loc) (p' : pool) (locs' : gmap loc (list loc)), RET (#l, #true);
-      own_dataStore_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
+      own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
       ⌜pool_split_right_step (ss_pool state) (ss_locs state) parent k (toYjsId idv) l p' locs'⌝ }}}.
 Proof using Type*.
   move=> Hp Hls Hr Hlk Hcov.
@@ -906,23 +906,23 @@ Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
   wp_method_call. wp_call. wp_call. wp_auto.
   have Hcovp : pool_covers p parent k (toYjsId idv) by (exists tm, r).
-  wp_apply (wp_dataStore__GetNode s idv (MkDataStoreState client0 k0 locs p bind pend pdel)
+  wp_apply (wp_store__GetNode s idv (MkStoreState client0 k0 locs p bind pend pdel)
               with "[$Hpkg $Hruns]").
   iIntros (nl ok) "(Hruns & %Hres)". simpl in Hres.
   destruct ok; last first.
   { exfalso. exact (Hres parent k Hcovp). }
   destruct Hres as (q' & k' & Hcov' & Hloc').
-  iDestruct (own_dataStore_state_covers_unique with "Hruns") as %Huniq.
+  iDestruct (own_store_state_covers_unique with "Hruns") as %Huniq.
   destruct (Huniq _ _ _ _ _ Hcov' Hcovp) as [-> ->].
   rewrite Hls /= Hlk in Hloc'. injection Hloc' as <-.
-  iDestruct (own_dataStore_state_run_wf with "Hruns") as %Hwf.
-  iDestruct (own_dataStore_state_run_pool_invs with "Hruns") as %Hrinv.
+  iDestruct (own_store_state_run_wf with "Hruns") as %Hwf.
+  iDestruct (own_store_state_run_pool_invs with "Hruns") as %Hrinv.
   have Hrmem : r ∈ all_runs p.
   { apply (elem_of_all_runs p r). exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hr)]. }
   have Hrwf : run_wf (run_items r) := Hwf r Hrmem.
   have Hrfits : run_fits r := proj1 (proj2 (proj1 Hrinv r Hrmem)).
   wp_auto.
-  iDestruct (own_dataStore_state_node_acc s (MkDataStoreState client0 k0 locs p bind pend pdel)
+  iDestruct (own_store_state_node_acc s (MkStoreState client0 k0 locs p bind pend pdel)
                parent ls tm k lc r Hls Hp Hlk Hr with "Hruns") as (ivR) "H".
   iNamed "H".
   (* the parent pin names [parent]; [wp_if_destruct]'s bare [subst] would take it *)
@@ -948,7 +948,7 @@ Proof using Type*.
     have Hdiffb : (0 < uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') ivR.(yjs.item.id').(yjs.id.clock'))
                    < length (run_items r))%nat.
     { rewrite Hdiffnat. lia. }
-    wp_apply (wp_dataStore__splitNode s (MkDataStoreState client0 k0 locs p bind pend pdel)
+    wp_apply (wp_store__splitNode s (MkStoreState client0 k0 locs p bind pend pdel)
                 parent lc ls tm k r _ Hp Hls Hr Hlk Hdiffb with "[$Hpkg $Hruns]").
     iIntros (rloc) "(Hruns & %Hfresh)". simpl in Hfresh.
     wp_auto.

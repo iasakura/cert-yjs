@@ -38,8 +38,8 @@ Local Open Scope Z_scope.
 Section text.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
-(** Store lock = a [sync.RWMutex] (write path here, via [wp_Doc__wlock] /
-    [wp_Doc__wunlock]); the per-text item set lives in a grow-only auth
+(** Store lock = a [sync.RWMutex] (write path here, via [wp_Store__wlock] /
+    [wp_Store__wunlock]); the per-text item set lives in a grow-only auth
     (the same RA as [store/store], used by [is_type_lb]). *)
 Context {sync_pkg : sync.Assumptions}.
 
@@ -48,8 +48,8 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-(* [is_Doc]'s reader-count accounting ties the readers' share to the store's
-   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Doc] uses
+(* [is_Store]'s reader-count accounting ties the readers' share to the store's
+   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
@@ -67,7 +67,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (** [Text.Len]: a CONCURRENT read (issues #22 / #125). Takes the RWMutex
     read lock, reads the type's visible length off its DLL through a
-    fractional [dataStore_inv_ro] share (so it runs alongside other readers),
+    fractional [store_inv_ro] share (so it runs alongside other readers),
     then releases. The read capability [own_read_cap] (one reader slot) is
     threaded and returned; [is_Text] is preserved. Like [wp_Text__String],
     the caller brings a prefix certificate of this replica's op history and
@@ -86,9 +86,9 @@ Lemma wp_Text__Len (t : loc) (γs : store_names) (γh : history_names)
       ⌜visible_excludes deleted_ids model⌝ }}}.
 Proof.
   wp_start as "(Hpre & #Hpin & #Hlb & Hcap)". iNamed "Hpre".
-  iDestruct "His_doc" as "#His_doc".
-  wp_auto. subst dv.
-  wp_apply (wp_Doc__rlock _ _ _ _ c h0 name _ with "[$His_doc $Hcap $Hpin $Hlb $Hbind]").
+  iDestruct "His_store" as "#His_store".
+  wp_auto. subst s_loc.
+  wp_apply (wp_Store__rlock _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
   iIntros (locs p delete_set) "(Hrlo & Hro & %Hfact)".
   iNamed "Hro".
   (* the handle's certificate against the shared authority: the ids it knows
@@ -105,7 +105,7 @@ Proof.
   iDestruct ("Hclose" with "[Hparent Hdll]") as "Hpool".
   { iExists ls. iSplitR; first by iPureIntro. iSplitL; last by iPureIntro.
     iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. exact Hlen. }
-  wp_apply (wp_Doc__runlock with "[$His_doc $Hrlo Hseq Hdelete_set_auth Hpool]").
+  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Hdelete_set_auth Hpool]").
   { iFrame "Hseq Hdelete_set_auth". iSplitR; first by iPureIntro.
     rewrite /own_type_pool. iSplitR; [by iPureIntro | iFrame "Hpool"]. }
   iIntros "Hcap".
@@ -131,8 +131,8 @@ Proof.
       rewrite Htmp in Htm'. injection Htm' as <-.
       exists it. split; [exact Hitid | rewrite Hfst //].
     - exact Hexcl. }
-  iExists tv, tv.(yjs.Text.doc'), s_loc, tv.(yjs.Text.inner'), deleted_items.
-  iFrame "Ht His_doc His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
+  iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
+  iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
   iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted].
 Qed.
 

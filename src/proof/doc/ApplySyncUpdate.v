@@ -24,7 +24,7 @@ Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
-(* [is_Doc] (from store/store) is generalized over the store lock + item-set RA,
+(* [is_Store] (from store/store) is generalized over the store lock + item-set RA,
    so mirror its Context here to apply it. *)
 Context {sync_pkg : sync.Assumptions}.
 
@@ -46,8 +46,8 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
-(* [is_Doc]'s reader-count accounting ties the readers' share to the store's
-   [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Doc]. *)
+(* [is_Store]'s reader-count accounting ties the readers' share to the store's
+   [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Store]. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
@@ -70,7 +70,7 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
     mint these fragments (unlike a bare existential over the internal [rest],
     which any implementation can satisfy vacuously). Interference means we
     still cannot pin down WHICH of delivered/buffered a given input takes (the
-    receipt is at the id level); [own_dataStore_accepted_sound] recovers, under the
+    receipt is at the id level); [own_store_accepted_sound] recovers, under the
     lock, that an accepted id is currently one or the other.
 
     Because the drain is TOTAL (issue #40: the pending buffer plus the batch
@@ -115,9 +115,9 @@ Proof.
   wp_start as "(#His_doc & #Hishist & #Hpin & Hupd & Hdel & #Hcerts)".
   (* open the pure model: the wire records live only inside this proof *)
   iDestruct "Hdel" as (spans) "[Hspans %Hdeleted]".
-  wp_auto.
+  iNamed "His_doc". subst s_loc. wp_auto.
   (* the batch is one transaction: the structs, then the delete spans *)
-  wp_apply (wp_Doc__Transact dv s_loc γs γh _
+  wp_apply (wp_store__transact dvv.(yjs.Doc.store') γs γh _
               (λ c0 h' m' pend' tombs',
                  ∃ (h : list Ev) (applied : list (TId * IntegrateInput (A := A))) (m'' : DocModel),
                    ⌜c0 = c⌝ ∗
@@ -125,54 +125,44 @@ Proof.
                    is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
                    ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
                    is_applied_certs γs applied m'')%I
-              with "[$His_doc Hupd Hspans s structs deletes]").
+              with "[$His_store Hupd Hspans s structs deletes]").
   { rewrite /closure_runs_transaction.
     iIntros (tr c0 h m pend tombs Ψ) "Htx HΨ".
-    (* [s := tr.store.data]: the transaction names the store, whose [data]
-       field holds the data; the transaction reveals the store's current
-       (c0, h, m, pend), and the client pin identifies c0 with the caller's c *)
-    iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx".
-    iDestruct "Hstore" as (ds observers_mref) "Hstore". iNamed "Hstore".
-    iDestruct (own_transaction_changes_store with "Hchanges") as (trv) "(Htr & %Htrstore & Hchangesback)".
-    iPoseProof "Hdata_field" as "#Hdata_load". iEval (rewrite /is_store_data -Htrstore) in "Hdata_load".
     wp_auto.
-    iDestruct ("Hchangesback" with "Htr") as "Hchanges".
-    iDestruct (own_dataStore_client_pin with "Hstore") as "[Hstore #Hpin0]".
+    (* the transaction reveals the store's current (c0, h, m, pend); the
+       client pin identifies c0 with the caller's c *)
+    iDestruct "Htx" as (changed_locs m0 deleted0 registry_mref) "Htx". iNamed "Htx".
+    iDestruct (own_store_client_pin with "Hstore") as "[Hstore #Hpin0]".
     iDestruct (is_store_client_agree with "Hpin0 Hpin") as %->.
-    iAssert (own_transaction tr s_loc γs γh c h m pend tombs ∅ ∅ ∅)
+    iAssert (own_transaction tr dvv.(yjs.Doc.store') γs γh c h m pend tombs ∅ ∅ ∅)
       with "[Hchanges Hstore Hregistry]" as "Htx".
-    { iExists changed_locs, m0, deleted0. iFrame "Hchanges Hchanged_bound".
-      iSplitL.
-      { iExists ds, observers_mref. iFrame "Hdata_field Hobservers_field Hstore Hregistry". }
-      iPureIntro. split_and!; [exact Hstart | exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
+    { iExists changed_locs, m0, deleted0, registry_mref. iFrame "Hchanges Hstore Hregistry Hchanged_bound". iPureIntro.
+      split_and!; [exact Hstart | exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
     (* run the total certificate-based applyUpdate on the real store: no
        causal-closure obligation; the pending plus the batch drain to the
        structural fixpoint, delivering only the applied structs (per char) *)
-    wp_apply (wp_dataStore__applyUpdate tr s_loc ds sl dq γs γh c h m pend inputs tombs ∅ ∅ ∅ Hwf
-                with "[$Hishist $Hdata_field $Htx $Hupd $Hcerts]").
+    wp_apply (wp_store__applyUpdate tr _ sl dq γs γh c h m pend inputs tombs ∅ ∅ ∅ Hwf
+                with "[$Hishist $Htx $Hupd $Hcerts]").
     iIntros (applied rest m' changed') "(Hupd & Htx & #Hlb & %Hdrain & %Hvr & %Hnoloss & #Happlied & %Hcsub)".
     wp_auto.
     (* the delete spans, second: a span may target a struct that just arrived
        in this very batch. Deletes are model no-ops, so the model, history and
        pending buffer come back unchanged; the tombstone state grows. *)
-    wp_apply (wp_dataStore__applyDeleteSpans_transaction with "[$Hdata_field $Htx $Hspans]").
+    wp_apply (wp_store__applyDeleteSpans_transaction with "[$Htx $Hspans]").
     iIntros (tombs' tombstoned' changed'') "(Htx & Hspans & %Htsub & %Htsub2 & %Hcsub2 & %Htombs')".
     (* mint the ENFORCEABLE no-loss receipts: every input's id is accepted, hence
        (by the store invariant) forever delivered-or-buffered; a discarding
        implementation could not produce these fragments *)
-    iDestruct "Htx" as (changed_locs' m0' deleted0') "Htx". iNamedSuffix "Htx" "'".
-    iDestruct "Hstore'" as (ds' observers_mref') "Hstore'". iNamedSuffix "Hstore'" "'".
-    iMod (own_dataStore_accept_batch _ _ _ _ _ _ _ _ inputs
+    iDestruct "Htx" as (changed_locs' m0' deleted0' registry_mref') "Htx". iNamedSuffix "Htx" "'".
+    iMod (own_store_accept_batch _ _ _ _ _ _ _ _ inputs
             ltac:(move=> x Hx; exact (input_accounted_id _ _ _ (Hnoloss x Hx)))
             with "Hstore'") as "[Hstore' #Haccepts]".
     wp_auto.
     iApply ("HΨ" $! (h ++ (deliver_ev <$> expand_inputs applied)) m' rest tombs'
               (∅ ∪ inputs_char_ids applied) tombstoned' changed'').
     iSplitL "Hchanges' Hstore' Hregistry'".
-    { iExists changed_locs', m0', deleted0'. iFrame "Hchanges' Hchanged_bound'".
-      iSplitL.
-      { iExists ds', observers_mref'. iFrame "Hdata_field' Hobservers_field' Hstore' Hregistry'". }
-      iPureIntro. split_and!; assumption. }
+    { iExists changed_locs', m0', deleted0', registry_mref'. iFrame "Hchanges' Hstore' Hregistry' Hchanged_bound'". iPureIntro.
+      split_and!; assumption. }
     iExists h, applied, m'. iFrame "Hupd Hspans Hlb Haccepts Happlied". done. }
   iIntros "HQ". iDestruct "HQ" as (c0 h' m' pend' tombs') "HQ".
   iDestruct "HQ" as (h applied m'') "(-> & Hupd & Hspans & #Hlb & #Haccepts & #Happlied)".

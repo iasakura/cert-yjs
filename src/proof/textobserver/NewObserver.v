@@ -49,7 +49,7 @@ Lemma wp_Text__NewObserver (t : loc) (γs : store_names) (γh : history_names)
   {{{ (obs : loc), RET #obs; own_TextObserver obs t γs γh name [] }}}.
 Proof.
   wp_start as "Htext". iNamed "Htext".
-  iDestruct "His_doc" as "#His_doc". iDestruct "His_lb" as "#His_lb".
+  iDestruct "His_store" as "#His_store". iDestruct "His_lb" as "#His_lb".
   iMod (is_delete_set_lb_empty γs) as "#Hdlb".
   wp_auto.
   wp_apply wp_map_make1. iIntros (sv_mref) "Hsv".
@@ -62,8 +62,8 @@ Proof.
   iDestruct (auth_gmap_gset_frag_weaken γs.(sn_seq) parent ∅ (list_to_set L) (empty_subseteq _)
                with "His_lb") as "#Hitems0".
   iApply "HΦ".
-  iExists _, tv, dv, s_loc, parent, ∅, {[parent := ∅]}.
-  iFrame "Hobs Ht His_doc Hbind Hsv Hitems0 Hdlb".
+  iExists _, tv, s_loc, parent, ∅, {[parent := ∅]}.
+  iFrame "Hobs Ht His_store Hbind Hsv Hitems0 Hdlb".
   iSplitR; first done.
   iSplitR; first done.
   iSplitR; first done.

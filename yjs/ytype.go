@@ -3,7 +3,7 @@ package yjs
 // The inner root sequence type (y-octo: YType in doc/types). In y-octo YType is
 // the lock-guarded data structure (inside the Arc<RwLock<DocStore>>), while the
 // YText handle lives outside the lock; we mirror that split: a yType and the DLL
-// reached from its [start] are only ever touched while holding the document's lock (Doc.mu), and the
+// reached from its [start] are only ever touched while holding store.mu, and the
 // public [Text] handle (text.go) is the unlocked wrapper that takes the lock.
 //
 // These methods are goose-translated (part of the verified model): findPos feeds

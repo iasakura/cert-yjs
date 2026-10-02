@@ -12,7 +12,7 @@
       point, [WireReplay] the resulting replay relation and [wire_ready_total]
       the readiness gate.
     - [run_tombstoned_ids] / [runs_tombstoned] / [pool_tombstoned]: the EXACT
-      tombstone state of a run list / of the pool (what [own_dataStore]'s
+      tombstone state of a run list / of the pool (what [own_store]'s
       [deleted] denotes), and how a step moves it: a split or an integrate
       splice keeps it, a flip adds the run's chars, a fresh type adds
       nothing, a sweep never clears one ([runs_tombstoned_split] /
@@ -146,7 +146,7 @@ Definition pool := gmap loc type_model.
     addresses, the pair the whole store speaks in ([ss_locs], [ss_pool]).
     Named because it is also the ghost value the readers agree on
     ([store_names]'s [sn_types_agree], read by [pool_frag] /
-    [own_read_locked] and pinned by [dataStore_inv_ro]). *)
+    [own_read_locked] and pinned by [store_inv_ro]). *)
 Definition addressed_pool := (gmap loc (list loc) * pool)%type.
 
 (** All runs across all types (the document-global item pool). *)
@@ -946,8 +946,8 @@ Qed.
     [integrate_live_refine input before after]: the same with "is one
     of [input]'s own chars" as the escape, what one integrate step reports.
     Used as: the loop invariant and the postcondition of
-    [wp_dataStore__applyUpdate_unlocked] and the postcondition of
-    [wp_dataStore__integrateDecoded]. *)
+    [wp_store__applyUpdate_unlocked] and the postcondition of
+    [wp_store__integrateDecoded]. *)
 Definition runs_within_or_from (inputs : list (TId * IntegrateInput (A := A)))
     (before after : list ItemRun) : Prop :=
   ∀ r, r ∈ after ->
@@ -1144,8 +1144,8 @@ Definition pool_next_clock (p : pool) (c n : nat) : Prop :=
     one certificate per character, so a multi-char wire item's head-id op is
     not itself in the log, only its per-char ops are. The bulk of the
     [expand_input] theory (lookup / length / singleton / chunk chaining) stays
-    in [store/GetNode]; only the two definitions live here so [own_dataStore] and
-    [dataStore_inv_excl] can name them. *)
+    in [store/GetNode]; only the two definitions live here so [own_store] and
+    [store_inv_excl] can name them. *)
 Definition expand_input (typedInput : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
   (λ op, (typedInput.1, op)) <$> ops_of_input typedInput.2 (explode (in_content typedInput.2)).
 
@@ -1355,7 +1355,7 @@ Qed.
 
 (** History only grows: an op that appends to [h] (delivered ids only grow) and
     leaves [pend] preserves [accepted_coh]. This is the trivial transport that
-    Insert/Delete apply at each dataStore_inv rebuild. *)
+    Insert/Delete apply at each store_inv rebuild. *)
 Lemma accepted_coh_hist_grow (acc : gset YjsId) (h h' : list Ev)
     (pend : list (TId * IntegrateInput (A := A))) :
   accepted_coh acc h pend -> delivered_ids h ⊆ delivered_ids h' ->
@@ -1398,7 +1398,7 @@ Qed.
 (** The per-client clock bound of a pool, from the
     model-level bound on every type's document: a run's last char is its
     head clock plus its length minus one ([run_wf_char_id]), and it sits in
-    the type's flatten. What [Text.Insert] feeds [wp_dataStore__Integrate]. *)
+    the type's flatten. What [Text.Insert] feeds [wp_store__Integrate]. *)
 Lemma pool_clock_below_of_arrs (p : pool) (c k : nat) :
   (∀ r, r ∈ all_runs p -> run_wf (run_items r)) ->
   (∀ q tm x, p !! q = Some tm -> x ∈ tm_arr tm -> clientId (item_id x) = c ->
@@ -1799,7 +1799,7 @@ Qed.
     when it is live; [runs_tombstoned runs] and [pool_tombstoned p] collect
     them over a run list and over the whole pool. This is the EXACT tombstone
     state of a store (the ghost delete set is a lower bound of it), what
-    [own_dataStore]'s [deleted] parameter denotes; a step of the store moves it
+    [own_store]'s [deleted] parameter denotes; a step of the store moves it
     by the laws below: a split or an integrate splice keeps it
     ([runs_tombstoned_split] / [runs_tombstoned_integrate]), a flip adds the
     flipped run's chars ([runs_tombstoned_flip]), a fresh empty type adds

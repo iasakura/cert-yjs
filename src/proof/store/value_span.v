@@ -73,7 +73,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     the conflict scan's [idSpan], [delete_span_ids] for the wire's
     [deleteSpan]), and a spec that has the three words in hand states itself
     over this directly rather than assembling a heap record just to name a
-    set ([wp_dataStore__deleteRange], whose arguments are the three words). *)
+    set ([wp_store__deleteRange], whose arguments are the three words). *)
 Definition range_ids (client start len : w64) : gset YjsId :=
   list_to_set
     ((λ o, MkYjsId (uint.nat client) (uint.nat start + o)%nat)
@@ -142,7 +142,7 @@ Qed.
 
     Used as: the pure model a public spec speaks about ([own_delete_ids],
     [codec_spec], [wp_Doc__ApplySyncUpdate]) and the currency of
-    [wp_dataStore__applyDeleteSpans]'s coverage report. *)
+    [wp_store__applyDeleteSpans]'s coverage report. *)
 Definition delete_span_ids (sp : delete_span) : gset YjsId :=
   range_ids sp.(delete_span_client) sp.(delete_span_start) sp.(delete_span_length).
 

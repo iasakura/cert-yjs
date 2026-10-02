@@ -1,7 +1,7 @@
 (** [wp_NewDoc]: creating a document creates its store AND its lock layer.
-    This is the living witness that [is_Doc] is satisfiable: the physical
+    This is the living witness that [is_Store] is satisfiable: the physical
     RWMutex is initialized ([init_RWMutex]), the store's ghost names are
-    allocated for real by [doc_tie_init] (write-lock witness, reader count,
+    allocated for real by [store_tie_init] (write-lock witness, reader count,
     discarded reader bound, types agreement, content authorities, client
     pin), and the tie invariant is allocated at [RLocked 0]. The caller
     supplies the client's (empty) history element, which the lock body owns
@@ -66,43 +66,35 @@ Proof.
   wp_func_call.
   wp_call.
   wp_auto.
-  (* newStore: the data first (newDataStore), then the store around it *)
-  wp_func_call.
-  wp_call.
-  wp_auto.
   wp_apply wp_map_make1. iIntros (items_mref) "Hitemsmap".
   wp_auto.
   wp_apply wp_map_make1. iIntros (types_mref) "Htypesmap".
   wp_auto.
   wp_apply wp_map_make1. iIntros (deletedSet_mref) "HdeletedSetMap".
   wp_auto.
-  wp_alloc ds as "Hds".
-  wp_auto.
-  (* the observer registry (issue #198 Part II): empty at birth *)
+  (* the observer registry (issue #198 Part II): empty at birth; its
+     invariant clause is C2's *)
   wp_apply wp_map_make1. iIntros (observers_mref) "HobserversMap".
   wp_auto.
   wp_alloc s_loc as "Hs".
   wp_auto.
   wp_alloc dv as "Hd".
+  iPersist "Hd".
   iApply wp_fupd.
   wp_auto.
-  iStructNamed "Hds". simpl.
-  iStructNamed "Hs". simpl.
-  iStructNamed "Hd". simpl.
   (* the physical lock: the mu field starts at the RWMutex zero value *)
-  iMod (init_RWMutex (docN .@ "rw") with "mu") as (γrw) "(#Hrw0 & Hst & Hltoks)".
-  (* the document's store field is never reassigned *)
-  iPersist "store".
+  iStructNamed "Hs". simpl.
+  iMod (init_RWMutex (storeN .@ "rw") with "mu") as (γrw) "(#Hrw0 & Hst & Hltoks)".
   (* the ghost layer, at the real lock names *)
-  iMod (doc_tie_init s_loc ds γh client items_mref types_mref observers_mref _ γrw
+  iMod (store_tie_init s_loc γh client items_mref types_mref observers_mref _ γrw
           with "client clock items [Hitemsmap] types [Htypesmap] deletedSet
-                pending pendingDeletes data observers [HobserversMap] Hhist") as (γs) "Hst0".
+                pending pendingDeletes observers [HobserversMap] Hhist") as (γs) "Hst0".
   { iFrame "Hitemsmap". }
   { iFrame "Htypesmap". }
   { iFrame "HobserversMap". }
   iNamed "Hst0".
   (* the tie invariant, at RLocked 0 *)
-  iMod (inv_alloc (docN .@ "tie") _
+  iMod (inv_alloc (storeN .@ "tie") _
           (∃ st, rwmutex.own_RWMutex γs.(sn_rw) st ∗ tie_body s_loc γs γh st)
           with "[Hst Htie]") as "#Htieinv".
   { iNext. iExists (RLocked 0). rewrite Hrw. iFrame "Hst Htie". }
@@ -114,7 +106,9 @@ Proof.
     iApply big_sep_replicate_sep.
     iSplitL "Hltoks"; [rewrite Hrw; iFrame "Hltoks" |].
     iApply own_toks_replicate. iFrame "Hrtoks". }
-  rewrite /is_Doc Hrw. iFrame "store Hrw0 Hmax Htieinv".
+  iExists _. iFrame "Hd".
+  iSplitR; first done.
+  rewrite /is_Store Hrw. iFrame "Hrw0 Hmax Htieinv".
 Qed.
 
 End doc_NewDoc.

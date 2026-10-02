@@ -168,7 +168,7 @@ Definition is_room_log_entry (γ : room_names) (i : nat) (e : relay_entry) : iPr
 
 (** The S1 safety receipts of one processed packet: it decodes, the server's
     store accepted every input (forever delivered-or-buffered,
-    [own_dataStore_accepted_sound]), and the server's history visibly grew by the
+    [own_store_accepted_sound]), and the server's history visibly grew by the
     applied portion, in processing order. The history certificate [Herlb] is
     also the CONTENT route (issue #125): fed to [wp_Text__Len] /
     [wp_Text__String] it guarantees a concurrent read's snapshot

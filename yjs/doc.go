@@ -1,24 +1,14 @@
 package yjs
 
-import "sync"
+// Document-level API (y-octo: doc/document.rs).
+//
+// A Doc is just a handle around the struct store; it owns nothing itself beyond
+// the store pointer (the store is y-octo's Arc<RwLock<DocStore>>). Goose-translated
+// like store.go / text.go.
 
-// Document-level API (Yjs: src/utils/Doc.js; yrs: src/doc.rs; y-octo:
-// doc/document.rs). Goose-translated like store.go / text.go.
-
-// Doc is a document: the lock and, under it, the store (the data and the
-// observers, store.go). The lock is yrs's RwLock<Store> (src/store.rs:509-512)
-// and y-octo's Arc<RwLock<DocStore>> (src/doc/store.rs:36) placed on the Doc;
-// Yjs is single-threaded and has none. Where y-octo's lock guards the data
-// alone (its publisher has its own lock), this one guards the observers too,
-// so that a transaction's callbacks run before its unlock (Transact,
-// transaction.go).
+// Doc is a document: a handle around the struct store (y-octo: Doc wraps an
+// Arc<RwLock<DocStore>>). The store owns the types, clock, items and lock.
 type Doc struct {
-	// mu guards *store: the data (and the YTypes' DLLs reached through its
-	// types) and the observers. Writers (Insert/Delete/GetOrCreateText/
-	// ApplySyncUpdate/Observe) take the write lock (Lock); pure readers
-	// (String/Len) take the read lock (RLock) so concurrent reads are allowed.
-	mu sync.RWMutex
-	// store is what mu guards, made once and never reassigned.
 	store *store
 }
 
@@ -28,24 +18,26 @@ func NewDoc(client Client) *Doc {
 }
 
 // GetOrCreateText returns the root text type named name, creating it on first use
-// (y-octo: Doc::get_or_create_text). Registering the type mutates the data, so
-// it is done under the write lock.
+// (y-octo: Doc::get_or_create_text). Registering the type mutates the store, so
+// it is done under the store lock.
 func (d *Doc) GetOrCreateText(name string) *Text {
-	d.mu.Lock()
-	inner := d.store.data.getOrCreateYType(name)
-	d.mu.Unlock()
-	return &Text{doc: d, inner: inner}
+	s := d.store
+	s.mu.Lock()
+	inner := s.getOrCreateYType(name)
+	s.mu.Unlock()
+	return &Text{store: s, inner: inner}
 }
 
 // applyUpdate integrates a decoded update batch as one transaction (y-octo:
 // Doc::apply_update takes store.write() for the whole apply; Yjs applyUpdate
-// runs inside transact). The verified core is dataStore.applyUpdate, which is
+// runs inside transact). The verified core is store.applyUpdate, which is
 // total: structs whose dependencies have not arrived are buffered in the
-// data and drained by later calls. The codec-level Doc.ApplyUpdate
+// store and drained by later calls. The codec-level Doc.ApplyUpdate
 // (codec.go) decodes the wire format and routes the batch through here.
 func (d *Doc) applyUpdate(structs []updateItem) {
-	d.Transact(func(tr *Transaction) {
-		tr.store.data.applyUpdate(tr, structs)
+	s := d.store
+	s.transact(func(tr *Transaction) {
+		s.applyUpdate(tr, structs)
 	})
 }
 

@@ -182,7 +182,7 @@ Qed.
 
 
 (** Fractional variant of [auth_gmap_gset_lookup]: a reader holding a [dq]-share
-    of the authority ([●{dq} m], from [dataStore_inv_ro]) can still learn membership
+    of the authority ([●{dq} m], from [store_inv_ro]) can still learn membership
     and the lower bound. Used by the concurrent read API (Text.Len). *)
 Lemma auth_gmap_gset_lookup_dq {K V : Type} `{Countable K} `{Countable V}
     `{!inG Σ (authR (gmapUR K (gsetUR V)))} (γ : gname) (dq : dfrac) (m : gmap K (gset V)) (k : K) (S : gset V) :
@@ -302,7 +302,7 @@ Qed.
 
 (** Mint a fragment below the CURRENT set at a key, under ANY authority
     fraction (a [gset] fragment is core-id, so nothing is transferred): how a
-    holder of a [●{dq}] share (a reader's [dataStore_inv_ro], or the write-lock
+    holder of a [●{dq}] share (a reader's [store_inv_ro], or the write-lock
     holder) mints an [is_type_lb] at (a subset of) the current item set
     without growing anything. *)
 Lemma auth_gmap_gset_frag_alloc {K V : Type} `{Countable K} `{Countable V}

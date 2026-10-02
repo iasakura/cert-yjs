@@ -6,8 +6,7 @@ import "testing"
 // root type "text" via the update path (store.repair resolves each item's
 // neighbours and parent, then store.Integrate splices it in).
 func runIntegrate(items []*item) string {
-	st := newStore(0)
-	s := st.data
+	s := newStore(0)
 	name := "text"
 	for _, it := range items {
 		var parentName *string
@@ -15,7 +14,7 @@ func runIntegrate(items []*item) string {
 			parentName = &name
 		}
 		s.repair(it, parentName)
-		s.Integrate(newTransaction(st), nil, it)
+		s.Integrate(newTransaction(s), nil, it)
 	}
 	return s.getOrCreateYType(name).Text()
 }
@@ -90,12 +89,11 @@ func TestConcurrentMiddleInsertConverges(t *testing.T) {
 // list insertion, and the deleted-flag inheritance of the right half (where
 // y-octo diverges; see docs/plan-issue-28-runs-split.md).
 func TestSplitNode(t *testing.T) {
-	st := newStore(1)
-	s := st.data
+	s := newStore(1)
 	y := s.getOrCreateYType("text")
 	it := newItem(newId(1, 0), "abc", nil, nil)
 	it.parent = y
-	s.Integrate(newTransaction(st), y, it)
+	s.Integrate(newTransaction(s), y, it)
 
 	left, right := s.splitNode(it, 1)
 	if got := y.Text(); got != "abc" {
@@ -127,12 +125,11 @@ func TestSplitNode(t *testing.T) {
 	}
 
 	// the right half of a tombstoned run stays deleted (y-octo drops the flag)
-	st2 := newStore(2)
-	s2 := st2.data
+	s2 := newStore(2)
 	y2 := s2.getOrCreateYType("text")
 	dead := newItem(newId(2, 0), "xy", nil, nil)
 	dead.parent = y2
-	s2.Integrate(newTransaction(st2), y2, dead)
+	s2.Integrate(newTransaction(s2), y2, dead)
 	dead.flags = dead.flags | itemDeleted
 	y2.len = y2.len - dead.Len()
 	_, r2 := s2.splitNode(dead, 1)

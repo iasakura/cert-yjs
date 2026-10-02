@@ -50,7 +50,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (** [Text.StringIn] reads the text inside a transaction: the visible string
     of this text's snapshot at the transaction's model and tombstone state,
-    which is exact (the tombstone set is [own_dataStore]'s, not a lower bound).
+    which is exact (the tombstone set is [own_store]'s, not a lower bound).
     Nothing changes: the handle and the transaction come back as they were. *)
 Lemma wp_Text__StringIn (t tr s_loc : loc) (γs : store_names) (γh : history_names)
     (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
@@ -64,17 +64,16 @@ Lemma wp_Text__StringIn (t tr s_loc : loc) (γs : store_names) (γh : history_na
       own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}.
 Proof.
   wp_start as "(Htext & Htx)".
-  iDestruct "Htext" as (tv dv text_store parent deleted_items) "Htext". iNamed "Htext".
-  iDestruct "His_doc" as "#His_doc". iDestruct "Ht" as "#Ht". iDestruct "His_lb" as "#His_lb".
-  subst dv parent.
-  iDestruct "Htx" as (changed_locs m0 deleted0) "Htx". iNamed "Htx".
-  iDestruct "Hstore" as (ds observers_mref) "Hstore". iNamed "Hstore".
-  iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
+  iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
+  iDestruct "His_store" as "#His_store". iDestruct "Ht" as "#Ht". iDestruct "His_lb" as "#His_lb".
+  subst text_store parent.
+  iDestruct "Htx" as (changed_locs m0 deleted0 registry_mref) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as (client k pdel locs p bind acc observers_mref) "Hown". iNamed "Hown".
   (* the registry binds [name] to this text, whose document is the model's *)
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
-  iDestruct (own_dataStore_state_registry_coh with "Hstate") as %Hreg.
-  iDestruct (own_dataStore_state_run_pool_invs with "Hstate") as %Hpoolinv.
-  iDestruct (own_dataStore_state_aligned with "Hstate") as %Haligned.
+  iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
+  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpoolinv.
+  iDestruct (own_store_state_aligned with "Hstate") as %Haligned.
   have [Hbindtypes _] := Hreg.
   have [Hmtypes _] := Hregmodel.
   destruct (Hbindtypes name _ Hbindlk) as [ts Htsp].
@@ -85,7 +84,7 @@ Proof.
   have Hsnap : runs_model (tm_runs ts) = type_snapshot m deleted name.
   { rewrite /type_snapshot Hmt Hdeleted. exact (runs_model_tombstoned p _ ts Hpoolinv Htsp). }
   wp_auto.
-  iDestruct (own_dataStore_state_ytype_acc ds (MkDataStoreState client k locs p bind pend pdel)
+  iDestruct (own_store_state_ytype_acc s_loc (MkStoreState client k locs p bind pend pdel)
                tv.(yjs.Text.inner') ls ts Hls Htsp with "Hstate") as "[Hyt Hytback]".
   wp_apply (wp_yType__Text with "[$Hyt]"). iIntros "Hyt".
   iDestruct ("Hytback" with "Hyt") as "Hstate".
@@ -93,13 +92,12 @@ Proof.
   rewrite Hsnap.
   iApply "HΦ".
   iSplitR.
-  { iExists tv, tv.(yjs.Text.doc'), text_store, tv.(yjs.Text.inner'), deleted_items.
-    iFrame "Ht His_doc His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
+  { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
+    iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
     iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted]. }
-  iExists changed_locs, m0, deleted0. iFrame "Hchanges Hchanged_bound".
+  iExists changed_locs, m0, deleted0, registry_mref. iFrame "Hchanges Hregistry Hchanged_bound".
   iSplitL.
-  { iExists ds, observers_mref. iFrame "Hdata_field Hobservers_field Hregistry".
-    iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro. split_and!;
+  { iExists client, k, pdel, locs, p, bind, acc, observers_mref. iFrame "∗#". iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
       | exact Hctr | exact Hacccoh | exact Hdeleted]. }
   iPureIntro. split_and!; [exact Hstart | exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded].
