@@ -32,7 +32,10 @@
       ([pool_registry_coh_bind_fresh] / [pool_registry_coh_dom_mono]), and an
       id no registered type holds is absent from the document model
       ([pool_docm_has_registry_false]); a pool's chars are the model's through
-      the registry ([pool_has_doc_model_has]).
+      the registry ([pool_has_doc_model_has]); a registered type's snapshot
+      is what a walk of its runs sees ([type_snapshot_runs_model]), and a
+      type outside a transaction's changed set has no char in its record
+      ([type_untouched_by_record], by the pool's id uniqueness).
     - the index under those same steps: [key_pair_client_locs] is stable under any
       key permutation ([key_pair_client_locs_perm]), ignores another client's keys
       ([_other]) and an absent address ([_absent]), and grows by one address
@@ -1073,5 +1076,43 @@ Proof.
     rewrite (run_wf_char_id run _ x Hwf Hx) Hhead. destruct i as [ci ki]. simpl in *. f_equal; [done | lia].
 Qed.
 
+
+(** A registered type's snapshot is what a walk of its runs sees: the
+    public model's chars with the pool's exact tombstone bits. *)
+Lemma type_snapshot_runs_model (m : DocModel) (bind : gmap P loc) (p : pool)
+    (name : P) (parent : loc) (tm : type_model) :
+  pool_invs p -> pool_registry_models m bind p ->
+  bind !! name = Some parent -> p !! parent = Some tm ->
+  runs_model (tm_runs tm) = type_snapshot m (pool_tombstoned p) name.
+Proof.
+  move=> Hinvs Hmodel Hb Hp.
+  rewrite (runs_model_tombstoned p parent tm Hinvs Hp) /type_snapshot (proj1 Hmodel name parent tm Hb Hp) //.
+Qed.
+
+(** A type outside the transaction's changed set has no char in its record:
+    every recorded id is a char of a changed type's document, and an id
+    belongs to one type. *)
+Lemma type_untouched_by_record (m : DocModel) (bind : gmap P loc) (p : pool)
+    (inserted tombstoned : gset YjsId) (changed : gset P) (changed_locs : gset loc)
+    (name : P) (parent : loc) :
+  pool_invs p -> pool_registry_coh bind p -> pool_registry_models m bind p ->
+  (∀ i, i ∈ inserted ∪ tombstoned ->
+     ∃ (name' : P) (x : YjsItem A), name' ∈ changed ∧ x ∈ doc_model_get m (RootId name') ∧ item_id x = i) ->
+  (∀ name', name' ∈ changed -> ∃ parent', bind !! name' = Some parent' ∧ parent' ∈ changed_locs) ->
+  bind !! name = Some parent -> parent ∉ changed_locs ->
+  ∀ x, x ∈ doc_model_get m (RootId name) -> item_id x ∉ inserted ∧ item_id x ∉ tombstoned.
+Proof.
+  move=> Hinvs Hreg Hmodel Hrecorded Hbound Hb Hnot x Hx.
+  have Hgen : item_id x ∉ inserted ∪ tombstoned.
+  { move=> Hin. destruct (Hrecorded _ Hin) as (name' & y & Hname' & Hy & Hyx).
+    destruct (Hbound name' Hname') as (parent' & Hb' & Hin').
+    destruct (proj1 Hreg name parent Hb) as [tm Htm].
+    destruct (proj1 Hreg name' parent' Hb') as [tm' Htm'].
+    rewrite (proj1 Hmodel name parent tm Hb Htm) in Hx.
+    rewrite (proj1 Hmodel name' parent' tm' Hb' Htm') in Hy.
+    destruct (pool_item_unique p parent parent' tm tm' x y Hinvs Htm Hx Htm' Hy (eq_sym Hyx)) as [Heq _].
+    subst parent'. exact (Hnot Hin'). }
+  split; move=> Hin; apply Hgen; [apply elem_of_union_l | apply elem_of_union_r]; exact Hin.
+Qed.
 
 End store_value_cells.

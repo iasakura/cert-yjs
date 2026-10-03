@@ -30,7 +30,7 @@ Local Open Scope Z_scope.
 Section text.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
-(** The store's write lock is taken by the transaction ([wp_store__transact]);
+(** The store's write lock is taken by the transaction ([wp_transact]);
     the per-text item set lives in a grow-only auth (the same RA as
     [store/store], used by [is_type_lb]). *)
 Context {sync_pkg : sync.Assumptions}.
@@ -44,6 +44,9 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* The ghost op-history types at the document content type; type names are Go
    strings (issue #49). *)
@@ -70,7 +73,7 @@ Proof.
   wp_auto.
   (* the one write, as one transaction: the closure runs [DeleteIn] on the
      transaction it is handed and reports what the handle learns *)
-  wp_apply (wp_store__transact tv.(yjs.Text.store') γs γh _
+  wp_apply (wp_transact tv.(yjs.Text.store') γs γh _
               (λ c h' m' pend' deleted',
                  ∃ (dels : gset YjsId), is_Text t γs γh name L (deleted_ids ∪ dels))%I
               with "[$His_store t index length]").

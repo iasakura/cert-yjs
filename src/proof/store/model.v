@@ -12,12 +12,18 @@
       point, [WireReplay] the resulting replay relation and [wire_ready_total]
       the readiness gate.
     - [run_tombstoned_ids] / [runs_tombstoned] / [pool_tombstoned]: the EXACT
-      tombstone state of a run list / of the pool (what [own_store]'s
+      tombstone state of a run list / of the pool (what [own_store_data]'s
       [deleted] denotes), and how a step moves it: a split or an integrate
       splice keeps it, a flip adds the run's chars, a fresh type adds
       nothing, a sweep never clears one ([runs_tombstoned_split] /
       [_integrate] / [_flip], [pool_tombstoned_insert_empty] /
       [_dead_kept]), read per type by [pool_tombstoned_lookup] / [_insert].
+    - [type_snapshot m deleted name]: a type's tombstone-tagged char sequence
+      as a function of the public model ([type_snapshot_fst] /
+      [type_snapshot_tombstoned_bit] / [elem_of_type_snapshot]); the
+      transaction's start relation over it is [transaction/model.v]'s.
+      [live_run_chars_not_tombstoned] / [fresh_tombstones_flip]: a sweep
+      records only live chars.
     - [accepted_coh] / [pending_id_set] / [input_accounted]: which delivered
       ids a replica has accounted for, either integrated or still pending. This
       is what the no-loss spec is stated with.
@@ -107,6 +113,7 @@ From iris.algebra Require Import auth gmap gset.
 From stdpp Require Import sorting.
 From New.proof.item Require Import run_theory model value heap.
 From New.proof.ytype Require Import model value heap.
+From New.proof.delta Require Import model.
 Local Open Scope Z_scope.
 
 Section store_model.
@@ -1134,7 +1141,7 @@ Definition pool_next_clock (p : pool) (c n : nat) : Prop :=
     one certificate per character, so a multi-char wire item's head-id op is
     not itself in the log, only its per-char ops are. The bulk of the
     [expand_input] theory (lookup / length / singleton / chunk chaining) stays
-    in [store/GetNode]; only the two definitions live here so [own_store] and
+    in [store/GetNode]; only the two definitions live here so [own_store_data] and
     [store_inv_excl] can name them. *)
 Definition expand_input (typedInput : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
   (λ op, (typedInput.1, op)) <$> ops_of_input typedInput.2 (explode (in_content typedInput.2)).
@@ -1789,7 +1796,7 @@ Qed.
     when it is live; [runs_tombstoned runs] and [pool_tombstoned p] collect
     them over a run list and over the whole pool. This is the EXACT tombstone
     state of a store (the ghost delete set is a lower bound of it), what
-    [own_store]'s [deleted] parameter denotes; a step of the store moves it
+    [own_store_data]'s [deleted] parameter denotes; a step of the store moves it
     by the laws below: a split or an integrate splice keeps it
     ([runs_tombstoned_split] / [runs_tombstoned_integrate]), a flip adds the
     flipped run's chars ([runs_tombstoned_flip]), a fresh empty type adds
@@ -2117,12 +2124,63 @@ Proof.
 Qed.
 
 
+(** A wire item's per-char ops carry its char ids, so a batch's char ids are
+    the ids its per-char replay inserts ([replay_ids]). *)
+Lemma expand_input_char_ids (x op : TId * IntegrateInput (A := A)) :
+  op ∈ expand_input x -> in_id op.2 ∈ input_char_ids x.2.
+Proof.
+  rewrite /expand_input list_elem_of_fmap. move=> [o [-> Ho]]. simpl.
+  apply list_elem_of_lookup in Ho as [k Hk].
+  have Hlen : length (ops_of_input x.2 (explode (in_content x.2))) = length (explode (in_content x.2))
+    := ops_from_length _ _ _ _ _.
+  have Hklt : (k < length (in_content x.2))%nat.
+  { have := lookup_lt_Some _ _ _ Hk. rewrite Hlen explode_length. lia. }
+  rewrite (proj1 (ops_from_lookup _ _ _ _ _ _ _ Hk)).
+  apply elem_of_input_char_ids. simpl. split_and!; [done | lia | lia].
+Qed.
+
+Lemma inputs_char_ids_replay (l : list (TId * IntegrateInput (A := A))) :
+  inputs_char_ids l = replay_ids (expand_inputs l).
+Proof.
+  apply set_eq => i. rewrite elem_of_inputs_char_ids /replay_ids elem_of_list_to_set list_elem_of_fmap. split.
+  - move=> [x [Hx Hi]]. destruct (input_char_ids_expand x i Hi) as (op & Hop & Hid).
+    exists op. split; [by rewrite Hid |].
+    rewrite /expand_inputs list_elem_of_join. exists (expand_input x). split; [exact Hop |].
+    apply list_elem_of_fmap. by exists x.
+  - move=> [op [-> Hop]]. rewrite /expand_inputs list_elem_of_join in Hop.
+    destruct Hop as [l0 [Hop Hl0]]. apply list_elem_of_fmap in Hl0 as [x [-> Hx]].
+    exists x. split; [exact Hx | exact (expand_input_char_ids x op Hop)].
+Qed.
+
 (** The exact snapshot of a type, read off the public model: its items tagged
     by membership in the tombstone set. [runs_model_tombstoned] is the bridge
     to the run view a walk sees: a run's bit is the membership of any of its
     chars, by covering-slot uniqueness ([run_deleted_tombstoned]). *)
 Definition type_snapshot (m : DocModel) (deleted : gset YjsId) (name : P) : list (YjsItem A * bool) :=
   (λ x, (x, bool_decide (item_id x ∈ deleted))) <$> doc_model_get m (RootId name).
+
+Lemma type_snapshot_fst (m : DocModel) (deleted : gset YjsId) (name : P) :
+  (type_snapshot m deleted name).*1 = doc_model_get m (RootId name).
+Proof.
+  rewrite /type_snapshot -list_fmap_compose -{2}(list_fmap_id (doc_model_get m (RootId name))).
+  apply list_fmap_ext. move=> i x _. reflexivity.
+Qed.
+
+Lemma type_snapshot_tombstoned_bit (m : DocModel) (deleted : gset YjsId) (name : P) (x : YjsItem A * bool) :
+  x ∈ type_snapshot m deleted name -> item_id x.1 ∈ deleted -> x.2 = true.
+Proof.
+  rewrite /type_snapshot list_elem_of_fmap. move=> [y [-> Hy]] Hd. simpl in *.
+  apply bool_decide_eq_true_2. exact Hd.
+Qed.
+
+Lemma elem_of_type_snapshot (m : DocModel) (deleted : gset YjsId) (name : P) (x : YjsItem A) (b : bool) :
+  (x, b) ∈ type_snapshot m deleted name <->
+  x ∈ doc_model_get m (RootId name) ∧ b = bool_decide (item_id x ∈ deleted).
+Proof.
+  rewrite /type_snapshot list_elem_of_fmap. split.
+  - move=> [y [Heq Hy]]. injection Heq as <- <-. done.
+  - move=> [Hx ->]. by exists x.
+Qed.
 
 Lemma run_deleted_tombstoned (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun)
     (x : YjsItem A) :
@@ -2170,5 +2228,32 @@ Proof.
   apply (Hgen 0%nat). move=> j r Hj. rewrite Nat.add_0_l. exact Hj.
 Qed.
 
+
+(** The chars of a live run are not tombstoned: what a flip adds to the
+    record is fresh. *)
+Lemma live_run_chars_not_tombstoned (p : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
+  pool_invs p -> p !! parent = Some tm -> tm_runs tm !! k = Some r -> run_deleted r = false ->
+  char_ids (run_items r) ## pool_tombstoned p.
+Proof.
+  move=> Hinv Hp Hk Hd. rewrite elem_of_disjoint => i Hi Hip.
+  apply elem_of_char_ids in Hi as (x & Hx & <-).
+  have := run_deleted_tombstoned p parent tm k r x Hinv Hp Hk Hx.
+  rewrite Hd bool_decide_eq_true_2 //.
+Qed.
+
+(** A sweep's record stays fresh over a flip: the flipped run was live. *)
+Lemma fresh_tombstones_flip (p p2 : pool) (parent : loc) (tm : type_model) (k : nat) (r : ItemRun)
+    (tombstoned tombstoned_i : gset YjsId) :
+  pool_invs p2 -> p2 !! parent = Some tm -> tm_runs tm !! k = Some r -> run_deleted r = false ->
+  pool_tombstoned p ⊆ pool_tombstoned p2 ->
+  (tombstoned_i ∖ tombstoned) ## pool_tombstoned p ->
+  ((tombstoned_i ∪ char_ids (run_items r)) ∖ tombstoned) ## pool_tombstoned p.
+Proof.
+  move=> Hinv Hp Hk Hd Hsub Hfresh. rewrite elem_of_disjoint => i Hi Hip.
+  apply elem_of_difference in Hi as [Hi Hni].
+  apply elem_of_union in Hi as [Hi | Hi].
+  - exact (proj1 (elem_of_disjoint _ _) Hfresh i (proj2 (elem_of_difference _ _ _) (conj Hi Hni)) Hip).
+  - exact (proj1 (elem_of_disjoint _ _) (live_run_chars_not_tombstoned p2 parent tm k r Hinv Hp Hk Hd) i Hi (Hsub i Hip)).
+Qed.
 
 End store_model.

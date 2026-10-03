@@ -45,6 +45,9 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    map via a [dfrac_agree]; [store/heap] declares it up front, so the specs
    reached from here carry it too. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (** [word] does not use [0 <= Z.of_nat l] on its own, so a [clock + length <
     2^64] bound needs the length-nonneg fact spelled out to recover the
@@ -70,7 +73,7 @@ Proof. move=> H. have Hlp : (0 <= Z.of_nat l)%Z by lia. clear -H Hlp. word. Qed.
    spec strictly refines the single-char one. *)
 
 (** [expand_input] / [expand_inputs] are defined UPSTREAM in [store/model]
-    (so [own_store]'s per-char [Hpendcert] can name them); this file only adds
+    (so [own_store_data]'s per-char [Hpendcert] can name them); this file only adds
     their theory. *)
 
 (** Flattening a concatenation: [expand_inputs] distributes over [++]. *)

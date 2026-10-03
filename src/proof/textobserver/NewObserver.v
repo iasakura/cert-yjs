@@ -16,6 +16,7 @@ From New.proof.item Require Import item.
 From New.proof.ytype Require Import ytype.
 From New.proof.store Require Import store.
 From New.proof.text Require Import text.
+From New.proof.delta Require Import delta.
 From New.proof.textobserver Require Import model value heap.
 
 Section text_observer.
@@ -35,6 +36,9 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 Local Notation P := go_string.
 

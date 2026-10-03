@@ -1,8 +1,6 @@
 (** The [TextObserver], Iris layer.
 
-    Definitions
-    - [own_delta sl dq delta]: the [[]DeltaOp] slice at [sl] denotes the
-      delta [delta].
+    Definitions ([own_delta] is [delta/heap])
     - [own_deleted_spans dref deleted_ids]: the observer's
       [map[Client][]span[uint64]] at [dref] covers exactly [deleted_ids].
     - [own_TextObserver obs t γs γh name observed]: the observer at [obs]
@@ -16,8 +14,7 @@
       ids as a delete-set lower bound, and [observed]'s document invariant.
 
     Laws
-    - [own_delta_nil] / [own_deleted_spans_empty]: the nil slice is the
-      empty delta, an empty map covers no id.
+    - [own_deleted_spans_empty]: an empty map covers no id.
     - [own_deleted_spans_snoc]: borrow a client's span slice (the nil slice
       when absent) to append one span; the map then covers that span too.
 
@@ -38,6 +35,7 @@ From New.proof.item Require Import run_theory model value heap.
 From New.proof.ytype Require Import model value heap.
 From New.proof.store Require Import model value heap.
 From New.proof.text Require Import model heap.
+From New.proof.delta Require Import model value heap.
 From New.proof.textobserver Require Import model value.
 
 Section text_observer_heap.
@@ -57,18 +55,15 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 Local Notation P := go_string.
 
 Local Notation snapshot := (list (YjsItem A * bool)).
 
 (* ===== definitions ======================================================== *)
-
-Definition own_delta (sl : slice.t) (dq : dfrac) (delta : list DeltaOp) : iProp Σ :=
-  ∃ (vs : list yjs.DeltaOp.t),
-    "Hsl" ∷ sl ↦*{dq} vs ∗
-    "Hcap" ∷ own_slice_cap yjs.DeltaOp.t sl dq ∗
-    "%Hdenote" ∷ ⌜Forall2 delta_op_denotes vs delta⌝.
 
 Definition own_deleted_spans (dref : loc) (deleted_ids : gset YjsId) : iProp Σ :=
   ∃ (dm : gmap w64 slice.t) (spans : gmap w64 (list (yjs.span.t w64))),
@@ -99,11 +94,6 @@ Definition own_TextObserver (obs t : loc) (γs : store_names) (γh : history_nam
     "%Hsorted" ∷ ⌜YjsArrInvariant observed.*1⌝.
 
 (* ===== lemmas ============================================================= *)
-
-Lemma own_delta_nil : ⊢ own_delta slice.nil (DfracOwn 1) [].
-Proof.
-  iExists []. iSplitR; [iApply own_slice_nil | iSplitR; [iApply own_slice_cap_nil | done]].
-Qed.
 
 Lemma own_deleted_spans_empty (dref : loc) :
   own_map dref (DfracOwn 1) (∅ : gmap w64 slice.t) -∗ own_deleted_spans dref ∅.

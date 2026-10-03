@@ -50,6 +50,16 @@ type store struct {
 	// issue #40). Every later applyDeleteSpans re-drains it, which is sound
 	// because tombstoning is idempotent.
 	pendingDeletes []deleteSpan
+	// observers is, per type, the callbacks Text.Observe registered (issue
+	// #198, Part II). The three references keep them in three places: Yjs
+	// v14 on the type (YType._eH, src/ytype.js:667), yrs 0.27 on the branch
+	// (Branch.observers, src/branch.rs:214), y-octo on a per-document
+	// publisher that polls the store (DocPublisher, src/doc/publisher.rs:15).
+	// Here they sit on the store, keyed by type, so that the pool's type
+	// cells, the heaviest proof machinery, keep their shape (a divergence,
+	// docs/plan-issue-198-observe.md section 18). Guarded by mu; notify walks
+	// it at the end of every transaction.
+	observers map[*yType][]func(delta []DeltaOp)
 }
 
 // newStore creates an empty store owned by the given client.
@@ -62,6 +72,7 @@ func newStore(client Client) *store {
 		deletedSet:     deletedSet{deletedSet: make(map[Client]orderRange)},
 		pending:        nil,
 		pendingDeletes: nil,
+		observers:      make(map[*yType][]func(delta []DeltaOp)),
 	}
 }
 
@@ -109,97 +120,6 @@ func (s *store) GetNode(id id) (*item, bool) {
 		return nil, false
 	}
 	return nodes[index], true
-}
-
-// deleteRange tombstones every integrated char of the half-open clock range
-// [clock, clock+length) in client's clock space (y-octo:
-// DocStore::delete_range, store.rs). Each step resolves the current char to
-// the node STARTING at it (splitAtAndGetRight, splitting when the range starts
-// inside a run), truncates that node at the range end when it would overrun
-// (splitAtAndGetLeft on the range's last char), and tombstones it whole, so
-// the deletion covers exactly the requested chars and never spills over. Both
-// splits are the same clean-start / clean-end helpers store.repair resolves
-// origins with.
-//
-// A char with no integrated node is skipped: its struct has not arrived, and
-// the caller re-applies the span later (the pending discipline of issue #40).
-// An already-tombstoned node is skipped too, which is what makes
-// re-application harmless. Callers hold s.mu inside the transaction tr,
-// which records what gets tombstoned (deleteNode).
-func (s *store) deleteRange(tr *Transaction, client Client, clock uint64, length uint64) bool {
-	covered := true
-	end := clock + length
-	cur := clock
-	for cur < end {
-		// The lookup and the clean-start split search the run list twice
-		// (y-octo searches once and keeps the index); the redundant lookup
-		// is what lets the two steps be verified independently.
-		_, found := s.GetNode(newId(client, cur))
-		if !found {
-			// not integrated yet: leave it for a later re-application.
-			covered = false
-			cur = cur + 1
-		} else {
-			// clean start: after this, [it] begins exactly at [cur].
-			it, _ := s.splitAtAndGetRight(newId(client, cur))
-			next := it.id.clock + it.Len()
-			if end < next {
-				// clean end: the range stops inside [it], so truncate it in
-				// place at the range's last char. [it] is the left half, so
-				// it now covers exactly [cur, end).
-				s.splitAtAndGetLeft(newId(client, end-1))
-				next = end
-			}
-			deleteNode(tr, it)
-			cur = next
-		}
-	}
-	return covered
-}
-
-// applyDeleteSpans applies a batch of decoded delete spans on top of the
-// buffered ones, keeping the spans that did not land in full because their
-// target structs have not arrived (y-octo: the pending half of
-// Update::delete_set). Re-applying a span that already landed is harmless:
-// deleteRange skips tombstoned nodes. Callers hold s.mu inside the
-// transaction tr.
-func (s *store) applyDeleteSpans(tr *Transaction, spans []deleteSpan) {
-	all := s.pendingDeletes
-	// Take the buffer out before retrying it (y-octo's mem::take of the
-	// pending set): while the retry loop runs, the store holds no buffered
-	// spans, and the ones that did not land are installed at the end.
-	s.pendingDeletes = nil
-	for i := 0; i < len(spans); i++ {
-		all = append(all, spans[i])
-	}
-	rest := []deleteSpan{}
-	for i := 0; i < len(all); i++ {
-		sp := all[i]
-		if !s.deleteRange(tr, sp.client, sp.clock, sp.length) {
-			rest = append(rest, sp)
-		}
-	}
-	s.pendingDeletes = rest
-}
-
-// deleteNode tombstones one whole node: sets its Deleted flag and shrinks its
-// type's visible length (y-octo: DocStore::delete_item_inner; Yjs
-// v14.0.0-rc.18 Item.delete, src/structs/Item.js:366; yrs 0.27.2
-// src/block.rs:635), and records the node in the transaction (its ids join
-// tr.deleteSet, its parent is marked changed), as Yjs and yrs do at this
-// point and y-octo, having no transaction, does not. A node that is already
-// tombstoned is left alone, which is what makes a re-delivered delete
-// idempotent. The node must be integrated (reached through the store's run
-// lists); callers hold s.mu. A free function, not a *store method as in
-// y-octo (whose &mut self borrows the whole store either way): it touches
-// only the node, its parent type and the transaction's record, and the
-// footprint must be visible in the program (CLAUDE.md "Spec shape").
-func deleteNode(tr *Transaction, it *item) {
-	if it.Indexable() {
-		tr.recordDelete(it)
-		it.flags = it.flags | itemDeleted
-		it.parent.len = it.parent.len - it.Len()
-	}
 }
 
 // addNode appends an item to the run list of its owning client (y-octo:
@@ -473,6 +393,27 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 	return left
 }
 
+// deleteNode tombstones one whole node: sets its Deleted flag and shrinks its
+// type's visible length (y-octo: DocStore::delete_item_inner; Yjs
+// v14.0.0-rc.18 Item.delete, src/structs/Item.js:366; yrs 0.27.2
+// src/block.rs:635), and reports whether it did: a node that is already
+// tombstoned is left alone, which is what makes a re-delivered delete
+// idempotent. It records nothing; Transaction.deleteNode records the flip in
+// the transaction (Yjs and yrs record at this point, y-octo, having no
+// transaction, does not). The node must be integrated (reached through the
+// store's run lists); callers hold s.mu. A free function, not a *store
+// method as in y-octo (whose &mut self borrows the whole store either way):
+// it touches only the node and its parent type, and the footprint must be
+// visible in the program.
+func deleteNode(it *item) bool {
+	if it.Indexable() {
+		it.flags = it.flags | itemDeleted
+		it.parent.len = it.parent.len - it.Len()
+		return true
+	}
+	return false
+}
+
 // integrateCore is y-octo store::integrate up to (but not including) the final
 // self.add_node: it resolves origin-based conflicts the same way as the Yjs
 // integrate algorithm, splices item into the doubly linked list at its
@@ -534,21 +475,22 @@ func (s *store) integrateCore(parent *yType, item *item) {
 // working on, while the update path passes nil and the item's own parent
 // (resolved by store.repair) is used; an item whose parent did not resolve is
 // dropped, as in y-octo. On return item is spliced into the doubly linked
-// list at its conflict-resolved position, parent.len is updated,
-// s.items[item.id.clientId] holds item at its tail, and the transaction
-// records the item (its ids join tr.insertSet and parent is marked changed:
-// Yjs v14.0.0-rc.18 Item.integrate, src/structs/Item.js:270-274; yrs 0.27.2
+// list at its conflict-resolved position, parent.len is updated and
+// s.items[item.id.clientId] holds item at its tail. The result is the parent
+// item went into, nil when item was dropped. It records nothing:
+// Transaction.integrate records the item in the transaction (Yjs
+// v14.0.0-rc.18 Item.integrate, src/structs/Item.js:270-274; yrs 0.27.2
 // src/block.rs:1085-1090; y-octo has no transaction and records nothing).
-func (s *store) Integrate(tr *Transaction, parent *yType, item *item) {
+func (s *store) Integrate(parent *yType, item *item) *yType {
 	if parent == nil {
 		if item.parent == nil {
-			return
+			return nil
 		}
 		parent = item.parent
 	}
 	s.integrateCore(parent, item)
 	addNode(s.items, item)
-	tr.recordInsert(parent, item)
+	return parent
 }
 
 // hasNode reports whether the struct with the given id has been integrated.
@@ -597,75 +539,4 @@ func (s *store) depsArrived(ui updateItem) bool {
 		return false
 	}
 	return true
-}
-
-// integrateDecoded builds, repairs and integrates one decoded struct whose
-// dependencies have arrived: the ready branch of applyUpdate's drain,
-// extracted so the per-struct integration contract is provable in isolation
-// (mirrors the findIntegrationLeft / integrateCore extractions).
-func (s *store) integrateDecoded(tr *Transaction, ui updateItem) {
-	it := newItem(ui.id, ui.content, ui.originLeftId, ui.originRightId)
-	s.repair(it, ui.parentName)
-	s.Integrate(tr, nil, it)
-}
-
-// applyUpdate integrates a decoded batch of insert structs, in any order and
-// under no causal-closure assumption, buffering what cannot integrate yet
-// (issue #40; y-octo: the Doc::apply_update fixpoint over UpdateIterator and
-// DocStore.pending, document.rs / codec/update.rs). The `pending` local is the store's
-// pending buffer plus the new batch. A struct whose id is already integrated
-// is dropped (a re-delivery; y-octo's offset >= len case). A struct whose
-// dependencies have all arrived (depsArrived) is repaired and integrated with
-// the proven store.Integrate; the rest is retried, pass after pass, until a
-// pass integrates nothing, and the remainder becomes the new pending buffer,
-// drained by later calls. Structs that can never resolve a parent (no
-// origins and no parentName, which the wire format never produces) are
-// dropped inside Integrate, as in y-octo.
-//
-// Structural deviations from y-octo (deliberate, reported; see
-// docs/plan-issue-40-pending.md, section 3):
-//   - the round-based fixpoint replaces UpdateIterator's stack-based
-//     dependency chase; both integrate exactly the least
-//     structural-dependency closure of the pending over the store, the chase
-//     being a within-pass shortcut for the later passes;
-//   - the pending buffer is re-drained on every call instead of gated on
-//     missing_state thresholds; the threshold is a retry optimization, and
-//     y-octo drops the stored thresholds when merging pending updates
-//     (document.rs merge branch), a liveness defect this port avoids;
-//   - pending re-deliveries are dropped by id on requeue rather than by
-//     merge_into's structural comparison (certified ids determine their
-//     struct);
-//   - as before, the loop lives on the store rather than on Doc, so the
-//     verified core stays self-contained; Doc.applyUpdate (doc.go) is the
-//     locking wrapper and the codec-level Doc.ApplyUpdate (codec.go) the
-//     decode rind.
-//
-// Callers hold s.mu inside the transaction tr, which records every struct
-// this call integrates.
-func (s *store) applyUpdate(tr *Transaction, structs []updateItem) {
-	pending := s.pending
-	for i := 0; i < len(structs); i++ {
-		pending = append(pending, structs[i])
-	}
-	s.pending = nil
-	progress := true
-	for progress {
-		progress = false
-		rest := []updateItem{}
-		for i := 0; i < len(pending); i++ {
-			ui := pending[i]
-			if s.hasNode(ui.id) {
-				// already integrated: a duplicate delivery, dropped.
-				continue
-			}
-			if s.depsArrived(ui) {
-				s.integrateDecoded(tr, ui)
-				progress = true
-			} else if !containsUpdateItemId(rest, ui.id) {
-				rest = append(rest, ui)
-			}
-		}
-		pending = rest
-	}
-	s.pending = pending
 }
