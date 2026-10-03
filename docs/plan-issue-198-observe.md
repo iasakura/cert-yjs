@@ -1135,10 +1135,10 @@ Decided, with the rejected alternatives:
   and brought a diff the references do not have.
 - The store methods stay on the store, with the transaction as an argument
   (Yjs's shape; yrs makes them methods of the transaction, which owns the
-  write guard). Reversed after C2: Part III (section 19) moves every method
-  that records into the transaction to the transaction, so that the store
-  knows nothing of transactions and the transaction's predicates sit in one
-  place above the store. The specs of the unexported methods are over parts of the
+  write guard). Reversed in C2's review: Part III (section 19) moves every
+  method that records into the transaction to the transaction, so that the
+  store knows nothing of transactions and the transaction's predicates sit
+  in one place above the store; it lands in C2 (#213). The specs of the unexported methods are over parts of the
   store (`own_store_state` and the record for the cell-level steps,
   `own_store_data` and `own_transaction_record` for `applyUpdate` and
   `applyDeleteSpans`), never over the observers, and the transitions
@@ -1198,7 +1198,8 @@ divergence in the Go.
 
 ## 19. Part III: the transaction owns the recording
 
-Decided after C2 (PR #213), its own PR between C2 and C3.
+Decided in the review of C2 (PR #213) and landed there, since the layering
+it repairs was a blocker of that review.
 
 ### 19.1 Why
 
@@ -1324,7 +1325,5 @@ file paths, and CLAUDE.md's Require order.
 
 ### 19.5 Order
 
-Land C2 (#213) with `own_transaction` in `store/heap.v`, noted there as
-interim; then this PR (branch `transaction-owns-recording`, stacked on
-#213); then rebase C3 (#214), which touches
-`own_transaction_observed_agree` and the Mirror only.
+Part of C2 (#213); C3 (#214), which touches
+`own_transaction_observed_agree` and the Mirror only, is rebased on it.
