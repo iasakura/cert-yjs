@@ -68,7 +68,7 @@ Lemma wp_Doc__Transact (dv s_loc : loc) (γs : store_names) (γh : history_names
 Proof.
   wp_start as "(#His_doc & Hf)".
   iNamed "His_doc". subst s_loc. wp_auto.
-  wp_apply (wp_store__transact with "[$His_store $Hf]").
+  wp_apply (wp_transact with "[$His_store $Hf]").
   iIntros "HQ". wp_auto.
   iApply ("HΦ" with "HQ").
 Qed.

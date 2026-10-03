@@ -30,7 +30,7 @@ Local Open Scope Z_scope.
 Section text.
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
-(** The store's write lock is taken by the transaction ([wp_store__transact]);
+(** The store's write lock is taken by the transaction ([wp_transact]);
     the per-text item set lives in a grow-only auth (the same RA as
     [store/store], used by [is_type_lb]). *)
 Context {sync_pkg : sync.Assumptions}.
@@ -75,7 +75,7 @@ Proof.
   wp_auto.
   (* the one write, as one transaction: the closure runs [InsertIn] on the
      transaction it is handed and reports what the handle learns *)
-  wp_apply (wp_store__transact tv.(yjs.Text.store') γs γh _
+  wp_apply (wp_transact tv.(yjs.Text.store') γs γh _
               (λ c h' m' pend' deleted',
                  ∃ (L' ins : list (YjsItem A)) (k0 : nat) (originLeft originRight : YjsPtr A),
                    is_Text t γs γh name L' deleted_ids ∗

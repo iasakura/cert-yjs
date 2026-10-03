@@ -96,7 +96,9 @@ Proof.
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord".
   iDestruct "Hstore" as (client k pdel locs0 p0 bind acc) "Hown". iNamed "Hown". subst c.
   (* [s := tr.store]: the transaction names the store *)
+  iDestruct (own_transaction_changes_store_acc with "Hchanges") as "[Htrstore Hchangesback]".
   wp_auto.
+  iDestruct ("Hchangesback" with "Htrstore") as "Hchanges".
   iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
   iDestruct (own_store_state_aligned with "Hstate") as %Haligned.
   iDestruct (own_store_state_run_wf with "Hstate") as %Hwf0.
@@ -155,8 +157,8 @@ Proof.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
         [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
-    iSplitL "Htrstore Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
-    { iExists m0, deleted0. iFrame "Htrstore Hobservers".
+    iSplitL "Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
+    { iExists m0, deleted0. iFrame "Hobservers".
       iSplitL "Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
       { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
@@ -199,8 +201,8 @@ Proof.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
         [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
-    iSplitL "Htrstore Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
-    { iExists m0, deleted0. iFrame "Htrstore Hobservers".
+    iSplitL "Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
+    { iExists m0, deleted0. iFrame "Hobservers".
       iSplitL "Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
       { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
@@ -443,7 +445,7 @@ Proof.
     "Hruns" ∷ own_store_state s_loc (MkStoreState client (W64 (uint.Z k + Z.of_nat j)) locsj pj bind pend pdel) ∗
     (* the transaction's record so far: the run's chars and, once a char is
        in, this text *)
-    "Hchanges" ∷ own_transaction_changes tr (inserted ∪ char_ids ins) tombstoned
+    "Hchanges" ∷ own_transaction_changes tr s_loc (inserted ∪ char_ids ins) tombstoned
                    (changed_locs ∪ (if decide (ins = []) then ∅ else {[tv.(yjs.Text.inner')]})) ∗
     "Htrp" ∷ tr_ptr ↦ tr ∗
     "Hdelete_set" ∷ own_delete_set γs m (all_runs pj) ∗
@@ -731,7 +733,7 @@ Proof.
     have Hresj : origins_resolved (tm_runs (MkTypeModel runsj)) (tm_arr (MkTypeModel runsj))
                    input (p1i + j)%nat (p1i + j)%nat.
     { rewrite /tm_arr /= -Harrj. exact Hres. }
-    wp_apply (wp_store__Integrate s_loc tr tv.(yjs.Text.inner') tv.(yjs.Text.inner') oL2
+    wp_apply (wp_Transaction__integrate tr s_loc tv.(yjs.Text.inner') tv.(yjs.Text.inner') oL2
                 (MkStoreState client (w64_word_instance.(word.add) (W64 (uint.Z k + Z.of_nat j)) (W64 1)) locsj pj bind pend pdel)
                 (MkTypeModel runsj) lsj arr' input newItem (p1i + j)%nat (p1i + j)%nat _ _ _
                 (or_introl eq_refl) Hpj Hlj Hreadyj Hfitsin Hallj Hresj Hnextj
@@ -870,7 +872,7 @@ Proof.
     iEval (rewrite Hinsstep Hchstep) in "Hchanges".
     wp_for_post.
     (* re-establish the loop invariant for [S j] with [ins ++ [newItem]] *)
-    iFrame "Ht His_lb HΦ HisRp Hacc Hobservers Htrstore".
+    iFrame "Ht His_lb HΦ HisRp Hacc Hobservers".
     iExists (S j), arr', (<[tv.(yjs.Text.inner') := ls']> locsj), (<[tv.(yjs.Text.inner') := MkTypeModel runs']> pj), ls', runs', (ins ++ [newItem]),
       (hj ++ [EvBroadcast (RootId name, OpInsert input);
               EvDeliver (RootId name, OpInsert input)]).
@@ -1131,8 +1133,8 @@ Proof.
       [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvj)]. }
   (* the transaction after the insert: the record's meaning at the grown
      model, this text now among the changed types (unless the run is empty) *)
-  iSplitL "Htrstore Hchanges Hstore Hobservers".
-  { iExists m0, deleted0. iFrame "Htrstore Hstore Hobservers".
+  iSplitL "Hchanges Hstore Hobservers".
+  { iExists m0, deleted0. iFrame "Hstore Hobservers".
     iSplitL; last (iPureIntro; exact Hstart').
     iExists (changed_locs ∪ (if decide (ins = []) then ∅ else {[tv.(yjs.Text.inner')]})).
     iFrame "Hchanges".

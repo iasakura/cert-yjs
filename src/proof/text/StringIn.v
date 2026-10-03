@@ -95,7 +95,7 @@ Proof.
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
     iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
     iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted]. }
-  iExists m0, deleted0. iFrame "Htrstore Hobservers Hrecord".
+  iExists m0, deleted0. iFrame "Hobservers Hrecord".
   iSplitL; last (iPureIntro; exact Hstart).
   iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro. split_and!;
     [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh

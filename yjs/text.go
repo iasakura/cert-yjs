@@ -92,7 +92,7 @@ func (t *Text) Observe(callback func(delta []DeltaOp)) {
 }
 
 func (t *Text) Insert(index uint64, content string) {
-	t.store.transact(func(tr *Transaction) {
+	transact(t.store, func(tr *Transaction) {
 		t.InsertIn(tr, index, content)
 	})
 }
@@ -158,7 +158,7 @@ func (t *Text) InsertIn(tr *Transaction, index uint64, content string) {
 		newit.left = left
 		newit.right = right
 		newit.parent = t.inner
-		s.Integrate(tr, t.inner, newit)
+		tr.integrate(t.inner, newit)
 
 		// the next character integrates immediately to the right of this one.
 		left = newit
@@ -170,7 +170,7 @@ func (t *Text) InsertIn(tr *Transaction, index uint64, content string) {
 // TextRef::remove_range with a transact_mut). One write, one transaction: the
 // observers of this text are notified once, at its end.
 func (t *Text) Delete(index uint64, length uint64) {
-	t.store.transact(func(tr *Transaction) {
+	transact(t.store, func(tr *Transaction) {
 		t.DeleteIn(tr, index, length)
 	})
 }
@@ -210,10 +210,11 @@ func (t *Text) DeleteIn(tr *Transaction, index uint64, length uint64) {
 				// so the tombstone below covers precisely the range.
 				s.splitNode(cur, remaining)
 			}
-			// Tombstone the (possibly truncated) node through the store's
-			// deleteNode: cur belongs to t.inner, so it shrinks t.inner.len
-			// by cur.Len() (y-octo: ListType::remove_after -> delete_item).
-			deleteNode(tr, cur)
+			// Tombstone the (possibly truncated) node through the
+			// transaction's deleteNode: cur belongs to t.inner, so it shrinks
+			// t.inner.len by cur.Len() (y-octo: ListType::remove_after ->
+			// delete_item) and the transaction records it.
+			tr.deleteNode(cur)
 			remaining = remaining - cur.Len()
 		}
 		cur = cur.right

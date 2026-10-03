@@ -30,14 +30,13 @@ func (d *Doc) GetOrCreateText(name string) *Text {
 
 // applyUpdate integrates a decoded update batch as one transaction (y-octo:
 // Doc::apply_update takes store.write() for the whole apply; Yjs applyUpdate
-// runs inside transact). The verified core is store.applyUpdate, which is
-// total: structs whose dependencies have not arrived are buffered in the
+// runs inside transact). The verified core is Transaction.applyUpdate, which
+// is total: structs whose dependencies have not arrived are buffered in the
 // store and drained by later calls. The codec-level Doc.ApplyUpdate
 // (codec.go) decodes the wire format and routes the batch through here.
 func (d *Doc) applyUpdate(structs []updateItem) {
-	s := d.store
-	s.transact(func(tr *Transaction) {
-		s.applyUpdate(tr, structs)
+	transact(d.store, func(tr *Transaction) {
+		tr.applyUpdate(structs)
 	})
 }
 

@@ -1,18 +1,18 @@
-(** [store.transact], the transaction as the store's write scope (issue #206
+(** [transact], the transaction as the store's write scope (issue #206
     T1, issue #198 Part II): the write lock is taken once, [f] runs with the
-    transaction handle, the lock is released. [wp_store__transact] is
+    transaction handle, the lock is released. [wp_transact] is
     higher-order in [f] ([closure_runs_transaction], a one-shot wand, so the
     closure may carry the caller's resources in): the caller proves [f]'s
     body against [own_transaction] at whatever state the store is in, and
     chooses what it wants to know afterwards ([Q]). The observers of the
-    changed types are notified before the unlock ([wp_store__notify], Part
-    II C2), which is where the store's observers catch up with its data.
+    changed types are notified before the unlock ([wp_Transaction__notify],
+    Part II C2), which is where the store's observers catch up with its data.
 
     The transitions of the store's predicate across one transaction, in
     order: the write lock hands out [own_store] with its two states
     coincident ([wp_Store__wlock]); [own_transaction_fresh] (below) wraps it
     with the fresh record into [own_transaction], the predicate the closure
-    runs on; [wp_store__notify] turns [own_transaction] back into
+    runs on; [wp_Transaction__notify] turns [own_transaction] back into
     [own_store] with coincident states, which the write lock takes back
     ([wp_Store__wunlock]). *)
 From New.proof Require Import proof_prelude.
@@ -29,10 +29,10 @@ From New.proof.sync_proof Require Import base mutex rwmutex rwmutex_guard.
 From New.proof Require Import tok_set.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
-From New.proof.store Require Import model value heap wp_private notify.
-From New.proof.transaction Require Import transaction.
+From New.proof.store Require Import store.
+From New.proof.transaction Require Import model heap wp_private notify.
 
-Section store_transact.
+Section transaction_transact.
 
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 
@@ -71,13 +71,12 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
     the current one ([transaction_start_fresh]). *)
 Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input) (deleted : gset YjsId) :
-  (tr .[(yjs.Transaction.t), "store"]) ↦ s_loc -∗
-  own_transaction_changes tr ∅ ∅ ∅ -∗
+  own_transaction_changes tr s_loc ∅ ∅ ∅ -∗
   own_store s_loc γs γh c h m pend deleted m deleted -∗
   own_transaction tr s_loc γs γh c h m pend deleted ∅ ∅ ∅.
 Proof.
-  iIntros "Htrstore Hchanges Hstore".
-  iExists m, deleted. iFrame "Htrstore Hstore".
+  iIntros "Hchanges Hstore".
+  iExists m, deleted. iFrame "Hstore".
   iSplit; last (iPureIntro; apply transaction_start_fresh).
   iExists ∅. iFrame "Hchanges".
   iSplit; first iApply changed_types_bound_empty.
@@ -87,10 +86,10 @@ Proof.
   - move=> i Hi. set_solver.
 Qed.
 
-Lemma wp_store__transact (s_loc : loc) (γs : store_names) (γh : history_names) (f : func.t)
+Lemma wp_transact (s_loc : loc) (γs : store_names) (γh : history_names) (f : func.t)
     (Q : ClientId -> list Ev -> DocModel -> list Input -> gset YjsId -> iProp Σ) :
   {{{ is_pkg_init yjs ∗ is_Store s_loc γs γh ∗ closure_runs_transaction s_loc γs γh f Q }}}
-    s_loc @! (go.PointerType yjs.store) @! "transact" #f
+    @! yjs.transact #s_loc #f
   {{{ RET #(); ∃ (c : ClientId) (h' : list Ev) (m' : DocModel) (pend' : list Input) (deleted' : gset YjsId),
       Q c h' m' pend' deleted' }}}.
 Proof.
@@ -99,16 +98,16 @@ Proof.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
   iDestruct "Hinv" as (c h m pend deleted) "Hstore".
   wp_auto.
-  wp_apply wp_newTransaction. iIntros (tr) "[Htrstore Hchanges]".
+  wp_apply wp_newTransaction. iIntros (tr) "Hchanges".
   wp_auto.
-  iDestruct (own_transaction_fresh with "Htrstore Hchanges Hstore") as "Htx".
+  iDestruct (own_transaction_fresh with "Hchanges Hstore") as "Htx".
   wp_apply ("Hf" with "[$Htx]").
   iIntros (h' m' pend' deleted' inserted tombstoned changed) "[Htx HQ]".
   wp_auto.
-  wp_apply (wp_store__notify with "[$Htx]"). iIntros "Hstore".
+  wp_apply (wp_Transaction__notify with "[$Htx]"). iIntros "Hstore".
   wp_auto.
   wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore]").
   iApply "HΦ". iExists c, h', m', pend', deleted'. iFrame "HQ".
 Qed.
 
-End store_transact.
+End transaction_transact.

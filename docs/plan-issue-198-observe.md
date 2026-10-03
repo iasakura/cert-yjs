@@ -1225,19 +1225,23 @@ predicate and proof of the `Transaction` type, and the inversion is gone.
 
 ### 19.2 The Go
 
-What stays on the store, record-free: `integrateCore`, `addNode`,
-`repair`, `splitNode`, `splitAtAndGetRight` / `splitAtAndGetLeft`,
-`GetNode`, `hasNode`, `depsArrived`, `getOrCreateYType`, and the free
-function `deleteNode(it) bool`, which flips one node and reports whether it
-did (it was `deleteNode(tr, it)`, recording inside).
+What stays on the store, record-free: `Integrate(parent, item) *yType`
+(the splice, returning the type the item went into, nil when it was
+dropped; it was `Integrate(tr, parent, item)`, recording inside),
+`integrateCore`, `addNode`, `repair`, `splitNode`, `splitAtAndGetRight` /
+`splitAtAndGetLeft`, `GetNode`, `hasNode`, `depsArrived`,
+`getOrCreateYType`, and the free function `deleteNode(it) bool`, which
+flips one node and reports whether it did (it was `deleteNode(tr, it)`,
+recording inside).
 
 What moves to the transaction, `yjs/transaction.go`:
 
 ```go
 // integrate integrates item into parent and records it (yrs
-// TransactionMut::integrate, src/block.rs:984): the store's integrateCore
-// and addNode, then recordInsert. A nil parent means the item's own, as
-// resolved by store.repair; an item whose parent did not resolve is dropped.
+// TransactionMut::integrate, src/block.rs:984): the store's Integrate, then
+// recordInsert for the type it returned. A nil parent means the item's own,
+// as resolved by store.repair; an item whose parent did not resolve is
+// dropped by the store and records nothing.
 func (tr *Transaction) integrate(parent *yType, item *item)
 // deleteNode tombstones one node and records it when it was live (yrs
 // TransactionMut::delete, src/transaction.rs:732).
@@ -1280,15 +1284,20 @@ text -> textobserver -> doc`. `transaction/` holds the whole type:
   `type_snapshot_untouched`, `transaction_start_fresh`, `_replay`,
   `_tombstone`), moved from `store/model.v`.
 - `transaction/heap.v`: the fields predicate (the store field and the three
-  record fields: `own_transaction_changes` with the store pointer back, as
-  C1 had it, since the methods are now the transaction's), `changed_types_bound`,
-  `own_transaction_record`, `own_transaction` (owning `own_store` with the
-  observers at the start state) and `own_transaction_observed_agree`, moved
-  from `store/heap.v`.
-- `transaction/wp_private.v`: `recordInsert`, `recordDelete`, `deleteNode`,
-  `integrateDecoded`; `transaction/integrate.v`, `deleteRange.v`,
-  `applyUpdate.v`: the moved loops, their statements unchanged but for the
-  receiver; `transaction/notify.v`, `transaction/transact.v`.
+  record fields: `own_transaction_changes tr s …` with the store pointer
+  back, as C1 had it, since the methods are now the transaction's),
+  `changed_types_bound`, `own_transaction_record tr s …`, `own_transaction`
+  (owning `own_store` with the observers at the start state) and
+  `own_transaction_observed_agree`, moved from `store/heap.v`.
+- `transaction/wp_private.v`: `recordInsert`, `recordDelete`,
+  `wp_Transaction__integrate` (the store's `wp_store__Integrate`, which now
+  returns the parent and records nothing, followed by `recordInsert`),
+  `wp_Transaction__deleteNode` / `_deleteNode_store` (the store's
+  `wp_deleteNode`, which now returns whether it flipped, followed by
+  `recordDelete`); `transaction/deleteRange.v`, `transaction/applyUpdate.v`
+  (with `integrateDecoded`): the moved loops, their statements unchanged
+  but for the receiver and the store parameter of the record;
+  `transaction/notify.v`, `transaction/transact.v`.
 - `store/` keeps `own_store_data`, `own_observers`, `own_store`, the lock
   layer, the observers' predicates (`own_observed`, `is_text_snapshot`,
   `is_text_callback`, `is_text_observed`, `own_type_observers`,
@@ -1316,5 +1325,6 @@ file paths, and CLAUDE.md's Require order.
 ### 19.5 Order
 
 Land C2 (#213) with `own_transaction` in `store/heap.v`, noted there as
-interim; then this PR; then rebase C3 (#214), which touches
+interim; then this PR (branch `transaction-owns-recording`, stacked on
+#213); then rebase C3 (#214), which touches
 `own_transaction_observed_agree` and the Mirror only.

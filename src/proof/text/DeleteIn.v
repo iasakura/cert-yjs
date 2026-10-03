@@ -86,7 +86,7 @@ Qed.
     type ([own_store_state_ytype_acc]) to the cursor (splitting at the start
     offset via [wp_store__splitNode] when it lands mid-run, issue #28
     M3), then a loop that walks forward tombstoning whole visible runs
-    through [wp_deleteNode_store] (reading each node's flags, length
+    through [wp_Transaction__deleteNode_store] (reading each node's flags, length
     and right link through [own_store_state_node_acc_links]) and splits once
     more at the range end when the budget ends inside a run; the
     tombstone-set ghost follows the type's runs across each surgery
@@ -122,7 +122,9 @@ Proof.
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord".
   iDestruct "Hstore" as (client k pdel locs0 p0 bind acc) "Hown". iNamed "Hown". subst c.
   (* [s := tr.store]: the transaction names the store *)
+  iDestruct (own_transaction_changes_store_acc with "Hchanges") as "[Htrstore Hchangesback]".
   wp_auto.
+  iDestruct ("Hchangesback" with "Htrstore") as "Hchanges".
   iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
   iDestruct (own_store_state_aligned with "Hstate") as %Haligned.
   iDestruct (own_store_state_run_wf with "Hstate") as %Hwf0.
@@ -256,7 +258,7 @@ Proof.
     "Hruns" ∷ own_store_state s_loc (MkStoreState client k locsj pj bind pend pdel) ∗
     (* the transaction's record so far: the chars tombstoned here and, once
        one is, this text *)
-    "Hchanges" ∷ own_transaction_changes tr inserted (tombstoned ∪ dels)
+    "Hchanges" ∷ own_transaction_changes tr s_loc inserted (tombstoned ∪ dels)
                    (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})) ∗
     "Htrp" ∷ tr_ptr ↦ tr ∗
     "Hseq" ∷ own γs.(sn_seq) (● ((λ tm : type_model, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p0) : authR (gmapUR loc (gsetUR (YjsItem A)))) ∗
@@ -364,8 +366,8 @@ Proof.
           | exact Hsorted]. }
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
-      iSplitL "Htrstore Hchanges Hstore Hobservers".
-      { iExists m0, deleted0. iFrame "Htrstore Hstore Hobservers".
+      iSplitL "Hchanges Hstore Hobservers".
+      { iExists m0, deleted0. iFrame "Hstore Hobservers".
         iSplitL; last (iPureIntro; exact Hstart').
         iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
         iFrame "Hchanges".
@@ -467,8 +469,8 @@ Proof.
           | exact Hsorted]. }
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
-      iSplitL "Htrstore Hchanges Hstore Hobservers".
-      { iExists m0, deleted0. iFrame "Htrstore Hstore Hobservers".
+      iSplitL "Hchanges Hstore Hobservers".
+      { iExists m0, deleted0. iFrame "Hstore Hobservers".
         iSplitL; last (iPureIntro; exact Hstart').
         iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
         iFrame "Hchanges".
@@ -523,7 +525,7 @@ Proof.
     simpl negb. wp_auto.
     iDestruct ("Haccback" with "Haccval") as "Hruns".
     wp_for_post.
-    iFrame "Hacc Hobservers Htrstore".
+    iFrame "Hacc Hobservers".
     iFrame "Ht His_lb HΦ". iExists (S q), rem, locsj, pj, lsj, runsj, dels.
     iFrame "Hsp Hrem Hruns Hchanges Htrp Hseq Hhist Hdelete_set HtypesAuth".
     rewrite Hnextq -Haccright. iFrame "Hcur".
@@ -561,7 +563,7 @@ Proof.
       have Hrl2 : runs2 !! q = Some leftRun := split_runs_lookup_left runsj q (uint.nat rem) rq Hrq.
       have Hlen2 : length runs2 = S (length runsj) := split_runs_length runsj q (uint.nat rem) rq Hrq.
       (* tombstone the truncated left half through the store *)
-      wp_apply (wp_deleteNode_store tr s_loc
+      wp_apply (wp_Transaction__deleteNode_store tr s_loc
                   (MkStoreState client k (<[tv.(yjs.Text.inner') := ls2]> locsj)
                      (<[tv.(yjs.Text.inner') := MkTypeModel runs2]> pj) bind pend pdel)
                   tv.(yjs.Text.inner') ls2 (MkTypeModel runs2) q lc leftRun _ _ _
@@ -620,7 +622,7 @@ Proof.
         rewrite /flip_run /leftRun /split_run_left /=.
         etrans; [exact (char_ids_take (uint.nat rem) (run_items rq)) |].
         rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
-      iFrame "Hacc Hobservers Htrstore".
+      iFrame "Hacc Hobservers".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (uint.nat rem))),
         (<[tv.(yjs.Text.inner') := ls2]> locsj), (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), ls2, runs3,
@@ -658,7 +660,7 @@ Proof.
            rewrite Hp2tomb Htombj. apply elem_of_union_l. exact Hi0.
       * rewrite /runs3 length_insert Hlen2. lia.
     + (* Len <= remaining: tombstone the WHOLE run and spend its length *)
-      wp_apply (wp_deleteNode_store tr s_loc (MkStoreState client k locsj pj bind pend pdel)
+      wp_apply (wp_Transaction__deleteNode_store tr s_loc (MkStoreState client k locsj pj bind pend pdel)
                   tv.(yjs.Text.inner') lsj (MkTypeModel runsj) q lc rq _ _ _ Hlj Hpj Hlc Hrq with "[$Hruns $Hchanges]").
       iIntros "[Hruns Hchanges]".
       iEval (simpl) in "Hruns".
@@ -693,7 +695,7 @@ Proof.
       have Hdelsarr' : dels ∪ char_ids (run_items rq) ⊆ char_ids (tm_arr ts).
       { apply union_least; [exact Hdelsarr |].
         rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
-      iFrame "Hacc Hobservers Htrstore".
+      iFrame "Hacc Hobservers".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (length (run_items rq)))),
         locsj, (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), lsj, runs3,

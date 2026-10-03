@@ -1,4 +1,4 @@
-(** [store.notify] and its walk [textDelta] (issue #198 Part II C2): at the
+(** [Transaction.notify] and its walk [textDelta] (issue #198 Part II C2): at the
     end of a transaction, for every root type it changed that somebody
     observes, one walk of the type's runs classifies each char by the
     transaction's record ([record_step]) into the Yjs delta, and every
@@ -11,7 +11,7 @@
       [Poll]'s ([textobserver/Poll.v]) with the record in place of the
       observer's token: the two proofs share [wp_deltaSnoc] and the
       trailing-retain trim, and stay separate as the Go loops do.
-    - [wp_store__notify]: the transaction in, the store out with its
+    - [wp_Transaction__notify]: the transaction in, the store out with its
       observers at its data's state ([own_store] with coincident states, what
       the write lock takes back): every observer of a changed root is called
       once with the delta from the root's start snapshot to its current one
@@ -30,8 +30,8 @@ From New.proof.item Require Import item.
 From New.proof.ytype Require Import ytype.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
-From New.proof.store Require Import model value heap wp_private Integrate.
-From New.proof.transaction Require Import transaction.
+From New.proof.store Require Import store.
+From New.proof.transaction Require Import model heap wp_private.
 From New.proof.delta Require Import delta.
 
 (* iris.algebra pushes [nat_scope], retuning the default [<] / [≤]; the
@@ -39,7 +39,7 @@ From New.proof.delta Require Import delta.
    [Z_scope] as the default. *)
 Local Open Scope Z_scope.
 
-Section store_notify.
+Section transaction_notify.
 
 Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 
@@ -384,11 +384,11 @@ Qed.
     moves to the current state, the observers of the other roots having
     nothing new to hear. The transaction's record is consumed:
     [transact] releases the lock right after. *)
-Lemma wp_store__notify (s_loc tr : loc) (γs : store_names) (γh : history_names)
+Lemma wp_Transaction__notify (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input)
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
   {{{ is_pkg_init yjs ∗ own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
-    s_loc @! (go.PointerType yjs.store) @! "notify" #tr
+    tr @! (go.PointerType yjs.Transaction) @! "notify" #()
   {{{ RET #(); own_store s_loc γs γh c h m pend deleted m deleted }}}.
 Proof.
   wp_start as "Htx".
@@ -598,4 +598,4 @@ Proof.
   rewrite -Hdoneall. exact Hnin.
 Qed.
 
-End store_notify.
+End transaction_notify.
