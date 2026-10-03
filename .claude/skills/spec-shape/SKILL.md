@@ -14,11 +14,6 @@ bullet title (`spec-shape "Public specs take the whole type"`).
   `is_Text`, `is_text_lb`, `is_origin_id`); `own_X` is ownership,
   `dfrac`-parameterized when it is plain heap state (`own_ytype`, `own_dll`,
   `own_item_map`; `own_fresh_item` is exclusive and consumed by Integrate).
-- **A predicate's name must carry its meaning.** When it cannot, the comment
-  above the definition owes the reader BOTH the meaning and the places it is
-  used: a qualifier naming the proof step that produces or consumes it
-  (`apply_live_refine`) is not self-explanatory. Restating the formula in prose
-  adds nothing the `Definition` line does not say.
 - **Spec shape, for every function, exported or not**:
   `{{{ own_X o dq m ∗ ⌜Pre m⌝ }}} … {{{ own_X o dq m' ∗ ⌜Post m m' ret⌝ }}}`,
   with persistent `is_X o m` handles as duplicable hypotheses carrying monotone
@@ -105,9 +100,8 @@ and these criteria, with a prompt like:
 > (b) two or more clauses about one data structure or semantic unit that
 > should be one named predicate (propose the name); (c) a predicate whose
 > argument is a struct address while it owns or describes only one field;
-> (d) a new predicate whose name does not carry its meaning; (e) a fact
-> stated twice, or derivable from the other conjuncts. Do not report
-> proof-script style. If nothing qualifies, say so.
+> (d) a fact stated twice, or derivable from the other conjuncts. Do not
+> report proof-script style. If nothing qualifies, say so.
 
 Fix each finding, or record in the PR's "Specs and invariants" section why
 it stands. A reviewer asked for gaps usually reports some; a finding that
