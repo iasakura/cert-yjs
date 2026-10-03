@@ -159,11 +159,11 @@ Illustrative only. Regenerate from live sources; do not just replay these.
   引数が付くことが多いのはなぜか。」
   Answer: `is_X` = persistent handle / read-only fact (duplicable);
   `own_X` = ownership, `dfrac`-parameterized when it is plain heap state so it
-  can be shared fractionally. (`CLAUDE.md` Predicate naming.)
+  can be shared fractionally. (spec-shape skill, "`is_X` / `own_X`".)
 - 「このプロジェクトのビルドは Go を編集した後になぜ必ず goose を再実行する
   必要があるのか。」
   Answer: `make` alone checks the stale translation; the Go change silently has
-  no effect until goose regenerates `src/code`. (`CLAUDE.md` Workflow.)
+  no effect until goose regenerates `src/code`. (`CLAUDE.md` Build and test.)
 - 「y-octo の `HashSet` / `HashMap` / `Vec` は Go では何に写すのが方針か。
   なぜ証明の都合でスライスに落としてはいけないのか。」
   Answer: `map` (`map[K]struct{}` for a set) / `map` / slice; faithfulness to a
@@ -175,7 +175,7 @@ Illustrative only. Regenerate from live sources; do not just replay these.
   述べられ、ヒープセルやノード位置に触れてはいけないのはなぜか。」
   Answer: specs are contracts for callers; leaking internal heap state couples
   callers to the representation and breaks the `is_X`/`own_X` abstraction that
-  lets the rep refactor freely. (`CLAUDE.md` Public specs.)
+  lets the rep refactor freely. (spec-shape skill, "Everything a spec says about a value goes through a model parameter".)
 - 「store のロックが `sync.Mutex` から `sync.RWMutex` に変わった動機は何で、
   なぜ read 側の検証が別途重い作業になったのか。」
   Answer: concurrent readers for read-APIs like `Text.Len` (#22); RWMutex's

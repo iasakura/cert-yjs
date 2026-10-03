@@ -193,7 +193,8 @@ func (s *store) applyDeleteSpans(tr *Transaction, spans []deleteSpan) {
 // lists); callers hold s.mu. A free function, not a *store method as in
 // y-octo (whose &mut self borrows the whole store either way): it touches
 // only the node, its parent type and the transaction's record, and the
-// footprint must be visible in the program (CLAUDE.md "Spec shape").
+// footprint must be visible in the program (spec-shape skill, "The
+// footprint is the whole receiver").
 func deleteNode(tr *Transaction, it *item) {
 	if it.Indexable() {
 		tr.recordDelete(it)
@@ -206,8 +207,8 @@ func deleteNode(tr *Transaction, it *item) {
 // store::add_item), so the store holds the full item set. Takes the items
 // map instead of being a *store method as in y-octo (whose &mut self
 // borrows the whole store either way): it touches nothing else of the
-// store, and the footprint must be visible in the program (CLAUDE.md
-// "Spec shape").
+// store, and the footprint must be visible in the program (spec-shape
+// skill, "The footprint is the whole receiver").
 func addNode(items map[Client][]*item, it *item) {
 	client := it.id.clientId
 	items[client] = append(items[client], it)
@@ -306,8 +307,9 @@ func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 // and the fresh right node covering the rest is spliced after it, its left
 // origin the last id of the truncated half and its right origin copied from
 // n. A free function, not a *store method: it touches only the node and its
-// neighbours, and the footprint must be visible in the program (CLAUDE.md
-// "Spec shape"); splitNode adds the per-client run-list insertion.
+// neighbours, and the footprint must be visible in the program (spec-shape
+// skill, "The footprint is the whole receiver"); splitNode adds the
+// per-client run-list insertion.
 func splitItem(n *item, diff uint64) *item {
 	olid := newId(n.id.clientId, n.id.clock+diff-1)
 	// Split the content through a []byte round-trip rather than slicing the

@@ -39,7 +39,7 @@ difference is reported (see Reporting).
 gotchas `build.sh` absorbs, and one-time environment setup. CI runs the same
 `build.sh`.
 
-## Specs and invariants
+## Naming and specs
 
 - **Spell every identifier out.** No cryptic abbreviations, in predicates,
   lemmas, binders and Go names alike: `key_pair` not `kp`, `state` not `st`,
@@ -47,70 +47,10 @@ gotchas `build.sh` absorbs, and one-time environment setup. CI runs the same
   reconstruct what a name stands for. Inside a proof script short forms are
   fine, where the name lives a few lines and the goal is in view; a name in a
   definition, a spec or the Go is spelled out.
-- **`is_X` / `own_X`**: `is_X` is persistent, duplicable knowledge (`is_Store`,
-  `is_Text`, `is_text_lb`, `is_origin_id`); `own_X` is ownership,
-  `dfrac`-parameterized when it is plain heap state (`own_ytype`, `own_dll`,
-  `own_item_map`; `own_fresh_item` is exclusive and consumed by Integrate).
-- **A predicate's name must carry its meaning.** When it cannot, the comment
-  above the definition owes the reader BOTH the meaning and the places it is
-  used: a qualifier naming the proof step that produces or consumes it
-  (`apply_live_refine`) is not self-explanatory. Restating the formula in prose
-  adds nothing the `Definition` line does not say.
-- **Spec shape, for every function, exported or not**:
-  `{{{ own_X o dq m ∗ ⌜Pre m⌝ }}} … {{{ own_X o dq m' ∗ ⌜Post m m' ret⌝ }}}`,
-  with persistent `is_X o m` handles as duplicable hypotheses carrying monotone
-  knowledge (`is_Text`'s grow-only `L`). The return value is related to the
-  model the same way (`RET #(f m)` or `⌜ret = f m⌝`).
-- **The footprint is the whole receiver.** `own_X` / `is_X` is THE predicate of
-  the receiver's type `X`, the one that owns every field of an `X`, not any
-  predicate with an `own_` name: `s.Method()` takes `own_X s` whole and gives
-  `own_X s` back, never a selection of its fields
-  (`own_store_items s types ∗ own_type_pool dq types`) or a part borrowed out
-  of it. If a proof only needs a part, the Go must say so (`s.fld.Method()`,
-  `Method(s.fld, …)`), so the footprint is visible in the program and not only
-  deep in the spec. Re-establishing `X`'s invariant is the callee's job, not
-  something a postcondition hands to the caller.
-  - An unexported method that is only an internal step of one public method,
-    called while the receiver is open, cannot take `own_X` whole. First narrow
-    the Go footprint so it can (a free function over the fields it touches, as
-    `addNode` / `deleteNode`). If a lemma must still be stated while `X`'s
-    invariant is broken, it is `#[local]` and goes through a RELAXED
-    representation predicate (`own_X_<relaxation>`, defined in `heap.v` next to
-    `own_X`, its extra model parameters tracking the pure state of the
-    suspended invariant, with fold/unfold laws to `own_X`), never through a
-    bare list of call-site resources; no such lemma currently exists. A helper
-    with standalone meaning still takes `own_X` whole.
-- **Everything a spec says about a value goes through a model parameter.**
-  Forbidden in a spec: struct field points-tos (`s .[store, "items"] ↦ …`), raw
-  slices or maps of internal records, goose struct values and their fields
-  (`yjs.item.t`, `itemVal.(left')`, `idv.(clock')`), flag bytes (`W8 2`), and
-  `w64` / `uint.Z` arithmetic where the model already has the fact
-  (`cell_covers`, `cell_fits`). Public predicates have the public model
-  (`YjsItem` lists, `DocModel`, `gset YjsId`); store-internal helpers have the
-  cell model (`item_cell` / `type_state`), and a node pointer appears only as
-  the `ic_loc` / `node_loc` of a model cell.
-- **Specs stay intuitive.** The developer's idea of a function is a few
-  sentences, so its spec is a few conjuncts, never ten. Conditions are grouped
-  by the data structure or semantic unit they are about into one named
-  predicate (`pool_invs`, `doc_registry_coh`, `cell_covers`), not listed as
-  loose clauses. When a proof needs a new fact, first find the predicate it
-  belongs to and add it there; a new top-level conjunct is the last resort, for
-  a fact no existing predicate is about.
-- **No over-specification.** A postcondition states each fact once (not
-  `setintegrate input arr = Some arr'` next to its unfolding
-  `arr' = take midx arr ++ …`) and states only what the function means. A fact
-  that follows from the others, or that a caller merely finds convenient, is a
-  lemma over the model or the predicates in the layer file, not a conjunct.
-- **One spec per function.** A second spec exists only if it is used and cannot
-  be derived from the first. Specs that are unused, or that are a stepping
-  stone of one proof, are deleted or made `#[local]` in that proof's file:
-  Integrate's stepping stone is folded into `wp_Store__Integrate`.
-- **Reuse the rocq-yjs model, don't invent independent proofs.** State WP specs
-  as refinements of the pure model and compose with its lemmas
-  (`YjsArrInvariant_integrate`, `setintegrate_eq_integrate`,
-  `integrate_commutative`, `yjs_strong_convergence`). Extract algorithmic cores
-  into their own Go functions (`scanConflicts`, `findIntegrationLeft`) so hard
-  loops are provable in isolation.
+- **Specs, predicates and invariants follow the `spec-shape` skill.** Load
+  it before writing or changing a WP spec, a representation predicate, an
+  invariant, or a definition in `model.v` / `value.v` / `heap.v`, and run its
+  fresh-context review before pushing such a change.
 
 ## Proof layout
 
@@ -139,10 +79,7 @@ it.
   unexported helpers' specs; `<type>.v` a `Require Export` facade, the only
   name downstream files Require. A layer a type does not need is absent (`id`
   has no model of its own; `Text` is a handle over a store type, so it starts
-  at `heap.v`). Type-less files stay at the top level: `core.v` (rocq-yjs
-  re-export), `prelude.v` (goose package-init instances), `algebra.v` (generic
-  Iris RA laws), `network_model.v` and `history.v` (the pure op-history model
-  and its ghost layer), `ws_prelude.v` and `ws_relay.v` (WebSocket, issue #107).
+  at `heap.v`). Type-less files stay at the top level of `src/proof/`.
 - **Definitions** live in `model.v` / `value.v` / `heap.v`, never in a WP file.
 - **Lemmas.** A layer holds only what a caller must know: laws of its
   predicates, relations between predicates (coherence, projection,
@@ -159,22 +96,16 @@ it.
   does not belong in the layer. Read the header, not this file, for what is in
   a given file.
 
-Require order is `core -> prelude -> algebra -> id -> item -> ytype ->
-doc/model -> network_model -> history -> transaction -> store -> text ->
-textobserver -> doc`.
-The pure layers
-form their own sub-DAG below the Iris one, and each file's `.vok` is an
-independent job, so no single heavy proof serializes the build.
-
 ## Reporting
 
-- **Spec and invariant changes belong in the PR description.** A PR that
-  changes a WP spec, a representation predicate, or an invariant says which one
-  and how, before and after, and why; that is what the review is about. A PR
-  that changes none says so. So: "`wp_Store__Integrate` takes
+- **Spec and invariant changes belong in the PR description**, which is
+  written for a reader who has not opened the diff. A PR that changes a WP
+  spec, a representation predicate, or an invariant says which one, before
+  and after, and why, in full sentences, every project term explained at first
+  use; a PR that changes none says so. So: "`wp_Store__Integrate` takes
   `own_store_struct` whole where it took `own_store_items ∗ own_type_pool`, so
   that re-establishing the invariant is the callee's job", not "rethreaded the
-  Integrate proof".
+  Integrate proof". The `pr-description` skill has the layout and the rest.
 - **Report unrequested changes** in the conversation as well: any change to
   `yjs/*.go` behavior, to a public function's spec or signature, or to a
   proof-layer contract that was not explicitly asked for. Any simplification
