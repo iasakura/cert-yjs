@@ -15,11 +15,12 @@ bullet title (`spec-shape "Public specs use only public predicates"`).
   grows (`is_Text`'s grow-only `L`); `own_X` is ownership,
   `dfrac`-parameterized when it is plain heap state (`own_ytype`, `own_dll`,
   `own_item_map`; `own_fresh_item` is exclusive and consumed by Integrate).
-- **Public specs use only public predicates.** A non-public predicate
-  describes a part of a value, or a state in which its type's invariant
-  need not hold; new ones are named `own_X_…` / `is_X_…`. Every other
-  predicate is public, among them each type's `own_X` / `is_X`, which
-  describes a whole value with its invariant. The specification of an
+- **Public / non-public predicates**: a non-public predicate describes a
+  part of a value, or a state in which its type's invariant need not hold;
+  new ones are named `own_X_…` / `is_X_…`. Every other predicate is public,
+  among them each type's `own_X` / `is_X`, which describes a whole value
+  with its invariant.
+- **Public specs use only public predicates.** The specification of an
   exported function uses only public predicates, so an exported method
   takes its receiver's predicate whole, gives it back whole, and
   re-establishes the invariant itself. Non-public predicates appear only in
