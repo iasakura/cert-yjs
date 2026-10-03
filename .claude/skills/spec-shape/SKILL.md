@@ -8,43 +8,25 @@ description: The rules for cert-yjs WP specs, representation predicates and inva
 ## Rules
 
 These are the project's rules for specifications. Code comments cite them by
-bullet title (`spec-shape "Public specs take the whole type"`).
+bullet title (`spec-shape "Public specs use only public predicates"`).
 
 - **`is_X` / `own_X`**: `is_X` is persistent, duplicable knowledge (`is_Store`,
-  `is_Text`, `is_text_lb`, `is_origin_id`); `own_X` is ownership,
+  `is_Text`, `is_text_lb`, `is_origin_id`), monotone where the model only
+  grows (`is_Text`'s grow-only `L`); `own_X` is ownership,
   `dfrac`-parameterized when it is plain heap state (`own_ytype`, `own_dll`,
   `own_item_map`; `own_fresh_item` is exclusive and consumed by Integrate).
-- **Spec shape, for every function, exported or not**:
-  `{{{ own_X o dq m ∗ ⌜Pre m⌝ }}} … {{{ own_X o dq m' ∗ ⌜Post m m' ret⌝ }}}`,
-  with persistent `is_X o m` handles as duplicable hypotheses carrying monotone
-  knowledge (`is_Text`'s grow-only `L`). The return value is related to the
-  model the same way (`RET #(f m)` or `⌜ret = f m⌝`). For an exported
-  function `own_X` / `is_X` is a public predicate (the next bullet); for an
-  unexported one it may be a non-public predicate (the bullet after).
-- **Public specs take the whole type.** The public `own_X` / `is_X` of an
-  exported Go type `X` describes a whole `X`, every field of it, and every
-  public specification is stated over it: an exported method on `s : X`
-  takes `own_X s` whole and gives `own_X s` back whole, never a selection
-  of its parts, so re-establishing `X`'s invariant is the method's job and
-  not something its postcondition hands to the caller.
-- **Private specs may take parts.** The specification of an unexported
-  function may be stated over non-public predicates: a part of a public
-  predicate, or a predicate for a state in which one of the public
-  predicate's invariants is suspended, whose model parameters track what is
-  suspended. A part is not a list of resources gathered at one call site. A
-  part about one field takes that field's reference (the map reference, the
-  slice, the node address), not the address of the struct around it.
-  - Definitions stay in `model.v` / `value.v` / `heap.v`, never in a WP
-    file. A non-public predicate that several methods go through is defined
-    in `heap.v` with its laws.
-  - Why: a method's proof splits the public predicate into the parts it
-    touches, steps the private functions over them, and reassembles it.
-    Taking the whole type everywhere would push that structure into the Go
-    instead (structs split, or methods turned into free functions, only so
-    that a part can stand as a receiver) and would produce partial
-    predicates in disguise.
-- **Everything a spec says about a value goes through a model parameter.**
-  Forbidden in a spec: struct field points-tos (`s .[store, "items"] ↦ …`), raw
+- **Public specs use only public predicates.** A non-public predicate
+  describes a part of a value, or a state in which its type's invariant
+  need not hold; new ones are named `own_X_…` / `is_X_…`. Every other
+  predicate is public, among them each type's `own_X` / `is_X`, which
+  describes a whole value with its invariant. The specification of an
+  exported function uses only public predicates, so an exported method
+  takes its receiver's predicate whole, gives it back whole, and
+  re-establishes the invariant itself. Non-public predicates appear only in
+  specifications of unexported functions.
+- **Everything a spec says about a value goes through a model parameter**,
+  the return value included (`RET #(f m)` or `⌜ret = f m⌝`). Forbidden in a
+  spec: struct field points-tos (`s .[store, "items"] ↦ …`), raw
   slices or maps of internal records, goose struct values and their fields
   (`yjs.item.t`, `itemVal.(left')`, `idv.(clock')`), flag bytes (`W8 2`), and
   `w64` / `uint.Z` arithmetic where the model already has the fact
@@ -98,10 +80,9 @@ and these criteria, with a prompt like:
 > existing conjunct (name the predicate), or a new conjunct whose reason
 > for not fitting is missing from the PR description;
 > (b) two or more clauses about one data structure or semantic unit that
-> should be one named predicate (propose the name); (c) a predicate whose
-> argument is a struct address while it owns or describes only one field;
-> (d) a fact stated twice, or derivable from the other conjuncts. Do not
-> report proof-script style. If nothing qualifies, say so.
+> should be one named predicate (propose the name); (c) a fact stated
+> twice, or derivable from the other conjuncts. Do not report proof-script
+> style. If nothing qualifies, say so.
 
 Fix each finding, or record in the PR's "Specs and invariants" section why
 it stands. A reviewer asked for gaps usually reports some; a finding that

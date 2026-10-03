@@ -57,8 +57,10 @@ but its cert-yjs-specific facts drift, verify against code).
   share, `Len.v`).
 - `src/proof/store/applyUpdate.v`: `wp_store__applyUpdate_certs` (`own_store`-level).
 - `src/proof/doc/ApplySyncUpdate.v`: doc-level applyUpdate wrapper.
-- spec-shape skill "Spec shape" rule (the `{{{ own_X o dq m ∗ ⌜Pre⌝ }}} … {{{ ⌜Post⌝ }}}`
-  shape; persistent `is_X` as duplicable monotone-knowledge hypotheses).
+- spec-shape skill rules "Public specs use only public predicates" and
+  "Everything a spec says about a value goes through a model parameter"
+  (public specs over public `own_X` / `is_X` and their models; persistent
+  `is_X` as duplicable monotone knowledge).
 - Memory: `insert-proof-done.md`, `general-insert-progress.md`,
   `delete-proof-done.md`, `apply-update-progress.md`,
   `issue-22-rwmutex-progress.md`, `sync-fragment-specs.md`, `issue-40-done.md`.
