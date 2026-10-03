@@ -19,10 +19,11 @@ Four sections, in this order:
   the What.
 - `## Specs and invariants`: every WP spec, representation predicate and
   invariant the PR changes, each with before, after and why. For each new
-  conjunct, the existing predicate it was tried in and why it does not fit
-  there; for each new `own_X` / `is_X`, what its argument owns and what its
-  name means (the `spec-shape` skill produces these answers). A PR that
-  changes none says `None.` with one sentence on why.
+  conjunct, the existing predicates its condition was considered for and
+  why it does not fit naturally into any of them (`spec-shape`, "A new
+  conjunct goes into an existing predicate, or the PR says why not"); for
+  each new `own_X` / `is_X`, what its argument owns and what its name
+  means. A PR that changes none says `None.` with one sentence on why.
 
 Then the three-way difference and unrequested-change reports that CLAUDE.md
 (Reporting) asks for, when there are any.

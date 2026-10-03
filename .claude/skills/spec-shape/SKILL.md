@@ -1,6 +1,6 @@
 ---
 name: spec-shape
-description: The rules for cert-yjs WP specs, representation predicates and invariants, the procedure for placing a fact a proof needs, and the fresh-context review of a spec diff. Use before writing or changing a WP spec, a representation predicate, an invariant, or a definition in model.v / value.v / heap.v; whenever a proof needs a new fact and you are about to add a conjunct; when you define a new own_X / is_X; and before pushing any such change.
+description: The rules for cert-yjs WP specs, representation predicates and invariants, and the fresh-context review of a spec diff. Use before writing or changing a WP spec, a representation predicate, an invariant, or a definition in model.v / value.v / heap.v; whenever a proof needs a new fact and you are about to add a conjunct; when you define a new own_X / is_X; and before pushing any such change.
 ---
 
 # Spec shape
@@ -61,9 +61,12 @@ bullet title (`spec-shape "Public specs take the whole type"`).
   sentences, so its spec is a few conjuncts, never ten. Conditions are grouped
   by the data structure or semantic unit they are about into one named
   predicate (`pool_invs`, `doc_registry_coh`, `cell_covers`), not listed as
-  loose clauses. When a proof needs a new fact, first find the predicate it
-  belongs to and add it there; a new top-level conjunct is the last resort, for
-  a fact no existing predicate is about.
+  loose clauses.
+- **A new conjunct goes into an existing predicate, or the PR says why
+  not.** When a spec or a predicate gains a conjunct, first consider
+  whether its condition fits naturally into the predicate of an existing
+  conjunct. If it does not, the PR description says so for that conjunct,
+  with the reason. The review checks every new conjunct against this rule.
 - **No over-specification.** A postcondition states each fact once (not
   `setintegrate input arr = Some arr'` next to its unfolding
   `arr' = take midx arr ++ …`) and states only what the function means. A fact
@@ -80,58 +83,25 @@ bullet title (`spec-shape "Public specs take the whole type"`).
   into their own Go functions (`scanConflicts`, `findIntegrationLeft`) so hard
   loops are provable in isolation.
 
-## Integrate before you add
-
-A proof in progress adds whatever closes the current goal. That is how a
-postcondition ends up with six loose clauses about one thing, or a
-predicate over one field takes the address of the whole struct. The fix is
-not a later cleanup: at the moment a fact is needed, find where it belongs.
-
-### When a proof needs a new fact
-
-1. **Say the fact in one sentence, naming the data structure or semantic
-   unit it is about** ("the transaction record lists every id the delete
-   sweep marked", not "`dom m' = dom m ∪ …`"). If you cannot name the unit,
-   the fact is not understood yet.
-2. **List the existing homes.** Read the header (the API lines at the top)
-   of `heap.v` and `model.v` of each type the fact mentions, and the
-   definition of the receiver's `own_X` / `is_X`. The candidates are the
-   predicates about that unit (`pool_invs`, `doc_registry_coh`,
-   `cell_covers`, the model's coherence relations).
-3. **Try each candidate.** Adding the fact to an existing predicate is the
-   default: the predicate's laws and its callers absorb it. It does not fit
-   only for a reason you can write down: the predicate is about a different
-   unit, or it is stated where this fact does not hold (say where). No
-   written reason: it goes there.
-4. **Neighbours that are one meaning become one predicate.** If the new
-   fact joins other loose clauses about the same unit, define one named
-   predicate for all of them in the layer file (`model.v` for pure facts,
-   `heap.v` for resources) and state the spec with it.
-5. **A new top-level conjunct is the last resort,** for a fact no
-   predicate is about. Keep the reason from step 3; it goes into the PR's
-   "Specs and invariants" section.
-
-### When you define a new `own_X` / `is_X`, or finish a postcondition
-
-Check it against the Rules above, in particular "`is_X` / `own_X`", "A
-predicate's name must carry its meaning", "Public specs take the whole
-type", "Private specs may take parts" and "No over-specification".
-
 ## Fresh-context review before push
 
 The session that wrote the proof is biased toward the conjuncts it added.
 Before pushing a change to a spec, predicate or invariant, launch a
-subagent (Agent tool, general-purpose) that sees only the diff and these
-criteria, with a prompt like:
+subagent (Agent tool, general-purpose) that sees only the diff, the PR
+description (the open PR's body, or its draft when the PR is not open yet)
+and these criteria, with a prompt like:
 
 > Review the specification shape of `git diff origin/main...HEAD -- src/proof`
-> in the cert-yjs repository. The criteria are every bullet of the "Rules"
+> in the cert-yjs repository, against the pull request description pasted
+> after this prompt. The criteria are every bullet of the "Rules"
 > section of `.claude/skills/spec-shape/SKILL.md`; read it first, then the
 > headers of the `model.v` / `value.v` / `heap.v` files the diff touches,
 > since the existing predicates listed there are where a new fact should
 > go. Report each violation with file:line, the rule's bullet title, and a
 > concrete proposal. Look hardest for: (a) a conjunct added to a spec or
-> predicate that belongs in an existing predicate (name the predicate);
+> predicate whose condition fits naturally into the predicate of an
+> existing conjunct (name the predicate), or a new conjunct whose reason
+> for not fitting is missing from the PR description;
 > (b) two or more clauses about one data structure or semantic unit that
 > should be one named predicate (propose the name); (c) a predicate whose
 > argument is a struct address while it owns or describes only one field;
