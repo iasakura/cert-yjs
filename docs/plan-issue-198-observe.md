@@ -1135,7 +1135,10 @@ Decided, with the rejected alternatives:
   and brought a diff the references do not have.
 - The store methods stay on the store, with the transaction as an argument
   (Yjs's shape; yrs makes them methods of the transaction, which owns the
-  write guard). The specs of the unexported methods are over parts of the
+  write guard). Reversed after C2: Part III (section 19) moves every method
+  that records into the transaction to the transaction, so that the store
+  knows nothing of transactions and the transaction's predicates sit in one
+  place above the store. The specs of the unexported methods are over parts of the
   store (`own_store_state` and the record for the cell-level steps,
   `own_store_data` and `own_transaction_record` for `applyUpdate` and
   `applyDeleteSpans`), never over the observers, and the transitions
@@ -1186,9 +1189,132 @@ divergence in the Go.
 | dispatch | the end of `cleanupTransactions`, before merge and gc (Transaction.js:211-301) | `commit`, then `call_observers` (transaction.rs:1031, :978) | a thread every 100 ms with an encoded diff (publisher.rs:13-116) | the end of `transact`, synchronous, under the lock |
 | the registry | on the type (`YType._eH`, ytype.js:667) | on the branch (`Branch.observers`, branch.rs:214) | on a per-document publisher that polls the store (`DocPublisher`, publisher.rs:15) | `store.observers` keyed by type: the pool's type cells keep their shape |
 | what a text handle holds | its document (`YType.doc`, ytype.js:661) | a bare branch pointer (`TextRef(BranchPtr)`, types/text.rs:91); the lock arrives with the transaction | the store (`YTypeRef.store`, doc/types/mod.rs:45) | `Text.store`: the store is where the lock and the observers live (y-octo) |
-| the transaction's handle on the document | `transaction.doc` (Transaction.js:56) | `TransactionMut.store`, the store's write guard (transaction.rs:446) | n/a | `Transaction.store`; the store stays the receiver of `Integrate`, `applyUpdate`, `applyDeleteSpans`, which take `tr` (Yjs's `integrateStructs(transaction, store, …)`), where yrs makes them methods of the transaction |
+| the transaction's handle on the document | `transaction.doc` (Transaction.js:56) | `TransactionMut.store`, the store's write guard (transaction.rs:446) | n/a | `Transaction.store`; through C2 the store is the receiver of `Integrate`, `applyUpdate`, `applyDeleteSpans`, which take `tr` (Yjs's `integrateStructs(transaction, store, …)`); Part III makes them methods of the transaction, as yrs |
 | the delta | `getDelta` over `insertSet` / `deleteSet` through `toDelta` (YEvent.js:95-123) | the `get_delta` walk with `has_added` / `has_deleted` (text.rs:1315-1340) | none (no positional observe) | `textDelta`: the same walk per char, verified as `text_delta before now` |
 | the callback | `(event, transaction)` | `(&TransactionMut, &TextEvent)` | `(&[u8], &[History])` | `func(delta []DeltaOp)` |
 | the initial load | the binding reads `toString()` then observes; atomic by the single thread | the same | n/a | `Observe` calls back with the whole text, under the lock |
 | the order of notification | the insertion order of `changed` (a `Map`) | `HashMap` order | n/a | Go map order |
 | cleanup after the observers | merge (`tryToMergeWithLefts`), gc, the `update` emit (Transaction.js:266-301) | the same, in `commit` | n/a | none (T3) |
+
+## 19. Part III: the transaction owns the recording
+
+Decided after C2 (PR #213), its own PR between C2 and C3.
+
+### 19.1 Why
+
+Through C2 every store method that records into the transaction takes it
+as an argument (`s.Integrate(tr, …)`, `s.applyUpdate(tr, …)`,
+`s.applyDeleteSpans(tr, …)`, `deleteNode(tr, …)`), Yjs's shape
+(`integrateStructs(transaction, store, …)`, `src/utils/encoding.js:97`).
+In the proofs this inverts the layering: the record's predicate
+(`own_transaction_changes`) must sit below the store, because the store's
+cell-level specs mark it, while the transaction's predicate
+(`own_transaction`) must sit above the store, because it owns `own_store`.
+One Go type ends up with its predicates in two directories, the handle in
+`store/heap.v`, and every store loop (`Integrate`, `deleteRange`,
+`applyDeleteSpans`, `applyUpdate`, `repair`'s `integrateDecoded`) threads
+the record through its invariants.
+
+Part III moves the methods that record to the transaction, yrs's shape
+(`TransactionMut::integrate`, `apply_update`, `apply_delete`, `delete`,
+`commit`: `src/block.rs:984`, `src/transaction.rs:820`, `:633`, `:732`,
+`:1031`): the store keeps the structural primitives, which record nothing,
+and the transaction owns everything that records. The store then knows
+nothing of transactions, `transaction/` sits above `store/` and holds every
+predicate and proof of the `Transaction` type, and the inversion is gone.
+
+### 19.2 The Go
+
+What stays on the store, record-free: `integrateCore`, `addNode`,
+`repair`, `splitNode`, `splitAtAndGetRight` / `splitAtAndGetLeft`,
+`GetNode`, `hasNode`, `depsArrived`, `getOrCreateYType`, and the free
+function `deleteNode(it) bool`, which flips one node and reports whether it
+did (it was `deleteNode(tr, it)`, recording inside).
+
+What moves to the transaction, `yjs/transaction.go`:
+
+```go
+// integrate integrates item into parent and records it (yrs
+// TransactionMut::integrate, src/block.rs:984): the store's integrateCore
+// and addNode, then recordInsert. A nil parent means the item's own, as
+// resolved by store.repair; an item whose parent did not resolve is dropped.
+func (tr *Transaction) integrate(parent *yType, item *item)
+// deleteNode tombstones one node and records it when it was live (yrs
+// TransactionMut::delete, src/transaction.rs:732).
+func (tr *Transaction) deleteNode(it *item)
+// deleteRange, applyDeleteSpans, integrateDecoded, applyUpdate: the loops
+// of store.go, moved verbatim with s := tr.store; the per-item calls are
+// tr.integrate and tr.deleteNode.
+func (tr *Transaction) deleteRange(client Client, clock uint64, length uint64) bool
+func (tr *Transaction) applyDeleteSpans(spans []deleteSpan)
+func (tr *Transaction) integrateDecoded(ui updateItem)
+func (tr *Transaction) applyUpdate(structs []updateItem)
+// notify is the end of the transaction (yrs commit's call_observers).
+func (tr *Transaction) notify()
+// transact is lock, newTransaction, f, tr.notify(), unlock: a free
+// function over the store, since the transaction is created inside.
+func transact(s *store, f func(tr *Transaction))
+```
+
+The callers change one token each: `Text.InsertIn` calls
+`tr.integrate(t.inner, newit)`, `Text.DeleteIn` `tr.deleteNode(cur)`,
+`Doc.ApplySyncUpdate` `tr.applyUpdate(structs)` and
+`tr.applyDeleteSpans(deletes)`, `Doc.applyUpdate` likewise; `Text.Insert` /
+`Delete`, `Doc.Transact` and `Doc.ApplySyncUpdate` call `transact(t.store,
+…)` / `transact(d.store, …)`. The loops are not rewritten: recording stays
+where Yjs and yrs record it, per integrated item and per flipped node,
+inside the loop. The alternative, store loops that return what they did
+(the integrated spans with their parents, the flipped spans) for the
+transaction to record afterwards, was rejected: a span must be captured at
+integration time (a later struct of the same drain can split the node), so
+the loops would return lists of values and the proofs would carry those
+lists through the drain, new content neither reference has.
+
+### 19.3 The proofs
+
+The Require order becomes `… history -> delta -> store -> transaction ->
+text -> textobserver -> doc`. `transaction/` holds the whole type:
+
+- `transaction/model.v`: `transaction_start` and its laws
+  (`type_snapshot_start`, `text_delta_transaction`,
+  `type_snapshot_untouched`, `transaction_start_fresh`, `_replay`,
+  `_tombstone`), moved from `store/model.v`.
+- `transaction/heap.v`: the fields predicate (the store field and the three
+  record fields: `own_transaction_changes` with the store pointer back, as
+  C1 had it, since the methods are now the transaction's), `changed_types_bound`,
+  `own_transaction_record`, `own_transaction` (owning `own_store` with the
+  observers at the start state) and `own_transaction_observed_agree`, moved
+  from `store/heap.v`.
+- `transaction/wp_private.v`: `recordInsert`, `recordDelete`, `deleteNode`,
+  `integrateDecoded`; `transaction/integrate.v`, `deleteRange.v`,
+  `applyUpdate.v`: the moved loops, their statements unchanged but for the
+  receiver; `transaction/notify.v`, `transaction/transact.v`.
+- `store/` keeps `own_store_data`, `own_observers`, `own_store`, the lock
+  layer, the observers' predicates (`own_observed`, `is_text_snapshot`,
+  `is_text_callback`, `is_text_observed`, `own_type_observers`,
+  `own_observer_registry`: they are the store's fields) and the record-free
+  primitives (`integrateCore`, `repair`, `splitNode`, `GetNode`, …).
+
+The spec shapes do not change: `tr.integrate` and `tr.deleteNode` are
+stated at cell level (`own_store_state` and the transaction's fields), as
+`wp_store__Integrate` and `wp_deleteNode` are today, because `InsertIn` and
+`DeleteIn` call them inside cell-level loops; `tr.applyUpdate` and
+`tr.applyDeleteSpans` keep their statements over `own_store_data` and the
+record; `own_transaction`, `wp_Text__InsertIn` / `DeleteIn` / `StringIn`,
+`wp_transact` (was `wp_store__transact`), `wp_Doc__Transact` and
+`wp_Text__Observe` keep theirs. The work is a move: receivers, one load of
+`tr.store` at each method's start, the store field in the loop invariants,
+file paths, and CLAUDE.md's Require order.
+
+### 19.4 Reported differences
+
+| where | Yjs v14.0.0-rc.18 | yrs 0.27.2 | y-octo | the Go after Part III |
+|---|---|---|---|---|
+| the receiver of the integrate algorithm | free functions over the transaction and the store (`integrateStructs(transaction, store, ss)`, `src/utils/encoding.js:97`); `Item.integrate(transaction, offset)` records into the transaction | methods of the transaction, which owns the store's write guard (`TransactionMut::integrate`, `src/block.rs:984`; `apply_update`, `src/transaction.rs:820`; `apply_delete`, `:633`; `delete`, `:732`) | methods of the store, each locking inside; nothing records | methods of the transaction, as yrs; the store keeps the record-free primitives |
+| the end of a transaction | `cleanupTransactions` (Transaction.js:211-301) | `commit` (transaction.rs:1031) | n/a | `tr.notify()`, called by the free function `transact` |
+
+### 19.5 Order
+
+Land C2 (#213) with `own_transaction` in `store/heap.v`, noted there as
+interim; then this PR; then rebase C3 (#214), which touches
+`own_transaction_observed_agree` and the Mirror only.
