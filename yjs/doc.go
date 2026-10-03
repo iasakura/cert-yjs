@@ -28,6 +28,16 @@ func (d *Doc) GetOrCreateText(name string) *Text {
 	return &Text{store: s, inner: inner}
 }
 
+// Transact runs f as one transaction on the document (Yjs doc.transact,
+// src/utils/Doc.js:179; yrs Doc::transact_mut): every write inside is one
+// unit, and the observers of the types it changed are called once at its end.
+// f must not lock the document again (no Transact, Insert, Delete,
+// ApplySyncUpdate, String or Len on the same document: deadlock, #206 item
+// 2); it uses the In-variants with tr.
+func (d *Doc) Transact(f func(tr *Transaction)) {
+	transact(d.store, f)
+}
+
 // applyUpdate integrates a decoded update batch as one transaction (y-octo:
 // Doc::apply_update takes store.write() for the whole apply; Yjs applyUpdate
 // runs inside transact). The verified core is Transaction.applyUpdate, which

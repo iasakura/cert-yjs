@@ -287,13 +287,3 @@ func (tr *Transaction) notify() {
 func newTransaction(s *store) *Transaction {
 	return &Transaction{store: s, insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool)}
 }
-
-// Transact runs f as one transaction on the document (Yjs doc.transact,
-// src/utils/Doc.js:179; yrs Doc::transact_mut): every write inside is one
-// unit, and the observers of the types it changed are called once at its end.
-// f must not lock the document again (no Transact, Insert, Delete,
-// ApplySyncUpdate, String or Len on the same document: deadlock, #206 item
-// 2); it uses the In-variants with tr.
-func (d *Doc) Transact(f func(tr *Transaction)) {
-	transact(d.store, f)
-}
