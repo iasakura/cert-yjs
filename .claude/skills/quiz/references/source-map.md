@@ -6,6 +6,7 @@ The memory dir is
 `/home/ia/.claude/projects/-home-ia-ghq-github-com-iasakura-cert-yjs/memory/`.
 
 Anchors that rarely go stale: `CLAUDE.md` (rules + architecture table),
+`.claude/skills/spec-shape/SKILL.md` (the spec rules),
 `README.md`, `WORKFLOW.md`, `docs/proof-engineering.md` (technique + gotchas,
 but its Cert-Yjs-specific facts drift, verify against code).
 
@@ -31,7 +32,10 @@ but its Cert-Yjs-specific facts drift, verify against code).
 
 ## 不変量・表現述語 (invariants / representation predicates)
 
-- `CLAUDE.md` "Predicate naming" rule (`is_X` persistent vs `own_X` ownership).
+- spec-shape skill rules "Values of Cert-Yjs types appear in specs through
+  their predicates" (`own_X` / `is_X` as the representation predicate of a
+  type; `is_X` persistent vs `own_X` ownership) and "Public and non-public
+  predicates".
 - `src/proof/store/heap.v`: `store_inv` / `store_inv_ro` / `store_inv_excl`,
   `own_store`, `own_item_map`, `is_Store` / `is_type_lb` / `is_root` /
   `is_root_lb`, RWMutex wrappers.
@@ -56,8 +60,11 @@ but its Cert-Yjs-specific facts drift, verify against code).
   share, `Len.v`).
 - `src/proof/store/applyUpdate.v`: `wp_store__applyUpdate_certs` (`own_store`-level).
 - `src/proof/doc/ApplySyncUpdate.v`: doc-level applyUpdate wrapper.
-- `CLAUDE.md` "Public specs" rule (the `{{{ own_X o dq m ∗ ⌜Pre⌝ }}} … {{{ ⌜Post⌝ }}}`
-  shape; persistent `is_X` as duplicable monotone-knowledge hypotheses).
+- spec-shape skill rules "Public and private functions", "Specs of public
+  functions use only public predicates" and "Everything a spec says about a
+  value goes through a model parameter" (the spec of a function public for a
+  type takes its `own_X` / `is_X` whole; values only through model
+  parameters).
 - Memory: `insert-proof-done.md`, `general-insert-progress.md`,
   `delete-proof-done.md`, `apply-update-progress.md`,
   `issue-22-rwmutex-progress.md`, `sync-fragment-specs.md`, `issue-40-done.md`.
@@ -88,7 +95,7 @@ but its Cert-Yjs-specific facts drift, verify against code).
 
 ## 過去の問題・設計判断 (past problems / design decisions)
 
-- `docs/proof-engineering.md` §A-§F (every gotcha), `CLAUDE.md` rules.
+- `docs/proof-engineering.md` §A-§F (every gotcha), `CLAUDE.md` rules, spec-shape skill rules.
 - `git log --oneline -40` and PR merge commits (the refactor stack #47/#49/#64,
   RWMutex #22, ghost history #42, sync #51, grove N0 spike).
 - Memory (gotchas): `goose-method-stepping.md`,
