@@ -85,7 +85,7 @@ ffiMapping entries; see the note above):
 - A **dedicated** opam switch with Perennial installed (New / Perennial in
   user-contrib). Dedicated because `cert-yjs.opam` pins perennial to the
   `iasakura` fork, and a switch has one pin: shared with other perennial
-  projects it would either hand them the fork or leave cert-yjs building
+  projects it would either hand them the fork or leave Cert-Yjs building
   against something its own opam file does not declare. (The fork's patches
   touch no `.v`, so today the installed library happens to be identical to
   upstream's; the pin is still what CI builds, so the local switch should

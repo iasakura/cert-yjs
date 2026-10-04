@@ -74,6 +74,9 @@ Local Notation Ev := (@Event (TId * @YjsOperation A)).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+(* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
+Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 Context (decode : list u8 -> option (list Input)).
 
@@ -251,6 +254,8 @@ Theorem ws_server_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
     `{seq_inG : !inG Σ (authR (gmapUR loc (gsetUR (YjsItem go_string))))}
     `{acc_inG : !inG Σ (authR (gsetUR YjsId))}
     `{ftypes_inG : !inG Σ (dfrac_agreeR (leibnizO addressed_pool))}
+    `{observed_inG : !ghost_varG Σ (list (YjsItem go_string * bool))}
+    `{observers_inG : !inG Σ (authR (gsetUR (gname * go_string)))}
     (host client : w64) (f : func.t)
     (decode : list u8 -> option (list Input))
     (coh0 : history_names -> ws_coh_ty Σ)

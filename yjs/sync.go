@@ -17,11 +17,10 @@ package yjs
 // into []updateItem is the unverified codec (codec.go, //go:build !goose); the
 // sender-side diff (Step1) against the real store is separate follow-on work.
 func (d *Doc) ApplySyncUpdate(structs []updateItem, deletes []deleteSpan) {
-	s := d.store
-	s.transact(func(tr *Transaction) {
-		s.applyUpdate(tr, structs)
+	transact(d.store, func(tr *Transaction) {
+		tr.applyUpdate(structs)
 		// deletes go second: a span may target a struct that just arrived in
 		// this very batch (y-octo applies the delete set after the structs).
-		s.applyDeleteSpans(tr, deletes)
+		tr.applyDeleteSpans(deletes)
 	})
 }

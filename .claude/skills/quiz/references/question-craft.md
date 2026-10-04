@@ -26,7 +26,7 @@ A good question lives in a narrow band:
 - **Too general** → either common knowledge the user already has (generic CRDT
   facts like "a deterministic tie-break is needed for convergence", generic Iris
   facts) OR not specific to this project at all.
-- **The target**: a fact that is **specific to cert-yjs and non-ad-hoc** (a real
+- **The target**: a fact that is **specific to Cert-Yjs and non-ad-hoc** (a real
   design decision the project made, not an incidental detail) **and carries
   meaning** (knowing it changes how you understand the system).
 
@@ -159,7 +159,8 @@ Illustrative only. Regenerate from live sources; do not just replay these.
   引数が付くことが多いのはなぜか。」
   Answer: `is_X` = persistent handle / read-only fact (duplicable);
   `own_X` = ownership, `dfrac`-parameterized when it is plain heap state so it
-  can be shared fractionally. (spec-shape skill, "`is_X` / `own_X`".)
+  can be shared fractionally. (spec-shape skill, "Values of Cert-Yjs types
+  appear in specs through their predicates".)
 - 「このプロジェクトのビルドは Go を編集した後になぜ必ず goose を再実行する
   必要があるのか。」
   Answer: `make` alone checks the stale translation; the Go change silently has

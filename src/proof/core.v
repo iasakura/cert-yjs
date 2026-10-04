@@ -1,11 +1,11 @@
 (** Boundary to the reusable Yjs order theory.
 
-    cert-yjs proves that the goose-translated [Integrate] refines the *pure*
+    Cert-Yjs proves that the goose-translated [Integrate] refines the *pure*
     integration algorithm and inherits order preservation from it. That pure
     theory lives in iasakura/rocq-yjs, packaged as the opam libraries
     rocq-yjs-core (namespace [yjs.crdt]) and rocq-yjs (namespace [yjs]).
 
-    This module re-exports the pieces cert-yjs consumes so the rest of the
+    This module re-exports the pieces Cert-Yjs consumes so the rest of the
     development imports a single name:
 
       ClientId                            yjs.crdt.client_id
@@ -34,7 +34,7 @@ From stdpp Require Import ssreflect.
 (* ===== Countable (YjsItem A) ============================================== *)
 
 (** [YjsItem]/[YjsPtr] are mutually inductive, so [solve_decision]-style
-    derivation can't break the cycle (rocq-yjs derives only [EqDecision] this
+    derivation can't break the cycle (Rocq-Yjs derives only [EqDecision] this
     way). We get [Countable] by encoding the item tree into stdpp's [gen_tree]
     (leaves carry an id or a content character) and back, with the round-trip
     proved by the mutual induction scheme [YjsItem_mut]. This is what lets the

@@ -212,15 +212,15 @@ them, since the APIs drift.
   goal") when `m !! k` occurs only in a *hypothesis*, not the goal. For
   `f <$> (m !! k) = Some y`, use `apply fmap_Some in H as (x & Hk & ->)` instead.
 
-## E. cert-yjs specifics
+## E. Cert-Yjs specifics
 
 - **Pipeline**: `yjs/yjs.go` (Go port) → goose → `src/code` + `src/generatedproof`
   (gitignored, never hand-edit) → proofs in `src/proof/`. After editing Go,
   re-run goose or the model is stale.
-- **Reuse the rocq-yjs model and order theory** (the installed `yjs.*`
-  library): do not invent independent proofs — state cert-yjs WP specs as
+- **Reuse the Rocq-Yjs model and order theory** (the installed `yjs.*`
+  library): do not invent independent proofs — state Cert-Yjs WP specs as
   refinements of the pure `integrate` / `setintegrate` model and compose with
-  rocq-yjs's invariant/order/commutativity lemmas (`YjsArrInvariant_integrate`,
+  Rocq-Yjs's invariant/order/commutativity lemmas (`YjsArrInvariant_integrate`,
   `setintegrate_eq_integrate`, `integrate_commutative`,
   `yjs_strong_convergence`, …).
 - **Extract algorithmic cores to their own Go functions** (e.g.
@@ -294,7 +294,7 @@ is registered, and at least item-set `S` is present"), use the RA
   reused). You usually don't need it: a grow-only **`gset` of ids** is enough as a
   membership lower bound, and CRDT order is recoverable from the items' origin
   pointers.
-- **`gset X` needs `Countable X`.** rocq-yjs gives `Countable YjsId` (basic.v) but
+- **`gset X` needs `Countable X`.** Rocq-Yjs gives `Countable YjsId` (basic.v) but
   NOT `Countable (YjsItem A)` (mutually recursive with `YjsPtr`) — track a
   `gset YjsId`, not a `gset (YjsItem A)`.
 - **Three-layer handle, lock owns the mutable state**: model y-octo's

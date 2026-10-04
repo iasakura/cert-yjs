@@ -160,7 +160,7 @@ Definition own_item_node (l : loc) (dq : dfrac) (input : IntegrateInput (A := A)
 {{{ own_item_node l dq input d p }}} l @! item @! "Indexable" #() {{{ RET #(negb d); … }}}
 ```
 
-(`Indexable`'s `is_countable_flag` premise disappears: every cert-yjs item is
+(`Indexable`'s `is_countable_flag` premise disappears: every Cert-Yjs item is
 countable, which `own_item_node` pins.) `wp_item__Len` has 17 callers, so
 this is a whole-tree change, but each call site gets shorter.
 

@@ -9,18 +9,17 @@ package yjs
 // own predecessor) have not arrived are buffered in store.pending and drained
 // by later calls, mirroring y-octo's UpdateIterator + DocStore.pending.
 //
-// The byte-level v1 decode (Update::read), the delete set
-// (store::delete_range), GC/Skip nodes, Parent::Id / parent_sub and
-// multi-clock runs remain out of the verified subset; the unverified runtime
-// path for those stays in codec.go (//go:build !goose), whose Doc.ApplyUpdate
-// is the thin decode wrapper routing through the locked Doc.applyUpdate
-// (doc.go).
+// The byte-level v1 decode (Update::read), GC/Skip nodes and Parent::Id /
+// parent_sub remain out of the verified subset. The unverified runtime path for
+// those stays in codec.go (//go:build !goose), whose Doc.ApplyUpdate is the
+// thin decode wrapper routing through the locked Doc.applyUpdate (doc.go).
 
 // updateItem is one decoded insert struct in the verified subset: an item carrying
-// its id, both sibling origins, its parent info and its single-char string content
-// (y-octo: codec/item.rs Item, as stored in codec/update.rs Update.structs). The
-// Phase-2 simplification fixes the content to a 1-char string and drops
-// Parent::Id / parent_sub (root types only, #43).
+// its id, both sibling origins, its parent info and its string content, a run of
+// one or more characters (y-octo: codec/item.rs Item, as stored in
+// codec/update.rs Update.structs). store.applyUpdate integrates a run as one
+// item; the byte decoder (codec.go splitStructs) still hands over one-character
+// structs. Parent::Id / parent_sub are dropped (root types only, #43).
 type updateItem struct {
 	id            id
 	originLeftId  *id

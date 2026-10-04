@@ -8,7 +8,7 @@ The memory dir is
 Anchors that rarely go stale: `CLAUDE.md` (rules + architecture table),
 `.claude/skills/spec-shape/SKILL.md` (the spec rules),
 `README.md`, `WORKFLOW.md`, `docs/proof-engineering.md` (technique + gotchas,
-but its cert-yjs-specific facts drift, verify against code).
+but its Cert-Yjs-specific facts drift, verify against code).
 
 ## データ構造 (data structures)
 
@@ -16,7 +16,7 @@ but its cert-yjs-specific facts drift, verify against code).
   findPos), `yjs/store.go` (DocStore, per-client `map[Client][]Node`, clock),
   `yjs/id.go`, `yjs/content.go`, `yjs/doc.go`, `yjs/text.go`, `yjs/range.go`,
   `yjs/refs.go`, `yjs/update.go`, `yjs/codec.go` (v1 codec, `//go:build !goose`).
-- Proof reps: each type is four layers, `model.v` (rocq-yjs only) ->
+- Proof reps: each type is four layers, `model.v` (Rocq-Yjs only) ->
   `runtime.v` (goose values, no Iris) -> `heap.v` (Iris) -> the WP files.
   `item_cell` / `cell_repr` / `num_visible` are in `src/proof/item/runtime.v`,
   `cells_model` in `src/proof/ytype/runtime.v`, `own_dll` in
@@ -32,7 +32,10 @@ but its cert-yjs-specific facts drift, verify against code).
 
 ## 不変量・表現述語 (invariants / representation predicates)
 
-- spec-shape skill "`is_X` / `own_X`" rule (`is_X` persistent vs `own_X` ownership).
+- spec-shape skill rules "Values of Cert-Yjs types appear in specs through
+  their predicates" (`own_X` / `is_X` as the representation predicate of a
+  type; `is_X` persistent vs `own_X` ownership) and "Public and non-public
+  predicates".
 - `src/proof/store/heap.v`: `store_inv` / `store_inv_ro` / `store_inv_excl`,
   `own_store`, `own_item_map`, `is_Store` / `is_type_lb` / `is_root` /
   `is_root_lb`, RWMutex wrappers.
@@ -57,10 +60,11 @@ but its cert-yjs-specific facts drift, verify against code).
   share, `Len.v`).
 - `src/proof/store/applyUpdate.v`: `wp_store__applyUpdate_certs` (`own_store`-level).
 - `src/proof/doc/ApplySyncUpdate.v`: doc-level applyUpdate wrapper.
-- spec-shape skill rules "Public specs use only public predicates" and
-  "Everything a spec says about a value goes through a model parameter"
-  (public specs over public `own_X` / `is_X` and their models; persistent
-  `is_X` as duplicable monotone knowledge).
+- spec-shape skill rules "Public and private functions", "Specs of public
+  functions use only public predicates" and "Everything a spec says about a
+  value goes through a model parameter" (the spec of a function public for a
+  type takes its `own_X` / `is_X` whole; values only through model
+  parameters).
 - Memory: `insert-proof-done.md`, `general-insert-progress.md`,
   `delete-proof-done.md`, `apply-update-progress.md`,
   `issue-22-rwmutex-progress.md`, `sync-fragment-specs.md`, `issue-40-done.md`.
@@ -72,7 +76,7 @@ but its cert-yjs-specific facts drift, verify against code).
 
 - YATA integrate: `yjs/store.go` `Integrate` + extracted cores (`scanConflicts`
   / `findIntegrationLeft`); pure model `integrate` / `setintegrate` from the
-  rocq-yjs library re-exported in `src/proof/core.v`.
+  Rocq-Yjs library re-exported in `src/proof/core.v`.
 - `findPos`: `yjs/ytype.go` + `wp_yType__findPos` in `src/proof/ytype/findPos.v`.
 - Binary-search `GetNode` / `AddNode`: `yjs/store.go`.
 - Sync protocol: state-vector + diff (`computeStateVector` / `computeDiff`).
@@ -117,7 +121,7 @@ but its cert-yjs-specific facts drift, verify against code).
 - Iris / goose tactics and the scratch-context (rocq-mcp) workflow:
   `docs/proof-engineering.md` §B (Iris proof mode), §C (Perennial/goose WP),
   §D (interactive workflow), §F (ghost state).
-- Model lemmas to name in convergence arguments (from rocq-yjs, re-exported in
+- Model lemmas to name in convergence arguments (from Rocq-Yjs, re-exported in
   `src/proof/core.v`): `setintegrate_eq_integrate`, `integrate_commutative`,
   `YjsArrInvariant_integrate`, `yjs_strong_convergence`.
 - Checking: `ToolSearch` query

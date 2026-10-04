@@ -1,6 +1,6 @@
 (** Trusted ws FFI model of the [wsnet] Go package.
 
-    [wsnet] is cert-yjs's Go realization of the connection-oriented network FFI
+    [wsnet] is Cert-Yjs's Go realization of the connection-oriented network FFI
     (wsnet/wsnet.go); goose maps the package to the ws FFI (its declfilter
     config marks the API trusted), so the generated New.code....wsnet
     references the [ⁱᵐᵖˡ] definitions below.

@@ -8,7 +8,7 @@
 Implementation plan for
 [#42 — core: ghost-tracked global operation history](https://github.com/iasakura/cert-yjs/issues/42):
 a shared Perennial ghost resource for the global operation history, so that the
-heap/WP state of every replica *refines* the rocq-yjs network model
+heap/WP state of every replica *refines* the Rocq-Yjs network model
 (`YjsOperationNetwork`), each replica's document is a causally-closed subset of
 that history, and `applyUpdate`'s validity becomes a **sender-side certificate**
 instead of the receiver-side `ValidReplay` precondition.
@@ -16,7 +16,7 @@ instead of the receiver-side `ValidReplay` precondition.
 This document is written to be executable step by step: every new definition is
 given in (near-)final Rocq, every lemma has a statement sketch, a proof sketch,
 a difficulty tag, and a home file. Model citations are into
-`iasakura/rocq-yjs` (the `rocq-yjs` opam package); cert-yjs citations are into
+`iasakura/rocq-yjs` (the `rocq-yjs` opam package); Cert-Yjs citations are into
 this repo. Read together with `docs/aneris-oplib-artifact.md` (the OpLib
 comparison that motivated several choices here).
 
@@ -56,11 +56,11 @@ comparison that motivated several choices here).
   `history_wf`, certificates, the ghost API — is unaffected: buffered ops are
   ghost-invisible until integrated (arrival is not delivery), so the global
   invariant design stands as-is.
-- **Prerequisite upstream fix**: rocq-yjs's `deliver_locally` axiom had its
+- **Prerequisite upstream fix**: Rocq-Yjs's `deliver_locally` axiom had its
   hypothesis flipped relative to Gomes et al.; as stated it (together with
   `histories_client_id`) made remote delivery **unsatisfiable**, so no
   multi-replica instantiation existed. **Fixed and merged**
-  (iasakura/rocq-yjs#24, merge `b95e6da`; ported back to lean-yjs as
+  (iasakura/rocq-yjs#24, merge `b95e6da`; ported back to Lean-Yjs as
   iasakura/lean-yjs#31). The one remaining step of the upstream-fix milestone:
   bump the `pin-depends` SHAs. §2 has the details.
 - **Scope cuts** (each flagged with rationale + extension path, §8): `Delete`
@@ -95,7 +95,7 @@ CLAUDE.md; this document is the sign-off artifact):
 
 ---
 
-## 2. Prerequisite: fix `deliver_locally` in rocq-yjs (upstream)
+## 2. Prerequisite: fix `deliver_locally` in Rocq-Yjs (upstream)
 
 Status: **fixed and merged** — iasakura/rocq-yjs#24 (merge commit `b95e6da`)
 and, for the port source, iasakura/lean-yjs#31 (merge commit `ac08745`). What
@@ -123,7 +123,7 @@ the convergence theorems are vacuous for `i ≠ j` with non-empty delivered sets
 No ghost instantiation of a real replicated run can satisfy the axioms — this
 blocks #42 outright.
 
-Gomes et al. (OOPSLA 2017, the model lean-yjs ports) state the axiom in the
+Gomes et al. (OOPSLA 2017, the model Lean-Yjs ports) state the axiom in the
 other direction — a node that **broadcasts** must subsequently self-deliver:
 
 ```rocq
@@ -134,7 +134,7 @@ deliver_locally : forall i e,
 
 ### 2.2 The fix is 3 lines
 
-`deliver_locally` is used **exactly once** in all of rocq-yjs:
+`deliver_locally` is used **exactly once** in all of Rocq-Yjs:
 `causal_network.v:202`, inside `HappensBefore_asymm`. At that use site the
 proof context already contains
 `Hlo : locallyOrdered cn i (EvDeliver a') (EvBroadcast b')`, from which
@@ -156,18 +156,18 @@ theorems) only depends on `HappensBefore_asymm`, not on the axiom directly.
 
 1. PR to `iasakura/rocq-yjs`: flip the hypothesis, adapt `HappensBefore_asymm`,
    `dune build` green. **Done and merged: iasakura/rocq-yjs#24** (merge
-   `b95e6da`). The same fix is ported back to lean-yjs
+   `b95e6da`). The same fix is ported back to Lean-Yjs
    (`LeanYjs/Network/CausalNetwork.lean:33`): **iasakura/lean-yjs#31, merged**
-   (`ac08745`) — independent of cert-yjs.
-2. Add the upstream lemmas of §4.4 that belong in rocq-yjs (they mention only
-   model types) in a follow-up rocq-yjs PR (can proceed in parallel with the
+   (`ac08745`) — independent of Cert-Yjs.
+2. Add the upstream lemmas of §4.4 that belong in Rocq-Yjs (they mention only
+   model types) in a follow-up Rocq-Yjs PR (can proceed in parallel with the
    pure-bridge milestone).
 3. **Remaining**: bump both `pin-depends` SHAs in `cert-yjs.opam` (`rocq-yjs`,
-   `rocq-yjs-core`) to `b95e6da` (or the then-current rocq-yjs main),
+   `rocq-yjs-core`) to `b95e6da` (or the then-current Rocq-Yjs main),
    `opam install ./cert-yjs.opam --deps-only` (reinstalls the pins),
    `./build.sh` green.
 
-Note: the currently pinned SHA `2947b30f` predates rocq-yjs HEAD `245ada52`
+Note: the currently pinned SHA `2947b30f` predates Rocq-Yjs HEAD `245ada52`
 ("Prove setfii_loop_eq_fii_loop"); the bump lands that too — re-run the full
 build and expect no fallout (the insert_set API did not change shape).
 
@@ -385,7 +385,7 @@ determinism** lemma below.
 
 The lemmas are named, not numbered, and cross-referenced by name (in prose and
 in each other's proof sketches). Difficulty scale: (E)asy < (M)edium <
-(H)ard. "Home": `up` = belongs upstream in rocq-yjs (mentions only model
+(H)ard. "Home": `up` = belongs upstream in Rocq-Yjs (mentions only model
 types), `here` = `network_model.v`.
 
 | lemma | statement (sketch) | proof sketch | diff | home |
@@ -807,7 +807,7 @@ Named, not numbered.
 
 | milestone | contents | deliverables / acceptance | risk |
 |---|---|---|---|
-| **Upstream fix** | rocq-yjs: `deliver_locally` fix (§2) — **merged, rocq-yjs#24 / lean-yjs#31**; remaining: upstream the lemmas replay determinism through fresh-broadcast past, and receiver clock safety if stated model-side; bump `pin-depends` in `cert-yjs.opam` to `b95e6da`+; full rebuild | rocq-yjs CI green ✓; cert-yjs `./build.sh` green on the new pin | low (fix landed; hb append-stability / fresh-broadcast past / receiver clock safety are the real work and can trail in a second upstream PR — the pure bridge can start against local pins) |
+| **Upstream fix** | Rocq-Yjs: `deliver_locally` fix (§2) — **merged, rocq-yjs#24 / lean-yjs#31**; remaining: upstream the lemmas replay determinism through fresh-broadcast past, and receiver clock safety if stated model-side; bump `pin-depends` in `cert-yjs.opam` to `b95e6da`+; full rebuild | Rocq-Yjs CI green ✓; Cert-Yjs `./build.sh` green on the new pin | low (fix landed; hb append-stability / fresh-broadcast past / receiver clock safety are the real work and can trail in a second upstream PR — the pure bridge can start against local pins) |
 | **Pure bridge** | `network_model.v`: §4 defs + freshness, broadcast step through certs ⇒ ValidReplay (+ any of replay determinism through receiver clock safety not yet upstream, proved here first and upstreamed later) | file compiles standalone; `certs_ValidReplay` Qed | **highest** — receiver clock safety is the one genuinely hard theorem; do it early to de-risk |
 | **Ghost layer** | `history.v`: §5 classes, predicates, the ghost API (`history_alloc`/`history_broadcast`/`history_deliver_batch`/read) | compiles; history_broadcast / history_deliver_batch Qed; a smoke lemma: alloc + one broadcast + one remote deliver composed end-to-end (two ghost clients, no WP) proving the ghost story is consistent | low — mechanical given the pure bridge |
 | **WP rethreading** | `store_inv`/`is_Store`/`is_Text` extension + `store_inv_init` + **Insert minting** + Delete/other call-site rethreading | `wp_Text__Insert` (new post) and `wp_Text__Delete` Qed, axiom-clean | medium — big mechanical rethreading (cf. #29: ~7 call sites then; grep `store_inv`/`is_Store`/`is_Text` uses first and list them in the PR) |
@@ -935,8 +935,8 @@ rest of the delete story (#43).
 - **Determinism plumbing**: `interpHistory` is relational; replay determinism's
   append/split lemmas get used constantly — write them first and make them
   `Hint`-friendly (plain rewriting equalities where possible).
-- **Pin bump fallout** (upstream-fix milestone): the pinned rocq-yjs SHA moves
-  across `setfii_loop_eq_fii_loop`; if any cert-yjs proof named an admitted
+- **Pin bump fallout** (upstream-fix milestone): the pinned Rocq-Yjs SHA moves
+  across `setfii_loop_eq_fii_loop`; if any Cert-Yjs proof named an admitted
   constant from before, `./build.sh make` will flag it — expected clean,
   verify.
 - **Arity churn** (WP rethreading): `store_inv`/`is_Store`/`is_Text` signature

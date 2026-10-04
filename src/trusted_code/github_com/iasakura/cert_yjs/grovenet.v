@@ -1,6 +1,6 @@
 (** Trusted Grove FFI model of the [grovenet] Go package.
 
-    [grovenet] is cert-yjs's Go realization of Perennial's Grove network FFI
+    [grovenet] is Cert-Yjs's Go realization of Perennial's Grove network FFI
     (grovenet/grovenet.go, adapted from gokv/grove_ffi); goose maps the package
     to the grove FFI (its declfilter config marks the API trusted), so the
     generated New.code....grovenet references the [ⁱᵐᵖˡ] definitions below.

@@ -2,7 +2,7 @@
     denotes, and the theory of inserting into it. No Go values, no Iris.
 
     It defines nothing: the sequence and its invariant ([YjsArrInvariant],
-    [IsItemValid]) are rocq-yjs's. What lives here is the theory the insert
+    [IsItemValid]) are Rocq-Yjs's. What lives here is the theory the insert
     paths need.
 
     Laws
@@ -49,13 +49,13 @@ Notation A := go_string.
     [own_fresh_item]; the document/input side conditions are the only premises.
     Proven from [wp_Store__Integrate_aux]: integration succeeds ([integrate_some]),
     bridges to [setintegrate] ([setintegrate_eq_integrate]); the insertion
-    position and the post-state's validity come from the rocq-yjs preservation
+    position and the post-state's validity come from the Rocq-Yjs preservation
     theorem [YjsArrInvariant_integrate]. *)
 
 (** [integrate_ready arr input newItem]: the wire item [input] resolves in
     the document [arr] to the valid, clock-maximal item [newItem]: with
     [YjsArrInvariant arr] (a fact about the document alone, carried by the
-    type pool), exactly the premises under which rocq-yjs's set integrate and
+    type pool), exactly the premises under which Rocq-Yjs's set integrate and
     scanning integrate agree ([setintegrate_eq_integrate]). What every
     Integrate spec asks of its input. *)
 Definition integrate_ready (arr : list (YjsItem A)) (input : IntegrateInput (A := A))

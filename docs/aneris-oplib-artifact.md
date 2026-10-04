@@ -6,7 +6,7 @@ Study notes on the **OpLib / RcbLib** Aneris development accompanying:
 > *Modular Verification of Op-Based CRDTs in Separation Logic.*
 > OOPSLA 2022, Proc. ACM Program. Lang. 6, Article 188.
 
-Read as a reference point for where cert-yjs could go. **All `path:line`
+Read as a reference point for where Cert-Yjs could go. **All `path:line`
 citations below are into the external Aneris artifact** (the `logsem/aneris`
 OpLib development; line numbers verified against the local checkout), not this
 repository. Paper citations use the article's page numbers, e.g. `(§5.2,
@@ -14,27 +14,27 @@ p.188:17)`.
 
 ---
 
-## TL;DR for cert-yjs
+## TL;DR for Cert-Yjs
 
 - OpLib defines what "done" looks like for an executable op-based CRDT:
   **SEC (convergence + eventual delivery) + functional correctness, modular,
-  over runnable code.** That is the natural north-star shape for cert-yjs.
+  over runnable code.** That is the natural north-star shape for Cert-Yjs.
 - A new CRDT in OpLib = **one `examples/<crdt>/` directory** (a `*_code.v` and a
   `*_proof.v`) that supplies a *denotation*, an *effect function* (an LTS), and a
   coherence proof. Everything else — network, concurrency, mutation, causal
   broadcast, convergence plumbing — is inherited. The closest existing example to
   a sequence CRDT is `mvreg` (concurrent writes, causality-sensitive).
-- Two routes for cert-yjs:
+- Two routes for Cert-Yjs:
   - **Aneris route**: instantiate OpLib. Cheap, but it would verify a *purely
     functional* Yjs (`setintegrate` over an immutable list), losing the
-    imperative-DLL realism that distinguishes cert-yjs.
+    imperative-DLL realism that distinguishes Cert-Yjs.
   - **Perennial/goose route** (current): verify the real imperative Go. Must
     rebuild the RCB / network layer (RcbLib is ~5.6k LOC of Coq here) or assume
     causal delivery for a first result. The RA toolkit it needs all exists in
     Perennial; the cost is proofs, not cameras.
 - Key reused fact: **`cc_subseteq` — the preorder of OpLib's monotone snapshot
   RA — is exactly "subset + causally closed", i.e. the `hbClosed`/`IdNoDup`
-  well-formedness that is cert-yjs's bridge obligation.** Aneris ships the RA for
+  well-formedness that is Cert-Yjs's bridge obligation.** Aneris ships the RA for
   it; a Perennial build would construct an equivalent monotone RA.
 
 ---
@@ -96,7 +96,7 @@ CRDT-agnostic vocabulary:
 - `examples/` (~4.5k LOC, 13 dirs) — the 12 CRDTs + one closed use-case.
   Per-CRDT cost is tiny (counter ~260 LOC; the compound *table-of-X* CRDTs are
   ~100 LOC because they reuse the map combinator). **No sequence/text/RGA/YATA
-  CRDT exists** — the hard class the paper lacks, and cert-yjs's opening.
+  CRDT exists** — the hard class the paper lacks, and Cert-Yjs's opening.
 
 ---
 
@@ -112,7 +112,7 @@ Per the paper (§5, p.188:8) and `model.v`, a CRDT instance supplies:
 Steps 1–3 are meta-level Coq; only step 4 is in separation logic. A Yjs instance
 would be one new `examples/yjs/` dir reusing all of `crdt/spec`, `crdt/oplib`,
 and `rcb`, with the single nontrivial obligation being `OpCrdtEffectCoh` for
-`integrate` — which reduces to rocq-yjs's `hb_consistent_effect_convergent` plus
+`integrate` — which reduces to Rocq-Yjs's `hb_consistent_effect_convergent` plus
 the causal-closure bridge.
 
 ---
@@ -136,8 +136,8 @@ the user prove commutativity?".
   already delivered* — the precondition that makes `integrate` well-defined.
 - **The actual mechanical proof** is a lock invariant *"physical state =
   ⟦processed set⟧"* (§5.3, p.188:20), re-established at every effect step.
-- **For Yjs specifically, the hard part is already done in rocq-yjs**
-  (`hb_consistent_effect_convergent`, `integrate_commutative`). cert-yjs reuses
+- **For Yjs specifically, the hard part is already done in Rocq-Yjs**
+  (`hb_consistent_effect_convergent`, `integrate_commutative`). Cert-Yjs reuses
   it; the residual obligation is bridging the generic broadcast `Valid` to Yjs's
   structural well-formedness (origins resolvable / causal closure).
 
@@ -314,15 +314,15 @@ to each node's real value, the invariant asserts the pure relation above, and
 **every update must re-establish it to close the invariant** — that proof
 obligation *is* the event-consistency check. This `h = ⋃ locals` + causally
 closed + unique-ids invariant is precisely the `IdNoDup`/`hbClosed`
-well-formedness that earlier cert-yjs notes identified as the bridge needed for
+well-formedness that earlier Cert-Yjs notes identified as the bridge needed for
 convergence.
 
 ---
 
-## 7. Implications for cert-yjs
+## 7. Implications for Cert-Yjs
 
 - **`cc_subseteq` = `hbClosed`/`IdNoDup`.** The structural obligation we flagged
-  for cert-yjs is, in OpLib, the preorder of an off-the-shelf monotone RA. The
+  for Cert-Yjs is, in OpLib, the preorder of an off-the-shelf monotone RA. The
   Aneris route inherits it; a Perennial route builds an equivalent monotone RA
   (Perennial/Iris ship `mono_list`, `mono_nat`, and a generic monotone
   construction).
@@ -336,10 +336,10 @@ convergence.
 - **The real cost remains the RCB / network layer.** Grove gives an atomic,
   set-based, unreliable per-endpoint mailbox (`c↦ ms`) — comparable raw power to
   AnerisLang's soup, but *without* RcbLib's causal-broadcast library or the
-  socket-protocol abstraction. cert-yjs would build causal delivery on `c↦`, or
+  socket-protocol abstraction. Cert-Yjs would build causal delivery on `c↦`, or
   assume it for a first convergence result (as most prior op-based CRDT
   verification did).
 - **Realism is the differentiator.** goose verifies the real imperative Go (the
   mutable DLL); AnerisLang verifies idealized OCaml. Combined with a sequence
-  CRDT (absent from the paper), that is cert-yjs's contribution over OpLib —
+  CRDT (absent from the paper), that is Cert-Yjs's contribution over OpLib —
   exactly the part OpLib abstracts away.

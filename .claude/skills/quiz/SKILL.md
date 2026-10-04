@@ -1,10 +1,10 @@
 ---
 name: quiz
-description: Quiz yourself on the cert-yjs project to keep up as it grows. Use when the user runs /quiz or asks to be quizzed / tested / drilled on the project's invariants, representation predicates, public specs, data structures, algorithms, or past problems and design decisions, or wants proof-composition practice exercises (compose the project's real specs to prove a small program, Iris-level). Difficulty is selectable (入門 / 中級 / 上級).
+description: Quiz yourself on the Cert-Yjs project to keep up as it grows. Use when the user runs /quiz or asks to be quizzed / tested / drilled on the project's invariants, representation predicates, public specs, data structures, algorithms, or past problems and design decisions, or wants proof-composition practice exercises (compose the project's real specs to prove a small program, Iris-level). Difficulty is selectable (入門 / 中級 / 上級).
 user-invocable: true
 ---
 
-# /quiz: cert-yjs understanding drills
+# /quiz: Cert-Yjs understanding drills
 
 Run an interactive quiz that helps the user keep pace with this fast-moving
 formally-verified-Yjs project. The point is *understanding*, not trivia: the

@@ -2,7 +2,7 @@
     exactly-once message streams (what TCP, and hence WebSocket, actually
     provides). [Trusted definitions!]
 
-    Staging note: this file is developed inside cert-yjs (so it lands under the
+    Staging note: this file is developed inside Cert-Yjs (so it lands under the
     [New] logical prefix) and belongs in the perennial fork at
     [src/goose_lang/ffi/ws_ffi/impl.v]; moving it only rewrites the intra-FFI
     [New.goose_lang.ffi.ws_ffi] requires to [Perennial.goose_lang.ffi.ws_ffi].

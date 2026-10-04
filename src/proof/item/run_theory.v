@@ -8,9 +8,9 @@
     single-node splice refines n model steps.
 
     Iris-free and goose-free: everything here is about the pure [integrate]
-    of rocq-yjs ([yjs.algorithm.insert_basic]). Sits between [core] and
+    of Rocq-Yjs ([yjs.algorithm.insert_basic]). Sits between [core] and
     [store/store] in the Require chain; a candidate for upstreaming into
-    rocq-yjs next to [insert_basic] once stable. *)
+    Rocq-Yjs next to [insert_basic] once stable. *)
 From stdpp Require Import base numbers list sorting gmap sets.
 From stdpp Require Import ssreflect.
 From iris.prelude Require Import options.

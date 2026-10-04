@@ -11,16 +11,13 @@ package yjs
 // preserve the document invariant is_ytype (see wp_yType__findPos / is_ytype in
 // src/proof/ytype/ytype.v).
 //
-// Simplifications vs y-octo:
-//   - the Phase-1 content is fixed to a single string type with no parent_sub,
-//     so we only need the head of the item linked list and the visible length;
-//   - every user-visible character becomes its own 1-char internal item, so
-//     positions never fall inside an item and no splitting is needed.
+// Simplification vs y-octo: the content is fixed to the string type with no
+// parent_sub, so we only need the head of the item linked list and the visible
+// length.
 
 // yType is the root sequence type the items are integrated into (y-octo: YType
-// in doc/types). The Phase-1 simplification fixes the content to a single string
-// type with no parent_sub, so we only need the head of the item linked list and
-// the visible length.
+// in doc/types). The content is fixed to the string type with no parent_sub, so
+// we only need the head of the item linked list and the visible length.
 type yType struct {
 	// start is the head of the doubly linked list of items (parent.start).
 	start *item
@@ -67,10 +64,7 @@ func (y *yType) findPos(index uint64) (*item, *item, uint64) {
 			if remaining < right.Len() {
 				// The index lands inside this run: record the offset and
 				// stop spending (the cursor advance below makes [left] the
-				// containing item). With 1-char items this branch is
-				// unreachable (Len() == 1 <= remaining); it is here so the
-				// walk is total and y-octo-faithful once multi-element runs
-				// exist (issue #28).
+				// containing item).
 				offset = remaining
 				remaining = 0
 			} else {
