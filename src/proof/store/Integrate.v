@@ -415,10 +415,12 @@ Qed.
     refinement of the loop onto [set_find_integration_loop]: the loop
     invariant [integrate_loop_inv] couples the heap loop state to a
     [set_find_integration_loop] run, and each Go iteration consumes one
-    whole run block via [set_find_integration_block_step]. *)
-Lemma wp_scanConflicts (parent item_l : loc) (dq : dfrac)
+    whole run block via [set_find_integration_block_step]. The scanned item
+    passes as [own_linked_item], the model form (spec-shape "Everything a
+    spec says about a value goes through a model parameter"); the scan
+    reads only its id and origin cells and returns it untouched. *)
+Lemma wp_scanConflicts (parent item_l leftNode rightNode : loc) (dq : dfrac)
     (ls : list loc) (runs : list ItemRun) (input : IntegrateInput (A := A)) (newItem : YjsItem A)
-    (itemVal : yjs.item.t) (oleft oright : option yjs.id.t)
     (leftIdx rightIdx : Z) (destIdx : nat) (curL curR : nat) :
   YjsArrInvariant (runs_flatten runs) ->
   toItem input (runs_flatten runs) = Some newItem ->
@@ -435,19 +437,21 @@ Lemma wp_scanConflicts (parent item_l : loc) (dq : dfrac)
   (Z.of_nat (length (runs_flatten (take curR runs))) = rightIdx)%Z ->
   (curR <= length runs)%nat ->
   {{{ is_pkg_init yjs ∗ own_ytype parent dq ls (MkTypeModel runs) ∗
-      own_fresh_item_raw item_l input itemVal oleft oright }}}
+      own_linked_item item_l input parent leftNode rightNode }}}
     @! yjs.scanConflicts #item_l #(loc_at ls (Z.of_nat curL - 1))
         #(loc_at ls (Z.of_nat curL)) #(loc_at ls (Z.of_nat curR))
   {{{ (ret : loc), RET #ret;
       own_ytype parent dq ls (MkTypeModel runs) ∗
-      own_fresh_item_raw item_l input itemVal oleft oright ∗
+      own_linked_item item_l input parent leftNode rightNode ∗
       ∃ curD : nat, ⌜ret = loc_at ls (Z.of_nat curD - 1)⌝ ∗
         ⌜(Z.of_nat (length (runs_flatten (take curD runs))) = Z.of_nat destIdx)%Z⌝ ∗
         ⌜(curD <= length runs)%nat⌝ }}}.
 Proof using Type*.
   set (arr := runs_flatten runs).
   move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb.
-  wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh". simpl in *.
+  wp_start as "(Htext & Hfresh)". iNamed "Htext".
+  iDestruct "Hfresh" as (itemVal oleft oright) "(Hraw & %HitemL & %HitemR & %Hitempar & %Hitemflags & %Hitemlen)".
+  iNamed "Hraw". simpl in *.
   iDestruct (own_dll_length with "Hdll") as %Hlenl.
   have Hids_unique := yai_unique _ Harr.
   have HfindLeftPtr : findPtrIdx (origin newItem) arr = Some leftIdx.
@@ -511,7 +515,7 @@ Proof using Type*.
     rewrite decide_True; last reflexivity. wp_auto.
     iApply ("HΦ" $! (loc_at ls (Z.of_nat curD - 1))).
     iFrame "Htext".
-    iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+    iSplitL. { iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
     iExists curD. iPureIntro. split_and!;
       [done | rewrite HcurD HdestL -Hd_eq Z2Nat.id; [done | clear -Hdest HdestL HleftLB; lia] | exact HcurDb].
   - (* cursor in range: run one scan step, matched to a [set_find_integration_block_step] unfold. *)
@@ -549,7 +553,7 @@ Proof using Type*.
       wp_for_post.
       iApply ("HΦ" $! (loc_at ls (Z.of_nat curD - 1))).
       iFrame "Htext".
-      iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+      iSplitL. { iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
       iExists curD. iPureIntro. split_and!;
         [done | rewrite HcurD HdestL -Hd_eq Z2Nat.id; [done | clear -Hdest HdestL HleftLB; lia] | exact HcurDb].
     + (* conflict ≠ right: scan one run block; match [set_find_integration_block_step]'s branches *)
@@ -726,7 +730,7 @@ Proof using Type*.
               wp_for_post.
               iApply ("HΦ" $! (loc_at ls (Z.of_nat curD - 1))).
               iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
-              iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+              iSplitL. { iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
               iExists curD. iPureIntro. split_and!;
                 [done | rewrite HcurD HdestL -Hd_eq Z2Nat.id; [done | clear -Hdest HdestL HleftLB; lia] | exact HcurDb].
            ++ (* different right origin: keep scanning, anchor unchanged *)
@@ -779,7 +783,7 @@ Proof using Type*.
            wp_for_post.
            iApply ("HΦ" $! (loc_at ls (Z.of_nat curD - 1))).
            iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
-           iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+           iSplitL. { iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
            iExists curD. iPureIntro. split_and!;
              [done | rewrite HcurD HdestL -Hd_eq Z2Nat.id; [done | clear -Hdest HdestL HleftLB; lia] | exact HcurDb].
         -- (* conflict has a left origin [idv] (different from the new item's) *)
@@ -895,7 +899,7 @@ Proof using Type*.
               wp_for_post.
               iApply ("HΦ" $! (loc_at ls (Z.of_nat curD - 1))).
               iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
-              iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+              iSplitL. { iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
               iExists curD. iPureIntro. split_and!;
                 [done | rewrite HcurD HdestL -Hd_eq Z2Nat.id; [done | clear -Hdest HdestL HleftLB; lia] | exact HcurDb].
 Qed.
@@ -908,9 +912,8 @@ Qed.
     guard is false the anchors are adjacent runs ([curL = curR], i.e.
     [leftIdx + 1 = rightIdx] by prefix-sum injectivity) so [destIdx = leftIdx
     + 1] and the unchanged [left] is the answer. *)
-Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc : loc) (dq : dfrac)
+Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc leftNode rightNode : loc) (dq : dfrac)
     (ls : list loc) (runs : list ItemRun) (input : IntegrateInput (A := A)) (newItem : YjsItem A)
-    (itemVal : yjs.item.t) (oleft oright : option yjs.id.t)
     (leftIdx rightIdx : Z) (destIdx : nat) (curL curR : nat) :
   YjsArrInvariant (runs_flatten runs) ->
   toItem input (runs_flatten runs) = Some newItem ->
@@ -929,18 +932,20 @@ Lemma wp_findIntegrationLeft (parent item_l left_loc right_loc : loc) (dq : dfra
   (Z.of_nat (length (runs_flatten (take curR runs))) = rightIdx)%Z ->
   (curR <= length runs)%nat ->
   {{{ is_pkg_init yjs ∗ own_ytype parent dq ls (MkTypeModel runs) ∗
-      own_fresh_item_raw item_l input itemVal oleft oright }}}
+      own_linked_item item_l input parent leftNode rightNode }}}
     @! yjs.findIntegrationLeft #parent #item_l #left_loc #right_loc
   {{{ (ret : loc), RET #ret;
       own_ytype parent dq ls (MkTypeModel runs) ∗
-      own_fresh_item_raw item_l input itemVal oleft oright ∗
+      own_linked_item item_l input parent leftNode rightNode ∗
       ∃ curD : nat, ⌜ret = loc_at ls (Z.of_nat curD - 1)⌝ ∗
         ⌜(Z.of_nat (length (runs_flatten (take curD runs))) = Z.of_nat destIdx)%Z⌝ ∗
         ⌜(curD <= length runs)%nat⌝ }}}.
 Proof using Type*.
   set (arr := runs_flatten runs).
   move=> Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hll Hrl Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb.
-  wp_start as "(Htext & Hfresh)". iNamed "Htext". iNamed "Hfresh". wp_auto.
+  wp_start as "(Htext & Hfresh)". iNamed "Htext".
+  iDestruct "Hfresh" as (itemVal oleft oright) "(Hraw & %HitemL & %HitemR & %Hitempar & %Hitemflags & %Hitemlen)".
+  iNamed "Hraw". wp_auto.
   iDestruct (own_dll_length with "Hdll") as %Hlenl. simpl in Hlenl.
   (* Index bounds via the pure model (mirrors setintegrate_eq_integrate). *)
   have Huniq := yai_unique _ Harr.
@@ -977,13 +982,13 @@ Proof using Type*.
       replace (# null) with (# (loc_at ls (Z.of_nat curL - 1))) by (rewrite -Hll Hlnull //).
       replace (yt.(yjs.yType.start')) with (loc_at ls (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
       rewrite Hrl.
-      wp_apply (wp_scanConflicts parent item_l dq ls runs input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
+      wp_apply (wp_scanConflicts parent item_l leftNode rightNode dq ls runs input newItem leftIdx rightIdx destIdx curL curR
                   Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[Hparent Hdll Hitem Holeft Horight]").
       { iSplitL "Hparent Hdll".
         { iExists yt, tl. iFrame "Hparent".
           replace (yt.(yjs.yType.start')) with (loc_at ls (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
           iFrame "Hdll". done. }
-        rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+        iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
       iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
       iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". }
     { (* combo 3: left non-null, right null -> compare left.right with right *)
@@ -1030,7 +1035,7 @@ Proof using Type*.
           simpl in HfindD. injection HfindD as HfindD'. rewrite -HfindD' Z2Nat.id; lia. }
         iApply ("HΦ" $! (loc_at ls (Z.of_nat curL - 1))).
         iFrame "Htext".
-        iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+        iSplitL. { iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
         iExists curL. iPureIntro. split_and!;
           [done | rewrite HcurL Hdestadj // | exact HcurLb]. }
       { (* scan: curL < curR, conflict = left.right *)
@@ -1054,9 +1059,9 @@ Proof using Type*.
         iDestruct ("Hback" with "Hnode") as "Hdll".
         iAssert (own_ytype parent dq ls (MkTypeModel runs)) with "[Hparent Hdll]" as "Htext".
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; exact Hlen'. }
-        wp_apply (wp_scanConflicts parent item_l dq ls runs input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
+        wp_apply (wp_scanConflicts parent item_l leftNode rightNode dq ls runs input newItem leftIdx rightIdx destIdx curL curR
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[Htext Hitem Holeft Horight]").
-        { iSplitL "Htext"; [iFrame "Htext" | rewrite /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
+        { iSplitL "Htext"; [iFrame "Htext" | iExists itemVal, oleft, oright; rewrite /own_linked_item /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
         iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
         iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". } } }
   { (* right non-null (curR < length runs): read right.left *)
@@ -1102,7 +1107,7 @@ Proof using Type*.
         iApply ("HΦ" $! null).
         iSplitR "Hitem Holeft Horight".
         { iExists yt, tl. iFrame "Hparent Hdll". done. }
-        iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+        iSplitL. { iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
         iExists 0%nat. iPureIntro. split_and!;
           [rewrite /loc_at; case_decide; [lia | done]
           | rewrite take_0 runs_flatten_nil /= Hdest0 //
@@ -1119,13 +1124,13 @@ Proof using Type*.
           first [ done | (case_decide; [done | lia]) ]. }
         replace (# null) with (# (loc_at ls (Z.of_nat curL - 1))) by (rewrite -Hll Hlnull //).
         replace (yt.(yjs.yType.start')) with (loc_at ls (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
-        wp_apply (wp_scanConflicts parent item_l dq ls runs input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
+        wp_apply (wp_scanConflicts parent item_l leftNode rightNode dq ls runs input newItem leftIdx rightIdx destIdx curL curR
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[Hparent Hdll Hitem Holeft Horight]").
         { iSplitL "Hparent Hdll".
           { iExists yt, tl. iFrame "Hparent".
             replace (yt.(yjs.yType.start')) with (loc_at ls (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
             iFrame "Hdll". done. }
-          rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+          iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
         iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
         iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". } }
     { (* combo 4: left non-null, right non-null -> compare left.right with right *)
@@ -1172,7 +1177,7 @@ Proof using Type*.
           simpl in HfindD. injection HfindD as HfindD'. rewrite -HfindD' Z2Nat.id; lia. }
         iApply ("HΦ" $! (loc_at ls (Z.of_nat curL - 1))).
         iFrame "Htext".
-        iSplitL. { rewrite /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+        iSplitL. { iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
         iExists curL. iPureIntro. split_and!;
           [done | rewrite HcurL Hdestadj // | exact HcurLb]. }
       { (* scan *)
@@ -1196,9 +1201,9 @@ Proof using Type*.
         iDestruct ("Hback" with "Hnode") as "Hdll".
         iAssert (own_ytype parent dq ls (MkTypeModel runs)) with "[Hparent Hdll]" as "Htext".
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; exact Hlen'. }
-        wp_apply (wp_scanConflicts parent item_l dq ls runs input newItem itemVal oleft oright leftIdx rightIdx destIdx curL curR
+        wp_apply (wp_scanConflicts parent item_l leftNode rightNode dq ls runs input newItem leftIdx rightIdx destIdx curL curR
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[Htext Hitem Holeft Horight]").
-        { iSplitL "Htext"; [iFrame "Htext" | rewrite /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
+        { iSplitL "Htext"; [iFrame "Htext" | iExists itemVal, oleft, oright; rewrite /own_linked_item /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
         iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
         iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". } } }
 Qed.
@@ -1220,15 +1225,16 @@ Proof.
   - apply (reachable_head _ y). { exact (Hstep _ H). } exact H0.
 Qed.
 
-(** The raw refinement of [store.integrateCore]: the
-    run-level statement of [wp_Store__integrateCore_aux]. The fresh run lands
-    at the cursor [idx] of the address list and the run list, its chars at
-    the matching model index. Local: a stepping stone of
-    [wp_store__integrateCore]. *)
-#[local] Lemma wp_Store__integrateCore_aux (s parent item_l : loc) (arr' : list (YjsItem A))
+(** [store.integrateCore]: the conflict scan and the DLL splice. The fresh
+    run lands at the cursor [idx] of the address list and the run list, its
+    chars at the matching model index ([runs_integrate_splice_at]), and it
+    denotes the input ([run_denotes]). The item passes as
+    [own_linked_item], the model form. Local: only [wp_store__Integrate]
+    steps by it. *)
+#[local] Lemma wp_store__integrateCore (s parent item_l : loc) (arr' : list (YjsItem A))
     (input : IntegrateInput (A := A)) (newItem : YjsItem A)
     (ls : list loc) (runs : list ItemRun)
-    (itemVal : yjs.item.t) (oleft oright : option yjs.id.t) (leftIdx rightIdx : Z)
+    (leftIdx rightIdx : Z)
     (curL curR : nat) :
   YjsArrInvariant (runs_flatten runs) ->
   toItem input (runs_flatten runs) = Some newItem ->
@@ -1236,11 +1242,6 @@ Qed.
   maximalId newItem (runs_flatten runs) ->
   findLeftIdx (in_originId input) (runs_flatten runs) = Some leftIdx ->
   findRightIdx (in_rightOriginId input) (runs_flatten runs) = Some rightIdx ->
-  itemVal.(yjs.item.left') = loc_at ls (Z.of_nat curL - 1) ->
-  itemVal.(yjs.item.right') = loc_at ls (Z.of_nat curR) ->
-  itemVal.(yjs.item.parent') = parent ->
-  itemVal.(yjs.item.flags') = W8 2 ->
-  (1 <= length (itemVal.(yjs.item.content').(yjs.content.content')))%nat ->
   Forall (λ r, run_items r ≠ []) runs ->
   (∀ r, r ∈ runs -> run_fits r) ->
   (∀ r, r ∈ runs -> run_origin_clk r) ->
@@ -1248,25 +1249,22 @@ Qed.
   (curL <= length runs)%nat ->
   (Z.of_nat (length (runs_flatten (take curR runs))) = rightIdx)%Z ->
   (curR <= length runs)%nat ->
-  integrate_all (ops_of_input input (explode (toContent itemVal.(yjs.item.content')))) (runs_flatten runs) = Some arr' ->
+  integrate_all (ops_of_input input (explode (in_content input))) (runs_flatten runs) = Some arr' ->
   {{{ is_pkg_init yjs ∗ own_ytype parent (DfracOwn 1) ls (MkTypeModel runs) ∗
-      own_fresh_item_raw item_l input itemVal oleft oright }}}
+      own_linked_item item_l input parent (loc_at ls (Z.of_nat curL - 1)) (loc_at ls (Z.of_nat curR)) }}}
     s @! (go.PointerType yjs.store) @! "integrateCore" #parent #item_l
   {{{ (idx : nat) (run : list (YjsItem A)), RET #();
       own_ytype parent (DfracOwn 1) (integrate_locs ls idx item_l)
         (MkTypeModel (take idx runs ++ MkItemRun run false :: drop idx runs)) ∗
       ⌜YjsArrInvariant arr'⌝ ∗
-      ⌜(idx <= length runs)%nat⌝ ∗
-      ⌜(length (runs_flatten (take idx runs)) <= length (runs_flatten runs))%nat⌝ ∗
-      ⌜arr' = take (length (runs_flatten (take idx runs))) (runs_flatten runs) ++ run ++
-              drop (length (runs_flatten (take idx runs))) (runs_flatten runs)⌝ ∗
-      ⌜item_id (hd inhabitant run) = in_id input⌝ ∗
-      ⌜origin (hd inhabitant run) = origin newItem⌝ ∗
-      ⌜rightOrigin (hd inhabitant run) = rightOrigin newItem⌝ ∗
-      ⌜length run = length (explode (toContent itemVal.(yjs.item.content')))⌝ }}}.
+      ⌜runs_integrate_splice_at idx runs (runs_flatten runs) run (take idx runs ++ MkItemRun run false :: drop idx runs) arr'⌝ ∗
+      ⌜run_denotes input newItem run⌝ }}}.
 Proof using Type*.
   set (arr := runs_flatten runs).
-  move=> Harr Htoitem Hvalid Hmax HfindL HfindR HivL HivR Hivpar Hflags Hlen1 Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb Hall.
+  move=> Harr Htoitem Hvalid Hmax HfindL HfindR Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb Hall.
+  wp_start as "(Htext & Hfresh)".
+  iDestruct "Hfresh" as (itemVal oleft oright) "(Hraw & %HivL & %HivR & %Hivpar & %Hflags & %Hlen1)".
+  iNamed "Hraw".
   (* [wp_if_join]'s bare [subst] would eliminate [parent] through [Hivpar]
      mid-proof; substitute it NOW and re-bind the name as a local
      definition, which [subst] skips. *)
@@ -1275,9 +1273,11 @@ Proof using Type*.
      input's origins/id, so its scan is literally the input's; decompose
      its setintegrate into the destIdx/itemM case shape the singleton
      proof used ([itemM] now carries the FIRST char). --- *)
-  destruct (explode (toContent itemVal.(yjs.item.content'))) as [|ch0 chrest] eqn:Hchars.
+  have Hlenin : (1 <= length (in_content input))%nat.
+  { rewrite -Hcontent. exact Hlen1. }
+  destruct (explode (in_content input)) as [|ch0 chrest] eqn:Hchars.
   { exfalso. have Hle := f_equal length Hchars.
-    rewrite explode_length /toContent /= in Hle. lia. }
+    rewrite explode_length /= in Hle. simpl in Hle. lia. }
   have Hideta : in_id input = MkYjsId (clientId (in_id input)) (clock (in_id input))
     by (destruct (in_id input); reflexivity).
   rewrite /ops_of_input /= -Hideta in Hall.
@@ -1317,9 +1317,7 @@ Proof using Type*.
   (* the scan equations transfer to the wire input by conversion (the scan
      only reads origins/id, shared between [h] and [input]) *)
   have HfindD : setfindIntegratedIndex leftIdx rightIdx input arr = Some destIdx := HfindD0.
-  wp_start as "(Htext & Hfresh)".
   have Hinv := Harr.
-  iNamed "Hfresh".
   have Huniq := yai_unique _ Harr.
   have HfLp : findPtrIdx (origin newItem) arr = Some leftIdx.
   { rewrite -(toitem_lemmas.findLeftIdx_findPtrIdx_eq input newItem arr Huniq Htoitem). exact HfindL. }
@@ -1336,24 +1334,18 @@ Proof using Type*.
   have Hrfl : arr = runs_flatten runs := eq_refl.
   iDestruct "Holeft" as "#Holeft". iDestruct "Horight" as "#Horight".
   (* the item's links are already resolved: no repair stepping (issue #49) *)
-  set iv2 := itemVal.
-  have Hiv2L : iv2.(yjs.item.left') = loc_at ls (Z.of_nat curL - 1) := HivL.
-  have Hiv2R : iv2.(yjs.item.right') = loc_at ls (Z.of_nat curR) := HivR.
-  have Hiv2oL : iv2.(yjs.item.originLeftId') = itemVal.(yjs.item.originLeftId') := eq_refl.
-  have Hiv2oR : iv2.(yjs.item.originRightId') = itemVal.(yjs.item.originRightId') := eq_refl.
-  have Hiv2id : iv2.(yjs.item.id') = itemVal.(yjs.item.id') := eq_refl.
-  have Hiv2con : iv2.(yjs.item.content') = itemVal.(yjs.item.content') := eq_refl.
-  have Hiv2flags : iv2.(yjs.item.flags') = itemVal.(yjs.item.flags') := eq_refl.
   wp_auto.
   (* Conflict scan (the extracted algorithmic core), via the proved spec. *)
-  rewrite Hiv2L Hiv2R.
+  rewrite HivL HivR.
   iAssert (own_ytype parent (DfracOwn 1) ls (MkTypeModel runs)) with "[Hparent Hdll]" as "Htext".
   { iExists yt3, tl3. iFrame "Hparent Hdll". done. }
-  iAssert (own_fresh_item_raw item_l input iv2 oleft oright) with "[Hitem]" as "Hfresh".
-  { rewrite /own_fresh_item_raw. iFrame "Hitem". rewrite Hiv2oL Hiv2oR. iFrame "Holeft Horight".
-    iPureIntro; split_and!; [exact Hin_l | exact Hin_r | rewrite Hiv2id; exact Hid | rewrite Hiv2con; exact Hcontent]. }
+  iAssert (own_linked_item item_l input parent (loc_at ls (Z.of_nat curL - 1)) (loc_at ls (Z.of_nat curR)))
+    with "[Hitem]" as "Hfresh".
+  { iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw.
+    iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
   wp_apply (wp_findIntegrationLeft parent item_l (loc_at ls (Z.of_nat curL - 1)) (loc_at ls (Z.of_nat curR))
-              (DfracOwn 1) ls runs input newItem iv2 oleft oright leftIdx rightIdx destIdx curL curR
+              (loc_at ls (Z.of_nat curL - 1)) (loc_at ls (Z.of_nat curR))
+              (DfracOwn 1) ls runs input newItem leftIdx rightIdx destIdx curL curR
               Harr Htoitem Hvalid Hmax HfindL HfindR HfindD eq_refl eq_refl Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[$Htext $Hfresh]").
   iIntros (v) "(Htext & Hfresh & Hpost)".
   iDestruct "Hpost" as (curD) "(%Hveq & %HcurDc & %HcurDb)". subst v.
@@ -1395,7 +1387,7 @@ Proof using Type*.
      and YjsArrInvariant_setintegrate. *)
   iDestruct "Htext" as (yt' tl') "(Hparent & Hdll & %Hlen')".
   iEval (cbn [tm_runs]) in "Hdll".
-  iDestruct "Hfresh" as "(Hitem & #Holeft2 & #Horight2 & %Hin_l2 & %Hin_r2 & %Hid2 & %Hcont2)".
+  iDestruct "Hfresh" as (iv2 oleft2 oright2) "((Hitem & #Holeft2 & #Horight2 & %Hin_l2 & %Hin_r2 & %Hid2 & %Hcont2) & %Hiv2L & %Hiv2R & %Hiv2par & %Hiv2flags & %Hiv2len)".
   iDestruct (typed_pointsto_not_null with "Hitem") as %Hitem_nn.
   (* First [if] (y-octo: link [item] after [left]/[parent.start]). The two index
      cases ([curD=0] head insertion vs [curD>=1]) converge to a uniform
@@ -1596,12 +1588,13 @@ Proof using Type*.
      [parent.len += Len()]. Step the [Item.Countable] / [Item.Len] /
      [Content.Len] methods, resolving the symbolic word tests with [Hflv];
      the length stays symbolic ([Hclv] names it, issue #28 U7). *)
-  have Hflv : ivL.(yjs.item.flags') = W8 2 by rewrite HivLf Hiv2flags Hflags.
+  have Hflv : ivL.(yjs.item.flags') = W8 2 by rewrite HivLf Hiv2flags.
   have Hclv : length ivL.(yjs.item.content').(yjs.content.content')
             = length (ch0 :: chrest).
-  { rewrite HivLc Hiv2con.
+  { rewrite HivLc.
+    have Hc2 : iv2.(yjs.item.content').(yjs.content.content') = in_content input := Hcont2.
     have Hle := f_equal length Hchars.
-    rewrite explode_length /toContent /= in Hle. rewrite Hle //. }
+    rewrite explode_length in Hle. rewrite Hc2 Hle //. }
   wp_method_call. wp_call. wp_auto. wp_method_call. wp_auto. wp_call. wp_auto.
   rewrite Hflv.
   rewrite (bool_decide_eq_false_2 (w8_word_instance.(word.and) (W8 2) (W8 2) = W8 0)); last by vm_compute.
@@ -1828,15 +1821,15 @@ Proof using Type*.
   have HleftEq : (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>).(yjs.item.left') = loc_at ls (Z.of_nat curD - 1).
   { simpl. exact HivLl. }
   have Hidtr : item_id (run_head_item (MkItemRun RUNITEMS false)) = toYjsId (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>).(yjs.item.id').
-  { rewrite /run_head_item /= Hheadid /= HivLid Hiv2id Hid //. }
+  { rewrite /run_head_item /= Hheadid /= HivLid Hid2 //. }
   have Hconttr : content <$> run_items (MkItemRun RUNITEMS false) = explode (toContent (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>).(yjs.item.content')).
-  { rewrite /= HivLc Hiv2con Hchars. exact Hruncont. }
-  have Holtr : origin_id (origin (run_head_item (MkItemRun RUNITEMS false))) = toYjsId <$> oleft.
+  { rewrite /= HivLc Hcont2 Hchars. exact Hruncont. }
+  have Holtr : origin_id (origin (run_head_item (MkItemRun RUNITEMS false))) = toYjsId <$> oleft2.
   { rewrite /run_head_item /= HitemM /= Hlpo -Hin_l2 //. }
-  have Hortr : origin_id (rightOrigin (run_head_item (MkItemRun RUNITEMS false))) = toYjsId <$> oright.
+  have Hortr : origin_id (rightOrigin (run_head_item (MkItemRun RUNITEMS false))) = toYjsId <$> oright2.
   { rewrite /run_head_item /= HitemM /= Hrpo -Hin_r2 //. }
   have Hpartr : (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>).(yjs.item.parent') = parent.
-  { simpl. rewrite HivLpar /iv2 /parent //. }
+  { simpl. rewrite HivLpar Hiv2par //. }
   have Hpcnew : run_per_char (MkItemRun RUNITEMS false)
     := run_per_char_intro _ _ _ Hconttr.
   iApply ("HΦ" $! curD RUNITEMS).
@@ -1851,7 +1844,7 @@ Proof using Type*.
                 Hlent1 Hitem_nn Hrunwf Hpcnew).
       iSplitL "Hleftdll"; first iFrame "Hleftdll".
       iSplitL "Hitem Holeft2 Horight2"; last iFrame "Hrightdll2".
-      iExists (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>), oleft, oright.
+      iExists (ivL <| yjs.item.right' := loc_at ls (Z.of_nat curD) |>), oleft2, oright2.
       simpl. rewrite HivLoL HivLoR.
       iFrame "Hitem Holeft2 Horight2".
       iPureIntro. split_and!.
@@ -1865,13 +1858,13 @@ Proof using Type*.
       - exact Hflv. }
     iPureIntro. rewrite /= -Hruns1 -Hruns2 Hytl Hnv0 HRUNlen /=. word. }
   iSplit; [iPureIntro; exact Hinvarr'|].
-  iSplit; [iPureIntro; exact HcurDb|].
-  iSplit; [iPureIntro; exact Hdle_arr|].
-  iSplit; [iPureIntro; exact Harr'form|].
-  iSplit; [iPureIntro; rewrite /RUNITEMS /= Hheadid //|].
-  iSplit; [iPureIntro; rewrite /RUNITEMS /= HitemMh /headit /= -HnewItemEq //|].
-  iSplit; [iPureIntro; rewrite /RUNITEMS /= HitemMh /headit /= -HnewItemEq //|].
-  iPureIntro. exact HRUNlen.
+  iSplit.
+  { iPureIntro. split_and!; [exact HcurDb | exact Hdle_arr | done | exact Harr'form]. }
+  iPureIntro. split_and!;
+    [ rewrite /RUNITEMS /= Hheadid //
+    | rewrite /RUNITEMS /= HitemMh /headit /= -HnewItemEq //
+    | rewrite /RUNITEMS /= HitemMh /headit /= -HnewItemEq //
+    | rewrite HRUNlen -Hchars explode_length // ].
 Qed.
 
 (** When [newItem]'s left origin is the current tail element [a] of a valid
@@ -2054,66 +2047,6 @@ Proof.
     destruct Hright as [[-> ->] | [b [-> [Hb ->]]]].
     + reflexivity.
     + rewrite (find_by_id_self arr b Hinv Hb) /=. reflexivity.
-Qed.
-
-(** [store.integrateCore] on the caller's linked item:
-    the fresh live run lands at one cursor of the address list and the run
-    list ([runs_integrate_splice_at] / [integrate_locs]) and denotes the
-    input ([run_denotes]). Local: a stepping stone of
-    [wp_store__Integrate]. *)
-#[local] Lemma wp_store__integrateCore (s parent item_l : loc)
-    (arr' : list (YjsItem A)) (input : IntegrateInput (A := A))
-    (newItem : YjsItem A) (ls : list loc) (runs : list ItemRun)
-    (leftIdx rightIdx : Z) (curL curR : nat) :
-  YjsArrInvariant (runs_flatten runs) ->
-  toItem input (runs_flatten runs) = Some newItem ->
-  IsItemValid newItem ->
-  maximalId newItem (runs_flatten runs) ->
-  findLeftIdx (in_originId input) (runs_flatten runs) = Some leftIdx ->
-  findRightIdx (in_rightOriginId input) (runs_flatten runs) = Some rightIdx ->
-  Forall (λ r, run_items r ≠ []) runs ->
-  (∀ r, r ∈ runs -> run_fits r) ->
-  (∀ r, r ∈ runs -> run_origin_clk r) ->
-  (Z.of_nat (length (runs_flatten (take curL runs))) = leftIdx + 1)%Z ->
-  (curL <= length runs)%nat ->
-  (Z.of_nat (length (runs_flatten (take curR runs))) = rightIdx)%Z ->
-  (curR <= length runs)%nat ->
-  integrate_all (ops_of_input input (explode (in_content input))) (runs_flatten runs) = Some arr' ->
-  {{{ is_pkg_init yjs ∗ own_ytype parent (DfracOwn 1) ls (MkTypeModel runs) ∗
-      own_linked_item item_l input parent (loc_at ls (Z.of_nat curL - 1)) (loc_at ls (Z.of_nat curR)) }}}
-    s @! (go.PointerType yjs.store) @! "integrateCore" #parent #item_l
-  {{{ (idx : nat) (run : list (YjsItem A)), RET #();
-      own_ytype parent (DfracOwn 1) (integrate_locs ls idx item_l)
-        (MkTypeModel (take idx runs ++ MkItemRun run false :: drop idx runs)) ∗
-      ⌜YjsArrInvariant arr'⌝ ∗
-      ⌜runs_integrate_splice_at idx runs (runs_flatten runs) run (take idx runs ++ MkItemRun run false :: drop idx runs) arr'⌝ ∗
-      ⌜run_denotes input newItem run⌝ }}}.
-Proof using Type*.
-  set (arr := runs_flatten runs).
-  move=> Hinv Htoitem Hvalid Hmax HfindL HfindR Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb Hall.
-  iIntros (Φ) "(Hpkg & Htext & Hfresh) HΦ".
-  iDestruct "Hfresh" as (itemVal oleft oright) "(Hraw & %Hfl & %Hfr & %Hfpar & %Hflags & %Hrun)".
-  iDestruct "Hraw" as "(Hitem & Holeft & Horight & %Hin_l & %Hin_r & %Hid & %Hcontent)".
-  have Hcc : explode (toContent itemVal.(yjs.item.content')) = explode (in_content input)
-    by rewrite Hcontent.
-  have Hall' : integrate_all (ops_of_input input (explode (toContent itemVal.(yjs.item.content')))) arr = Some arr'
-    by rewrite Hcc.
-  have Hlen1 : (1 <= length (itemVal.(yjs.item.content').(yjs.content.content')))%nat by exact Hrun.
-  iAssert (own_fresh_item_raw item_l input itemVal oleft oright) with "[Hitem Holeft Horight]" as "Hraw".
-  { iFrame "Hitem Holeft Horight". iPureIntro.
-    split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent]. }
-  wp_apply (wp_Store__integrateCore_aux s parent item_l arr' input newItem ls runs itemVal oleft oright
-              leftIdx rightIdx curL curR
-              Hinv Htoitem Hvalid Hmax HfindL HfindR Hfl Hfr Hfpar Hflags Hlen1 Hnec Hfits Hoclk
-              HcurL HcurLb HcurR HcurRb Hall'
-              with "[$Hpkg $Hraw $Htext]").
-  iIntros (idx run) "(Htext' & %Hinv' & %Hidxb & %Hmile & %Harrsp & %Hcid & %Horig & %Hrorig & %Hclen)".
-  iApply ("HΦ" $! idx run).
-  iFrame "Htext'".
-  iPureIntro. split_and!.
-  - exact Hinv'.
-  - split_and!; [exact Hidxb | exact Hmile | done | exact Harrsp].
-  - split_and!; [exact Hcid | exact Horig | exact Hrorig | rewrite Hclen Hcc explode_length //].
 Qed.
 
 (* The former public model-level [wp_Store__integrateCore] (over [own_ytype])
