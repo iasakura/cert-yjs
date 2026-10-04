@@ -1,9 +1,9 @@
 ---
 name: pr-description
-description: Write or rewrite a cert-yjs pull request description. Use before every `gh pr create`, and whenever a PR body is written, updated, or reviewed for readiness.
+description: Writes or rewrites a Cert-Yjs pull request description, with its four sections and its writing rules. Use before every `gh pr create`, and whenever a PR body is written, updated, or reviewed for readiness.
 ---
 
-# Writing a cert-yjs PR description
+# Writing a Cert-Yjs PR description
 
 The description is what the review, and the history a year later, reads
 first. The diff is the evidence for it, not a prerequisite to it.
