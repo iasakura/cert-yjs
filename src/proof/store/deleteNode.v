@@ -1,9 +1,9 @@
 (** [deleteNode] (issue #133, plan section 5): tombstone one integrated
     node, reporting whether it was live. [wp_deleteNode] is the pool-level
-    core, [wp_deleteNode_store] the store re-closed around it. Records
-    nothing: [Transaction.deleteNode] ([transaction/wp_private]) records the
-    flip, and the delete loops ([Transaction.deleteRange] /
-    [applyDeleteSpans], [transaction/deleteRange]) step by that. *)
+    statement. Records nothing: [Transaction.deleteNode]
+    ([transaction/wp_private]) records the flip, and the delete loops
+    ([Transaction.deleteRange] / [applyDeleteSpans],
+    [transaction/deleteRange]) step by that. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -161,57 +161,6 @@ Proof using Type*.
                      (W64 (length (itemVal.(yjs.item.content').(yjs.content.content')))) |>), tl.
     iFrame "Hparent Hdll". iPureIntro.
     simpl. rewrite Hlen Hnv -Hrunlen. word.
-Qed.
-
-
-(** [deleteNode] on the store: the addressed run is tombstoned and every
-    other field is untouched (the store re-closed around [wp_deleteNode]);
-    what [Transaction.deleteNode] steps by. *)
-Lemma wp_deleteNode_store (s : loc) (state : store_state)
-    (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
-  ss_locs state !! parent = Some ls ->
-  ss_pool state !! parent = Some tm ->
-  ls !! k = Some lc ->
-  tm_runs tm !! k = Some r ->
-  {{{ is_pkg_init yjs ∗ own_store_state s state }}}
-    @! yjs.deleteNode #lc
-  {{{ RET #(negb (run_deleted r)); own_store_state s
-        (state <| ss_pool := <[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]>
-                             (ss_pool state) |>) }}}.
-Proof.
-  move=> Hls Hp Hlk Hrk.
-  iIntros (Φ) "(#Hpkg & Hruns) HΦ".
-  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
-  iDestruct "Hruns" as "(Hfields & %Hinvs)".
-  have Hrpi : pool_invs p := proj1 Hinvs.
-  have Hreg : pool_registry_coh bind p := proj1 (proj2 Hinvs).
-  have Hcontig : pool_clocks_contiguous p := proj2 (proj2 Hinvs).
-  have Hrmem : r ∈ all_runs p.
-  { apply (elem_of_all_runs_lookup p parent tm r Hp). left. exact (list_elem_of_lookup_2 _ _ _ Hrk). }
-  have Hrfits : run_fits r := proj1 (proj2 (proj1 Hrpi r Hrmem)).
-  iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iEval (simpl) in "Hitems Htypes".
-  wp_apply (wp_deleteNode locs p parent ls tm k lc r Hls Hp Hlk Hrk Hrfits with "[$Hpkg $Htypes]").
-  iIntros "Htypes".
-  set (tm' := MkTypeModel (<[k := flip_run r]> (tm_runs tm))) in *.
-  have Hrpi' : pool_invs (<[parent := tm']> p) := pool_invs_flip p parent tm k r Hp Hrk Hrpi.
-  have Hreg' : pool_registry_coh bind (<[parent := tm']> p)
-    := pool_registry_coh_insert_existing bind p parent tm tm' Hp Hreg.
-  have Hcontig' : pool_clocks_contiguous (<[parent := tm']> p).
-  { apply (pool_clocks_contiguous_ext p _ parent tm tm'); [| exact Hp | apply lookup_insert_eq | | exact Hcontig].
-    - move=> q Hne. rewrite lookup_insert_ne //.
-    - rewrite /tm' /tm_arr /=. exact (runs_flatten_flip_run (tm_runs tm) k r Hrk). }
-  (* the item index is unchanged: a flip keeps every entry's key *)
-  have Hkps : entry_key_pair <$> pool_entries locs (<[parent := tm']> p) ≡ₚ entry_key_pair <$> pool_entries locs p
-    := pool_entries_flip_key_pairs locs p parent ls tm k lc r Hls Hp Hlk Hrk.
-  iDestruct "Hitems" as (mref) "(Hitemsf & Hitemmap)".
-  iEval (rewrite /own_item_map) in "Hitemmap".
-  iDestruct (own_item_map_key_pairs_keys_perm mref (DfracOwn 1) _ _ (Permutation_sym Hkps) with "Hitemmap") as "Hitemmap".
-  iApply "HΦ".
-  iSplitL; last (iPureIntro; split_and!; [exact Hrpi' | exact Hreg' | exact Hcontig']).
-  rewrite /own_store_fields /=.
-  iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
-  iExists mref. iFrame "Hitemsf Hitemmap".
 Qed.
 
 

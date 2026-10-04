@@ -940,8 +940,12 @@ Qed.
     ORIGIN-FREE decoded item targeting a not-yet-registered root [nm]. Both
     origin [if]s are skipped, and the parent branch registers a fresh empty
     type through [getOrCreateYType]'s miss path; the item comes back linked
-    to null/null under the fresh type [q]. Local: a stepping stone of
-    [wp_store__integrateDecoded_unbound]. *)
+    to null/null under the fresh type [q]. A second spec of [store.repair]
+    ([transaction/applyUpdate]'s unbound-parent branch,
+    [wp_Transaction__integrateDecoded_unbound], uses it): it cannot be
+    derived from [wp_store__repair], whose [pool_repair_parent] premise
+    requires the wire parent name to be bound already, while here [nm] is
+    unbound and the registration itself is the point. *)
 Lemma wp_store__repair_create (s item_l pname : loc)
     (input : IntegrateInput (A := A)) (nm : go_string) (state : store_state) :
   in_originId input = None ->
