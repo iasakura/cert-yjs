@@ -8,12 +8,13 @@
     - [own_item_map_key_pairs]: the heap [map[Client][]*item] over a
       (client, clock, address) key list, which [own_item_map] is over a
       state's entries.
-    - the type pool and the store predicate:
+    - the type pool and the store-data predicate:
       [own_type_pool dq locs p] (over [store/value_cells]'s [locs_wf]);
-      the PRIMITIVE [own_store_state s state], the store at a
-      [store_state] (every field,
+      [own_store_state s state], the store's data fields at a
+      [store_state] (every field but [mu] and [observers],
       [own_store_fields] / [own_items_field], with
-      [store_invs]), which every store spec is stated over, and what it
+      [store_invs]; non-public, what the store method specs are stated
+      over until issue #219 moves the lock out of the store), and what it
       reads back ([own_store_state_run_pool_invs] /
       [own_store_state_run_wf] / [own_store_state_arr_inv] /
       [own_store_state_registry_coh], the document reader also on the pool,
@@ -821,15 +822,16 @@ Definition own_pending_deletes_field (l : loc) (pdel : list delete_span) : iProp
 Definition own_deleted_set_field (l : loc) : iProp Σ :=
   ∃ deletedSetVal : yjs.deletedSet.t, l ↦ deletedSetVal.
 
-(** The store's fields: the client id and clock, the deleted-set struct
+(** The store's data fields: the client id and clock, the deleted-set struct
     (not modeled: no verified method reads it through the field; the delete
     set's ghost model is [own_delete_set]), the item index
     ([store.items] and the per-client run map it points to), the root registry
     ([store.types] and its name -> type-loc map), the type pool, and the two
     buffers ([store.pending], [store.pendingDeletes]) over their model lists.
+    [mu] and [observers] are not here ([is_Store] / [own_observers]).
     The field pointers and buffer slices are existential: no spec names them,
-    and no field has a predicate of its own, so a spec can only take the
-    store whole ([own_store_state]). *)
+    and no field has a predicate of its own, so a spec can only take these
+    fields together ([own_store_state]). *)
 
 (** [own_items_field l locs p]: the [items] field, the index over the
     pool's entries ([own_item_map]). *)
@@ -838,9 +840,9 @@ Definition own_items_field (l : loc) (locs : gmap loc (list loc)) (p : pool) : i
     "Hitemsf" ∷ l ↦ items_mref ∗
     "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) locs p.
 
-(** [own_store_fields s state]: every field of the store at its
-    state: the item index over the pool's entries and the type
-    pool as [own_type_pool]. *)
+(** [own_store_fields s state]: the store's data fields (every field but
+    [mu] and [observers]) at its state: the item index over the pool's
+    entries and the type pool as [own_type_pool]. *)
 Definition own_store_fields (s : loc) (state : store_state) : iProp Σ :=
   "Hclient" ∷ (s .[(yjs.store.t), "client"]) ↦ ss_client state ∗
   "Hclock" ∷ (s .[(yjs.store.t), "clock"]) ↦ ss_clock state ∗
@@ -859,9 +861,13 @@ Definition store_invs (state : store_state) : Prop :=
   pool_invs (ss_pool state) ∧ pool_registry_coh (ss_bind state) (ss_pool state) ∧
   pool_clocks_contiguous (ss_pool state).
 
-(** [own_store_state s state]: THE store at its state, the
-    PRIMITIVE store predicate: every field of the struct at [state], with
-    the invariants every method preserves. *)
+(** [own_store_state s state]: the store's data fields at [state]: every
+    field of the struct but [mu] (owned by the RWMutex handle, [is_Store])
+    and [observers] ([own_observers]), with the invariants every store
+    method preserves ([store_invs]). Non-public (it holds part of the
+    store's resources); the store method specs are stated over it until
+    issue #219 moves the lock out of the store. The public predicate is
+    [own_store]. *)
 Definition own_store_state (s : loc) (state : store_state) : iProp Σ :=
   "Hfields" ∷ own_store_fields s state ∗
   "%Hinvs" ∷ ⌜store_invs state⌝.
