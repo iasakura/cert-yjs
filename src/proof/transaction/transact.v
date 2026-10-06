@@ -9,12 +9,17 @@
     Part II C2), which is where the store's observers catch up with its data.
 
     The transitions of the store's predicate across one transaction, in
-    order: the write lock hands out [own_store] with its two states
-    coincident ([wp_Store__wlock]); [own_transaction_fresh] (below) wraps it
-    with the fresh record into [own_transaction], the predicate the closure
-    runs on; [wp_Transaction__notify] turns [own_transaction] back into
-    [own_store] with coincident states, which the write lock takes back
-    ([wp_Store__wunlock]). *)
+    order: the write lock hands out the issue #219 split, the core, the
+    session and the observers told up to the store's current model and
+    tombstones ([wp_Store__wlock]); this proof rebuilds [own_store] from
+    the split ([own_store_data_build]) and [own_transaction_fresh] (below)
+    wraps it with the fresh record into [own_transaction], the predicate
+    the closure runs on; [wp_Transaction__notify] turns [own_transaction]
+    back into [own_store] with coincident states, which this proof splits
+    again ([own_store_data_split]) for the write lock to take back
+    ([wp_Store__wunlock]). The conversions at this boundary retire when
+    [own_transaction] itself moves to the split (issue #219's next
+    milestone). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -96,8 +101,15 @@ Proof.
   wp_start as "(#His_store & Hf)". rewrite /closure_runs_transaction.
   wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
-  iDestruct "Hinv" as (c h m pend deleted) "Hstore".
+  iDestruct "Hinv" as (c h m) "Hstore".
   wp_auto.
+  iDestruct "Hstore" as (state0 ds0) "(Hcore & Hsession & Hobservers0)".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  set (pend := ss_pending state0) in *.
+  set (deleted := pool_tombstoned (ss_pool state0)) in *.
+  iAssert (own_store (store_of_ref ref) γs γh c h m pend deleted m deleted)
+    with "[Hdata Hobservers0]" as "Hstore".
+  { rewrite /own_store. iFrame "Hdata Hobservers0". }
   wp_apply wp_newTransaction. iIntros (tr) "Hchanges".
   wp_auto.
   iDestruct (own_transaction_fresh with "Hchanges Hstore") as "Htx".
@@ -106,7 +118,10 @@ Proof.
   wp_auto.
   wp_apply (wp_Transaction__notify with "[$Htx]"). iIntros "Hstore".
   wp_auto.
-  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore]").
+  iDestruct "Hstore" as "[Hdata' Hobservers']".
+  iDestruct (own_store_data_split with "Hdata'") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+  iEval (rewrite Hdel') in "Hobservers'".
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hcore' $Hsession' $Hobservers']").
   iApply "HΦ". iExists c, h', m', pend', deleted'. iFrame "HQ".
 Qed.
 

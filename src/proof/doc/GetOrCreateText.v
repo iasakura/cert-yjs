@@ -71,9 +71,13 @@ Proof.
   wp_start as "(#His_doc & #Hishist)".
   iNamed "His_doc". subst s_loc. wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
-  iDestruct "Hinv" as (c0 h m pend deleted) "Hstore".
+  iDestruct "Hinv" as (c0 h m) "Hstore".
   wp_auto.
-  iDestruct "Hstore" as "[Hown Hobservers]". iNamed "Hown". subst c0.
+  iDestruct "Hstore" as (state0 ds0) "(Hcore & Hsession & Hobservers)".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hown".
+  set (pend := ss_pending state0) in *.
+  set (deleted := pool_tombstoned (ss_pool state0)) in *.
+  iNamed "Hown". subst c0.
   iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hrpi.
   iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
@@ -90,13 +94,16 @@ Proof.
     iMod (auth_gmap_gset_frag_alloc γs.(sn_seq) (DfracOwn 1) _ q ∅ _
             Hmk (empty_subseteq _) with "Hseq") as "[Hseq #Hlb0]".
     wp_auto.
-    wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend deleted
-                with "[$His_store $Hwl $Hobservers Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+    iAssert (own_store_data (store_of_ref (dvv.(yjs.Doc.store'))) γs γh (uint.nat client) h m pend deleted)
+      with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hdata".
     { iExists client, k, pdel, locs, p, bind, acc.
       iFrame "∗#". iPureIntro.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
         | exact Hctr | exact Hacccoh | exact Hdeleted]. }
+    iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+    iEval (rewrite Hdel') in "Hobservers".
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hcore' $Hsession' $Hobservers]").
     (* a fresh handle knows of no deleted char: the empty lower bound of the
        store's delete set *)
     iMod (is_delete_set_lb_empty γs) as "#Hdel0".
@@ -205,13 +212,16 @@ Proof.
     { rewrite /pool_registry_models. split; [exact Hmtypes' | exact Hmdom']. }
     (* registering an empty type tombstones nothing *)
     have Htomb' : pool_tombstoned p' = pool_tombstoned p := pool_tombstoned_insert_empty p q Hfresh.
-    wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend deleted
-                with "[$His_store $Hwl $Hobservers Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+    iAssert (own_store_data (store_of_ref (dvv.(yjs.Doc.store'))) γs γh (uint.nat client) h m pend deleted)
+      with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hdata".
     { iExists client, k, pdel, (<[q := []]> locs), p', bind', acc.
       iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds'". iPureIntro.
       split_and!;
         [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh
         | exact Hctr' | exact Hacccoh | rewrite Htomb'; exact Hdeleted]. }
+    iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+    iEval (rewrite Hdel') in "Hobservers".
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hcore' $Hsession' $Hobservers]").
     (* a fresh handle knows of no deleted char: the empty lower bound of the
        store's delete set *)
     iMod (is_delete_set_lb_empty γs) as "#Hdel0".
