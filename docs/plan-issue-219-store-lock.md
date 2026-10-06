@@ -114,14 +114,30 @@ and why it closes:
 
 Two things every row relies on:
 
-- The model stays the cell model. `GetNode`'s postcondition names the
-  slot `(parent, k)` and the address list entry; `Integrate`'s
-  precondition ties the fresh item's `left` / `right` pointers to
-  `loc_at ls` of the resolved origin runs. Both are only expressible
-  because `ss_locs` / `ss_pool` remain spec parameters. Hiding them
-  (a doc-model-only public spec) would need a new joint
-  store-plus-fresh-item predicate and is the separate, much larger
-  refactor of issue #105. The rules do not ask for it.
+- The model stays the cell model, because two of the eight specs must
+  say WHICH heap node they mean, and the addresses in `ss_locs` are the
+  words for that. `GetNode` returns a raw node pointer `l`, and its
+  postcondition identifies it: `pool_covers (ss_pool state) parent k
+  (toYjsId idv)` and `(ss_locs state !! parent) ≫= (λ ls, ls !! k) =
+  Some l`, that is, `l` is the address of the `k`-th run of type
+  `parent` and that run covers the id. `Integrate` receives the item
+  already linked to its neighbours, and its precondition says where the
+  item's `left` / `right` fields point: `own_linked_item item_l input
+  parent (loc_at ls (kL - 1)) (loc_at ls kR)`, the addresses of the
+  resolved origin runs read off the parent's address list `ls`. Both
+  sentences mention `ss_locs` / `ss_pool`, so both are writable only
+  while the state, addresses included, is a spec parameter. The
+  alternative, a public spec over the doc model alone (`m`, the
+  per-root char sequences, with the pool and the addresses existential
+  inside `own_store`), erases that vocabulary: the address ties would
+  have to move into a new predicate owning the store AND the fresh item
+  under one existential, and a model-level meaning for `GetNode`'s
+  returned pointer needs the run-granular model redesign that is
+  issue #105. That is a separate, much larger refactor, and nothing
+  requires it here: the deviation is about a predicate holding only
+  part of the store's resources, not about the model, and #219 states
+  that a spec may use any model, the cell model included. Keeping the
+  cell model is what lets the eight proofs port nearly one for one.
 - The observers ride along untouched: no store method reads or writes the
   `observers` field (only `Text.Observe` and `notify` do, and both run in
   the transaction layer), so `(m0, deleted0)` pass through every spec
