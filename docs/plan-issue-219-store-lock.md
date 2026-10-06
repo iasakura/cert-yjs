@@ -302,14 +302,40 @@ resource and is public". So:
   step the invariant is open and the session bundle (the history) is
   visible regardless of which fraction leaves.
 
-Readers get, as baggage, fractions of resources they never use (the
-pending buffers, the observer registry). That is the cost of the public
-shape and it is proof-only; no Go changes. One engineering note: the
-observers' callback contracts are not timeless, so the lock proofs keep
-the one-`later`-strip discipline that `tie_body` has today; heap.v
-exports the split `own_store ⊣⊢ own_store_core ∗ own_observers_part`
-(a law of the predicate, usable in the lock type's private proofs) so the
-timeless core can still be pulled through `>_` intros.
+Two costs come with this shape, and neither reaches the Go.
+
+First, a reader's fraction covers resources a read never touches.
+Today `rlock` hands `Text.String` exactly what it uses: a share of the
+pool it walks and of the two authorities it compares its certificates
+against (`store_inv_ro`). A fraction of `own_store` instead contains a
+fraction of every resource of the store, the pending buffers, the
+registry map, the clock and client fields and the observers included;
+the reader's proof carries those along unread and `runlock` returns
+them. This is proof-side plumbing only; `RLock` / `RUnlock` and the
+read methods are unchanged.
+
+Second, swallowing the observers into `own_store` would naively break
+the lock proofs' later handling, and one exported law repairs it.
+Opening the tie invariant yields its content under a `▷`, and at the
+lock wrappers' linearization points, inside an atomic step, there is no
+program step ahead to strip that later, so whatever the proof needs
+there must come out through timeless strips (`>` intros). The
+observers' callback contracts (`is_text_callback`, a Hoare triple) are
+not timeless, which is why today's `tie_body` places `own_observers`
+BESIDE the timeless `tie_store`: the proofs strip the store state with
+one `>` intro, through the sealed `Timeless` instance that is also the
+compile-time fix of issue #22, and carry the observers under the `▷`
+untouched. The new `own_store` contains the observers, so the predicate
+as one opaque blob is no longer timeless and that `>` intro would fail.
+heap.v therefore exports
+`own_store ⊣⊢ own_store_core ∗ own_observers_part`, the split into the
+timeless core and the observers half, as a law of the predicate; the
+lock wrappers are private to the lock type, so their proofs may rewrite
+with it under the `▷` (`▷ (P ∗ Q) ⊣⊢ ▷ P ∗ ▷ Q`), strip the core, and
+keep the observers half under the `▷` exactly as today. The discipline
+and the compile-time behaviour of the current lock proofs are
+preserved, only now the split is a lemma instead of the shape of
+`tie_body`.
 
 ## 6. The free functions become methods again (open point 3)
 
