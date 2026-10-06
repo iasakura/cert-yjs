@@ -67,13 +67,13 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
     predicate is the Doc-level handle the [wp_NewDoc] / [wp_Doc__GetOrCreateText] specs
     are stated over (GetOrCreateText: consume [is_Doc dv s_loc γ], look up or create the
     YType under the write lock, return [is_Text t γs γh name []]). *)
-Definition is_Doc (dv s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
+Definition is_Doc (dv ref : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
   ∃ (dvv : yjs.Doc.t),
     "Hdoc" ∷ dv ↦□ dvv ∗
-    "%Hstore" ∷ ⌜dvv.(yjs.Doc.store') = s_loc⌝ ∗
-    "His_store" ∷ is_Store s_loc γs γh.
+    "%Hstore" ∷ ⌜dvv.(yjs.Doc.store') = ref⌝ ∗
+    "His_store" ∷ is_Store ref γs γh.
 
-#[global] Instance is_Doc_persistent dv s_loc γs γh : Persistent (is_Doc dv s_loc γs γh).
+#[global] Instance is_Doc_persistent dv ref γs γh : Persistent (is_Doc dv ref γs γh).
 Proof. apply _. Qed.
 
 End doc.

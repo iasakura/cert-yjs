@@ -13,16 +13,35 @@ import "sync"
 // the proofs in src/proof can reason about them.
 // ---------------------------------------------------------------------------
 
-// store is the document's struct store (y-octo: doc/store.rs DocStore). Like
-// y-octo's Arc<RwLock<DocStore>>, the store carries everything mutable and
-// shared: the lock, the local client's next clock, the per-client run lists, the
-// root-type registry, and the delete set. The Doc is just a handle around it.
+// storeRef is the shared, lock-guarded store: y-octo's StoreRef =
+// Arc<RwLock<DocStore>> (y-octo 0.1.0 src/doc/store.rs:36). The Go pointer
+// *storeRef is the Arc, mu the RwLock, store the DocStore it guards. Every
+// holder of the document (Doc, Text) holds this ref; a transaction holds
+// the bare *store while the write lock is held (transaction.go), which is
+// yrs's shape (TransactionMut owns the store's write guard, yrs 0.27.2
+// src/transaction.rs:445). None of the three references keeps the lock as
+// a field of the store itself (issue #219): writers
+// (Insert/Delete/GetOrCreateText/applyUpdate) take the write lock (Lock),
+// pure readers (String/Len) take the read lock (RLock) so concurrent reads
+// are allowed. mu guards every field of store, and the yTypes' DLLs
+// reached through store.types.
+type storeRef struct {
+	mu    sync.RWMutex
+	store store
+}
+
+// newStoreRef creates the shared ref around a fresh store owned by client
+// (y-octo: Doc::new builds the Arc<RwLock<DocStore>>).
+func newStoreRef(client Client) *storeRef {
+	return &storeRef{store: newStore(client)}
+}
+
+// store is the document's struct store (y-octo: doc/store.rs DocStore): the
+// local client's next clock, the per-client run lists, the root-type
+// registry, the delete set and the observers. It is everything mutable and
+// shared, guarded as one unit by the storeRef's lock; the Doc is just a
+// handle around the ref.
 type store struct {
-	// mu guards every other field (and the YTypes' DLLs reached via types):
-	// y-octo's RwLock<DocStore>. Writers (Insert/Delete/GetOrCreateText/apply_update)
-	// take the write lock (Lock); pure readers (String/Len) take the read lock
-	// (RLock) so concurrent reads are allowed, matching Arc<RwLock<DocStore>>.
-	mu sync.RWMutex
 	// client is the local replica id.
 	client Client
 	// clock is the next clock for the local client (state-vector head). Each
@@ -57,14 +76,17 @@ type store struct {
 	// publisher that polls the store (DocPublisher, src/doc/publisher.rs:15).
 	// Here they sit on the store, keyed by type, so that the pool's type
 	// cells, the heaviest proof machinery, keep their shape (a divergence,
-	// docs/plan-issue-198-observe.md section 18). Guarded by mu; notify walks
-	// it at the end of every transaction.
+	// docs/plan-issue-198-observe.md section 18). Guarded by the storeRef's
+	// mu like every other field; notify walks it at the end of every
+	// transaction.
 	observers map[*yType][]func(delta []DeltaOp)
 }
 
-// newStore creates an empty store owned by the given client.
-func newStore(client Client) *store {
-	return &store{
+// newStore creates an empty store owned by the given client, by value: the
+// one in the document lives embedded in its storeRef (newStoreRef), the
+// tests build bare, lock-free stores with it.
+func newStore(client Client) store {
+	return store{
 		client:         client,
 		clock:          0,
 		items:          make(map[Client][]*item),
@@ -77,7 +99,7 @@ func newStore(client Client) *store {
 }
 
 // getOrCreateYType returns the internal sequence for name, creating it on first
-// use (y-octo: DocStore::get_or_create_type). Callers hold s.mu.
+// use (y-octo: DocStore::get_or_create_type). Callers hold the storeRef's write lock.
 func (s *store) getOrCreateYType(name string) *yType {
 	y, ok := s.types[name]
 	if !ok {
@@ -123,14 +145,12 @@ func (s *store) GetNode(id id) (*item, bool) {
 }
 
 // addNode appends an item to the run list of its owning client (y-octo:
-// store::add_item), so the store holds the full item set. Takes the items
-// map instead of being a *store method as in y-octo (whose &mut self
-// borrows the whole store either way): it touches nothing else of the
-// store, and the footprint must be visible in the program (CLAUDE.md
-// "Spec shape").
-func addNode(items map[Client][]*item, it *item) {
+// DocStore::add_item, a &mut self method there too), so the store holds the
+// full item set. A store method again since issue #219 retired the rule
+// that had made it a free function over the items map.
+func (s *store) addNode(it *item) {
 	client := it.id.clientId
-	items[client] = append(items[client], it)
+	s.items[client] = append(s.items[client], it)
 }
 
 // idOptEqual compares two optional ids (Option<id> in y-octo).
@@ -225,9 +245,9 @@ func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 // DocStore::split_node_at): n is truncated in place to its first diff clocks
 // and the fresh right node covering the rest is spliced after it, its left
 // origin the last id of the truncated half and its right origin copied from
-// n. A free function, not a *store method: it touches only the node and its
-// neighbours, and the footprint must be visible in the program (CLAUDE.md
-// "Spec shape"); splitNode adds the per-client run-list insertion.
+// n. A free function over the node, as in y-octo, where Item::split_at is
+// an Item method, not a store method; splitNode adds the per-client
+// run-list insertion.
 func splitItem(n *item, diff uint64) *item {
 	olid := newId(n.id.clientId, n.id.clock+diff-1)
 	// Split the content through a []byte round-trip rather than slicing the
@@ -301,7 +321,7 @@ func (s *store) splitAtAndGetRight(id id) (*item, bool) {
 //
 // Parent::Id (type-as-item) is out of the verified subset (#43). parentName is
 // passed alongside the item because the decoded wire form lives on updateItem,
-// not on item (see item.parent). Callers hold s.mu.
+// not on item (see item.parent). Callers hold the storeRef's write lock.
 func (s *store) repair(it *item, parentName *string) {
 	// After the clean-end/clean-start splits the origin ids already sit on
 	// node boundaries (the left origin IS the left node's LastId, the right
@@ -402,11 +422,11 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 // idempotent. It records nothing; Transaction.deleteNode records the flip in
 // the transaction (Yjs and yrs record at this point, y-octo, having no
 // transaction, does not). The node must be integrated (reached through the
-// store's run lists); callers hold s.mu. A free function, not a *store
-// method as in y-octo (whose &mut self borrows the whole store either way):
-// it touches only the node and its parent type, and the footprint must be
-// visible in the program.
-func deleteNode(it *item) bool {
+// store's run lists); callers hold the storeRef's write lock. A store
+// method as in y-octo (DocStore::delete_item_inner takes &mut self), where
+// Yjs and yrs put the delete on the item instead; a store method again
+// since issue #219 retired the rule that had made it a free function.
+func (s *store) deleteNode(it *item) bool {
 	if it.Indexable() {
 		it.flags = it.flags | itemDeleted
 		it.parent.len = it.parent.len - it.Len()
@@ -490,7 +510,7 @@ func (s *store) Integrate(parent *yType, item *item) *yType {
 		parent = item.parent
 	}
 	s.integrateCore(parent, item)
-	addNode(s.items, item)
+	s.addNode(item)
 	return parent
 }
 

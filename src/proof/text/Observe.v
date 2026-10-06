@@ -87,7 +87,7 @@ Proof.
   { apply elem_of_dom. rewrite (proj1 Haligned). apply elem_of_dom. by exists ts. }
   have Hsnap : runs_model (tm_runs ts) = type_snapshot m deleted name.
   { rewrite Hdeleted. exact (type_snapshot_runs_model m bind p name _ ts Hpoolinv Hregmodel Hbindlk Htsp). }
-  iDestruct (own_store_state_ytype_acc tv.(yjs.Text.store') (MkStoreState client k locs p bind pend pdel)
+  iDestruct (own_store_state_ytype_acc (store_of_ref tv.(yjs.Text.store')) (MkStoreState client k locs p bind pend pdel)
                tv.(yjs.Text.inner') ls ts Hls Htsp with "Hstate") as "[Hyt Hytback]".
   iDestruct "Hyt" as (yt tl) "Hyt". iNamed "Hyt".
   iDestruct (own_dll_run_per_char with "Hdll") as %Hperchar.
@@ -110,7 +110,7 @@ Proof.
     rewrite Hb. discriminate. }
   iNamed "Hregistry".
   iDestruct (registered_bindings_lookup with "HtypesAuth Hregistered_bind") as %Hregbind.
-  iAssert (own_store_data tv.(yjs.Text.store') γs γh c h m pend deleted)
+  iAssert (own_store_data (store_of_ref tv.(yjs.Text.store')) γs γh c h m pend deleted)
     with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hstore".
   { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh

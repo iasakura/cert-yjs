@@ -91,7 +91,7 @@ func (tr *Transaction) integrate(parent *yType, item *item) {
 // TransactionMut::delete, src/transaction.rs:732; Yjs Item.delete,
 // src/structs/Item.js:366-375): the store's deleteNode, then recordDelete.
 func (tr *Transaction) deleteNode(it *item) {
-	if deleteNode(it) {
+	if tr.store.deleteNode(it) {
 		tr.recordDelete(it)
 	}
 }
@@ -246,18 +246,20 @@ func (tr *Transaction) applyUpdate(structs []updateItem) {
 // src/utils/Transaction.js:391-422, without the reentrant branch; yrs
 // transact_mut takes the store's write guard and commits on drop,
 // src/transact.rs:131, src/transaction.rs:488). The store's write lock is the
-// transaction's critical section. A free function over the store, since the
-// transaction is created inside. Go has no goroutine identity, so a nested
-// transact cannot be recognised and deadlocks (#206, item 2): f uses the
-// In-variants (Text.InsertIn / DeleteIn / StringIn) with tr and never locks
-// the document, and the callbacks notify runs receive their delta and must
-// not touch the document at all (Text.Observe).
-func transact(s *store, f func(tr *Transaction)) {
-	s.mu.Lock()
-	tr := newTransaction(s)
+// transaction's critical section: the transaction holds the bare *store for
+// its duration, which is yrs's shape (TransactionMut owns the write guard).
+// A free function over the store ref, since the transaction is created
+// inside. Go has no goroutine identity, so a nested transact cannot be
+// recognised and deadlocks (#206, item 2): f uses the In-variants
+// (Text.InsertIn / DeleteIn / StringIn) with tr and never locks the
+// document, and the callbacks notify runs receive their delta and must not
+// touch the document at all (Text.Observe).
+func transact(ref *storeRef, f func(tr *Transaction)) {
+	ref.mu.Lock()
+	tr := newTransaction(&ref.store)
 	f(tr)
 	tr.notify()
-	s.mu.Unlock()
+	ref.mu.Unlock()
 }
 
 // notify is the end of the transaction, the observer half of Yjs's

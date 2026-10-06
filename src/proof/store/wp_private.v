@@ -133,13 +133,13 @@ Qed.
     the [pool_frag] for the next transition). The store comes out under a
     later: the observers' contracts are not timeless (the next program step
     strips it). *)
-Lemma wp_Store__wlock (s_loc : loc) (γs : store_names) (γh : history_names) :
-  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh }}}
-    (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Lock" #()
+Lemma wp_Store__wlock (ref : loc) (γs : store_names) (γh : history_names) :
+  {{{ is_pkg_init sync ∗ is_Store ref γs γh }}}
+    (ref .[(yjs.storeRef.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Lock" #()
   {{{ RET #(); own_wlock γs ∗
       ∃ (c : ClientId) (h : list Ev) (m : DocModel)
         (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId),
-        ▷ own_store s_loc γs γh c h m pend deleted m deleted }}}.
+        ▷ own_store (store_of_ref ref) γs γh c h m pend deleted m deleted }}}.
 Proof.
   wp_start_folded as "His". iNamed "His".
   wp_apply (rwmutex.wp_RWMutex__Lock with "[$Hrw]").
@@ -169,12 +169,12 @@ Qed.
     bridge; this is what lets the write proofs stay ignorant of the reader
     accounting. The "invariant is in [RLocked]" case (unlock without the
     lock) is impossible: the [own_wlock] clash. *)
-Lemma wp_Store__wunlock (s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma wp_Store__wunlock (ref : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
-  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_wlock γs ∗
-      own_store s_loc γs γh c h m pend deleted m deleted }}}
-    (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Unlock" #()
+  {{{ is_pkg_init sync ∗ is_Store ref γs γh ∗ own_wlock γs ∗
+      own_store (store_of_ref ref) γs γh c h m pend deleted m deleted }}}
+    (ref .[(yjs.storeRef.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Unlock" #()
   {{{ RET #(); True }}}.
 Proof.
   wp_start_folded as "(His & Hwl & Hstore)". iNamed "His".
@@ -216,12 +216,12 @@ Qed.
     exclusive slice, and [store_inv_excl_hist_root] converts there: the
     [types] snapshot handed out already contains, at the bound root, one item
     per delivered insert of the certified prefix. *)
-Lemma wp_Store__rlock (s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma wp_Store__rlock (ref : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
-  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_read_cap γs ∗
+  {{{ is_pkg_init sync ∗ is_Store ref γs γh ∗ own_read_cap γs ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗
       is_type_binding γs.(sn_types) name parent }}}
-    (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "RLock" #()
+    (ref .[(yjs.storeRef.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "RLock" #()
   {{{ locs p delete_set, RET #();
       own_read_locked γs locs p ∗ store_inv_ro γs locs p delete_set rwmutex_guard.rfrac ∗
       ⌜∀ input : IntegrateInput (A := A),
@@ -265,11 +265,11 @@ Qed.
 (** Read-lock release: returns the reader's [rfrac] share (proving via [pool_frag_agree]
     that the store's [types] is unchanged since the [RLock], so the share
     recombines) and the reader slot; returns [own_read_cap]. *)
-Lemma wp_Store__runlock (s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma wp_Store__runlock (ref : loc) (γs : store_names) (γh : history_names)
     (locs_r : gmap loc (list loc)) (p_r : pool) (delete_set_r : gset YjsId) :
-  {{{ is_pkg_init sync ∗ is_Store s_loc γs γh ∗ own_read_locked γs locs_r p_r ∗
+  {{{ is_pkg_init sync ∗ is_Store ref γs γh ∗ own_read_locked γs locs_r p_r ∗
         store_inv_ro γs locs_r p_r delete_set_r rwmutex_guard.rfrac }}}
-    (s_loc .[(yjs.store.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "RUnlock" #()
+    (ref .[(yjs.storeRef.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "RUnlock" #()
   {{{ RET #(); own_read_cap γs }}}.
 Proof.
   wp_start_folded as "(His & Hrlo & Hro_r)". iNamed "His".

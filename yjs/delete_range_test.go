@@ -14,7 +14,7 @@ func TestDeleteRangeWholeRun(t *testing.T) {
 	txt.Insert(0, "hello")
 
 	doc.store.mu.Lock()
-	newTransaction(doc.store).deleteRange(1, 1, 3) // clocks 1..3 = "ell"
+	newTransaction(&doc.store.store).deleteRange(1, 1, 3) // clocks 1..3 = "ell"
 	doc.store.mu.Unlock()
 
 	if got := txt.String(); got != "ho" {
@@ -31,8 +31,8 @@ func TestDeleteRangeIdempotent(t *testing.T) {
 	txt.Insert(0, "abcd")
 
 	doc.store.mu.Lock()
-	newTransaction(doc.store).deleteRange(1, 0, 2)
-	newTransaction(doc.store).deleteRange(1, 0, 2) // again: no double length shrink
+	newTransaction(&doc.store.store).deleteRange(1, 0, 2)
+	newTransaction(&doc.store.store).deleteRange(1, 0, 2) // again: no double length shrink
 	doc.store.mu.Unlock()
 
 	if got := txt.String(); got != "cd" {
@@ -50,9 +50,9 @@ func TestDeleteRangeSkipsUnintegrated(t *testing.T) {
 
 	doc.store.mu.Lock()
 	// clocks 0..4 requested, only 0..1 exist: the rest is skipped, not a panic
-	newTransaction(doc.store).deleteRange(1, 0, 5)
+	newTransaction(&doc.store.store).deleteRange(1, 0, 5)
 	// a client with no items at all
-	newTransaction(doc.store).deleteRange(7, 0, 3)
+	newTransaction(&doc.store.store).deleteRange(7, 0, 3)
 	doc.store.mu.Unlock()
 
 	if got := txt.String(); got != "" {
@@ -75,11 +75,11 @@ func TestDeleteRangeRemoteConverges(t *testing.T) {
 	docB.ApplySyncUpdate(structsOf(docA, "root"), nil)
 
 	docA.store.mu.Lock()
-	newTransaction(docA.store).deleteRange(1, 5, 6) // " world"
+	newTransaction(&docA.store.store).deleteRange(1, 5, 6) // " world"
 	docA.store.mu.Unlock()
 
 	docB.store.mu.Lock()
-	newTransaction(docB.store).deleteRange(1, 5, 6)
+	newTransaction(&docB.store.store).deleteRange(1, 5, 6)
 	docB.store.mu.Unlock()
 
 	if got, want := txtB.String(), txtA.String(); got != want {
@@ -96,7 +96,7 @@ func structsOf(doc *Doc, name string) []updateItem {
 	doc.store.mu.RLock()
 	defer doc.store.mu.RUnlock()
 	items := []updateItem{}
-	cur := doc.store.types[name].start
+	cur := doc.store.store.types[name].start
 	for cur != nil {
 		var ol *id
 		if cur.originLeftId != nil {

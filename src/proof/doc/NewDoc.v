@@ -57,11 +57,15 @@ Lemma wp_NewDoc (γh : history_names) (client : w64) :
   {{{ is_pkg_init yjs ∗
       own_client_history γh (uint.nat client) ([] : list Ev) }}}
     @! yjs.NewDoc #client
-  {{{ (dv s_loc : loc) (γs : store_names), RET #dv;
-      is_Doc dv s_loc γs γh ∗ is_store_client γs (uint.nat client) ∗
+  {{{ (dv ref : loc) (γs : store_names), RET #dv;
+      is_Doc dv ref γs γh ∗ is_store_client γs (uint.nat client) ∗
       [∗] replicate (Z.to_nat rwmutex.actualMaxReaders) (own_read_cap γs) }}}.
 Proof.
   wp_start as "Hhist".
+  wp_auto.
+  (* newStoreRef, then newStore building the embedded store value *)
+  wp_func_call.
+  wp_call.
   wp_auto.
   wp_func_call.
   wp_call.
@@ -76,17 +80,19 @@ Proof.
      invariant clause is C2's *)
   wp_apply wp_map_make1. iIntros (observers_mref) "HobserversMap".
   wp_auto.
-  wp_alloc s_loc as "Hs".
+  wp_alloc ref as "Hs".
   wp_auto.
   wp_alloc dv as "Hd".
   iPersist "Hd".
   iApply wp_fupd.
   wp_auto.
-  (* the physical lock: the mu field starts at the RWMutex zero value *)
+  (* split the storeRef into its lock and the embedded store, then the
+     store into its fields; the lock starts at the RWMutex zero value *)
   iStructNamed "Hs". simpl.
+  iStructNamed "store". simpl.
   iMod (init_RWMutex (storeN .@ "rw") with "mu") as (γrw) "(#Hrw0 & Hst & Hltoks)".
   (* the ghost layer, at the real lock names *)
-  iMod (store_tie_init s_loc γh client items_mref types_mref observers_mref _ γrw
+  iMod (store_tie_init (store_of_ref ref) γh client items_mref types_mref observers_mref _ γrw
           with "client clock items [Hitemsmap] types [Htypesmap] deletedSet
                 pending pendingDeletes observers [HobserversMap] Hhist") as (γs) "Hst0".
   { iFrame "Hitemsmap". }
@@ -95,11 +101,11 @@ Proof.
   iNamed "Hst0".
   (* the tie invariant, at RLocked 0 *)
   iMod (inv_alloc (storeN .@ "tie") _
-          (∃ st, rwmutex.own_RWMutex γs.(sn_rw) st ∗ tie_body s_loc γs γh st)
+          (∃ st, rwmutex.own_RWMutex γs.(sn_rw) st ∗ tie_body (store_of_ref ref) γs γh st)
           with "[Hst Htie]") as "#Htieinv".
   { iNext. iExists (RLocked 0). rewrite Hrw. iFrame "Hst Htie". }
   iModIntro.
-  iApply ("HΦ" $! dv s_loc γs).
+  iApply ("HΦ" $! dv ref γs).
   iFrame "Hclientpin".
   iSplitR "Hltoks Hrtoks"; last first.
   { (* the read capabilities: one RLock token + one reader-bound token per slot *)

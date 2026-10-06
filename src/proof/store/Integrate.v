@@ -2057,10 +2057,10 @@ Qed.
 
 
 
-(** [addNode items it]: append the freshly integrated
+(** [store.addNode it]: append the freshly integrated
     node's address to its client's slice of the item index (y-octo
-    [store::add_item], a [&mut self] method there; a free function here so
-    the footprint is visible, CLAUDE.md "Spec shape").
+    [DocStore::add_item], a [&mut self] method there too; a method again
+    since issue #219 retired the rule that had made it a free function).
 
     The node at [item_l] is the [idx]-th of the type at [parent] after the
     splice and its entry is the one the splice added, so the append lands
@@ -2071,7 +2071,7 @@ Qed.
     [run_invs] is the same about the new one (its key is a machine word
     because its head id is); [pool_invs] carries it once the splice is
     in. *)
-#[local] Lemma wp_addNode (items_mref parent item_l : loc) (locs : gmap loc (list loc)) (p : pool)
+#[local] Lemma wp_store__addNode (s parent item_l : loc) (locs : gmap loc (list loc)) (p : pool)
     (ls' : list loc) (tm' : type_model) (idx : nat) (r : ItemRun) :
   ls' !! idx = Some item_l ->
   tm_runs tm' !! idx = Some r ->
@@ -2080,10 +2080,10 @@ Qed.
   pool_clock_below p (item_id (run_head_item r)) ->
   run_invs r ->
   {{{ is_pkg_init yjs ∗ own_ytype parent (DfracOwn 1) ls' tm' ∗
-      own_item_map items_mref (DfracOwn 1) locs p }}}
-    @! yjs.addNode #items_mref #item_l
+      own_store_items s locs p }}}
+    s @! (go.PointerType yjs.store) @! "addNode" #item_l
   {{{ RET #(); own_ytype parent (DfracOwn 1) ls' tm' ∗
-      own_item_map items_mref (DfracOwn 1) (<[parent := ls']> locs) (<[parent := tm']> p) }}}.
+      own_store_items s (<[parent := ls']> locs) (<[parent := tm']> p) }}}.
 Proof using Type*.
   move=> Hlk Hrk Hperm Hrpi Hbelow Hinvr.
   have [Hinvpool _] := Hrpi.
@@ -2095,8 +2095,9 @@ Proof using Type*.
   have Hne : ∀ r0, r0 ∈ all_runs p -> run_items r0 ≠ [].
   { move=> r0 Hr0. exact (proj1 (proj1 (Hinvpool r0 Hr0))). }
   have Hckb : (Z.of_nat (run_clock r) < 2^64)%Z by (move: Hfitsr; rewrite /run_fits; lia).
-  wp_start as "(Hyt & Hitemmap)".
-  wp_auto.
+  iIntros (Φ) "(#Hpkg & Hyt & Hitems) HΦ".
+  iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
+  wp_method_call. wp_call. wp_call. wp_auto.
   iDestruct "Hyt" as (yt tl) "(Hpar & Hdll & %Hlen)".
   iDestruct (own_dll_lookup_acc _ _ _ _ _ _ _ _ _ _ _ Hlk Hrk with "Hdll") as (prevn nxtn) "(Hnode & Hback)".
   iDestruct "Hnode" as (itemVal olid orid)
@@ -2187,6 +2188,7 @@ Proof using Type*.
   iApply "HΦ".
   iSplitL "Hpar Hdll".
   { iExists yt, tl. iFrame "Hpar Hdll". iPureIntro. exact Hlen. }
+  iExists items_mref. iFrame "Hitemsf".
   iExists (<[kc := snew]> gm). iFrame "Hmap".
   iSplitL "Hsnew Hsnewcap Hrunsrest".
   - rewrite big_sepM_insert_delete. iSplitL "Hsnew Hsnewcap".
@@ -2326,8 +2328,6 @@ Proof using Type*.
     { move=> originId Hoid Hcl. rewrite /run_head_item /run_client /run_clock /r /= in Hoid Hcl *.
       rewrite (proj1 (proj2 Hden)) in Hoid. rewrite (proj1 Hden) -Hidnew in Hcl *.
       exact (integrate_ready_origin_clk (tm_arr tm) input newItem (conj Htoitem (conj Hvalid Hmax)) originId Hoid Hcl). }
-    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
-    wp_auto.
     (* the spliced run is chained: read it off the node the type now holds *)
     iDestruct "Htext'" as (yt' tl') "(Hparent' & Hdll' & %Hlen')".
     iDestruct (own_dll_acc _ _ _ _ ls' runs' idx item_l r Hlk' Hrk' with "Hdll'")
@@ -2335,10 +2335,10 @@ Proof using Type*.
     iDestruct ("Hback'" with "Hnode'") as "Hdll'".
     iAssert (own_ytype parent (DfracOwn 1) ls' tm') with "[Hparent' Hdll']" as "Htext'".
     { iExists yt', tl'. iFrame "Hparent' Hdll'". iPureIntro. exact Hlen'. }
-    wp_apply (wp_addNode items_mref parent item_l locs p ls' tm' idx r
+    wp_apply (wp_store__addNode s parent item_l locs p ls' tm' idx r
                 Hlk' Hrk' Hperm Hrpi Hbelowr
-                (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) with "[$Hpkg $Htext' $Hitemmap]").
-    iIntros "(Htext' & Hitemmap)".
+                (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) with "[$Hpkg $Htext' $Hitems]").
+    iIntros "(Htext' & Hitems)".
     wp_auto.
     have Hlocswf2 : locs_wf locs2 p2
       := locs_wf_integrate locs p parent ls tm idx item_l r arr' Hlocs Hpl Hfreshloc Hlocswf0.
@@ -2364,14 +2364,14 @@ Proof using Type*.
       := pool_clocks_contiguous_integrate p parent tm idx run runs' arr' _ _ Hpl Hsplice Hwfr Hhead
            (proj2 Hnext) Hcontig.
     iApply ("HΦ" $! runs' ls' run).
-    iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes";
+    iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes2 Hpending Hpdeletes";
       last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
     iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
-      with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
+      with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
     { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
       rewrite /own_store_fields /=.
       iFrame "Hclient Hclock HdeletedSet Hregistry Htypes2 Hpending Hpdeletes".
-      iExists items_mref. iFrame "Hitemsf Hitemmap". }
+      iFrame "Hitems". }
     iExact "Hfinal".
   - wp_auto. rewrite Hfpar2 (bool_decide_eq_false_2 (parent = null) Hpnn).
     wp_auto.
@@ -2415,8 +2415,6 @@ Proof using Type*.
     { move=> originId Hoid Hcl. rewrite /run_head_item /run_client /run_clock /r /= in Hoid Hcl *.
       rewrite (proj1 (proj2 Hden)) in Hoid. rewrite (proj1 Hden) -Hidnew in Hcl *.
       exact (integrate_ready_origin_clk (tm_arr tm) input newItem (conj Htoitem (conj Hvalid Hmax)) originId Hoid Hcl). }
-    iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
-    wp_auto.
     (* the spliced run is chained: read it off the node the type now holds *)
     iDestruct "Htext'" as (yt' tl') "(Hparent' & Hdll' & %Hlen')".
     iDestruct (own_dll_acc _ _ _ _ ls' runs' idx item_l r Hlk' Hrk' with "Hdll'")
@@ -2424,10 +2422,10 @@ Proof using Type*.
     iDestruct ("Hback'" with "Hnode'") as "Hdll'".
     iAssert (own_ytype parent (DfracOwn 1) ls' tm') with "[Hparent' Hdll']" as "Htext'".
     { iExists yt', tl'. iFrame "Hparent' Hdll'". iPureIntro. exact Hlen'. }
-    wp_apply (wp_addNode items_mref parent item_l locs p ls' tm' idx r
+    wp_apply (wp_store__addNode s parent item_l locs p ls' tm' idx r
                 Hlk' Hrk' Hperm Hrpi Hbelowr
-                (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) with "[$Hpkg $Htext' $Hitemmap]").
-    iIntros "(Htext' & Hitemmap)".
+                (conj Hwfr (conj Hfitsr (conj Hrclb Hoclkr))) with "[$Hpkg $Htext' $Hitems]").
+    iIntros "(Htext' & Hitems)".
     wp_auto.
     have Hlocswf2 : locs_wf locs2 p2
       := locs_wf_integrate locs p parent ls tm idx item_l r arr' Hlocs Hpl Hfreshloc Hlocswf0.
@@ -2453,14 +2451,14 @@ Proof using Type*.
       := pool_clocks_contiguous_integrate p parent tm idx run runs' arr' _ _ Hpl Hsplice Hwfr Hhead
            (proj2 Hnext) Hcontig.
     iApply ("HΦ" $! runs' ls' run).
-    iSplitL "Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes";
+    iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes2 Hpending Hpdeletes";
       last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
     iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
-      with "[Hclient Hclock HdeletedSet Hitemsf Hitemmap Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
+      with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
     { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
       rewrite /own_store_fields /=.
       iFrame "Hclient Hclock HdeletedSet Hregistry Htypes2 Hpending Hpdeletes".
-      iExists items_mref. iFrame "Hitemsf Hitemmap". }
+      iFrame "Hitems". }
     iExact "Hfinal".
 Qed.
 
