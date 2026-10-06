@@ -77,7 +77,8 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input) (deleted : gset YjsId) :
   own_transaction_changes tr s_loc ∅ ∅ ∅ -∗
-  own_store s_loc γs γh c h m pend deleted m deleted -∗
+  own_store_data s_loc γs γh c h m pend deleted ∗
+  own_observers s_loc γs γh m deleted -∗
   own_transaction tr s_loc γs γh c h m pend deleted ∅ ∅ ∅.
 Proof.
   iIntros "Hchanges Hstore".
@@ -107,9 +108,10 @@ Proof.
   iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
   set (pend := ss_pending state0) in *.
   set (deleted := pool_tombstoned (ss_pool state0)) in *.
-  iAssert (own_store (store_of_ref ref) γs γh c h m pend deleted m deleted)
+  iAssert (own_store_data (store_of_ref ref) γs γh c h m pend deleted ∗
+           own_observers (store_of_ref ref) γs γh m deleted)%I
     with "[Hdata Hobservers0]" as "Hstore".
-  { rewrite /own_store. iFrame "Hdata Hobservers0". }
+  { iFrame "Hdata Hobservers0". }
   wp_apply wp_newTransaction. iIntros (tr) "Hchanges".
   wp_auto.
   iDestruct (own_transaction_fresh with "Hchanges Hstore") as "Htx".

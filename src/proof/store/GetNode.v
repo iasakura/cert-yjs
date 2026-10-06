@@ -1,5 +1,5 @@
 (** store update path, node layer: the id lookups, [wp_getNodeIndex]
-    (the binary search over one client's entries) and [wp_store__GetNode]
+    (the binary search over one client's entries) and [wp_store__GetNode_state]
     (direct, over [own_store_state]) and the
     applyUpdate input-expansion helpers ([expand_inputs_*],
     [ValidReplay_chunk_extract], the [types_*] accessors). The heavier
@@ -531,7 +531,7 @@ Qed.
     because every slot of that client is an entry of the walked list
     ([pool_entries_slot]), or, for a client with no slice at all, because
     the index is complete. *)
-Lemma wp_store__GetNode (s : loc) (idv : yjs.id.t) (state : store_state) :
+Lemma wp_store__GetNode_state (s : loc) (idv : yjs.id.t) (state : store_state) :
   {{{ is_pkg_init yjs ∗ own_store_state s state }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
@@ -656,6 +656,34 @@ Proof using Type*.
       apply list_elem_of_fmap_2. exact Hpe. }
     destruct (Hcomplete kc Hkcin) as [slk Hslk'].
     rewrite Hslk in Hslk'. discriminate.
+Qed.
+
+(** [store.GetNode], the public form (issue #219): the store taken and
+    returned whole ([own_store]) at an unchanged state, the node named
+    through the holder's predicate by its covering slot (spec-shape
+    "Values of Cert-Yjs types appear in specs through their predicates").
+    The state-level [wp_store__GetNode_state] above is the stepping stone
+    the internal update path still composes with; it retires when every
+    caller has moved here (issue #219, the second half of M2). *)
+Lemma wp_store__GetNode (s : loc) (γs : store_names) (γh : history_names)
+    (idv : yjs.id.t) (state : store_state) (ds : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) :
+  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 }}}
+    s @! (go.PointerType yjs.store) @! "GetNode" #idv
+  {{{ (l : loc) (ok : bool), RET (#l, #ok);
+      own_store s γs γh state ds m0 deleted0 ∗
+      ⌜if ok then ∃ parent k, pool_covers (ss_pool state) parent k (toYjsId idv) ∧
+                    (ss_locs state !! parent) ≫= (λ ls, ls !! k) = Some l
+       else ∀ parent k, ¬ pool_covers (ss_pool state) parent k (toYjsId idv)⌝ }}}.
+Proof using Type*.
+  iIntros (Φ) "(#Hpkg & Hstore) HΦ".
+  iNamed "Hstore". iNamed "Hcore".
+  wp_apply (wp_store__GetNode_state s idv state with "[$Hpkg $Hstate]").
+  iIntros (l ok) "[Hstate %Hfact]".
+  iApply "HΦ".
+  iSplitL; last (iPureIntro; exact Hfact).
+  iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth".
+  iPureIntro. exact Hds_tomb.
 Qed.
 
 End store_update.

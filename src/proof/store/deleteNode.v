@@ -1,5 +1,5 @@
 (** [deleteNode] (issue #133, plan section 5): tombstone one integrated
-    node, reporting whether it was live. [wp_store__deleteNode] is the pool-level
+    node, reporting whether it was live. [wp_store__deleteNode_pool] is the pool-level
     statement. Records nothing: [Transaction.deleteNode]
     ([transaction/wp_private]) records the flip, and the delete loops
     ([Transaction.deleteRange] / [applyDeleteSpans],
@@ -68,7 +68,7 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
     the run was live. The Deleted branch is the identity on the nose. The
     receiver is untouched (the method reads only the node and its parent
     type), so the spec needs nothing of the store but its pool. *)
-Lemma wp_store__deleteNode (s : loc) (locs : gmap loc (list loc)) (p : pool)
+Lemma wp_store__deleteNode_pool (s : loc) (locs : gmap loc (list loc)) (p : pool)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
   locs !! parent = Some ls ->
   p !! parent = Some tm ->

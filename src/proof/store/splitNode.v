@@ -3,7 +3,7 @@
     over the whole store ([wp_store__splitNode], adding the per-client
     run-list insertion), and
     [wp_store__splitAtAndGetLeft] / [wp_store__splitAtAndGetRight]
-    (proved from [wp_store__GetNode] and [wp_store__splitNode],
+    (proved from [wp_store__GetNode_state] and [wp_store__splitNode],
     stepping the pool and the address map by the index-explicit
     [pool_split_left_step] / [pool_split_right_step]).
     Split out of [store/GetNode] so it proof-checks in parallel; same
@@ -793,7 +793,7 @@ Qed.
     address map step by [pool_split_left_step] (index-explicit; the
     boundary it pins is [pool_split_left_step_ends_at], and it weakens to
     [pool_after_split] through [pool_split_step_of_left]). Proved directly
-    from [wp_store__GetNode] and [wp_store__splitNode]. *)
+    from [wp_store__GetNode_state] and [wp_store__splitNode]. *)
 Lemma wp_store__splitAtAndGetLeft (s : loc) (idv : yjs.id.t) (state : store_state)
     (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc) :
   ss_pool state !! parent = Some tm ->
@@ -812,7 +812,7 @@ Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
   wp_method_call. wp_call. wp_call. wp_auto.
   have Hcovp : pool_covers p parent k (toYjsId idv) by (exists tm, r).
-  wp_apply (wp_store__GetNode s idv (MkStoreState client0 k0 locs p bind pend pdel)
+  wp_apply (wp_store__GetNode_state s idv (MkStoreState client0 k0 locs p bind pend pdel)
               with "[$Hpkg $Hruns]").
   iIntros (nl ok) "(Hruns & %Hres)". simpl in Hres.
   destruct ok; last first.
@@ -887,7 +887,7 @@ Qed.
     half comes back. The returned address and the step are
     [pool_split_right_step] (the boundary it pins is
     [pool_split_right_step_starts_at]). Proved directly from
-    [wp_store__GetNode] and [wp_store__splitNode]. *)
+    [wp_store__GetNode_state] and [wp_store__splitNode]. *)
 Lemma wp_store__splitAtAndGetRight (s : loc) (idv : yjs.id.t) (state : store_state)
     (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc) :
   ss_pool state !! parent = Some tm ->
@@ -906,7 +906,7 @@ Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hruns) HΦ".
   wp_method_call. wp_call. wp_call. wp_auto.
   have Hcovp : pool_covers p parent k (toYjsId idv) by (exists tm, r).
-  wp_apply (wp_store__GetNode s idv (MkStoreState client0 k0 locs p bind pend pdel)
+  wp_apply (wp_store__GetNode_state s idv (MkStoreState client0 k0 locs p bind pend pdel)
               with "[$Hpkg $Hruns]").
   iIntros (nl ok) "(Hruns & %Hres)". simpl in Hres.
   destruct ok; last first.

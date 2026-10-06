@@ -151,7 +151,7 @@ Proof using Type*.
             = (uint.nat cur - uint.nat dclock)%nat by word.
     move: n Hnw. rewrite /range_no_overflow /= => Hstop Hnw2. word. }
   wp_apply wp_NewId.
-  wp_apply (wp_store__GetNode s _ (MkStoreState client0 k0 locs_i p_i bind pend pdel)
+  wp_apply (wp_store__GetNode_state s _ (MkStoreState client0 k0 locs_i p_i bind pend pdel)
               with "[$Hpkg $Hruns]").
   iIntros (nl found) "(Hruns & %Hres)". simpl in Hres.
   wp_auto.

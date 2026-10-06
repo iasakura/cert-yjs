@@ -642,7 +642,7 @@ Proof using Type*.
   have Hagree : ∀ d : YjsId, doc_model_has m d = true <-> ∃ q k, pool_covers (ss_pool state) q k d
     := λ d, docm_agree m (ss_bind state) (ss_pool state) d Hregmodel Hpreg Hwf.
   wp_method_call. wp_call. wp_call. wp_auto.
-  wp_apply (wp_store__GetNode s idv state with "[$Hpkg $Hruns]").
+  wp_apply (wp_store__GetNode_state s idv state with "[$Hpkg $Hruns]").
   iIntros (l ok) "(Hruns & %Hres)".
   wp_auto.
   iApply ("HΦ" $! ok). iFrame "Hruns".

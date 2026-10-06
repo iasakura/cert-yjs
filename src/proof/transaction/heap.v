@@ -189,7 +189,8 @@ Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_n
     (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) : iProp Σ :=
   ∃ (m0 : DocModel) (deleted0 : gset YjsId),
-    "Hstore" ∷ own_store s_loc γs γh c h m pend deleted m0 deleted0 ∗
+    "Hstore" ∷ (own_store_data s_loc γs γh c h m pend deleted ∗
+                own_observers s_loc γs γh m0 deleted0) ∗
     "Hrecord" ∷ own_transaction_record tr s_loc γs m deleted inserted tombstoned changed ∗
     "%Hstart" ∷ ⌜transaction_start m deleted inserted tombstoned m0 deleted0⌝.
 

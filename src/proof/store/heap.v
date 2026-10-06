@@ -52,9 +52,10 @@
     - [own_store_data s c h m pend deleted]: the data half of the store, one
       exclusive predicate over its public model, the tombstone state
       [deleted] exact ([pool_tombstoned]); [own_observers s m0 deleted0] the
-      observers half (the [observers] field and its registry); [own_store s c
-      h m pend deleted m0 deleted0] THE predicate of the store, both halves,
-      the observers told up to [(m0, deleted0)].
+      observers half (the [observers] field and its registry);
+      [own_store s state ds m0 deleted0] THE public predicate of the store
+      (issue #219): [own_store_core] beside the observers told up to
+      [(m0, deleted0)], a free parameter.
     - the observers (issue #198 Part II): [own_observed γo s] (one half of an
       observer's token), [is_text_snapshot γs γh name s] (what a read
       certifies about a snapshot, over store witnesses), [is_text_callback
@@ -1639,19 +1640,6 @@ Definition own_store_data (s_loc : loc) (γs : store_names) (γh : history_names
        model, [type_snapshot m deleted name] *)
     "%Hdeleted" ∷ ⌜deleted = pool_tombstoned p⌝.
 
-(** [own_store s γs γh c h m pend deleted m0 deleted0]: THE predicate of the
-    store: its data at the public model [(m, deleted)] ([own_store_data]) and
-    its observers told everything up to [(m0, deleted0)] ([own_observers]).
-    Between transactions the two states coincide (the lock body, [wp_Store__wlock]
-    and [wp_Store__wunlock] use it at [m0 = m], [deleted0 = deleted]); inside a
-    transaction the observers stay at the state the transaction started from
-    until [store.notify] tells them the rest ([own_transaction]). *)
-Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId)
-    (m0 : DocModel) (deleted0 : gset YjsId) : iProp Σ :=
-  own_store_data s_loc γs γh c h m pend deleted ∗ own_observers s_loc γs γh m0 deleted0.
-
 (* ----- the issue #219 split of the store's data ------------------------- *)
 
 (** [own_store_core s γs state ds]: the half of [own_store_data] that every
@@ -1707,6 +1695,23 @@ Proof. rewrite /own_store_core. apply _. Qed.
 #[global] Instance own_store_session_timeless γs γh c h m state ds :
   Timeless (own_store_session γs γh c h m state ds).
 Proof. rewrite /own_store_session /is_pending_certified /is_update_item. apply _. Qed.
+
+(** [own_store s γs γh state ds m0 deleted0]: THE public predicate of the
+    store (issue #219): every field of the lock-free struct at the cell
+    state [state], with exactly the invariants every store method
+    preserves ([own_store_core]: [store_invs], the client pin, the
+    item-set, registry and delete-set authorities with the tombstone
+    clause), and the observers told everything up to [(m0, deleted0)].
+    The observers' state is a free parameter: no store method tells them
+    anything, catching them up is the transaction's business
+    ([store.notify] at its end) and their coincidence with the data is
+    the lock invariant's clause, never a store method's obligation. *)
+Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
+    (state : store_state) (ds : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) : iProp Σ :=
+  "Hcore" ∷ own_store_core s_loc γs state ds ∗
+  "Hobservers" ∷ own_observers s_loc γs γh m0 deleted0.
+
 
 (** The split: [own_store_data] is exactly [own_store_core] beside
     [own_store_session], at a shared cell state whose pending buffer is the
