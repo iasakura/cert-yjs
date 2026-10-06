@@ -60,10 +60,11 @@
       [is_type_lb], [is_root_lb], [is_applied_root_lb] / [is_applied_certs],
       [is_accepted],
       [is_update_item], and the read capability [own_read_cap].
-    - the Integrate-side predicates [own_fresh_item_raw], [own_linked_item]
+    - the Integrate-side predicates [own_linked_item]
       ([own_linked_item_as_node]: it is [item/heap]'s [own_item_node] at
-      [DfracOwn 1], live, with a nonempty content) and the loop invariant
-      [integrate_loop_inv].
+      [DfracOwn 1], live, with a nonempty content; its internal raw half
+      [own_fresh_item_raw] appears in no spec, only opened or built inside
+      proofs) and the loop invariant [integrate_loop_inv].
 
     Laws
     - [store_inv_init]: how to build the invariant from the raw points-tos, and
@@ -1726,11 +1727,15 @@ Definition integrate_loop_inv
 
 (** [own_fresh_item_raw item_l input itemVal oleft oright]: [item_l] is a heap [Item] whose
     id / content and origin-id cells carry the integration [input]. Its abstract
-    model item is [newItem = toItem input arr] — that link is a side condition of
+    model item is [newItem = toItem input arr]; that link is a side condition of
     the spec (a fresh item's resolved origins depend on the current document
     [arr]), so it is *not* restated here. The [left']/[right'] fields are *not*
-    constrained: the scan / entry-guard never read them, and [Store.Integrate]
-    has already repaired (set) them by the time it calls the scan. *)
+    constrained: the scan / entry-guard never read them. This raw half
+    appears in no spec statement: the specs state the item as
+    [own_linked_item], the model form (spec-shape "Everything a spec says
+    about a value goes through a model parameter"), and proofs open or
+    build it when constructing an [own_linked_item] or threading the
+    conflict-scan loop invariant. *)
 Definition own_fresh_item_raw (item_l : loc) (input : IntegrateInput (A := A))
     (itemVal : yjs.item.t) (oleft oright : option yjs.id.t) : iProp Σ :=
   "Hitem" ∷ item_l ↦ itemVal ∗
