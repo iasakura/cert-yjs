@@ -285,7 +285,7 @@ Proof using Type*.
       [exact Hin_l | exact Hin_r | exact Hin_id | exact Hin_c
       | reflexivity | reflexivity | reflexivity | reflexivity
       | exact Hunonempty]. }
-  wp_apply (wp_store__repair s itv (updateItemVal.(yjs.updateItem.parentName'))
+  wp_apply (wp_store__repair_state s itv (updateItemVal.(yjs.updateItem.parentName'))
               input opn (MkStoreState client0 k0 locs p0 bind pend pdel) orL orR p
               (conj HwL (conj HwR Hsameg)) Hwpar
               with "[$Hpkg $Hfresh $HisPN $Hruns]").
@@ -546,7 +546,7 @@ Proof using Type*.
       [exact Hin_l | exact Hin_r | exact Hin_id | exact Hin_c
       | reflexivity | reflexivity | reflexivity | reflexivity
       | exact Hunonempty]. }
-  wp_apply (wp_store__repair_create s itv (updateItemVal.(yjs.updateItem.parentName'))
+  wp_apply (wp_store__repair_create_state s itv (updateItemVal.(yjs.updateItem.parentName'))
               input nm (MkStoreState client0 k0 locs p0 bind pend pdel) HoL HoR Hbnm
               with "[$Hpkg $Hfresh $HisPN $Hruns]").
   iIntros (q) "(Hlinked & Hruns & %Hfresh)".
@@ -1023,7 +1023,7 @@ Proof using Type*.
           replace (sint.nat (W64 i)) with i by word. exact Huiv. }
         iEval (rewrite Hinsid) in "HslP".
         (* the arrival probe: hasNode *)
-        wp_apply (wp_store__hasNode s (updateItemVal.(yjs.updateItem.id')) m_c
+        wp_apply (wp_store__hasNode_state s (updateItemVal.(yjs.updateItem.id')) m_c
                     (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) (conj Hmtypesc Hmdomc)
                     with "[$Hruns]").
         iIntros (ok) "(Hruns & %Hok)".
@@ -1047,7 +1047,7 @@ Proof using Type*.
             exact Hpassa. }
         (* fresh: probe the structural gate *)
         wp_auto.
-        wp_apply (wp_store__depsArrived s updateItemVal (targetType, input) m_c
+        wp_apply (wp_store__depsArrived_state s updateItemVal (targetType, input) m_c
                     (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) (conj Hmtypesc Hmdomc)
                     with "[$Hui $Hruns]").
         iIntros "Hruns".

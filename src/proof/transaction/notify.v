@@ -12,7 +12,7 @@
       observer's token: the two proofs share [wp_deltaSnoc] and the
       trailing-retain trim, and stay separate as the Go loops do.
     - [wp_Transaction__notify]: the transaction in, the store out with its
-      observers at its data's state ([own_store] with coincident states, what
+      observers at its data's state (what
       the write lock takes back): every observer of a changed root is called
       once with the delta from the root's start snapshot to its current one
       ([text_delta_transaction]), certified ([own_store_data_text_snapshot]);
@@ -390,7 +390,8 @@ Lemma wp_Transaction__notify (tr s_loc : loc) (γs : store_names) (γh : history
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
   {{{ is_pkg_init yjs ∗ own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "notify" #()
-  {{{ RET #(); own_store s_loc γs γh c h m pend deleted m deleted }}}.
+  {{{ RET #(); own_store_data s_loc γs γh c h m pend deleted ∗
+      own_observers s_loc γs γh m deleted }}}.
 Proof.
   wp_start as "Htx".
   iDestruct "Htx" as (m0 deleted0) "Htx". iNamed "Htx". iDestruct "Hstore" as "[Hstore Hobservers]".

@@ -9,11 +9,11 @@
       its parent joins the changed types. Both read the node's id and length
       off its points-to, which the caller borrows for the call.
     - [wp_Transaction__integrate]: the store's [Integrate] (the splice into
-      the type, [wp_store__Integrate]) followed by [recordInsert] of the new
+      the type, [wp_store__Integrate_state]) followed by [recordInsert] of the new
       run; stated at cell level, over [own_store_state] and the record,
       because [Text.InsertIn] calls it inside its per-char loop.
     - [wp_Transaction__deleteNode] / [_deleteNode_store]: the store's
-      [deleteNode] (the flip, [wp_store__deleteNode]) followed by [recordDelete]
+      [deleteNode] (the flip, [wp_store__deleteNode_pool]) followed by [recordDelete]
       when the node was live; at the pool and re-closed over the store, what
       the delete loops step by. *)
 From New.proof Require Import proof_prelude.
@@ -121,9 +121,9 @@ Proof.
   - rewrite span_union_snoc Htombstoned. apply union_comm_L.
 Qed.
 
-(** [Transaction.integrate]: the store's splice ([wp_store__Integrate]),
+(** [Transaction.integrate]: the store's splice ([wp_store__Integrate_state]),
     then the new run joins the record: its chars the insert set, its type
-    the changed types. The statement is [wp_store__Integrate]'s with the
+    the changed types. The statement is [wp_store__Integrate_state]'s with the
     record threaded through. *)
 Lemma wp_Transaction__integrate (tr s parent parent_arg item_l : loc)
     (state : store_state) (tm : type_model) (ls : list loc)
@@ -158,7 +158,7 @@ Proof using Type*.
   have Hlsl : length ls = length (tm_runs tm) := Hlens parent ls tm Hlocs Hpl.
   iDestruct (own_transaction_changes_store_acc with "Hchanges") as "[Htrstore Hchangesback]".
   wp_method_call. wp_call. wp_call. wp_auto.
-  wp_apply (wp_store__Integrate s parent parent_arg item_l state tm ls arr' input newItem kL kR
+  wp_apply (wp_store__Integrate_state s parent parent_arg item_l state tm ls arr' input newItem kL kR
               Hparg Hpl Hlocs Hready Hfitsin Hall Hres Hnext with "[$Hpkg $Hruns $Hfresh]").
   iIntros (runs' ls' run) "(Hruns & %Hinv' & %Hsplice & %Hden)".
   iDestruct ("Hchangesback" with "Htrstore") as "Hchanges".
@@ -210,8 +210,8 @@ Proof using Type*.
 Qed.
 
 (** [Transaction.deleteNode] at the pool: the store's [deleteNode] flips the
-    run ([wp_store__deleteNode]) and, when it was live, [recordDelete] records its
-    chars and its type. The statement is [wp_store__deleteNode]'s with the record
+    run ([wp_store__deleteNode_pool]) and, when it was live, [recordDelete] records its
+    chars and its type. The statement is [wp_store__deleteNode_pool]'s with the record
     threaded through. *)
 Lemma wp_Transaction__deleteNode (tr s_loc : loc) (locs : gmap loc (list loc)) (p : pool)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun)
@@ -238,7 +238,7 @@ Proof using Type*.
   have Hwfr : run_wf (run_items r) := Hwfall r Hrmem.
   iDestruct (own_transaction_changes_store_acc with "Hchanges") as "[Htrstore Hchangesback]".
   wp_auto.
-  wp_apply (wp_store__deleteNode s_loc locs p parent ls tm k lc r Hlp Hpp Hlk Hrk Hrfits with "[$Hpool]").
+  wp_apply (wp_store__deleteNode_pool s_loc locs p parent ls tm k lc r Hlp Hpp Hlk Hrk Hrfits with "[$Hpool]").
   iIntros "Hpool".
   iDestruct ("Hchangesback" with "Htrstore") as "Hchanges".
   destruct (run_deleted r) eqn:Hd; simpl negb.

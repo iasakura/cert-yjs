@@ -82,7 +82,7 @@ Proof.
   iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
   have [Hmtypes Hmdom] := Hregmodel.
-  wp_apply (wp_store__getOrCreateYType _ (MkStoreState client k locs p bind pend pdel) name
+  wp_apply (wp_store__getOrCreateYType_state _ (MkStoreState client k locs p bind pend pdel) name
               with "[$Hstate]").
   iIntros (q p' locs' bind') "(Hstate & %Hlc)". iEval (simpl) in "Hstate". simpl in Hlc.
   destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & Hfresh & -> & -> & ->)].
