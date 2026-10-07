@@ -188,9 +188,11 @@ Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_n
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) : iProp Σ :=
-  ∃ (m0 : DocModel) (deleted0 : gset YjsId),
-    "Hstore" ∷ (own_store_data s_loc γs γh c h m pend deleted ∗
-                own_observers s_loc γs γh m0 deleted0) ∗
+  ∃ (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId),
+    "%Hpend_state" ∷ ⌜ss_pending state = pend⌝ ∗
+    "%Hdeleted_state" ∷ ⌜deleted = pool_tombstoned (ss_pool state)⌝ ∗
+    "Hstore" ∷ own_store s_loc γs γh state ds m0 deleted0 ∗
+    "Hsession" ∷ own_store_session γs γh c h m state ds ∗
     "Hrecord" ∷ own_transaction_record tr s_loc γs m deleted inserted tombstoned changed ∗
     "%Hstart" ∷ ⌜transaction_start m deleted inserted tombstoned m0 deleted0⌝.
 
@@ -375,8 +377,12 @@ Lemma own_transaction_observed_agree (tr s_loc : loc) (γs : store_names) (γh :
   ⌜s = type_snapshot m deleted name⌝.
 Proof.
   move=> Hnot. iIntros "Htx #Hobserved Hobs".
-  iDestruct "Htx" as (m0 deleted0) "Htx". iNamed "Htx". iDestruct "Hstore" as "[Hdata Hobservers]".
-  iNamed "Hobservers". iNamed "Hregistry".
+  iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as "[Hcore Hobservers]".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
+  iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry)".
+  iDestruct "Hregistry" as (registry registered) "(Hobserversmap & Hobserversauth & #Hregistered_bind & Hobservers)".
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord".
   (* the token is registered under [name], at some address *)
   iDestruct (own_valid_2 with "Hobserversauth Hobserved") as %Hincl.

@@ -132,7 +132,11 @@ Proof.
     (* the transaction is the store's data, the observers at the start
        state and the record; the client pin identifies c0 with the
        caller's c *)
-    iDestruct "Htx" as (m0 deleted0) "Htx". iNamed "Htx". iDestruct "Hstore" as "[Hstore Hobservers]".
+    iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as "[Hcore Hobservers]".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hstore".
+  iEval (rewrite Hpend_state) in "Hstore". iEval (rewrite -Hdeleted_state) in "Hstore".
+  clear Hpend_state Hdeleted_state.
     iDestruct (own_store_data_client_pin with "Hstore") as "[Hstore #Hpin0]".
     iDestruct (is_store_client_agree with "Hpin0 Hpin") as %->.
     (* run the total certificate-based applyUpdate on the real store: no
@@ -158,7 +162,12 @@ Proof.
               (∅ ∪ inputs_char_ids applied) tombstoned' changed'').
     (* the transaction closes back over the two steps' start relation *)
     iSplitL "Hstore Hobservers Hrecord".
-    { iExists m0, deleted0. iFrame "Hstore Hobservers Hrecord".
+    { iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+      iExists state', ds', m0, deleted0.
+      iSplitR; first (iPureIntro; exact Hpend').
+      iSplitR; first (iPureIntro; exact Hdel').
+      iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
+      iFrame "Hsession' Hrecord".
       iPureIntro.
       apply (transaction_start_tombstone m' tombs tombs' (∅ ∪ inputs_char_ids applied) ∅ tombstoned' m0 deleted0);
         [| exact Htsub2 | exact Htombs' | exact Hfresh].

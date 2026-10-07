@@ -390,12 +390,20 @@ Lemma wp_Transaction__notify (tr s_loc : loc) (γs : store_names) (γh : history
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
   {{{ is_pkg_init yjs ∗ own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "notify" #()
-  {{{ RET #(); own_store_data s_loc γs γh c h m pend deleted ∗
-      own_observers s_loc γs γh m deleted }}}.
+  {{{ RET #();
+      ∃ (state : store_state) (ds : gset YjsId),
+        ⌜ss_pending state = pend⌝ ∗ ⌜deleted = pool_tombstoned (ss_pool state)⌝ ∗
+        own_store s_loc γs γh state ds m deleted ∗
+        own_store_session γs γh c h m state ds }}}.
 Proof.
   wp_start as "Htx".
-  iDestruct "Htx" as (m0 deleted0) "Htx". iNamed "Htx". iDestruct "Hstore" as "[Hstore Hobservers]".
-  iNamed "Hobservers". iNamed "Hregistry".
+  iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as "[Hcore Hobservers]".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hstore".
+  iEval (rewrite Hpend_state) in "Hstore". iEval (rewrite -Hdeleted_state) in "Hstore".
+  clear Hpend_state Hdeleted_state.
+  iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry)".
+  iDestruct "Hregistry" as (registry registered) "(Hobserversmap & Hobserversauth & #Hregistered_bind & Hobservers)".
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord". iNamed "Hchanges".
   iAssert (own_id_spans insert_sl (DfracOwn 1) inserted) with "[Hinsert]" as "Hinsert".
   { iExists insert_vs. iFrame "Hinsert". done. }
@@ -586,18 +594,27 @@ Proof.
   simpl in Hregcoh, Hpoolinv.
   wp_auto.
   iApply "HΦ".
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
+  iAssert (own_store_data s_loc γs γh c h m pend deleted)
+    with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hdata".
   { iExists client, k, pdel, locs, p, bind, acc. iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hclientpin Hpendcert Hbinds". iPureIntro.
     split_and!; [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
-  iExists observers_mref. iFrame "Hobserversf".
-  iExists registry, registered.
-  iFrame "Hobserversmap Hobserversauth Hregistered_bind".
-  iApply (big_sepM2_mono with "Hobservers"). iIntros (parent cbs_sl entry Hr Hd) "H".
-  destruct (decide (parent ∈ done)) as [Hin | Hnin]; first iExact "H".
-  rewrite (type_snapshot_untouched m deleted inserted tombstoned m0 deleted0 entry.1 Hstart); first iExact "H".
-  apply (type_untouched_by_record m bind p inserted tombstoned changed changed_locs entry.1 parent
-           Hpoolinv Hregcoh Hregmodel Hrecorded Hbound (Hregbind parent entry Hd)).
-  rewrite -Hdoneall. exact Hnin.
+  iAssert (own_observers s_loc γs γh m deleted)
+    with "[Hobserversf Hobserversmap Hobserversauth Hobservers]" as "Hobservers'".
+  { iExists observers_mref. iFrame "Hobserversf".
+    iExists registry, registered.
+    iFrame "Hobserversmap Hobserversauth Hregistered_bind".
+    iApply (big_sepM2_mono with "Hobservers"). iIntros (parent cbs_sl entry Hr Hd) "H".
+    destruct (decide (parent ∈ done)) as [Hin | Hnin]; first iExact "H".
+    rewrite (type_snapshot_untouched m deleted inserted tombstoned m0 deleted0 entry.1 Hstart); first iExact "H".
+    apply (type_untouched_by_record m bind p inserted tombstoned changed changed_locs entry.1 parent
+             Hpoolinv Hregcoh Hregmodel Hrecorded Hbound (Hregbind parent entry Hd)).
+    rewrite -Hdoneall. exact Hnin. }
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+  iExists state', ds'.
+  iSplitR; first (iPureIntro; exact Hpend').
+  iSplitR; first (iPureIntro; exact Hdel').
+  iSplitL "Hcore' Hobservers'"; first iFrame "Hcore' Hobservers'".
+  iFrame "Hsession'".
 Qed.
 
 End transaction_notify.
