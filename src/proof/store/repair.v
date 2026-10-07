@@ -1,22 +1,27 @@
 (** store update path, repair + applyUpdate layer: [getOrCreateYType],
-    [store.repair] ([wp_store__repair]), their forms
-    [wp_store__getOrCreateYType] (derived) / [wp_store__repair]
+    [store.repair] ([wp_store__repair_state]), their forms
+    [wp_store__getOrCreateYType_state] (derived) / [wp_store__repair_state]
     (proved directly from the split helpers; over
     [own_store_state], stepping the registry by [pool_lookup_or_create] and
-    the pool by [pool_after_repair]; [wp_store__repair_create] is its
+    the pool by [pool_after_repair]; [wp_store__repair_create_state] is its
     creation form, what [Transaction.integrateDecoded]'s unbound case
     steps by), [hasNode] / [originArrived] /
     [depsArrived] (proved directly,
-    [wp_store__hasNode] / [wp_store__originArrived] /
-    [wp_store__depsArrived], read against [pool_registry_models]
-    through [docm_agree]), the [wire_*] drain machinery and the
-    [own_store_data]-level certificate specs. Split out of [store/GetNode]; Requires the
-    [store/splitNode] pool lemmas. Same boilerplate / [#[local]]
-    instances. *)
+    [wp_store__hasNode_state] / [wp_store__originArrived] /
+    [wp_store__depsArrived_state], read against [pool_registry_models]
+    through [docm_agree]; [originArrived] is private to the store, so
+    [wp_store__originArrived] is its one spec), the public forms of the
+    five that are public for the store over [own_store]
+    (issue #219: [wp_store__getOrCreateYType] and [wp_store__repair_create]
+    mint the binding and grow the item-set authority themselves), the
+    [wire_*] drain machinery and the [own_store_data]-level certificate
+    specs. Split out of [store/GetNode]; Requires the [store/splitNode]
+    pool lemmas. Same boilerplate / [#[local]] instances. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core.
+From New.proof Require Import algebra.
 From New.proof Require Import prelude.
 From New.proof.id Require Import id.
 From New.proof.item Require Import item.
@@ -77,7 +82,7 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
     invariants hold again (spec-shape "Specs of public functions use only
     public predicates": re-establishing the invariant is the function's
     job, never its caller's). *)
-Lemma wp_store__getOrCreateYType (s : loc) (state : store_state) (nm : go_string) :
+Lemma wp_store__getOrCreateYType_state (s : loc) (state : store_state) (nm : go_string) :
   {{{ is_pkg_init yjs ∗ own_store_state s state }}}
     s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
   {{{ (q : loc) (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #q;
@@ -146,6 +151,79 @@ Proof using Type*.
     iExists types_mref. iFrame "Htypesf Htypesmap".
 Qed.
 
+(** [store.getOrCreateYType], the public form (issue #219): the store
+    taken and returned whole ([own_store]), and the registration is the
+    method's own job: the wrapper mints the persistent binding witness
+    itself (the hit branch reads it off the authority, the miss branch
+    inserts it, [ghost_map_insert_persist]) and grows the item-set
+    authority by the fresh empty root ([auth_gmap_gset_grow_snap]). An
+    empty type holds no run, so the delete set's tombstone clause
+    transports over a permutation of the runs
+    ([all_runs_insert_empty]). [wp_store__getOrCreateYType_state] above is
+    the stepping stone the callers still compose with; it retires when
+    they move here (issue #219, the second half of M2). *)
+Lemma wp_store__getOrCreateYType (s : loc) (γs : store_names) (γh : history_names)
+    (nm : go_string) (state : store_state) (ds : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) :
+  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 }}}
+    s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
+  {{{ (q : loc) (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #q;
+      own_store s γs γh (state <| ss_pool := p' |> <| ss_locs := locs' |>
+                            <| ss_bind := bind' |>) ds m0 deleted0 ∗
+      is_type_binding γs.(sn_types) nm q ∗
+      ⌜pool_lookup_or_create (ss_pool state) (ss_locs state) (ss_bind state) nm q p' locs' bind'⌝ }}}.
+Proof using Type*.
+  iIntros (Φ) "(#Hpkg & Hstore) HΦ".
+  iNamed "Hstore". iNamed "Hcore".
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
+  iApply wp_fupd.
+  wp_apply (wp_store__getOrCreateYType_state s (MkStoreState client0 k0 locs p bind pend pdel) nm
+              with "[$Hpkg $Hstate]").
+  iIntros (q p' locs' bind') "(Hstate & %Hlc)". iEval (simpl) in "Hstate". simpl in Hlc.
+  have Hlc0 := Hlc.
+  destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & Hfresh & -> & -> & ->)].
+  - (* hit: nothing changes, the binding is already in the authority *)
+    iDestruct (big_sepM_lookup _ _ nm q Hb' with "Hbinds") as "#Hbindname".
+    iModIntro. iApply ("HΦ" $! q p locs bind).
+    iSplitL; last (iSplitR; [iFrame "Hbindname" | iPureIntro; exact Hlc0]).
+    rewrite /own_store /own_store_core /=.
+    iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+    iPureIntro. exact Hds_tomb.
+  - (* miss: register the fresh empty root in both authorities *)
+    set (p' := <[q := MkTypeModel []]> p).
+    set (bind' := <[nm := q]> bind).
+    iMod (ghost_map_insert_persist nm q Hb' with "HtypesAuth")
+      as "[HtypesAuth #Hbindname]".
+    iAssert ([∗ map] nm0 ↦ q0 ∈ bind', is_type_binding γs.(sn_types) nm0 q0)%I as "#Hbinds'".
+    { rewrite /bind' big_sepM_insert; last exact Hb'.
+      iFrame "Hbinds". iFrame "Hbindname". }
+    have Hfmap' : ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p')
+                = <[q := (∅ : gset (YjsItem A))]>
+                    ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p).
+    { rewrite /p' fmap_insert //. }
+    have Hdomf : dom ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p)
+               ⊆ dom ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p').
+    { rewrite Hfmap' dom_insert. apply union_subseteq_r. }
+    have Hgrowf : ∀ q0 S S',
+        ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p) !! q0 = Some S ->
+        ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p') !! q0 = Some S' ->
+        S ⊆ S'.
+    { move=> q0 S S'. rewrite Hfmap'.
+      destruct (decide (q0 = q)) as [-> | Hne].
+      - rewrite lookup_fmap Hfresh //.
+      - rewrite lookup_insert_ne //. move=> -> [= ->]. done. }
+    iMod (auth_gmap_gset_grow_snap γs.(sn_seq) _ _ Hdomf Hgrowf with "Hseq")
+      as "[Hseq #Hsnap]".
+    have Hperm : all_runs p' ≡ₚ all_runs p := all_runs_insert_empty p q [] Hfresh.
+    have Hds_tomb' : delete_set_tombstoned ds (all_runs p')
+      := delete_set_tombstoned_perm ds (all_runs p) (all_runs p') Hperm Hds_tomb.
+    iModIntro. iApply ("HΦ" $! q p' (<[q := []]> locs) bind').
+    iSplitL; last (iSplitR; [iFrame "Hbindname" | iPureIntro; exact Hlc0]).
+    rewrite /own_store /own_store_core /= Hfmap'.
+    iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds' Hdelete_set_auth Hstate".
+    iPureIntro. exact Hds_tomb'.
+Qed.
+
 (* ----- the general repair (issue #28 stage D2b) ---------------------------
    [store.repair] over the invariant-carrying split wrappers: the origin ids
    may address ANY char of their covering cells' runs; the clean-end /
@@ -158,13 +236,13 @@ Qed.
     linked to run-boundary addresses read off the updated address map
     ([pool_origins_split]) and the pool steps by [pool_after_repair].
     Proved directly from the split helpers and
-    [wp_store__getOrCreateYType]: the clean-end split first, the right
+    [wp_store__getOrCreateYType_state]: the clean-end split first, the right
     origin's slot relocated through [pool_after_split]'s coverage clause,
     the clean-start split second, and the left boundary carried across it
     by [pool_split_step_other_slot] (the two slots differ: the left result
     ends at the left origin, which same origin slots put strictly before
     the right one). *)
-Lemma wp_store__repair (s item_l pname : loc)
+Lemma wp_store__repair_state (s item_l pname : loc)
     (input : IntegrateInput (A := A)) (opn : option go_string)
     (state : store_state) (orL orR : option (loc * nat)) (p_t : loc) :
   pool_origins_covered (ss_pool state) input orL orR ->
@@ -209,7 +287,7 @@ Proof using Type*.
     destruct (locs_aligned_lens _ _ Haligned0 qL tmL HpL) as (lsL & HlsL & HlenL).
     have HkLlt : (kL < length lsL)%nat by (rewrite HlenL; exact (lookup_lt_Some _ _ _ HrL)).
     destruct (lookup_lt_is_Some_2 lsL kL HkLlt) as [lcL HlkL].
-    wp_apply (wp_store__splitAtAndGetLeft s idvL (MkStoreState client0 k0 locs p bind pend pdel)
+    wp_apply (wp_store__splitAtAndGetLeft_state s idvL (MkStoreState client0 k0 locs p bind pend pdel)
                 qL tmL lsL kL rL lcL HpL HlsL HrL HlkL HrLcov with "[$Hpkg $Hruns]").
     iIntros (p1 locs1) "(Hruns & %Hlstep1)".
     iEval (simpl) in "Hruns".
@@ -275,7 +353,7 @@ Proof using Type*.
         { exists tmL, rL. split_and!; [exact HpL | exact HrL | exact (Hhead_cov rL HrLwf)]. }
         destruct (Huniq0 _ _ _ _ _ HcovR HcovL) as [_ HkeqLR]. subst kR.
         have := Hsame' eq_refl. lia. }
-      wp_apply (wp_store__splitAtAndGetRight s idvR (MkStoreState client0 k0 locs1 p1 bind pend pdel)
+      wp_apply (wp_store__splitAtAndGetRight_state s idvR (MkStoreState client0 k0 locs1 p1 bind pend pdel)
                   qR tmR1 lsR1 kR1 rR1 lcR1 HpR1 HlsR1 HrR1 HlkR1 HrR1cov with "[$Hpkg $Hruns]").
       iIntros (rl p2 locs2) "(Hruns & %Hrstep2)".
       iEval (simpl) in "Hruns".
@@ -301,7 +379,7 @@ Proof using Type*.
         iDestruct "HisPN" as "[%HnnP #HpnC]".
         rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
         wp_auto.
-        wp_apply (wp_store__getOrCreateYType s (MkStoreState client0 k0 locs2 p2 bind pend pdel) nm
+        wp_apply (wp_store__getOrCreateYType_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel) nm
                     with "[$Hpkg $Hruns]").
         iIntros (q p3 locs3 bind3) "(Hruns & %Hlc)". simpl in Hlc.
         destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
@@ -359,7 +437,7 @@ Proof using Type*.
         iDestruct "HisPN" as "[%HnnP #HpnC]".
         rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
         wp_auto.
-        wp_apply (wp_store__getOrCreateYType s (MkStoreState client0 k0 locs1 p1 bind pend pdel) nm
+        wp_apply (wp_store__getOrCreateYType_state s (MkStoreState client0 k0 locs1 p1 bind pend pdel) nm
                     with "[$Hpkg $Hruns]").
         iIntros (q p3 locs3 bind3) "(Hruns & %Hlc)". simpl in Hlc.
         destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
@@ -418,7 +496,7 @@ Proof using Type*.
       destruct (locs_aligned_lens _ _ Haligned0 qR tmR HpR) as (lsR & HlsR & HlenR).
       have HkRlt : (kR < length lsR)%nat by (rewrite HlenR; exact (lookup_lt_Some _ _ _ HrR)).
       destruct (lookup_lt_is_Some_2 lsR kR HkRlt) as [lcR HlkR].
-      wp_apply (wp_store__splitAtAndGetRight s idvR (MkStoreState client0 k0 locs p bind pend pdel)
+      wp_apply (wp_store__splitAtAndGetRight_state s idvR (MkStoreState client0 k0 locs p bind pend pdel)
                   qR tmR lsR kR rR lcR HpR HlsR HrR HlkR HrRcov with "[$Hpkg $Hruns]").
       iIntros (rl p1 locs1) "(Hruns & %Hrstep1)".
       iEval (simpl) in "Hruns".
@@ -438,7 +516,7 @@ Proof using Type*.
         iDestruct "HisPN" as "[%HnnP #HpnC]".
         rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
         wp_auto.
-        wp_apply (wp_store__getOrCreateYType s (MkStoreState client0 k0 locs1 p1 bind pend pdel) nm
+        wp_apply (wp_store__getOrCreateYType_state s (MkStoreState client0 k0 locs1 p1 bind pend pdel) nm
                     with "[$Hpkg $Hruns]").
         iIntros (q p3 locs3 bind3) "(Hruns & %Hlc)". simpl in Hlc.
         destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
@@ -497,7 +575,7 @@ Proof using Type*.
       iDestruct "HisPN" as "[%HnnP #HpnC]".
       rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
       wp_auto.
-      wp_apply (wp_store__getOrCreateYType s (MkStoreState client0 k0 locs p bind pend pdel) nm
+      wp_apply (wp_store__getOrCreateYType_state s (MkStoreState client0 k0 locs p bind pend pdel) nm
                   with "[$Hpkg $Hruns]").
       iIntros (q p3 locs3 bind3) "(Hruns & %Hlc)". simpl in Hlc.
       destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & _)]; last by rewrite Hb' in Hwpar.
@@ -627,7 +705,7 @@ Qed.
     [doc_model_has m (toYjsId idv)]: [GetNode]'s covering slot is bridged to
     [doc_model_has] through the registry's model agreement
     ([pool_registry_models], [docm_agree]). *)
-Lemma wp_store__hasNode (s : loc) (idv : yjs.id.t) (m : DocModel) (state : store_state) :
+Lemma wp_store__hasNode_state (s : loc) (idv : yjs.id.t) (m : DocModel) (state : store_state) :
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   {{{ is_pkg_init yjs ∗ own_store_state s state }}}
     s @! (go.PointerType yjs.store) @! "hasNode" #idv
@@ -789,7 +867,7 @@ Proof using Type*.
     rewrite bool_decide_eq_false_2; last first.
     { move=> Heq. exact (Hpne Heq). }
     wp_auto.
-    wp_apply (wp_store__hasNode s idv m state Hregmodel with "[$Hpkg $Hruns]").
+    wp_apply (wp_store__hasNode_state s idv m state Hregmodel with "[$Hpkg $Hruns]").
     iIntros (ok) "(Hruns & %Hok)".
     wp_auto.
     iApply ("HΦ" $! ok).
@@ -809,7 +887,7 @@ Qed.
     of the decoded struct; each arrival check ([originArrived] / [hasNode])
     returns the model presence of a dependency, so the gate composes them by
     [input_ready_true_of] / [input_ready_false_of_dep]. *)
-Lemma wp_store__depsArrived (s : loc) (updateItemVal : yjs.updateItem.t)
+Lemma wp_store__depsArrived_state (s : loc) (updateItemVal : yjs.updateItem.t)
     (typedInput : TId * IntegrateInput (A := A)) (m : DocModel) (state : store_state) :
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s state }}}
@@ -874,7 +952,7 @@ Proof using Type*.
     wp_auto.
     wp_apply (wp_NewId updateItemVal.(yjs.updateItem.id').(yjs.id.clientId')
                 (word.sub updateItemVal.(yjs.updateItem.id').(yjs.id.clock') (W64 1))).
-    wp_apply (wp_store__hasNode s _ m state Hregmodel with "[$Hpkg $Hruns]").
+    wp_apply (wp_store__hasNode_state s _ m state Hregmodel with "[$Hpkg $Hruns]").
     iIntros (okP) "(Hruns & %HokP)".
     wp_auto.
     have Hpredid : toYjsId (yjs.id.mk updateItemVal.(yjs.updateItem.id').(yjs.id.clientId')
@@ -945,10 +1023,10 @@ Qed.
     to null/null under the fresh type [q]. A second spec of [store.repair]
     ([transaction/applyUpdate]'s unbound-parent branch,
     [wp_Transaction__integrateDecoded_unbound], uses it): it cannot be
-    derived from [wp_store__repair], whose [pool_repair_parent] premise
+    derived from [wp_store__repair_state], whose [pool_repair_parent] premise
     requires the wire parent name to be bound already, while here [nm] is
     unbound and the registration itself is the point. *)
-Lemma wp_store__repair_create (s item_l pname : loc)
+Lemma wp_store__repair_create_state (s item_l pname : loc)
     (input : IntegrateInput (A := A)) (nm : go_string) (state : store_state) :
   in_originId input = None ->
   in_rightOriginId input = None ->
@@ -983,7 +1061,7 @@ Proof using Type*.
   iDestruct "HisPN" as "[%HnnP #HpnC]".
   rewrite (bool_decide_eq_false_2 (pname = null) HnnP) /=.
   wp_auto.
-  wp_apply (wp_store__getOrCreateYType s (MkStoreState client0 k0 locs p bind pend pdel) nm
+  wp_apply (wp_store__getOrCreateYType_state s (MkStoreState client0 k0 locs p bind pend pdel) nm
               with "[$Hpkg $Hruns]").
   iIntros (q p' locs' bind') "(Hruns & %Hlc)". simpl in Hlc.
   destruct Hlc as [(Hb' & _) | (_ & Hfresh & -> & -> & ->)]; first by rewrite Hb' in Hnm.
@@ -996,6 +1074,175 @@ Proof using Type*.
     iFrame "Hitem".
     iPureIntro. split_and!; try done. }
   done.
+Qed.
+
+(** [store.repair], the public form (issue #219): the store taken and
+    returned whole ([own_store]). The at most two splits inside preserve
+    every type's document ([pool_after_repair]), so the item-set
+    authority does not move ([pool_item_sets_eq]) and the delete set's
+    tombstone clause transports along [live_refine]; the registry is
+    untouched (the wire parent name is bound already,
+    [pool_repair_parent]). [wp_store__repair_state] above is the stepping
+    stone the update path still composes with; it retires when the
+    callers move here (issue #219, the second half of M2). *)
+Lemma wp_store__repair (s item_l pname : loc) (γs : store_names) (γh : history_names)
+    (input : IntegrateInput (A := A)) (opn : option go_string)
+    (orL orR : option (loc * nat)) (p_t : loc)
+    (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :
+  pool_origins_covered (ss_pool state) input orL orR ->
+  pool_repair_parent (ss_bind state) opn orL orR p_t ->
+  {{{ is_pkg_init yjs ∗
+      own_linked_item item_l input null null null ∗
+      is_parent_name pname opn ∗
+      own_store s γs γh state ds m0 deleted0 }}}
+    s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
+  {{{ (leftNode rightNode : loc) (p' : pool) (locs' : gmap loc (list loc)), RET #();
+      own_linked_item item_l input p_t leftNode rightNode ∗
+      own_store s γs γh (state <| ss_pool := p' |> <| ss_locs := locs' |>) ds m0 deleted0 ∗
+      ⌜pool_after_repair (ss_pool state) p'⌝ ∗
+      ⌜pool_origins_split p' locs' input orL orR leftNode rightNode⌝ ∗
+      ⌜pool_tombstoned p' = pool_tombstoned (ss_pool state)⌝ }}}.
+Proof using Type*.
+  move=> Hcov Hpar.
+  iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hstore) HΦ".
+  iNamed "Hstore". iNamed "Hcore".
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
+  wp_apply (wp_store__repair_state s item_l pname input opn
+              (MkStoreState client0 k0 locs p bind pend pdel) orL orR p_t Hcov Hpar
+              with "[$Hpkg $Hlinked $HisPN $Hstate]").
+  iIntros (leftNode rightNode p' locs') "(Hlinked & Hstate & %Hrep & %Hsplit & %Htomb)".
+  iEval (simpl) in "Hstate".
+  have Hrep0 := Hrep.
+  destruct Hrep as (Hpres & Hdom & _ & _ & Hlr).
+  have Hfmap := pool_item_sets_eq p p' Hpres Hdom.
+  have Hds_tomb' : delete_set_tombstoned ds (all_runs p')
+    := delete_set_tombstoned_refine ds p p' Hlr Hds_tomb.
+  iApply ("HΦ" $! leftNode rightNode p' locs').
+  iFrame "Hlinked".
+  iSplitL; last (iPureIntro; split_and!; [exact Hrep0 | exact Hsplit | exact Htomb]).
+  rewrite /own_store /own_store_core /= Hfmap.
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+  iPureIntro. exact Hds_tomb'.
+Qed.
+
+(** [store.repair], the public creation form (issue #219): the unbound
+    wire parent registers a fresh empty root, and as in the public
+    [wp_store__getOrCreateYType] the registration is the method's own
+    job: the binding witness is minted here and the item-set authority
+    grows by the fresh empty root. A second public spec of [store.repair]
+    for the same reason as the state-level pair: [wp_store__repair]'s
+    [pool_repair_parent] premise requires the wire parent name to be
+    bound already, while here it is unbound and the registration itself
+    is the point. *)
+Lemma wp_store__repair_create (s item_l pname : loc) (γs : store_names) (γh : history_names)
+    (input : IntegrateInput (A := A)) (nm : go_string)
+    (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :
+  in_originId input = None ->
+  in_rightOriginId input = None ->
+  ss_bind state !! nm = None ->
+  {{{ is_pkg_init yjs ∗
+      own_linked_item item_l input null null null ∗
+      is_parent_name pname (Some nm) ∗
+      own_store s γs γh state ds m0 deleted0 }}}
+    s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
+  {{{ (q : loc), RET #();
+      own_linked_item item_l input q null null ∗
+      own_store s γs γh (state <| ss_pool := <[q := MkTypeModel []]> (ss_pool state) |>
+                            <| ss_locs := <[q := []]> (ss_locs state) |>
+                            <| ss_bind := <[nm := q]> (ss_bind state) |>) ds m0 deleted0 ∗
+      is_type_binding γs.(sn_types) nm q ∗
+      ⌜ss_pool state !! q = None⌝ }}}.
+Proof using Type*.
+  move=> HoL HoR Hnm.
+  iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hstore) HΦ".
+  iNamed "Hstore". iNamed "Hcore".
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
+  iApply wp_fupd.
+  wp_apply (wp_store__repair_create_state s item_l pname input nm
+              (MkStoreState client0 k0 locs p bind pend pdel) HoL HoR Hnm
+              with "[$Hpkg $Hlinked $HisPN $Hstate]").
+  iIntros (q) "(Hlinked & Hstate & %Hfresh)".
+  iEval (simpl) in "Hstate". simpl in Hfresh.
+  set (p' := <[q := MkTypeModel []]> p).
+  set (bind' := <[nm := q]> bind).
+  iMod (ghost_map_insert_persist nm q Hnm with "HtypesAuth")
+    as "[HtypesAuth #Hbindname]".
+  iAssert ([∗ map] nm0 ↦ q0 ∈ bind', is_type_binding γs.(sn_types) nm0 q0)%I as "#Hbinds'".
+  { rewrite /bind' big_sepM_insert; last exact Hnm.
+    iFrame "Hbinds". iFrame "Hbindname". }
+  have Hfmap' : ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p')
+              = <[q := (∅ : gset (YjsItem A))]>
+                  ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p).
+  { rewrite /p' fmap_insert //. }
+  have Hdomf : dom ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p)
+             ⊆ dom ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p').
+  { rewrite Hfmap' dom_insert. apply union_subseteq_r. }
+  have Hgrowf : ∀ q0 S S',
+      ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p) !! q0 = Some S ->
+      ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p') !! q0 = Some S' ->
+      S ⊆ S'.
+  { move=> q0 S S'. rewrite Hfmap'.
+    destruct (decide (q0 = q)) as [-> | Hne].
+    - rewrite lookup_fmap Hfresh //.
+    - rewrite lookup_insert_ne //. move=> -> [= ->]. done. }
+  iMod (auth_gmap_gset_grow_snap γs.(sn_seq) _ _ Hdomf Hgrowf with "Hseq")
+    as "[Hseq #Hsnap]".
+  have Hperm : all_runs p' ≡ₚ all_runs p := all_runs_insert_empty p q [] Hfresh.
+  have Hds_tomb' : delete_set_tombstoned ds (all_runs p')
+    := delete_set_tombstoned_perm ds (all_runs p) (all_runs p') Hperm Hds_tomb.
+  iModIntro. iApply ("HΦ" $! q).
+  iFrame "Hlinked".
+  iSplitL; last (iSplitR; [iFrame "Hbindname" | iPureIntro; exact Hfresh]).
+  rewrite /own_store /own_store_core /= Hfmap'.
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds' Hdelete_set_auth Hstate".
+  iPureIntro. exact Hds_tomb'.
+Qed.
+
+(** [store.hasNode] / [store.depsArrived], the public forms (issue
+    #219): pure reads, the store taken and returned whole, what
+    [Transaction.applyUpdate]'s drain calls. Each keeps its state-level
+    stepping stone above for the loop's internal composition, and each
+    takes the doc model [m] with the registry coherence premise the
+    session supplies to the callers. [originArrived] has no public form:
+    it is private to the store (only [depsArrived] calls it). *)
+Lemma wp_store__hasNode (s : loc) (γs : store_names) (γh : history_names)
+    (idv : yjs.id.t) (m : DocModel)
+    (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :
+  pool_registry_models m (ss_bind state) (ss_pool state) ->
+  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 }}}
+    s @! (go.PointerType yjs.store) @! "hasNode" #idv
+  {{{ (ok : bool), RET #ok;
+      own_store s γs γh state ds m0 deleted0 ∗
+      ⌜ok = true <-> doc_model_has m (toYjsId idv) = true⌝ }}}.
+Proof using Type*.
+  move=> Hregmodel.
+  iIntros (Φ) "(#Hpkg & Hstore) HΦ".
+  iNamed "Hstore". iNamed "Hcore".
+  wp_apply (wp_store__hasNode_state s idv m state Hregmodel with "[$Hpkg $Hstate]").
+  iIntros (ok) "[Hstate %Hfact]".
+  iApply "HΦ".
+  iSplitL; last (iPureIntro; exact Hfact).
+  iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth".
+  iPureIntro. exact Hds_tomb.
+Qed.
+
+Lemma wp_store__depsArrived (s : loc) (γs : store_names) (γh : history_names)
+    (updateItemVal : yjs.updateItem.t) (typedInput : TId * IntegrateInput (A := A)) (m : DocModel)
+    (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :
+  pool_registry_models m (ss_bind state) (ss_pool state) ->
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store s γs γh state ds m0 deleted0 }}}
+    s @! (go.PointerType yjs.store) @! "depsArrived" #updateItemVal
+  {{{ RET #(input_ready m typedInput.2); own_store s γs γh state ds m0 deleted0 }}}.
+Proof using Type*.
+  move=> Hregmodel.
+  iIntros (Φ) "(#Hpkg & #Hui & Hstore) HΦ".
+  iNamed "Hstore". iNamed "Hcore".
+  wp_apply (wp_store__depsArrived_state s updateItemVal typedInput m state Hregmodel
+              with "[$Hpkg $Hui $Hstate]").
+  iIntros "Hstate".
+  iApply "HΦ".
+  iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth".
+  iPureIntro. exact Hds_tomb.
 Qed.
 
 Lemma wire_pass_kept_le (pending : list (TId * IntegrateInput (A := A))) :

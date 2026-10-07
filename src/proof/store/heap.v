@@ -13,8 +13,9 @@
       [own_store_state s state], the store's data fields at a
       [store_state] (every field but [mu] and [observers],
       [own_store_fields] / [own_items_field] / [own_store_items], with
-      [store_invs]; non-public, what the store method specs are stated
-      over until issue #219 moves the lock out of the store), and what it
+      [store_invs]; non-public, what the state-level stepping stones of
+      the store method specs are stated over until every caller moves to
+      the public [own_store], issue #219), and what it
       reads back ([own_store_state_run_pool_invs] /
       [own_store_state_run_wf] / [own_store_state_arr_inv] /
       [own_store_state_registry_coh], the document reader also on the pool,
@@ -886,9 +887,10 @@ Definition store_invs (state : store_state) : Prop :=
     field of the struct but [mu] (owned by the RWMutex handle, [is_Store])
     and [observers] ([own_observers]), with the invariants every store
     method preserves ([store_invs]). Non-public (it holds part of the
-    store's resources); the store method specs are stated over it until
-    issue #219 moves the lock out of the store. The public predicate is
-    [own_store]. *)
+    store's resources); the state-level stepping stones of the store
+    method specs ([wp_store__GetNode_state] and its siblings) are stated
+    over it until every caller moves to the public [own_store]
+    (issue #219). *)
 Definition own_store_state (s : loc) (state : store_state) : iProp Σ :=
   "Hfields" ∷ own_store_fields s state ∗
   "%Hinvs" ∷ ⌜store_invs state⌝.

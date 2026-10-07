@@ -84,7 +84,7 @@ Qed.
     [yType.len] change. Proof shape: open the transaction, then the store
     ([own_store_state]), [findPos] through a borrow of this
     type ([own_store_state_ytype_acc]) to the cursor (splitting at the start
-    offset via [wp_store__splitNode] when it lands mid-run, issue #28
+    offset via [wp_store__splitNode_state] when it lands mid-run, issue #28
     M3), then a loop that walks forward tombstoning whole visible runs
     through [wp_Transaction__deleteNode_store] (reading each node's flags, length
     and right link through [own_store_state_node_acc_links]) and splits once
@@ -192,7 +192,7 @@ Proof.
     { rewrite /loc_at decide_True; last lia.
       have -> : Z.to_nat (Z.of_nat p - 1) = (p - 1)%nat by lia.
       destruct (ls0 !! (p - 1)%nat) as [l0|] eqn:Hl0k; [done | apply lookup_ge_None in Hl0k; lia]. }
-    wp_apply (wp_store__splitNode s_loc (MkStoreState client k locs0 p0 bind pend pdel)
+    wp_apply (wp_store__splitNode_state s_loc (MkStoreState client k locs0 p0 bind pend pdel)
                 tv.(yjs.Text.inner') (loc_at ls0 (Z.of_nat p - 1)) ls0 (MkTypeModel runs0) (p - 1)%nat r off
                 Hp0 Hl0 Hr Hlk Hdiffb with "[$Hruns]").
     iIntros (rloc) "(Hruns & %Hrlocfresh)".
@@ -548,7 +548,7 @@ Proof.
          left half; the Len() read below then returns the truncated length,
          so the budget hits zero and the loop exits on its next test *)
       have Hdiffb : (0 < uint.nat rem < length (run_items rq))%nat by word.
-      wp_apply (wp_store__splitNode s_loc (MkStoreState client k locsj pj bind pend pdel)
+      wp_apply (wp_store__splitNode_state s_loc (MkStoreState client k locsj pj bind pend pdel)
                   tv.(yjs.Text.inner') lc lsj (MkTypeModel runsj) q rq rem
                   Hpj Hlj Hrq Hlc Hdiffb with "[$Hruns]").
       iIntros (rloc) "(Hruns & %Hrlocfresh)".

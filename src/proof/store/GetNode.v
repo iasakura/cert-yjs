@@ -1,6 +1,7 @@
 (** store update path, node layer: the id lookups, [wp_getNodeIndex]
-    (the binary search over one client's entries) and [wp_store__GetNode_state]
-    (direct, over [own_store_state]) and the
+    (the binary search over one client's entries), [wp_store__GetNode_state]
+    (direct, over [own_store_state]) with its public form
+    [wp_store__GetNode] over [own_store] (issue #219), and the
     applyUpdate input-expansion helpers ([expand_inputs_*],
     [ValidReplay_chunk_extract], the [types_*] accessors). The heavier
     [splitNode] and repair/applyUpdate proofs live in [store/splitNode]

@@ -83,7 +83,10 @@
     transported along a permutation, a growth by a fresh run, a set union
     or shrink, and read off a delete loop's own record of what it tombstoned
     ([delete_set_tombstoned_of_ids_tombstoned], where one id living in one
-    slot rules out a live run holding it);
+    slot rules out a live run holding it); [pool_item_sets_eq], two pools
+    whose types keep their documents carry the same item-set map (what
+    closes the store's item-set authority over a split or a repair,
+    issue #219);
     membership in [all_runs] is membership in some type
     ([elem_of_all_runs]) and [all_runs] around one split is the two halves
     in place of the split run ([all_runs_split_perm]); [pool_after_split]
@@ -1713,6 +1716,26 @@ Proof.
       have Hy' := Hb q0 tm0 y Hq0 Hy Hcy. rewrite Hid in Hy'. exact Hy'.
     + exfalso. apply (Hother y Hy). rewrite Hid. exact Hcx.
   - destruct Hprev as [-> | Hprev]; [by left | right]. apply (Hiff _ Hp Hsp). by left.
+Qed.
+
+(** Two pools whose types all keep their documents carry the same
+    item-set map (each type's items as a set): the transport the public
+    split and repair specs close the store's item-set authority with
+    (issue #219; [pool_after_split] / [pool_after_repair] hand over both
+    premises). *)
+Lemma pool_item_sets_eq (before after : pool) :
+  (∀ q tm', after !! q = Some tm' -> ∃ tm, before !! q = Some tm ∧ tm_arr tm' = tm_arr tm) ->
+  (∀ q, is_Some (before !! q) -> is_Some (after !! q)) ->
+  ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> after)
+  = ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> before).
+Proof.
+  move=> Hpres Hdom. apply map_eq => q. rewrite !lookup_fmap.
+  destruct (after !! q) as [tm'|] eqn:Ha.
+  - destruct (Hpres q tm' Ha) as (tm & Hb & Harr).
+    rewrite Ha Hb /=. f_equal. f_equal. exact Harr.
+  - destruct (before !! q) as [tm|] eqn:Hb.
+    + exfalso. destruct (Hdom q (ex_intro _ tm Hb)) as [tm' Ha']. congruence.
+    + rewrite Ha Hb //.
 Qed.
 
 (** The tombstone-set clause travels along [live_refine] (a split, a

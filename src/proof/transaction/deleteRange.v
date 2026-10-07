@@ -167,7 +167,7 @@ Proof using Type*.
   destruct Hcovw as (tmw & rw & Hpw & Hrw & Hrwcov).
   destruct (locs_i !! pw) as [lsw|] eqn:Hlsw; last done. simpl in Hlocw.
   iDestruct (own_store_state_run_wf with "Hruns") as %Hwf_i.
-  wp_apply (wp_store__splitAtAndGetRight s _ (MkStoreState client0 k0 locs_i p_i bind pend pdel)
+  wp_apply (wp_store__splitAtAndGetRight_state s _ (MkStoreState client0 k0 locs_i p_i bind pend pdel)
               pw tmw lsw kw rw nl Hpw Hlsw Hrw Hlocw Hrwcov with "[$Hpkg $Hruns]").
   iIntros (rl p1 locs1) "(Hruns & %Hrstep1)".
   iEval (simpl) in "Hruns".
@@ -225,7 +225,7 @@ Proof using Type*.
                      (w64_word_instance.(word.add) dclock dlen) (W64 1) |}).
     have HrRcovL : run_covers rR (toYjsId idL).
     { rewrite /run_covers /toYjsId /= HrRcl HrRclk. split_and!; [done | word | word]. }
-    wp_apply (wp_store__splitAtAndGetLeft s idL (MkStoreState client0 k0 locs1 p1 bind pend pdel)
+    wp_apply (wp_store__splitAtAndGetLeft_state s idL (MkStoreState client0 k0 locs1 p1 bind pend pdel)
                 pw tmR lsR kR rR rl HpR HlsR HrR HkRloc HrRcovL with "[$Hpkg $Hruns]").
     iIntros (p2 locs2) "(Hruns & %Hlstep2)".
     iEval (simpl) in "Hruns".

@@ -1,9 +1,11 @@
 (** store update path, split layer: the DLL half
     [wp_splitItem] (over the type's [own_ytype]), [store.splitNode]
-    over the whole store ([wp_store__splitNode], adding the per-client
+    over the store's data ([wp_store__splitNode_state], adding the per-client
     run-list insertion), and
-    [wp_store__splitAtAndGetLeft] / [wp_store__splitAtAndGetRight]
-    (proved from [wp_store__GetNode_state] and [wp_store__splitNode],
+    [wp_store__splitAtAndGetLeft_state] / [wp_store__splitAtAndGetRight_state]
+    (proved from [wp_store__GetNode_state] and [wp_store__splitNode_state];
+    the public forms of all three, over [own_store] (issue #219), close
+    the file,
     stepping the pool and the address map by the index-explicit
     [pool_split_left_step] / [pool_split_right_step]).
     Split out of [store/GetNode] so it proof-checks in parallel; same
@@ -369,7 +371,7 @@ Qed.
     address slice ([own_item_map]) gets the right half's address
     inserted after the split node's, the pool and address-map laws being
     [pool_invs_split] / [locs_wf_split] / [pool_entries_split]. *)
-Lemma wp_store__splitNode (s : loc) (state : store_state)
+Lemma wp_store__splitNode_state (s : loc) (state : store_state)
     (parent l : loc) (ls : list loc) (tm : type_model) (k : nat) (r : ItemRun) (diff : w64) :
   ss_pool state !! parent = Some tm ->
   ss_locs state !! parent = Some ls ->
@@ -793,8 +795,8 @@ Qed.
     address map step by [pool_split_left_step] (index-explicit; the
     boundary it pins is [pool_split_left_step_ends_at], and it weakens to
     [pool_after_split] through [pool_split_step_of_left]). Proved directly
-    from [wp_store__GetNode_state] and [wp_store__splitNode]. *)
-Lemma wp_store__splitAtAndGetLeft (s : loc) (idv : yjs.id.t) (state : store_state)
+    from [wp_store__GetNode_state] and [wp_store__splitNode_state]. *)
+Lemma wp_store__splitAtAndGetLeft_state (s : loc) (idv : yjs.id.t) (state : store_state)
     (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc) :
   ss_pool state !! parent = Some tm ->
   ss_locs state !! parent = Some ls ->
@@ -868,7 +870,7 @@ Proof using Type*.
                       (w64_word_instance.(word.sub) idv.(yjs.id.clock') ivR.(yjs.item.id').(yjs.id.clock'))
                       (W64 1)) < length (run_items r))%nat.
     { rewrite Hdiffnat. lia. }
-    wp_apply (wp_store__splitNode s (MkStoreState client0 k0 locs p bind pend pdel)
+    wp_apply (wp_store__splitNode_state s (MkStoreState client0 k0 locs p bind pend pdel)
                 parent lc ls tm k r _ Hp Hls Hr Hlk Hdiffb with "[$Hpkg $Hruns]").
     iIntros (rloc) "(Hruns & %Hfresh)". simpl in Hfresh.
     wp_auto.
@@ -887,8 +889,8 @@ Qed.
     half comes back. The returned address and the step are
     [pool_split_right_step] (the boundary it pins is
     [pool_split_right_step_starts_at]). Proved directly from
-    [wp_store__GetNode_state] and [wp_store__splitNode]. *)
-Lemma wp_store__splitAtAndGetRight (s : loc) (idv : yjs.id.t) (state : store_state)
+    [wp_store__GetNode_state] and [wp_store__splitNode_state]. *)
+Lemma wp_store__splitAtAndGetRight_state (s : loc) (idv : yjs.id.t) (state : store_state)
     (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc) :
   ss_pool state !! parent = Some tm ->
   ss_locs state !! parent = Some ls ->
@@ -948,7 +950,7 @@ Proof using Type*.
     have Hdiffb : (0 < uint.nat (w64_word_instance.(word.sub) idv.(yjs.id.clock') ivR.(yjs.item.id').(yjs.id.clock'))
                    < length (run_items r))%nat.
     { rewrite Hdiffnat. lia. }
-    wp_apply (wp_store__splitNode s (MkStoreState client0 k0 locs p bind pend pdel)
+    wp_apply (wp_store__splitNode_state s (MkStoreState client0 k0 locs p bind pend pdel)
                 parent lc ls tm k r _ Hp Hls Hr Hlk Hdiffb with "[$Hpkg $Hruns]").
     iIntros (rloc) "(Hruns & %Hfresh)". simpl in Hfresh.
     wp_auto.
@@ -964,6 +966,139 @@ Proof using Type*.
     exists tm, ls, r, lc. split_and!; [exact Hp | exact Hls | exact Hr | exact Hlk |].
     left. split_and!; [| done | done | done].
     rewrite /toYjsId /=. move: Hosub. word.
+Qed.
+
+(* ----- the public forms (issue #219): the store whole ------------------- *)
+
+(** [store.splitNode], the public form (issue #219): the store taken and
+    returned whole ([own_store]). A split is a model no-op (the split run
+    flattens to the same document, [split_runs_flatten]), so the item-set
+    authority does not move ([pool_item_sets_eq]); live chars refine
+    ([pool_after_split]), so the delete set's tombstone clause survives;
+    the observers' told state passes through.
+    [wp_store__splitNode_state] above is the stepping stone the callers
+    still compose with; it retires when they move here (issue #219, the
+    second half of M2). *)
+Lemma wp_store__splitNode (s : loc) (γs : store_names) (γh : history_names)
+    (parent l : loc) (ls : list loc) (tm : type_model) (k : nat) (r : ItemRun) (diff : w64)
+    (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :
+  ss_pool state !! parent = Some tm ->
+  ss_locs state !! parent = Some ls ->
+  tm_runs tm !! k = Some r ->
+  ls !! k = Some l ->
+  (0 < uint.nat diff < length (run_items r))%nat ->
+  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 }}}
+    s @! (go.PointerType yjs.store) @! "splitNode" #l #diff
+  {{{ (rloc : loc), RET (#l, #rloc);
+      own_store s γs γh
+        (state <| ss_pool := <[parent := MkTypeModel (split_runs (tm_runs tm) k (uint.nat diff))]> (ss_pool state) |>
+               <| ss_locs := <[parent := split_locs ls k rloc]> (ss_locs state) |>)
+        ds m0 deleted0 ∗
+      ⌜rloc ≠ null ∧ rloc ∉ concat ((map_to_list (ss_locs state)).*2)⌝ }}}.
+Proof using Type*.
+  move=> Hp Hl Hr Hlk Hdiff.
+  iIntros (Φ) "(#Hpkg & Hstore) HΦ".
+  iNamed "Hstore". iNamed "Hcore".
+  iDestruct (own_store_state_run_wf with "Hstate") as %Hwfall.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
+  have Hrmem : r ∈ all_runs p.
+  { apply (elem_of_all_runs_lookup p parent tm r Hp). left. exact (list_elem_of_lookup_2 _ _ _ Hr). }
+  wp_apply (wp_store__splitNode_state s (MkStoreState client0 k0 locs p bind pend pdel)
+              parent l ls tm k r diff Hp Hl Hr Hlk Hdiff with "[$Hpkg $Hstate]").
+  iIntros (rloc) "[Hstate %Hfresh]". iEval (simpl) in "Hstate".
+  set (p' := <[parent := MkTypeModel (split_runs (tm_runs tm) k (uint.nat diff))]> p) in *.
+  have Hsplit : pool_after_split p p' parent k
+    := pool_after_split_of_split_runs p parent tm k (uint.nat diff) r Hp Hr (Hwfall r Hrmem) Hdiff.
+  destruct Hsplit as (Hpres & Hdom & _ & _ & _ & _ & Hlr & _).
+  have Hfmap := pool_item_sets_eq p p' Hpres Hdom.
+  have Hds_tomb' : delete_set_tombstoned ds (all_runs p')
+    := delete_set_tombstoned_refine ds p p' Hlr Hds_tomb.
+  iApply "HΦ".
+  iSplitL; last (iPureIntro; exact Hfresh).
+  rewrite /own_store /own_store_core /= Hfmap.
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+  iPureIntro. exact Hds_tomb'.
+Qed.
+
+(** [store.splitAtAndGetLeft], the public form (issue #219): the same
+    closure over [own_store]; the step weakens to [pool_after_split]
+    ([pool_split_step_of_left] / [pool_after_split_of_split_step]), which
+    carries what the authority and the tombstone clause transport
+    along. *)
+Lemma wp_store__splitAtAndGetLeft (s : loc) (γs : store_names) (γh : history_names)
+    (idv : yjs.id.t) (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc)
+    (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :
+  ss_pool state !! parent = Some tm ->
+  ss_locs state !! parent = Some ls ->
+  tm_runs tm !! k = Some r ->
+  ls !! k = Some lc ->
+  run_covers r (toYjsId idv) ->
+  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 }}}
+    s @! (go.PointerType yjs.store) @! "splitAtAndGetLeft" #idv
+  {{{ (p' : pool) (locs' : gmap loc (list loc)), RET (#lc, #true);
+      own_store s γs γh (state <| ss_pool := p' |> <| ss_locs := locs' |>) ds m0 deleted0 ∗
+      ⌜pool_split_left_step (ss_pool state) (ss_locs state) parent k (toYjsId idv) p' locs'⌝ }}}.
+Proof using Type*.
+  move=> Hp Hls Hr Hlk Hcov.
+  iIntros (Φ) "(#Hpkg & Hstore) HΦ".
+  iNamed "Hstore". iNamed "Hcore".
+  iDestruct (own_store_state_run_wf with "Hstate") as %Hwfall.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
+  wp_apply (wp_store__splitAtAndGetLeft_state s idv (MkStoreState client0 k0 locs p bind pend pdel)
+              parent tm ls k r lc Hp Hls Hr Hlk Hcov with "[$Hpkg $Hstate]").
+  iIntros (p' locs') "[Hstate %Hstep]". iEval (simpl) in "Hstate". simpl in Hstep.
+  have Hpas : pool_after_split p p' parent k.
+  { apply (pool_after_split_of_split_step p locs parent k p' locs' Hwfall).
+    exact (pool_split_step_of_left p locs parent k (toYjsId idv) p' locs' r
+             (ex_intro _ tm (conj Hp Hr)) Hcov Hstep). }
+  destruct Hpas as (Hpres & Hdom & _ & _ & _ & _ & Hlr & _).
+  have Hfmap := pool_item_sets_eq p p' Hpres Hdom.
+  have Hds_tomb' : delete_set_tombstoned ds (all_runs p')
+    := delete_set_tombstoned_refine ds p p' Hlr Hds_tomb.
+  iApply "HΦ".
+  iSplitL; last (iPureIntro; exact Hstep).
+  rewrite /own_store /own_store_core /= Hfmap.
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+  iPureIntro. exact Hds_tomb'.
+Qed.
+
+(** [store.splitAtAndGetRight], the public form (issue #219): as the left
+    form, through [pool_split_step_of_right]. *)
+Lemma wp_store__splitAtAndGetRight (s : loc) (γs : store_names) (γh : history_names)
+    (idv : yjs.id.t) (parent : loc) (tm : type_model) (ls : list loc) (k : nat) (r : ItemRun) (lc : loc)
+    (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :
+  ss_pool state !! parent = Some tm ->
+  ss_locs state !! parent = Some ls ->
+  tm_runs tm !! k = Some r ->
+  ls !! k = Some lc ->
+  run_covers r (toYjsId idv) ->
+  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 }}}
+    s @! (go.PointerType yjs.store) @! "splitAtAndGetRight" #idv
+  {{{ (l : loc) (p' : pool) (locs' : gmap loc (list loc)), RET (#l, #true);
+      own_store s γs γh (state <| ss_pool := p' |> <| ss_locs := locs' |>) ds m0 deleted0 ∗
+      ⌜pool_split_right_step (ss_pool state) (ss_locs state) parent k (toYjsId idv) l p' locs'⌝ }}}.
+Proof using Type*.
+  move=> Hp Hls Hr Hlk Hcov.
+  iIntros (Φ) "(#Hpkg & Hstore) HΦ".
+  iNamed "Hstore". iNamed "Hcore".
+  iDestruct (own_store_state_run_wf with "Hstate") as %Hwfall.
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
+  wp_apply (wp_store__splitAtAndGetRight_state s idv (MkStoreState client0 k0 locs p bind pend pdel)
+              parent tm ls k r lc Hp Hls Hr Hlk Hcov with "[$Hpkg $Hstate]").
+  iIntros (l p' locs') "[Hstate %Hstep]". iEval (simpl) in "Hstate". simpl in Hstep.
+  have Hpas : pool_after_split p p' parent k.
+  { apply (pool_after_split_of_split_step p locs parent k p' locs' Hwfall).
+    exact (pool_split_step_of_right p locs parent k (toYjsId idv) l p' locs' r
+             (ex_intro _ tm (conj Hp Hr)) Hcov Hstep). }
+  destruct Hpas as (Hpres & Hdom & _ & _ & _ & _ & Hlr & _).
+  have Hfmap := pool_item_sets_eq p p' Hpres Hdom.
+  have Hds_tomb' : delete_set_tombstoned ds (all_runs p')
+    := delete_set_tombstoned_refine ds p p' Hlr Hds_tomb.
+  iApply "HΦ".
+  iSplitL; last (iPureIntro; exact Hstep).
+  rewrite /own_store /own_store_core /= Hfmap.
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+  iPureIntro. exact Hds_tomb'.
 Qed.
 
 End store_update.

@@ -9,7 +9,7 @@
       its parent joins the changed types. Both read the node's id and length
       off its points-to, which the caller borrows for the call.
     - [wp_Transaction__integrate]: the store's [Integrate] (the splice into
-      the type, [wp_store__Integrate]) followed by [recordInsert] of the new
+      the type, [wp_store__Integrate_state]) followed by [recordInsert] of the new
       run; stated at cell level, over [own_store_state] and the record,
       because [Text.InsertIn] calls it inside its per-char loop.
     - [wp_Transaction__deleteNode] / [_deleteNode_store]: the store's
@@ -121,9 +121,9 @@ Proof.
   - rewrite span_union_snoc Htombstoned. apply union_comm_L.
 Qed.
 
-(** [Transaction.integrate]: the store's splice ([wp_store__Integrate]),
+(** [Transaction.integrate]: the store's splice ([wp_store__Integrate_state]),
     then the new run joins the record: its chars the insert set, its type
-    the changed types. The statement is [wp_store__Integrate]'s with the
+    the changed types. The statement is [wp_store__Integrate_state]'s with the
     record threaded through. *)
 Lemma wp_Transaction__integrate (tr s parent parent_arg item_l : loc)
     (state : store_state) (tm : type_model) (ls : list loc)
@@ -158,7 +158,7 @@ Proof using Type*.
   have Hlsl : length ls = length (tm_runs tm) := Hlens parent ls tm Hlocs Hpl.
   iDestruct (own_transaction_changes_store_acc with "Hchanges") as "[Htrstore Hchangesback]".
   wp_method_call. wp_call. wp_call. wp_auto.
-  wp_apply (wp_store__Integrate s parent parent_arg item_l state tm ls arr' input newItem kL kR
+  wp_apply (wp_store__Integrate_state s parent parent_arg item_l state tm ls arr' input newItem kL kR
               Hparg Hpl Hlocs Hready Hfitsin Hall Hres Hnext with "[$Hpkg $Hruns $Hfresh]").
   iIntros (runs' ls' run) "(Hruns & %Hinv' & %Hsplice & %Hden)".
   iDestruct ("Hchangesback" with "Htrstore") as "Hchanges".
