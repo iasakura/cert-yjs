@@ -21,6 +21,7 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core.
 From New.proof Require Import prelude.
+From New.proof Require Import history.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
 From New.proof.id Require Import id.
@@ -39,6 +40,14 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 Set Default Proof Using "Type*".
 
 Notation A := go_string.
+
+Notation P := go_string.
+
+Local Notation TId := (TypeId P).
+
+Local Notation Ev := (@Event (TId * @YjsOperation A)).
+
+Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (* the store's ghost state, as [store/heap]: the record predicate is stated in
    a section that carries it *)
@@ -213,7 +222,7 @@ Qed.
     run ([wp_store__deleteNode_pool]) and, when it was live, [recordDelete] records its
     chars and its type. The statement is [wp_store__deleteNode_pool]'s with the record
     threaded through. *)
-Lemma wp_Transaction__deleteNode (tr s_loc : loc) (locs : gmap loc (list loc)) (p : pool)
+Lemma wp_Transaction__deleteNode_pool (tr s_loc : loc) (locs : gmap loc (list loc)) (p : pool)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun)
     (inserted tombstoned : gset YjsId) (changed : gset loc) :
   locs !! parent = Some ls ->
@@ -262,7 +271,7 @@ Qed.
 
 (** [Transaction.deleteNode] on the store: the addressed run is tombstoned
     and recorded, every other field untouched (the store re-closed around
-    [wp_Transaction__deleteNode]); what the delete loops ([deleteRange] /
+    [wp_Transaction__deleteNode_pool]); what the delete loops ([deleteRange] /
     [applyDeleteSpans] here, [Text.DeleteIn] in [text/DeleteIn]) step by. *)
 Lemma wp_Transaction__deleteNode_store (tr s : loc) (state : store_state)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun)
@@ -293,7 +302,7 @@ Proof.
   have Hrfits : run_fits r := proj1 (proj2 (proj1 Hrpi r Hrmem)).
   iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iEval (simpl) in "Hitems Htypes".
-  wp_apply (wp_Transaction__deleteNode tr s locs p parent ls tm k lc r inserted tombstoned changed
+  wp_apply (wp_Transaction__deleteNode_pool tr s locs p parent ls tm k lc r inserted tombstoned changed
               Hls Hp Hlk Hrk Hrfits with "[$Hpkg $Htypes $Hchanges]").
   iIntros "[Htypes Hchanges]".
   set (tm' := MkTypeModel (<[k := flip_run r]> (tm_runs tm))) in *.
@@ -317,5 +326,58 @@ Proof.
   iFrame "Hclient Hclock HdeletedSet Hregistry Htypes Hpending Hpdeletes".
   iExists mref. iFrame "Hitemsf Hitemmap".
 Qed.
+
+(** [Transaction.deleteNode], the public form (issue #219): the store
+    taken and returned whole ([own_store]) beside the record. The flip
+    moves no authority and only strengthens the tombstone clause, so the
+    closure is the public store wrapper's, with the record stepped as in
+    the state form above. *)
+Lemma wp_Transaction__deleteNode (tr s : loc) (γs : store_names) (γh : history_names)
+    (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun)
+    (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId)
+    (inserted tombstoned : gset YjsId) (changed : gset loc) :
+  ss_locs state !! parent = Some ls ->
+  ss_pool state !! parent = Some tm ->
+  ls !! k = Some lc ->
+  tm_runs tm !! k = Some r ->
+  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 ∗
+      own_transaction_changes tr s inserted tombstoned changed }}}
+    tr @! (go.PointerType yjs.Transaction) @! "deleteNode" #lc
+  {{{ RET #(); own_store s γs γh
+        (state <| ss_pool := <[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]>
+                             (ss_pool state) |>) ds m0 deleted0 ∗
+      own_transaction_changes tr s inserted
+        (if run_deleted r then tombstoned else tombstoned ∪ char_ids (run_items r))
+        (if run_deleted r then changed else changed ∪ {[parent]}) }}}.
+Proof using Type*.
+  move=> Hls Hp Hlk Hrk.
+  iIntros (Φ) "(#Hpkg & Hstore & Hchanges) HΦ".
+  iNamed "Hstore". iNamed "Hcore".
+  destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
+  have Hrmem : r ∈ all_runs p.
+  { apply elem_of_all_runs. exists parent, tm.
+    split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hrk)]. }
+  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hrpi0.
+  wp_apply (wp_Transaction__deleteNode_store tr s (MkStoreState client0 k0 locs p bind pend pdel)
+              parent ls tm k lc r inserted tombstoned changed Hls Hp Hlk Hrk
+              with "[$Hpkg $Hstate $Hchanges]").
+  iIntros "[Hstate Hchanges]". iEval (simpl) in "Hstate".
+  set (tm' := MkTypeModel (<[k := flip_run r]> (tm_runs tm))) in *.
+  have Hfmap : ((λ tm0, (list_to_set (tm_arr tm0) : gset (YjsItem A))) <$> (<[parent := tm']> p))
+             = ((λ tm0, (list_to_set (tm_arr tm0) : gset (YjsItem A))) <$> p).
+  { apply map_eq => q. destruct (decide (q = parent)) as [-> | Hne].
+    - rewrite lookup_fmap lookup_insert_eq lookup_fmap Hp /=.
+      do 2 f_equal. rewrite /tm' /tm_arr /=.
+      exact (runs_flatten_flip_run (tm_runs tm) k r Hrk).
+    - rewrite !lookup_fmap lookup_insert_ne //. }
+  have Hds_tomb' : delete_set_tombstoned ds (all_runs (<[parent := tm']> p))
+    := delete_set_tombstoned_flip ds p parent tm k r Hp Hrk Hds_tomb.
+  iApply "HΦ".
+  iFrame "Hchanges".
+  rewrite /own_store /own_store_core /= Hfmap.
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+  iPureIntro. exact Hds_tomb'.
+Qed.
+
 
 End transaction_wp.

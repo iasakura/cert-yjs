@@ -79,7 +79,8 @@
     [pool_after_delete_flip]), and the tombstone record survives a step
     that keeps dead chars dead ([ids_tombstoned_dead_kept]);
     [delete_set_tombstoned], the tombstone-set clause at runs, refined
-    along [live_refine] ([delete_set_tombstoned_refine]) and
+    along [live_refine] ([delete_set_tombstoned_refine]), a flip
+    ([delete_set_tombstoned_flip]) and
     transported along a permutation, a growth by a fresh run, a set union
     or shrink, and read off a delete loop's own record of what it tombstoned
     ([delete_set_tombstoned_of_ids_tombstoned], where one id living in one
@@ -1751,6 +1752,35 @@ Proof.
   destruct (run_deleted r') eqn:Hdel; [done |].
   destruct (Hlr r' Hr' Hdel) as (r & Hr & Hrdel & Hsub).
   have := Ht r Hr y (Hsub y Hy) Hd. congruence.
+Qed.
+
+(** The tombstone-set clause survives one flip: the flipped run is
+    tombstoned, so its clause is vacuous, and every other run is
+    unchanged. What lets the public [wp_store__deleteNode] and
+    [wp_Transaction__deleteNode] keep [own_store_core]'s tombstone
+    clause without touching the ghost delete set. *)
+Lemma delete_set_tombstoned_flip (ds : gset YjsId) (p : pool)
+    (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
+  p !! parent = Some tm ->
+  tm_runs tm !! k = Some r ->
+  delete_set_tombstoned ds (all_runs p) ->
+  delete_set_tombstoned ds
+    (all_runs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p)).
+Proof.
+  move=> Hp Hrk Ht r' Hr'.
+  apply elem_of_all_runs in Hr' as (q & tm0 & Hq & Hr').
+  destruct (decide (q = parent)) as [-> | Hne]; last first.
+  { rewrite lookup_insert_ne // in Hq.
+    apply (Ht r'). apply elem_of_all_runs. by exists q, tm0. }
+  rewrite lookup_insert_eq in Hq. injection Hq as <-. simpl in Hr'.
+  apply list_elem_of_lookup in Hr' as [j Hj].
+  destruct (decide (j = k)) as [-> | Hjk].
+  - rewrite list_lookup_insert_eq in Hj;
+      last exact (lookup_lt_Some _ _ _ Hrk).
+    injection Hj as <-. move=> y Hy Hd. done.
+  - rewrite list_lookup_insert_ne // in Hj.
+    apply (Ht r'). apply elem_of_all_runs. exists parent, tm. split; [exact Hp |].
+    exact (list_elem_of_lookup_2 _ _ _ Hj).
 Qed.
 
 Lemma delete_set_tombstoned_perm (delete_set : gset YjsId) (runs runs' : list ItemRun) :

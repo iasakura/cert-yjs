@@ -62,35 +62,6 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* ===== lemmas ============================================================= *)
 
-(** The tombstone-set clause survives one flip: the flipped run is
-    tombstoned, so its clause is vacuous, and every other run is
-    unchanged. What lets the public [wp_store__deleteNode] below keep
-    [own_store_core]'s tombstone clause without touching the ghost
-    delete set. *)
-Lemma delete_set_tombstoned_flip (ds : gset YjsId) (p : pool)
-    (parent : loc) (tm : type_model) (k : nat) (r : ItemRun) :
-  p !! parent = Some tm ->
-  tm_runs tm !! k = Some r ->
-  delete_set_tombstoned ds (all_runs p) ->
-  delete_set_tombstoned ds
-    (all_runs (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p)).
-Proof.
-  move=> Hp Hrk Ht r' Hr'.
-  apply elem_of_all_runs in Hr' as (q & tm0 & Hq & Hr').
-  destruct (decide (q = parent)) as [-> | Hne]; last first.
-  { rewrite lookup_insert_ne // in Hq.
-    apply (Ht r'). apply elem_of_all_runs. by exists q, tm0. }
-  rewrite lookup_insert_eq in Hq. injection Hq as <-. simpl in Hr'.
-  apply list_elem_of_lookup in Hr' as [j Hj].
-  destruct (decide (j = k)) as [-> | Hjk].
-  - rewrite list_lookup_insert_eq in Hj;
-      last exact (lookup_lt_Some _ _ _ Hrk).
-    injection Hj as <-. move=> y Hy Hd. done.
-  - rewrite list_lookup_insert_ne // in Hj.
-    apply (Ht r'). apply elem_of_all_runs. exists parent, tm. split; [exact Hp |].
-    exact (list_elem_of_lookup_2 _ _ _ Hj).
-Qed.
-
 (** [store.deleteNode]:
     the pool at [(locs, p)], the node named by its type's address list and
     the run it holds; the post flips that run's bit ([flip_run]) and leaves
