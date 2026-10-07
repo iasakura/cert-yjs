@@ -1,5 +1,5 @@
 (** [deleteNode] (issue #133, plan section 5): tombstone one integrated
-    node, reporting whether it was live. [wp_deleteNode] is the pool-level
+    node, reporting whether it was live. [wp_store__deleteNode] is the pool-level
     statement. Records nothing: [Transaction.deleteNode]
     ([transaction/wp_private]) records the flip, and the delete loops
     ([Transaction.deleteRange] / [applyDeleteSpans],
@@ -61,12 +61,14 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* ===== lemmas ============================================================= *)
 
-(** [deleteNode]:
+(** [store.deleteNode]:
     the pool at [(locs, p)], the node named by its type's address list and
     the run it holds; the post flips that run's bit ([flip_run]) and leaves
     everything else, the address map included, and the result says whether
-    the run was live. The Deleted branch is the identity on the nose. *)
-Lemma wp_deleteNode (locs : gmap loc (list loc)) (p : pool)
+    the run was live. The Deleted branch is the identity on the nose. The
+    receiver is untouched (the method reads only the node and its parent
+    type), so the spec needs nothing of the store but its pool. *)
+Lemma wp_store__deleteNode (s : loc) (locs : gmap loc (list loc)) (p : pool)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
   locs !! parent = Some ls ->
   p !! parent = Some tm ->
@@ -74,13 +76,14 @@ Lemma wp_deleteNode (locs : gmap loc (list loc)) (p : pool)
   tm_runs tm !! k = Some r ->
   run_fits r ->
   {{{ is_pkg_init yjs ∗ own_type_pool (DfracOwn 1) locs p }}}
-    @! yjs.deleteNode #lc
+    s @! (go.PointerType yjs.store) @! "deleteNode" #lc
   {{{ RET #(negb (run_deleted r)); own_type_pool (DfracOwn 1) locs
         (<[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]> p) }}}.
 Proof using Type*.
   move=> Hlp Hpp Hlk Hrk Hrfits.
   destruct tm as [runs]. simpl in *.
-  wp_start as "Hpool".
+  iIntros (Φ) "(#Hpkg & Hpool) HΦ".
+  wp_method_call. wp_call. wp_call.
   iDestruct "Hpool" as "(%Hlocswf & Hpool)".
   iDestruct (big_sepM_delete _ _ parent _ Hpp with "Hpool") as "[Hpc Hrest]".
   iDestruct "Hpc" as (ls0) "(%Hls0 & Hyt & %Harrinv)".

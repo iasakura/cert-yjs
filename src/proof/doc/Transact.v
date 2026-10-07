@@ -58,16 +58,16 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 (** [Doc.Transact]: what [store.transact] gives, at the document
     ([closure_runs_transaction] is the closure's obligation: run the fresh
     transaction to an end state where [Q] holds). *)
-Lemma wp_Doc__Transact (dv s_loc : loc) (γs : store_names) (γh : history_names) (f : func.t)
+Lemma wp_Doc__Transact (dv ref : loc) (γs : store_names) (γh : history_names) (f : func.t)
     (Q : ClientId -> list Ev -> DocModel -> list (TId * IntegrateInput (A := A)) -> gset YjsId -> iProp Σ) :
-  {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ closure_runs_transaction s_loc γs γh f Q }}}
+  {{{ is_pkg_init yjs ∗ is_Doc dv ref γs γh ∗ closure_runs_transaction (store_of_ref ref) γs γh f Q }}}
     dv @! (go.PointerType yjs.Doc) @! "Transact" #f
   {{{ RET #(); ∃ (c : ClientId) (h' : list Ev) (m' : DocModel)
         (pend' : list (TId * IntegrateInput (A := A))) (deleted' : gset YjsId),
       Q c h' m' pend' deleted' }}}.
 Proof.
   wp_start as "(#His_doc & Hf)".
-  iNamed "His_doc". subst s_loc. wp_auto.
+  iNamed "His_doc". subst ref. wp_auto.
   wp_apply (wp_transact with "[$His_store $Hf]").
   iIntros "HQ". wp_auto.
   iApply ("HΦ" with "HQ").

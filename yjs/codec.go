@@ -109,7 +109,7 @@ func (d *decoder) readItemID() id {
 // on demand, so the store's DeleteSet need not be mirrored by Delete.
 func generateDeleteSet(doc *Doc) map[Client]orderRange {
 	ds := deletedSet{deletedSet: make(map[Client]orderRange)}
-	for _, y := range doc.store.types {
+	for _, y := range doc.store.store.types {
 		for cur := y.start; cur != nil; cur = cur.right {
 			if cur.Deleted() {
 				ds.addRange(cur.id, cur.Len())
@@ -129,7 +129,7 @@ func (doc *Doc) EncodeUpdate() []byte {
 	// by client, then sort each client's run by clock.
 	name := map[id]string{}
 	byClient := map[Client][]*item{}
-	for nm, y := range doc.store.types {
+	for nm, y := range doc.store.store.types {
 		for cur := y.start; cur != nil; cur = cur.right {
 			name[cur.id] = nm
 			byClient[cur.id.clientId] = append(byClient[cur.id.clientId], cur)
@@ -436,11 +436,11 @@ func splitStructs(structs []decodedStruct) []updateItem {
 // items; the owning type comes from the item's own parent.
 func (doc *Doc) applyDeletes(deletes []pendingDelete) {
 	for _, del := range deletes {
-		doc.store.deletedSet.addRange(newId(del.client, del.clock), del.length)
+		doc.store.store.deletedSet.addRange(newId(del.client, del.clock), del.length)
 		end := del.clock + del.length
 		for clock := del.clock; clock < end; clock++ {
 			target := newId(del.client, clock)
-			item, ok := doc.store.GetNode(target)
+			item, ok := doc.store.store.GetNode(target)
 			if ok && !item.Deleted() {
 				item.flags = item.flags | itemDeleted
 				if item.Countable() {

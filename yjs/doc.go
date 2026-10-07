@@ -6,26 +6,27 @@ package yjs
 // the store pointer (the store is y-octo's Arc<RwLock<DocStore>>). Goose-translated
 // like store.go / text.go.
 
-// Doc is a document: a handle around the struct store (y-octo: Doc wraps an
-// Arc<RwLock<DocStore>>). The store owns the types, clock, items and lock.
+// Doc is a document: a handle around the lock-guarded struct store
+// (y-octo: Doc wraps an Arc<RwLock<DocStore>>, our storeRef). The store
+// owns the types, clock and items; the ref owns the lock.
 type Doc struct {
-	store *store
+	store *storeRef
 }
 
 // NewDoc creates a document with a fresh store owned by client.
 func NewDoc(client Client) *Doc {
-	return &Doc{store: newStore(client)}
+	return &Doc{store: newStoreRef(client)}
 }
 
 // GetOrCreateText returns the root text type named name, creating it on first use
 // (y-octo: Doc::get_or_create_text). Registering the type mutates the store, so
 // it is done under the store lock.
 func (d *Doc) GetOrCreateText(name string) *Text {
-	s := d.store
-	s.mu.Lock()
-	inner := s.getOrCreateYType(name)
-	s.mu.Unlock()
-	return &Text{store: s, inner: inner}
+	ref := d.store
+	ref.mu.Lock()
+	inner := ref.store.getOrCreateYType(name)
+	ref.mu.Unlock()
+	return &Text{store: ref, inner: inner}
 }
 
 // Transact runs f as one transaction on the document (Yjs doc.transact,

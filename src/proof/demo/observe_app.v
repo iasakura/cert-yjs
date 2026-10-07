@@ -204,7 +204,7 @@ Proof.
     (* the mirror's view, its snapshot tied to the transaction's at the
        lock's linearization point *)
     wp_apply (wp_Mirror__Text _ _ _ _ _ _ _
-                (λ s, own_transaction tr s_loc γs γh c h m0 pend deleted ∅ ∅ ∅ ∗
+                (λ s, own_transaction tr (store_of_ref s_loc) γs γh c h m0 pend deleted ∅ ∅ ∅ ∗
                       ⌜s = type_snapshot m0 deleted name⌝)%I
                 with "[$Hmirror Htx]").
     { iIntros (s) "Hhalf".

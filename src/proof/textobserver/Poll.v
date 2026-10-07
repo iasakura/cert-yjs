@@ -224,7 +224,7 @@ Proof.
   { apply elem_of_dom. rewrite Hdom. apply elem_of_dom. eauto. }
   simpl in Hreg, Hpoolinv, Harrinv, Hcontig, Hdom, Hlens.
   (* ---- borrow this type's spine for the walk ---- *)
-  iDestruct (own_store_state_ytype_acc tv.(yjs.Text.store') (MkStoreState client k locs p bind pend pdel) tv.(yjs.Text.inner') ls tm Hls Htmp with "Hstate") as "[Hyt Hclose]".
+  iDestruct (own_store_state_ytype_acc (store_of_ref tv.(yjs.Text.store')) (MkStoreState client k locs p bind pend pdel) tv.(yjs.Text.inner') ls tm Hls Htmp with "Hstate") as "[Hyt Hclose]".
   iNamed "Hyt".
   subst t.
   wp_auto.

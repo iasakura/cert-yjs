@@ -26,10 +26,11 @@ package yjs
 // type holds its document (YType.doc, src/ytype.js:661), yrs 0.27's TextRef
 // is a bare branch pointer (src/types/text.rs:91) and the lock arrives with
 // the transaction, y-octo's YTypeRef holds the store (src/doc/types/mod.rs:45).
-// The Go follows y-octo: the store is where the lock and the observers live,
-// and Doc is only the store's owner (doc.go).
+// The Go follows y-octo: the handle holds the store ref (the lock and the
+// store with its observers, store.go storeRef), and Doc is only the ref's
+// other holder (doc.go).
 type Text struct {
-	store *store
+	store *storeRef
 	inner *yType
 }
 
@@ -87,7 +88,7 @@ func (t *Text) Observe(callback func(delta []DeltaOp)) {
 		initial = append(initial, DeltaOp{Kind: DeltaInsert, Content: text})
 	}
 	callback(initial)
-	s.observers[t.inner] = append(s.observers[t.inner], callback)
+	s.store.observers[t.inner] = append(s.store.observers[t.inner], callback)
 	s.mu.Unlock()
 }
 

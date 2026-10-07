@@ -12,7 +12,7 @@
       [own_type_pool dq locs p] (over [store/value_cells]'s [locs_wf]);
       [own_store_state s state], the store's data fields at a
       [store_state] (every field but [mu] and [observers],
-      [own_store_fields] / [own_items_field], with
+      [own_store_fields] / [own_items_field] / [own_store_items], with
       [store_invs]; non-public, what the store method specs are stated
       over until issue #219 moves the lock out of the store), and what it
       reads back ([own_store_state_run_pool_invs] /
@@ -56,7 +56,10 @@
       [own_observer_registry observers_mref γs γh m deleted] (the observers
       map's contents: every observer told everything up to its type's
       snapshot at [(m, deleted)]); [tie_store] is the lock body's data part.
-    - the persistent witnesses [is_Store], [is_type_binding], [is_root],
+    - [store_of_ref], the embedded store's address under a [storeRef]
+      (issue #219: the lock left the store struct);
+    - the persistent witnesses [is_Store] (over the [storeRef]'s address),
+      [is_type_binding], [is_root],
       [is_type_lb], [is_root_lb], [is_applied_root_lb] / [is_applied_certs],
       [is_accepted],
       [is_update_item], and the read capability [own_read_cap].
@@ -841,6 +844,14 @@ Definition own_items_field (l : loc) (locs : gmap loc (list loc)) (p : pool) : i
     "Hitemsf" ∷ l ↦ items_mref ∗
     "Hitemmap" ∷ own_item_map items_mref (DfracOwn 1) locs p.
 
+(** [own_store_items s locs p]: the same, anchored at the store's address
+    (the receiver), so a spec that needs just the item index never names
+    the field path (spec-shape "Everything a spec says about a value goes
+    through a model parameter"); what [wp_store__addNode] is stated
+    over. *)
+Definition own_store_items (s : loc) (locs : gmap loc (list loc)) (p : pool) : iProp Σ :=
+  own_items_field (s .[(yjs.store.t), "items"]) locs p.
+
 (** [own_store_fields s state]: the store's data fields (every field but
     [mu] and [observers]) at its state: the item index over the pool's
     entries and the type pool as [own_type_pool]. *)
@@ -848,7 +859,7 @@ Definition own_store_fields (s : loc) (state : store_state) : iProp Σ :=
   "Hclient" ∷ (s .[(yjs.store.t), "client"]) ↦ ss_client state ∗
   "Hclock" ∷ (s .[(yjs.store.t), "clock"]) ↦ ss_clock state ∗
   "HdeletedSet" ∷ own_deleted_set_field (s .[(yjs.store.t), "deletedSet"]) ∗
-  "Hitems" ∷ own_items_field (s .[(yjs.store.t), "items"]) (ss_locs state) (ss_pool state) ∗
+  "Hitems" ∷ own_store_items s (ss_locs state) (ss_pool state) ∗
   "Hregistry" ∷ own_registry_field (s .[(yjs.store.t), "types"]) (ss_bind state) ∗
   "Htypes" ∷ own_type_pool (DfracOwn 1) (ss_locs state) (ss_pool state) ∗
   "Hpending" ∷ own_pending_field (s .[(yjs.store.t), "pending"]) (ss_pending state) ∗
@@ -1504,14 +1515,22 @@ Definition tie_body (s_loc : loc) (γs : store_names) (γh : history_names) (st 
          own_observers s_loc γs γh m deleted)
   end.
 
-(** Store handle (persistent): the [sync.RWMutex] at [&store.mu] with the
-    reader-count accounting invariant. The lock ghost names live in [γs] (see
+(** [store_of_ref ref]: the address of the store embedded in the [storeRef]
+    at [ref] (yjs/store.go: [storeRef] is y-octo's [StoreRef =
+    Arc<RwLock<DocStore>>], the store held by value next to the lock, issue
+    #219). A pure field-reference computation; every store predicate below
+    is stated at this address. *)
+Definition store_of_ref (ref : loc) : loc := ref .[(yjs.storeRef.t), "store"].
+
+(** Store handle (persistent): the [sync.RWMutex] at [&ref.mu] with the
+    reader-count accounting invariant, guarding the store embedded at
+    [store_of_ref ref]. The lock ghost names live in [γs] (see
     [store_names]); ALL store-field / item-set / DLL references are sealed here or
     in [store_inv]. *)
-Definition is_Store (s_loc : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
-  "#Hrw" ∷ rwmutex.is_RWMutex (s_loc .[(yjs.store.t), "mu"]) γs.(sn_rw) (storeN .@ "rw") ∗
+Definition is_Store (ref : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
+  "#Hrw" ∷ rwmutex.is_RWMutex (ref .[(yjs.storeRef.t), "mu"]) γs.(sn_rw) (storeN .@ "rw") ∗
   "#Hmax" ∷ own_tok_auth_dfrac γs.(sn_rmax) DfracDiscarded (Z.to_nat rwmutex.actualMaxReaders) ∗
-  "#Htie" ∷ inv (storeN .@ "tie") (∃ st, rwmutex.own_RWMutex γs.(sn_rw) st ∗ tie_body s_loc γs γh st).
+  "#Htie" ∷ inv (storeN .@ "tie") (∃ st, rwmutex.own_RWMutex γs.(sn_rw) st ∗ tie_body (store_of_ref ref) γs γh st).
 
 (** The read capability (one reader slot) and the post-RLock reader state. *)
 Definition own_read_cap (γs : store_names) : iProp Σ :=
