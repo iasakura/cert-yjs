@@ -71,9 +71,13 @@ Proof.
   subst text_store parent.
   wp_auto.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
-  iDestruct "Hinv" as (c h m pend deleted) "Hstore".
+  iDestruct "Hinv" as (c h m) "Hstore".
   wp_auto.
-  iDestruct "Hstore" as "[Hstore Hobservers]". iNamed "Hobservers".
+  iDestruct "Hstore" as (state0 ds0) "(Hcore & Hsession & Hobservers)".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hstore".
+  set (pend := ss_pending state0) in *.
+  set (deleted := pool_tombstoned (ss_pool state0)) in *.
+  iNamed "Hobservers".
   (* ---- the current text ---- *)
   iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
@@ -171,8 +175,9 @@ Proof.
     iIntros (sl') "(Hsl' & Hcap' & _)". wp_auto.
     wp_apply (wp_map_insert with "Hobserversmap"). iIntros "Hobserversmap". wp_auto.
     iMod (observers_register γs _ γo name with "Hobserversauth") as "[Hobserversauth #Hobserved]".
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore Hobserversf Hobserversmap Hobserversauth Hobservers Hsl' Hcap' Hentry_callbacks Hobs]").
-    { iExists observers_mref. iFrame "Hobserversf".
+    iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hcore' $Hsession' Hobserversf Hobserversmap Hobserversauth Hobservers Hsl' Hcap' Hentry_callbacks Hobs]").
+    { rewrite -Hdel'. iExists observers_mref. iFrame "Hobserversf".
       iExists (<[tv.(yjs.Text.inner') := sl']> registry),
         (<[tv.(yjs.Text.inner') := (name, γos ++ [γo])]> registered).
       iFrame "Hobserversmap".
@@ -193,8 +198,9 @@ Proof.
     iIntros (sl') "(Hsl' & Hcap' & _)". wp_auto.
     wp_apply (wp_map_insert with "Hobserversmap"). iIntros "Hobserversmap". wp_auto.
     iMod (observers_register γs _ γo name with "Hobserversauth") as "[Hobserversauth #Hobserved]".
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore Hobserversf Hobserversmap Hobserversauth Hobservers Hsl' Hcap' Hobs]").
-    { iExists observers_mref. iFrame "Hobserversf".
+    iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hcore' $Hsession' Hobserversf Hobserversmap Hobserversauth Hobservers Hsl' Hcap' Hobs]").
+    { rewrite -Hdel'. iExists observers_mref. iFrame "Hobserversf".
       iExists (<[tv.(yjs.Text.inner') := sl']> registry),
         (<[tv.(yjs.Text.inner') := (name, [] ++ [γo])]> registered).
       iFrame "Hobserversmap".

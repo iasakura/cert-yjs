@@ -194,9 +194,12 @@ Proof.
   wp_auto.
   (* ---- the write lock: the store at its current model ---- *)
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
-  iDestruct "Hinv" as (c0 h m pend deleted) "Hstore".
+  iDestruct "Hinv" as (c0 h m) "Hstore".
   wp_auto.
-  iDestruct "Hstore" as "[Hown Hobservers]".
+  iDestruct "Hstore" as (state0 ds0) "(Hcore & Hsession & Hobservers)".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hown".
+  set (pend := ss_pending state0) in *.
+  set (deleted := pool_tombstoned (ss_pool state0)) in *.
   iDestruct "Hown" as (client k pdel locs p bind acc) "Hown". iNamed "Hown". subst c0.
   wp_apply wp_map_make1. iIntros (sv_mref) "Hsvm". wp_auto.
   wp_apply wp_map_make1. iIntros (del_mref) "Hdm". wp_auto.
@@ -558,9 +561,13 @@ Proof.
     (* the store goes back whole, and the lock is released *)
     iDestruct ("Hclose" with "[Hparent Hdll]") as "Hstate".
     { iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. exact Hlen. }
-    wp_apply (wp_Store__wunlock _ _ _ (uint.nat client) h m pend deleted with "[$His_store $Hlk $Hobservers Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]").
+    iAssert (own_store_data (store_of_ref tv.(yjs.Text.store')) γs γh (uint.nat client) h m pend deleted)
+      with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hdata".
     { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro.
       split_and!; [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
+    iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+    iEval (rewrite Hdel') in "Hobservers".
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hcore' $Hsession' $Hobservers]").
     iAssert (own_TextObserver obs ov.(yjs.TextObserver.text') γs γh name (runs_model tm.(tm_runs)))
       with "[Hobs Hsvm Hdel]" as "Hobs_new".
     { iExists (ov <| yjs.TextObserver.stateVector' := sv_mref |> <| yjs.TextObserver.deleted' := del_mref |>),

@@ -26,7 +26,15 @@
       [own_store_state_client_acc]) and
       covering-slot uniqueness ([own_store_state_covers_unique]).
       [own_store_data] is the lock layer's closure of [own_store_state] over the
-      public model.
+      public model; [own_store_core] (what every store method preserves:
+      the state with the client pin, the item-set, registry and delete-set
+      authorities with the tombstone clause) and [own_store_session] (what
+      only the lock's holder re-establishes: the history with its
+      coherences, the counter tie, the accepted set, the pending
+      certificates, the delete set's domain bound) are its issue #219
+      split, [own_store_data_core_session], with the single-wand
+      corollaries [own_store_data_build] / [own_store_data_split] that
+      the lock wrappers' callers convert with.
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
       hands out) and [own_delete_set] (its authority, with the domain
       bound and the tombstone-bit coherence that make the bound mean
@@ -1643,6 +1651,134 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId)
     (m0 : DocModel) (deleted0 : gset YjsId) : iProp Σ :=
   own_store_data s_loc γs γh c h m pend deleted ∗ own_observers s_loc γs γh m0 deleted0.
+
+(* ----- the issue #219 split of the store's data ------------------------- *)
+
+(** [own_store_core s γs state ds]: the half of [own_store_data] that every
+    store method preserves (docs/plan-issue-219-store-lock.md, section 3):
+    the data fields at the cell model [state] with the pure [store_invs]
+    ([own_store_state]), the client pin, the item-set authority at exactly
+    the pool's item sets, the registry authority at exactly [ss_bind] with
+    its persistent binding witnesses, and the delete-set authority at [ds]
+    with the tombstone clause (every ghost-deleted id is tombstoned in the
+    pool; tombstoning only strengthens it). The delete set's domain bound,
+    which mentions the doc model, is [own_store_session]'s. *)
+Definition own_store_core (s_loc : loc) (γs : store_names)
+    (state : store_state) (ds : gset YjsId) : iProp Σ :=
+  "Hstate" ∷ own_store_state s_loc state ∗
+  "#Hclientpin" ∷ is_store_client γs (uint.nat (ss_client state)) ∗
+  "Hseq" ∷ own γs.(sn_seq) (● ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> ss_pool state) : seqUR) ∗
+  "HtypesAuth" ∷ ghost_map_auth γs.(sn_types) 1 (ss_bind state) ∗
+  "#Hbinds" ∷ ([∗ map] name ↦ q ∈ ss_bind state, is_type_binding γs.(sn_types) name q) ∗
+  "Hdelete_set_auth" ∷ own γs.(sn_delete_set) (● ds : accUR) ∗
+  "%Hds_tomb" ∷ ⌜delete_set_tombstoned ds (all_runs (ss_pool state))⌝.
+
+(** [own_store_session γs γh c h m state ds]: the half of [own_store_data]
+    that only the lock's holder re-establishes before release, over the
+    public doc model [m]: the client's ghost operation history with its
+    coherences (the replayed model is [m], and [m] is the registry-replayed
+    model of the state's pool), the clock-counter tie (every run of client
+    [c] sits below the clock field, which [Integrate] breaks until the
+    caller bumps the field), the accepted set with its no-loss coherence,
+    the pending buffer's certificates, and the delete set's domain bound.
+    What the redesigned lock invariant will hold beside [own_store_core]
+    (issue #219). *)
+Definition own_store_session (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (state : store_state) (ds : gset YjsId) : iProp Σ :=
+  ∃ (acc : gset YjsId),
+    "%Hclient_is" ∷ ⌜uint.nat (ss_client state) = c⌝ ∗
+    "Hhist" ∷ own_client_history γh c h ∗
+    "%Hhcoh" ∷ ⌜history_state_coh h m⌝ ∗
+    "%Hregmodel" ∷ ⌜pool_registry_models m (ss_bind state) (ss_pool state)⌝ ∗
+    "%Hctr" ∷ ⌜pool_next_clock (ss_pool state) c (uint.nat (ss_clock state))⌝ ∗
+    "#Hpendcert" ∷ is_pending_certified γh (expand_inputs (ss_pending state)) ∗
+    "%Hpendroot" ∷ ⌜is_pending_rooted (ss_pending state)⌝ ∗
+    "%Hpendbnd" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ ss_pending state ->
+                    (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z⌝ ∗
+    "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
+    "%Hacccoh" ∷ ⌜accepted_coh acc h (ss_pending state)⌝ ∗
+    "%Hds_dom" ∷ ⌜delete_set_dom ds m⌝.
+
+#[global] Instance own_store_core_timeless s_loc γs state ds :
+  Timeless (own_store_core s_loc γs state ds).
+Proof. rewrite /own_store_core. apply _. Qed.
+
+#[global] Instance own_store_session_timeless γs γh c h m state ds :
+  Timeless (own_store_session γs γh c h m state ds).
+Proof. rewrite /own_store_session /is_pending_certified /is_update_item. apply _. Qed.
+
+(** The split: [own_store_data] is exactly [own_store_core] beside
+    [own_store_session], at a shared cell state whose pending buffer is the
+    public [pend] and whose pool tombstones are the public [deleted]. The
+    two sides of the issue #219 redesign: the core is what the store's
+    methods will take and return whole, the session is what the lock
+    invariant will demand back at release. *)
+Lemma own_store_data_core_session (s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
+  own_store_data s_loc γs γh c h m pend deleted ⊣⊢
+  ∃ (state : store_state) (ds : gset YjsId),
+    ⌜ss_pending state = pend⌝ ∗ ⌜deleted = pool_tombstoned (ss_pool state)⌝ ∗
+    own_store_core s_loc γs state ds ∗ own_store_session γs γh c h m state ds.
+Proof.
+  iSplit.
+  - iIntros "Hdata". iNamed "Hdata".
+    iDestruct "Hdelete_set" as (ds) "(Hdelete_set_auth & %Hds_dom & %Hds_tomb)".
+    iExists (MkStoreState client k locs p bind pend pdel), ds.
+    iSplitR; first done.
+    iSplitR; first (iPureIntro; exact Hdeleted).
+    rewrite /own_store_core /own_store_session /= Hclientc.
+    iFrame "Hstate Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth".
+    iSplitR; first (iPureIntro; exact Hds_tomb).
+    iExists acc.
+    iFrame "Hhist Hpendcert Hacc".
+    iPureIntro.
+    split_and!; [done | exact Hhcoh | exact Hregmodel | exact Hctr
+                | exact Hpendroot | exact Hpendbnd | exact Hacccoh | exact Hds_dom].
+  - iIntros "Hsplit".
+    iDestruct "Hsplit" as (state ds) "(%Hpend & %Hdeleted & Hcore & Hsession)".
+    iNamed "Hcore". iNamed "Hsession".
+    destruct state as [client k locs p bind pend' pdel]. simpl in *. subst pend'.
+    iExists client, k, pdel, locs, p, bind, acc.
+    rewrite Hclient_is.
+    iFrame "Hstate Hclientpin Hseq HtypesAuth Hbinds Hhist Hacc Hpendcert".
+    iSplitR; first done.
+    iSplitR; first (iPureIntro; exact Hpendroot).
+    iSplitR; first (iPureIntro; exact Hpendbnd).
+    iSplitR; first (iPureIntro; exact Hregmodel).
+    iSplitR; first (iPureIntro; exact Hhcoh).
+    iSplitR; first (iPureIntro; exact Hctr).
+    iSplitL "Hdelete_set_auth".
+    { iExists ds. iFrame "Hdelete_set_auth". iPureIntro.
+      split; [exact Hds_dom | exact Hds_tomb]. }
+    iPureIntro. split; [exact Hacccoh | exact Hdeleted].
+Qed.
+
+(** The two single-wand corollaries of the split, what the lock wrappers'
+    callers convert with while the consumers still speak
+    [own_store_data] (issue #219, M1): build the data from the halves at
+    the state's own pending buffer and tombstones, and split it back. *)
+Lemma own_store_data_build (s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (state : store_state) (ds : gset YjsId) :
+  own_store_core s_loc γs state ds -∗
+  own_store_session γs γh c h m state ds -∗
+  own_store_data s_loc γs γh c h m (ss_pending state) (pool_tombstoned (ss_pool state)).
+Proof.
+  iIntros "Hcore Hsession".
+  iApply own_store_data_core_session.
+  iExists state, ds. iFrame "Hcore Hsession". done.
+Qed.
+
+Lemma own_store_data_split (s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
+  own_store_data s_loc γs γh c h m pend deleted -∗
+  ∃ (state : store_state) (ds : gset YjsId),
+    ⌜ss_pending state = pend⌝ ∗ ⌜deleted = pool_tombstoned (ss_pool state)⌝ ∗
+    own_store_core s_loc γs state ds ∗ own_store_session γs γh c h m state ds.
+Proof. rewrite own_store_data_core_session. auto. Qed.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
    Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked
