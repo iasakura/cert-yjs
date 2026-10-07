@@ -379,7 +379,7 @@ Qed.
     The buffer's own spans and the batch's are both consumed as VALUES (a
     span is a triple of machine words), so the batch comes back untouched
     and the new buffer is a fresh slice. *)
-Lemma wp_Transaction__applyDeleteSpans_state (tr s : loc) (state : store_state)
+#[local] Lemma wp_Transaction__applyDeleteSpans_state (tr s : loc) (state : store_state)
     (sp_sl : slice.t) (dq : dfrac) (spans : list delete_span)
     (inserted tombstoned : gset YjsId) (changed : gset loc) :
   tombstoned ⊆ pool_tombstoned (ss_pool state) ->
@@ -665,7 +665,7 @@ Qed.
     spans are inside", a receipt the empty set satisfies (PR #99). Making it
     enforceable wants the delete-side analogue of [is_accepted], its own
     milestone. *)
-Lemma wp_Transaction__applyDeleteSpans_data (tr s_loc : loc) (γs : store_names)
+#[local] Lemma wp_Transaction__applyDeleteSpans_data (tr s_loc : loc) (γs : store_names)
     (γh : history_names) (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P)

@@ -223,7 +223,7 @@ Qed.
     run ([wp_store__deleteNode_pool]) and, when it was live, [recordDelete] records its
     chars and its type. The statement is [wp_store__deleteNode_pool]'s with the record
     threaded through. *)
-Lemma wp_Transaction__deleteNode_pool (tr s_loc : loc) (locs : gmap loc (list loc)) (p : pool)
+#[local] Lemma wp_Transaction__deleteNode_pool (tr s_loc : loc) (locs : gmap loc (list loc)) (p : pool)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun)
     (inserted tombstoned : gset YjsId) (changed : gset loc) :
   locs !! parent = Some ls ->

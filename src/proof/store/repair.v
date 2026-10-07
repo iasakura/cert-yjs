@@ -82,7 +82,7 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
     invariants hold again (spec-shape "Specs of public functions use only
     public predicates": re-establishing the invariant is the function's
     job, never its caller's). *)
-Lemma wp_store__getOrCreateYType_state (s : loc) (state : store_state) (nm : go_string) :
+#[local] Lemma wp_store__getOrCreateYType_state (s : loc) (state : store_state) (nm : go_string) :
   {{{ is_pkg_init yjs ∗ own_store_state s state }}}
     s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
   {{{ (q : loc) (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #q;

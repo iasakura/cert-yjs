@@ -2362,7 +2362,7 @@ Proof.
   exists y. split; [exact Hy |]. exists it. split; [rewrite -Hop1; exact Hitmem | rewrite Hitid Hid //].
 Qed.
 
-Lemma wp_Transaction__applyUpdate_data (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
+#[local] Lemma wp_Transaction__applyUpdate_data (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
     (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend inputs : list (TId * IntegrateInput (A := A)))
