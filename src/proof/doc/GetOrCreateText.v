@@ -1,14 +1,15 @@
 (** [wp_Doc__GetOrCreateText]: the public root-type accessor (y-octo:
     Doc::get_or_create_text; Yjs doc.getText has the same get-or-create
     semantics under the shorter name). Takes the store's WRITE lock (first use
-    registers the type), runs the verified [getOrCreateYType] (issue #54
-    proved the miss branch), and hands back the persistent [Text] handle for
-    [name] with the empty content lower bound; a caller grows the bound by
-    reading ([Len]/[String] intersect it with any [is_root_lb] certificate)
-    or writing. Registering a fresh root is model-clean: an empty type adds
-    no cells and no items, and the doc model [m] already maps every unbound
-    root to [[]], so only the registry ([bind], its ghost map and the item-set
-    authority's domain) grows. *)
+    registers the type), runs the public [wp_store__getOrCreateYType] (the
+    store taken and returned whole, issue #219; issue #54 proved the miss
+    branch), and hands back the persistent [Text] handle for [name] with the
+    empty content lower bound ([own_store_bound_root_lb] mints it off the
+    binding); a caller grows the bound by reading ([Len]/[String] intersect
+    it with any [is_root_lb] certificate) or writing. Registering a fresh
+    root is model-clean: an empty type adds no cells and no items, and the
+    doc model [m] already maps every unbound root to [[]], so only the
+    session's registry coherence and clock tie transport before release. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -74,36 +75,25 @@ Proof.
   iDestruct "Hinv" as (c0 h m) "Hstore".
   wp_auto.
   iDestruct "Hstore" as (state0 ds0) "(Hcore & Hsession & Hobservers)".
-  iDestruct (own_store_data_build with "Hcore Hsession") as "Hown".
-  set (pend := ss_pending state0) in *.
-  set (deleted := pool_tombstoned (ss_pool state0)) in *.
-  iNamed "Hown". subst c0.
-  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hrpi.
-  iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
-  have [Hbindtypes [Hbindinj Htypesbound]] := Hreg.
-  have [Hmtypes Hmdom] := Hregmodel.
-  wp_apply (wp_store__getOrCreateYType_state _ (MkStoreState client k locs p bind pend pdel) name
-              with "[$Hstate]").
-  iIntros (q p' locs' bind') "(Hstate & %Hlc)". iEval (simpl) in "Hstate". simpl in Hlc.
+  destruct state0 as [client0 k0 locs0 p0 bind0 pend0 pdel0].
+  (* the entry registry coherence, kept to transport the session across the
+     registry-growing call *)
+  iDestruct (own_store_core_registry_coh with "Hcore") as %Hreg0.
+  have [Hbindtypes _] := Hreg0.
+  iAssert (own_store (store_of_ref (dvv.(yjs.Doc.store'))) γs γh
+             (MkStoreState client0 k0 locs0 p0 bind0 pend0 pdel0) ds0 m
+             (pool_tombstoned p0)) with "[Hcore Hobservers]" as "Hstore".
+  { rewrite /own_store. iFrame "Hcore Hobservers". }
+  wp_apply (wp_store__getOrCreateYType with "[$Hstore]").
+  iIntros (q p' locs' bind') "(Hstore & #Hbindname & %Hlc)".
+  iEval (simpl) in "Hstore". simpl in Hlc.
   destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & Hfresh & -> & -> & ->)].
-  - (* ---- hit: the root is registered; nothing changes ---- *)
-    iDestruct (big_sepM_lookup _ _ name q Hb' with "Hbinds") as "#Hbindname".
-    destruct (Hbindtypes name q Hb') as [tm Htm].
-    have Hmk : ((λ tm0, (list_to_set (tm_arr tm0) : gset (YjsItem A))) <$> p) !! q
-             = Some (list_to_set (tm_arr tm)) by rewrite lookup_fmap Htm //.
-    iMod (auth_gmap_gset_frag_alloc γs.(sn_seq) (DfracOwn 1) _ q ∅ _
-            Hmk (empty_subseteq _) with "Hseq") as "[Hseq #Hlb0]".
+  - (* ---- hit: the root is registered; the session closes as it came ---- *)
+    iMod (own_store_bound_root_lb _ _ _ (MkStoreState client0 k0 locs0 p0 bind0 pend0 pdel0)
+            _ _ _ name q Hb' with "Hstore") as "[Hstore #Hlb0]".
     wp_auto.
-    iAssert (own_store_data (store_of_ref (dvv.(yjs.Doc.store'))) γs γh (uint.nat client) h m pend deleted)
-      with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hdata".
-    { iExists client, k, pdel, locs, p, bind, acc.
-      iFrame "∗#". iPureIntro.
-      split_and!;
-        [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
-        | exact Hctr | exact Hacccoh | exact Hdeleted]. }
-    iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
-    iEval (rewrite Hdel') in "Hobservers".
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hcore' $Hsession' $Hobservers]").
+    iDestruct "Hstore" as "[Hcore Hobservers]".
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hcore $Hsession $Hobservers]").
     (* a fresh handle knows of no deleted char: the empty lower bound of the
        store's delete set *)
     iMod (is_delete_set_lb_empty γs) as "#Hdel0".
@@ -116,69 +106,20 @@ Proof.
     iSplitR; first done.
     iFrame "Hlb0 Hdel0".
     iPureIntro. split; [apply empty_subseteq | constructor].
-  - (* ---- miss: register a fresh empty root type ---- *)
-    set (p' := <[q := MkTypeModel []]> p).
-    set (bind' := <[name := q]> bind).
-    (* registry ghost map: mint the persistent binding *)
-    iMod (ghost_map_insert_persist name q Hb' with "HtypesAuth")
-      as "[HtypesAuth #Hbindname]".
-    iAssert ([∗ map] nm ↦ q0 ∈ bind', is_type_binding γs.(sn_types) nm q0)%I as "#Hbinds'".
-    { rewrite /bind' big_sepM_insert; last exact Hb'.
-      iFrame "Hbinds". iFrame "Hbindname". }
-    (* item-set authority: the domain grows by the fresh empty root *)
-    have Hfmap' : ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p')
-                = <[q := (∅ : gset (YjsItem A))]>
-                    ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p).
-    { rewrite /p' fmap_insert //. }
-    have Hdomf : dom ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p)
-               ⊆ dom ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p').
-    { rewrite Hfmap' dom_insert. apply union_subseteq_r. }
-    have Hgrowf : ∀ q0 S S',
-        ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p) !! q0 = Some S ->
-        ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p') !! q0 = Some S' ->
-        S ⊆ S'.
-    { move=> q0 S S'. rewrite Hfmap'.
-      destruct (decide (q0 = q)) as [-> | Hne].
-      - rewrite lookup_fmap Hfresh //.
-      - rewrite lookup_insert_ne //. move=> -> [= ->]. done. }
-    iMod (auth_gmap_gset_grow_snap γs.(sn_seq) _ _ Hdomf Hgrowf with "Hseq")
-      as "[Hseq #Hsnap]".
-    have Hlk0 : ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p') !! q
-              = Some (∅ : gset (YjsItem A)) by rewrite Hfmap' lookup_insert_eq.
-    iDestruct (auth_gmap_gset_frag_lookup γs.(sn_seq) _ q ∅ Hlk0 with "Hsnap") as "#Hlb0".
-    (* an empty type holds no run, so everything the pool's runs speak about
-       transports over the same permutation *)
-    have Hperm : all_runs p' ≡ₚ all_runs p := all_runs_insert_empty p q [] Hfresh.
-    (* the registry / model coherence survives the fresh binding *)
-    have Hbindtypes' : ∀ nm q0, bind' !! nm = Some q0 → is_Some (p' !! q0).
-    { move=> nm q0. rewrite /bind' /p'.
-      destruct (decide (nm = name)) as [-> | Hne].
-      - rewrite lookup_insert_eq. move=> [= <-]. rewrite lookup_insert_eq //.
-      - rewrite lookup_insert_ne //. move=> Hq.
-        destruct (Hbindtypes nm q0 Hq) as [tm Htm].
-        destruct (decide (q0 = q)) as [-> | Hqp].
-        + rewrite lookup_insert_eq //.
-        + rewrite lookup_insert_ne // Htm //. }
-    have Hbindinj' : ∀ n1 n2 q0, bind' !! n1 = Some q0 → bind' !! n2 = Some q0 → n1 = n2.
-    { move=> n1 n2 q0. rewrite /bind'.
-      destruct (decide (n1 = name)) as [-> | Hne1];
-        destruct (decide (n2 = name)) as [-> | Hne2].
-      - done.
-      - rewrite lookup_insert_eq lookup_insert_ne //.
-        move=> [= <-] Hq2.
-        destruct (Hbindtypes n2 q Hq2) as [tm Htm]. rewrite Hfresh in Htm. done.
-      - rewrite lookup_insert_eq lookup_insert_ne //.
-        move=> Hq1 [= Heq]. subst q0.
-        destruct (Hbindtypes n1 q Hq1) as [tm Htm]. rewrite Hfresh in Htm. done.
-      - rewrite !lookup_insert_ne //. exact (Hbindinj n1 n2 q0). }
-    have Htypesbound' : ∀ q0, is_Some (p' !! q0) → ∃ nm, bind' !! nm = Some q0.
-    { move=> q0. rewrite /p' /bind'.
-      destruct (decide (q0 = q)) as [-> | Hqp].
-      - move=> _. exists name. rewrite lookup_insert_eq //.
-      - rewrite lookup_insert_ne //. move=> Hq.
-        destruct (Htypesbound q0 Hq) as [nm Hnm].
-        exists nm. rewrite lookup_insert_ne //.
-        move=> Heq. subst nm. rewrite Hb' in Hnm. done. }
+  - (* ---- miss: a fresh empty root was registered; the model already maps
+       the unbound name to [[]], so the registry coherence and the clock tie
+       transport over the pool with the fresh empty type ---- *)
+    set (p' := <[q := MkTypeModel []]> p0).
+    set (bind' := <[name := q]> bind0).
+    have Hbq : bind' !! name = Some q by rewrite /bind' lookup_insert_eq.
+    iMod (own_store_bound_root_lb _ _ _
+            (MkStoreState client0 k0 (<[q := []]> locs0) p' bind' pend0 pdel0)
+            _ _ _ name q Hbq with "Hstore") as "[Hstore #Hlb0]".
+    wp_auto.
+    iDestruct "Hstore" as "[Hcore Hobservers]".
+    iNamed "Hsession".
+    have [Hmtypes Hmdom] := Hregmodel.
+    (* the unbound name's model entry is empty *)
     have Hnameempty : doc_model_get m (RootId name) = [].
     { destruct (doc_model_get m (RootId name)) as [| x l] eqn:Hdg; first done.
       have Hne : doc_model_get m (RootId name) ≠ [] by rewrite Hdg.
@@ -201,27 +142,23 @@ Proof.
       exists nm, q0. split; first exact Heq.
       rewrite /bind' lookup_insert_ne //.
       move=> Heq2. subst nm. rewrite Hb' in Hq. done. }
-    have Hctr' : pool_next_clock p' (uint.nat client) (uint.nat k)
-      := pool_next_clock_insert_empty p q _ _ Hfresh Hctr.
-    (* registering an empty type moves no run, so the tombstone-set
-       invariant transports over the same permutation *)
-    iDestruct (own_delete_set_perm γs m (all_runs p) (all_runs p') Hperm
-                 with "Hdelete_set") as "Hdelete_set".
-    wp_auto.
     have Hregmodel' : pool_registry_models m bind' p'.
-    { rewrite /pool_registry_models. split; [exact Hmtypes' | exact Hmdom']. }
+    { split; [exact Hmtypes' | exact Hmdom']. }
+    have Hctr' : pool_next_clock p' c0 (uint.nat k0)
+      := pool_next_clock_insert_empty p0 q _ _ Hfresh Hctr.
     (* registering an empty type tombstones nothing *)
-    have Htomb' : pool_tombstoned p' = pool_tombstoned p := pool_tombstoned_insert_empty p q Hfresh.
-    iAssert (own_store_data (store_of_ref (dvv.(yjs.Doc.store'))) γs γh (uint.nat client) h m pend deleted)
-      with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hdata".
-    { iExists client, k, pdel, (<[q := []]> locs), p', bind', acc.
-      iFrame "∗". iFrame "Hclientpin Hpendcert Hbinds'". iPureIntro.
-      split_and!;
-        [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh
-        | exact Hctr' | exact Hacccoh | rewrite Htomb'; exact Hdeleted]. }
-    iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
-    iEval (rewrite Hdel') in "Hobservers".
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hcore' $Hsession' $Hobservers]").
+    have Htomb' : pool_tombstoned p' = pool_tombstoned p0
+      := pool_tombstoned_insert_empty p0 q Hfresh.
+    iEval (rewrite -Htomb') in "Hobservers".
+    iAssert (own_store_session γs γh c0 h m
+               (MkStoreState client0 k0 (<[q := []]> locs0) p' bind' pend0 pdel0) ds0)
+      with "[Hhist Hacc]" as "Hsession".
+    { rewrite /own_store_session /=. iExists acc.
+      iFrame "Hhist Hacc Hpendcert".
+      iPureIntro.
+      split_and!; [exact Hclient_is | exact Hhcoh | exact Hregmodel' | exact Hctr'
+                  | exact Hpendroot | exact Hpendbnd | exact Hacccoh | exact Hds_dom]. }
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hcore $Hsession $Hobservers]").
     (* a fresh handle knows of no deleted char: the empty lower bound of the
        store's delete set *)
     iMod (is_delete_set_lb_empty γs) as "#Hdel0".

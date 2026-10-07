@@ -976,9 +976,10 @@ Qed.
     authority does not move ([pool_item_sets_eq]); live chars refine
     ([pool_after_split]), so the delete set's tombstone clause survives;
     the observers' told state passes through.
-    [wp_store__splitNode_state] above is the stepping stone the callers
-    still compose with; it retires when they move here (issue #219, the
-    second half of M2). *)
+    [wp_store__splitNode_state] above stays as the second spec for the
+    private update paths (the [Text.InsertIn] / [Text.DeleteIn] loops and
+    [transaction.deleteRange]), which call it while they hold the store's
+    invariants open across a whole loop, where this form cannot apply. *)
 Lemma wp_store__splitNode (s : loc) (γs : store_names) (γh : history_names)
     (parent l : loc) (ls : list loc) (tm : type_model) (k : nat) (r : ItemRun) (diff : w64)
     (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :

@@ -173,9 +173,10 @@ Qed.
     every other field untouched. A flip changes no document ([tm_arr]
     survives the flip, so the item-set authority does not move) and only
     strengthens the tombstone clause; the observers' told state passes
-    through untouched. [wp_store__deleteNode_pool] above is the stepping
-    stone the delete loops still compose with; it retires when they move
-    here (issue #219, the second half of M2). *)
+    through untouched. [wp_store__deleteNode_pool] above stays as the
+    second spec for the delete loops ([transaction.deleteRange]), which
+    flip run after run under one open borrow of the pool, where this
+    form cannot apply. *)
 Lemma wp_store__deleteNode (s : loc) (γs : store_names) (γh : history_names)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun)
     (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :

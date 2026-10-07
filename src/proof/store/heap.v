@@ -35,7 +35,10 @@
       certificates, the delete set's domain bound) are its issue #219
       split, [own_store_data_core_session], with the single-wand
       corollaries [own_store_data_build] / [own_store_data_split] that
-      the lock wrappers' callers convert with.
+      the lock wrappers' callers convert with;
+      [own_store_core_registry_coh] reads the registry coherence off the
+      core and [own_store_bound_root_lb] mints a bound root's empty
+      item-set lower bound off the public store.
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
       hands out) and [own_delete_set] (its authority, with the domain
       bound and the tombstone-bit coherence that make the bound mean
@@ -1786,6 +1789,46 @@ Lemma own_store_data_split (s_loc : loc) (γs : store_names) (γh : history_name
     ⌜ss_pending state = pend⌝ ∗ ⌜deleted = pool_tombstoned (ss_pool state)⌝ ∗
     own_store_core s_loc γs state ds ∗ own_store_session γs γh c h m state ds.
 Proof. rewrite own_store_data_core_session. auto. Qed.
+
+(** The registry coherence read off the core, without opening it: every
+    bound name's type is in the pool, bindings are injective, every type
+    is bound ([pool_registry_coh], a [store_invs] component inside
+    [own_store_state]). What a lock holder keeps of the entry state to
+    transport its session coherence across a registry-growing call. *)
+Lemma own_store_core_registry_coh (s_loc : loc) (γs : store_names)
+    (state : store_state) (ds : gset YjsId) :
+  own_store_core s_loc γs state ds -∗
+  ⌜pool_registry_coh (ss_bind state) (ss_pool state)⌝.
+Proof.
+  iIntros "Hcore". iNamed "Hcore".
+  iApply (own_store_state_registry_coh with "Hstate").
+Qed.
+
+(** A bound root's empty item-set lower bound, off the public store: the
+    registry coherence inside [own_store_state] says a bound name's type
+    is in the pool, so the item-set authority holds an entry for it and
+    the empty lower bound certificate is mintable
+    ([auth_gmap_gset_frag_alloc]). What a fresh handle constructor
+    ([Doc.GetOrCreateText]) hands out without opening the store. *)
+Lemma own_store_bound_root_lb (s_loc : loc) (γs : store_names) (γh : history_names)
+    (state : store_state) (ds : gset YjsId)
+    (m0 : DocModel) (deleted0 : gset YjsId) (name : P) (q : loc) :
+  ss_bind state !! name = Some q →
+  own_store s_loc γs γh state ds m0 deleted0 ==∗
+  own_store s_loc γs γh state ds m0 deleted0 ∗ is_type_lb γs.(sn_seq) q ∅.
+Proof.
+  iIntros (Hbound) "Hstore". iNamed "Hstore". iNamed "Hcore".
+  iDestruct (own_store_state_registry_coh with "Hstate") as %Hreg.
+  destruct (proj1 Hreg name q Hbound) as [type_model Htype].
+  have Hmk : ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> ss_pool state) !! q
+           = Some (list_to_set (tm_arr type_model)) by rewrite lookup_fmap Htype.
+  iMod (auth_gmap_gset_frag_alloc γs.(sn_seq) (DfracOwn 1) _ q ∅ _
+          Hmk (empty_subseteq _) with "Hseq") as "[Hseq Hlb]".
+  iModIntro. iFrame "Hlb".
+  rewrite /own_store /own_store_core.
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+  iPureIntro. exact Hds_tomb.
+Qed.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
    Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked

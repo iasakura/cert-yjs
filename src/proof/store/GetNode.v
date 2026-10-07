@@ -663,9 +663,10 @@ Qed.
     returned whole ([own_store]) at an unchanged state, the node named
     through the holder's predicate by its covering slot (spec-shape
     "Values of Cert-Yjs types appear in specs through their predicates").
-    The state-level [wp_store__GetNode_state] above is the stepping stone
-    the internal update path still composes with; it retires when every
-    caller has moved here (issue #219, the second half of M2). *)
+    The state-level [wp_store__GetNode_state] above stays as the second
+    spec for the internal update path ([store.repair], [store.splitNode],
+    [transaction.deleteRange]), which looks nodes up while the store's
+    invariants are mid-surgery, where this form cannot apply. *)
 Lemma wp_store__GetNode (s : loc) (γs : store_names) (γh : history_names)
     (idv : yjs.id.t) (state : store_state) (ds : gset YjsId)
     (m0 : DocModel) (deleted0 : gset YjsId) :

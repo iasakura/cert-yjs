@@ -159,9 +159,10 @@ Qed.
     authority by the fresh empty root ([auth_gmap_gset_grow_snap]). An
     empty type holds no run, so the delete set's tombstone clause
     transports over a permutation of the runs
-    ([all_runs_insert_empty]). [wp_store__getOrCreateYType_state] above is
-    the stepping stone the callers still compose with; it retires when
-    they move here (issue #219, the second half of M2). *)
+    ([all_runs_insert_empty]). [wp_store__getOrCreateYType_state] above
+    stays as the second spec for [store.repair]'s own proof, which calls
+    it while the pool is mid-surgery, where this form cannot apply; the
+    public caller ([Doc.GetOrCreateText]) composes with this one. *)
 Lemma wp_store__getOrCreateYType (s : loc) (γs : store_names) (γh : history_names)
     (nm : go_string) (state : store_state) (ds : gset YjsId)
     (m0 : DocModel) (deleted0 : gset YjsId) :
@@ -1082,9 +1083,11 @@ Qed.
     authority does not move ([pool_item_sets_eq]) and the delete set's
     tombstone clause transports along [live_refine]; the registry is
     untouched (the wire parent name is bound already,
-    [pool_repair_parent]). [wp_store__repair_state] above is the stepping
-    stone the update path still composes with; it retires when the
-    callers move here (issue #219, the second half of M2). *)
+    [pool_repair_parent]). [wp_store__repair_state] above stays as the
+    second spec for the private update path ([transaction.integrateDecoded]
+    and the drain loop), which calls it between its own split and
+    integrate steps, where the session invariants are down and this form
+    cannot apply. *)
 Lemma wp_store__repair (s item_l pname : loc) (γs : store_names) (γh : history_names)
     (input : IntegrateInput (A := A)) (opn : option go_string)
     (orL orR : option (loc * nat)) (p_t : loc)
