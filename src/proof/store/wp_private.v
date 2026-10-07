@@ -169,7 +169,7 @@ Proof.
   iAssert (own_store_data (store_of_ref ref) γs γh (uint.nat client) h m pend deleted)
     with "[Hexcl Hro]" as "Hdata".
   { rewrite Hdel. iApply store_slices_own_store_data. iFrame "Hexcl Hro". }
-  iDestruct (own_store_data_split with "Hdata") as (state ds) "(%Hpend & %Hdelt & Hcore & Hsession)".
+  iDestruct (own_store_data_split with "Hdata") as (state ds) "(%Hface & Hcore & Hsession)". destruct Hface as [Hpend Hdelt].
   iExists state, ds. iFrame "Hcore Hsession".
   rewrite -Hdelt. iFrame "Hobservers".
 Qed.

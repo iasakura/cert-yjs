@@ -95,6 +95,7 @@ Proof.
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
   iDestruct (own_store_data_build with "Hcore Hsession") as "Hstore".
+  destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hstore". iEval (rewrite -Hdeleted_state) in "Hstore".
   clear Hpend_state Hdeleted_state.
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord".
@@ -167,10 +168,9 @@ Proof.
       { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
           | exact Hctr | exact Hacccoh | exact Hdeleted]. }
-      iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+      iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
       iExists state', ds', m0, deleted0.
-      iSplitR; first (iPureIntro; exact Hpend').
-      iSplitR; first (iPureIntro; exact Hdel').
+      iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
       iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
       iFrame "Hsession'".
       iSplitL; last (iPureIntro; exact Hstart).
@@ -217,10 +217,9 @@ Proof.
       { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
           | exact Hctr | exact Hacccoh | exact Hdeleted]. }
-      iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+      iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
       iExists state', ds', m0, deleted0.
-      iSplitR; first (iPureIntro; exact Hpend').
-      iSplitR; first (iPureIntro; exact Hdel').
+      iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
       iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
       iFrame "Hsession'".
       iSplitL; last (iPureIntro; exact Hstart).
@@ -1151,10 +1150,9 @@ Proof.
   (* the transaction after the insert: the record's meaning at the grown
      model, this text now among the changed types (unless the run is empty) *)
   iSplitL "Hchanges Hstore Hobservers".
-  { iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+  { iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
     iExists state', ds', m0, deleted0.
-    iSplitR; first (iPureIntro; exact Hpend').
-    iSplitR; first (iPureIntro; exact Hdel').
+    iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
     iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
     iFrame "Hsession'".
     iSplitL; last (iPureIntro; exact Hstart').

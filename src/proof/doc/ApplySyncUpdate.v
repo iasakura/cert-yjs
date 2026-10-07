@@ -137,13 +137,16 @@ Proof.
        structural fixpoint, delivering only the applied structs (per char) *)
     wp_apply (wp_Transaction__applyUpdate tr _ sl dq γs γh c h m pend inputs tombs ∅ ∅ ∅ Hwf
                 with "[$Hishist $Htx $Hupd $Hcerts]").
-    iIntros (applied rest m' changed') "(Hupd & Htx & #Hlb & %Hdrain & %Hvr & %Hnoloss & #Happlied & %Hcsub)".
+    iIntros (applied rest m' changed') "(Hupd & Htx & %Hdrain & %Hvr & %Hnoloss & #Happlied & %Hcsub)".
+    (* the delivery receipt: the transaction's history is now the grown one,
+       so its lower bound certificate is a projection *)
+    iDestruct (own_transaction_history_lb with "Htx") as "[Htx #Hlb]".
     wp_auto.
     (* the delete spans, second: a span may target a struct that just arrived
        in this very batch. Deletes are model no-ops, so the model, history and
        pending buffer come back unchanged; the tombstone state grows. *)
     wp_apply (wp_Transaction__applyDeleteSpans with "[$Htx $Hspans]").
-    iIntros (tombs' tombstoned' changed'') "(Htx & Hspans & %Htsub & %Htsub2 & %Hcsub2 & %Htombs' & %Hfresh)".
+    iIntros (tombs' tombstoned' changed'') "(Htx & Hspans & %Hpass & %Hcsub2)".
     (* mint the ENFORCEABLE no-loss receipts: every input's id is accepted, hence
        (by the store invariant) forever delivered-or-buffered; a discarding
        implementation could not produce these fragments *)

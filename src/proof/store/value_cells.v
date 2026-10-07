@@ -5,9 +5,10 @@
     Definitions
     - [store_state]: every field of the store as the invariant sees it,
       the type pool as an address map plus a run pool ([ss_locs] / [ss_pool]);
-      [locs_wf], the address map covering the registered types with one
-      address per run and no address twice; [locs_aligned], its pure
-      alignment with a run pool.
+      [state_pending_tombstoned], the state's public face (its pending
+      buffer and its pool's exact tombstone set); [locs_wf], the address
+      map covering the registered types with one address per run and no
+      address twice; [locs_aligned], its pure alignment with a run pool.
     - the registry: [pool_registry_coh] / [pool_registry_models] /
       [pool_doc_registry_coh] (a binding names a registered type, whose runs
       spell the document model), and [pool_lookup_or_create], what
@@ -175,6 +176,15 @@ Record store_state := MkStoreState {
 #[export] Instance settable_store_state : Settable store_state :=
   settable! MkStoreState
     <ss_client; ss_clock; ss_locs; ss_pool; ss_bind; ss_pending; ss_pending_deletes>.
+
+(** [state_pending_tombstoned state pend deleted]: the cell state's public
+    face: its pending buffer is exactly [pend] and the tombstoned char ids
+    of its pool are exactly [deleted]. The one tie between a store-internal
+    [store_state] and the public parameters of the lock boundary
+    ([own_store_data]'s split) and of a transaction ([own_transaction]). *)
+Definition state_pending_tombstoned (state : store_state)
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) : Prop :=
+  ss_pending state = pend ∧ deleted = pool_tombstoned (ss_pool state).
 
 (** [locs_aligned locs p]: the pure alignment of an address map with a run
     pool: same type domain, and per type as many addresses as runs. The half

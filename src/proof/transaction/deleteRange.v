@@ -751,8 +751,9 @@ Qed.
 (** [Transaction.applyDeleteSpans], the public form (issue #219): the
     transaction taken and returned whole. Deletes replay no history and
     move no model, so the session passes through untouched at the same
-    [h] and [m]; the exact tombstone state grows, and the start relation
-    transports along the tombstoning ([transaction_start_tombstone]). *)
+    [h] and [m]; what the pass does to the tombstone bookkeeping is one
+    predicate, [tombstone_pass], which is also what carries the start
+    relation across it ([transaction_start_tombstone]). *)
 Lemma wp_Transaction__applyDeleteSpans (tr s_loc : loc) (γs : store_names)
     (γh : history_names) (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
@@ -765,13 +766,13 @@ Lemma wp_Transaction__applyDeleteSpans (tr s_loc : loc) (γs : store_names)
   {{{ (deleted' tombstoned' : gset YjsId) (changed' : gset P), RET #();
       own_transaction tr s_loc γs γh c h m pend deleted' inserted tombstoned' changed' ∗
       own_delete_spans sp_sl dq spans ∗
-      ⌜deleted ⊆ deleted'⌝ ∗ ⌜tombstoned ⊆ tombstoned'⌝ ∗ ⌜changed ⊆ changed'⌝ ∗
-      ⌜deleted' = deleted ∪ tombstoned'⌝ ∗ ⌜(tombstoned' ∖ tombstoned) ## deleted⌝ }}}.
+      ⌜tombstone_pass deleted tombstoned deleted' tombstoned'⌝ ∗ ⌜changed ⊆ changed'⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Htx & Hsp) HΦ".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
   iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   clear Hpend_state Hdeleted_state.
   wp_apply (wp_Transaction__applyDeleteSpans_data tr s_loc γs γh c h m pend
@@ -781,17 +782,16 @@ Proof using Type*.
     "(Hdata & Hrecord & Hsp & %Hdsub & %Htsub & %Hcsub & %Hdeq & %Hdfresh)".
   iApply ("HΦ" $! deleted' tombstoned' changed').
   iFrame "Hsp".
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
-  iSplitL; last (iPureIntro; split_and!;
-    [exact Hdsub | exact Htsub | exact Hcsub | exact Hdeq | exact Hdfresh]).
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+  iSplitL; last (iPureIntro; split;
+    [exact (conj Htsub (conj Hdeq Hdfresh)) | exact Hcsub]).
   iExists state', ds', m0, deleted0.
-  iSplitR; first (iPureIntro; exact Hpend').
-  iSplitR; first (iPureIntro; exact Hdel').
+  iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
   iFrame "Hsession' Hrecord".
   iPureIntro.
   apply (transaction_start_tombstone m deleted deleted' inserted tombstoned tombstoned' m0 deleted0);
-    [exact Hstart | exact Htsub | exact Hdeq | exact Hdfresh].
+    [exact Hstart | exact (conj Htsub (conj Hdeq Hdfresh))].
 Qed.
 
 End transaction_deleteRange.

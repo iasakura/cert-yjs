@@ -83,8 +83,7 @@ Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_
 Proof.
   iIntros "Hchanges (Hcore & Hsession & Hobservers)".
   iExists state, ds, m, (pool_tombstoned (ss_pool state)).
-  iSplitR; first done.
-  iSplitR; first done.
+  iSplitR; first (iPureIntro; split; reflexivity).
   iSplitL "Hcore Hobservers"; first iFrame "Hcore Hobservers".
   iFrame "Hsession".
   iSplit; last (iPureIntro; apply transaction_start_fresh).
@@ -117,7 +116,8 @@ Proof.
   wp_auto.
   wp_apply (wp_Transaction__notify with "[$Htx]"). iIntros "Hstore".
   wp_auto.
-  iDestruct "Hstore" as (state' ds') "(%Hpend' & %Hdel' & Hstore & Hsession')".
+  iDestruct "Hstore" as (state' ds') "(%Hface' & Hstore & Hsession')".
+  destruct Hface' as [Hpend' Hdel'].
   iEval (rewrite Hdel') in "Hstore".
   iDestruct "Hstore" as "[Hcore' Hobs']".
   wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hcore' $Hsession' $Hobs']").

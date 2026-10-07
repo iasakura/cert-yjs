@@ -392,7 +392,7 @@ Lemma wp_Transaction__notify (tr s_loc : loc) (γs : store_names) (γh : history
     tr @! (go.PointerType yjs.Transaction) @! "notify" #()
   {{{ RET #();
       ∃ (state : store_state) (ds : gset YjsId),
-        ⌜ss_pending state = pend⌝ ∗ ⌜deleted = pool_tombstoned (ss_pool state)⌝ ∗
+        ⌜state_pending_tombstoned state pend deleted⌝ ∗
         own_store s_loc γs γh state ds m deleted ∗
         own_store_session γs γh c h m state ds }}}.
 Proof.
@@ -400,6 +400,7 @@ Proof.
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
   iDestruct (own_store_data_build with "Hcore Hsession") as "Hstore".
+  destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hstore". iEval (rewrite -Hdeleted_state) in "Hstore".
   clear Hpend_state Hdeleted_state.
   iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry)".
@@ -609,10 +610,9 @@ Proof.
     apply (type_untouched_by_record m bind p inserted tombstoned changed changed_locs entry.1 parent
              Hpoolinv Hregcoh Hregmodel Hrecorded Hbound (Hregbind parent entry Hd)).
     rewrite -Hdoneall. exact Hnin. }
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
   iExists state', ds'.
-  iSplitR; first (iPureIntro; exact Hpend').
-  iSplitR; first (iPureIntro; exact Hdel').
+  iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers'"; first iFrame "Hcore' Hobservers'".
   iFrame "Hsession'".
 Qed.

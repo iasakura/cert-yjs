@@ -26,8 +26,9 @@
     - [own_transaction tr s γs γh c h m pend deleted inserted tombstoned
       changed]: the transaction, over the issue #219 split: the public
       [own_store] at an existential cell state (its observers at the start
-      state), the holder's [own_store_session] at the public history and
-      model, the record with its meaning, and [transaction_start].
+      state) tied to [(pend, deleted)] by [state_pending_tombstoned], the
+      holder's [own_store_session] at the public history and model, the
+      record with its meaning, and [transaction_start].
     - [closure_runs_transaction s γs γh f Q]: what [transact] asks of its
       closure: run the fresh transaction to an end state where [Q] holds.
 
@@ -43,9 +44,10 @@
     - [own_transaction_observed_agree]: inside a transaction that did not
       change a root, an observer's half of its token is at the root's
       current snapshot (what [Mirror.Check] reads off).
-    - [own_transaction_accept_batch] / [own_transaction_client_pin]: the
-      data-level accept-batch update and client-pin read, lifted through
-      the sealed transaction (what [Doc.ApplySyncUpdate] composes with).
+    - [own_transaction_accept_batch] / [own_transaction_client_pin] /
+      [own_transaction_history_lb]: the data-level accept-batch update,
+      client-pin read and history lower bound, lifted through the sealed
+      transaction (what [Doc.ApplySyncUpdate] composes with).
 
     The WPs: [transaction/wp_private.v] (the record steps, [integrate],
     [deleteNode]), [transaction/deleteRange.v], [transaction/applyUpdate.v],
@@ -194,8 +196,7 @@ Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_n
     (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) : iProp Σ :=
   ∃ (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId),
-    "%Hpend_state" ∷ ⌜ss_pending state = pend⌝ ∗
-    "%Hdeleted_state" ∷ ⌜deleted = pool_tombstoned (ss_pool state)⌝ ∗
+    "%Hpend_tomb" ∷ ⌜state_pending_tombstoned state pend deleted⌝ ∗
     "Hstore" ∷ own_store s_loc γs γh state ds m0 deleted0 ∗
     "Hsession" ∷ own_store_session γs γh c h m state ds ∗
     "Hrecord" ∷ own_transaction_record tr s_loc γs m deleted inserted tombstoned changed ∗
@@ -385,13 +386,13 @@ Proof.
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
   iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   iMod (own_store_data_accept_batch _ _ _ _ _ _ _ _ L HL with "Hdata") as "[Hdata #Haccepts]".
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
   iModIntro. iFrame "Haccepts".
   iExists state', ds', m0, deleted0.
-  iSplitR; first (iPureIntro; exact Hpend').
-  iSplitR; first (iPureIntro; exact Hdel').
+  iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
   iFrame "Hsession' Hrecord".
   iPureIntro. exact Hstart.
@@ -409,13 +410,37 @@ Proof.
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
   iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   iDestruct (own_store_data_client_pin with "Hdata") as "[Hdata #Hpin]".
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
   iFrame "Hpin".
   iExists state', ds', m0, deleted0.
-  iSplitR; first (iPureIntro; exact Hpend').
-  iSplitR; first (iPureIntro; exact Hdel').
+  iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
+  iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
+  iFrame "Hsession' Hrecord".
+  iPureIntro. exact Hstart.
+Qed.
+
+Lemma own_transaction_history_lb (tr s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
+  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed -∗
+  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+  is_history_lb γh c h.
+Proof.
+  iIntros "Htx".
+  iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as "[Hcore Hobservers]".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  destruct Hpend_tomb as [Hpend_state Hdeleted_state].
+  iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
+  iDestruct (own_store_data_history_lb with "Hdata") as "[Hdata #Hlb]".
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+  iFrame "Hlb".
+  iExists state', ds', m0, deleted0.
+  iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
   iFrame "Hsession' Hrecord".
   iPureIntro. exact Hstart.
@@ -439,6 +464,7 @@ Proof.
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
   iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry)".
   iDestruct "Hregistry" as (registry registered) "(Hobserversmap & Hobserversauth & #Hregistered_bind & Hobservers)".

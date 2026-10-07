@@ -2688,7 +2688,6 @@ Lemma wp_Transaction__applyUpdate (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
       own_update_structs sl dq inputs ∗
       own_transaction tr s_loc γs γh c (h ++ (deliver_ev <$> expand_inputs applied)) m' rest
         deleted (inserted ∪ inputs_char_ids applied) tombstoned changed' ∗
-      is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
       ⌜wire_drain m (pend ++ inputs) = (applied, rest, m')⌝ ∗
       ⌜ValidReplay (expand_inputs applied) m m'⌝ ∗
       ⌜∀ x, x ∈ inputs ->
@@ -2701,6 +2700,7 @@ Proof using Type*.
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
   iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   clear Hpend_state Hdeleted_state.
   wp_apply (wp_Transaction__applyUpdate_data tr s_loc sl dq γs γh c h m pend inputs
@@ -2709,12 +2709,11 @@ Proof using Type*.
   iIntros (applied rest m' changed')
     "(Hupd & Hdata & Hrecord & #Hlb & %Hdrain & %Hvr & %Hacc & #Hcerts & %Hcsub)".
   iApply ("HΦ" $! applied rest m' changed').
-  iFrame "Hupd Hlb Hcerts".
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+  iFrame "Hupd Hcerts".
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
   iSplitL; last (iPureIntro; split_and!; [exact Hdrain | exact Hvr | exact Hacc | exact Hcsub]).
   iExists state', ds', m0, deleted0.
-  iSplitR; first (iPureIntro; exact Hpend').
-  iSplitR; first (iPureIntro; exact Hdel').
+  iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
   iFrame "Hsession' Hrecord".
   iPureIntro.
