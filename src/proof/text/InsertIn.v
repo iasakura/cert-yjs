@@ -750,7 +750,7 @@ Proof.
     have Hresj : origins_resolved (tm_runs (MkTypeModel runsj)) (tm_arr (MkTypeModel runsj))
                    input (p1i + j)%nat (p1i + j)%nat.
     { rewrite /tm_arr /= -Harrj. exact Hres. }
-    wp_apply (wp_Transaction__integrate tr s_loc tv.(yjs.Text.inner') tv.(yjs.Text.inner') oL2
+    wp_apply (wp_Transaction__integrate_state tr s_loc tv.(yjs.Text.inner') tv.(yjs.Text.inner') oL2
                 (MkStoreState client (w64_word_instance.(word.add) (W64 (uint.Z k + Z.of_nat j)) (W64 1)) locsj pj bind pend pdel)
                 (MkTypeModel runsj) lsj arr' input newItem (p1i + j)%nat (p1i + j)%nat _ _ _
                 (or_introl eq_refl) Hpj Hlj Hreadyj Hfitsin Hallj Hresj Hnextj

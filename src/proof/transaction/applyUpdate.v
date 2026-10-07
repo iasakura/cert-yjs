@@ -5,7 +5,7 @@
     [integrate_live_refine]), then the [applyUpdate] stack, from the drain
     [wp_Transaction__applyUpdate_unlocked] through the wire-drain subset /
     replay lemmas and the certificate machinery up to
-    [wp_Transaction__applyUpdate] over the store's data and the record's
+    [wp_Transaction__applyUpdate_data] over the store's data and the record's
     meaning (delivered content comes back as [is_root_lb] fragments).
 
     The layers it stands on are the store's ([store/GetNode]: node lookup,
@@ -119,7 +119,7 @@ Qed.
     ([own_store_state]). The registry follows the model
     ([pool_registry_models]) and the live chars refine up to the chars this
     apply integrated ([apply_live_refine]). Local: the stepping stone of
-    [wp_Transaction__applyUpdate] below, which is the spec. *)
+    [wp_Transaction__applyUpdate_data] below, which is the spec. *)
 (** [Transaction.integrateDecoded] (issue #40 x issue #28 U7c), the ready branch of
     the drain as a per-struct contract,: the struct's
     target root is bound, its chained per-char op chunk realizes the run
@@ -400,7 +400,7 @@ Proof using Type*.
   { rewrite Harrj2. exact (conj Htoit (conj Hvld Hmax)). }
   have Hall' : integrate_all (ops_of_input input (explode (in_content input))) (tm_arr tm2) = Some arr2
     by rewrite Harrj2; exact Hall.
-  wp_apply (wp_Transaction__integrate tr s p null itv (MkStoreState client0 k0 locs2 p2 bind pend pdel)
+  wp_apply (wp_Transaction__integrate_state tr s p null itv (MkStoreState client0 k0 locs2 p2 bind pend pdel)
               tm2 ls2 arr2 input newItem curL2 curR2 inserted tombstoned changed
               (or_intror eq_refl) Htm2 Hls2 Hready Hnowrapc Hall' Hres Hnextj'
               with "[$Hpkg $Hruns $Hlinked $Hchanges]").
@@ -574,7 +574,7 @@ Proof using Type*.
   iEval (rewrite {1}HlinkL {1}HlinkR) in "Hlinked".
   have Hready : integrate_ready (tm_arr (MkTypeModel [])) input newItem := conj Htoit (conj Hvld Hmax).
   wp_auto.
-  wp_apply (wp_Transaction__integrate tr s q null itv (MkStoreState client0 k0 locs2 p2 (<[nm := q]> bind) pend pdel)
+  wp_apply (wp_Transaction__integrate_state tr s q null itv (MkStoreState client0 k0 locs2 p2 (<[nm := q]> bind) pend pdel)
               (MkTypeModel []) [] arr2 input newItem 0 0 inserted tombstoned changed
               (or_intror eq_refl) Htm2 Hls2 Hready Hnowrapc Hall Hres Hnextj'
               with "[$Hpkg $Hruns $Hlinked $Hchanges]").
@@ -1494,7 +1494,7 @@ Qed.
    model ([doc_model_has], a re-delivered struct). These lemmas prove none of
    the three loses the item: EVERY pending item is accounted for at the id
    level -- some applied item shares its id, some kept item shares its id, or
-   the final model already carries its id. [wp_Transaction__applyUpdate] turns
+   the final model already carries its id. [wp_Transaction__applyUpdate_data] turns
    this into the per-input guarantee that each input is either delivered into
    the history or buffered in the new pending: no input silently vanishes. *)
 
@@ -2362,7 +2362,7 @@ Proof.
   exists y. split; [exact Hy |]. exists it. split; [rewrite -Hop1; exact Hitmem | rewrite Hitid Hid //].
 Qed.
 
-Lemma wp_Transaction__applyUpdate (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
+Lemma wp_Transaction__applyUpdate_data (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
     (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend inputs : list (TId * IntegrateInput (A := A)))
@@ -2663,6 +2663,61 @@ Proof using Type*.
       exists nm, it. split_and!;
         [apply elem_of_union_r; apply elem_of_bound_names; by exists q
         | rewrite -Hy1; exact Hit | exact Hid].
+Qed.
+
+(** [Transaction.applyUpdate], the public form (issue #219): the
+    transaction taken and returned whole. The drain extends the history
+    by one delivery event per applied char and replays the model, which
+    is exactly the coherence [own_store_session] demands back, so the
+    body closes over [own_transaction] at the grown indexes; the start
+    relation transports along the replay ([transaction_start_replay]). *)
+Lemma wp_Transaction__applyUpdate (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
+    (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend inputs : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
+  update_wf inputs ->
+  {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
+      own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+      own_update_structs sl dq inputs ∗
+      is_pending_certified γh (expand_inputs inputs) }}}
+    tr @! (go.PointerType yjs.Transaction) @! "applyUpdate" #sl
+  {{{ (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel) (changed' : gset P),
+      RET #();
+      own_update_structs sl dq inputs ∗
+      own_transaction tr s_loc γs γh c (h ++ (deliver_ev <$> expand_inputs applied)) m' rest
+        deleted (inserted ∪ inputs_char_ids applied) tombstoned changed' ∗
+      is_history_lb γh c (h ++ (deliver_ev <$> expand_inputs applied)) ∗
+      ⌜wire_drain m (pend ++ inputs) = (applied, rest, m')⌝ ∗
+      ⌜ValidReplay (expand_inputs applied) m m'⌝ ∗
+      ⌜∀ x, x ∈ inputs ->
+         input_accounted (h ++ (deliver_ev <$> expand_inputs applied)) rest x⌝ ∗
+      is_applied_certs γs applied m' ∗
+      ⌜changed ⊆ changed'⌝ }}}.
+Proof using Type*.
+  move=> Hwf.
+  iIntros (Φ) "(#Hpkg & #Hishist & Htx & Hupd & #Hcertsin) HΦ".
+  iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as "[Hcore Hobservers]".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
+  clear Hpend_state Hdeleted_state.
+  wp_apply (wp_Transaction__applyUpdate_data tr s_loc sl dq γs γh c h m pend inputs
+              deleted inserted tombstoned changed Hwf
+              with "[$Hpkg $Hishist $Hdata $Hrecord $Hupd $Hcertsin]").
+  iIntros (applied rest m' changed')
+    "(Hupd & Hdata & Hrecord & #Hlb & %Hdrain & %Hvr & %Hacc & #Hcerts & %Hcsub)".
+  iApply ("HΦ" $! applied rest m' changed').
+  iFrame "Hupd Hlb Hcerts".
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+  iSplitL; last (iPureIntro; split_and!; [exact Hdrain | exact Hvr | exact Hacc | exact Hcsub]).
+  iExists state', ds', m0, deleted0.
+  iSplitR; first (iPureIntro; exact Hpend').
+  iSplitR; first (iPureIntro; exact Hdel').
+  iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
+  iFrame "Hsession' Hrecord".
+  iPureIntro.
+  exact (transaction_start_replay m m' deleted inserted tombstoned m0 deleted0 applied Hvr Hstart).
 Qed.
 
 End transaction_applyUpdate.

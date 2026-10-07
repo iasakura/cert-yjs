@@ -366,6 +366,60 @@ Qed.
     that did not change its root: the snapshot it was last told is the
     root's current one, the record having no char of that root. What
     [Mirror.Check] reads off ([demo/observe_app]). *)
+(** The data-level laws lifted to the transaction (issue #219): the
+    accept-batch update and the client pin, each opening the body,
+    using the [own_store_data] form of the law through the split, and
+    closing the body back unchanged. *)
+Lemma own_transaction_accept_batch (tr s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P)
+    (L : list (TId * IntegrateInput (A := A))) :
+  (∀ x, x ∈ L -> in_id x.2 ∈ delivered_ids h ∪ pending_id_set pend) ->
+  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ==∗
+  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+  [∗ list] x ∈ L, is_accepted γs (in_id x.2).
+Proof.
+  iIntros (HL) "Htx".
+  iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as "[Hcore Hobservers]".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
+  iMod (own_store_data_accept_batch _ _ _ _ _ _ _ _ L HL with "Hdata") as "[Hdata #Haccepts]".
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+  iModIntro. iFrame "Haccepts".
+  iExists state', ds', m0, deleted0.
+  iSplitR; first (iPureIntro; exact Hpend').
+  iSplitR; first (iPureIntro; exact Hdel').
+  iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
+  iFrame "Hsession' Hrecord".
+  iPureIntro. exact Hstart.
+Qed.
+
+Lemma own_transaction_client_pin (tr s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
+  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed -∗
+  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+  is_store_client γs c.
+Proof.
+  iIntros "Htx".
+  iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as "[Hcore Hobservers]".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
+  iDestruct (own_store_data_client_pin with "Hdata") as "[Hdata #Hpin]".
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+  iFrame "Hpin".
+  iExists state', ds', m0, deleted0.
+  iSplitR; first (iPureIntro; exact Hpend').
+  iSplitR; first (iPureIntro; exact Hdel').
+  iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
+  iFrame "Hsession' Hrecord".
+  iPureIntro. exact Hstart.
+Qed.
+
 Lemma own_transaction_observed_agree (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P)
