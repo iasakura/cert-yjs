@@ -5,16 +5,17 @@
     decoded batch, keeping what did not land; both record what they
     tombstone through [Transaction.deleteNode].
 
-    The specs: [wp_Transaction__deleteRange] and
-    [wp_Transaction__applyDeleteSpans_state] over [own_store_state] and the
+    The specs: [wp_Transaction__deleteRange] over [own_store_state] and the
     record, stepping the pool by [pool_after_delete] and recording coverage
-    as [ids_tombstoned]. The loops speak indices, addresses and runs; the
-    store is opened and re-closed around the node-level core by
+    as [ids_tombstoned], and the public [wp_Transaction__applyDeleteSpans]
+    over [own_transaction] whole (issue #219), which [Doc.ApplySyncUpdate]
+    consumes. The loops speak indices, addresses and runs; the store is
+    opened and re-closed around the node-level core by
     [wp_Transaction__deleteNode_store] and the store's node borrow
-    [own_store_state_node_acc]. [wp_Transaction__applyDeleteSpans_data],
-    the form over the store's data and the record's meaning that
-    [Doc.ApplySyncUpdate] consumes, is derived from
-    [wp_Transaction__applyDeleteSpans_state] at the pool. *)
+    [own_store_state_node_acc]. The [#[local]] stepping stones
+    [wp_Transaction__applyDeleteSpans_state] (at the pool) and
+    [wp_Transaction__applyDeleteSpans_data] (over the store's data) carry
+    the public form. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.

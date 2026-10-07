@@ -24,8 +24,10 @@
     - [own_transaction_record tr s γs m deleted inserted tombstoned changed]:
       the record with its meaning against the data's model [(m, deleted)].
     - [own_transaction tr s γs γh c h m pend deleted inserted tombstoned
-      changed]: the transaction: [own_store] with the observers at the start
-      state, the record with its meaning, and [transaction_start].
+      changed]: the transaction, over the issue #219 split: the public
+      [own_store] at an existential cell state (its observers at the start
+      state), the holder's [own_store_session] at the public history and
+      model, the record with its meaning, and [transaction_start].
     - [closure_runs_transaction s γs γh f Q]: what [transact] asks of its
       closure: run the fresh transaction to an end state where [Q] holds.
 
@@ -41,6 +43,9 @@
     - [own_transaction_observed_agree]: inside a transaction that did not
       change a root, an observer's half of its token is at the root's
       current snapshot (what [Mirror.Check] reads off).
+    - [own_transaction_accept_batch] / [own_transaction_client_pin]: the
+      data-level accept-batch update and client-pin read, lifted through
+      the sealed transaction (what [Doc.ApplySyncUpdate] composes with).
 
     The WPs: [transaction/wp_private.v] (the record steps, [integrate],
     [deleteNode]), [transaction/deleteRange.v], [transaction/applyUpdate.v],
@@ -362,10 +367,6 @@ Proof.
       apply elem_of_bound_names. by exists q.
 Qed.
 
-(** An observer's own half agrees with the registry's inside a transaction
-    that did not change its root: the snapshot it was last told is the
-    root's current one, the record having no char of that root. What
-    [Mirror.Check] reads off ([demo/observe_app]). *)
 (** The data-level laws lifted to the transaction (issue #219): the
     accept-batch update and the client pin, each opening the body,
     using the [own_store_data] form of the law through the split, and
@@ -420,6 +421,10 @@ Proof.
   iPureIntro. exact Hstart.
 Qed.
 
+(** An observer's own half agrees with the registry's inside a transaction
+    that did not change its root: the snapshot it was last told is the
+    root's current one, the record having no char of that root. What
+    [Mirror.Check] reads off ([demo/observe_app]). *)
 Lemma own_transaction_observed_agree (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P)

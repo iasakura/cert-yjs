@@ -8,14 +8,16 @@
       insert set or the delete set (its head id and length as one span) and
       its parent joins the changed types. Both read the node's id and length
       off its points-to, which the caller borrows for the call.
-    - [wp_Transaction__integrate_state]: the store's [Integrate] (the splice into
-      the type, [wp_store__Integrate_state]) followed by [recordInsert] of the new
-      run; stated at cell level, over [own_store_state] and the record,
-      because [Text.InsertIn] calls it inside its per-char loop.
+    - [wp_Transaction__integrate]: the store's [Integrate] (the splice into
+      the type) followed by [recordInsert] of the new run, over the public
+      [own_store] and the record (issue #219); [_integrate_state] is its
+      second spec at cell level, over [own_store_state], because
+      [Text.InsertIn] and the drain loop call it while the clock tie is
+      broken.
     - [wp_Transaction__deleteNode] / [_deleteNode_store]: the store's
-      [deleteNode] (the flip, [wp_store__deleteNode_pool]) followed by [recordDelete]
-      when the node was live; at the pool and re-closed over the store, what
-      the delete loops step by. *)
+      [deleteNode] (the flip) followed by [recordDelete] when the node was
+      live; over the public [own_store] (issue #219), and at cell level
+      ([own_store_state]) for the delete loops that step by it. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.

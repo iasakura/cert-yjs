@@ -4,9 +4,10 @@
     unbound-root cases, reporting [runs_within_or_from] and
     [integrate_live_refine]), then the [applyUpdate] stack, from the drain
     [wp_Transaction__applyUpdate_unlocked] through the wire-drain subset /
-    replay lemmas and the certificate machinery up to
-    [wp_Transaction__applyUpdate_data] over the store's data and the record's
-    meaning (delivered content comes back as [is_root_lb] fragments).
+    replay lemmas and the certificate machinery up to the public
+    [wp_Transaction__applyUpdate] over [own_transaction] (issue #219;
+    delivered content comes back as [is_root_lb] fragments), derived from
+    the [#[local]] stepping stone [wp_Transaction__applyUpdate_data].
 
     The layers it stands on are the store's ([store/GetNode]: node lookup,
     input expansion; [store/splitNode] and [store/repair]: registry, repair,
