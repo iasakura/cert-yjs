@@ -565,7 +565,7 @@ Proof.
       with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hdata".
     { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro.
       split_and!; [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
-    iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
+    iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
     iEval (rewrite Hdel') in "Hobservers".
     wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hcore' $Hsession' $Hobservers]").
     iAssert (own_TextObserver obs ov.(yjs.TextObserver.text') γs γh name (runs_model tm.(tm_runs)))

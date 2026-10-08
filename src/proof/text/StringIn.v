@@ -67,7 +67,12 @@ Proof.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
   iDestruct "His_store" as "#His_store". iDestruct "Ht" as "#Ht". iDestruct "His_lb" as "#His_lb".
   subst text_store parent.
-  iDestruct "Htx" as (m0 deleted0) "Htx". iNamed "Htx". iDestruct "Hstore" as "[Hstore Hobservers]".
+  iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as "[Hcore Hobservers]".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hstore".
+  destruct Hpend_tomb as [Hpend_state Hdeleted_state].
+  iEval (rewrite Hpend_state) in "Hstore". iEval (rewrite -Hdeleted_state) in "Hstore".
+  clear Hpend_state Hdeleted_state.
   iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
   (* the registry binds [name] to this text, whose document is the model's *)
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
@@ -95,11 +100,16 @@ Proof.
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
     iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
     iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted]. }
-  iExists m0, deleted0. iFrame "Hobservers Hrecord".
-  iSplitL; last (iPureIntro; exact Hstart).
-  iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro. split_and!;
-    [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
-    | exact Hctr | exact Hacccoh | exact Hdeleted].
+  iAssert (own_store_data s_loc γs γh c h m pend deleted) with "[-Hobservers Hrecord]" as "Hstore".
+  { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro. split_and!;
+      [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
+      | exact Hctr | exact Hacccoh | exact Hdeleted]. }
+  iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+  iExists state', ds', m0, deleted0.
+  iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
+  iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
+  iFrame "Hsession' Hrecord".
+  iPureIntro. exact Hstart.
 Qed.
 
 End text.

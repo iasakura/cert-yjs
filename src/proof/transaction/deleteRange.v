@@ -5,16 +5,17 @@
     decoded batch, keeping what did not land; both record what they
     tombstone through [Transaction.deleteNode].
 
-    The specs: [wp_Transaction__deleteRange] and
-    [wp_Transaction__applyDeleteSpans] over [own_store_state] and the
+    The specs: [wp_Transaction__deleteRange] over [own_store_state] and the
     record, stepping the pool by [pool_after_delete] and recording coverage
-    as [ids_tombstoned]. The loops speak indices, addresses and runs; the
-    store is opened and re-closed around the node-level core by
+    as [ids_tombstoned], and the public [wp_Transaction__applyDeleteSpans]
+    over [own_transaction] whole (issue #219), which [Doc.ApplySyncUpdate]
+    consumes. The loops speak indices, addresses and runs; the store is
+    opened and re-closed around the node-level core by
     [wp_Transaction__deleteNode_store] and the store's node borrow
-    [own_store_state_node_acc]. [wp_Transaction__applyDeleteSpans_transaction],
-    the form over the store's data and the record's meaning that
-    [Doc.ApplySyncUpdate] consumes, is derived from
-    [wp_Transaction__applyDeleteSpans] at the pool. *)
+    [own_store_state_node_acc]. The [#[local]] stepping stones
+    [wp_Transaction__applyDeleteSpans_state] (at the pool) and
+    [wp_Transaction__applyDeleteSpans_data] (over the store's data) carry
+    the public form. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -379,7 +380,7 @@ Qed.
     The buffer's own spans and the batch's are both consumed as VALUES (a
     span is a triple of machine words), so the batch comes back untouched
     and the new buffer is a fresh slice. *)
-Lemma wp_Transaction__applyDeleteSpans (tr s : loc) (state : store_state)
+#[local] Lemma wp_Transaction__applyDeleteSpans_state (tr s : loc) (state : store_state)
     (sp_sl : slice.t) (dq : dfrac) (spans : list delete_span)
     (inserted tombstoned : gset YjsId) (changed : gset loc) :
   tombstoned ⊆ pool_tombstoned (ss_pool state) ->
@@ -665,7 +666,7 @@ Qed.
     spans are inside", a receipt the empty set satisfies (PR #99). Making it
     enforceable wants the delete-side analogue of [is_accepted], its own
     milestone. *)
-Lemma wp_Transaction__applyDeleteSpans_transaction (tr s_loc : loc) (γs : store_names)
+#[local] Lemma wp_Transaction__applyDeleteSpans_data (tr s_loc : loc) (γs : store_names)
     (γh : history_names) (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P)
@@ -688,7 +689,7 @@ Proof using Type*.
   (* the old marks name their types: read the bindings off the registry
      while the authority is at hand *)
   iDestruct (changed_types_bound_registered with "HtypesAuth Hchanged_bound") as %Hlocs_bound.
-  wp_apply (wp_Transaction__applyDeleteSpans tr s_loc (MkStoreState client k locs p bind pend pdel) sp_sl dq spans
+  wp_apply (wp_Transaction__applyDeleteSpans_state tr s_loc (MkStoreState client k locs p bind pend pdel) sp_sl dq spans
               inserted tombstoned changed_locs Hsub with "[$Hpkg $Hstate $Hsp $Hchanges]").
   iIntros (p' locs' rest tombstoned' changed_locs')
     "(Hstate & Hsp & Hchanges & %Hfacts & %_Hdels & %Htsub & %Hcsub & %Htomb & %Hfresh & %Hcover & %Hckeys)".
@@ -745,6 +746,52 @@ Proof using Type*.
     + apply (ids_in_types_model m bind p' _ _ changed' Hregmodel' Hcover Hnames).
       apply elem_of_difference. split; [| move=> Ht; apply Hnew; apply elem_of_union_r; exact Ht].
       apply elem_of_union in Hi as [Hi | Hi]; [exfalso; apply Hnew; apply elem_of_union_l; exact Hi | exact Hi].
+Qed.
+
+(** [Transaction.applyDeleteSpans], the public form (issue #219): the
+    transaction taken and returned whole. Deletes replay no history and
+    move no model, so the session passes through untouched at the same
+    [h] and [m]; what the pass does to the tombstone bookkeeping is one
+    predicate, [tombstone_pass], which is also what carries the start
+    relation across it ([transaction_start_tombstone]). *)
+Lemma wp_Transaction__applyDeleteSpans (tr s_loc : loc) (γs : store_names)
+    (γh : history_names) (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P)
+    (sp_sl : slice.t) (dq : dfrac) (spans : list delete_span) :
+  {{{ is_pkg_init yjs ∗
+      own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+      own_delete_spans sp_sl dq spans }}}
+    tr @! (go.PointerType yjs.Transaction) @! "applyDeleteSpans" #sp_sl
+  {{{ (deleted' tombstoned' : gset YjsId) (changed' : gset P), RET #();
+      own_transaction tr s_loc γs γh c h m pend deleted' inserted tombstoned' changed' ∗
+      own_delete_spans sp_sl dq spans ∗
+      ⌜tombstone_pass deleted tombstoned deleted' tombstoned'⌝ ∗ ⌜changed ⊆ changed'⌝ }}}.
+Proof using Type*.
+  iIntros (Φ) "(#Hpkg & Htx & Hsp) HΦ".
+  iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as "[Hcore Hobservers]".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  destruct Hpend_tomb as [Hpend_state Hdeleted_state].
+  iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
+  clear Hpend_state Hdeleted_state.
+  wp_apply (wp_Transaction__applyDeleteSpans_data tr s_loc γs γh c h m pend
+              deleted inserted tombstoned changed sp_sl dq spans
+              with "[$Hpkg $Hdata $Hrecord $Hsp]").
+  iIntros (deleted' tombstoned' changed')
+    "(Hdata & Hrecord & Hsp & %Hdsub & %Htsub & %Hcsub & %Hdeq & %Hdfresh)".
+  iApply ("HΦ" $! deleted' tombstoned' changed').
+  iFrame "Hsp".
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+  iSplitL; last (iPureIntro; split;
+    [exact (conj Htsub (conj Hdeq Hdfresh)) | exact Hcsub]).
+  iExists state', ds', m0, deleted0.
+  iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
+  iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
+  iFrame "Hsession' Hrecord".
+  iPureIntro.
+  apply (transaction_start_tombstone m deleted deleted' inserted tombstoned tombstoned' m0 deleted0);
+    [exact Hstart | exact (conj Htsub (conj Hdeq Hdfresh))].
 Qed.
 
 End transaction_deleteRange.

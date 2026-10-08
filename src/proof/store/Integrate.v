@@ -2473,9 +2473,10 @@ Qed.
     session's domain bound hands it to the callers, since a fresh id is
     in no model (reported in the PR per spec-shape "A new conjunct goes
     into an existing predicate, or the PR says why not").
-    [wp_store__Integrate_state] above is the stepping stone the callers
-    still compose with; it retires when they move here (issue #219, the
-    second half of M2). *)
+    [wp_store__Integrate_state] above stays as the second spec for the
+    transaction's own integrate ([wp_Transaction__integrate_state]),
+    which threads the clock-tie breakage through a loop, where this
+    form cannot apply. *)
 Lemma wp_store__Integrate (s parent parent_arg item_l : loc)
     (γs : store_names) (γh : history_names)
     (tm : type_model) (ls : list loc)

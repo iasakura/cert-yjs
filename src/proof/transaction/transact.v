@@ -15,11 +15,10 @@
     the split ([own_store_data_build]) and [own_transaction_fresh] (below)
     wraps it with the fresh record into [own_transaction], the predicate
     the closure runs on; [wp_Transaction__notify] turns [own_transaction]
-    back into [own_store] with coincident states, which this proof splits
-    again ([own_store_data_split]) for the write lock to take back
-    ([wp_Store__wunlock]). The conversions at this boundary retire when
-    [own_transaction] itself moves to the split (issue #219's next
-    milestone). *)
+    back out as the split at coincident states, which the write lock
+    takes back ([wp_Store__wunlock]); since issue #219's consumer move,
+    [own_transaction] itself is the split plus the record, so no
+    conversion happens at this boundary. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -75,14 +74,18 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
     every clause of the record's meaning is vacuous and the start state is
     the current one ([transaction_start_fresh]). *)
 Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input) (deleted : gset YjsId) :
+    (c : ClientId) (h : list Ev) (m : DocModel) (state : store_state) (ds : gset YjsId) :
   own_transaction_changes tr s_loc ∅ ∅ ∅ -∗
-  own_store_data s_loc γs γh c h m pend deleted ∗
-  own_observers s_loc γs γh m deleted -∗
-  own_transaction tr s_loc γs γh c h m pend deleted ∅ ∅ ∅.
+  own_store_core s_loc γs state ds ∗
+  own_store_session γs γh c h m state ds ∗
+  own_observers s_loc γs γh m (pool_tombstoned (ss_pool state)) -∗
+  own_transaction tr s_loc γs γh c h m (ss_pending state) (pool_tombstoned (ss_pool state)) ∅ ∅ ∅.
 Proof.
-  iIntros "Hchanges Hstore".
-  iExists m, deleted. iFrame "Hstore".
+  iIntros "Hchanges (Hcore & Hsession & Hobservers)".
+  iExists state, ds, m, (pool_tombstoned (ss_pool state)).
+  iSplitR; first (iPureIntro; split; reflexivity).
+  iSplitL "Hcore Hobservers"; first iFrame "Hcore Hobservers".
+  iFrame "Hsession".
   iSplit; last (iPureIntro; apply transaction_start_fresh).
   iExists ∅. iFrame "Hchanges".
   iSplit; first iApply changed_types_bound_empty.
@@ -105,25 +108,19 @@ Proof.
   iDestruct "Hinv" as (c h m) "Hstore".
   wp_auto.
   iDestruct "Hstore" as (state0 ds0) "(Hcore & Hsession & Hobservers0)".
-  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
-  set (pend := ss_pending state0) in *.
-  set (deleted := pool_tombstoned (ss_pool state0)) in *.
-  iAssert (own_store_data (store_of_ref ref) γs γh c h m pend deleted ∗
-           own_observers (store_of_ref ref) γs γh m deleted)%I
-    with "[Hdata Hobservers0]" as "Hstore".
-  { iFrame "Hdata Hobservers0". }
   wp_apply wp_newTransaction. iIntros (tr) "Hchanges".
   wp_auto.
-  iDestruct (own_transaction_fresh with "Hchanges Hstore") as "Htx".
+  iDestruct (own_transaction_fresh with "Hchanges [$Hcore $Hsession $Hobservers0]") as "Htx".
   wp_apply ("Hf" with "[$Htx]").
   iIntros (h' m' pend' deleted' inserted tombstoned changed) "[Htx HQ]".
   wp_auto.
   wp_apply (wp_Transaction__notify with "[$Htx]"). iIntros "Hstore".
   wp_auto.
-  iDestruct "Hstore" as "[Hdata' Hobservers']".
-  iDestruct (own_store_data_split with "Hdata'") as (state' ds') "(%Hpend' & %Hdel' & Hcore' & Hsession')".
-  iEval (rewrite Hdel') in "Hobservers'".
-  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hcore' $Hsession' $Hobservers']").
+  iDestruct "Hstore" as (state' ds') "(%Hface' & Hstore & Hsession')".
+  destruct Hface' as [Hpend' Hdel'].
+  iEval (rewrite Hdel') in "Hstore".
+  iDestruct "Hstore" as "[Hcore' Hobs']".
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hcore' $Hsession' $Hobs']").
   iApply "HΦ". iExists c, h', m', pend', deleted'. iFrame "HQ".
 Qed.
 

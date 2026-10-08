@@ -10,6 +10,9 @@
       tombstones were the current ones without those tombstoned here, which
       were live, and an inserted char is above every older char of its
       client.
+    - [tombstone_pass deleted tombstoned deleted' tombstoned']: what one
+      delete pass does to the tombstone bookkeeping ([applyDeleteSpans]'s
+      postcondition, [transaction_start_tombstone]'s hypothesis).
 
     Laws
     - [type_snapshot_start] / [text_delta_transaction]: a type's start
@@ -73,6 +76,16 @@ Definition transaction_start (m : DocModel) (deleted inserted tombstoned : gset 
   tombstoned ## deleted0 ∧
   (∀ i j : YjsId, i ∈ inserted -> doc_model_has m j = true ->
      clientId j = clientId i -> (clock i < clock j)%nat -> j ∈ inserted).
+
+(** [tombstone_pass deleted tombstoned deleted' tombstoned']: what one
+    delete pass ([Transaction.applyDeleteSpans]) does to the tombstone
+    bookkeeping: the recorded set grows, the exact tombstone state is the
+    old one plus everything recorded so far, and the newly recorded chars
+    were live before the pass. *)
+Definition tombstone_pass (deleted tombstoned deleted' tombstoned' : gset YjsId) : Prop :=
+  tombstoned ⊆ tombstoned' ∧
+  deleted' = deleted ∪ tombstoned' ∧
+  (tombstoned' ∖ tombstoned) ## deleted.
 
 
 (* ===== lemmas ============================================================= *)
@@ -190,12 +203,10 @@ Qed.
 Lemma transaction_start_tombstone (m : DocModel) (deleted deleted' inserted tombstoned tombstoned' : gset YjsId)
     (m0 : DocModel) (deleted0 : gset YjsId) :
   transaction_start m deleted inserted tombstoned m0 deleted0 ->
-  tombstoned ⊆ tombstoned' ->
-  deleted' = deleted ∪ tombstoned' ->
-  (tombstoned' ∖ tombstoned) ## deleted ->
+  tombstone_pass deleted tombstoned deleted' tombstoned' ->
   transaction_start m deleted' inserted tombstoned' m0 deleted0.
 Proof.
-  move=> [Hfilter [Hdel [Hdisj Htop]]] Htsub Hdel' Hfresh. split_and!; [exact Hfilter | | | exact Htop].
+  move=> [Hfilter [Hdel [Hdisj Htop]]] [Htsub [Hdel' Hfresh]]. split_and!; [exact Hfilter | | | exact Htop].
   - rewrite Hdel' Hdel -assoc_L. f_equal. apply subseteq_union_1_L. exact Htsub.
   - rewrite elem_of_disjoint => i Hi Hi0.
     destruct (decide (i ∈ tombstoned)) as [Hin | Hnin].

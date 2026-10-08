@@ -118,7 +118,12 @@ Proof.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
   iDestruct "His_store" as "#His_store".
   subst text_store.
-  iDestruct "Htx" as (m0 deleted0) "Htx". iNamed "Htx". iDestruct "Hstore" as "[Hstore Hobservers]".
+  iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hstore" as "[Hcore Hobservers]".
+  iDestruct (own_store_data_build with "Hcore Hsession") as "Hstore".
+  destruct Hpend_tomb as [Hpend_state Hdeleted_state].
+  iEval (rewrite Hpend_state) in "Hstore". iEval (rewrite -Hdeleted_state) in "Hstore".
+  clear Hpend_state Hdeleted_state.
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord".
   iDestruct "Hstore" as (client k pdel locs0 p0 bind acc) "Hown". iNamed "Hown". subst c.
   (* [s := tr.store]: the transaction names the store *)
@@ -367,7 +372,11 @@ Proof.
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
       iSplitL "Hchanges Hstore Hobservers".
-      { iExists m0, deleted0. iFrame "Hstore Hobservers".
+      { iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+        iExists state', ds', m0, deleted0.
+        iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
+        iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
+        iFrame "Hsession'".
         iSplitL; last (iPureIntro; exact Hstart').
         iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
         iFrame "Hchanges".
@@ -470,7 +479,11 @@ Proof.
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
       iSplitL "Hchanges Hstore Hobservers".
-      { iExists m0, deleted0. iFrame "Hstore Hobservers".
+      { iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+        iExists state', ds', m0, deleted0.
+        iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
+        iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
+        iFrame "Hsession'".
         iSplitL; last (iPureIntro; exact Hstart').
         iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
         iFrame "Hchanges".
