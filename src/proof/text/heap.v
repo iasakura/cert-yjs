@@ -61,8 +61,8 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
    [is_Text] carries a lower bound of the latter. *)
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
-(* [is_Store]'s reader-count accounting ties the readers' share to the store's
-   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
+(* [is_store_ref]'s reader-count accounting ties the readers' share to the store's
+   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_store_ref] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
@@ -87,7 +87,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 (* ----- the Text handle invariant ----------------------------------------
    [is_Text] lives here; the Doc-layer predicate [is_Doc] lives in doc/heap.v
    (mirrors doc.go). [is_Text] delegates straight to the store invariants
-   ([is_Store] / [is_type_lb]) in store/heap, referencing only Text's own fields.
+   ([is_store_ref] / [is_type_lb]) in store/heap, referencing only Text's own fields.
    [wp_Text__Insert] is proved (Lock → the store → findPos/Integrate loop → grow
    the item-set auth → Unlock). *)
 
@@ -100,7 +100,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     same key [parent] ([deleted_items], hidden, and NOT required to be inside
     [L], which is only what the holder happens to know):
     reads ONLY its OWN fields ([store]/[inner], immutable ⇒ [↦□]) and delegates
-    straight to [is_Store] (no Doc hop — Text holds [store] directly). The ghost
+    straight to [is_store_ref] (no Doc hop — Text holds [store] directly). The ghost
     is fed the item-SET of [L] ([is_type_lb] over [gset (YjsItem A)], a subset
     lower bound — grow-only, no [mra] needed), while [L] is required
     [StronglySorted] by the document order [YjsLt'] (the order
@@ -121,7 +121,7 @@ Definition is_Text (t : loc) (γs : store_names) (γh : history_names) (name : P
     "Ht" ∷ t ↦□ tv ∗
     "%Hstore" ∷ ⌜tv.(yjs.Text.store') = s_loc⌝ ∗
     "%Hinner" ∷ ⌜tv.(yjs.Text.inner') = parent⌝ ∗
-    "His_store" ∷ is_Store s_loc γs γh ∗
+    "His_store" ∷ is_store_ref s_loc γs γh ∗
     "#His_hist" ∷ is_history (A := A) (P := P) γh ∗
     "#Hbind" ∷ is_type_binding γs.(sn_types) name parent ∗
     "His_lb" ∷ is_type_lb γs.(sn_seq) parent (list_to_set L) ∗
@@ -172,7 +172,7 @@ Proof. iIntros "H". iNamed "H". iFrame "Hdeleted_lb". Qed.
     This says exactly "the characters you inserted are in [L'−L], with these
     content / id / left / right".
 
-    Proof shape: peel [is_Text → is_Store] and take the RWMutex write lock
+    Proof shape: peel [is_Text → is_store_ref] and take the RWMutex write lock
     ([wp_Store__wlock]), which yields the store; combine [is_type_lb] with
     [Hseq] (auth) via
     [auth_gmap_gset_lookup] to learn [parent ∈ dom types] and extract THIS text's

@@ -96,7 +96,7 @@ Qed.
 
 Lemma wp_transact (ref : loc) (γs : store_names) (γh : history_names) (f : func.t)
     (Q : ClientId -> list Ev -> DocModel -> list Input -> gset YjsId -> iProp Σ) :
-  {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ closure_runs_transaction (store_of_ref ref) γs γh f Q }}}
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ closure_runs_transaction (store_of_ref ref) γs γh f Q }}}
     @! yjs.transact #ref #f
   {{{ RET #(); ∃ (c : ClientId) (h' : list Ev) (m' : DocModel) (pend' : list Input) (deleted' : gset YjsId),
       Q c h' m' pend' deleted' }}}.

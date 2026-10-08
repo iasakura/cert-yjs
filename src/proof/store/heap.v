@@ -43,8 +43,8 @@
     - the ghost delete set: [is_delete_set_lb] (the persistent lower bound a delete
       hands out) and [own_delete_set] (its authority, with the domain
       bound and the tombstone-bit coherence that make the bound mean
-      something), with its transports ([own_delete_set_mono] / [_refine] /
-      [_perm] / [_snoc] / [_apply] / [_insert] / [_ValidReplay]) and the one
+      something), with its transports ([own_delete_set_refine] /
+      [_snoc] / [_apply] / [_insert]) and the one
       law that grows it, [own_delete_set_grow].
     - the lock body (issue #219 M4): [tie_store] (the core at the readers'
       complement fraction [frac_of n] beside the session) and [tie_body],
@@ -70,7 +70,7 @@
       snapshot at [(m, deleted)]); [tie_store] is the lock body's data part.
     - [store_of_ref], the embedded store's address under a [storeRef]
       (issue #219: the lock left the store struct);
-    - the persistent witnesses [is_Store] (over the [storeRef]'s address),
+    - the persistent witnesses [is_store_ref] (over the [storeRef]'s address),
       [is_type_binding], [is_root],
       [is_type_lb], [is_root_lb], [is_applied_root_lb] / [is_applied_certs],
       [is_accepted],
@@ -480,11 +480,6 @@ Definition own_delete_ids (sl : slice.t) (dq : dfrac) (D : gset YjsId) : iProp �
   Timeless (own_delete_ids sl dq D).
 Proof. rewrite /own_delete_ids. apply _. Qed.
 
-Lemma own_delete_ids_intro (sl : slice.t) (dq : dfrac)
-    (spans : list delete_span) :
-  own_delete_spans sl dq spans -∗ own_delete_ids sl dq (delete_batch_ids spans).
-Proof. iIntros "H". iExists spans. by iFrame "H". Qed.
-
 
 (** [is_root γs name]: persistent witness that the root type [name] is
     registered in the store (bound in the registry to SOME type loc, which
@@ -541,32 +536,12 @@ Definition own_delete_set (γs : store_names) (m : DocModel) (runs : list ItemRu
 #[global] Instance own_delete_set_timeless γs m runs : Timeless (own_delete_set γs m runs).
 Proof. rewrite /own_delete_set. apply _. Qed.
 
-(** The transports of the delete set, at runs: along model growth, along
-    [live_refine] (a split, a flip, a registry insert), along a
-    permutation, along an integrate (a fresh live run), along the remote
-    apply ([apply_live_refine]), and along one type's list growing or a
-    whole valid replay. *)
-Lemma own_delete_set_mono (γs : store_names) (m m' : DocModel) (runs : list ItemRun) :
-  (∀ i, doc_model_has m i = true -> doc_model_has m' i = true) ->
-  own_delete_set γs m runs -∗ own_delete_set γs m' runs.
-Proof.
-  iIntros (Hmono) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
-  iPureIntro. split; [exact (delete_set_dom_mono delete_set m m' Hmono Hdelete_set_dom) | exact Hdelete_set_tomb].
-Qed.
-
 Lemma own_delete_set_refine (γs : store_names) (m : DocModel) (p p' : pool) :
   live_refine p p' ->
   own_delete_set γs m (all_runs p) -∗ own_delete_set γs m (all_runs p').
 Proof.
   iIntros (Hlr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
   iPureIntro. split; [exact Hdelete_set_dom | exact (delete_set_tombstoned_refine delete_set p p' Hlr Hdelete_set_tomb)].
-Qed.
-
-Lemma own_delete_set_perm (γs : store_names) (m : DocModel) (runs runs' : list ItemRun) :
-  runs' ≡ₚ runs -> own_delete_set γs m runs -∗ own_delete_set γs m runs'.
-Proof.
-  iIntros (Hperm) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
-  iPureIntro. split; [exact Hdelete_set_dom | exact (delete_set_tombstoned_perm delete_set runs runs' Hperm Hdelete_set_tomb)].
 Qed.
 
 Lemma own_delete_set_snoc (γs : store_names) (m : DocModel) (runs runs' : list ItemRun) (r : ItemRun) :
@@ -601,15 +576,6 @@ Lemma own_delete_set_insert (γs : store_names) (m : DocModel) (runs : list Item
 Proof.
   iIntros (Hgrow) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
   iPureIntro. split; [exact (delete_set_dom_insert delete_set m t arr' Hgrow Hdelete_set_dom) | exact Hdelete_set_tomb].
-Qed.
-
-Lemma own_delete_set_ValidReplay (γs : store_names)
-    (inputs : list (TId * IntegrateInput (A := A))) (m m' : DocModel)
-    (runs : list ItemRun) :
-  ValidReplay inputs m m' -> own_delete_set γs m runs -∗ own_delete_set γs m' runs.
-Proof.
-  iIntros (Hvr) "H". iNamed "H". iExists delete_set. iFrame "Hdelete_set_auth".
-  iPureIntro. split; [exact (delete_set_dom_ValidReplay delete_set inputs m m' Hvr Hdelete_set_dom) | exact Hdelete_set_tomb].
 Qed.
 
 (** The one law that GROWS the delete set, and so the only source of an
@@ -859,7 +825,7 @@ Definition own_deleted_set_field (l : loc) (q : Qp) : iProp Σ :=
     ([store.items] and the per-client run map it points to), the root registry
     ([store.types] and its name -> type-loc map), the type pool, and the two
     buffers ([store.pending], [store.pendingDeletes]) over their model lists.
-    [mu] and [observers] are not here ([is_Store] / [own_observers]).
+    [mu] and [observers] are not here ([is_store_ref] / [own_observers]).
     The field pointers and buffer slices are existential: no spec names them,
     and no field has a predicate of its own, so a spec can only take these
     fields together ([own_store_state]). *)
@@ -901,7 +867,7 @@ Definition store_invs (state : store_state) : Prop :=
   pool_clocks_contiguous (ss_pool state).
 
 (** [own_store_state s q state]: the store's data fields at [state]: every
-    field of the struct but [mu] (owned by the RWMutex handle, [is_Store])
+    field of the struct but [mu] (owned by the RWMutex handle, [is_store_ref])
     and [observers] ([own_observers]), with the invariants every store
     method preserves ([store_invs]). Non-public (it holds part of the
     store's resources); the state-level stepping stones of the store
@@ -1252,10 +1218,10 @@ Qed.
 
     Writers (Insert/Delete/GetOrCreateText/applyUpdate) take the write lock; the pure
     readers (String/Len) take the read lock, so concurrent reads are allowed.
-    [is_Store] is a PERSISTENT handle built over Perennial's logically-atomic
+    [is_store_ref] is a PERSISTENT handle built over Perennial's logically-atomic
     RWMutex ([New.proof.sync_proof.rwmutex]): a tying [inv] relates the RWMutex's
     abstract lock state to [store_inv]. The RWMutex ghost names [γrw] are hidden
-    (existential) inside [is_Store], so [is_Store]'s signature is unchanged.
+    (existential) inside [is_store_ref], so [is_store_ref]'s signature is unchanged.
 
     Write path (this port): the write [Lock] linearizes only at [RLocked 0] (no
     readers outstanding), where it can take the WHOLE [store_inv]; [Unlock]
@@ -1296,10 +1262,6 @@ Definition own_observed (γo : gname) (s : snapshot) : iProp Σ := ghost_var γo
 Definition own_observed_share (γo : gname) (q : Qp) (s : snapshot) : iProp Σ :=
   ghost_var γo (q / 2) s.
 
-Lemma own_observed_share_whole (γo : gname) (s : snapshot) :
-  own_observed_share γo 1 s ⊣⊢ own_observed γo s.
-Proof. reflexivity. Qed.
-
 (** [is_text_snapshot γs γh name s]: what a read of root [name] certifies
     about the snapshot [s] (what [Text.String] and [Poll] say), over the
     store's witnesses alone so that it can sit inside the store's lock: the
@@ -1307,7 +1269,7 @@ Proof. reflexivity. Qed.
     in the store's delete set, [s] is a valid document, and it holds every
     insert into [name] that a history prefix of this replica delivered.
     Minted by the writer when it notifies; persistent. Never mentions
-    [is_Text], whose [is_Store] would contain this predicate (a cycle); an
+    [is_Text], whose [is_store_ref] would contain this predicate (a cycle); an
     application pairs it with its own handle. *)
 Definition is_text_snapshot (γs : store_names) (γh : history_names) (name : P) (s : snapshot) : iProp Σ :=
   ∃ (parent : loc) (c : ClientId) (h : list Ev),
@@ -2136,7 +2098,7 @@ Definition tie_body (s_loc : loc) (γs : store_names) (γh : history_names) (st 
     [store_of_ref ref]. The lock ghost names live in [γs] (see
     [store_names]); ALL store-field / item-set / DLL references are sealed here or
     in the lock body. *)
-Definition is_Store (ref : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
+Definition is_store_ref (ref : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
   "#Hrw" ∷ rwmutex.is_RWMutex (ref .[(yjs.storeRef.t), "mu"]) γs.(sn_rw) (storeN .@ "rw") ∗
   "#Hmax" ∷ own_tok_auth_dfrac γs.(sn_rmax) DfracDiscarded (Z.to_nat rwmutex.actualMaxReaders) ∗
   "#Htie" ∷ inv (storeN .@ "tie") (∃ st, rwmutex.own_RWMutex γs.(sn_rw) st ∗ tie_body (store_of_ref ref) γs γh st).
@@ -2150,7 +2112,7 @@ Definition own_read_cap (γs : store_names) : iProp Σ :=
 Definition own_read_locked (γs : store_names) : iProp Σ :=
   own_toks γs.(sn_rrlocked) 1.
 
-#[global] Instance is_Store_persistent s_loc γs γh : Persistent (is_Store s_loc γs γh).
+#[global] Instance is_store_ref_persistent s_loc γs γh : Persistent (is_store_ref s_loc γs γh).
 Proof. apply _. Qed.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
@@ -2504,10 +2466,10 @@ Qed.
     [RLocked 0], over caller-provided RWMutex names (the physical lock is set
     up by [init_RWMutex] at the call site), allocating the store's ghost
     names for real: the write-lock witness, the reader count at zero, the
-    DISCARDED reader-bound authority ([is_Store]'s [Hmax]) and the types
+    DISCARDED reader-bound authority ([is_store_ref]'s [Hmax]) and the types
     agreement all go into the payload rather than being dropped. The caller
     wraps the result in the tie invariant next to [own_RWMutex (RLocked 0)]
-    and has [is_Store]. The reader-bound TOKENS come back too (issue #125):
+    and has [is_store_ref]. The reader-bound TOKENS come back too (issue #125):
     zipped with [init_RWMutex]'s RLock tokens they are the document's
     [own_read_cap] read capabilities, one per reader slot. *)
 Lemma store_tie_init (s_loc : loc) (γh : history_names) (client : w64)
@@ -2540,7 +2502,7 @@ Proof.
   { apply auth_auth_valid. rewrite /p fmap_empty //. }
   iMod (ghost_map_alloc_empty (K := P) (V := loc)) as (γtypes) "HtypesAuth".
   (* the lock-layer ghosts, for real: the write-lock witness, the reader
-     count at zero, the reader bound (discarded, so it can sit in [is_Store]
+     count at zero, the reader bound (discarded, so it can sit in [is_store_ref]
      persistently; its tokens are the read capabilities, handed back to the
      caller) and the pool agreement at the empty store *)
   iMod (ghost_var_alloc ()) as (γwl) "Hwl".

@@ -34,9 +34,8 @@
 
     Laws
     - [node_span_char_ids]: a node's span fits and denotes its run's chars.
-    - [own_transaction_changes_store_acc] / [_spans_acc]: borrow the store
-      field (the methods read it first) or the two span slices as the sets
-      they denote ([notify]'s walk reads them).
+    - [own_transaction_changes_store_acc]: borrow the store field (the
+      methods read it first).
     - the changed types: [changed_types_bound_empty], [_mark] (one more
       type), [_grow] (a sweep's types, by [bound_names]), [_registered] /
       [_names] (the marked addresses are registered under the marked names,
@@ -261,29 +260,6 @@ Lemma own_transaction_changes_store_acc (tr s_loc : loc)
 Proof.
   iIntros "H". iNamed "H". iFrame "Htrstore". iIntros "Htrstore".
   iExists insert_sl, delete_sl, changed_mref, insert_vs, delete_vs. iFrame "∗". done.
-Qed.
-
-Lemma own_transaction_changes_spans_acc (tr s_loc : loc)
-    (inserted tombstoned : gset YjsId) (changed : gset loc) :
-  own_transaction_changes tr s_loc inserted tombstoned changed -∗
-  ∃ (insert_sl delete_sl : slice.t),
-    (tr .[(yjs.Transaction.t), "insertSet"]) ↦ insert_sl ∗
-    (tr .[(yjs.Transaction.t), "deleteSet"]) ↦ delete_sl ∗
-    own_id_spans insert_sl (DfracOwn 1) inserted ∗
-    own_id_spans delete_sl (DfracOwn 1) tombstoned ∗
-    ((tr .[(yjs.Transaction.t), "insertSet"]) ↦ insert_sl -∗
-     (tr .[(yjs.Transaction.t), "deleteSet"]) ↦ delete_sl -∗
-     own_id_spans insert_sl (DfracOwn 1) inserted -∗
-     own_id_spans delete_sl (DfracOwn 1) tombstoned -∗
-     own_transaction_changes tr s_loc inserted tombstoned changed).
-Proof.
-  iIntros "H". iNamed "H". iExists insert_sl, delete_sl. iFrame "Hinsertf Hdeletef".
-  iSplitL "Hinsert". { iExists insert_vs. iFrame "Hinsert". done. }
-  iSplitL "Hdelete". { iExists delete_vs. iFrame "Hdelete". done. }
-  iIntros "Hinsertf Hdeletef Hins Hdel".
-  iDestruct "Hins" as (insert_vs') "(Hinsert' & %Hinsertwf' & %Hinserted')".
-  iDestruct "Hdel" as (delete_vs') "(Hdelete' & %Hdeletewf' & %Htombstoned')".
-  iExists insert_sl, delete_sl, changed_mref, insert_vs', delete_vs'. iFrame "∗". done.
 Qed.
 
 

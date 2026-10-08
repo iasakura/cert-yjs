@@ -42,8 +42,8 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-(* [is_Store]'s reader-count accounting ties the readers' share to the store's
-   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
+(* [is_store_ref]'s reader-count accounting ties the readers' share to the store's
+   [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_store_ref] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)

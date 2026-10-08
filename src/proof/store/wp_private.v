@@ -141,7 +141,7 @@ Qed.
     out under a later: the observers' callback contracts are not
     timeless (the next program step strips it). *)
 Lemma wp_Store__wlock (ref : loc) (γs : store_names) (γh : history_names) :
-  {{{ is_pkg_init yjs ∗ is_Store ref γs γh }}}
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh }}}
     ref @! (go.PointerType yjs.storeRef) @! "wlock" #()
   {{{ RET #(); own_wlock γs ∗
       ∃ (c : ClientId) (h : list Ev) (m : DocModel),
@@ -183,7 +183,7 @@ Qed.
 Lemma wp_Store__wunlock (ref : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (state : store_state) (ds : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ own_wlock γs ∗
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ own_wlock γs ∗
       own_store (store_of_ref ref) γs γh 1 state ds m (pool_tombstoned (ss_pool state)) ∗
       own_store_session γs γh c h m state ds }}}
     ref @! (go.PointerType yjs.storeRef) @! "wunlock" #()
@@ -229,7 +229,7 @@ Qed.
     delivered insert of the certified prefix. *)
 Lemma wp_Store__rlock (ref : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
-  {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ own_read_cap γs ∗
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ own_read_cap γs ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗
       is_type_binding γs.(sn_types) name parent }}}
     ref @! (go.PointerType yjs.storeRef) @! "rlock" #()
@@ -290,7 +290,7 @@ Qed.
     [own_read_cap]. *)
 Lemma wp_Store__runlock (ref : loc) (γs : store_names) (γh : history_names)
     (state_r : store_state) (ds_r : gset YjsId) (m_r : DocModel) (d_r : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ own_read_locked γs ∗
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ own_read_locked γs ∗
       own_store (store_of_ref ref) γs γh rwmutex_guard.rfrac state_r ds_r m_r d_r }}}
     ref @! (go.PointerType yjs.storeRef) @! "runlock" #()
   {{{ RET #(); own_read_cap γs }}}.
