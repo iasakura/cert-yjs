@@ -1356,7 +1356,7 @@ Proof using Type*.
       wp_auto.
       rewrite Happeq.
       iApply ("HΦ" $! p_j locs_j bindj changed_j). simpl.
-      iAssert (own_pending_field (s .[(yjs.store.t), "pending"]) rest)%I with "[Hpendf HslP HcapP]" as "Hpending".
+      iAssert (own_pending_field (s .[(yjs.store.t), "pending"]) 1 rest)%I with "[Hpendf HslP HcapP]" as "Hpending".
       { iExists pendingS. iFrame "Hpendf". iExists uivsP. iFrame "HslP HcapP HitemsPj". }
       iSplitL "Hslin Hcapin".
       { iExists uivs_in. iFrame "Hslin Hcapin Hitemsin". }
@@ -2442,7 +2442,7 @@ Proof using Type*.
           Hdrainc Hhcoh Harrinv Hnonemptyb with "Hishist Hhist Hcertpending")
     as "(Hhist & #Hlbnew & %Hvr & %Hcoh' & %Hnoc)".
   iModIntro.
-  iAssert (own_pending_field (s_loc .[(yjs.store.t), "pending"]) pend)%I with "[Hpendf Hpend]" as "Hpending".
+  iAssert (own_pending_field (s_loc .[(yjs.store.t), "pending"]) 1 pend)%I with "[Hpendf Hpend]" as "Hpending".
   { iExists pend_sl. iFrame "Hpendf Hpend". }
   iAssert (own_store_state s_loc 1 (MkStoreState client k locs p bind pend pdel))
     with "[Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes]" as "Hruns".
@@ -2613,6 +2613,7 @@ Proof using Type*.
     - destruct (Hlocs_bound q Hold) as (nm & Hnm & Hb). exists nm.
       split; [apply elem_of_union_l; exact Hnm | exact (lookup_weaken _ _ _ _ Hb Hbindsub')].
     - exists nm. split; [| exact Hb]. apply elem_of_union_r. apply elem_of_bound_names. by exists q. }
+  iMod (state_frag_update γs _ with "Hstate_agree") as "Hstate_agree".
   iModIntro. iApply ("HΦ" $! applied rest' m' changed').
   iAssert (is_applied_certs γs applied m') with "[Hlbs]" as "#Hcerts".
   { iFrame "Hlbs". iPureIntro. exact (ValidReplay_input_mem (expand_inputs applied) m m' Hvr). }
@@ -2624,9 +2625,9 @@ Proof using Type*.
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi' | exact Hreg' | exact Hcontig']).
     rewrite /own_store_fields /=.
     iFrame "Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes". }
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree".
   { iExists client, k, pdel, locs', p', bind', acc.
-    iFrame "Hstate Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set".
+    iFrame "Hstate Hseq HtypesAuth Hbinds' Hhist Hacc Hdelete_set Hstate_agree".
     iFrame "Hpendcert' Hclientpin".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot' | exact Hpendbnd' | exact Hregmodel' | exact Hcoh'

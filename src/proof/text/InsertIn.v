@@ -163,9 +163,9 @@ Proof.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
         [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
-    iSplitL "Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
+    iSplitL "Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree".
     { iAssert (own_store_data s_loc γs γh (uint.nat client) h m pend deleted)
-        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hstore".
+        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree]" as "Hstore".
       { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
           | exact Hctr | exact Hacccoh | exact Hdeleted]. }
@@ -212,9 +212,9 @@ Proof.
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
         [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
-    iSplitL "Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set".
+    iSplitL "Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree".
     { iAssert (own_store_data s_loc γs γh (uint.nat client) h m pend deleted)
-        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hstore".
+        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree]" as "Hstore".
       { iExists client, k, pdel, locs0, p0, bind, acc. iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
           | exact Hctr | exact Hacccoh | exact Hdeleted]. }
@@ -889,7 +889,7 @@ Proof.
     iEval (rewrite Hinsstep Hchstep) in "Hchanges".
     wp_for_post.
     (* re-establish the loop invariant for [S j] with [ins ++ [newItem]] *)
-    iFrame "Ht His_lb HΦ HisRp Hacc Hobservers".
+    iFrame "Ht His_lb HΦ HisRp Hacc Hobservers Hstate_agree".
     iExists (S j), arr', (<[tv.(yjs.Text.inner') := ls']> locsj), (<[tv.(yjs.Text.inner') := MkTypeModel runs']> pj), ls', runs', (ins ++ [newItem]),
       (hj ++ [EvBroadcast (RootId name, OpInsert input);
               EvDeliver (RootId name, OpInsert input)]).
@@ -1079,8 +1079,9 @@ Proof.
         rewrite Hitid. f_equal. lia. }
   (* the store after the insert, at the grown model: what the transaction
      carries on *)
+  iMod (state_frag_update γs _ with "Hstate_agree") as "Hstate_agree".
   iAssert (own_store_data s_loc γs γh (uint.nat client) hj (<[RootId name := arr]> m) pend deleted)
-    with "[Hruns Hseq HtypesAuth Hhistj Hacc Hdelete_set]" as "Hstore".
+    with "[Hruns Hseq HtypesAuth Hhistj Hacc Hdelete_set Hstate_agree]" as "Hstore".
   { iExists client, (W64 (uint.Z k + j)), pdel, locsj, pj, bind, acc.
     rewrite (pool_seq_map_insert_at p0 pj tv.(yjs.Text.inner') ts (MkTypeModel runsj) Hdompj Htsp Hpj) /=.
     rewrite /tm_arr /= -Harrj.

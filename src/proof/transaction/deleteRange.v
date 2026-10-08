@@ -502,7 +502,7 @@ Proof using Type*.
     { (* every span has been retried: install the leftover as the new buffer,
          and hand the whole thing back over the PURE model *)
       iApply ("HΦ" $! p_j locs_j (delete_span_of_val <$> rest_vs) tombstoned_j changed_j).
-      iAssert (own_pending_deletes_field (s .[(yjs.store.t), "pendingDeletes"]) (delete_span_of_val <$> rest_vs))%I
+      iAssert (own_pending_deletes_field (s .[(yjs.store.t), "pendingDeletes"]) 1 (delete_span_of_val <$> rest_vs))%I
         with "[Hpddelf Hrest Hrestcap]" as "Hpdeletes".
       { iExists rest_sl. iFrame "Hpddelf". iExists rest_vs. by iFrame "Hrest Hrestcap". }
       iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes Hpending Hpdeletes".
@@ -685,6 +685,7 @@ Qed.
       ⌜deleted' = deleted ∪ tombstoned'⌝ ∗ ⌜(tombstoned' ∖ tombstoned) ## deleted⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hstore & Hrecord & Hsp) HΦ".
+  iApply wp_fupd.
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord". iNamed "Hstore".
   have Hsub : tombstoned ⊆ pool_tombstoned p by (rewrite -Hdeleted; exact Htombstoned_sub).
   (* the old marks name their types: read the bindings off the registry
@@ -715,10 +716,12 @@ Proof using Type*.
     - destruct (Hlocs_bound q Hold) as (nm & Hnm & Hb). exists nm. split; [apply elem_of_union_l; exact Hnm | exact Hb].
     - destruct (proj2 (proj2 Hreg') q Hsome) as [nm Hb]. exists nm. split; [| exact Hb].
       apply elem_of_union. right. apply elem_of_bound_names. by exists q. }
+  iMod (state_frag_update γs _ with "Hstate_agree") as "Hstate_agree".
+  iModIntro.
   iApply ("HΦ" $! (pool_tombstoned p') tombstoned' changed'). iFrame "Hsp".
-  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
+  iSplitL "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree".
   { iExists client, k, rest, locs', p', bind, acc.
-    iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set".
+    iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree".
     iFrame "Hclientpin Hpendcert Hbinds".
     iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel' | exact Hhcoh

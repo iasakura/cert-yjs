@@ -91,7 +91,7 @@ Proof.
   iEval (simpl) in "Hstore". simpl in Hlc.
   destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & Hfresh & -> & -> & ->)].
   - (* ---- hit: the root is registered; the session closes as it came ---- *)
-    iMod (own_store_bound_root_lb _ _ _ (MkStoreState client0 k0 locs0 p0 bind0 pend0 pdel0)
+    iMod (own_store_bound_root_lb _ _ _ 1 (MkStoreState client0 k0 locs0 p0 bind0 pend0 pdel0)
             _ _ _ name q Hb' with "Hstore") as "[Hstore #Hlb0]".
     wp_auto.
     wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hstore $Hsession]").
@@ -113,7 +113,7 @@ Proof.
     set (p' := <[q := MkTypeModel []]> p0).
     set (bind' := <[name := q]> bind0).
     have Hbq : bind' !! name = Some q by rewrite /bind' lookup_insert_eq.
-    iMod (own_store_bound_root_lb _ _ _
+    iMod (own_store_bound_root_lb _ _ _ 1
             (MkStoreState client0 k0 (<[q := []]> locs0) p' bind' pend0 pdel0)
             _ _ _ name q Hbq with "Hstore") as "[Hstore #Hlb0]".
     wp_auto.

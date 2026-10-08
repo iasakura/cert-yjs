@@ -343,8 +343,9 @@ Proof.
                          Hdompj Htsp Hpj Harrj)) in "Hseq".
       (* the store after the delete, the tombstone state grown by [dels]:
          what the transaction carries on *)
+      iMod (state_frag_update γs _ with "Hstate_agree") as "Hstate_agree".
       iAssert (own_store_data s_loc γs γh (uint.nat client) h m pend (deleted ∪ dels))
-        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hstore".
+        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree]" as "Hstore".
       { iExists client, k, pdel, locsj, pj, bind, acc.
         iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close
@@ -450,8 +451,9 @@ Proof.
                          Hdompj Htsp Hpj Harrj)) in "Hseq".
       (* the store after the delete, the tombstone state grown by [dels]:
          what the transaction carries on *)
+      iMod (state_frag_update γs _ with "Hstate_agree") as "Hstate_agree".
       iAssert (own_store_data s_loc γs γh (uint.nat client) h m pend (deleted ∪ dels))
-        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hstore".
+        with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree]" as "Hstore".
       { iExists client, k, pdel, locsj, pj, bind, acc.
         iFrame "∗#". iPureIntro. split_and!;
           [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel_close
@@ -539,7 +541,7 @@ Proof.
     simpl negb. wp_auto.
     iDestruct ("Haccback" with "Haccval") as "Hruns".
     wp_for_post.
-    iFrame "Hacc Hobservers".
+    iFrame "Hacc Hobservers Hstate_agree".
     iFrame "Ht His_lb HΦ". iExists (S q), rem, locsj, pj, lsj, runsj, dels.
     iFrame "Hsp Hrem Hruns Hchanges Htrp Hseq Hhist Hdelete_set HtypesAuth".
     rewrite Hnextq -Haccright. iFrame "Hcur".
@@ -636,7 +638,7 @@ Proof.
         rewrite /flip_run /leftRun /split_run_left /=.
         etrans; [exact (char_ids_take (uint.nat rem) (run_items rq)) |].
         rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
-      iFrame "Hacc Hobservers".
+      iFrame "Hacc Hobservers Hstate_agree".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (uint.nat rem))),
         (<[tv.(yjs.Text.inner') := ls2]> locsj), (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), ls2, runs3,
@@ -709,7 +711,7 @@ Proof.
       have Hdelsarr' : dels ∪ char_ids (run_items rq) ⊆ char_ids (tm_arr ts).
       { apply union_least; [exact Hdelsarr |].
         rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
-      iFrame "Hacc Hobservers".
+      iFrame "Hacc Hobservers Hstate_agree".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (length (run_items rq)))),
         locsj, (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), lsj, runs3,

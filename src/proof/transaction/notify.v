@@ -405,7 +405,7 @@ Proof.
   iEval (rewrite Hpend_state) in "Hstore". iEval (rewrite -Hdeleted_state) in "Hstore".
   clear Hpend_state Hdeleted_state.
   iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry)".
-  iDestruct "Hregistry" as (registry registered) "(Hobserversmap & Hobserversauth & #Hregistered_bind & Hobservers)".
+  iDestruct "Hregistry" as (registry registered) "(Hobserversmap & Hobserversauth & Hregagree & #Hregistered_bind & Hobservers)".
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord". iNamed "Hchanges".
   iAssert (own_id_spans insert_sl (DfracOwn 1) inserted) with "[Hinsert]" as "Hinsert".
   { iExists insert_vs. iFrame "Hinsert". done. }
@@ -429,6 +429,8 @@ Proof.
       "Hobserversf" ∷ (s_loc .[(yjs.store.t), "observers"]) ↦ observers_mref ∗
       "Hobserversmap" ∷ own_map observers_mref (DfracOwn 1) registry ∗
       "Hobserversauth" ∷ own γs.(sn_observers) (● registered_tokens registered : authR (gsetUR (gname * P))) ∗
+      "Hregagree" ∷ own γs.(sn_observers_agree)
+        (to_frac_agree 1 ((registry, registered) : leibnizO observer_registry_model)) ∗
       "Hobservers" ∷ ([∗ map] parent ↦ cbs_sl; entry ∈ registry; registered,
          own_type_observers γs γh entry.1 1
            (if decide (parent ∈ done) then type_snapshot m deleted entry.1
@@ -436,8 +438,8 @@ Proof.
     with "Hchanged").
   iIntros (keys) "%Hkeys". destruct Hkeys as (Hkeysdom & Hkeyslen & Hkeysnodup).
   rewrite dom_gset_to_gmap in Hkeysdom.
-  iSplitL "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth Hobservers".
-  { iExists ∅, _. iFrame "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth".
+  iSplitL "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth Hregagree Hobservers".
+  { iExists ∅, _. iFrame "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth Hregagree".
     iSplitR. { iPureIntro. split; [rewrite /= ?take_0 ?list_to_set_nil // | lia]. }
     iApply (big_sepM2_mono with "Hobservers"). iIntros (parent cbs_sl entry Hr Hd) "H".
     first [iExact "H" | rewrite decide_False; [iExact "H" | apply not_elem_of_empty]]. }
@@ -467,7 +469,7 @@ Proof.
       wp_auto.
       unfold for_map_postcondition. iRight. iLeft. iSplitR; first done.
       iExists (done ∪ {[key]}), key.
-      iFrame "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth".
+      iFrame "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth Hregagree".
       iSplitR; first (iPureIntro; split; [symmetry; exact Hdone' | lia]).
       iApply (type_observers_told_grow with "Hobservers"). exact Hrkey. }
     (* the type is observed: its callbacks hear the delta *)
@@ -488,7 +490,7 @@ Proof.
       wp_auto.
       unfold for_map_postcondition. iRight. iLeft. iSplitR; first done.
       iExists (done ∪ {[key]}), key.
-      iFrame "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth".
+      iFrame "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth Hregagree".
       iSplitR; first (iPureIntro; split; [symmetry; exact Hdone' | lia]).
       rewrite (big_sepM2_delete _ _ _ key cbs_sl entry Hrkey Hdkey).
       iSplitL "Hentry_slice Hentry_cap".
@@ -524,8 +526,8 @@ Proof.
     have Harr : YjsArrInvariant (doc_model_get m (RootId entry.1)) by (rewrite Hdoc; exact (Harrinv _ _ Htmp)).
     destruct (text_delta_transaction m deleted inserted tombstoned m0 deleted0 entry.1 Hstart Htombstoned_sub Harr) as [Hdeltaeq Hgrows].
     iEval (rewrite Hrm -Hdeltaeq) in "Hdelta".
-    iAssert (own_store_data s_loc γs γh c h m pend deleted) with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hstore".
-    { iExists client, k, pdel, locs, p, bind, acc. iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hclientpin Hpendcert Hbinds". iPureIntro.
+    iAssert (own_store_data s_loc γs γh c h m pend deleted) with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree]" as "Hstore".
+    { iExists client, k, pdel, locs, p, bind, acc. iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree Hclientpin Hpendcert Hbinds". iPureIntro.
       split_and!; [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
     iMod (own_store_data_text_snapshot with "Hbind_key Hstore") as "[Hstore #Hsnap]".
     wp_auto.
@@ -561,7 +563,7 @@ Proof.
       { iFrame "Hobs Hdelta Hsnap". iPureIntro. exact Hgrows. }
       iIntros "[Hobs Hdelta]".
       wp_auto. wp_for_post.
-      iFrame "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth Hobservers Hentry_slice Hentry_cap callbacks delta".
+      iFrame "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth Hregagree Hobservers Hentry_slice Hentry_cap callbacks delta".
       iExists (S j).
       replace (w64_word_instance.(word.add) (W64 j) (W64 1)) with (W64 (S j)) by word.
       iFrame "Hj Hdelta Htotell".
@@ -574,7 +576,7 @@ Proof.
       wp_auto.
       unfold for_map_postcondition. iRight. iLeft. iSplitR; first done.
       iExists (done ∪ {[key]}), key.
-      iFrame "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth".
+      iFrame "ty tr s Hinsertf Hdeletef Hinsert Hdelete Hstore Hobserversf Hobserversmap Hobserversauth Hregagree".
       iSplitR; first (iPureIntro; split; [symmetry; exact Hdone' | lia]).
       rewrite (big_sepM2_delete _ _ _ key cbs_sl entry Hrkey Hdkey).
       iSplitL "Hentry_slice Hentry_cap Htold".
@@ -597,14 +599,14 @@ Proof.
   wp_auto.
   iApply "HΦ".
   iAssert (own_store_data s_loc γs γh c h m pend deleted)
-    with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hdata".
-  { iExists client, k, pdel, locs, p, bind, acc. iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hclientpin Hpendcert Hbinds". iPureIntro.
+    with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree]" as "Hdata".
+  { iExists client, k, pdel, locs, p, bind, acc. iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree Hclientpin Hpendcert Hbinds". iPureIntro.
     split_and!; [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
   iAssert (own_observers s_loc γs γh 1 m deleted)
-    with "[Hobserversf Hobserversmap Hobserversauth Hobservers]" as "Hobservers'".
+    with "[Hobserversf Hobserversmap Hobserversauth Hregagree Hobservers]" as "Hobservers'".
   { iExists observers_mref. iFrame "Hobserversf".
     iExists registry, registered.
-    iFrame "Hobserversmap Hobserversauth Hregistered_bind".
+    iFrame "Hobserversmap Hobserversauth Hregagree Hregistered_bind".
     iApply (big_sepM2_mono with "Hobservers"). iIntros (parent cbs_sl entry Hr Hd) "H".
     destruct (decide (parent ∈ done)) as [Hin | Hnin]; first iExact "H".
     rewrite (type_snapshot_untouched m deleted inserted tombstoned m0 deleted0 entry.1 Hstart); first iExact "H".
