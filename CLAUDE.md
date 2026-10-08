@@ -91,10 +91,6 @@ it.
   Never declare a `Context` mid-section: under `Set Default Proof Using "Type*"`
   it silently changes what the lemmas below are generalized over. Never
   annotate a `Require` line with a comment.
-- **Headers.** Each layer file opens with its API: the definitions it
-  introduces and its laws, one line each. A lemma that does not earn that line
-  does not belong in the layer. Read the header, not this file, for what is in
-  a given file.
 
 ## Reporting
 
