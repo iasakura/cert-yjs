@@ -68,7 +68,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (** [Text.Len]: a CONCURRENT read (issues #22 / #125). Takes the RWMutex
     read lock, reads the type's visible length off its DLL through a
-    fractional [store_inv_ro] share (so it runs alongside other readers),
+    fractional share of [own_store] (so it runs alongside other readers),
     then releases. The read capability [own_read_cap] (one reader slot) is
     threaded and returned; [is_Text] is preserved. Like [wp_Text__String],
     the caller brings a prefix certificate of this replica's op history and

@@ -11,11 +11,12 @@
     - the type pool and the store-data predicate:
       [own_type_pool dq locs p] (over [store/value_cells]'s [locs_wf]);
       [own_store_state s q state], the store's data fields at a
-      [store_state] (every field but [mu] and [observers],
-      [own_store_fields] / [own_items_field] / [own_store_items], with
-      [store_invs]; non-public, what the state-level stepping stones of
-      the store method specs are stated over until every caller moves to
-      the public [own_store], issue #219), and what it
+      [store_state], at fraction [q] (every field but [mu] and
+      [observers], [own_store_fields] / [own_items_field] /
+      [own_store_items], with [store_invs]; non-public, what the
+      state-level second specs of the store methods are stated over for
+      the private update paths, and what a concurrent reader walks the
+      pool through at [rfrac]), and what it
       reads back ([own_store_state_run_pool_invs] /
       [own_store_state_run_wf] / [own_store_state_arr_inv] /
       [own_store_state_registry_coh], the document reader also on the pool,
@@ -45,21 +46,19 @@
       something), with its transports ([own_delete_set_mono] / [_refine] /
       [_perm] / [_snoc] / [_apply] / [_insert] / [_ValidReplay]) and the one
       law that grows it, [own_delete_set_grow].
-    - the lock body, at [(locs, pool, delete_set)]: [store_inv_ro] (the
-      fractional, reader-visible part: the item-set and delete-set
-      authorities, the delete set's tombstone-bit clause, and
-      [own_type_pool]; two shares are at the same delete set,
-      [store_inv_ro_delete_set_agree]), [store_inv_excl] (the exclusive part,
-      holding the delete set's model-domain bound) and [store_inv], carrying
-      the client's ghost history; [tie_body] and [types_frag] / [frac_of] are
-      the RWMutex reader-count accounting (issue #22).
+    - the lock body (issue #219 M4): [tie_store] (the core at the readers'
+      complement fraction [frac_of n] beside the session) and [tie_body],
+      with [frac_of] the RWMutex reader-count accounting (issue #22);
+      [state_frag], the whole-cell-state agreement a reader's share and
+      the invariant recombine through.
     - [own_store_data s c h m pend deleted]: the data half of the store, one
       exclusive predicate over its public model, the tombstone state
-      [deleted] exact ([pool_tombstoned]); [own_observers s m0 deleted0] the
-      observers half (the [observers] field and its registry);
-      [own_store s state ds m0 deleted0] THE public predicate of the store
-      (issue #219): [own_store_core] beside the observers told up to
-      [(m0, deleted0)], a free parameter.
+      [deleted] exact ([pool_tombstoned]); [own_observers s q m0 deleted0]
+      the observers half (the [observers] field and its registry, at
+      fraction [q]); [own_store s q state ds m0 deleted0] THE public
+      predicate of the store (issue #219): [own_store_core] beside the
+      observers told up to [(m0, deleted0)], a free parameter, all at
+      fraction [q] (a reader holds [rfrac] of it, a writer the whole).
     - the observers (issue #198 Part II): [own_observed γo s] (one half of an
       observer's token), [is_text_snapshot γs γh name s] (what a read
       certifies about a snapshot, over store witnesses), [is_text_callback
@@ -83,11 +82,17 @@
       proofs) and the loop invariant [integrate_loop_inv].
 
     Laws
-    - [store_inv_init]: how to build the invariant from the raw points-tos, and
-      [store_inv_bridge] / [store_inv_own_store_data] / [store_slices_own_store_data] /
-      [own_store_data_store_slices] / [own_store_data_hist_coh] /
-      [own_store_accepted_sound] / [store_inv_excl_hist_root]: what you may
-      read back out of it.
+    - [store_tie_init]: how to build the lock body from the raw points-tos;
+      [own_store_data_hist_coh] / [own_store_accepted_sound] /
+      [own_store_core_session_hist_root]: what you may read back out of it.
+    - the fractions (issue #219 M4): everything under [own_store] splits at
+      equal indices ([own_store_state_split] / [own_store_core_split] /
+      [own_observers_split], with [own_map_dfrac_split] / [_agree] and the
+      slice-bundle splits underneath); [own_store_core_agree] pins a
+      reader's state and delete set to the invariant's, and
+      [own_observers_combine] realigns the observers across told states
+      ([observers_agree_update] moves the registry agreement with a
+      registration).
     - the pool's laws: borrow one node ([own_type_pool_node_acc], with
       its links [_node_acc_links]), read its pure content off
       ([own_type_pool_run_wf] / [_id_bounds] / [_arr] / [_arr_inv]), a
@@ -230,7 +235,7 @@ Context {observers_agree_inG : inG Σ observersAgreeUR}.
 
 (* The [∷] (named) wrapper blocks [Timeless] TC resolution; unfold it (as
    [New.proof.sync_proof.rwmutex] does) so the [Timeless] instances below go
-   through the named conjuncts of [own_item_map_key_pairs] / [store_inv]. *)
+   through the named conjuncts of [own_item_map_key_pairs] / the lock body. *)
 
 #[local] Hint Extern 100 (Timeless (?n ∷ ?P)) =>
   (change (n ∷ P) with P) : typeclass_instances.
@@ -240,17 +245,18 @@ Context {observers_agree_inG : inG Σ observersAgreeUR}.
 
 (** ---------- reader-count accounting (concurrent read API) ----------------
     The tie invariant carries [rwmutex_guard]-style accounting so multiple readers
-    can each hold a fractional [store_inv_ro] share:
+    can each hold an [rfrac] fraction of the public [own_store] (issue #219 M4):
     - [own_tok_auth γs.(sn_rrlocked) n]: the active reader count [n];
     - [own_toks γs.(sn_rmax) n] bounded by the persistent
       [own_tok_auth_dfrac γs.(sn_rmax) □ (max)]: [n ≤ actualMaxReaders], so the
       per-reader fraction stays positive;
-    - [types_frag] ([dfrac_agree] on the [types] map) ties the readers' share to
-      the store's current [types] (needed to recombine at RUnlock, since the
-      item-set auth alone does not determine the type pool);
-    - the mutable-exclusive [store_inv_excl] whole + the shared [store_inv_ro] at
-      the remaining fraction [frac_of n]. The write [Lock] linearizes at
-      [RLocked 0] (fraction 1 = the whole [store_inv] via [store_inv_bridge]);
+    - [state_frag] ([dfrac_agree] on the whole [store_state], inside
+      [own_store_core]) ties the readers' share to the store's current state
+      (needed to recombine at RUnlock: the heap fractions alone do not
+      determine the type pool, and an update struct with a nil parent name
+      does not determine the pending buffer's type tags);
+    - the session whole + the core and observers at the remaining fraction
+      [frac_of n]. The write [Lock] linearizes at [RLocked 0] (fraction 1);
       each read [RLock] peels off one [rfrac] share. The fraction arithmetic
       mirrors [rwmutex_guard.rfrac]. ------------------------------------------ *)
 
@@ -442,7 +448,7 @@ Definition own_update_structs (sl : slice.t) (dq : dfrac)
     that a span is a goose record, and a spec that mentioned one would be
     mixing the model with the representation.
 
-    Used as: the store's [pendingDeletes] buffer in [store_inv_excl], the
+    Used as: the store's [pendingDeletes] buffer in [own_store_state], the
     argument and the leftover of [wp_store__applyDeleteSpans], and (through
     [own_delete_ids], which forgets down to the union of the ids) every public
     spec that takes a delete batch. *)
@@ -664,7 +670,8 @@ Definition own_type_pool (dq : dfrac)
           own_ytype parent dq ls tm ∗ ⌜YjsArrInvariant (tm_arr tm)⌝.
 
 (** The type and pool are fractional: the read path holds a
-    share of the pool ([store_inv_ro]) while the write path holds it whole. *)
+    share of the pool (inside its [own_store] fraction) while the write path
+    holds it whole. *)
 #[global] Instance own_ytype_fractional parent ls tm :
   Fractional (λ q, own_ytype parent (DfracOwn q) ls tm).
 Proof.
@@ -1524,7 +1531,7 @@ Definition own_store_data (s_loc : loc) (γs : store_names) (γh : history_names
     "%Hregmodel" ∷ ⌜pool_registry_models m bind p⌝ ∗
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
     "%Hctr"   ∷ ⌜pool_next_clock p c (uint.nat k)⌝ ∗
-    (* no-loss accepted-id layer: matches [store_inv_excl] *)
+    (* no-loss accepted-id layer: matches [own_store_session] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
     "Hdelete_set" ∷ own_delete_set γs m (all_runs p) ∗
     (* the reader/invariant agreement on the whole cell state (issue #219
@@ -2146,7 +2153,7 @@ Proof. apply _. Qed.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
    Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked
-   n)], whose payload nests [store_inv_excl ∗ store_inv_ro] (the latter an auth
+   n)], whose payload nests the core beside the session (auths plus
    plus a [big_sepM] of the DLL fixpoint). Stripping the [▷] off the payload
    conjunct-by-conjunct with those predicates TRANSPARENT makes the [Timeless]
    search unfold that whole structure into its normal form: ~750 s per lock
@@ -2160,7 +2167,7 @@ Proof. apply _. Qed.
    the payload predicates stay transparent so [iFrame] / [iNamed] on them keep
    working (store_inv_init, store_inv_own_store_data, Insert / Delete). The one-off
    [tie_body_timeless] proof decomposes the [∗]/[∃] by hand so each leaf
-   [Timeless] goal is a flat instance lookup (store_inv_excl_timeless etc.);
+   [Timeless] goal is a flat instance lookup (own_store_core_timeless etc.);
    letting [apply _] tackle the whole nested goal instead costs ~85 s of TC
    backtracking. Each lock proof drops from ~750 s to sub-second, and the file
    from ~37 min to well under a minute. *)

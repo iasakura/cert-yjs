@@ -59,7 +59,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (** [Text.String]: a CONCURRENT functional read (issue #125). Takes the
     RWMutex read lock, walks the type's DLL through a fractional
-    [store_inv_ro] share ([wp_yType__Text]), then releases. The caller brings
+    share of [own_store] ([wp_yType__Text]), then releases. The caller brings
     a prefix certificate [is_history_lb γh c h0] of THIS replica's op history
     (with the client pin identifying it), and the model is guaranteed to
     contain one item per delivered insert of [h0] targeting this root (a

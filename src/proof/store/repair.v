@@ -67,7 +67,7 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
 
 (* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54
-   weakened them off their registration resource), so [store_inv_excl] /
+   weakened them off their registration resource), so the lock body /
    [own_store_data] carry them as [⌜..⌝] and no Persistent/Timeless instances are
    needed here. *)
 

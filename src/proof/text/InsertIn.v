@@ -1015,7 +1015,7 @@ Proof.
       rewrite Htk runs_flatten_app length_app Hcoupj runs_flatten_cons runs_flatten_nil /rnew /=. lia.
     - rewrite Hruns'eq length_app /= length_take_le; last exact Hnxb. rewrite length_drop. lia.
     - exact Hhcohj2. }
-  (* loop exit: the whole run is integrated; rebuild [store_inv] and return. *)
+  (* loop exit: the whole run is integrated; rebuild the store and return. *)
   have Hjend : (j = length cs)%nat by word.
   have Hnf : ¬ ((#false : val) = #true) by done.
   rewrite (decide_False _ _ Hnf). wp_auto.

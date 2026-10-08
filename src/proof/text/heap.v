@@ -88,7 +88,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
    [is_Text] lives here; the Doc-layer predicate [is_Doc] lives in doc/heap.v
    (mirrors doc.go). [is_Text] delegates straight to the store invariants
    ([is_Store] / [is_type_lb]) in store/heap, referencing only Text's own fields.
-   [wp_Text__Insert] is proved (Lock → store_inv → findPos/Integrate loop → grow
+   [wp_Text__Insert] is proved (Lock → the store → findPos/Integrate loop → grow
    the item-set auth → Unlock). *)
 
 (** Text handle (persistent), parameterized by a SORTED list [L] of known items
@@ -173,14 +173,14 @@ Proof. iIntros "H". iNamed "H". iFrame "Hdeleted_lb". Qed.
     content / id / left / right".
 
     Proof shape: peel [is_Text → is_Store] and take the RWMutex write lock
-    ([wp_Store__wlock]), which yields [store_inv]; combine [is_type_lb] with
+    ([wp_Store__wlock]), which yields the store; combine [is_type_lb] with
     [Hseq] (auth) via
     [auth_gmap_gset_lookup] to learn [parent ∈ dom types] and extract THIS text's
     type's runs / DLL from [Htypes]; run the findPos/Integrate loop, whose
     invariant accumulates [ins] with the per-byte facts (content/id/origins) plus
     [tm_arr tm ⊆ arr]; at exit grow the auth item-set ([tm_arr tm → arr]) with
     [auth_gmap_gset_grow] and mint the new [is_type_lb]; reinsert the grown text
-    into [Htypes] ([big_sepM_insert_acc]); rebuild [store_inv] (clock bumped,
+    into [Htypes] ([big_sepM_insert_acc]); rebuild the store (clock bumped,
     counter [Hctr] preserved); [Unlock]; return with [L' = arr]. The post's
     [sublist L L'] follows from [sorted_subseteq_sublist] (both sorted, [L ⊆ L']
     as items via the item-set ghost), and [it ∉ L] from the fresh clocks vs the

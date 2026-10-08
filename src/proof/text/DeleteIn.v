@@ -303,7 +303,7 @@ Proof.
   { destruct (locs_aligned_lens _ _ Halj tv.(yjs.Text.inner') _ Hpj) as (ls' & Hls' & Hlen').
     simpl in Hls'. rewrite Hlj in Hls'. injection Hls' as <-. exact Hlen'. }
   case_bool_decide as Hrem.
-  2:{ (* budget exhausted: rebuild [store_inv] (same [tm_arr]), Unlock, return. *)
+  2:{ (* budget exhausted: rebuild the store (same [tm_arr]), Unlock, return. *)
       wp_auto.
       have Hnf : ¬ ((#false : val) = #true) by done.
       rewrite (decide_False _ _ Hnf) (decide_True _ _ (eq_refl (#false : val))). wp_auto.
@@ -409,7 +409,7 @@ Proof.
       iPureIntro. rewrite Hmt. exact Hdelsarr. }
   wp_auto.
   destruct (decide (q < length runsj)%nat) as [Hqlt | Hqge].
-  2:{ (* cursor at end: rebuild [store_inv] (same [tm_arr]), Unlock, return. *)
+  2:{ (* cursor at end: rebuild the store (same [tm_arr]), Unlock, return. *)
       have Hnull : loc_at lsj (Z.of_nat q) = null.
       { rewrite /loc_at decide_True; [| lia]. rewrite Nat2Z.id lookup_ge_None_2; [done | lia]. }
       rewrite (bool_decide_eq_true_2 (loc_at lsj (Z.of_nat q) = null) Hnull). simpl negb.

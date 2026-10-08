@@ -72,7 +72,7 @@ Context {sync_pkg : sync.Assumptions}.
 (** Item-SET RA: [auth (gmap loc (gset (YjsItem A)))] — the AUTH wraps the whole
     map (NOT [gmap (auth gset)], where a per-key frag would be valid even for an
     absent key and so would NOT witness registration). The authority [● m] (per
-    type-loc item set) sits in [store_inv]; a persistent fragment
+    type-loc item set) sits in the lock body; a persistent fragment
     [◯ {[parent := S]}] held by [is_Text] gives, when combined with [● m],
     gmap-inclusion [{[parent := S]} ≼ m] = [∃ S', m !! parent = Some S' ∧ S ⊆ S']
     — i.e. it BOTH witnesses [parent ∈ dom m] (= the type is registered) AND
@@ -93,7 +93,7 @@ Context {seq_inG : inG Σ seqUR}.
 
 (** Accepted-id RA (this branch): a GROW-ONLY set of ids the store has
     "accepted", i.e. promised not to lose. [authR (gsetUR YjsId)] — the
-    authority [● acc] sits in [store_inv], and a persistent lower-bound
+    authority [● acc] sits in the lock body, and a persistent lower-bound
     fragment [◯ {[i]}] (gset elements are core-id) is the [is_accepted]
     receipt every applyUpdate hands back per input. The store invariant ties
     [acc ⊆ delivered_ids h ∪ pending ids], so an accepted id is forever
@@ -113,7 +113,7 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* The [∷] (named) wrapper blocks [Timeless] TC resolution; unfold it (as
    [New.proof.sync_proof.rwmutex] does) so the [Timeless] instances below go
-   through the named conjuncts of [own_item_map] / [store_inv]. *)
+   through the named conjuncts of [own_item_map] / the lock body. *)
 
 #[local] Hint Extern 100 (Timeless (?n ∷ ?P)) =>
   (change (n ∷ P) with P) : typeclass_instances.
