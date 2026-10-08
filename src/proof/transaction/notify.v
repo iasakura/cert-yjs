@@ -71,7 +71,7 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
-Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 (** The walk: one type at its run view, the record's two span slices read
     only. Every run fits a word ([run_fits], the pool's invariant), which
@@ -430,7 +430,7 @@ Proof.
       "Hobserversmap" ∷ own_map observers_mref (DfracOwn 1) registry ∗
       "Hobserversauth" ∷ own γs.(sn_observers) (● registered_tokens registered : authR (gsetUR (gname * P))) ∗
       "Hregagree" ∷ own γs.(sn_observers_agree)
-        (to_frac_agree 1 ((registry, registered) : leibnizO observer_registry_model)) ∗
+        (to_frac_agree 1 (registered : leibnizO registered_entries)) ∗
       "Hobservers" ∷ ([∗ map] parent ↦ cbs_sl; entry ∈ registry; registered,
          own_type_observers γs γh entry.1 1
            (if decide (parent ∈ done) then type_snapshot m deleted entry.1

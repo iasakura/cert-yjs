@@ -61,7 +61,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
-Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 (* ===== lemmas ============================================================= *)
 

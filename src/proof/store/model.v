@@ -40,7 +40,7 @@
     The address-level bookkeeping over this model is [store/value.v].
 
     The type pool: [pool], every registered type at its [type_model]
-    ([addressed_pool] pairs it with the types' node addresses); [all_runs]
+    (the address map pairs it with the types' node addresses); [all_runs]
     and the clock-sorted [client_runs]; [pool_invs], the pool invariants
     the model does not determine (the addresses' [NoDup] is not among them:
     it is a heap fact, [locs_wf]); [pool_covers], the [k]-th run of a
@@ -143,11 +143,6 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     with it). *)
 Definition pool := gmap loc type_model.
 
-(** [addressed_pool]: a pool together with each registered type's node
-    addresses, the pair the whole store speaks in ([ss_locs], [ss_pool]).
-    Named because it is also the ghost value the readers agree on
-    ([store_names]'s [sn_types_agree], read by [state_frag]). *)
-Definition addressed_pool := (gmap loc (list loc) * pool)%type.
 
 (** All runs across all types (the document-global item pool). *)
 Definition all_runs (p : pool) : list ItemRun :=

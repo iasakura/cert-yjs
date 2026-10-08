@@ -220,16 +220,18 @@ Notation observersUR := (authR (gsetUR (gname * go_string))).
 
 Context {observers_inG : inG Σ observersUR}.
 
-(** The observer registry's contents as one agreement value (issue #219 M4):
-    the [observers] map's value (per registered type, its callback slice)
-    and the registered entries (per type, its root name and its observers'
-    tokens in slice order). A reader's fraction of [own_observers] and the
-    lock invariant's remainder agree on it, which is what lets the two
-    recombine at [runlock] with every existential aligned. *)
-Definition observer_registry_model : Type :=
-  (gmap loc slice.t * gmap loc (go_string * list gname))%type.
+(** The registered observer entries as one agreement value (issue #219
+    M4): per registered type, its root name and its observers' tokens in
+    slice order. A reader's fraction of [own_observers] and the lock
+    invariant's remainder agree on it, which is what lets the two
+    recombine at [runlock] with the per-token [ghost_var] fractions
+    aligned (the flattened token-set authority alone does not pin the
+    lists). The [observers] map's contents need no agreement of their
+    own: the heap pins them ([own_map_dfrac_agree]). *)
+Definition registered_entries : Type :=
+  gmap loc (go_string * list gname).
 
-Notation observersAgreeUR := (dfrac_agreeR (leibnizO observer_registry_model)).
+Notation observersAgreeUR := (dfrac_agreeR (leibnizO registered_entries)).
 
 Context {observers_agree_inG : inG Σ observersAgreeUR}.
 
@@ -362,7 +364,7 @@ Record store_names := StoreNames {
   sn_rw : RWMutex_names; (* the logically-atomic RWMutex ghost names             *)
   sn_rmax : gname;   (* own_toks bound: # readers ≤ actualMaxReaders            *)
   sn_rrlocked : gname; (* own_tok_auth: the active reader count                 *)
-  sn_types_agree : gname; (* dfrac_agree on the types map (reader/inv agreement) *)
+  sn_state_agree : gname; (* dfrac_agree on the whole cell state (reader/inv agreement, issue #219 M4) *)
   sn_accepted : gname; (* authR (gsetUR YjsId): grow-only accepted-id set (no-loss) *)
   sn_client : gname; (* agreeR (leibnizO ClientId): the store's client pin, [is_store_client] *)
   sn_delete_set : gname;     (* authR (gsetUR YjsId): the monotone delete set (plan-delete-set.md D1) *)
@@ -1382,7 +1384,7 @@ Definition own_observer_registry (observers_mref : loc) (γs : store_names) (γh
     "Hobserversmap" ∷ own_map observers_mref (DfracOwn q) registry ∗
     "Hobserversauth" ∷ own γs.(sn_observers) (●{#q} registered_tokens registered : observersUR) ∗
     "Hregagree" ∷ own γs.(sn_observers_agree)
-       (to_frac_agree q ((registry, registered) : leibnizO observer_registry_model)) ∗
+       (to_frac_agree q (registered : leibnizO registered_entries)) ∗
     "#Hregistered_bind" ∷ ([∗ map] parent ↦ entry ∈ registered,
        is_type_binding γs.(sn_types) entry.1 parent) ∗
     "Hobservers" ∷ ([∗ map] parent ↦ cbs_sl; entry ∈ registry; registered,
@@ -1407,7 +1409,7 @@ Definition own_wlock (γs : store_names) : iProp Σ :=
     A mutating method moves it with the state (full fraction,
     [state_frag_update]). *)
 Definition state_frag (γs : store_names) (q : Qp) (state : store_state) : iProp Σ :=
-  own γs.(sn_types_agree) (to_frac_agree q (state : leibnizO store_state)).
+  own γs.(sn_state_agree) (to_frac_agree q (state : leibnizO store_state)).
 
 Lemma state_frag_split (γs : store_names) (q1 q2 : Qp) (state : store_state) :
   state_frag γs (q1 + q2) state ⊣⊢ state_frag γs q1 state ∗ state_frag γs q2 state.
@@ -1430,9 +1432,9 @@ Qed.
 (** The observer registry's agreement moves with the writer, like
     [state_frag_update]: registering a callback ([Text.Observe]) holds
     the whole fraction. *)
-Lemma observers_agree_update (γs : store_names) (v' v : observer_registry_model) :
-  own γs.(sn_observers_agree) (to_frac_agree 1 (v : leibnizO observer_registry_model)) ==∗
-  own γs.(sn_observers_agree) (to_frac_agree 1 (v' : leibnizO observer_registry_model)).
+Lemma observers_agree_update (γs : store_names) (v' v : registered_entries) :
+  own γs.(sn_observers_agree) (to_frac_agree 1 (v : leibnizO registered_entries)) ==∗
+  own γs.(sn_observers_agree) (to_frac_agree 1 (v' : leibnizO registered_entries)).
 Proof.
   iIntros "H". iMod (own_update with "H") as "$"; last done.
   apply cmra_update_exclusive. done.
@@ -2026,8 +2028,8 @@ Proof.
     iDestruct "H1" as (registry1 registered1) "(Hm1 & Ha1 & Hg1 & #Hbind & Hobs1)".
     iDestruct "H2" as (registry2 registered2) "(Hm2 & Ha2 & Hg2 & _ & Hobs2)".
     iCombine "Hg1 Hg2" gives %Hv.
-    apply frac_agree_op_valid_L in Hv as [_ Hveq].
-    injection Hveq => <- <-.
+    apply frac_agree_op_valid_L in Hv as [_ Hveq]. subst registered2.
+    iDestruct (own_map_dfrac_agree with "Hm1 Hm2") as %<-.
     iExists registry1, registered1.
     rewrite own_map_dfrac_split.
     rewrite frac_agree_op own_op.
@@ -2079,8 +2081,8 @@ Proof.
   iDestruct "Hr1" as (registry1 registered1) "(Hm1 & Ha1 & Hg1 & #Hbind1 & Hobs1)".
   iDestruct "Hr2" as (registry2 registered2) "(Hm2 & Ha2 & Hg2 & #Hbind2 & Hobs2)".
   iCombine "Hg1 Hg2" gives %Hv.
-  apply frac_agree_op_valid_L in Hv as [_ Hveq].
-  injection Hveq => <- <-.
+  apply frac_agree_op_valid_L in Hv as [_ Hveq]. subst registered2.
+  iDestruct (own_map_dfrac_agree with "Hm1 Hm2") as %<-.
   iExists registry1, registered1.
   rewrite own_map_dfrac_split.
   rewrite frac_agree_op own_op.
@@ -2564,12 +2566,12 @@ Proof.
   iMod (own_alloc (● (∅ : gset (gname * P)) : observersUR)) as (γobs) "Hobsauth".
   { apply auth_auth_valid. done. }
   (* the observer registry's agreement, at the empty registry (issue #219 M4) *)
-  iMod (own_alloc (to_frac_agree 1 ((∅, ∅) : leibnizO observer_registry_model)))
+  iMod (own_alloc (to_frac_agree 1 (∅ : leibnizO registered_entries)))
     as (γoa) "Hregagree".
   { done. }
   set (γs := {| sn_seq := γseq; sn_types := γtypes; sn_wl := γwl;
                 sn_rw := γrw; sn_rmax := γrmax; sn_rrlocked := γrrlocked;
-                sn_types_agree := γta; sn_accepted := γacc; sn_client := γcl;
+                sn_state_agree := γta; sn_accepted := γacc; sn_client := γcl;
                 sn_delete_set := γds; sn_observers := γobs;
                 sn_observers_agree := γoa |}).
   iModIntro. iExists γs.

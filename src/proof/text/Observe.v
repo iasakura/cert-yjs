@@ -45,7 +45,7 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
-Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 Local Notation P := go_string.
 Local Notation TId := (TypeId P).
@@ -179,8 +179,7 @@ Proof.
     wp_apply (wp_map_insert with "Hobserversmap"). iIntros "Hobserversmap". wp_auto.
     iMod (observers_register γs _ γo name with "Hobserversauth") as "[Hobserversauth #Hobserved]".
     iMod (observers_agree_update γs
-            (<[tv.(yjs.Text.inner') := sl']> registry,
-             <[tv.(yjs.Text.inner') := (name, γos ++ [γo])]> registered)
+            (<[tv.(yjs.Text.inner') := (name, γos ++ [γo])]> registered)
             with "Hregagree") as "Hregagree".
     iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
     iAssert (own_observers (store_of_ref tv.(yjs.Text.store')) γs γh 1 m deleted)
@@ -213,8 +212,7 @@ Proof.
     wp_apply (wp_map_insert with "Hobserversmap"). iIntros "Hobserversmap". wp_auto.
     iMod (observers_register γs _ γo name with "Hobserversauth") as "[Hobserversauth #Hobserved]".
     iMod (observers_agree_update γs
-            (<[tv.(yjs.Text.inner') := sl']> registry,
-             <[tv.(yjs.Text.inner') := (name, [] ++ [γo])]> registered)
+            (<[tv.(yjs.Text.inner') := (name, [] ++ [γo])]> registered)
             with "Hregagree") as "Hregagree".
     iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
     iAssert (own_observers (store_of_ref tv.(yjs.Text.store')) γs γh 1 m deleted)

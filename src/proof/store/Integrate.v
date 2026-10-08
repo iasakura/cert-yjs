@@ -85,7 +85,7 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
-Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 (** [containsId] decides membership of the span slice's char-id set (issue #28:
     an id addresses any char of a scanned run, so the Go test is a clock-range
