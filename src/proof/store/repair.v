@@ -60,10 +60,11 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* The store's reader-count accounting ties the readers' share to the [types]
    map via a [dfrac_agree]; [store/heap] declares it up front, so the specs
    reached from here carry it too. *)
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
 
 (* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54
    weakened them off their registration resource), so [store_inv_excl] /
@@ -83,10 +84,10 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
     public predicates": re-establishing the invariant is the function's
     job, never its caller's). *)
 #[local] Lemma wp_store__getOrCreateYType_state (s : loc) (state : store_state) (nm : go_string) :
-  {{{ is_pkg_init yjs ∗ own_store_state s state }}}
+  {{{ is_pkg_init yjs ∗ own_store_state s 1 state }}}
     s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
   {{{ (q : loc) (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #q;
-      own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>
+      own_store_state s 1 (state <| ss_pool := p' |> <| ss_locs := locs' |>
                             <| ss_bind := bind' |>) ∗
       ⌜pool_lookup_or_create (ss_pool state) (ss_locs state) (ss_bind state) nm q p' locs' bind'⌝ }}}.
 Proof using Type*.
@@ -166,10 +167,10 @@ Qed.
 Lemma wp_store__getOrCreateYType (s : loc) (γs : store_names) (γh : history_names)
     (nm : go_string) (state : store_state) (ds : gset YjsId)
     (m0 : DocModel) (deleted0 : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 }}}
+  {{{ is_pkg_init yjs ∗ own_store s γs γh 1 state ds m0 deleted0 }}}
     s @! (go.PointerType yjs.store) @! "getOrCreateYType" #nm
   {{{ (q : loc) (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc), RET #q;
-      own_store s γs γh (state <| ss_pool := p' |> <| ss_locs := locs' |>
+      own_store s γs γh 1 (state <| ss_pool := p' |> <| ss_locs := locs' |>
                             <| ss_bind := bind' |>) ds m0 deleted0 ∗
       is_type_binding γs.(sn_types) nm q ∗
       ⌜pool_lookup_or_create (ss_pool state) (ss_locs state) (ss_bind state) nm q p' locs' bind'⌝ }}}.
@@ -188,7 +189,7 @@ Proof using Type*.
     iModIntro. iApply ("HΦ" $! q p locs bind).
     iSplitL; last (iSplitR; [iFrame "Hbindname" | iPureIntro; exact Hlc0]).
     rewrite /own_store /own_store_core /=.
-    iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+    iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree Hstate".
     iPureIntro. exact Hds_tomb.
   - (* miss: register the fresh empty root in both authorities *)
     set (p' := <[q := MkTypeModel []]> p).
@@ -218,10 +219,11 @@ Proof using Type*.
     have Hperm : all_runs p' ≡ₚ all_runs p := all_runs_insert_empty p q [] Hfresh.
     have Hds_tomb' : delete_set_tombstoned ds (all_runs p')
       := delete_set_tombstoned_perm ds (all_runs p) (all_runs p') Hperm Hds_tomb.
+    iMod (state_frag_update γs _ with "Hstate_agree") as "Hstate_agree".
     iModIntro. iApply ("HΦ" $! q p' (<[q := []]> locs) bind').
     iSplitL; last (iSplitR; [iFrame "Hbindname" | iPureIntro; exact Hlc0]).
     rewrite /own_store /own_store_core /= Hfmap'.
-    iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds' Hdelete_set_auth Hstate".
+    iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds' Hdelete_set_auth Hstate_agree Hstate".
     iPureIntro. exact Hds_tomb'.
 Qed.
 
@@ -251,11 +253,11 @@ Lemma wp_store__repair_state (s item_l pname : loc)
   {{{ is_pkg_init yjs ∗
       own_linked_item item_l input null null null ∗
       is_parent_name pname opn ∗
-      own_store_state s state }}}
+      own_store_state s 1 state }}}
     s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
   {{{ (leftNode rightNode : loc) (p' : pool) (locs' : gmap loc (list loc)), RET #();
       own_linked_item item_l input p_t leftNode rightNode ∗
-      own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
+      own_store_state s 1 (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
       ⌜pool_after_repair (ss_pool state) p'⌝ ∗
       ⌜pool_origins_split p' locs' input orL orR leftNode rightNode⌝ ∗
       (* a repair only splits: the exact tombstone state is untouched *)
@@ -708,10 +710,10 @@ Qed.
     ([pool_registry_models], [docm_agree]). *)
 Lemma wp_store__hasNode_state (s : loc) (idv : yjs.id.t) (m : DocModel) (state : store_state) :
   pool_registry_models m (ss_bind state) (ss_pool state) ->
-  {{{ is_pkg_init yjs ∗ own_store_state s state }}}
+  {{{ is_pkg_init yjs ∗ own_store_state s 1 state }}}
     s @! (go.PointerType yjs.store) @! "hasNode" #idv
   {{{ (ok : bool), RET #ok;
-      own_store_state s state ∗
+      own_store_state s 1 state ∗
       ⌜ok = true <-> doc_model_has m (toYjsId idv) = true⌝ }}}.
 Proof using Type*.
   move=> Hregmodel.
@@ -851,10 +853,10 @@ Qed.
 Lemma wp_store__originArrived (s : loc) (p : loc)
     (originId : option yjs.id.t) (m : DocModel) (state : store_state) :
   pool_registry_models m (ss_bind state) (ss_pool state) ->
-  {{{ is_pkg_init yjs ∗ is_origin_id p originId ∗ own_store_state s state }}}
+  {{{ is_pkg_init yjs ∗ is_origin_id p originId ∗ own_store_state s 1 state }}}
     s @! (go.PointerType yjs.store) @! "originArrived" #p
   {{{ (ok : bool), RET #ok;
-      own_store_state s state ∗
+      own_store_state s 1 state ∗
       ⌜ok = true <-> match originId with
                      | None => True
                      | Some idv => doc_model_has m (toYjsId idv) = true
@@ -891,9 +893,9 @@ Qed.
 Lemma wp_store__depsArrived_state (s : loc) (updateItemVal : yjs.updateItem.t)
     (typedInput : TId * IntegrateInput (A := A)) (m : DocModel) (state : store_state) :
   pool_registry_models m (ss_bind state) (ss_pool state) ->
-  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s state }}}
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s 1 state }}}
     s @! (go.PointerType yjs.store) @! "depsArrived" #updateItemVal
-  {{{ RET #(input_ready m typedInput.2); own_store_state s state }}}.
+  {{{ RET #(input_ready m typedInput.2); own_store_state s 1 state }}}.
 Proof using Type*.
   move=> Hregmodel.
   iIntros (Φ) "(#Hpkg & #Hui & Hruns) HΦ".
@@ -1035,11 +1037,11 @@ Lemma wp_store__repair_create_state (s item_l pname : loc)
   {{{ is_pkg_init yjs ∗
       own_linked_item item_l input null null null ∗
       is_parent_name pname (Some nm) ∗
-      own_store_state s state }}}
+      own_store_state s 1 state }}}
     s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
   {{{ (q : loc), RET #();
       own_linked_item item_l input q null null ∗
-      own_store_state s (state <| ss_pool := <[q := MkTypeModel []]> (ss_pool state) |>
+      own_store_state s 1 (state <| ss_pool := <[q := MkTypeModel []]> (ss_pool state) |>
                             <| ss_locs := <[q := []]> (ss_locs state) |>
                             <| ss_bind := <[nm := q]> (ss_bind state) |>) ∗
       ⌜ss_pool state !! q = None⌝ }}}.
@@ -1097,11 +1099,11 @@ Lemma wp_store__repair (s item_l pname : loc) (γs : store_names) (γh : history
   {{{ is_pkg_init yjs ∗
       own_linked_item item_l input null null null ∗
       is_parent_name pname opn ∗
-      own_store s γs γh state ds m0 deleted0 }}}
+      own_store s γs γh 1 state ds m0 deleted0 }}}
     s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
   {{{ (leftNode rightNode : loc) (p' : pool) (locs' : gmap loc (list loc)), RET #();
       own_linked_item item_l input p_t leftNode rightNode ∗
-      own_store s γs γh (state <| ss_pool := p' |> <| ss_locs := locs' |>) ds m0 deleted0 ∗
+      own_store s γs γh 1 (state <| ss_pool := p' |> <| ss_locs := locs' |>) ds m0 deleted0 ∗
       ⌜pool_after_repair (ss_pool state) p'⌝ ∗
       ⌜pool_origins_split p' locs' input orL orR leftNode rightNode⌝ ∗
       ⌜pool_tombstoned p' = pool_tombstoned (ss_pool state)⌝ }}}.
@@ -1110,6 +1112,7 @@ Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hlinked & #HisPN & Hstore) HΦ".
   iNamed "Hstore". iNamed "Hcore".
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
+  iApply wp_fupd.
   wp_apply (wp_store__repair_state s item_l pname input opn
               (MkStoreState client0 k0 locs p bind pend pdel) orL orR p_t Hcov Hpar
               with "[$Hpkg $Hlinked $HisPN $Hstate]").
@@ -1120,11 +1123,13 @@ Proof using Type*.
   have Hfmap := pool_item_sets_eq p p' Hpres Hdom.
   have Hds_tomb' : delete_set_tombstoned ds (all_runs p')
     := delete_set_tombstoned_refine ds p p' Hlr Hds_tomb.
+  iMod (state_frag_update γs _ with "Hstate_agree") as "Hstate_agree".
+  iModIntro.
   iApply ("HΦ" $! leftNode rightNode p' locs').
   iFrame "Hlinked".
   iSplitL; last (iPureIntro; split_and!; [exact Hrep0 | exact Hsplit | exact Htomb]).
   rewrite /own_store /own_store_core /= Hfmap.
-  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree Hstate".
   iPureIntro. exact Hds_tomb'.
 Qed.
 
@@ -1146,11 +1151,11 @@ Lemma wp_store__repair_create (s item_l pname : loc) (γs : store_names) (γh : 
   {{{ is_pkg_init yjs ∗
       own_linked_item item_l input null null null ∗
       is_parent_name pname (Some nm) ∗
-      own_store s γs γh state ds m0 deleted0 }}}
+      own_store s γs γh 1 state ds m0 deleted0 }}}
     s @! (go.PointerType yjs.store) @! "repair" #item_l #pname
   {{{ (q : loc), RET #();
       own_linked_item item_l input q null null ∗
-      own_store s γs γh (state <| ss_pool := <[q := MkTypeModel []]> (ss_pool state) |>
+      own_store s γs γh 1 (state <| ss_pool := <[q := MkTypeModel []]> (ss_pool state) |>
                             <| ss_locs := <[q := []]> (ss_locs state) |>
                             <| ss_bind := <[nm := q]> (ss_bind state) |>) ds m0 deleted0 ∗
       is_type_binding γs.(sn_types) nm q ∗
@@ -1193,11 +1198,12 @@ Proof using Type*.
   have Hperm : all_runs p' ≡ₚ all_runs p := all_runs_insert_empty p q [] Hfresh.
   have Hds_tomb' : delete_set_tombstoned ds (all_runs p')
     := delete_set_tombstoned_perm ds (all_runs p) (all_runs p') Hperm Hds_tomb.
+  iMod (state_frag_update γs _ with "Hstate_agree") as "Hstate_agree".
   iModIntro. iApply ("HΦ" $! q).
   iFrame "Hlinked".
   iSplitL; last (iSplitR; [iFrame "Hbindname" | iPureIntro; exact Hfresh]).
   rewrite /own_store /own_store_core /= Hfmap'.
-  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds' Hdelete_set_auth Hstate".
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds' Hdelete_set_auth Hstate_agree Hstate".
   iPureIntro. exact Hds_tomb'.
 Qed.
 
@@ -1212,10 +1218,10 @@ Lemma wp_store__hasNode (s : loc) (γs : store_names) (γh : history_names)
     (idv : yjs.id.t) (m : DocModel)
     (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :
   pool_registry_models m (ss_bind state) (ss_pool state) ->
-  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 }}}
+  {{{ is_pkg_init yjs ∗ own_store s γs γh 1 state ds m0 deleted0 }}}
     s @! (go.PointerType yjs.store) @! "hasNode" #idv
   {{{ (ok : bool), RET #ok;
-      own_store s γs γh state ds m0 deleted0 ∗
+      own_store s γs γh 1 state ds m0 deleted0 ∗
       ⌜ok = true <-> doc_model_has m (toYjsId idv) = true⌝ }}}.
 Proof using Type*.
   move=> Hregmodel.
@@ -1225,7 +1231,7 @@ Proof using Type*.
   iIntros (ok) "[Hstate %Hfact]".
   iApply "HΦ".
   iSplitL; last (iPureIntro; exact Hfact).
-  iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth".
+  iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
   iPureIntro. exact Hds_tomb.
 Qed.
 
@@ -1233,9 +1239,9 @@ Lemma wp_store__depsArrived (s : loc) (γs : store_names) (γh : history_names)
     (updateItemVal : yjs.updateItem.t) (typedInput : TId * IntegrateInput (A := A)) (m : DocModel)
     (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :
   pool_registry_models m (ss_bind state) (ss_pool state) ->
-  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store s γs γh state ds m0 deleted0 }}}
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store s γs γh 1 state ds m0 deleted0 }}}
     s @! (go.PointerType yjs.store) @! "depsArrived" #updateItemVal
-  {{{ RET #(input_ready m typedInput.2); own_store s γs γh state ds m0 deleted0 }}}.
+  {{{ RET #(input_ready m typedInput.2); own_store s γs γh 1 state ds m0 deleted0 }}}.
 Proof using Type*.
   move=> Hregmodel.
   iIntros (Φ) "(#Hpkg & #Hui & Hstore) HΦ".
@@ -1244,7 +1250,7 @@ Proof using Type*.
               with "[$Hpkg $Hui $Hstate]").
   iIntros "Hstate".
   iApply "HΦ".
-  iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth".
+  iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
   iPureIntro. exact Hds_tomb.
 Qed.
 

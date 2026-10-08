@@ -56,9 +56,10 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
    a section that carries it *)
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
 
 Lemma wp_newTransaction (s_loc : loc) :
   {{{ is_pkg_init yjs }}}
@@ -150,13 +151,13 @@ Lemma wp_Transaction__integrate_state (tr s parent parent_arg item_l : loc)
   integrate_all (ops_of_input input (explode (in_content input))) (tm_arr tm) = Some arr' ->
   origins_resolved (tm_runs tm) (tm_arr tm) input kL kR ->
   pool_next_clock (ss_pool state) (clientId (in_id input)) (clock (in_id input)) ->
-  {{{ is_pkg_init yjs ∗ own_store_state s state ∗
+  {{{ is_pkg_init yjs ∗ own_store_state s 1 state ∗
       own_linked_item item_l input parent
         (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) ∗
       own_transaction_changes tr s inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "integrate" #parent_arg #item_l
   {{{ (runs' : list ItemRun) (ls' : list loc) (run : list (YjsItem A)), RET #();
-      own_store_state s (state <| ss_pool := <[parent := MkTypeModel runs']> (ss_pool state) |>
+      own_store_state s 1 (state <| ss_pool := <[parent := MkTypeModel runs']> (ss_pool state) |>
                             <| ss_locs := <[parent := ls']> (ss_locs state) |>) ∗
       own_transaction_changes tr s (inserted ∪ char_ids run) tombstoned (changed ∪ {[parent]}) ∗
       ⌜YjsArrInvariant arr'⌝ ∗
@@ -198,7 +199,7 @@ Proof using Type*.
   have Hwfr : run_wf (run_items r) := Hwf' r Hrmem.
   have Hfitsr : run_fits r := proj1 (proj2 (proj1 Hrpi' r Hrmem)).
   (* the parent is a real type, so the result is not nil *)
-  iDestruct (own_store_state_ytype_acc s _ parent ls' (MkTypeModel runs') Hlocs' Hpl' with "Hruns") as "[Hyt Hytback]".
+  iDestruct (own_store_state_ytype_acc s 1 _ parent ls' (MkTypeModel runs') Hlocs' Hpl' with "Hruns") as "[Hyt Hytback]".
   iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
   iDestruct (typed_pointsto_not_null with "Hparent") as %Hpnn.
   iAssert (own_ytype parent (DfracOwn 1) ls' (MkTypeModel runs')) with "[Hparent Hdll]" as "Hyt".
@@ -283,10 +284,10 @@ Lemma wp_Transaction__deleteNode_store (tr s : loc) (state : store_state)
   ss_pool state !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
-  {{{ is_pkg_init yjs ∗ own_store_state s state ∗
+  {{{ is_pkg_init yjs ∗ own_store_state s 1 state ∗
       own_transaction_changes tr s inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "deleteNode" #lc
-  {{{ RET #(); own_store_state s
+  {{{ RET #(); own_store_state s 1
         (state <| ss_pool := <[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]>
                              (ss_pool state) |>) ∗
       own_transaction_changes tr s inserted
@@ -343,10 +344,10 @@ Lemma wp_Transaction__deleteNode (tr s : loc) (γs : store_names) (γh : history
   ss_pool state !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
-  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 ∗
+  {{{ is_pkg_init yjs ∗ own_store s γs γh 1 state ds m0 deleted0 ∗
       own_transaction_changes tr s inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "deleteNode" #lc
-  {{{ RET #(); own_store s γs γh
+  {{{ RET #(); own_store s γs γh 1
         (state <| ss_pool := <[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]>
                              (ss_pool state) |>) ds m0 deleted0 ∗
       own_transaction_changes tr s inserted
@@ -361,6 +362,7 @@ Proof using Type*.
   { apply elem_of_all_runs. exists parent, tm.
     split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hrk)]. }
   iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hrpi0.
+  iApply wp_fupd.
   wp_apply (wp_Transaction__deleteNode_store tr s (MkStoreState client0 k0 locs p bind pend pdel)
               parent ls tm k lc r inserted tombstoned changed Hls Hp Hlk Hrk
               with "[$Hpkg $Hstate $Hchanges]").
@@ -375,10 +377,12 @@ Proof using Type*.
     - rewrite !lookup_fmap lookup_insert_ne //. }
   have Hds_tomb' : delete_set_tombstoned ds (all_runs (<[parent := tm']> p))
     := delete_set_tombstoned_flip ds p parent tm k r Hp Hrk Hds_tomb.
+  iMod (state_frag_update γs _ with "Hstate_agree") as "Hstate_agree".
+  iModIntro.
   iApply "HΦ".
   iFrame "Hchanges".
   rewrite /own_store /own_store_core /= Hfmap.
-  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree Hstate".
   iPureIntro. exact Hds_tomb'.
 Qed.
 
@@ -407,13 +411,13 @@ Lemma wp_Transaction__integrate (tr s parent parent_arg item_l : loc)
   origins_resolved (tm_runs tm) (tm_arr tm) input kL kR ->
   pool_next_clock (ss_pool state) (clientId (in_id input)) (clock (in_id input)) ->
   input_char_ids input ## ds ->
-  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 ∗
+  {{{ is_pkg_init yjs ∗ own_store s γs γh 1 state ds m0 deleted0 ∗
       own_linked_item item_l input parent
         (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) ∗
       own_transaction_changes tr s inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "integrate" #parent_arg #item_l
   {{{ (runs' : list ItemRun) (ls' : list loc) (run : list (YjsItem A)), RET #();
-      own_store s γs γh
+      own_store s γs γh 1
         (state <| ss_pool := <[parent := MkTypeModel runs']> (ss_pool state) |>
                <| ss_locs := <[parent := ls']> (ss_locs state) |>) ds m0 deleted0 ∗
       own_transaction_changes tr s (inserted ∪ char_ids run) tombstoned (changed ∪ {[parent]}) ∗
@@ -474,12 +478,13 @@ Proof using Type*.
   have Hds_tomb' := delete_set_tombstoned_snoc ds (all_runs p)
                       (all_runs (<[parent := MkTypeModel runs']> p)) (MkItemRun run false)
                       Hperm2 Hfreshids Hds_tomb.
+  iMod (state_frag_update γs _ with "Hstate_agree") as "Hstate_agree".
   iModIntro. iApply ("HΦ" $! runs' ls' run).
   iFrame "Hchanges".
   iSplitL; last (iPureIntro; split_and!;
     [exact Hinv' | exists idx; split; [exact Hsp0 | exact Hls'eq] | exact Hden]).
   rewrite /own_store /own_store_core /= -Hfmap.
-  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree Hstate".
   iPureIntro. exact Hds_tomb'.
 Qed.
 

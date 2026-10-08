@@ -58,10 +58,11 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
 
 Lemma wp_Doc__GetOrCreateText (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (name : P) :
@@ -74,13 +75,14 @@ Proof.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
   iDestruct "Hinv" as (c0 h m) "Hstore".
   wp_auto.
-  iDestruct "Hstore" as (state0 ds0) "(Hcore & Hsession & Hobservers)".
+  iDestruct "Hstore" as (state0 ds0) "(Hstore & Hsession)".
   destruct state0 as [client0 k0 locs0 p0 bind0 pend0 pdel0].
   (* the entry registry coherence, kept to transport the session across the
      registry-growing call *)
+  iDestruct "Hstore" as "[Hcore Hobservers]".
   iDestruct (own_store_core_registry_coh with "Hcore") as %Hreg0.
   have [Hbindtypes _] := Hreg0.
-  iAssert (own_store (store_of_ref (dvv.(yjs.Doc.store'))) γs γh
+  iAssert (own_store (store_of_ref (dvv.(yjs.Doc.store'))) γs γh 1
              (MkStoreState client0 k0 locs0 p0 bind0 pend0 pdel0) ds0 m
              (pool_tombstoned p0)) with "[Hcore Hobservers]" as "Hstore".
   { rewrite /own_store. iFrame "Hcore Hobservers". }
@@ -92,8 +94,7 @@ Proof.
     iMod (own_store_bound_root_lb _ _ _ (MkStoreState client0 k0 locs0 p0 bind0 pend0 pdel0)
             _ _ _ name q Hb' with "Hstore") as "[Hstore #Hlb0]".
     wp_auto.
-    iDestruct "Hstore" as "[Hcore Hobservers]".
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hcore $Hsession $Hobservers]").
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hstore $Hsession]").
     (* a fresh handle knows of no deleted char: the empty lower bound of the
        store's delete set *)
     iMod (is_delete_set_lb_empty γs) as "#Hdel0".
@@ -158,7 +159,12 @@ Proof.
       iPureIntro.
       split_and!; [exact Hclient_is | exact Hhcoh | exact Hregmodel' | exact Hctr'
                   | exact Hpendroot | exact Hpendbnd | exact Hacccoh | exact Hds_dom]. }
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hcore $Hsession $Hobservers]").
+    iAssert (own_store (store_of_ref (dvv.(yjs.Doc.store'))) γs γh 1
+               (MkStoreState client0 k0 (<[q := []]> locs0) p' bind' pend0 pdel0) ds0 m
+               (pool_tombstoned p'))
+      with "[Hcore Hobservers]" as "Hstore".
+    { rewrite /own_store. iFrame "Hcore Hobservers". }
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hstore $Hsession]").
     (* a fresh handle knows of no deleted char: the empty lower bound of the
        store's delete set *)
     iMod (is_delete_set_lb_empty γs) as "#Hdel0".

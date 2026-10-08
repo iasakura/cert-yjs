@@ -58,9 +58,10 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
 
 (* ===== lemmas ============================================================= *)
 
@@ -89,12 +90,12 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Lemma wp_Transaction__deleteRange (tr s : loc) (state : store_state)
     (client dclock dlen : w64) (inserted tombstoned : gset YjsId) (changed : gset loc) :
   tombstoned ⊆ pool_tombstoned (ss_pool state) ->
-  {{{ is_pkg_init yjs ∗ own_store_state s state ∗
+  {{{ is_pkg_init yjs ∗ own_store_state s 1 state ∗
       own_transaction_changes tr s inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "deleteRange" #client #dclock #dlen
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (covered : bool)
       (tombstoned' : gset YjsId) (changed' : gset loc), RET #covered;
-      own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
+      own_store_state s 1 (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
       own_transaction_changes tr s inserted tombstoned' changed' ∗
       ⌜pool_after_delete (ss_pool state) p'⌝ ∗
       ⌜range_no_overflow dclock dlen -> covered = true ->
@@ -118,7 +119,7 @@ Proof using Type*.
              (tombstoned_i : gset YjsId) (changed_i : gset loc),
     "Hcur" ∷ cur_ptr ↦ cur ∗
     "Hcov" ∷ covered_ptr ↦ cov ∗
-    "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_i p_i bind pend pdel) ∗
+    "Hruns" ∷ own_store_state s 1 (MkStoreState client0 k0 locs_i p_i bind pend pdel) ∗
     "Hchanges" ∷ own_transaction_changes tr s inserted tombstoned_i changed_i ∗
     "%Hcurb" ∷ ⌜(uint.Z dclock <= uint.Z cur)%Z⌝ ∗
     "%Hcovj" ∷ ⌜range_no_overflow dclock dlen -> cov = true ->
@@ -384,12 +385,12 @@ Qed.
     (sp_sl : slice.t) (dq : dfrac) (spans : list delete_span)
     (inserted tombstoned : gset YjsId) (changed : gset loc) :
   tombstoned ⊆ pool_tombstoned (ss_pool state) ->
-  {{{ is_pkg_init yjs ∗ own_store_state s state ∗ own_delete_spans sp_sl dq spans ∗
+  {{{ is_pkg_init yjs ∗ own_store_state s 1 state ∗ own_delete_spans sp_sl dq spans ∗
       own_transaction_changes tr s inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "applyDeleteSpans" #sp_sl
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (rest : list delete_span)
       (tombstoned' : gset YjsId) (changed' : gset loc), RET #();
-      own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>
+      own_store_state s 1 (state <| ss_pool := p' |> <| ss_locs := locs' |>
                             <| ss_pending_deletes := rest |>) ∗
       own_delete_spans sp_sl dq spans ∗
       own_transaction_changes tr s inserted tombstoned' changed' ∗
@@ -455,7 +456,7 @@ Proof using Type*.
       "Hrest" ∷ rest_sl ↦* rest_vs ∗
       "Hrestcap" ∷ own_slice_cap yjs.deleteSpan.t rest_sl (DfracOwn 1) ∗
       "Hall" ∷ all_sl ↦* (pdel_vs ++ spans_vs) ∗
-      "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_j p_j bind pend []) ∗
+      "Hruns" ∷ own_store_state s 1 (MkStoreState client0 k0 locs_j p_j bind pend []) ∗
       "Hchanges" ∷ own_transaction_changes tr s inserted tombstoned_j changed_j ∗
       "%Hjb" ∷ ⌜(uint.nat j <= length (pdel_vs ++ spans_vs))%nat⌝ ∗
       "%HdelDj" ∷ ⌜ids_tombstoned Dj (all_runs p_j)⌝ ∗

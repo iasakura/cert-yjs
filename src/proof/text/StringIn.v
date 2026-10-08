@@ -36,10 +36,11 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
 
 Local Notation P := go_string.
 Local Notation TId := (TypeId P).
@@ -89,7 +90,7 @@ Proof.
   have Hsnap : runs_model (tm_runs ts) = type_snapshot m deleted name.
   { rewrite /type_snapshot Hmt Hdeleted. exact (runs_model_tombstoned p _ ts Hpoolinv Htsp). }
   wp_auto.
-  iDestruct (own_store_state_ytype_acc s_loc (MkStoreState client k locs p bind pend pdel)
+  iDestruct (own_store_state_ytype_acc s_loc 1 (MkStoreState client k locs p bind pend pdel)
                tv.(yjs.Text.inner') ls ts Hls Htsp with "Hstate") as "[Hyt Hytback]".
   wp_apply (wp_yType__Text with "[$Hyt]"). iIntros "Hyt".
   iDestruct ("Hytback" with "Hyt") as "Hstate".

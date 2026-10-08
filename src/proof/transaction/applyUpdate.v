@@ -56,10 +56,11 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* The store's reader-count accounting ties the readers' share to the [types]
    map via a [dfrac_agree]; [store/heap] declares it up front, so the specs
    reached from here carry it too. *)
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
 
 (* [pending_item_rooted] / [is_pending_rooted] are pure [Prop]s (issue #54), so
    [store_inv_excl] / [own_store_data] carry them as [⌜..⌝] and no Persistent /
@@ -143,11 +144,11 @@ Qed.
   pool_next_clock (ss_pool state) (clientId (in_id typedInput.2)) (clock (in_id typedInput.2)) ->
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   input_fits typedInput.2 ->
-  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s state ∗
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s 1 state ∗
       own_transaction_changes tr s inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "integrateDecoded" #updateItemVal
   {{{ (p' : pool) (locs' : gmap loc (list loc)), RET #();
-      own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
+      own_store_state s 1 (state <| ss_pool := p' |> <| ss_locs := locs' |>) ∗
       own_transaction_changes tr s (inserted ∪ input_char_ids typedInput.2) tombstoned (changed ∪ {[p]}) ∗
       ⌜pool_registry_models (<[typedInput.1 := arr2]> m) (ss_bind state) p'⌝ ∗
       ⌜runs_within_or_from [typedInput] (all_runs (ss_pool state)) (all_runs p')⌝ ∗
@@ -498,11 +499,11 @@ Qed.
   pool_next_clock (ss_pool state) (clientId (in_id typedInput.2)) (clock (in_id typedInput.2)) ->
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   input_fits typedInput.2 ->
-  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s state ∗
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s 1 state ∗
       own_transaction_changes tr s inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "integrateDecoded" #updateItemVal
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc) (q : loc), RET #();
-      own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |> <| ss_bind := bind' |>) ∗
+      own_store_state s 1 (state <| ss_pool := p' |> <| ss_locs := locs' |> <| ss_bind := bind' |>) ∗
       own_transaction_changes tr s (inserted ∪ input_char_ids typedInput.2) tombstoned (changed ∪ {[q]}) ∗
       ⌜ss_bind state ⊆ bind'⌝ ∗
       ⌜pool_registry_models (<[typedInput.1 := arr2]> m) bind' p'⌝ ∗
@@ -671,11 +672,11 @@ Lemma wp_Transaction__integrateDecoded (tr s : loc)
   pool_next_clock (ss_pool state) (clientId (in_id typedInput.2)) (clock (in_id typedInput.2)) ->
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   input_fits typedInput.2 ->
-  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s state ∗
+  {{{ is_pkg_init yjs ∗ is_update_item updateItemVal typedInput ∗ own_store_state s 1 state ∗
       own_transaction_changes tr s inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "integrateDecoded" #updateItemVal
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc) (q : loc), RET #();
-      own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |> <| ss_bind := bind' |>) ∗
+      own_store_state s 1 (state <| ss_pool := p' |> <| ss_locs := locs' |> <| ss_bind := bind' |>) ∗
       (* the transaction records the item's chars and its type, the one
          bound to [nm] afterwards *)
       own_transaction_changes tr s (inserted ∪ input_char_ids typedInput.2) tombstoned (changed ∪ {[q]}) ∗
@@ -741,12 +742,12 @@ Qed.
   pool_registry_models m (ss_bind state) (ss_pool state) ->
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ pend0 ++ inputs ->
      (Z.of_nat (clock (in_id typedInput.2)) + Z.of_nat (length (in_content typedInput.2)) < 2^64)%Z) ->
-  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_state s state ∗
+  {{{ is_pkg_init yjs ∗ own_update_structs sl dq inputs ∗ own_store_state s 1 state ∗
       own_transaction_changes tr s inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "applyUpdate" #sl
   {{{ (p' : pool) (locs' : gmap loc (list loc)) (bind' : gmap P loc) (changed' : gset loc), RET #();
       own_update_structs sl dq inputs ∗
-      own_store_state s (state <| ss_pool := p' |> <| ss_locs := locs' |>
+      own_store_state s 1 (state <| ss_pool := p' |> <| ss_locs := locs' |>
                             <| ss_bind := bind' |> <| ss_pending := rest |>) ∗
       (* the transaction records the applied items' chars, and marks exactly
          the types they went into (bound in the grown registry) *)
@@ -851,7 +852,7 @@ Proof using Type*.
         "HslP" ∷ pendingS ↦* uivsP ∗
         "HcapP" ∷ own_slice_cap yjs.updateItem.t pendingS (DfracOwn 1) ∗
         "#HitemsPj" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsP;pendingj, is_update_item updateItemVal typedInput) ∗
-        "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_j p_j bindj [] pdel) ∗
+        "Hruns" ∷ own_store_state s 1 (MkStoreState client0 k0 locs_j p_j bindj [] pdel) ∗
         "Hchanges" ∷ own_transaction_changes tr s inserted_j tombstoned changed_j ∗
         "%Hpendingsubj" ∷ ⌜∀ typedInput : TId * IntegrateInput (A := A),
             typedInput ∈ pendingj -> typedInput ∈ pend0 ++ inputs⌝ ∗
@@ -942,7 +943,7 @@ Proof using Type*.
           "HslR" ∷ restS ↦* uivsR ∗
           "HcapR" ∷ own_slice_cap yjs.updateItem.t restS (DfracOwn 1) ∗
           "#HitemsR" ∷ ([∗ list] updateItemVal;typedInput ∈ uivsR;keptacc, is_update_item updateItemVal typedInput) ∗
-          "Hruns" ∷ own_store_state s (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) ∗
+          "Hruns" ∷ own_store_state s 1 (MkStoreState client0 k0 locs_c p_c bind_c [] pdel) ∗
           "Hchanges" ∷ own_transaction_changes tr s inserted_c tombstoned changed_c ∗
           "%Hilen" ∷ ⌜(i <= length pendingj)%nat⌝ ∗
           "%Hpassa" ∷ ⌜wire_pass m_c (drop i pendingj) keptacc =
@@ -2443,7 +2444,7 @@ Proof using Type*.
   iModIntro.
   iAssert (own_pending_field (s_loc .[(yjs.store.t), "pending"]) pend)%I with "[Hpendf Hpend]" as "Hpending".
   { iExists pend_sl. iFrame "Hpendf Hpend". }
-  iAssert (own_store_state s_loc (MkStoreState client k locs p bind pend pdel))
+  iAssert (own_store_state s_loc 1 (MkStoreState client k locs p bind pend pdel))
     with "[Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes]" as "Hruns".
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi | exact Hreg | exact Hcontig]).
     rewrite /own_store_fields /=.
@@ -2618,7 +2619,7 @@ Proof using Type*.
   iFrame "Hupd". iFrame "Hlbnew". iFrame "Hcerts".
   have Hregmodel' : pool_registry_models m' bind' p'.
   { rewrite /pool_registry_models. split; [exact Hmtypes' | exact Hmdom']. }
-  iAssert (own_store_state s_loc (MkStoreState client k locs' p' bind' rest' pdel))
+  iAssert (own_store_state s_loc 1 (MkStoreState client k locs' p' bind' rest' pdel))
     with "[Hclient Hclock HdeletedSet Hitems Htypesfield Htypes Hpending Hpdeletes]" as "Hstate".
   { iSplitL; last (iPureIntro; split_and!; [exact Hrpi' | exact Hreg' | exact Hcontig']).
     rewrite /own_store_fields /=.

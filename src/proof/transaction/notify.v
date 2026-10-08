@@ -67,10 +67,11 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
 
 (** The walk: one type at its run view, the record's two span slices read
     only. Every run fits a word ([run_fits], the pool's invariant), which
@@ -362,11 +363,11 @@ Qed.
     (m m0 : DocModel) (deleted deleted0 : gset YjsId) (done : gset loc) (key : loc) :
   registry !! key = None ->
   ([∗ map] parent ↦ cbs_sl; entry ∈ registry; registered,
-     own_type_observers γs γh entry.1
+     own_type_observers γs γh entry.1 1
        (if decide (parent ∈ done) then type_snapshot m deleted entry.1
         else type_snapshot m0 deleted0 entry.1) cbs_sl entry.2) -∗
   ([∗ map] parent ↦ cbs_sl; entry ∈ registry; registered,
-     own_type_observers γs γh entry.1
+     own_type_observers γs γh entry.1 1
        (if decide (parent ∈ done ∪ {[key]}) then type_snapshot m deleted entry.1
         else type_snapshot m0 deleted0 entry.1) cbs_sl entry.2).
 Proof.
@@ -393,7 +394,7 @@ Lemma wp_Transaction__notify (tr s_loc : loc) (γs : store_names) (γh : history
   {{{ RET #();
       ∃ (state : store_state) (ds : gset YjsId),
         ⌜state_pending_tombstoned state pend deleted⌝ ∗
-        own_store s_loc γs γh state ds m deleted ∗
+        own_store s_loc γs γh 1 state ds m deleted ∗
         own_store_session γs γh c h m state ds }}}.
 Proof.
   wp_start as "Htx".
@@ -429,7 +430,7 @@ Proof.
       "Hobserversmap" ∷ own_map observers_mref (DfracOwn 1) registry ∗
       "Hobserversauth" ∷ own γs.(sn_observers) (● registered_tokens registered : authR (gsetUR (gname * P))) ∗
       "Hobservers" ∷ ([∗ map] parent ↦ cbs_sl; entry ∈ registry; registered,
-         own_type_observers γs γh entry.1
+         own_type_observers γs γh entry.1 1
            (if decide (parent ∈ done) then type_snapshot m deleted entry.1
             else type_snapshot m0 deleted0 entry.1) cbs_sl entry.2))%I
     with "Hchanged").
@@ -512,7 +513,7 @@ Proof.
     have Hfits_all : ∀ r, r ∈ tm_runs tm -> run_fits r.
     { move=> r Hr. have Hrall : r ∈ all_runs p by (apply elem_of_all_runs; exists key, tm).
       exact (proj1 (proj2 (proj1 Hpoolinv r Hrall))). }
-    iDestruct (own_store_state_ytype_acc s_loc (MkStoreState client k locs p bind pend pdel) key ls tm Hls Htmp with "Hstate") as "[Hyt Hclose]".
+    iDestruct (own_store_state_ytype_acc s_loc 1 (MkStoreState client k locs p bind pend pdel) key ls tm Hls Htmp with "Hstate") as "[Hyt Hclose]".
     wp_apply (wp_textDelta with "[$Hyt $Hinsert $Hdelete]").
     { iPureIntro. exact Hfits_all. }
     iIntros (dsl) "(Hyt & Hinsert & Hdelete & Hdelta)".
@@ -599,7 +600,7 @@ Proof.
     with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hdata".
   { iExists client, k, pdel, locs, p, bind, acc. iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hclientpin Hpendcert Hbinds". iPureIntro.
     split_and!; [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
-  iAssert (own_observers s_loc γs γh m deleted)
+  iAssert (own_observers s_loc γs γh 1 m deleted)
     with "[Hobserversf Hobserversmap Hobserversauth Hobservers]" as "Hobservers'".
   { iExists observers_mref. iFrame "Hobserversf".
     iExists registry, registered.

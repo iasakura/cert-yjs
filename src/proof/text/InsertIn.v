@@ -45,10 +45,11 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
 
 (* The ghost op-history types at the document content type; type names are Go
    strings (issue #49). *)
@@ -139,7 +140,7 @@ Proof.
     { apply HLsub. rewrite elem_of_list_to_set. exact Hx. }
     rewrite elem_of_list_to_set in Hxg. exact Hxg. }
   (* the type's [len] field *)
-  iDestruct (own_store_state_ytype_acc s_loc (MkStoreState client k locs0 p0 bind pend pdel) tv.(yjs.Text.inner') ls0 (MkTypeModel runs0) Hl0 Hp0 with "Hruns") as "[Hyt Hytback]".
+  iDestruct (own_store_state_ytype_acc s_loc 1 (MkStoreState client k locs0 p0 bind pend pdel) tv.(yjs.Text.inner') ls0 (MkTypeModel runs0) Hl0 Hp0 with "Hruns") as "[Hyt Hytback]".
   iDestruct "Hyt" as (yt0 tl0) "(Hparent & Hdll & %Hlen)".
   wp_auto.
   case_bool_decide as Hbound.
@@ -236,7 +237,7 @@ Proof.
   iDestruct ("Hclockback" with "Hclock") as "Hruns".
   iEval (simpl) in "Hruns".
   wp_auto.
-  iDestruct (own_store_state_ytype_acc s_loc (MkStoreState client k locs0 p0 bind pend pdel) tv.(yjs.Text.inner') ls0 (MkTypeModel runs0) Hl0 Hp0 with "Hruns") as "[Hyt Hytback]".
+  iDestruct (own_store_state_ytype_acc s_loc 1 (MkStoreState client k locs0 p0 bind pend pdel) tv.(yjs.Text.inner') ls0 (MkTypeModel runs0) Hl0 Hp0 with "Hruns") as "[Hyt Hytback]".
   wp_apply (wp_yType__findPos tv.(yjs.Text.inner') (DfracOwn 1) ls0 (MkTypeModel runs0) idx with "[$Hyt]").
   iIntros (leftNode rightNode p off) "(Hyt & %Hfp)".
   iDestruct ("Hytback" with "Hyt") as "Hruns".
@@ -251,7 +252,7 @@ Proof.
   wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗
       ∃ (locs1 : gmap loc (list loc)) (p1 : pool) (ls1 : list loc) (runs1 : list ItemRun) (p1i : nat),
       "s" ∷ s_ptr ↦ s_loc ∗
-      "Hruns" ∷ own_store_state s_loc (MkStoreState client k locs1 p1 bind pend pdel) ∗
+      "Hruns" ∷ own_store_state s_loc 1 (MkStoreState client k locs1 p1 bind pend pdel) ∗
       "left" ∷ left_ptr ↦ loc_at ls1 (Z.of_nat p1i - 1) ∗
       "right" ∷ right_ptr ↦ loc_at ls1 (Z.of_nat p1i) ∗
       "%Hp1" ∷ ⌜p1 !! tv.(yjs.Text.inner') = Some (MkTypeModel runs1)⌝ ∗
@@ -353,7 +354,7 @@ Proof.
   (* shared right origin *)
   wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗ ∃ (oRptr : loc) (in_rO : option yjs.id.t),
       "HoR" ∷ originRightId_ptr ↦ oRptr ∗ "HisR" ∷ is_origin_id oRptr in_rO ∗
-      "Hruns" ∷ own_store_state s_loc (MkStoreState client k locs1 p1 bind pend pdel) ∗
+      "Hruns" ∷ own_store_state s_loc 1 (MkStoreState client k locs1 p1 bind pend pdel) ∗
       "Hright" ∷ right_ptr ↦ loc_at ls1 (Z.of_nat p1i) ∗
       "%Hrightinit" ∷ ⌜(in_rO = None ∧ (p1i = length runs1)%nat) ∨
         (∃ (ri : YjsItem A) (rightOriginId : yjs.id.t), (tm_arr ts) !! mp = Some ri ∧ in_rO = Some rightOriginId ∧ item_id ri = toYjsId rightOriginId)⌝)%I
@@ -457,7 +458,7 @@ Proof.
     "HoRp" ∷ originRightId_ptr ↦ oRptr ∗
     "Hleftp" ∷ left_ptr ↦ loc_at lsj (Z.of_nat (p1i + j) - 1) ∗
     "Hsp" ∷ s_ptr ↦ s_loc ∗
-    "Hruns" ∷ own_store_state s_loc (MkStoreState client (W64 (uint.Z k + Z.of_nat j)) locsj pj bind pend pdel) ∗
+    "Hruns" ∷ own_store_state s_loc 1 (MkStoreState client (W64 (uint.Z k + Z.of_nat j)) locsj pj bind pend pdel) ∗
     (* the transaction's record so far: the run's chars and, once a char is
        in, this text *)
     "Hchanges" ∷ own_transaction_changes tr s_loc (inserted ∪ char_ids ins) tombstoned
@@ -575,7 +576,7 @@ Proof.
       ∃ (oLptr : loc) (olo : option yjs.id.t),
         "HoL" ∷ originLeftId_ptr ↦ oLptr ∗
         "HisL" ∷ is_origin_id oLptr olo ∗
-        "Hruns" ∷ own_store_state s_loc (MkStoreState client (w64_word_instance.(word.add) (W64 (uint.Z k + Z.of_nat j)) (W64 1)) locsj pj bind pend pdel) ∗
+        "Hruns" ∷ own_store_state s_loc 1 (MkStoreState client (w64_word_instance.(word.add) (W64 (uint.Z k + Z.of_nat j)) (W64 1)) locsj pj bind pend pdel) ∗
         "Hleftp" ∷ left_ptr ↦ loc_at lsj (Z.of_nat (p1i + j) - 1) ∗
         "%Hleftspec" ∷ ⌜(olo = None ∧ (p1i + length ins = 0)%nat) ∨
            (∃ (li : YjsItem A), (1 <= p1i + length ins)%nat ∧ arr !! (mp + length ins - 1)%nat = Some li ∧ (toYjsId <$> olo) = Some (item_id li))⌝)%I

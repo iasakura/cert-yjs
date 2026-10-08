@@ -1420,6 +1420,17 @@ Proof.
   apply cmra_update_exclusive. done.
 Qed.
 
+(** The observer registry's agreement moves with the writer, like
+    [state_frag_update]: registering a callback ([Text.Observe]) holds
+    the whole fraction. *)
+Lemma observers_agree_update (γs : store_names) (v' v : observer_registry_model) :
+  own γs.(sn_observers_agree) (to_frac_agree 1 (v : leibnizO observer_registry_model)) ==∗
+  own γs.(sn_observers_agree) (to_frac_agree 1 (v' : leibnizO observer_registry_model)).
+Proof.
+  iIntros "H". iMod (own_update with "H") as "$"; last done.
+  apply cmra_update_exclusive. done.
+Qed.
+
 Definition storeN : namespace := nroot .@ "yjs_store".
 
 (** [own_observers s γs γh m0 deleted0]: the store's [observers] field and

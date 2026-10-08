@@ -81,10 +81,11 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
    [store/splitNode] declares). *)
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO observer_registry_model))}.
 
 (** [containsId] decides membership of the span slice's char-id set (issue #28:
     an id addresses any char of a scanned run, so the Go test is a clock-range
@@ -2082,10 +2083,10 @@ Qed.
   pool_clock_below p (item_id (run_head_item r)) ->
   run_invs r ->
   {{{ is_pkg_init yjs ∗ own_ytype parent (DfracOwn 1) ls' tm' ∗
-      own_store_items s locs p }}}
+      own_store_items s 1 locs p }}}
     s @! (go.PointerType yjs.store) @! "addNode" #item_l
   {{{ RET #(); own_ytype parent (DfracOwn 1) ls' tm' ∗
-      own_store_items s (<[parent := ls']> locs) (<[parent := tm']> p) }}}.
+      own_store_items s 1 (<[parent := ls']> locs) (<[parent := tm']> p) }}}.
 Proof using Type*.
   move=> Hlk Hrk Hperm Hrpi Hbelow Hinvr.
   have [Hinvpool _] := Hrpi.
@@ -2228,12 +2229,12 @@ Lemma wp_store__Integrate_state (s parent parent_arg item_l : loc)
   integrate_all (ops_of_input input (explode (in_content input))) (tm_arr tm) = Some arr' ->
   origins_resolved (tm_runs tm) (tm_arr tm) input kL kR ->
   pool_next_clock (ss_pool state) (clientId (in_id input)) (clock (in_id input)) ->
-  {{{ is_pkg_init yjs ∗ own_store_state s state ∗
+  {{{ is_pkg_init yjs ∗ own_store_state s 1 state ∗
       own_linked_item item_l input parent
         (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) }}}
     s @! (go.PointerType yjs.store) @! "Integrate" #parent_arg #item_l
   {{{ (runs' : list ItemRun) (ls' : list loc) (run : list (YjsItem A)), RET #parent;
-      own_store_state s (state <| ss_pool := <[parent := MkTypeModel runs']> (ss_pool state) |>
+      own_store_state s 1 (state <| ss_pool := <[parent := MkTypeModel runs']> (ss_pool state) |>
                             <| ss_locs := <[parent := ls']> (ss_locs state) |>) ∗
       ⌜YjsArrInvariant arr'⌝ ∗
       ⌜∃ idx : nat, runs_integrate_splice_at idx (tm_runs tm) (tm_arr tm) run runs' arr' ∧
@@ -2368,7 +2369,7 @@ Proof using Type*.
     iApply ("HΦ" $! runs' ls' run).
     iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes2 Hpending Hpdeletes";
       last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
-    iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
+    iAssert (own_store_state s 1 (MkStoreState client0 k0 locs2 p2 bind pend pdel))
       with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
     { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
       rewrite /own_store_fields /=.
@@ -2455,7 +2456,7 @@ Proof using Type*.
     iApply ("HΦ" $! runs' ls' run).
     iSplitL "Hclient Hclock HdeletedSet Hitems Hregistry Htypes2 Hpending Hpdeletes";
       last by (iPureIntro; split_and!; [exact Hinv' | exists idx; split; [exact Hsplice | done] | exact Hden]).
-    iAssert (own_store_state s (MkStoreState client0 k0 locs2 p2 bind pend pdel))
+    iAssert (own_store_state s 1 (MkStoreState client0 k0 locs2 p2 bind pend pdel))
       with "[Hclient Hclock HdeletedSet Hitems Hregistry Htypes2 Hpending Hpdeletes]" as "Hfinal".
     { iSplitL; last (iPureIntro; split_and!; [exact Hrpi2 | exact Hreg2 | exact Hcontig2]).
       rewrite /own_store_fields /=.
@@ -2492,12 +2493,12 @@ Lemma wp_store__Integrate (s parent parent_arg item_l : loc)
   origins_resolved (tm_runs tm) (tm_arr tm) input kL kR ->
   pool_next_clock (ss_pool state) (clientId (in_id input)) (clock (in_id input)) ->
   input_char_ids input ## ds ->
-  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 ∗
+  {{{ is_pkg_init yjs ∗ own_store s γs γh 1 state ds m0 deleted0 ∗
       own_linked_item item_l input parent
         (loc_at ls (Z.of_nat kL - 1)) (loc_at ls (Z.of_nat kR)) }}}
     s @! (go.PointerType yjs.store) @! "Integrate" #parent_arg #item_l
   {{{ (runs' : list ItemRun) (ls' : list loc) (run : list (YjsItem A)), RET #parent;
-      own_store s γs γh
+      own_store s γs γh 1
         (state <| ss_pool := <[parent := MkTypeModel runs']> (ss_pool state) |>
                <| ss_locs := <[parent := ls']> (ss_locs state) |>) ds m0 deleted0 ∗
       ⌜YjsArrInvariant arr'⌝ ∗
@@ -2559,11 +2560,12 @@ Proof using Type*.
   have Hds_tomb' := delete_set_tombstoned_snoc ds (all_runs p)
                       (all_runs (<[parent := MkTypeModel runs']> p)) (MkItemRun run false)
                       Hperm2 Hfreshids Hds_tomb.
+  iMod (state_frag_update γs _ with "Hstate_agree") as "Hstate_agree".
   iModIntro. iApply ("HΦ" $! runs' ls' run).
   iSplitL; last (iPureIntro; split_and!;
     [exact Hinv' | exists idx; split; [exact Hsp0 | exact Hls'eq] | exact Hden]).
   rewrite /own_store /own_store_core /= -Hfmap.
-  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate".
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree Hstate".
   iPureIntro. exact Hds_tomb'.
 Qed.
 
