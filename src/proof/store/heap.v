@@ -1578,8 +1578,8 @@ Definition own_store_session (γs : store_names) (γh : history_names)
     "%Hacccoh" ∷ ⌜accepted_coh acc h (ss_pending state)⌝ ∗
     "%Hds_dom" ∷ ⌜delete_set_dom ds m⌝.
 
-#[global] Instance own_store_core_timeless s_loc γs state ds :
-  Timeless (own_store_core s_loc γs 1 state ds).
+#[global] Instance own_store_core_timeless s_loc γs q state ds :
+  Timeless (own_store_core s_loc γs q state ds).
 Proof. rewrite /own_store_core. apply _. Qed.
 
 #[global] Instance own_store_session_timeless γs γh c h m state ds :
@@ -1715,6 +1715,374 @@ Proof.
   iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree Hstate".
   iPureIntro. exact Hds_tomb.
 Qed.
+
+(* ---- fractions of the store (issue #219 M4): split, agree, combine ----
+   The read lock peels [rfrac] of [own_store] off the lock invariant and
+   [runlock] returns it. Splitting at equal indices is componentwise
+   (everything under [own_store] is fractional); recombining first pins
+   the indices: the cell state by [state_frag_agree], the delete set by
+   the authority's validity, the observer registry's contents by its own
+   agreement ghost, and each observer's told snapshot by the token's
+   [ghost_var] agreement. *)
+
+Lemma own_map_dfrac_split `{!ZeroVal K} `{!EqDecision K} `{!Countable K}
+    `{!ZeroVal V} `{!go.IntoValInj K}
+    (mref : loc) (q1 q2 : Qp) (m : gmap K V) :
+  own_map mref (DfracOwn (q1 + q2)) m ⊣⊢
+  own_map mref (DfracOwn q1) m ∗ own_map mref (DfracOwn q2) m.
+Proof.
+  rewrite own_map_unseal /own_map_def.
+  iSplit.
+  - iDestruct 1 as (mv mp) "(Hown & %His & %Hag & %Hdom & %Hdef)".
+    iDestruct "Hown" as "[Hown1 Hown2]".
+    iSplitL "Hown1"; iExists mv, mp; by iFrame "∗%".
+  - iDestruct 1 as "[H1 H2]".
+    iDestruct "H1" as (mv1 mp1) "(Hown1 & %His1 & %Hag1 & %Hdom1 & %Hdef1)".
+    iDestruct "H2" as (mv2 mp2) "(Hown2 & %His2 & %Hag2 & %Hdom2 & %Hdef2)".
+    iDestruct (heap_pointsto_agree with "[$Hown1 $Hown2]") as %<-.
+    iCombine "Hown1 Hown2" as "Hown".
+    iExists mv1, mp1. by iFrame "∗%".
+Qed.
+
+Lemma own_map_dfrac_agree `{!ZeroVal K} `{!EqDecision K} `{!Countable K}
+    `{!ZeroVal V} `{!go.IntoValInj K} `{!go.IntoValInj V}
+    (mref : loc) (dq1 dq2 : dfrac) (m1 m2 : gmap K V) :
+  own_map mref dq1 m1 -∗ own_map mref dq2 m2 -∗ ⌜m1 = m2⌝.
+Proof.
+  rewrite own_map_unseal /own_map_def.
+  iDestruct 1 as (mv1 mp1) "(Hown1 & %His1 & %Hag1 & %Hdom1 & %Hdef1)".
+  iDestruct 1 as (mv2 mp2) "(Hown2 & %His2 & %Hag2 & %Hdom2 & %Hdef2)".
+  iDestruct (heap_pointsto_agree with "[$Hown1 $Hown2]") as %<-.
+  have Hmp : ∀ kv, mp1 kv = mp2 kv.
+  { move=> kv. rewrite -(go.map_lookup_pure kv mv1 mp1 His1)
+                        -(go.map_lookup_pure kv mv1 mp2 His2) //. }
+  iPureIntro. apply map_eq => k.
+  have H1 := Hag1 k. have H2 := Hag2 k. rewrite Hmp H2 in H1.
+  destruct (m1 !! k) as [v1|] eqn:Hm1, (m2 !! k) as [v2|] eqn:Hm2;
+    try discriminate H1; last done.
+  injection H1 => Heq. by simplify_eq.
+Qed.
+
+Lemma own_item_map_key_pairs_split (mref : loc) (q1 q2 : Qp)
+    (key_pairs : list (w64 * (Z * loc))) :
+  own_item_map_key_pairs mref (DfracOwn (q1 + q2)) key_pairs ⊣⊢
+  own_item_map_key_pairs mref (DfracOwn q1) key_pairs ∗
+  own_item_map_key_pairs mref (DfracOwn q2) key_pairs.
+Proof.
+  rewrite /own_item_map_key_pairs.
+  iSplit.
+  - iDestruct 1 as (gm) "(Hmap & Hruns & %Hc & %Hu)".
+    rewrite own_map_dfrac_split. iDestruct "Hmap" as "[Hm1 Hm2]".
+    iAssert ([∗ map] client ↦ sl ∈ gm,
+        (sl ↦*{#q1} key_pair_client_locs client key_pairs ∗
+         own_slice_cap loc sl (DfracOwn q1)) ∗
+        (sl ↦*{#q2} key_pair_client_locs client key_pairs ∗
+         own_slice_cap loc sl (DfracOwn q2)))%I with "[Hruns]" as "Hruns".
+    { iApply (big_sepM_impl with "Hruns"). iIntros "!>" (client sl Hgm) "H".
+      iNamed "H".
+      iDestruct "Hslice" as "[Hs1 Hs2]". iDestruct "Hcap" as "[Hc1 Hc2]".
+      iFrame. }
+    rewrite big_sepM_sep. iDestruct "Hruns" as "[HrA HrB]".
+    iSplitL "Hm1 HrA"; iExists gm; by iFrame "∗%".
+  - iDestruct 1 as "[H1 H2]".
+    iDestruct "H1" as (gm1) "(Hmap1 & Hruns1 & %Hc1 & %Hu1)".
+    iDestruct "H2" as (gm2) "(Hmap2 & Hruns2 & %Hc2 & %Hu2)".
+    iDestruct (own_map_dfrac_agree with "Hmap1 Hmap2") as %<-.
+    iCombine "Hmap1 Hmap2" as "Hmap".
+    rewrite -own_map_dfrac_split.
+    iExists gm1. iFrame "Hmap".
+    iSplitL; last by iFrame "%".
+    iCombine "Hruns1 Hruns2" as "Hruns".
+    rewrite -big_sepM_sep.
+    iApply (big_sepM_impl with "Hruns"). iIntros "!>" (client sl Hgm) "[H1 H2]".
+    iNamed "H1".
+    iDestruct "H2" as "(Hslice2 & Hcap2)".
+    iCombine "Hslice Hslice2" as "Hs". iCombine "Hcap Hcap2" as "Hc".
+    iFrame.
+Qed.
+
+
+
+Lemma own_update_structs_split (sl : slice.t) (q1 q2 : Qp)
+    (inputs : list (TId * IntegrateInput (A := A))) :
+  own_update_structs sl (DfracOwn (q1 + q2)) inputs ⊣⊢
+  own_update_structs sl (DfracOwn q1) inputs ∗ own_update_structs sl (DfracOwn q2) inputs.
+Proof.
+  rewrite /own_update_structs.
+  iSplit.
+  - iDestruct 1 as (uivs) "(Hsl & Hcap & #Hitems)".
+    iDestruct "Hsl" as "[Hsl1 Hsl2]". iDestruct "Hcap" as "[Hcap1 Hcap2]".
+    iSplitL "Hsl1 Hcap1"; iExists uivs; by iFrame "∗#".
+  - iDestruct 1 as "[H1 H2]".
+    iDestruct "H1" as (uivs1) "(Hsl1 & Hcap1 & #Hitems)".
+    iDestruct "H2" as (uivs2) "(Hsl2 & Hcap2 & _)".
+    iDestruct (own_slice_agree with "Hsl1 Hsl2") as %<-.
+    iCombine "Hsl1 Hsl2" as "Hsl". iCombine "Hcap1 Hcap2" as "Hcap".
+    iExists uivs1. by iFrame "∗#".
+Qed.
+
+Lemma own_delete_spans_split (sl : slice.t) (q1 q2 : Qp)
+    (spans : list delete_span) :
+  own_delete_spans sl (DfracOwn (q1 + q2)) spans ⊣⊢
+  own_delete_spans sl (DfracOwn q1) spans ∗ own_delete_spans sl (DfracOwn q2) spans.
+Proof.
+  rewrite /own_delete_spans.
+  iSplit.
+  - iDestruct 1 as (vs) "(Hsl & Hcap & %Hm)".
+    iDestruct "Hsl" as "[Hsl1 Hsl2]". iDestruct "Hcap" as "[Hcap1 Hcap2]".
+    iSplitL "Hsl1 Hcap1"; iExists vs; by iFrame "∗%".
+  - iDestruct 1 as "[H1 H2]".
+    iDestruct "H1" as (vs1) "(Hsl1 & Hcap1 & %Hm1)".
+    iDestruct "H2" as (vs2) "(Hsl2 & Hcap2 & %Hm2)".
+    iDestruct (own_slice_agree with "Hsl1 Hsl2") as %<-.
+    iCombine "Hsl1 Hsl2" as "Hsl". iCombine "Hcap1 Hcap2" as "Hcap".
+    iExists vs1. by iFrame "∗%".
+Qed.
+
+Lemma own_store_state_split (s : loc) (q1 q2 : Qp) (state : store_state) :
+  own_store_state s (q1 + q2) state ⊣⊢
+  own_store_state s q1 state ∗ own_store_state s q2 state.
+Proof.
+  rewrite /own_store_state /own_store_fields /own_deleted_set_field
+          /own_store_items /own_items_field /own_item_map
+          /own_registry_field /own_pending_field /own_pending_deletes_field.
+  rewrite (own_type_pool_fractional (ss_locs state) (ss_pool state) q1 q2).
+  iSplit.
+  - iIntros "((Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes) & %Hinvs)".
+    iDestruct "Hclient" as "[Hclient1 Hclient2]".
+    iDestruct "Hclock" as "[Hclock1 Hclock2]".
+    iDestruct "HdeletedSet" as (deletedSetVal) "[Hds1 Hds2]".
+    iDestruct "Hitems" as (items_mref) "(Hif & Him)".
+    iDestruct "Hif" as "[Hif1 Hif2]".
+    rewrite own_item_map_key_pairs_split. iDestruct "Him" as "[Him1 Him2]".
+    iDestruct "Hregistry" as (types_mref) "(Htf & Htm)".
+    iDestruct "Htf" as "[Htf1 Htf2]".
+    rewrite own_map_dfrac_split. iDestruct "Htm" as "[Htm1 Htm2]".
+    iDestruct "Htypes" as "[Hty1 Hty2]".
+    iDestruct "Hpending" as (pend_sl) "(Hpf & Hpe)".
+    iDestruct "Hpf" as "[Hpf1 Hpf2]".
+    rewrite own_update_structs_split. iDestruct "Hpe" as "[Hpe1 Hpe2]".
+    iDestruct "Hpdeletes" as (pdel_sl) "(Hpdf & Hpd)".
+    iDestruct "Hpdf" as "[Hpdf1 Hpdf2]".
+    rewrite own_delete_spans_split. iDestruct "Hpd" as "[Hpd1 Hpd2]".
+    iSplitL "Hclient1 Hclock1 Hds1 Hif1 Him1 Htf1 Htm1 Hty1 Hpf1 Hpe1 Hpdf1 Hpd1".
+    + iFrame "Hclient1 Hclock1".
+      iSplitR ""; last by iPureIntro.
+      iSplitL "Hds1"; first by iExists deletedSetVal.
+      iSplitL "Hif1 Him1"; first (iExists items_mref; by iFrame).
+      iSplitL "Htf1 Htm1"; first (iExists types_mref; by iFrame).
+      iFrame "Hty1". iSplitL "Hpf1 Hpe1"; first (iExists pend_sl; by iFrame).
+      iExists pdel_sl. by iFrame.
+    + iFrame "Hclient2 Hclock2".
+      iSplitR ""; last by iPureIntro.
+      iSplitL "Hds2"; first by iExists deletedSetVal.
+      iSplitL "Hif2 Him2"; first (iExists items_mref; by iFrame).
+      iSplitL "Htf2 Htm2"; first (iExists types_mref; by iFrame).
+      iFrame "Hty2". iSplitL "Hpf2 Hpe2"; first (iExists pend_sl; by iFrame).
+      iExists pdel_sl. by iFrame.
+  - iIntros "[H1 H2]".
+    iDestruct "H1" as "((Hclient1 & Hclock1 & HdeletedSet1 & Hitems1 & Hregistry1 & Htypes1 & Hpending1 & Hpdeletes1) & %Hinvs)".
+    iDestruct "H2" as "((Hclient2 & Hclock2 & HdeletedSet2 & Hitems2 & Hregistry2 & Htypes2 & Hpending2 & Hpdeletes2) & %_Hinvs2)".
+    iCombine "Hclient1 Hclient2" as "Hclient".
+    iCombine "Hclock1 Hclock2" as "Hclock".
+    iDestruct "HdeletedSet1" as (dsv1) "Hds1". iDestruct "HdeletedSet2" as (dsv2) "Hds2".
+    iCombine "Hds1 Hds2" gives %<-.
+    iCombine "Hds1 Hds2" as "Hds".
+    iDestruct "Hitems1" as (imref1) "(Hif1 & Him1)".
+    iDestruct "Hitems2" as (imref2) "(Hif2 & Him2)".
+    iCombine "Hif1 Hif2" gives %<-.
+    iCombine "Hif1 Hif2" as "Hif".
+    iCombine "Him1 Him2" as "Him". rewrite -own_item_map_key_pairs_split.
+    iDestruct "Hregistry1" as (tmref1) "(Htf1 & Htm1)".
+    iDestruct "Hregistry2" as (tmref2) "(Htf2 & Htm2)".
+    iCombine "Htf1 Htf2" gives %<-.
+    iCombine "Htf1 Htf2" as "Htf".
+    iCombine "Htm1 Htm2" as "Htm". rewrite -own_map_dfrac_split.
+    iCombine "Htypes1 Htypes2" as "Hty".
+    iDestruct "Hpending1" as (psl1) "(Hpf1 & Hpe1)".
+    iDestruct "Hpending2" as (psl2) "(Hpf2 & Hpe2)".
+    iCombine "Hpf1 Hpf2" gives %<-.
+    iCombine "Hpf1 Hpf2" as "Hpf".
+    iCombine "Hpe1 Hpe2" as "Hpe". rewrite -own_update_structs_split.
+    iDestruct "Hpdeletes1" as (pdsl1) "(Hpdf1 & Hpd1)".
+    iDestruct "Hpdeletes2" as (pdsl2) "(Hpdf2 & Hpd2)".
+    iCombine "Hpdf1 Hpdf2" gives %<-.
+    iCombine "Hpdf1 Hpdf2" as "Hpdf".
+    iCombine "Hpd1 Hpd2" as "Hpd". rewrite -own_delete_spans_split.
+    iFrame "Hclient Hclock".
+    iSplitR ""; last by iPureIntro.
+    iSplitL "Hds"; first by iExists dsv1.
+    iSplitL "Hif Him"; first (iExists imref1; by iFrame).
+    iSplitL "Htf Htm"; first (iExists tmref1; by iFrame).
+    iFrame "Hty". iSplitL "Hpf Hpe"; first (iExists psl1; by iFrame).
+    iExists pdsl1. by iFrame.
+Qed.
+
+Lemma own_store_core_split (s_loc : loc) (γs : store_names) (q1 q2 : Qp)
+    (state : store_state) (ds : gset YjsId) :
+  own_store_core s_loc γs (q1 + q2) state ds ⊣⊢
+  own_store_core s_loc γs q1 state ds ∗ own_store_core s_loc γs q2 state ds.
+Proof.
+  rewrite /own_store_core.
+  rewrite own_store_state_split state_frag_split.
+  rewrite -!dfrac_op_own !auth_auth_dfrac_op !own_op.
+  rewrite (fractional (Φ := λ q, ghost_map_auth γs.(sn_types) q (ss_bind state)) q1 q2).
+  iSplit.
+  - iIntros "((Hst1 & Hst2) & #Hpin & (Hseq1 & Hseq2) & (Hta1 & Hta2) & #Hbinds & (Hda1 & Hda2) & (Hsa1 & Hsa2) & %Htomb)".
+    iSplitL "Hst1 Hseq1 Hta1 Hda1 Hsa1"; by iFrame "∗#%".
+  - iIntros "[H1 H2]".
+    iDestruct "H1" as "(Hst1 & #Hpin & Hseq1 & Hta1 & #Hbinds & Hda1 & Hsa1 & %Htomb)".
+    iDestruct "H2" as "(Hst2 & _ & Hseq2 & Hta2 & _ & Hda2 & Hsa2 & _)".
+    by iFrame "∗#%".
+Qed.
+
+(** Two shares of the core are at the SAME cell state and delete set:
+    the whole-state agreement ghost pins the state, the delete-set
+    authority's validity pins the set. What lets a reader's share
+    recombine with the lock invariant's at [runlock]. *)
+Lemma own_store_core_agree (s_loc : loc) (γs : store_names) (q1 q2 : Qp)
+    (state1 state2 : store_state) (ds1 ds2 : gset YjsId) :
+  own_store_core s_loc γs q1 state1 ds1 -∗ own_store_core s_loc γs q2 state2 ds2 -∗
+  ⌜state1 = state2 ∧ ds1 = ds2⌝.
+Proof.
+  iIntros "H1 H2". iNamed "H1".
+  iDestruct "H2" as "(_ & _ & _ & _ & _ & Hda2 & Hsa2 & _)".
+  iDestruct (state_frag_agree with "Hstate_agree Hsa2") as %Heq.
+  iCombine "Hdelete_set_auth Hda2" gives %Hv.
+  iPureIntro. split; first exact Heq.
+  apply auth_auth_dfrac_op_valid in Hv as (_ & Heqds & _).
+  exact (leibniz_equiv _ _ Heqds).
+Qed.
+
+Lemma own_type_observers_split (γs : store_names) (γh : history_names) (name : P)
+    (q1 q2 : Qp) (told : snapshot) (cbs_sl : slice.t) (γos : list gname) :
+  own_type_observers γs γh name (q1 + q2) told cbs_sl γos ⊣⊢
+  own_type_observers γs γh name q1 told cbs_sl γos ∗
+  own_type_observers γs γh name q2 told cbs_sl γos.
+Proof.
+  rewrite /own_type_observers /own_observed_share.
+  iSplit.
+  - iDestruct 1 as (cbs) "(Hsl & Hcap & Hcbs)".
+    iDestruct "Hsl" as "[Hsl1 Hsl2]". iDestruct "Hcap" as "[Hcap1 Hcap2]".
+    iAssert ([∗ list] cb;γo ∈ cbs;γos,
+        (is_text_callback γs γh name cb γo ∗ ghost_var γo (q1 / 2) told) ∗
+        (is_text_callback γs γh name cb γo ∗ ghost_var γo (q2 / 2) told))%I
+      with "[Hcbs]" as "Hcbs".
+    { iApply (big_sepL2_impl with "Hcbs"). iIntros "!>" (k cb γo Hcb Hγo) "[#Hcb Hvar]".
+      iEval (rewrite Qp.div_add_distr) in "Hvar".
+      iDestruct "Hvar" as "[Hv1 Hv2]". iFrame "∗#". }
+    rewrite big_sepL2_sep. iDestruct "Hcbs" as "[HcbsA HcbsB]".
+    iSplitL "Hsl1 Hcap1 HcbsA"; iExists cbs; by iFrame.
+  - iDestruct 1 as "[H1 H2]".
+    iDestruct "H1" as (cbs1) "(Hsl1 & Hcap1 & Hcbs1)".
+    iDestruct "H2" as (cbs2) "(Hsl2 & Hcap2 & Hcbs2)".
+    iDestruct (own_slice_agree with "Hsl1 Hsl2") as %<-.
+    iCombine "Hsl1 Hsl2" as "Hsl". iCombine "Hcap1 Hcap2" as "Hcap".
+    iExists cbs1. iFrame "Hsl Hcap".
+    iCombine "Hcbs1 Hcbs2" as "Hcbs". rewrite -big_sepL2_sep.
+    iApply (big_sepL2_impl with "Hcbs"). iIntros "!>" (k cb γo Hcb Hγo) "[[#Hcb Hv1] [_ Hv2]]".
+    iCombine "Hv1 Hv2" as "Hv". rewrite Qp.div_add_distr. iFrame "∗#".
+Qed.
+
+Lemma own_observer_registry_split (observers_mref : loc) (γs : store_names)
+    (γh : history_names) (q1 q2 : Qp) (m : DocModel) (deleted : gset YjsId) :
+  own_observer_registry observers_mref γs γh (q1 + q2) m deleted ⊣⊢
+  own_observer_registry observers_mref γs γh q1 m deleted ∗
+  own_observer_registry observers_mref γs γh q2 m deleted.
+Proof.
+  rewrite /own_observer_registry.
+  iSplit.
+  - iDestruct 1 as (registry registered) "(Hmap & Hauth & Hagree & #Hbind & Hobs)".
+    rewrite own_map_dfrac_split. iDestruct "Hmap" as "[Hm1 Hm2]".
+    rewrite -dfrac_op_own auth_auth_dfrac_op own_op. iDestruct "Hauth" as "[Ha1 Ha2]".
+    rewrite frac_agree_op own_op. iDestruct "Hagree" as "[Hg1 Hg2]".
+    iAssert ([∗ map] parent ↦ cbs_sl; entry ∈ registry; registered,
+        own_type_observers γs γh entry.1 q1 (type_snapshot m deleted entry.1) cbs_sl entry.2 ∗
+        own_type_observers γs γh entry.1 q2 (type_snapshot m deleted entry.1) cbs_sl entry.2)%I
+      with "[Hobs]" as "Hobs".
+    { iApply (big_sepM2_impl with "Hobs"). iIntros "!>" (parent cbs_sl entry H1 H2) "Hoto".
+      rewrite own_type_observers_split. iFrame. }
+    rewrite big_sepM2_sep. iDestruct "Hobs" as "[HobsA HobsB]".
+    iSplitL "Hm1 Ha1 Hg1 HobsA"; iExists registry, registered; by iFrame "∗#".
+  - iDestruct 1 as "[H1 H2]".
+    iDestruct "H1" as (registry1 registered1) "(Hm1 & Ha1 & Hg1 & #Hbind & Hobs1)".
+    iDestruct "H2" as (registry2 registered2) "(Hm2 & Ha2 & Hg2 & _ & Hobs2)".
+    iCombine "Hg1 Hg2" gives %Hv.
+    apply frac_agree_op_valid_L in Hv as [_ Hveq].
+    injection Hveq => <- <-.
+    iExists registry1, registered1.
+    rewrite own_map_dfrac_split.
+    rewrite frac_agree_op own_op.
+    rewrite -dfrac_op_own auth_auth_dfrac_op own_op.
+    iFrame "Hm1 Hm2 Hg1 Hg2 Ha1 Ha2 Hbind".
+    iCombine "Hobs1 Hobs2" as "Hobs". rewrite -big_sepM2_sep.
+    iApply (big_sepM2_impl with "Hobs"). iIntros "!>" (parent cbs_sl entry HH1 HH2) "Hoto".
+    rewrite own_type_observers_split. iFrame.
+Qed.
+
+Lemma own_observers_split (s_loc : loc) (γs : store_names) (γh : history_names)
+    (q1 q2 : Qp) (m0 : DocModel) (deleted0 : gset YjsId) :
+  own_observers s_loc γs γh (q1 + q2) m0 deleted0 ⊣⊢
+  own_observers s_loc γs γh q1 m0 deleted0 ∗ own_observers s_loc γs γh q2 m0 deleted0.
+Proof.
+  rewrite /own_observers.
+  iSplit.
+  - iDestruct 1 as (observers_mref) "(Hf & Hreg)".
+    iDestruct "Hf" as "[Hf1 Hf2]".
+    rewrite own_observer_registry_split. iDestruct "Hreg" as "[Hr1 Hr2]".
+    iSplitL "Hf1 Hr1"; iExists observers_mref; by iFrame.
+  - iDestruct 1 as "[H1 H2]".
+    iDestruct "H1" as (mref1) "(Hf1 & Hr1)".
+    iDestruct "H2" as (mref2) "(Hf2 & Hr2)".
+    iCombine "Hf1 Hf2" gives %<-.
+    iCombine "Hf1 Hf2" as "Hf".
+    iCombine "Hr1 Hr2" as "Hr". rewrite -own_observer_registry_split.
+    iExists mref1. by iFrame.
+Qed.
+
+(** Recombining the observers across told states (issue #219 M4): a
+    reader's share came off the lock invariant and no writer ran since
+    (the reader holds heap fractions a writer would need whole), so the
+    registry's contents agree through [sn_observers_agree] and each
+    token's [ghost_var] agrees on the told snapshot; the result stands at
+    the second (the invariant's) index. *)
+Lemma own_observers_combine (s_loc : loc) (γs : store_names) (γh : history_names)
+    (q1 q2 : Qp) (m1 : DocModel) (d1 : gset YjsId) (m2 : DocModel) (d2 : gset YjsId) :
+  own_observers s_loc γs γh q1 m1 d1 -∗ own_observers s_loc γs γh q2 m2 d2 -∗
+  own_observers s_loc γs γh (q1 + q2) m2 d2.
+Proof.
+  iIntros "H1 H2".
+  iDestruct "H1" as (mref1) "(Hf1 & Hr1)".
+  iDestruct "H2" as (mref2) "(Hf2 & Hr2)".
+  iCombine "Hf1 Hf2" gives %<-.
+  iCombine "Hf1 Hf2" as "Hf".
+  iExists mref1. iFrame "Hf".
+  rewrite /own_observer_registry.
+  iDestruct "Hr1" as (registry1 registered1) "(Hm1 & Ha1 & Hg1 & #Hbind1 & Hobs1)".
+  iDestruct "Hr2" as (registry2 registered2) "(Hm2 & Ha2 & Hg2 & #Hbind2 & Hobs2)".
+  iCombine "Hg1 Hg2" gives %Hv.
+  apply frac_agree_op_valid_L in Hv as [_ Hveq].
+  injection Hveq => <- <-.
+  iExists registry1, registered1.
+  rewrite own_map_dfrac_split.
+  rewrite frac_agree_op own_op.
+  rewrite -dfrac_op_own auth_auth_dfrac_op own_op.
+  iFrame "Hm1 Hm2 Hg1 Hg2 Ha1 Ha2 Hbind2".
+  iCombine "Hobs1 Hobs2" as "Hobs". rewrite -big_sepM2_sep.
+  iApply (big_sepM2_impl with "Hobs"). iIntros "!>" (parent cbs_sl entry HH1 HH2) "[Hoto1 Hoto2]".
+  rewrite /own_type_observers /own_observed_share.
+  iDestruct "Hoto1" as (cbs1) "(Hsl1 & Hcap1 & Hcbs1)".
+  iDestruct "Hoto2" as (cbs2) "(Hsl2 & Hcap2 & Hcbs2)".
+  iDestruct (own_slice_agree with "Hsl1 Hsl2") as %<-.
+  iCombine "Hsl1 Hsl2" as "Hsl". iCombine "Hcap1 Hcap2" as "Hcap".
+  iExists cbs1. iFrame "Hsl Hcap".
+  iCombine "Hcbs1 Hcbs2" as "Hcbs". rewrite -big_sepL2_sep.
+  iApply (big_sepL2_impl with "Hcbs"). iIntros "!>" (k cb γo Hcb Hγo) "[[#Hcb Hv1] [_ Hv2]]".
+  iDestruct (ghost_var_agree with "Hv1 Hv2") as %->.
+  iCombine "Hv1 Hv2" as "Hv". rewrite Qp.div_add_distr. iFrame "∗#".
+Qed.
+
+(* ---------------------------------------------------------------------- *)
 
 (* ---- the lock invariant over the issue #219 split (M4) ----------------- *)
 
