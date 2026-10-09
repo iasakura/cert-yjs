@@ -70,15 +70,21 @@ a rule below is what binds, and no entry here can be violated by itself.
   other functions private to `X`. Every other function is public for `X`:
   every exported one, and an unexported one as soon as code outside the
   implementation of `X` calls it. This is finer than Go's export, under which
-  every unexported function would count as private. Open point: the
-  classification reads Go call sites, so it reaches only specs of Cert-Yjs's
-  own Go functions, and not every WP lemma is one. `wp_Store__rlock` and
-  `wp_Store__wlock` (`src/proof/store/wp_private.v`) are specs of
-  `sync.RWMutex`'s own `RLock` and `Lock` at the store's `mu` field,
-  specialized to the store's lock invariant; there is no Go function named
-  `rlock` whose call sites the classification could read. Which predicates
-  such a derived spec may mention has not been decided, and deciding it needs
-  a change to this file.
+  every unexported function would count as private. Known gap, and where it
+  belongs: the classification reads Go call sites, so it reaches only specs of
+  Cert-Yjs's own Go functions, and not every WP lemma is one.
+  `wp_Store__rlock` and `wp_Store__wlock` (`src/proof/store/wp_private.v`) are
+  specs of `sync.RWMutex`'s own `RLock` and `Lock` at the lock field beside
+  the store, specialized to the store's lock invariant. There is no Go
+  function named `rlock` whose call sites the classification could read, and
+  their statements mention non-public predicates of the store. Such a lemma
+  exists only where the Go exposes the lock's acquire and release to callers
+  outside the store's implementation. Where it does not, no such lemma arises:
+  `transact` takes the closure it runs under the write lock, and its spec
+  mentions no non-public predicate, because the store's contents appear only
+  inside the closure's contract. The resolution is therefore on the Go side,
+  in giving the remaining access paths that same closure-passing form, and not
+  in a verdict added here.
 
 ## Rules
 
