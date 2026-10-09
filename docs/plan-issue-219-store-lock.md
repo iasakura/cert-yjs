@@ -20,8 +20,9 @@ second group becomes the lock invariant of the new lock type. Every one of
 the eight public-for-store functions then takes `own_store` whole and
 returns it whole (section 2 checks them one by one).
 
-It creates no new deviation, provided four design decisions are made, each
-forced or strongly suggested by the rules themselves:
+It creates no new deviation, provided four design decisions are made (the
+first is a uniformity choice, the others forced or strongly suggested by
+the rules themselves):
 
 1. the read lock hands out a fractional `own_store`, not a share of a
    partial predicate (section 5; this settles open point 1);
@@ -278,16 +279,21 @@ exactly there, and this change removes that deviation).
 
 ## 5. The read lock returns a fractional `own_store` (open point 1)
 
-The rules decide this. `Text.String` and `Text.Len` are public functions
-of `Text` that enter the read lock, so whatever the read-lock wrapper
-hands them ends up, directly or boxed, in public reasoning about the
-store. Today it is a share of `store_inv_ro` (the pool, the item-set
-authority, the delete-set authority), a predicate holding SOME of the
-store's resources: non-public by definition. A "read-only view"
-certificate would not do either, because the readers really walk the heap
-(the DLL) and need fractional points-tos. The only public shape is the
-one the rules name themselves: "a fraction of `own_X` still covers every
-resource and is public". So:
+A design choice, not a rule. The spec-shape rules constrain the SPECS of
+public functions, and `Text.String` / `Text.Len` already have public
+specs; what the read-lock wrapper hands their proofs is proof-internal,
+and a proof may open any shape it likes. The choice is uniformity. Today
+the reader's view is its own predicate (`store_inv_ro`: the pool, the
+item-set authority, the delete-set authority), maintained beside the
+public predicate with its own agreement ghost (`pool_frag`) and bridge
+laws; after the redesign that parallel family would survive only for the
+two read methods. Handing the reader a fraction of `own_store` instead
+leaves ONE predicate family at every lock boundary, and the rules'
+observation that "a fraction of `own_X` still covers every resource and
+is public" says the reader's share is as public a shape as the write
+path's. A "read-only view" certificate could not replace it as the single
+shape, because the readers really walk the heap (the DLL) and need
+fractional points-tos. So:
 
 - `own_store` takes a fraction `q` (every conjunct is fractional:
   points-tos, `own_map`, slices, `own_type_pool` already is, the
