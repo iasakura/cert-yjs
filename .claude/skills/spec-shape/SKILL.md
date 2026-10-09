@@ -70,21 +70,24 @@ a rule below is what binds, and no entry here can be violated by itself.
   other functions private to `X`. Every other function is public for `X`:
   every exported one, and an unexported one as soon as code outside the
   implementation of `X` calls it. This is finer than Go's export, under which
-  every unexported function would count as private. Known gap, and where it
-  belongs: the classification reads Go call sites, so it reaches only specs of
-  Cert-Yjs's own Go functions, and not every WP lemma is one.
-  `wp_Store__rlock` and `wp_Store__wlock` (`src/proof/store/wp_private.v`) are
-  specs of `sync.RWMutex`'s own `RLock` and `Lock` at the lock field beside
-  the store, specialized to the store's lock invariant. There is no Go
-  function named `rlock` whose call sites the classification could read, and
-  their statements mention non-public predicates of the store. Such a lemma
-  exists only where the Go exposes the lock's acquire and release to callers
-  outside the store's implementation. Where it does not, no such lemma arises:
-  `transact` takes the closure it runs under the write lock, and its spec
-  mentions no non-public predicate, because the store's contents appear only
-  inside the closure's contract. The resolution is therefore on the Go side,
-  in giving the remaining access paths that same closure-passing form, and not
-  in a verdict added here.
+  every unexported function would count as private. Known deviation, and where
+  it belongs: acquiring and releasing a lock counts as an operation of the type
+  that holds the lock, so the classification does reach `wp_Store__rlock` and
+  `wp_Store__wlock` (`src/proof/store/wp_private.v`), the specs of
+  `sync.RWMutex`'s own `RLock` and `Lock` at the lock field beside the store.
+  It classifies them as public, because the call sites are outside that type's
+  implementation: `Text.String`, `Text.Len` and `Text.Observe` each take and
+  release the lock themselves, as do `Doc` and the encoder. A public spec takes
+  its type whole and gives it back whole, which an acquire cannot do, since an
+  acquire is what produces the contents; so these two statements mention
+  non-public predicates of the store and the rule above is not met. The
+  deviation is in the Go, not in the rule: where the lock is not exposed, no
+  such spec arises. `transact` takes the closure it runs under the write lock,
+  and its own spec mentions no non-public predicate, because the store's
+  contents appear only inside the closure's contract. Giving the remaining
+  access paths that same closure-passing form leaves the acquire and the
+  release called only from within the holding type, which makes them private to
+  it and closes this with no change here.
 
 ## Rules
 
