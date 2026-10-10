@@ -220,28 +220,37 @@ Qed.
 (** Read-lock acquire: peels one [rfrac] share of the public [own_store]
     off the lock invariant (bumping the reader count), under one later
     (the observers' callback contracts are not timeless; the caller's
-    next program step strips it). The reader
-    brings a prefix certificate of THIS replica's op history (plus the
-    client pin identifying it) and a root binding (issue #125); the read
-    lock's linearization point is the one moment the reader sees the
-    session, and [own_store_core_session_hist_root] converts there: the
-    state handed out already contains, at the bound root, one item per
-    delivered insert of the certified prefix. *)
+    next program step strips it).
+
+    Two pure facts come with the share, both of them about the lock body's
+    quiescent agreement between its halves, which a share of [own_store]
+    cannot express on its own, and which the read lock's linearization point
+    is the one moment to read:
+
+    - the told model [m0] really is this state's document model
+      ([pool_registry_models]). The predicate leaves it free, because a
+      transaction moves the data ahead of what the observers were told.
+    - every insert the reader's certificate says was delivered already has
+      its item in [m0], under the type it targeted ([delivered_reflected]).
+      The reader brings a prefix certificate of THIS replica's op history
+      and the client pin identifying it (issue #125).
+
+    Neither mentions a root: taking the lock is not a read of any one type,
+    and a reader lands these on the root it cares about afterwards, with its
+    own binding against the registry authority inside the share. *)
 Lemma wp_Store__rlock (ref : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
+    (c : ClientId) (h0 : list Ev) :
   {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ own_read_cap γs ∗
-      is_store_client γs c ∗ is_history_lb γh c h0 ∗
-      is_type_binding γs.(sn_types) name parent }}}
+      is_store_client γs c ∗ is_history_lb γh c h0 }}}
     ref @! (go.PointerType yjs.storeRef) @! "rlock" #()
   {{{ (state : store_state) (ds : gset YjsId) (m0 : DocModel), RET #();
       own_read_locked γs ∗
       ▷ own_store (store_of_ref ref) γs γh rwmutex_guard.rfrac state ds m0
           (pool_tombstoned (ss_pool state)) ∗
-      ⌜∀ input : IntegrateInput (A := A),
-         (RootId name, OpInsert input) ∈ delivered_ops h0 ->
-         ∃ tm it, ss_pool state !! parent = Some tm ∧ item_id it = in_id input ∧ it ∈ tm_arr tm⌝ }}}.
+      ⌜pool_registry_models m0 (ss_bind state) (ss_pool state)⌝ ∗
+      ⌜delivered_reflected h0 m0⌝ }}}.
 Proof.
-  wp_start_folded as "(His & Hcap & #Hpin & #Hlb & #Hbind)". iNamed "His".
+  wp_start_folded as "(His & Hcap & #Hpin & #Hlb)". iNamed "His".
   iDestruct "Hcap" as "[Htok Hmaxtok]".
   wp_method_call. wp_call. wp_call. wp_auto.
   wp_apply (rwmutex.wp_RWMutex__RLock with "[$Hrw $Htok]").
@@ -254,9 +263,10 @@ Proof.
   iDestruct "Hrest" as (m deleted) "[>Hstore Hobservers]".
   iEval (rewrite /tie_store) in "Hstore".
   iDestruct "Hstore" as (c0 h state ds) "(%Hdel & Hcore & Hsession)".
-  (* the conversion, at the one moment the session is visible *)
-  iDestruct (own_store_core_session_hist_root with "Hcore Hsession Hpin Hlb Hbind")
-    as "(Hcore & Hsession & %Hfact)".
+  (* the two reads of the session, at the one moment it is visible *)
+  iDestruct (own_replica_history_registry_models with "Hsession") as %Hregmodel.
+  iDestruct (own_store_core_session_delivered_reflected with "Hcore Hsession Hpin Hlb")
+    as %Hdeliv.
   iCombine "Hmaxn Hmaxtok" as "Hmaxn1".
   iCombine "Hmax Hmaxn1" gives %Hbound.
   iMod (own_tok_auth_S with "Hrauth") as "[Hrauth Hrtok]".
@@ -275,7 +285,8 @@ Proof.
   iModIntro. wp_auto. iApply ("HΦ" $! state ds m).
   iFrame "Hrtok".
   subst deleted.
-  iSplitL "Hcore_r Hobs_r"; last (iPureIntro; exact Hfact).
+  iSplitL "Hcore_r Hobs_r";
+    last (iPureIntro; split; [exact Hregmodel | exact Hdeliv]).
   iNext. rewrite /own_store. iFrame "Hcore_r Hobs_r".
 Qed.
 
