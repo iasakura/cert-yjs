@@ -36,6 +36,22 @@ func newStoreRef(client Client) *storeRef {
 	return &storeRef{store: newStore(client)}
 }
 
+// The four lock entry points of the shared ref, as methods so the lock
+// protocol is part of storeRef's own surface: every reader and writer of
+// the document enters through one of them, and each carries its own spec.
+// The three references name no such operations. Yjs v14 has no lock at
+// all (single-threaded JavaScript); yrs reaches its store only through
+// the guards its transactions hold (yrs 0.27.2 src/transaction.rs:417
+// Transaction's RwLockReadGuard, :446 TransactionMut's RwLockWriteGuard);
+// y-octo calls read() / write() on the Arc<RwLock<DocStore>> inline at
+// each use (y-octo 0.1.0 src/doc/store.rs:36, src/doc/document.rs:254).
+// The Go follows y-octo's lock placement (the lock around the store, taken
+// per operation) and names the four operations.
+func (ref *storeRef) rlock()   { ref.mu.RLock() }
+func (ref *storeRef) runlock() { ref.mu.RUnlock() }
+func (ref *storeRef) wlock()   { ref.mu.Lock() }
+func (ref *storeRef) wunlock() { ref.mu.Unlock() }
+
 // store is the document's struct store (y-octo: doc/store.rs DocStore): the
 // local client's next clock, the per-client run lists, the root-type
 // registry, the delete set and the observers. It is everything mutable and

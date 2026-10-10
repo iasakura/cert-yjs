@@ -255,11 +255,11 @@ func (tr *Transaction) applyUpdate(structs []updateItem) {
 // document, and the callbacks notify runs receive their delta and must not
 // touch the document at all (Text.Observe).
 func transact(ref *storeRef, f func(tr *Transaction)) {
-	ref.mu.Lock()
+	ref.wlock()
 	tr := newTransaction(&ref.store)
 	f(tr)
 	tr.notify()
-	ref.mu.Unlock()
+	ref.wunlock()
 }
 
 // notify is the end of the transaction, the observer half of Yjs's

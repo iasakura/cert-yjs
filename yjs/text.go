@@ -39,9 +39,9 @@ type Text struct {
 // under the RwLock read guard).
 func (t *Text) String() string {
 	s := t.store
-	s.mu.RLock()
+	s.rlock()
 	r := t.inner.Text()
-	s.mu.RUnlock()
+	s.runlock()
 	return r
 }
 
@@ -58,9 +58,9 @@ func (t *Text) StringIn(tr *Transaction) string {
 // the read lock (RLock) so it runs concurrently with other readers.
 func (t *Text) Len() uint64 {
 	s := t.store
-	s.mu.RLock()
+	s.rlock()
 	n := t.inner.len
-	s.mu.RUnlock()
+	s.runlock()
 	return n
 }
 
@@ -81,7 +81,7 @@ func (t *Text) Len() uint64 {
 // reason (#206 item 2).
 func (t *Text) Observe(callback func(delta []DeltaOp)) {
 	s := t.store
-	s.mu.Lock()
+	s.wlock()
 	var initial []DeltaOp
 	text := t.inner.Text()
 	if len(text) > 0 {
@@ -89,7 +89,7 @@ func (t *Text) Observe(callback func(delta []DeltaOp)) {
 	}
 	callback(initial)
 	s.store.observers[t.inner] = append(s.store.observers[t.inner], callback)
-	s.mu.Unlock()
+	s.wunlock()
 }
 
 func (t *Text) Insert(index uint64, content string) {

@@ -271,9 +271,9 @@ func (doc *Doc) ApplyUpdate(data []byte) {
 	}
 
 	doc.integrateStructs(structs)
-	doc.store.mu.Lock()
+	doc.store.wlock()
 	doc.applyDeletes(deletes)
-	doc.store.mu.Unlock()
+	doc.store.wunlock()
 }
 
 // readDeleteSection parses the delete set of an update into the decoded

@@ -117,7 +117,7 @@ func deltaSnoc(delta []DeltaOp, op DeltaOp) []DeltaOp {
 // section 6.2); y-octo's publisher only reads.
 func (o *TextObserver) Poll() []DeltaOp {
 	s := o.text.store
-	s.mu.Lock()
+	s.wlock()
 	var delta []DeltaOp
 	stateVector := make(map[Client]Clock)
 	deleted := make(map[Client][]span[uint64])
@@ -157,7 +157,7 @@ func (o *TextObserver) Poll() []DeltaOp {
 	}
 	o.stateVector = stateVector
 	o.deleted = deleted
-	s.mu.Unlock()
+	s.wunlock()
 	// a trailing retain is implicit
 	n := len(delta)
 	if n > 0 && delta[n-1].Kind == DeltaRetain {

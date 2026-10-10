@@ -6,10 +6,11 @@
     [rlock] / [runlock] trade a reader slot for an [rfrac] fraction of
     the public [own_store] (issue #219 M4: the core without a later, the
     observers under one), with a history certificate converted at the
-    linearization point (issue #125).
-    Not part of the store's Go API: every method proof of the store and of
-    the [Text] handle enters through these, so they sit next to the
-    invariant rather than inside any one method file. *)
+    linearization point (issue #125). All four are [storeRef] methods, so
+    these are their method specs. Unexported, with no exported
+    counterpart: every method proof of the store and of the [Text] handle
+    enters through these, so they sit next to the invariant rather than
+    inside any one method file. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -139,8 +140,8 @@ Qed.
     out under a later: the observers' callback contracts are not
     timeless (the next program step strips it). *)
 Lemma wp_Store__wlock (ref : loc) (γs : store_names) (γh : history_names) :
-  {{{ is_pkg_init sync ∗ is_Store ref γs γh }}}
-    (ref .[(yjs.storeRef.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Lock" #()
+  {{{ is_pkg_init yjs ∗ is_Store ref γs γh }}}
+    ref @! (go.PointerType yjs.storeRef) @! "wlock" #()
   {{{ RET #(); own_wlock γs ∗
       ∃ (c : ClientId) (h : list Ev) (m : DocModel),
         ▷ ∃ (state : store_state) (ds : gset YjsId),
@@ -148,6 +149,7 @@ Lemma wp_Store__wlock (ref : loc) (γs : store_names) (γh : history_names) :
             own_store_session γs γh c h m state ds }}}.
 Proof.
   wp_start_folded as "His". iNamed "His".
+  wp_method_call. wp_call. wp_call. wp_auto.
   wp_apply (rwmutex.wp_RWMutex__Lock with "[$Hrw]").
   iInv "Htie" as "Hi" "Hclose".
   iDestruct "Hi" as (st) "[>Hown Hbody]".
@@ -161,7 +163,7 @@ Proof.
   iMod "Hmask" as "_".
   iMod ("Hclose" with "[Hlocked Hrauth]") as "_".
   { iExists Locked. iFrame "Hlocked". iEval (cbn [tie_body]). iFrame "Hrauth". }
-  iModIntro. iApply "HΦ". iFrame "Hwl".
+  iModIntro. wp_auto. iApply "HΦ". iFrame "Hwl".
   iExists c, h, m. iNext.
   iExists state, ds.
   iEval (rewrite frac_of_0) in "Hcore".
@@ -180,14 +182,15 @@ Qed.
 Lemma wp_Store__wunlock (ref : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (state : store_state) (ds : gset YjsId) :
-  {{{ is_pkg_init sync ∗ is_Store ref γs γh ∗ own_wlock γs ∗
+  {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ own_wlock γs ∗
       own_store (store_of_ref ref) γs γh 1 state ds m (pool_tombstoned (ss_pool state)) ∗
       own_store_session γs γh c h m state ds }}}
-    (ref .[(yjs.storeRef.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "Unlock" #()
+    ref @! (go.PointerType yjs.storeRef) @! "wunlock" #()
   {{{ RET #(); True }}}.
 Proof.
   wp_start_folded as "(His & Hwl & Hstore & Hsession)". iNamed "His".
   iDestruct "Hstore" as "[Hcore Hobservers]".
+  wp_method_call. wp_call. wp_call. wp_auto.
   wp_apply (rwmutex.wp_RWMutex__Unlock with "[$Hrw]").
   iInv "Htie" as "Hi" "Hclose".
   iDestruct "Hi" as (st) "[>Hown Hbody]".
@@ -209,7 +212,7 @@ Proof.
       iSplitR "Hobservers"; last by (iEval (rewrite frac_of_0); iFrame "Hobservers").
       rewrite /tie_store frac_of_0.
       iExists c, h, state, ds. iFrame "Hcore Hsession". done. }
-    iModIntro. by iApply "HΦ".
+    iModIntro. wp_auto. by iApply "HΦ".
 Qed.
 
 
@@ -225,10 +228,10 @@ Qed.
     delivered insert of the certified prefix. *)
 Lemma wp_Store__rlock (ref : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
-  {{{ is_pkg_init sync ∗ is_Store ref γs γh ∗ own_read_cap γs ∗
+  {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ own_read_cap γs ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗
       is_type_binding γs.(sn_types) name parent }}}
-    (ref .[(yjs.storeRef.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "RLock" #()
+    ref @! (go.PointerType yjs.storeRef) @! "rlock" #()
   {{{ (state : store_state) (ds : gset YjsId) (m0 : DocModel), RET #();
       own_read_locked γs ∗
       own_store_core (store_of_ref ref) γs rwmutex_guard.rfrac state ds ∗
@@ -240,6 +243,7 @@ Lemma wp_Store__rlock (ref : loc) (γs : store_names) (γh : history_names)
 Proof.
   wp_start_folded as "(His & Hcap & #Hpin & #Hlb & #Hbind)". iNamed "His".
   iDestruct "Hcap" as "[Htok Hmaxtok]".
+  wp_method_call. wp_call. wp_call. wp_auto.
   wp_apply (rwmutex.wp_RWMutex__RLock with "[$Hrw $Htok]").
   iInv "Htie" as "Hi" "Hclose".
   iDestruct "Hi" as (st) "[>Hown Hbody]".
@@ -268,7 +272,7 @@ Proof.
     iFrame "Hrauth Hmaxn1 Hwl".
     iExists m, deleted. iFrame "Hobs_i". rewrite /tie_store.
     iExists c0, h, state, ds. iFrame "Hcore_i Hsession". done. }
-  iModIntro. iApply ("HΦ" $! state ds m).
+  iModIntro. wp_auto. iApply ("HΦ" $! state ds m).
   iFrame "Hrtok Hcore_r".
   subst deleted. iFrame "Hobs_r".
   iPureIntro. exact Hfact.
@@ -285,13 +289,14 @@ Qed.
     [own_read_cap]. *)
 Lemma wp_Store__runlock (ref : loc) (γs : store_names) (γh : history_names)
     (state_r : store_state) (ds_r : gset YjsId) (m_r : DocModel) (d_r : gset YjsId) :
-  {{{ is_pkg_init sync ∗ is_Store ref γs γh ∗ own_read_locked γs ∗
+  {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ own_read_locked γs ∗
       own_store_core (store_of_ref ref) γs rwmutex_guard.rfrac state_r ds_r ∗
       own_observers (store_of_ref ref) γs γh rwmutex_guard.rfrac m_r d_r }}}
-    (ref .[(yjs.storeRef.t), "mu"]) @! (go.PointerType sync.RWMutex) @! "RUnlock" #()
+    ref @! (go.PointerType yjs.storeRef) @! "runlock" #()
   {{{ RET #(); own_read_cap γs }}}.
 Proof.
   wp_start_folded as "(His & Hrtok & Hcore_r & Hobs_r)". iNamed "His".
+  wp_method_call. wp_call. wp_call. wp_auto.
   wp_apply (rwmutex.wp_RWMutex__RUnlock with "[$Hrw]").
   iInv "Htie" as "Hi" "Hclose".
   iDestruct "Hi" as (st) "[>Hown Hbody]".
@@ -328,7 +333,7 @@ Proof.
   { iExists (RLocked n). iFrame "Hrln". iEval (cbn [tie_body]). iFrame "Hrauth Hmaxn Hwl".
     iExists m, deleted. iFrame "Hobs". rewrite /tie_store.
     iExists c0, h, state, ds. iFrame "Hcore Hsession". done. }
-  iModIntro. iApply "HΦ". iFrame "Htok Hmaxtok".
+  iModIntro. wp_auto. iApply "HΦ". iFrame "Htok Hmaxtok".
 Qed.
 
 End store_wp_private.

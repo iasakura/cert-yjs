@@ -23,9 +23,9 @@ func NewDoc(client Client) *Doc {
 // it is done under the store lock.
 func (d *Doc) GetOrCreateText(name string) *Text {
 	ref := d.store
-	ref.mu.Lock()
+	ref.wlock()
 	inner := ref.store.getOrCreateYType(name)
-	ref.mu.Unlock()
+	ref.wunlock()
 	return &Text{store: ref, inner: inner}
 }
 
