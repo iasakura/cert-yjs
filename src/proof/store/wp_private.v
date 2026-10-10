@@ -4,13 +4,14 @@
     ([own_store_session], what the holder re-establishes before release)
     and the observers told up to the current model and tombstones;
     [rlock] / [runlock] trade a reader slot for an [rfrac] fraction of
-    the public [own_store] (issue #219 M4: the core without a later, the
-    observers under one), with a history certificate converted at the
-    linearization point (issue #125). All four are [storeRef] methods, so
-    these are their method specs. Unexported, with no exported
-    counterpart: every method proof of the store and of the [Text] handle
-    enters through these, so they sit next to the invariant rather than
-    inside any one method file. *)
+    the public [own_store] (issue #219 M4), with a history certificate
+    converted at the linearization point (issue #125). All four are
+    [storeRef] methods, so these are their method specs; the methods are
+    public for [storeRef] (Text / Doc / codec call them), so each takes
+    and returns [own_store] whole at its fraction.
+    Unexported, with no exported counterpart: every method proof of the
+    store and of the [Text] handle enters through these, so they sit next
+    to the invariant rather than inside any one method file. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -217,9 +218,9 @@ Qed.
 
 
 (** Read-lock acquire: peels one [rfrac] share of the public [own_store]
-    off the lock invariant (bumping the reader count): the core without a
-    later, the observers' half under one (their callback contracts are
-    not timeless; the caller's next program step strips it). The reader
+    off the lock invariant (bumping the reader count), under one later
+    (the observers' callback contracts are not timeless; the caller's
+    next program step strips it). The reader
     brings a prefix certificate of THIS replica's op history (plus the
     client pin identifying it) and a root binding (issue #125); the read
     lock's linearization point is the one moment the reader sees the
@@ -234,8 +235,7 @@ Lemma wp_Store__rlock (ref : loc) (γs : store_names) (γh : history_names)
     ref @! (go.PointerType yjs.storeRef) @! "rlock" #()
   {{{ (state : store_state) (ds : gset YjsId) (m0 : DocModel), RET #();
       own_read_locked γs ∗
-      own_store_core (store_of_ref ref) γs rwmutex_guard.rfrac state ds ∗
-      ▷ own_observers (store_of_ref ref) γs γh rwmutex_guard.rfrac m0
+      ▷ own_store (store_of_ref ref) γs γh rwmutex_guard.rfrac state ds m0
           (pool_tombstoned (ss_pool state)) ∗
       ⌜∀ input : IntegrateInput (A := A),
          (RootId name, OpInsert input) ∈ delivered_ops h0 ->
@@ -273,9 +273,10 @@ Proof.
     iExists m, deleted. iFrame "Hobs_i". rewrite /tie_store.
     iExists c0, h, state, ds. iFrame "Hcore_i Hsession". done. }
   iModIntro. wp_auto. iApply ("HΦ" $! state ds m).
-  iFrame "Hrtok Hcore_r".
-  subst deleted. iFrame "Hobs_r".
-  iPureIntro. exact Hfact.
+  iFrame "Hrtok".
+  subst deleted.
+  iSplitL "Hcore_r Hobs_r"; last (iPureIntro; exact Hfact).
+  iNext. rewrite /own_store. iFrame "Hcore_r Hobs_r".
 Qed.
 
 
@@ -290,12 +291,12 @@ Qed.
 Lemma wp_Store__runlock (ref : loc) (γs : store_names) (γh : history_names)
     (state_r : store_state) (ds_r : gset YjsId) (m_r : DocModel) (d_r : gset YjsId) :
   {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ own_read_locked γs ∗
-      own_store_core (store_of_ref ref) γs rwmutex_guard.rfrac state_r ds_r ∗
-      own_observers (store_of_ref ref) γs γh rwmutex_guard.rfrac m_r d_r }}}
+      own_store (store_of_ref ref) γs γh rwmutex_guard.rfrac state_r ds_r m_r d_r }}}
     ref @! (go.PointerType yjs.storeRef) @! "runlock" #()
   {{{ RET #(); own_read_cap γs }}}.
 Proof.
-  wp_start_folded as "(His & Hrtok & Hcore_r & Hobs_r)". iNamed "His".
+  wp_start_folded as "(His & Hrtok & Hstore_r)". iNamed "His".
+  iDestruct "Hstore_r" as "[Hcore_r Hobs_r]".
   wp_method_call. wp_call. wp_call. wp_auto.
   wp_apply (rwmutex.wp_RWMutex__RUnlock with "[$Hrw]").
   iInv "Htie" as "Hi" "Hclose".

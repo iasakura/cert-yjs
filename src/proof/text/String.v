@@ -84,8 +84,9 @@ Proof.
   iDestruct "His_store" as "#His_store".
   wp_auto. subst s_loc. subst parent.
   wp_apply (wp_Store__rlock _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
-  iIntros (state ds m0) "(Hrlo & Hcore & Hobs & %Hfact)".
-  iNamed "Hcore".
+  iIntros (state ds m0) "(Hrlo & Hstore & %Hfact)".
+  wp_auto.
+  iNamed "Hstore". iNamed "Hcore".
   (* the handle's certificate against the shared authority: the ids it knows
      deleted are in the store's delete set, hence tombstoned in this pool *)
   iDestruct (auth_gset_frag_sub_dq with "Hdelete_set_auth Hdeleted_lb") as %Hdelsub.
@@ -96,7 +97,6 @@ Proof.
   have [ls Hls] : ∃ ls, ss_locs state !! tv.(yjs.Text.inner') = Some ls.
   { apply elem_of_dom. rewrite (proj1 Haligned). apply elem_of_dom. by exists tm. }
   have Harr : tm_arr tm = runs_flatten (tm_runs tm) := eq_refl.
-  wp_auto.
   (* borrow the type's run view at the reader's fraction and run the walk *)
   iDestruct (own_store_state_ytype_acc _ rwmutex_guard.rfrac state
                tv.(yjs.Text.inner') ls tm Hls Htmp with "Hstate") as "[Hyt Hytback]".
@@ -105,12 +105,13 @@ Proof.
   iDestruct ("Hytback" with "Hyt") as "Hstate".
   wp_auto.
   (* the reader's share goes back whole *)
-  iAssert (own_store_core (store_of_ref tv.(yjs.Text.store')) γs rwmutex_guard.rfrac state ds)
-    with "[Hstate Hseq HtypesAuth Hdelete_set_auth Hstate_agree]" as "Hcore".
-  { rewrite /own_store_core.
-    iFrame "Hstate Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
+  iAssert (own_store (store_of_ref tv.(yjs.Text.store')) γs γh rwmutex_guard.rfrac
+             state ds m0 (pool_tombstoned (ss_pool state)))
+    with "[Hstate Hseq HtypesAuth Hdelete_set_auth Hstate_agree Hobservers]" as "Hstore".
+  { rewrite /own_store /own_store_core.
+    iFrame "Hstate Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree Hobservers".
     iPureIntro. exact Hds_tomb. }
-  wp_apply (wp_Store__runlock with "[$His_store $Hrlo $Hcore $Hobs]").
+  wp_apply (wp_Store__runlock with "[$His_store $Hrlo $Hstore]").
   iIntros "Hcap".
   wp_auto.
   have Hfst : (runs_model (tm_runs tm)).*1 = tm_arr tm.

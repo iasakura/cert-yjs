@@ -90,8 +90,9 @@ Proof.
   iDestruct "His_store" as "#His_store".
   wp_auto. subst s_loc. subst parent.
   wp_apply (wp_Store__rlock _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
-  iIntros (state ds m0) "(Hrlo & Hcore & Hobs & %Hfact)".
-  iNamed "Hcore".
+  iIntros (state ds m0) "(Hrlo & Hstore & %Hfact)".
+  wp_auto.
+  iNamed "Hstore". iNamed "Hcore".
   (* the handle's certificate against the shared authority: the ids it knows
      deleted are in the store's delete set, hence tombstoned in this pool *)
   iDestruct (auth_gset_frag_sub_dq with "Hdelete_set_auth Hdeleted_lb") as %Hdelsub.
@@ -107,12 +108,14 @@ Proof.
   wp_auto.
   iDestruct ("Hytback" with "[Hparent Hdll]") as "Hstate".
   { iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. exact Hlen. }
-  iAssert (own_store_core (store_of_ref tv.(yjs.Text.store')) γs rwmutex_guard.rfrac state ds)
-    with "[Hstate Hseq HtypesAuth Hdelete_set_auth Hstate_agree]" as "Hcore".
-  { rewrite /own_store_core.
-    iFrame "Hstate Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
+  (* the reader's share goes back whole *)
+  iAssert (own_store (store_of_ref tv.(yjs.Text.store')) γs γh rwmutex_guard.rfrac
+             state ds m0 (pool_tombstoned (ss_pool state)))
+    with "[Hstate Hseq HtypesAuth Hdelete_set_auth Hstate_agree Hobservers]" as "Hstore".
+  { rewrite /own_store /own_store_core.
+    iFrame "Hstate Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree Hobservers".
     iPureIntro. exact Hds_tomb. }
-  wp_apply (wp_Store__runlock with "[$His_store $Hrlo $Hcore $Hobs]").
+  wp_apply (wp_Store__runlock with "[$His_store $Hrlo $Hstore]").
   iIntros "Hcap".
   wp_auto.
   have Hfst : (runs_model (tm_runs tm)).*1 = tm_arr tm.
