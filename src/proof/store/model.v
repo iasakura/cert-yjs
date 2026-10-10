@@ -40,7 +40,7 @@
     The address-level bookkeeping over this model is [store/value.v].
 
     The type pool: [pool], every registered type at its [type_model]
-    ([addressed_pool] pairs it with the types' node addresses); [all_runs]
+    (the address map pairs it with the types' node addresses); [all_runs]
     and the clock-sorted [client_runs]; [pool_invs], the pool invariants
     the model does not determine (the addresses' [NoDup] is not among them:
     it is a heap fact, [locs_wf]); [pool_covers], the [k]-th run of a
@@ -143,12 +143,6 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     with it). *)
 Definition pool := gmap loc type_model.
 
-(** [addressed_pool]: a pool together with each registered type's node
-    addresses, the pair the whole store speaks in ([ss_locs], [ss_pool]).
-    Named because it is also the ghost value the readers agree on
-    ([store_names]'s [sn_types_agree], read by [pool_frag] /
-    [own_read_locked] and pinned by [store_inv_ro]). *)
-Definition addressed_pool := (gmap loc (list loc) * pool)%type.
 
 (** All runs across all types (the document-global item pool). *)
 Definition all_runs (p : pool) : list ItemRun :=
@@ -1146,7 +1140,7 @@ Definition pool_next_clock (p : pool) (c n : nat) : Prop :=
     not itself in the log, only its per-char ops are. The bulk of the
     [expand_input] theory (lookup / length / singleton / chunk chaining) stays
     in [store/GetNode]; only the two definitions live here so [own_store_data] and
-    [store_inv_excl] can name them. *)
+    the lock body can name them. *)
 Definition expand_input (typedInput : TId * IntegrateInput (A := A)) : list (TId * IntegrateInput (A := A)) :=
   (λ op, (typedInput.1, op)) <$> ops_of_input typedInput.2 (explode (in_content typedInput.2)).
 

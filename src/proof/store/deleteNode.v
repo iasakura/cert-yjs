@@ -55,10 +55,11 @@ Notation accUR := (authR (gsetUR YjsId)).
 
 Context {acc_inG : inG Σ accUR}.
 
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 (* ===== lemmas ============================================================= *)
 
@@ -184,10 +185,10 @@ Lemma wp_store__deleteNode (s : loc) (γs : store_names) (γh : history_names)
   ss_pool state !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
-  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 }}}
+  {{{ is_pkg_init yjs ∗ own_store s γs γh 1 state ds m0 deleted0 }}}
     s @! (go.PointerType yjs.store) @! "deleteNode" #lc
   {{{ RET #(negb (run_deleted r));
-      own_store s γs γh
+      own_store s γs γh 1
         (state <| ss_pool := <[parent := MkTypeModel (<[k := flip_run r]> (tm_runs tm))]>
                              (ss_pool state) |>)
         ds m0 deleted0 }}}.
@@ -196,6 +197,7 @@ Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hstore) HΦ".
   iNamed "Hstore". iNamed "Hcore".
   destruct state as [client0 k0 locs p bind pend pdel]. simpl in *.
+  iApply wp_fupd.
   iDestruct "Hstate" as "(Hfields & %Hinvs)".
   have Hrpi : pool_invs p := proj1 Hinvs.
   have Hreg : pool_registry_coh bind p := proj1 (proj2 Hinvs).
@@ -232,9 +234,14 @@ Proof using Type*.
     - rewrite !lookup_fmap lookup_insert_ne //. }
   have Hds_tomb' : delete_set_tombstoned ds (all_runs (<[parent := tm']> p))
     := delete_set_tombstoned_flip ds p parent tm k r Hp Hrk Hds_tomb.
+  (* the whole-state agreement moves with the flip *)
+  iMod (state_frag_update γs
+          (MkStoreState client0 k0 locs (<[parent := tm']> p) bind pend pdel)
+          with "Hstate_agree") as "Hstate_agree".
+  iModIntro.
   iApply "HΦ".
   rewrite /own_store /own_store_core /= Hfmap.
-  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth".
+  iFrame "Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
   iSplitL; last (iPureIntro; exact Hds_tomb').
   iSplitL; last (iPureIntro; split_and!; [exact Hrpi' | exact Hreg' | exact Hcontig']).
   rewrite /own_store_fields /=.

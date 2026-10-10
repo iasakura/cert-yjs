@@ -93,9 +93,10 @@ Local Notation snapshot := (list (YjsItem A * bool)).
 (* the store's ghost state, as [store/heap] *)
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 (* [own_slice_cap] is timeless but the New.golang slice library ships no such
    instance ([store/heap] provides its own; this file does not Require it, so
@@ -197,7 +198,7 @@ Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_n
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) : iProp Σ :=
   ∃ (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId),
     "%Hpend_tomb" ∷ ⌜state_pending_tombstoned state pend deleted⌝ ∗
-    "Hstore" ∷ own_store s_loc γs γh state ds m0 deleted0 ∗
+    "Hstore" ∷ own_store s_loc γs γh 1 state ds m0 deleted0 ∗
     "Hsession" ∷ own_store_session γs γh c h m state ds ∗
     "Hrecord" ∷ own_transaction_record tr s_loc γs m deleted inserted tombstoned changed ∗
     "%Hstart" ∷ ⌜transaction_start m deleted inserted tombstoned m0 deleted0⌝.
@@ -467,7 +468,7 @@ Proof.
   destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry)".
-  iDestruct "Hregistry" as (registry registered) "(Hobserversmap & Hobserversauth & #Hregistered_bind & Hobservers)".
+  iDestruct "Hregistry" as (registry registered) "(Hobserversmap & Hobserversauth & Hregagree & #Hregistered_bind & Hobservers)".
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord".
   (* the token is registered under [name], at some address *)
   iDestruct (own_valid_2 with "Hobserversauth Hobserved") as %Hincl.

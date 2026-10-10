@@ -45,10 +45,11 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* The store's reader-count accounting ties the readers' share to the [types]
    map via a [dfrac_agree]; [store/heap] declares it up front, so the specs
    reached from here carry it too. *)
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 (** [word] does not use [0 <= Z.of_nat l] on its own, so a [clock + length <
     2^64] bound needs the length-nonneg fact spelled out to recover the
@@ -533,10 +534,10 @@ Qed.
     ([pool_entries_slot]), or, for a client with no slice at all, because
     the index is complete. *)
 Lemma wp_store__GetNode_state (s : loc) (idv : yjs.id.t) (state : store_state) :
-  {{{ is_pkg_init yjs ∗ own_store_state s state }}}
+  {{{ is_pkg_init yjs ∗ own_store_state s 1 state }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store_state s state ∗
+      own_store_state s 1 state ∗
       ⌜if ok then ∃ parent k, pool_covers (ss_pool state) parent k (toYjsId idv) ∧
                     (ss_locs state !! parent) ≫= (λ ls, ls !! k) = Some l
        else ∀ parent k, ¬ pool_covers (ss_pool state) parent k (toYjsId idv)⌝ }}}.
@@ -670,10 +671,10 @@ Qed.
 Lemma wp_store__GetNode (s : loc) (γs : store_names) (γh : history_names)
     (idv : yjs.id.t) (state : store_state) (ds : gset YjsId)
     (m0 : DocModel) (deleted0 : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ own_store s γs γh state ds m0 deleted0 }}}
+  {{{ is_pkg_init yjs ∗ own_store s γs γh 1 state ds m0 deleted0 }}}
     s @! (go.PointerType yjs.store) @! "GetNode" #idv
   {{{ (l : loc) (ok : bool), RET (#l, #ok);
-      own_store s γs γh state ds m0 deleted0 ∗
+      own_store s γs γh 1 state ds m0 deleted0 ∗
       ⌜if ok then ∃ parent k, pool_covers (ss_pool state) parent k (toYjsId idv) ∧
                     (ss_locs state !! parent) ≫= (λ ls, ls !! k) = Some l
        else ∀ parent k, ¬ pool_covers (ss_pool state) parent k (toYjsId idv)⌝ }}}.
@@ -684,7 +685,7 @@ Proof using Type*.
   iIntros (l ok) "[Hstate %Hfact]".
   iApply "HΦ".
   iSplitL; last (iPureIntro; exact Hfact).
-  iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth".
+  iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
   iPureIntro. exact Hds_tomb.
 Qed.
 

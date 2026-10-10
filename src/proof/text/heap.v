@@ -64,10 +64,11 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_Store]'s reader-count accounting ties the readers' share to the store's
    [types] map via a [dfrac_agree]; threaded here so [is_Text]/[is_Store] uses
    in this file (Insert/Delete/Len) can discharge the instance. *)
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 (* The ghost op-history types at the document content type; type names are Go
    strings (issue #49). *)
@@ -87,7 +88,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
    [is_Text] lives here; the Doc-layer predicate [is_Doc] lives in doc/heap.v
    (mirrors doc.go). [is_Text] delegates straight to the store invariants
    ([is_Store] / [is_type_lb]) in store/heap, referencing only Text's own fields.
-   [wp_Text__Insert] is proved (Lock → store_inv → findPos/Integrate loop → grow
+   [wp_Text__Insert] is proved (Lock → the store → findPos/Integrate loop → grow
    the item-set auth → Unlock). *)
 
 (** Text handle (persistent), parameterized by a SORTED list [L] of known items
@@ -172,14 +173,14 @@ Proof. iIntros "H". iNamed "H". iFrame "Hdeleted_lb". Qed.
     content / id / left / right".
 
     Proof shape: peel [is_Text → is_Store] and take the RWMutex write lock
-    ([wp_Store__wlock]), which yields [store_inv]; combine [is_type_lb] with
+    ([wp_Store__wlock]), which yields the store; combine [is_type_lb] with
     [Hseq] (auth) via
     [auth_gmap_gset_lookup] to learn [parent ∈ dom types] and extract THIS text's
     type's runs / DLL from [Htypes]; run the findPos/Integrate loop, whose
     invariant accumulates [ins] with the per-byte facts (content/id/origins) plus
     [tm_arr tm ⊆ arr]; at exit grow the auth item-set ([tm_arr tm → arr]) with
     [auth_gmap_gset_grow] and mint the new [is_type_lb]; reinsert the grown text
-    into [Htypes] ([big_sepM_insert_acc]); rebuild [store_inv] (clock bumped,
+    into [Htypes] ([big_sepM_insert_acc]); rebuild the store (clock bumped,
     counter [Hctr] preserved); [Unlock]; return with [L' = arr]. The post's
     [sublist L L'] follows from [sorted_subseteq_sublist] (both sorted, [L ⊆ L']
     as items via the item-set ghost), and [it ∉ L] from the fresh clocks vs the

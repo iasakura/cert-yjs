@@ -41,10 +41,11 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 Local Notation P := go_string.
 Local Notation TId := (TypeId P).
@@ -73,11 +74,12 @@ Proof.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
   iDestruct "Hinv" as (c h m) "Hstore".
   wp_auto.
-  iDestruct "Hstore" as (state0 ds0) "(Hcore & Hsession & Hobservers)".
+  iDestruct "Hstore" as (state0 ds0) "(Hstore & Hsession)".
+  iDestruct "Hstore" as "[Hcore Hobservers]".
   iDestruct (own_store_data_build with "Hcore Hsession") as "Hstore".
   set (pend := ss_pending state0) in *.
   set (deleted := pool_tombstoned (ss_pool state0)) in *.
-  iNamed "Hobservers".
+  iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry)".
   (* ---- the current text ---- *)
   iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
@@ -91,7 +93,7 @@ Proof.
   { apply elem_of_dom. rewrite (proj1 Haligned). apply elem_of_dom. by exists ts. }
   have Hsnap : runs_model (tm_runs ts) = type_snapshot m deleted name.
   { rewrite Hdeleted. exact (type_snapshot_runs_model m bind p name _ ts Hpoolinv Hregmodel Hbindlk Htsp). }
-  iDestruct (own_store_state_ytype_acc (store_of_ref tv.(yjs.Text.store')) (MkStoreState client k locs p bind pend pdel)
+  iDestruct (own_store_state_ytype_acc (store_of_ref tv.(yjs.Text.store')) 1 (MkStoreState client k locs p bind pend pdel)
                tv.(yjs.Text.inner') ls ts Hls Htsp with "Hstate") as "[Hyt Hytback]".
   iDestruct "Hyt" as (yt tl) "Hyt". iNamed "Hyt".
   iDestruct (own_dll_run_per_char with "Hdll") as %Hperchar.
@@ -112,10 +114,11 @@ Proof.
     apply list_elem_of_fmap in Hitems as (r & -> & Hr).
     destruct (run_per_char_content (run_items r) x (Hperchar r Hr) Hxitems) as [b Hb].
     rewrite Hb. discriminate. }
-  iNamed "Hregistry".
+  iDestruct "Hregistry" as (registry registered)
+    "(Hobserversmap & Hobserversauth & Hregagree & #Hregistered_bind & Hobservers)".
   iDestruct (registered_bindings_lookup with "HtypesAuth Hregistered_bind") as %Hregbind.
   iAssert (own_store_data (store_of_ref tv.(yjs.Text.store')) γs γh c h m pend deleted)
-    with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set]" as "Hstore".
+    with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree]" as "Hstore".
   { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh
       | exact Hctr | exact Hacccoh | exact Hdeleted]. }
@@ -175,12 +178,17 @@ Proof.
     iIntros (sl') "(Hsl' & Hcap' & _)". wp_auto.
     wp_apply (wp_map_insert with "Hobserversmap"). iIntros "Hobserversmap". wp_auto.
     iMod (observers_register γs _ γo name with "Hobserversauth") as "[Hobserversauth #Hobserved]".
+    iMod (observers_agree_update γs
+            (<[tv.(yjs.Text.inner') := (name, γos ++ [γo])]> registered)
+            with "Hregagree") as "Hregagree".
     iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hcore' $Hsession' Hobserversf Hobserversmap Hobserversauth Hobservers Hsl' Hcap' Hentry_callbacks Hobs]").
-    { rewrite -Hdel'. iExists observers_mref. iFrame "Hobserversf".
+    iAssert (own_observers (store_of_ref tv.(yjs.Text.store')) γs γh 1 m deleted)
+      with "[Hobserversf Hobserversmap Hobserversauth Hregagree Hobservers Hsl' Hcap' Hentry_callbacks Hobs]"
+      as "Hobservers'".
+    { iExists observers_mref. iFrame "Hobserversf".
       iExists (<[tv.(yjs.Text.inner') := sl']> registry),
         (<[tv.(yjs.Text.inner') := (name, γos ++ [γo])]> registered).
-      iFrame "Hobserversmap".
+      iFrame "Hobserversmap Hregagree".
       rewrite (registered_tokens_register registered _ name γos γo (or_introl Hdkey)).
       iFrame "Hobserversauth".
       iSplitR.
@@ -188,6 +196,11 @@ Proof.
       rewrite big_sepM2_insert_delete. iFrame "Hobservers".
       iExists (cbs ++ [cb]). iFrame "Hsl' Hcap'". iEval (cbn [fst snd]).
       rewrite big_sepL2_snoc. iFrame "Hentry_callbacks Hcb Hobs". }
+    iAssert (own_store (store_of_ref tv.(yjs.Text.store')) γs γh 1 state' ds' m
+               (pool_tombstoned (ss_pool state')))
+      with "[Hcore' Hobservers']" as "Hstore'".
+    { rewrite /own_store -Hdel'. iFrame "Hcore' Hobservers'". }
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore' $Hsession']").
     iApply ("HΦ" with "Hobserved").
   - (* the first observer of this type *)
     have Hdkey : registered !! tv.(yjs.Text.inner') = None.
@@ -198,12 +211,17 @@ Proof.
     iIntros (sl') "(Hsl' & Hcap' & _)". wp_auto.
     wp_apply (wp_map_insert with "Hobserversmap"). iIntros "Hobserversmap". wp_auto.
     iMod (observers_register γs _ γo name with "Hobserversauth") as "[Hobserversauth #Hobserved]".
+    iMod (observers_agree_update γs
+            (<[tv.(yjs.Text.inner') := (name, [] ++ [γo])]> registered)
+            with "Hregagree") as "Hregagree".
     iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hcore' $Hsession' Hobserversf Hobserversmap Hobserversauth Hobservers Hsl' Hcap' Hobs]").
-    { rewrite -Hdel'. iExists observers_mref. iFrame "Hobserversf".
+    iAssert (own_observers (store_of_ref tv.(yjs.Text.store')) γs γh 1 m deleted)
+      with "[Hobserversf Hobserversmap Hobserversauth Hregagree Hobservers Hsl' Hcap' Hobs]"
+      as "Hobservers'".
+    { iExists observers_mref. iFrame "Hobserversf".
       iExists (<[tv.(yjs.Text.inner') := sl']> registry),
         (<[tv.(yjs.Text.inner') := (name, [] ++ [γo])]> registered).
-      iFrame "Hobserversmap".
+      iFrame "Hobserversmap Hregagree".
       rewrite (registered_tokens_register registered _ name [] γo (or_intror (conj Hdkey eq_refl))).
       iFrame "Hobserversauth".
       iSplitR.
@@ -211,6 +229,11 @@ Proof.
       rewrite (big_sepM2_insert _ _ _ _ _ _ Hrkey Hdkey). iFrame "Hobservers".
       iExists ([] ++ [cb]). iFrame "Hsl' Hcap'". iEval (cbn [fst snd]).
       rewrite big_sepL2_snoc big_sepL2_nil. iSplitR; first done. iFrame "Hcb Hobs". }
+    iAssert (own_store (store_of_ref tv.(yjs.Text.store')) γs γh 1 state' ds' m
+               (pool_tombstoned (ss_pool state')))
+      with "[Hcore' Hobservers']" as "Hstore'".
+    { rewrite /own_store -Hdel'. iFrame "Hcore' Hobservers'". }
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore' $Hsession']").
     iApply ("HΦ" with "Hobserved").
 Qed.
 

@@ -44,10 +44,11 @@ Set Default Proof Using "Type*".
 Notation A := go_string.
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 Local Notation P := go_string.
 Local Notation TId := (TypeId P).
@@ -58,7 +59,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (** [Text.String]: a CONCURRENT functional read (issue #125). Takes the
     RWMutex read lock, walks the type's DLL through a fractional
-    [store_inv_ro] share ([wp_yType__Text]), then releases. The caller brings
+    share of [own_store] ([wp_yType__Text]), then releases. The caller brings
     a prefix certificate [is_history_lb γh c h0] of THIS replica's op history
     (with the client pin identifying it), and the model is guaranteed to
     contain one item per delivered insert of [h0] targeting this root (a
@@ -83,27 +84,34 @@ Proof.
   iDestruct "His_store" as "#His_store".
   wp_auto. subst s_loc. subst parent.
   wp_apply (wp_Store__rlock _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
-  iIntros (locs p delete_set) "(Hrlo & Hro & %Hfact)".
-  iNamed "Hro".
+  iIntros (state ds m0) "(Hrlo & Hstore & %Hfact)".
+  wp_auto.
+  iNamed "Hstore". iNamed "Hcore".
   (* the handle's certificate against the shared authority: the ids it knows
      deleted are in the store's delete set, hence tombstoned in this pool *)
   iDestruct (auth_gset_frag_sub_dq with "Hdelete_set_auth Hdeleted_lb") as %Hdelsub.
   iDestruct (auth_gmap_gset_lookup_dq with "Hseq His_lb") as %(S' & HmS & HLsub).
   rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (tm & Htmp & ->).
-  iDestruct "Htypes" as "(%Hlocswf & Hpool)".
-  (* borrow the type's run view and run the verified walk *)
-  iDestruct (big_sepM_lookup_acc _ _ _ _ Htmp with "Hpool") as "[Hbody Hclose]".
-  iDestruct "Hbody" as (ls) "(%Hls & Htextr & %Hinvarr)".
+  iDestruct (own_store_state_aligned with "Hstate") as %Haligned.
+  iDestruct (own_store_state_arr_inv with "Hstate") as %Harrinv.
+  have [ls Hls] : ∃ ls, ss_locs state !! tv.(yjs.Text.inner') = Some ls.
+  { apply elem_of_dom. rewrite (proj1 Haligned). apply elem_of_dom. by exists tm. }
   have Harr : tm_arr tm = runs_flatten (tm_runs tm) := eq_refl.
+  (* borrow the type's run view at the reader's fraction and run the walk *)
+  iDestruct (own_store_state_ytype_acc _ rwmutex_guard.rfrac state
+               tv.(yjs.Text.inner') ls tm Hls Htmp with "Hstate") as "[Hyt Hytback]".
+  wp_apply (wp_yType__Text (tv.(yjs.Text.inner')) (DfracOwn rwmutex_guard.rfrac) ls tm with "[$Hyt]").
+  iIntros "Hyt".
+  iDestruct ("Hytback" with "Hyt") as "Hstate".
   wp_auto.
-  wp_apply (wp_yType__Text (tv.(yjs.Text.inner')) (DfracOwn rwmutex_guard.rfrac) ls tm with "[$Htextr]").
-  iIntros "Htextr".
-  iDestruct ("Hclose" with "[Htextr]") as "Hpool".
-  { iExists ls. iSplitR; first by iPureIntro. iFrame "Htextr". by iPureIntro. }
-  wp_auto.
-  wp_apply (wp_Store__runlock with "[$His_store $Hrlo Hseq Hdelete_set_auth Hpool]").
-  { iFrame "Hseq Hdelete_set_auth". iSplitR; first by iPureIntro.
-    rewrite /own_type_pool. iSplitR; [by iPureIntro | iFrame "Hpool"]. }
+  (* the reader's share goes back whole *)
+  iAssert (own_store (store_of_ref tv.(yjs.Text.store')) γs γh rwmutex_guard.rfrac
+             state ds m0 (pool_tombstoned (ss_pool state)))
+    with "[Hstate Hseq HtypesAuth Hdelete_set_auth Hstate_agree Hobservers]" as "Hstore".
+  { rewrite /own_store /own_store_core.
+    iFrame "Hstate Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree Hobservers".
+    iPureIntro. exact Hds_tomb. }
+  wp_apply (wp_Store__runlock with "[$His_store $Hrlo $Hstore]").
   iIntros "Hcap".
   wp_auto.
   have Hfst : (runs_model (tm_runs tm)).*1 = tm_arr tm.
@@ -113,15 +121,15 @@ Proof.
   have Hexcl : visible_excludes deleted_ids (runs_model (tm_runs tm)).
   { apply visible_excludes_of_bits => x b Hin Hid.
     destruct (runs_model_elem_of _ _ _ Hin) as (r & Hr & Hx & ->).
-    have Hrall : r ∈ all_runs p.
+    have Hrall : r ∈ all_runs (ss_pool state).
     { apply elem_of_all_runs. exists tv.(yjs.Text.inner'), tm.
       split; [exact Htmp | exact Hr]. }
-    exact (Hdelete_set_tomb r Hrall x Hx (Hdelsub (item_id x) Hid)). }
+    exact (Hds_tomb r Hrall x Hx (Hdelsub (item_id x) Hid)). }
   iApply ("HΦ" $! _ (runs_model (tm_runs tm))).
   iSplitR "Hcap"; last first.
   { iFrame "Hcap". iPureIntro. split_and!.
     - reflexivity.
-    - split; rewrite Hfst; [exact HLsub | exact Hinvarr].
+    - split; rewrite Hfst; [exact HLsub | exact (Harrinv _ _ Htmp)].
     - move=> input Hin.
       destruct (Hfact input Hin) as (tm' & it & Htm' & Hitid & Hitmem).
       rewrite Htmp in Htm'. injection Htm' as <-.

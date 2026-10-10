@@ -13,9 +13,9 @@ func TestDeleteRangeWholeRun(t *testing.T) {
 	txt := doc.GetOrCreateText("root")
 	txt.Insert(0, "hello")
 
-	doc.store.mu.Lock()
+	doc.store.wlock()
 	newTransaction(&doc.store.store).deleteRange(1, 1, 3) // clocks 1..3 = "ell"
-	doc.store.mu.Unlock()
+	doc.store.wunlock()
 
 	if got := txt.String(); got != "ho" {
 		t.Fatalf("String() = %q, want %q", got, "ho")
@@ -30,10 +30,10 @@ func TestDeleteRangeIdempotent(t *testing.T) {
 	txt := doc.GetOrCreateText("root")
 	txt.Insert(0, "abcd")
 
-	doc.store.mu.Lock()
+	doc.store.wlock()
 	newTransaction(&doc.store.store).deleteRange(1, 0, 2)
 	newTransaction(&doc.store.store).deleteRange(1, 0, 2) // again: no double length shrink
-	doc.store.mu.Unlock()
+	doc.store.wunlock()
 
 	if got := txt.String(); got != "cd" {
 		t.Fatalf("String() = %q, want %q", got, "cd")
@@ -48,12 +48,12 @@ func TestDeleteRangeSkipsUnintegrated(t *testing.T) {
 	txt := doc.GetOrCreateText("root")
 	txt.Insert(0, "ab")
 
-	doc.store.mu.Lock()
+	doc.store.wlock()
 	// clocks 0..4 requested, only 0..1 exist: the rest is skipped, not a panic
 	newTransaction(&doc.store.store).deleteRange(1, 0, 5)
 	// a client with no items at all
 	newTransaction(&doc.store.store).deleteRange(7, 0, 3)
-	doc.store.mu.Unlock()
+	doc.store.wunlock()
 
 	if got := txt.String(); got != "" {
 		t.Fatalf("String() = %q, want empty", got)
@@ -74,13 +74,13 @@ func TestDeleteRangeRemoteConverges(t *testing.T) {
 	txtB := docB.GetOrCreateText("root")
 	docB.ApplySyncUpdate(structsOf(docA, "root"), nil)
 
-	docA.store.mu.Lock()
+	docA.store.wlock()
 	newTransaction(&docA.store.store).deleteRange(1, 5, 6) // " world"
-	docA.store.mu.Unlock()
+	docA.store.wunlock()
 
-	docB.store.mu.Lock()
+	docB.store.wlock()
 	newTransaction(&docB.store.store).deleteRange(1, 5, 6)
-	docB.store.mu.Unlock()
+	docB.store.wunlock()
 
 	if got, want := txtB.String(), txtA.String(); got != want {
 		t.Fatalf("B = %q, A = %q", got, want)
@@ -93,8 +93,8 @@ func TestDeleteRangeRemoteConverges(t *testing.T) {
 // structsOf builds the decoded insert batch for one root of doc, in clock
 // order, the way a wire update would carry it.
 func structsOf(doc *Doc, name string) []updateItem {
-	doc.store.mu.RLock()
-	defer doc.store.mu.RUnlock()
+	doc.store.rlock()
+	defer doc.store.runlock()
 	items := []updateItem{}
 	cur := doc.store.store.types[name].start
 	for cur != nil {

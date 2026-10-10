@@ -64,10 +64,11 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 (** [own_store] (states coincident) to [own_transaction]: a fresh
     transaction on the locked store. The record has recorded nothing, so
@@ -76,16 +77,14 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel) (state : store_state) (ds : gset YjsId) :
   own_transaction_changes tr s_loc ∅ ∅ ∅ -∗
-  own_store_core s_loc γs state ds ∗
-  own_store_session γs γh c h m state ds ∗
-  own_observers s_loc γs γh m (pool_tombstoned (ss_pool state)) -∗
+  own_store s_loc γs γh 1 state ds m (pool_tombstoned (ss_pool state)) ∗
+  own_store_session γs γh c h m state ds -∗
   own_transaction tr s_loc γs γh c h m (ss_pending state) (pool_tombstoned (ss_pool state)) ∅ ∅ ∅.
 Proof.
-  iIntros "Hchanges (Hcore & Hsession & Hobservers)".
+  iIntros "Hchanges (Hstore & Hsession)".
   iExists state, ds, m, (pool_tombstoned (ss_pool state)).
   iSplitR; first (iPureIntro; split; reflexivity).
-  iSplitL "Hcore Hobservers"; first iFrame "Hcore Hobservers".
-  iFrame "Hsession".
+  iFrame "Hstore Hsession".
   iSplit; last (iPureIntro; apply transaction_start_fresh).
   iExists ∅. iFrame "Hchanges".
   iSplit; first iApply changed_types_bound_empty.
@@ -107,10 +106,10 @@ Proof.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
   iDestruct "Hinv" as (c h m) "Hstore".
   wp_auto.
-  iDestruct "Hstore" as (state0 ds0) "(Hcore & Hsession & Hobservers0)".
+  iDestruct "Hstore" as (state0 ds0) "(Hstore0 & Hsession)".
   wp_apply wp_newTransaction. iIntros (tr) "Hchanges".
   wp_auto.
-  iDestruct (own_transaction_fresh with "Hchanges [$Hcore $Hsession $Hobservers0]") as "Htx".
+  iDestruct (own_transaction_fresh with "Hchanges [$Hstore0 $Hsession]") as "Htx".
   wp_apply ("Hf" with "[$Htx]").
   iIntros (h' m' pend' deleted' inserted tombstoned changed) "[Htx HQ]".
   wp_auto.
@@ -119,8 +118,7 @@ Proof.
   iDestruct "Hstore" as (state' ds') "(%Hface' & Hstore & Hsession')".
   destruct Hface' as [Hpend' Hdel'].
   iEval (rewrite Hdel') in "Hstore".
-  iDestruct "Hstore" as "[Hcore' Hobs']".
-  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hcore' $Hsession' $Hobs']").
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore $Hsession']").
   iApply "HΦ". iExists c, h', m', pend', deleted'. iFrame "HQ".
 Qed.
 

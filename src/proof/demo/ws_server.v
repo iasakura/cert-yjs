@@ -73,10 +73,11 @@ Local Notation Ev := (@Event (TId * @YjsOperation A)).
 
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
-Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO addressed_pool))}.
+Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
+Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 Context (decode : list u8 -> option (list Input)).
 
@@ -253,9 +254,10 @@ Theorem ws_server_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
        boot lemma, exactly as every wp file above the store does *)
     `{seq_inG : !inG Σ (authR (gmapUR loc (gsetUR (YjsItem go_string))))}
     `{acc_inG : !inG Σ (authR (gsetUR YjsId))}
-    `{ftypes_inG : !inG Σ (dfrac_agreeR (leibnizO addressed_pool))}
+    `{ftypes_inG : !inG Σ (dfrac_agreeR (leibnizO store_state))}
     `{observed_inG : !ghost_varG Σ (list (YjsItem go_string * bool))}
     `{observers_inG : !inG Σ (authR (gsetUR (gname * go_string)))}
+    `{observers_agree_inG : !inG Σ (dfrac_agreeR (leibnizO registered_entries))}
     (host client : w64) (f : func.t)
     (decode : list u8 -> option (list Input))
     (coh0 : history_names -> ws_coh_ty Σ)
