@@ -25,6 +25,9 @@
       remains.
     - [history_state_coh h m]: the lock-side tie: the events of [h] replay to
       a document whose per-type item lists are [m : gmap TypeId (list item)].
+    - [delivered_reflected h0 m]: what a history-prefix certificate buys a
+      reader, with [history_state_coh_delivered_reflected] producing it: every
+      insert [h0] delivered has its item in [m] under the type it targeted.
     - [doc_model_replaced m m' t L']: [m'] is [m] with the document of [t]
       replaced by [L'] (what one write to one type does to the model).
     - [replay_ids inputs], with [ValidReplay_filter_new] (a replay only
@@ -3234,6 +3237,30 @@ Lemma sv_of_prefix (h0 h : list Ev) (c : ClientId) :
   h0 `prefix_of` h -> (sv_get (sv_of h0) c <= sv_get (sv_of h) c)%nat.
 Proof.
   move=> [t ->]. rewrite sv_of_app sv_get_join. lia.
+Qed.
+
+(** [delivered_reflected h0 m]: every insert that the history [h0] delivered
+    has an item with its id in the doc model [m], under the type it targeted.
+    This is what a history-prefix certificate buys a reader against a state
+    (issue #125): the certificate is a prefix [h0] of the replica's own
+    history, and the model is coherent with the WHOLE history, so the reader
+    may conclude of every insert it knows was delivered that the model it is
+    about to walk already contains the item. No type is privileged: a reader
+    of one root instantiates the type with that root ([doc_model_get m (RootId
+    name)]), a reader of several with each of them. *)
+Definition delivered_reflected (h0 : list Ev) (m : DocModel) : Prop :=
+  ∀ (t : TId) (input : IntegrateInput (A := A)),
+    (t, OpInsert input) ∈ delivered_ops h0 ->
+    ∃ it, item_id it = in_id input ∧ it ∈ doc_model_get m t.
+
+Lemma history_state_coh_delivered_reflected (h0 h : list Ev) (m : DocModel) :
+  h0 `prefix_of` h -> history_state_coh h m -> delivered_reflected h0 m.
+Proof.
+  move=> Hpref Hcoh t input Hin.
+  have Hin' : (t, OpInsert input) ∈ delivered_ops h.
+  { destruct (delivered_ops_prefix h0 h Hpref) as [rest ->].
+    rewrite elem_of_app. by left. }
+  exact (delivered_docm_mem h m t input Hcoh Hin').
 Qed.
 
 

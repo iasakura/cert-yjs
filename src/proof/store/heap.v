@@ -84,7 +84,9 @@
     Laws
     - [store_tie_init]: how to build the lock body from the raw points-tos;
       [own_store_data_hist_coh] / [own_store_accepted_sound] /
-      [own_store_core_session_hist_root]: what you may read back out of it.
+      [own_replica_history_registry_models] /
+      [own_store_core_session_delivered_reflected]: what you may read back
+      out of it.
     - the fractions (issue #219 M4): everything under [own_store] splits at
       equal indices ([own_store_state_split] / [own_store_core_split] /
       [own_observers_split], with [own_map_dfrac_split] / [_agree] and the
@@ -2313,59 +2315,52 @@ Qed.
 
 
 
-(** The read-lock conversion (issue #125): a reader's history-prefix
-    certificate against the store's state, at the one moment the session
-    is visible (the lock's linearization point): the pool already holds,
-    at the bound root, one item per delivered insert of the certified
-    prefix. Over the issue #219 split: the binding is looked up in the
-    core's registry authority (any fraction), the prefix and the model
-    coherence come from the session. *)
-Lemma own_store_core_session_hist_root (s_loc : loc) (γs : store_names) (γh : history_names)
-    (qf : Qp) (state : store_state) (ds : gset YjsId)
-    (c0 : ClientId) (h : list Ev) (m : DocModel)
-    (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
+(** The session's model tie, read off it without opening it: the doc model
+    the session is stated over is the one the state's registry spells out
+    ([pool_registry_models]: a bound name's type has the model's items at
+    that name, and no unbound name has any).
+
+    This comes from the session and from nowhere else. [own_store] carries
+    the observers' told model as a FREE parameter, because a transaction
+    moves the data ahead of what the observers have been told, so holding
+    [own_store] at [(state, m0)] does not say that [m0] is [state]'s model.
+    Only a holder of the session can say it, which is why the read lock
+    hands this out beside the reader's share. *)
+Lemma own_replica_history_registry_models (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (state : store_state) (ds : gset YjsId) :
+  own_replica_history γs γh c h m state ds -∗
+  ⌜pool_registry_models m (ss_bind state) (ss_pool state)⌝.
+Proof.
+  iIntros "Hsession". iNamed "Hsession". iPureIntro. exact Hregmodel.
+Qed.
+
+(** What a reader's history-prefix certificate buys against the replica's
+    model (issue #125): every insert the certificate says was delivered
+    already has its item in the model, under the type it targeted
+    ([delivered_reflected]). The certificate names a client, the core's pin
+    says that client is this store's, and the session holds that client's
+    history authority, so the certificate is a prefix of the history the
+    session's model replays; [history_state_coh_delivered_reflected] closes
+    it. No type is privileged and no root is looked up here: a reader lands
+    the conclusion on its own root with the registry tie above. Read at the
+    one moment the session is visible, the read lock's linearization
+    point. *)
+Lemma own_store_core_session_delivered_reflected (s_loc : loc) (γs : store_names)
+    (γh : history_names) (qf : Qp) (state : store_state) (ds : gset YjsId)
+    (c0 : ClientId) (h : list Ev) (m : DocModel) (c : ClientId) (h0 : list Ev) :
   own_store_core s_loc γs qf state ds -∗
   own_replica_history γs γh c0 h m state ds -∗
   is_store_client γs c -∗
   is_history_lb γh c h0 -∗
-  is_type_binding γs.(sn_types) name parent -∗
-  own_store_core s_loc γs qf state ds ∗
-  own_replica_history γs γh c0 h m state ds ∗
-  ⌜∀ input : IntegrateInput (A := A),
-     (RootId name, OpInsert input) ∈ delivered_ops h0 ->
-     ∃ tm it, ss_pool state !! parent = Some tm ∧ item_id it = in_id input ∧ it ∈ tm_arr tm⌝.
+  ⌜delivered_reflected h0 m⌝.
 Proof.
-  iIntros "Hcore Hsession #Hpin #Hlb #Hbind".
-  iDestruct (own_store_core_registry_coh with "Hcore") as %Hregcoh.
+  iIntros "Hcore Hsession #Hpin #Hlb".
   iNamed "Hcore". iNamed "Hsession".
   iDestruct (is_store_client_agree with "Hclientpin Hpin") as %Heqc.
   assert (c = c0) as -> by congruence.
   iDestruct (is_history_lb_prefix with "Hhist Hlb") as %Hpref.
-  iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
-  have [Hmtypes _] := Hregmodel.
-  have [Hbindtypes _] := Hregcoh.
-  have Hfact : ∀ input : IntegrateInput (A := A),
-      (RootId name, OpInsert input) ∈ delivered_ops h0 ->
-      ∃ tm it, ss_pool state !! parent = Some tm ∧ item_id it = in_id input ∧ it ∈ tm_arr tm.
-  { move=> input Hin.
-    destruct (Hbindtypes name parent Hbindlk) as [tm Htm].
-    have Hdg : doc_model_get m (RootId name) = tm_arr tm := Hmtypes name parent tm Hbindlk Htm.
-    have Hin' : (RootId name, OpInsert input) ∈ delivered_ops h.
-    { destruct (delivered_ops_prefix h0 h Hpref) as [rest ->].
-      rewrite elem_of_app. by left. }
-    destruct (delivered_docm_mem h m (RootId name) input Hhcoh Hin') as (it & Hitid & Hitmem).
-    exists tm, it. rewrite Hdg in Hitmem.
-    split_and!; [exact Htm | exact Hitid | exact Hitmem]. }
-  iSplitL "Hstate Hseq HtypesAuth Hdelete_set_auth Hstate_agree".
-  { rewrite /own_store_core.
-    iFrame "Hstate Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
-    iPureIntro. exact Hds_tomb. }
-  iSplitL; last (iPureIntro; exact Hfact).
-  iExists acc. rewrite /own_replica_history.
-  iFrame "Hhist Hacc Hpendcert".
-  iPureIntro.
-  split_and!; [exact Hclient_is | exact Hhcoh | exact Hregmodel | exact Hctr
-              | exact Hpendroot | exact Hpendbnd | exact Hacccoh | exact Hds_dom].
+  iPureIntro. exact (history_state_coh_delivered_reflected h0 h m Hpref Hhcoh).
 Qed.
 
 

@@ -33,7 +33,10 @@
       observer, issue #198 Part II).
     - [snapshot_deleted_ids s]: the tombstoned ids of a snapshot.
     - [history_reflected h0 name s]: every insert into the root [name] that
-      the history prefix [h0] delivered has its item in [s].
+      the history prefix [h0] delivered has its item in [s];
+      [delivered_reflected_at_root] produces it from the whole-model form
+      [delivered_reflected] ([network_model]) once the walked sequence is
+      known to list the model's items at that root.
     - [delta_fits delta]: every retain and delete count is below [2^64], the
       bound up to which a Go delta (counts as [uint64] words) denotes its
       model.
@@ -91,6 +94,7 @@ Local Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation Ev := (@Event Op).
+Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 (* ===== definitions ======================================================== *)
 
@@ -844,6 +848,26 @@ Lemma run_models_fst (r : ItemRun) : (run_models r).*1 = run_items r.
 Proof.
   rewrite /run_models -list_fmap_compose -{2}(list_fmap_id (run_items r)).
   apply list_fmap_ext. move=> i x _. reflexivity.
+Qed.
+
+
+(* ----- a reader's history certificate, at one root ----- *)
+
+(** [delivered_reflected] ([network_model]) is stated over the whole doc
+    model, because a certificate says nothing about which root a reader cares
+    about; [history_reflected] is stated over the one snapshot a read walked.
+    The two meet as soon as the walked sequence lists the model's items at
+    that root: this is the step from a read lock's postcondition to a read's
+    own ([Text.Len], [Text.String], issue #125). *)
+Lemma delivered_reflected_at_root (h0 : list Ev) (m : DocModel) (name : P)
+    (s : snapshot) :
+  delivered_reflected h0 m ->
+  s.*1 = doc_model_get m (RootId name) ->
+  history_reflected h0 name s.
+Proof.
+  move=> Hdeliv Harr input Hin.
+  destruct (Hdeliv (RootId name) input Hin) as (it & Hitid & Hitmem).
+  exists it. split; [exact Hitid | rewrite Harr; exact Hitmem].
 Qed.
 
 End delta_model.
