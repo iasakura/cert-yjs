@@ -2671,7 +2671,7 @@ Qed.
 (** [Transaction.applyUpdate], the public form (issue #219): the
     transaction taken and returned whole. The drain extends the history
     by one delivery event per applied char and replays the model, which
-    is exactly the coherence [own_store_session] demands back, so the
+    is exactly the coherence [own_replica_history] demands back, so the
     body closes over [own_transaction] at the grown indexes; the start
     relation transports along the replay ([transaction_start_replay]). *)
 Lemma wp_Transaction__applyUpdate (tr s_loc : loc) (sl : slice.t) (dq : dfrac)

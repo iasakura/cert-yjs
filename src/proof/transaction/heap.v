@@ -27,7 +27,7 @@
       changed]: the transaction, over the issue #219 split: the public
       [own_store] at an existential cell state (its observers at the start
       state) tied to [(pend, deleted)] by [state_pending_tombstoned], the
-      holder's [own_store_session] at the public history and model, the
+      holder's [own_replica_history] at the public history and model, the
       record with its meaning, and [transaction_start].
     - [closure_runs_transaction s γs γh f Q]: what [transact] asks of its
       closure: run the fresh transaction to an end state where [Q] holds.
@@ -198,7 +198,7 @@ Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_n
   ∃ (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId),
     "%Hpend_tomb" ∷ ⌜state_pending_tombstoned state pend deleted⌝ ∗
     "Hstore" ∷ own_store s_loc γs γh 1 state ds m0 deleted0 ∗
-    "Hsession" ∷ own_store_session γs γh c h m state ds ∗
+    "Hsession" ∷ own_replica_history γs γh c h m state ds ∗
     "Hrecord" ∷ own_transaction_record tr s_loc γs m deleted inserted tombstoned changed ∗
     "%Hstart" ∷ ⌜transaction_start m deleted inserted tombstoned m0 deleted0⌝.
 

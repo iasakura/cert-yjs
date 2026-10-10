@@ -193,7 +193,7 @@ caller-side ghost-map reconciliation that `store/wp_private.v` carries
 for the applyUpdate path.
 
 Into the lock invariant of the lock type (the session bundle; one named
-predicate, say `own_store_session γs γh c h state m ds`):
+predicate, say `own_replica_history γs γh c h state m ds`):
 
 - the client's ghost history `own_client_history γh c h` with
   `history_state_coh h m` and `pool_registry_models m bind p` (so `m` is
@@ -211,13 +211,13 @@ The lock invariant then says: `own_store` at fraction 1 with the
 observers caught up (`m0 = m`, `deleted0 = pool_tombstoned p`), next to
 the session bundle. `transact` acquires the write lock and receives both;
 the closure runs over `own_transaction`, which becomes
-`own_store (observers at the start state) ∗ own_store_session ∗ the
+`own_store (observers at the start state) ∗ own_replica_history ∗ the
 record`; `notify` moves the observers; release demands the coherence
 back. This is exactly the C1/C2 transaction design with the predicate
 boundary redrawn, so `wp_Transaction__notify`'s job does not change.
 
 `own_store_data` and `own_store_state` dissolve: the first into
-`own_store ∗ own_store_session`, the second into `own_store`'s body
+`own_store ∗ own_replica_history`, the second into `own_store`'s body
 (`own_store_fields` survives as the internal fields conjunct). The names
 `store_inv_excl` / `store_inv_ro` disappear with the ro/excl split
 (section 5). The agreement that `pool_frag` provides today (a reader's
@@ -397,7 +397,7 @@ Each rule of spec-shape, against the design above:
   issue #220 item 2) are a separate fix, orthogonal to this plan: those
   functions stay private and keep pool-level predicates either way.
 - "Specs stay intuitive": the session bundle is ONE named predicate
-  (`own_store_session`), never spilled as loose conjuncts into
+  (`own_replica_history`), never spilled as loose conjuncts into
   `transact`'s closure contract; `own_transaction` keeps wrapping it.
 - "A new conjunct goes into an existing predicate": no new conditions
   are introduced at all; every conjunct is one of today's, relocated.
@@ -408,7 +408,7 @@ Each rule of spec-shape, against the design above:
   dissolved predicates take their helper lemmas with them
   (`store_inv_bridge`, `store_slices_own_store_data`, the
   `own_store_data` laws get successors over `own_store ∗
-  own_store_session`, and the ones nothing uses anymore are deleted).
+  own_replica_history`, and the ones nothing uses anymore are deleted).
 - Naming: `is_Store` today names the lock handle while living on the
   store; it moves to the lock type as `is_store_ref` (with the tie
   invariant inside), freeing the store's `is_X` slot. `own_store_state`
@@ -440,7 +440,7 @@ review runs before every push that touches a predicate.
   path, entry points reading the store off the ref). No predicate
   changes meaning.
 - M1, the predicate: define the new `own_store` (fields + observers +
-  authorities + `store_invs`, fractional) and `own_store_session`;
+  authorities + `store_invs`, fractional) and `own_replica_history`;
   restate the lock wrappers and `own_transaction`; dissolve
   `own_store_data`; keep the method specs on `own_store_state`'s
   successor shape compiling by a bridge law for one milestone.

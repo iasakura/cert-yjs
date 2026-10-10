@@ -151,10 +151,10 @@ Proof.
     have Htomb' : pool_tombstoned p' = pool_tombstoned p0
       := pool_tombstoned_insert_empty p0 q Hfresh.
     iEval (rewrite -Htomb') in "Hobservers".
-    iAssert (own_store_session γs γh c0 h m
+    iAssert (own_replica_history γs γh c0 h m
                (MkStoreState client0 k0 (<[q := []]> locs0) p' bind' pend0 pdel0) ds0)
       with "[Hhist Hacc]" as "Hsession".
-    { rewrite /own_store_session /=. iExists acc.
+    { rewrite /own_replica_history /=. iExists acc.
       iFrame "Hhist Hacc Hpendcert".
       iPureIntro.
       split_and!; [exact Hclient_is | exact Hhcoh | exact Hregmodel' | exact Hctr'

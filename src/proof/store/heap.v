@@ -30,7 +30,7 @@
       [own_store_data] is the lock layer's closure of [own_store_state] over the
       public model; [own_store_core] (what every store method preserves:
       the state with the client pin, the item-set, registry and delete-set
-      authorities with the tombstone clause) and [own_store_session] (what
+      authorities with the tombstone clause) and [own_replica_history] (what
       only the lock's holder re-establishes: the history with its
       coherences, the counter tie, the accepted set, the pending
       certificates, the delete set's domain bound) are its issue #219
@@ -1495,7 +1495,7 @@ Definition own_store_data (s_loc : loc) (γs : store_names) (γh : history_names
     "%Hregmodel" ∷ ⌜pool_registry_models m bind p⌝ ∗
     "%Hhcoh"  ∷ ⌜history_state_coh h m⌝ ∗
     "%Hctr"   ∷ ⌜pool_next_clock p c (uint.nat k)⌝ ∗
-    (* no-loss accepted-id layer: matches [own_store_session] *)
+    (* no-loss accepted-id layer: matches [own_replica_history] *)
     "Hacc" ∷ own γs.(sn_accepted) (● acc : accUR) ∗
     "Hdelete_set" ∷ own_delete_set γs m (all_runs p) ∗
     (* the reader/invariant agreement on the whole cell state (issue #219
@@ -1521,7 +1521,7 @@ Definition own_store_data (s_loc : loc) (γs : store_names) (γh : history_names
     its persistent binding witnesses, and the delete-set authority at [ds]
     with the tombstone clause (every ghost-deleted id is tombstoned in the
     pool; tombstoning only strengthens it). The delete set's domain bound,
-    which mentions the doc model, is [own_store_session]'s. *)
+    which mentions the doc model, is [own_replica_history]'s. *)
 Definition own_store_core (s_loc : loc) (γs : store_names) (q : Qp)
     (state : store_state) (ds : gset YjsId) : iProp Σ :=
   "Hstate" ∷ own_store_state s_loc q state ∗
@@ -1533,7 +1533,7 @@ Definition own_store_core (s_loc : loc) (γs : store_names) (q : Qp)
   "Hstate_agree" ∷ state_frag γs q state ∗
   "%Hds_tomb" ∷ ⌜delete_set_tombstoned ds (all_runs (ss_pool state))⌝.
 
-(** [own_store_session γs γh c h m state ds]: the half of [own_store_data]
+(** [own_replica_history γs γh c h m state ds]: the half of [own_store_data]
     that only the lock's holder re-establishes before release, over the
     public doc model [m]: the client's ghost operation history with its
     coherences (the replayed model is [m], and [m] is the registry-replayed
@@ -1543,7 +1543,7 @@ Definition own_store_core (s_loc : loc) (γs : store_names) (q : Qp)
     the pending buffer's certificates, and the delete set's domain bound.
     What the redesigned lock invariant will hold beside [own_store_core]
     (issue #219). *)
-Definition own_store_session (γs : store_names) (γh : history_names)
+Definition own_replica_history (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (state : store_state) (ds : gset YjsId) : iProp Σ :=
   ∃ (acc : gset YjsId),
@@ -1564,9 +1564,9 @@ Definition own_store_session (γs : store_names) (γh : history_names)
   Timeless (own_store_core s_loc γs q state ds).
 Proof. rewrite /own_store_core. apply _. Qed.
 
-#[global] Instance own_store_session_timeless γs γh c h m state ds :
-  Timeless (own_store_session γs γh c h m state ds).
-Proof. rewrite /own_store_session /is_pending_certified /is_update_item. apply _. Qed.
+#[global] Instance own_replica_history_timeless γs γh c h m state ds :
+  Timeless (own_replica_history γs γh c h m state ds).
+Proof. rewrite /own_replica_history /is_pending_certified /is_update_item. apply _. Qed.
 
 (** [own_store s γs γh state ds m0 deleted0]: THE public predicate of the
     store (issue #219): every field of the lock-free struct at the cell
@@ -1586,7 +1586,7 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
 
 
 (** The split: [own_store_data] is exactly [own_store_core] beside
-    [own_store_session], at a shared cell state tied to the public
+    [own_replica_history], at a shared cell state tied to the public
     [(pend, deleted)] by [state_pending_tombstoned]. The
     two sides of the issue #219 redesign: the core is what the store's
     methods will take and return whole, the session is what the lock
@@ -1597,14 +1597,14 @@ Lemma own_store_data_core_session (s_loc : loc) (γs : store_names) (γh : histo
   own_store_data s_loc γs γh c h m pend deleted ⊣⊢
   ∃ (state : store_state) (ds : gset YjsId),
     ⌜state_pending_tombstoned state pend deleted⌝ ∗
-    own_store_core s_loc γs 1 state ds ∗ own_store_session γs γh c h m state ds.
+    own_store_core s_loc γs 1 state ds ∗ own_replica_history γs γh c h m state ds.
 Proof.
   iSplit.
   - iIntros "Hdata". iNamed "Hdata".
     iDestruct "Hdelete_set" as (ds) "(Hdelete_set_auth & %Hds_dom & %Hds_tomb)".
     iExists (MkStoreState client k locs p bind pend pdel), ds.
     iSplitR; first (iPureIntro; split; [done | exact Hdeleted]).
-    rewrite /own_store_core /own_store_session /= Hclientc.
+    rewrite /own_store_core /own_replica_history /= Hclientc.
     iFrame "Hstate Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
     iSplitR; first (iPureIntro; exact Hds_tomb).
     iExists acc.
@@ -1640,7 +1640,7 @@ Lemma own_store_data_build (s_loc : loc) (γs : store_names) (γh : history_name
     (c : ClientId) (h : list Ev) (m : DocModel)
     (state : store_state) (ds : gset YjsId) :
   own_store_core s_loc γs 1 state ds -∗
-  own_store_session γs γh c h m state ds -∗
+  own_replica_history γs γh c h m state ds -∗
   own_store_data s_loc γs γh c h m (ss_pending state) (pool_tombstoned (ss_pool state)).
 Proof.
   iIntros "Hcore Hsession".
@@ -1655,7 +1655,7 @@ Lemma own_store_data_split (s_loc : loc) (γs : store_names) (γh : history_name
   own_store_data s_loc γs γh c h m pend deleted -∗
   ∃ (state : store_state) (ds : gset YjsId),
     ⌜state_pending_tombstoned state pend deleted⌝ ∗
-    own_store_core s_loc γs 1 state ds ∗ own_store_session γs γh c h m state ds.
+    own_store_core s_loc γs 1 state ds ∗ own_replica_history γs γh c h m state ds.
 Proof. rewrite own_store_data_core_session. auto. Qed.
 
 (** The registry coherence read off the core, without opening it: every
@@ -2081,7 +2081,7 @@ Definition tie_store (s_loc : loc) (γs : store_names) (γh : history_names) (n 
   ∃ (c : ClientId) (h : list Ev) (state : store_state) (ds : gset YjsId),
     ⌜deleted = pool_tombstoned (ss_pool state)⌝ ∗
     own_store_core s_loc γs (frac_of n) state ds ∗
-    own_store_session γs γh c h m state ds.
+    own_replica_history γs γh c h m state ds.
 
 Definition tie_body (s_loc : loc) (γs : store_names) (γh : history_names) (st : rwmutex) : iProp Σ :=
   match st with
@@ -2325,12 +2325,12 @@ Lemma own_store_core_session_hist_root (s_loc : loc) (γs : store_names) (γh : 
     (c0 : ClientId) (h : list Ev) (m : DocModel)
     (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
   own_store_core s_loc γs qf state ds -∗
-  own_store_session γs γh c0 h m state ds -∗
+  own_replica_history γs γh c0 h m state ds -∗
   is_store_client γs c -∗
   is_history_lb γh c h0 -∗
   is_type_binding γs.(sn_types) name parent -∗
   own_store_core s_loc γs qf state ds ∗
-  own_store_session γs γh c0 h m state ds ∗
+  own_replica_history γs γh c0 h m state ds ∗
   ⌜∀ input : IntegrateInput (A := A),
      (RootId name, OpInsert input) ∈ delivered_ops h0 ->
      ∃ tm it, ss_pool state !! parent = Some tm ∧ item_id it = in_id input ∧ it ∈ tm_arr tm⌝.
@@ -2361,7 +2361,7 @@ Proof.
     iFrame "Hstate Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
     iPureIntro. exact Hds_tomb. }
   iSplitL; last (iPureIntro; exact Hfact).
-  iExists acc. rewrite /own_store_session.
+  iExists acc. rewrite /own_replica_history.
   iFrame "Hhist Hacc Hpendcert".
   iPureIntro.
   split_and!; [exact Hclient_is | exact Hhcoh | exact Hregmodel | exact Hctr
@@ -2559,7 +2559,7 @@ Proof.
   { iPureIntro. rewrite /pool_tombstoned /all_runs map_to_list_empty //. }
   iSplitR "Hhist Hacc0"; last first.
   { (* the session over the fresh store: empty history, empty model *)
-    rewrite /own_store_session /=.
+    rewrite /own_replica_history /=.
     iExists (∅ : gset YjsId).
     iFrame "Hhist Hacc0".
     iSplitR; first done.

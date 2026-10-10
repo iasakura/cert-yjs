@@ -395,7 +395,7 @@ Lemma wp_Transaction__notify (tr s_loc : loc) (γs : store_names) (γh : history
       ∃ (state : store_state) (ds : gset YjsId),
         ⌜state_pending_tombstoned state pend deleted⌝ ∗
         own_store s_loc γs γh 1 state ds m deleted ∗
-        own_store_session γs γh c h m state ds }}}.
+        own_replica_history γs γh c h m state ds }}}.
 Proof.
   wp_start as "Htx".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".

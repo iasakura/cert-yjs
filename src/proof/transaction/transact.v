@@ -78,7 +78,7 @@ Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_
     (c : ClientId) (h : list Ev) (m : DocModel) (state : store_state) (ds : gset YjsId) :
   own_transaction_changes tr s_loc ∅ ∅ ∅ -∗
   own_store s_loc γs γh 1 state ds m (pool_tombstoned (ss_pool state)) ∗
-  own_store_session γs γh c h m state ds -∗
+  own_replica_history γs γh c h m state ds -∗
   own_transaction tr s_loc γs γh c h m (ss_pending state) (pool_tombstoned (ss_pool state)) ∅ ∅ ∅.
 Proof.
   iIntros "Hchanges (Hstore & Hsession)".

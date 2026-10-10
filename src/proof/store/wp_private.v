@@ -1,7 +1,7 @@
 (** Specs of the [store]'s internal lock layer: [wlock] / [wunlock] trade
     the write lock for the issue #219 split of the lock body, the core
     ([own_store_core], what every store method preserves), the session
-    ([own_store_session], what the holder re-establishes before release)
+    ([own_replica_history], what the holder re-establishes before release)
     and the observers told up to the current model and tombstones;
     [rlock] / [runlock] trade a reader slot for an [rfrac] fraction of
     the public [own_store] (issue #219 M4), with a history certificate
@@ -135,7 +135,7 @@ Qed.
 
 (** Write-lock acquire. The write [Lock] linearizes at [RLocked 0]
     (fraction 1), where the invariant holds the whole split: the public
-    [own_store] at fraction 1 and the session ([own_store_session], what
+    [own_store] at fraction 1 and the session ([own_replica_history], what
     the holder re-establishes before release); the invariant is left
     holding [Locked] (the bare reader-count authority). The store comes
     out under a later: the observers' callback contracts are not
@@ -147,7 +147,7 @@ Lemma wp_Store__wlock (ref : loc) (γs : store_names) (γh : history_names) :
       ∃ (c : ClientId) (h : list Ev) (m : DocModel),
         ▷ ∃ (state : store_state) (ds : gset YjsId),
             own_store (store_of_ref ref) γs γh 1 state ds m (pool_tombstoned (ss_pool state)) ∗
-            own_store_session γs γh c h m state ds }}}.
+            own_replica_history γs γh c h m state ds }}}.
 Proof.
   wp_start_folded as "His". iNamed "His".
   wp_method_call. wp_call. wp_call. wp_auto.
@@ -185,7 +185,7 @@ Lemma wp_Store__wunlock (ref : loc) (γs : store_names) (γh : history_names)
     (state : store_state) (ds : gset YjsId) :
   {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ own_wlock γs ∗
       own_store (store_of_ref ref) γs γh 1 state ds m (pool_tombstoned (ss_pool state)) ∗
-      own_store_session γs γh c h m state ds }}}
+      own_replica_history γs γh c h m state ds }}}
     ref @! (go.PointerType yjs.storeRef) @! "wunlock" #()
   {{{ RET #(); True }}}.
 Proof.
