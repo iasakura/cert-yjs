@@ -77,8 +77,8 @@ a rule below is what binds, and no entry here can be violated by itself.
   lock exempts a spec from the rules below: an acquire's postcondition can name
   the guarded value through its one whole predicate, and a release's
   precondition can demand it back the same way, so a lock wrapper is held to
-  the rules like anything else. Where the wrappers on `main` do not meet them
-  yet, that is recorded in issue #220 with the other deviations, not here.
+  the rules like anything else. Where a wrapper on `main` does not meet them,
+  that is recorded in issue #220 with the other deviations, not here.
 
 ## Rules
 
