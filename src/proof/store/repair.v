@@ -1088,8 +1088,8 @@ Qed.
     [pool_repair_parent]). [wp_store__repair_state] above stays as the
     second spec for the private update path ([transaction.integrateDecoded]
     and the drain loop), which calls it between its own split and
-    integrate steps, where the session invariants are down and this form
-    cannot apply. *)
+    integrate steps, where the replica history's invariants are down and
+    this form cannot apply. *)
 Lemma wp_store__repair (s item_l pname : loc) (γs : store_names) (γh : history_names)
     (input : IntegrateInput (A := A)) (opn : option go_string)
     (orL orR : option (loc * nat)) (p_t : loc)
@@ -1212,8 +1212,8 @@ Qed.
     [Transaction.applyUpdate]'s drain calls. Each keeps its state-level
     stepping stone above for the loop's internal composition, and each
     takes the doc model [m] with the registry coherence premise the
-    session supplies to the callers. [originArrived] has no public form:
-    it is private to the store (only [depsArrived] calls it). *)
+    replica history supplies to the callers. [originArrived] has no public
+    form: it is private to the store (only [depsArrived] calls it). *)
 Lemma wp_store__hasNode (s : loc) (γs : store_names) (γh : history_names)
     (idv : yjs.id.t) (m : DocModel)
     (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId) :

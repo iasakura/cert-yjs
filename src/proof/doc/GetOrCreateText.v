@@ -9,7 +9,8 @@
     it with any [is_root_lb] certificate) or writing. Registering a fresh
     root is model-clean: an empty type adds no cells and no items, and the
     doc model [m] already maps every unbound root to [[]], so only the
-    session's registry coherence and clock tie transport before release. *)
+    replica history's registry coherence and clock tie transport before
+    release. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -75,10 +76,10 @@ Proof.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hwl Hinv]".
   iDestruct "Hinv" as (c0 h m) "Hstore".
   wp_auto.
-  iDestruct "Hstore" as (state0 ds0) "(Hstore & Hsession)".
+  iDestruct "Hstore" as (state0 ds0) "(Hstore & Hreplica_history)".
   destruct state0 as [client0 k0 locs0 p0 bind0 pend0 pdel0].
-  (* the entry registry coherence, kept to transport the session across the
-     registry-growing call *)
+  (* the entry registry coherence, kept to transport the replica history
+     across the registry-growing call *)
   iDestruct "Hstore" as "[Hcore Hobservers]".
   iDestruct (own_store_core_registry_coh with "Hcore") as %Hreg0.
   have [Hbindtypes _] := Hreg0.
@@ -90,11 +91,12 @@ Proof.
   iIntros (q p' locs' bind') "(Hstore & #Hbindname & %Hlc)".
   iEval (simpl) in "Hstore". simpl in Hlc.
   destruct Hlc as [(Hb' & -> & -> & ->) | (Hb' & Hfresh & -> & -> & ->)].
-  - (* ---- hit: the root is registered; the session closes as it came ---- *)
+  - (* ---- hit: the root is registered; the replica history closes as it
+     came ---- *)
     iMod (own_store_bound_root_lb _ _ _ 1 (MkStoreState client0 k0 locs0 p0 bind0 pend0 pdel0)
             _ _ _ name q Hb' with "Hstore") as "[Hstore #Hlb0]".
     wp_auto.
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hstore $Hsession]").
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hstore $Hreplica_history]").
     (* a fresh handle knows of no deleted char: the empty lower bound of the
        store's delete set *)
     iMod (is_delete_set_lb_empty γs) as "#Hdel0".
@@ -118,7 +120,7 @@ Proof.
             _ _ _ name q Hbq with "Hstore") as "[Hstore #Hlb0]".
     wp_auto.
     iDestruct "Hstore" as "[Hcore Hobservers]".
-    iNamed "Hsession".
+    iNamed "Hreplica_history".
     have [Hmtypes Hmdom] := Hregmodel.
     (* the unbound name's model entry is empty *)
     have Hnameempty : doc_model_get m (RootId name) = [].
@@ -153,7 +155,7 @@ Proof.
     iEval (rewrite -Htomb') in "Hobservers".
     iAssert (own_replica_history γs γh c0 h m
                (MkStoreState client0 k0 (<[q := []]> locs0) p' bind' pend0 pdel0) ds0)
-      with "[Hhist Hacc]" as "Hsession".
+      with "[Hhist Hacc]" as "Hreplica_history".
     { rewrite /own_replica_history /=. iExists acc.
       iFrame "Hhist Hacc Hpendcert".
       iPureIntro.
@@ -164,7 +166,7 @@ Proof.
                (pool_tombstoned p'))
       with "[Hcore Hobservers]" as "Hstore".
     { rewrite /own_store. iFrame "Hcore Hobservers". }
-    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hstore $Hsession]").
+    wp_apply (wp_Store__wunlock with "[$His_store $Hwl $Hstore $Hreplica_history]").
     (* a fresh handle knows of no deleted char: the empty lower bound of the
        store's delete set *)
     iMod (is_delete_set_lb_empty γs) as "#Hdel0".

@@ -34,7 +34,7 @@
       only the lock's holder re-establishes: the history with its
       coherences, the counter tie, the accepted set, the pending
       certificates, the delete set's domain bound) are its issue #219
-      split, [own_store_data_core_session], with the single-wand
+      split, [own_store_data_core_replica_history], with the single-wand
       corollaries [own_store_data_build] / [own_store_data_split] that
       the lock wrappers' callers convert with;
       [own_store_core_registry_coh] reads the registry coherence off the
@@ -47,8 +47,9 @@
       [_snoc] / [_apply] / [_insert]) and the one
       law that grows it, [own_delete_set_grow].
     - the lock body (issue #219 M4): [tie_store] (the core at the readers'
-      complement fraction [frac_of n] beside the session) and [tie_body],
-      with [frac_of] the RWMutex reader-count accounting (issue #22);
+      complement fraction [frac_of n] beside the replica history) and
+      [tie_body], with [frac_of] the RWMutex reader-count accounting
+      (issue #22);
       [state_frag], the whole-cell-state agreement a reader's share and
       the invariant recombine through.
     - [own_store_data s c h m pend deleted]: the data half of the store, one
@@ -84,7 +85,8 @@
     Laws
     - [store_tie_init]: how to build the lock body from the raw points-tos;
       [own_store_data_hist_coh] / [own_store_accepted_sound] /
-      [own_store_core_session_hist_root]: what you may read back out of it.
+      [own_store_core_replica_history_hist_root]: what you may read back
+      out of it.
     - the fractions (issue #219 M4): everything under [own_store] splits at
       equal indices ([own_store_state_split] / [own_store_core_split] /
       [own_observers_split], with [own_map_dfrac_split] / [_agree] and the
@@ -257,10 +259,10 @@ Context {observers_agree_inG : inG Σ observersAgreeUR}.
       (needed to recombine at RUnlock: the heap fractions alone do not
       determine the type pool, and an update struct with a nil parent name
       does not determine the pending buffer's type tags);
-    - the session whole + the core and observers at the remaining fraction
-      [frac_of n]. The write [Lock] linearizes at [RLocked 0] (fraction 1);
-      each read [RLock] peels off one [rfrac] share. The fraction arithmetic
-      mirrors [rwmutex_guard.rfrac]. ------------------------------------------ *)
+    - the replica history whole + the core and observers at the remaining
+      fraction [frac_of n]. The write [Lock] linearizes at [RLocked 0]
+      (fraction 1); each read [RLock] peels off one [rfrac] share. The
+      fraction arithmetic mirrors [rwmutex_guard.rfrac]. ------------------- *)
 
 Definition frac_of (n : nat) : Qp :=
   (pos_to_Qp (Z.to_pos (rwmutex.actualMaxReaders + 1 - Z.of_nat n)) * rwmutex_guard.rfrac)%Qp.
@@ -1589,9 +1591,9 @@ Definition own_store (s_loc : loc) (γs : store_names) (γh : history_names)
     [own_replica_history], at a shared cell state tied to the public
     [(pend, deleted)] by [state_pending_tombstoned]. The
     two sides of the issue #219 redesign: the core is what the store's
-    methods will take and return whole, the session is what the lock
-    invariant will demand back at release. *)
-Lemma own_store_data_core_session (s_loc : loc) (γs : store_names) (γh : history_names)
+    methods will take and return whole, the replica history is what the
+    lock invariant will demand back at release. *)
+Lemma own_store_data_core_replica_history (s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) :
   own_store_data s_loc γs γh c h m pend deleted ⊣⊢
@@ -1613,9 +1615,9 @@ Proof.
     split_and!; [done | exact Hhcoh | exact Hregmodel | exact Hctr
                 | exact Hpendroot | exact Hpendbnd | exact Hacccoh | exact Hds_dom].
   - iIntros "Hsplit".
-    iDestruct "Hsplit" as (state ds) "(%Hface & Hcore & Hsession)".
+    iDestruct "Hsplit" as (state ds) "(%Hface & Hcore & Hreplica_history)".
     destruct Hface as [Hpend Hdeleted].
-    iNamed "Hcore". iNamed "Hsession".
+    iNamed "Hcore". iNamed "Hreplica_history".
     destruct state as [client k locs p bind pend' pdel]. simpl in *. subst pend'.
     iExists client, k, pdel, locs, p, bind, acc.
     rewrite Hclient_is.
@@ -1643,9 +1645,9 @@ Lemma own_store_data_build (s_loc : loc) (γs : store_names) (γh : history_name
   own_replica_history γs γh c h m state ds -∗
   own_store_data s_loc γs γh c h m (ss_pending state) (pool_tombstoned (ss_pool state)).
 Proof.
-  iIntros "Hcore Hsession".
-  iApply own_store_data_core_session.
-  iExists state, ds. iFrame "Hcore Hsession".
+  iIntros "Hcore Hreplica_history".
+  iApply own_store_data_core_replica_history.
+  iExists state, ds. iFrame "Hcore Hreplica_history".
   iPureIntro. split; reflexivity.
 Qed.
 
@@ -1656,13 +1658,14 @@ Lemma own_store_data_split (s_loc : loc) (γs : store_names) (γh : history_name
   ∃ (state : store_state) (ds : gset YjsId),
     ⌜state_pending_tombstoned state pend deleted⌝ ∗
     own_store_core s_loc γs 1 state ds ∗ own_replica_history γs γh c h m state ds.
-Proof. rewrite own_store_data_core_session. auto. Qed.
+Proof. rewrite own_store_data_core_replica_history. auto. Qed.
 
 (** The registry coherence read off the core, without opening it: every
     bound name's type is in the pool, bindings are injective, every type
     is bound ([pool_registry_coh], a [store_invs] component inside
     [own_store_state]). What a lock holder keeps of the entry state to
-    transport its session coherence across a registry-growing call. *)
+    transport the replica history's coherence across a registry-growing
+    call. *)
 Lemma own_store_core_registry_coh (s_loc : loc) (γs : store_names)
     (qf : Qp) (state : store_state) (ds : gset YjsId) :
   own_store_core s_loc γs qf state ds -∗
@@ -2070,8 +2073,8 @@ Qed.
 
 (** [tie_store s γs γh n m deleted]: the data's state inside the lock
     invariant with [n] readers outstanding: the core at the readers'
-    complement share ([frac_of n]) and the session, at the public model
-    [(m, deleted)] the observers beside it are told up to. The reader
+    complement share ([frac_of n]) and the replica history, at the public
+    model [(m, deleted)] the observers beside it are told up to. The reader
     fractions peeled off by [rlock] recombine against this remainder:
     the core's [state_frag] pins the cell state and the field shares
     pin the rest of the state. Sealed for typeclass resolution and
@@ -2117,7 +2120,7 @@ Proof. apply _. Qed.
 
 (* ---- lock-layer compile-time fix -------------------------------------------
    Opening the tie invariant at [RLocked n] hands back [▷ tie_body … (RLocked
-   n)], whose payload nests the core beside the session (auths plus
+   n)], whose payload nests the core beside the replica history (auths
    plus a [big_sepM] of the DLL fixpoint). Stripping the [▷] off the payload
    conjunct-by-conjunct with those predicates TRANSPARENT makes the [Timeless]
    search unfold that whole structure into its normal form: ~750 s per lock
@@ -2314,13 +2317,13 @@ Qed.
 
 
 (** The read-lock conversion (issue #125): a reader's history-prefix
-    certificate against the store's state, at the one moment the session
-    is visible (the lock's linearization point): the pool already holds,
-    at the bound root, one item per delivered insert of the certified
-    prefix. Over the issue #219 split: the binding is looked up in the
-    core's registry authority (any fraction), the prefix and the model
-    coherence come from the session. *)
-Lemma own_store_core_session_hist_root (s_loc : loc) (γs : store_names) (γh : history_names)
+    certificate against the store's state, at the one moment the replica
+    history is visible (the lock's linearization point): the pool already
+    holds, at the bound root, one item per delivered insert of the
+    certified prefix. Over the issue #219 split: the binding is looked up
+    in the core's registry authority (any fraction), the prefix and the
+    model coherence come from the replica history. *)
+Lemma own_store_core_replica_history_hist_root (s_loc : loc) (γs : store_names) (γh : history_names)
     (qf : Qp) (state : store_state) (ds : gset YjsId)
     (c0 : ClientId) (h : list Ev) (m : DocModel)
     (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
@@ -2335,9 +2338,9 @@ Lemma own_store_core_session_hist_root (s_loc : loc) (γs : store_names) (γh : 
      (RootId name, OpInsert input) ∈ delivered_ops h0 ->
      ∃ tm it, ss_pool state !! parent = Some tm ∧ item_id it = in_id input ∧ it ∈ tm_arr tm⌝.
 Proof.
-  iIntros "Hcore Hsession #Hpin #Hlb #Hbind".
+  iIntros "Hcore Hreplica_history #Hpin #Hlb #Hbind".
   iDestruct (own_store_core_registry_coh with "Hcore") as %Hregcoh.
-  iNamed "Hcore". iNamed "Hsession".
+  iNamed "Hcore". iNamed "Hreplica_history".
   iDestruct (is_store_client_agree with "Hclientpin Hpin") as %Heqc.
   assert (c = c0) as -> by congruence.
   iDestruct (is_history_lb_prefix with "Hhist Hlb") as %Hpref.
@@ -2558,7 +2561,7 @@ Proof.
   iSplitR.
   { iPureIntro. rewrite /pool_tombstoned /all_runs map_to_list_empty //. }
   iSplitR "Hhist Hacc0"; last first.
-  { (* the session over the fresh store: empty history, empty model *)
+  { (* the replica history over the fresh store: empty history, empty model *)
     rewrite /own_replica_history /=.
     iExists (∅ : gset YjsId).
     iFrame "Hhist Hacc0".

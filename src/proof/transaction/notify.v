@@ -400,7 +400,7 @@ Proof.
   wp_start as "Htx".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
-  iDestruct (own_store_data_build with "Hcore Hsession") as "Hstore".
+  iDestruct (own_store_data_build with "Hcore Hreplica_history") as "Hstore".
   destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hstore". iEval (rewrite -Hdeleted_state) in "Hstore".
   clear Hpend_state Hdeleted_state.
@@ -613,11 +613,11 @@ Proof.
     apply (type_untouched_by_record m bind p inserted tombstoned changed changed_locs entry.1 parent
              Hpoolinv Hregcoh Hregmodel Hrecorded Hbound (Hregbind parent entry Hd)).
     rewrite -Hdoneall. exact Hnin. }
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
   iExists state', ds'.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers'"; first iFrame "Hcore' Hobservers'".
-  iFrame "Hsession'".
+  iFrame "Hreplica_history'".
 Qed.
 
 End transaction_notify.
