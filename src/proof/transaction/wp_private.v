@@ -391,8 +391,8 @@ Qed.
     taken and returned whole beside the record. As in the public
     [wp_store__Integrate], the item-set authority grows at the parent by
     the spliced run, and the live splice demands the one premise the
-    store alone cannot supply, [input_char_ids input ## ds] (the
-    session's domain bound hands it to the callers: a fresh id is in no
+    store alone cannot supply, [input_char_ids input ## ds] (the replica
+    history's domain bound hands it to the callers: a fresh id is in no
     model). Delegates to the state form, which does the splice and the
     record step. *)
 Lemma wp_Transaction__integrate (tr s parent parent_arg item_l : loc)

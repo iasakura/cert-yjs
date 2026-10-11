@@ -1333,21 +1333,6 @@ Proof.
   split; [move=> [x [-> Hx]] | move=> [x [Hx <-]]]; by exists x.
 Qed.
 
-(** Expansion preserves the target type: every per-char op of a wire batch
-    carries the type id of the wire item it came from (issue #125: this is
-    how a reader routes an applied input's item to the root it reads). *)
-Lemma expand_inputs_tid (inputs : list (TId * IntegrateInput (A := A)))
-    (x : TId * IntegrateInput (A := A)) :
-  x ∈ expand_inputs inputs -> ∃ x', x' ∈ inputs ∧ x.1 = x'.1.
-Proof.
-  rewrite /expand_inputs list_elem_of_join.
-  move=> [l [Hx Hl]].
-  apply list_elem_of_fmap in Hl as (x' & -> & Hx').
-  exists x'. split; first exact Hx'.
-  move: Hx. rewrite /expand_input list_elem_of_fmap.
-  move=> [op [-> _]] //.
-Qed.
-
 (** History only grows: an op that appends to [h] (delivered ids only grow) and
     leaves [pend] preserves [accepted_coh]. This is the trivial transport that
     Insert/Delete apply at each store_inv rebuild. *)
@@ -1800,11 +1785,6 @@ Proof.
     [exact (H1 r Hr y Hy Hin) | exact (H2 r Hr y Hy Hin)].
 Qed.
 
-Lemma delete_set_tombstoned_mono (delete_set delete_set' : gset YjsId) (runs : list ItemRun) :
-  delete_set' ⊆ delete_set ->
-  delete_set_tombstoned delete_set runs -> delete_set_tombstoned delete_set' runs.
-Proof. move=> Hsub Ht r Hr y Hy Hin. exact (Ht r Hr y Hy (Hsub _ Hin)). Qed.
-
 (** A delete's own record of what it tombstoned IS the tombstone-set clause:
     if every id of [ids] sits in some tombstoned run, then no LIVE run holds
     one, because one id lives in one slot ([pool_covers_unique]). This is what
@@ -2081,22 +2061,6 @@ Proof.
       [apply lookup_insert_eq | simpl; apply list_lookup_insert_eq; exact (lookup_lt_Some _ _ _ Hk) | set_solver].
 Qed.
 
-
-Lemma pool_tombstoned_insert_fresh (p : pool) (parent : loc) (tm : type_model) :
-  p !! parent = None ->
-  pool_tombstoned (<[parent := tm]> p) = runs_tombstoned (tm_runs tm) ∪ pool_tombstoned p.
-Proof.
-  move=> Hp. apply set_eq => i. rewrite elem_of_union !elem_of_runs_tombstoned. split.
-  - move=> [r [Hr Hrest]]. move: Hr. rewrite elem_of_all_runs. move=> [q [tm' [Hq Hr]]].
-    destruct (decide (q = parent)) as [-> | Hne].
-    + rewrite lookup_insert_eq in Hq. injection Hq as <-. left. by exists r.
-    + rewrite lookup_insert_ne // in Hq. right. exists r. split; [| exact Hrest].
-      rewrite elem_of_all_runs. by exists q, tm'.
-  - move=> [[r [Hr Hrest]] | [r [Hr Hrest]]]; exists r; (split; [| exact Hrest]); rewrite elem_of_all_runs.
-    + exists parent, tm. split; [apply lookup_insert_eq | exact Hr].
-    + move: Hr. rewrite elem_of_all_runs. move=> [q [tm' [Hq Hr]]]. exists q, tm'. split; [| exact Hr].
-      rewrite lookup_insert_ne //. move=> Heq. subst q. by rewrite Hp in Hq.
-Qed.
 
 Lemma pool_tombstoned_integrate_splice (p : pool) (parent : loc) (tm : type_model) (idx : nat)
     (runs' : list ItemRun) (run : list (YjsItem A)) :

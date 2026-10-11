@@ -1,8 +1,8 @@
 (** Specs of the [store]'s internal lock layer: [wlock] / [wunlock] trade
     the write lock for the issue #219 split of the lock body, the core
-    ([own_store_core], what every store method preserves), the session
-    ([own_store_session], what the holder re-establishes before release)
-    and the observers told up to the current model and tombstones;
+    ([own_store_core], what every store method preserves), the replica
+    history ([own_replica_history], what the holder re-establishes before
+    release) and the observers told up to the current model and tombstones;
     [rlock] / [runlock] trade a reader slot for an [rfrac] fraction of
     the public [own_store] (issue #219 M4), with a history certificate
     converted at the linearization point (issue #125). All four are
@@ -135,19 +135,19 @@ Qed.
 
 (** Write-lock acquire. The write [Lock] linearizes at [RLocked 0]
     (fraction 1), where the invariant holds the whole split: the public
-    [own_store] at fraction 1 and the session ([own_store_session], what
-    the holder re-establishes before release); the invariant is left
+    [own_store] at fraction 1 and the replica history ([own_replica_history],
+    what the holder re-establishes before release); the invariant is left
     holding [Locked] (the bare reader-count authority). The store comes
     out under a later: the observers' callback contracts are not
     timeless (the next program step strips it). *)
 Lemma wp_Store__wlock (ref : loc) (γs : store_names) (γh : history_names) :
-  {{{ is_pkg_init yjs ∗ is_Store ref γs γh }}}
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh }}}
     ref @! (go.PointerType yjs.storeRef) @! "wlock" #()
   {{{ RET #(); own_wlock γs ∗
       ∃ (c : ClientId) (h : list Ev) (m : DocModel),
         ▷ ∃ (state : store_state) (ds : gset YjsId),
             own_store (store_of_ref ref) γs γh 1 state ds m (pool_tombstoned (ss_pool state)) ∗
-            own_store_session γs γh c h m state ds }}}.
+            own_replica_history γs γh c h m state ds }}}.
 Proof.
   wp_start_folded as "His". iNamed "His".
   wp_method_call. wp_call. wp_call. wp_auto.
@@ -160,7 +160,7 @@ Proof.
   iDestruct "Hbody" as "(>Hrauth & >Htoks0 & >Hwl & Hrest)".
   iDestruct "Hrest" as (m deleted) "[>Hstore Hobservers]".
   iEval (rewrite /tie_store) in "Hstore".
-  iDestruct "Hstore" as (c h state ds) "(%Hdel & Hcore & Hsession)".
+  iDestruct "Hstore" as (c h state ds) "(%Hdel & Hcore & Hreplica_history)".
   iMod "Hmask" as "_".
   iMod ("Hclose" with "[Hlocked Hrauth]") as "_".
   { iExists Locked. iFrame "Hlocked". iEval (cbn [tie_body]). iFrame "Hrauth". }
@@ -170,26 +170,26 @@ Proof.
   iEval (rewrite frac_of_0) in "Hcore".
   iEval (rewrite frac_of_0) in "Hobservers".
   subst deleted.
-  rewrite /own_store. iFrame "Hcore Hsession Hobservers".
+  rewrite /own_store. iFrame "Hcore Hreplica_history Hobservers".
 Qed.
 
 
 (** Write-lock release. Consumes [own_wlock] and the split at whatever
     state the writer left the store: the public [own_store] whole, with
     the observers told up to the final model and the state's tombstones
-    (a transaction ends with [store.notify]), and the session back in
-    coherence at that model. The "invariant is in [RLocked]" case
+    (a transaction ends with [store.notify]), and the replica history back
+    in coherence at that model. The "invariant is in [RLocked]" case
     (unlock without the lock) is impossible: the [own_wlock] clash. *)
 Lemma wp_Store__wunlock (ref : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (state : store_state) (ds : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ own_wlock γs ∗
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ own_wlock γs ∗
       own_store (store_of_ref ref) γs γh 1 state ds m (pool_tombstoned (ss_pool state)) ∗
-      own_store_session γs γh c h m state ds }}}
+      own_replica_history γs γh c h m state ds }}}
     ref @! (go.PointerType yjs.storeRef) @! "wunlock" #()
   {{{ RET #(); True }}}.
 Proof.
-  wp_start_folded as "(His & Hwl & Hstore & Hsession)". iNamed "His".
+  wp_start_folded as "(His & Hwl & Hstore & Hreplica_history)". iNamed "His".
   iDestruct "Hstore" as "[Hcore Hobservers]".
   wp_method_call. wp_call. wp_call. wp_auto.
   wp_apply (rwmutex.wp_RWMutex__Unlock with "[$Hrw]").
@@ -206,13 +206,13 @@ Proof.
     iIntros "Hrl0".
     iMod "Hmask" as "_".
     iMod (own_toks_0 γs.(sn_rmax)) as "Htoks0".
-    iMod ("Hclose" with "[Hrl0 Hrauth Htoks0 Hwl Hcore Hsession Hobservers]") as "_".
+    iMod ("Hclose" with "[Hrl0 Hrauth Htoks0 Hwl Hcore Hreplica_history Hobservers]") as "_".
     { iExists (RLocked 0). iFrame "Hrl0". iEval (cbn [tie_body]).
       iFrame "Hrauth Htoks0 Hwl".
       iExists m, (pool_tombstoned (ss_pool state)).
       iSplitR "Hobservers"; last by (iEval (rewrite frac_of_0); iFrame "Hobservers").
       rewrite /tie_store frac_of_0.
-      iExists c, h, state, ds. iFrame "Hcore Hsession". done. }
+      iExists c, h, state, ds. iFrame "Hcore Hreplica_history". done. }
     iModIntro. wp_auto. by iApply "HΦ".
 Qed.
 
@@ -224,12 +224,12 @@ Qed.
     brings a prefix certificate of THIS replica's op history (plus the
     client pin identifying it) and a root binding (issue #125); the read
     lock's linearization point is the one moment the reader sees the
-    session, and [own_store_core_session_hist_root] converts there: the
-    state handed out already contains, at the bound root, one item per
-    delivered insert of the certified prefix. *)
+    replica history, and [own_store_core_replica_history_hist_root]
+    converts there: the state handed out already contains, at the bound
+    root, one item per delivered insert of the certified prefix. *)
 Lemma wp_Store__rlock (ref : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h0 : list Ev) (name : P) (parent : loc) :
-  {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ own_read_cap γs ∗
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ own_read_cap γs ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗
       is_type_binding γs.(sn_types) name parent }}}
     ref @! (go.PointerType yjs.storeRef) @! "rlock" #()
@@ -253,10 +253,10 @@ Proof.
   iDestruct "Hbody" as "(>Hrauth & >Hmaxn & >Hwl & Hrest)".
   iDestruct "Hrest" as (m deleted) "[>Hstore Hobservers]".
   iEval (rewrite /tie_store) in "Hstore".
-  iDestruct "Hstore" as (c0 h state ds) "(%Hdel & Hcore & Hsession)".
-  (* the conversion, at the one moment the session is visible *)
-  iDestruct (own_store_core_session_hist_root with "Hcore Hsession Hpin Hlb Hbind")
-    as "(Hcore & Hsession & %Hfact)".
+  iDestruct "Hstore" as (c0 h state ds) "(%Hdel & Hcore & Hreplica_history)".
+  (* the conversion, at the one moment the replica history is visible *)
+  iDestruct (own_store_core_replica_history_hist_root with "Hcore Hreplica_history Hpin Hlb Hbind")
+    as "(Hcore & Hreplica_history & %Hfact)".
   iCombine "Hmaxn Hmaxtok" as "Hmaxn1".
   iCombine "Hmax Hmaxn1" gives %Hbound.
   iMod (own_tok_auth_S with "Hrauth") as "[Hrauth Hrtok]".
@@ -266,12 +266,12 @@ Proof.
   iEval (rewrite (frac_of_split n Hlt) own_observers_split later_sep) in "Hobservers".
   iDestruct "Hobservers" as "[Hobs_r Hobs_i]".
   iMod "Hmask" as "_".
-  iMod ("Hclose" with "[Hrl Hrauth Hmaxn1 Hwl Hcore_i Hsession Hobs_i]") as "_".
+  iMod ("Hclose" with "[Hrl Hrauth Hmaxn1 Hwl Hcore_i Hreplica_history Hobs_i]") as "_".
   { iExists (RLocked (S n)). iFrame "Hrl". iEval (cbn [tie_body]).
     replace (S n) with (n + 1)%nat by lia.
     iFrame "Hrauth Hmaxn1 Hwl".
     iExists m, deleted. iFrame "Hobs_i". rewrite /tie_store.
-    iExists c0, h, state, ds. iFrame "Hcore_i Hsession". done. }
+    iExists c0, h, state, ds. iFrame "Hcore_i Hreplica_history". done. }
   iModIntro. wp_auto. iApply ("HΦ" $! state ds m).
   iFrame "Hrtok".
   subst deleted.
@@ -290,7 +290,7 @@ Qed.
     [own_read_cap]. *)
 Lemma wp_Store__runlock (ref : loc) (γs : store_names) (γh : history_names)
     (state_r : store_state) (ds_r : gset YjsId) (m_r : DocModel) (d_r : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ own_read_locked γs ∗
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ own_read_locked γs ∗
       own_store (store_of_ref ref) γs γh rwmutex_guard.rfrac state_r ds_r m_r d_r }}}
     ref @! (go.PointerType yjs.storeRef) @! "runlock" #()
   {{{ RET #(); own_read_cap γs }}}.
@@ -311,7 +311,7 @@ Proof.
   iDestruct "Hbody" as "(>Hrauth & >Hmaxsn & >Hwl & Hrest)".
   iDestruct "Hrest" as (m deleted) "[>Hstore Hobservers]".
   iEval (rewrite /tie_store) in "Hstore".
-  iDestruct "Hstore" as (c0 h state ds) "(%Hdel & Hcore_i & Hsession)".
+  iDestruct "Hstore" as (c0 h state ds) "(%Hdel & Hcore_i & Hreplica_history)".
   (* the state did not move since the RLock: the agreement ghost says so *)
   iDestruct (own_store_core_agree with "Hcore_r Hcore_i") as %[Heqst Heqds].
   subst state_r ds_r.
@@ -330,10 +330,10 @@ Proof.
     with "[Hobs_r Hobservers]" as "Hobs".
   { iNext. iEval (rewrite (frac_of_split n Hlt)).
     iApply (own_observers_combine with "Hobs_r Hobservers"). }
-  iMod ("Hclose" with "[Hrln Hrauth Hmaxn Hwl Hcore Hsession Hobs]") as "_".
+  iMod ("Hclose" with "[Hrln Hrauth Hmaxn Hwl Hcore Hreplica_history Hobs]") as "_".
   { iExists (RLocked n). iFrame "Hrln". iEval (cbn [tie_body]). iFrame "Hrauth Hmaxn Hwl".
     iExists m, deleted. iFrame "Hobs". rewrite /tie_store.
-    iExists c0, h, state, ds. iFrame "Hcore Hsession". done. }
+    iExists c0, h, state, ds. iFrame "Hcore Hreplica_history". done. }
   iModIntro. wp_auto. iApply "HΦ". iFrame "Htok Hmaxtok".
 Qed.
 

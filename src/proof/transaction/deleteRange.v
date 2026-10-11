@@ -754,8 +754,8 @@ Qed.
 
 (** [Transaction.applyDeleteSpans], the public form (issue #219): the
     transaction taken and returned whole. Deletes replay no history and
-    move no model, so the session passes through untouched at the same
-    [h] and [m]; what the pass does to the tombstone bookkeeping is one
+    move no model, so the replica history passes through untouched at the
+    same [h] and [m]; what the pass does to the tombstone bookkeeping is one
     predicate, [tombstone_pass], which is also what carries the start
     relation across it ([transaction_start_tombstone]). *)
 Lemma wp_Transaction__applyDeleteSpans (tr s_loc : loc) (γs : store_names)
@@ -775,7 +775,7 @@ Proof using Type*.
   iIntros (Φ) "(#Hpkg & Htx & Hsp) HΦ".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
-  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  iDestruct (own_store_data_build with "Hcore Hreplica_history") as "Hdata".
   destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   clear Hpend_state Hdeleted_state.
@@ -786,13 +786,13 @@ Proof using Type*.
     "(Hdata & Hrecord & Hsp & %Hdsub & %Htsub & %Hcsub & %Hdeq & %Hdfresh)".
   iApply ("HΦ" $! deleted' tombstoned' changed').
   iFrame "Hsp".
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
   iSplitL; last (iPureIntro; split;
     [exact (conj Htsub (conj Hdeq Hdfresh)) | exact Hcsub]).
   iExists state', ds', m0, deleted0.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-  iFrame "Hsession' Hrecord".
+  iFrame "Hreplica_history' Hrecord".
   iPureIntro.
   apply (transaction_start_tombstone m deleted deleted' inserted tombstoned tombstoned' m0 deleted0);
     [exact Hstart | exact (conj Htsub (conj Hdeq Hdfresh))].
