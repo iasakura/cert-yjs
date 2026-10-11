@@ -20,8 +20,9 @@ second group becomes the lock invariant of the new lock type. Every one of
 the eight public-for-store functions then takes `own_store` whole and
 returns it whole (section 2 checks them one by one).
 
-It creates no new deviation, provided four design decisions are made, each
-forced or strongly suggested by the rules themselves:
+It creates no new deviation, provided four design decisions are made (the
+first is a uniformity choice, the others forced or strongly suggested by
+the rules themselves):
 
 1. the read lock hands out a fractional `own_store`, not a share of a
    partial predicate (section 5; this settles open point 1);
@@ -191,8 +192,8 @@ of a release-time proof obligation smeared over callers; third, it lets
 caller-side ghost-map reconciliation that `store/wp_private.v` carries
 for the applyUpdate path.
 
-Into the lock invariant of the lock type (the session bundle; one named
-predicate, say `own_store_session γs γh c h state m ds`):
+Into the lock invariant of the lock type (the replica history bundle; one named
+predicate, say `own_replica_history γs γh c h state m ds`):
 
 - the client's ghost history `own_client_history γh c h` with
   `history_state_coh h m` and `pool_registry_models m bind p` (so `m` is
@@ -208,15 +209,15 @@ predicate, say `own_store_session γs γh c h state m ds`):
 
 The lock invariant then says: `own_store` at fraction 1 with the
 observers caught up (`m0 = m`, `deleted0 = pool_tombstoned p`), next to
-the session bundle. `transact` acquires the write lock and receives both;
+the replica history bundle. `transact` acquires the write lock and receives both;
 the closure runs over `own_transaction`, which becomes
-`own_store (observers at the start state) ∗ own_store_session ∗ the
+`own_store (observers at the start state) ∗ own_replica_history ∗ the
 record`; `notify` moves the observers; release demands the coherence
 back. This is exactly the C1/C2 transaction design with the predicate
 boundary redrawn, so `wp_Transaction__notify`'s job does not change.
 
 `own_store_data` and `own_store_state` dissolve: the first into
-`own_store ∗ own_store_session`, the second into `own_store`'s body
+`own_store ∗ own_replica_history`, the second into `own_store`'s body
 (`own_store_fields` survives as the internal fields conjunct). The names
 `store_inv_excl` / `store_inv_ro` disappear with the ro/excl split
 (section 5). The agreement that `pool_frag` provides today (a reader's
@@ -278,16 +279,21 @@ exactly there, and this change removes that deviation).
 
 ## 5. The read lock returns a fractional `own_store` (open point 1)
 
-The rules decide this. `Text.String` and `Text.Len` are public functions
-of `Text` that enter the read lock, so whatever the read-lock wrapper
-hands them ends up, directly or boxed, in public reasoning about the
-store. Today it is a share of `store_inv_ro` (the pool, the item-set
-authority, the delete-set authority), a predicate holding SOME of the
-store's resources: non-public by definition. A "read-only view"
-certificate would not do either, because the readers really walk the heap
-(the DLL) and need fractional points-tos. The only public shape is the
-one the rules name themselves: "a fraction of `own_X` still covers every
-resource and is public". So:
+A design choice, not a rule. The spec-shape rules constrain the SPECS of
+public functions, and `Text.String` / `Text.Len` already have public
+specs; what the read-lock wrapper hands their proofs is proof-internal,
+and a proof may open any shape it likes. The choice is uniformity. Today
+the reader's view is its own predicate (`store_inv_ro`: the pool, the
+item-set authority, the delete-set authority), maintained beside the
+public predicate with its own agreement ghost (`pool_frag`) and bridge
+laws; after the redesign that parallel family would survive only for the
+two read methods. Handing the reader a fraction of `own_store` instead
+leaves ONE predicate family at every lock boundary, and the rules'
+observation that "a fraction of `own_X` still covers every resource and
+is public" says the reader's share is as public a shape as the write
+path's. A "read-only view" certificate could not replace it as the single
+shape, because the readers really walk the heap (the DLL) and need
+fractional points-tos. So:
 
 - `own_store` takes a fraction `q` (every conjunct is fractional:
   points-tos, `own_map`, slices, `own_type_pool` already is, the
@@ -299,7 +305,7 @@ resource and is public". So:
 - the certificate conversion at the linearization point
   (`store_inv_excl_hist_root`, what lets a reader relate its history
   prefix to the snapshot, issue #125) survives unchanged: at the atomic
-  step the invariant is open and the session bundle (the history) is
+  step the invariant is open and the replica history bundle (the history) is
   visible regardless of which fraction leaves.
 
 Two costs come with this shape, and neither reaches the Go.
@@ -384,14 +390,14 @@ Each rule of spec-shape, against the design above:
   the lock wrappers (`wlock` / `wunlock` / `rlock` / `runlock`) and
   `notify` are private to the lock type / transaction and may keep
   internal shapes, though after the move even they are statable over
-  `own_store` plus the named session bundle.
+  `own_store` plus the named replica history bundle.
 - "Everything a spec says about a value goes through a model parameter":
   unchanged; the cell model is a model. The goose-value binders in the
   PRIVATE scan specs (`wp_scanConflicts` / `wp_findIntegrationLeft`,
   issue #220 item 2) are a separate fix, orthogonal to this plan: those
   functions stay private and keep pool-level predicates either way.
-- "Specs stay intuitive": the session bundle is ONE named predicate
-  (`own_store_session`), never spilled as loose conjuncts into
+- "Specs stay intuitive": the replica history bundle is ONE named predicate
+  (`own_replica_history`), never spilled as loose conjuncts into
   `transact`'s closure contract; `own_transaction` keeps wrapping it.
 - "A new conjunct goes into an existing predicate": no new conditions
   are introduced at all; every conjunct is one of today's, relocated.
@@ -402,7 +408,7 @@ Each rule of spec-shape, against the design above:
   dissolved predicates take their helper lemmas with them
   (`store_inv_bridge`, `store_slices_own_store_data`, the
   `own_store_data` laws get successors over `own_store ∗
-  own_store_session`, and the ones nothing uses anymore are deleted).
+  own_replica_history`, and the ones nothing uses anymore are deleted).
 - Naming: `is_Store` today names the lock handle while living on the
   store; it moves to the lock type as `is_store_ref` (with the tie
   invariant inside), freeing the store's `is_X` slot. `own_store_state`
@@ -434,7 +440,7 @@ review runs before every push that touches a predicate.
   path, entry points reading the store off the ref). No predicate
   changes meaning.
 - M1, the predicate: define the new `own_store` (fields + observers +
-  authorities + `store_invs`, fractional) and `own_store_session`;
+  authorities + `store_invs`, fractional) and `own_replica_history`;
   restate the lock wrappers and `own_transaction`; dissolve
   `own_store_data`; keep the method specs on `own_store_state`'s
   successor shape compiling by a bridge law for one milestone.

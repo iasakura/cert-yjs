@@ -2671,7 +2671,7 @@ Qed.
 (** [Transaction.applyUpdate], the public form (issue #219): the
     transaction taken and returned whole. The drain extends the history
     by one delivery event per applied char and replays the model, which
-    is exactly the coherence [own_store_session] demands back, so the
+    is exactly the coherence [own_replica_history] demands back, so the
     body closes over [own_transaction] at the grown indexes; the start
     relation transports along the replay ([transaction_start_replay]). *)
 Lemma wp_Transaction__applyUpdate (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
@@ -2701,7 +2701,7 @@ Proof using Type*.
   iIntros (Φ) "(#Hpkg & #Hishist & Htx & Hupd & #Hcertsin) HΦ".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
-  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  iDestruct (own_store_data_build with "Hcore Hreplica_history") as "Hdata".
   destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   clear Hpend_state Hdeleted_state.
@@ -2712,12 +2712,12 @@ Proof using Type*.
     "(Hupd & Hdata & Hrecord & #Hlb & %Hdrain & %Hvr & %Hacc & #Hcerts & %Hcsub)".
   iApply ("HΦ" $! applied rest m' changed').
   iFrame "Hupd Hcerts".
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
   iSplitL; last (iPureIntro; split_and!; [exact Hdrain | exact Hvr | exact Hacc | exact Hcsub]).
   iExists state', ds', m0, deleted0.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-  iFrame "Hsession' Hrecord".
+  iFrame "Hreplica_history' Hrecord".
   iPureIntro.
   exact (transaction_start_replay m m' deleted inserted tombstoned m0 deleted0 applied Hvr Hstart).
 Qed.

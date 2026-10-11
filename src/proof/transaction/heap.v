@@ -27,16 +27,15 @@
       changed]: the transaction, over the issue #219 split: the public
       [own_store] at an existential cell state (its observers at the start
       state) tied to [(pend, deleted)] by [state_pending_tombstoned], the
-      holder's [own_store_session] at the public history and model, the
+      holder's [own_replica_history] at the public history and model, the
       record with its meaning, and [transaction_start].
     - [closure_runs_transaction s γs γh f Q]: what [transact] asks of its
       closure: run the fresh transaction to an end state where [Q] holds.
 
     Laws
     - [node_span_char_ids]: a node's span fits and denotes its run's chars.
-    - [own_transaction_changes_store_acc] / [_spans_acc]: borrow the store
-      field (the methods read it first) or the two span slices as the sets
-      they denote ([notify]'s walk reads them).
+    - [own_transaction_changes_store_acc]: borrow the store field (the
+      methods read it first).
     - the changed types: [changed_types_bound_empty], [_mark] (one more
       type), [_grow] (a sweep's types, by [bound_names]), [_registered] /
       [_names] (the marked addresses are registered under the marked names,
@@ -199,7 +198,7 @@ Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_n
   ∃ (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId),
     "%Hpend_tomb" ∷ ⌜state_pending_tombstoned state pend deleted⌝ ∗
     "Hstore" ∷ own_store s_loc γs γh 1 state ds m0 deleted0 ∗
-    "Hsession" ∷ own_store_session γs γh c h m state ds ∗
+    "Hreplica_history" ∷ own_replica_history γs γh c h m state ds ∗
     "Hrecord" ∷ own_transaction_record tr s_loc γs m deleted inserted tombstoned changed ∗
     "%Hstart" ∷ ⌜transaction_start m deleted inserted tombstoned m0 deleted0⌝.
 
@@ -261,29 +260,6 @@ Lemma own_transaction_changes_store_acc (tr s_loc : loc)
 Proof.
   iIntros "H". iNamed "H". iFrame "Htrstore". iIntros "Htrstore".
   iExists insert_sl, delete_sl, changed_mref, insert_vs, delete_vs. iFrame "∗". done.
-Qed.
-
-Lemma own_transaction_changes_spans_acc (tr s_loc : loc)
-    (inserted tombstoned : gset YjsId) (changed : gset loc) :
-  own_transaction_changes tr s_loc inserted tombstoned changed -∗
-  ∃ (insert_sl delete_sl : slice.t),
-    (tr .[(yjs.Transaction.t), "insertSet"]) ↦ insert_sl ∗
-    (tr .[(yjs.Transaction.t), "deleteSet"]) ↦ delete_sl ∗
-    own_id_spans insert_sl (DfracOwn 1) inserted ∗
-    own_id_spans delete_sl (DfracOwn 1) tombstoned ∗
-    ((tr .[(yjs.Transaction.t), "insertSet"]) ↦ insert_sl -∗
-     (tr .[(yjs.Transaction.t), "deleteSet"]) ↦ delete_sl -∗
-     own_id_spans insert_sl (DfracOwn 1) inserted -∗
-     own_id_spans delete_sl (DfracOwn 1) tombstoned -∗
-     own_transaction_changes tr s_loc inserted tombstoned changed).
-Proof.
-  iIntros "H". iNamed "H". iExists insert_sl, delete_sl. iFrame "Hinsertf Hdeletef".
-  iSplitL "Hinsert". { iExists insert_vs. iFrame "Hinsert". done. }
-  iSplitL "Hdelete". { iExists delete_vs. iFrame "Hdelete". done. }
-  iIntros "Hinsertf Hdeletef Hins Hdel".
-  iDestruct "Hins" as (insert_vs') "(Hinsert' & %Hinsertwf' & %Hinserted')".
-  iDestruct "Hdel" as (delete_vs') "(Hdelete' & %Hdeletewf' & %Htombstoned')".
-  iExists insert_sl, delete_sl, changed_mref, insert_vs', delete_vs'. iFrame "∗". done.
 Qed.
 
 
@@ -386,16 +362,16 @@ Proof.
   iIntros (HL) "Htx".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
-  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  iDestruct (own_store_data_build with "Hcore Hreplica_history") as "Hdata".
   destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   iMod (own_store_data_accept_batch _ _ _ _ _ _ _ _ L HL with "Hdata") as "[Hdata #Haccepts]".
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
   iModIntro. iFrame "Haccepts".
   iExists state', ds', m0, deleted0.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-  iFrame "Hsession' Hrecord".
+  iFrame "Hreplica_history' Hrecord".
   iPureIntro. exact Hstart.
 Qed.
 
@@ -410,16 +386,16 @@ Proof.
   iIntros "Htx".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
-  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  iDestruct (own_store_data_build with "Hcore Hreplica_history") as "Hdata".
   destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   iDestruct (own_store_data_client_pin with "Hdata") as "[Hdata #Hpin]".
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
   iFrame "Hpin".
   iExists state', ds', m0, deleted0.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-  iFrame "Hsession' Hrecord".
+  iFrame "Hreplica_history' Hrecord".
   iPureIntro. exact Hstart.
 Qed.
 
@@ -434,16 +410,16 @@ Proof.
   iIntros "Htx".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
-  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  iDestruct (own_store_data_build with "Hcore Hreplica_history") as "Hdata".
   destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   iDestruct (own_store_data_history_lb with "Hdata") as "[Hdata #Hlb]".
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
   iFrame "Hlb".
   iExists state', ds', m0, deleted0.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-  iFrame "Hsession' Hrecord".
+  iFrame "Hreplica_history' Hrecord".
   iPureIntro. exact Hstart.
 Qed.
 
@@ -464,7 +440,7 @@ Proof.
   move=> Hnot. iIntros "Htx #Hobserved Hobs".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
-  iDestruct (own_store_data_build with "Hcore Hsession") as "Hdata".
+  iDestruct (own_store_data_build with "Hcore Hreplica_history") as "Hdata".
   destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
   iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry)".

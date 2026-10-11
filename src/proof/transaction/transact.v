@@ -10,8 +10,8 @@
 
     The transitions of the store's predicate across one transaction, in
     order: the write lock hands out the issue #219 split, the core, the
-    session and the observers told up to the store's current model and
-    tombstones ([wp_Store__wlock]); this proof rebuilds [own_store] from
+    replica history and the observers told up to the store's current model
+    and tombstones ([wp_Store__wlock]); this proof rebuilds [own_store] from
     the split ([own_store_data_build]) and [own_transaction_fresh] (below)
     wraps it with the fresh record into [own_transaction], the predicate
     the closure runs on; [wp_Transaction__notify] turns [own_transaction]
@@ -78,13 +78,13 @@ Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_
     (c : ClientId) (h : list Ev) (m : DocModel) (state : store_state) (ds : gset YjsId) :
   own_transaction_changes tr s_loc ∅ ∅ ∅ -∗
   own_store s_loc γs γh 1 state ds m (pool_tombstoned (ss_pool state)) ∗
-  own_store_session γs γh c h m state ds -∗
+  own_replica_history γs γh c h m state ds -∗
   own_transaction tr s_loc γs γh c h m (ss_pending state) (pool_tombstoned (ss_pool state)) ∅ ∅ ∅.
 Proof.
-  iIntros "Hchanges (Hstore & Hsession)".
+  iIntros "Hchanges (Hstore & Hreplica_history)".
   iExists state, ds, m, (pool_tombstoned (ss_pool state)).
   iSplitR; first (iPureIntro; split; reflexivity).
-  iFrame "Hstore Hsession".
+  iFrame "Hstore Hreplica_history".
   iSplit; last (iPureIntro; apply transaction_start_fresh).
   iExists ∅. iFrame "Hchanges".
   iSplit; first iApply changed_types_bound_empty.
@@ -96,7 +96,7 @@ Qed.
 
 Lemma wp_transact (ref : loc) (γs : store_names) (γh : history_names) (f : func.t)
     (Q : ClientId -> list Ev -> DocModel -> list Input -> gset YjsId -> iProp Σ) :
-  {{{ is_pkg_init yjs ∗ is_Store ref γs γh ∗ closure_runs_transaction (store_of_ref ref) γs γh f Q }}}
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ closure_runs_transaction (store_of_ref ref) γs γh f Q }}}
     @! yjs.transact #ref #f
   {{{ RET #(); ∃ (c : ClientId) (h' : list Ev) (m' : DocModel) (pend' : list Input) (deleted' : gset YjsId),
       Q c h' m' pend' deleted' }}}.
@@ -106,19 +106,19 @@ Proof.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
   iDestruct "Hinv" as (c h m) "Hstore".
   wp_auto.
-  iDestruct "Hstore" as (state0 ds0) "(Hstore0 & Hsession)".
+  iDestruct "Hstore" as (state0 ds0) "(Hstore0 & Hreplica_history)".
   wp_apply wp_newTransaction. iIntros (tr) "Hchanges".
   wp_auto.
-  iDestruct (own_transaction_fresh with "Hchanges [$Hstore0 $Hsession]") as "Htx".
+  iDestruct (own_transaction_fresh with "Hchanges [$Hstore0 $Hreplica_history]") as "Htx".
   wp_apply ("Hf" with "[$Htx]").
   iIntros (h' m' pend' deleted' inserted tombstoned changed) "[Htx HQ]".
   wp_auto.
   wp_apply (wp_Transaction__notify with "[$Htx]"). iIntros "Hstore".
   wp_auto.
-  iDestruct "Hstore" as (state' ds') "(%Hface' & Hstore & Hsession')".
+  iDestruct "Hstore" as (state' ds') "(%Hface' & Hstore & Hreplica_history')".
   destruct Hface' as [Hpend' Hdel'].
   iEval (rewrite Hdel') in "Hstore".
-  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore $Hsession']").
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore $Hreplica_history']").
   iApply "HΦ". iExists c, h', m', pend', deleted'. iFrame "HQ".
 Qed.
 

@@ -2471,9 +2471,9 @@ Qed.
     the parent by the spliced run ([auth_gmap_gset_grow]); the fresh run
     is live, so the delete set's tombstone clause needs the one premise
     the store alone cannot supply, [input_char_ids input ## ds]: the
-    session's domain bound hands it to the callers, since a fresh id is
-    in no model (reported in the PR per spec-shape "A new conjunct goes
-    into an existing predicate, or the PR says why not").
+    replica history's domain bound hands it to the callers, since a fresh
+    id is in no model (reported in the PR per spec-shape "A new conjunct
+    goes into an existing predicate, or the PR says why not").
     [wp_store__Integrate_state] above stays as the second spec for the
     transaction's own integrate ([wp_Transaction__integrate_state]),
     which threads the clock-tie breakage through a loop, where this

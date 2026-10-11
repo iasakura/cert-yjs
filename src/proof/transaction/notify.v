@@ -395,12 +395,12 @@ Lemma wp_Transaction__notify (tr s_loc : loc) (γs : store_names) (γh : history
       ∃ (state : store_state) (ds : gset YjsId),
         ⌜state_pending_tombstoned state pend deleted⌝ ∗
         own_store s_loc γs γh 1 state ds m deleted ∗
-        own_store_session γs γh c h m state ds }}}.
+        own_replica_history γs γh c h m state ds }}}.
 Proof.
   wp_start as "Htx".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
-  iDestruct (own_store_data_build with "Hcore Hsession") as "Hstore".
+  iDestruct (own_store_data_build with "Hcore Hreplica_history") as "Hstore".
   destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hstore". iEval (rewrite -Hdeleted_state) in "Hstore".
   clear Hpend_state Hdeleted_state.
@@ -613,11 +613,11 @@ Proof.
     apply (type_untouched_by_record m bind p inserted tombstoned changed changed_locs entry.1 parent
              Hpoolinv Hregcoh Hregmodel Hrecorded Hbound (Hregbind parent entry Hd)).
     rewrite -Hdoneall. exact Hnin. }
-  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+  iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
   iExists state', ds'.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers'"; first iFrame "Hcore' Hobservers'".
-  iFrame "Hsession'".
+  iFrame "Hreplica_history'".
 Qed.
 
 End transaction_notify.

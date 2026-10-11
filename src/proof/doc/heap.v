@@ -27,7 +27,7 @@ Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
-(* [is_Store] (from store/store) is generalized over the store lock + item-set RA,
+(* [is_store_ref] (from store/store) is generalized over the store lock + item-set RA,
    so mirror its Context here to apply it. *)
 Context {sync_pkg : sync.Assumptions}.
 
@@ -49,8 +49,8 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
-(* [is_Store]'s reader-count accounting ties the readers' share to the store's
-   [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Store]. *)
+(* [is_store_ref]'s reader-count accounting ties the readers' share to the store's
+   [types] map via a [dfrac_agree]; mirror the instance here to apply [is_store_ref]. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
@@ -63,7 +63,7 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
    [own_store_data]'s [Hpendroot] conjunct is a [⌜..⌝] and needs no instances. *)
 
 (** Doc handle (persistent): reads ONLY [Doc.store] (immutable ⇒ [↦□]) and
-    delegates to [is_Store]. Since [Text] holds the store directly (y-octo: the
+    delegates to [is_store_ref]. Since [Text] holds the store directly (y-octo: the
     YTypeRef carries the store ref), [is_Text] does NOT go through [is_Doc]; this
     predicate is the Doc-level handle the [wp_NewDoc] / [wp_Doc__GetOrCreateText] specs
     are stated over (GetOrCreateText: consume [is_Doc dv s_loc γ], look up or create the
@@ -72,7 +72,7 @@ Definition is_Doc (dv ref : loc) (γs : store_names) (γh : history_names) : iPr
   ∃ (dvv : yjs.Doc.t),
     "Hdoc" ∷ dv ↦□ dvv ∗
     "%Hstore" ∷ ⌜dvv.(yjs.Doc.store') = ref⌝ ∗
-    "His_store" ∷ is_Store ref γs γh.
+    "His_store" ∷ is_store_ref ref γs γh.
 
 #[global] Instance is_Doc_persistent dv ref γs γh : Persistent (is_Doc dv ref γs γh).
 Proof. apply _. Qed.

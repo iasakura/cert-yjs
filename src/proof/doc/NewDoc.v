@@ -1,5 +1,5 @@
 (** [wp_NewDoc]: creating a document creates its store AND its lock layer.
-    This is the living witness that [is_Store] is satisfiable: the physical
+    This is the living witness that [is_store_ref] is satisfiable: the physical
     RWMutex is initialized ([init_RWMutex]), the store's ghost names are
     allocated for real by [store_tie_init] (write-lock witness, reader count,
     discarded reader bound, types agreement, content authorities, client
@@ -115,7 +115,7 @@ Proof.
     iApply own_toks_replicate. iFrame "Hrtoks". }
   iExists _. iFrame "Hd".
   iSplitR; first done.
-  rewrite /is_Store Hrw. iFrame "Hrw0 Hmax Htieinv".
+  rewrite /is_store_ref Hrw. iFrame "Hrw0 Hmax Htieinv".
 Qed.
 
 End doc_NewDoc.

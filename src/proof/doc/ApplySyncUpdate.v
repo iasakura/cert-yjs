@@ -24,7 +24,7 @@ Context `{hG: heapGS Σ, !ffi_semantics _ _}.
 
 Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
-(* [is_Store] (from store/store) is generalized over the store lock + item-set RA,
+(* [is_store_ref] (from store/store) is generalized over the store lock + item-set RA,
    so mirror its Context here to apply it. *)
 Context {sync_pkg : sync.Assumptions}.
 
@@ -46,8 +46,8 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
-(* [is_Store]'s reader-count accounting ties the readers' share to the store's
-   [types] map via a [dfrac_agree]; mirror the instance here to apply [is_Store]. *)
+(* [is_store_ref]'s reader-count accounting ties the readers' share to the store's
+   [types] map via a [dfrac_agree]; mirror the instance here to apply [is_store_ref]. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
 Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.

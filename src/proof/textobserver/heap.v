@@ -82,7 +82,7 @@ Definition own_TextObserver (obs t : loc) (γs : store_names) (γh : history_nam
     "#Ht" ∷ t ↦□ tv ∗
     "%Hstore" ∷ ⌜tv.(yjs.Text.store') = s_loc⌝ ∗
     "%Hinner" ∷ ⌜tv.(yjs.Text.inner') = parent⌝ ∗
-    "#His_store" ∷ is_Store s_loc γs γh ∗
+    "#His_store" ∷ is_store_ref s_loc γs γh ∗
     "#Hbind" ∷ is_type_binding γs.(sn_types) name parent ∗
     "Hstate_vector" ∷ own_map ov.(yjs.TextObserver.stateVector') (DfracOwn 1) state_vector ∗
     "%Hstate_vector" ∷ ⌜state_vector_denotes state_vector (snapshot_state_vector observed)⌝ ∗
