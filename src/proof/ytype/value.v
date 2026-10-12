@@ -22,7 +22,7 @@
       tombstone bits; [runs_visible_model], the [len] counter counts the
       sequence's visible items.
     - [visible_string_take_S]: one more run appends its string when live
-      and nothing when tombstoned, the step [Text.String] walks. *)
+      and nothing when tombstoned, the step [Text.CodeUnits] walks. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -44,7 +44,7 @@ Notation A := (list w16).
 
 (** The visible (non-tombstoned) items of an abstract sequence, and the string
     they spell (the concatenation of their per-char contents): what the read
-    API ([Text.Len] / [Text.String]) exposes about a snapshot (issue #125).
+    API ([Text.Len] / [Text.CodeUnits]) exposes about a snapshot (issue #125).
     The bound a read hands back is at the ITEM level ([m.*1] contains a set);
     a tombstoned item is in [m.*1] but not in [visible_items m].
     [items_string] is [item/model.v]'s. *)

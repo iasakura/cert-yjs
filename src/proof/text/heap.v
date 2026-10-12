@@ -7,7 +7,7 @@
       Persistent, and grow-only in both [L] and [deleted_ids]: the document
       state a handle holder knows is the pair, since a [Text]'s content is its
       items MINUS its deleted ids.
-    - what a read ([Text.Len] / [Text.String]) sees: [text_snapshot L model]
+    - what a read ([Text.Len] / [Text.CodeUnits]) sees: [text_snapshot L model]
       (a valid document holding [L]) and [history_reflected h0 name model]
       (every insert a history prefix delivered is in it).
 
@@ -165,8 +165,8 @@ Proof. iIntros "H". iNamed "H". iFrame "Hdeleted_lb". Qed.
 
 (** [Text.Insert] preserves the (persistent) document handle, grows the known
     content ([L ⊑ L']), AND exposes the inserted run [ins]: one fresh item per
-    byte of [content], each now known ([∈ L'], and [∉ L] since its id is fresh),
-    carrying that byte as content, with a fresh id [(client, k0+i)] (one local
+    code unit of [content], each now known ([∈ L'], and [∉ L] since its id is fresh),
+    carrying that code unit as content, with a fresh id [(client, k0+i)] (one local
     [client], consecutive clocks from some [k0]), the run's shared right origin
     [originRight], and its left origin chained (item 0 from [originLeft], item i+1 from item i).
     This says exactly "the characters you inserted are in [L'−L], with these
@@ -177,7 +177,7 @@ Proof. iIntros "H". iNamed "H". iFrame "Hdeleted_lb". Qed.
     [Hseq] (auth) via
     [auth_gmap_gset_lookup] to learn [parent ∈ dom types] and extract THIS text's
     type's runs / DLL from [Htypes]; run the findPos/Integrate loop, whose
-    invariant accumulates [ins] with the per-byte facts (content/id/origins) plus
+    invariant accumulates [ins] with the per-code-unit facts (content/id/origins) plus
     [tm_arr tm ⊆ arr]; at exit grow the auth item-set ([tm_arr tm → arr]) with
     [auth_gmap_gset_grow] and mint the new [is_type_lb]; reinsert the grown text
     into [Htypes] ([big_sepM_insert_acc]); rebuild the store (clock bumped,

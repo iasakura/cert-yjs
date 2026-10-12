@@ -1268,7 +1268,7 @@ Definition own_observed_share (γo : gname) (q : Qp) (s : snapshot) : iProp Σ :
   ghost_var γo (q / 2) s.
 
 (** [is_text_snapshot γs γh name s]: what a read of root [name] certifies
-    about the snapshot [s] (what [Text.String] and [Poll] say), over the
+    about the snapshot [s] (what [Text.CodeUnits] and [Poll] say), over the
     store's witnesses alone so that it can sit inside the store's lock: the
     root is bound, its items are known to the store, its tombstoned ids are
     in the store's delete set, [s] is a valid document, and it holds every

@@ -1,6 +1,6 @@
 (** Text handle: the top-level [wp_Text__Insert], one write as one
     transaction ([store.transact] around [Text.InsertIn], issue #206 T1).
-    The per-byte Integrate loop is [text/InsertIn]; this file only wraps it
+    The per-code-unit Integrate loop is [text/InsertIn]; this file only wraps it
     and hides the transaction. Shares [is_Text] etc. via [text/heap]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.

@@ -207,9 +207,10 @@ Proof.
   wp_auto.
   destruct (decide (left.(slice.len) = right.(slice.len))) as [Hleneq | Hlenne]; last first.
   { rewrite (bool_decide_eq_false_2 (left.(slice.len) = right.(slice.len)) Hlenne).
-    wp_auto. iApply "HΦ". iFrame "Hl Hr".
-    rewrite bool_decide_eq_false_2; first done.
-    move=> Heq. apply Hlenne. apply (inj sint.Z). rewrite -Hllen -Hrlen Heq //. }
+    wp_auto.
+    rewrite (bool_decide_eq_false_2 (ul = ur)); last first.
+    { move=> Heq. apply Hlenne. have Hl := f_equal length Heq. rewrite Hllen Hrlen in Hl. word. }
+    iApply "HΦ". iFrame "Hl Hr". }
   rewrite (bool_decide_eq_true_2 (left.(slice.len) = right.(slice.len)) Hleneq).
   wp_auto.
   (* the scan: the first [i] units agree *)
@@ -221,38 +222,44 @@ Proof.
     "%Hagree" ∷ ⌜take i ul = take i ur⌝)%I with "[i Hl Hr]" as "IH".
   { iExists 0%nat. iFrame "i Hl Hr". iPureIntro. split; [lia | by rewrite !take_0]. }
   wp_for "IH".
+  have Hlenur : length ur = length ul by (rewrite Hllen Hrlen Hleneq //).
   destruct (decide (i < length ul)%nat) as [Hilt | Hige].
-  - rewrite (bool_decide_eq_true_2 (sint.Z (W64 i) < sint.Z left.(slice.len))); last word.
+  - rewrite (bool_decide_eq_true_2 (sint.Z (W64 i) < sint.Z left.(slice.len))%Z); last word.
     destruct (lookup_lt_is_Some_2 ul i Hilt) as [a Ha].
     destruct (lookup_lt_is_Some_2 ur i ltac:(lia)) as [b Hb].
     wp_auto.
+    rewrite decide_True; last word.
     wp_apply (wp_load_slice_index with "[$Hl]").
     { word. }
     { iPureIntro. replace (Z.to_nat (sint.Z (W64 i))) with i by word. exact Ha. }
     iIntros "Hl".
+    wp_auto.
+    rewrite decide_True; last word.
     wp_apply (wp_load_slice_index with "[$Hr]").
     { word. }
     { iPureIntro. replace (Z.to_nat (sint.Z (W64 i))) with i by word. exact Hb. }
     iIntros "Hr".
     wp_auto.
+    (* [left[i] != right[i]] is [negb (bool_decide (a = b))] *)
     destruct (decide (a = b)) as [-> | Hab].
-    + rewrite (bool_decide_eq_false_2 (b ≠ b)); last by move=> Hne; apply Hne.
+    + rewrite (bool_decide_eq_true_2 (b = b) eq_refl) /=.
       wp_auto. wp_for_post.
-      iFrame "HΦ". iExists (S i).
+      iFrame "HΦ right left". iExists (S i).
       replace (w64_word_instance.(word.add) (W64 i) (W64 1)) with (W64 (S i)) by word.
       iFrame "Hi Hl Hr". iPureIntro. split; first lia.
       rewrite (take_S_r _ _ _ Ha) (take_S_r _ _ _ Hb) Hagree //.
-    + rewrite (bool_decide_eq_true_2 (a ≠ b) Hab).
-      wp_auto. iApply "HΦ". iFrame "Hl Hr".
-      rewrite bool_decide_eq_false_2; first done.
-      move=> Heq. apply Hab. rewrite Heq in Ha. rewrite Ha in Hb. by injection Hb.
-  - rewrite (bool_decide_eq_false_2 (sint.Z (W64 i) < sint.Z left.(slice.len))); last word.
-    wp_auto. iApply "HΦ". iFrame "Hl Hr".
+    + rewrite (bool_decide_eq_false_2 (a = b) Hab) /=.
+      wp_auto. wp_for_post.
+      rewrite (bool_decide_eq_false_2 (ul = ur)); last first.
+      { move=> Heq. apply Hab. rewrite Heq in Ha. rewrite Ha in Hb. by injection Hb. }
+      iApply "HΦ". iFrame "Hl Hr".
+  - rewrite (bool_decide_eq_false_2 (sint.Z (W64 i) < sint.Z left.(slice.len))%Z); last word.
+    wp_auto.
     have Hieq : i = length ul by lia.
-    have Hlenur : length ur = length ul by (rewrite Hllen Hrlen Hleneq //).
-    rewrite Hieq (take_ge ul); last lia. rewrite (take_ge ur) in Hagree; last lia.
+    rewrite Hieq (take_ge ur) in Hagree; last lia.
     rewrite (take_ge ul) in Hagree; last lia.
-    rewrite bool_decide_eq_true_2; done.
+    rewrite (bool_decide_eq_true_2 (ul = ur) Hagree).
+    iApply "HΦ". iFrame "Hl Hr".
 Qed.
 
 (** THE theorem: inside one transaction the view equals the text. The

@@ -129,7 +129,6 @@ Proof.
   iMod (own_store_data_text_snapshot with "Hbind Hstore") as "[Hstore #Hsnapshot]".
   wp_auto.
   (* ---- the initial delta: the whole visible text, as one insert ---- *)
-  wp_auto.
   (* [wp_if_join] substitutes every variable equation; keep [deleted] *)
   clear Hdeleted.
   wp_if_join (λ v, ⌜v = execute_val⌝ ∗
@@ -154,7 +153,7 @@ Proof.
     rewrite (text_delta_from_empty_string _ Hnonempty).
     rewrite decide_True; last first.
     { destruct (visible_string (type_snapshot m deleted name)) as [| b bs] eqn:Hvs; first done.
-      exfalso. apply n. rewrite Hvs /= in Htlen. word. }
+      exfalso. apply n. simpl in Htlen. word. }
     iApply own_delta_nil. }
   iIntros (v) "(-> & Hjoin)". iDestruct "Hjoin" as (initial_sl) "Hjoin". iNamed "Hjoin".
   wp_auto.

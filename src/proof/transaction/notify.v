@@ -155,14 +155,14 @@ Proof.
     wp_for "IHi".
     destruct (decide (i < length (run_items r))%nat) as [Hilt | Hige].
     + (* one more char [x] of the run *)
-      rewrite (bool_decide_eq_true_2 (uint.Z (W64 i) < uint.Z (W64 (length (in_content (input_of_run r)))))%Z); last (rewrite Hclen'; word).
+      rewrite (bool_decide_eq_true_2 (uint.Z (W64 i) < uint.Z (W64 (length (items_string (run_items r)))))%Z); last (rewrite Hclen; word).
       destruct (lookup_lt_is_Some_2 (run_items r) i Hilt) as [x Hx].
       have Hxid : item_id x = MkYjsId (run_client r) (run_clock r + i) := run_wf_char_id _ i x Hrun Hx.
       have Hxcont : ∃ b, items_string (run_items r) !! i = Some b ∧ content x = [b].
       { have H1 : (content <$> run_items r) !! i = Some (content x) by rewrite list_lookup_fmap Hx //.
         rewrite Hpck /explode list_lookup_fmap in H1.
-        destruct (items_string (run_items r) !! i) as [b|] eqn:Hb; rewrite Hb /= in H1; last discriminate.
-        exists b. split; [exact Hb | injection H1 as <-; done]. }
+        move: H1. destruct (items_string (run_items r) !! i) as [b|] eqn:Hb; simpl; last discriminate.
+        move=> [= <-]. by exists b. }
       destruct Hxcont as (b & Hb & Hxb).
       have Hrm : run_models r !! i = Some (x, run_deleted r) by rewrite /run_models list_lookup_fmap Hx //.
       have Hstep_i : runs_model (take kk tm.(tm_runs)) ++ take (S i) (run_models r)
@@ -269,7 +269,7 @@ Proof.
             rewrite decide_False; last exact Hxnins. rewrite decide_False; last exact Hxnt. rewrite Hxb //. }
           rewrite Hmerge. iFrame "Hdelta". iPureIntro. lia. }
     + (* the run's chars are classified: on to the next node *)
-      rewrite (bool_decide_eq_false_2 (uint.Z (W64 i) < uint.Z (W64 (length (in_content (input_of_run r)))))%Z); last (rewrite Hclen'; word).
+      rewrite (bool_decide_eq_false_2 (uint.Z (W64 i) < uint.Z (W64 (length (items_string (run_items r)))))%Z); last (rewrite Hclen; word).
       have Hieq : i = length (run_items r) by lia.
       wp_auto.
       wp_for_post.
@@ -308,7 +308,7 @@ Proof.
     iDestruct (own_slice_len with "Hsl") as %[Hsllen Hsllen0].
     iDestruct (own_slice_wf with "Hsl") as %Hslwf.
     set (dm := delta_merge (record_delta inserted tombstoned (runs_model tm.(tm_runs)))).
-    have Hlenvs : length vs = length dm by eapply Forall2_length; exact Hdenote.
+    iDestruct (big_sepL2_length with "Hdenote") as %Hlenvs.
     have Htd : delta_normal_form (record_delta inserted tombstoned (runs_model tm.(tm_runs)))
                = delta_drop_trailing_retain dm by done.
     destruct (decide (0 < length vs)%nat) as [Hpos | Hzero]; last first.
@@ -318,12 +318,12 @@ Proof.
       have Hdm : dm = [] by destruct dm; [done | rewrite Hvs in Hlenvs; simpl in Hlenvs; lia].
       wp_auto.
       iApply ("HΦ" $! dsl). iFrame "Hyt Hins Hdel".
-      rewrite Htd Hdm /delta_drop_trailing_retain /=. iExists vs. iFrame "Hsl Hcap". iPureIntro.
-      rewrite Hvs. constructor. }
+      rewrite Htd Hdm /delta_drop_trailing_retain /=. iExists vs. iFrame "Hsl Hcap". rewrite Hvs. by iApply big_sepL2_nil. }
     rewrite (bool_decide_eq_true_2 (sint.Z (W64 0) < sint.Z dsl.(slice.len))%Z); last word.
     destruct (lookup_lt_is_Some_2 vs (length vs - 1) ltac:(lia)) as [lastv Hlastv].
     destruct (lookup_lt_is_Some_2 dm (length vs - 1) ltac:(lia)) as [lastop Hlastop].
-    have Hdenlast : delta_op_denotes lastv lastop := Forall2_lookup_lr _ _ _ _ _ _ Hdenote Hlastv Hlastop.
+    iDestruct (big_sepL2_lookup _ _ _ (length vs - 1) lastv lastop Hlastv Hlastop with "Hdenote") as "#Hdenlast".
+    iDestruct "Hdenlast" as "[%Hkind _]".
     have Hlastdm : last dm = Some lastop.
     { rewrite last_lookup -Hlenvs. replace (pred (length vs)) with (length vs - 1)%nat by lia. exact Hlastop. }
     wp_auto.
@@ -334,7 +334,7 @@ Proof.
     wp_auto.
     iDestruct ("Hgive" $! lastv with "Hel") as "Hsl".
     rewrite list_insert_id; last (replace (Z.to_nat (sint.Z (w64_word_instance.(word.sub) dsl.(slice.len) (W64 1)))) with (length vs - 1)%nat by word; exact Hlastv).
-    destruct lastop as [nn | t | nn]; destruct Hdenlast as [Hk1 Hv1].
+    destruct lastop as [nn | t | nn]; [destruct Hkind as [Hk1 Hv1] | rename Hkind into Hk1 | destruct Hkind as [Hk1 Hv1]].
     + (* a trailing retain: dropped *)
       rewrite Hk1 (bool_decide_eq_true_2 (W8 0 = W8 0)); last done.
       wp_auto.
@@ -343,23 +343,23 @@ Proof.
       have Hbnd : (0 ≤ sint.Z (W64 0) ≤ sint.Z (w64_word_instance.(word.sub) dsl.(slice.len) (W64 1)) ≤ sint.Z dsl.(slice.len))%Z by split_and!; word.
       iDestruct (own_slice_slice_with_cap (W64 0) (w64_word_instance.(word.sub) dsl.(slice.len) (W64 1)) dsl vs Hbnd with "[$Hsl $Hcap]") as "(_ & Hsl' & Hcap')".
       iApply ("HΦ" $! _). iFrame "Hyt Hins Hdel".
-      iExists _. iFrame "Hsl' Hcap'". iPureIntro.
+      iExists _. iFrame "Hsl' Hcap'".
       rewrite Htd /delta_drop_trailing_retain Hlastdm /subslice.
       replace (sint.nat (W64 0)) with 0%nat by word. rewrite drop_0.
       replace (sint.nat (w64_word_instance.(word.sub) dsl.(slice.len) (W64 1))) with (length vs - 1)%nat by word.
       rewrite removelast_firstn_len -Hlenvs.
       replace (pred (length vs)) with (length vs - 1)%nat by lia.
-      apply Forall2_take. exact Hdenote.
+      iApply (is_delta_ops_take with "Hdenote").
     + (* a trailing insert: kept *)
       rewrite Hk1 (bool_decide_eq_false_2 (W8 1 = W8 0)); last done.
       wp_auto.
       iApply ("HΦ" $! dsl). iFrame "Hyt Hins Hdel".
-      rewrite Htd /delta_drop_trailing_retain Hlastdm. iExists vs. iFrame "Hsl Hcap". iPureIntro. exact Hdenote.
+      rewrite Htd /delta_drop_trailing_retain Hlastdm. iExists vs. iFrame "Hsl Hcap". iExact "Hdenote".
     + (* a trailing delete: kept *)
       rewrite Hk1 (bool_decide_eq_false_2 (W8 2 = W8 0)); last done.
       wp_auto.
       iApply ("HΦ" $! dsl). iFrame "Hyt Hins Hdel".
-      rewrite Htd /delta_drop_trailing_retain Hlastdm. iExists vs. iFrame "Hsl Hcap". iPureIntro. exact Hdenote.
+      rewrite Htd /delta_drop_trailing_retain Hlastdm. iExists vs. iFrame "Hsl Hcap". iExact "Hdenote".
 Qed.
 
 (** Moving an address the registry does not hold into the told set changes

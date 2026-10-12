@@ -8,7 +8,7 @@
     from then on; back come the persistent [is_Doc] handle, the client pin,
     and the document's read capabilities (issue #125): one [own_read_cap]
     per RWMutex reader slot, each an RLock token zipped with a reader-bound
-    token, which is what a concurrent [Text.Len] / [Text.String] reader
+    token, which is what a concurrent [Text.Len] / [Text.CodeUnits] reader
     presents. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.

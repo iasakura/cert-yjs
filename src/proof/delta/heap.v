@@ -13,6 +13,7 @@
     Laws
     - [is_delta_op_retain] / [is_delta_op_delete] / [is_delta_op_insert]:
       building an entry's denotation from the struct's fields.
+    - [is_delta_ops_take]: the denotations survive truncating a delta.
     - [own_delta_nil]: the nil slice is the empty delta.
 
     The method proofs are [delta/ApplyDelta.v]; [deltaSnoc], the step every
@@ -71,6 +72,18 @@ Lemma is_delta_op_insert (v : yjs.DeltaOp.t) (t : A) :
   v.(yjs.DeltaOp.Kind') = W8 1 ->
   v.(yjs.DeltaOp.Content') ↦*□ t -∗ is_delta_op v (Insert t).
 Proof. move=> Hk. iIntros "#Hc". rewrite /is_delta_op /=. iSplit; [by iPureIntro | iExact "Hc"]. Qed.
+
+(** Truncating a delta keeps its entries' denotations: what dropping the
+    trailing retain ([delta[:n-1]]) hands the shorter slice. *)
+Lemma is_delta_ops_take (vs : list yjs.DeltaOp.t) (delta : list DeltaOp) (k : nat) :
+  ([∗ list] v;op ∈ vs;delta, is_delta_op v op) -∗
+  [∗ list] v;op ∈ take k vs;take k delta, is_delta_op v op.
+Proof.
+  iIntros "H". iDestruct (big_sepL2_length with "H") as %Hlen.
+  iEval (rewrite -(take_drop k vs) -(take_drop k delta)) in "H".
+  iDestruct (big_sepL2_app_inv with "H") as "[Hk _]"; last iExact "Hk".
+  left. rewrite !length_take Hlen //.
+Qed.
 
 Lemma own_delta_nil : ⊢ own_delta slice.nil (DfracOwn 1) [].
 Proof.

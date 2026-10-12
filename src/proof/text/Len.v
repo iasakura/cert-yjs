@@ -70,7 +70,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     read lock, reads the type's visible length off its DLL through a
     fractional share of [own_store] (so it runs alongside other readers),
     then releases. The read capability [own_read_cap] (one reader slot) is
-    threaded and returned; [is_Text] is preserved. Like [wp_Text__String],
+    threaded and returned; [is_Text] is preserved. Like [wp_Text__CodeUnits],
     the caller brings a prefix certificate of this replica's op history and
     the counted snapshot contains one item per delivered insert of the prefix
     targeting this root (a caller with no such knowledge passes [h0 = []]). *)

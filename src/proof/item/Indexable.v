@@ -21,8 +21,8 @@ Notation A := (list w16).
 
 
 (** Per-node method specs [findPos] reads off each cursor node. Every cell is
-    Countable ([is_countable_flag]) with single-byte content, so [Indexable] is
-    "not Deleted" and [Len] is the content byte length (1 for our cells). Proving
+    Countable ([is_countable_flag]) with single-code-unit content, so [Indexable] is
+    "not Deleted" and [Len] is the content length in code units (1 for our cells). Proving
     these once keeps the [findPos] loop free of nested method-call stepping.
     Read-only, hence stated at a generic [dq]. *)
 Lemma wp_item__Indexable (l : loc) (dq : dfrac) (v : yjs.item.t) :

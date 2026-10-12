@@ -621,7 +621,7 @@ Qed.
 
 (** The same, decided on the visible string, which is empty exactly when
     no char is visible once every char carries content (a store's chars
-    are one byte each). [Text.Observe] tests the string's length. *)
+    are one code unit each). [Text.Observe] tests the string's length. *)
 Lemma text_delta_from_empty_string (current : snapshot) :
   (∀ x, x ∈ visible_items current -> content x ≠ []) ->
   text_delta [] current =
@@ -858,7 +858,7 @@ Qed.
     about; [history_reflected] is stated over the one snapshot a read walked.
     The two meet as soon as the walked sequence lists the model's items at
     that root: this is the step from a read lock's postcondition to a read's
-    own ([Text.Len], [Text.String], issue #125). *)
+    own ([Text.Len], [Text.CodeUnits], issue #125). *)
 Lemma delivered_reflected_at_root (h0 : list Ev) (m : DocModel) (name : P)
     (s : snapshot) :
   delivered_reflected h0 m ->

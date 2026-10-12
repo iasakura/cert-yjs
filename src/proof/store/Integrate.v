@@ -497,6 +497,9 @@ Proof using Type*.
       iPureIntro; split_and!;
         [lia | by rewrite HcurL | exact HcurLb | exact HcurL | exact HcurLb | lia | lia | lia | exact Hset_find_integration].
     - iFrame "Hcontent". iPureIntro; split_and!; [exact Hin_l | exact Hin_r | exact Hid]. }
+  (* the invariant carries the item's content share under the same name:
+     drop this copy so that opening the invariant can name it *)
+  iClear "Hcontent".
   wp_for "IH".
   iDestruct "IH" as "[Hinv Hfresh]". iNamed "Hinv". iNamed "Hfresh".
   iDestruct "Holeft" as "#Holeft". iDestruct "Horight" as "#Horight".
@@ -593,7 +596,8 @@ Proof using Type*.
         rewrite length_fmap explode_length in Hl. lia. }
       rewrite Hlencont. wp_auto.
       destruct (run_items rc) as [|hh tl2] eqn:Hrun; first by (exfalso; exact (proj1 Hrunwf_ci eq_refl)).
-      rewrite -Hrun in Hccont_ci Hrunwf_ci.
+      (* the goal names the run's length as [length (run_items rc)] again *)
+      rewrite -Hrun in Hccont_ci Hrunwf_ci |- *.
       have Hrhead : run_head_item rc = hh by rewrite /run_head_item Hrun.
       have Hrunstep : run_step (hh :: tl2).
       { have Hrs := run_wf_run_step (run_items rc) Hrunwf_ci. rewrite Hrun in Hrs. exact Hrs. }
@@ -689,7 +693,7 @@ Proof using Type*.
            iExists (offset + length (run_items rc))%nat, (S cur), (S cur), (char_ids (run_items rc) ∪ idsB), ∅, (leftIdx + Z.of_nat (offset + length (run_items rc)))%Z.
            rewrite /integrate_loop_inv /own_fresh_item_raw.
            iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_empty Hci_empty_cap"; last first.
-           { iFrame "Hitem Holeft Horight Hcontent0".
+           { iFrame "Hitem Holeft Horight Hcontent".
              iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0]. }
            iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
            iSplitL "Hconflict".
@@ -747,7 +751,7 @@ Proof using Type*.
               iExists (offset + length (run_items rc))%nat, (S cur), curD, (char_ids (run_items rc) ∪ idsB), (char_ids (run_items rc) ∪ conflictI), destL.
               rewrite /integrate_loop_inv /own_fresh_item_raw.
               iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_sl Hci_cap"; last first.
-              { iFrame "Hitem Holeft Horight Hcontent0".
+              { iFrame "Hitem Holeft Horight Hcontent".
                 iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0]. }
               iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
               iSplitL "Hconflict".
@@ -828,7 +832,7 @@ Proof using Type*.
                  iExists (offset + length (run_items rc))%nat, (S cur), curD, (char_ids (run_items rc) ∪ idsB), (char_ids (run_items rc) ∪ conflictI), destL.
                  rewrite /integrate_loop_inv /own_fresh_item_raw.
                  iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_sl Hci_cap"; last first.
-                 { iFrame "Hitem Holeft Horight Hcontent0".
+                 { iFrame "Hitem Holeft Horight Hcontent".
                    iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0]. }
                  iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
                  iSplitL "Hconflict".
@@ -865,7 +869,7 @@ Proof using Type*.
                  iExists (offset + length (run_items rc))%nat, (S cur), (S cur), (char_ids (run_items rc) ∪ idsB), ∅, (leftIdx + Z.of_nat (offset + length (run_items rc)))%Z.
                  rewrite /integrate_loop_inv /own_fresh_item_raw.
                  iSplitL "Hparent Hdll Hconflict Hleft Hright Hibo_ref Hibo_sl Hibo_cap Hci_ref Hci_empty Hci_empty_cap"; last first.
-                 { iFrame "Hitem Holeft Horight Hcontent0".
+                 { iFrame "Hitem Holeft Horight Hcontent".
                    iPureIntro; split_and!; [exact Hin_l0|exact Hin_r0|exact Hid0]. }
                  iSplitL "Hparent Hdll". { iExists yt0, tl0. iFrame "Hparent Hdll". done. }
                  iSplitL "Hconflict".
@@ -989,7 +993,7 @@ Proof using Type*.
         { iExists yt, tl. iFrame "Hparent".
           replace (yt.(yjs.yType.start')) with (loc_at ls (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
           iFrame "Hdll". done. }
-        iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+        iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight Hcontent". iPureIntro; split_and!; done. }
       iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
       iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". }
     { (* combo 3: left non-null, right null -> compare left.right with right *)
@@ -1062,7 +1066,7 @@ Proof using Type*.
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; exact Hlen'. }
         wp_apply (wp_scanConflicts parent item_l leftNode rightNode dq ls runs input newItem leftIdx rightIdx destIdx curL curR
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[Htext Hitem Holeft Horight]").
-        { iSplitL "Htext"; [iFrame "Htext" | iExists itemVal, oleft, oright; rewrite /own_linked_item /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
+        { iSplitL "Htext"; [iFrame "Htext" | iExists itemVal, oleft, oright; rewrite /own_linked_item /own_fresh_item_raw; iFrame "Hitem Holeft Horight Hcontent"; iPureIntro; split_and!; done]. }
         iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
         iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". } } }
   { (* right non-null (curR < length runs): read right.left *)
@@ -1131,7 +1135,7 @@ Proof using Type*.
           { iExists yt, tl. iFrame "Hparent".
             replace (yt.(yjs.yType.start')) with (loc_at ls (Z.of_nat curL)) by (rewrite Hstart Hl0 //).
             iFrame "Hdll". done. }
-          iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+          iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw. iFrame "Hitem Holeft Horight Hcontent". iPureIntro; split_and!; done. }
         iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
         iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". } }
     { (* combo 4: left non-null, right non-null -> compare left.right with right *)
@@ -1204,7 +1208,7 @@ Proof using Type*.
         { iExists yt', tl'. iFrame "Hparent Hdll". iPureIntro; exact Hlen'. }
         wp_apply (wp_scanConflicts parent item_l leftNode rightNode dq ls runs input newItem leftIdx rightIdx destIdx curL curR
                     Harr Htoitem Hvalid Hmax HfindL HfindR HfindD Hnec Hfits Hoclk HcurL HcurLb HcurR HcurRb with "[Htext Hitem Holeft Horight]").
-        { iSplitL "Htext"; [iFrame "Htext" | iExists itemVal, oleft, oright; rewrite /own_linked_item /own_fresh_item_raw; iFrame "Hitem Holeft Horight"; iPureIntro; split_and!; done]. }
+        { iSplitL "Htext"; [iFrame "Htext" | iExists itemVal, oleft, oright; rewrite /own_linked_item /own_fresh_item_raw; iFrame "Hitem Holeft Horight Hcontent"; iPureIntro; split_and!; done]. }
         iIntros (v) "(Htext & Hfresh & Hpost)". wp_auto.
         iApply ("HΦ" $! v). iFrame "Htext Hfresh Hpost". } } }
 Qed.
@@ -1343,7 +1347,7 @@ Proof using Type*.
   iAssert (own_linked_item item_l input parent (loc_at ls (Z.of_nat curL - 1)) (loc_at ls (Z.of_nat curR)))
     with "[Hitem]" as "Hfresh".
   { iExists itemVal, oleft, oright. rewrite /own_linked_item /own_fresh_item_raw.
-    iFrame "Hitem Holeft Horight". iPureIntro; split_and!; done. }
+    iFrame "Hitem Holeft Horight Hcontent". iPureIntro; split_and!; done. }
   wp_apply (wp_findIntegrationLeft parent item_l (loc_at ls (Z.of_nat curL - 1)) (loc_at ls (Z.of_nat curR))
               (loc_at ls (Z.of_nat curL - 1)) (loc_at ls (Z.of_nat curR))
               (DfracOwn 1) ls runs input newItem leftIdx rightIdx destIdx curL curR
@@ -1601,7 +1605,7 @@ Proof using Type*.
   simpl negb. wp_auto.
   wp_method_call. wp_call. wp_auto. wp_method_call. wp_call. wp_call. wp_auto.
   wp_method_call. wp_call. wp_auto. wp_method_call. wp_call. wp_call. wp_auto.
-  rewrite Hslen. wp_auto.
+  rewrite Hslen.
   (* Conclude: resolve [itemM]'s origins, land the WHOLE run's model splice
      ([integrate_chain] off the freshly inserted head, issue #28 U7), and
      reassemble the DLL with the run spliced in. *)
@@ -1850,7 +1854,13 @@ Proof using Type*.
       iSplitR; first (iPureIntro; exact (eq_sym Holtr)).
       iSplitR; first (iPureIntro; exact (eq_sym Hortr)).
       iSplitR; first (iPureIntro; exact (eq_sym Hidtr)).
-      iSplitR; first (rewrite /input_of_run /= (items_string_explode _ _ Hconttr) HivLc; iExact "Hcont2").
+      iSplitR.
+      { (* the run's content is the input's ([items_string RUNITEMS] is
+           [in_content input] by [Hconttr]); the [simpl] above unfolded the
+           goal's copy, so the hypothesis is brought to the same shape *)
+        have Hinc : items_string RUNITEMS = in_content input := items_string_explode _ _ Hconttr.
+        iEval (rewrite -Hinc -HivLc; simpl) in "Hcont2".
+        iExact "Hcont2". }
       iPureIntro. split_and!.
       - exact Hpartr.
       - exact HleftEq.

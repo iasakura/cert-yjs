@@ -292,14 +292,14 @@ Proof.
     have Hrall : r ∈ all_runs p.
     { apply elem_of_all_runs. exists tv.(yjs.Text.inner'), tm. split; [exact Htmp | exact (list_elem_of_lookup_2 _ _ _ Hrk)]. }
     have Hfits : run_fits r := proj1 (proj2 (proj1 Hpoolinv r Hrall)).
-    have Hend_w : uint.nat (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (in_content (input_of_run r))))) = (run_clock r + length (run_items r))%nat.
-    { rewrite Hclen'. rewrite /run_fits in Hfits. word. }
+    have Hend_w : uint.nat (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (items_string (run_items r))))) = (run_clock r + length (run_items r))%nat.
+    { rewrite Hclen. rewrite /run_fits in Hfits. word. }
     have Hstep_sv : snapshot_state_vector (runs_model (take (S kk) tm.(tm_runs)))
         = sv_join (snapshot_state_vector (runs_model (take kk tm.(tm_runs)))) (snapshot_state_vector (run_models r)).
     { rewrite (take_S_r _ _ _ Hrk) runs_model_app runs_model_singleton snapshot_state_vector_app //. }
     (* the token of this poll: the client's next clock ... *)
     wp_if_join (λ v, ⌜v = execute_val⌝ ∗
-      "end" ∷ end_ptr ↦ w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (in_content (input_of_run r)))) ∗
+      "end" ∷ end_ptr ↦ w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (items_string (run_items r)))) ∗
       "Hsv_ptr" ∷ stateVector_ptr ↦ sv_mref ∗
       "client" ∷ client_ptr ↦ itemVal.(yjs.item.id').(yjs.id.clientId') ∗
       ∃ (svm' : gmap w64 w64),
@@ -326,7 +326,7 @@ Proof.
     wp_bind (If _ _ _)%E.
     iApply (wp_wand _ _ _ (λ v, ⌜v = execute_val⌝ ∗
       "start" ∷ start_ptr ↦ itemVal.(yjs.item.id').(yjs.id.clock') ∗
-      "end" ∷ end_ptr ↦ w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (in_content (input_of_run r)))) ∗
+      "end" ∷ end_ptr ↦ w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (items_string (run_items r)))) ∗
       "client" ∷ client_ptr ↦ itemVal.(yjs.item.id').(yjs.id.clientId') ∗
       "Hdel_ptr" ∷ deleted_ptr ↦ del_mref ∗
       "Hdel" ∷ own_deleted_spans del_mref (snapshot_deleted_ids (runs_model (take (S kk) tm.(tm_runs)))))%I
@@ -338,7 +338,7 @@ Proof.
                 ∨ span_covers itemVal.(yjs.item.id').(yjs.id.clientId')
                     (yjs.span.mk w64 itemVal.(yjs.item.id').(yjs.id.clock')
                        (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock')
-                          (W64 (length (in_content (input_of_run r)))))) d.
+                          (W64 (length (items_string (run_items r)))))) d.
         { move=> d. rewrite Hstep_del elem_of_union. apply or_iff_compat_l. split.
           - move=> Hd. destruct (char_ids_run_covers r d Hrun Hd) as (Hc & Hlo & Hhi).
             split_and!; [rewrite Hclient_w; symmetry; exact Hc
@@ -383,14 +383,14 @@ Proof.
     wp_for "IHi".
     destruct (decide (i < length (run_items r))%nat) as [Hilt | Hige].
     + (* one more char [x] of the run *)
-      rewrite (bool_decide_eq_true_2 (uint.Z (W64 i) < uint.Z (W64 (length (in_content (input_of_run r)))))%Z); last (rewrite Hclen'; word).
+      rewrite (bool_decide_eq_true_2 (uint.Z (W64 i) < uint.Z (W64 (length (items_string (run_items r)))))%Z); last (rewrite Hclen; word).
       destruct (lookup_lt_is_Some_2 (run_items r) i Hilt) as [x Hx].
       have Hxid : item_id x = MkYjsId (run_client r) (run_clock r + i) := run_wf_char_id _ i x Hrun Hx.
       have Hxcont : ∃ b, items_string (run_items r) !! i = Some b ∧ content x = [b].
       { have H1 : (content <$> run_items r) !! i = Some (content x) by rewrite list_lookup_fmap Hx //.
         rewrite Hpck /explode list_lookup_fmap in H1.
-        destruct (items_string (run_items r) !! i) as [b|] eqn:Hb; rewrite Hb /= in H1; last discriminate.
-        exists b. split; [exact Hb | injection H1 as <-; done]. }
+        move: H1. destruct (items_string (run_items r) !! i) as [b|] eqn:Hb; simpl; last discriminate.
+        move=> [= <-]. by exists b. }
       destruct Hxcont as (b & Hb & Hxb).
       have Hxcur : x ∈ (runs_model tm.(tm_runs)).*1.
       { rewrite runs_model_fst /tm_arr /runs_flatten list_elem_of_join. exists (run_items r).
@@ -504,7 +504,7 @@ Proof.
           rewrite decide_False; last exact Hxnew. done. }
         rewrite Hmerge. iFrame "Hdelta". iPureIntro. lia.
     + (* the run's chars are classified: on to the next node *)
-      rewrite (bool_decide_eq_false_2 (uint.Z (W64 i) < uint.Z (W64 (length (in_content (input_of_run r)))))%Z); last (rewrite Hclen'; word).
+      rewrite (bool_decide_eq_false_2 (uint.Z (W64 i) < uint.Z (W64 (length (items_string (run_items r)))))%Z); last (rewrite Hclen; word).
       have Hieq : i = length (run_items r) by lia.
       wp_auto.
       wp_for_post.
@@ -595,7 +595,7 @@ Proof.
     iDestruct (own_slice_len with "Hsl") as %[Hsllen Hsllen0].
     iDestruct (own_slice_wf with "Hsl") as %Hslwf.
     set (dm := delta_merge (per_char_delta observed (runs_model tm.(tm_runs)))).
-    have Hlenvs : length vs = length dm by eapply Forall2_length; exact Hdenote.
+    iDestruct (big_sepL2_length with "Hdenote") as %Hlenvs.
     have Htd : text_delta observed (runs_model tm.(tm_runs)) = delta_drop_trailing_retain dm by done.
     destruct (decide (0 < length vs)%nat) as [Hpos | Hzero]; last first.
     { (* the empty delta: nothing to drop *)
@@ -605,13 +605,13 @@ Proof.
       wp_auto.
       iApply ("HΦ" $! dsl (runs_model tm.(tm_runs))).
       iFrame "Hobs_new". iSplitL.
-      { rewrite Htd Hdm /delta_drop_trailing_retain /=. iExists vs. iFrame "Hsl Hcap". iPureIntro.
-        rewrite Hvs. constructor. }
+      { rewrite Htd Hdm /delta_drop_trailing_retain /=. iExists vs. iFrame "Hsl Hcap". rewrite Hvs. by iApply big_sepL2_nil. }
       iPureIntro. split_and!; [exact Hgrows | exact Hsnap | exact Hhistref | exact Hexcl]. }
     rewrite (bool_decide_eq_true_2 (sint.Z (W64 0) < sint.Z dsl.(slice.len))%Z); last word.
     destruct (lookup_lt_is_Some_2 vs (length vs - 1) ltac:(lia)) as [lastv Hlastv].
     destruct (lookup_lt_is_Some_2 dm (length vs - 1) ltac:(lia)) as [lastop Hlastop].
-    have Hdenlast : delta_op_denotes lastv lastop := Forall2_lookup_lr _ _ _ _ _ _ Hdenote Hlastv Hlastop.
+    iDestruct (big_sepL2_lookup _ _ _ (length vs - 1) lastv lastop Hlastv Hlastop with "Hdenote") as "#Hdenlast".
+    iDestruct "Hdenlast" as "[%Hkind _]".
     have Hlastdm : last dm = Some lastop.
     { rewrite last_lookup -Hlenvs. replace (pred (length vs)) with (length vs - 1)%nat by lia. exact Hlastop. }
     wp_auto.
@@ -622,7 +622,7 @@ Proof.
     wp_auto.
     iDestruct ("Hgive" $! lastv with "Hel") as "Hsl".
     rewrite list_insert_id; last (replace (Z.to_nat (sint.Z (w64_word_instance.(word.sub) dsl.(slice.len) (W64 1)))) with (length vs - 1)%nat by word; exact Hlastv).
-    destruct lastop as [nn | t | nn]; destruct Hdenlast as [Hk1 Hv1].
+    destruct lastop as [nn | t | nn]; [destruct Hkind as [Hk1 Hv1] | rename Hkind into Hk1 | destruct Hkind as [Hk1 Hv1]].
     + (* a trailing retain: dropped *)
       rewrite Hk1 (bool_decide_eq_true_2 (W8 0 = W8 0)); last done.
       wp_auto.
@@ -632,27 +632,27 @@ Proof.
       iDestruct (own_slice_slice_with_cap (W64 0) (w64_word_instance.(word.sub) dsl.(slice.len) (W64 1)) dsl vs Hbnd with "[$Hsl $Hcap]") as "(_ & Hsl' & Hcap')".
       iApply ("HΦ" $! _ (runs_model tm.(tm_runs))).
       iFrame "Hobs_new". iSplitL.
-      { iExists _. iFrame "Hsl' Hcap'". iPureIntro.
+      { iExists _. iFrame "Hsl' Hcap'".
         rewrite Htd /delta_drop_trailing_retain Hlastdm /subslice.
         replace (sint.nat (W64 0)) with 0%nat by word. rewrite drop_0.
         replace (sint.nat (w64_word_instance.(word.sub) dsl.(slice.len) (W64 1))) with (length vs - 1)%nat by word.
         rewrite removelast_firstn_len -Hlenvs.
         replace (pred (length vs)) with (length vs - 1)%nat by lia.
-        apply Forall2_take. exact Hdenote. }
+        iApply (is_delta_ops_take with "Hdenote"). }
       iPureIntro. split_and!; [exact Hgrows | exact Hsnap | exact Hhistref | exact Hexcl].
     + (* a trailing insert: kept *)
       rewrite Hk1 (bool_decide_eq_false_2 (W8 1 = W8 0)); last done.
       wp_auto.
       iApply ("HΦ" $! dsl (runs_model tm.(tm_runs))).
       iFrame "Hobs_new". iSplitL.
-      { rewrite Htd /delta_drop_trailing_retain Hlastdm. iExists vs. iFrame "Hsl Hcap". iPureIntro. exact Hdenote. }
+      { rewrite Htd /delta_drop_trailing_retain Hlastdm. iExists vs. iFrame "Hsl Hcap". iExact "Hdenote". }
       iPureIntro. split_and!; [exact Hgrows | exact Hsnap | exact Hhistref | exact Hexcl].
     + (* a trailing delete: kept *)
       rewrite Hk1 (bool_decide_eq_false_2 (W8 2 = W8 0)); last done.
       wp_auto.
       iApply ("HΦ" $! dsl (runs_model tm.(tm_runs))).
       iFrame "Hobs_new". iSplitL.
-      { rewrite Htd /delta_drop_trailing_retain Hlastdm. iExists vs. iFrame "Hsl Hcap". iPureIntro. exact Hdenote. }
+      { rewrite Htd /delta_drop_trailing_retain Hlastdm. iExists vs. iFrame "Hsl Hcap". iExact "Hdenote". }
       iPureIntro. split_and!; [exact Hgrows | exact Hsnap | exact Hhistref | exact Hexcl].
 Qed.
 
