@@ -80,9 +80,11 @@ Lemma is_delta_ops_take (vs : list yjs.DeltaOp.t) (delta : list DeltaOp) (k : na
   [∗ list] v;op ∈ take k vs;take k delta, is_delta_op v op.
 Proof.
   iIntros "H". iDestruct (big_sepL2_length with "H") as %Hlen.
-  iEval (rewrite -(take_drop k vs) -(take_drop k delta)) in "H".
-  iDestruct (big_sepL2_app_inv with "H") as "[Hk _]"; last iExact "Hk".
-  left. rewrite !length_take Hlen //.
+  have Hlens : length (take k vs) = length (take k delta) by rewrite !length_take Hlen.
+  iDestruct (big_sepL2_app_inv (λ _ v op, is_delta_op v op) (take k vs) (drop k vs)
+               (take k delta) (drop k delta) (or_introl Hlens) with "[H]") as "[Hk _]";
+    last iExact "Hk".
+  rewrite !take_drop. iExact "H".
 Qed.
 
 Lemma own_delta_nil : ⊢ own_delta slice.nil (DfracOwn 1) [].
