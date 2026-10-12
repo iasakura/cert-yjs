@@ -11,7 +11,7 @@ import "testing"
 func TestDeleteRangeWholeRun(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("root")
-	txt.Insert(0, "hello")
+	txt.InsertString(0, "hello")
 
 	doc.store.wlock()
 	newTransaction(&doc.store.store).deleteRange(1, 1, 3) // clocks 1..3 = "ell"
@@ -28,7 +28,7 @@ func TestDeleteRangeWholeRun(t *testing.T) {
 func TestDeleteRangeIdempotent(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("root")
-	txt.Insert(0, "abcd")
+	txt.InsertString(0, "abcd")
 
 	doc.store.wlock()
 	newTransaction(&doc.store.store).deleteRange(1, 0, 2)
@@ -46,7 +46,7 @@ func TestDeleteRangeIdempotent(t *testing.T) {
 func TestDeleteRangeSkipsUnintegrated(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("root")
-	txt.Insert(0, "ab")
+	txt.InsertString(0, "ab")
 
 	doc.store.wlock()
 	// clocks 0..4 requested, only 0..1 exist: the rest is skipped, not a panic
@@ -68,7 +68,7 @@ func TestDeleteRangeRemoteConverges(t *testing.T) {
 	// B applies the same range by id and ends up with A's text.
 	docA := NewDoc(1)
 	txtA := docA.GetOrCreateText("root")
-	txtA.Insert(0, "hello world")
+	txtA.InsertString(0, "hello world")
 
 	docB := NewDoc(2)
 	txtB := docB.GetOrCreateText("root")

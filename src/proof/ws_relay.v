@@ -66,7 +66,7 @@ Context {wsnet_pkg : wsnet.Assumptions} {wsrelay_pkg : wsrelay.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Input := (TId * IntegrateInput (A := A))%type.
@@ -79,7 +79,7 @@ Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 

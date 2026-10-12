@@ -11,7 +11,7 @@ import "testing"
 func TestWireCodecCarriesDeletes(t *testing.T) {
 	docA := NewDoc(1)
 	txtA := docA.GetOrCreateText("root")
-	txtA.Insert(0, "hello world")
+	txtA.InsertString(0, "hello world")
 	txtA.Delete(5, 6) // " world"
 
 	update := docA.EncodeUpdate()
@@ -39,7 +39,7 @@ func TestWireDeleteBeforeInsertsConverges(t *testing.T) {
 	// cannot integrate yet), then the inserts.
 	docA := NewDoc(1)
 	txtA := docA.GetOrCreateText("root")
-	txtA.Insert(0, "abcd")
+	txtA.InsertString(0, "abcd")
 	inserts := docA.EncodeUpdate()
 
 	txtA.Delete(1, 2) // "bc"

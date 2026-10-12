@@ -266,12 +266,13 @@ func (s *store) splitNode(n *item, diff uint64) (*item, *item) {
 // run-list insertion.
 func splitItem(n *item, diff uint64) *item {
 	olid := newId(n.id.clientId, n.id.clock+diff-1)
-	// Split the content through a []byte round-trip rather than slicing the
-	// string directly: Perennial's goose model has no reduction for slicing a
-	// Go string (Slice go.string), whereas byte-slice slicing steps normally
-	// (byteString in content.go builds one-byte strings from a byte slice for
-	// the same reason).
-	cb := []byte(n.content.content)
+	// The two halves are subslices of the one backing array (Yjs
+	// v14.0.0-rc.18 ContentString.splice slices the string, src/structs/Item.js:1326;
+	// yrs 0.27.2 and y-octo 0.1.0 copy, src/block.rs:2017 and
+	// src/doc/codec/content.rs:222). Sharing is safe because content is never
+	// written after creation (content.go); in particular nothing appends to
+	// the left half, whose capacity still reaches over the right half.
+	units := n.content.content
 	right := &item{
 		id:            newId(n.id.clientId, n.id.clock+diff),
 		originLeftId:  &olid,
@@ -279,10 +280,10 @@ func splitItem(n *item, diff uint64) *item {
 		left:          n,
 		right:         n.right,
 		parent:        n.parent,
-		content:       content{content: string(cb[diff:])},
+		content:       content{content: units[diff:]},
 		flags:         n.flags,
 	}
-	n.content = content{content: string(cb[:diff])}
+	n.content = content{content: units[:diff]}
 	if n.right != nil {
 		n.right.left = right
 	}
@@ -465,7 +466,7 @@ func (s *store) deleteNode(it *item) bool {
 //     struct whose first character is present, where Yjs, yrs and y-octo
 //     integrate the rest of it (Yjs v14.0.0-rc.18 src/structs/Item.js:168;
 //     yrs 0.27.2 src/update.rs:341; y-octo 0.1.0 src/doc/store.rs:423; #207).
-//     The byte decoder hands over one-character structs, so no such struct
+//     The byte decoder hands over one-code-unit structs, so no such struct
 //     arrives today;
 //   - parent_sub is always None (root sequence), so the map branches are dropped;
 //   - the caller holds the store's write lock, so y-octo's unsafe shared-reference

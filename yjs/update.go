@@ -16,9 +16,9 @@ package yjs
 
 // updateItem is one decoded insert struct in the verified subset: an item carrying
 // its id, both sibling origins, its parent info and its string content, a run of
-// one or more characters (y-octo: codec/item.rs Item, as stored in
+// one or more UTF-16 code units (y-octo: codec/item.rs Item, as stored in
 // codec/update.rs Update.structs). store.applyUpdate integrates a run as one
-// item; the byte decoder (codec.go splitStructs) still hands over one-character
+// item; the byte decoder (codec.go splitStructs) still hands over one-unit
 // structs. Parent::Id / parent_sub are dropped (root types only, #43).
 type updateItem struct {
 	id            id
@@ -30,7 +30,10 @@ type updateItem struct {
 	// resolved left/right neighbour (the wire format only carries a parent for
 	// structs with no sibling origins).
 	parentName *string
-	content    string
+	// content is the run's code units, decoded from the wire's UTF-8 string
+	// by the codec. The item built from this struct keeps the slice, so it is
+	// never written once the struct is made (content.go).
+	content []uint16
 }
 
 // deleteSpan is one decoded delete range: the half-open clock interval

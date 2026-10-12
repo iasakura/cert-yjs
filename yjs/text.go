@@ -9,15 +9,22 @@ package yjs
 // wp_Text__DeleteIn in src/proof/text/text.v); Insert and Delete are the
 // one-write transactions around them (transaction.go). The byte-level v1
 // codec and the delete-set cache stay behind //go:build !goose (codec.go,
-// delete.go).
+// delete.go), and so does the Go-string convenience layer over this API
+// (strings.go: String / StringIn / InsertString / InsertStringIn).
+//
+// Text is a sequence of UTF-16 code units, as in Yjs, where a JavaScript
+// string is one (Yjs v14.0.0-rc.18 ContentString, src/structs/Item.js:1283;
+// yrs 0.27.2 and y-octo 0.1.0 count the same units over a UTF-8 string,
+// src/block.rs:1583 and src/doc/codec/content.rs:203). An index, a length and
+// a clock all count code units, so this API takes and returns []uint16 and
+// converts nothing: the Go string view is strings.go's, the wire's UTF-8 is
+// the codec's.
 //
 // Simplifications vs y-octo:
 //   - the store owns the root types by name (no nested types, no maps/arrays);
 //   - the local client's next clock lives in the store (state-vector head); an
 //     edit takes the store lock, integrates, and registers the new item into the
-//     store's item set -- faithful to y-octo's Arc<RwLock<DocStore>>;
-//   - content is assumed single-byte (ASCII): a clock unit is one byte, which
-//     keeps id arithmetic consistent with content.Len (byte length).
+//     store's item set -- faithful to y-octo's Arc<RwLock<DocStore>>.
 
 // Text is the public handle for a root text type. It carries the store (for
 // the lock / client / clock / observers) and the inner yType it edits; the
@@ -34,10 +41,12 @@ type Text struct {
 	inner *yType
 }
 
-// String returns the current visible text. A pure read: takes the read lock
-// (RLock) so it runs concurrently with other readers (y-octo reads the type
-// under the RwLock read guard).
-func (t *Text) String() string {
+// CodeUnits returns the current visible text as UTF-16 code units (Yjs
+// ytext.toString(), which returns the JavaScript string; yrs
+// TextRef::get_string; y-octo Text::to_string). A pure read: takes the read
+// lock (RLock) so it runs concurrently with other readers (y-octo reads the
+// type under the RwLock read guard). The slice is fresh and the caller's own.
+func (t *Text) CodeUnits() []uint16 {
 	s := t.store
 	s.rlock()
 	r := t.inner.Text()
@@ -45,17 +54,18 @@ func (t *Text) String() string {
 	return r
 }
 
-// StringIn returns the visible text inside the transaction tr, which holds
-// the store's write lock (Yjs ytext.toString() inside doc.transact; yrs
-// text.get_string(&txn)). What it returns is the text as this transaction
-// sees it: exact, where String from outside a transaction reads a state
-// some other writer may already have moved on from.
-func (t *Text) StringIn(tr *Transaction) string {
+// CodeUnitsIn returns the visible text, as UTF-16 code units, inside the
+// transaction tr, which holds the store's write lock (Yjs ytext.toString()
+// inside doc.transact; yrs text.get_string(&txn)). What it returns is the text
+// as this transaction sees it: exact, where CodeUnits from outside a
+// transaction reads a state some other writer may already have moved on from.
+func (t *Text) CodeUnitsIn(tr *Transaction) []uint16 {
 	return t.inner.Text()
 }
 
-// Len returns the visible (countable, non-deleted) length. A pure read: takes
-// the read lock (RLock) so it runs concurrently with other readers.
+// Len returns the visible (countable, non-deleted) length, in code units. A
+// pure read: takes the read lock (RLock) so it runs concurrently with other
+// readers.
 func (t *Text) Len() uint64 {
 	s := t.store
 	s.rlock()
@@ -64,10 +74,6 @@ func (t *Text) Len() uint64 {
 	return n
 }
 
-// Insert inserts content at the visible character index as one transaction
-// (Yjs ytext.insert outside a transact, which opens one of its own; yrs
-// TextRef::insert with a transact_mut). One write, one transaction: the
-// observers of this text are notified once, at its end.
 // Observe registers callback on t (Yjs v14 YType.observe, src/ytype.js:779;
 // yrs 0.27 Observable::observe on TextRef, src/types/text.rs:112). Under the store's write
 // lock: one immediate call with the whole visible text as one insert (the
@@ -76,7 +82,7 @@ func (t *Text) Len() uint64 {
 // transaction that changed t, with that transaction's delta (notify,
 // transaction.go). Callbacks run under the store's write lock: a callback
 // must not lock the document again (no Transact, Insert, Delete,
-// ApplySyncUpdate, Observe, String, Len: deadlock) and a lock it takes is
+// ApplySyncUpdate, Observe, CodeUnits, Len: deadlock) and a lock it takes is
 // ordered after the store's. Not callable inside a transaction, for the same
 // reason (#206 item 2).
 func (t *Text) Observe(callback func(delta []DeltaOp)) {
@@ -92,26 +98,31 @@ func (t *Text) Observe(callback func(delta []DeltaOp)) {
 	s.wunlock()
 }
 
-func (t *Text) Insert(index uint64, content string) {
+// Insert inserts the code units content at the visible index as one
+// transaction (Yjs ytext.insert outside a transact, which opens one of its
+// own; yrs TextRef::insert with a transact_mut). One write, one transaction:
+// the observers of this text are notified once, at its end.
+func (t *Text) Insert(index uint64, content []uint16) {
 	transact(t.store, func(tr *Transaction) {
 		t.InsertIn(tr, index, content)
 	})
 }
 
-// InsertIn inserts content at the visible character index inside the
+// InsertIn inserts the code units content at the visible index inside the
 // transaction tr (Yjs ytext.insert inside doc.transact, the implicit
 // doc._transaction made explicit; yrs text.insert(&mut txn, index, chunk)
-// takes the transaction first). It generates one 1-char item per byte, where
-// Yjs, yrs and y-octo create one item for the whole string (Yjs
+// takes the transaction first). It generates one 1-unit item per code unit,
+// where Yjs, yrs and y-octo create one item for the whole string (Yjs
 // v14.0.0-rc.18 src/ytype.js:361; yrs 0.27.2 src/types/text.rs:227; y-octo
 // 0.1.0 src/doc/types/text.rs:55): each item's left origin chains to the
 // previous one and every item shares the same right origin, which is what
 // splitting that one item would give (y-octo: ListType::insert_after via
-// store::create_item + integrate). The transaction
-// holds the store's write lock; each character's id comes from the store's
-// local clock counter, read through tr (yrs reaches the store through the
-// transaction the same way), and every integrated char is recorded in tr.
-func (t *Text) InsertIn(tr *Transaction, index uint64, content string) {
+// store::create_item + integrate). Each item gets a fresh one-unit slice of
+// its own, so content stays the caller's. The transaction holds the store's
+// write lock; each unit's id comes from the store's local clock counter, read
+// through tr (yrs reaches the store through the transaction the same way),
+// and every integrated unit is recorded in tr.
+func (t *Text) InsertIn(tr *Transaction, index uint64, content []uint16) {
 	s := tr.store
 	if index > t.inner.len {
 		return
@@ -125,18 +136,18 @@ func (t *Text) InsertIn(tr *Transaction, index uint64, content string) {
 		return
 	}
 	// Normalize the position (y-octo: ItemPosition::normalize): when the
-	// index lands inside a multi-character item, split [left] at the offset so
-	// the insertion point sits on a node boundary. Such items come from runs
-	// that store.applyUpdate integrated as one item; local inserts only create
-	// one-character items.
+	// index lands inside a multi-unit item, split [left] at the offset so the
+	// insertion point sits on a node boundary. Such items come from runs that
+	// store.applyUpdate integrated as one item; local inserts only create
+	// one-unit items.
 	left, right, offset := t.inner.findPos(index)
 	if offset > 0 {
 		left, right = s.splitNode(left, offset)
 	}
 	client := s.client
 
-	// Every character in this run shares the same right origin: the node that
-	// was to the right of the insertion point (y-octo chains a run between one
+	// Every unit in this run shares the same right origin: the node that was
+	// to the right of the insertion point (y-octo chains a run between one
 	// fixed left/right pair). [right] never moves in the loop, so read it once.
 	var originRightId *id
 	if right != nil {
@@ -158,18 +169,18 @@ func (t *Text) InsertIn(tr *Transaction, index uint64, content string) {
 		// carrying its parent (y-octo: store::create_item receives pos.left /
 		// pos.right / Some(Parent::Type)); the update path resolves the same
 		// fields with store.repair instead.
-		newit := newItem(newId(client, clk), byteString(content[i]), originLeftId, originRightId)
+		newit := newItem(newId(client, clk), []uint16{content[i]}, originLeftId, originRightId)
 		newit.left = left
 		newit.right = right
 		newit.parent = t.inner
 		tr.integrate(t.inner, newit)
 
-		// the next character integrates immediately to the right of this one.
+		// the next unit integrates immediately to the right of this one.
 		left = newit
 	}
 }
 
-// Delete tombstones length visible characters starting at the visible index
+// Delete tombstones length visible code units starting at the visible index
 // as one transaction (Yjs ytext.delete outside a transact; yrs
 // TextRef::remove_range with a transact_mut). One write, one transaction: the
 // observers of this text are notified once, at its end.
@@ -179,7 +190,7 @@ func (t *Text) Delete(index uint64, length uint64) {
 	})
 }
 
-// DeleteIn tombstones length visible characters starting at the visible index
+// DeleteIn tombstones length visible code units starting at the visible index
 // inside the transaction tr (Yjs ytext.delete inside doc.transact; yrs
 // text.remove_range(&mut txn, index, len)), marking each item deleted and
 // shrinking the visible length (y-octo: ListType::remove_after via

@@ -37,7 +37,7 @@ Context {sync_pkg : sync.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_store_ref]'s reader-count accounting ties the readers' share to the store's
@@ -45,7 +45,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -57,20 +57,21 @@ Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation Ev := (@Event Op).
 Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
-Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : go_string) (γs : store_names) (γh : history_names)
+Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : slice.t) (dq : dfrac) (units : A)
+    (γs : store_names) (γh : history_names)
     (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids }}}
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗ cs ↦*{dq} units }}}
     t @! (go.PointerType yjs.Text) @! "Insert" #idx #cs
   {{{ (L' ins : list (YjsItem A)) (client k0 : nat) (originLeft originRight : YjsPtr A), RET #();
-      is_Text t γs γh name L' deleted_ids ∗
-      ⌜inserted_run L L' ins cs client k0 originLeft originRight⌝ ∗
+      is_Text t γs γh name L' deleted_ids ∗ cs ↦*{dq} units ∗
+      ⌜inserted_run L L' ins units client k0 originLeft originRight⌝ ∗
       (* the op certificates: one broadcast fragment per inserted item
          (issues #42/#49; the doc-level op an item denotes is
          [(RootId name, OpInsert (input_of_item it))]) *)
       ([∗ list] it ∈ ins,
          is_op_cert γh (RootId name, OpInsert (input_of_item it))) }}}.
 Proof.
-  wp_start as "#Htext".
+  wp_start as "[#Htext Hcs]".
   iPoseProof "Htext" as (tv text_store parent deleted_items) "Hhandle". iNamed "Hhandle".
   subst text_store.
   wp_auto.
@@ -79,25 +80,25 @@ Proof.
   wp_apply (wp_transact tv.(yjs.Text.store') γs γh _
               (λ c h' m' pend' deleted',
                  ∃ (L' ins : list (YjsItem A)) (k0 : nat) (originLeft originRight : YjsPtr A),
-                   is_Text t γs γh name L' deleted_ids ∗
-                   ⌜inserted_run L L' ins cs c k0 originLeft originRight⌝ ∗
+                   is_Text t γs γh name L' deleted_ids ∗ cs ↦*{dq} units ∗
+                   ⌜inserted_run L L' ins units c k0 originLeft originRight⌝ ∗
                    [∗ list] it ∈ ins, is_op_cert γh (RootId name, OpInsert (input_of_item it)))%I
-              with "[$His_store t index content]").
+              with "[$His_store t index content Hcs]").
   { rewrite /closure_runs_transaction.
     iIntros (tr c h m pend deleted Ψ) "Htx HΨ".
     wp_auto.
-    wp_apply (wp_Text__InsertIn with "[$Htext $Htx]").
-    iIntros (L' ins h' m' k0 originLeft originRight) "(#Htext' & Htx & %Hrun & %Hrepl & Hcerts)".
+    wp_apply (wp_Text__InsertIn with "[$Htext $Htx $Hcs]").
+    iIntros (L' ins h' m' k0 originLeft originRight) "(#Htext' & Htx & Hcs & %Hrun & %Hrepl & Hcerts)".
     wp_auto.
     iApply ("HΨ" $! h' m' pend deleted (∅ ∪ char_ids ins) ∅
               (∅ ∪ (if decide (ins = []) then ∅ else {[name]}))).
     iFrame "Htx".
-    iExists L', ins, k0, originLeft, originRight. iFrame "Htext' Hcerts". iPureIntro. exact Hrun. }
+    iExists L', ins, k0, originLeft, originRight. iFrame "Htext' Hcerts Hcs". iPureIntro. exact Hrun. }
   iIntros "HQ". iDestruct "HQ" as (c h' m' pend' deleted') "HQ".
-  iDestruct "HQ" as (L' ins k0 originLeft originRight) "(#Htext' & %Hrun & Hcerts)".
+  iDestruct "HQ" as (L' ins k0 originLeft originRight) "(#Htext' & Hcs & %Hrun & Hcerts)".
   wp_auto.
   iApply ("HΦ" $! L' ins c k0 originLeft originRight).
-  iFrame "Htext' Hcerts". iPureIntro. exact Hrun.
+  iFrame "Htext' Hcerts Hcs". iPureIntro. exact Hrun.
 Qed.
 
 End text.

@@ -66,7 +66,7 @@ func TestUpdateReachesTheOtherClientAndTheServer(t *testing.T) {
 	waitForRoomSize(t, room, 2)
 
 	docA := yjs.NewDoc(2)
-	docA.GetOrCreateText("root").Insert(0, "hello")
+	docA.GetOrCreateText("root").InsertString(0, "hello")
 	update := docA.EncodeUpdate()
 	if wsnet.Send(a, update) {
 		t.Fatal("A could not send")
@@ -114,7 +114,7 @@ func TestFanOutReachesEveryOtherConnection(t *testing.T) {
 	waitForRoomSize(t, room, 4)
 
 	docA := yjs.NewDoc(2)
-	docA.GetOrCreateText("root").Insert(0, "to everyone")
+	docA.GetOrCreateText("root").InsertString(0, "to everyone")
 	update := docA.EncodeUpdate()
 	if wsnet.Send(a, update) {
 		t.Fatal("A could not send")
@@ -148,7 +148,7 @@ func TestCrossEditsConverge(t *testing.T) {
 	waitForRoomSize(t, room, 2)
 
 	docA := yjs.NewDoc(2)
-	docA.GetOrCreateText("root").Insert(0, "ab")
+	docA.GetOrCreateText("root").InsertString(0, "ab")
 	if wsnet.Send(a, docA.EncodeUpdate()) {
 		t.Fatal("A could not send")
 	}
@@ -159,7 +159,7 @@ func TestCrossEditsConverge(t *testing.T) {
 
 	docB := yjs.NewDoc(3)
 	docB.ApplyUpdate(fromA)
-	docB.GetOrCreateText("root").Insert(2, "cd")
+	docB.GetOrCreateText("root").InsertString(2, "cd")
 	if wsnet.Send(b, docB.EncodeUpdate()) {
 		t.Fatal("B could not send")
 	}
@@ -270,7 +270,7 @@ func TestListenAndServeRelays(t *testing.T) {
 	a := connect("A")
 
 	docA := yjs.NewDoc(2)
-	docA.GetOrCreateText("root").Insert(0, "hello")
+	docA.GetOrCreateText("root").InsertString(0, "hello")
 	update := docA.EncodeUpdate()
 
 	got := make(chan []byte, 1)

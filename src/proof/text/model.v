@@ -22,7 +22,7 @@ From stdpp Require Import gmap.
 
 Section text_model.
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (* Type names are Go strings (issue #49). *)
 Local Notation P := go_string.

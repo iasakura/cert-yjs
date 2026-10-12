@@ -2,9 +2,13 @@
 
     Definitions
     - [item_or_null p ov]: a heap item pointer is null or owns a node.
+    - [is_content c units]: the Go [content] value [c] holds the UTF-16 code
+      units [units]: persistent, read-only ownership of its slice, since a
+      node's content is never written after creation and is shared by every
+      reader and by both halves of a split.
     - [own_item_node l dq input deleted parent prev nxt]: one heap [Item]
-      node in full: the wire item it denotes, its tombstone bit, its parent
-      and its two spine links. This is what the spine is made of and what
+      node in full: the wire item it denotes (its content through
+      [is_content]), its tombstone bit, its parent and its two spine links. This is what the spine is made of and what
       the borrow lemmas hand out.
     - [own_dll dq parent l last prev next ls runs]: THE doubly-linked
       list,: node addresses paired with the runs they
@@ -53,7 +57,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (* ===== definitions ======================================================== *)
 
@@ -63,13 +67,25 @@ Definition item_or_null (p : loc) (ov : option yjs.item.t) (dq : dfrac) : iProp 
   | Some v => ⌜p ≠ null⌝ ∗ p ↦{dq} v
   end.
 
+(** [is_content c units]: the Go [content] value [c] holds the code units
+    [units]. The slice behind an item's content is never written after the
+    item is created (yjs/content.go): a split hands each half a subslice of
+    the same backing array, and every reader shares it. So the ownership is
+    the persistent, read-only share [↦*□], which every holder of the node may
+    duplicate and keep. *)
+Definition is_content (c : yjs.content.t) (units : A) : iProp Σ :=
+  c.(yjs.content.content') ↦*□ units.
+
+#[global] Instance is_content_persistent c units : Persistent (is_content c units).
+Proof. rewrite /is_content. apply _. Qed.
+
 (* ----- the doubly-linked spine (adapted from the reference DLL) ----------- *)
 
 
 (** [own_item_node l dq input deleted parent prev nxt]: one heap [Item] node
     in full: the struct and its two origin-id cells are existential, pinned
     to the wire item [input] (the [toYjsId] images of the id and the origins,
-    [toContent] of the content), tombstoned iff [deleted] (the flag byte is
+    the content's code units through [is_content]), tombstoned iff [deleted] (the flag byte is
     [W8 6] / [W8 2], so a node is always Countable), under [parent], its
     [left'] / [right'] spine links at [prev] / [nxt]. The per-node payload
     [own_dll] holds and the borrow lemmas hand out; [own_linked_item]
@@ -83,7 +99,7 @@ Definition own_item_node (l : loc) (dq : dfrac) (input : IntegrateInput (A := A)
     "%Hin_l" ∷ ⌜(toYjsId <$> olid) = in_originId input⌝ ∗
     "%Hin_r" ∷ ⌜(toYjsId <$> orid) = in_rightOriginId input⌝ ∗
     "%Hid" ∷ ⌜toYjsId v.(yjs.item.id') = in_id input⌝ ∗
-    "%Hcontent" ∷ ⌜toContent v.(yjs.item.content') = in_content input⌝ ∗
+    "#Hcontent" ∷ is_content v.(yjs.item.content') (in_content input) ∗
     "%Hpar" ∷ ⌜v.(yjs.item.parent') = parent⌝ ∗
     "%Hprev" ∷ ⌜v.(yjs.item.left') = prev⌝ ∗
     "%Hnext" ∷ ⌜v.(yjs.item.right') = nxt⌝ ∗
@@ -643,10 +659,10 @@ Proof.
       iSplitL "Hv1 Hr1".
       * iSplitR; first done. iSplitR; first done. iSplitR; first done.
         iExists nxt0. iSplitL "Hv1"; last iExact "Hr1".
-        iExists v, olid, orid. iFrame "Hv1 Holeft Horight". done.
+        iExists v, olid, orid. iFrame "Hv1 Holeft Horight Hcontent". done.
       * iSplitR; first done. iSplitR; first done. iSplitR; first done.
         iExists nxt0. iSplitL "Hv2"; last iExact "Hr2".
-        iExists v, olid, orid. iFrame "Hv2 Holeft Horight". done.
+        iExists v, olid, orid. iFrame "Hv2 Holeft Horight Hcontent". done.
     + iIntros "[H1 H2]".
       iNamedSuffix "H1" "1". iDestruct "H1" as (nxt1) "H1". iNamedSuffix "H1" "1".
       iNamedSuffix "H2" "2". iDestruct "H2" as (nxt2) "H2". iNamedSuffix "H2" "2".
@@ -660,7 +676,7 @@ Proof.
       iDestruct (IH with "[$Hrest1 $Hrest2]") as "Hrest".
       iSplitR; first done. iSplitR; first done. iSplitR; first done.
       iExists nxt1. iSplitL "Hval"; last iExact "Hrest".
-      iExists v1, olid1, orid1. iFrame "Hval Holeft1 Horight1". done.
+      iExists v1, olid1, orid1. iFrame "Hval Holeft1 Horight1 Hcontent1". done.
 Qed.
 
 Lemma own_dll_id_bounds (dq : dfrac) (parent l last prev next : loc)

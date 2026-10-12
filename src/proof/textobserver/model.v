@@ -28,7 +28,7 @@ Section text_observer_model.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 Local Notation snapshot := (list (YjsItem A * bool)).
 

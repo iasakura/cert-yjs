@@ -44,7 +44,7 @@ Section transaction_model.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 Notation P := go_string.
 

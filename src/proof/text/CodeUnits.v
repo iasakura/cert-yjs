@@ -1,9 +1,10 @@
-(** [wp_Text__String]: the [Text] handle's visible-string read, a concurrent
-    read under the store's RWMutex read lock (issues #22 / #125). Shares
-    [is_Text] etc. via [text/heap.v].
+(** [wp_Text__CodeUnits]: the [Text] handle's visible-text read, as UTF-16
+    code units, a concurrent read under the store's RWMutex read lock
+    (issues #22 / #125). Shares [is_Text] etc. via [text/heap.v].
 
-    The postcondition is a SNAPSHOT: the returned string spells exactly the
-    visible characters of some tombstone-tagged array [model] that satisfies
+    The postcondition is a SNAPSHOT: the returned slice, fresh and the
+    caller's own, holds exactly the
+    visible code units of some tombstone-tagged array [model] that satisfies
     the document invariant and contains everything the handle already knows
     ([L], the handle's grow-only lower bound), and that contains one item per
     delivered insert of the caller's history certificate [is_history_lb]
@@ -41,12 +42,12 @@ Context {sync_pkg : sync.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -57,7 +58,7 @@ Local Notation Ev := (@Event Op).
 Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 
-(** [Text.String]: a CONCURRENT functional read (issue #125). Takes the
+(** [Text.CodeUnits]: a CONCURRENT functional read (issue #125). Takes the
     RWMutex read lock, walks the type's DLL through a fractional
     share of [own_store] ([wp_yType__Text]), then releases. The caller brings
     a prefix certificate [is_history_lb γh c h0] of THIS replica's op history
@@ -68,15 +69,15 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     history grow (an applyUpdate postcondition, a server receipt, a
     sync-protocol certificate) can replay that knowledge against a concurrent
     read. *)
-Lemma wp_Text__String (t : loc) (γs : store_names) (γh : history_names)
+Lemma wp_Text__CodeUnits (t : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
     (h0 : list Ev) :
   {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗ own_read_cap γs }}}
-    t @! (go.PointerType yjs.Text) @! "String" #()
-  {{{ (visible_text : go_string) (model : list (YjsItem A * bool)), RET #visible_text;
+    t @! (go.PointerType yjs.Text) @! "CodeUnits" #()
+  {{{ (sl : slice.t) (model : list (YjsItem A * bool)), RET #sl;
       is_Text t γs γh name L deleted_ids ∗ own_read_cap γs ∗
-      ⌜visible_text = visible_string model⌝ ∗
+      sl ↦* visible_string model ∗ own_slice_cap w16 sl (DfracOwn 1) ∗
       ⌜text_snapshot L model⌝ ∗ ⌜history_reflected h0 name model⌝ ∗
       ⌜visible_excludes deleted_ids model⌝ }}}.
 Proof.
@@ -104,7 +105,7 @@ Proof.
   iDestruct (own_store_state_ytype_acc _ rwmutex_guard.rfrac state
                tv.(yjs.Text.inner') ls tm Hls Htmp with "Hstate") as "[Hyt Hytback]".
   wp_apply (wp_yType__Text (tv.(yjs.Text.inner')) (DfracOwn rwmutex_guard.rfrac) ls tm with "[$Hyt]").
-  iIntros "Hyt".
+  iIntros (sl) "(Hyt & Hsl & Hslcap)".
   iDestruct ("Hytback" with "Hyt") as "Hstate".
   wp_auto.
   (* the reader's share goes back whole *)
@@ -128,10 +129,9 @@ Proof.
     { apply elem_of_all_runs. exists tv.(yjs.Text.inner'), tm.
       split; [exact Htmp | exact Hr]. }
     exact (Hds_tomb r Hrall x Hx (Hdelsub (item_id x) Hid)). }
-  iApply ("HΦ" $! _ (runs_model (tm_runs tm))).
-  iSplitR "Hcap"; last first.
-  { iFrame "Hcap". iPureIntro. split_and!.
-    - reflexivity.
+  iApply ("HΦ" $! sl (runs_model (tm_runs tm))).
+  iSplitR "Hcap Hsl Hslcap"; last first.
+  { iFrame "Hcap Hsl Hslcap". iPureIntro. split_and!.
     - split; rewrite Hfst; [exact HLsub | exact (Harrinv _ _ Htmp)].
     - apply (delivered_reflected_at_root h0 m0 name _ Hdeliv).
       rewrite Hfst. symmetry.

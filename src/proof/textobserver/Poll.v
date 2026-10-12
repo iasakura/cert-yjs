@@ -43,7 +43,7 @@ Context {sync_pkg : sync.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 
@@ -51,7 +51,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -269,7 +269,7 @@ Proof.
     iDestruct (own_dll_acc (DfracOwn 1) tv.(yjs.Text.inner') yt.(yjs.yType.start') tl ls tm.(tm_runs) kk lk r Hlk Hrk with "Hdll")
       as (prevk nxtk) "(%Hcl & %Hcrn & %Hrun & %Hpck & %Hclen & Hnode & Hback)".
     iDestruct "Hnode" as (itemVal olidk oridk)
-      "(Hcval & Hcol & Hcor & %Hinl & %Hinr & %Hid & %Hcontent & %Hpark & %Hprevk & %Hnextk & %Hflags)".
+      "(Hcval & Hcol & Hcor & %Hinl & %Hinr & %Hid & #Hcontent & %Hpark & %Hprevk & %Hnextk & %Hflags)".
     have Hcloc : lk = loc_at ls (Z.of_nat kk).
     { rewrite /loc_at decide_True; last lia. rewrite Nat2Z.id Hlk //. }
     have Hcr : itemVal.(yjs.item.right') = loc_at ls (Z.of_nat kk + 1).
@@ -277,7 +277,7 @@ Proof.
     iEval (rewrite -Hcloc) in "Hcur".
     rewrite decide_True; [| reflexivity].
     wp_auto.
-    wp_apply (wp_item__Len lk (DfracOwn 1) itemVal with "[$Hcval]"). iIntros "[Hcval %Hcontlen]".
+    wp_apply (wp_item__Len lk (DfracOwn 1) itemVal with "[$Hcval $Hcontent]"). iIntros "[Hcval %Hcontlen]".
     wp_auto.
     wp_apply (wp_item__Deleted lk (DfracOwn 1) itemVal with "[$Hcval]"). iIntros "Hcval".
     rewrite (flags_if_deleted itemVal (run_deleted r) Hflags).
@@ -288,18 +288,18 @@ Proof.
     have Hidw := Hid. rewrite /toYjsId /input_of_run /= in Hidw.
     have Hclient_w : uint.nat itemVal.(yjs.item.id').(yjs.id.clientId') = run_client r by rewrite /run_client -Hidw //.
     have Hclock_w : uint.nat itemVal.(yjs.item.id').(yjs.id.clock') = run_clock r by rewrite /run_clock -Hidw //.
-    have Hstr : itemVal.(yjs.item.content').(yjs.content.content') = items_string (run_items r) := Hcontent.
+    have Hclen' : length (in_content (input_of_run r)) = length (run_items r) := Hclen.
     have Hrall : r ∈ all_runs p.
     { apply elem_of_all_runs. exists tv.(yjs.Text.inner'), tm. split; [exact Htmp | exact (list_elem_of_lookup_2 _ _ _ Hrk)]. }
     have Hfits : run_fits r := proj1 (proj2 (proj1 Hpoolinv r Hrall)).
-    have Hend_w : uint.nat (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length itemVal.(yjs.item.content').(yjs.content.content')))) = (run_clock r + length (run_items r))%nat.
-    { rewrite Hstr Hclen. rewrite /run_fits in Hfits. word. }
+    have Hend_w : uint.nat (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (in_content (input_of_run r))))) = (run_clock r + length (run_items r))%nat.
+    { rewrite Hclen'. rewrite /run_fits in Hfits. word. }
     have Hstep_sv : snapshot_state_vector (runs_model (take (S kk) tm.(tm_runs)))
         = sv_join (snapshot_state_vector (runs_model (take kk tm.(tm_runs)))) (snapshot_state_vector (run_models r)).
     { rewrite (take_S_r _ _ _ Hrk) runs_model_app runs_model_singleton snapshot_state_vector_app //. }
     (* the token of this poll: the client's next clock ... *)
     wp_if_join (λ v, ⌜v = execute_val⌝ ∗
-      "end" ∷ end_ptr ↦ w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length itemVal.(yjs.item.content').(yjs.content.content'))) ∗
+      "end" ∷ end_ptr ↦ w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (in_content (input_of_run r)))) ∗
       "Hsv_ptr" ∷ stateVector_ptr ↦ sv_mref ∗
       "client" ∷ client_ptr ↦ itemVal.(yjs.item.id').(yjs.id.clientId') ∗
       ∃ (svm' : gmap w64 w64),
@@ -326,7 +326,7 @@ Proof.
     wp_bind (If _ _ _)%E.
     iApply (wp_wand _ _ _ (λ v, ⌜v = execute_val⌝ ∗
       "start" ∷ start_ptr ↦ itemVal.(yjs.item.id').(yjs.id.clock') ∗
-      "end" ∷ end_ptr ↦ w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length itemVal.(yjs.item.content').(yjs.content.content'))) ∗
+      "end" ∷ end_ptr ↦ w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (in_content (input_of_run r)))) ∗
       "client" ∷ client_ptr ↦ itemVal.(yjs.item.id').(yjs.id.clientId') ∗
       "Hdel_ptr" ∷ deleted_ptr ↦ del_mref ∗
       "Hdel" ∷ own_deleted_spans del_mref (snapshot_deleted_ids (runs_model (take (S kk) tm.(tm_runs)))))%I
@@ -338,7 +338,7 @@ Proof.
                 ∨ span_covers itemVal.(yjs.item.id').(yjs.id.clientId')
                     (yjs.span.mk w64 itemVal.(yjs.item.id').(yjs.id.clock')
                        (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock')
-                          (W64 (length itemVal.(yjs.item.content').(yjs.content.content'))))) d.
+                          (W64 (length (in_content (input_of_run r)))))) d.
         { move=> d. rewrite Hstep_del elem_of_union. apply or_iff_compat_l. split.
           - move=> Hd. destruct (char_ids_run_covers r d Hrun Hd) as (Hc & Hlo & Hhi).
             split_and!; [rewrite Hclient_w; symmetry; exact Hc
@@ -383,14 +383,14 @@ Proof.
     wp_for "IHi".
     destruct (decide (i < length (run_items r))%nat) as [Hilt | Hige].
     + (* one more char [x] of the run *)
-      rewrite (bool_decide_eq_true_2 (uint.Z (W64 i) < uint.Z (W64 (length itemVal.(yjs.item.content').(yjs.content.content'))))%Z); last (rewrite Hstr Hclen; word).
+      rewrite (bool_decide_eq_true_2 (uint.Z (W64 i) < uint.Z (W64 (length (in_content (input_of_run r)))))%Z); last (rewrite Hclen'; word).
       destruct (lookup_lt_is_Some_2 (run_items r) i Hilt) as [x Hx].
       have Hxid : item_id x = MkYjsId (run_client r) (run_clock r + i) := run_wf_char_id _ i x Hrun Hx.
-      have Hxcont : ∃ b, itemVal.(yjs.item.content').(yjs.content.content') !! i = Some b ∧ content x = [b].
+      have Hxcont : ∃ b, items_string (run_items r) !! i = Some b ∧ content x = [b].
       { have H1 : (content <$> run_items r) !! i = Some (content x) by rewrite list_lookup_fmap Hx //.
         rewrite Hpck /explode list_lookup_fmap in H1.
         destruct (items_string (run_items r) !! i) as [b|] eqn:Hb; rewrite Hb /= in H1; last discriminate.
-        exists b. split; [rewrite Hstr; exact Hb | injection H1 as <-; done]. }
+        exists b. split; [exact Hb | injection H1 as <-; done]. }
       destruct Hxcont as (b & Hb & Hxb).
       have Hxcur : x ∈ (runs_model tm.(tm_runs)).*1.
       { rewrite runs_model_fst /tm_arr /runs_flatten list_elem_of_join. exists (run_items r).
@@ -435,7 +435,7 @@ Proof.
         { (* known, live before, tombstoned now: one delete *)
           wp_auto.
           wp_apply (wp_deltaSnoc _ _ _ (Delete 1) with "[$Hdelta]").
-          { iPureIntro. split; reflexivity. }
+          { iApply is_delta_op_delete; reflexivity. }
           iIntros (dsl') "Hdelta". wp_auto. wp_for_post.
           iFrame "Hobs Hdeleted HΦ o s Hlk Hobservers Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hstate_agree Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
           iExists (S i), dsl'.
@@ -449,7 +449,7 @@ Proof.
         { (* known and still live: one retain *)
           wp_auto.
           wp_apply (wp_deltaSnoc _ _ _ (Retain 1) with "[$Hdelta]").
-          { iPureIntro. split; reflexivity. }
+          { iApply is_delta_op_retain; reflexivity. }
           iIntros (dsl') "Hdelta". wp_auto. wp_for_post.
           iFrame "Hobs Hdeleted HΦ o s Hlk Hobservers Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hstate_agree Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
           iExists (S i), dsl'.
@@ -480,13 +480,19 @@ Proof.
         (* new and live: insert its char; the content is a Go string, so the
            [uint64] offset is a valid [int] index ([Len] said so) *)
         wp_auto.
-        have Hi63z : (Z.of_nat i < 2^63)%Z by (rewrite Hstr Hclen in Hcontlen; lia).
-        replace (sint.nat (W64 i)) with i by word.
-        rewrite Hb.
-        wp_auto.
-        wp_apply wp_byteString.
+        have Hi63z : (Z.of_nat i < 2^63)%Z by (rewrite Hclen' in Hcontlen; lia).
+        iDestruct (own_slice_len with "Hcontent") as %[Hcsl Hcsl0].
+        rewrite decide_True; last word.
+        wp_apply (wp_load_slice_index with "[]").
+        { word. }
+        { iSplit; [iEval (rewrite /is_content /input_of_run /=) in "Hcontent"; iExact "Hcontent"
+                  | iPureIntro; replace (Z.to_nat (sint.Z (W64 i))) with i by word; exact Hb]. }
+        iIntros "_". wp_auto.
+        (* the unit, copied into a fresh one-unit slice the delta then holds read-only *)
+        wp_apply wp_slice_literal. iSplitR; first done. iIntros "%bsl [Hbsl _]". wp_auto.
+        iPersist "Hbsl".
         wp_apply (wp_deltaSnoc _ _ _ (Insert (content x)) with "[$Hdelta]").
-        { iPureIntro. split; [reflexivity | rewrite Hxb //]. }
+        { rewrite Hxb. iApply (is_delta_op_insert with "[]"); [reflexivity | iExact "Hbsl"]. }
         iIntros (dsl') "Hdelta". wp_auto. wp_for_post.
         iFrame "Hobs Hdeleted HΦ o s Hlk Hobservers Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hstate_agree Hparent Hclose Hcur Hcol Hcor Hback length tombstoned Hcval Hsv_ptr Hsvm start client Hdel_ptr Hdel observedEnd Hstate_vector".
         iExists (S i), dsl'.
@@ -498,14 +504,14 @@ Proof.
           rewrite decide_False; last exact Hxnew. done. }
         rewrite Hmerge. iFrame "Hdelta". iPureIntro. lia.
     + (* the run's chars are classified: on to the next node *)
-      rewrite (bool_decide_eq_false_2 (uint.Z (W64 i) < uint.Z (W64 (length itemVal.(yjs.item.content').(yjs.content.content'))))%Z); last (rewrite Hstr Hclen; word).
+      rewrite (bool_decide_eq_false_2 (uint.Z (W64 i) < uint.Z (W64 (length (in_content (input_of_run r)))))%Z); last (rewrite Hclen'; word).
       have Hieq : i = length (run_items r) by lia.
       wp_auto.
       wp_for_post.
       iAssert (own_item_node lk (DfracOwn 1) (input_of_run r) (run_deleted r) tv.(yjs.Text.inner') prevk nxtk)
         with "[Hcval Hcol Hcor]" as "Hnode".
-      { iExists itemVal, olidk, oridk. iFrame "Hcval Hcol Hcor". iPureIntro.
-        split_and!; [exact Hinl | exact Hinr | exact Hid | exact Hcontent | exact Hpark | exact Hprevk | exact Hnextk | exact Hflags]. }
+      { iExists itemVal, olidk, oridk. iFrame "Hcval Hcol Hcor Hcontent". iPureIntro.
+        split_and!; [exact Hinl | exact Hinr | exact Hid  | exact Hpark | exact Hprevk | exact Hnextk | exact Hflags]. }
       iDestruct ("Hback" with "Hnode") as "Hdll".
       iFrame "Hobs Hstate_vector Hdeleted HΦ o s Hlk Hobservers Hseq HtypesAuth Hhist Hacc Hdelete_set_auth Hstate_agree Hparent Hclose".
       iExists (S kk), dsl0, svm'.

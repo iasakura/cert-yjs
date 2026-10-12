@@ -65,17 +65,17 @@ Context {wsnet_pkg : wsnet.Assumptions} {wsrelay_pkg : wsrelay.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Input := (TId * IntegrateInput (A := A))%type.
 Local Notation Ev := (@Event (TId * @YjsOperation A)).
 
-Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
+Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem (list w16)))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem (list w16) * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -236,7 +236,7 @@ Context {sync_pkg : sync.Assumptions}.
 Context {wsnet_pkg : wsnet.Assumptions} {wsrelay_pkg : wsrelay.Assumptions}.
 
 Local Notation Input :=
-  (TypeId go_string * IntegrateInput (A := go_string))%type.
+  (TypeId go_string * IntegrateInput (A := (list w16)))%type.
 
 (** [heapGS] at the ws instances, resolved once here so the theorem's
     codec hypothesis does not have to re-infer the FFI parameters inside
@@ -252,10 +252,10 @@ Theorem ws_server_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
     (* the store-layer specs are generalized over these RAs (the item-set,
        the accepted-id set, the reader-count tie); mirror them to apply the
        boot lemma, exactly as every wp file above the store does *)
-    `{seq_inG : !inG Σ (authR (gmapUR loc (gsetUR (YjsItem go_string))))}
+    `{seq_inG : !inG Σ (authR (gmapUR loc (gsetUR (YjsItem (list w16)))))}
     `{acc_inG : !inG Σ (authR (gsetUR YjsId))}
     `{ftypes_inG : !inG Σ (dfrac_agreeR (leibnizO store_state))}
-    `{observed_inG : !ghost_varG Σ (list (YjsItem go_string * bool))}
+    `{observed_inG : !ghost_varG Σ (list (YjsItem (list w16) * bool))}
     `{observers_inG : !inG Σ (authR (gsetUR (gname * go_string)))}
     `{observers_agree_inG : !inG Σ (dfrac_agreeR (leibnizO registered_entries))}
     (host client : w64) (f : func.t)
@@ -273,7 +273,7 @@ Theorem ws_server_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
       W.(ws_prot) = yjs_prot decode γh ->
       W.(ws_env_coh) = coh0 γh ->
       W.(ws_may) = g.(global_world).(ws_env_may) ->
-      ⊢ is_history (A := go_string) (P := go_string) γh -∗
+      ⊢ is_history (A := (list w16)) (P := go_string) γh -∗
         @ws_env_preserves Σ W Hinv ⊤) ->
   dist_adequate (CS := goose_crash_lang)
     [ {| init_thread := server_boot (go_fns := sem.(go.sem_fn)) host client f;
@@ -288,7 +288,7 @@ Proof.
   intros Hinv.
   iStartProof.
   (* allocate the history, then name the protocol *)
-  iMod (history_alloc (A := go_string) (P := go_string) {[ uint.nat client ]} ⊤)
+  iMod (history_alloc (A := (list w16)) (P := go_string) {[ uint.nat client ]} ⊤)
     as (γh) "[#Hhist Hels]".
   iDestruct (big_sepS_elem_of _ _ (uint.nat client) with "Hels") as "Hcl";
     first set_solver.

@@ -42,7 +42,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 Notation P := go_string.
 
@@ -57,7 +57,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -83,24 +83,25 @@ Proof.
 Qed.
 
 Lemma wp_Transaction__recordInsert (tr s_loc parent lc : loc) (dq : dfrac) (v : yjs.item.t)
-    (inserted tombstoned : gset YjsId) (changed : gset loc) :
-  span_no_overflow (node_span v) ->
-  {{{ is_pkg_init yjs ∗ own_transaction_changes tr s_loc inserted tombstoned changed ∗ lc ↦{dq} v }}}
+    (units : A) (inserted tombstoned : gset YjsId) (changed : gset loc) :
+  span_no_overflow (node_span v units) ->
+  {{{ is_pkg_init yjs ∗ own_transaction_changes tr s_loc inserted tombstoned changed ∗
+      lc ↦{dq} v ∗ is_content v.(yjs.item.content') units }}}
     tr @! (go.PointerType yjs.Transaction) @! "recordInsert" #parent #lc
   {{{ RET #();
-      own_transaction_changes tr s_loc (inserted ∪ span_ids (node_span v)) tombstoned
+      own_transaction_changes tr s_loc (inserted ∪ span_ids (node_span v units)) tombstoned
         (changed ∪ {[parent]}) ∗
       lc ↦{dq} v }}}.
 Proof.
   move=> Hfits.
-  wp_start as "(Hchanges & Hv)". iNamed "Hchanges". wp_auto.
-  wp_apply (wp_item__Len with "[$Hv]"). iIntros "[Hv _]". wp_auto.
+  wp_start as "(Hchanges & Hv & #Hcontent)". iNamed "Hchanges". wp_auto.
+  wp_apply (wp_item__Len with "[$Hv $Hcontent]"). iIntros "[Hv _]". wp_auto.
   wp_apply wp_slice_literal. iSplitR; first done. iIntros "%s2 [Hs2 _]". wp_auto.
   wp_apply (wp_slice_append with "[$Hinsert $Hinsertcap $Hs2]").
   iIntros (sl') "(Hinsert & Hinsertcap & _)". wp_auto.
   wp_apply (wp_map_insert with "Hchanged"). iIntros "Hchanged". wp_auto.
   iApply "HΦ". iFrame "Hv".
-  iExists sl', delete_sl, changed_mref, (insert_vs ++ [node_span v]), delete_vs. simpl.
+  iExists sl', delete_sl, changed_mref, (insert_vs ++ [node_span v units]), delete_vs. simpl.
   iFrame "Htrstore Hinsertf Hinsert Hinsertcap Hdeletef Hdelete Hdeletecap Hchangedf".
   rewrite (union_comm_L changed) gset_to_gmap_union_singleton. iFrame "Hchanged".
   iPureIntro. split_and!; [ | | done | done].
@@ -109,24 +110,25 @@ Proof.
 Qed.
 
 Lemma wp_Transaction__recordDelete (tr s_loc lc : loc) (dq : dfrac) (v : yjs.item.t)
-    (inserted tombstoned : gset YjsId) (changed : gset loc) :
-  span_no_overflow (node_span v) ->
-  {{{ is_pkg_init yjs ∗ own_transaction_changes tr s_loc inserted tombstoned changed ∗ lc ↦{dq} v }}}
+    (units : A) (inserted tombstoned : gset YjsId) (changed : gset loc) :
+  span_no_overflow (node_span v units) ->
+  {{{ is_pkg_init yjs ∗ own_transaction_changes tr s_loc inserted tombstoned changed ∗
+      lc ↦{dq} v ∗ is_content v.(yjs.item.content') units }}}
     tr @! (go.PointerType yjs.Transaction) @! "recordDelete" #lc
   {{{ RET #();
-      own_transaction_changes tr s_loc inserted (tombstoned ∪ span_ids (node_span v))
+      own_transaction_changes tr s_loc inserted (tombstoned ∪ span_ids (node_span v units))
         (changed ∪ {[v.(yjs.item.parent')]}) ∗
       lc ↦{dq} v }}}.
 Proof.
   move=> Hfits.
-  wp_start as "(Hchanges & Hv)". iNamed "Hchanges". wp_auto.
-  wp_apply (wp_item__Len with "[$Hv]"). iIntros "[Hv _]". wp_auto.
+  wp_start as "(Hchanges & Hv & #Hcontent)". iNamed "Hchanges". wp_auto.
+  wp_apply (wp_item__Len with "[$Hv $Hcontent]"). iIntros "[Hv _]". wp_auto.
   wp_apply wp_slice_literal. iSplitR; first done. iIntros "%s2 [Hs2 _]". wp_auto.
   wp_apply (wp_slice_append with "[$Hdelete $Hdeletecap $Hs2]").
   iIntros (sl') "(Hdelete & Hdeletecap & _)". wp_auto.
   wp_apply (wp_map_insert with "Hchanged"). iIntros "Hchanged". wp_auto.
   iApply "HΦ". iFrame "Hv".
-  iExists insert_sl, sl', changed_mref, insert_vs, (delete_vs ++ [node_span v]). simpl.
+  iExists insert_sl, sl', changed_mref, insert_vs, (delete_vs ++ [node_span v units]). simpl.
   iFrame "Htrstore Hinsertf Hinsert Hinsertcap Hdeletef Hdelete Hdeletecap Hchangedf".
   rewrite (union_comm_L changed) gset_to_gmap_union_singleton. iFrame "Hchanged".
   iPureIntro. split_and!; [done | done | | ].
@@ -211,9 +213,9 @@ Proof using Type*.
   iDestruct (own_store_state_node_acc s _ parent ls' (MkTypeModel runs') idx item_l r Hlocs' Hpl' Hlk' Hrk'
                with "Hruns") as (itemVal) "H". iNamed "H".
   have Hid' : toYjsId itemVal.(yjs.item.id') = item_id (run_head_item r) by rewrite Haccid.
-  destruct (node_span_char_ids itemVal r Hwfr Hid' Haccle Hfitsr) as [Hfits Hspan].
-  wp_apply (wp_Transaction__recordInsert tr s parent item_l (DfracOwn 1) itemVal inserted tombstoned changed
-              Hfits with "[$Hchanges $Haccval]").
+  destruct (node_span_char_ids itemVal (items_string (run_items r)) r Hwfr Hid' Haccle Hfitsr) as [Hfits Hspan].
+  wp_apply (wp_Transaction__recordInsert tr s parent item_l (DfracOwn 1) itemVal (items_string (run_items r))
+              inserted tombstoned changed Hfits with "[$Hchanges $Haccval $Hacccontent]").
   iIntros "[Hchanges Haccval]".
   iDestruct ("Haccback" with "Haccval") as "Hruns".
   wp_auto.
@@ -264,9 +266,9 @@ Proof using Type*.
                  Hlp (lookup_insert_eq _ _ _) Hlk (list_lookup_insert_eq _ _ _ Hklt) with "Hpool") as (itemVal) "H".
     iNamed "H". simpl in Haccid, Haccle.
     have Hid' : toYjsId itemVal.(yjs.item.id') = item_id (run_head_item r) by rewrite Haccid.
-    destruct (node_span_char_ids itemVal r Hwfr Hid' Haccle Hrfits) as [Hfits Hspan].
-    wp_apply (wp_Transaction__recordDelete tr s_loc lc (DfracOwn 1) itemVal inserted tombstoned changed
-                Hfits with "[$Hchanges $Haccval]").
+    destruct (node_span_char_ids itemVal (items_string (run_items r)) r Hwfr Hid' Haccle Hrfits) as [Hfits Hspan].
+    wp_apply (wp_Transaction__recordDelete tr s_loc lc (DfracOwn 1) itemVal (items_string (run_items r))
+                inserted tombstoned changed Hfits with "[$Hchanges $Haccval $Hacccontent]").
     iIntros "[Hchanges Haccval]".
     iDestruct ("Haccback" with "Haccval") as "Hpool".
     wp_auto.

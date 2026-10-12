@@ -39,7 +39,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Op := (TId * @YjsOperation A)%type.
@@ -55,7 +55,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    reached from here carry it too. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -101,12 +101,12 @@ Proof using Type*.
   iDestruct (own_dll_cons_unfold with "Hseg2") as (nxtcw) "(%Hhead & %Hpccw & %Hrun & Hnodecw & Hrest)".
   destruct Hhead as [Hmfeq Hmfnn]. subst mf.
   iDestruct "Hnodecw" as (itemVal olidcw oridcw)
-    "(Hval & Holeft & Horight & %Hinlcw & %Hinrcw & %Hidn & %Hcontn & %Hpar & %Hprev & %Hnextcw & %Hflags)".
+    "(Hval & Holeft & Horight & %Hinlcw & %Hinrcw & %Hidn & #Hcontn & %Hpar & %Hprev & %Hnextcw & %Hflags)".
   have Hid : item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id').
   { symmetry. exact Hidn. }
-  have Hcontent : content <$> run_items r = explode (toContent itemVal.(yjs.item.content')).
-  { have Hstr : toContent itemVal.(yjs.item.content') = items_string (run_items r) := Hcontn.
-    rewrite Hstr. exact Hpccw. }
+  (* the node's content slice, read-only, holding the run's code units *)
+  set (units := itemVal.(yjs.item.content').(yjs.content.content')) in *.
+  have Hcontent : content <$> run_items r = explode (items_string (run_items r)) := Hpccw.
   have Holid : origin_id (origin (run_head_item r)) = toYjsId <$> olidcw.
   { symmetry. exact Hinlcw. }
   have Horid : origin_id (rightOrigin (run_head_item r)) = toYjsId <$> oridcw.
@@ -115,26 +115,24 @@ Proof using Type*.
   wp_auto.
   (* olid := newId(client, clock+diff-1) *)
   wp_apply wp_NewId.
-  (* cb := []byte(n.content.content) via the byte round-trip *)
-  wp_apply wp_string_to_bytes. iIntros (cbs) "[Hcb Hcbcap]". wp_auto.
-  (* the right node's id := newId(client, clock+diff) *)
+  (* units := n.content.content; the right node's id := newId(client, clock+diff) *)
   wp_apply wp_NewId.
-  have Hsclen : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r).
-  { have H := f_equal length Hcontent. rewrite length_fmap explode_length /toContent in H. lia. }
-  iDestruct (own_slice_len with "Hcb") as %Hcbwf.
-  iDestruct (own_slice_wf with "Hcb") as %Hcapwf.
+  have Hsclen : length (items_string (run_items r)) = length (run_items r).
+  { have H := f_equal length Hcontent. rewrite length_fmap explode_length in H. lia. }
+  iDestruct (own_slice_len with "Hcontn") as %Hcbwf.
+  iDestruct (own_slice_wf with "Hcontn") as %Hcapwf.
   destruct Hcbwf as [Hcbwf1 Hcbwf2].
-  have Hdiffb : 0 ≤ sint.Z diff ≤ sint.Z cbs.(slice.len) by word.
-  (* right.content := string(cb[diff:]) *)
+  have Hcbwf1' : length (items_string (run_items r)) = sint.nat units.(slice.len) := Hcbwf1.
+  have Hdiffb : 0 ≤ sint.Z diff ≤ sint.Z units.(slice.len) by word.
+  (* right.content := units[diff:], the read-only share of the one backing
+     array split at [diff]: both halves stay read-only *)
   rewrite decide_True; last (split; [word | word]).
-  have Hslbound : 0 ≤ sint.Z diff ≤ sint.Z cbs.(slice.len) ≤ sint.Z cbs.(slice.len) by word.
-  iDestruct (own_slice_slice diff cbs.(slice.len) cbs (DfracOwn 1) _ Hslbound with "Hcb") as "(Hcb_lo & Hcb_mid & Hcb_hi)".
-  wp_apply (wp_bytes_to_string with "Hcb_mid"). iIntros "Hcb_mid".
+  have Hslbound : 0 ≤ sint.Z diff ≤ sint.Z units.(slice.len) ≤ sint.Z units.(slice.len) by word.
+  iDestruct (own_slice_slice diff units.(slice.len) units DfracDiscarded _ Hslbound with "Hcontn") as "(#Hcb_lo & #Hcb_mid & _)".
   wp_auto.
   wp_alloc rs as "Hrs". wp_auto.
-  (* n.content := string(cb[:diff]) *)
-  rewrite decide_True; last word.
-  wp_apply (wp_bytes_to_string with "Hcb_lo"). iIntros "Hcb_lo".
+  (* n.content := units[:diff] *)
+  rewrite decide_True; last (clear -Hdiffb Hcapwf; word).
   wp_auto.
   (* ===== branch-agnostic pure run-telescoping facts (the split's model core) *)
   iDestruct (typed_pointsto_not_null with "Hrs") as %Hrsnn.
@@ -155,7 +153,7 @@ Proof using Type*.
     by (rewrite Hid /toYjsId /=; word).
   have Hcwck : run_clock r = uint.nat itemVal.(yjs.item.id').(yjs.id.clock')
     by (rewrite /run_clock Hid /toYjsId /=).
-  have Hsintlen : sint.nat cbs.(slice.len) = length (run_items r).
+  have Hsintlen : sint.nat units.(slice.len) = length (run_items r).
   { rewrite -Hsclen. symmetry. exact Hcbwf1. }
   have Hsintdiff : sint.nat diff = o.
   { rewrite /o. word. }
@@ -172,13 +170,13 @@ Proof using Type*.
   { rewrite /run_head_item /split_run_left /=. apply hd_inhabitant_take. rewrite /o; lia. }
   have Hrhcr : run_head_item (split_run_right r o) = yo.
   { rewrite /run_head_item /split_run_right /=. exact (hd_inhabitant_drop _ o yo Hyo). }
-  have Hcontl : content <$> take o (run_items r) = explode (take (sint.nat diff) itemVal.(yjs.item.content').(yjs.content.content')).
-  { rewrite Hsintdiff fmap_take Hcontent /toContent /explode fmap_take //. }
-  have Hsubdrop : subslice (sint.nat diff) (sint.nat cbs.(slice.len)) itemVal.(yjs.item.content').(yjs.content.content')
-                = drop o itemVal.(yjs.item.content').(yjs.content.content').
+  have Hcontl : content <$> take o (run_items r) = explode (take (sint.nat diff) (items_string (run_items r))).
+  { rewrite Hsintdiff fmap_take Hcontent /explode fmap_take //. }
+  have Hsubdrop : subslice (sint.nat diff) (sint.nat units.(slice.len)) (items_string (run_items r))
+                = drop o (items_string (run_items r)).
   { rewrite Hsintdiff Hsintlen -Hsclen /subslice. rewrite take_ge; [reflexivity | lia]. }
-  have Hcontr : content <$> drop o (run_items r) = explode (drop o itemVal.(yjs.item.content').(yjs.content.content')).
-  { rewrite fmap_drop Hcontent /toContent /explode fmap_drop //. }
+  have Hcontr : content <$> drop o (run_items r) = explode (drop o (items_string (run_items r))).
+  { rewrite fmap_drop Hcontent /explode fmap_drop //. }
   (* ----- the two halves' facts (origin telescoping), branch-agnostic ----- *)
   set (leftRun := split_run_left r o).
   set (rightRun := split_run_right r o).
@@ -201,14 +199,14 @@ Proof using Type*.
     rewrite Hxpid Hid /toYjsId /originId /=. f_equal. clear -Hnowrap_add Hdiff. word. }
   have Hrhck : clock (item_id (run_head_item r)) = uint.nat itemVal.(yjs.item.id').(yjs.id.clock') by (rewrite Hid /toYjsId /=).
   have Hrhcli : clientId (item_id (run_head_item r)) = uint.nat itemVal.(yjs.item.id').(yjs.id.clientId') by (rewrite Hid /toYjsId /=).
-  set (ivl := itemVal <| yjs.item.content' := {| yjs.content.content' := take (sint.nat diff) itemVal.(yjs.item.content').(yjs.content.content') |} |> <| yjs.item.right' := rs |>).
+  set (ivl := itemVal <| yjs.item.content' := {| yjs.content.content' := slice.slice units w16 (W64 0) diff |} |> <| yjs.item.right' := rs |>).
   set (ivr := {| yjs.item.id' := {| yjs.id.clientId' := itemVal.(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := word.add itemVal.(yjs.item.id').(yjs.id.clock') diff |};
                  yjs.item.originLeftId' := olid_ptr;
                  yjs.item.originRightId' := itemVal.(yjs.item.originRightId');
                  yjs.item.left' := lc;
                  yjs.item.right' := itemVal.(yjs.item.right');
                  yjs.item.parent' := itemVal.(yjs.item.parent');
-                 yjs.item.content' := {| yjs.content.content' := subslice (sint.nat diff) (sint.nat cbs.(slice.len)) itemVal.(yjs.item.content').(yjs.content.content') |};
+                 yjs.item.content' := {| yjs.content.content' := slice.slice units w16 diff units.(slice.len) |};
                  yjs.item.flags' := itemVal.(yjs.item.flags') |}).
   have Hivl_ol : ivl.(yjs.item.originLeftId') = itemVal.(yjs.item.originLeftId') by (rewrite /ivl /=).
   have Hivl_or : ivl.(yjs.item.originRightId') = itemVal.(yjs.item.originRightId') by (rewrite /ivl /=).
@@ -219,7 +217,7 @@ Proof using Type*.
   have Hp4 : ivl.(yjs.item.right') = rs by (rewrite /ivl /=).
   have Hp5 : ivl.(yjs.item.parent') = parent by (rewrite /ivl /=; exact Hpar).
   have Hp6 : item_id (run_head_item leftRun) = toYjsId ivl.(yjs.item.id'). { rewrite /leftRun Hrhcl /ivl /=. exact Hid. }
-  have Hp7 : content <$> run_items leftRun = explode (toContent ivl.(yjs.item.content')). { rewrite /leftRun /ivl /toContent /=. exact Hcontl. }
+  have Hp7 : content <$> run_items leftRun = explode (take (sint.nat diff) (items_string (run_items r))). { rewrite /leftRun /=. exact Hcontl. }
   have Hp8 : origin_id (origin (run_head_item leftRun)) = toYjsId <$> olidcw. { rewrite /leftRun Hrhcl. exact Holid. }
   have Hp9 : origin_id (rightOrigin (run_head_item leftRun)) = toYjsId <$> oridcw. { rewrite /leftRun Hrhcl. exact Horid. }
   have Hp10 : ivl.(yjs.item.flags') = (if run_deleted leftRun then W8 6 else W8 2). { rewrite /ivl /leftRun /=. exact Hflags. }
@@ -227,12 +225,18 @@ Proof using Type*.
   have Hp12 : ivr.(yjs.item.left') = lc. { rewrite /ivr /=. reflexivity. }
   have Hp13 : ivr.(yjs.item.parent') = parent. { rewrite /ivr /=. exact Hpar. }
   have Hp14 : item_id (run_head_item rightRun) = toYjsId ivr.(yjs.item.id'). { rewrite /rightRun Hrhcr Hyoid /ivr /toYjsId /=. rewrite Hrhck Hrhcli Hadd_eq. reflexivity. }
-  have Hp15 : content <$> run_items rightRun = explode (toContent ivr.(yjs.item.content')). { rewrite /rightRun /ivr /toContent /= Hsubdrop. exact Hcontr. }
+  have Hp15 : content <$> run_items rightRun = explode (subslice (sint.nat diff) (sint.nat units.(slice.len)) (items_string (run_items r))). { rewrite /rightRun Hsubdrop. exact Hcontr. }
   have Hp17 : origin_id (rightOrigin (run_head_item rightRun)) = toYjsId <$> oridcw. { rewrite /rightRun Hrhcr Hyoro. exact Horid. }
   have Hp18 : ivr.(yjs.item.flags') = (if run_deleted rightRun then W8 6 else W8 2). { rewrite /ivr /rightRun /=. exact Hflags. }
   have Hp19 : run_wf (run_items rightRun). { rewrite /rightRun /=. exact (run_wf_drop (run_items r) o Hoinrun Hrun). }
   have Hpcl : run_per_char leftRun := run_per_char_intro _ _ _ Hp7.
   have Hpcr : run_per_char rightRun := run_per_char_intro _ _ _ Hp15.
+  (* the two halves' content pins: the read-only subslices of the node's
+     array hold exactly the halves' code units *)
+  iAssert (is_content ivl.(yjs.item.content') (in_content (input_of_run leftRun))) as "#Hcontl".
+  { rewrite /is_content /ivl /input_of_run /= (items_string_explode _ _ Hp7). iExact "Hcb_lo". }
+  iAssert (is_content ivr.(yjs.item.content') (in_content (input_of_run rightRun))) as "#Hcontr".
+  { rewrite /is_content /ivr /input_of_run /= (items_string_explode _ _ Hp15). iExact "Hcb_mid". }
   iDestruct "Horight" as "#HorightP".
   (* [if n.right != nil] branches on whether [lc] is the type's last node *)
   destruct sufl as [|d0l sufl'] eqn:Hsufleq; destruct sufr as [|d0r sufr'] eqn:Hsufreq;
@@ -257,12 +261,11 @@ Proof using Type*.
       iSplitL "Hval Holeft".
       { iExists ivl, olidcw, oridcw.
         rewrite Hivl_ol Hivl_or.
-        iFrame "Hval Holeft HorightP".
+        iFrame "Hval Holeft HorightP Hcontl".
         iPureIntro. split_and!.
         - exact (eq_sym Hp8).
         - exact (eq_sym Hp9).
         - exact (eq_sym Hp6).
-        - symmetry. exact (items_string_explode _ _ Hp7).
         - exact Hp5.
         - exact Hivl_left.
         - exact Hp4.
@@ -270,13 +273,12 @@ Proof using Type*.
       iSplitL "Hrs".
       { iExists ivr, (Some originId), oridcw.
         rewrite Hivr_ol Hivr_or.
-        iFrame "Hrs HorightP".
+        iFrame "Hrs HorightP Hcontr".
         iSplitR; first (simpl; iFrame "olid"; iPureIntro; exact Holidnn).
         iPureIntro. split_and!.
         - exact (eq_sym Hcrorig).
         - exact (eq_sym Hp17).
         - exact (eq_sym Hp14).
-        - symmetry. exact (items_string_explode _ _ Hp15).
         - exact Hp13.
         - exact Hp12.
         - rewrite Hivr_r. exact Hrnull.
@@ -287,7 +289,7 @@ Proof using Type*.
     iDestruct (own_dll_cons_unfold with "Hrest") as (nxtd) "(%Hlocd & %Hpcd0 & %Hrund & Hnoded & Hrestd)".
     destruct Hlocd as [Hlocd1n Hlocdnn].
     iDestruct "Hnoded" as (ivd olidd oridd)
-      "(Hvald & Holeftd & Horightd & %Hinld & %Hinrd & %Hiddn & %Hcontdn & %Hpard & %Hprevd & %Hnextd & %Hflagsd)".
+      "(Hvald & Holeftd & Horightd & %Hinld & %Hinrd & %Hiddn & #Hcontdn & %Hpard & %Hprevd & %Hnextd & %Hflagsd)".
     have Hlocd1 : itemVal.(yjs.item.right') = d0l by rewrite Hnextcw Hlocd1n.
     have Hrnnd : itemVal.(yjs.item.right') ≠ null by rewrite Hlocd1.
     rewrite (bool_decide_eq_false_2 (itemVal.(yjs.item.right') = null) Hrnnd).
@@ -309,13 +311,12 @@ Proof using Type*.
       iApply (own_dll_cons_fold (DfracOwn 1) parent tl rs null nxtd d0l sufl' d0r sufr' Hlocdnn Hrund Hpcd0).
       iSplitL "Hvald Holeftd Horightd".
       { iExists ivd2, olidd, oridd.
-        rewrite Hd2ol Hd2or.
-        iFrame "Hvald Holeftd Horightd".
+        rewrite Hd2ol Hd2or Hd2c.
+        iFrame "Hvald Holeftd Horightd Hcontdn".
         iPureIntro. split_and!.
         - exact Hinld.
         - exact Hinrd.
         - rewrite Hd2id. exact Hiddn.
-        - rewrite Hd2c. exact Hcontdn.
         - rewrite Hd2p. exact Hpard.
         - exact Hd2l.
         - rewrite Hd2r. exact Hnextd.
@@ -336,12 +337,11 @@ Proof using Type*.
       iSplitL "Hval Holeft".
       { iExists ivl, olidcw, oridcw.
         rewrite Hivl_ol Hivl_or.
-        iFrame "Hval Holeft HorightP".
+        iFrame "Hval Holeft HorightP Hcontl".
         iPureIntro. split_and!.
         - exact (eq_sym Hp8).
         - exact (eq_sym Hp9).
         - exact (eq_sym Hp6).
-        - symmetry. exact (items_string_explode _ _ Hp7).
         - exact Hp5.
         - exact Hivl_left.
         - exact Hp4.
@@ -349,13 +349,12 @@ Proof using Type*.
       iSplitL "Hrs".
       { iExists ivr, (Some originId), oridcw.
         rewrite Hivr_ol Hivr_or.
-        iFrame "Hrs HorightP".
+        iFrame "Hrs HorightP Hcontr".
         iSplitR; first (simpl; iFrame "olid"; iPureIntro; exact Holidnn).
         iPureIntro. split_and!.
         - exact (eq_sym Hcrorig).
         - exact (eq_sym Hp17).
         - exact (eq_sym Hp14).
-        - symmetry. exact (items_string_explode _ _ Hp15).
         - exact Hp13.
         - exact Hp12.
         - exact Hivr_r.
@@ -432,12 +431,12 @@ Proof using Type*.
   iDestruct (own_dll_acc (DfracOwn 1) parent _ tl0 ls (tm_runs tm) k l r Hlk Hr with "Hdll0")
     as (prev0 nxt0) "(%Hcl0 & %Hcr0 & %Hrun0 & %Hpc0 & %Hclen0 & Hnode0 & Hback0)".
   iDestruct "Hnode0" as (itemVal olid0 orid0)
-    "(Hval0 & Hol0 & Hor0 & %Hinl0 & %Hinr0 & %Hidn0 & %Hcont0 & %Hpar0 & %Hprev0 & %Hnext0 & %Hflags0)".
+    "(Hval0 & Hol0 & Hor0 & %Hinl0 & %Hinr0 & %Hidn0 & #Hcont0 & %Hpar0 & %Hprev0 & %Hnext0 & %Hflags0)".
   have Hid : item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id') by (symmetry; exact Hidn0).
   iAssert (own_item_node l (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev0 nxt0)
     with "[Hval0 Hol0 Hor0]" as "Hnode0".
-  { iExists itemVal, olid0, orid0. iFrame "Hval0 Hol0 Hor0". iPureIntro.
-    split_and!; [exact Hinl0 | exact Hinr0 | exact Hidn0 | exact Hcont0 | exact Hpar0
+  { iExists itemVal, olid0, orid0. iFrame "Hval0 Hol0 Hor0 Hcont0". iPureIntro.
+    split_and!; [exact Hinl0 | exact Hinr0 | exact Hidn0  | exact Hpar0
                 | exact Hprev0 | exact Hnext0 | exact Hflags0]. }
   iDestruct ("Hback0" with "Hnode0") as "Hdll0".
   iAssert (own_ytype parent (DfracOwn 1) ls (MkTypeModel (tm_runs tm)))
@@ -456,13 +455,13 @@ Proof using Type*.
   iDestruct "Hyt2" as (yt2 tl2) "(Hparent2 & Hdll2 & %Hlen2)".
   iEval (cbn [tm_runs]) in "Hdll2".
   iDestruct (own_dll_lookup_acc _ _ _ _ _ _ _ _ _ _ _ Hlk' Hrk' with "Hdll2") as (pr nr) "(Hnoder & Hbackr)".
-  iDestruct "Hnoder" as (ivr olr orr) "(Hrsval & Hrsol & Hrsor & %Hf1 & %Hf2 & %Hf3 & %Hf4 & %Hf5 & %Hf6 & %Hf7 & %Hf8)".
+  iDestruct "Hnoder" as (ivr olr orr) "(Hrsval & Hrsol & Hrsor & %Hf1 & %Hf2 & %Hf3 & #Hf4 & %Hf5 & %Hf6 & %Hf7 & %Hf8)".
   iDestruct (own_type_pool_fresh rs ivr (DfracOwn 1) locs (delete parent p) with "Hrsval Hrest") as %Hfr_rest.
   iAssert (own_item_node rs (DfracOwn 1) (input_of_run (split_run_right r (uint.nat diff)))
              (run_deleted (split_run_right r (uint.nat diff))) parent pr nr)
     with "[Hrsval Hrsol Hrsor]" as "Hnoder".
-  { iExists ivr, olr, orr. iFrame "Hrsval Hrsol Hrsor". iPureIntro.
-    split_and!; [exact Hf1 | exact Hf2 | exact Hf3 | exact Hf4 | exact Hf5 | exact Hf6 | exact Hf7 | exact Hf8]. }
+  { iExists ivr, olr, orr. iFrame "Hrsval Hrsol Hrsor Hf4". iPureIntro.
+    split_and!; [exact Hf1 | exact Hf2 | exact Hf3 | exact Hf5 | exact Hf6 | exact Hf7 | exact Hf8]. }
   iDestruct ("Hbackr" with "Hnoder") as "Hdll2".
   have Hrsfresh : rs ∉ concat ((map_to_list locs).*2).
   { move=> Hin. apply list_elem_of_concat in Hin as (lsq & Hin & Hlsq).
@@ -663,7 +662,9 @@ Proof using Type*.
   iEval (rewrite Eall) in "HnewNodes".
   iAssert (slk ↦* E.*1)%I with "[Hsl_pre Hsl_suf Hsl_tail]" as "Hslice".
   { rewrite (own_slice_slice (w64_word_instance.(word.add) idx (W64 1)) slk.(slice.len) slk (DfracOwn 1) E.*1 Hsplitbnd). iFrame. }
-  (* s.items[client] = newNodes: the key read borrows the left half's node again *)
+  (* s.items[client] = newNodes: the key read borrows the left half's node again
+     (the first borrow's content share is dropped so the second can take its name) *)
+  iClear "Hacccontent".
   iDestruct (own_type_pool_node_acc locs2 p2 parent ls2 tm2 k l leftRun Hl2 Hp2 Hlk2 Hrk2 with "Htypes2")
     as (iv3) "Hacc3". iNamed "Hacc3".
   have Hid3 : toYjsId iv3.(yjs.item.id') = toYjsId itemVal.(yjs.item.id').
@@ -848,7 +849,7 @@ Proof using Type*.
              = Z.of_nat (uint.nat idv.(yjs.id.clock') - run_clock r)%nat.
   { move: Hivclk Hlo. word. }
   wp_auto.
-  wp_apply (wp_item__Len lc (DfracOwn 1) ivR with "[$Haccval]"). iIntros "[Haccval _]".
+  wp_apply (wp_item__Len lc (DfracOwn 1) ivR with "[$Haccval $Hacccontent]"). iIntros "[Haccval _]".
   iDestruct ("Haccback" with "Haccval") as "Hruns".
   rewrite Haccle.
   wp_auto.

@@ -31,7 +31,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Op := (TId * @YjsOperation A)%type.
@@ -47,7 +47,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    reached from here carry it too. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -465,7 +465,7 @@ Proof using Type*.
     have Hlenpos : (1 <= Z.of_nat (length (run_items rmid)))%Z.
     { have [Hne _] := Hwfm. destruct (run_items rmid) as [|? ?]; [done | simpl; lia]. }
     have Hnw : (Z.of_nat (run_clock rmid) + Z.of_nat (length (run_items rmid)) < 2^64)%Z := Hfitsm.
-    wp_apply (wp_item__Len lmid (DfracOwn 1) itemVal with "[$Haccval]"). iIntros "[Haccval _]".
+    wp_apply (wp_item__Len lmid (DfracOwn 1) itemVal _ with "[$Haccval $Hacccontent]"). iIntros "[Haccval _]".
     rewrite Haccle.
     iDestruct ("Haccback" with "Haccval") as "Htypes".
     wp_auto.
