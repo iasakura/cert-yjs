@@ -24,8 +24,8 @@ are:
 - **the proof and the Go code**: the script between `Proof.` and `Qed.`, which
   nothing outside the file can observe, and the Go function the spec is about.
 
-A rule binds nothing beyond what its subsection and its own text name.
-Publicity, as the rules use the word (a public or non-public predicate, a
+A rule binds nothing beyond what its subsection and its first sentence
+name. Publicity, as the rules use the word (a public or non-public predicate, a
 function public or private for a type), is a property of an interface: the
 vocabulary below settles it, by what a predicate describes and by a function's
 call sites, and it constrains what a spec states. Inside a proof the ordinary
@@ -46,30 +46,31 @@ a rule below is what binds, and no entry here can be violated by itself.
   state, not guarded by a lock or an invariant (`own_ytype`, `own_delta`);
   `is_X` is persistent, duplicable knowledge about it (`is_Doc`, `is_Text`),
   monotone where the model only grows (`is_Text`'s grow-only `L`).
-- **Public and non-public predicates.** `own_X` / `is_X` is public: `own_X`
-  holds every resource of the value, all its fields and what they own,
-  together with the invariant of `X`, and `is_X` covers the same resources
-  persistently or through the lock or invariant that guards them. A non-public
-  predicate of `X` owns or persistently covers some but not all of those
-  resources, or describes a state in which the invariant of `X` need not hold;
-  a fraction of `own_X` still covers every resource and is public. Whether a
-  predicate is public depends on what it describes, not on its name: any
-  predicate that is not non-public is public. `is_history_lb`, persistent
-  knowledge of a lower bound on a client's operation history, covers no part
-  of a value's resources and is public.
+- **Public and non-public predicates.** A non-public predicate of `X` owns or
+  persistently covers some but not all of the resources of a value of `X`
+  (its fields and what they own, together with the invariant of `X`), or
+  describes a state in which the invariant of `X` need not hold. Every other
+  predicate is public: `own_X`, which holds every one of those resources;
+  `is_X`, which covers the same resources persistently or through the lock or
+  invariant that guards them; a fraction of `own_X`, which still covers every
+  resource; and `is_history_lb`, persistent knowledge of a lower bound on a
+  client's operation history, which covers no part of a value's resources at
+  all. Whether a predicate is public depends on what it describes, not on its
+  name.
 - **Public and private functions.** This classifies the Go functions and
   methods of Cert-Yjs, by their call sites in the Go code. A function or
   method is private to a type `X` when it is unexported and called only from
   within the implementation of `X`, that is, from the methods of `X` and from
-  other functions private to `X`. Every other function is public for `X`:
-  every exported one, and an unexported one as soon as code outside the
-  implementation of `X` calls it. This is finer than Go's export, under which
-  every unexported function would count as private.
+  other unexported functions that are themselves called only from there.
+  Every other function is public for `X`: every exported one, and an
+  unexported one as soon as code outside the implementation of `X` calls it.
+  This is finer than Go's export, under which every unexported function would
+  count as private.
 
 ## Rules
 
-Code comments cite a rule, or an entry of the vocabulary above, by its bullet
-title
+Cite a rule, or an entry of the vocabulary above, in a code comment by its
+bullet title
 (`spec-shape "Values of Cert-Yjs types appear in specs through their predicates"`).
 
 ### The statement of a spec
@@ -97,32 +98,35 @@ title
   (`yjs.item.t`, `itemVal.(left')`, `idv.(clock')`), flag bytes (`W8 2`), and
   `w64` / `uint.Z` arithmetic for a condition that a model predicate already
   states (state it with that predicate, such as `cell_covers` or `cell_fits`).
-- **Specs stay intuitive.** The developer's idea of a function is a few
-  sentences, so keep its spec to a few conjuncts, never ten. Group conditions
-  by the data structure or semantic unit they are about into one named
-  predicate (`pool_invs`, `doc_registry_coh`, `cell_covers`) instead of
+- **Specs stay intuitive.** This rule binds a spec's statement and the named
+  predicates it groups conditions into. The developer's idea of a function is
+  a few sentences, so keep its spec to a few conjuncts, never ten. Group
+  conditions by the data structure or semantic unit they are about into one
+  named predicate (`pool_invs`, `doc_registry_coh`, `cell_covers`) instead of
   listing them as separate conjuncts.
 - **No over-specification.** This rule binds a postcondition and the layer
   file a condition it excludes goes to. State each condition once (not
   `setintegrate input arr = Some arr'` next to its unfolding `arr' = take midx
   arr ++ …`) and state only what the function means. Put a condition that
-  follows from the others, or that a caller merely finds convenient, in the
-  layer file that defines the model or the predicates it is about (`model.v`,
-  `value.v` or `heap.v`), as a lemma, not in the postcondition.
+  follows from the others, including one a caller merely finds convenient in
+  that form, in the layer file that defines the model or the predicates it is
+  about (`model.v`, `value.v` or `heap.v`), as a lemma, not in the
+  postcondition.
 
 ### The definition of a predicate
 
 - **A new conjunct goes into an existing predicate, or the PR says why not.**
-  This rule binds a predicate's definition and a spec's statement alike. When
-  a spec or a predicate gains a conjunct, first consider whether its condition
-  fits naturally into the predicate of an existing conjunct. If it does not,
-  say so in the PR description for that conjunct, with the reason. Check every
-  new conjunct against this rule in review.
+  This rule binds a predicate's definition and a spec's statement alike, and
+  the PR description that reports them. When a spec or a predicate gains a
+  conjunct, first consider whether its condition fits naturally into the
+  predicate of an existing conjunct. If it does not, say so in the PR
+  description for that conjunct, with the reason. Check every new conjunct
+  against this rule in review.
 - **New non-public predicates are named `own_X_…` / `is_X_…`.** This rule
-  binds the name a new predicate is given. The name marks the predicate as one
-  of `X`'s; it does not decide the predicate's publicity, which follows from
-  what the predicate describes (vocabulary, "Public and non-public
-  predicates").
+  binds the name a new non-public predicate is given. Name it `own_X_…` or
+  `is_X_…` so that the name marks it as one of `X`'s, and do not read
+  publicity off a name: it follows from what the predicate describes
+  (vocabulary, "Public and non-public predicates").
 
 ### Which specs a file exports
 
@@ -146,8 +150,9 @@ The session that wrote the proof is biased toward the conjuncts it added.
 Before pushing a change to a spec, predicate or invariant, launch a
 subagent (Agent tool, general-purpose) that starts without this session's
 context, and give it the diff, the PR description (the open PR's body, or
-its draft when the PR is not open yet), these rules and the headers of the
-layer files that define the predicates the diff uses, with a prompt like:
+its draft when the PR is not open yet), these rules and the headers (the
+comment block at the top of each file) of the layer files that define the
+predicates the diff uses, with a prompt like:
 
 > Review the spec shape of `git diff origin/main...HEAD -- src/proof`
 > in the Cert-Yjs repository, against the pull request description pasted
