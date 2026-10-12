@@ -89,10 +89,13 @@ Proof.
   wp_start as "(Hpre & #Hpin & #Hlb & Hcap)". iNamed "Hpre".
   iDestruct "His_store" as "#His_store".
   wp_auto. subst s_loc. subst parent.
-  wp_apply (wp_Store__rlock _ _ _ c h0 name _ with "[$His_store $Hcap $Hpin $Hlb $Hbind]").
-  iIntros (state ds m0) "(Hrlo & Hstore & %Hfact)".
+  wp_apply (wp_Store__rlock _ _ _ c h0 with "[$His_store $Hcap $Hpin $Hlb]").
+  iIntros (state ds m0) "(Hrlo & Hstore & %Hregmodel & %Hdeliv)".
   wp_auto.
   iNamed "Hstore". iNamed "Hcore".
+  (* this handle's root, in the state the lock handed out: the registry
+     authority inside the share answers the handle's binding *)
+  iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
   (* the handle's certificate against the shared authority: the ids it knows
      deleted are in the store's delete set, hence tombstoned in this pool *)
   iDestruct (auth_gset_frag_sub_dq with "Hdelete_set_auth Hdeleted_lb") as %Hdelsub.
@@ -134,10 +137,9 @@ Proof.
   { iFrame "Hcap". iPureIntro. split_and!.
     - rewrite Hlen runs_visible_model //.
     - split; rewrite Hfst; [exact HLsub | exact (Harrinv _ _ Htmp)].
-    - move=> input Hin.
-      destruct (Hfact input Hin) as (tm' & it & Htm' & Hitid & Hitmem).
-      rewrite Htmp in Htm'. injection Htm' as <-.
-      exists it. split; [exact Hitid | rewrite Hfst //].
+    - apply (delivered_reflected_at_root h0 m0 name _ Hdeliv).
+      rewrite Hfst. symmetry.
+      exact (proj1 Hregmodel name tv.(yjs.Text.inner') tm Hbindlk Htmp).
     - exact Hexcl. }
   iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
   iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
