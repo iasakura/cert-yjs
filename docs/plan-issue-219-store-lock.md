@@ -192,7 +192,7 @@ of a release-time proof obligation smeared over callers; third, it lets
 caller-side ghost-map reconciliation that `store/wp_private.v` carries
 for the applyUpdate path.
 
-Into the lock invariant of the lock type (the session bundle; one named
+Into the lock invariant of the lock type (the replica history bundle; one named
 predicate, say `own_replica_history γs γh c h state m ds`):
 
 - the client's ghost history `own_client_history γh c h` with
@@ -209,7 +209,7 @@ predicate, say `own_replica_history γs γh c h state m ds`):
 
 The lock invariant then says: `own_store` at fraction 1 with the
 observers caught up (`m0 = m`, `deleted0 = pool_tombstoned p`), next to
-the session bundle. `transact` acquires the write lock and receives both;
+the replica history bundle. `transact` acquires the write lock and receives both;
 the closure runs over `own_transaction`, which becomes
 `own_store (observers at the start state) ∗ own_replica_history ∗ the
 record`; `notify` moves the observers; release demands the coherence
@@ -305,7 +305,7 @@ fractional points-tos. So:
 - the certificate conversion at the linearization point
   (`store_inv_excl_hist_root`, what lets a reader relate its history
   prefix to the snapshot, issue #125) survives unchanged: at the atomic
-  step the invariant is open and the session bundle (the history) is
+  step the invariant is open and the replica history bundle (the history) is
   visible regardless of which fraction leaves.
 
 Two costs come with this shape, and neither reaches the Go.
@@ -390,13 +390,13 @@ Each rule of spec-shape, against the design above:
   the lock wrappers (`wlock` / `wunlock` / `rlock` / `runlock`) and
   `notify` are private to the lock type / transaction and may keep
   internal shapes, though after the move even they are statable over
-  `own_store` plus the named session bundle.
+  `own_store` plus the named replica history bundle.
 - "Everything a spec says about a value goes through a model parameter":
   unchanged; the cell model is a model. The goose-value binders in the
   PRIVATE scan specs (`wp_scanConflicts` / `wp_findIntegrationLeft`,
   issue #220 item 2) are a separate fix, orthogonal to this plan: those
   functions stay private and keep pool-level predicates either way.
-- "Specs stay intuitive": the session bundle is ONE named predicate
+- "Specs stay intuitive": the replica history bundle is ONE named predicate
   (`own_replica_history`), never spilled as loose conjuncts into
   `transact`'s closure contract; `own_transaction` keeps wrapping it.
 - "A new conjunct goes into an existing predicate": no new conditions

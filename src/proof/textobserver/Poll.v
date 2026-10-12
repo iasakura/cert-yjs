@@ -197,9 +197,9 @@ Proof.
   wp_apply (wp_Store__wlock with "[$His_store]"). iIntros "[Hlk Hinv]".
   iDestruct "Hinv" as (c0 h m) "Hstore".
   wp_auto.
-  iDestruct "Hstore" as (state0 ds0) "(Hstore & Hsession)".
+  iDestruct "Hstore" as (state0 ds0) "(Hstore & Hreplica_history)".
   iDestruct "Hstore" as "[Hcore Hobservers]".
-  iDestruct (own_store_data_build with "Hcore Hsession") as "Hown".
+  iDestruct (own_store_data_build with "Hcore Hreplica_history") as "Hown".
   set (pend := ss_pending state0) in *.
   set (deleted := pool_tombstoned (ss_pool state0)) in *.
   iDestruct "Hown" as (client k pdel locs p bind acc) "Hown". iNamed "Hown". subst c0.
@@ -567,13 +567,13 @@ Proof.
       with "[Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree]" as "Hdata".
     { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro.
       split_and!; [reflexivity | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
-    iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hsession')". destruct Hface' as [Hpend' Hdel'].
+    iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
     iEval (rewrite Hdel') in "Hobservers".
     iAssert (own_store (store_of_ref tv.(yjs.Text.store')) γs γh 1 state' ds' m
                (pool_tombstoned (ss_pool state')))
       with "[Hcore' Hobservers]" as "Hstore'".
     { rewrite /own_store. iFrame "Hcore' Hobservers". }
-    wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore' $Hsession']").
+    wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore' $Hreplica_history']").
     iAssert (own_TextObserver obs ov.(yjs.TextObserver.text') γs γh name (runs_model tm.(tm_runs)))
       with "[Hobs Hsvm Hdel]" as "Hobs_new".
     { iExists (ov <| yjs.TextObserver.stateVector' := sv_mref |> <| yjs.TextObserver.deleted' := del_mref |>),
