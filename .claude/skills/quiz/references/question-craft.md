@@ -159,8 +159,8 @@ Illustrative only. Regenerate from live sources; do not just replay these.
   引数が付くことが多いのはなぜか。」
   Answer: `is_X` = persistent handle / read-only fact (duplicable);
   `own_X` = ownership, `dfrac`-parameterized when it is plain heap state so it
-  can be shared fractionally. (spec-shape skill, "Values of Cert-Yjs types
-  appear in specs through their predicates".)
+  can be shared fractionally. (spec-shape skill, vocabulary "Representation
+  predicates `own_X` and `is_X`".)
 - 「このプロジェクトのビルドは Go を編集した後になぜ必ず goose を再実行する
   必要があるのか。」
   Answer: `make` alone checks the stale translation; the Go change silently has

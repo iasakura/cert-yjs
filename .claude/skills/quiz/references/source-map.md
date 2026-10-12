@@ -32,9 +32,10 @@ but its Cert-Yjs-specific facts drift, verify against code).
 
 ## 不変量・表現述語 (invariants / representation predicates)
 
-- spec-shape skill rules "Values of Cert-Yjs types appear in specs through
-  their predicates" (`own_X` / `is_X` as the representation predicate of a
-  type; `is_X` persistent vs `own_X` ownership) and "Public and non-public
+- spec-shape skill vocabulary "Representation predicates `own_X` and `is_X`"
+  (`own_X` / `is_X` as the representation predicate of a type; `is_X`
+  persistent vs `own_X` ownership) and "Public and non-public predicates",
+  plus the rule "Values of Cert-Yjs types appear in specs through their
   predicates".
 - `src/proof/store/heap.v`: `store_inv` / `store_inv_ro` / `store_inv_excl`,
   `own_store`, `own_item_map`, `is_Store` / `is_type_lb` / `is_root` /
@@ -60,11 +61,11 @@ but its Cert-Yjs-specific facts drift, verify against code).
   share, `Len.v`).
 - `src/proof/store/applyUpdate.v`: `wp_store__applyUpdate_certs` (`own_store`-level).
 - `src/proof/doc/ApplySyncUpdate.v`: doc-level applyUpdate wrapper.
-- spec-shape skill rules "Public and private functions", "Specs of public
-  functions use only public predicates" and "Everything a spec says about a
-  value goes through a model parameter" (the spec of a function public for a
-  type takes its `own_X` / `is_X` whole; values only through model
-  parameters).
+- spec-shape skill: the vocabulary entry "Public and private functions" and
+  the rules "Specs of public functions use only public predicates" and
+  "Everything a spec says about a value goes through a model parameter" (the
+  statement of a spec of a function public for a type takes its `own_X` /
+  `is_X` whole; values only through model parameters).
 - Memory: `insert-proof-done.md`, `general-insert-progress.md`,
   `delete-proof-done.md`, `apply-update-progress.md`,
   `issue-22-rwmutex-progress.md`, `sync-fragment-specs.md`, `issue-40-done.md`.
