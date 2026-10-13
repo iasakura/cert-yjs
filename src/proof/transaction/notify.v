@@ -130,7 +130,7 @@ Proof.
     iEval (rewrite -Hcloc) in "Hcur".
     rewrite decide_True; [| reflexivity].
     wp_auto.
-    wp_apply (wp_item__Len lk dq itemVal with "[$Hcval $Hcontent]"). iIntros "[Hcval %Hcontlen]".
+    wp_apply (wp_item__Len lk dq itemVal with "[$Hcval $Hcontent]"). iIntros "Hcval". iDestruct (is_content_length_fits_int with "Hcontent") as %Hcontlen.
     wp_auto.
     wp_apply (wp_item__Deleted lk dq itemVal with "[$Hcval]"). iIntros "Hcval".
     rewrite (flags_if_deleted itemVal (run_deleted r) Hflags).

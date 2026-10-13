@@ -19,6 +19,8 @@
       proof (iasakura/perennial-sandbox, dll/list.go, [is_dlist_node]).
 
     Laws
+    - [is_content_length_fits_int]: a content's length fits a Go [int],
+      since a slice's [len] is one.
     - the spine is a monoid: [own_dll_app] splits and joins a segment,
       [own_dll_insert_middle] splices a fresh node in and
       [own_dll_split] rejoins a split node's two halves;
@@ -125,6 +127,17 @@ Fixpoint own_dll (dq : dfrac) (parent l last prev next : loc)
   end.
 
 (* ===== lemmas ============================================================= *)
+
+(** A content's length fits a Go [int]: it is the [len] of a slice. What a
+    caller that indexes the content by a [uint64] offset needs ([Poll],
+    [textDelta]). *)
+Lemma is_content_length_fits_int (c : yjs.content.t) (units : A) :
+  is_content c units -∗ ⌜(Z.of_nat (length units) < 2^63)%Z⌝.
+Proof.
+  rewrite /is_content. iIntros "Hcontent".
+  iDestruct (own_slice_len with "Hcontent") as %[Hlen Hlen0].
+  iPureIntro. word.
+Qed.
 
 (* ----- structural lemmas for the DLL spine ------------------------------- *)
 

@@ -201,7 +201,7 @@ Proof using Type*.
   clear Haccpar.
   wp_auto.
   wp_apply (wp_item__Len rl (DfracOwn 1) ivR with "[$Haccval $Hacccontent]").
-  iIntros "[Haccval _]".
+  iIntros "Haccval".
   iDestruct ("Haccback" with "Haccval") as "Hruns".
   (* kept at the [uint.Z] level on purpose: [wp_if_destruct]'s bare [subst]
      would consume a [clock' = cur] equation and take [cur] with it *)

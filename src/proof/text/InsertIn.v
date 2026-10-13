@@ -611,7 +611,7 @@ Proof.
       wp_method_call. wp_call. rewrite /yjs.item__LastIdⁱᵐᵖˡ. wp_auto.
       wp_alloc icopy as "Hic". wp_auto.
       wp_bind (icopy @! (go.PointerType yjs.item) @! "Len" (# ()))%E.
-      wp_apply (wp_item__Len icopy (DfracOwn 1) itemVal with "[$Hic $Hacccontent]"). iIntros "[Hic _]".
+      wp_apply (wp_item__Len icopy (DfracOwn 1) itemVal with "[$Hic $Hacccontent]"). iIntros "Hic".
       wp_pures. wp_store.
       iDestruct (typed_pointsto_not_null with "lid") as %Hlidnn.
       iPersist "lid". wp_auto.

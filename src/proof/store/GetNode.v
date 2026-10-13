@@ -465,7 +465,7 @@ Proof using Type*.
     have Hlenpos : (1 <= Z.of_nat (length (run_items rmid)))%Z.
     { have [Hne _] := Hwfm. destruct (run_items rmid) as [|? ?]; [done | simpl; lia]. }
     have Hnw : (Z.of_nat (run_clock rmid) + Z.of_nat (length (run_items rmid)) < 2^64)%Z := Hfitsm.
-    wp_apply (wp_item__Len lmid (DfracOwn 1) itemVal _ with "[$Haccval $Hacccontent]"). iIntros "[Haccval _]".
+    wp_apply (wp_item__Len lmid (DfracOwn 1) itemVal _ with "[$Haccval $Hacccontent]"). iIntros "Haccval".
     rewrite Haccle.
     iDestruct ("Haccback" with "Haccval") as "Htypes".
     wp_auto.

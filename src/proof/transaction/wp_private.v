@@ -95,7 +95,7 @@ Lemma wp_Transaction__recordInsert (tr s_loc parent lc : loc) (dq : dfrac) (v : 
 Proof.
   move=> Hfits.
   wp_start as "(Hchanges & Hv & #Hcontent)". iNamed "Hchanges". wp_auto.
-  wp_apply (wp_item__Len with "[$Hv $Hcontent]"). iIntros "[Hv _]". wp_auto.
+  wp_apply (wp_item__Len with "[$Hv $Hcontent]"). iIntros "Hv". wp_auto.
   wp_apply wp_slice_literal. iSplitR; first done. iIntros "%s2 [Hs2 _]". wp_auto.
   wp_apply (wp_slice_append with "[$Hinsert $Hinsertcap $Hs2]").
   iIntros (sl') "(Hinsert & Hinsertcap & _)". wp_auto.
@@ -122,7 +122,7 @@ Lemma wp_Transaction__recordDelete (tr s_loc lc : loc) (dq : dfrac) (v : yjs.ite
 Proof.
   move=> Hfits.
   wp_start as "(Hchanges & Hv & #Hcontent)". iNamed "Hchanges". wp_auto.
-  wp_apply (wp_item__Len with "[$Hv $Hcontent]"). iIntros "[Hv _]". wp_auto.
+  wp_apply (wp_item__Len with "[$Hv $Hcontent]"). iIntros "Hv". wp_auto.
   wp_apply wp_slice_literal. iSplitR; first done. iIntros "%s2 [Hs2 _]". wp_auto.
   wp_apply (wp_slice_append with "[$Hdelete $Hdeletecap $Hs2]").
   iIntros (sl') "(Hdelete & Hdeletecap & _)". wp_auto.

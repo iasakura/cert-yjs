@@ -129,7 +129,7 @@ Proof using Type*.
     rewrite Hpar. wp_auto.
     wp_apply (wp_item__Len lc (DfracOwn 1) (set_deleted itemVal) (items_string (run_items r)) with "[$Hval]");
       first (rewrite /set_deleted /=; iExact "Hcont").
-    iIntros "[Hval _]".
+    iIntros "Hval".
     wp_auto. rewrite Hpar. wp_auto.
     have Hflagspin : itemVal.(yjs.item.flags') = (if false then W8 6 else W8 2)
       by rewrite Hflags ?Hd.

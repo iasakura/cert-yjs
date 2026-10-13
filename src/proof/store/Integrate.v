@@ -590,7 +590,7 @@ Proof using Type*.
       iDestruct "Hibo_setf" as (vs_ibo) "(Hibo_sl & Hibo_cap & %Hibo_wf & %Hibo_set)".
       iDestruct "Hconflict_ids" as (ci_s) "[Hci_ref Hci_setf]".
       iDestruct "Hci_setf" as (vs_ci) "(Hci_sl & Hci_cap & %Hci_wf & %Hci_set)".
-      wp_apply (wp_item__Len with "[$Hcival $Hccontn_ci]"). iIntros "[Hcival _]".
+      wp_apply (wp_item__Len with "[$Hcival $Hccontn_ci]"). iIntros "Hcival".
       have Hlencont : (length (in_content (input_of_run rc)) = length (run_items rc))%nat.
       { rewrite /input_of_run /=. have Hl := f_equal length Hccont_ci.
         rewrite length_fmap explode_length in Hl. lia. }

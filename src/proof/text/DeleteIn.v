@@ -549,7 +549,7 @@ Proof.
       | exact Hdelstomb | exact Hdelsarr | exact Htombj | exact Hdelsfresh | lia].
   - (* visible node: spend the whole run, or split at the range end first *)
     simpl negb. wp_auto.
-    wp_apply (wp_item__Len lc (DfracOwn 1) itemVal with "[$Haccval $Hacccontent]"). iIntros "[Haccval _]".
+    wp_apply (wp_item__Len lc (DfracOwn 1) itemVal with "[$Haccval $Hacccontent]"). iIntros "Haccval".
     rewrite Haccle.
     wp_auto.
     (* the node goes back to the store before the store methods run *)
@@ -607,7 +607,7 @@ Proof.
         as (iv2) "Hacc2". iNamed "Hacc2".
       have Hlenl : length (run_items (flip_run leftRun)) = uint.nat rem.
       { rewrite /flip_run /leftRun /split_run_left /= length_take. lia. }
-      wp_apply (wp_item__Len lc (DfracOwn 1) iv2 with "[$Haccval $Hacccontent]"). iIntros "[Haccval _]".
+      wp_apply (wp_item__Len lc (DfracOwn 1) iv2 with "[$Haccval $Hacccontent]"). iIntros "Haccval".
       rewrite Haccle0 Hlenl. wp_auto.
       iDestruct ("Haccback" with "Haccval") as "Hruns".
       wp_for_post.
@@ -696,7 +696,7 @@ Proof.
                    Hlj (lookup_insert_eq _ _ _) Hlc Hrl3 with "Hruns")
         as (iv2) "Hacc2". iNamed "Hacc2".
       have Hlenf : length (run_items (flip_run rq)) = length (run_items rq) by rewrite /flip_run //.
-      wp_apply (wp_item__Len lc (DfracOwn 1) iv2 with "[$Haccval $Hacccontent]"). iIntros "[Haccval _]".
+      wp_apply (wp_item__Len lc (DfracOwn 1) iv2 with "[$Haccval $Hacccontent]"). iIntros "Haccval".
       rewrite Haccle0 Hlenf. wp_auto.
       iDestruct ("Haccback" with "Haccval") as "Hruns".
       wp_for_post.
