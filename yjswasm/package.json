@@ -1,0 +1,13 @@
+{
+  "name": "cert-yjs-wasm",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "./build.sh",
+    "test": "node --test",
+    "serve": "python3 -m http.server 8000"
+  },
+  "devDependencies": {
+    "yjs": "^13.6.0"
+  }
+}
