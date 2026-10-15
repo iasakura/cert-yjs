@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cert-Yjs in the browser</title>
+<title>Yjs and Cert-Yjs editing together</title>
 <style>
   :root {
     --background: #f6f5f1;
@@ -36,7 +36,8 @@
   }
   main { max-width: 960px; margin: 0 auto; }
   h1 { font-size: 22px; margin: 0 0 4px; }
-  p { margin: 0 0 12px; color: var(--muted); max-width: 70ch; }
+  p { margin: 0 0 12px; color: var(--muted); max-width: 72ch; }
+  a { color: var(--accent); }
   .network {
     display: flex;
     flex-wrap: wrap;
@@ -60,8 +61,9 @@
     padding: 14px;
     min-width: 0;
   }
-  .replica h2 { font-size: 15px; margin: 0 0 8px; display: flex; justify-content: space-between; gap: 8px; }
-  .replica h2 span { font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .replica h2 { font-size: 16px; margin: 0; }
+  .replica .library { margin: 0 0 4px; font-size: 13px; }
+  .replica .size { margin: 0 0 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
   textarea {
     display: block;
     width: 100%;
@@ -82,168 +84,99 @@
     color: var(--muted);
     overflow-wrap: anywhere;
   }
-  .delta b { color: var(--text); font-weight: 600; }
+  .notes { margin-top: 20px; font-size: 13px; }
 </style>
+<script type="importmap">
+{ "imports": { "yjs": "https://cdn.jsdelivr.net/npm/yjs@13.6.33/+esm" } }
+</script>
 </head>
 <body>
 <main>
-  <h1>Cert-Yjs in the browser</h1>
+  <h1>Yjs and Cert-Yjs editing together</h1>
   <p>
-    Two replicas of one text, each a document of the Go CRDT compiled to
-    WebAssembly, driven through a Yjs-shaped API. Type in either box. To see
-    a merge, switch the network off, edit both sides, and switch it back on.
+    One shared text, two replicas. The left one is Yjs, the JavaScript
+    library. The right one is Cert-Yjs, a CRDT written in Go after Yjs and
+    verified in Rocq, compiled to WebAssembly. They exchange Yjs's own update
+    format over a simulated network. Type in either box. To see a merge,
+    switch the network off, edit both sides, and switch it back on.
   </p>
 
   <div class="network">
     <label><input type="checkbox" id="connected" checked> Network connected</label>
-    <span id="status">loading the wasm module</span>
+    <span id="status">loading the WebAssembly module</span>
   </div>
 
   <div class="replicas">
     <section class="replica">
-      <h2>Alice <span id="alice-size"></span></h2>
-      <textarea id="alice-text" spellcheck="false" disabled></textarea>
-      <div class="delta" id="alice-delta"></div>
+      <h2>Yjs</h2>
+      <p class="library">JavaScript, yjs 13.6.33</p>
+      <p class="size" id="yjs-size"></p>
+      <textarea id="yjs-text" spellcheck="false" disabled></textarea>
+      <div class="delta" id="yjs-delta"></div>
     </section>
     <section class="replica">
-      <h2>Bob <span id="bob-size"></span></h2>
-      <textarea id="bob-text" spellcheck="false" disabled></textarea>
-      <div class="delta" id="bob-delta"></div>
+      <h2>Cert-Yjs</h2>
+      <p class="library">Go, compiled to WebAssembly</p>
+      <p class="size" id="cert-yjs-size"></p>
+      <textarea id="cert-yjs-text" spellcheck="false" disabled></textarea>
+      <div class="delta" id="cert-yjs-delta"></div>
     </section>
+  </div>
+
+  <div class="notes">
+    <p>
+      Yjs runs here with garbage collection off: Cert-Yjs cannot yet read an
+      update in which Yjs has garbage-collected deleted text, which Yjs does by
+      default. The core of Cert-Yjs is verified; the encoding of updates and
+      the WebAssembly binding are not.
+    </p>
+    <p>Source: <a href="https://github.com/iasakura/cert-yjs">github.com/iasakura/cert-yjs</a></p>
   </div>
 </main>
 
 <script type="module">
-import * as Y from './cert-yjs.mjs'
+import * as Y from 'yjs'
+import * as CertYjs from './cert-yjs.mjs'
+import { bindTextarea, connect } from './demo.mjs'
 
 const element = (id) => document.getElementById(id)
 
-// positionAfter moves a caret position in the old text through delta.
-const positionAfter = (delta, position) => {
-  let index = 0
-  let shift = 0
-  for (const operation of delta) {
-    if (index >= position) {
-      break
-    }
-    if (operation.retain !== undefined) {
-      index += operation.retain
-    } else if (operation.insert !== undefined) {
-      shift += operation.insert.length
-    } else {
-      shift -= Math.min(operation.delete, position - index)
-      index += operation.delete
-    }
-  }
-  return position + shift
+await CertYjs.init()
+
+const replicas = [
+  { name: 'yjs', library: Y, doc: new Y.Doc({ gc: false }) },
+  { name: 'cert-yjs', library: CertYjs, doc: new CertYjs.Doc() }
+]
+for (const replica of replicas) {
+  replica.text = replica.doc.getText('note')
 }
-
-// bindTextarea keeps textarea and text equal: an edit of the textarea becomes
-// one delete and one insert in a transaction, a change of the text (local or
-// remote) is written back with the caret moved through its delta.
-const bindTextarea = (textarea, text, deltaLog) => {
-  textarea.value = text.toString()
-
-  const pushEdit = () => {
-    const before = text.toString()
-    const after = textarea.value
-    let prefix = 0
-    while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) {
-      prefix++
-    }
-    let suffix = 0
-    while (suffix < before.length - prefix && suffix < after.length - prefix &&
-           before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) {
-      suffix++
-    }
-    text.doc.transact(() => {
-      text.delete(prefix, before.length - prefix - suffix)
-      text.insert(prefix, after.slice(prefix, after.length - suffix))
-    }, textarea)
-    if (textarea.value !== after) {
-      const caret = textarea.selectionStart
-      textarea.value = after
-      textarea.setSelectionRange(caret, caret)
-    }
-  }
-  textarea.addEventListener('input', (event) => {
-    // An input method's composition is pushed once, when it ends.
-    if (!event.isComposing) {
-      pushEdit()
-    }
-  })
-  textarea.addEventListener('compositionend', pushEdit)
-
-  text.observe((event) => {
-    const origin = event.transaction.origin === textarea ? 'local' : 'remote'
-    deltaLog.innerHTML = `<b>last ${origin} delta</b> `
-    deltaLog.append(JSON.stringify(event.delta))
-    const next = text.toString()
-    if (textarea.value !== next) {
-      const start = positionAfter(event.delta, textarea.selectionStart)
-      const end = positionAfter(event.delta, textarea.selectionEnd)
-      textarea.value = next
-      textarea.setSelectionRange(start, end)
-    }
-  })
-}
-
-await Y.init()
-
-const replicas = ['alice', 'bob'].map((name, index) => {
-  const doc = new Y.Doc({ clientID: index + 1 })
-  return { name, doc, text: doc.getText('note'), outbox: null }
-})
-const connected = element('connected')
+const [yjs, certYjs] = replicas
 
 const render = () => {
-  const [alice, bob] = replicas
   for (const replica of replicas) {
+    const bytes = replica.library.encodeStateAsUpdate(replica.doc).length
     element(`${replica.name}-size`).textContent =
-      `${replica.text.length} chars, ${Y.encodeStateAsUpdate(replica.doc).length} bytes of state`
+      `${replica.text.length} UTF-16 code units, ${bytes} bytes of state`
   }
   const status = element('status')
-  const agree = alice.text.toString() === bob.text.toString()
+  const agree = yjs.text.toString() === certYjs.text.toString()
   status.className = agree ? '' : 'diverged'
   status.textContent = agree
     ? 'The replicas agree.'
-    : connected.checked ? 'The replicas differ.' : 'Offline: the replicas differ until the network is back.'
+    : network.online ? 'The replicas differ.' : 'Offline: the replicas differ until the network is back.'
 }
 
-// The network: every update of one replica goes to the other, at once when
-// connected. Offline only the latest is kept, an update being the whole state.
-const deliver = () => {
-  for (const replica of replicas) {
-    const peer = replicas.find((other) => other !== replica)
-    if (replica.outbox !== null) {
-      const update = replica.outbox
-      replica.outbox = null
-      Y.applyUpdate(peer.doc, update, 'network')
-    }
-  }
-}
+const network = connect(replicas, render)
+const connected = element('connected')
+connected.addEventListener('change', () => network.setOnline(connected.checked))
+
 for (const replica of replicas) {
-  replica.doc.on('update', (update, origin) => {
-    if (origin !== 'network') {
-      replica.outbox = update
-      if (connected.checked) {
-        deliver()
-      }
-    }
-    render()
-  })
   const textarea = element(`${replica.name}-text`)
   bindTextarea(textarea, replica.text, element(`${replica.name}-delta`))
   textarea.disabled = false
 }
-connected.addEventListener('change', () => {
-  if (connected.checked) {
-    deliver()
-  }
-  render()
-})
 
-replicas[0].doc.transact(() => replicas[0].text.insert(0, 'Hello from the verified core.'), element('alice-text'))
+yjs.doc.transact(() => yjs.text.insert(0, 'Hello from Yjs. Edit either side.'), 'seed')
 render()
 </script>
 </body>
