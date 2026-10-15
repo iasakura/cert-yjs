@@ -30,25 +30,27 @@ import (
 // inserts create one item per code unit, a surrogate pair is two items; the
 // encoder joins adjacent items of one client into runs (joinable, below)
 // before writing a string, so that the pair's halves leave as one struct and
-// one code point. A half that cannot be joined (a concurrent insert landed
-// between the halves) is a lone surrogate, which encodeWireString replaces by
-// U+FFFD, one code unit for one, so the clock count on the wire is unchanged.
-// The three references split a pair differently: Yjs v14.0.0-rc.18 replaces
-// both halves by U+FFFD in memory the moment a split lands between them
-// (ContentString.splice, src/structs/Item.js:1326-1341); yrs 0.27.2
-// (ItemContent::splice, src/block.rs:2006-2033, over split_str,
-// src/block.rs:1669) and y-octo 0.1.0 (Content::split,
-// src/doc/codec/content.rs:218-224, over utf16_offset_to_utf8,
-// src/doc/common/algorithm.rs:28-42) map the UTF-16 offset to a byte offset
-// one whole character at a time and stop once the offset is reached, so a
-// split inside a pair moves to the end of the pair: the left half keeps the
-// whole pair and one code unit more than its clock range (yrs's U+FFFD
-// replacement is commented out, "TODO: do we need that in Rust?"). The Go
-// follows Yjs: it never produces a lone surrogate from a split that is not
-// one, and what it has to write as a lone surrogate becomes U+FFFD, as
-// Yjs's own encoder would write it (TextEncoder replaces lone surrogates).
-// Unlike Yjs the replacement happens at encode time, not in the document,
-// so the document keeps the exact code units it was given.
+// one code point.
+//
+// Lone surrogates are not supported (issue #233). UTF-8 cannot carry one,
+// and one reaches the encoder when a caller inserts it, or when an edit
+// separates the halves of a pair (an insert between them, or the deletion of
+// one half) so that they are no longer joinable. encodeWireString writes it
+// the way utf16.Decode does, as U+FFFD, one code unit for one so that clocks
+// stay aligned; a replica that received the pair before the edit then reads
+// different text from one that receives it after. The three references
+// split a pair differently: Yjs v14.0.0-rc.18 replaces both halves by U+FFFD
+// in memory the moment a split lands between them (ContentString.splice,
+// src/structs/Item.js:1326-1341); yrs 0.27.2 (ItemContent::splice,
+// src/block.rs:2006-2033, over split_str, src/block.rs:1669) and y-octo
+// 0.1.0 (Content::split, src/doc/codec/content.rs:218-224, over
+// utf16_offset_to_utf8, src/doc/common/algorithm.rs:28-42) map the UTF-16
+// offset to a byte offset one whole character at a time, so a split inside a
+// pair moves to the end of the pair and the left half keeps the whole pair
+// and one code unit more than its clock range (yrs's U+FFFD replacement is
+// commented out, "TODO: do we need that in Rust?"). The Go follows none of
+// them and keeps the exact code units in the document; the issue records the
+// options.
 //
 // Excluded from goose translation (`//go:build !goose`): runtime interop, not
 // part of the verified core.

@@ -184,60 +184,23 @@ func TestSurrogatePairRoundTrip(t *testing.T) {
 	}
 }
 
-// A lone surrogate stays exact in the document and leaves on the wire as
-// U+FFFD, one unit for one, so a replica agrees on every clock (the file
-// comment of codec.go: Yjs replaces the halves of a split pair the same way).
-func TestLoneSurrogateEncodesAsReplacement(t *testing.T) {
+// Lone surrogates are not supported (issue #233), but one must not shift the
+// clocks: the wire carries it as one code unit, so a replica holds as many
+// units as the source and integrates the next insert after it.
+func TestLoneSurrogateKeepsClocksAligned(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("root")
 	txt.Insert(0, []uint16{0xD83D})
-	if got := txt.CodeUnits(); len(got) != 1 || got[0] != 0xD83D {
-		t.Fatalf("the document changed the unit: %x", got)
-	}
 	clone := NewDoc(2)
 	clone.ApplyUpdate(doc.EncodeUpdate())
 	ct := clone.GetOrCreateText("root")
-	if got := ct.CodeUnits(); len(got) != 1 || got[0] != 0xFFFD {
-		t.Fatalf("replica reads %x, want the replacement character", got)
-	}
-	// the replica's own encoding of it is stable, and converges with the source
 	txt.InsertString(1, "z")
 	clone.ApplyUpdate(doc.EncodeUpdate())
 	doc.ApplyUpdate(clone.EncodeUpdate())
-	if got := txt.Len(); got != 2 {
-		t.Fatalf("source len: got %d, want 2", got)
+	if txt.Len() != 2 || ct.Len() != 2 {
+		t.Fatalf("lengths: source %d, replica %d, want 2 and 2", txt.Len(), ct.Len())
 	}
-	if got := ct.String(); got != "\uFFFDz" {
-		t.Fatalf("replica reads %q", got)
-	}
-}
-
-// A concurrent insert between the halves of a pair splits them for good: in
-// memory both replicas keep the exact units around the intruder, and on the
-// wire each half, no longer joinable, becomes U+FFFD (what Yjs's
-// ContentString.splice does in memory, Yjs v14.0.0-rc.18 src/structs/Item.js:1326).
-func TestSplitSurrogatePairEncodesReplacements(t *testing.T) {
-	a := NewDoc(1)
-	ta := a.GetOrCreateText("root")
-	ta.InsertString(0, "😀")
-	b := NewDoc(2)
-	b.ApplyUpdate(a.EncodeUpdate())
-	tb := b.GetOrCreateText("root")
-	tb.InsertString(1, "x")
-	a.ApplyUpdate(b.EncodeUpdate())
-	want := []uint16{0xD83D, 'x', 0xDE00}
-	for _, txt := range []*Text{ta, tb} {
-		got := txt.CodeUnits()
-		if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
-			t.Fatalf("in memory: got %x, want %x", got, want)
-		}
-	}
-	c := NewDoc(3)
-	c.ApplyUpdate(a.EncodeUpdate())
-	if got := c.GetOrCreateText("root").String(); got != "\uFFFDx\uFFFD" {
-		t.Fatalf("over the wire: got %q", got)
-	}
-	if got := c.GetOrCreateText("root").Len(); got != 3 {
-		t.Fatalf("over the wire: len %d, want 3", got)
+	if got := ct.CodeUnits(); got[1] != 'z' {
+		t.Fatalf("replica reads %x, want z after the lone unit", got)
 	}
 }

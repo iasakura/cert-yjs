@@ -82,6 +82,12 @@ never panics and has no data races.
   neither is the conversion between Go strings and UTF-16 code units that it
   and the `String` conveniences perform. The verified code takes an update
   after it has been decoded.
+- **Lone surrogates.** A UTF-16 surrogate without its partner, whether
+  inserted alone or left alone when an edit separates the two halves of a
+  pair, cannot be written in the update format, which carries text as UTF-8,
+  and is sent as U+FFFD. A replica that received the pair before the edit then
+  reads different text from one that received it after. Text whose surrogate
+  pairs stay whole is exchanged exactly.
 - **Stronger specifications.** The specifications do not yet say that
   `Insert` inserts the new characters at the requested index, which characters
   `Delete` marks, what the deletions carried by an update from another replica
