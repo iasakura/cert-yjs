@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yjs and Cert-Yjs editing together</title>
+<style>
+  :root {
+    --background: #f6f5f1;
+    --surface: #ffffff;
+    --text: #1d1d1b;
+    --muted: #6b6a65;
+    --border: #d9d6cc;
+    --accent: #1f6f5c;
+    --warning: #a4541a;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --background: #17181a;
+      --surface: #212325;
+      --text: #e9e7e1;
+      --muted: #9b998f;
+      --border: #383b3e;
+      --accent: #6fcfb6;
+      --warning: #e7a36a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 16px 48px;
+    background: var(--background);
+    color: var(--text);
+    font: 15px/1.5 system-ui, sans-serif;
+  }
+  main { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p { margin: 0 0 12px; color: var(--muted); max-width: 72ch; }
+  a { color: var(--accent); }
+  .network {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 20px;
+    margin: 20px 0 12px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .network label { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+  .network input { width: 18px; height: 18px; accent-color: var(--accent); }
+  #status { color: var(--muted); font-variant-numeric: tabular-nums; }
+  #status.diverged { color: var(--warning); }
+  .replicas { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .replica {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    min-width: 0;
+  }
+  .replica h2 { font-size: 16px; margin: 0; }
+  .replica .library { margin: 0 0 4px; font-size: 13px; }
+  .replica .size { margin: 0 0 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  textarea {
+    display: block;
+    width: 100%;
+    height: 180px;
+    resize: vertical;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--background);
+    color: var(--text);
+    font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .delta {
+    margin: 10px 0 0;
+    min-height: 3.2em;
+    font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .notes { margin-top: 20px; font-size: 13px; }
+</style>
+<script type="importmap">
+{ "imports": { "yjs": "https://cdn.jsdelivr.net/npm/yjs@13.6.33/+esm" } }
+</script>
+</head>
+<body>
+<main>
+  <h1>Yjs and Cert-Yjs editing together</h1>
+  <p>
+    One shared text, two replicas. The left one is Yjs, the JavaScript
+    library. The right one is Cert-Yjs, a CRDT written in Go after Yjs and
+    verified in Rocq, compiled to WebAssembly. They exchange Yjs's own update
+    format over a simulated network. Type in either box. To see a merge,
+    switch the network off, edit both sides, and switch it back on.
+  </p>
+
+  <div class="network">
+    <label><input type="checkbox" id="connected" checked> Network connected</label>
+    <span id="status">loading the WebAssembly module</span>
+  </div>
+
+  <div class="replicas">
+    <section class="replica">
+      <h2>Yjs</h2>
+      <p class="library">JavaScript, yjs 13.6.33</p>
+      <p class="size" id="yjs-size"></p>
+      <textarea id="yjs-text" spellcheck="false" disabled></textarea>
+      <div class="delta" id="yjs-delta"></div>
+    </section>
+    <section class="replica">
+      <h2>Cert-Yjs</h2>
+      <p class="library">Go, compiled to WebAssembly</p>
+      <p class="size" id="cert-yjs-size"></p>
+      <textarea id="cert-yjs-text" spellcheck="false" disabled></textarea>
+      <div class="delta" id="cert-yjs-delta"></div>
+    </section>
+  </div>
+
+  <div class="notes">
+    <p>
+      Yjs runs here with garbage collection off: Cert-Yjs cannot yet read an
+      update in which Yjs has garbage-collected deleted text, which Yjs does by
+      default. The core of Cert-Yjs is verified; the encoding of updates and
+      the WebAssembly binding are not.
+    </p>
+    <p>Source: <a href="https://github.com/iasakura/cert-yjs">github.com/iasakura/cert-yjs</a></p>
+  </div>
+</main>
+
+<script type="module">
+import * as Y from 'yjs'
+import * as CertYjs from './cert-yjs.mjs'
+import { bindTextarea, connect } from './demo.mjs'
+
+const element = (id) => document.getElementById(id)
+
+await CertYjs.init()
+
+const replicas = [
+  { name: 'yjs', library: Y, doc: new Y.Doc({ gc: false }) },
+  { name: 'cert-yjs', library: CertYjs, doc: new CertYjs.Doc() }
+]
+for (const replica of replicas) {
+  replica.text = replica.doc.getText('note')
+}
+const [yjs, certYjs] = replicas
+
+const render = () => {
+  for (const replica of replicas) {
+    const bytes = replica.library.encodeStateAsUpdate(replica.doc).length
+    element(`${replica.name}-size`).textContent =
+      `${replica.text.length} UTF-16 code units, ${bytes} bytes of state`
+  }
+  const status = element('status')
+  const agree = yjs.text.toString() === certYjs.text.toString()
+  status.className = agree ? '' : 'diverged'
+  status.textContent = agree
+    ? 'The replicas agree.'
+    : network.online ? 'The replicas differ.' : 'Offline: the replicas differ until the network is back.'
+}
+
+const network = connect(replicas, render)
+const connected = element('connected')
+connected.addEventListener('change', () => network.setOnline(connected.checked))
+
+for (const replica of replicas) {
+  const textarea = element(`${replica.name}-text`)
+  bindTextarea(textarea, replica.text, element(`${replica.name}-delta`))
+  textarea.disabled = false
+}
+
+yjs.doc.transact(() => yjs.text.insert(0, 'Hello from Yjs. Edit either side.'), 'seed')
+render()
+</script>
+</body>
+</html>

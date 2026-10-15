@@ -97,8 +97,10 @@ never panics and has no data races.
   that apply insertions in causal order. The Go, like Yjs, applies an insertion
   as soon as the characters it depends on are present, which allows more
   orders, and the theorem has not been extended to them yet.
-- **Compatibility with Yjs** is not tested: no test exchanges updates with the
-  JavaScript Yjs library.
+- **Compatibility with Yjs** is tested on text only, by tests that run the Go
+  compiled to WebAssembly against the JavaScript Yjs library and exchange
+  updates in both directions. Cert-Yjs cannot yet read a Yjs update in which
+  deleted text has been garbage-collected, which Yjs does by default.
 
 ## Acknowledgements
 
