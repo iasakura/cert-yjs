@@ -5,6 +5,7 @@ package yjs
 import (
 	"fmt"
 	"math/rand"
+	"slices"
 	"sync"
 	"testing"
 )
@@ -18,7 +19,7 @@ func deltaEqual(a, b []DeltaOp) bool {
 		return false
 	}
 	for i := range a {
-		if a[i] != b[i] {
+		if a[i].Kind != b[i].Kind || a[i].Length != b[i].Length || !slices.Equal(a[i].Content, b[i].Content) {
 			return false
 		}
 	}
@@ -26,7 +27,7 @@ func deltaEqual(a, b []DeltaOp) bool {
 }
 
 func retain(n uint64) DeltaOp  { return DeltaOp{Kind: DeltaRetain, Length: n} }
-func insert(s string) DeltaOp  { return DeltaOp{Kind: DeltaInsert, Content: s} }
+func insert(s string) DeltaOp  { return DeltaOp{Kind: DeltaInsert, Content: encodeContent(s)} }
 func deleteN(n uint64) DeltaOp { return DeltaOp{Kind: DeltaDelete, Length: n} }
 
 func expectDelta(t *testing.T, got []DeltaOp, want ...DeltaOp) {
@@ -40,9 +41,9 @@ func expectDelta(t *testing.T, got []DeltaOp, want ...DeltaOp) {
 // applied or does not reproduce the text.
 func patch(t *testing.T, app string, delta []DeltaOp, txt *Text) string {
 	t.Helper()
-	next, ok := ApplyDelta(app, delta)
+	next, ok := ApplyDeltaString(app, delta)
 	if !ok {
-		t.Fatalf("ApplyDelta(%q, %v) failed", app, delta)
+		t.Fatalf("ApplyDeltaString(%q, %v) failed", app, delta)
 	}
 	if got := txt.String(); next != got {
 		t.Fatalf("patched app = %q, text = %q (delta %v)", next, got, delta)
@@ -53,7 +54,7 @@ func patch(t *testing.T, app string, delta []DeltaOp, txt *Text) string {
 func TestObserverFirstPollInsertsWholeText(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("text")
-	txt.Insert(0, "hello")
+	txt.InsertString(0, "hello")
 	obs := txt.NewObserver()
 	expectDelta(t, obs.Poll(), insert("hello"))
 	expectDelta(t, obs.Poll())
@@ -64,7 +65,7 @@ func TestObserverEmptyTextHasEmptyDelta(t *testing.T) {
 	txt := doc.GetOrCreateText("text")
 	obs := txt.NewObserver()
 	expectDelta(t, obs.Poll())
-	txt.Insert(0, "a")
+	txt.InsertString(0, "a")
 	txt.Delete(0, 1)
 	// inserted and deleted between polls: never visible to this observer
 	expectDelta(t, obs.Poll())
@@ -73,21 +74,21 @@ func TestObserverEmptyTextHasEmptyDelta(t *testing.T) {
 func TestObserverInsertsAreRetainThenInsert(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("text")
-	txt.Insert(0, "ac")
+	txt.InsertString(0, "ac")
 	obs := txt.NewObserver()
 	obs.Poll()
-	txt.Insert(1, "b")
+	txt.InsertString(1, "b")
 	expectDelta(t, obs.Poll(), retain(1), insert("b"))
-	txt.Insert(3, "d")
+	txt.InsertString(3, "d")
 	expectDelta(t, obs.Poll(), retain(3), insert("d"))
-	txt.Insert(0, "_")
+	txt.InsertString(0, "_")
 	expectDelta(t, obs.Poll(), insert("_"))
 }
 
 func TestObserverDeletesAreRetainThenDelete(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("text")
-	txt.Insert(0, "abcd")
+	txt.InsertString(0, "abcd")
 	obs := txt.NewObserver()
 	obs.Poll()
 	txt.Delete(1, 2)
@@ -103,12 +104,12 @@ func TestObserverMixedEditsPatch(t *testing.T) {
 	txt := doc.GetOrCreateText("text")
 	obs := txt.NewObserver()
 	app := ""
-	txt.Insert(0, "hello world")
+	txt.InsertString(0, "hello world")
 	app = patch(t, app, obs.Poll(), txt)
 	txt.Delete(5, 6)
-	txt.Insert(5, ", there")
+	txt.InsertString(5, ", there")
 	app = patch(t, app, obs.Poll(), txt)
-	txt.Insert(0, ">> ")
+	txt.InsertString(0, ">> ")
 	txt.Delete(3, 5)
 	app = patch(t, app, obs.Poll(), txt)
 	if app != ">> , there" {
@@ -124,7 +125,7 @@ func TestObserverRemoteUpdates(t *testing.T) {
 	obs := txtB.NewObserver()
 	app := ""
 
-	txtA.Insert(0, "hello")
+	txtA.InsertString(0, "hello")
 	if !docB.ApplyEncodedUpdate(WireCodec(), docA.EncodeUpdate()) {
 		t.Fatal("malformed update")
 	}
@@ -132,7 +133,7 @@ func TestObserverRemoteUpdates(t *testing.T) {
 	app = "hello"
 
 	txtA.Delete(1, 3) // "ell"
-	txtB.Insert(5, "!")
+	txtB.InsertString(5, "!")
 	if !docB.ApplyEncodedUpdate(WireCodec(), docA.EncodeUpdate()) {
 		t.Fatal("malformed update")
 	}
@@ -150,13 +151,13 @@ func TestObserverRemoteUpdates(t *testing.T) {
 }
 
 func TestApplyDeltaRejectsOverrun(t *testing.T) {
-	if _, ok := ApplyDelta("ab", []DeltaOp{retain(3)}); ok {
+	if _, ok := ApplyDeltaString("ab", []DeltaOp{retain(3)}); ok {
 		t.Fatal("retain past the end accepted")
 	}
-	if _, ok := ApplyDelta("ab", []DeltaOp{retain(1), deleteN(2)}); ok {
+	if _, ok := ApplyDeltaString("ab", []DeltaOp{retain(1), deleteN(2)}); ok {
 		t.Fatal("delete past the end accepted")
 	}
-	if got, ok := ApplyDelta("ab", nil); !ok || got != "ab" {
+	if got, ok := ApplyDeltaString("ab", nil); !ok || got != "ab" {
 		t.Fatalf("empty delta: %q %v", got, ok)
 	}
 }
@@ -166,7 +167,7 @@ func randomEdit(r *rand.Rand, txt *Text) {
 	n := txt.Len()
 	if n == 0 || r.Intn(3) != 0 {
 		pos := uint64(r.Intn(int(n) + 1))
-		txt.Insert(pos, fmt.Sprintf("%c", 'a'+rune(r.Intn(26))))
+		txt.InsertString(pos, fmt.Sprintf("%c", 'a'+rune(r.Intn(26))))
 		return
 	}
 	pos := uint64(r.Intn(int(n)))
@@ -231,7 +232,7 @@ func TestObserverConcurrentEditor(t *testing.T) {
 	}()
 	app := ""
 	for i := 0; i < 50; i++ {
-		next, ok := ApplyDelta(app, obs.Poll())
+		next, ok := ApplyDeltaString(app, obs.Poll())
 		if !ok {
 			t.Fatalf("patch %d failed", i)
 		}
@@ -261,7 +262,7 @@ type recorder struct {
 
 func (r *recorder) callback(delta []DeltaOp) {
 	r.deltas = append(r.deltas, delta)
-	next, ok := ApplyDelta(r.app, delta)
+	next, ok := ApplyDeltaString(r.app, delta)
 	if !ok {
 		r.failed = true
 		return
@@ -289,7 +290,7 @@ func (r *recorder) check(t *testing.T, doc *Doc, txt *Text, what string) {
 func TestObserveInitialAndBatched(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("text")
-	txt.Insert(0, "hello")
+	txt.InsertString(0, "hello")
 	r := &recorder{}
 	txt.Observe(r.callback)
 	if len(r.deltas) != 1 {
@@ -297,9 +298,9 @@ func TestObserveInitialAndBatched(t *testing.T) {
 	}
 	expectDelta(t, r.deltas[0], insert("hello"))
 	doc.Transact(func(tr *Transaction) {
-		txt.InsertIn(tr, 5, " world")
+		txt.InsertStringIn(tr, 5, " world")
 		txt.DeleteIn(tr, 0, 1)
-		txt.InsertIn(tr, 0, "J")
+		txt.InsertStringIn(tr, 0, "J")
 	})
 	if len(r.deltas) != 2 {
 		t.Fatalf("one transaction reached the callback %d times, want 1", len(r.deltas)-1)
@@ -310,7 +311,7 @@ func TestObserveInitialAndBatched(t *testing.T) {
 	r.check(t, doc, txt, "after the batched transaction")
 	// nothing written: nothing said
 	doc.Transact(func(tr *Transaction) {
-		txt.InsertIn(tr, 100, "x")
+		txt.InsertStringIn(tr, 100, "x")
 		_ = txt.StringIn(tr)
 	})
 	if len(r.deltas) != 2 {
@@ -318,7 +319,7 @@ func TestObserveInitialAndBatched(t *testing.T) {
 	}
 	// a char inserted and deleted in one transaction is invisible to it
 	doc.Transact(func(tr *Transaction) {
-		txt.InsertIn(tr, 0, "zz")
+		txt.InsertStringIn(tr, 0, "zz")
 		txt.DeleteIn(tr, 0, 2)
 	})
 	if len(r.deltas) != 3 {
@@ -342,7 +343,7 @@ func TestObserveInitialAndBatched(t *testing.T) {
 func TestObserveRemoteBatchOnce(t *testing.T) {
 	docA := NewDoc(1)
 	txtA := docA.GetOrCreateText("text")
-	txtA.Insert(0, "hello")
+	txtA.InsertString(0, "hello")
 	txtA.Delete(1, 2) // "hlo"
 	ok, structs, deletes := decodeUpdateItems(docA.EncodeUpdate())
 	if !ok {
@@ -364,7 +365,7 @@ func TestObserveRemoteBatchOnce(t *testing.T) {
 	// (the drain integrates everything: one delta)
 	docC := NewDoc(3)
 	txtC := docC.GetOrCreateText("text")
-	txtC.Insert(0, "abcd")
+	txtC.InsertString(0, "abcd")
 	ok, structsC, _ := decodeUpdateItems(docC.EncodeUpdate())
 	if !ok || len(structsC) < 2 {
 		t.Fatalf("the encoded state did not decode into several structs: %d", len(structsC))
@@ -394,13 +395,13 @@ func TestObserveOtherTextSilent(t *testing.T) {
 	ra, rb := &recorder{}, &recorder{}
 	a.Observe(ra.callback)
 	b.Observe(rb.callback)
-	a.Insert(0, "only a")
+	a.InsertString(0, "only a")
 	if len(ra.deltas) != 2 || len(rb.deltas) != 1 {
 		t.Fatalf("callbacks: a %d, b %d", len(ra.deltas), len(rb.deltas))
 	}
 	doc.Transact(func(tr *Transaction) {
 		a.DeleteIn(tr, 0, 1)
-		b.InsertIn(tr, 0, "b too")
+		b.InsertStringIn(tr, 0, "b too")
 	})
 	if len(ra.deltas) != 3 || len(rb.deltas) != 2 {
 		t.Fatalf("callbacks after both: a %d, b %d", len(ra.deltas), len(rb.deltas))
@@ -416,7 +417,7 @@ func TestObserveOtherTextSilent(t *testing.T) {
 	aR.Observe(raR.callback)
 	bR.Observe(rbR.callback)
 	docA := NewDoc(3)
-	docA.GetOrCreateText("a").Insert(0, "remote a")
+	docA.GetOrCreateText("a").InsertString(0, "remote a")
 	ok, structs, deletes := decodeUpdateItems(docA.EncodeUpdate())
 	if !ok {
 		t.Fatal("the encoded state did not decode")
@@ -447,12 +448,12 @@ func TestObserveMirrorRandom(t *testing.T) {
 			txt.Delete(at, count)
 		case rng.Intn(5) == 0:
 			doc.Transact(func(tr *Transaction) {
-				txt.InsertIn(tr, 0, "xy")
+				txt.InsertStringIn(tr, 0, "xy")
 				txt.DeleteIn(tr, 1, 1)
 			})
 		default:
 			at := uint64(rng.Intn(int(n) + 1))
-			txt.Insert(at, string(rune('a'+rng.Intn(26))))
+			txt.InsertString(at, string(rune('a'+rng.Intn(26))))
 		}
 		if step == 200 {
 			late = &recorder{}
@@ -472,7 +473,7 @@ func TestObserveMirrorRandom(t *testing.T) {
 func TestObserveConcurrentEditors(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("text")
-	txt.Insert(0, "seed")
+	txt.InsertString(0, "seed")
 	var wg sync.WaitGroup
 	for g := 0; g < 3; g++ {
 		wg.Add(1)
@@ -483,7 +484,7 @@ func TestObserveConcurrentEditors(t *testing.T) {
 				doc.Transact(func(tr *Transaction) {
 					s := txt.StringIn(tr)
 					at := uint64(rng.Intn(len(s) + 1))
-					txt.InsertIn(tr, at, "z")
+					txt.InsertStringIn(tr, at, "z")
 					if len(s) > 4 && rng.Intn(2) == 0 {
 						txt.DeleteIn(tr, 0, 2)
 					}
@@ -508,8 +509,8 @@ func TestObserverNonASCII(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("text")
 	obs := txt.NewObserver()
-	txt.Insert(0, "é")
+	txt.InsertString(0, "é")
 	app := patch(t, "", obs.Poll(), txt)
-	txt.Insert(1, "ü")
+	txt.InsertString(1, "ü")
 	patch(t, app, obs.Poll(), txt)
 }

@@ -5,9 +5,15 @@ package observeapp
 import (
 	"math/rand"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/iasakura/cert-yjs/yjs"
 )
+
+// mirrorText is the mirror's view as a Go string, for the comparisons below.
+func mirrorText(m *Mirror) string {
+	return string(utf16.Decode(m.Text()))
+}
 
 // TestMirrorTracksText: after every transaction the mirror spells the text,
 // through inserts and deletes of every shape (the theorem of
@@ -17,29 +23,29 @@ import (
 func TestMirrorTracksText(t *testing.T) {
 	doc := yjs.NewDoc(1)
 	txt := doc.GetOrCreateText("text")
-	txt.Insert(0, "before the mirror")
+	txt.InsertString(0, "before the mirror")
 	mirror := NewMirror(doc, txt)
 
-	if !mirror.Check() || mirror.Text() != txt.String() {
-		t.Fatalf("initial: mirror %q, text %q", mirror.Text(), txt.String())
+	if !mirror.Check() || mirrorText(mirror) != txt.String() {
+		t.Fatalf("initial: mirror %q, text %q", mirrorText(mirror), txt.String())
 	}
-	txt.Insert(0, "hello world ")
-	if !mirror.Check() || mirror.Text() != txt.String() {
-		t.Fatalf("after insert: mirror %q, text %q", mirror.Text(), txt.String())
+	txt.InsertString(0, "hello world ")
+	if !mirror.Check() || mirrorText(mirror) != txt.String() {
+		t.Fatalf("after insert: mirror %q, text %q", mirrorText(mirror), txt.String())
 	}
 	txt.Delete(5, 6)
-	txt.Insert(5, ", there")
-	if !mirror.Check() || mirror.Text() != txt.String() {
-		t.Fatalf("after edits: mirror %q, text %q", mirror.Text(), txt.String())
+	txt.InsertString(5, ", there")
+	if !mirror.Check() || mirrorText(mirror) != txt.String() {
+		t.Fatalf("after edits: mirror %q, text %q", mirrorText(mirror), txt.String())
 	}
 	// one transaction of several writes: one delta
 	doc.Transact(func(tr *yjs.Transaction) {
 		txt.DeleteIn(tr, 0, 3)
-		txt.InsertIn(tr, 0, "HEL")
-		txt.InsertIn(tr, uint64(len(txt.StringIn(tr))), "!")
+		txt.InsertStringIn(tr, 0, "HEL")
+		txt.InsertStringIn(tr, uint64(len(txt.StringIn(tr))), "!")
 	})
-	if !mirror.Check() || mirror.Text() != txt.String() {
-		t.Fatalf("after a transaction: mirror %q, text %q", mirror.Text(), txt.String())
+	if !mirror.Check() || mirrorText(mirror) != txt.String() {
+		t.Fatalf("after a transaction: mirror %q, text %q", mirrorText(mirror), txt.String())
 	}
 
 	rng := rand.New(rand.NewSource(198))
@@ -51,10 +57,10 @@ func TestMirrorTracksText(t *testing.T) {
 			txt.Delete(at, count)
 		} else {
 			at := uint64(rng.Intn(int(n) + 1))
-			txt.Insert(at, string(rune('a'+rng.Intn(26))))
+			txt.InsertString(at, string(rune('a'+rng.Intn(26))))
 		}
-		if !mirror.Check() || mirror.Text() != txt.String() {
-			t.Fatalf("step %d: mirror %q, text %q", step, mirror.Text(), txt.String())
+		if !mirror.Check() || mirrorText(mirror) != txt.String() {
+			t.Fatalf("step %d: mirror %q, text %q", step, mirrorText(mirror), txt.String())
 		}
 	}
 }
@@ -64,9 +70,9 @@ func TestMirrorTracksNonASCII(t *testing.T) {
 	doc := yjs.NewDoc(1)
 	txt := doc.GetOrCreateText("text")
 	mirror := NewMirror(doc, txt)
-	txt.Insert(0, "héllo")
+	txt.InsertString(0, "héllo")
 	txt.Delete(1, 1)
-	if !mirror.Check() || mirror.Text() != txt.String() {
-		t.Fatalf("mirror %q, text %q", mirror.Text(), txt.String())
+	if !mirror.Check() || mirrorText(mirror) != txt.String() {
+		t.Fatalf("mirror %q, text %q", mirrorText(mirror), txt.String())
 	}
 }

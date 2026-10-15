@@ -25,10 +25,13 @@
 //	refs.go      node / GC / Skip tombstones (y-octo: codec/refs.rs)     [not translated]
 //	delete.go    delete-set range merge     (y-octo: codec/delete_set.rs) [not translated]
 //	codec.go     v1 update encode/decode    (y-octo: codec/{update,...}) [not translated]
+//	strings.go   Go-string view of the text API (String, InsertString, ...) [not translated]
 //
-// refs.go, delete.go and codec.go carry the `//go:build !goose` constraint: the
-// node enum and the delete-set range merge are used only by the byte-level v1
-// codec, which is the runtime interop layer. They are excluded from goose
-// translation, and the rest of the package is the verified code. Normal
-// `go build` / `go test` compile every file.
+// refs.go, delete.go, codec.go and strings.go carry the `//go:build !goose`
+// constraint: the node enum and the delete-set range merge are used only by
+// the byte-level v1 codec, which is the runtime interop layer, and the Go
+// string wrappers convert between UTF-8 and the UTF-16 code units the
+// verified text API works on. They are excluded from goose translation, and
+// the rest of the package is the verified code. Normal `go build` /
+// `go test` compile every file.
 package yjs

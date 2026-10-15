@@ -52,7 +52,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (* The ghost op-history types ([history] / [network_model]) at the
    document content type; type names are Go strings (issue #49). *)
@@ -110,7 +110,7 @@ Context {acc_inG : inG Σ accUR}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 
 (* The [∷] (named) wrapper blocks [Timeless] TC resolution; unfold it (as

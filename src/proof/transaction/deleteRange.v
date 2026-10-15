@@ -44,7 +44,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 Notation P := go_string.
 
@@ -59,7 +59,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -200,14 +200,14 @@ Proof using Type*.
   (* the parent pin names [pw]; [wp_if_destruct]'s bare [subst] would take it *)
   clear Haccpar.
   wp_auto.
-  wp_apply (wp_item__Len rl (DfracOwn 1) ivR with "[$Haccval]").
-  iIntros "[Haccval _]".
+  wp_apply (wp_item__Len rl (DfracOwn 1) ivR with "[$Haccval $Hacccontent]").
+  iIntros "Haccval".
   iDestruct ("Haccback" with "Haccval") as "Hruns".
   (* kept at the [uint.Z] level on purpose: [wp_if_destruct]'s bare [subst]
      would consume a [clock' = cur] equation and take [cur] with it *)
   have HivRclk : uint.Z ivR.(yjs.item.id').(yjs.id.clock') = uint.Z cur.
   { move: Haccid. rewrite HrRid /toYjsId /=. move=> [_ Hk]. word. }
-  have HivRlen : length (ivR.(yjs.item.content').(yjs.content.content')) = length (run_items rR) := Haccle.
+  have HivRlen : length (items_string (run_items rR)) = length (run_items rR) := Haccle.
   iDestruct (own_store_state_run_wf with "Hruns") as %Hwf1.
   have HrRwf : run_wf (run_items rR) := Hwf1 rR HrRmem.
   have Hcurlt : (uint.Z cur < uint.Z (w64_word_instance.(word.add) dclock dlen))%Z := l.
@@ -215,7 +215,7 @@ Proof using Type*.
   have HrRfitsZ : (uint.Z cur + Z.of_nat (length (run_items rR)) < 2^64)%Z.
   { move: HrRfits. rewrite /run_fits HrRclkZ //. }
   have Hnext : uint.Z (w64_word_instance.(word.add) ivR.(yjs.item.id').(yjs.id.clock')
-                        (W64 (length ivR.(yjs.item.content').(yjs.content.content'))))
+                        (W64 (length (items_string (run_items rR)))))
              = (uint.Z cur + Z.of_nat (length (run_items rR)))%Z.
   { rewrite HivRlen. move: HivRclk HrRfitsZ. word. }
   wp_auto.
@@ -325,7 +325,7 @@ Proof using Type*.
     wp_auto. wp_for_post.
     iFrame "HΦ s client end tr".
     iExists (w64_word_instance.(word.add) ivR.(yjs.item.id').(yjs.id.clock')
-               (W64 (length ivR.(yjs.item.content').(yjs.content.content')))), cov, locs1, p3,
+               (W64 (length (items_string (run_items rR))))), cov, locs1, p3,
       (if run_deleted rR then tombstoned_i else tombstoned_i ∪ char_ids (run_items rR)),
       (if run_deleted rR then changed_i else changed_i ∪ {[pw]}).
     iFrame "Hcur Hcov Hruns Hchanges".
@@ -334,7 +334,7 @@ Proof using Type*.
       exact (pool_after_delete_flip p1 pw tmR kR rR HpR HrR). }
     have Hdk3 : dead_kept p_i p3 := proj1 (proj2 (proj2 (proj2 Hstep3))).
     have Hcurstep : uint.nat (w64_word_instance.(word.add) ivR.(yjs.item.id').(yjs.id.clock')
-                       (W64 (length ivR.(yjs.item.content').(yjs.content.content'))))
+                       (W64 (length (items_string (run_items rR)))))
                   = (uint.nat cur + length (run_items rR))%nat.
     { move: Hnext. word. }
     iPureIntro. split_and!; [move: Hnext Hcurb; word | | exact (pool_after_delete_trans _ _ _ Hfacts Hstep3)

@@ -2,7 +2,10 @@
 
 package yjs
 
-import "sort"
+import (
+	"sort"
+	"unicode/utf16"
+)
 
 // v1 update codec: a port of y-octo's src/doc/codec for the Cert-Yjs subset.
 //
@@ -15,10 +18,39 @@ import "sort"
 //   - delete set                   <- codec/delete_set.rs
 //
 // Subset assumptions: the only content type is String (tag 4); parents are
-// always root types referenced by name (never Parent::id, never parent_sub);
-// content is single-byte (ASCII). Multi-char runs in an incoming update are
-// split into 1-char items on decode (chained left origins, shared right
-// origin), then integrated in dependency order.
+// always root types referenced by name (never Parent::id, never parent_sub).
+// Multi-unit runs in an incoming update are split into 1-unit items on decode
+// (chained left origins, shared right origin), then integrated in dependency
+// order.
+//
+// Text encoding. The document holds UTF-16 code units (content.go) and the
+// wire holds UTF-8 strings (lib0 writeVarString), so this file is where the
+// two meet: decodeWireString turns a wire string into code units and
+// encodeWireString turns a run's code units back into a string. Because local
+// inserts create one item per code unit, a surrogate pair is two items; the
+// encoder joins adjacent items of one client into runs (joinable, below)
+// before writing a string, so that the pair's halves leave as one struct and
+// one code point.
+//
+// Lone surrogates are not supported (issue #233). UTF-8 cannot carry one,
+// and one reaches the encoder when a caller inserts it, or when an edit
+// separates the halves of a pair (an insert between them, or the deletion of
+// one half) so that they are no longer joinable. encodeWireString writes it
+// the way utf16.Decode does, as U+FFFD, one code unit for one so that clocks
+// stay aligned; a replica that received the pair before the edit then reads
+// different text from one that receives it after. The three references
+// split a pair differently: Yjs v14.0.0-rc.18 replaces both halves by U+FFFD
+// in memory the moment a split lands between them (ContentString.splice,
+// src/structs/Item.js:1326-1341); yrs 0.27.2 (ItemContent::splice,
+// src/block.rs:2006-2033, over split_str, src/block.rs:1669) and y-octo
+// 0.1.0 (Content::split, src/doc/codec/content.rs:218-224, over
+// utf16_offset_to_utf8, src/doc/common/algorithm.rs:28-42) map the UTF-16
+// offset to a byte offset one whole character at a time, so a split inside a
+// pair moves to the end of the pair and the left half keeps the whole pair
+// and one code unit more than its clock range (yrs's U+FFFD replacement is
+// commented out, "TODO: do we need that in Rust?"). The Go follows none of
+// them and keeps the exact code units in the document; the issue records the
+// options.
 //
 // Excluded from goose translation (`//go:build !goose`): runtime interop, not
 // part of the verified core.
@@ -53,6 +85,18 @@ func (e *encoder) writeVarUint(n uint64) {
 func (e *encoder) writeVarString(s string) {
 	e.writeVarUint(uint64(len(s)))
 	e.buf = append(e.buf, s...)
+}
+
+// encodeWireString is the wire string of a run's code units: the UTF-8 of
+// the text they spell, a lone surrogate replaced by U+FFFD (utf16.Decode),
+// which keeps one code unit per clock on the wire; see the file comment.
+func encodeWireString(units []uint16) string {
+	return string(utf16.Decode(units))
+}
+
+// decodeWireString is the code units of a wire string, one clock each.
+func decodeWireString(s string) []uint16 {
+	return utf16.Encode([]rune(s))
 }
 
 func (e *encoder) writeItemID(id id) {
@@ -143,12 +187,16 @@ func (doc *Doc) EncodeUpdate() []byte {
 	clients := sortedClientsDesc(byClient)
 	e.writeVarUint(uint64(len(clients)))
 	for _, client := range clients {
-		runItems := byClient[client]
-		e.writeVarUint(uint64(len(runItems)))
+		// Adjacent items of this client that Yjs would hold as one item are
+		// written as one struct (joinable): a surrogate pair typed locally is
+		// two one-unit items, and only joined do its halves encode as one code
+		// point (see the file comment).
+		runs := joinRuns(byClient[client])
+		e.writeVarUint(uint64(len(runs)))
 		e.writeVarUint(client)
-		e.writeVarUint(runItems[0].id.clock)
-		for _, it := range runItems {
-			encodeItem(e, *it, name)
+		e.writeVarUint(runs[0][0].id.clock)
+		for _, run := range runs {
+			encodeRun(e, run, name)
 		}
 	}
 
@@ -170,7 +218,7 @@ func (doc *Doc) EncodeUpdate() []byte {
 func encodeNode(e *encoder, node node, name map[id]string) {
 	switch n := node.(type) {
 	case itemNode:
-		encodeItem(e, n.item, name)
+		encodeRun(e, []*item{&n.item}, name)
 	case gcNode:
 		e.writeU8(nodeTagGC)
 		e.writeVarUint(n.nodeLen.len)
@@ -180,30 +228,71 @@ func encodeNode(e *encoder, node node, name map[id]string) {
 	}
 }
 
-func encodeItem(e *encoder, item item, name map[id]string) {
+// joinable reports whether next continues the run of prev as one item, the
+// conditions under which the references merge two items into one (Yjs
+// v14.0.0-rc.18 Item.mergeWith, src/structs/Item.js:321-334; yrs 0.27.2
+// ItemPtr::try_squash, src/block.rs:688-698; y-octo 0.1.0 Node::merge,
+// src/doc/codec/refs.rs:243-254): same client, consecutive clocks, next's
+// left origin is prev's last id, the same right origin, adjacent in the
+// list, and the same deleted flag. Yjs and yrs also require no redo and
+// (yrs) no link, which this subset has no notion of. The two halves of a
+// split run are always joinable (splitItem, store.go), and so are the items
+// of one local insert (Text.InsertIn).
+func joinable(prev *item, next *item) bool {
+	return prev.id.clientId == next.id.clientId &&
+		prev.id.clock+prev.Len() == next.id.clock &&
+		next.originLeftId != nil && *next.originLeftId == prev.LastId() &&
+		idOptEqual(prev.originRightId, next.originRightId) &&
+		prev.right == next &&
+		prev.Deleted() == next.Deleted()
+}
+
+// joinRuns groups a client's clock-sorted items into maximal joinable runs,
+// each written as one struct.
+func joinRuns(items []*item) [][]*item {
+	var runs [][]*item
+	for _, it := range items {
+		n := len(runs)
+		if n > 0 && joinable(runs[n-1][len(runs[n-1])-1], it) {
+			runs[n-1] = append(runs[n-1], it)
+			continue
+		}
+		runs = append(runs, []*item{it})
+	}
+	return runs
+}
+
+// encodeRun writes one struct for a joinable run of items: the head's info
+// byte, origins and parent, then the string the run's code units spell.
+func encodeRun(e *encoder, run []*item, name map[id]string) {
+	head := run[0]
 	info := byte(contentTypeString)
-	if item.originLeftId != nil {
+	if head.originLeftId != nil {
 		info |= infoHasLeftID
 	}
-	if item.originRightId != nil {
+	if head.originRightId != nil {
 		info |= infoHasRightID
 	}
 	e.writeU8(info)
 
-	if item.originLeftId != nil {
-		e.writeItemID(*item.originLeftId)
+	if head.originLeftId != nil {
+		e.writeItemID(*head.originLeftId)
 	}
-	if item.originRightId != nil {
-		e.writeItemID(*item.originRightId)
+	if head.originRightId != nil {
+		e.writeItemID(*head.originRightId)
 	}
 
 	// a head item (no sibling origins) carries its parent: the root type name.
 	if info&infoHasSibling == 0 {
 		e.writeVarUint(1) // 1 => Parent::String
-		e.writeVarString(name[item.id])
+		e.writeVarString(name[head.id])
 	}
 
-	e.writeVarString(item.content.content)
+	var units []uint16
+	for _, it := range run {
+		units = append(units, it.content.content...)
+	}
+	e.writeVarString(encodeWireString(units))
 }
 
 func encodeOrderRange(e *encoder, r orderRange) {
@@ -241,9 +330,9 @@ type decodedStruct struct {
 	id            id
 	originLeftId  *id
 	originRightId *id
-	parentName    string // set only for head structs (no origins)
-	content       string
-	isItem        bool // false => GC / Skip (no content, not integrated)
+	parentName    string   // set only for head structs (no origins)
+	content       []uint16 // the wire string's code units, one clock each
+	isItem        bool     // false => GC / Skip (no content, not integrated)
 	length        uint64
 }
 
@@ -313,7 +402,7 @@ func readStructSection(d *decoder) []decodedStruct {
 }
 
 // WireCodec is the deployment's Codec (the type is in doc.go): the v1 decode
-// of an update's structs section, split into 1-char items exactly as
+// of an update's structs section, split into 1-unit items exactly as
 // ApplyUpdate splits them, and of its delete set, as the spans that
 // Doc.ApplySyncUpdate applies after the structs. Malformed input
 // reports ok=false (the wire protocol makes that branch dead for the
@@ -375,7 +464,7 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 		d.readVarString() // parent_sub: unused in this subset
 	}
 
-	content := d.readVarString()
+	content := decodeWireString(d.readVarString())
 	return decodedStruct{
 		id:            newId(client, clock),
 		originLeftId:  originLeftId,
@@ -395,8 +484,9 @@ func (doc *Doc) integrateStructs(structs []decodedStruct) {
 	doc.applyUpdate(splitStructs(structs))
 }
 
-// splitStructs splits each item struct into 1-char updateItems (chained left
-// origins, shared right origin).
+// splitStructs splits each item struct into 1-unit updateItems (chained left
+// origins, shared right origin), each holding a one-unit subslice of the
+// struct's code units (never written afterwards, content.go).
 func splitStructs(structs []decodedStruct) []updateItem {
 	var items []updateItem
 	for _, ds := range structs {

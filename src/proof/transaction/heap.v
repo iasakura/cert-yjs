@@ -5,7 +5,8 @@
     asked to do.
 
     Definitions
-    - [node_span v]: the span a node contributes to a record (head id, length).
+    - [node_span v units]: the span a node contributes to a record (its head
+      id, and the length of its content [units]).
     - [own_id_spans sl dq ids]: the [[]idSpan] at [sl] denotes the char-id
       set [ids] (the union of its spans' ids), every span fitting [w64]
       (what [containsId]'s range test needs): a record's slice as
@@ -75,7 +76,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 Notation P := go_string.
 
@@ -93,7 +94,7 @@ Local Notation snapshot := (list (YjsItem A * bool)).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -106,11 +107,11 @@ Proof. rewrite own_slice_cap_unseal /own_slice_cap_def. apply _. Qed.
 
 (* ===== definitions ======================================================== *)
 
-(** [node_span v]: the span a node contributes to the record, its head id
-    and its length as one [idSpan] (what [recordInsert] / [recordDelete]
-    append). *)
-Definition node_span (v : yjs.item.t) : yjs.idSpan.t :=
-  yjs.idSpan.mk v.(yjs.item.id') (W64 (length v.(yjs.item.content').(yjs.content.content'))).
+(** [node_span v units]: the span a node contributes to the record, its head
+    id and the length of its content [units] (what [item.Len] reports) as one
+    [idSpan] (what [recordInsert] / [recordDelete] append). *)
+Definition node_span (v : yjs.item.t) (units : A) : yjs.idSpan.t :=
+  yjs.idSpan.mk v.(yjs.item.id') (W64 (length units)).
 
 Definition own_id_spans (sl : slice.t) (dq : dfrac) (ids : gset YjsId) : iProp Σ :=
   ∃ (vs : list yjs.idSpan.t),
@@ -226,12 +227,12 @@ Definition closure_runs_transaction (s_loc : loc) (γs : store_names) (γh : his
 (** What a node's span records is its run: a node whose id, content length
     and run agree ([own_item_node]'s pins) contributes a span that fits a
     word and denotes exactly the run's char ids. *)
-Lemma node_span_char_ids (v : yjs.item.t) (r : ItemRun) :
+Lemma node_span_char_ids (v : yjs.item.t) (units : A) (r : ItemRun) :
   run_wf (run_items r) ->
   toYjsId v.(yjs.item.id') = item_id (run_head_item r) ->
-  length v.(yjs.item.content').(yjs.content.content') = length (run_items r) ->
+  length units = length (run_items r) ->
   run_fits r ->
-  span_no_overflow (node_span v) ∧ span_ids (node_span v) = char_ids (run_items r).
+  span_no_overflow (node_span v units) ∧ span_ids (node_span v units) = char_ids (run_items r).
 Proof.
   move=> Hwf Hid Hlen Hfits.
   have Hclk : uint.nat v.(yjs.item.id').(yjs.id.clock') = run_clock r.
@@ -243,7 +244,7 @@ Proof.
     move: Hfits. rewrite /run_fits -Hclk. word. }
   have Hstep : run_step (run_items r) := run_wf_run_step _ Hwf.
   have Hhead : item_id (run_head_item r) = toYjsId v.(yjs.item.id') by rewrite Hid.
-  have Hlenw : length (run_items r) = uint.nat (W64 (length v.(yjs.item.content').(yjs.content.content'))).
+  have Hlenw : length (run_items r) = uint.nat (W64 (length units)).
   { rewrite Hlen. word. }
   have Hcons : run_items r = run_head_item r :: List.tl (run_items r).
   { rewrite /run_head_item. destruct (run_items r); [by destruct Hwf | reflexivity]. }

@@ -6,7 +6,8 @@
     Definitions
     - [run_wf r]: [r] is a run, its items chained by left origin and sharing
       one right origin.
-    - [explode s]: a content string as the list of its per-char contents.
+    - [explode s]: a node's content, a list of UTF-16 code units, as the list
+      of its per-char contents (one code unit each).
 
     Laws
     - [run_wf] holds of a singleton, and of any chain minted from a head
@@ -42,9 +43,9 @@
       (append-homomorphic, [items_string_app], and recovering an exploded
       string, [items_string_explode]); [input_of_run], the wire item a run
       denotes, and [run_per_char]: each of the run's items carries exactly
-      one byte of that wire content ([explode] is append-homomorphic,
+      one code unit of that wire content ([explode] is append-homomorphic,
       [explode_app], [run_per_char_intro] introduces the per-char fact
-      from an explode coupling, [run_per_char_content] reads one byte off
+      from an explode coupling, [run_per_char_content] reads one code unit off
       each item, and [run_per_char] survives the split surgery,
       [run_per_char_split_left] / [run_per_char_split_right]);
       the split
@@ -73,7 +74,7 @@ Section item_model.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (* ===== definitions ======================================================== *)
 
@@ -96,10 +97,11 @@ Definition run_wf (r : list (YjsItem A)) : Prop :=
     origin y = itemPtr x ∧
     rightOrigin y = rightOrigin x.
 
-(** Per-char explosion of a heap content string: byte k becomes the content of
-    the run's k-th model item. (For future non-string content types, this is
-    the per-content-type element decomposition.) *)
-Definition explode (s : go_string) : list A := (λ b, [b]) <$> s.
+(** Per-char explosion of a node's content: code unit k becomes the content of
+    the run's k-th model item, so a model item holds exactly one UTF-16 code
+    unit, one clock. (For future non-string content types, this is the
+    per-content-type element decomposition.) *)
+Definition explode (s : A) : list A := (λ b, [b]) <$> s.
 
 (* ===== lemmas ============================================================= *)
 
@@ -176,10 +178,10 @@ Proof.
     rewrite Hro (IH z Hz) //.
 Qed.
 
-Lemma explode_length (s : go_string) : length (explode s) = length s.
+Lemma explode_length (s : A) : length (explode s) = length s.
 Proof. by rewrite /explode length_fmap. Qed.
 
-Lemma explode_singleton (s : go_string) :
+Lemma explode_singleton (s : A) :
   length s = 1%nat → explode s = [s].
 Proof.
   destruct s as [|b s']; first done.
@@ -247,7 +249,7 @@ Section item_run.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (* ===== definitions ======================================================== *)
 
@@ -440,8 +442,8 @@ Definition input_of_run (r : ItemRun) : IntegrateInput (A := A) :=
     (items_string (run_items r))
     (item_id (run_head_item r)).
 
-(** [run_per_char r]: each item of the run carries exactly one byte of the
-    string the run spells: the per-char granularity of the model
+(** [run_per_char r]: each item of the run carries exactly one code unit of
+    the string the run spells: the per-char granularity of the model
     (issue #28). The wire view ([input_of_run]) alone cannot recover how
     its content splits over the run's items, so the DLL ([own_dll])
     states it per run, next to the node's content pin. *)
@@ -463,10 +465,10 @@ Proof.
     IH app_assoc //.
 Qed.
 
-(** A run whose per-char contents explode a heap content string spells exactly
-    that string (the [own_item_node] content pin, consumed by the [yType.Text]
+(** A run whose per-char contents explode a node's content spells exactly
+    that content (the [own_item_node] content pin, consumed by the [yType.Text]
     walk and the node borrows). *)
-Lemma items_string_explode (r : list (YjsItem A)) (s : go_string) :
+Lemma items_string_explode (r : list (YjsItem A)) (s : A) :
   content <$> r = explode s -> items_string r = s.
 Proof.
   revert s. induction r as [|x r IH] => s Hc.
@@ -476,7 +478,7 @@ Proof.
     rewrite /items_string /= -/(items_string r) (IH s' Hr) Hx //.
 Qed.
 
-Lemma explode_app (s1 s2 : go_string) :
+Lemma explode_app (s1 s2 : A) :
   explode (s1 ++ s2) = explode s1 ++ explode s2.
 Proof. rewrite /explode fmap_app //. Qed.
 
@@ -544,7 +546,7 @@ Proof.
   - exact Hcl.
 Qed.
 
-(** Peeling one item off a per-char run: its content is one byte, and the
+(** Peeling one item off a per-char run: its content is one code unit, and the
     tail is per-char again. The induction step of the split-surgery
     preservation below. *)
 Lemma per_char_cons_inv (x : YjsItem A) (l : list (YjsItem A)) :
@@ -577,7 +579,7 @@ Proof.
   by rewrite (items_string_explode _ _ H).
 Qed.
 
-(** Every item of a per-char run carries one byte. *)
+(** Every item of a per-char run carries one code unit. *)
 Lemma run_per_char_content (l : list (YjsItem A)) (x : YjsItem A) :
   content <$> l = explode (items_string l) -> x ∈ l -> ∃ b, content x = [b].
 Proof.

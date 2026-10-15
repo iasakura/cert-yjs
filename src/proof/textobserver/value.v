@@ -27,7 +27,7 @@ Section text_observer_value.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (* ===== definitions ======================================================== *)
 

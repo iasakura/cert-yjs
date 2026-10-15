@@ -20,6 +20,11 @@ package yjs
 // (transaction.go) calls it at the end of every transaction that changed the
 // text with textDelta (below), Yjs's YTextEvent.delta proper.
 //
+// Text is UTF-16 code units throughout (content.go): a retain or delete count
+// is a number of code units and an insert carries code units, as Yjs's delta
+// does with JavaScript strings. The slices a delta carries are never written
+// after they are made; the proofs hold them read-only.
+//
 // Verified model: src/proof/textobserver (text_delta, apply_delta,
 // snapshot_grows_to and the patch law apply_text_delta).
 
@@ -27,21 +32,21 @@ package yjs
 type DeltaKind = uint8
 
 const (
-	// DeltaRetain keeps the next Length chars.
+	// DeltaRetain keeps the next Length code units.
 	DeltaRetain DeltaKind = 0
 	// DeltaInsert emits Content.
 	DeltaInsert DeltaKind = 1
-	// DeltaDelete drops the next Length chars.
+	// DeltaDelete drops the next Length code units.
 	DeltaDelete DeltaKind = 2
 )
 
 // DeltaOp is one entry of a text delta (Yjs YTextEvent.delta, Quill's delta).
 // Kind says which of Length (retain / delete) and Content (insert) is
-// meaningful.
+// meaningful. Content is read-only once the entry exists.
 type DeltaOp struct {
 	Kind    DeltaKind
 	Length  uint64
-	Content string
+	Content []uint16
 }
 
 // TextObserver observes one Text incrementally. Its token is what y-octo's
@@ -67,8 +72,8 @@ func (t *Text) NewObserver() *TextObserver {
 	}
 }
 
-// deletedContains reports whether the char (client, clock) was tombstoned at
-// the last Poll.
+// deletedContains reports whether the code unit (client, clock) was
+// tombstoned at the last Poll.
 func (o *TextObserver) deletedContains(client Client, clock Clock) bool {
 	spans := o.deleted[client]
 	for i := 0; i < len(spans); i++ {
@@ -81,13 +86,18 @@ func (o *TextObserver) deletedContains(client Client, clock Clock) bool {
 }
 
 // deltaSnoc appends op to delta, joining it with the last entry when both are
-// of one kind (the merged normal form Yjs produces).
+// of one kind (the merged normal form Yjs produces). Two inserts join into a
+// fresh slice: the entries' own slices are read-only (they may be a node's
+// content, shared with the document), so neither is appended to in place.
 func deltaSnoc(delta []DeltaOp, op DeltaOp) []DeltaOp {
 	n := len(delta)
 	if n > 0 && delta[n-1].Kind == op.Kind {
 		last := delta[n-1]
 		if op.Kind == DeltaInsert {
-			last.Content = last.Content + op.Content
+			var joined []uint16
+			joined = append(joined, last.Content...)
+			joined = append(joined, op.Content...)
+			last.Content = joined
 		} else {
 			last.Length = last.Length + op.Length
 		}
@@ -100,15 +110,15 @@ func deltaSnoc(delta []DeltaOp, op DeltaOp) []DeltaOp {
 // Poll returns the delta from the snapshot observed at the previous Poll (the
 // empty snapshot for a fresh observer) to the text's current one, and makes
 // the current snapshot the observed one. One walk of the item list under the
-// store lock, classifying each char as Yjs's YTextEvent.delta does: a char
-// whose clock is below the observed state vector was known; known and
+// store lock, classifying each code unit as Yjs's YTextEvent.delta does: a
+// unit whose clock is below the observed state vector was known; known and
 // tombstoned then contributes nothing, known and tombstoned now is a delete,
-// known and live is a retain; a new char is an insert when live and nothing
+// known and live is a retain; a new unit is an insert when live and nothing
 // when already tombstoned. Adjacent entries of one kind merge and a trailing
-// retain is dropped. The walk goes char by char (a run of n chars is n
+// retain is dropped. The walk goes unit by unit (a run of n units is n
 // consecutive clocks), the granularity of the verified model; a run never
 // straddles the observed state vector in practice (a client's clocks arrive
-// contiguously and runs never merge), but the per-char walk needs no such
+// contiguously and runs never merge), but the per-unit walk needs no such
 // assumption.
 //
 // Takes the write lock, not the read lock: the proof mints the observed
@@ -135,12 +145,12 @@ func (o *TextObserver) Poll() []DeltaOp {
 		if tombstoned {
 			deleted[client] = append(deleted[client], span[uint64]{start: start, end: end})
 		}
-		// the classification against the previous token, char by char
+		// the classification against the previous token, unit by unit
 		observedEnd := o.stateVector[client]
 		for i := uint64(0); i < length; i++ {
 			clock := start + i
 			if clock < observedEnd {
-				// a known char: invisible before and after when it was
+				// a known unit: invisible before and after when it was
 				// already tombstoned (tombstones never clear)
 				if !o.deletedContains(client, clock) {
 					if tombstoned {
@@ -150,7 +160,7 @@ func (o *TextObserver) Poll() []DeltaOp {
 					}
 				}
 			} else if !tombstoned {
-				delta = deltaSnoc(delta, DeltaOp{Kind: DeltaInsert, Content: byteString(cur.content.content[i])})
+				delta = deltaSnoc(delta, DeltaOp{Kind: DeltaInsert, Content: []uint16{cur.content.content[i]}})
 			}
 		}
 		cur = cur.right
@@ -169,15 +179,15 @@ func (o *TextObserver) Poll() []DeltaOp {
 // textDelta is Yjs's YTextEvent delta for the type ty and one transaction's
 // record (YEvent.getDelta, src/utils/YEvent.js:95-123; yrs
 // TextEvent::get_delta, src/types/text.rs:1315-1340): one walk of ty's runs,
-// char by char. A char this transaction integrated (insertSet) is an insert
-// when live and nothing when the same transaction tombstoned it; a char from
-// before it is a delete when this transaction tombstoned it (deleteSet),
-// invisible before and after when it was already a tombstone, and a retain
-// when live. Adjacent entries of one kind merge (deltaSnoc) and a trailing
-// retain is dropped: the merged normal form, text_delta in the model. Poll's
-// walk (above) is the same classification against the observer's token; the
-// two loops stay separate so that Poll keeps its proof, which is why the
-// trailing-retain trim is repeated rather than shared.
+// code unit by code unit. A unit this transaction integrated (insertSet) is
+// an insert when live and nothing when the same transaction tombstoned it; a
+// unit from before it is a delete when this transaction tombstoned it
+// (deleteSet), invisible before and after when it was already a tombstone,
+// and a retain when live. Adjacent entries of one kind merge (deltaSnoc) and
+// a trailing retain is dropped: the merged normal form, text_delta in the
+// model. Poll's walk (above) is the same classification against the
+// observer's token; the two loops stay separate so that Poll keeps its proof,
+// which is why the trailing-retain trim is repeated rather than shared.
 func textDelta(ty *yType, insertSet []idSpan, deleteSet []idSpan) []DeltaOp {
 	var delta []DeltaOp
 	cur := ty.start
@@ -188,7 +198,7 @@ func textDelta(ty *yType, insertSet []idSpan, deleteSet []idSpan) []DeltaOp {
 			charId := newId(cur.id.clientId, cur.id.clock+i)
 			if containsId(insertSet, charId) {
 				if !tombstoned {
-					delta = deltaSnoc(delta, DeltaOp{Kind: DeltaInsert, Content: byteString(cur.content.content[i])})
+					delta = deltaSnoc(delta, DeltaOp{Kind: DeltaInsert, Content: []uint16{cur.content.content[i]}})
 				}
 			} else if containsId(deleteSet, charId) {
 				delta = deltaSnoc(delta, DeltaOp{Kind: DeltaDelete, Length: 1})
@@ -206,25 +216,26 @@ func textDelta(ty *yType, insertSet []idSpan, deleteSet []idSpan) []DeltaOp {
 	return delta
 }
 
-// ApplyDelta patches s with delta, the application side of the pattern:
-// retain copies, insert emits, delete skips, and the rest of s after the last
-// entry is kept (the implicit trailing retain). It reports false, with an
-// empty string, when a retain or a delete runs past the end of s.
-func ApplyDelta(s string, delta []DeltaOp) (string, bool) {
-	result := ""
+// ApplyDelta patches the code units s with delta, the application side of
+// the pattern: retain copies, insert emits, delete skips, and the rest of s
+// after the last entry is kept (the implicit trailing retain). The result is
+// a fresh slice; s and the delta's slices are only read. It reports false,
+// with a nil result, when a retain or a delete runs past the end of s.
+func ApplyDelta(s []uint16, delta []DeltaOp) ([]uint16, bool) {
+	var result []uint16
 	position := uint64(0)
 	remaining := uint64(len(s))
 	for k := 0; k < len(delta); k++ {
 		op := delta[k]
 		if op.Kind == DeltaInsert {
-			result = result + op.Content
+			result = append(result, op.Content...)
 		} else {
 			if op.Length > remaining {
-				return "", false
+				return nil, false
 			}
 			if op.Kind == DeltaRetain {
 				for i := uint64(0); i < op.Length; i++ {
-					result = result + byteString(s[position+i])
+					result = append(result, s[position+i])
 				}
 			}
 			position = position + op.Length
@@ -232,7 +243,7 @@ func ApplyDelta(s string, delta []DeltaOp) (string, bool) {
 		}
 	}
 	for position < uint64(len(s)) {
-		result = result + byteString(s[position])
+		result = append(result, s[position])
 		position = position + 1
 	}
 	return result, true

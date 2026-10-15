@@ -45,7 +45,7 @@ Context {sync_pkg : sync.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_store_ref]'s reader-count accounting ties the readers' share to the store's
@@ -53,7 +53,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -70,7 +70,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     read lock, reads the type's visible length off its DLL through a
     fractional share of [own_store] (so it runs alongside other readers),
     then releases. The read capability [own_read_cap] (one reader slot) is
-    threaded and returned; [is_Text] is preserved. Like [wp_Text__String],
+    threaded and returned; [is_Text] is preserved. Like [wp_Text__CodeUnits],
     the caller brings a prefix certificate of this replica's op history and
     the counted snapshot contains one item per delivered insert of the prefix
     targeting this root (a caller with no such knowledge passes [h0 = []]). *)

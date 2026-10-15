@@ -38,7 +38,7 @@ Context {sync_pkg : sync.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_store_ref]'s reader-count accounting ties the readers' share to the store's
@@ -46,7 +46,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -549,7 +549,7 @@ Proof.
       | exact Hdelstomb | exact Hdelsarr | exact Htombj | exact Hdelsfresh | lia].
   - (* visible node: spend the whole run, or split at the range end first *)
     simpl negb. wp_auto.
-    wp_apply (wp_item__Len lc (DfracOwn 1) itemVal with "[$Haccval]"). iIntros "[Haccval _]".
+    wp_apply (wp_item__Len lc (DfracOwn 1) itemVal with "[$Haccval $Hacccontent]"). iIntros "Haccval".
     rewrite Haccle.
     wp_auto.
     (* the node goes back to the store before the store methods run *)
@@ -596,7 +596,9 @@ Proof.
       set (runs3 := <[q := flip_run leftRun]> runs2).
       have Hrl3 : runs3 !! q = Some (flip_run leftRun).
       { rewrite /runs3 list_lookup_insert_eq //. apply lookup_lt_Some in Hrl2. exact Hrl2. }
-      (* [remaining -= cur.Len()] reads the TRUNCATED length [rem] *)
+      (* [remaining -= cur.Len()] reads the TRUNCATED length [rem]; the first
+         borrow's content share is dropped so the second can take its name *)
+      iClear "Hacccontent".
       iDestruct (own_store_state_node_acc_links s_loc
                    (MkStoreState client k (<[tv.(yjs.Text.inner') := ls2]> locsj)
                       (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj) bind pend pdel)
@@ -605,7 +607,7 @@ Proof.
         as (iv2) "Hacc2". iNamed "Hacc2".
       have Hlenl : length (run_items (flip_run leftRun)) = uint.nat rem.
       { rewrite /flip_run /leftRun /split_run_left /= length_take. lia. }
-      wp_apply (wp_item__Len lc (DfracOwn 1) iv2 with "[$Haccval]"). iIntros "[Haccval _]".
+      wp_apply (wp_item__Len lc (DfracOwn 1) iv2 with "[$Haccval $Hacccontent]"). iIntros "Haccval".
       rewrite Haccle0 Hlenl. wp_auto.
       iDestruct ("Haccback" with "Haccval") as "Hruns".
       wp_for_post.
@@ -687,13 +689,14 @@ Proof.
       set (runs3 := <[q := flip_run rq]> runsj).
       have Hrl3 : runs3 !! q = Some (flip_run rq).
       { rewrite /runs3 list_lookup_insert_eq //. }
+      iClear "Hacccontent".
       iDestruct (own_store_state_node_acc_links s_loc
                    (MkStoreState client k locsj (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj) bind pend pdel)
                    tv.(yjs.Text.inner') lsj (MkTypeModel runs3) q lc (flip_run rq)
                    Hlj (lookup_insert_eq _ _ _) Hlc Hrl3 with "Hruns")
         as (iv2) "Hacc2". iNamed "Hacc2".
       have Hlenf : length (run_items (flip_run rq)) = length (run_items rq) by rewrite /flip_run //.
-      wp_apply (wp_item__Len lc (DfracOwn 1) iv2 with "[$Haccval]"). iIntros "[Haccval _]".
+      wp_apply (wp_item__Len lc (DfracOwn 1) iv2 with "[$Haccval $Hacccontent]"). iIntros "Haccval".
       rewrite Haccle0 Hlenf. wp_auto.
       iDestruct ("Haccback" with "Haccval") as "Hruns".
       wp_for_post.

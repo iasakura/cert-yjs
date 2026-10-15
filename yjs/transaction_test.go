@@ -42,12 +42,12 @@ func TestTransactBatchesWrites(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("text")
 	doc.Transact(func(tr *Transaction) {
-		txt.InsertIn(tr, 0, "hello world")
+		txt.InsertStringIn(tr, 0, "hello world")
 		if s := txt.StringIn(tr); s != "hello world" {
 			t.Fatalf("StringIn after insert = %q", s)
 		}
 		txt.DeleteIn(tr, 5, 6)
-		txt.InsertIn(tr, 5, ", there")
+		txt.InsertStringIn(tr, 5, ", there")
 		if s := txt.StringIn(tr); s != "hello, there" {
 			t.Fatalf("StringIn after edits = %q", s)
 		}
@@ -63,10 +63,10 @@ func TestTransactionRecordsLocalWrites(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("text")
 	other := doc.GetOrCreateText("other")
-	txt.Insert(0, "abc") // clocks 0..2
+	txt.InsertString(0, "abc") // clocks 0..2
 	doc.Transact(func(tr *Transaction) {
-		txt.InsertIn(tr, 3, "de") // clocks 3, 4
-		txt.DeleteIn(tr, 1, 2)    // "bc": clocks 1, 2
+		txt.InsertStringIn(tr, 3, "de") // clocks 3, 4
+		txt.DeleteIn(tr, 1, 2)          // "bc": clocks 1, 2
 		expectIds(t, "insertSet", idsOf(tr.insertSet), newId(1, 3), newId(1, 4))
 		expectIds(t, "deleteSet", idsOf(tr.deleteSet), newId(1, 1), newId(1, 2))
 		if !tr.changed[txt.inner] || tr.changed[other.inner] || len(tr.changed) != 1 {
@@ -75,7 +75,7 @@ func TestTransactionRecordsLocalWrites(t *testing.T) {
 	})
 	// an out-of-range index, an empty delete and a read change nothing
 	doc.Transact(func(tr *Transaction) {
-		txt.InsertIn(tr, 100, "x")
+		txt.InsertStringIn(tr, 100, "x")
 		txt.DeleteIn(tr, 0, 0)
 		_ = txt.StringIn(tr)
 		if len(tr.insertSet) != 0 || len(tr.deleteSet) != 0 || len(tr.changed) != 0 {
@@ -84,7 +84,7 @@ func TestTransactionRecordsLocalWrites(t *testing.T) {
 	})
 	// a char inserted and deleted in the same transaction is in both sets
 	doc.Transact(func(tr *Transaction) {
-		txt.InsertIn(tr, 0, "z") // clock 5
+		txt.InsertStringIn(tr, 0, "z") // clock 5
 		txt.DeleteIn(tr, 0, 1)
 		expectIds(t, "insertSet", idsOf(tr.insertSet), newId(1, 5))
 		expectIds(t, "deleteSet", idsOf(tr.deleteSet), newId(1, 5))
@@ -97,8 +97,8 @@ func TestTransactionRecordsLocalWrites(t *testing.T) {
 func TestTransactionRecordsRemoteBatch(t *testing.T) {
 	docA := NewDoc(1)
 	txtA := docA.GetOrCreateText("text")
-	txtA.Insert(0, "hello")
-	docA.GetOrCreateText("other").Insert(0, "o")
+	txtA.InsertString(0, "hello")
+	docA.GetOrCreateText("other").InsertString(0, "o")
 	ok, structs, deletes := decodeUpdateItems(docA.EncodeUpdate())
 	if !ok {
 		t.Fatal("the encoded state did not decode")
@@ -161,7 +161,7 @@ func TestTransactConcurrent(t *testing.T) {
 				doc.Transact(func(tr *Transaction) {
 					before := txt.StringIn(tr)
 					at := uint64(r.Intn(len(before) + 1))
-					txt.InsertIn(tr, at, "x")
+					txt.InsertStringIn(tr, at, "x")
 					after := txt.StringIn(tr)
 					if len(after) != len(before)+1 {
 						t.Errorf("transaction did not see its own insert: %q -> %q", before, after)
@@ -181,7 +181,7 @@ func TestTransactConcurrent(t *testing.T) {
 		go func() {
 			defer wg2.Done()
 			for i := 0; i < 100; i++ {
-				txt.Insert(0, "y")
+				txt.InsertString(0, "y")
 				txt.Delete(0, 1)
 				_ = txt.String()
 			}

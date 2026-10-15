@@ -6,7 +6,9 @@
       ([null] outside the list), how a spec reads [ss_locs].
     - the flag accessors [is_deleted_flag] / [is_countable_flag] reading the
       heap struct's bits, and [set_deleted] setting the tombstone.
-    - [toContent] and [originId_of], the remaining scalar readings.
+    - [originId_of], the remaining scalar reading. (A node's content is a
+      slice, so it is not a value-layer reading: [item/heap.v]'s [is_content]
+      owns it.)
 
     Laws
     - [loc_at_splice_ge]: a splice at [idx] leaves the addresses before [idx]
@@ -26,7 +28,7 @@ Section item_value.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (* ===== definitions ======================================================== *)
 
@@ -53,8 +55,6 @@ Definition is_countable_flag (v : yjs.item.t) : bool :=
 (** The heap effect of [item.flags |= itemDeleted]: set the Deleted bit. *)
 Definition set_deleted (v : yjs.item.t) : yjs.item.t :=
   v <| yjs.item.flags' := w8_word_instance.(word.or) v.(yjs.item.flags') (W8 4) |>.
-
-Definition toContent (c : yjs.content.t) : A := c.(yjs.content.content').
 
 (* ----- item-pointer helpers --------------------------------------------- *)
 

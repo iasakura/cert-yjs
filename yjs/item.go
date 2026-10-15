@@ -3,11 +3,11 @@ package yjs
 type flags = uint8
 
 // item is a single CRDT insertion (y-octo: codec/item.rs): a run of one or
-// more consecutive characters of one client, which the store splits when an
-// edit or an origin lands inside it. Local inserts and the byte decoder create
-// one-character items for now (Text.InsertIn in text.go, splitStructs in
-// codec.go), where Yjs, yrs and y-octo keep a run typed or sent together as
-// one item. parent_sub is dropped (sequence types only).
+// more consecutive UTF-16 code units of one client, which the store splits
+// when an edit or an origin lands inside it. Local inserts and the byte
+// decoder create one-unit items for now (Text.InsertIn in text.go,
+// splitStructs in codec.go), where Yjs, yrs and y-octo keep a run typed or
+// sent together as one item. parent_sub is dropped (sequence types only).
 type item struct {
 	id id
 	// null means no left origin when generated
@@ -34,11 +34,13 @@ const (
 	itemDeleted   flags = 0x04
 )
 
-// newItem builds an item carrying the string content str. It is countable
-// (y-octo: string content sets ITEM_COUNTABLE) and starts unlinked and
-// parentless: the update path resolves left/right/parent with store.repair,
-// the local-edit path fills them in at creation (y-octo: store::create_item).
-func newItem(id id, str string, originLeftId *id, originRightId *id) *item {
+// newItem builds an item carrying the code units units as its string content.
+// It is countable (y-octo: string content sets ITEM_COUNTABLE) and starts
+// unlinked and parentless: the update path resolves left/right/parent with
+// store.repair, the local-edit path fills them in at creation (y-octo:
+// store::create_item). The item keeps units itself, so the caller must not
+// write to it afterwards (content.go).
+func newItem(id id, units []uint16, originLeftId *id, originRightId *id) *item {
 	return &item{
 		id:            id,
 		originLeftId:  originLeftId,
@@ -46,7 +48,7 @@ func newItem(id id, str string, originLeftId *id, originRightId *id) *item {
 		left:          nil,
 		right:         nil,
 		parent:        nil,
-		content:       content{content: str},
+		content:       content{content: units},
 		flags:         itemCountable,
 	}
 }

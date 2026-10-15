@@ -22,7 +22,7 @@
       tombstone bits; [runs_visible_model], the [len] counter counts the
       sequence's visible items.
     - [visible_string_take_S]: one more run appends its string when live
-      and nothing when tombstoned, the step [Text.String] walks. *)
+      and nothing when tombstoned, the step [Text.CodeUnits] walks. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -36,7 +36,7 @@ Section ytype_value.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (* ===== definitions ======================================================== *)
 
@@ -44,7 +44,7 @@ Notation A := go_string.
 
 (** The visible (non-tombstoned) items of an abstract sequence, and the string
     they spell (the concatenation of their per-char contents): what the read
-    API ([Text.Len] / [Text.String]) exposes about a snapshot (issue #125).
+    API ([Text.Len] / [Text.CodeUnits]) exposes about a snapshot (issue #125).
     The bound a read hands back is at the ITEM level ([m.*1] contains a set);
     a tombstoned item is in [m.*1] but not in [visible_items m].
     [items_string] is [item/model.v]'s. *)
@@ -132,9 +132,10 @@ Proof.
 Qed.
 
 (** One more run contributes its string when live and nothing when
-    tombstoned: the step [yType.Text]'s walk takes, with [s] the node's heap
-    content string (tied to the run by [own_item_node]'s content pin). *)
-Lemma visible_string_run_models (r : ItemRun) (s : go_string) :
+    tombstoned: the step [yType.Text]'s walk takes, with [s] the node's
+    content, its code units (tied to the run by [own_item_node]'s content
+    pin). *)
+Lemma visible_string_run_models (r : ItemRun) (s : A) :
   content <$> run_items r = explode s ->
   visible_string (run_models r) = (if run_deleted r then [] else s).
 Proof.
@@ -143,7 +144,7 @@ Proof.
 Qed.
 
 Lemma visible_string_take_S (runs : list ItemRun) (k : nat) (r : ItemRun)
-    (s : go_string) :
+    (s : A) :
   runs !! k = Some r ->
   content <$> run_items r = explode s ->
   visible_string (runs_model (take (S k) runs))

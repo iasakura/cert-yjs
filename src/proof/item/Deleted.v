@@ -16,7 +16,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 
 
@@ -44,7 +44,7 @@ Proof.
   wp_apply (wp_item__Deleted l dq v with "[$Hpkg $Hval]").
   iIntros "Hval".
   rewrite Hd.
-  iApply "HΦ". iExists v, olid, orid. iFrame "Hval Holeft Horight".
+  iApply "HΦ". iExists v, olid, orid. iFrame "Hval Holeft Horight Hcontent".
   iPureIntro. split_and!; assumption.
 Qed.
 

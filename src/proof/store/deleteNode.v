@@ -33,7 +33,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 Notation P := go_string.
 
@@ -57,7 +57,7 @@ Context {acc_inG : inG Σ accUR}.
 
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -94,7 +94,7 @@ Proof using Type*.
   iDestruct (own_dll_update parent yt.(yjs.yType.start') tl null null ls runs k lc r Hlk Hrk with "Hdll")
     as (prev' nxt') "(%Hrun & %Hpc & %Hclen & Hnode & Hback)".
   iDestruct "Hnode" as (itemVal olid orid)
-    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & %Hcont & %Hpar & %Hprevf & %Hnextf & %Hflags)".
+    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & #Hcont & %Hpar & %Hprevf & %Hnextf & %Hflags)".
   wp_auto.
   wp_apply (wp_item__Indexable lc (DfracOwn 1) itemVal
               (flags_if_countable itemVal (run_deleted r) Hflags) with "[$Hval]").
@@ -105,9 +105,9 @@ Proof using Type*.
     wp_auto.
     iAssert (own_item_node lc (DfracOwn 1) (input_of_run r) true parent prev' nxt')
       with "[Hval Hol Hor]" as "Hnode".
-    { iExists itemVal, olid, orid. iFrame "Hval Hol Hor".
+    { iExists itemVal, olid, orid. iFrame "Hval Hol Hor Hcont".
       iPureIntro. split_and!;
-        [exact Hinl | exact Hinr | exact Hid | exact Hcont | exact Hpar
+        [exact Hinl | exact Hinr | exact Hid  | exact Hpar
         | exact Hprevf | exact Hnextf | (by rewrite Hflags ?Hd)]. }
     iDestruct ("Hback" $! true with "Hnode") as "Hdll".
     have Hr : MkItemRun (run_items r) true = r.
@@ -127,8 +127,9 @@ Proof using Type*.
   - (* visible: set the bit and shrink the type's [len] by the run length *)
     wp_auto.
     rewrite Hpar. wp_auto.
-    wp_apply (wp_item__Len lc (DfracOwn 1) (set_deleted itemVal) with "[$Hval]").
-    iIntros "[Hval _]".
+    wp_apply (wp_item__Len lc (DfracOwn 1) (set_deleted itemVal) (items_string (run_items r)) with "[$Hval]");
+      first (rewrite /set_deleted /=; iExact "Hcont").
+    iIntros "Hval".
     wp_auto. rewrite Hpar. wp_auto.
     have Hflagspin : itemVal.(yjs.item.flags') = (if false then W8 6 else W8 2)
       by rewrite Hflags ?Hd.
@@ -136,15 +137,14 @@ Proof using Type*.
       with "[Hval Hol Hor]" as "Hnode".
     { iExists (set_deleted itemVal), olid, orid.
       iEval (rewrite /set_deleted /=).
-      iFrame "Hval Hol Hor".
+      iFrame "Hval Hol Hor Hcont".
       iPureIntro. split_and!;
-        [exact Hinl | exact Hinr | exact Hid | exact Hcont | exact Hpar
+        [exact Hinl | exact Hinr | exact Hid  | exact Hpar
         | exact Hprevf | exact Hnextf | (rewrite Hflagspin; vm_compute; reflexivity)]. }
     iDestruct ("Hback" $! true with "Hnode") as "Hdll".
     iEval (change (MkItemRun (run_items r) true) with (flip_run r)) in "Hdll".
-    have Hrunlen : length (run_items r) = length (itemVal.(yjs.item.content').(yjs.content.content')).
-    { have Hstr : itemVal.(yjs.item.content').(yjs.content.content') = in_content (input_of_run r) := Hcont.
-      rewrite Hstr. symmetry. exact Hclen. }
+    have Hrunlen : length (run_items r) = length (items_string (run_items r)).
+    { symmetry. exact Hclen. }
     have Hnv : runs_visible (<[k := flip_run r]> runs) = (runs_visible runs - length (run_items r))%nat
       := runs_visible_flip_run runs k r Hrk Hd.
     have Hnvge : (length (run_items r) <= runs_visible runs)%nat.
@@ -163,7 +163,7 @@ Proof using Type*.
     iSplitL; last first.
     { iPureIntro. rewrite /tm_arr /= (runs_flatten_flip_run runs k r Hrk). exact Harrinv. }
     iExists (yt <| yjs.yType.len' := w64_word_instance.(word.sub) yt.(yjs.yType.len')
-                     (W64 (length (itemVal.(yjs.item.content').(yjs.content.content')))) |>), tl.
+                     (W64 (length (items_string (run_items r)))) |>), tl.
     iFrame "Hparent Hdll". iPureIntro.
     simpl. rewrite Hlen Hnv -Hrunlen. word.
 Qed.

@@ -20,7 +20,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 
 (** [newYType] allocates an empty root sequence (issue #54: the storage
