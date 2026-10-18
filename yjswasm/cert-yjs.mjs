@@ -42,16 +42,16 @@ export async function init (source = new URL('./cert-yjs.wasm', import.meta.url)
   }
   await import('./wasm_exec.js')
   const go = new globalThis.Go()
-  let instance
+  let result
   if (typeof process !== 'undefined' && process.versions?.node) {
     const { readFile } = await import('node:fs/promises')
-    ;({ instance } = await WebAssembly.instantiate(await readFile(source), go.importObject))
+    result = await WebAssembly.instantiate(await readFile(source), go.importObject)
   } else {
-    ;({ instance } = await WebAssembly.instantiateStreaming(fetch(source), go.importObject))
+    result = await WebAssembly.instantiateStreaming(fetch(source), go.importObject)
   }
   // Never resolves: the Go program serves calls until the page goes away. It
   // has installed its global by the time run returns its promise.
-  go.run(instance)
+  go.run(result.instance)
   binding = globalThis.__certYjs
   if (binding === undefined) {
     binding = null
