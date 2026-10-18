@@ -6,77 +6,77 @@
 
 // The origin the network applies updates with, so that a replica tells an
 // update it received from an edit of its own and does not send it back.
-export const NETWORK = 'network'
+export const NETWORK = 'network';
 
 // positionAfter moves a caret position in the old text through delta.
 export const positionAfter = (delta, position) => {
-  let index = 0
-  let shift = 0
+  let index = 0;
+  let shift = 0;
   for (const operation of delta) {
     if (index >= position) {
-      break
+      break;
     }
     if (operation.retain !== undefined) {
-      index += operation.retain
+      index += operation.retain;
     } else if (operation.insert !== undefined) {
-      shift += operation.insert.length
+      shift += operation.insert.length;
     } else {
-      shift -= Math.min(operation.delete, position - index)
-      index += operation.delete
+      shift -= Math.min(operation.delete, position - index);
+      index += operation.delete;
     }
   }
-  return position + shift
-}
+  return position + shift;
+};
 
 // bindTextarea keeps textarea and text equal: an edit of the textarea becomes
 // one delete and one insert in a transaction, and a change of the text (local
 // or received) is written back with the caret moved through its delta. Each
 // delta is shown in deltaLog.
 export const bindTextarea = (textarea, text, deltaLog) => {
-  textarea.value = text.toString()
+  textarea.value = text.toString();
 
   const pushEdit = () => {
-    const before = text.toString()
-    const after = textarea.value
-    let prefix = 0
+    const before = text.toString();
+    const after = textarea.value;
+    let prefix = 0;
     while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) {
-      prefix++
+      prefix++;
     }
-    let suffix = 0
+    let suffix = 0;
     while (suffix < before.length - prefix && suffix < after.length - prefix &&
            before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) {
-      suffix++
+      suffix++;
     }
     text.doc.transact(() => {
-      text.delete(prefix, before.length - prefix - suffix)
-      text.insert(prefix, after.slice(prefix, after.length - suffix))
-    }, textarea)
+      text.delete(prefix, before.length - prefix - suffix);
+      text.insert(prefix, after.slice(prefix, after.length - suffix));
+    }, textarea);
     if (textarea.value !== after) {
-      const caret = textarea.selectionStart
-      textarea.value = after
-      textarea.setSelectionRange(caret, caret)
+      const caret = textarea.selectionStart;
+      textarea.value = after;
+      textarea.setSelectionRange(caret, caret);
     }
-  }
+  };
   textarea.addEventListener('input', (event) => {
     // An input method's composition is pushed once, when it ends.
     if (!event.isComposing) {
-      pushEdit()
+      pushEdit();
     }
-  })
-  textarea.addEventListener('compositionend', pushEdit)
+  });
+  textarea.addEventListener('compositionend', pushEdit);
 
   text.observe((event) => {
-    const origin = event.transaction.origin === NETWORK ? 'received' : 'local'
-    deltaLog.textContent = `last ${origin} delta: ${JSON.stringify(event.delta)}`
-    const next = text.toString()
+    const origin = event.transaction.origin === NETWORK ? 'received' : 'local';
+    deltaLog.textContent = `last ${origin} delta: ${JSON.stringify(event.delta)}`;
+    const next = text.toString();
     if (textarea.value !== next) {
-      const start = positionAfter(event.delta, textarea.selectionStart)
-      const end = positionAfter(event.delta, textarea.selectionEnd)
-      textarea.value = next
-      textarea.setSelectionRange(start, end)
+      const start = positionAfter(event.delta, textarea.selectionStart);
+      const end = positionAfter(event.delta, textarea.selectionEnd);
+      textarea.value = next;
+      textarea.setSelectionRange(start, end);
     }
-  })
-}
+  });
+};
 
 // connect links two replicas by a simulated network and calls onChange after
 // every update either of them has. While the network is up, each update of a
@@ -85,30 +85,30 @@ export const bindTextarea = (textarea, text, deltaLog) => {
 // is sent, and when it comes back each replica sends its whole state to the
 // other, as a Yjs provider resynchronizes after a reconnection.
 export const connect = (replicas, onChange) => {
-  let online = true
-  const peerOf = (replica) => replicas.find((other) => other !== replica)
+  let online = true;
+  const peerOf = (replica) => replicas.find((other) => other !== replica);
   for (const replica of replicas) {
     replica.doc.on('update', (update, origin) => {
       if (online && origin !== NETWORK) {
-        const peer = peerOf(replica)
-        peer.library.applyUpdate(peer.doc, update, NETWORK)
+        const peer = peerOf(replica);
+        peer.library.applyUpdate(peer.doc, update, NETWORK);
       }
-      onChange()
-    })
+      onChange();
+    });
   }
   return {
     get online () {
-      return online
+      return online;
     },
     setOnline (value) {
-      online = value
+      online = value;
       if (online) {
         for (const replica of replicas) {
-          const peer = peerOf(replica)
-          peer.library.applyUpdate(peer.doc, replica.library.encodeStateAsUpdate(replica.doc), NETWORK)
+          const peer = peerOf(replica);
+          peer.library.applyUpdate(peer.doc, replica.library.encodeStateAsUpdate(replica.doc), NETWORK);
         }
       }
-      onChange()
+      onChange();
     }
-  }
-}
+  };
+};

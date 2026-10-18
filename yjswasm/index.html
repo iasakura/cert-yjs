@@ -135,49 +135,49 @@
 </main>
 
 <script type="module">
-import * as Y from 'yjs'
-import * as CertYjs from './cert-yjs.mjs'
-import { bindTextarea, connect } from './demo.mjs'
+import * as Y from 'yjs';
+import * as CertYjs from './cert-yjs.mjs';
+import { bindTextarea, connect } from './demo.mjs';
 
-const element = (id) => document.getElementById(id)
+const element = (id) => document.getElementById(id);
 
-await CertYjs.init()
+await CertYjs.init();
 
 const replicas = [
   { name: 'yjs', library: Y, doc: new Y.Doc({ gc: false }) },
   { name: 'cert-yjs', library: CertYjs, doc: new CertYjs.Doc() }
-]
+];
 for (const replica of replicas) {
-  replica.text = replica.doc.getText('note')
+  replica.text = replica.doc.getText('note');
 }
-const [yjs, certYjs] = replicas
+const [yjs, certYjs] = replicas;
 
 const render = () => {
   for (const replica of replicas) {
-    const bytes = replica.library.encodeStateAsUpdate(replica.doc).length
+    const bytes = replica.library.encodeStateAsUpdate(replica.doc).length;
     element(`${replica.name}-size`).textContent =
-      `${replica.text.length} UTF-16 code units, ${bytes} bytes of state`
+      `${replica.text.length} UTF-16 code units, ${bytes} bytes of state`;
   }
-  const status = element('status')
-  const agree = yjs.text.toString() === certYjs.text.toString()
-  status.className = agree ? '' : 'diverged'
+  const status = element('status');
+  const agree = yjs.text.toString() === certYjs.text.toString();
+  status.className = agree ? '' : 'diverged';
   status.textContent = agree
     ? 'The replicas agree.'
-    : network.online ? 'The replicas differ.' : 'Offline: the replicas differ until the network is back.'
-}
+    : network.online ? 'The replicas differ.' : 'Offline: the replicas differ until the network is back.';
+};
 
-const network = connect(replicas, render)
-const connected = element('connected')
-connected.addEventListener('change', () => network.setOnline(connected.checked))
+const network = connect(replicas, render);
+const connected = element('connected');
+connected.addEventListener('change', () => network.setOnline(connected.checked));
 
 for (const replica of replicas) {
-  const textarea = element(`${replica.name}-text`)
-  bindTextarea(textarea, replica.text, element(`${replica.name}-delta`))
-  textarea.disabled = false
+  const textarea = element(`${replica.name}-text`);
+  bindTextarea(textarea, replica.text, element(`${replica.name}-delta`));
+  textarea.disabled = false;
 }
 
-yjs.doc.transact(() => yjs.text.insert(0, 'Hello from Yjs. Edit either side.'), 'seed')
-render()
+yjs.doc.transact(() => yjs.text.insert(0, 'Hello from Yjs. Edit either side.'), 'seed');
+render();
 </script>
 </body>
 </html>
