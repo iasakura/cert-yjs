@@ -26,6 +26,6 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 Set Default Proof Using "Type*".
 
 (** Document content type. *)
-Notation A := go_string.
+Notation A := (list w16).
 
 End prelude.

@@ -10,7 +10,7 @@ import "testing"
 func TestApplyDeleteSpansBuffersUncovered(t *testing.T) {
 	docA := NewDoc(1)
 	txtA := docA.GetOrCreateText("root")
-	txtA.Insert(0, "abcd")
+	txtA.InsertString(0, "abcd")
 
 	docB := NewDoc(2)
 	txtB := docB.GetOrCreateText("root")
@@ -44,7 +44,7 @@ func TestApplyDeleteSpansConverges(t *testing.T) {
 	// A deletes locally, B applies the same span by id: same visible text.
 	docA := NewDoc(1)
 	txtA := docA.GetOrCreateText("root")
-	txtA.Insert(0, "hello world")
+	txtA.InsertString(0, "hello world")
 
 	docB := NewDoc(2)
 	txtB := docB.GetOrCreateText("root")
@@ -67,7 +67,7 @@ func TestApplyDeleteSpansConverges(t *testing.T) {
 func TestApplyDeleteSpansIdempotentAcrossCalls(t *testing.T) {
 	doc := NewDoc(1)
 	txt := doc.GetOrCreateText("root")
-	txt.Insert(0, "abc")
+	txt.InsertString(0, "abc")
 
 	span := []deleteSpan{{client: 1, clock: 0, length: 2}}
 	doc.store.wlock()

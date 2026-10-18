@@ -46,7 +46,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Op := (TId * @YjsOperation A)%type.
@@ -62,7 +62,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    reached from here carry it too. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -393,7 +393,7 @@ Proof using Type*.
         iFrame "Hruns".
         iSplitL "Hitem".
         { iExists _, (Some idvL), (Some idvR). rewrite /own_fresh_item_raw. simpl.
-          iFrame "Hitem". iFrame "HolC HorC".
+          iFrame "Hitem Hcontent". iFrame "HolC HorC".
           iPureIntro. split_and!; try done. }
         iPureIntro. split; first exact Hrepair2.
         split; last by rewrite (pool_tombstoned_split_step _ _ _ _ _ _ Hsstep2)
@@ -418,7 +418,7 @@ Proof using Type*.
         iFrame "Hruns".
         iSplitL "Hitem".
         { iExists _, (Some idvL), (Some idvR). rewrite /own_fresh_item_raw. simpl.
-          iFrame "Hitem". iFrame "HolC HorC".
+          iFrame "Hitem Hcontent". iFrame "HolC HorC".
           iPureIntro. split_and!; try done. }
         iPureIntro. split; first exact Hrepair2.
         split; last by rewrite (pool_tombstoned_split_step _ _ _ _ _ _ Hsstep2)
@@ -451,7 +451,7 @@ Proof using Type*.
         iFrame "Hruns".
         iSplitL "Hitem".
         { iExists _, (Some idvL), None. rewrite /own_fresh_item_raw. simpl.
-          iFrame "Hitem". iFrame "HolC".
+          iFrame "Hitem Hcontent". iFrame "HolC".
           iPureIntro. split_and!; try done. }
         iPureIntro. split; first exact Hrepair1.
         split; last by rewrite (pool_tombstoned_split_step _ _ _ _ _ _ Hsstep1).
@@ -475,7 +475,7 @@ Proof using Type*.
         iFrame "Hruns".
         iSplitL "Hitem".
         { iExists _, (Some idvL), None. rewrite /own_fresh_item_raw. simpl.
-          iFrame "Hitem". iFrame "HolC".
+          iFrame "Hitem Hcontent". iFrame "HolC".
           iPureIntro. split_and!; try done. }
         iPureIntro. split; first exact Hrepair1.
         split; last by rewrite (pool_tombstoned_split_step _ _ _ _ _ _ Hsstep1).
@@ -530,7 +530,7 @@ Proof using Type*.
         iFrame "Hruns".
         iSplitL "Hitem".
         { iExists _, None, (Some idvR). rewrite /own_fresh_item_raw. simpl.
-          iFrame "Hitem". iFrame "HorC".
+          iFrame "Hitem Hcontent". iFrame "HorC".
           iPureIntro. split_and!; try done. }
         iPureIntro. split; first exact Hrepair1.
         split; last by rewrite (pool_tombstoned_split_step _ _ _ _ _ _ Hsstep1).
@@ -559,7 +559,7 @@ Proof using Type*.
         iFrame "Hruns".
         iSplitL "Hitem".
         { iExists _, None, (Some idvR). rewrite /own_fresh_item_raw. simpl.
-          iFrame "Hitem". iFrame "HorC".
+          iFrame "Hitem Hcontent". iFrame "HorC".
           iPureIntro. split_and!; try done. }
         iPureIntro. split; first exact Hrepair1.
         split; last by rewrite (pool_tombstoned_split_step _ _ _ _ _ _ Hsstep1).
@@ -589,7 +589,7 @@ Proof using Type*.
       iFrame "Hruns".
       iSplitL "Hitem".
       { iExists _, None, None. rewrite /own_fresh_item_raw. simpl.
-        iFrame "Hitem".
+        iFrame "Hitem Hcontent".
         iPureIntro. split_and!; try done. }
       iPureIntro. split; first exact (pool_after_repair_refl p).
       split; last reflexivity.
@@ -751,7 +751,7 @@ Proof.
     with "Hitems []") as "Hpure".
   { iIntros "!>" (i updateItemVal typedInput Hu Hi) "Hui".
     iDestruct "Hui" as (oleft oright opn)
-      "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hulen & %Htid & %Hborrow)".
+      "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & #Hin_c & %Hulen & %Htid & %Hborrow)".
     iPureIntro. rewrite -Hin_id /toYjsId /=. split; word. }
   iDestruct (big_sepL2_length with "Hitems") as %Hlen2.
   iDestruct (big_sepL2_pure_1 with "Hpure") as %Hb.
@@ -799,7 +799,7 @@ Proof using Type*.
     iDestruct (big_sepL2_lookup _ _ _ j with "Hitems") as "Hui";
       [exact Huiv | exact Hti |].
     iDestruct "Hui" as (oleft oright opn)
-      "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hulen & %Htid & %Hborrow)".
+      "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & #Hin_c & %Hulen & %Htid & %Hborrow)".
     wp_auto.
     rewrite decide_True; last by word.
     iDestruct (own_slice_elem_acc (sint.Z (W64 j)) updateItemVal sl dq uivs with "Hsl") as "[Hel Hgive]".
@@ -900,7 +900,7 @@ Proof using Type*.
   move=> Hregmodel.
   iIntros (Φ) "(#Hpkg & #Hui & Hruns) HΦ".
   iDestruct "Hui" as (oleft oright opn)
-    "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)".
+    "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & #Hin_c & %Hunonempty & %Htid & %Hborrow)".
   have Hcid : clientId (in_id typedInput.2) = uint.nat updateItemVal.(yjs.updateItem.id').(yjs.id.clientId').
   { rewrite -Hin_id /toYjsId //. }
   have Hck : clock (in_id typedInput.2) = uint.nat updateItemVal.(yjs.updateItem.id').(yjs.id.clock').
@@ -1074,7 +1074,7 @@ Proof using Type*.
   iFrame "Hruns".
   iSplitL "Hitem".
   { iExists _, None, None. rewrite /own_fresh_item_raw. simpl.
-    iFrame "Hitem".
+    iFrame "Hitem Hcontent".
     iPureIntro. split_and!; try done. }
   done.
 Qed.

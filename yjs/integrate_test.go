@@ -16,7 +16,7 @@ func runIntegrate(items []*item) string {
 		s.repair(it, parentName)
 		newTransaction(&s).integrate(nil, it)
 	}
-	return s.getOrCreateYType(name).Text()
+	return decodeContent(s.getOrCreateYType(name).Text())
 }
 
 func mkId(client, clock uint64) id { return newId(client, clock) }
@@ -31,8 +31,8 @@ func mkIdp(client, clock uint64) *id {
 // integration order converges to "AB".
 func TestConcurrentHeadInsertConverges(t *testing.T) {
 	mk := func() (*item, *item) {
-		a := newItem(mkId(1, 0), "A", nil, nil)
-		b := newItem(mkId(2, 0), "B", nil, nil)
+		a := newItem(mkId(1, 0), encodeContent("A"), nil, nil)
+		b := newItem(mkId(2, 0), encodeContent("B"), nil, nil)
 		return a, b
 	}
 
@@ -51,8 +51,8 @@ func TestConcurrentHeadInsertConverges(t *testing.T) {
 // codec.go retries until dependencies resolve — so at the raw repair +
 // Integrate level the input is always causally ordered.)
 func TestSequentialInsert(t *testing.T) {
-	h := newItem(mkId(1, 0), "H", nil, nil)
-	i := newItem(mkId(1, 1), "I", mkIdp(1, 0), nil)
+	h := newItem(mkId(1, 0), encodeContent("H"), nil, nil)
+	i := newItem(mkId(1, 1), encodeContent("I"), mkIdp(1, 0), nil)
 	if got := runIntegrate([]*item{h, i}); got != "HI" {
 		t.Fatalf("expected HI, got %q", got)
 	}
@@ -63,10 +63,10 @@ func TestSequentialInsert(t *testing.T) {
 // regardless of order.
 func TestConcurrentMiddleInsertConverges(t *testing.T) {
 	build := func(order int) string {
-		a := newItem(mkId(1, 0), "A", nil, nil)
-		c := newItem(mkId(1, 1), "C", mkIdp(1, 0), nil)
-		x := newItem(mkId(2, 0), "X", mkIdp(1, 0), mkIdp(1, 1))
-		y := newItem(mkId(3, 0), "Y", mkIdp(1, 0), mkIdp(1, 1))
+		a := newItem(mkId(1, 0), encodeContent("A"), nil, nil)
+		c := newItem(mkId(1, 1), encodeContent("C"), mkIdp(1, 0), nil)
+		x := newItem(mkId(2, 0), encodeContent("X"), mkIdp(1, 0), mkIdp(1, 1))
+		y := newItem(mkId(3, 0), encodeContent("Y"), mkIdp(1, 0), mkIdp(1, 1))
 		if order == 0 {
 			return runIntegrate([]*item{a, c, x, y})
 		}
@@ -91,16 +91,16 @@ func TestConcurrentMiddleInsertConverges(t *testing.T) {
 func TestSplitNode(t *testing.T) {
 	s := newStore(1)
 	y := s.getOrCreateYType("text")
-	it := newItem(newId(1, 0), "abc", nil, nil)
+	it := newItem(newId(1, 0), encodeContent("abc"), nil, nil)
 	it.parent = y
 	newTransaction(&s).integrate(y, it)
 
 	left, right := s.splitNode(it, 1)
-	if got := y.Text(); got != "abc" {
+	if got := decodeContent(y.Text()); got != "abc" {
 		t.Fatalf("split changed the document: %q", got)
 	}
-	if left.content.content != "a" || right.content.content != "bc" {
-		t.Fatalf("bad contents: %q / %q", left.content.content, right.content.content)
+	if decodeContent(left.content.content) != "a" || decodeContent(right.content.content) != "bc" {
+		t.Fatalf("bad contents: %q / %q", decodeContent(left.content.content), decodeContent(right.content.content))
 	}
 	if right.id != newId(1, 1) {
 		t.Fatalf("bad right id: %+v", right.id)
@@ -117,17 +117,17 @@ func TestSplitNode(t *testing.T) {
 
 	// clean-start split of the remaining "bc" run via the repair-side helper
 	mid, ok := s.splitAtAndGetRight(newId(1, 2))
-	if !ok || mid.content.content != "c" || mid.id != newId(1, 2) {
+	if !ok || decodeContent(mid.content.content) != "c" || mid.id != newId(1, 2) {
 		t.Fatalf("splitAtAndGetRight: %v %+v", ok, mid)
 	}
-	if got := y.Text(); got != "abc" {
+	if got := decodeContent(y.Text()); got != "abc" {
 		t.Fatalf("second split changed the document: %q", got)
 	}
 
 	// the right half of a tombstoned run stays deleted (y-octo drops the flag)
 	s2 := newStore(2)
 	y2 := s2.getOrCreateYType("text")
-	dead := newItem(newId(2, 0), "xy", nil, nil)
+	dead := newItem(newId(2, 0), encodeContent("xy"), nil, nil)
 	dead.parent = y2
 	newTransaction(&s2).integrate(y2, dead)
 	dead.flags = dead.flags | itemDeleted
@@ -136,7 +136,7 @@ func TestSplitNode(t *testing.T) {
 	if !r2.Deleted() {
 		t.Fatalf("right half of a tombstoned run lost the deleted flag")
 	}
-	if got := y2.Text(); got != "" {
+	if got := decodeContent(y2.Text()); got != "" {
 		t.Fatalf("tombstoned content resurrected: %q", got)
 	}
 }

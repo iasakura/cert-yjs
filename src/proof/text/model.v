@@ -10,7 +10,7 @@
     delivered is in the walked list) is [delta/model]'s, shared with the
     observers below the store.
 
-    Laws: none; [Text.Len] / [Text.String] state their reads over these
+    Laws: none; [Text.Len] / [Text.CodeUnits] state their reads over these
     directly. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
@@ -22,7 +22,7 @@ From stdpp Require Import gmap.
 
 Section text_model.
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (* Type names are Go strings (issue #49). *)
 Local Notation P := go_string.

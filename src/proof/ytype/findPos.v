@@ -23,7 +23,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (** General tombstone-aware [findPos]: walk to the visible character index [idx]
     and return the straddling neighbours plus the in-node offset. The Go walks
@@ -99,7 +99,7 @@ Proof.
       have Hcloc : lq = loc_at (l0 :: ls') (Z.of_nat q).
       { rewrite /loc_at decide_True; last lia. rewrite Nat2Z.id Hlq //. }
       iDestruct "Hnode" as (itemVal olidq oridq)
-        "(Hcval & Hcol & Hcor & %Hinl & %Hinr & %Hid & %Hcontent & %Hparq & %Hprevq & %Hnextq & %Hflags)".
+        "(Hcval & Hcol & Hcor & %Hinl & %Hinr & %Hid & #Hcontent & %Hparq & %Hprevq & %Hnextq & %Hflags)".
       have Hcr : itemVal.(yjs.item.right') = loc_at (l0 :: ls') (Z.of_nat q + 1).
       { rewrite Hnextq. exact Hcrn. }
       iEval (rewrite -Hcloc) in "Hrightp".
@@ -112,9 +112,9 @@ Proof.
         wp_auto.
         iAssert (own_item_node lq dq (input_of_run rq) true
                    parent prevq nxtq) with "[Hcval Hcol Hcor]" as "Hnode".
-        { iExists itemVal, olidq, oridq. iFrame "Hcval Hcol Hcor".
+        { iExists itemVal, olidq, oridq. iFrame "Hcval Hcol Hcor Hcontent".
           iPureIntro. split_and!;
-            [exact Hinl | exact Hinr | exact Hid | exact Hcontent | exact Hparq
+            [exact Hinl | exact Hinr | exact Hid  | exact Hparq
             | exact Hprevq | exact Hnextq | (by rewrite Hflags ?Hdq)]. }
         iDestruct ("Hback" with "Hnode") as "Hdll".
         wp_for_post.
@@ -126,9 +126,9 @@ Proof.
         rewrite decide_False; [| done]. rewrite decide_True; [| done].
         iAssert (own_item_node lq dq (input_of_run rq) false
                    parent prevq nxtq) with "[Hcval Hcol Hcor]" as "Hnode".
-        { iExists itemVal, olidq, oridq. iFrame "Hcval Hcol Hcor".
+        { iExists itemVal, olidq, oridq. iFrame "Hcval Hcol Hcor Hcontent".
           iPureIntro. split_and!;
-            [exact Hinl | exact Hinr | exact Hid | exact Hcontent | exact Hparq
+            [exact Hinl | exact Hinr | exact Hid  | exact Hparq
             | exact Hprevq | exact Hnextq | (by rewrite Hflags ?Hdq)]. }
         iDestruct ("Hback" with "Hnode") as "Hdll".
         iEval (rewrite Hcloc) in "Hrightp".
@@ -180,7 +180,7 @@ Proof.
         have Hc2loc : l2 = loc_at (l0 :: ls') (Z.of_nat q2).
         { rewrite /loc_at decide_True; last lia. rewrite Nat2Z.id Hl2 //. }
         iDestruct "Hnode2" as (iv2 olid2 orid2)
-          "(Hc2val & Hc2ol & Hc2or & %Hc2inl & %Hc2inr & %Hc2id & %Hc2cont & %Hc2par & %Hc2prev & %Hc2next & %Hc2flags)".
+          "(Hc2val & Hc2ol & Hc2or & %Hc2inl & %Hc2inr & %Hc2id & #Hc2cont & %Hc2par & %Hc2prev & %Hc2next & %Hc2flags)".
         have Hcount2 : is_countable_flag iv2 = true := flags_if_countable iv2 (run_deleted r2) Hc2flags.
         have Hdel2 : is_deleted_flag iv2 = run_deleted r2 := flags_if_deleted iv2 (run_deleted r2) Hc2flags.
         have Hc2r : iv2.(yjs.item.right') = loc_at (l0 :: ls') (Z.of_nat q2 + 1).
@@ -191,15 +191,15 @@ Proof.
         rewrite Hdel2.
         destruct (run_deleted r2) eqn:Hd2; simpl negb; wp_auto.
         2:{ (* visible node: spend the budget, or record the in-run offset *)
-            wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "[Hc2val _]".
+            wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val $Hc2cont]"). iIntros "Hc2val".
             wp_auto.
             case_bool_decide as Hcmp; wp_auto.
             - (* remaining < Len: the index lands inside this run (issue #28) *)
               iAssert (own_item_node l2 dq (input_of_run r2) false
                          parent prev2 nxt2) with "[Hc2val Hc2ol Hc2or]" as "Hnode2".
-              { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or".
+              { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or Hc2cont".
                 iPureIntro. split_and!;
-                  [exact Hc2inl | exact Hc2inr | exact Hc2id | exact Hc2cont | exact Hc2par
+                  [exact Hc2inl | exact Hc2inr | exact Hc2id  | exact Hc2par
                   | exact Hc2prev | exact Hc2next | (by rewrite Hc2flags ?Hd2)]. }
               iDestruct ("Hback2" with "Hnode2") as "Hdll".
               wp_for_post.
@@ -208,37 +208,35 @@ Proof.
               rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
               replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
               rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro.
-              have Hrlen : length (run_items r2) = length (iv2.(yjs.item.content').(yjs.content.content')).
-              { have Hstr : iv2.(yjs.item.content').(yjs.content.content')
-                          = in_content (input_of_run r2) := Hc2cont.
-                rewrite Hstr. symmetry. exact Hc2len. }
+              have Hrlen : length (run_items r2) = length (in_content (input_of_run r2)).
+              { symmetry. exact Hc2len. }
               split; [lia |]. right.
               split_and!; [word | done | lia |].
               exists r2. replace (S q2 - 1)%nat with q2 by lia.
               split_and!; [exact Hr2 | exact Hd2 | rewrite Hrlen; word].
             - (* Len <= remaining: spend the whole node (the else branch
                  re-reads right.Len(), a second method call) *)
-              wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "[Hc2val _]".
+              wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val $Hc2cont]"). iIntros "Hc2val".
               wp_auto.
               iAssert (own_item_node l2 dq (input_of_run r2) false
                          parent prev2 nxt2) with "[Hc2val Hc2ol Hc2or]" as "Hnode2".
-              { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or".
+              { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or Hc2cont".
                 iPureIntro. split_and!;
-                  [exact Hc2inl | exact Hc2inr | exact Hc2id | exact Hc2cont | exact Hc2par
+                  [exact Hc2inl | exact Hc2inr | exact Hc2id  | exact Hc2par
                   | exact Hc2prev | exact Hc2next | (by rewrite Hc2flags ?Hd2)]. }
               iDestruct ("Hback2" with "Hnode2") as "Hdll".
               wp_for_post.
               iFrame "HΦ".
-              iExists (S q2), (w64_word_instance.(word.sub) rem (W64 (length (iv2.(yjs.item.content').(yjs.content.content'))))), (W64 0).
+              iExists (S q2), (w64_word_instance.(word.sub) rem (W64 (length (in_content (input_of_run r2))))), (W64 0).
               iFrame "Hp Hdll Hrem Hoffp".
               rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
               replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
               rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro. split; [lia | by left]. }
         iAssert (own_item_node l2 dq (input_of_run r2) true
                    parent prev2 nxt2) with "[Hc2val Hc2ol Hc2or]" as "Hnode2".
-        { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or".
+        { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or Hc2cont".
           iPureIntro. split_and!;
-            [exact Hc2inl | exact Hc2inr | exact Hc2id | exact Hc2cont | exact Hc2par
+            [exact Hc2inl | exact Hc2inr | exact Hc2id  | exact Hc2par
             | exact Hc2prev | exact Hc2next | (by rewrite Hc2flags ?Hd2)]. }
         iDestruct ("Hback2" with "Hnode2") as "Hdll".
         wp_for_post.
@@ -301,7 +299,7 @@ Proof.
         have Hc2loc : l2 = loc_at (l0 :: ls') (Z.of_nat q2).
         { rewrite /loc_at decide_True; last lia. rewrite Nat2Z.id Hl2 //. }
         iDestruct "Hnode2" as (iv2 olid2 orid2)
-          "(Hc2val & Hc2ol & Hc2or & %Hc2inl & %Hc2inr & %Hc2id & %Hc2cont & %Hc2par & %Hc2prev & %Hc2next & %Hc2flags)".
+          "(Hc2val & Hc2ol & Hc2or & %Hc2inl & %Hc2inr & %Hc2id & #Hc2cont & %Hc2par & %Hc2prev & %Hc2next & %Hc2flags)".
         have Hcount2 : is_countable_flag iv2 = true := flags_if_countable iv2 (run_deleted r2) Hc2flags.
         have Hdel2 : is_deleted_flag iv2 = run_deleted r2 := flags_if_deleted iv2 (run_deleted r2) Hc2flags.
         have Hc2r : iv2.(yjs.item.right') = loc_at (l0 :: ls') (Z.of_nat q2 + 1).
@@ -312,15 +310,15 @@ Proof.
         rewrite Hdel2.
         destruct (run_deleted r2) eqn:Hd2; simpl negb; wp_auto.
         2:{ (* visible node: spend the budget, or record the in-run offset *)
-            wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "[Hc2val _]".
+            wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val $Hc2cont]"). iIntros "Hc2val".
             wp_auto.
             case_bool_decide as Hcmp; wp_auto.
             - (* remaining < Len: the index lands inside this run (issue #28) *)
               iAssert (own_item_node l2 dq (input_of_run r2) false
                          parent prev2 nxt2) with "[Hc2val Hc2ol Hc2or]" as "Hnode2".
-              { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or".
+              { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or Hc2cont".
                 iPureIntro. split_and!;
-                  [exact Hc2inl | exact Hc2inr | exact Hc2id | exact Hc2cont | exact Hc2par
+                  [exact Hc2inl | exact Hc2inr | exact Hc2id  | exact Hc2par
                   | exact Hc2prev | exact Hc2next | (by rewrite Hc2flags ?Hd2)]. }
               iDestruct ("Hback2" with "Hnode2") as "Hdll".
               wp_for_post.
@@ -329,37 +327,35 @@ Proof.
               rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
               replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
               rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro.
-              have Hrlen : length (run_items r2) = length (iv2.(yjs.item.content').(yjs.content.content')).
-              { have Hstr : iv2.(yjs.item.content').(yjs.content.content')
-                          = in_content (input_of_run r2) := Hc2cont.
-                rewrite Hstr. symmetry. exact Hc2len. }
+              have Hrlen : length (run_items r2) = length (in_content (input_of_run r2)).
+              { symmetry. exact Hc2len. }
               split; [lia |]. right.
               split_and!; [word | done | lia |].
               exists r2. replace (S q2 - 1)%nat with q2 by lia.
               split_and!; [exact Hr2 | exact Hd2 | rewrite Hrlen; word].
             - (* Len <= remaining: spend the whole node (the else branch
                  re-reads right.Len(), a second method call) *)
-              wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val]"). iIntros "[Hc2val _]".
+              wp_apply (wp_item__Len l2 dq iv2 with "[$Hc2val $Hc2cont]"). iIntros "Hc2val".
               wp_auto.
               iAssert (own_item_node l2 dq (input_of_run r2) false
                          parent prev2 nxt2) with "[Hc2val Hc2ol Hc2or]" as "Hnode2".
-              { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or".
+              { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or Hc2cont".
                 iPureIntro. split_and!;
-                  [exact Hc2inl | exact Hc2inr | exact Hc2id | exact Hc2cont | exact Hc2par
+                  [exact Hc2inl | exact Hc2inr | exact Hc2id  | exact Hc2par
                   | exact Hc2prev | exact Hc2next | (by rewrite Hc2flags ?Hd2)]. }
               iDestruct ("Hback2" with "Hnode2") as "Hdll".
               wp_for_post.
               iFrame "HΦ".
-              iExists (S q2), (w64_word_instance.(word.sub) rem (W64 (length (iv2.(yjs.item.content').(yjs.content.content'))))), (W64 0).
+              iExists (S q2), (w64_word_instance.(word.sub) rem (W64 (length (in_content (input_of_run r2))))), (W64 0).
               iFrame "Hp Hdll Hrem Hoffp".
               rewrite Hc2r. replace (Z.of_nat (S q2) - 1)%Z with (Z.of_nat q2) by lia.
               replace (Z.of_nat (S q2)) with (Z.of_nat q2 + 1)%Z by lia.
               rewrite Hc2loc. iFrame "Hleftp Hrightp". iPureIntro. split; [lia | by left]. }
         iAssert (own_item_node l2 dq (input_of_run r2) true
                    parent prev2 nxt2) with "[Hc2val Hc2ol Hc2or]" as "Hnode2".
-        { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or".
+        { iExists iv2, olid2, orid2. iFrame "Hc2val Hc2ol Hc2or Hc2cont".
           iPureIntro. split_and!;
-            [exact Hc2inl | exact Hc2inr | exact Hc2id | exact Hc2cont | exact Hc2par
+            [exact Hc2inl | exact Hc2inr | exact Hc2id  | exact Hc2par
             | exact Hc2prev | exact Hc2next | (by rewrite Hc2flags ?Hd2)]. }
         iDestruct ("Hback2" with "Hnode2") as "Hdll".
         wp_for_post.

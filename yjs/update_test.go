@@ -5,13 +5,13 @@ import "testing"
 // helper: one decoded insert struct with sibling origins (its parent is
 // borrowed from a neighbour, as on the wire).
 func mkUpdateItem(client, clock uint64, content string, oL, oR *id) updateItem {
-	return updateItem{id: newId(client, clock), originLeftId: oL, originRightId: oR, content: content}
+	return updateItem{id: newId(client, clock), originLeftId: oL, originRightId: oR, content: encodeContent(content)}
 }
 
 // helper: one decoded head insert struct (no origins), carrying its root type
 // name (Parent::String on the wire).
 func mkHeadUpdateItem(client, clock uint64, content string, name string) updateItem {
-	return updateItem{id: newId(client, clock), parentName: &name, content: content}
+	return updateItem{id: newId(client, clock), parentName: &name, content: encodeContent(content)}
 }
 
 // applyUpdateTo integrates a decoded update (any order, issue #40) into a
@@ -21,7 +21,7 @@ func applyUpdateTo(structs []updateItem) string {
 	s := newStore(0)
 	u := Update{structs: structs}
 	newTransaction(&s).applyUpdate(u.structs)
-	return s.getOrCreateYType("text").Text()
+	return decodeContent(s.getOrCreateYType("text").Text())
 }
 
 // Sequential update "HI": H at head, then I with originLeft = H.
@@ -84,7 +84,7 @@ func TestApplyUpdatePendingDrain(t *testing.T) {
 	i := mkUpdateItem(1, 1, "I", mkIdp(1, 0), nil)
 
 	newTransaction(&s).applyUpdate([]updateItem{i})
-	if got := s.getOrCreateYType("text").Text(); got != "" {
+	if got := decodeContent(s.getOrCreateYType("text").Text()); got != "" {
 		t.Fatalf("expected empty text while pending, got %q", got)
 	}
 	if len(s.pending) != 1 {
@@ -92,7 +92,7 @@ func TestApplyUpdatePendingDrain(t *testing.T) {
 	}
 
 	newTransaction(&s).applyUpdate([]updateItem{h})
-	if got := s.getOrCreateYType("text").Text(); got != "HI" {
+	if got := decodeContent(s.getOrCreateYType("text").Text()); got != "HI" {
 		t.Fatalf("expected HI after drain, got %q", got)
 	}
 	if len(s.pending) != 0 {
@@ -116,14 +116,14 @@ func TestApplyUpdateOwnPredecessorGate(t *testing.T) {
 
 	s := newStore(0)
 	newTransaction(&s).applyUpdate([]updateItem{h, x, k})
-	if got := s.getOrCreateYType("text").Text(); got != "HX" {
+	if got := decodeContent(s.getOrCreateYType("text").Text()); got != "HX" {
 		t.Fatalf("expected HX while K pends, got %q", got)
 	}
 	if len(s.pending) != 1 {
 		t.Fatalf("expected K pending, got %d structs", len(s.pending))
 	}
 	newTransaction(&s).applyUpdate([]updateItem{i})
-	if got := s.getOrCreateYType("text").Text(); got != "HKXI" {
+	if got := decodeContent(s.getOrCreateYType("text").Text()); got != "HKXI" {
 		t.Fatalf("expected HKXI after drain, got %q", got)
 	}
 	if len(s.pending) != 0 {
@@ -141,7 +141,7 @@ func TestApplyUpdateDuplicatesDropped(t *testing.T) {
 	s := newStore(0)
 	newTransaction(&s).applyUpdate([]updateItem{h, i, h, i})
 	newTransaction(&s).applyUpdate([]updateItem{h, i})
-	if got := s.getOrCreateYType("text").Text(); got != "HI" {
+	if got := decodeContent(s.getOrCreateYType("text").Text()); got != "HI" {
 		t.Fatalf("expected HI, got %q", got)
 	}
 
@@ -164,7 +164,7 @@ func TestApplyUpdateUnresolvableStaysPending(t *testing.T) {
 
 	newTransaction(&s).applyUpdate([]updateItem{ghostDep})
 	newTransaction(&s).applyUpdate([]updateItem{h})
-	if got := s.getOrCreateYType("text").Text(); got != "H" {
+	if got := decodeContent(s.getOrCreateYType("text").Text()); got != "H" {
 		t.Fatalf("expected H, got %q", got)
 	}
 	if len(s.pending) != 1 {
@@ -194,7 +194,7 @@ func TestApplyUpdateFragmentedDeliveryConverges(t *testing.T) {
 		for _, ui := range ord {
 			newTransaction(&s).applyUpdate([]updateItem{ui})
 		}
-		if got := s.getOrCreateYType("text").Text(); got != want {
+		if got := decodeContent(s.getOrCreateYType("text").Text()); got != want {
 			t.Fatalf("order %d diverged: %q vs %q", oi, got, want)
 		}
 		if len(s.pending) != 0 {
@@ -211,10 +211,10 @@ func TestApplyUpdateMultipleRoots(t *testing.T) {
 	i := mkUpdateItem(1, 1, "I", mkIdp(1, 0), nil)
 	b := mkHeadUpdateItem(1, 2, "B", "body")
 	newTransaction(&s).applyUpdate([]updateItem{h, i, b})
-	if got := s.getOrCreateYType("title").Text(); got != "HI" {
+	if got := decodeContent(s.getOrCreateYType("title").Text()); got != "HI" {
 		t.Fatalf("title: expected HI, got %q", got)
 	}
-	if got := s.getOrCreateYType("body").Text(); got != "B" {
+	if got := decodeContent(s.getOrCreateYType("body").Text()); got != "B" {
 		t.Fatalf("body: expected B, got %q", got)
 	}
 }

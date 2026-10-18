@@ -38,12 +38,12 @@ Context {sync_pkg : sync.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -99,10 +99,14 @@ Proof.
   iDestruct (own_dll_run_per_char with "Hdll") as %Hperchar.
   iAssert (own_ytype tv.(yjs.Text.inner') (DfracOwn 1) ls ts) with "[Hparent Hdll]" as "Hyt".
   { iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. exact Hlen. }
-  wp_apply (wp_yType__Text with "[$Hyt]"). iIntros "Hyt".
+  wp_apply (wp_yType__Text with "[$Hyt]"). iIntros (textsl) "(Hyt & Htextsl & Htextcap)".
   iDestruct ("Hytback" with "Hyt") as "Hstate".
   rewrite Hsnap.
-  (* every visible char carries one byte, so the string is empty exactly
+  (* the slice of the current text is handed to the callback inside the
+     initial delta, so it is held read-only from here on *)
+  iPersist "Htextsl".
+  iDestruct (own_slice_len with "Htextsl") as %[Htlen Htlen0].
+  (* every visible char carries one code unit, so the text is empty exactly
      when nothing is visible *)
   have Hnonempty : ∀ x, x ∈ visible_items (type_snapshot m deleted name) -> content x ≠ [].
   { move=> x Hx.
@@ -125,8 +129,6 @@ Proof.
   iMod (own_store_data_text_snapshot with "Hbind Hstore") as "[Hstore #Hsnapshot]".
   wp_auto.
   (* ---- the initial delta: the whole visible text, as one insert ---- *)
-  wp_apply wp_string_len. iIntros "%Hstrlen".
-  wp_auto.
   (* [wp_if_join] substitutes every variable equation; keep [deleted] *)
   clear Hdeleted.
   wp_if_join (λ v, ⌜v = execute_val⌝ ∗
@@ -142,14 +144,16 @@ Proof.
     iSplitR; first done. iExists sl'. iFrame "initial".
     rewrite (text_delta_from_empty_string _ Hnonempty).
     rewrite decide_False; last first.
-    { move=> Heq. rewrite Heq /= in l. word. }
-    iExists [_]. iFrame "Hsl' Hcap'". iPureIntro. simpl. constructor; [split; reflexivity | constructor]. }
+    { move=> Heq. rewrite Heq /= in Htlen. word. }
+    iExists [_]. iFrame "Hsl' Hcap'". simpl.
+    iSplit; last done.
+    iApply (is_delta_op_insert with "[]"); [reflexivity | iExact "Htextsl"]. }
   { (* empty: nothing to say *)
     iSplitR; first done. iExists slice.nil. iFrame "initial".
     rewrite (text_delta_from_empty_string _ Hnonempty).
     rewrite decide_True; last first.
     { destruct (visible_string (type_snapshot m deleted name)) as [| b bs] eqn:Hvs; first done.
-      exfalso. apply n. simpl in Hstrlen |- *. word. }
+      exfalso. apply n. simpl in Htlen. word. }
     iApply own_delta_nil. }
   iIntros (v) "(-> & Hjoin)". iDestruct "Hjoin" as (initial_sl) "Hjoin". iNamed "Hjoin".
   wp_auto.

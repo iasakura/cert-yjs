@@ -69,7 +69,7 @@ Set Default Proof Using "Type*".
 
 (** The content type is the store's, since the protocol has to be the one
     [wp_Transaction__applyUpdate] consumes. *)
-Notation A := go_string.
+Notation A := (list w16).
 Notation P := go_string.
 
 Local Notation TId := (TypeId P).
@@ -99,22 +99,22 @@ Proof. apply _. Qed.
 
 (** The one operation this peer ever performs: insert [a] into the empty
     document of type [t], as client [cl]'s clock-zero operation. *)
-Definition smoke_input (cl : ClientId) (b : w8) : IntegrateInput (A := A) :=
+Definition smoke_input (cl : ClientId) (b : w16) : IntegrateInput (A := A) :=
   MkIntegrateInput (A := A) None None [b] (MkYjsId cl 0).
 
-Definition smoke_item (cl : ClientId) (b : w8) : YjsItem A :=
+Definition smoke_item (cl : ClientId) (b : w16) : YjsItem A :=
   Item (A := A) First Last (MkYjsId cl 0) [b].
 
 (** One character, so the per-character expansion is the operation itself.
     This is what lets a one-operation message's protocol be one certificate. *)
-Lemma expand_inputs_smoke (t : TId) (cl : ClientId) (b : w8) :
+Lemma expand_inputs_smoke (t : TId) (cl : ClientId) (b : w16) :
   expand_inputs [(t, smoke_input cl b)] = [(t, smoke_input cl b)].
 Proof. rewrite /expand_inputs /expand_input /ops_of_input /explode //=. Qed.
 
 (** Honesty of the peers' single-struct batches: tiny clocks make the no-wrap
     seam trivial, and an origin-less struct targets a named root (which is why
     the peers below insert at [RootId nm] rather than an arbitrary type). *)
-Lemma smoke_input_wf (nm : P) (cl : ClientId) (b : w8) :
+Lemma smoke_input_wf (nm : P) (cl : ClientId) (b : w16) :
   update_wf [(RootId nm, smoke_input cl b)].
 Proof.
   split; move=> x Hx; apply list_elem_of_singleton in Hx; subst x; simpl.
@@ -125,7 +125,7 @@ Qed.
 (** The send relation: that one message, and only onto an empty network. The
     emptiness condition is what makes the peer's operation anchor-free, so no
     delivery has to happen before it can be minted. *)
-Definition smoke_may (cl : ClientId) (nm : P) (a : w8)
+Definition smoke_may (cl : ClientId) (nm : P) (a : w16)
     (M : gmap (chan_id * nat) (list u8)) (c : chan_id) (d : list u8) : Prop :=
   M = ∅ /\ d = encode [(RootId nm, smoke_input cl a)].
 
@@ -142,7 +142,7 @@ Definition smoke_coh (γh : history_names) (cl : ClientId)
     names are whatever the network layer allocated; only the last four fields
     are this file's business. *)
 Definition smoke_wsGS (γm γs γr : gname) (γh : history_names)
-    (cl : ClientId) (nm : P) (a : w8) : wsGS Σ :=
+    (cl : ClientId) (nm : P) (a : w16) : wsGS Σ :=
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
        (smoke_coh γh cl) (smoke_may cl nm a).
 
@@ -151,7 +151,7 @@ Definition smoke_wsGS (γm γs γr : gname) (γh : history_names)
     array is valid, maximal, and integrates. Stated over the array rather than
     over the empty document, because the peer below broadcasts into a document
     that is not empty, only empty at the type it is inserting into. *)
-Lemma smoke_premises_nil (cl : ClientId) (a : w8) :
+Lemma smoke_premises_nil (cl : ClientId) (a : w16) :
   toItem (smoke_input cl a) [] = Some (smoke_item cl a) /\
   IsItemValid (smoke_item cl a) /\
   maximalId (smoke_item cl a) [] /\
@@ -174,7 +174,7 @@ Qed.
 Lemma smoke_nilget (t' : TId) : doc_model_get (∅ : DocM) t' = [].
 Proof. rewrite /doc_model_get lookup_empty //. Qed.
 
-Lemma smoke_broadcast_premises (cl : ClientId) (t : TId) (a : w8) :
+Lemma smoke_broadcast_premises (cl : ClientId) (t : TId) (a : w16) :
   toItem (smoke_input cl a) (doc_model_get (∅ : DocM) t)
     = Some (smoke_item cl a) /\
   IsItemValid (smoke_item cl a) /\
@@ -191,7 +191,7 @@ Qed.
 
 (** The obligation holds for this peer. *)
 Lemma smoke_ws_env_preserves (γm γs γr : gname) (γh : history_names)
-    (cl : ClientId) (nm : P) (a : w8) (E : coPset) :
+    (cl : ClientId) (nm : P) (a : w16) (E : coPset) :
   ↑histN ⊆ E ->
   is_history (A := A) (P := P) γh -∗
     @ws_env_preserves Σ (smoke_wsGS γm γs γr γh cl nm a) _ E.
@@ -223,7 +223,7 @@ Qed.
 (** Non-vacuity, in one statement: a history exists, the obligation holds over
     it, and the send relation permits something. *)
 Lemma smoke_env_nonvacuous (γm γs γr : gname)
-    (cl : ClientId) (nm : P) (a : w8) (c : chan_id) (E : coPset) :
+    (cl : ClientId) (nm : P) (a : w16) (c : chan_id) (E : coPset) :
   ↑histN ⊆ E ->
   ⊢ |={E}=> ∃ γh : history_names,
       is_history (A := A) (P := P) γh ∗
@@ -252,7 +252,7 @@ Qed.
     operation it received is the next step, and that one needs the theory of
     [toItem] and [integrate] at a non-empty array. *)
 
-Definition relay_may (cl clX : ClientId) (t : TId) (nm2 : P) (aX aY : w8)
+Definition relay_may (cl clX : ClientId) (t : TId) (nm2 : P) (aX aY : w16)
     (k : chan_id * nat)
     (M : gmap (chan_id * nat) (list u8)) (c : chan_id) (d : list u8) : Prop :=
   M = {[ k := encode [(t, smoke_input clX aX)] ]} /\
@@ -281,14 +281,14 @@ Proof.
 Qed.
 
 Definition relay_wsGS (γm γs γr : gname) (γh : history_names)
-    (cl clX : ClientId) (t : TId) (nm2 : P) (aX aY : w8) (k : chan_id * nat) : wsGS Σ :=
+    (cl clX : ClientId) (t : TId) (nm2 : P) (aX aY : w16) (k : chan_id * nat) : wsGS Σ :=
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
        (relay_coh γh cl k (encode [(t, smoke_input clX aX)]))
        (relay_may cl clX t nm2 aX aY k).
 
 (** Draining the one operation the wire carries into an empty document. Same
     computation as [history_smoke]'s. *)
-Lemma relay_deliver_drain (clX : ClientId) (t : TId) (aX : w8) :
+Lemma relay_deliver_drain (clX : ClientId) (t : TId) (aX : w16) :
   pending_drain (∅ : DocM) [(t, smoke_input clX aX)]
     = ([(t, smoke_input clX aX)], [],
        <[t := [smoke_item clX aX]]> (∅ : DocM)).
@@ -300,7 +300,7 @@ Proof.
 Qed.
 
 Lemma relay_ws_env_preserves (γm γs γr : gname) (γh : history_names)
-    (cl clX : ClientId) (t : TId) (nm2 : P) (aX aY : w8) (k : chan_id * nat)
+    (cl clX : ClientId) (t : TId) (nm2 : P) (aX aY : w16) (k : chan_id * nat)
     (E : coPset) :
   ↑histN ⊆ E ->
   cl ≠ clX ->
@@ -378,17 +378,17 @@ Qed.
     holds. A real Yjs client's next operation points at one the server relayed
     to it. Here it does. *)
 
-Definition anchor_input (cl clX : ClientId) (b : w8) : IntegrateInput (A := A) :=
+Definition anchor_input (cl clX : ClientId) (b : w16) : IntegrateInput (A := A) :=
   MkIntegrateInput (A := A) (Some (MkYjsId clX 0)) None [b] (MkYjsId cl 0).
 
-Definition anchor_item (cl clX : ClientId) (bX b : w8) : YjsItem A :=
+Definition anchor_item (cl clX : ClientId) (bX b : w16) : YjsItem A :=
   Item (A := A) (itemPtr (smoke_item clX bX)) Last (MkYjsId cl 0) [b].
 
-Lemma expand_inputs_anchor (t : TId) (cl clX : ClientId) (b : w8) :
+Lemma expand_inputs_anchor (t : TId) (cl clX : ClientId) (b : w16) :
   expand_inputs [(t, anchor_input cl clX b)] = [(t, anchor_input cl clX b)].
 Proof. rewrite /expand_inputs /expand_input /ops_of_input /explode //=. Qed.
 
-Lemma anchor_input_wf (t : TId) (cl clX : ClientId) (b : w8) :
+Lemma anchor_input_wf (t : TId) (cl clX : ClientId) (b : w16) :
   update_wf [(t, anchor_input cl clX b)].
 Proof.
   split; move=> x Hx; apply list_elem_of_singleton in Hx; subst x; simpl.
@@ -397,7 +397,7 @@ Proof.
 Qed.
 
 
-Lemma anchor_toItem (cl clX : ClientId) (bX b : w8) :
+Lemma anchor_toItem (cl clX : ClientId) (bX b : w16) :
   toItem (anchor_input cl clX b) [smoke_item clX bX]
     = Some (anchor_item cl clX bX b).
 Proof.
@@ -405,7 +405,7 @@ Proof.
   rewrite decide_True //.
 Qed.
 
-Lemma anchor_integrate (cl clX : ClientId) (bX b : w8) :
+Lemma anchor_integrate (cl clX : ClientId) (bX b : w16) :
   integrate (anchor_input cl clX b) [smoke_item clX bX]
     = Some [smoke_item clX bX; anchor_item cl clX bX b].
 Proof.
@@ -413,7 +413,7 @@ Proof.
   rewrite decide_True //.
 Qed.
 
-Lemma anchor_valid (cl clX : ClientId) (bX b : w8) :
+Lemma anchor_valid (cl clX : ClientId) (bX b : w16) :
   IsItemValid (anchor_item cl clX bX b).
 Proof.
   split.
@@ -434,7 +434,7 @@ Proof.
         inversion Hreach as [? ? Hs2 | ? ? ? Hs2 ?]; subst; inversion Hs2.
 Qed.
 
-Lemma anchor_maximal (cl clX : ClientId) (bX b : w8) :
+Lemma anchor_maximal (cl clX : ClientId) (bX b : w16) :
   cl ≠ clX ->
   maximalId (anchor_item cl clX bX b) [smoke_item clX bX].
 Proof.
@@ -443,20 +443,20 @@ Proof.
   subst x. rewrite /smoke_item /anchor_item /= in Hcid. by apply Hne.
 Qed.
 
-Definition anchor_may (cl clX : ClientId) (t : TId) (bX bY : w8)
+Definition anchor_may (cl clX : ClientId) (t : TId) (bX bY : w16)
     (k : chan_id * nat)
     (M : gmap (chan_id * nat) (list u8)) (c : chan_id) (d : list u8) : Prop :=
   M = {[ k := encode [(t, smoke_input clX bX)] ]} /\
   d = encode [(t, anchor_input cl clX bY)].
 
 Definition anchor_wsGS (γm γs γr : gname) (γh : history_names)
-    (cl clX : ClientId) (t : TId) (bX bY : w8) (k : chan_id * nat) : wsGS Σ :=
+    (cl clX : ClientId) (t : TId) (bX bY : w16) (k : chan_id * nat) : wsGS Σ :=
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
        (relay_coh γh cl k (encode [(t, smoke_input clX bX)]))
        (anchor_may cl clX t bX bY k).
 
 Lemma anchor_ws_env_preserves (γm γs γr : gname) (γh : history_names)
-    (cl clX : ClientId) (t : TId) (bX bY : w8) (k : chan_id * nat)
+    (cl clX : ClientId) (t : TId) (bX bY : w16) (k : chan_id * nat)
     (E : coPset) :
   ↑histN ⊆ E ->
   cl ≠ clX ->
@@ -542,7 +542,7 @@ Qed.
     of the slot being filled would want the network's well-formedness too,
     which the obligation also carries. *)
 
-Fixpoint stream_items (cl : ClientId) (prev : YjsPtr A) (k : nat) (bs : list w8)
+Fixpoint stream_items (cl : ClientId) (prev : YjsPtr A) (k : nat) (bs : list w16)
     : list (YjsItem A) :=
   match bs with
   | [] => []
@@ -551,18 +551,18 @@ Fixpoint stream_items (cl : ClientId) (prev : YjsPtr A) (k : nat) (bs : list w8)
       it :: stream_items cl (itemPtr it) (S k) rest
   end.
 
-Definition stream_input (cl : ClientId) (k : nat) (b : w8)
+Definition stream_input (cl : ClientId) (k : nat) (b : w16)
     : IntegrateInput (A := A) :=
   MkIntegrateInput (A := A)
     (match k with O => None | S k' => Some (MkYjsId cl k') end)
     None [b] (MkYjsId cl k).
 
 Lemma stream_items_length (cl : ClientId) (prev : YjsPtr A) (k : nat)
-    (bs : list w8) :
+    (bs : list w16) :
   length (stream_items cl prev k bs) = length bs.
 Proof. elim: bs prev k => [| b bs IH] prev k //=. by rewrite IH. Qed.
 
-Lemma stream_input_wf (nm : P) (cl : ClientId) (k : nat) (b : w8) :
+Lemma stream_input_wf (nm : P) (cl : ClientId) (k : nat) (b : w16) :
   (Z.of_nat k + 1 < 2^64)%Z ->
   update_wf [(RootId nm, stream_input cl k b)].
 Proof.
@@ -576,7 +576,7 @@ Qed.
 
 (** Growing at the end: the new character hangs off the last one, or off
     [prev] when there is none yet. *)
-Fixpoint stream_last (cl : ClientId) (prev : YjsPtr A) (k : nat) (bs : list w8)
+Fixpoint stream_last (cl : ClientId) (prev : YjsPtr A) (k : nat) (bs : list w16)
     : YjsPtr A :=
   match bs with
   | [] => prev
@@ -586,7 +586,7 @@ Fixpoint stream_last (cl : ClientId) (prev : YjsPtr A) (k : nat) (bs : list w8)
   end.
 
 Lemma stream_items_snoc (cl : ClientId) (prev : YjsPtr A) (k : nat)
-    (bs : list w8) (b : w8) :
+    (bs : list w16) (b : w16) :
   stream_items cl prev k (bs ++ [b])
     = stream_items cl prev k bs
       ++ [Item (A := A) (stream_last cl prev k bs) Last
@@ -601,7 +601,7 @@ Notation stream_doc cl bs := (stream_items cl First 0 bs).
 Notation stream_tail cl bs := (stream_last cl First 0 bs).
 
 Lemma stream_last_snoc (cl : ClientId) (prev : YjsPtr A) (k : nat)
-    (bs : list w8) (b : w8) :
+    (bs : list w16) (b : w16) :
   stream_last cl prev k (bs ++ [b])
     = itemPtr (Item (A := A) (stream_last cl prev k bs) Last
                  (MkYjsId cl (k + length bs)) [b]).
@@ -613,7 +613,7 @@ Qed.
 
 (** What the peer's document satisfies at every point of the stream. Enough to
     take the next step and re-establish itself. *)
-Record stream_ok (cl : ClientId) (bs : list w8) : Prop := {
+Record stream_ok (cl : ClientId) (bs : list w16) : Prop := {
   so_inv : YjsArrInvariant (stream_doc cl bs);
   so_ids : forall i it, stream_doc cl bs !! i = Some it ->
              item_id it = MkYjsId cl i;
@@ -632,19 +632,19 @@ Qed.
 
 (** The character typed after [bs]: it hangs off the last one, and nothing
     stands to its right. *)
-Definition stream_item (cl : ClientId) (bs : list w8) (b : w8) : YjsItem A :=
+Definition stream_item (cl : ClientId) (bs : list w16) (b : w16) : YjsItem A :=
   Item (A := A) (stream_tail cl bs) Last (MkYjsId cl (length bs)) [b].
 
-Lemma stream_doc_snoc (cl : ClientId) (bs : list w8) (b : w8) :
+Lemma stream_doc_snoc (cl : ClientId) (bs : list w16) (b : w16) :
   stream_doc cl (bs ++ [b]) = stream_doc cl bs ++ [stream_item cl bs b].
 Proof. rewrite stream_items_snoc //. Qed.
 
-Lemma stream_tail_snoc (cl : ClientId) (bs : list w8) (b : w8) :
+Lemma stream_tail_snoc (cl : ClientId) (bs : list w16) (b : w16) :
   stream_tail cl (bs ++ [b]) = itemPtr (stream_item cl bs b).
 Proof. rewrite stream_last_snoc //. Qed.
 
 (** Where the tail points: at nothing, or at an item of the document. *)
-Lemma stream_tail_elem (cl : ClientId) (bs : list w8) :
+Lemma stream_tail_elem (cl : ClientId) (bs : list w16) :
   stream_tail cl bs = First \/
   ∃ y, y ∈ stream_doc cl bs /\ stream_tail cl bs = itemPtr y.
 Proof.
@@ -654,7 +654,7 @@ Proof.
 Qed.
 
 (** Ids read off membership rather than off a position. *)
-Lemma stream_ok_id_elem (cl : ClientId) (bs : list w8) (y : YjsItem A) :
+Lemma stream_ok_id_elem (cl : ClientId) (bs : list w16) (y : YjsItem A) :
   stream_ok cl bs -> y ∈ stream_doc cl bs ->
   ∃ i, (i < length bs)%nat /\ item_id y = MkYjsId cl i.
 Proof.
@@ -667,7 +667,7 @@ Qed.
 (** The step, at the array level: the next character resolves to
     [stream_item], that item is valid and carries this client's largest clock,
     and integrating it appends it. *)
-Lemma stream_step (cl : ClientId) (bs : list w8) (b : w8) :
+Lemma stream_step (cl : ClientId) (bs : list w16) (b : w16) :
   stream_ok cl bs ->
   toItem (stream_input cl (length bs) b) (stream_doc cl bs)
     = Some (stream_item cl bs b) /\
@@ -741,7 +741,7 @@ Proof.
       done.
 Qed.
 
-Lemma stream_ok_snoc (cl : ClientId) (bs : list w8) (b : w8) :
+Lemma stream_ok_snoc (cl : ClientId) (bs : list w16) (b : w16) :
   stream_ok cl bs -> stream_ok cl (bs ++ [b]).
 Proof.
   move=> Hok.
@@ -785,14 +785,14 @@ Qed.
 
 (** So the peer's document is a well-formed Yjs array at every point of its
     stream, whatever it types. *)
-Lemma stream_ok_all (cl : ClientId) (bs : list w8) : stream_ok cl bs.
+Lemma stream_ok_all (cl : ClientId) (bs : list w16) : stream_ok cl bs.
 Proof.
   elim/rev_ind: bs => [| b bs IH]; [exact (stream_ok_nil cl) | exact (stream_ok_snoc cl bs b IH)].
 Qed.
 
 (** One character per message, so again the per-character expansion is the
     operation itself. *)
-Lemma expand_inputs_stream (t : TId) (cl : ClientId) (k : nat) (b : w8) :
+Lemma expand_inputs_stream (t : TId) (cl : ClientId) (k : nat) (b : w16) :
   expand_inputs [(t, stream_input cl k b)] = [(t, stream_input cl k b)].
 Proof. rewrite /expand_inputs /expand_input /ops_of_input /explode //=. Qed.
 
@@ -829,10 +829,10 @@ Proof.
 Qed.
 
 (** The peer's document, as a doc model: one type, holding what it typed. *)
-Definition stream_docm (cl : ClientId) (t : TId) (bs : list w8) : DocM :=
+Definition stream_docm (cl : ClientId) (t : TId) (bs : list w16) : DocM :=
   <[t := stream_doc cl bs]> (∅ : DocM).
 
-Lemma stream_docm_get (cl : ClientId) (t t' : TId) (bs : list w8) :
+Lemma stream_docm_get (cl : ClientId) (t t' : TId) (bs : list w16) :
   doc_model_get (stream_docm cl t bs) t'
     = if decide (t' = t) then stream_doc cl bs else [].
 Proof.
@@ -849,7 +849,7 @@ Qed.
 Definition stream_may (cl : ClientId) (nm : P) (c0 : chan_id)
     (M : gmap (chan_id * nat) (list u8)) (c : chan_id) (d : list u8) : Prop :=
   c = c0 /\ (Z.of_nat (stream_pos c0 M) + 1 < 2^64)%Z /\
-  ∃ b : w8, d = encode [(RootId nm, stream_input cl (stream_pos c0 M) b)].
+  ∃ b : w16, d = encode [(RootId nm, stream_input cl (stream_pos c0 M) b)].
 
 (** Coherence: the peer has typed some byte string, it is as far along as the
     wire says, and its ghost history replays to the document that byte string
@@ -857,7 +857,7 @@ Definition stream_may (cl : ClientId) (nm : P) (c0 : chan_id)
     for. *)
 Definition stream_coh (γh : history_names) (cl : ClientId) (t : TId)
     (c0 : chan_id) (M : gmap (chan_id * nat) (list u8)) : iProp Σ :=
-  ∃ (bs : list w8) (h : list Ev),
+  ∃ (bs : list w16) (h : list Ev),
     ⌜length bs = stream_pos c0 M⌝ ∗
     ⌜history_state_coh h (stream_docm cl t bs)⌝ ∗
     own_client_history γh cl h.
@@ -943,7 +943,7 @@ Lemma stream_env_nonvacuous (γm γs γr : gname)
       is_history (A := A) (P := P) γh ∗
       @ws_env_preserves Σ (stream_wsGS γm γs γr γh cl nm c0) _ E ∗
       stream_coh γh cl (RootId nm) c0 ∅ ∗
-      ⌜forall (M : gmap (chan_id * nat) (list u8)) (b : w8),
+      ⌜forall (M : gmap (chan_id * nat) (list u8)) (b : w16),
          (Z.of_nat (stream_pos c0 M) + 1 < 2^64)%Z ->
          stream_may cl nm c0 M c0
            (encode [(RootId nm, stream_input cl (stream_pos c0 M) b)])⌝.
@@ -980,11 +980,11 @@ Qed.
 
 (** What the peer holds once it has done both: the operation it took in, at
     [t], and the characters it typed, at [t2]. *)
-Definition full_model (cl clX : ClientId) (t t2 : TId) (aX : w8)
-    (bs : list w8) : DocM :=
+Definition full_model (cl clX : ClientId) (t t2 : TId) (aX : w16)
+    (bs : list w16) : DocM :=
   <[t := [smoke_item clX aX]]> (<[t2 := stream_doc cl bs]> (∅ : DocM)).
 
-Lemma full_model_typed (cl clX : ClientId) (t t2 : TId) (aX : w8) (bs : list w8) :
+Lemma full_model_typed (cl clX : ClientId) (t t2 : TId) (aX : w16) (bs : list w16) :
   t2 ≠ t ->
   doc_model_get (full_model cl clX t t2 aX bs) t2 = stream_doc cl bs.
 Proof. move=> Hnt. rewrite /full_model docm_get_insert_ne // docm_get_insert_eq //. Qed.
@@ -992,7 +992,7 @@ Proof. move=> Hnt. rewrite /full_model docm_get_insert_ne // docm_get_insert_eq 
 (** Delivering the relayed operation lands on a model with no entry at [t2] at
     all; the peer's, before it has typed, has an empty one. As documents those
     are the same, which is all [history_state_coh] looks at. *)
-Lemma full_model_nil_get (cl clX : ClientId) (t t2 : TId) (aX : w8) (t'' : TId) :
+Lemma full_model_nil_get (cl clX : ClientId) (t t2 : TId) (aX : w16) (t'' : TId) :
   doc_model_get (<[t := [smoke_item clX aX]]> (∅ : DocM)) t''
     = doc_model_get (full_model cl clX t t2 aX []) t''.
 Proof.
@@ -1005,7 +1005,7 @@ Proof.
   - rewrite (docm_get_insert_ne (∅ : DocM) t2 t'' _ H2) //.
 Qed.
 
-Lemma full_model_bound (cl clX : ClientId) (t t2 : TId) (aX : w8) (bs : list w8) :
+Lemma full_model_bound (cl clX : ClientId) (t t2 : TId) (aX : w16) (bs : list w16) :
   cl ≠ clX -> t2 ≠ t ->
   forall (t' : TId) (x : YjsItem A),
     x ∈ doc_model_get (full_model cl clX t t2 aX bs) t' ->
@@ -1027,32 +1027,32 @@ Qed.
 (** The send relation: the wire carries the other client's operation at [kX],
     and the peer may put the next character of its stream on the channel it
     owns. *)
-Definition full_may (cl clX : ClientId) (t : TId) (nm2 : P) (aX : w8)
+Definition full_may (cl clX : ClientId) (t : TId) (nm2 : P) (aX : w16)
     (kX : chan_id * nat) (c0 : chan_id)
     (M : gmap (chan_id * nat) (list u8)) (c : chan_id) (d : list u8) : Prop :=
   M !! kX = Some (encode [(t, smoke_input clX aX)]) /\
   c = c0 /\ (Z.of_nat (stream_pos c0 M) + 1 < 2^64)%Z /\
-  ∃ b : w8, d = encode [(RootId nm2, stream_input cl (stream_pos c0 M) b)].
+  ∃ b : w16, d = encode [(RootId nm2, stream_input cl (stream_pos c0 M) b)].
 
 (** Coherence: as for the typing peer, with the delivery folded in. Before the
     first character the peer's history is empty of everything, including what
     was relayed to it; afterwards it replays to both halves of its document. *)
 Definition full_coh (γh : history_names) (cl clX : ClientId) (t t2 : TId)
-    (aX : w8) (c0 : chan_id) (M : gmap (chan_id * nat) (list u8)) : iProp Σ :=
-  ∃ (bs : list w8) (h : list Ev),
+    (aX : w16) (c0 : chan_id) (M : gmap (chan_id * nat) (list u8)) : iProp Σ :=
+  ∃ (bs : list w16) (h : list Ev),
     ⌜length bs = stream_pos c0 M⌝ ∗
     ⌜history_state_coh h
        (if decide (bs = []) then (∅ : DocM) else full_model cl clX t t2 aX bs)⌝ ∗
     own_client_history γh cl h.
 
 Definition full_wsGS (γm γs γr : gname) (γh : history_names)
-    (cl clX : ClientId) (t : TId) (nm2 : P) (aX : w8) (kX : chan_id * nat)
+    (cl clX : ClientId) (t : TId) (nm2 : P) (aX : w16) (kX : chan_id * nat)
     (c0 : chan_id) : wsGS Σ :=
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
        (full_coh γh cl clX t (RootId nm2) aX c0) (full_may cl clX t nm2 aX kX c0).
 
 Lemma full_coh_init (γh : history_names) (cl clX : ClientId) (t t2 : TId)
-    (aX : w8) (c0 : chan_id) :
+    (aX : w16) (c0 : chan_id) :
   own_client_history γh cl ([] : list Ev) -∗ full_coh γh cl clX t t2 aX c0 ∅.
 Proof.
   iIntros "Hown". iExists [], []. iFrame "Hown". iPureIntro.
@@ -1061,7 +1061,7 @@ Proof.
 Qed.
 
 Lemma full_ws_env_preserves (γm γs γr : gname) (γh : history_names)
-    (cl clX : ClientId) (t : TId) (nm2 : P) (aX : w8) (kX : chan_id * nat)
+    (cl clX : ClientId) (t : TId) (nm2 : P) (aX : w16) (kX : chan_id * nat)
     (c0 : chan_id) (E : coPset) :
   ↑histN ⊆ E ->
   cl ≠ clX ->

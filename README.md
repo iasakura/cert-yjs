@@ -23,8 +23,8 @@ replica must follow.
 ### Verified
 
 These are safety properties. They hold for every interleaving of goroutines
-and every ASCII input, but do not promise that a call returns. The verified
-code never panics and has no data races.
+and every input, but do not promise that a call returns. The verified code
+never panics and has no data races.
 
 - **Every replica follows the pure model.** A replica keeps each text as a
   list of characters in which deleted characters stay in place, marked as
@@ -39,33 +39,36 @@ code never panics and has no data races.
   only after the two characters it was inserted between and its author's
   previous insertion, and that each replica's text is what its history
   computes.
+- **UTF-16 code units.** A text is a sequence of UTF-16 code units, each with
+  its own id, which is what Yjs counts positions in. The verified API takes
+  and returns code units: `Insert` takes them and `CodeUnits` returns them.
+  The `String` conveniences convert from and to Go strings outside the
+  verified code.
 - **Insertion and deletion.** `Insert` adds characters with fresh ids and
   places them as the algorithm does. `Delete` only ever marks characters as
-  deleted. `String` and `Len` return a text that contains every insertion the
-  caller has made or has seen applied and none of the characters the caller
-  has deleted, and several of them run in parallel under the read lock.
+  deleted. `CodeUnits` and `Len` return a text that contains every insertion
+  the caller has made or has seen applied and none of the characters the
+  caller has deleted, and several of them run in parallel under the read lock.
 - **Applying updates from other replicas.** Applying a decoded update never
   fails, and updates may arrive in any order. Each insertion in an update is
   either applied or, when a character it depends on has not arrived yet, kept
   in a buffer that later updates retry. No insertion is dropped.
 - **Transactions.** `Doc.Transact` runs a group of writes (`InsertIn`,
   `DeleteIn`) as one transaction, as Yjs's `doc.transact` does. No other
-  goroutine can write until the transaction ends, and `StringIn` returns the
-  document's exact current text. `Insert`, `Delete` and applying an update are
+  goroutine can write until the transaction ends, and `CodeUnitsIn` returns
+  the document's exact current text. `Insert`, `Delete` and applying an update are
   each one transaction.
 - **Update observers.** An application can observe a text and receive its
-  changes as Yjs text deltas (retain n characters, insert a string, delete n
+  changes as Yjs text deltas (retain n characters, insert code units, delete n
   characters). Applying a delta to the text the application saw last gives
   exactly the current text. `observeapp/` is an example application that keeps
-  a string copy of a text this way, and its proof shows that the copy equals
-  the text.
+  a copy of a text this way, and its proof shows that the copy equals the
+  text.
 
 ### Remaining
 
 - **Types other than Text.** Map, Array, the XML types, types nested in other
   types, and rich-text formatting are not implemented.
-- **UTF-16.** Text is handled as bytes, one byte per character, so only ASCII
-  text is supported. Yjs counts positions in UTF-16 code units.
 - **Creating and merging runs.** Yjs keeps a run of characters typed together
   as one item and merges neighbouring items. Items here can hold runs too, and
   the verified code integrates a run as one item and splits an item when an
@@ -75,8 +78,16 @@ code never panics and has no data races.
   never merged.
 - **Garbage collection, undo and redo** are not implemented.
 - **Encoding updates as bytes.** Exporting local updates and reading received
-  ones use Yjs's v1 update format, but this encoding is not verified. The
-  verified code takes an update after it has been decoded.
+  ones use Yjs's v1 update format, but this encoding is not verified, and
+  neither is the conversion between Go strings and UTF-16 code units that it
+  and the `String` conveniences perform. The verified code takes an update
+  after it has been decoded.
+- **Lone surrogates.** A UTF-16 surrogate without its partner, whether
+  inserted alone or left alone when an edit separates the two halves of a
+  pair, cannot be written in the update format, which carries text as UTF-8,
+  and is sent as U+FFFD. A replica that received the pair before the edit then
+  reads different text from one that received it after. Text whose surrogate
+  pairs stay whole is exchanged exactly.
 - **Stronger specifications.** The specifications do not yet say that
   `Insert` inserts the new characters at the requested index, which characters
   `Delete` marks, what the deletions carried by an update from another replica

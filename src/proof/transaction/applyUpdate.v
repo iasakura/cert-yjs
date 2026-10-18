@@ -42,7 +42,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Op := (TId * @YjsOperation A)%type.
@@ -58,7 +58,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    reached from here carry it too. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -159,7 +159,7 @@ Proof using Type*.
   destruct state as [client0 k0 locs p0 bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & #Hui & Hruns & Hchanges) HΦ".
   iDestruct "Hui" as (oleft oright opn)
-    "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)".
+    "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & #Hin_c & %Hunonempty & %Htid & %Hborrow)".
   destruct typedInput as [typedInput2 input]. simpl in *. subst typedInput2.
   iDestruct (own_store_state_run_wf with "Hruns") as %Hwf0.
   iDestruct (own_store_state_arr_inv with "Hruns") as %Harrinv0.
@@ -282,11 +282,13 @@ Proof using Type*.
                 yjs.item.flags' := W8 2 |}).
   iAssert (own_linked_item itv input null null null) with "[Hitv]" as "Hfresh".
   { iExists itemVal, oleft, oright. rewrite /own_fresh_item_raw.
-    iFrame "Hitv HisL HisR". iPureIntro.
-    split_and!;
-      [exact Hin_l | exact Hin_r | exact Hin_id | exact Hin_c
-      | reflexivity | reflexivity | reflexivity | reflexivity
-      | exact Hunonempty]. }
+    iFrame "Hitv HisL HisR".
+    iSplitR; last (iPureIntro; split_and!;
+      [reflexivity | reflexivity | reflexivity | reflexivity | exact Hunonempty]).
+    iSplitR; first (iPureIntro; exact Hin_l).
+    iSplitR; first (iPureIntro; exact Hin_r).
+    iSplitR; first (iPureIntro; exact Hin_id).
+    rewrite /itemVal /is_content /=. iExact "Hin_c". }
   wp_apply (wp_store__repair_state s itv (updateItemVal.(yjs.updateItem.parentName'))
               input opn (MkStoreState client0 k0 locs p0 bind pend pdel) orL orR p
               (conj HwL (conj HwR Hsameg)) Hwpar
@@ -516,7 +518,7 @@ Proof using Type*.
   destruct state as [client0 k0 locs p0 bind pend pdel]. simpl in *.
   iIntros (Φ) "(#Hpkg & #Hui & Hruns & Hchanges) HΦ".
   iDestruct "Hui" as (oleft oright opn)
-    "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)".
+    "(HisL & HisR & HisPN & %Hin_l & %Hin_r & %Hin_id & #Hin_c & %Hunonempty & %Htid & %Hborrow)".
   destruct typedInput as [typedInput2 input]. simpl in *. subst typedInput2.
   have HoleftN : oleft = None by (move: Hin_l; rewrite HoL; by destruct oleft).
   have HorightN : oright = None by (move: Hin_r; rewrite HoR; by destruct oright).
@@ -543,11 +545,13 @@ Proof using Type*.
                 yjs.item.flags' := W8 2 |}).
   iAssert (own_linked_item itv input null null null) with "[Hitv]" as "Hfresh".
   { iExists itemVal, None, None. rewrite /own_fresh_item_raw.
-    iFrame "Hitv HisL HisR". iPureIntro.
-    split_and!;
-      [exact Hin_l | exact Hin_r | exact Hin_id | exact Hin_c
-      | reflexivity | reflexivity | reflexivity | reflexivity
-      | exact Hunonempty]. }
+    iFrame "Hitv HisL HisR".
+    iSplitR; last (iPureIntro; split_and!;
+      [reflexivity | reflexivity | reflexivity | reflexivity | exact Hunonempty]).
+    iSplitR; first (iPureIntro; exact Hin_l).
+    iSplitR; first (iPureIntro; exact Hin_r).
+    iSplitR; first (iPureIntro; exact Hin_id).
+    rewrite /itemVal /is_content /=. iExact "Hin_c". }
   wp_apply (wp_store__repair_create_state s itv (updateItemVal.(yjs.updateItem.parentName'))
               input nm (MkStoreState client0 k0 locs p0 bind pend pdel) HoL HoR Hbnm
               with "[$Hpkg $Hfresh $HisPN $Hruns]").
@@ -1006,9 +1010,9 @@ Proof using Type*.
           [exact Huiv | exact Hpi |].
         iDestruct (big_sepL2_lookup _ _ _ i with "HitemsPj") as
           (oleft oright opn)
-          "(#HisL & #HisR & #HisPN & %Hin_l & %Hin_r & %Hin_id & %Hin_c & %Hunonempty & %Htid & %Hborrow)";
+          "(#HisL & #HisR & #HisPN & %Hin_l & %Hin_r & %Hin_id & #Hin_c & %Hunonempty & %Htid & %Hborrow)";
           [exact Huiv | exact Hpi |].
-        simpl in Hin_l, Hin_r, Hin_id, Hin_c, Htid, Hborrow.
+        simpl in Hin_l, Hin_r, Hin_id, Htid, Hborrow.
         have Hpending0in : (targetType, input) ∈ pend0 ++ inputs.
         { apply Hpendingsubj. exact (list_elem_of_lookup_2 _ _ _ Hpi). }
         (* read pending[i] into ui *)
@@ -1070,7 +1074,7 @@ Proof using Type*.
            move: Hpassa => [= Happrem Hkeq Hmeq].
            subst app_rem kept2 m2.
            (* peel this wire item's chunk off the per-char replay *)
-           have Hne1 : (1 <= length (in_content input))%nat by (rewrite -Hin_c; exact Hunonempty).
+           have Hne1 : (1 <= length (in_content input))%nat by exact Hunonempty.
            rewrite -app_comm_cons in Hvrc.
            have Hlk0 : ((targetType, input) :: app2 ++ af2) !! 0%nat = Some (targetType, input) by done.
            destruct (applyUpdate_peel_step ((targetType, input) :: app2 ++ af2) 0%nat targetType input
@@ -2292,7 +2296,7 @@ Proof.
              (1 <= length (in_content typedInput.2))%nat⌝)%I as %Hnem.
   { iIntros (typedInput Hin). destruct (list_elem_of_lookup_1 _ _ Hin) as (i & Hi).
     iDestruct (big_sepL2_lookup_r _ _ _ i with "Hitems") as (updateItemVal Huiv) "Hit"; [exact Hi |].
-    iNamed "Hit". iPureIntro. rewrite -Hin_c. exact Hunonempty. }
+    iNamed "Hit". iPureIntro. exact Hunonempty. }
   iSplitR ""; [iExists uivs; iFrame "Hsl Hcap Hitems" | done].
 Qed.
 

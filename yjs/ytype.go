@@ -77,14 +77,19 @@ func (y *yType) findPos(index uint64) (*item, *item, uint64) {
 	return left, right, offset
 }
 
-// Text reads the current visible string by walking the item list left to right
-// (skipping deleted items). Useful for stating/verifying convergence.
-func (parent *yType) Text() string {
-	result := ""
+// Text reads the current visible text, as UTF-16 code units, by walking the
+// item list left to right and appending the content of every item that is
+// not deleted (yrs 0.27.2 TextRef::get_string, src/types/text.rs:120, is the
+// same walk over a String; Yjs v14.0.0-rc.18 YType.toString, src/ytype.js:1366,
+// joins toArray()). The result is a fresh slice: the items' own content is
+// shared and never written (content.go), so it is copied out rather than
+// aliased.
+func (parent *yType) Text() []uint16 {
+	var result []uint16
 	cur := parent.start
 	for cur != nil {
 		if !cur.Deleted() {
-			result = result + cur.content.content
+			result = append(result, cur.content.content...)
 		}
 		cur = cur.right
 	}

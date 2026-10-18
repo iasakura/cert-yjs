@@ -156,7 +156,7 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (* The ghost op-history types ([history] / [network_model]) at the
    document content type; type names are Go strings (issue #49). *)
@@ -217,7 +217,7 @@ Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
     [ghost_var] over snapshots, one half in the registry and one with the
     application; the set of registered tokens is a grow-only auth whose
     fragments are the registration witnesses [is_text_observed]. *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 
 Notation observersUR := (authR (gsetUR (gname * go_string))).
 
@@ -408,7 +408,9 @@ Proof. rewrite /is_parent_name. by destruct opn; apply _. Qed.
 (** [is_update_item updateItemVal typedInput]: the decoded heap struct [updateItemVal] (a [updateItem])
     translates to the model doc-op payload [typedInput = (tid, input)] -- its id /
     content / both origin pointers map across (origins via [is_origin_id],
-    persistent), its content is a nonempty run (issue #28 U7c: the single-char
+    persistent; the content slice as the persistent, read-only share [↦*□] of
+    its code units, which the item built from the struct keeps, yjs/update.go),
+    its content is a nonempty run (issue #28 U7c: the single-char
     [Hulen = 1] restriction is dropped so a wire item can carry a whole run of
     chained per-char ops), and its decoded parent name
     (when present) is the name of the root type [tid] (issue #49; when absent
@@ -422,8 +424,8 @@ Definition is_update_item (updateItemVal : yjs.updateItem.t)
     "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId typedInput.2⌝ ∗
     "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId typedInput.2⌝ ∗
     "%Hin_id" ∷ ⌜toYjsId updateItemVal.(yjs.updateItem.id') = in_id typedInput.2⌝ ∗
-    "%Hin_c" ∷ ⌜updateItemVal.(yjs.updateItem.content') = in_content typedInput.2⌝ ∗
-    "%Hunonempty" ∷ ⌜(1 <= length updateItemVal.(yjs.updateItem.content'))%nat⌝ ∗
+    "#Hin_c" ∷ updateItemVal.(yjs.updateItem.content') ↦*□ in_content typedInput.2 ∗
+    "%Hunonempty" ∷ ⌜(1 <= length (in_content typedInput.2))%nat⌝ ∗
     "%Htid" ∷ ⌜∀ nm, opn = Some nm -> typedInput.1 = RootId nm⌝ ∗
     "%Hborrow" ∷ ⌜opn = None -> in_originId typedInput.2 ≠ None ∨ in_rightOriginId typedInput.2 ≠ None⌝.
 
@@ -961,7 +963,8 @@ Lemma own_type_pool_node_acc (locs : gmap loc (list loc)) (p : pool) (parent : l
   own_type_pool (DfracOwn 1) locs p -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
-    "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
+    "#Hacccontent" ∷ is_content itemVal.(yjs.item.content') (items_string (run_items r)) ∗
+    "%Haccle" ∷ ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
     "%Haccpar" ∷ ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
     "Haccval" ∷ lc ↦ itemVal ∗
     "Haccback" ∷ (lc ↦ itemVal -∗ own_type_pool (DfracOwn 1) locs p).
@@ -975,23 +978,20 @@ Proof.
                with "Hdll")
     as (prev' nxt') "(%Hcl & %Hcr & %Hrun & %Hperchar & %Hclen & Hnode & Hback)".
   iDestruct "Hnode" as (itemVal olid orid)
-    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & %Hcont & %Hparf & %Hprevf & %Hnextf & %Hflags)".
+    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & #Hcont & %Hparf & %Hprevf & %Hnextf & %Hflags)".
   have Haccid : item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id').
   { symmetry. exact Hid. }
-  have Haccle : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r).
-  { have Hstr : itemVal.(yjs.item.content').(yjs.content.content')
-              = in_content (input_of_run r) := Hcont.
-    rewrite Hstr. exact Hclen. }
   iExists itemVal. iFrame "Hval".
   iSplitR; first (iPureIntro; exact Haccid).
-  iSplitR; first (iPureIntro; exact Haccle).
+  iSplitR; first (iEval (rewrite /input_of_run /=) in "Hcont"; iExact "Hcont").
+  iSplitR; first (iPureIntro; exact Hclen).
   iSplitR; first (iPureIntro; exact Hparf).
   iIntros "Hval".
   iAssert (own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev' nxt')
     with "[Hval Hol Hor]" as "Hnode".
-  { iExists itemVal, olid, orid. iFrame "Hval Hol Hor".
+  { iExists itemVal, olid, orid. iFrame "Hval Hol Hor Hcont".
     iPureIntro. split_and!;
-      [exact Hinl | exact Hinr | exact Hid | exact Hcont | exact Hparf
+      [exact Hinl | exact Hinr | exact Hid | exact Hparf
       | exact Hprevf | exact Hnextf | exact Hflags]. }
   iDestruct ("Hback" with "Hnode") as "Hdll".
   iSplitR; first (iPureIntro; exact Hlocswf).
@@ -1013,7 +1013,8 @@ Lemma own_store_state_node_acc (s : loc) (state : store_state)
   own_store_state s 1 state -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
-    "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
+    "#Hacccontent" ∷ is_content itemVal.(yjs.item.content') (items_string (run_items r)) ∗
+    "%Haccle" ∷ ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
     "%Haccpar" ∷ ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
     "Haccval" ∷ lc ↦ itemVal ∗
     "Haccback" ∷ (lc ↦ itemVal -∗ own_store_state s 1 state).
@@ -1027,6 +1028,7 @@ Proof.
   iNamed "H".
   iExists itemVal. iFrame "Haccval".
   iSplitR; first (iPureIntro; exact Haccid).
+  iSplitR; first iExact "Hacccontent".
   iSplitR; first (iPureIntro; exact Haccle).
   iSplitR; first (iPureIntro; exact Haccpar).
   iIntros "Haccval".
@@ -1049,7 +1051,8 @@ Lemma own_type_pool_node_acc_links (locs : gmap loc (list loc)) (p : pool) (pare
   own_type_pool (DfracOwn 1) locs p -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
-    "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
+    "#Hacccontent" ∷ is_content itemVal.(yjs.item.content') (items_string (run_items r)) ∗
+    "%Haccle" ∷ ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
     "%Haccpar" ∷ ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
     "%Haccleft" ∷ ⌜itemVal.(yjs.item.left') = loc_at ls (Z.of_nat k - 1)⌝ ∗
     "%Haccright" ∷ ⌜itemVal.(yjs.item.right') = loc_at ls (Z.of_nat k + 1)⌝ ∗
@@ -1066,16 +1069,13 @@ Proof.
                with "Hdll")
     as (prev' nxt') "(%Hcl & %Hcr & %Hrun & %Hperchar & %Hclen & Hnode & Hback)".
   iDestruct "Hnode" as (itemVal olid orid)
-    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & %Hcont & %Hparf & %Hprevf & %Hnextf & %Hflags)".
+    "(Hval & Hol & Hor & %Hinl & %Hinr & %Hid & #Hcont & %Hparf & %Hprevf & %Hnextf & %Hflags)".
   have Haccid : item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id').
   { symmetry. exact Hid. }
-  have Haccle : length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r).
-  { have Hstr : itemVal.(yjs.item.content').(yjs.content.content')
-              = in_content (input_of_run r) := Hcont.
-    rewrite Hstr. exact Hclen. }
   iExists itemVal. iFrame "Hval".
   iSplitR; first (iPureIntro; exact Haccid).
-  iSplitR; first (iPureIntro; exact Haccle).
+  iSplitR; first (iEval (rewrite /input_of_run /=) in "Hcont"; iExact "Hcont").
+  iSplitR; first (iPureIntro; exact Hclen).
   iSplitR; first (iPureIntro; exact Hparf).
   iSplitR; first (iPureIntro; rewrite Hprevf Hcl //).
   iSplitR; first (iPureIntro; rewrite Hnextf Hcr //).
@@ -1083,9 +1083,9 @@ Proof.
   iIntros "Hval".
   iAssert (own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev' nxt')
     with "[Hval Hol Hor]" as "Hnode".
-  { iExists itemVal, olid, orid. iFrame "Hval Hol Hor".
+  { iExists itemVal, olid, orid. iFrame "Hval Hol Hor Hcont".
     iPureIntro. split_and!;
-      [exact Hinl | exact Hinr | exact Hid | exact Hcont | exact Hparf
+      [exact Hinl | exact Hinr | exact Hid | exact Hparf
       | exact Hprevf | exact Hnextf | exact Hflags]. }
   iDestruct ("Hback" with "Hnode") as "Hdll".
   iSplitR; first (iPureIntro; exact Hlocswf).
@@ -1105,7 +1105,8 @@ Lemma own_store_state_node_acc_links (s : loc) (state : store_state)
   own_store_state s 1 state -∗
   ∃ itemVal : yjs.item.t,
     "%Haccid" ∷ ⌜item_id (run_head_item r) = toYjsId itemVal.(yjs.item.id')⌝ ∗
-    "%Haccle" ∷ ⌜length (itemVal.(yjs.item.content').(yjs.content.content')) = length (run_items r)⌝ ∗
+    "#Hacccontent" ∷ is_content itemVal.(yjs.item.content') (items_string (run_items r)) ∗
+    "%Haccle" ∷ ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
     "%Haccpar" ∷ ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
     "%Haccleft" ∷ ⌜itemVal.(yjs.item.left') = loc_at ls (Z.of_nat k - 1)⌝ ∗
     "%Haccright" ∷ ⌜itemVal.(yjs.item.right') = loc_at ls (Z.of_nat k + 1)⌝ ∗
@@ -1122,6 +1123,7 @@ Proof.
   iNamed "H".
   iExists itemVal. iFrame "Haccval".
   iSplitR; first (iPureIntro; exact Haccid).
+  iSplitR; first iExact "Hacccontent".
   iSplitR; first (iPureIntro; exact Haccle).
   iSplitR; first (iPureIntro; exact Haccpar).
   iSplitR; first (iPureIntro; exact Haccleft).
@@ -1266,7 +1268,7 @@ Definition own_observed_share (γo : gname) (q : Qp) (s : snapshot) : iProp Σ :
   ghost_var γo (q / 2) s.
 
 (** [is_text_snapshot γs γh name s]: what a read of root [name] certifies
-    about the snapshot [s] (what [Text.String] and [Poll] say), over the
+    about the snapshot [s] (what [Text.CodeUnits] and [Poll] say), over the
     store's witnesses alone so that it can sit inside the store's lock: the
     root is bound, its items are known to the store, its tombstoned ids are
     in the store's delete set, [s] is a valid document, and it holds every
@@ -2238,7 +2240,7 @@ Definition own_fresh_item_raw (item_l : loc) (input : IntegrateInput (A := A))
   "%Hin_l" ∷ ⌜(toYjsId <$> oleft) = in_originId input⌝ ∗   (* heap ids = input ids *)
   "%Hin_r" ∷ ⌜(toYjsId <$> oright) = in_rightOriginId input⌝ ∗
   "%Hid" ∷ ⌜toYjsId itemVal.(yjs.item.id') = in_id input⌝ ∗
-  "%Hcontent" ∷ ⌜toContent itemVal.(yjs.item.content') = in_content input⌝.
+  "#Hcontent" ∷ is_content itemVal.(yjs.item.content') (in_content input).
 
 (** [own_linked_item item_l input parent leftNode rightNode]: the not-yet-integrated heap
     [Item] that [Store.Integrate] is about to splice in; everything about the
@@ -2258,7 +2260,7 @@ Definition own_linked_item (item_l : loc) (input : IntegrateInput (A := A))
     ⌜itemVal.(yjs.item.right') = rightNode⌝ ∗
     ⌜itemVal.(yjs.item.parent') = parent⌝ ∗
     ⌜itemVal.(yjs.item.flags') = W8 2⌝ ∗
-    ⌜(1 <= length (itemVal.(yjs.item.content').(yjs.content.content')))%nat⌝.
+    ⌜(1 <= length (in_content input))%nat⌝.
 
 (** [own_linked_item] IS [own_item_node] at [DfracOwn 1], live, with a
     nonempty content: the fold/unfold between the two. *)
@@ -2273,24 +2275,19 @@ Proof.
   - iIntros "H".
     iDestruct "H" as (v olid orid) "(H & %Hfl & %Hfr & %Hfpar & %Hflags & %Hlen)".
     iNamed "H".
-    have Hc' : v.(yjs.item.content').(yjs.content.content') = in_content input
-      := Hcontent.
-    iSplitL; last first.
-    { iPureIntro. rewrite -Hc'. exact Hlen. }
+    iSplitL; last (iPureIntro; exact Hlen).
     iExists v, olid, orid.
-    iFrame "Hitem Holeft Horight".
+    iFrame "Hitem Holeft Horight Hcontent".
     iPureIntro.
-    split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
+    split_and!; [exact Hin_l | exact Hin_r | exact Hid
                 | exact Hfpar | exact Hfl | exact Hfr | exact Hflags].
   - iIntros "[H %Hlen]". iDestruct "H" as (v olid orid) "H". iNamed "H".
-    have Hc' : v.(yjs.item.content').(yjs.content.content') = in_content input
-      := Hcontent.
     iExists v, olid, orid.
-    iFrame "Hval Holeft Horight".
+    iFrame "Hval Holeft Horight Hcontent".
     iPureIntro.
-    split_and!; [exact Hin_l | exact Hin_r | exact Hid | exact Hcontent
+    split_and!; [exact Hin_l | exact Hin_r | exact Hid
                 | exact Hprev | exact Hnext | exact Hpar | exact Hflags
-                | rewrite Hc' //].
+                | exact Hlen].
 Qed.
 
 (** A linked item's address is new to the whole address map of the pool

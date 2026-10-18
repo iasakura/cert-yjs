@@ -1,5 +1,5 @@
 (** Text handle: [wp_Text__InsertIn], the insert inside a transaction (issue
-    #206 T1, issue #198 Part II): the per-byte Integrate loop over
+    #206 T1, issue #198 Part II): the per-code-unit Integrate loop over
     [own_transaction], one op certificate per inserted item, the
     transaction's record growing by the run's chars and this text's name.
     [Text.Insert] is the one-write transaction around it ([text/Insert]).
@@ -39,7 +39,7 @@ Context {sync_pkg : sync.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 Context {seq_inG : inG Σ (authR (gmapUR loc (gsetUR (YjsItem A))))}.
 Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 (* [is_store_ref]'s reader-count accounting ties the readers' share to the store's
@@ -47,7 +47,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
    in this file (Insert/Delete/Len) can discharge the instance. *)
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
@@ -66,19 +66,22 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     record grows by exactly the run's chars and, when the run is not empty,
     this text's name. The tombstone state and the pending buffer are
     untouched; the op history grows by the run's certificates. *)
-Lemma wp_Text__InsertIn (t tr s_loc : loc) (idx : w64) (cs : go_string) (γs : store_names)
+Lemma wp_Text__InsertIn (t tr s_loc : loc) (idx : w64) (cs : slice.t) (dq : dfrac) (units : A)
+    (γs : store_names)
     (γh : history_names) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
   {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗
-      own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
+      own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+      cs ↦*{dq} units }}}
     t @! (go.PointerType yjs.Text) @! "InsertIn" #tr #idx #cs
   {{{ (L' ins : list (YjsItem A)) (h' : list Ev) (m' : DocModel) (k0 : nat)
       (originLeft originRight : YjsPtr A), RET #();
       is_Text t γs γh name L' deleted_ids ∗
       own_transaction tr s_loc γs γh c h' m' pend deleted (inserted ∪ char_ids ins) tombstoned
         (changed ∪ (if decide (ins = []) then ∅ else {[name]})) ∗
-      ⌜inserted_run L L' ins cs c k0 originLeft originRight⌝ ∗
+      cs ↦*{dq} units ∗
+      ⌜inserted_run L L' ins units c k0 originLeft originRight⌝ ∗
       ⌜doc_model_replaced m m' (RootId name) L'⌝ ∗
       (* the op certificates: one broadcast fragment per inserted item
          (issues #42/#49; the doc-level op an item denotes is
@@ -87,7 +90,7 @@ Lemma wp_Text__InsertIn (t tr s_loc : loc) (idx : w64) (cs : go_string) (γs : s
          is_op_cert γh (RootId name, OpInsert (input_of_item it))) }}}.
 Proof.
   (* ---- Prologue: open the transaction, extract THIS text. ---- *)
-  wp_start as "(Htext & Htx)".
+  wp_start as "(Htext & Htx & Hcs)".
   (* the ghost updates at the exits happen after the last program step *)
   iApply wp_fupd.
   iDestruct "Htext" as (tv text_store parent deleted_items) "Htext". iNamed "Htext".
@@ -159,6 +162,7 @@ Proof.
     iApply ("HΦ" $! (tm_arr ts) [] h m 0%nat First Last).
     rewrite char_ids_nil. repeat (rewrite decide_True; last reflexivity).
     rewrite ?(right_id_L (∅ : gset YjsId) (∪)) ?(right_id_L (∅ : gset P) (∪)).
+    iFrame "Hcs".
     iSplitL "Ht".
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
@@ -183,7 +187,7 @@ Proof.
       - intros i it b Hii. rewrite lookup_nil in Hii. inversion Hii. }
     iSplit; first (iPureIntro; rewrite -Hmt; apply doc_model_replaced_same).
     rewrite big_sepL_nil. done. }
-  (* ---- in-range: insert one 1-char item per byte. ---- *)
+  (* ---- in-range: insert one 1-char item per code unit. ---- *)
   iAssert (own_ytype tv.(yjs.Text.inner') (DfracOwn 1) ls0 (MkTypeModel runs0))
     with "[Hparent Hdll]" as "Hyt".
   { iExists yt0, tl0. iFrame "Hparent Hdll". iPureIntro. exact Hlen. }
@@ -192,8 +196,7 @@ Proof.
   iDestruct (own_store_state_clock_acc with "Hruns") as "[Hclock Hclockback]".
   iEval (simpl) in "Hclock".
   wp_auto.
-  wp_apply strings.wp_string_len. iIntros "%Hlcb".
-  wp_auto.
+  iDestruct (own_slice_len with "Hcs") as %[Hlcb Hlcb0].
   case_bool_decide as Hovf.
   { (* clock-overflow guard fired: nothing inserted (like OOB). *)
     iDestruct ("Hclockback" with "Hclock") as "Hruns".
@@ -208,6 +211,7 @@ Proof.
     iApply ("HΦ" $! (tm_arr ts) [] h m 0%nat First Last).
     rewrite char_ids_nil. repeat (rewrite decide_True; last reflexivity).
     rewrite ?(right_id_L (∅ : gset YjsId) (∪)) ?(right_id_L (∅ : gset P) (∪)).
+    iFrame "Hcs".
     iSplitL "Ht".
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
@@ -233,7 +237,7 @@ Proof.
     iSplit; first (iPureIntro; rewrite -Hmt; apply doc_model_replaced_same).
     rewrite big_sepL_nil. done. }
   (* no overflow: the run fits. *)
-  have Hnoof : (uint.Z k + Z.of_nat (length cs) < 2^64)%Z by word.
+  have Hnoof : (uint.Z k + Z.of_nat (length units) < 2^64)%Z by word.
   iDestruct ("Hclockback" with "Hclock") as "Hruns".
   iEval (simpl) in "Hruns".
   wp_auto.
@@ -454,6 +458,7 @@ Proof.
     "Hi" ∷ i_ptr ↦ W64 j ∗
     "Htptr" ∷ t_ptr ↦ t ∗
     "Hcontentp" ∷ content_ptr ↦ cs ∗
+    "Hcs" ∷ cs ↦*{dq} units ∗
     "Hclientp" ∷ client_ptr ↦ client ∗
     "HoRp" ∷ originRightId_ptr ↦ oRptr ∗
     "Hleftp" ∷ left_ptr ↦ loc_at lsj (Z.of_nat (p1i + j) - 1) ∗
@@ -477,7 +482,7 @@ Proof.
     "%Hinvj" ∷ ⌜YjsArrInvariant arr⌝ ∗
     "%Hlenarr" ∷ ⌜length arr = (length (tm_arr ts) + j)%nat⌝ ∗
     "%Hrlensj" ∷ ⌜length runsj = (length runs1 + j)%nat⌝ ∗
-    "%Hjle" ∷ ⌜(j <= length cs)%nat⌝ ∗
+    "%Hjle" ∷ ⌜(j <= length units)%nat⌝ ∗
     "%Hctrj" ∷ ⌜∀ x : YjsItem A, ArrSet arr (itemPtr x) → clientId (item_id x) = uint.nat client → (clock (item_id x) < uint.nat k + j)%nat⌝ ∗
     "%Hleftj" ∷ ⌜(p1i + j = 0)%nat
       ∨ (∃ (lr : ItemRun) (li : YjsItem A),
@@ -491,7 +496,7 @@ Proof.
     "%Hinslen" ∷ ⌜length ins = j⌝ ∗
     "%Hins" ∷ ⌜∀ (i : nat) (it : YjsItem A), ins !! i = Some it →
        it ∈ arr ∧
-       (∀ b : w8, cs !! i = Some b → content it = [b]) ∧
+       (∀ b : w16, units !! i = Some b → content it = [b]) ∧
        item_id it = MkYjsId (uint.nat client) (uint.nat k + i)%nat ∧
        rightOrigin it = originRight ∧
        (i = 0%nat → origin it = originLeft) ∧
@@ -509,13 +514,13 @@ Proof.
     "%Hhcohj" ∷ ⌜history_state_coh hj (<[RootId name := arr]> m)⌝ ∗
     "Hcertsj" ∷ ([∗ list] it ∈ ins,
                    is_op_cert γh (RootId name, OpInsert (input_of_item it)))
-    )%I with "[i t content client HoR left s Hruns Hchanges tr Hdelete_set Hseq HtypesAuth Hright Hhist]" as "IH".
+    )%I with "[i t content Hcs client HoR left s Hruns Hchanges tr Hdelete_set Hseq HtypesAuth Hright Hhist]" as "IH".
   { iExists 0%nat, (tm_arr ts), locs1, p1, ls1, runs1, [], h.
     replace (W64 (uint.Z k + Z.of_nat 0)) with k by word.
     rewrite !Nat.add_0_r.
     rewrite char_ids_nil. repeat (rewrite decide_True; last reflexivity).
     rewrite ?(right_id_L (∅ : gset YjsId) (∪)) ?(right_id_L (∅ : gset loc) (∪)).
-    iFrame "i t content client HoR left s Hruns Hchanges tr Hdelete_set Hseq HtypesAuth Hright Hhist".
+    iFrame "i t content Hcs client HoR left s Hruns Hchanges tr Hdelete_set Hseq HtypesAuth Hright Hhist".
     rewrite big_sepL_nil sep_emp.
     iPureIntro. split_and!.
     - exact Hp1.
@@ -548,11 +553,9 @@ Proof.
       + rewrite docm_get_insert_eq (Hmd (RootId name)). exact Hmt.
       + rewrite docm_get_insert_ne //. }
   wp_for "IH".
-  wp_apply strings.wp_string_len. iIntros "%Hlcb2". wp_auto. case_bool_decide as Hjlt.
+  iDestruct (own_slice_len with "Hcs") as %[Hlcb2 Hlcb2z]. case_bool_decide as Hjlt.
   { (* loop body: integrate the [j]-th character *)
-    have Hjpos : (j < length cs)%nat by word.
-    (* the loop's own [decide], not the record's *)
-    rewrite (decide_True _ _ (eq_refl (#true : val))).
+    have Hjpos : (j < length units)%nat by word.
     (* [clk := s.clock; s.clock = clk + 1] through the clock borrow *)
     iDestruct (own_store_state_clock_acc with "Hruns") as "[Hclock Hclockback]".
     iEval (simpl) in "Hclock".
@@ -608,14 +611,14 @@ Proof.
       wp_method_call. wp_call. rewrite /yjs.item__LastIdⁱᵐᵖˡ. wp_auto.
       wp_alloc icopy as "Hic". wp_auto.
       wp_bind (icopy @! (go.PointerType yjs.item) @! "Len" (# ()))%E.
-      wp_apply (wp_item__Len icopy (DfracOwn 1) itemVal with "[$Hic]"). iIntros "[Hic _]".
+      wp_apply (wp_item__Len icopy (DfracOwn 1) itemVal with "[$Hic $Hacccontent]"). iIntros "Hic".
       wp_pures. wp_store.
       iDestruct (typed_pointsto_not_null with "lid") as %Hlidnn.
       iPersist "lid". wp_auto.
       iEval (rewrite Hlcloc) in "Haccval".
       iDestruct ("Haccback" with "Haccval") as "Hruns".
       iSplitR; [done|].
-      iExists lid_ptr, (Some {| yjs.id.clientId' := itemVal.(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := w64_word_instance.(word.sub) (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (itemVal.(yjs.item.content').(yjs.content.content'))))) (W64 1) |}).
+      iExists lid_ptr, (Some {| yjs.id.clientId' := itemVal.(yjs.item.id').(yjs.id.clientId'); yjs.id.clock' := w64_word_instance.(word.sub) (w64_word_instance.(word.add) itemVal.(yjs.item.id').(yjs.id.clock') (W64 (length (items_string (run_items lr))))) (W64 1) |}).
       iFrame "originLeftId Hleftp Hruns".
       iSplitR.
       { rewrite /is_origin_id. iSplit; [iPureIntro; exact Hlidnn | iFrame "lid"]. }
@@ -639,11 +642,21 @@ Proof.
     iIntros (v) "[%Hv HQL]". subst v. iNamed "HQL". wp_auto.
 
     wp_func_call. wp_call.
-    destruct (cs !! sint.nat (W64 j)) as [b|] eqn:Hb;
+    destruct (units !! sint.nat (W64 j)) as [b|] eqn:Hb;
       [ wp_auto | exfalso; apply lookup_ge_None in Hb; revert Hb Hjlt Hlcb2; word ].
     wp_alloc client_l as "Hcl2". wp_auto.
-    rewrite Hb. wp_auto.
-    wp_apply wp_byteString. wp_func_call. wp_call.
+    (* the unit [content[i]], copied into a fresh one-unit slice of the item's
+       own, which the item then holds read-only *)
+    (* the index check of [content[i]]; named, since the goal holds other
+       [decide]s (the record's [ins = []]) *)
+    rewrite (decide_True (P := (0 ≤ sint.Z (W64 j) < sint.Z cs.(slice.len))%Z)); last word.
+    wp_apply (wp_load_slice_index with "[$Hcs]").
+    { word. }
+    { iPureIntro. replace (Z.to_nat (sint.Z (W64 j))) with (sint.nat (W64 j)) by word. exact Hb. }
+    iIntros "Hcs". wp_auto.
+    wp_apply wp_slice_literal. iSplitR; first done. iIntros "%bsl [Hbsl _]". wp_auto.
+    iPersist "Hbsl".
+    wp_func_call. wp_call.
     wp_alloc oR2 as "HoR2". wp_auto. wp_alloc oL2 as "HoL2". wp_auto.
     (* build the model item [newItem] and integrate *)
     have Hclocknit : uint.nat (W64 (uint.Z k + j)) = (uint.nat k + j)%nat by word.
@@ -699,9 +712,14 @@ Proof.
                (loc_at lsj (Z.of_nat (p1i + j) - 1)) (loc_at lsj (Z.of_nat (p1i + j))))
       with "[HoL2 HisL]" as "Hfresh".
     { iExists _, olo, in_rO. rewrite /own_fresh_item_raw /=. iFrame "HoL2 HisL HisRp".
+      iSplitR.
+      { iSplit; first (iPureIntro; reflexivity).
+        iSplit; first (iPureIntro; reflexivity).
+        iSplit; first (iPureIntro; reflexivity).
+        (* the item's content is the one-unit literal, held read-only *)
+        rewrite /is_content /=. iExact "Hbsl". }
       iPureIntro. split_and!;
-        [reflexivity | reflexivity | reflexivity | reflexivity
-        | reflexivity | reflexivity | reflexivity | reflexivity | simpl; lia]. }
+        [reflexivity | reflexivity | reflexivity | reflexivity | simpl; lia]. }
     have Hres : origins_resolved runsj arr input (p1i + j)%nat (p1i + j)%nat.
     { exists (Z.of_nat (mp + j) - 1)%Z, (Z.of_nat (mp + j)).
       split_and!; [exact HfindLj | exact HfindRj | rewrite Hcoupj; lia | exact Hpjb | rewrite Hcoupj; lia | exact Hpjb]. }
@@ -905,7 +923,7 @@ Proof.
       apply loc_at_splice_ge; [lia | rewrite Hlslj; exact Hnxb]. }
     iEval (rewrite -Hleft') in "Hleftp".
     iEval (rewrite -Hright') in "Hrightp".
-    iFrame "Hi Htptr Hcontentp Hclientp HoRp Hleftp Hsp Hruns Hchanges Htrp Hdelete_set Hseq HtypesAuth Hrightp Hhistj Hcertsj".
+    iFrame "Hi Htptr Hcontentp Hcs Hclientp HoRp Hleftp Hsp Hruns Hchanges Htrp Hdelete_set Hseq HtypesAuth Hrightp Hhistj Hcertsj".
     have HmroR : mrightorigin = originRight.
     { destruct in_rO as [rightOriginId|] eqn:Hino.
       - destruct Hrorig as [(Hrn & _ & _) | (ri & Hria & _ & Hmr)]; [simpl in Hrn; discriminate |].
@@ -1016,10 +1034,9 @@ Proof.
     - rewrite Hruns'eq length_app /= length_take_le; last exact Hnxb. rewrite length_drop. lia.
     - exact Hhcohj2. }
   (* loop exit: the whole run is integrated; rebuild the store and return. *)
-  have Hjend : (j = length cs)%nat by word.
-  have Hnf : ¬ ((#false : val) = #true) by done.
-  rewrite (decide_False _ _ Hnf). wp_auto.
-  rewrite (decide_True _ _ (eq_refl (#false : val))). wp_auto.
+  have Hjend : (j = length units)%nat by word.
+  (* [wp_for] already decided the loop condition; step out of the loop *)
+  wp_auto.
   have Hk'val : uint.nat (W64 (uint.Z k + j)) = (uint.nat k + j)%nat by word.
   have Hsubarr : list_to_set (tm_arr ts) ⊆ (list_to_set arr : gset (YjsItem A)).
   { intros y Hy. rewrite elem_of_list_to_set in Hy. rewrite elem_of_list_to_set. apply Hsubold. exact Hy. }
@@ -1145,6 +1162,7 @@ Proof.
         * rewrite docm_get_insert_ne // in Hz. exfalso.
           have := Hother tid z Hne Hz Hcl. lia. }
   iApply ("HΦ" $! arr ins hj (<[RootId name := arr]> m) (uint.nat k) originLeft originRight).
+  iFrame "Hcs".
   iSplitL "Hfrag Ht".
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
     iFrame "Ht His_store His_hist Hbind Hfrag Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;

@@ -251,7 +251,7 @@ func (tr *Transaction) applyUpdate(structs []updateItem) {
 // A free function over the store ref, since the transaction is created
 // inside. Go has no goroutine identity, so a nested transact cannot be
 // recognised and deadlocks (#206, item 2): f uses the In-variants
-// (Text.InsertIn / DeleteIn / StringIn) with tr and never locks the
+// (Text.InsertIn / DeleteIn / CodeUnitsIn) with tr and never locks the
 // document, and the callbacks notify runs receive their delta and must not
 // touch the document at all (Text.Observe).
 func transact(ref *storeRef, f func(tr *Transaction)) {

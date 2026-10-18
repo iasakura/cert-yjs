@@ -37,7 +37,7 @@ Section ytype_model.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (** Public top-level spec — [Store.Integrate] inserts the item and preserves the
     document invariant. The result [arr'] is the model document with [newItem]
@@ -71,16 +71,17 @@ Definition integrate_ready (arr : list (YjsItem A)) (input : IntegrateInput (A :
     hard obligation of an insert into the order theory, so the WP side only has
     to maintain that the chosen left/right neighbours are adjacent. *)
 (** [inserted_run L L' ins cs client k0 originLeft originRight]: what one
-    [Text.Insert] of the bytes [cs] did to the list: it grew from [L] to [L']
-    (a sublist), and [ins] lists the new items, one per byte unless nothing was
-    inserted: the [i]-th carries byte [cs !! i], id [(client, k0 + i)] and right
+    [Text.Insert] of the code units [cs] did to the list: it grew from [L] to
+    [L'] (a sublist), and [ins] lists the new items, one per code unit unless
+    nothing was inserted: the [i]-th carries the unit [cs !! i], id
+    [(client, k0 + i)] and right
     origin [originRight]; its left origin is [originLeft] for the first item and
     the previous new item for the others (the chain of one insert). *)
 Definition inserted_run (L L' ins : list (YjsItem A)) (cs : A) (client k0 : nat)
     (originLeft originRight : YjsPtr A) : Prop :=
   sublist L L' ∧
   (ins = [] ∨ length ins = length cs) ∧
-  (∀ (i : nat) (it : YjsItem A) (b : w8),
+  (∀ (i : nat) (it : YjsItem A) (b : w16),
      ins !! i = Some it → cs !! i = Some b →
        it ∈ L' ∧ it ∉ L ∧
        content it = [b] ∧
@@ -373,7 +374,7 @@ Section ytype_run_model.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 (* ===== definitions ======================================================== *)
 

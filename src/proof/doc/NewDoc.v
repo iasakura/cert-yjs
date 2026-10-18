@@ -8,7 +8,7 @@
     from then on; back come the persistent [is_Doc] handle, the client pin,
     and the document's read capabilities (issue #125): one [own_read_cap]
     per RWMutex reader slot, each an RLock token zipped with a reader-bound
-    token, which is what a concurrent [Text.Len] / [Text.String] reader
+    token, which is what a concurrent [Text.Len] / [Text.CodeUnits] reader
     presents. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
@@ -36,7 +36,7 @@ Context {sync_pkg : sync.Assumptions}.
 
 Set Default Proof Using "Type*".
 
-Notation A := go_string.
+Notation A := (list w16).
 
 Notation P := go_string.
 
@@ -50,7 +50,7 @@ Context {acc_inG : inG Σ (authR (gsetUR YjsId))}.
 
 Context {ftypes_inG : inG Σ (dfrac_agreeR (leibnizO store_state))}.
 (* the observers' tokens and registrations (issue #198 Part II), as [store/heap] *)
-Context {observed_inG : ghost_varG Σ (list (YjsItem go_string * bool))}.
+Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
