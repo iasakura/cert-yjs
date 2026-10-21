@@ -1,0 +1,4 @@
+# build.sh output
+/cert-yjs.wasm
+/wasm_exec.js
+/node_modules/
