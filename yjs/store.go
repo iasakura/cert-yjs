@@ -21,7 +21,7 @@ import "sync"
 // yrs's shape (TransactionMut owns the store's write guard, yrs 0.27.2
 // src/transaction.rs:445). None of the three references keeps the lock as
 // a field of the store itself (issue #219): writers
-// (Insert/Delete/GetOrCreateText/applyUpdate) take the write lock (Lock),
+// (Insert/Delete/GetOrCreateText/ApplySyncUpdate) take the write lock (Lock),
 // pure readers (CodeUnits/Len) take the read lock (RLock) so concurrent reads
 // are allowed. mu guards every field of store, and the yTypes' DLLs
 // reached through store.types.

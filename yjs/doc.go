@@ -39,19 +39,6 @@ func (d *Doc) Transact(f func(tr *Transaction)) {
 	transact(d.store, f)
 }
 
-// applyUpdate integrates a decoded update batch as one transaction (y-octo:
-// Doc::apply_update takes store.write() for the whole apply; Yjs applyUpdate
-// runs inside transact). The verified core is Transaction.applyUpdate, which
-// is total: structs whose dependencies have not arrived are buffered in the
-// store and drained by later calls. Nothing calls it: a wire update enters
-// through ApplyEncodedUpdate, and a decoded batch through ApplySyncUpdate
-// (sync.go), whose transaction also applies the batch's delete spans.
-func (d *Doc) applyUpdate(structs []updateItem) {
-	transact(d.store, func(tr *Transaction) {
-		tr.applyUpdate(structs)
-	})
-}
-
 // Codec is the decoding half of the update codec: data decodes to a batch of
 // insert structs, ok reports whether it decoded at all. The struct type is
 // unexported, so a Codec can only be built inside this package; the
