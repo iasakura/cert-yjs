@@ -46,16 +46,19 @@ a rule below is what binds, and no entry here can be violated by itself.
   state, not guarded by a lock or an invariant (`own_ytype`, `own_delta`);
   `is_X` is persistent, duplicable knowledge about it (`is_Doc`, `is_Text`),
   monotone where the model only grows (`is_Text`'s grow-only `L`).
-- **Public and non-public predicates.** A non-public predicate of `X` owns or
-  persistently covers some but not all of the resources of a value of `X`
-  (its fields and what they own, together with the invariant of `X`), or
-  describes a state in which the invariant of `X` need not hold. Every other
-  predicate is public: `own_X`, which holds every one of those resources;
-  `is_X`, which covers the same resources persistently or through the lock or
-  invariant that guards them; a fraction of `own_X`, which still covers every
-  resource; and `is_history_lb`, persistent knowledge of a lower bound on a
-  client's operation history, which covers no part of a value's resources at
-  all. Whether a predicate is public depends on what it describes, not on its
+- **Public and non-public predicates.** A non-public predicate of `X`
+  describes a value of `X` in the place of `own_X` or `is_X`, but with some
+  of the resources of the value (its fields and what they own, together with
+  the invariant of `X`) left out, or in a state in which the invariant of `X`
+  need not hold. Every other predicate is public: `own_X`, which holds every
+  one of those resources; `is_X`, which covers the same resources
+  persistently or through the lock or invariant that guards them; a fraction
+  of `own_X`, which still covers every resource; the invariant of a lock of
+  `X`, and a ghost token kept in that lock, which describe what the lock
+  holds rather than a value of `X` in the place of `own_X` or `is_X`; and
+  `is_history_lb`, persistent knowledge of a lower bound on a client's
+  operation history, which covers no part of a value's resources at all.
+  Whether a predicate is public depends on what it describes, not on its
   name.
 - **Public and private functions.** This classifies the Go functions and
   methods of Cert-Yjs, by their call sites in the Go code. A function or
@@ -136,13 +139,14 @@ bullet title
 
 ### The proof and the Go code
 
-- **Reuse the Rocq-Yjs model, don't invent independent proofs.** This rule
+- **Reuse the Rocq-Yjs model, don't build on an independent one.** This rule
   reaches the statement the proof refines as well. State WP specs as
-  refinements of the pure model and compose with its lemmas
+  refinements of the pure model and compose with lemmas about it
   (`YjsArrInvariant_integrate`, `setintegrate_eq_integrate`,
-  `integrate_commutative`, `yjs_strong_convergence`). Extract algorithmic
-  cores into their own Go functions (`scanConflicts`, `findIntegrationLeft`)
-  so hard loops are provable in isolation.
+  `integrate_commutative`, `yjs_strong_convergence`), not with those of a
+  model or an order theory of Cert-Yjs's own. Extract algorithmic cores into
+  their own Go functions (`scanConflicts`, `findIntegrationLeft`) so hard
+  loops are provable in isolation.
 
 ## Fresh-context review before push
 

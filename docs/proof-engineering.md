@@ -218,11 +218,12 @@ them, since the APIs drift.
   (gitignored, never hand-edit) → proofs in `src/proof/`. After editing Go,
   re-run goose or the model is stale.
 - **Reuse the Rocq-Yjs model and order theory** (the installed `yjs.*`
-  library): do not invent independent proofs — state Cert-Yjs WP specs as
-  refinements of the pure `integrate` / `setintegrate` model and compose with
-  Rocq-Yjs's invariant/order/commutativity lemmas (`YjsArrInvariant_integrate`,
+  library): state Cert-Yjs WP specs as refinements of the pure `integrate` /
+  `setintegrate` model and compose with lemmas about it, Rocq-Yjs's
+  invariant/order/commutativity lemmas first (`YjsArrInvariant_integrate`,
   `setintegrate_eq_integrate`, `integrate_commutative`,
-  `yjs_strong_convergence`, …).
+  `yjs_strong_convergence`, …), not with those of a model or an order theory
+  of Cert-Yjs's own.
 - **Extract algorithmic cores to their own Go functions** (e.g.
   `scanConflicts`, `findIntegrationLeft`) so the hard WP loop is provable in
   isolation, separate from the surrounding pointer surgery.
