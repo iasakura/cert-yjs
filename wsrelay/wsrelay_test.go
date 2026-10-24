@@ -35,6 +35,16 @@ func itoa(n int) string {
 	return string(b)
 }
 
+// applyWireUpdate applies a v1 update to a client's replica through the
+// byte-level entry point the room itself uses, ApplyEncodedUpdate with the
+// deployment's codec, and fails the test when the update does not decode.
+func applyWireUpdate(t *testing.T, doc *yjs.Doc, update []byte) {
+	t.Helper()
+	if !doc.ApplyEncodedUpdate(yjs.WireCodec(), update) {
+		t.Fatal("ApplyEncodedUpdate reported a malformed update")
+	}
+}
+
 // startRoom brings up a server room around a fresh document and returns it
 // with its address.
 func startRoom(t *testing.T) (wsnet.Address, *Room, *yjs.Doc) {
@@ -78,7 +88,7 @@ func TestUpdateReachesTheOtherClientAndTheServer(t *testing.T) {
 		t.Fatal("B received nothing")
 	}
 	docB := yjs.NewDoc(3)
-	docB.ApplyUpdate(got)
+	applyWireUpdate(t, docB, got)
 	if s := docB.GetOrCreateText("root").String(); s != "hello" {
 		t.Fatalf("B's replica reads %q, want %q", s, "hello")
 	}
@@ -125,7 +135,7 @@ func TestFanOutReachesEveryOtherConnection(t *testing.T) {
 			t.Fatalf("reader %d received nothing", i)
 		}
 		replica := yjs.NewDoc(uint64(10 + i))
-		replica.ApplyUpdate(got)
+		applyWireUpdate(t, replica, got)
 		if s := replica.GetOrCreateText("root").String(); s != "to everyone" {
 			t.Fatalf("reader %d's replica reads %q, want %q", i, s, "to everyone")
 		}
@@ -158,7 +168,7 @@ func TestCrossEditsConverge(t *testing.T) {
 	}
 
 	docB := yjs.NewDoc(3)
-	docB.ApplyUpdate(fromA)
+	applyWireUpdate(t, docB, fromA)
 	docB.GetOrCreateText("root").InsertString(2, "cd")
 	if wsnet.Send(b, docB.EncodeUpdate()) {
 		t.Fatal("B could not send")
@@ -167,7 +177,7 @@ func TestCrossEditsConverge(t *testing.T) {
 	if errRecvA {
 		t.Fatal("A did not receive B's update")
 	}
-	docA.ApplyUpdate(fromB)
+	applyWireUpdate(t, docA, fromB)
 
 	want := "abcd"
 	if s := docA.GetOrCreateText("root").String(); s != want {
@@ -296,7 +306,7 @@ func TestListenAndServeRelays(t *testing.T) {
 		break
 	}
 	docB := yjs.NewDoc(3)
-	docB.ApplyUpdate(data)
+	applyWireUpdate(t, docB, data)
 	if s := docB.GetOrCreateText("root").String(); s != "hello" {
 		t.Fatalf("B's replica reads %q, want %q", s, "hello")
 	}

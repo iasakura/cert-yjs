@@ -11,8 +11,10 @@ package yjs
 //
 // The byte-level v1 decode (Update::read), GC/Skip nodes and Parent::Id /
 // parent_sub remain out of the verified subset. The unverified runtime path for
-// those stays in codec.go (//go:build !goose), whose Doc.ApplyUpdate is the
-// thin decode wrapper routing through the locked Doc.applyUpdate (doc.go).
+// those stays in codec.go (//go:build !goose), whose WireCodec decodes a wire
+// update into this batch; Doc.ApplyEncodedUpdate (doc.go) takes that decoder
+// as a value and hands the batch to the verified Doc.ApplySyncUpdate
+// (sync.go).
 
 // updateItem is one decoded insert struct in the verified subset: an item carrying
 // its id, both sibling origins, its parent info and its string content, a run of

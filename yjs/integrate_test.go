@@ -47,9 +47,10 @@ func TestConcurrentHeadInsertConverges(t *testing.T) {
 }
 
 // Sequential typing "HI": H at head, then I with originLeft = H. (Delivery
-// out of causal order is the pending machinery's job — integrateStructs in
-// codec.go retries until dependencies resolve — so at the raw repair +
-// Integrate level the input is always causally ordered.)
+// out of causal order is the pending machinery's job: Transaction.applyUpdate
+// buffers a struct whose dependencies have not arrived and retries it on later
+// calls, so at the raw repair + Integrate level the input is always causally
+// ordered.)
 func TestSequentialInsert(t *testing.T) {
 	h := newItem(mkId(1, 0), encodeContent("H"), nil, nil)
 	i := newItem(mkId(1, 1), encodeContent("I"), mkIdp(1, 0), nil)
