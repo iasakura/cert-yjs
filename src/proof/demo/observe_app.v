@@ -116,7 +116,7 @@ Proof.
   { rewrite /is_type_lb /=. iApply (auth_gmap_gset_frag_weaken _ _ ∅ (list_to_set L) with "His_lb").
     apply empty_subseteq. }
   iSplit; first iExact "Hdellb".
-  iPureIntro. split; [exact YjsArrInvariant_nil | move=> input Hin; by apply elem_of_nil in Hin].
+  iPureIntro. split; [exact YjsArrInvariant_empty | move=> input Hin; by apply elem_of_nil in Hin].
 Qed.
 
 (** [NewMirror]: the mirror's callback meets [is_text_callback] with a fresh
