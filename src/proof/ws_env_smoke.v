@@ -624,7 +624,7 @@ Record stream_ok (cl : ClientId) (bs : list w16) : Prop := {
 Lemma stream_ok_nil (cl : ClientId) : stream_ok cl [].
 Proof.
   split; simpl.
-  - exact YjsArrInvariant_nil.
+  - exact YjsArrInvariant_empty.
   - by move=> [|i] it.
   - by move=> z /elem_of_nil.
   - by move=> z /elem_of_nil.
