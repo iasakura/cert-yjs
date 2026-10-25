@@ -2693,10 +2693,90 @@ Proof.
   exact (hwf_deliver_has_a_cause N Hwf c op Hd).
 Qed.
 
-(** THE relaxed validity transport: a broadcast insert is valid in any
-    coherent state that has integrated its ORIGINS (same type). No causal
-    coverage: broadcast-time validity moves along [item_determinism_raw],
-    which only needs the shared broadcast universe. *)
+(** THE relaxed validity transport, over an arbitrary replay: a broadcast
+    insert is valid in the replay of any list of broadcast ops that delivered
+    its ORIGINS (same type). No causal coverage: broadcast-time validity moves
+    along [item_determinism_raw], which only needs the shared broadcast
+    universe. Stated over a bare [effect_list] rather than a replica's
+    history so that the convergence argument ([network_convergence]) can
+    apply it to the hypothetical replays the Rocq-Yjs framework quantifies
+    over. *)
+Lemma valid_in_broadcast_replay N (l : list Op) (s : op_State O) (t0 : TId)
+    (input : IntegrateInput (A := A)) :
+  history_wf N ->
+  op_broadcast N (t0, OpInsert input) ->
+  (∀ op, op ∈ l -> op_broadcast N op) ->
+  effect_list O l (op_init O) s ->
+  (∀ originId : YjsId, (in_originId input = Some originId ∨ in_rightOriginId input = Some originId) ->
+     ∃ (t' : TId) (x : IntegrateInput (A := A)), (t', OpInsert x) ∈ l ∧ in_id x = originId) ->
+  ∃ item0, toItem input (st_items (doc_get s t0)) = Some item0 ∧ IsItemValid item0.
+Proof.
+  move=> Hwf Hbc Hsrc Heff Horigins.
+  (* the author's pre-broadcast state, projected at [t0] *)
+  destruct Hbc as (j & Hj).
+  destruct (list_elem_of_split _ _ Hj) as (preA & postA & HhjA).
+  have HhjA' : to_histories N j = preA ++ [EvBroadcast (t0, OpInsert input)] ++ postA
+    by rewrite HhjA.
+  destruct (hwf_broadcast_valid N Hwf j _ preA postA HhjA') as (sA & HinterpA & HvalidA).
+  destruct HvalidA as (itemA & HtoitA & HvalidA).
+  have HinterpAt : interpHistory Oy (proj_hist t0 preA) (op_init Oy) (doc_get sA t0)
+    := doc_interp_proj preA sA t0 HinterpA.
+  (* the replay, projected at [t0] *)
+  have HeffR : effect_list Oy (proj_ops t0 l) (op_init Oy) (doc_get s t0).
+  { have -> : op_init Oy = doc_get (op_init O) t0 by rewrite /= doc_get_empty.
+    exact (doc_effect_list_proj l _ s t0 Heff). }
+  (* sourcing of both projected replays in the broadcast universe at [t0] *)
+  set B := λ y : @YjsOperation A, op_broadcast N (t0, y).
+  have HsrcA : ∀ y, y ∈ omap deliverP (proj_hist t0 preA) -> B y.
+  { move=> y Hy.
+    have Hy' : (t0, y) ∈ delivered_ops preA.
+    { rewrite -(delivered_ops_proj t0 preA) elem_of_proj_ops // in Hy. }
+    apply elem_of_delivered_ops_ev in Hy'.
+    have Hd : EvDeliver (t0, y) ∈ to_histories N j by rewrite HhjA'; set_solver.
+    exact (hwf_deliver_has_a_cause N Hwf j (t0, y) Hd). }
+  have HsrcR : ∀ y, y ∈ proj_ops t0 l -> B y.
+  { move=> y Hy. apply elem_of_proj_ops in Hy. exact (Hsrc _ Hy). }
+  have Huniq : ∀ x y, B x -> B y -> yopid x = yopid y -> x = y
+    := broadcast_type_uniq N t0 Hwf.
+  (* transport along the origins *)
+  apply (toItem_isValid_transport_origins input (st_items (doc_get sA t0))
+           (st_items (doc_get s t0)) itemA HtoitA HvalidA).
+  move=> originId oitA Hor HfindA.
+  (* the origin op, as delivered in the replay: same type by id uniqueness *)
+  destruct (Horigins originId Hor) as (t' & xR & HdelR & HidR).
+  (* the origin op at the author's prefix: type [t0] *)
+  have HmemA : oitA ∈ st_items (doc_get sA t0)
+    := @find_by_id_mem _ EqDA originId (st_items (doc_get sA t0)) oitA HfindA.
+  destruct (effect_list_mem_src (omap deliverP (proj_hist t0 preA)) (op_init Oy)
+              (doc_get sA t0) oitA HinterpAt HmemA)
+    as [Hnil | (xA & HxA & HxAid)].
+  { move: Hnil. rewrite /= elem_of_nil //. }
+  have HidA : in_id xA = originId.
+  { rewrite HxAid. exact (@find_by_id_id _ EqDA originId _ _ HfindA). }
+  (* the two origin ops agree, so the replay delivered it into [t0] *)
+  have HbcA : op_broadcast N (t0, OpInsert xA) := HsrcA _ HxA.
+  have HbcR : op_broadcast N (t', OpInsert xR) := Hsrc _ HdelR.
+  have Heqop : (t0, OpInsert xA) = ((t', OpInsert xR) : Op).
+  { destruct HbcA as (jA & HjA). destruct HbcR as (jR & HjR).
+    exact (proj2 (hwf_msg_id_unique N Hwf _ _ jA jR HjA HjR
+                    ltac:(by rewrite /DocOp_id /= HidA HidR))). }
+  injection Heqop as Heqt HeqxA. subst t' xR.
+  (* the replay's item with this id *)
+  have HmemRop : OpInsert xA ∈ proj_ops t0 l by apply elem_of_proj_ops.
+  pose proof (effect_list_uniqueId_init (proj_ops t0 l) (doc_get s t0) HeffR) as HuniqR.
+  pose proof (effect_list_insert_mem (proj_ops t0 l) (op_init Oy) (doc_get s t0) xA
+                HeffR HuniqR HmemRop) as (oitR & HoitRid & HfindR).
+  rewrite HidA in HfindR.
+  (* determinism: the author's and the replay's items with id [originId] agree *)
+  have Heqit : oitA = oitR.
+  { exact (item_determinism_raw B Huniq oitA oitR
+             (omap deliverP (proj_hist t0 preA)) (proj_ops t0 l)
+             (doc_get sA t0) (doc_get s t0) originId HsrcA HsrcR HinterpAt HeffR HfindA HfindR). }
+  rewrite Heqit //.
+Qed.
+
+(** The transport at a replica: a broadcast insert is valid in any coherent
+    state that has integrated its ORIGINS (same type). *)
 Lemma docm_valid_from_deps N c h (m : DocModel) (t0 : TId)
     (input : IntegrateInput (A := A)) :
   history_wf N -> N !! c = Some h ->
@@ -2708,72 +2788,12 @@ Lemma docm_valid_from_deps N c h (m : DocModel) (t0 : TId)
   ∃ item0, toItem input (doc_model_get m t0) = Some item0 ∧ IsItemValid item0.
 Proof.
   move=> Hwf Hc Hcoh Hbc Horigins.
-  (* the author's pre-broadcast state, projected at [t0] *)
-  destruct Hbc as (j & Hj).
-  destruct (list_elem_of_split _ _ Hj) as (preA & postA & HhjA).
-  have HhjA' : to_histories N j = preA ++ [EvBroadcast (t0, OpInsert input)] ++ postA
-    by rewrite HhjA.
-  destruct (hwf_broadcast_valid N Hwf j _ preA postA HhjA') as (sA & HinterpA & HvalidA).
-  destruct HvalidA as (itemA & HtoitA & HvalidA).
-  have HinterpAt : interpHistory Oy (proj_hist t0 preA) (op_init Oy) (doc_get sA t0)
-    := doc_interp_proj preA sA t0 HinterpA.
-  (* the receiver's state, projected at [t0] *)
-  destruct (history_state_coh_proj h m t0 Hcoh) as (stR & HinterpR & HitemsR).
-  rewrite -HitemsR.
-  (* sourcing of both projected replays in the broadcast universe at [t0] *)
-  set B := λ y : @YjsOperation A, op_broadcast N (t0, y).
-  have HsrcA : ∀ y, y ∈ omap deliverP (proj_hist t0 preA) -> B y.
-  { move=> y Hy.
-    have Hy' : (t0, y) ∈ delivered_ops preA.
-    { rewrite -(delivered_ops_proj t0 preA) elem_of_proj_ops // in Hy. }
-    apply elem_of_delivered_ops_ev in Hy'.
-    have Hd : EvDeliver (t0, y) ∈ to_histories N j by rewrite HhjA'; set_solver.
-    exact (hwf_deliver_has_a_cause N Hwf j (t0, y) Hd). }
-  have HsrcR : ∀ y, y ∈ omap deliverP (proj_hist t0 h) -> B y.
-  { move=> y Hy.
-    have Hy' : (t0, y) ∈ delivered_ops h.
-    { rewrite -(delivered_ops_proj t0 h) elem_of_proj_ops // in Hy. }
-    exact (delivered_ops_broadcast_src N c h Hwf Hc (t0, y) Hy'). }
-  have Huniq : ∀ x y, B x -> B y -> yopid x = yopid y -> x = y
-    := broadcast_type_uniq N t0 Hwf.
-  (* transport along the origins *)
-  apply (toItem_isValid_transport_origins input (st_items (doc_get sA t0))
-           (st_items stR) itemA HtoitA HvalidA).
-  move=> originId oitA Hor HfindA.
-  (* the origin op, as delivered at the receiver: same type by id uniqueness *)
-  destruct (Horigins originId Hor) as (t' & xR & HdelR & HidR).
-  (* the origin op at the author's prefix: type [t0] *)
-  have HmemA : oitA ∈ st_items (doc_get sA t0)
-    := @find_by_id_mem _ EqDA originId (st_items (doc_get sA t0)) oitA HfindA.
-  destruct (effect_list_mem_src (omap deliverP (proj_hist t0 preA)) (op_init Oy)
-              (doc_get sA t0) oitA HinterpAt HmemA)
-    as [Hnil | (xA & HxA & HxAid)].
-  { move: Hnil. rewrite /= elem_of_nil //. }
-  have HidA : in_id xA = originId.
-  { rewrite HxAid. exact (@find_by_id_id _ EqDA originId _ _ HfindA). }
-  (* the two origin ops agree, so the receiver delivered it into [t0] *)
-  have HbcA : op_broadcast N (t0, OpInsert xA) := HsrcA _ HxA.
-  have HbcR : op_broadcast N (t', OpInsert xR).
-  { exact (delivered_ops_broadcast_src N c h Hwf Hc _ HdelR). }
-  have Heqop : (t0, OpInsert xA) = ((t', OpInsert xR) : Op).
-  { destruct HbcA as (jA & HjA). destruct HbcR as (jR & HjR).
-    exact (proj2 (hwf_msg_id_unique N Hwf _ _ jA jR HjA HjR
-                    ltac:(by rewrite /DocOp_id /= HidA HidR))). }
-  injection Heqop as Heqt HeqxA. subst t' xR.
-  (* the receiver's item with this id *)
-  have HmemRop : OpInsert xA ∈ omap deliverP (proj_hist t0 h).
-  { rewrite -(delivered_ops_proj t0 h) elem_of_proj_ops //. }
-  pose proof (effect_list_uniqueId_init (omap deliverP (proj_hist t0 h)) stR HinterpR)
-    as HuniqR.
-  pose proof (effect_list_insert_mem (omap deliverP (proj_hist t0 h)) (op_init Oy) stR xA
-                HinterpR HuniqR HmemRop) as (oitR & HoitRid & HfindR).
-  rewrite HidA in HfindR.
-  (* determinism: the author's and the receiver's items with id [originId] agree *)
-  have Heqit : oitA = oitR.
-  { exact (item_determinism_raw B Huniq oitA oitR
-             (omap deliverP (proj_hist t0 preA)) (omap deliverP (proj_hist t0 h))
-             (doc_get sA t0) stR originId HsrcA HsrcR HinterpAt HinterpR HfindA HfindR). }
-  rewrite Heqit //.
+  destruct Hcoh as (s & Hinterp & Hm).
+  rewrite -(Hm t0).
+  apply (valid_in_broadcast_replay N (delivered_ops h) s t0 input Hwf Hbc).
+  - exact (delivered_ops_broadcast_src N c h Hwf Hc).
+  - exact Hinterp.
+  - exact Horigins.
 Qed.
 
 (* ----- the FIFO clock bound ----- *)
