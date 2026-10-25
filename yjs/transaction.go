@@ -208,8 +208,9 @@ func (tr *Transaction) integrateDecoded(ui updateItem) {
 //     struct);
 //   - the loop lives on the transaction rather than on Doc (yrs
 //     TransactionMut::apply_update, src/transaction.rs:820), so the verified
-//     core stays self-contained; Doc.applyUpdate (doc.go) is the transaction
-//     wrapper and the codec-level Doc.ApplyUpdate (codec.go) the decode rind.
+//     core stays self-contained; Doc.ApplySyncUpdate (sync.go) is the
+//     transaction wrapper, which runs applyDeleteSpans after the loop, and
+//     Doc.ApplyEncodedUpdate (doc.go) the decode rind.
 //
 // Runs inside the transaction, which holds the store's write lock and records
 // every struct this call integrates.

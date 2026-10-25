@@ -13,7 +13,7 @@ import (
 //   - encoder / decoder            <- codec/io/{writer,reader}.rs (lib0 varint)
 //   - encodeItem / item read       <- codec/item.rs (info byte, origins, parent)
 //   - encodeNode / node read       <- codec/refs.rs (GC=0, Skip=10, else item)
-//   - EncodeUpdate / ApplyUpdate   <- codec/update.rs (clients -> structs, then
+//   - EncodeUpdate / WireCodec     <- codec/update.rs (clients -> structs, then
 //                                     the delete set)
 //   - delete set                   <- codec/delete_set.rs
 //
@@ -323,7 +323,7 @@ func sortedClientsDesc[V any](m map[Client]V) []Client {
 	return cs
 }
 
-// ----- decode + apply --------------------------------------------------------
+// ----- decode ----------------------------------------------------------------
 
 // decodedStruct is one struct read from an update, before run-splitting.
 type decodedStruct struct {
@@ -336,37 +336,8 @@ type decodedStruct struct {
 	length        uint64
 }
 
-type pendingDelete struct {
-	client Client
-	clock  uint64
-	length uint64
-}
-
-// ApplyUpdate decodes a Yjs v1 update and integrates it into the document.
-// The update may arrive in any order and need not be self-contained: structs
-// whose dependencies have not arrived yet are buffered in the store's pending
-// buffer by the verified store.applyUpdate and drained by later updates
-// (issue #40).
-func (doc *Doc) ApplyUpdate(data []byte) {
-	d := &decoder{buf: data}
-
-	// structs
-	structs := readStructSection(d)
-
-	// delete set
-	var deletes []pendingDelete
-	for _, sp := range readDeleteSection(d) {
-		deletes = append(deletes, pendingDelete{client: sp.client, clock: sp.clock, length: sp.length})
-	}
-
-	doc.integrateStructs(structs)
-	doc.store.wlock()
-	doc.applyDeletes(deletes)
-	doc.store.wunlock()
-}
-
 // readDeleteSection parses the delete set of an update into the decoded
-// spans the verified store.applyDeleteSpans consumes (y-octo:
+// spans the verified Transaction.applyDeleteSpans consumes (y-octo:
 // DeleteSet::read). The decoder must be positioned right after the structs.
 func readDeleteSection(d *decoder) []deleteSpan {
 	var spans []deleteSpan
@@ -402,19 +373,19 @@ func readStructSection(d *decoder) []decodedStruct {
 }
 
 // WireCodec is the deployment's Codec (the type is in doc.go): the v1 decode
-// of an update's structs section, split into 1-unit items exactly as
-// ApplyUpdate splits them, and of its delete set, as the spans that
-// Doc.ApplySyncUpdate applies after the structs. Malformed input
-// reports ok=false (the wire protocol makes that branch dead for the
-// verified server, but the codec is total either way).
+// of an update's structs section, split into 1-unit items (splitStructs),
+// and of its delete set, as the spans that Doc.ApplySyncUpdate applies after
+// the structs. Malformed input reports ok=false (the wire protocol makes
+// that branch dead for the verified server, but the codec is total either
+// way).
 func WireCodec() Codec {
 	return decodeUpdateItems
 }
 
 func decodeUpdateItems(data []byte) (ok bool, items []updateItem, deletes []deleteSpan) {
-	// The low-level reader indexes without bounds checks (it is only ever fed
-	// self-produced updates elsewhere); at this trust boundary a malformed
-	// update must come back as ok=false instead.
+	// The low-level reader indexes without bounds checks, so a malformed
+	// update panics inside it; at this trust boundary that must come back as
+	// ok=false instead.
 	defer func() {
 		if recover() != nil {
 			ok, items, deletes = false, nil, nil
@@ -476,14 +447,6 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 	}
 }
 
-// integrateStructs hands the split batch to the verified total update path
-// in one locked call: Doc.applyUpdate buffers structs whose dependencies are
-// missing in the store's pending, so no ordering or self-containedness is
-// assumed here (issue #40).
-func (doc *Doc) integrateStructs(structs []decodedStruct) {
-	doc.applyUpdate(splitStructs(structs))
-}
-
 // splitStructs splits each item struct into 1-unit updateItems (chained left
 // origins, shared right origin), each holding a one-unit subslice of the
 // struct's code units (never written afterwards, content.go).
@@ -520,23 +483,4 @@ func splitStructs(structs []decodedStruct) []updateItem {
 	}
 
 	return items
-}
-
-// applyDeletes records each range in the delete set and tombstones the matching
-// items; the owning type comes from the item's own parent.
-func (doc *Doc) applyDeletes(deletes []pendingDelete) {
-	for _, del := range deletes {
-		doc.store.store.deletedSet.addRange(newId(del.client, del.clock), del.length)
-		end := del.clock + del.length
-		for clock := del.clock; clock < end; clock++ {
-			target := newId(del.client, clock)
-			item, ok := doc.store.store.GetNode(target)
-			if ok && !item.Deleted() {
-				item.flags = item.flags | itemDeleted
-				if item.Countable() {
-					item.parent.len = item.parent.len - item.Len()
-				}
-			}
-		}
-	}
 }

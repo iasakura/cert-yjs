@@ -39,18 +39,6 @@ func (d *Doc) Transact(f func(tr *Transaction)) {
 	transact(d.store, f)
 }
 
-// applyUpdate integrates a decoded update batch as one transaction (y-octo:
-// Doc::apply_update takes store.write() for the whole apply; Yjs applyUpdate
-// runs inside transact). The verified core is Transaction.applyUpdate, which
-// is total: structs whose dependencies have not arrived are buffered in the
-// store and drained by later calls. The codec-level Doc.ApplyUpdate
-// (codec.go) decodes the wire format and routes the batch through here.
-func (d *Doc) applyUpdate(structs []updateItem) {
-	transact(d.store, func(tr *Transaction) {
-		tr.applyUpdate(structs)
-	})
-}
-
 // Codec is the decoding half of the update codec: data decodes to a batch of
 // insert structs, ok reports whether it decoded at all. The struct type is
 // unexported, so a Codec can only be built inside this package; the
@@ -67,6 +55,22 @@ type Codec = func(data []byte) (ok bool, structs []updateItem, deletes []deleteS
 // store's write lock). It reports whether the update decoded; an applied
 // update is one the caller may relay (y-websocket relays exactly what it
 // applied).
+//
+// It is the document's only byte-level entry point, and it takes the whole
+// decode as a value, for the reason given at Codec above. In the three
+// references the decode is the library's own. Yjs v14.0.0-rc.18
+// applyUpdate(ydoc, update, transactionOrigin) decodes v1
+// (src/utils/encoding.js:370); applyUpdateV2 takes an optional decoder
+// class, v2 by default (src/utils/encoding.js:354), but the class only picks
+// the field encoding, and the reading of the structs and the delete set
+// stays inside Yjs (readUpdateV2, src/utils/encoding.js:246). yrs 0.27.2 has
+// no byte-level apply: the caller decodes with Update::decode_v1
+// (src/updates/decoder.rs:11) and applies the decoded Update with
+// TransactionMut::apply_update (src/transaction.rs:820). y-octo 0.1.0
+// Doc::apply_update_from_binary_v1 (src/doc/document.rs:343) decodes v1 with
+// its own reader and hands the Update to Doc::apply_update (:349). Past the
+// decode the Go follows all three: the structs, then the delete set, in one
+// transaction (ApplySyncUpdate; in y-octo, under one write lock).
 func (d *Doc) ApplyEncodedUpdate(decode Codec, data []byte) bool {
 	ok, structs, deletes := decode(data)
 	if !ok {

@@ -2,6 +2,16 @@ package yjs
 
 import "testing"
 
+// applyWireUpdate applies a v1 update to doc through the byte-level entry
+// point, ApplyEncodedUpdate with the deployment's codec, and fails the test
+// when the update does not decode.
+func applyWireUpdate(t *testing.T, doc *Doc, update []byte) {
+	t.Helper()
+	if !doc.ApplyEncodedUpdate(WireCodec(), update) {
+		t.Fatal("ApplyEncodedUpdate reported a malformed update")
+	}
+}
+
 // Basic editing: insert at head, in the middle, and delete a span.
 func TestTextInsertDelete(t *testing.T) {
 	doc := NewDoc(1)
@@ -40,7 +50,7 @@ func TestUpdateRoundTrip(t *testing.T) {
 	update := doc.EncodeUpdate()
 
 	clone := NewDoc(99) // a different local client; only receives
-	clone.ApplyUpdate(update)
+	applyWireUpdate(t, clone, update)
 	ct := clone.GetOrCreateText("root")
 	if got := ct.String(); got != "hello" {
 		t.Fatalf("round-trip text: got %q, want %q", got, "hello")
@@ -51,7 +61,7 @@ func TestUpdateRoundTrip(t *testing.T) {
 
 	// re-encoding the clone yields a document with the same observable text.
 	again := NewDoc(1)
-	again.ApplyUpdate(clone.EncodeUpdate())
+	applyWireUpdate(t, again, clone.EncodeUpdate())
 	if got := again.GetOrCreateText("root").String(); got != "hello" {
 		t.Fatalf("re-encode text: got %q, want %q", got, "hello")
 	}
@@ -65,7 +75,7 @@ func TestUpdateRoundTripMultipleRoots(t *testing.T) {
 	doc.GetOrCreateText("body").InsertString(0, "yo")
 
 	clone := NewDoc(9)
-	clone.ApplyUpdate(doc.EncodeUpdate())
+	applyWireUpdate(t, clone, doc.EncodeUpdate())
 	if got := clone.GetOrCreateText("title").String(); got != "hi" {
 		t.Fatalf("title: got %q, want %q", got, "hi")
 	}
@@ -86,17 +96,17 @@ func TestConcurrentMergeConverges(t *testing.T) {
 	updB := docB.EncodeUpdate()
 
 	// A learns B; B learns A.
-	docA.ApplyUpdate(updB)
-	docB.ApplyUpdate(updA)
+	applyWireUpdate(t, docA, updB)
+	applyWireUpdate(t, docB, updA)
 
 	// Fresh receivers applying the two updates in opposite orders.
 	docC := NewDoc(3)
-	docC.ApplyUpdate(updA)
-	docC.ApplyUpdate(updB)
+	applyWireUpdate(t, docC, updA)
+	applyWireUpdate(t, docC, updB)
 
 	docD := NewDoc(4)
-	docD.ApplyUpdate(updB)
-	docD.ApplyUpdate(updA)
+	applyWireUpdate(t, docD, updB)
+	applyWireUpdate(t, docD, updA)
 
 	a := docA.GetOrCreateText("root").String()
 	b := docB.GetOrCreateText("root").String()
@@ -152,7 +162,7 @@ func TestNonASCIIReplicasConverge(t *testing.T) {
 	ta.Delete(1, 1)
 	ta.InsertString(1, "z")
 	b := NewDoc(2)
-	b.ApplyUpdate(a.EncodeUpdate())
+	applyWireUpdate(t, b, a.EncodeUpdate())
 	if got, want := b.GetOrCreateText("root").String(), ta.String(); got != want {
 		t.Fatalf("replica B reads %q, replica A reads %q", got, want)
 	}
@@ -174,7 +184,7 @@ func TestSurrogatePairRoundTrip(t *testing.T) {
 		t.Fatalf("the pair did not survive the wire: %x %x", structs[1].content, structs[2].content)
 	}
 	clone := NewDoc(2)
-	clone.ApplyUpdate(update)
+	applyWireUpdate(t, clone, update)
 	ct := clone.GetOrCreateText("root")
 	if got := ct.String(); got != "a😀b" {
 		t.Fatalf("round-trip text: got %q, want %q", got, "a😀b")
@@ -192,11 +202,11 @@ func TestLoneSurrogateKeepsClocksAligned(t *testing.T) {
 	txt := doc.GetOrCreateText("root")
 	txt.Insert(0, []uint16{0xD83D})
 	clone := NewDoc(2)
-	clone.ApplyUpdate(doc.EncodeUpdate())
+	applyWireUpdate(t, clone, doc.EncodeUpdate())
 	ct := clone.GetOrCreateText("root")
 	txt.InsertString(1, "z")
-	clone.ApplyUpdate(doc.EncodeUpdate())
-	doc.ApplyUpdate(clone.EncodeUpdate())
+	applyWireUpdate(t, clone, doc.EncodeUpdate())
+	applyWireUpdate(t, doc, clone.EncodeUpdate())
 	if txt.Len() != 2 || ct.Len() != 2 {
 		t.Fatalf("lengths: source %d, replica %d, want 2 and 2", txt.Len(), ct.Len())
 	}
