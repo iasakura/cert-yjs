@@ -13,8 +13,9 @@
     [concat_perm], [elem_of_list_insert_inv] (membership in a list with one
     slot replaced), [map_to_list_fst_perm] (two maps with the same domain
     list the same keys). Positions: [list_before] (strictly earlier in a
-    list) with its order laws under [NoDup], [list_before_filter] /
-    [list_before_prefix] / [list_before_of_measure], [rtc_list_before] (a
+    list) with its order laws under [NoDup], [list_before_filter] (and its
+    converse [list_before_filter_inv]) / [list_before_prefix] /
+    [list_before_of_measure], [rtc_list_before] (a
     closure of forward edges points forward), [NoDup_fmap_elem_of_eq]. Map
     big-op:
     [big_sepM_map_imap_total], a big-op over a total [map_imap] is the
@@ -256,6 +257,40 @@ Proof.
       apply list_elem_of_filter in Hyf. exact (proj2 Hyf).
     + apply list_before_cons. apply IH. exists i, j. split_and!; [done | done | lia].
   - move=> Hb. apply list_before_cons. exact (IH Hb).
+Qed.
+
+(** Conversely, members of the filtered list keep their order from the list
+    (positions are unique under [NoDup]). *)
+Lemma list_before_filter_inv {X : Type} (Pf : X -> Prop) `{∀ x, Decision (Pf x)}
+    (l : list X) (x y : X) :
+  NoDup l -> x ∈ filter Pf l -> y ∈ filter Pf l ->
+  list_before l x y -> list_before (filter Pf l) x y.
+Proof.
+  elim: l => [| a l IH].
+  { move=> _ _ _ [i [j [Hi _]]]. rewrite lookup_nil // in Hi. }
+  move=> Hnd Hx Hy [i [j [Hi [Hj Hij]]]].
+  apply NoDup_cons in Hnd as [Hnotin Hnd].
+  destruct i as [| i]; destruct j as [| j]; simpl in Hi, Hj; try lia.
+  - (* [x] is the head *)
+    injection Hi as <-.
+    have Hyl : y ∈ l := list_elem_of_lookup_2 _ _ _ Hj.
+    have Hpa : Pf a.
+    { apply list_elem_of_filter in Hx. exact (proj1 Hx). }
+    rewrite filter_cons decide_True //.
+    apply list_before_cons_head.
+    apply list_elem_of_filter. split; [| exact Hyl].
+    apply list_elem_of_filter in Hy as [HPy Hy].
+    exact HPy.
+  - (* both in the tail *)
+    have Hxl : x ∈ l := list_elem_of_lookup_2 _ _ _ Hi.
+    have Hyl : y ∈ l := list_elem_of_lookup_2 _ _ _ Hj.
+    have Hxf : x ∈ filter Pf l.
+    { apply list_elem_of_filter. apply list_elem_of_filter in Hx. split; [exact (proj1 Hx) | exact Hxl]. }
+    have Hyf : y ∈ filter Pf l.
+    { apply list_elem_of_filter. apply list_elem_of_filter in Hy. split; [exact (proj1 Hy) | exact Hyl]. }
+    have Hb : list_before (filter Pf l) x y.
+    { apply IH; [exact Hnd | exact Hxf | exact Hyf |]. exists i, j. split_and!; [done | done | lia]. }
+    rewrite filter_cons. case_decide; [apply list_before_cons; exact Hb | exact Hb].
 Qed.
 
 (** A list whose measure strictly grows along positions orders its members
