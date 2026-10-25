@@ -12,6 +12,11 @@
       persistent fragments [is_history_lb γh c h0] certify [h0] as a history
       prefix (the lossless replica-progress lower bound), minted afresh at
       every ghost append;
+    - [is_history_replay γh c h m]: a certified prefix [h] of client [c]'s
+      history with the document [m] it replays to; [is_text_state γh c h
+      name s]: an exact read certificate, [s] lists the items of root [name]
+      in such a replay; two of them whose snapshots hold the same ids list
+      the same items ([is_text_state_convergence], issue #239);
     - [is_op_cert γh op D]: the persistent certificate — "op was broadcast, and
       [D] covers its strict causal past" — minted by [Text.Insert], consumed by
       [applyUpdate];
@@ -29,6 +34,7 @@ From New.proof Require Import proof_prelude.
 From New.golang Require Import theory.
 From New.proof Require Export core.
 From New.proof Require Export network_model.
+From New.proof Require Export network_convergence.
 From iris.algebra Require Import auth gmap max_prefix_list.
 From iris.algebra.lib Require Import mono_list.
 
@@ -124,6 +130,28 @@ Definition is_pending_certified (γh : history_names)
     (pending : list (TId * IntegrateInput (A := A))) : iProp Σ :=
   [∗ list] typedInput ∈ pending, is_op_cert γh (typedInput.1, OpInsert typedInput.2).
 
+(** [is_history_replay γh c h m] (issue #239, layer 1): a certified prefix
+    [h] of client [c]'s history together with the document [m] it replays to
+    ([history_state_coh]). The unit a read lock hands its reader (the told
+    model is the replay of the history the reader is certified at) and an
+    exact read certificate is built on. Persistent. *)
+Definition is_history_replay (γh : history_names) (c : ClientId) (h : list Ev)
+    (m : DocModel) : iProp Σ :=
+  "#Hhistory_replay_lb" ∷ is_history_lb γh c h ∗
+  "%Hhistory_replay_coh" ∷ ⌜history_state_coh h m⌝.
+
+(** [is_text_state γh c h name s] (issue #239, layer 1): what an exact read
+    of root [name] certifies. The tombstone-tagged item list [s] is, item for
+    item, the document of [name] in the replay of [h], a certified prefix of
+    client [c]'s history. The history is insert-only, so the replay fixes the
+    items and not the tags: the tags are the delete set's business.
+    Persistent. *)
+Definition is_text_state (γh : history_names) (c : ClientId) (h : list Ev)
+    (name : P) (s : list (YjsItem A * bool)) : iProp Σ :=
+  ∃ m : DocModel,
+    "#Htext_state_replay" ∷ is_history_replay γh c h m ∗
+    "%Htext_state_root" ∷ ⌜s.*1 = doc_model_get m (RootId name)⌝.
+
 #[global] Instance history_inv_timeless γh : Timeless (history_inv γh).
 Proof. apply _. Qed.
 #[global] Instance is_history_persistent γh : Persistent (is_history γh).
@@ -138,6 +166,12 @@ Proof. apply _. Qed.
 #[global] Instance is_history_lb_persistent γh c h0 : Persistent (is_history_lb γh c h0).
 Proof. apply _. Qed.
 #[global] Instance is_history_lb_timeless γh c h0 : Timeless (is_history_lb γh c h0).
+Proof. apply _. Qed.
+#[global] Instance is_history_replay_persistent γh c h m :
+  Persistent (is_history_replay γh c h m).
+Proof. apply _. Qed.
+#[global] Instance is_text_state_persistent γh c h name s :
+  Persistent (is_text_state γh c h name s).
 Proof. apply _. Qed.
 #[global] Instance hist_auth_timeless γ N : Timeless (hist_auth γ N).
 Proof. apply _. Qed.
@@ -198,6 +232,27 @@ Proof.
   iPureIntro. move: Hv.
   rewrite -auth_frag_op auth_frag_valid singleton_op singleton_valid.
   rewrite mono_list_both_valid_L. done.
+Qed.
+
+(** A certificate really is a prefix of the authority's history of its client. *)
+Lemma hist_auth_lb_prefix (γh : history_names) (N : RawHistories) (c : ClientId)
+    (h0 : list Ev) :
+  hist_auth γh.(hn_hist) N -∗ is_history_lb γh c h0 -∗ ⌜h0 `prefix_of` to_histories N c⌝.
+Proof.
+  iIntros "Ha Hlb". iDestruct (own_valid_2 with "Ha Hlb") as %Hv.
+  iPureIntro. move: Hv.
+  rewrite auth_both_valid_discrete. move=> [Hincl _].
+  apply singleton_included_l in Hincl. destruct Hincl as (y & Hy & Hinc).
+  move: Hy. rewrite /hist_auth_map lookup_fmap.
+  move=> /fmap_Some_equiv [h' [HN Hyeq]].
+  rewrite Hyeq in Hinc.
+  have Hle : (◯ML (h0 : list EvO) : mono_listR EvO) ≼ ●ML (h' : list EvO).
+  { move: Hinc. rewrite Some_included. move=> [Heq | Hle]; [| exact Hle].
+    rewrite -Heq. exists (◯ML (h0 : list EvO)). by rewrite -core_id_dup. }
+  have Hvalid : ✓ ((●ML (h' : list EvO) : mono_listR EvO) ⋅ ◯ML (h0 : list EvO)).
+  { rewrite -(core_id_extract _ _ Hle). apply mono_list_auth_valid. }
+  move: Hvalid. rewrite mono_list_both_valid_L. move=> Hpre.
+  rewrite /to_histories HN //.
 Qed.
 
 (** Two replica elements for the same client cannot coexist. *)
@@ -468,6 +523,35 @@ Proof.
   iIntros (Hid) "H1 H2". rewrite /is_op_cert Hid.
   iDestruct (ghost_map_elem_agree with "H1 H2") as %Heq.
   iPureIntro. exact Heq.
+Qed.
+
+(** Two exact certificates of one root whose snapshots hold the same ids
+    list the same items (issue #239): [history_prefix_convergence_ids_at]
+    under the global invariant, which holds [history_wf] and pins each
+    certificate as a prefix of its client's history. Stated over what a
+    read sees, the ids of its snapshot, since a read of one root knows
+    nothing of the rest of the document. *)
+Lemma is_text_state_convergence (γh : history_names) (c1 c2 : ClientId) (h1 h2 : list Ev)
+    (name : P) (s1 s2 : list (YjsItem A * bool)) (E : coPset) :
+  ↑histN ⊆ E ->
+  is_history γh -∗
+  is_text_state γh c1 h1 name s1 -∗
+  is_text_state γh c2 h2 name s2 -∗
+  ⌜item_ids s1.*1 = item_ids s2.*1⌝ -∗
+  |={E}=> ⌜s1.*1 = s2.*1⌝.
+Proof.
+  iIntros (HE) "#Hhist #Hs1 #Hs2 %Hids".
+  iDestruct "Hs1" as (m1) "[[Hlb1 %Hcoh1] %Hs1]".
+  iDestruct "Hs2" as (m2) "[[Hlb2 %Hcoh2] %Hs2]".
+  iInv "Hhist" as ">Hinv" "Hclose". iNamed "Hinv".
+  iDestruct (hist_auth_lb_prefix with "HhistAuth Hlb1") as %Hpre1.
+  iDestruct (hist_auth_lb_prefix with "HhistAuth Hlb2") as %Hpre2.
+  iMod ("Hclose" with "[HhistAuth HopsAuth]") as "_".
+  { iNext. iExists N, ops. iFrame "HhistAuth HopsAuth Hcerts". by iSplit. }
+  iPureIntro.
+  rewrite Hs1 Hs2 in Hids |- *.
+  exact (history_prefix_convergence_ids_at N c1 c2 h1 h2 m1 m2 (RootId name)
+           Hwf Hpre1 Hpre2 Hcoh1 Hcoh2 Hids).
 Qed.
 
 End history.

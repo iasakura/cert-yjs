@@ -870,4 +870,18 @@ Proof.
   exists it. split; [exact Hitid | rewrite Harr; exact Hitmem].
 Qed.
 
+(** An exact read ([is_text_state] of [history], issue #239) reflects every
+    earlier prefix: the issue #125 read guarantee, as a corollary. *)
+Lemma text_state_history_reflected (h0 h : list Ev) (m : DocModel) (name : P)
+    (s : snapshot) :
+  h0 `prefix_of` h ->
+  history_state_coh h m ->
+  s.*1 = doc_model_get m (RootId name) ->
+  history_reflected h0 name s.
+Proof.
+  move=> Hpref Hcoh Hs.
+  exact (delivered_reflected_at_root h0 m name s
+           (history_state_coh_delivered_reflected h0 h m Hpref Hcoh) Hs).
+Qed.
+
 End delta_model.

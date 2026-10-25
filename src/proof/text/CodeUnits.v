@@ -6,9 +6,11 @@
     caller's own, holds exactly the
     visible code units of some tombstone-tagged array [model] that satisfies
     the document invariant and contains everything the handle already knows
-    ([L], the handle's grow-only lower bound), and that contains one item per
-    delivered insert of the caller's history certificate [is_history_lb]
-    targeting this root. The bound is at the ITEM-SET
+    ([L], the handle's grow-only lower bound), and that is EXACTLY the root's
+    document in the replay of a certified history prefix [h] extending the
+    caller's certificate [h0] ([is_text_state], issue #239; that [model]
+    holds one item per delivered insert of [h0] targeting this root follows,
+    [text_state_history_reflected]). The bound is at the ITEM-SET
     level: a tombstoned item is in [model] but not in the string, so "the
     characters are visible" needs a no-delete side condition on top; the
     set-level statement is unconditional. *)
@@ -62,9 +64,9 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     RWMutex read lock, walks the type's DLL through a fractional
     share of [own_store] ([wp_yType__Text]), then releases. The caller brings
     a prefix certificate [is_history_lb γh c h0] of THIS replica's op history
-    (with the client pin identifying it), and the model is guaranteed to
-    contain one item per delivered insert of [h0] targeting this root (a
-    caller with no such knowledge passes [h0 = []]). This is the read
+    (with the client pin identifying it), and gets back an exact certificate
+    of the snapshot at a history prefix extending [h0] (a caller with no such
+    knowledge passes [h0 = []]). This is the read
     guarantee in the network stack's own currency: whoever observed the
     history grow (an applyUpdate postcondition, a server receipt, a
     sync-protocol certificate) can replay that knowledge against a concurrent
@@ -78,14 +80,15 @@ Lemma wp_Text__CodeUnits (t : loc) (γs : store_names) (γh : history_names)
   {{{ (sl : slice.t) (model : list (YjsItem A * bool)), RET #sl;
       is_Text t γs γh name L deleted_ids ∗ own_read_cap γs ∗
       sl ↦* visible_string model ∗ own_slice_cap w16 sl (DfracOwn 1) ∗
-      ⌜text_snapshot L model⌝ ∗ ⌜history_reflected h0 name model⌝ ∗
+      ⌜text_snapshot L model⌝ ∗
+      (∃ h : list Ev, ⌜h0 `prefix_of` h⌝ ∗ is_text_state γh c h name model) ∗
       ⌜visible_excludes deleted_ids model⌝ }}}.
 Proof.
   wp_start as "(Hpre & #Hpin & #Hlb & Hcap)". iNamed "Hpre".
   iDestruct "His_store" as "#His_store".
   wp_auto. subst s_loc. subst parent.
   wp_apply (wp_Store__rlock _ _ _ c h0 with "[$His_store $Hcap $Hpin $Hlb]").
-  iIntros (state ds m0) "(Hrlo & Hstore & %Hregmodel & %Hdeliv)".
+  iIntros (state ds m0) "(Hrlo & Hstore & %Hregmodel & (%h & %Hpref & #Hreplay))".
   wp_auto.
   iNamed "Hstore". iNamed "Hcore".
   (* this handle's root, in the state the lock handed out: the registry
@@ -129,14 +132,19 @@ Proof.
     { apply elem_of_all_runs. exists tv.(yjs.Text.inner'), tm.
       split; [exact Htmp | exact Hr]. }
     exact (Hds_tomb r Hrall x Hx (Hdelsub (item_id x) Hid)). }
+  (* the walked list is the root's document in [m0], which is the replay of
+     the history [h] the read lock certified *)
+  have Hroot : (runs_model (tm_runs tm)).*1 = doc_model_get m0 (RootId name).
+  { rewrite Hfst. symmetry.
+    exact (proj1 Hregmodel name tv.(yjs.Text.inner') tm Hbindlk Htmp). }
   iApply ("HΦ" $! sl (runs_model (tm_runs tm))).
   iSplitR "Hcap Hsl Hslcap"; last first.
-  { iFrame "Hcap Hsl Hslcap". iPureIntro. split_and!.
-    - split; rewrite Hfst; [exact HLsub | exact (Harrinv _ _ Htmp)].
-    - apply (delivered_reflected_at_root h0 m0 name _ Hdeliv).
-      rewrite Hfst. symmetry.
-      exact (proj1 Hregmodel name tv.(yjs.Text.inner') tm Hbindlk Htmp).
-    - exact Hexcl. }
+  { iFrame "Hcap Hsl Hslcap".
+    iSplitR.
+    { iPureIntro. split; rewrite Hfst; [exact HLsub | exact (Harrinv _ _ Htmp)]. }
+    iSplitR; last (iPureIntro; exact Hexcl).
+    iExists h. iSplitR; first (iPureIntro; exact Hpref).
+    rewrite /is_text_state. iExists m0. iFrame "Hreplay". iPureIntro. exact Hroot. }
   iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
   iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
   iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted].
