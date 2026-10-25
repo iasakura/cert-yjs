@@ -139,14 +139,19 @@ bullet title
 
 ### The proof and the Go code
 
-- **Reuse the Rocq-Yjs model, don't build on an independent one.** This rule
-  reaches the statement the proof refines as well. State WP specs as
-  refinements of the pure model and compose with lemmas about it
+- **Specs refine the Rocq-Yjs model, not one of Cert-Yjs's own.** This rule
+  reaches the statement the proof refines as well, and it concerns which
+  model a spec and its proof speak of, not which lemmas the proof proves.
+  State WP specs as refinements of the Rocq-Yjs pure model, and reason
+  about order, validity and convergence through its definitions
+  (`YjsArrInvariant`, `integrate`, `setintegrate`) and lemmas about them
   (`YjsArrInvariant_integrate`, `setintegrate_eq_integrate`,
-  `integrate_commutative`, `yjs_strong_convergence`), not with those of a
-  model or an order theory of Cert-Yjs's own. Extract algorithmic cores into
-  their own Go functions (`scanConflicts`, `findIntegrationLeft`) so hard
-  loops are provable in isolation.
+  `integrate_commutative`, `yjs_strong_convergence`), never through a model
+  or an order that Cert-Yjs defines in their place. Use any lemma about
+  those definitions, wherever it is proved: one that Cert-Yjs proves itself
+  follows this rule even when Rocq-Yjs proves the same statement. Extract
+  algorithmic cores into their own Go functions (`scanConflicts`,
+  `findIntegrationLeft`) so hard loops are provable in isolation.
 
 ## Fresh-context review before push
 
