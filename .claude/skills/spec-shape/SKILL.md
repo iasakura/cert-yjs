@@ -46,17 +46,23 @@ a rule below is what binds, and no entry here can be violated by itself.
   state, not guarded by a lock or an invariant (`own_ytype`, `own_delta`);
   `is_X` is persistent, duplicable knowledge about it (`is_Doc`, `is_Text`),
   monotone where the model only grows (`is_Text`'s grow-only `L`).
-- **Public and non-public predicates.** A non-public predicate of `X` owns or
-  persistently covers some but not all of the resources of a value of `X`
-  (its fields and what they own, together with the invariant of `X`), or
-  describes a state in which the invariant of `X` need not hold. Every other
-  predicate is public: `own_X`, which holds every one of those resources;
-  `is_X`, which covers the same resources persistently or through the lock or
-  invariant that guards them; a fraction of `own_X`, which still covers every
-  resource; and `is_history_lb`, persistent knowledge of a lower bound on a
-  client's operation history, which covers no part of a value's resources at
-  all. Whether a predicate is public depends on what it describes, not on its
-  name.
+- **Public and non-public predicates.** These two words qualify only the
+  predicates that describe a value of a Go type `X` defined in Cert-Yjs:
+  `own_X`, `is_X`, and the predicates that describe the value in their
+  place. `own_X`, a fraction of `own_X`, and `is_X` are public: each covers
+  every resource of the value (its fields and what they own, together with
+  the invariant of `X`), `is_X` persistently or through the lock or
+  invariant that guards them. A non-public predicate of `X` describes a
+  value of `X` in the place of `own_X` or `is_X`, but with some of those
+  resources left out, or in a state in which the invariant of `X` need not
+  hold, as the store's `own_store_state` describes the store without its
+  observers and its ghost state. Any other predicate, one that does not
+  describe a value of a type, is neither public nor non-public, and the
+  rules about publicity do not apply to it: a lock's invariant (even one
+  that owns fields of `X`), a ghost token, a history lower bound
+  (`is_history_lb`), the ghost state a lock hands to its holder
+  (`own_replica_history`). Whether a predicate is public or non-public
+  depends on what it describes, not on its name.
 - **Public and private functions.** This classifies the Go functions and
   methods of Cert-Yjs, by their call sites in the Go code. A function or
   method is private to a type `X` when it is unexported and called only from
@@ -136,13 +142,19 @@ bullet title
 
 ### The proof and the Go code
 
-- **Reuse the Rocq-Yjs model, don't invent independent proofs.** This rule
-  reaches the statement the proof refines as well. State WP specs as
-  refinements of the pure model and compose with its lemmas
+- **Specs refine the Rocq-Yjs model, not one of Cert-Yjs's own.** This rule
+  reaches the statement the proof refines as well, and it concerns which
+  model a spec and its proof speak of, not which lemmas the proof proves.
+  State WP specs as refinements of the Rocq-Yjs pure model, and reason
+  about order, validity and convergence through its definitions
+  (`YjsArrInvariant`, `integrate`, `setintegrate`) and lemmas about them
   (`YjsArrInvariant_integrate`, `setintegrate_eq_integrate`,
-  `integrate_commutative`, `yjs_strong_convergence`). Extract algorithmic
-  cores into their own Go functions (`scanConflicts`, `findIntegrationLeft`)
-  so hard loops are provable in isolation.
+  `integrate_commutative`, `yjs_strong_convergence`), never through a model
+  or an order that Cert-Yjs defines in their place. Use any lemma about
+  those definitions, wherever it is proved: one that Cert-Yjs proves itself
+  follows this rule even when Rocq-Yjs proves the same statement. Extract
+  algorithmic cores into their own Go functions (`scanConflicts`,
+  `findIntegrationLeft`) so hard loops are provable in isolation.
 
 ## Fresh-context review before push
 
