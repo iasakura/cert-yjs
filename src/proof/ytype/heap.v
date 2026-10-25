@@ -15,8 +15,11 @@
       through the spine
       ([own_ytype_fractional], in [store/heap.v] next to the pool's).
 
-    The method proofs are [ytype/newYType.v], [ytype/findPos.v] and
-    [ytype/Text.v]. *)
+    [own_snapshot_chars sl dq model] is the slice [Text.Snapshot] returns
+    for a snapshot (issue #239): the [SnapshotChar] values of its characters.
+
+    The method proofs are [ytype/newYType.v], [ytype/findPos.v],
+    [ytype/Text.v] and [ytype/Snapshot.v]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -51,6 +54,15 @@ Definition own_ytype (parent : loc) (dq : dfrac)
     "Hparent" ∷ parent ↦{dq} yt ∗
     "Hdll" ∷ own_dll dq parent yt.(yjs.yType.start') tl null null ls (tm_runs tm) ∗
     "%Hlen" ∷ ⌜yt.(yjs.yType.len') = W64 (runs_visible (tm_runs tm))⌝.
+
+
+(** [own_snapshot_chars sl dq model]: the slice [Text.Snapshot] returns for
+    the snapshot [model] (issue #239): one [SnapshotChar] value per
+    character ([snapshot_chars]), with the slice's capacity. Plain data,
+    four scalars per character, no invariant of its own. *)
+Definition own_snapshot_chars (sl : slice.t) (dq : dfrac)
+    (model : list (YjsItem A * bool)) : iProp Σ :=
+  sl ↦*{dq} snapshot_chars model ∗ own_slice_cap yjs.SnapshotChar.t sl dq.
 
 (* ===== lemmas ============================================================= *)
 
