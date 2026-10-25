@@ -61,6 +61,12 @@ Section code.
       let: "err" := Fst "r" in
       let: "data" := Convert go.string (go.SliceType go.byte) (Snd "r") in
       ("err", "data").
+
+  (** Type: func([]byte) *)
+  Definition Traceⁱᵐᵖˡ : val :=
+    λ: "m",
+      let: "data" := Convert (go.SliceType go.byte) go.string "m" in
+      ExternalOp WsTraceOp "data".
 End code.
 
 (** Value-model types for the trusted go.types above (referenced by the
