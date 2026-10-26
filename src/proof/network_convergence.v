@@ -51,7 +51,7 @@ From stdpp Require Import base list gmap relations.
 From stdpp Require Import ssreflect.
 From iris.prelude Require Import options.
 From New.proof Require Import core.
-From New.proof Require Import algebra.
+From New.proof Require Import list_before.
 From New.proof Require Import network_model.
 
 Section network_convergence.
