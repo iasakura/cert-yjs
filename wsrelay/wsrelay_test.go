@@ -42,7 +42,7 @@ func startRoom(t *testing.T) (wsnet.Address, *Room, *yjs.Doc) {
 	addr := freeAddr(t)
 	l := wsnet.Listen(addr)
 	doc := yjs.NewDoc(1)
-	room := NewRoom(doc, yjs.WireCodec())
+	room := NewRoom(doc, yjs.WireCodec(), "root")
 	go Run(l, room)
 	return addr, room, doc
 }
@@ -252,7 +252,7 @@ func waitForRoomSize(t *testing.T, r *Room, n int) {
 // B, whose Join may land after the first send, sees a relay.
 func TestListenAndServeRelays(t *testing.T) {
 	addr := freeAddr(t)
-	go ListenAndServe(addr, 1, yjs.WireCodec())
+	go ListenAndServe(addr, 1, yjs.WireCodec(), "root")
 
 	connect := func(who string) wsnet.Connection {
 		for i := 0; ; i++ {
