@@ -85,7 +85,9 @@ it.
   predicates, relations between predicates (coherence, projection,
   observation), state-transition laws. Everything else belongs in the WP file
   that needs it; "the WP proof uses it" is not a reason. A fact mentioning no
-  Cert-Yjs definition goes to `algebra.v`.
+  Cert-Yjs definition goes to `algebra.v`, or to its own top-level file when
+  it is one notion with its theory (`list_before.v`, the position order on
+  lists).
 - **Shape.** Section boilerplate first, then every definition, then every
   lemma, under `(* ===== definitions ===== *)` / `(* ===== lemmas ===== *)`.
   Never declare a `Context` mid-section: under `Set Default Proof Using "Type*"`
