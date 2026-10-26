@@ -7,9 +7,10 @@
       Persistent, and grow-only in both [L] and [deleted_ids]: the document
       state a handle holder knows is the pair, since a [Text]'s content is its
       items MINUS its deleted ids.
-    - what a read ([Text.Len] / [Text.CodeUnits]) sees: [text_snapshot L model]
-      (and, for [Text.CodeUnits], the exact certificate [is_text_state] of
-      [history], issue #239)
+    - what a read ([Text.Len] / [Text.CodeUnits] / [Text.Snapshot]) sees:
+      [text_snapshot L model] (and, for [Text.CodeUnits] and
+      [Text.Snapshot], the exact certificate [is_text_state] of [history],
+      issue #239)
       (a valid document holding [L]) and [history_reflected h0 name model]
       (every insert a history prefix delivered is in it).
 

@@ -22,7 +22,12 @@
       tombstone bits; [runs_visible_model], the [len] counter counts the
       sequence's visible items.
     - [visible_string_take_S]: one more run appends its string when live
-      and nothing when tombstoned, the step [Text.CodeUnits] walks. *)
+      and nothing when tombstoned, the step [Text.CodeUnits] walks.
+    - [snapshot_char] / [snapshot_chars]: the [SnapshotChar] values a read
+      reports for a snapshot's characters ([Text.Snapshot], issue #239),
+      with the steps its walks take ([snapshot_chars_take_S], one more run;
+      [run_models_take_S] and [snapshot_char_run], one more character of a
+      run: the head id advanced by the offset and the unit at it). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -53,6 +58,21 @@ Definition visible_items (m : list (YjsItem A * bool)) : list (YjsItem A) :=
 
 Definition visible_string (m : list (YjsItem A * bool)) : A :=
   items_string (visible_items m).
+
+(** [snapshot_char p]: the [SnapshotChar] value a read reports for one
+    tombstone-tagged char of a snapshot ([Text.Snapshot], issue #239): its
+    item's id as the heap holds it, its tag, and its one code unit (a char's
+    content is a one-unit list, [run_per_char]; the empty case cannot occur
+    and reads as 0). *)
+Definition snapshot_char (p : YjsItem A * bool) : yjs.SnapshotChar.t :=
+  yjs.SnapshotChar.mk (W64 (Z.of_nat (clientId (item_id p.1))))
+                      (W64 (Z.of_nat (clock (item_id p.1))))
+                      p.2
+                      (default (W16 0) (content p.1 !! 0%nat)).
+
+(** The slice [Text.Snapshot] returns for a snapshot. *)
+Definition snapshot_chars (m : list (YjsItem A * bool)) : list yjs.SnapshotChar.t :=
+  snapshot_char <$> m.
 
 (** [visible_excludes deleted_ids m]: none of the ids the reader knows deleted
     is among the snapshot's visible chars, so [visible_string m] does not
@@ -141,6 +161,54 @@ Lemma visible_string_run_models (r : ItemRun) (s : A) :
 Proof.
   move=> Hc. rewrite /visible_string visible_items_run_models.
   destruct (run_deleted r); [done | exact (items_string_explode _ s Hc)].
+Qed.
+
+Lemma snapshot_chars_app (m1 m2 : list (YjsItem A * bool)) :
+  snapshot_chars (m1 ++ m2) = snapshot_chars m1 ++ snapshot_chars m2.
+Proof. rewrite /snapshot_chars fmap_app //. Qed.
+
+(** One more run contributes its chars: the step [yType.Snapshot]'s outer
+    walk takes. *)
+Lemma snapshot_chars_take_S (runs : list ItemRun) (k : nat) (r : ItemRun) :
+  runs !! k = Some r ->
+  snapshot_chars (runs_model (take (S k) runs))
+  = snapshot_chars (runs_model (take k runs)) ++ snapshot_chars (run_models r).
+Proof.
+  move=> Hk.
+  rewrite (take_S_r _ _ r Hk) runs_model_app runs_model_singleton snapshot_chars_app //.
+Qed.
+
+(** One more char of a run: the step [yType.Snapshot]'s inner walk takes. *)
+Lemma run_models_take_S (r : ItemRun) (j : nat) (x : YjsItem A) :
+  run_items r !! j = Some x ->
+  take (S j) (run_models r) = take j (run_models r) ++ [(x, run_deleted r)].
+Proof.
+  move=> Hx. rewrite /run_models.
+  apply (take_S_r _ _ (x, run_deleted r)).
+  rewrite list_lookup_fmap Hx //.
+Qed.
+
+(** The [j]-th char of a run, as a read reports it: the run's head id with
+    the clock advanced by [j] ([run_wf]), the run's tag, and the [j]-th unit
+    of the string the run spells ([run_per_char]). *)
+Lemma snapshot_char_run (r : ItemRun) (j : nat) (x : YjsItem A) (u : w16) :
+  run_wf (run_items r) -> run_per_char r ->
+  run_items r !! j = Some x ->
+  items_string (run_items r) !! j = Some u ->
+  snapshot_char (x, run_deleted r)
+  = yjs.SnapshotChar.mk (W64 (Z.of_nat (run_client r)))
+      (word.add (W64 (Z.of_nat (run_clock r))) (W64 (Z.of_nat j)))
+      (run_deleted r) u.
+Proof.
+  move=> Hwf Hpc Hx Hu.
+  have Hhd : run_items r !! 0%nat = Some (run_head_item r).
+  { rewrite /run_head_item. destruct (run_items r) as [| y l]; [by destruct Hwf | done]. }
+  have Hid := run_wf_lookup_clock (run_items r) j (run_head_item r) x Hwf Hhd Hx.
+  have Hcontent : content x = [u].
+  { have Hfm : (content <$> run_items r) !! j = Some (content x) by rewrite list_lookup_fmap Hx.
+    rewrite Hpc /explode list_lookup_fmap Hu in Hfm. by injection Hfm. }
+  rewrite /snapshot_char /= Hid Hcontent /run_client /run_clock /=.
+  f_equal. word.
 Qed.
 
 Lemma visible_string_take_S (runs : list ItemRun) (k : nat) (r : ItemRun)

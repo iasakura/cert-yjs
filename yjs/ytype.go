@@ -95,3 +95,25 @@ func (parent *yType) Text() []uint16 {
 	}
 	return result
 }
+
+// Snapshot walks the list and reports every character, tombstoned or not:
+// the id it carries (its run's head id plus its offset in the run), its
+// run's tombstone bit, and its code unit (Text.Snapshot, issue #239).
+func (parent *yType) Snapshot() []SnapshotChar {
+	var result []SnapshotChar
+	cur := parent.start
+	for cur != nil {
+		deleted := cur.Deleted()
+		units := cur.content.content
+		for k := uint64(0); k < uint64(len(units)); k++ {
+			result = append(result, SnapshotChar{
+				Client:  cur.id.clientId,
+				Clock:   cur.id.clock + k,
+				Deleted: deleted,
+				Unit:    units[k],
+			})
+		}
+		cur = cur.right
+	}
+	return result
+}

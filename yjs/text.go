@@ -54,6 +54,30 @@ func (t *Text) CodeUnits() []uint16 {
 	return r
 }
 
+// SnapshotChar is one character of a text as a read saw it: the id of the
+// item carrying it, whether that item is tombstoned, and its code unit. The
+// per-character shape of the verified model (every item of a run is one
+// code unit), so it is what the closed theorem of issue #239 compares
+// between replicas, independent of how a replica groups the characters into
+// runs. None of the references has this read; it exists for the trace.
+type SnapshotChar struct {
+	Client  Client
+	Clock   Clock
+	Deleted bool
+	Unit    uint16
+}
+
+// Snapshot returns the text as a read sees it, character by character with
+// ids and tombstone bits: the observable a replica writes to the trace
+// (issue #239). A pure read under the read lock, like CodeUnits.
+func (t *Text) Snapshot() []SnapshotChar {
+	s := t.store
+	s.rlock()
+	r := t.inner.Snapshot()
+	s.runlock()
+	return r
+}
+
 // CodeUnitsIn returns the visible text, as UTF-16 code units, inside the
 // transaction tr, which holds the store's write lock (Yjs ytext.toString()
 // inside doc.transact; yrs text.get_string(&txn)). What it returns is the text
