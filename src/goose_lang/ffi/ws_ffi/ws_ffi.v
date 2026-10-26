@@ -64,6 +64,13 @@ Class wsGS Σ : Type := WsGS {
   (** Persistent: one message is delivered to every member of a room, and the
       state interpretation keeps its copy while a receiver takes one. *)
   #[global] ws_prot_persistent :: forall d, Persistent (ws_prot d);
+  (** The trace protocol: what every entry of the run's trace ([ws_trace],
+      impl.v) satisfies. Writing an entry is an obligation ([wp_WsTraceOp]
+      requires it); a closed theorem reads it off the state interpretation
+      for every entry there is. Persistent, like [ws_prot], since the
+      interpretation keeps its copy. *)
+  trace_prot : list u8 -> iProp Σ;
+  #[global] trace_prot_persistent :: forall d, Persistent (trace_prot d);
   (** Environment coherence: what relates the peer we do not run to ghost
       state. Indexed by [env_msgs], the messages the environment has put on
       the wire, so that by construction nothing modeled code does can disturb
@@ -113,6 +120,8 @@ Section ws.
              straight out of here, with no cursor of the sender's and no index
              arithmetic, because the authority over [ws_msgs] is right here. *)
           ([∗ map] k ↦ d ∈ g.(ws_msgs), ws_prot d) ∗
+          (* the trace protocol, over every entry of the run's trace *)
+          ([∗ list] d ∈ g.(ws_trace), trace_prot d) ∗
           (* the environment's side of the protocol: whatever ghost structure
              describes the peer we do not run, coherent with what that peer
              has put on the wire so far. [ws_env_preserves] is what moves it,
@@ -320,7 +329,7 @@ Section lifting.
   Proof.
     iIntros (Φ) "_ HΦ". iApply (wp_WsOp with "[-]").
     iIntros "!> * Hl Hg".
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf & %Hmay)".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & #Htrace & Hcoh & %Hwf & %Hmay)".
     assert (Hwf2 : ws_wf g2) by (eapply ws_wf_step_listen; [exact Hstep | exact Hwf]).
     assert (Hmay2 : g2.(ws_env_may) = ws_may)
       by (erewrite ws_env_may_step_listen; [exact Hmay | exact Hstep]).
@@ -338,7 +347,7 @@ Section lifting.
   Proof.
     iIntros (Φ) "_ HΦ". iApply (wp_WsOp with "[-]").
     iIntros "!> * Hl Hg".
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf & %Hmay)".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & #Htrace & Hcoh & %Hwf & %Hmay)".
     assert (Hwf2 : ws_wf g2) by (eapply ws_wf_step_connect; [exact Hstep | exact Hwf]).
     assert (Hmay2 : g2.(ws_env_may) = ws_may)
       by (erewrite ws_env_may_step_connect; [exact Hmay | exact Hstep]).
@@ -369,7 +378,7 @@ Section lifting.
   Proof.
     iIntros (Φ) "_ HΦ". iApply (wp_WsOp with "[-]").
     iIntros "!> * Hl Hg".
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf & %Hmay)".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & #Htrace & Hcoh & %Hwf & %Hmay)".
     assert (Hwf2 : ws_wf g2) by (eapply ws_wf_step_accept; [exact Hstep | exact Hwf]).
     assert (Hmay2 : g2.(ws_env_may) = ws_may)
       by (erewrite ws_env_may_step_accept; [exact Hmay | exact Hstep]).
@@ -407,7 +416,7 @@ Section lifting.
   Proof.
     iIntros (Φ) "[Hsc #Hpd] HΦ". iApply (wp_WsOp with "[-]").
     iIntros "!> * Hl Hg".
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf & %Hmay)".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & #Htrace & Hcoh & %Hwf & %Hmay)".
     assert (Hwf2 : ws_wf g2) by (eapply ws_wf_step_send; [exact Hstep | exact Hwf]).
     assert (Hmay2 : g2.(ws_env_may) = ws_may)
       by (erewrite ws_env_may_step_send; [exact Hmay | exact Hstep]).
@@ -456,7 +465,7 @@ Section lifting.
   Proof.
     iIntros (Φ) "[Hrc #Henv] HΦ". iApply (wp_WsOp with "[-]").
     iIntros "!> * Hl Hg".
-    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & Hcoh & %Hwf & %Hmay)".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & #Htrace & Hcoh & %Hwf & %Hmay)".
     assert (Hwf2 : ws_wf g2) by (eapply ws_wf_step_recv; [exact Hstep | exact Hwf]).
     assert (Hmay2 : g2.(ws_env_may) = ws_may)
       by (erewrite ws_env_may_step_recv; [exact Hmay | exact Hstep]).
@@ -497,6 +506,28 @@ Section lifting.
       iApply wp_value. iApply ("HΦ" $! false data). iFrame "∗#".
   Qed.
 
+  (** [Trace] appends to the run's trace. Writing is where the trace
+      protocol is an obligation: the caller shows the bytes satisfy
+      [trace_prot], and the state interpretation records that for whoever
+      reads the trace, which is only a closed theorem. *)
+  Lemma wp_WsTraceOp (data : list u8) s E :
+    {{{ trace_prot data }}}
+      ExternalOp WsTraceOp #data @ s; E
+    {{{ RET #(); True }}}.
+  Proof.
+    iIntros (Φ) "#Hpd HΦ". iApply (wp_WsOp with "[-]").
+    iIntros "!> * Hl Hg".
+    iDestruct "Hg" as "(Hmsgs & Hsent & Hrecvd & #Hmsgfacts & #Hprot & #Htrace & Hcoh & %Hwf & %Hmay)".
+    assert (Hwf2 : ws_wf g2) by (eapply ws_wf_step_trace; [exact Hstep | exact Hwf]).
+    assert (Hmay2 : g2.(ws_env_may) = ws_may)
+      by (erewrite ws_env_may_step_trace; [exact Hmay | exact Hstep]).
+    inv_base_step.
+    rewrite (env_msgs_same g1 _) //.
+    iAssert ([∗ list] d ∈ g1.(ws_trace) ++ [data], trace_prot d)%I as "#Htrace2".
+    { rewrite big_sepL_app big_sepL_singleton. iFrame "#". }
+    iModIntro. iFrame "∗#%". iApply wp_value. by iApply "HΦ".
+  Qed.
+
 End lifting.
 
 (** * Adequacy: initializing the ghost state from an arbitrary initial network *)
@@ -521,16 +552,18 @@ Existing Instances ws_op ws_model ws_interp.
 Lemma ws_global_init_prot {go_gctx : GoGlobalContext} Σ (hPre : wsGpreS Σ)
     (g : ws_global_state)
     (prot : list u8 -> iProp Σ) (Hpers : forall d, Persistent (prot d))
+    (tprot : list u8 -> iProp Σ) (Htpers : forall d, Persistent (tprot d))
     (coh : gmap (chan_id * nat) (list u8) -> iProp Σ) :
   ws_wf g ->
   ([∗ map] k ↦ d ∈ g.(ws_msgs), prot d) -∗
+  ([∗ list] d ∈ g.(ws_trace), tprot d) -∗
   coh (env_msgs g) -∗
   |==> ∃ hG : wsGS Σ,
-    ⌜hG.(ws_prot) = prot⌝ ∗ ⌜hG.(ws_env_coh) = coh⌝ ∗
+    ⌜hG.(ws_prot) = prot⌝ ∗ ⌜hG.(trace_prot) = tprot⌝ ∗ ⌜hG.(ws_env_coh) = coh⌝ ∗
     ⌜hG.(ws_may) = g.(ws_env_may)⌝ ∗
     @ffi_global_ctx _ ws_interp Σ hG g ∗ @ffi_global_start _ ws_interp Σ hG g.
 Proof.
-  iIntros (Hwf) "#Hprot Hcoh".
+  iIntros (Hwf) "#Hprot #Htrace Hcoh".
   iMod (ghost_map_alloc g.(ws_msgs)) as (γm) "[Hm Hmelems]".
   iMod (ghost_map_alloc g.(ws_sent)) as (γs) "[Hs Hselems]".
   iMod (ghost_map_alloc g.(ws_recvd)) as (γr) "[Hr Hrelems]".
@@ -539,7 +572,7 @@ Proof.
   { iApply big_sepM_bupd. iApply (big_sepM_mono with "Hmelems").
     iIntros (k d Hk) "H". by iApply ghost_map_elem_persist. }
   iModIntro.
-  iExists (WsGS Σ _ _ γm γs γr prot Hpers coh g.(ws_env_may)).
+  iExists (WsGS Σ _ _ γm γs γr prot Hpers tprot Htpers coh g.(ws_env_may)).
   by iFrame "∗#%".
 Qed.
 
@@ -572,9 +605,9 @@ Next Obligation.
   { iApply big_sepM_bupd. iApply (big_sepM_mono with "Hmelems").
     iIntros (k d Hk) "H". by iApply ghost_map_elem_persist. }
   iModIntro.
-  iExists (WsGS _ _ _ γm γs γr (λ _, True)%I (λ _, _) (λ _, True)%I
-                 g.(ws_env_may)).
-  iFrame "∗#%"; try (by iApply big_sepM_intro); done.
+  iExists (WsGS _ _ _ γm γs γr (λ _, True)%I (λ _, _) (λ _, True)%I (λ _, _)
+                 (λ _, True)%I g.(ws_env_may)).
+  iFrame "∗#%"; try (by iApply big_sepM_intro); try (by iApply big_sepL_intro); done.
 Qed.
 Next Obligation.
   rewrite //=. iIntros (? Σ hPre σ ??). iExists tt. eauto.

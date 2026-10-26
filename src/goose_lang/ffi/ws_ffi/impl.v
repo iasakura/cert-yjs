@@ -36,13 +36,13 @@ Set Printing Projections.
 (** * The connection-oriented network extension to GooseLang *)
 
 Inductive WsOp : Set :=
-  WsListenOp | WsConnectOp | WsAcceptOp | WsSendOp | WsRecvOp.
+  WsListenOp | WsConnectOp | WsAcceptOp | WsSendOp | WsRecvOp | WsTraceOp.
 #[global]
 Instance eq_WsOp : EqDecision WsOp.
 Proof. solve_decision. Defined.
 #[global]
 Instance WsOp_fin : Countable WsOp.
-Proof. solve_countable WsOp_rec 5%nat. Qed.
+Proof. solve_countable WsOp_rec 6%nat. Qed.
 
 (** [ws_endpoint] corresponds to a host-IP pair, as in grove. *)
 Definition ws_endpoint := u64.
@@ -120,7 +120,14 @@ Defined.
       handshake, so it arrives before any message and there is no way for a
       peer to convey it in-band. It is handed to the acceptor once, at
       [WsAcceptOp], and the model keeps nothing about it afterwards. What an
-      application reads into it is not this file's business. *)
+      application reads into it is not this file's business.
+    - [ws_trace]: the run's trace, every entry modeled code ever wrote with
+      [WsTraceOp], in order. Append-only and never read by any step: it is
+      an OUTPUT of the run, what a closed theorem may speak about besides
+      the wire (an adequacy statement sees the global state and nothing of
+      any node's heap, so a replica that wants a fact about its document
+      exported has to write it here). Not part of the network at all: no
+      channel, no peer, no well-formedness condition reads it. *)
 Record ws_global_state : Type := {
   ws_msgs : gmap (chan_id * nat) (list u8);
   ws_sent : gmap chan_id nat;
@@ -128,16 +135,17 @@ Record ws_global_state : Type := {
   ws_ext : gset chan_id;
   ws_backlog : gmap ws_endpoint (list (chan_id * chan_id * go_string));
   ws_env_may : gmap (chan_id * nat) (list u8) -> chan_id -> list u8 -> Prop;
+  ws_trace : list (list u8);
 }.
 
 Global Instance ws_global_state_settable : Settable _ :=
   settable! Build_ws_global_state
-    <ws_msgs; ws_sent; ws_recvd; ws_ext; ws_backlog; ws_env_may>.
+    <ws_msgs; ws_sent; ws_recvd; ws_ext; ws_backlog; ws_env_may; ws_trace>.
 
 Global Instance ws_global_state_inhabited : Inhabited ws_global_state :=
   populate {| ws_msgs := ∅; ws_sent := ∅; ws_recvd := ∅;
               ws_ext := ∅; ws_backlog := ∅;
-              ws_env_may := fun _ _ _ => False |}.
+              ws_env_may := fun _ _ _ => False; ws_trace := [] |}.
 
 (** There is no per-node state: this FFI is the network and nothing else. *)
 Definition ws_node_state : Type := unit.
@@ -271,6 +279,13 @@ Section ws.
                         e' = Val ((*err*) #false, #data)%V)
            | None => g = g' ∧ e' = Panic "invalid"
            end)
+
+    (** [Trace(data)]: append [data] to the run's trace. Always enabled, never
+        fails, touches no channel. *)
+    | WsTraceOp =>
+        σ = σ' ∧
+        (∀ (data : list u8), v = #data →
+           g' = set ws_trace (λ T, T ++ [data]) g ∧ e' = Val #())
     end.
 
   (** ** The model can actually carry traffic
@@ -348,7 +363,8 @@ Section ws.
 
   Lemma ws_wf_empty envmay :
     ws_wf {| ws_msgs := ∅; ws_sent := ∅; ws_recvd := ∅;
-             ws_ext := ∅; ws_backlog := ∅; ws_env_may := envmay |}.
+             ws_ext := ∅; ws_backlog := ∅; ws_env_may := envmay;
+             ws_trace := [] |}.
   Proof.
     split; simpl.
     - set_solver.
@@ -419,9 +435,27 @@ Section ws.
       as [[<- _] | [(d & _ & -> & _) | (_ & _ & (d & _ & -> & _))]]; done.
   Qed.
 
+  Lemma ws_env_may_step_trace (data : list u8) e' sigma sigma' g g' :
+    is_ws_ffi_step WsTraceOp #data e' sigma sigma' g g' ->
+    g'.(ws_env_may) = g.(ws_env_may).
+  Proof.
+    intros [_ Hstep]. specialize (Hstep data eq_refl).
+    destruct Hstep as [-> _]. done.
+  Qed.
+
   Lemma ws_wf_step_listen (a : ws_endpoint) e' sigma sigma' g g' :
     is_ws_ffi_step WsListenOp #a e' sigma sigma' g g' -> ws_wf g -> ws_wf g'.
   Proof. intros (_ & <- & _) Hwf. exact Hwf. Qed.
+
+  (** A trace step touches no channel, so the network stays well formed and
+      the environment's view of the wire does not move. *)
+  Lemma ws_wf_step_trace (data : list u8) e' sigma sigma' g g' :
+    is_ws_ffi_step WsTraceOp #data e' sigma sigma' g g' -> ws_wf g -> ws_wf g'.
+  Proof.
+    intros (_ & Hstep) Hwf. specialize (Hstep data eq_refl).
+    destruct Hstep as [-> _].
+    destruct Hwf as [H1 H2 H3 H4]. split; simpl; assumption.
+  Qed.
 
   Lemma ws_wf_step_connect (a : ws_endpoint) (path : go_string) e' sigma sigma' g g' :
     is_ws_ffi_step WsConnectOp (#a, #path)%V e' sigma sigma' g g' -> ws_wf g -> ws_wf g'.

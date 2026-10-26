@@ -264,6 +264,7 @@ Theorem ws_server_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
     g σ0 :
   ws_wf g.(global_world) ->
   g.(global_world).(ws_msgs) = ∅ ->
+  g.(global_world).(ws_trace) = [] ->
   σ0.(go_state).(package_state) = ∅ ->
   σ0.(go_state).(lang.go_lctx) = go_lctx ->
   (∀ γh, ⊢ coh0 γh ∅) ->
@@ -283,8 +284,8 @@ Theorem ws_server_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
         g'.(global_world).(ws_msgs) !! (ch, n) = Some d ->
         ∃ inputs, decode d = Some inputs ∧ update_wf inputs).
 Proof.
-  intros Hwf Hempty Hpkg Hlctx0 Hcoh0 Hcodec Henv.
-  eapply (ws_dist_adequacy_prot_fupd Σ); [exact Hwf | exact Hempty | done |].
+  intros Hwf Hempty Htrace Hpkg Hlctx0 Hcoh0 Hcodec Henv.
+  eapply (ws_dist_adequacy_prot_fupd Σ); [exact Hwf | exact Hempty | exact Htrace | done |].
   intros Hinv.
   iStartProof.
   (* allocate the history, then name the protocol *)
@@ -293,9 +294,10 @@ Proof.
   iDestruct (big_sepS_elem_of _ _ (uint.nat client) with "Hels") as "Hcl";
     first set_solver.
   iModIntro.
-  iExists (yjs_prot decode γh), _, (coh0 γh).
+  (* no trace protocol yet: the server writes no trace entry (issue #239) *)
+  iExists (yjs_prot decode γh), _, (λ _, True)%I, _, (coh0 γh).
   iSplitR; first iApply Hcoh0.
-  iIntros (HG) "%Hp %Hc %Hm %Hi Hstart".
+  iIntros (HG) "%Hp %Ht %Hc %Hm %Hi Hstart".
   iEval (rewrite -Hi) in "Hhist".
   iModIntro.
   iSplitL.
@@ -324,7 +326,7 @@ Proof.
       iExact "Hhist".
   - (* the export: protocol totality off the state interpretation *)
     iIntros (g') "Hctx".
-    iDestruct "Hctx" as "(_ & _ & _ & _ & #Hprot & _ & _ & _)".
+    iDestruct "Hctx" as "(_ & _ & _ & _ & #Hprot & _ & _ & _ & _)".
     iApply fupd_mask_intro; [set_solver | iIntros "_"].
     iAssert ([∗ map] k↦d ∈ g'.(global_world).(ws_msgs),
                ⌜∃ inputs, decode d = Some inputs ∧ update_wf inputs⌝)%I as "#Hpure".

@@ -31,13 +31,16 @@ Theorem ws_dist_adequacy_prot {go_gctx : GoGlobalContext}
     Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ} (ebσs : list node_init_cfg)
     g φinv
     (prot : list u8 -> iProp Σ) (Hpers : forall d, Persistent (prot d))
+    (tprot : list u8 -> iProp Σ) (Htpers : forall d, Persistent (tprot d))
     (coh : gmap (chan_id * nat) (list u8) -> iProp Σ) :
   ws_wf g.(global_world) ->
   g.(global_world).(ws_msgs) = ∅ ->
+  g.(global_world).(ws_trace) = [] ->
   (⊢ coh ∅) ->
   (∀ σ, σ ∈ init_local_state <$> ebσs -> ffi_initP σ.(world) g.(global_world)) ->
   (∀ HG : gooseGlobalGS Σ,
       goose_ffiGlobalGS.(ws_prot) = prot ->
+      goose_ffiGlobalGS.(trace_prot) = tprot ->
       goose_ffiGlobalGS.(ws_env_coh) = coh ->
       goose_ffiGlobalGS.(ws_may) = g.(global_world).(ws_env_may) ->
       ⊢ ffi_global_start goose_ffiGlobalGS g.(global_world) ={⊤}=∗
@@ -46,13 +49,14 @@ Theorem ws_dist_adequacy_prot {go_gctx : GoGlobalContext}
                  |={⊤, ∅}=> ⌜ φinv g' ⌝)) ->
   dist_adequate (CS := goose_crash_lang) ebσs g (λ g, φinv g).
 Proof.
-  intros Hwf Hempty Hcoh HINIT Hwp.
+  intros Hwf Hempty Htrace Hcoh HINIT Hwp.
   eapply (wpd_dist_adequacy_inv Σ _ _ _ _ _ _ _ (λ n, 10 * (n + 1))%nat).
   iIntros (Hinv ?) "".
   (* the one line that differs from [goose_dist_adequacy] *)
-  iMod (ws_global_init_prot Σ _ g.(global_world) prot Hpers coh Hwf
-          with "[] []") as (ffi_namesg) "(%Hp & %Hc & %Hm & Hgw & Hgstart)".
+  iMod (ws_global_init_prot Σ _ g.(global_world) prot Hpers tprot Htpers coh Hwf
+          with "[] [] []") as (ffi_namesg) "(%Hp & %Ht & %Hc & %Hm & Hgw & Hgstart)".
   { rewrite Hempty. by iApply big_sepM_empty. }
+  { rewrite Htrace. by iApply big_sepL_nil. }
   { rewrite /env_msgs Hempty map_filter_empty. iApply Hcoh. }
   iMod (credit_name_init (crash_borrow_ginv_number))
     as (name_credit) "(Hcred_auth&Hcred&Htok)".
@@ -65,7 +69,7 @@ Proof.
   iExists global_state_interp, fork_post.
   iExists _, _.
 
-  iMod (Hwp hG Hp Hc Hm with "[$]") as "(Hwp&Hφ)".
+  iMod (Hwp hG Hp Ht Hc Hm with "[$]") as "(Hwp&Hφ)".
 
   iAssert (|={⊤}=> crash_borrow_ginv)%I with "[Hcred]" as ">Hinv".
   { rewrite /crash_borrow_ginv. iApply (inv_alloc _). iNext. eauto. }
@@ -136,14 +140,18 @@ Theorem ws_dist_adequacy_prot_fupd {go_gctx : GoGlobalContext}
     g φinv :
   ws_wf g.(global_world) ->
   g.(global_world).(ws_msgs) = ∅ ->
+  g.(global_world).(ws_trace) = [] ->
   (∀ σ, σ ∈ init_local_state <$> ebσs -> ffi_initP σ.(world) g.(global_world)) ->
   (∀ Hinv : invGS Σ,
      ⊢ |={⊤}=> ∃ (prot : list u8 -> iProp Σ)
                  (Hpers : forall d, Persistent (prot d))
+                 (tprot : list u8 -> iProp Σ)
+                 (Htpers : forall d, Persistent (tprot d))
                  (coh : ws_coh_ty Σ),
        coh ∅ ∗
        (∀ HG : gooseGlobalGS Σ,
           ⌜goose_ffiGlobalGS.(ws_prot) = prot⌝ -∗
+          ⌜goose_ffiGlobalGS.(trace_prot) = tprot⌝ -∗
           ⌜goose_ffiGlobalGS.(ws_env_coh) = coh⌝ -∗
           ⌜goose_ffiGlobalGS.(ws_may) = g.(global_world).(ws_env_may)⌝ -∗
           ⌜HG.(@goose_invGS _ _ _ _) = Hinv⌝ -∗
@@ -153,15 +161,16 @@ Theorem ws_dist_adequacy_prot_fupd {go_gctx : GoGlobalContext}
                      |={⊤, ∅}=> ⌜ φinv g' ⌝))) ->
   dist_adequate (CS := goose_crash_lang) ebσs g (λ g, φinv g).
 Proof.
-  intros Hwf Hempty HINIT Hwp.
+  intros Hwf Hempty Htrace HINIT Hwp.
   eapply (wpd_dist_adequacy_inv Σ _ _ _ _ _ _ _ (λ n, 10 * (n + 1))%nat).
   iIntros (Hinv ?) "".
-  (* the caller picks the protocol, allocating whatever ghost it needs *)
+  (* the caller picks the protocols, allocating whatever ghost it needs *)
   iPoseProof (Hwp Hinv) as "Hchoice".
-  iMod "Hchoice" as (prot Hpers coh) "[Hcoh Hcont]".
-  iMod (ws_global_init_prot Σ _ g.(global_world) prot Hpers coh Hwf
-          with "[] [Hcoh]") as (ffi_namesg) "(%Hp & %Hc & %Hm & Hgw & Hgstart)".
+  iMod "Hchoice" as (prot Hpers tprot Htpers coh) "[Hcoh Hcont]".
+  iMod (ws_global_init_prot Σ _ g.(global_world) prot Hpers tprot Htpers coh Hwf
+          with "[] [] [Hcoh]") as (ffi_namesg) "(%Hp & %Ht & %Hc & %Hm & Hgw & Hgstart)".
   { rewrite Hempty. by iApply big_sepM_empty. }
+  { rewrite Htrace. by iApply big_sepL_nil. }
   { rewrite /env_msgs Hempty map_filter_empty. iFrame "Hcoh". }
   iMod (credit_name_init (crash_borrow_ginv_number))
     as (name_credit) "(Hcred_auth&Hcred&Htok)".
@@ -174,7 +183,7 @@ Proof.
   iExists global_state_interp, fork_post.
   iExists _, _.
 
-  iMod ("Hcont" $! hG with "[//] [//] [//] [//] [$]") as "(Hwp&Hφ)".
+  iMod ("Hcont" $! hG with "[//] [//] [//] [//] [//] [$]") as "(Hwp&Hφ)".
 
   iAssert (|={⊤}=> crash_borrow_ginv)%I with "[Hcred]" as ">Hinv".
   { rewrite /crash_borrow_ginv. iApply (inv_alloc _). iNext. eauto. }

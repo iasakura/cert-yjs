@@ -165,4 +165,20 @@ Proof.
   iApply ("HΦ" $! err sl data). iFrame.
 Qed.
 
+(** [Trace]: appends the slice's bytes to the run's trace, under the trace
+    protocol; the slice is untouched. *)
+Lemma wp_Trace (s : slice.t) (dq : dfrac) (data : list w8) :
+  {{{ s ↦*{dq} data ∗ trace_prot data }}}
+    wsnet.Traceⁱᵐᵖˡ #s
+  {{{ RET #(); s ↦*{dq} data }}}.
+Proof.
+  wp_start as "(Hs & #Hpd)".
+  wp_pures.
+  wp_apply (wp_bytes_to_string with "[$Hs]").
+  iIntros "Hs".
+  wp_pures.
+  wp_apply (wp_WsTraceOp with "[$Hpd]").
+  iApply "HΦ". iFrame "Hs".
+Qed.
+
 End wrappers.

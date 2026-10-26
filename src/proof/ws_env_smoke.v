@@ -144,6 +144,7 @@ Definition smoke_coh (γh : history_names) (cl : ClientId)
 Definition smoke_wsGS (γm γs γr : gname) (γh : history_names)
     (cl : ClientId) (nm : P) (a : w16) : wsGS Σ :=
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+       (λ _, True)%I (λ _, _)
        (smoke_coh γh cl) (smoke_may cl nm a).
 
 (** The pure premises of [history_broadcast] against an empty array. Lifted
@@ -283,6 +284,7 @@ Qed.
 Definition relay_wsGS (γm γs γr : gname) (γh : history_names)
     (cl clX : ClientId) (t : TId) (nm2 : P) (aX aY : w16) (k : chan_id * nat) : wsGS Σ :=
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+       (λ _, True)%I (λ _, _)
        (relay_coh γh cl k (encode [(t, smoke_input clX aX)]))
        (relay_may cl clX t nm2 aX aY k).
 
@@ -452,6 +454,7 @@ Definition anchor_may (cl clX : ClientId) (t : TId) (bX bY : w16)
 Definition anchor_wsGS (γm γs γr : gname) (γh : history_names)
     (cl clX : ClientId) (t : TId) (bX bY : w16) (k : chan_id * nat) : wsGS Σ :=
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+       (λ _, True)%I (λ _, _)
        (relay_coh γh cl k (encode [(t, smoke_input clX bX)]))
        (anchor_may cl clX t bX bY k).
 
@@ -865,6 +868,7 @@ Definition stream_coh (γh : history_names) (cl : ClientId) (t : TId)
 Definition stream_wsGS (γm γs γr : gname) (γh : history_names)
     (cl : ClientId) (nm : P) (c0 : chan_id) : wsGS Σ :=
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+       (λ _, True)%I (λ _, _)
        (stream_coh γh cl (RootId nm) c0) (stream_may cl nm c0).
 
 (** A peer that has not typed anything yet is coherent with the empty history,
@@ -1049,6 +1053,7 @@ Definition full_wsGS (γm γs γr : gname) (γh : history_names)
     (cl clX : ClientId) (t : TId) (nm2 : P) (aX : w16) (kX : chan_id * nat)
     (c0 : chan_id) : wsGS Σ :=
   WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+       (λ _, True)%I (λ _, _)
        (full_coh γh cl clX t (RootId nm2) aX c0) (full_may cl clX t nm2 aX kX c0).
 
 Lemma full_coh_init (γh : history_names) (cl clX : ClientId) (t t2 : TId)

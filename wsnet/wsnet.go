@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -223,4 +224,15 @@ func Receive(c Connection) (bool, []byte) {
 			return false, data
 		}
 	}
+}
+
+// Trace appends data to the run's trace: the ws FFI's WsTraceOp (the
+// append-only ws_trace of src/goose_lang/ffi/ws_ffi/impl.v), the output a
+// closed theorem may speak about besides the wire. A replica writes what it
+// wants exported about its document here (its reports, issue #239), since an
+// adequacy statement sees the FFI's global state and nothing of a node's
+// heap. Realized as one hex-encoded line on standard output, so that a test
+// can diff the traces of a run.
+func Trace(data []byte) {
+	fmt.Fprintf(os.Stdout, "%x\n", data)
 }

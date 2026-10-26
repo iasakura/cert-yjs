@@ -17,4 +17,5 @@ trusted = [
   "Connect",
   "Send",
   "Receive",
+  "Trace",
 ]
