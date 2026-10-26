@@ -33,4 +33,3 @@ func TestSnapshotReportsEveryCharWithIdsAndTombstones(t *testing.T) {
 		t.Fatalf("CodeUnits() = %q, want %q", s, "ac")
 	}
 }
-
