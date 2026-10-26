@@ -230,10 +230,13 @@ Qed.
     - the told model [m0] really is this state's document model
       ([pool_registry_models]). The predicate leaves it free, because a
       transaction moves the data ahead of what the observers were told.
-    - every insert the reader's certificate says was delivered already has
-      its item in [m0], under the type it targeted ([delivered_reflected]).
-      The reader brings a prefix certificate of THIS replica's op history
-      and the client pin identifying it (issue #125).
+    - the reader's certificate, a prefix [h0] of THIS replica's op history
+      with the client pin identifying it (issue #125), is a prefix of a
+      history [h] that [m0] is the replay of, and the reader takes that
+      away as [is_history_replay]: the exact form of what a read certifies
+      (issue #239). That every insert of [h0] already has its item in [m0]
+      ([delivered_reflected]) follows
+      ([history_state_coh_delivered_reflected]).
 
     Neither mentions a root: taking the lock is not a read of any one type,
     and a reader lands these on the root it cares about afterwards, with its
@@ -248,7 +251,7 @@ Lemma wp_Store__rlock (ref : loc) (γs : store_names) (γh : history_names)
       ▷ own_store (store_of_ref ref) γs γh rwmutex_guard.rfrac state ds m0
           (pool_tombstoned (ss_pool state)) ∗
       ⌜pool_registry_models m0 (ss_bind state) (ss_pool state)⌝ ∗
-      ⌜delivered_reflected h0 m0⌝ }}}.
+      (∃ h : list Ev, ⌜h0 `prefix_of` h⌝ ∗ is_history_replay γh c h m0) }}}.
 Proof.
   wp_start_folded as "(His & Hcap & #Hpin & #Hlb)". iNamed "His".
   iDestruct "Hcap" as "[Htok Hmaxtok]".
@@ -265,8 +268,9 @@ Proof.
   iDestruct "Hstore" as (c0 h state ds) "(%Hdel & Hcore & Hreplica_history)".
   (* the two reads of the replica history, at the one moment it is visible *)
   iDestruct (own_replica_history_registry_models with "Hreplica_history") as %Hregmodel.
-  iDestruct (own_store_core_replica_history_delivered_reflected with "Hcore Hreplica_history Hpin Hlb")
-    as %Hdeliv.
+  iDestruct (own_store_core_replica_history_certified with "Hcore Hreplica_history Hpin Hlb")
+    as "(Hcore & Hreplica_history & #Hreplay & %Hcert)".
+  destruct Hcert as (_ & Hpref).
   iCombine "Hmaxn Hmaxtok" as "Hmaxn1".
   iCombine "Hmax Hmaxn1" gives %Hbound.
   iMod (own_tok_auth_S with "Hrauth") as "[Hrauth Hrtok]".
@@ -285,9 +289,10 @@ Proof.
   iModIntro. wp_auto. iApply ("HΦ" $! state ds m).
   iFrame "Hrtok".
   subst deleted.
-  iSplitL "Hcore_r Hobs_r";
-    last (iPureIntro; split; [exact Hregmodel | exact Hdeliv]).
-  iNext. rewrite /own_store. iFrame "Hcore_r Hobs_r".
+  iSplitL "Hcore_r Hobs_r".
+  { iNext. rewrite /own_store. iFrame "Hcore_r Hobs_r". }
+  iSplitR; first (iPureIntro; exact Hregmodel).
+  iExists h. iFrame "Hreplay". iPureIntro. exact Hpref.
 Qed.
 
 

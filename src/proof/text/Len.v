@@ -90,7 +90,10 @@ Proof.
   iDestruct "His_store" as "#His_store".
   wp_auto. subst s_loc. subst parent.
   wp_apply (wp_Store__rlock _ _ _ c h0 with "[$His_store $Hcap $Hpin $Hlb]").
-  iIntros (state ds m0) "(Hrlo & Hstore & %Hregmodel & %Hdeliv)".
+  iIntros (state ds m0) "(Hrlo & Hstore & %Hregmodel & (%h & %Hpref & #Hreplay))".
+  iDestruct "Hreplay" as "[_ %Hcoh]".
+  have Hdeliv : delivered_reflected h0 m0
+    := history_state_coh_delivered_reflected h0 h m0 Hpref Hcoh.
   wp_auto.
   iNamed "Hstore". iNamed "Hcore".
   (* this handle's root, in the state the lock handed out: the registry

@@ -86,7 +86,7 @@
     - [store_tie_init]: how to build the lock body from the raw points-tos;
       [own_store_data_hist_coh] / [own_store_accepted_sound] /
       [own_replica_history_registry_models] /
-      [own_store_core_replica_history_delivered_reflected]: what you may read back
+      [own_store_core_replica_history_certified]: what you may read back
       out of it.
     - the fractions (issue #219 M4): everything under [own_store] splits at
       equal indices ([own_store_state_split] / [own_store_core_split] /
@@ -2334,32 +2334,47 @@ Proof.
   iIntros "Hreplica_history". iNamed "Hreplica_history". iPureIntro. exact Hregmodel.
 Qed.
 
-(** What a reader's history-prefix certificate buys against the replica's
-    model (issue #125): every insert the certificate says was delivered
-    already has its item in the model, under the type it targeted
-    ([delivered_reflected]). The certificate names a client, the core's pin
-    says that client is this store's, and the replica history holds that client's
-    history authority, so the certificate is a prefix of the history the
-    replica history's model replays; [history_state_coh_delivered_reflected] closes
-    it. No type is privileged and no root is looked up here: a reader lands
-    the conclusion on its own root with the registry tie above. Read at the
-    one moment the replica history is visible, the read lock's linearization
-    point. *)
-Lemma own_store_core_replica_history_delivered_reflected (s_loc : loc) (γs : store_names)
+(** What a reader's history-prefix certificate pins at the one moment the
+    replica history is visible, the read lock's linearization point (issues
+    #125 and #239): the certificate names a client, the core's pin says that
+    client is this store's, and the replica history holds that client's
+    history authority, so the certificate is a prefix of the history [h] the
+    model [m] is coherent with. The reader takes away [is_history_replay]:
+    a certificate of [h] itself together with the coherence, the exact form
+    of what a read certifies; [delivered_reflected] (every insert the reader knew delivered
+    has its item in the model) is its corollary
+    ([history_state_coh_delivered_reflected]). No type is privileged and no
+    root is looked up here: a reader lands the conclusion on its own root with
+    the registry tie above. *)
+Lemma own_store_core_replica_history_certified (s_loc : loc) (γs : store_names)
     (γh : history_names) (qf : Qp) (state : store_state) (ds : gset YjsId)
     (c0 : ClientId) (h : list Ev) (m : DocModel) (c : ClientId) (h0 : list Ev) :
   own_store_core s_loc γs qf state ds -∗
   own_replica_history γs γh c0 h m state ds -∗
   is_store_client γs c -∗
   is_history_lb γh c h0 -∗
-  ⌜delivered_reflected h0 m⌝.
+  own_store_core s_loc γs qf state ds ∗
+  own_replica_history γs γh c0 h m state ds ∗
+  is_history_replay γh c h m ∗
+  ⌜c = c0 ∧ h0 `prefix_of` h⌝.
 Proof.
   iIntros "Hcore Hreplica_history #Hpin #Hlb".
   iNamed "Hcore". iNamed "Hreplica_history".
   iDestruct (is_store_client_agree with "Hclientpin Hpin") as %Heqc.
   assert (c = c0) as -> by congruence.
   iDestruct (is_history_lb_prefix with "Hhist Hlb") as %Hpref.
-  iPureIntro. exact (history_state_coh_delivered_reflected h0 h m Hpref Hhcoh).
+  iDestruct (own_client_history_lb with "Hhist") as "[Hhist #Hlbh]".
+  iSplitL "Hstate Hseq HtypesAuth Hdelete_set_auth Hstate_agree".
+  { rewrite /own_store_core.
+    iFrame "Hstate Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
+    iPureIntro. exact Hds_tomb. }
+  iSplitL.
+  { rewrite /own_replica_history. iExists acc.
+    iFrame "Hhist Hpendcert Hacc". iPureIntro.
+    split_and!; [exact Hclient_is | exact Hhcoh | exact Hregmodel | exact Hctr
+                | exact Hpendroot | exact Hpendbnd | exact Hacccoh | exact Hds_dom]. }
+  iSplit; last (iPureIntro; split; [done | exact Hpref]).
+  rewrite /is_history_replay. iFrame "Hlbh". iPureIntro. exact Hhcoh.
 Qed.
 
 
