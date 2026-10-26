@@ -26,7 +26,8 @@
     - [ItemRun]: a node's run of items and its tombstone bit, no [loc].
     - its vocabulary: [run_head_item], [run_client] / [run_clock] (pure
       [nat]s), [runs_flatten], [runs_visible], [flip_run], [run_fits],
-      [run_covers] / [run_covers_clock], [run_origin_clk], [run_le]
+      [run_covers] / [run_covers_clock], [run_origin_clk], [item_fits]
+      (an item's id fits the machine words), [run_le]
       (the clock order on runs), [runs_disjoint]
       (runs told apart by index, not address), and the split surgery
       [split_run_left] / [split_run_right] / [split_runs]; the index-based
@@ -323,6 +324,12 @@ Definition run_invs (r : ItemRun) : Prop :=
   (Z.of_nat (run_client r) < 2^64)%Z ∧
   run_origin_clk r.
 
+(** [item_fits x]: the id of [x] fits the machine words the heap holds it
+    in, creator and clock alike. What a reader needs to tell items apart by
+    the [w64] pairs a read reports ([Text.Snapshot], issue #239). *)
+Definition item_fits (x : YjsItem A) : Prop :=
+  (Z.of_nat (clientId (item_id x)) < 2^64 ∧ Z.of_nat (clock (item_id x)) < 2^64)%Z.
+
 (** The clock order on runs: what sorts a client's run list. *)
 Definition run_le (r1 r2 : ItemRun) : Prop := (run_clock r1 <= run_clock r2)%nat.
 
@@ -454,6 +461,21 @@ Definition run_per_char (r : ItemRun) : Prop :=
 
 (** The flatten and the visible count are invariant under a split, and a flip
     only drops the flipped run's characters from the visible count. *)
+(** Every item of a run of a store fits the machine words: the head does
+    ([run_invs]), and the [o]-th item's clock is the head's plus [o], inside
+    the run's range ([run_fits]). *)
+Lemma run_invs_item_fits (r : ItemRun) (x : YjsItem A) :
+  run_invs r -> x ∈ run_items r -> item_fits x.
+Proof.
+  move=> [Hwf [Hfits [Hclient _]]] Hx.
+  destruct (list_elem_of_lookup_1 _ _ Hx) as [o Ho].
+  have Hid := run_wf_char_id (run_items r) o x Hwf Ho.
+  have Holt : (o < length (run_items r))%nat := lookup_lt_Some _ _ _ Ho.
+  rewrite /item_fits Hid. cbn [clientId clock].
+  rewrite /run_fits /run_client /run_clock /run_head_item in Hfits Hclient.
+  lia.
+Qed.
+
 Lemma runs_flatten_nil : runs_flatten [] = [].
 Proof. reflexivity. Qed.
 
