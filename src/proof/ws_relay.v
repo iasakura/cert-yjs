@@ -2,14 +2,21 @@
     connection table, and the y-websocket message loop for the update case,
     over the ws FFI. [process] decodes one received message, applies it to the
     room's document through the verified total apply path
-    ([wp_Doc__ApplyEncodedUpdate]), and relays the applied bytes to the room's
-    other connections.
+    ([wp_Doc__ApplyEncodedUpdate]), relays the applied bytes to the room's
+    other connections, and writes the report of the room's root (the text
+    as [Text.Snapshot] sees it, [wp_EncodeReport]) to the run's trace
+    (issue #239), under the trace protocol [is_report].
 
     API
     - [relay_entry] / [member]: one processed packet (who sent it, its stream
       index, its bytes) and one joined connection (its channels, its join
       point in the log, its processed cursor).
     - [is_room_member γ j mb]: persistent, member [j] of the room is [mb].
+    - [own_Room_root r γs γh]: the root the room reports on, its handle
+      and the read capability its snapshots use (held in [room_inv]).
+    - [deployment_protocols γh]: the deployment's wire and trace protocols
+      ([yjs_prot], [is_report]), the one hypothesis the server's
+      composition takes about the FFI.
     - [room_inv] ties the ghost log to the wire: per entry the S1 receipts
       ([entry_receipts], internal: the packet decodes, every input is
       [is_accepted] by the server's store, and the server's history visibly
@@ -38,13 +45,15 @@
 From New.proof Require Import proof_prelude.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import wsrelay.
 From New.proof Require Import prelude.
-From New.proof.sync_proof Require Import base mutex.
+From New.proof.sync_proof Require Import base mutex rwmutex.
 From New.goose_lang.ffi.ws_ffi Require Import ws_ffi.
 From New.proof Require Import core.
 From New.proof Require Import history.
 From New.proof Require Import yjs_prot.
 From New.proof.store Require Import store.
 From New.proof.doc Require Import doc.
+From New.proof.text Require Import text.
+From New.proof.report Require Import report.
 From New.ghost Require Import mono_list ghost_var.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
@@ -212,6 +221,18 @@ Definition own_member_send (L : list relay_entry) (j : nat) (mb : member) : iPro
     "#Hsent" ∷ ([∗ list] i ↦ d ∈ sent, is_chan_msg mb.(mb_send) i d) ∗
     "%Hsub"  ∷ ⌜sent `sublist_of` relay_view j (drop mb.(mb_join) L)⌝.
 
+(** The root the room reports on (issue #239): the fields naming it, the
+    handle of the root text (with the empty lower bounds, since the room
+    never writes through it) and one read capability, what [Text.Snapshot]
+    takes the store's read lock with. Non-public, part of the room's
+    resources, held in the lock body. *)
+Definition own_Room_root (r : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
+  ∃ (t : loc) (name : go_string),
+    "Htextf" ∷ (r .[(wsrelay.Room.t), "text"]) ↦ t ∗
+    "Hnamef" ∷ (r .[(wsrelay.Room.t), "name"]) ↦ name ∗
+    "#Htext" ∷ is_Text t γs γh name [] ∅ ∗
+    "Hrcap"  ∷ own_read_cap γs.
+
 (** The room's lock body. *)
 Definition room_inv (r : loc) (γ : room_names) (γs : store_names)
     (γh : history_names) (c : ClientId) : iProp Σ :=
@@ -222,6 +243,7 @@ Definition room_inv (r : loc) (γ : room_names) (γs : store_names)
     "Hcap"      ∷ own_slice_cap wsnet.Connection.t sl (DfracOwn 1) ∗
     "Hdocf"     ∷ (r .[(wsrelay.Room.t), "doc"]) ↦ dv ∗
     "Hdecodef"  ∷ (r .[(wsrelay.Room.t), "decode"]) ↦ f ∗
+    "Hroot"     ∷ own_Room_root r γs γh ∗
     "#Hdoc"     ∷ is_Doc dv s_loc γs γh ∗
     "#Hcodec"   ∷ codec_spec decode f ∗
     "Hmem"      ∷ mono_list_auth_own γ.(rn_mem) 1 MS ∗
@@ -235,16 +257,21 @@ Definition room_inv (r : loc) (γ : room_names) (γs : store_names)
     "Hsends"    ∷ ([∗ list] j ↦ mb ∈ MS, own_member_send L j mb) ∗
     "%Hcoh"     ∷ ⌜log_coh MS L⌝.
 
+(** The deployment's protocols on the FFI's global state: the wire protocol
+    is [yjs_prot] (receives convert their [ws_prot] payload into
+    certificates, sends convert them back) and the trace protocol is
+    [is_report] (what every report the room traces must satisfy). *)
+Definition deployment_protocols (γh : history_names) : Prop :=
+  (∀ d, ws_prot d = yjs_prot decode γh d) ∧ (∀ d, trace_prot d = is_report γh d).
+
 (** Room handle (persistent). Carries the global-history handle, the server
-    store's client pin, and the deployment equation identifying the ambient
-    wire protocol with [yjs_prot]: receives convert their [ws_prot] payload
-    into certificates, sends convert them back. *)
+    store's client pin, and the deployment's protocols. *)
 Definition is_Room (r : loc) (γ : room_names) (γs : store_names)
     (γh : history_names) (c : ClientId) : iProp Σ :=
   "#Hmu"     ∷ is_Mutex (r .[(wsrelay.Room.t), "mu"]) (room_inv r γ γs γh c) ∗
   "#Hishist" ∷ is_history (A := A) (P := P) γh ∗
   "#Hpin"    ∷ is_store_client γs c ∗
-  "%Hprot"   ∷ ⌜∀ d, ws_prot d = yjs_prot decode γh d⌝.
+  "%Hdeploy" ∷ ⌜deployment_protocols γh⌝.
 
 #[global] Instance is_room_member_persistent γ j mb : Persistent (is_room_member γ j mb).
 Proof. apply _. Qed.
@@ -374,16 +401,21 @@ Qed.
 (* ----- the WP specs ----- *)
 
 Lemma wp_NewRoom (dv s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (f : func.t) :
-  (∀ d, ws_prot d = yjs_prot decode γh d) ->
+    (c : ClientId) (f : func.t) (name : go_string) :
+  deployment_protocols γh ->
   {{{ is_pkg_init wsrelay ∗ is_Doc dv s_loc γs γh ∗
       is_history (A := A) (P := P) γh ∗ is_store_client γs c ∗
-      codec_spec decode f }}}
-    @! wsrelay.NewRoom #dv #f
+      codec_spec decode f ∗ own_read_cap γs }}}
+    @! wsrelay.NewRoom #dv #f #name
   {{{ (r : loc) (γ : room_names), RET #r; is_Room r γ γs γh c }}}.
 Proof.
-  intros Hprot.
-  wp_start as "(#Hdoc & #Hishist & #Hpin & #Hcodec)".
+  intros Hdeploy.
+  wp_start as "(#Hdoc & #Hishist & #Hpin & #Hcodec & Hrcap)".
+  wp_auto.
+  (* the root the room reports on, and the read capability its snapshots
+     take the store's read lock with *)
+  wp_apply (wp_Doc__GetOrCreateText with "[$Hdoc $Hishist]").
+  iIntros (t) "#Htext".
   wp_auto.
   wp_alloc r as "Hr".
   iMod (mono_list_own_alloc ([] : list relay_entry)) as (γlog) "[Hlog _]".
@@ -392,9 +424,11 @@ Proof.
   iApply wp_fupd. wp_auto.
   iApply ("HΦ" $! r γ). iStructNamed "Hr".
   simpl. rewrite /is_Room.
+  iAssert (own_Room_root r γs γh) with "[text name Hrcap]" as "Hroot".
+  { iExists t, name. iFrame "text name Htext Hrcap". }
   iMod (init_Mutex (room_inv r γ γs γh c) with "[$] [-]") as "$"; last by iFrame "#%".
   iExists slice.nil, dv, s_loc, f, [], [].
-  iNext. iFrame "conns doc decode Hmem Hlog Hdoc Hcodec".
+  iNext. iFrame "conns doc decode Hroot Hmem Hlog Hdoc Hcodec".
   iSplitR; [by iApply own_slice_nil|].
   iSplitR; [by iApply own_slice_cap_nil|].
   iSplitR; [by iApply big_sepL_nil|].
@@ -442,10 +476,10 @@ Proof.
   iAssert (is_room_member γ (length MS) mb) as "#Hmember".
   { iFrame "Hmidx". iFrame "Hconn". }
   iAssert (▷ room_inv r γ γs γh c)%I
-    with "[Hconnsf Hconns Hcap Hdocf Hdecodef Hmem Hlog Hposvs Hsends Hsend Hpos1]"
+    with "[Hconnsf Hconns Hcap Hdocf Hdecodef Hroot Hmem Hlog Hposvs Hsends Hsend Hpos1]"
     as "Hinv2".
   { iNext. iExists sl', dv, s_loc, f, (MS ++ [mb]), L.
-    iFrame "Hconnsf Hdocf Hdecodef Hmem Hlog Hdoc Hcodec".
+    iFrame "Hconnsf Hdocf Hdecodef Hroot Hmem Hlog Hdoc Hcodec".
     rewrite fmap_app /=. iFrame "Hconns Hcap".
     iSplitR.
     { rewrite big_sepL_snoc. iFrame "Hconninfo". iFrame "Hconn". }
@@ -486,7 +520,7 @@ Lemma wp_Room__process (r : loc) (γ : room_names) (γs : store_names)
       (∃ i : nat, is_room_log_entry γ i (RelayEntry j mb.(mb_recv) n data)) }}}.
 Proof.
   wp_start as "(#Hroom & #Hmember & Hpos & #Hmsg & #Hprotd & Hs)".
-  iNamed "Hroom".
+  iNamed "Hroom". destruct Hdeploy as [Hprot Htrace].
   iDestruct "Hmember" as "[Hmidx Hmconn]".
   wp_auto.
   wp_apply (wp_Mutex__Lock with "[$Hmu]").
@@ -633,19 +667,41 @@ Proof.
       case_decide as Hji; first by iExact "H".
       case_decide as Hlt1; case_decide as Hlt2;
         [ by iExact "H" | exfalso; word | exfalso; word | by iExact "H" ].
-  - (* every member has been offered the entry: close the invariant at the
-       extended log *)
+  - (* every member has been offered the entry. The report of the root after
+       this apply goes to the run's trace (issue #239): a snapshot under the
+       store's read lock (nested inside [room.mu] like the write lock),
+       encoded, and traced under the deployment's trace protocol
+       [is_report], whose certificate is the snapshot's exact read
+       certificate. *)
     iAssert ([∗ list] j' ↦ mb' ∈ MS, own_member_send (L ++ [e]) j' mb')%I
       with "[Hsends]" as "Hsends".
     { iApply (big_sepL_impl with "Hsends").
       iIntros "!>" (j' mb' Hj') "H".
       case_decide as Hlt; first iFrame.
       exfalso. apply lookup_lt_Some in Hj'. word. }
+    iNamed "Hroot".
+    wp_auto.
+    wp_apply (wp_Text__Snapshot t γs γh c name [] ∅ _ with "[$Htext $Hpin $Hlb $Hrcap]").
+    iIntros (chars_sl model) "(_ & Hrcap & Hchars & %Hsnap & Hstate & %Hexcl)".
+    wp_auto.
+    wp_apply (wp_EncodeReport name chars_sl (DfracOwn 1) model with "[$Hchars]").
+    iIntros (report_sl) "[Hchars Hreport]".
+    iDestruct "Hreport" as (bytes) "(Hreport & Hreportcap & %Hreportdec)".
+    wp_auto.
+    wp_func_call.
+    wp_apply (wp_Trace with "[$Hreport Hstate]").
+    { rewrite Htrace. iDestruct "Hstate" as (h') "[_ #Hstate]".
+      iExists c, h', name, model. iFrame "Hstate". iPureIntro.
+      split; [exact (proj2 (proj2 Hsnap)) | exact Hreportdec]. }
+    iIntros "Hreport".
+    wp_auto.
+    iAssert (own_Room_root r γs γh) with "[Htextf Hnamef Hrcap]" as "Hroot".
+    { iExists t, name. iFrame "Htextf Hnamef Htext Hrcap". }
     wp_apply (wp_Mutex__Unlock
-      with "[$Hmu $Hlocked Hconnsf Hconns Hcap Hdocf Hdecodef Hmem Hlog
-             Hposvs Hsends]").
+      with "[$Hmu $Hlocked Hconnsf Hconns Hcap Hdocf Hdecodef Hroot
+             Hmem Hlog Hposvs Hsends]").
     { iNext. iExists sl, dv, s_loc, f, MS, (L ++ [e]).
-      iFrame "Hconnsf Hconns Hcap Hdocf Hdecodef Hmem Hlog Hdoc Hcodec Hconninfo".
+      iFrame "Hconnsf Hconns Hcap Hdocf Hdecodef Hroot Hmem Hlog Hdoc Hcodec Hconninfo".
       iSplitR.
       { rewrite big_sepL_snoc. iFrame "Hlogmsgs". iFrame "Hmsg". }
       iSplitR.
@@ -726,20 +782,21 @@ Proof.
 Qed.
 
 (** The whole server: listen on [host], create the server document as client
-    [client], wrap it in a room decoding with [f], and serve forever. The
-    closed-system theorem (src/proof/demo/ws_server.v) boots exactly this
-    function. *)
-Lemma wp_ListenAndServe (host client : w64) (f : func.t) (γh : history_names) :
-  (∀ d, ws_prot d = yjs_prot decode γh d) ->
+    [client], wrap it in a room decoding with [f] and reporting on the root
+    [name], and serve forever. The closed-system theorem
+    (src/proof/demo/ws_server.v) boots exactly this function. *)
+Lemma wp_ListenAndServe (host client : w64) (f : func.t) (name : go_string)
+    (γh : history_names) :
+  deployment_protocols γh ->
   {{{ is_pkg_init wsrelay ∗
       is_history (A := A) (P := P) γh ∗
       own_client_history γh (uint.nat client) ([] : list Ev) ∗
       codec_spec decode f ∗
       ws_env_preserves ⊤ }}}
-    @! wsrelay.ListenAndServe #host #client #f
+    @! wsrelay.ListenAndServe #host #client #f #name
   {{{ RET #(); False }}}.
 Proof.
-  intros Hprot.
+  intros Hdeploy.
   wp_start as "(#Hhist & Hcl & #Hcodec & #Henv)".
   wp_auto.
   wp_func_call.
@@ -747,13 +804,16 @@ Proof.
   iIntros (l) "#Hl".
   wp_auto.
   wp_apply (wp_NewDoc γh client with "[$Hcl]").
-  (* the read capabilities come back with the document (issue #125); the
-     boot composition has no reader to hand them to yet, so they are simply
-     kept unused here *)
+  (* the read capabilities come back with the document (issue #125); one
+     goes to the room, for the snapshots its reports are taken from, the
+     rest are kept unused here *)
   iIntros (dv s_loc γs) "(#Hdoc & #Hpin & Hrcaps)".
+  destruct (Z.to_nat rwmutex.actualMaxReaders) as [|readers] eqn:Hreaders.
+  { exfalso. rewrite rwmutex.actualMaxReaders_unseal in Hreaders. lia. }
+  iEval (simpl) in "Hrcaps". iDestruct "Hrcaps" as "[Hrcap _]".
   wp_auto.
-  wp_apply (wp_NewRoom dv s_loc γs γh (uint.nat client) f Hprot
-             with "[$Hdoc $Hhist $Hpin $Hcodec]").
+  wp_apply (wp_NewRoom dv s_loc γs γh (uint.nat client) f name Hdeploy
+             with "[$Hdoc $Hhist $Hpin $Hcodec $Hrcap]").
   iIntros (r γ) "#Hroom".
   wp_auto.
   wp_apply (wp_Run l host r γ γs γh (uint.nat client)
