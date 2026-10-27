@@ -17,6 +17,7 @@ From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core network_model.
 From New.proof.doc Require Import model.
+From New.proof.item Require Import model.
 From New.proof.delta Require Import model.
 From stdpp Require Import gmap.
 
@@ -34,9 +35,13 @@ Local Notation Ev := (@Event Op).
 
 (** [text_snapshot L model]: the list a reader walked, with tombstones
     ([model]), is a valid document holding every item of the handle's model
-    [L] (the handle's list is a lower bound of what the reader sees). *)
+    [L] (the handle's list is a lower bound of what the reader sees), its
+    ids fitting the machine words the heap holds them in ([item_fits]: what
+    lets a reader tell the items apart by the [w64] pairs [Text.Snapshot]
+    reports, issue #239). *)
 Definition text_snapshot (L : list (YjsItem A)) (model : list (YjsItem A * bool)) : Prop :=
   list_to_set L ⊆ (list_to_set model.*1 : gset (YjsItem A)) ∧
-  YjsArrInvariant model.*1.
+  YjsArrInvariant model.*1 ∧
+  Forall item_fits model.*1.
 
 End text_model.

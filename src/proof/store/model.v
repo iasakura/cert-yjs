@@ -365,6 +365,19 @@ Proof.
     by apply elem_of_map_to_list.
 Qed.
 
+(** Every item of a type of a pool fits the machine words ([item_fits]):
+    read off [pool_invs], the run invariants of every run of the pool. *)
+Lemma pool_invs_item_fits (p : pool) (parent : loc) (tm : type_model) (x : YjsItem A) :
+  pool_invs p -> p !! parent = Some tm -> x ∈ runs_flatten (tm_runs tm) -> item_fits x.
+Proof.
+  move=> [Hinvs _] Hp Hx.
+  rewrite /runs_flatten list_elem_of_join in Hx.
+  destruct Hx as (items & Hx & Hitems).
+  apply list_elem_of_fmap in Hitems as (r & -> & Hr).
+  apply (run_invs_item_fits r x); last exact Hx.
+  apply Hinvs. apply elem_of_all_runs. by exists parent, tm.
+Qed.
+
 (** One id, one item: two items of the pool with the same id are one item
     of one type ([pool_covers_unique] at the item level). *)
 Lemma pool_item_unique (p : pool) (q1 q2 : loc) (tm1 tm2 : type_model) (x y : YjsItem A) :

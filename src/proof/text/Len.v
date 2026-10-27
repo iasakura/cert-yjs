@@ -106,6 +106,7 @@ Proof.
   rewrite lookup_fmap in HmS. apply fmap_Some in HmS as (tm & Htmp & ->).
   iDestruct (own_store_state_aligned with "Hstate") as %Haligned.
   iDestruct (own_store_state_arr_inv with "Hstate") as %Harrinv.
+  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpoolinv.
   have [ls Hls] : ∃ ls, ss_locs state !! tv.(yjs.Text.inner') = Some ls.
   { apply elem_of_dom. rewrite (proj1 Haligned). apply elem_of_dom. by exists tm. }
   iDestruct (own_store_state_ytype_acc _ rwmutex_guard.rfrac state
@@ -139,7 +140,7 @@ Proof.
   iSplitR "Hcap"; last first.
   { iFrame "Hcap". iPureIntro. split_and!.
     - rewrite Hlen runs_visible_model //.
-    - split; rewrite Hfst; [exact HLsub | exact (Harrinv _ _ Htmp)].
+    - split_and!; rewrite Hfst; [exact HLsub | exact (Harrinv _ _ Htmp) | apply Forall_forall => x Hx; exact (pool_invs_item_fits _ _ _ _ Hpoolinv Htmp Hx)].
     - apply (delivered_reflected_at_root h0 m0 name _ Hdeliv).
       rewrite Hfst. symmetry.
       exact (proj1 Hregmodel name tv.(yjs.Text.inner') tm Hbindlk Htmp).

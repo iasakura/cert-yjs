@@ -552,7 +552,7 @@ Proof.
     iDestruct (auth_gmap_gset_lookup with "Hseq His_lb") as %(SL & HmSL & HLsub).
     rewrite /M lookup_fmap Htmp /= in HmSL. injection HmSL as <-.
     have Hsnap : text_snapshot L (runs_model tm.(tm_runs)).
-    { split; rewrite runs_model_fst; [exact HLsub | exact Harr]. }
+    { split_and!; rewrite runs_model_fst; [exact HLsub | exact Harr | apply Forall_forall => x Hx; exact (pool_invs_item_fits _ _ _ _ Hpoolinv Htmp Hx)]. }
     have Hhistref : history_reflected h0 name (runs_model tm.(tm_runs)).
     { move=> input Hin.
       have Hin' : (RootId name, OpInsert input) ∈ delivered_ops h.
