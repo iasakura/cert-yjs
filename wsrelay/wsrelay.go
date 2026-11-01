@@ -43,12 +43,21 @@ type Room struct {
 	conns  []wsnet.Connection
 	doc    *yjs.Doc
 	decode yjs.Codec
+	// The root the room reports on (issue #239): after every applied update
+	// the room writes the report of this root (its name and the text as
+	// Text.Snapshot sees it, yjs.EncodeReport) to the run's trace
+	// (wsnet.Trace). The closed theorem (src/proof/demo/ws_server.v) reads
+	// the trace back and compares the reports. Verification tooling: no
+	// reference server (y-websocket) has it.
+	text *yjs.Text
+	name string
 }
 
 // NewRoom creates an empty room around doc, decoding wire updates with
-// decode (the deployment passes yjs.WireCodec()).
-func NewRoom(doc *yjs.Doc, decode yjs.Codec) *Room {
-	return &Room{doc: doc, decode: decode}
+// decode (the deployment passes yjs.WireCodec()) and reporting on the root
+// text name.
+func NewRoom(doc *yjs.Doc, decode yjs.Codec, name string) *Room {
+	return &Room{doc: doc, decode: decode, text: doc.GetOrCreateText(name), name: name}
 }
 
 // Join hands the room the right to answer c. Relays reach c from this point
@@ -84,6 +93,10 @@ func (r *Room) process(self wsnet.Connection, data []byte) {
 				wsnet.Send(c, data)
 			}
 		}
+		// the report of the root after this apply, for the run's trace
+		chars := r.text.Snapshot()
+		report := yjs.EncodeReport(r.name, chars)
+		wsnet.Trace(report)
 	}
 	r.mu.Unlock()
 }
@@ -117,12 +130,12 @@ func Run(l wsnet.Listener, r *Room) {
 
 // ListenAndServe listens on host, creates the server document as client,
 // and serves a room around it forever, decoding wire updates with decode
-// (the deployment passes yjs.WireCodec()). This is the whole server; the
-// closed-system theorem (src/proof/demo/ws_server.v) is about booting
-// exactly this function.
-func ListenAndServe(host wsnet.Address, client yjs.Client, decode yjs.Codec) {
+// (the deployment passes yjs.WireCodec()) and reporting on the root text
+// name. This is the whole server; the closed-system theorem
+// (src/proof/demo/ws_server.v) is about booting exactly this function.
+func ListenAndServe(host wsnet.Address, client yjs.Client, decode yjs.Codec, name string) {
 	l := wsnet.Listen(host)
 	dv := yjs.NewDoc(client)
-	r := NewRoom(dv, decode)
+	r := NewRoom(dv, decode, name)
 	Run(l, r)
 }

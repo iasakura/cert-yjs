@@ -5,9 +5,12 @@
     create the room, and run the accept loop. The theorem pushes that
     through [ws_dist_adequacy_prot_fupd] with the REAL wire protocol
     [yjs_prot decode γh], whose history instance is allocated inside the
-    initial fancy update, and exports protocol totality: in EVERY reachable
-    state of EVERY execution, EVERY message on the wire decodes to an honest
-    batch.
+    initial fancy update, and exports two facts about EVERY reachable
+    state of EVERY execution: EVERY message on the wire decodes to an honest
+    batch (protocol totality), and the run's trace, the reports the server
+    wrote after each apply, converges ([reports_converge], issue #239): any
+    two reports about the same root that hold the same ids spell the same
+    text.
 
     Crash-restart halts immediately ([halt]) by design: the server's
     history element lives in the store lock invariant and dies with the
@@ -31,6 +34,7 @@ From New.proof Require Import history.
 From New.proof Require Import yjs_prot.
 From New.proof.store Require Import store.
 From New.proof.doc Require Import doc.
+From New.proof.report Require Import report.
 From New.proof Require Import ws_relay.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
@@ -46,16 +50,17 @@ Definition halt {ext : ffi_syntax} {go_gctx : GoGlobalContext} : expr := #().
 
 (** Initialize the packages, then run the translated whole-server function
     [wsrelay.ListenAndServe] (listen on [host], create the server document
-    as client [client], serve a room decoding with [f], forever). Everything
-    but this canonical initialize-then-call idiom is generated from the Go;
-    a real deployment is [func main() { wsrelay.ListenAndServe(host, client,
-    yjs.WireCodec()) }]. Defined outside any [heapGS] section so a closed
-    theorem can name it before any node exists. *)
+    as client [client], serve a room decoding with [f] and reporting on the
+    root [name], forever). Everything but this canonical initialize-then-call
+    idiom is generated from the Go; a real deployment is
+    [func main() { wsrelay.ListenAndServe(host, client, yjs.WireCodec(),
+    "root") }]. Defined outside any [heapGS] section so a closed theorem can
+    name it before any node exists. *)
 Definition server_boot {go_gctx : GoGlobalContext}
     {go_lctx : GoLocalContext} {go_fns : GoSemanticsFunctions}
-    (host client : w64) (f : func.t) : expr :=
+    (host client : w64) (f : func.t) (name : go_string) : expr :=
   wsrelay.initialize' #();;
-  (@! wsrelay.ListenAndServe) #host #client #f.
+  (@! wsrelay.ListenAndServe) #host #client #f #name.
 
 Section boot.
 Context {Σ : gFunctors} {hG : heapGS Σ}.
@@ -132,22 +137,22 @@ Qed.
 
 (* ===== the boot expression =============================================== *)
 
-Lemma wp_server_boot (host client : w64) (f : func.t) (γh : history_names)
-    get_is_pkg_init :
+Lemma wp_server_boot (host client : w64) (f : func.t) (name : go_string)
+    (γh : history_names) get_is_pkg_init :
   get_is_pkg_init_prop wsrelay get_is_pkg_init →
-  (∀ d, ws_prot d = yjs_prot decode γh d) →
+  deployment_protocols decode γh →
   ⊢ own_initializing get_is_pkg_init -∗
     is_history (A := A) (P := P) γh -∗
     own_client_history γh (uint.nat client) ([] : list Ev) -∗
     codec_spec decode f -∗
     ws_env_preserves ⊤ -∗
-    WP server_boot host client f {{ _, True }}.
+    WP server_boot host client f name {{ _, True }}.
 Proof.
-  iIntros (Hget Hprot) "Hown #Hhist Hcl #Hcodec #Henv".
+  iIntros (Hget Hdeploy) "Hown #Hhist Hcl #Hcodec #Henv".
   rewrite /server_boot.
   wp_apply (wp_wsrelay_initialize' with "[$Hown]") as "(Hown & #Hinit)";
     first exact Hget.
-  wp_apply (wp_ListenAndServe decode host client f γh Hprot
+  wp_apply (wp_ListenAndServe decode host client f name γh Hdeploy
              with "[$Hhist $Hcl $Hcodec $Henv]").
   iIntros "[]".
 Qed.
@@ -191,27 +196,27 @@ Proof. iApply wpc_value'. by iSplit. Qed.
     is trivial), and after any crash come back up as [halt]. Stated over
     [own_go_state] directly so a closed theorem needs no in-context
     instances: everything is fixed by unifying with the [wpr] goal. *)
-Lemma wpr_server_boot (host client : w64) (f : func.t) (γh : history_names)
-    (σ : lang.state) :
+Lemma wpr_server_boot (host client : w64) (f : func.t) (name : go_string)
+    (γh : history_names) (σ : lang.state) :
   is_init σ →
-  (∀ d, ws_prot d = yjs_prot decode γh d) →
+  deployment_protocols decode γh →
   ⊢ own_go_state σ.(go_state).(package_state) -∗
     is_history (A := A) (P := P) γh -∗
     own_client_history γh (uint.nat client) ([] : list Ev) -∗
     codec_spec decode f -∗
     ws_env_preserves ⊤ -∗
-    wpr NotStuck ⊤ (server_boot host client f) halt
+    wpr NotStuck ⊤ (server_boot host client f name) halt
         (λ _, True%I) (λ _, True%I) (λ _ _, True%I).
 Proof.
-  iIntros (Hinit Hprot) "Hgo #Hhist Hcl #Hcodec #Henv".
+  iIntros (Hinit Hdeploy) "Hgo #Hhist Hcl #Hcodec #Henv".
   iApply fupd_wpr.
   iMod (go_init server_get_is_pkg_init _ Hinit with "Hgo") as "Hown".
   iModIntro.
   iApply (idempotence_wpr NotStuck ⊤ _ _ _
             (λ _, True%I) (λ _ _, True%I) (λ _, True%I) with "[-] []").
   - iApply wp_wpc.
-    iApply (wp_server_boot _ _ _ _ server_get_is_pkg_init
-              server_get_is_pkg_init_wf Hprot
+    iApply (wp_server_boot _ _ _ _ _ server_get_is_pkg_init
+              server_get_is_pkg_init_wf Hdeploy
               with "Hown Hhist Hcl Hcodec Henv").
   - iModIntro.
     iIntros (hL' σ1 σ2 Hcrash) "_".
@@ -247,7 +252,9 @@ Definition ws_heapGS (Σ : gFunctors) := heapGS Σ.
     well-formed wire and an arbitrary environment that discharges
     [ws_env_preserves] for the deployment protocol. In EVERY reachable state
     of EVERY execution (crash-restarts included), EVERY message on the wire
-    decodes to an honest batch: protocol totality. *)
+    decodes to an honest batch (protocol totality), and the run's trace
+    converges ([reports_converge]): any two reports the server wrote about
+    the same root that hold the same ids spell the same text. *)
 Theorem ws_server_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
     (* the store-layer specs are generalized over these RAs (the item-set,
        the accepted-id set, the reader-count tie); mirror them to apply the
@@ -258,7 +265,7 @@ Theorem ws_server_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
     `{observed_inG : !ghost_varG Σ (list (YjsItem (list w16) * bool))}
     `{observers_inG : !inG Σ (authR (gsetUR (gname * go_string)))}
     `{observers_agree_inG : !inG Σ (dfrac_agreeR (leibnizO registered_entries))}
-    (host client : w64) (f : func.t)
+    (host client : w64) (f : func.t) (name : go_string)
     (decode : list u8 -> option (list Input))
     (coh0 : history_names -> ws_coh_ty Σ)
     g σ0 :
@@ -277,12 +284,14 @@ Theorem ws_server_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
       ⊢ is_history (A := (list w16)) (P := go_string) γh -∗
         @ws_env_preserves Σ W Hinv ⊤) ->
   dist_adequate (CS := goose_crash_lang)
-    [ {| init_thread := server_boot (go_fns := sem.(go.sem_fn)) host client f;
+    [ {| init_thread := server_boot (go_fns := sem.(go.sem_fn)) host client f name;
          init_restart := halt;
          init_local_state := σ0 |} ] g
-    (λ g', ∀ ch n d,
-        g'.(global_world).(ws_msgs) !! (ch, n) = Some d ->
-        ∃ inputs, decode d = Some inputs ∧ update_wf inputs).
+    (λ g',
+       (∀ ch n d,
+          g'.(global_world).(ws_msgs) !! (ch, n) = Some d ->
+          ∃ inputs, decode d = Some inputs ∧ update_wf inputs) ∧
+       reports_converge g'.(global_world).(ws_trace)).
 Proof.
   intros Hwf Hempty Htrace Hpkg Hlctx0 Hcoh0 Hcodec Henv.
   eapply (ws_dist_adequacy_prot_fupd Σ); [exact Hwf | exact Hempty | exact Htrace | done |].
@@ -294,8 +303,8 @@ Proof.
   iDestruct (big_sepS_elem_of _ _ (uint.nat client) with "Hels") as "Hcl";
     first set_solver.
   iModIntro.
-  (* no trace protocol yet: the server writes no trace entry (issue #239) *)
-  iExists (yjs_prot decode γh), _, (λ _, True)%I, _, (coh0 γh).
+  (* the trace protocol: every entry the server writes is a report *)
+  iExists (yjs_prot decode γh), _, (is_report γh), _, (coh0 γh).
   iSplitR; first iApply Hcoh0.
   iIntros (HG) "%Hp %Ht %Hc %Hm %Hi Hstart".
   iEval (rewrite -Hi) in "Hhist".
@@ -311,9 +320,9 @@ Proof.
     simpl in Hlctx. rewrite Hlctx0 in Hlctx. subst hLlctx.
     iModIntro.
     iExists _, _, _.
-    iApply (wpr_server_boot (hG := HeapGS _ _ HG _ _) _ _ _ _ γh σ0 Hpkg
+    iApply (wpr_server_boot (hG := HeapGS _ _ HG _ _) _ _ _ _ _ γh σ0 Hpkg
               with "Hgo Hhist Hcl [] []").
-    + intros d. rewrite Hp //.
+    + split; intros d; [rewrite Hp // | rewrite Ht //].
     + iApply (Hcodec _ _).
     + (* [iApply]'s unification will not unfold the instance aliases
          ([goose_wsGS], the [irisGS] projection chain); passing both
@@ -324,9 +333,18 @@ Proof.
                       (@goose_irisGS ws_op ws_model (@ws_semantics go_gctx) go_gctx ws_interp Σ HG))
                    γh Hp Hc Hm).
       iExact "Hhist".
-  - (* the export: protocol totality off the state interpretation *)
+  - (* the export: protocol totality and report convergence off the state
+       interpretation *)
     iIntros (g') "Hctx".
-    iDestruct "Hctx" as "(_ & _ & _ & _ & #Hprot & _ & _ & _ & _)".
+    iDestruct "Hctx" as "(_ & _ & _ & _ & #Hprot & #Htrace & _ & _ & _)".
+    (* the trace's reports converge: each is a certified snapshot, and the
+       certificates of one root converge (the history invariant opened, at
+       the invariant instance the export's update runs under) *)
+    iEval (rewrite Hi) in "Hhist".
+    iMod (is_report_trace_converge (invGS0 := Hinv) γh g'.(global_world).(ws_trace) ⊤
+            with "Hhist []") as %Hconv; first solve_ndisj.
+    { iApply (big_sepL_mono with "Htrace").
+      iIntros (k d Hk) "Hd". rewrite Ht. iExact "Hd". }
     iApply fupd_mask_intro; [set_solver | iIntros "_"].
     iAssert ([∗ map] k↦d ∈ g'.(global_world).(ws_msgs),
                ⌜∃ inputs, decode d = Some inputs ∧ update_wf inputs⌝)%I as "#Hpure".
@@ -336,7 +354,7 @@ Proof.
       iDestruct "Hd" as (inputs) "(%Hdec & %Hwfb & _)".
       iPureIntro. eauto. }
     iDestruct (big_sepM_pure_1 with "Hpure") as %Hall.
-    iPureIntro.
+    iPureIntro. split; last exact Hconv.
     intros ch n d Hlk. exact (Hall (ch, n) d Hlk).
 Qed.
 
