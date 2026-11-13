@@ -355,6 +355,158 @@ Proof using Type*.
     rewrite -Hright_model. destruct left_id, origin_right; simpl; naive_solver.
 Qed.
 
+(** An entry's covered clock is an id of the pool. *)
+#[local] Lemma pool_entry_covered_clock_has (locs : gmap loc (list loc)) (p : pool) (l : loc) (r : ItemRun) (k : nat) :
+  pool_invs p ->
+  (l, r) ∈ pool_entries locs p ->
+  run_covers_clock r k ->
+  pool_has p (MkYjsId (run_client r) k).
+Proof.
+  move=> Hinvs /pool_entries_slot [parent [ls [tm [slot [Hls [Hp [Hlk Hrk]]]]]]] [Hlow Hhigh].
+  have Hr_all : r ∈ all_runs p.
+  { apply elem_of_all_runs. exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hrk)]. }
+  have Hwf : run_wf (run_items r) := proj1 (proj1 Hinvs r Hr_all).
+  rewrite /run_client /run_clock /run_head_item in Hlow Hhigh |- *.
+  have [item Hitem] : is_Some (run_items r !! (k - clock (item_id (hd inhabitant (run_items r))))%nat).
+  { apply lookup_lt_is_Some. lia. }
+  exists parent, tm, item. split_and!; first exact Hp.
+  - rewrite /tm_arr /runs_flatten list_elem_of_join. exists (run_items r).
+    split; first exact (list_elem_of_lookup_2 _ _ _ Hitem).
+    apply list_elem_of_fmap. exists r. split; [done | exact (list_elem_of_lookup_2 _ _ _ Hrk)].
+  - rewrite (run_wf_char_id _ _ _ Hwf Hitem). f_equal. lia.
+Qed.
+
+(** An item of the pool sits in an entry of its creator, which covers its
+    clock. *)
+#[local] Lemma pool_item_entry (locs : gmap loc (list loc)) (p : pool) (parent : loc) (tm : type_model)
+    (item : YjsItem A) :
+  pool_invs p ->
+  (∀ parent tm, p !! parent = Some tm -> ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
+  p !! parent = Some tm -> item ∈ tm_arr tm ->
+  ∃ l r, (l, r) ∈ pool_entries locs p ∧ run_client r = clientId (item_id item) ∧
+         run_covers_clock r (clock (item_id item)).
+Proof.
+  move=> Hinvs Hlens Hp Hitem. apply list_elem_of_lookup_1 in Hitem as [n Hn].
+  destruct (runs_flatten_lookup_run (tm_runs tm) n item Hn) as (slot & offset & r & Hslot & Hoffset & _).
+  have Hr_all : r ∈ all_runs p.
+  { apply elem_of_all_runs. exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hslot)]. }
+  have Hwf : run_wf (run_items r) := proj1 (proj1 Hinvs r Hr_all).
+  destruct (Hlens parent tm Hp) as (ls & Hls & Hlength).
+  have [l Hl] : is_Some (ls !! slot).
+  { apply lookup_lt_is_Some. rewrite Hlength. exact (lookup_lt_Some _ _ _ Hslot). }
+  exists l, r. split.
+  { apply pool_entries_slot. by exists parent, ls, tm, slot. }
+  rewrite (run_wf_char_id _ _ _ Hwf Hoffset) /run_covers_clock /run_client /run_clock /run_head_item /=.
+  split; first reflexivity. split; first lia.
+  have := lookup_lt_Some _ _ _ Hoffset. lia.
+Qed.
+
+(** The walk of [appendSpanStructs] reaches every clock of the span that an
+    entry of the client covers: it starts at the entry covering the span's
+    first clock, and it stops past the last entry or at one that begins at
+    or past the span's end. *)
+#[local] Lemma span_walk_reaches_span_entries (E : list (loc * ItemRun)) (first span_end found exit_index : nat)
+    (reached : ItemRun -> nat -> Prop) :
+  StronglySorted entry_le E ->
+  (∀ l r, (l, r) ∈ E -> (Z.of_nat (run_clock r) < 2^64)%Z) ->
+  (∀ (i j : nat) (l1 l2 : loc) (r1 r2 : ItemRun),
+     E !! i = Some (l1, r1) -> E !! j = Some (l2, r2) -> i ≠ j ->
+     (run_clock r1 + length (run_items r1) <= run_clock r2)%nat ∨
+     (run_clock r2 + length (run_items r2) <= run_clock r1)%nat) ->
+  (∃ l r, E !! found = Some (l, r) ∧ run_covers_clock r first) ->
+  (∀ (j : nat) l r k, (found <= j < exit_index)%nat -> E !! j = Some (l, r) ->
+     run_covers_clock r k -> (first <= k < span_end)%nat -> reached r k) ->
+  ((length E <= exit_index)%nat ∨
+   ∃ l r, E !! exit_index = Some (l, r) ∧ (span_end <= run_clock r)%nat) ->
+  ∀ l r k, (l, r) ∈ E -> run_covers_clock r k -> (first <= k < span_end)%nat -> reached r k.
+Proof.
+  move=> Hsorted Hbound Hdisjoint [l0 [r0 [Hfound [Hfound_low Hfound_high]]]] Hwalked Hexit l r k
+    Hentry [Hlow Hhigh] [Hfirst Hend].
+  apply list_elem_of_lookup_1 in Hentry as [j Hj].
+  have Hclock : ∀ (i i' : nat) l1 r1 l2 r2, E !! i = Some (l1, r1) -> E !! i' = Some (l2, r2) ->
+      (i < i')%nat -> (run_clock r1 <= run_clock r2)%nat.
+  { move=> i i' l1 r1 l2 r2 Hi Hi' Hlt.
+    have Hle := StronglySorted_lookup_le entry_le E i i' _ _ Hsorted Hi Hi' Hlt.
+    move: Hle. rewrite /entry_le (entry_clock_Z l1 r1 (Hbound l1 r1 (list_elem_of_lookup_2 _ _ _ Hi)))
+      (entry_clock_Z l2 r2 (Hbound l2 r2 (list_elem_of_lookup_2 _ _ _ Hi'))). lia. }
+  destruct (decide (j < found)%nat) as [Hbefore | Hfrom].
+  { exfalso.
+    have Hle := Hclock j found l r l0 r0 Hj Hfound Hbefore.
+    destruct (Hdisjoint j found l l0 r r0 Hj Hfound ltac:(lia)) as [Hd | Hd]; lia. }
+  destruct (decide (j < exit_index)%nat) as [Hin | Hpast].
+  { apply (Hwalked j l r k); [lia | exact Hj | done | done]. }
+  exfalso. destruct Hexit as [Hlength | (l1 & r1 & Hexit & Hbeyond)].
+  { have := lookup_lt_Some _ _ _ Hj. lia. }
+  destruct (decide (j = exit_index)) as [-> | Hne].
+  { rewrite Hexit in Hj. injection Hj as <- <-. lia. }
+  have Hle := Hclock exit_index j l1 r1 l r Hexit Hj ltac:(lia). lia.
+Qed.
+
+(** When no entry of the client covers the span's first clock, none covers
+    a later one either: a client's clocks are gap-free
+    ([pool_clocks_contiguous]). *)
+#[local] Lemma span_without_first_clock_reaches_nothing (locs : gmap loc (list loc)) (p : pool) (client : w64)
+    (E : list (loc * ItemRun)) (first : nat) :
+  pool_invs p -> pool_clocks_contiguous p ->
+  (∀ parent tm, p !! parent = Some tm -> ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
+  (∀ e, e ∈ E -> e ∈ pool_entries locs p ∧ entry_client e = client) ->
+  (∀ e, e ∈ pool_entries locs p -> entry_client e = client -> e ∈ E) ->
+  (∀ l r, (l, r) ∈ E -> ¬ run_covers_clock r first) ->
+  ∀ l r k, (l, r) ∈ E -> run_covers_clock r k -> (first <= k)%nat -> False.
+Proof.
+  move=> Hinvs Hcontiguous Hlens Hsound Hcomplete Hnone l r k Hentry Hcovers Hfirst.
+  destruct (Hsound _ Hentry) as [Hpool_entry Hclient].
+  have Hhas := pool_entry_covered_clock_has locs p l r k Hinvs Hpool_entry Hcovers.
+  have Hhas_first : pool_has p (MkYjsId (run_client r) first).
+  { destruct (decide (first = k)) as [-> | Hne]; first exact Hhas.
+    exact (Hcontiguous _ Hhas first ltac:(simpl; lia)). }
+  destruct Hhas_first as (parent & tm & item & Hp & Hitem & Hid).
+  destruct (pool_item_entry locs p parent tm item Hinvs Hlens Hp Hitem) as (l' & r' & Hentry' & Hclient' & Hcovers').
+  rewrite Hid /= in Hclient' Hcovers'.
+  apply (Hnone l' r'); last exact Hcovers'.
+  apply Hcomplete; first exact Hentry'.
+  rewrite -Hclient /entry_client /=. by rewrite Hclient'.
+Qed.
+
+(** From the walk to the items: when the walk reached every clock of the
+    span that an entry covers, and every character it appended is an item of
+    the registry with an id of the span, the appended batch holds exactly
+    those items. *)
+#[local] Lemma span_structs_hold_span_items (locs : gmap loc (list loc)) (p : pool) (bind : gmap P loc)
+    (span : yjs.idSpan.t) (E : list (loc * ItemRun))
+    (appended : list (TId * IntegrateInput (A := A))) :
+  pool_invs p -> pool_registry_coh bind p ->
+  (∀ parent tm, p !! parent = Some tm -> ∃ ls, locs !! parent = Some ls ∧ length ls = length (tm_runs tm)) ->
+  (∀ e, e ∈ pool_entries locs p -> entry_client e = span.(yjs.idSpan.id').(yjs.id.clientId') -> e ∈ E) ->
+  (∀ l r k, (l, r) ∈ E -> run_covers_clock r k ->
+     (uint.nat span.(yjs.idSpan.id').(yjs.id.clock') <= k <
+      uint.nat span.(yjs.idSpan.id').(yjs.id.clock') + uint.nat span.(yjs.idSpan.len'))%nat ->
+     ∃ op, op ∈ expand_inputs appended ∧ in_id op.2 = MkYjsId (run_client r) k) ->
+  (∀ op, op ∈ expand_inputs appended ->
+     ∃ (name : go_string) (item : YjsItem A),
+       (registry_has_item bind p name item ∧ item_id item ∈ span_ids span) ∧
+       op = (RootId name, input_of_item item)) ->
+  structs_expand_to_items appended (λ name item,
+    registry_has_item bind p name item ∧ item_id item ∈ span_ids span).
+Proof.
+  move=> Hinvs [_ [Hone_name _]] Hlens Hcomplete Hwalk Hsound op. split; first exact (Hsound op).
+  move=> [name [item [[[parent [tm [Hname [Hparent Hitem]]]] Hid] ->]]].
+  destruct (pool_item_entry locs p parent tm item Hinvs Hlens Hparent Hitem) as (l & r & Hentry & Hclient & Hcovers).
+  move: Hid. rewrite /span_ids /range_ids elem_of_list_to_set list_elem_of_fmap.
+  move=> [offset [Hid /elem_of_seq Hoffset]].
+  have Hentry_client : entry_client (l, r) = span.(yjs.idSpan.id').(yjs.id.clientId').
+  { rewrite /entry_client /= Hclient Hid /=. word. }
+  destruct (Hwalk l r (clock (item_id item)) (Hcomplete _ Hentry Hentry_client) Hcovers)
+    as (walked & Hwalked & Hwalked_id).
+  { rewrite Hid /=. lia. }
+  destruct (Hsound walked Hwalked) as (name' & item' & [(parent' & tm' & Hname' & Hparent' & Hitem') _] & ->).
+  have Hsame_id : item_id item' = item_id item.
+  { move: Hwalked_id. rewrite /= Hclient. by destruct (item_id item). }
+  destruct (pool_item_unique p parent' parent tm' tm item' item Hinvs Hparent' Hitem' Hparent Hitem Hsame_id)
+    as [-> ->].
+  by rewrite (Hone_name name' name parent Hname' Hname) in Hwalked.
+Qed.
+
 (** [store.appendSpanStructs] over the store's data fields: the stepping
     stone of the public spec below. The walk hands half of the store to
     [updateItemOfNode] and reads the client's node list through the other
@@ -370,11 +522,9 @@ Qed.
       RET #result_slice;
       own_store_state s 1 state ∗
       own_update_structs result_slice (DfracOwn 1) (structs ++ appended) ∗
-      ⌜∀ op, op ∈ expand_inputs appended ->
-         ∃ (name : go_string) (parent : loc) (tm : type_model) (r : ItemRun) (it : YjsItem A),
-           ss_bind state !! name = Some parent ∧ ss_pool state !! parent = Some tm ∧
-           r ∈ tm_runs tm ∧ it ∈ run_items r ∧
-           op = (RootId name, input_of_item it) ∧ item_id it ∈ span_ids span⌝ }}}.
+      ⌜structs_expand_to_items appended (λ name item,
+         registry_has_item (ss_bind state) (ss_pool state) name item ∧
+         item_id item ∈ span_ids span)⌝ }}}.
 Proof using Type*.
   move=> Hspan.
   iIntros (Φ) "(#Hpkg & Hstate & Hstructs) HΦ".
@@ -384,6 +534,8 @@ Proof using Type*.
   destruct state as [client0 clock0 locs p bind pend pdel]. simpl in *.
   iDestruct "Hread" as "(Hfields & %Hinvs)".
   have Hpool_invs : pool_invs p := proj1 Hinvs.
+  have Hregistry_coh : pool_registry_coh bind p := proj1 (proj2 Hinvs).
+  have Hcontiguous : pool_clocks_contiguous p := proj2 (proj2 Hinvs).
   iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
   iEval (simpl) in "Hclient Hclock Hitems Hregistry Htypes Hpending Hpdeletes".
   iDestruct "Hitems" as (items_mref) "(Hitemsf & Hitemmap)".
@@ -401,23 +553,41 @@ Proof using Type*.
   iAssert (∃ (nodes : slice.t) (E : list (loc * ItemRun)),
       ⌜default slice.nil (gm !! span.(yjs.idSpan.id').(yjs.id.clientId')) = nodes⌝ ∗
       ⌜sorted_client_entries locs p span.(yjs.idSpan.id').(yjs.id.clientId') E⌝ ∗
+      ⌜∀ e, e ∈ pool_entries locs p -> entry_client e = span.(yjs.idSpan.id').(yjs.id.clientId') -> e ∈ E⌝ ∗
       nodes ↦*{#1/2} E.*1 ∗
       (nodes ↦*{#1/2} E.*1 -∗
        [∗ map] client ↦ client_slice ∈ gm,
          client_slice ↦*{#1/2} key_pair_client_locs client (entry_key_pair <$> pool_entries locs p) ∗
          own_slice_cap loc client_slice (DfracOwn (1/2))))%I
-    with "[Hruns]" as (nodes E) "(%Hnodes & %Hsorted & Hslice & Hrunsback)".
+    with "[Hruns]" as (nodes E) "(%Hnodes & %Hsorted & %Hentries & Hslice & Hrunsback)".
   { destruct (gm !! span.(yjs.idSpan.id').(yjs.id.clientId')) as [client_slice |] eqn:Hclient_slice.
     - iDestruct (big_sepM_lookup_acc _ _ _ client_slice Hclient_slice with "Hruns") as "[Hrun Hrunsback]".
       iNamed "Hrun".
       iExists client_slice, (client_entries locs p span.(yjs.idSpan.id').(yjs.id.clientId')).
       iSplitR; first done.
       iSplitR; first (iPureIntro; exact (client_entries_sorted_client locs p _ Hndl)).
+      iSplitR. { iPureIntro. move=> e He Hc. by apply client_entries_mem. }
       rewrite -(client_locs_entries locs p _ Hclockunique). iFrame "Hslice".
       iIntros "Hslice". iApply "Hrunsback". iFrame "Hslice Hcap".
     - iExists slice.nil, []. iSplitR; first done.
       iSplitR. { iPureIntro. split_and!; [constructor | constructor | by move=> e /elem_of_nil]. }
+      iSplitR.
+      { (* a client with no slice in the index has no node *)
+        iPureIntro. move=> e He Hc. exfalso.
+        have Hsome : is_Some (gm !! span.(yjs.idSpan.id').(yjs.id.clientId')).
+        { apply Hcomplete. rewrite -Hc. apply list_elem_of_fmap. exists (entry_key_pair e).
+          split; first reflexivity. apply list_elem_of_fmap. by exists e. }
+        rewrite Hclient_slice in Hsome. destruct Hsome as [client_slice Hclient_some]. discriminate. }
       iSplitR; first iApply own_slice_nil. iIntros "_". iFrame "Hruns". }
+  have Hentry_clock : ∀ l r, (l, r) ∈ E -> (Z.of_nat (run_clock r) < 2^64)%Z.
+  { move=> l r Hlr. destruct (proj2 (proj2 Hsorted) (l, r) Hlr) as [Hpool_entry _].
+    apply pool_entries_slot in Hpool_entry as (parent & ls & tm & k & Hls & Hp & Hlk & Hrk).
+    have Hr_all : r ∈ all_runs p.
+    { apply elem_of_all_runs. exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hrk)]. }
+    have Hfits : run_fits r := proj1 (proj2 (proj1 Hpool_invs r Hr_all)).
+    move: Hfits. rewrite /run_fits. lia. }
+  have Hentries_disjoint := sorted_client_entries_disjoint locs p _ E Hdom Hlens' Hndl
+    (λ r Hr, proj1 (proj2 (proj2 (proj1 Hpool_invs r Hr)))) (proj2 Hpool_invs) Hsorted.
   wp_method_call. wp_call. wp_call. wp_auto.
   wp_apply (wp_map_lookup1 with "Hmap"). iIntros "Hmap".
   rewrite Hnodes. wp_auto.
@@ -451,7 +621,11 @@ Proof using Type*.
            ∃ (name : go_string) (parent : loc) (tm : type_model) (r : ItemRun) (it : YjsItem A),
              bind !! name = Some parent ∧ p !! parent = Some tm ∧
              r ∈ tm_runs tm ∧ it ∈ run_items r ∧
-             op = (RootId name, input_of_item it) ∧ item_id it ∈ span_ids span)⌝)%I
+             op = (RootId name, input_of_item it) ∧ item_id it ∈ span_ids span)⌝ ∗
+      "%Hwalk" ∷ ⌜∀ l r k, (l, r) ∈ E -> run_covers_clock r k ->
+           (uint.nat span.(yjs.idSpan.id').(yjs.id.clock') <= k <
+            uint.nat span.(yjs.idSpan.id').(yjs.id.clock') + uint.nat span.(yjs.idSpan.len'))%nat ->
+           ∃ op, op ∈ expand_inputs appended ∧ in_id op.2 = MkYjsId (run_client r) k⌝)%I
       with "[s structs nodes first end index Hstructs Hcall Hslice Htypes]".
   { (* the walk *)
     iAssert (∃ (index : w64) (result_slice : slice.t) (appended : list (TId * IntegrateInput (A := A))),
@@ -468,11 +642,17 @@ Proof using Type*.
            ∃ (name : go_string) (parent : loc) (tm : type_model) (r : ItemRun) (it : YjsItem A),
              bind !! name = Some parent ∧ p !! parent = Some tm ∧
              r ∈ tm_runs tm ∧ it ∈ run_items r ∧
-             op = (RootId name, input_of_item it) ∧ item_id it ∈ span_ids span)⌝)%I
+             op = (RootId name, input_of_item it) ∧ item_id it ∈ span_ids span)⌝ ∗
+      "%Hcovered" ∷ ⌜∀ (j : nat) l r k, (uint.nat found_index <= j < uint.nat index)%nat ->
+           E !! j = Some (l, r) -> run_covers_clock r k ->
+           (uint.nat span.(yjs.idSpan.id').(yjs.id.clock') <= k <
+            uint.nat span.(yjs.idSpan.id').(yjs.id.clock') + uint.nat span.(yjs.idSpan.len'))%nat ->
+           ∃ op, op ∈ expand_inputs appended ∧ in_id op.2 = MkYjsId (run_client r) k⌝)%I
       with "[s structs nodes first end index Hstructs Hcall Hslice Htypes]" as "IH".
     { iExists found_index, structs_slice, []. rewrite app_nil_r.
       iFrame "s structs nodes first end index Hstructs Hcall Hslice Htypes".
-      iPureIntro. by move=> op /elem_of_nil. }
+      iPureIntro. split; first by move=> op /elem_of_nil.
+      move=> j entry_loc entry_run covered Hj. exfalso. lia. }
     wp_for "IH".
     iDestruct (own_slice_len with "Hslice") as %[Hnodes_length Hnodes_nonneg].
     rewrite length_fmap in Hnodes_length.
@@ -480,7 +660,11 @@ Proof using Type*.
     { (* past the last node *)
       rewrite bool_decide_eq_false_2 //.
       iSplitR; first done. iExists result_slice, appended.
-      iFrame "structs Hstructs Hcall Hslice Htypes". done. }
+      iFrame "structs Hstructs Hcall Hslice Htypes".
+      iPureIntro. split; first exact Happended.
+      apply (span_walk_reaches_span_entries E _ _ (uint.nat found_index) (uint.nat index) _
+               (proj1 Hsorted) Hentry_clock Hentries_disjoint Hfound Hcovered).
+      left. clear -Hpast Hnodes_length Hnodes_nonneg. word. }
     rewrite bool_decide_eq_true_2 //.
     wp_auto.
     rewrite decide_True; last (clear -Hinside Hnodes_nonneg; word).
@@ -525,7 +709,12 @@ Proof using Type*.
       { iExists node_value, _, _. iFrame "Hval Hnode_left Hnode_right Hnode_content". done. }
       wp_for_post.
       iSplitR; first done. iExists result_slice, appended.
-      iFrame "structs Hstructs Hcall Hslice Htypes". done. }
+      iFrame "structs Hstructs Hcall Hslice Htypes".
+      iPureIntro. split; first exact Happended.
+      apply (span_walk_reaches_span_entries E _ _ (uint.nat found_index) (uint.nat index) _
+               (proj1 Hsorted) Hentry_clock Hentries_disjoint Hfound Hcovered).
+      right. exists node_loc, r. split; first exact Hentry.
+      rewrite /run_clock. move: Hbeyond Hnode_clock Hspan'. word. }
     rewrite bool_decide_eq_false_2 //. wp_auto.
     (* start: where the span begins in the node *)
     wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗ ∃ (start_value : w64),
@@ -548,9 +737,10 @@ Proof using Type*.
         "stop" ∷ stop_ptr ↦ stop_value ∗ "node" ∷ node_ptr ↦ node_loc ∗
         "end" ∷ end_ptr ↦ w64_word_instance.(word.add) span.(yjs.idSpan.id').(yjs.id.clock') span.(yjs.idSpan.len') ∗
         "Hval" ∷ node_loc ↦{#1/2} node_value ∗
-        "%Hstop" ∷ ⌜(uint.Z stop_value ≤ Z.of_nat (length (run_items r)) ∧
-                     uint.Z node_value.(yjs.item.id').(yjs.id.clock') + uint.Z stop_value ≤
-                     uint.Z span.(yjs.idSpan.id').(yjs.id.clock') + uint.Z span.(yjs.idSpan.len'))%Z⌝)%I
+        "%Hstop" ∷ ⌜(uint.Z stop_value =
+                     Z.min (Z.of_nat (length (run_items r)))
+                           (uint.Z span.(yjs.idSpan.id').(yjs.id.clock') + uint.Z span.(yjs.idSpan.len') -
+                            uint.Z node_value.(yjs.item.id').(yjs.id.clock')))%Z⌝)%I
         with "[stop node end Hval]".
     { iSplitR; first done. iExists _. iFrame "stop node end Hval". iPureIntro.
       move: Hcontent_length l. word. }
@@ -569,7 +759,12 @@ Proof using Type*.
            ∃ (name : go_string) (parent : loc) (tm : type_model) (r : ItemRun) (it : YjsItem A),
              bind !! name = Some parent ∧ p !! parent = Some tm ∧
              r ∈ tm_runs tm ∧ it ∈ run_items r ∧
-             op = (RootId name, input_of_item it) ∧ item_id it ∈ span_ids span)⌝)%I
+             op = (RootId name, input_of_item it) ∧ item_id it ∈ span_ids span)⌝ ∗
+        "%Hgrown" ∷ ⌜∀ op, op ∈ expand_inputs appended -> op ∈ expand_inputs appended_now⌝ ∗
+        "%Hnode_reached" ∷ ⌜∀ k, run_covers_clock r k ->
+           (uint.nat span.(yjs.idSpan.id').(yjs.id.clock') <= k <
+            uint.nat span.(yjs.idSpan.id').(yjs.id.clock') + uint.nat span.(yjs.idSpan.len'))%nat ->
+           ∃ op, op ∈ expand_inputs appended_now ∧ in_id op.2 = MkYjsId (run_client r) k⌝)%I
         with "[s structs node start stop Hstructs Hcall]".
     { have Hpart : (uint.nat start_value < uint.nat stop_value <= length (run_items r))%nat.
       { move: l Hstop. word. }
@@ -590,8 +785,7 @@ Proof using Type*.
         { iExactEq "Hsl". f_equal. }
         iFrame "Hcap".
         iApply (big_sepL2_app with "Hitems"). iSplit; last done. iExact "Hitem". }
-      iPureIntro. move=> op. rewrite expand_inputs_app elem_of_app.
-      move=> [Hold | Hnew]; first exact (Happended op Hold).
+      iPureIntro.
       have Hhead : run_items r !! 0%nat = Some (run_head_item r).
       { rewrite /run_head_item. destruct Hrun as [Hrun_nonempty _].
         destruct (run_items r); [done | reflexivity]. }
@@ -600,6 +794,30 @@ Proof using Type*.
         apply run_wf_take; first lia. apply run_wf_drop; [lia | exact Hrun]. }
       have Hpart_per_char : run_per_char (split_run_left (split_run_right r (uint.nat start_value)) (uint.nat stop_value - uint.nat start_value))
         := run_per_char_split_left _ _ (run_per_char_split_right r _ Hper_char).
+      split_and!; last first.
+      { (* every clock of the span that the node covers is in the part *)
+        move=> covered [Hk_low Hk_high] [Hk_first Hk_end].
+        rewrite /run_clock in Hk_low Hk_high.
+        have [it Hit] : is_Some (run_items r !! (covered - clock (item_id (run_head_item r)))%nat).
+        { apply lookup_lt_is_Some. lia. }
+        exists (RootId name, input_of_item it). split.
+        - rewrite expand_inputs_app elem_of_app. right.
+          rewrite /expand_inputs /= app_nil_r.
+          rewrite (expand_input_input_of_run _ (split_run_left (split_run_right r (uint.nat start_value)) (uint.nat stop_value - uint.nat start_value)) Hpart_wf Hpart_per_char).
+          apply list_elem_of_fmap. exists it. split; first reflexivity.
+          rewrite /split_run_left /split_run_right /=.
+          apply (list_elem_of_lookup_2 _ (covered - clock (item_id (run_head_item r)) - uint.nat start_value)%nat).
+          apply lookup_take_Some. split.
+          + rewrite lookup_drop.
+            replace (uint.nat start_value + (covered - clock (item_id (run_head_item r)) - uint.nat start_value))%nat
+              with (covered - clock (item_id (run_head_item r)))%nat; first exact Hit.
+            move: Hstart Hnode_clock Hk_low Hk_first. word.
+          + move: Hstart Hstop Hnode_clock Hk_low Hk_high Hk_first Hk_end Hspan'. word.
+        - rewrite /= (run_wf_lookup_clock (run_items r) _ (run_head_item r) it Hrun Hhead Hit) /run_client.
+          f_equal. lia. }
+      { move=> op Hop. rewrite expand_inputs_app elem_of_app. by left. }
+      move=> op. rewrite expand_inputs_app elem_of_app.
+      move=> [Hold | Hnew]; first exact (Happended op Hold).
       move: Hnew. rewrite /expand_inputs /= app_nil_r.
       rewrite (expand_input_input_of_run _ (split_run_left (split_run_right r (uint.nat start_value)) (uint.nat stop_value - uint.nat start_value)) Hpart_wf Hpart_per_char).
       move=> /list_elem_of_fmap [it [-> Hit]].
@@ -620,17 +838,34 @@ Proof using Type*.
       - rewrite Hspan_client. f_equal. move: Hstart Hnode_clock. word.
       - apply elem_of_seq. move: Hstart Hstop Hnode_clock Hoffset_bound Hspan'. word. }
     { iSplitR; first done. iExists result_slice, appended.
-      iFrame "s structs node start stop Hstructs Hcall". done. }
+      iFrame "s structs node start stop Hstructs Hcall".
+      iPureIntro. split_and!; [exact Happended | done |].
+      (* a node whose part is empty covers no clock of the span *)
+      move=> covered [Hk_low Hk_high] [Hk_first Hk_end]. exfalso.
+      rewrite /run_clock in Hk_low Hk_high.
+      move: n Hstart Hstop Hnode_clock Hk_low Hk_high Hk_first Hk_end Hspan'. word. }
     iIntros (v) "[%Hv HQ]". subst v. iNamed "HQ".
     wp_auto.
     iDestruct ("Hback" with "[Hval]") as "Htypes".
     { iExists node_value, _, _. iFrame "Hval Hnode_left Hnode_right Hnode_content". done. }
     wp_for_post.
     iExists _, result_now, appended_now.
-    iFrame "s nodes first end index structs Hstructs Hcall Hslice Htypes". done. }
+    iFrame "s nodes first end index structs Hstructs Hcall Hslice Htypes".
+    iPureIntro. split; first exact Happended_now.
+    move=> j entry_loc entry_run covered Hj Hlookup Hcovers Hin_span.
+    destruct (decide (j = uint.nat index)) as [-> | Hne].
+    - rewrite Hentry in Hlookup. injection Hlookup as <- <-. exact (Hnode_reached covered Hcovers Hin_span).
+    - have Hj' : (uint.nat found_index <= j < uint.nat index)%nat.
+      { clear -Hj Hne Hinside Hnodes_nonneg. word. }
+      destruct (Hcovered j entry_loc entry_run covered Hj' Hlookup Hcovers Hin_span) as (op & Hop & Hop_id).
+      exists op. split; [exact (Hgrown op Hop) | exact Hop_id]. }
   { (* no node covers the span's first clock: nothing to append *)
     iSplitR; first done. iExists structs_slice, []. rewrite app_nil_r.
-    iFrame "structs Hstructs Hcall Hslice Htypes". iPureIntro. by move=> op /elem_of_nil. }
+    iFrame "structs Hstructs Hcall Hslice Htypes". iPureIntro.
+    split; first by move=> op /elem_of_nil.
+    move=> entry_loc entry_run covered Hlr Hcovers [Hk_first _]. exfalso.
+    exact (span_without_first_clock_reaches_nothing locs p _ E _ Hpool_invs Hcontiguous Hlens'
+             (proj2 (proj2 Hsorted)) Hentries Hfound entry_loc entry_run covered Hlr Hcovers Hk_first). }
   iIntros (v) "[%Hv HQ]". subst v. iNamed "HQ".
   wp_auto.
   (* put the read half back together and rejoin the two halves *)
@@ -643,13 +878,23 @@ Proof using Type*.
     iExists items_mref. iFrame "Hitemsf". iExists gm. iFrame "Hmap Hruns". done. }
   iDestruct (own_store_state_split with "[$Hcall $Hread]") as "Hstate".
   iEval (rewrite Qp.div_2) in "Hstate".
-  iApply ("HΦ" $! result_slice appended). iFrame "Hstate Hstructs". done.
+  iApply ("HΦ" $! result_slice appended). iFrame "Hstate Hstructs".
+  iPureIntro.
+  apply (span_structs_hold_span_items locs p bind span E appended Hpool_invs Hregistry_coh Hlens'
+           Hentries Hwalk).
+  move=> op Hop.
+  destruct (Happended op Hop) as (name & parent & tm & r & item & Hname & Hparent & Hr & Hitem & -> & Hid).
+  exists name, item. split; last reflexivity. split; last exact Hid.
+  exists parent, tm. split_and!; [exact Hname | exact Hparent |].
+  rewrite /tm_arr /runs_flatten list_elem_of_join.
+  exists (run_items r). split; first exact Hitem. apply list_elem_of_fmap. by exists r.
 Qed.
 
 (** [store.appendSpanStructs]: the store taken and returned whole
-    ([own_store]) at an unchanged state. The structs appended for a recorded
-    span denote, character by character, items of the store's runs whose ids
-    are ids of the span, each under the name of its run's root. *)
+    ([own_store]) at an unchanged state. The structs appended for a span
+    are, character by character, exactly the items of the store's registry
+    whose ids are ids of the span, each under the name of its root: every
+    such item is in the batch, and nothing else is. *)
 Lemma wp_store__appendSpanStructs (s : loc) (γs : store_names) (γh : history_names)
     (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId)
     (structs_slice : slice.t) (structs : list (TId * IntegrateInput (A := A)))
@@ -675,12 +920,7 @@ Proof using Type*.
   iApply "HΦ". iFrame "Hstructs". iSplitL.
   { iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
     iPureIntro. exact Hds_tomb. }
-  iPureIntro. move=> input Hinput.
-  destruct (Happended input Hinput) as (name & parent & tm & r & item & Hname & Hparent & Hr & Hitem & -> & Hid).
-  exists name, item. split; last reflexivity. split; last exact Hid.
-  exists parent, tm. split_and!; [exact Hname | exact Hparent |].
-  rewrite /tm_arr /runs_flatten list_elem_of_join.
-  exists (run_items r). split; first exact Hitem. apply list_elem_of_fmap. by exists r.
+  iPureIntro. exact Happended.
 Qed.
 
 End store_appendSpanStructs.

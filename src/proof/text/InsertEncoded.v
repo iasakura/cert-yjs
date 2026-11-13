@@ -3,7 +3,7 @@
     ([Transaction.insertedStructs]) and returns their encoding. The insert
     is [text/InsertIn]'s; what this file adds is the meaning of the bytes:
     they are the encoder's output for a batch that is, character by
-    character, the inserted items under the text's root. *)
+    character, exactly the inserted items under the text's root. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -108,20 +108,25 @@ Proof.
     iFrame "Htx".
     iExists L', ins, k0, originLeft, originRight, structs_slice, structs.
     iFrame "Htext' Hcerts Hcs structs Hstructs". iPureIntro. split; first exact Hrun.
-    (* a struct's character has an inserted id, so it is the inserted item *)
-    move=> op Hop.
-    destruct (Hstructs op Hop) as (op_name & op_item & [Hop_item Hop_id] & ->).
-    rewrite left_id_L in Hop_id. apply elem_of_char_ids in Hop_id as (it & Hit & Hit_id).
-    have Hit_model : it ∈ doc_model_get m' (RootId name).
-    { rewrite (proj1 Hreplaced).
-      destruct Hrun as (_ & Hlength & Hitems).
+    (* the inserted items are items of the text's root *)
+    have Hins_model : ∀ it, it ∈ ins -> it ∈ doc_model_get m' (RootId name).
+    { move=> it Hit. rewrite (proj1 Hreplaced).
+      destruct Hrun as (_ & Hlength & Hitems & _).
       apply list_elem_of_lookup in Hit as [position Hposition].
       destruct Hlength as [-> | Hlength]; first by rewrite lookup_nil in Hposition.
       have [unit Hunit] : is_Some (units !! position).
       { apply lookup_lt_is_Some. rewrite -Hlength. exact (lookup_lt_Some _ _ _ Hposition). }
       exact (proj1 (Hitems position it unit Hposition Hunit)). }
-    destruct (Hunique name op_name it op_item Hit_model Hop_item Hit_id) as [<- <-].
-    exists name, it. split; [split; [reflexivity | exact Hit] | reflexivity]. }
+    move=> input. rewrite (Hstructs input). split.
+    - (* a struct's character has an inserted id, so it is the inserted item *)
+      intros (op_name & op_item & [Hop_item Hop_id] & ->).
+      rewrite left_id_L in Hop_id. apply elem_of_char_ids in Hop_id as (it & Hit & Hit_id).
+      destruct (Hunique name op_name it op_item (Hins_model it Hit) Hop_item Hit_id) as [<- <-].
+      exists name, it. split; [split; [reflexivity | exact Hit] | reflexivity].
+    - (* an inserted item is an item of the model with a recorded id *)
+      intros (root & item & [-> Hitem] & ->). exists name, item. split; last reflexivity.
+      split; first exact (Hins_model item Hitem).
+      rewrite left_id_L. apply elem_of_char_ids. by exists item. }
   iIntros "HQ". iDestruct "HQ" as (c h' m' pend' deleted') "HQ".
   iDestruct "HQ" as (L' ins k0 originLeft originRight structs_slice structs)
     "(#Htext' & Hcs & %Hrun & Hcerts & structs & Hstructs & %Hstructs)".

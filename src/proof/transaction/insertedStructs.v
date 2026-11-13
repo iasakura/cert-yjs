@@ -1,10 +1,11 @@
 (** [Transaction.insertedStructs] (issue #131): the structs a transaction
     integrated, read back from the store as decoded update items. What the
     caller learns is stated per character over the transaction's public
-    model: every character the structs carry is an item of the document
-    model whose id the transaction recorded as inserted, under the name of
-    its root. That is what a sender needs to find the certificates of what
-    it is about to encode. *)
+    model: the characters the structs carry are exactly the items of the
+    document model whose ids the transaction recorded as inserted, each
+    under the name of its root. That is what a sender needs to find the
+    certificates of what it is about to encode, and to know that it sends
+    everything the transaction inserted. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -75,7 +76,21 @@ Lemma wp_Transaction__insertedStructs (tr s_loc : loc) (γs : store_names) (γh 
 Proof.
   wp_start as "Htx".
   iDestruct "Htx" as (state ds m0 deleted0) "Htx". iNamed "Htx".
-  iDestruct (own_replica_history_registry_models with "Hreplica_history") as %[Hmodels _].
+  iDestruct (own_replica_history_registry_models with "Hreplica_history") as %[Hmodels Hbound].
+  iAssert (⌜pool_registry_coh (ss_bind state) (ss_pool state)⌝)%I as %Hregistry_coh.
+  { iNamed "Hstore". iNamed "Hcore". iApply (own_store_state_registry_coh with "Hstate"). }
+  (* the items of the registry are the items of the public model *)
+  have Hregistry_items : ∀ (name : P) (item : YjsItem A),
+      registry_has_item (ss_bind state) (ss_pool state) name item <-> item ∈ doc_model_get m (RootId name).
+  { move=> name item. split.
+    - intros (parent & tm & Hname & Hparent & Hitem). by rewrite (Hmodels name parent tm Hname Hparent).
+    - move=> Hitem.
+      have Hnonempty : doc_model_get m (RootId name) ≠ [].
+      { move=> Hnil. rewrite Hnil in Hitem. by apply elem_of_nil in Hitem. }
+      destruct (Hbound _ Hnonempty) as (name' & parent & [= <-] & Hbind).
+      destruct (proj1 Hregistry_coh name parent Hbind) as [tm Htm].
+      exists parent, tm. split_and!; [exact Hbind | exact Htm |].
+      by rewrite -(Hmodels name parent tm Hbind Htm). }
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord". iNamed "Hchanges".
   wp_auto.
   iAssert (∃ (i : w64) (structs_slice : slice.t) (structs : list Input),
@@ -86,16 +101,19 @@ Proof.
       "Hstore" ∷ own_store s_loc γs γh 1 state ds m0 deleted0 ∗
       "Hstructs" ∷ own_update_structs structs_slice (DfracOwn 1) structs ∗
       "%Hi" ∷ ⌜0 ≤ sint.Z i⌝ ∗
-      "%Hstructs_model" ∷ ⌜∀ op, op ∈ expand_inputs structs ->
-         ∃ (name : P) (it : YjsItem A),
-           it ∈ doc_model_get m (RootId name) ∧ op = (RootId name, input_of_item it) ∧
-           item_id it ∈ inserted⌝)%I
+      "%Hstructs_model" ∷ ⌜structs_expand_to_items structs (λ name item,
+           item ∈ doc_model_get m (RootId name) ∧
+           item_id item ∈ ⋃ (span_ids <$> take (sint.nat i) insert_vs))⌝)%I
     with "[tr s i structs Hinsertf Hinsert Hstore]" as "IH".
   { iExists (W64 0), slice.nil, []. iFrame "tr s i structs Hinsertf Hinsert Hstore".
     iSplitL.
     { iExists []. iSplitL; first iApply own_slice_nil. iSplitL; first iApply own_slice_cap_nil.
       by iApply big_sepL2_nil. }
-    iPureIntro. split; first done. by move=> op /elem_of_nil. }
+    iPureIntro. split; first done.
+    move=> input. split; first by move=> /elem_of_nil.
+    intros (name & item & [_ Hid] & _). exfalso.
+    replace (sint.nat (W64 0)) with 0%nat in Hid by word.
+    rewrite take_0 /= in Hid. by apply elem_of_empty in Hid. }
   wp_for "IH".
   iDestruct (own_slice_len with "Hinsert") as %[Hinsert_length Hinsert_nonneg].
   destruct (decide (sint.Z i < sint.Z insert_sl.(slice.len))) as [Hinside | Hpast]; last first.
@@ -103,9 +121,9 @@ Proof.
     rewrite bool_decide_eq_false_2 //. wp_auto.
     iApply ("HΦ" $! structs_slice structs). iFrame "Hstructs".
     iSplitL; last first.
-    { iPureIntro. move=> input Hinput.
-      destruct (Hstructs_model input Hinput) as (name & item & Hitem & -> & Hid).
-      by exists name, item. }
+    { iPureIntro. move: Hstructs_model.
+      rewrite take_ge; last (clear -Hpast Hi Hinsert_length Hinsert_nonneg; word).
+      by rewrite -Hinserted. }
     iExists state, ds, m0, deleted0. iSplitR; first done.
     iFrame "Hstore Hreplica_history". iSplitL; last done.
     iExists changed_locs. iFrame "Hchanged_bound".
@@ -132,14 +150,20 @@ Proof.
   wp_auto.
   wp_for_post.
   iFrame. iPureIntro. split; first (clear -Hinside Hi; word).
-  move=> op. rewrite expand_inputs_app elem_of_app.
-  move=> [Hold | Hnew]; first exact (Hstructs_model op Hold).
-  destruct (Happended op Hnew) as (name & it & [(parent & tm & Hname & Hparent & Hit) Hid] & ->).
-  exists name, it. split_and!; last first.
-  - rewrite Hinserted elem_of_union_list. exists (span_ids span). split; last exact Hid.
-    apply list_elem_of_fmap. exists span. split; [reflexivity | exact (list_elem_of_lookup_2 _ _ _ Hspan_lookup)].
-  - reflexivity.
-  - by rewrite (Hmodels name parent tm Hname Hparent).
+  have Htake : ∀ n : nat, n = S (sint.nat i) ->
+      take n insert_vs = take (sint.nat i) insert_vs ++ [span].
+  { move=> n ->. exact (take_S_r _ _ _ Hspan_lookup). }
+  erewrite Htake; last (clear -Hinside Hi Hinsert_nonneg; word).
+  rewrite fmap_app union_list_app_L /= union_empty_r_L.
+  move=> input. rewrite expand_inputs_app elem_of_app (Hstructs_model input) (Happended input).
+  split.
+  - intros [(name & item & [Hitem Hid] & ->) | (name & item & [Hregistry Hid] & ->)];
+      exists name, item; (split; last reflexivity).
+    + split; first exact Hitem. apply elem_of_union. by left.
+    + split; first by apply Hregistry_items. apply elem_of_union. by right.
+  - intros (name & item & [Hitem Hid] & ->). apply elem_of_union in Hid as [Hid | Hid].
+    + left. by exists name, item.
+    + right. exists name, item. split; last reflexivity. split; [by apply Hregistry_items | exact Hid].
 Qed.
 
 End transaction_insertedStructs.

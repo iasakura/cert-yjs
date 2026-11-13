@@ -128,10 +128,9 @@ func (s *store) getOrCreateYType(name string) *yType {
 // rootName is the name the root type parent is registered under, found by
 // scanning the registry for the key bound to it: Yjs v14.0.0-rc.18
 // findRootTypeKey (src/utils/ID.js:79), which Item.write calls when it writes
-// the parent of a struct that has no origin. yrs 0.27.2 and y-octo 0.1.0
-// keep the name on the type instead and read it there (Branch.name,
-// src/branch.rs:201; YType.root_name, src/doc/types/mod.rs:39). The Go
-// follows Yjs: the registry is the one place a name is kept, so the type's
+// the parent of a struct that has no origin. yrs 0.27.2 keeps the name on
+// the type instead and reads it there (Branch.name, src/branch.rs:201). The
+// Go follows Yjs: the registry is the one place a name is kept, so the type's
 // own fields and their proofs stay as they are. A type is registered under
 // exactly one name, so the scan has one match and does not stop at it (a Go
 // map range in goose has no early exit worth its proof); for a type that is
@@ -153,16 +152,15 @@ func (s *store) rootName(parent *yType) string {
 // integrated node, in code units from the node's first: the wire form that
 // part would be read from (Yjs v14.0.0-rc.18 Item.write(encoder, offset,
 // offsetEnd), src/structs/Item.js:455, which writes a struct from an offset
-// and short of its end; yrs 0.27.2 Item::encode, src/block.rs:780, and y-octo
-// 0.1.0 Item::write, src/doc/codec/item.rs:256, write whole items only, and
-// slice a block before encoding it where they need a part). A part that does
-// not begin at the node's first unit has the unit before it as its left
-// origin, which is what splitting the node there would give (splitItem). A
-// struct names its parent only when it has no origin on either side, as all
-// three references write it. The struct shares the node's right origin id
-// and content, neither of which is written after the node is created
-// (content.go). The caller passes 0 <= start < stop <= it.Len() and holds
-// the storeRef's lock.
+// and short of its end; yrs 0.27.2 Item::encode, src/block.rs:780, writes
+// whole items only, and slices a block before encoding it where it needs a
+// part). A part that does not begin at the node's first unit has the unit
+// before it as its left origin, which is what splitting the node there would
+// give (splitItem). A struct names its parent only when it has no origin on
+// either side, as both references write it. The struct shares the node's
+// right origin id and content, neither of which is written after the node is
+// created (content.go). The caller passes 0 <= start < stop <= it.Len() and
+// holds the storeRef's lock.
 func (s *store) updateItemOfNode(it *item, start uint64, stop uint64) updateItem {
 	originLeftId := it.originLeftId
 	if start > 0 {

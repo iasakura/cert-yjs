@@ -214,9 +214,8 @@ Proof.
   - (* the wire is no longer empty, so the weaker branch is what is owed *)
     rewrite /smoke_coh bool_decide_eq_false_2; last by apply insert_non_empty.
     by iExists _.
-  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm, smoke_input cl a)], [(RootId nm, smoke_input cl a)].
-    iSplitR; first by rewrite decode_encode.
-    iSplitR; first by iPureIntro; apply same_wire_struct_refl.
+  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm, smoke_input cl a)].
+    iSplitR; first by iPureIntro; apply decodes_to_decoded; rewrite decode_encode.
     iSplitR; first by iPureIntro; apply smoke_input_wf.
     rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
     by iFrame "Hcert".
@@ -324,7 +323,8 @@ Proof.
   (* the certificate for what is on the wire comes from the hypothesis *)
   iAssert (is_op_cert γh (t, OpInsert (smoke_input clX aX))) as "#HcertX".
   { rewrite Hw big_sepM_singleton.
-    iDestruct "Hwire" as (decoded inputs) "(%Hd & %Hsame & %Hwfw & Hc)".
+    iDestruct "Hwire" as (inputs) "(%Hdecodes & %Hwfw & Hc)".
+    destruct Hdecodes as (decoded & Hd & Hsame).
     rewrite decode_encode in Hd. injection Hd as <-.
     apply same_wire_struct_no_origin_singleton in Hsame; [| done | done]. subst inputs.
     rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
@@ -368,9 +368,8 @@ Proof.
       (* the peer inserts into a different type than the message it took in *)
       have := f_equal decode Hd. rewrite !decode_encode.
       move=> [=] Ht *. exact (Hnt Ht).
-  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm2, smoke_input cl aY)], [(RootId nm2, smoke_input cl aY)].
-    iSplitR; first by rewrite decode_encode.
-    iSplitR; first by iPureIntro; apply same_wire_struct_refl.
+  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm2, smoke_input cl aY)].
+    iSplitR; first by iPureIntro; apply decodes_to_decoded; rewrite decode_encode.
     iSplitR; first by iPureIntro; apply smoke_input_wf.
     rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
     by iFrame "Hcert".
@@ -480,7 +479,8 @@ Proof.
   iDestruct (relay_coh_open with "Hcoh") as "Hcoh"; first exact Henv.
   iAssert (is_op_cert γh (t, OpInsert (smoke_input clX bX))) as "#HcertX".
   { rewrite Hw big_sepM_singleton.
-    iDestruct "Hwire" as (decoded inputs) "(%Hd & %Hsame & %Hwfw & Hc)".
+    iDestruct "Hwire" as (inputs) "(%Hdecodes & %Hwfw & Hc)".
+    destruct Hdecodes as (decoded & Hd & Hsame).
     rewrite decode_encode in Hd. injection Hd as <-.
     apply same_wire_struct_no_origin_singleton in Hsame; [| done | done]. subst inputs.
     rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
@@ -526,9 +526,8 @@ Proof.
       (* the two differ in whether the operation has an origin at all *)
       have := f_equal decode Hd. rewrite !decode_encode.
       rewrite /anchor_input /smoke_input. move=> [=] *. by [].
-  - rewrite /smoke_prot /yjs_prot. iExists [(t, anchor_input cl clX bY)], [(t, anchor_input cl clX bY)].
-    iSplitR; first by rewrite decode_encode.
-    iSplitR; first by iPureIntro; apply same_wire_struct_refl.
+  - rewrite /smoke_prot /yjs_prot. iExists [(t, anchor_input cl clX bY)].
+    iSplitR; first by iPureIntro; apply decodes_to_decoded; rewrite decode_encode.
     iSplitR; first by iPureIntro; apply anchor_input_wf.
     rewrite expand_inputs_anchor /is_pending_certified big_sepL_singleton.
     by iFrame "Hcert".
@@ -934,9 +933,8 @@ Proof.
     iFrame "Hown". iPureIntro. split.
     + rewrite length_app /= (stream_pos_insert c0 (env_msgs g) n) // -Hlen. lia.
     + move: Hcoh2. rewrite /stream_docm insert_insert_eq //.
-  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm, stream_input cl (length bs) b)], [(RootId nm, stream_input cl (length bs) b)].
-    iSplitR; first by rewrite decode_encode.
-    iSplitR; first by iPureIntro; apply same_wire_struct_refl.
+  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm, stream_input cl (length bs) b)].
+    iSplitR; first by iPureIntro; apply decodes_to_decoded; rewrite decode_encode.
     iSplitR.
     { iPureIntro. apply stream_input_wf. word. }
     rewrite expand_inputs_stream /is_pending_certified big_sepL_singleton.
@@ -1087,8 +1085,9 @@ Proof.
   iDestruct "Hcoh" as (bs h) "(%Hlen & %Hcohst & Hown)".
   (* the certificate for what the peer took in comes off the wire *)
   iAssert (is_op_cert γh (t, OpInsert (smoke_input clX aX))) as "#HcertX".
-  { iDestruct (big_sepM_lookup _ _ kX with "Hwire") as (decoded inputs) "(%Hd & %Hsame & %Hwfw & Hc)";
+  { iDestruct (big_sepM_lookup _ _ kX with "Hwire") as (inputs) "(%Hdecodes & %Hwfw & Hc)";
       first exact HkX.
+    destruct Hdecodes as (decoded & Hd & Hsame).
     rewrite decode_encode in Hd. injection Hd as <-.
     apply same_wire_struct_no_origin_singleton in Hsame; [| done | done]. subst inputs.
     rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
@@ -1128,9 +1127,8 @@ Proof.
     + rewrite length_app /= (stream_pos_insert c0 (env_msgs g) n) // -Hlen. lia.
     + rewrite decide_False; last by destruct bs.
       move: Hcoh3. rewrite /full_model insert_insert_ne // insert_insert_eq //.
-  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm2, stream_input cl (length bs) b)], [(RootId nm2, stream_input cl (length bs) b)].
-    iSplitR; first by rewrite decode_encode.
-    iSplitR; first by iPureIntro; apply same_wire_struct_refl.
+  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm2, stream_input cl (length bs) b)].
+    iSplitR; first by iPureIntro; apply decodes_to_decoded; rewrite decode_encode.
     iSplitR.
     { iPureIntro. apply stream_input_wf. word. }
     rewrite expand_inputs_stream /is_pending_certified big_sepL_singleton.
