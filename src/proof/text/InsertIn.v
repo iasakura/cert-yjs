@@ -182,7 +182,7 @@ Proof.
       iExists changed_locs. iFrame "Hchanges Hchanged_bound". iPureIntro.
       split_and!; [exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
     iSplit.
-    { iPureIntro. split_and!; [| left; reflexivity |].
+    { iPureIntro. split_and!; [| left; reflexivity | | simpl; lia].
       - apply (sorted_subseteq_sublist L (tm_arr ts) Hinvarr0 Hsorted (yai_sorted _ Hinvarr0)). exact HLts.
       - intros i it b Hii. rewrite lookup_nil in Hii. inversion Hii. }
     iSplit; first (iPureIntro; rewrite -Hmt; apply doc_model_replaced_same).
@@ -231,7 +231,7 @@ Proof.
       iExists changed_locs. iFrame "Hchanges Hchanged_bound". iPureIntro.
       split_and!; [exact Hinserted_dom | exact Htombstoned_sub | exact Hrecorded]. }
     iSplit.
-    { iPureIntro. split_and!; [| left; reflexivity |].
+    { iPureIntro. split_and!; [| left; reflexivity | | simpl; lia].
       - apply (sorted_subseteq_sublist L (tm_arr ts) Hinvarr0 Hsorted (yai_sorted _ Hinvarr0)). exact HLts.
       - intros i it b Hii. rewrite lookup_nil in Hii. inversion Hii. }
     iSplit; first (iPureIntro; rewrite -Hmt; apply doc_model_replaced_same).
@@ -1228,7 +1228,10 @@ Proof.
       + exact Hid.
       + exact Hror.
       + exact Horg.
-      + exact Hchain. }
+      + exact Hchain.
+    - (* the overflow guard: the run's clocks stay in a machine word *)
+      have Hins_length : length ins = length units by (rewrite Hinslen; exact Hjend).
+      rewrite Hins_length. move: Hnoof. word. }
   iSplit; first (iPureIntro; apply doc_model_replaced_insert).
   iFrame "Hcertsj".
 Qed.

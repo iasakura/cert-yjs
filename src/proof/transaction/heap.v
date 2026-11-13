@@ -44,6 +44,8 @@
     - [own_transaction_observed_agree]: inside a transaction that did not
       change a root, an observer's half of its token is at the root's
       current snapshot (what [Mirror.Check] reads off).
+    - [own_transaction_item_unique]: two items of the transaction's model
+      with one id are one item of one root.
     - [own_transaction_accept_batch] / [own_transaction_client_pin] /
       [own_transaction_history_lb]: the data-level accept-batch update,
       client-pin read and history lower bound, lifted through the sealed
@@ -482,6 +484,42 @@ Proof.
   move=> Hin. apply Hnot.
   destruct (Hmarked parent Hin) as (nm & Hnm & Hnmlk).
   rewrite (proj1 (proj2 Hregcoh) nm name parent Hnmlk Hbindlk) in Hnm. exact Hnm.
+Qed.
+
+(** One id, one item, in the transaction's public model: two items of the
+    document with the same id are one item of one root (the pool's
+    [pool_item_unique] through the registry). What lets a caller identify an
+    item it is handed by its id ([Text.InsertEncoded] matches the structs a
+    transaction read back against the items it inserted). *)
+Lemma own_transaction_item_unique (tr s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
+  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed -∗
+  ⌜∀ (name1 name2 : P) (item1 item2 : YjsItem A),
+     item1 ∈ doc_model_get m (RootId name1) -> item2 ∈ doc_model_get m (RootId name2) ->
+     item_id item1 = item_id item2 -> name1 = name2 ∧ item1 = item2⌝.
+Proof.
+  iIntros "Htx". iDestruct "Htx" as (state ds m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct (own_replica_history_registry_models with "Hreplica_history") as %[Hmodels Hbound].
+  iNamed "Hstore". iNamed "Hcore".
+  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpool_invs.
+  iDestruct (own_store_state_registry_coh with "Hstate") as %(Hregistered & Hinjective & _).
+  iPureIntro. move=> name1 name2 item1 item2 Hitem1 Hitem2 Hid.
+  have Hslot : ∀ (name : P) (item : YjsItem A), item ∈ doc_model_get m (RootId name) ->
+      ∃ parent tm, ss_bind state !! name = Some parent ∧ ss_pool state !! parent = Some tm ∧
+                   item ∈ tm_arr tm.
+  { move=> name item Hitem.
+    have Hnonempty : doc_model_get m (RootId name) ≠ [] by (move=> Hnil; rewrite Hnil in Hitem; by apply elem_of_nil in Hitem).
+    destruct (Hbound _ Hnonempty) as (name' & parent & [= <-] & Hbind).
+    destruct (Hregistered name parent Hbind) as [tm Htm].
+    exists parent, tm. split_and!; [exact Hbind | exact Htm |].
+    by rewrite -(Hmodels name parent tm Hbind Htm). }
+  destruct (Hslot name1 item1 Hitem1) as (parent1 & tm1 & Hbind1 & Htm1 & Hin1).
+  destruct (Hslot name2 item2 Hitem2) as (parent2 & tm2 & Hbind2 & Htm2 & Hin2).
+  destruct (pool_item_unique _ parent1 parent2 tm1 tm2 item1 item2 Hpool_invs Htm1 Hin1 Htm2 Hin2 Hid)
+    as [Hparent Hitem].
+  subst parent2. split; [exact (Hinjective name1 name2 parent1 Hbind1 Hbind2) | exact Hitem].
 Qed.
 
 End transaction_heap.
