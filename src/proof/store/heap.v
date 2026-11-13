@@ -414,7 +414,11 @@ Proof. rewrite /is_parent_name. by destruct opn; apply _. Qed.
     [Hulen = 1] restriction is dropped so a wire item can carry a whole run of
     chained per-char ops), and its decoded parent name
     (when present) is the name of the root type [tid] (issue #49; when absent
-    the batch-level well-formedness pins [tid] through the origins). *)
+    the batch-level well-formedness pins [tid] through the origins). The
+    name is present exactly when the struct has no origin ([Hborrow], an
+    equivalence since issue #131): that is what the wire carries, and it is
+    what lets one heap struct denote any input that is the same wire struct
+    ([own_update_structs_same_wire_struct]). *)
 Definition is_update_item (updateItemVal : yjs.updateItem.t)
     (typedInput : TId * IntegrateInput (A := A)) : iProp Σ :=
   ∃ (oleft oright : option yjs.id.t) (opn : option go_string),
@@ -427,7 +431,7 @@ Definition is_update_item (updateItemVal : yjs.updateItem.t)
     "#Hin_c" ∷ updateItemVal.(yjs.updateItem.content') ↦*□ in_content typedInput.2 ∗
     "%Hunonempty" ∷ ⌜(1 <= length (in_content typedInput.2))%nat⌝ ∗
     "%Htid" ∷ ⌜∀ nm, opn = Some nm -> typedInput.1 = RootId nm⌝ ∗
-    "%Hborrow" ∷ ⌜opn = None -> in_originId typedInput.2 ≠ None ∨ in_rightOriginId typedInput.2 ≠ None⌝.
+    "%Hborrow" ∷ ⌜opn = None <-> input_has_origin typedInput.2⌝.
 
 #[global] Instance is_update_item_persistent updateItemVal typedInput : Persistent (is_update_item updateItemVal typedInput).
 Proof. rewrite /is_update_item. apply _. Qed.
@@ -1807,6 +1811,38 @@ Proof.
     iDestruct (own_slice_agree with "Hsl1 Hsl2") as %<-.
     iCombine "Hsl1 Hsl2" as "Hsl". iCombine "Hcap1 Hcap2" as "Hcap".
     iExists uivs1. by iFrame "∗#".
+Qed.
+
+(** One heap struct denotes every input that is the same wire struct: the
+    struct pins its input's type only through its parent name, which it has
+    only when the input has no origin, and [same_wire_struct] leaves the type
+    free only when it has one. So the batch a decoder hands over
+    ([codec_spec]) is also the batch the sender certified ([yjs_prot]). *)
+Lemma is_update_item_same_wire_struct (updateItemVal : yjs.updateItem.t)
+    (decoded certified : TId * IntegrateInput (A := A)) :
+  same_wire_struct decoded certified ->
+  is_update_item updateItemVal decoded -∗ is_update_item updateItemVal certified.
+Proof.
+  move=> [Hinput Htype]. iIntros "H". iNamed "H".
+  iExists oleft, oright, opn. rewrite -Hinput.
+  iFrame "HisL HisR HisPN Hin_c". iPureIntro. split_and!; try done.
+  move=> nm Hnm. destruct Htype as [Horigin | <-]; last exact (Htid nm Hnm).
+  have Hnone := proj2 Hborrow Horigin. rewrite Hnone in Hnm. discriminate.
+Qed.
+
+Lemma own_update_structs_same_wire_struct (sl : slice.t) (dq : dfrac)
+    (decoded certified : list (TId * IntegrateInput (A := A))) :
+  Forall2 same_wire_struct decoded certified ->
+  own_update_structs sl dq decoded -∗ own_update_structs sl dq certified.
+Proof.
+  move=> Hsame. iIntros "H". iNamed "H". iExists uivs. iFrame "Hsl Hcap".
+  iDestruct (big_sepL2_length with "Hitems") as %Hlen.
+  iApply big_sepL2_forall. iSplit.
+  { iPureIntro. rewrite Hlen. exact (Forall2_length _ _ _ Hsame). }
+  iIntros (i updateItemVal y Hu Hy).
+  destruct (Forall2_lookup_r _ _ _ _ _ Hsame Hy) as (x & Hx & Hxy).
+  iDestruct (big_sepL2_lookup _ _ _ i _ _ Hu Hx with "Hitems") as "Hitem".
+  iApply (is_update_item_same_wire_struct _ _ _ Hxy with "Hitem").
 Qed.
 
 Lemma own_delete_spans_split (sl : slice.t) (q1 q2 : Qp)

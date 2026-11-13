@@ -153,6 +153,26 @@ func TestWireEncoderGapAndClients(t *testing.T) {
 	expectWireRoundTrip(t, structs)
 }
 
+// A struct whose first clock an earlier struct already covers is left out,
+// so that what comes back is still made of the given structs.
+func TestWireEncoderRepeatedStruct(t *testing.T) {
+	root := "root"
+	first := updateItem{id: newId(1, 0), parentName: &root, content: []uint16{'a', 'b'}}
+	left := newId(1, 0)
+	inside := updateItem{id: newId(1, 1), originLeftId: &left, content: []uint16{'b'}}
+	ok, decoded, _ := WireCodec()(WireEncoder()([]updateItem{first, first, inside}))
+	if !ok {
+		t.Fatal("the encoder's output does not decode")
+	}
+	want := []plainStruct{
+		{id: newId(1, 0), parentName: "root", hasParent: true, content: []uint16{'a'}},
+		{id: newId(1, 1), originLeft: newId(1, 0), hasLeft: true, content: []uint16{'b'}},
+	}
+	if got := plainStructs(decoded); !reflect.DeepEqual(got, want) {
+		t.Fatalf("decoded:\n got %+v\nwant %+v", got, want)
+	}
+}
+
 // The two halves of a surrogate pair typed in one insert are two one-unit
 // structs; the encoder joins them, so the pair crosses the wire as one code
 // point and comes back as the same two structs.

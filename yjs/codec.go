@@ -306,10 +306,14 @@ func encodeRun(e *encoder, run []*item, name map[id]string) {
 // range (writeStructs, src/utils/encoding-helpers.js:51-56), and structs
 // that continue each other are joined into one (joinableStructs), so that
 // the two halves of a surrogate pair typed as two one-unit items leave as one
-// code point (see the file comment). The structs must cover pairwise
-// disjoint ids, as a transaction's insert set does, and a struct with no
-// origin must name its parent; a lone surrogate is written as U+FFFD (issue
-// #233), which WireCodec does not read back as the unit that was given.
+// code point (see the file comment). A struct that starts at a clock an
+// earlier struct of the list already covers is left out (a transaction's
+// insert set has no such struct), so that whatever is given, every struct
+// WireCodec reads back is one of the given structs' units: the contract the
+// proofs assume of the pair (codec_roundtrip, src/proof/yjs_prot.v). A struct
+// with no origin must name its parent. A lone surrogate is written as U+FFFD
+// (issue #233), which WireCodec does not read back as the unit that was
+// given; the contract leaves surrogates out.
 func WireEncoder() Encoder {
 	return encodeUpdateItems
 }
@@ -343,6 +347,12 @@ func encodeUpdateItems(structs []updateItem) []byte {
 		next := own[0].id.clock
 		for _, st := range own {
 			n := len(section)
+			if n > 0 && st.id.clock < next {
+				// starts at a clock that is already written: the wire's
+				// one clock range per client cannot carry it a second
+				// time, so it is left out.
+				continue
+			}
 			if st.id.clock > next {
 				section = append(section, wireStruct{skip: st.id.clock - next})
 				section = append(section, wireStruct{run: []updateItem{st}})
