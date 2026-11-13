@@ -295,6 +295,140 @@ func encodeRun(e *encoder, run []*item, name map[id]string) {
 	e.writeVarString(encodeWireString(units))
 }
 
+// WireEncoder is the deployment's Encoder (the type is in doc.go): the v1
+// encoding of the given structs followed by an empty delete set. What
+// WireCodec reads back from it is the given structs split into one-unit
+// items, each client's in clock order, clients in descending order.
+//
+// Per client the structs are sorted by clock and written as the wire's one
+// contiguous clock range: a gap between two structs is written as a Skip
+// struct, which is how Yjs v14.0.0-rc.18 writes an id set that is not one
+// range (writeStructs, src/utils/encoding-helpers.js:51-56), and structs
+// that continue each other are joined into one (joinableStructs), so that
+// the two halves of a surrogate pair typed as two one-unit items leave as one
+// code point (see the file comment). A struct that starts at a clock an
+// earlier struct of the list already covers is left out (a transaction's
+// insert set has no such struct), so that whatever is given, every struct
+// WireCodec reads back is one of the given structs' units: the contract the
+// proofs assume of the pair (codec_roundtrip, src/proof/yjs_prot.v). A struct
+// with no origin must name its parent. A lone surrogate is written as U+FFFD
+// (issue #233), which WireCodec does not read back as the unit that was
+// given; the contract leaves surrogates out.
+func WireEncoder() Encoder {
+	return encodeUpdateItems
+}
+
+// wireStruct is one struct of a client's section as it is written: a Skip of
+// skip clocks when run is empty, otherwise the joined run of structs.
+type wireStruct struct {
+	skip uint64
+	run  []updateItem
+}
+
+func encodeUpdateItems(structs []updateItem) []byte {
+	e := &encoder{}
+
+	byClient := map[Client][]updateItem{}
+	for _, st := range structs {
+		if len(st.content) == 0 {
+			// covers no clock: nothing to write.
+			continue
+		}
+		byClient[st.id.clientId] = append(byClient[st.id.clientId], st)
+	}
+
+	clients := sortedClientsDesc(byClient)
+	e.writeVarUint(uint64(len(clients)))
+	for _, client := range clients {
+		own := byClient[client]
+		sort.SliceStable(own, func(i, j int) bool { return own[i].id.clock < own[j].id.clock })
+
+		var section []wireStruct
+		next := own[0].id.clock
+		for _, st := range own {
+			n := len(section)
+			if n > 0 && st.id.clock < next {
+				// starts at a clock that is already written: the wire's
+				// one clock range per client cannot carry it a second
+				// time, so it is left out.
+				continue
+			}
+			if st.id.clock > next {
+				section = append(section, wireStruct{skip: st.id.clock - next})
+				section = append(section, wireStruct{run: []updateItem{st}})
+			} else if n > 0 && len(section[n-1].run) > 0 && joinableStructs(section[n-1].run[len(section[n-1].run)-1], st) {
+				section[n-1].run = append(section[n-1].run, st)
+			} else {
+				section = append(section, wireStruct{run: []updateItem{st}})
+			}
+			next = st.id.clock + uint64(len(st.content))
+		}
+
+		e.writeVarUint(uint64(len(section)))
+		e.writeVarUint(client)
+		e.writeVarUint(own[0].id.clock)
+		for _, ws := range section {
+			if len(ws.run) == 0 {
+				e.writeU8(nodeTagSkip)
+				e.writeVarUint(ws.skip)
+			} else {
+				encodeStructRun(e, ws.run)
+			}
+		}
+	}
+
+	// the empty delete set.
+	e.writeVarUint(0)
+	return e.buf
+}
+
+// joinableStructs reports whether next continues prev as one wire struct:
+// the next clock of the same client, its left origin prev's last id, and the
+// same right origin. These are joinable's conditions without the two that
+// need the list (adjacency, the deleted flag): splitStructs gives back
+// exactly these origins when it splits the joined struct, whatever the list
+// looks like.
+func joinableStructs(prev updateItem, next updateItem) bool {
+	last := newId(prev.id.clientId, prev.id.clock+uint64(len(prev.content))-1)
+	return prev.id.clientId == next.id.clientId &&
+		last.clock+1 == next.id.clock &&
+		next.originLeftId != nil && *next.originLeftId == last &&
+		idOptEqual(prev.originRightId, next.originRightId)
+}
+
+// encodeStructRun writes one struct for a joinable run of decoded structs:
+// encodeRun over structs instead of nodes, the parent name read from the
+// head struct.
+func encodeStructRun(e *encoder, run []updateItem) {
+	head := run[0]
+	info := byte(contentTypeString)
+	if head.originLeftId != nil {
+		info |= infoHasLeftID
+	}
+	if head.originRightId != nil {
+		info |= infoHasRightID
+	}
+	e.writeU8(info)
+
+	if head.originLeftId != nil {
+		e.writeItemID(*head.originLeftId)
+	}
+	if head.originRightId != nil {
+		e.writeItemID(*head.originRightId)
+	}
+
+	if info&infoHasSibling == 0 {
+		e.writeVarUint(1) // 1 => Parent::String
+		e.writeVarString(*head.parentName)
+	}
+
+	var units []uint16
+	for _, st := range run {
+		units = append(units, st.content...)
+	}
+	e.writeVarString(encodeWireString(units))
+}
+
 func encodeOrderRange(e *encoder, r orderRange) {
 	ranges := rangesOf(r)
 	e.writeVarUint(uint64(len(ranges)))

@@ -125,6 +125,101 @@ func (s *store) getOrCreateYType(name string) *yType {
 	return y
 }
 
+// rootName is the name the root type parent is registered under, found by
+// scanning the registry for the key bound to it: Yjs v14.0.0-rc.18
+// findRootTypeKey (src/utils/ID.js:79), which Item.write calls when it writes
+// the parent of a struct that has no origin. yrs 0.27.2 keeps the name on
+// the type instead and reads it there (Branch.name, src/branch.rs:201). The
+// Go follows Yjs: the registry is the one place a name is kept, so the type's
+// own fields and their proofs stay as they are. A type is registered under
+// exactly one name, so the scan has one match and does not stop at it (a Go
+// map range in goose has no early exit worth its proof); for a type that is
+// not registered, which no caller passes, Yjs throws and this returns "".
+// Callers hold the storeRef's lock.
+func (s *store) rootName(parent *yType) string {
+	result := ""
+	// The range binds the key only and looks the value up: goose translates
+	// a range that binds both to a body whose value parameter is misnamed.
+	for name := range s.types {
+		if s.types[name] == parent {
+			result = name
+		}
+	}
+	return result
+}
+
+// updateItemOfNode is the decoded struct of the part [start, stop) of one
+// integrated node, in code units from the node's first: the wire form that
+// part would be read from (Yjs v14.0.0-rc.18 Item.write(encoder, offset,
+// offsetEnd), src/structs/Item.js:455, which writes a struct from an offset
+// and short of its end; yrs 0.27.2 Item::encode, src/block.rs:780, writes
+// whole items only, and slices a block before encoding it where it needs a
+// part). A part that does not begin at the node's first unit has the unit
+// before it as its left origin, which is what splitting the node there would
+// give (splitItem). A struct names its parent only when it has no origin on
+// either side, as both references write it. The struct shares the node's
+// right origin id and content, neither of which is written after the node is
+// created (content.go). The caller passes 0 <= start < stop <= it.Len() and
+// holds the storeRef's lock.
+func (s *store) updateItemOfNode(it *item, start uint64, stop uint64) updateItem {
+	originLeftId := it.originLeftId
+	if start > 0 {
+		before := newId(it.id.clientId, it.id.clock+start-1)
+		originLeftId = &before
+	}
+	var parentName *string
+	if originLeftId == nil && it.originRightId == nil {
+		name := s.rootName(it.parent)
+		parentName = &name
+	}
+	return updateItem{
+		id:            newId(it.id.clientId, it.id.clock+start),
+		originLeftId:  originLeftId,
+		originRightId: it.originRightId,
+		parentName:    parentName,
+		content:       it.content.content[start:stop],
+	}
+}
+
+// appendSpanStructs appends to structs the decoded structs of the ids of
+// recorded, in clock order: the nodes of that client's run list from the one
+// that covers the span's first clock up to the span's end, the first from
+// the span's first clock on and the last short of the span's end when the
+// span begins or ends inside a node (Yjs v14.0.0-rc.18 writeStructs,
+// src/utils/encoding-helpers.js:18, walks findIndexSS the same way and
+// writes the first and the last struct with an offset, :59-61). Every id of
+// a struct it appends is an id of the span. Callers hold the storeRef's
+// lock.
+func (s *store) appendSpanStructs(structs []updateItem, recorded idSpan) []updateItem {
+	nodes := s.items[recorded.id.clientId]
+	first := recorded.id.clock
+	end := first + recorded.len
+	index, found := getNodeIndex(nodes, first)
+	if found {
+		for index < uint64(len(nodes)) {
+			node := nodes[index]
+			if node.id.clock >= end {
+				break
+			}
+			start := uint64(0)
+			if node.id.clock < first {
+				start = first - node.id.clock
+			}
+			stop := node.Len()
+			if end-node.id.clock < stop {
+				stop = end - node.id.clock
+			}
+			if start < stop {
+				// (a node of the walk that holds no clock of the span
+				// contributes nothing)
+				structs = append(structs, s.updateItemOfNode(node, start, stop))
+			}
+			index = index + 1
+		}
+	}
+	return structs
+}
+
 // getNodeIndex finds the index of the node whose run covers clock, by binary
 // search over the per-client node list (y-octo: store::get_node_index).
 func getNodeIndex(nodes []*item, clock uint64) (uint64, bool) {

@@ -243,6 +243,36 @@ func (tr *Transaction) applyUpdate(structs []updateItem) {
 	s.pending = pending
 }
 
+// insertedStructs reads the structs this transaction integrated back from
+// the store as decoded update items, in insert-set order: for each span of
+// tr.insertSet, the structs of the nodes that cover it
+// (store.appendSpanStructs). It is the verified-subset counterpart of Yjs
+// v14.0.0-rc.18 writeStructsFromTransaction (src/utils/encoding-helpers.js:96),
+// which writes the transaction's insertSet from the struct store; the bytes
+// are the Encoder's (doc.go).
+//
+// The references differ in what a transaction's update holds. Yjs writes
+// the insert set (above). yrs 0.27.2 writes every block at or past the
+// state vector the transaction began with (TransactionMut::encode_update_v1
+// over store.write_blocks_from(before_state), src/transaction.rs:597-627).
+// The Go follows Yjs, because the insert set is the record the
+// transaction already keeps; for a transaction of local edits the two
+// readings give the same structs.
+//
+// A recorded span begins where a node begins and ends where a node ends
+// (recordInsert records whole nodes, and a later split only cuts a node in
+// two), so a node split after it was recorded is read back as its parts.
+// appendSpanStructs does not rely on that: it cuts the first and the last
+// node to the span, as Yjs does.
+func (tr *Transaction) insertedStructs() []updateItem {
+	s := tr.store
+	var structs []updateItem
+	for i := 0; i < len(tr.insertSet); i++ {
+		structs = s.appendSpanStructs(structs, tr.insertSet[i])
+	}
+	return structs
+}
+
 // transact runs f as one transaction: lock, f, notify, unlock (Yjs transact,
 // src/utils/Transaction.js:391-422, without the reentrant branch; yrs
 // transact_mut takes the store's write guard and commits on drop,
