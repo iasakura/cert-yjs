@@ -39,27 +39,29 @@ the decoding side.
   edit (insert inside a transaction, read the transaction's structs, encode,
   send, trace the root's report); `Serve` is the receive loop (apply, trace
   the root's report). `Run` is the scripted client the closed theorem boots:
-  connect, serve on a goroutine, type a script one code unit at a time at
-  the end of the text.
-- **Specs.** `wp_Transaction__insertedStructs` returns `own_update_structs`
-  whose inputs are the transaction's inserted items as the model holds them;
-  `encoder_spec encode g` is `codec_spec`'s mirror image; the two abstract
-  halves are tied by the pure hypothesis `codec_roundtrip decode encode`:
-  what `decode` reads back from `encode inputs` is made of wire structs of
-  `inputs`, for batches without surrogate code units (section 4.2). The
-  wire protocol `yjs_prot` changes with it: a decoded struct with an origin
-  is not required to carry the type it is certified under.
-  The client's specs are the server's turned around: `is_Client` persistent,
-  `Insert` consumes a send cursor and produces `yjs_prot` for what it sent
-  (the certificates come from `wp_Text__InsertIn`), `Serve` consumes a
-  receive cursor.
-- **Closed theorem** `ws_system_dist_adequate` (new, `src/proof/demo/ws_system.v`):
-  one server node and client nodes, each a `node_init_cfg`, over an initial
-  global state with no environment channels and a send relation that permits
-  nothing. Hypotheses: the initial state, `codec_spec`, `encoder_spec`,
-  `codec_roundtrip`, and scripts without surrogate code units. No `ws_env_preserves`: it is proved inside the theorem
-  from the send relation. Conclusion: wire totality and `reports_converge`
-  over a trace that now holds every node's reports.
+  connect, serve on a goroutine, type a script at the end of the text, one
+  byte of the script as one code unit.
+- **Specs.** The three functions that read structs back from the store say
+  exactly which characters the returned batch carries
+  (`structs_expand_to_items`, an equivalence): the store's items with an id
+  of the span, the items the transaction inserted, the items one insert
+  created. `encoder_spec encode g` is `codec_spec`'s mirror image; the two
+  abstract halves are tied by the pure hypothesis
+  `codec_roundtrip decode encode`: the encoding of a well-formed batch
+  without surrogate code units decodes to characters of the batch (section
+  4.2). The wire protocol `yjs_prot` changes with it: the bytes decode to
+  the certified batch up to the types the wire does not carry
+  (`decodes_to`). The client's specs follow the server's: `is_Client`
+  persistent, and two bundles of tokens, the send side for the goroutine
+  that calls `Insert` and the receive side for the one that runs `Serve`.
+- **Closed theorem** `ws_system_dist_adequate` (`src/proof/demo/ws_system.v`):
+  one server node and a list of client nodes, over an initial global state
+  whose send relation permits nothing. Hypotheses: the initial state,
+  distinct client ids, `codec_spec`, `encoder_spec`, `codec_roundtrip`. No
+  `ws_env_preserves` (it is proved inside the theorem from the send
+  relation) and no condition on the scripts (a script is bytes, and a byte
+  is never a surrogate code unit). Conclusion: wire totality and
+  `reports_converge` over a trace that now holds every node's reports.
 
 ## 1. Scope
 
@@ -88,7 +90,7 @@ Out of scope, recorded with what the design does about them:
 - **Liveness.** As in the server's theorem: nothing says a message is ever
   delivered.
 
-## 2. References, and the three-way differences met
+## 2. References, and the differences between them met
 
 - **The update of a transaction.** Yjs v14.0.0-rc.18 emits, at transaction
   cleanup, the structs of the transaction's insert set read back from the
@@ -98,8 +100,7 @@ Out of scope, recorded with what the design does about them:
   `writeStructsFromIdSet(encoder, store, transaction.insertSet)`). yrs 0.27.2
   encodes the blocks whose clocks are at or beyond the transaction's
   `before_state` (`src/transaction.rs:597-627`, `encode_update_v1` via
-  `store.write_blocks_from(before_state)`). y-octo 0.1.0 has no transaction;
-  `DocStore::encode_with_state_vector` plays the yrs role. The Go follows
+  `store.write_blocks_from(before_state)`). The Go follows
   Yjs: `Transaction.insertedStructs` walks `tr.insertSet`, the field the
   transaction already keeps (issue #198), and reads each span's items from
   the store's per-client lists. For a transaction of local edits the two
@@ -107,9 +108,8 @@ Out of scope, recorded with what the design does about them:
   its insert set); the insert-set reading is what the existing transaction
   record supports.
 - **The name of a root type.** yrs's `Branch` carries `name: Option<Arc<str>>`
-  ("for root-level types, this is a name of a branch", `src/branch.rs:201`);
-  y-octo's `YType` carries `root_name: Option<String>`
-  (`src/doc/types/mod.rs:39`). Yjs v14 keeps no name on the type and scans
+  ("for root-level types, this is a name of a branch", `src/branch.rs:201`).
+  Yjs v14 keeps no name on the type and scans
   `doc.share` for the key when it writes a struct's parent
   (`findRootTypeKey`, `src/utils/ID.js:79`). The Go follows Yjs:
   `store.rootName` scans `store.types` for the key bound to the type. The
@@ -122,11 +122,10 @@ Out of scope, recorded with what the design does about them:
   coherence `pool_registry_coh` (`src/proof/store/value_cells.v`) already
   says that every registered type has exactly one name, and the functions
   that read the registry are store methods with the whole store at hand.
-- **The wire parent.** All three write a struct's parent only when it has
+- **The wire parent.** Both write a struct's parent only when it has
   no left and no right origin (Yjs v14.0.0-rc.18 `Item.write`,
   `src/structs/Item.js:455-469`; yrs 0.27.2 `Item::encode`,
-  `src/block.rs:780-797`; y-octo 0.1.0 `Item::write`,
-  `src/doc/codec/item.rs:256`). `insertedStructs` fills `parentName` under the
+  `src/block.rs:780-797`). `insertedStructs` fills `parentName` under the
   same rule; `is_update_item` already states it (`Hborrow`,
   `src/proof/store/heap.v`).
 - **Sending.** y-websocket's provider sends every local update as soon as
@@ -225,10 +224,12 @@ func (c *Client) Insert(index uint64, content []uint16) bool
 func (c *Client) Serve()
 
 // Run is the scripted client the closed theorem boots: connect, serve on a
-// goroutine, and type script at the end of the text one code unit at a
-// time. A real client calls Insert from its user interface instead.
+// goroutine, and type script at the end of the text one byte at a time,
+// each byte as one code unit (an ASCII script types its text). A byte is
+// never a surrogate code unit, so the script needs no side condition. A
+// real client calls Insert from its user interface instead.
 func Run(host wsnet.Address, path string, client yjs.Client,
-	decode yjs.Codec, encode yjs.Encoder, name string, script []uint16)
+	decode yjs.Codec, encode yjs.Encoder, name string, script string)
 ```
 
 The transaction that makes the edit also reads the structs back, through a
@@ -263,26 +264,44 @@ return type is, and gives the client one call with one spec.
 
 ## 4. Specs
 
-### 4.1 `wp_Transaction__insertedStructs` (`src/proof/transaction/insertedStructs.v`)
+As verified. Where a statement differs from the first version of this
+document, the difference and its reason are given.
 
-As verified (the first version of this section stated it per struct, which
-does not survive a multi-character node):
+### 4.1 The structs a store, a transaction and an insert hand back
+
+One pure predicate states what all three functions promise about the batch
+they return (`src/proof/store/model.v`):
 
 ```
-{{{ is_pkg_init yjs ∗ own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
-  tr @! (go.PointerType yjs.Transaction) @! "insertedStructs" #()
-{{{ (structs_slice : slice.t) (structs : list Input), RET #structs_slice;
-    own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
-    own_update_structs structs_slice (DfracOwn 1) structs ∗
-    ⌜∀ op, op ∈ expand_inputs structs ->
-       ∃ name it, it ∈ doc_model_get m (RootId name) ∧
-                  op = (RootId name, input_of_item it) ∧ item_id it ∈ inserted⌝ }}}
+Definition structs_expand_to_items structs (holds : go_string -> YjsItem A -> Prop) : Prop :=
+  ∀ input, input ∈ expand_inputs structs <->
+    ∃ name item, holds name item ∧ input = (RootId name, input_of_item item).
 ```
 
-Per character, through `expand_inputs`: a struct may carry several
-characters, the model and the certificates are per character. The store
-half is `wp_store__appendSpanStructs` (over `own_store`), with
-`wp_store__updateItemOfNode` and `wp_store__rootName` under it.
+The characters of the batch (its per-character expansion `expand_inputs`)
+are exactly the items `holds` names, each under the name of its root. Per
+character, because a struct may carry several characters while the model and
+the certificates are per character. An equivalence, so that the spec says
+what the function returns and not only a bound on it: every such item is in
+the batch, and nothing else is.
+
+```
+wp_store__appendSpanStructs (public for the store, over own_store):
+  ... own_update_structs result_slice (DfracOwn 1) (structs ++ appended) ∗
+  ⌜structs_expand_to_items appended (λ name item,
+     registry_has_item (ss_bind state) (ss_pool state) name item ∧ item_id item ∈ span_ids span)⌝
+
+wp_Transaction__insertedStructs:
+  ... own_update_structs structs_slice (DfracOwn 1) structs ∗
+  ⌜structs_expand_to_items structs (λ name item,
+     item ∈ doc_model_get m (RootId name) ∧ item_id item ∈ inserted)⌝
+```
+
+The walk's completeness (every id of the span that the store holds is
+appended) rests on invariants the store already has: a client's node list
+is sorted with disjoint clock ranges, it holds every node of that client,
+and a client's clocks are gap-free (`pool_clocks_contiguous`), so a span
+whose first clock the store does not hold has no later clock in it either.
 
 ### 4.2 The wire protocol, `encoder_spec` and `codec_roundtrip` (`src/proof/yjs_prot.v`)
 
@@ -290,20 +309,32 @@ Three things turned out differently from the first version of this section.
 
 **The protocol.** The bytes of a struct with an origin do not carry its
 root, so no `decode` can report the type such a struct is certified under.
-`yjs_prot` therefore relates what `decode` returns to the certified batch by
-`same_wire_struct` (equal structs, and equal types unless the struct has an
-origin), pointwise:
+The protocol therefore says that the bytes decode to the certified batch up
+to those types:
 
 ```
+Definition decodes_to d inputs : Prop :=
+  ∃ decoded, decode d = Some decoded ∧ Forall2 same_wire_struct decoded inputs.
+
 Definition yjs_prot γh d : iProp Σ :=
-  ∃ decoded inputs,
-    ⌜decode d = Some decoded⌝ ∗ ⌜Forall2 same_wire_struct decoded inputs⌝ ∗
-    ⌜update_wf inputs⌝ ∗ is_pending_certified γh (expand_inputs inputs).
+  ∃ inputs, ⌜decodes_to d inputs⌝ ∗ ⌜update_wf inputs⌝ ∗
+            is_pending_certified γh (expand_inputs inputs).
 ```
 
-A receiver turns the decoder's slice into the certified batch with
-`own_update_structs_same_wire_struct`, which needs `is_update_item` to say
-that a decoded struct has a parent name exactly when it has no origin.
+`same_wire_struct` is equal structs, and equal types unless the struct has
+an origin. A receiver turns the decoder's slice into the certified batch
+with `own_update_structs_same_wire_struct`, which needs `is_update_item` to
+say that a decoded struct has a parent name exactly when it has no origin.
+
+An alternative that was weighed and not taken: give `decode` a wire-level
+codomain, `list (option TypeId * IntegrateInput)`, with the type present
+only on structs without an origin, so that the protocol is an equation
+`decode d = Some (wire_struct <$> inputs)`. It is the more honest model of
+the bytes, and it would remove the made-up types from
+`wp_Doc__ApplyEncodedUpdate`'s postcondition and from the closed theorems'
+conclusions. It changes the type of `decode` in every merged file of the
+server, so it is left as a follow-up; `decodes_to` confines the difference
+to one definition in the meantime.
 
 **The encoder's spec** is `codec_spec`'s mirror image, as planned:
 
@@ -321,27 +352,25 @@ Definition encoder_spec encode encoder : iProp Σ :=
 `decode (encode structs) = Some (expand_inputs structs)`. The real encoder
 reorders (clients descending, clocks ascending), leaves out a struct that
 repeats clocks already written, and writes a lone surrogate code unit as
-U+FFFD (issue #233). The contract the real pair meets, and all a sender's
-safety needs, is an inclusion over batches with no surrogate code unit:
+U+FFFD (issue #233); and the real decoder counts a struct's clocks in
+machine words, so a struct whose clocks would pass 2^64 does not come back
+as its characters. The contract the real pair meets, and all a sender's
+safety needs, is an inclusion over well-formed batches with no surrogate
+code unit:
 
 ```
 Definition codec_roundtrip encode : Prop :=
-  ∀ structs, structs_surrogate_free structs ->
-    ∃ decoded, decode (encode structs) = Some decoded ∧
-      ∀ decoded_struct, decoded_struct ∈ decoded ->
-        ∃ sent_struct, sent_struct ∈ expand_inputs structs ∧
-          same_wire_struct decoded_struct sent_struct.
+  ∀ structs, structs_surrogate_free structs -> update_wf (expand_inputs structs) ->
+    ∃ inputs, decodes_to (encode structs) inputs ∧ inputs ⊆ expand_inputs structs.
 ```
 
-`yjs_prot_encode` is the sender's lemma: from `codec_roundtrip`, a
+It is a trusted hypothesis, so it assumes no more than the proofs use; the
+verified functions of section 4.1 are the ones that say exactly what they
+return. `yjs_prot_encode` is the sender's lemma: from `codec_roundtrip`, a
 surrogate-free batch whose expansion is well formed and certified,
-`yjs_prot γh (encode structs)`. The consequence for the client: its inserts
-must be free of surrogate code units, a precondition of `wp_Client__Insert`
-and a hypothesis on the scripts of the closed theorem.
+`yjs_prot γh (encode structs)`.
 
 ### 4.3 `wp_Text__InsertEncoded` (`src/proof/text/InsertEncoded.v`)
-
-As verified:
 
 ```
 {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗ cs ↦*{dq} units ∗
@@ -353,99 +382,86 @@ As verified:
     ⌜inserted_run L L' ins units client k0 originLeft originRight⌝ ∗
     ([∗ list] it ∈ ins, is_op_cert γh (RootId name, OpInsert (input_of_item it))) ∗
     bytes_slice ↦* encode structs ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) ∗
-    ⌜∀ op, op ∈ expand_inputs structs -> ∃ it, it ∈ ins ∧ op = (RootId name, input_of_item it)⌝ }}}
+    ⌜structs_expand_to_items structs (λ root item, root = name ∧ item ∈ ins)⌝ }}}
 ```
 
-`wp_Text__Insert`'s postcondition with the bytes and their meaning added.
-From it the client derives `yjs_prot decode γh (encode structs)` by
-`yjs_prot_encode`: the certificates of `ins` cover every character of
-`structs`, `update_wf` follows from `inserted_run` (one unit per item,
-a head item names `name`), and surrogate-freeness from the caller's
-content.
+`wp_Text__Insert`'s postcondition with the bytes and their meaning added:
+the bytes are the encoding of a batch that is, character by character,
+exactly the inserted items. For a sender to put them on the wire it also
+needs the inserted ids to fit machine words, which `inserted_run` did not
+say; it gains that bound (`k0 + length ins < 2^64`, what `Text.Insert`'s
+overflow guard establishes). With it, `yjs_prot_encode_inserted_run`
+(`yjs_prot.v`) turns this postcondition, for code units free of surrogates,
+into `yjs_prot decode γh (encode structs)`.
 
 ### 4.4 The client (`src/proof/ws_client.v`)
 
 ```
-Definition is_Client (cl : loc) (γs : store_names) (γh : history_names) (c : ClientId)
-    (sc rc : chan_id) (name : go_string) : iProp Σ :=
-  "#Hconn"    ∷ is_Connection conn sc rc ∗
-  "#Hdoc"     ∷ is_Doc dv s_loc γs γh ∗
-  "#Htext"    ∷ is_Text t γs γh name [] ∅ ∗
-  "#Hhist"    ∷ is_history γh ∗
-  "#Hpin"     ∷ is_store_client γs c ∗
-  "#Hcodec"   ∷ codec_spec decode fdec ∗
-  "#Hencoder" ∷ encoder_spec encode fenc ∗
-  "%Hdeploy"  ∷ ⌜deployment_protocols γh⌝
+is_Client cl γs γh c sc rc name     (persistent)
+own_Client_send_side γs sc    := ∃ n, own_send_cursor sc n ∗ own_read_cap γs
+own_Client_receive_side γs rc := ∃ n, own_recv_cursor rc n ∗ own_read_cap γs
 ```
 
-(with the struct's fields `conn`, `doc`, `text`, `name`, `decode`, `encode`
-pinned to `conn`, `dv`, `t`, `name`, `fdec`, `fenc` under one read-only
-points-to, as `is_Room` does). `deployment_protocols` moves from
-`ws_relay.v` to `yjs_prot.v`, where both the server and the client can
-`Require` it; `is_report` lives in `report/heap.v`, which `yjs_prot.v` does
-not import, so the trace equation's right-hand side is stated over a
-parameter there, or `deployment_protocols` goes to a small shared file
-(`src/proof/deployment.v`) importing both. Settled when written.
+`is_Client` holds the struct read-only (every field is written once, by
+`Connect`), the connection's, the document's and the root text's handles,
+the history handle, the client pin with the empty history lower bound (what
+a report's snapshot is certified against), the two codec specifications
+with `codec_roundtrip`, and `deployment_protocols`. The two sides are
+bundles of tokens keyed by ghost names, as the server's `own_processed` is:
+a cursor of the connection and one read capability of the store (`report`
+snapshots the root under the read lock).
 
 ```
-Lemma wp_Client__Insert cl γs γh c sc rc name (n : nat) (idx : w64) (cs : slice.t) dq units :
-  {{{ is_pkg_init wsclient ∗ is_Client cl γs γh c sc rc name ∗
-      own_send_cursor sc n ∗ own_read_cap γs ∗ cs ↦*{dq} units }}}
-    cl @! (go.PointerType wsclient.Client) @! "Insert" #idx #cs
-  {{{ (err : bool), RET #err;
-      cs ↦*{dq} units ∗ own_read_cap γs ∗
-      ((⌜err = true⌝ ∗ own_send_cursor sc n) ∨
-       (∃ data, own_send_cursor sc (S n) ∗ is_chan_msg sc n data)) }}}.
+wp_Connect: codec_roundtrip decode encode -> deployment_protocols decode γh ->
+  {{{ is_history γh ∗ own_client_history γh (uint.nat client) [] ∗
+      codec_spec decode decoder ∗ encoder_spec encode encoder }}}
+    Connect #host #path #client #decoder #encoder #name
+  {{{ err cl, RET (#err, #cl);
+      if err then own_client_history γh (uint.nat client) []
+      else ∃ γs sc rc, is_Client cl γs γh (uint.nat client) sc rc name ∗
+             own_Client_send_side γs sc ∗ own_Client_receive_side γs rc }}}
+
+wp_Client__Insert: units_surrogate_free units ->
+  {{{ is_Client cl γs γh c sc rc name ∗ own_Client_send_side γs sc ∗ cs ↦*{dq} units }}}
+    cl.Insert #index #cs
+  {{{ err, RET #err; own_Client_send_side γs sc ∗ cs ↦*{dq} units }}}
+
+wp_Client__Serve:
+  {{{ is_Client cl γs γh c sc rc name ∗ own_Client_receive_side γs rc ∗ ws_env_preserves ⊤ }}}
+    cl.Serve #()
+  {{{ RET #(); own_Client_receive_side γs rc }}}
+
+wp_Run: codec_roundtrip decode encode -> deployment_protocols decode γh ->
+  {{{ is_history γh ∗ own_client_history γh (uint.nat client) [] ∗
+      codec_spec decode decoder ∗ encoder_spec encode encoder ∗ ws_env_preserves ⊤ }}}
+    Run #host #path #client #decoder #encoder #name #script
+  {{{ RET #(); True }}}
 ```
 
-What was sent satisfies `ws_prot`, which the state interpretation records;
-the postcondition does not repeat it (as `wp_Room__process` does not). The
-read capability is what `Text.Snapshot` takes the read lock with, for the
-trace.
+What `Insert` sent satisfies `ws_prot`, which the state interpretation
+records; the postcondition does not repeat it. A failed dial hands the
+history element back: the document is created after the dial.
+`ws_env_preserves` is `wp_Receive`'s precondition and stays in `Serve`'s
+spec; in the closed theorem it is proved once from the send relation.
 
-```
-Lemma wp_Client__Serve cl γs γh c sc rc name :
-  {{{ is_pkg_init wsclient ∗ is_Client cl γs γh c sc rc name ∗
-      own_recv_cursor rc 0 ∗ own_read_cap γs ∗ ws_env_preserves ⊤ }}}
-    cl @! (go.PointerType wsclient.Client) @! "Serve" #()
-  {{{ RET #(); ∃ n : nat, own_recv_cursor rc n ∗ own_read_cap γs }}}.
-```
-
-`ws_env_preserves` is `wp_Receive`'s precondition and stays in the lemma;
-in the closed theorem it is proved once from the send relation.
-
-```
-Lemma wp_Connect host path (client : w64) fdec fenc name γh :
-  deployment_protocols γh ->
-  {{{ is_pkg_init wsclient ∗ is_history γh ∗
-      own_client_history γh (uint.nat client) [] ∗
-      codec_spec decode fdec ∗ encoder_spec encode fenc }}}
-    @! wsclient.Connect #host #path #client #fdec #fenc #name
-  {{{ (err : bool) (cl : loc), RET (#err, #cl);
-      if err then True
-      else ∃ γs sc rc, is_Client cl γs (uint.nat client) sc rc name ∗
-             own_send_cursor sc 0 ∗ own_recv_cursor rc 0 ∗
-             [∗] replicate (Z.to_nat rwmutex.actualMaxReaders) (own_read_cap γs) }}}.
-```
-
-On `err` the client's history element is consumed for nothing (the document
-was created before the dial failed, or never); the scripted `Run` returns
-on error. `wp_Run` composes the three; `client_boot` and `wpr_client_boot`
-mirror `server_boot` and `wpr_server_boot` (`halt` on restart: a crashed
-client has lost its document, like the server).
+`deployment_protocols` moves from `ws_relay.v` to `src/proof/deployment.v`,
+which both the server and the client `Require`, together with the package
+initialization of the two packages both import.
 
 ### 4.5 The closed theorem `ws_system_dist_adequate` (`src/proof/demo/ws_system.v`)
 
-Nodes: `server_boot host server_client fdec name` and, per script in a list,
-`client_boot host path client_i fdec fenc name script_i`. Initial global
-state: `ws_msgs = ∅`, `ws_trace = []`, `ws_ext = ∅`, `ws_backlog = ∅`,
-`ws_env_may = λ _ _ _, False`, `ws_wf`. Hypotheses beyond the initial
-state and the RA plumbing: `codec_spec decode fdec`, `encoder_spec encode fenc`,
-`codec_roundtrip decode encode`, distinct client ids, scripts without
-surrogate code units (section 4.2). No `coh0`, no
-`ws_env_preserves`: with `ws_may = λ _ _ _, False` the obligation's first
-premise is `False`, so it is proved inside the theorem for
-`ws_env_coh := λ _, True`.
+Nodes: `server_boot host server_client decoder name` and, per entry of a
+list of `client_config` (path, client id, script),
+`client_boot host path client decoder encoder name script`
+(`wsclient.initialize'` then `wsclient.Run`). Hypotheses beyond the initial
+state and the RA plumbing: the initial world's send relation permits
+nothing (`∀ messages channel data, ¬ ws_env_may messages channel data`),
+the client ids are distinct, `codec_spec decode decoder`,
+`encoder_spec encode encoder`, `codec_roundtrip decode encode`. No `coh0`
+and no `ws_env_preserves`: with a send relation that permits nothing the
+obligation's first premise is false (`ws_env_preserves_silent`), for the
+coherence `λ _, True`. No condition on the scripts: `Run` types a script
+byte by byte, and a byte is below the surrogate range.
 
 Conclusion, for every reachable global state: every message on the wire
 decodes to a well-formed batch, and `reports_converge ws_trace`. The trace
@@ -455,11 +471,10 @@ ids show the same text. That is issue #132 part 2 (the verified population
 needs no conformance assumption) and the safety half of part 3 for the
 states where the id sets agree.
 
-The history is allocated for the set of all node ids
-(`history_alloc {[server; c_1; …]}`), and each node's `wpr` lemma takes its
-own `own_client_history`. `ws_wpd` is a `big_sepL` over the node list; the
-server's conjunct is `wpr_server_boot` as today, each client's is
-`wpr_client_boot`.
+The history is allocated for the set of all node ids, and each node's `wpr`
+lemma takes its own `own_client_history`. `ws_wpd` is a `big_sepL` over the
+node list; the server's conjunct is `wpr_server_boot` as before, each
+client's is `wpr_client_boot`.
 
 ## 5. Ghost architecture
 
@@ -481,7 +496,7 @@ and `Serve` each hold one.
 | **C2** proofs of C1 | the protocol change (`same_wire_struct`, `yjs_prot`, `encoder_spec`, `codec_roundtrip`), then `wp_store__appendSpanStructs`, `wp_Transaction__insertedStructs`, `wp_Text__InsertEncoded`; two pull requests | `./build.sh make` |
 | **C3** Go client | `wsclient/`: `Client`, `Connect`, `Insert`, `Serve`, `Run`; tests against `wsrelay` (two clients converge through the server by the new send path; a report per edit on the trace) | `go test ./wsclient/`, goose translates |
 | **C4** proofs of C3 | `is_Client`, `wp_Connect`, `wp_Client__Insert`, `wp_Client__Serve`, `wp_Run`, `client_boot`, `wpr_client_boot` | `./build.sh make` |
-| **C5** closed theorem | `ws_system_dist_adequate`, server + one scripted client, then the list of clients | theorem Qed, `Print Assumptions` clean under a `.vo` build |
+| **C5** closed theorem | `ws_system_dist_adequate`, server + a list of scripted clients | theorem Qed, `Print Assumptions` clean under a `.vo` build |
 
 C1 and C3 are Go and tests; C2 and C4 are their proofs; each is one PR. C1
 changes no verified function: it only adds new ones (`Text` gains
@@ -506,7 +521,7 @@ changes no verified function: it only adds new ones (`Text` gains
 
 ## 8. Decisions requested
 
-1. A registry scan (Yjs) over `yType.name` (yrs, y-octo): recommended, for
+1. A registry scan (Yjs) over `yType.name` (yrs): recommended, for
    the proof-cost reason in section 2. (The first version recommended the
    field; section 2 says what changed.)
 2. `Text.InsertEncoded` in `yjs` (section 3.5 (a)) over exporting the update
