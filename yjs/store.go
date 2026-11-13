@@ -119,7 +119,7 @@ func newStore(client Client) store {
 func (s *store) getOrCreateYType(name string) *yType {
 	y, ok := s.types[name]
 	if !ok {
-		y = newYType()
+		y = newYType(name)
 		s.types[name] = y
 	}
 	return y

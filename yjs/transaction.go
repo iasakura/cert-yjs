@@ -243,6 +243,72 @@ func (tr *Transaction) applyUpdate(structs []updateItem) {
 	s.pending = pending
 }
 
+// insertedStructs reads the structs this transaction integrated back from
+// the store as decoded update items, in insert-set order: for each span of
+// tr.insertSet, the nodes of that client's run list from the node that
+// starts at the span's first clock up to the span's end. It is the
+// verified-subset counterpart of Yjs v14.0.0-rc.18 writeStructsFromTransaction
+// (src/utils/encoding-helpers.js:96), which writes the transaction's
+// insertSet from the struct store; the bytes are the Encoder's (doc.go).
+//
+// The three references differ in what a transaction's update holds. Yjs
+// writes the insert set (above). yrs 0.27.2 writes every block at or past
+// the state vector the transaction began with (TransactionMut::encode_update_v1
+// over store.write_blocks_from(before_state), src/transaction.rs:597-627).
+// y-octo 0.1.0 has no transaction; DocStore::encode_with_state_vector plays
+// the yrs role. The Go follows Yjs, because the insert set is the record the
+// transaction already keeps; for a transaction of local edits the two
+// readings give the same structs.
+//
+// A recorded span begins where a node begins and ends where a node ends:
+// recordInsert records whole nodes, and a later split (store.splitNode)
+// only cuts a node in two, never moving a node's first clock and never
+// joining nodes. So the walk needs no offset into its first node and no
+// truncation of its last, both of which Yjs has (writeStructs,
+// src/utils/encoding-helpers.js:59-61), and a node split after it was
+// recorded is read back as its parts.
+//
+// A struct names its parent only when it has no origin on either side, as
+// all three references write it (Yjs v14.0.0-rc.18 Item.write,
+// src/structs/Item.js:455-469; yrs 0.27.2 Item::encode, src/block.rs:780-797;
+// y-octo 0.1.0 Item::write, src/doc/codec/item.rs:256). The struct shares the
+// node's origin ids and content slice, neither of which is written after the
+// node is created (content.go).
+func (tr *Transaction) insertedStructs() []updateItem {
+	s := tr.store
+	var structs []updateItem
+	for i := 0; i < len(tr.insertSet); i++ {
+		recorded := tr.insertSet[i]
+		nodes := s.items[recorded.id.clientId]
+		end := recorded.id.clock + recorded.len
+		index, found := getNodeIndex(nodes, recorded.id.clock)
+		if found {
+			for index < uint64(len(nodes)) && nodes[index].id.clock < end {
+				structs = append(structs, updateItemOfNode(nodes[index]))
+				index = index + 1
+			}
+		}
+	}
+	return structs
+}
+
+// updateItemOfNode is the decoded struct of one integrated node: the wire
+// form the node would be read from (insertedStructs has the rules).
+func updateItemOfNode(it *item) updateItem {
+	var parentName *string
+	if it.originLeftId == nil && it.originRightId == nil {
+		name := it.parent.name
+		parentName = &name
+	}
+	return updateItem{
+		id:            it.id,
+		originLeftId:  it.originLeftId,
+		originRightId: it.originRightId,
+		parentName:    parentName,
+		content:       it.content.content,
+	}
+}
+
 // transact runs f as one transaction: lock, f, notify, unlock (Yjs transact,
 // src/utils/Transaction.js:391-422, without the reentrant branch; yrs
 // transact_mut takes the store's write guard and commits on drop,

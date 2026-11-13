@@ -132,6 +132,34 @@ func (t *Text) Insert(index uint64, content []uint16) {
 	})
 }
 
+// InsertEncoded inserts the code units content at the visible index as one
+// transaction, like Insert, and returns the update that carries the edit to
+// other replicas: the structs the transaction integrated
+// (Transaction.insertedStructs), encoded by encode. Yjs v14.0.0-rc.18 hands
+// that update to the document's 'update' handlers when the transaction ends
+// (src/utils/Transaction.js:297-301), and y-websocket v2.1.0 sends it from
+// such a handler (src/y-websocket.js:353-361); yrs 0.27.2 hands it to the
+// callbacks registered with Doc::observe_update_v1, at commit
+// (src/transaction.rs:1031); y-octo 0.1.0 has no transaction and its
+// subscribers poll the store (DocPublisher, src/doc/publisher.rs:15). No
+// handler registry is built here: the caller that makes the edit gets the
+// bytes back and sends them. A divergence from the references, in which the
+// update reaches every handler whoever made the edit.
+//
+// The structs are read inside the transaction and encoded after it: they
+// share the nodes' origin ids and content slices, which are never written
+// once a node exists (content.go), so the encoder needs no lock. An insert
+// that InsertIn refuses (index past the end, clock overflow) yields the
+// encoding of no structs.
+func (t *Text) InsertEncoded(index uint64, content []uint16, encode Encoder) []byte {
+	var structs []updateItem
+	transact(t.store, func(tr *Transaction) {
+		t.InsertIn(tr, index, content)
+		structs = tr.insertedStructs()
+	})
+	return encode(structs)
+}
+
 // InsertIn inserts the code units content at the visible index inside the
 // transaction tr (Yjs ytext.insert inside doc.transact, the implicit
 // doc._transaction made explicit; yrs text.insert(&mut txn, index, chunk)
