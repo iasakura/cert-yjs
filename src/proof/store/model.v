@@ -6,7 +6,9 @@
       integrate inputs, which is how a update refines the
       per-char model.
     - what a decoded batch must satisfy: [input_fits] per struct,
-      [pending_item_rooted] / [is_pending_rooted], bundled as [update_wf].
+      [pending_item_rooted] / [is_pending_rooted], bundled as [update_wf];
+      [input_has_origin] and [same_wire_struct], two type-tagged inputs
+      that are one struct on the wire (issue #131).
     - the wire-level drain: [wire_integrate] applies one ready item,
       [wire_pass] one sweep over the pending list, [wire_drain(_aux)] the fixed
       point, [WireReplay] the resulting replay relation and [wire_ready_total]
@@ -1199,6 +1201,23 @@ Definition update_wf (inputs : list (TId * IntegrateInput (A := A))) : Prop :=
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs -> input_fits typedInput.2) ∧
   is_pending_rooted inputs.
 
+(** [input_has_origin input]: the struct has an origin on at least one
+    side. Such a struct carries no parent on the wire (its type is the type
+    of the origin, found at integration time); a struct with no origin
+    carries the name of its root. *)
+Definition input_has_origin (input : IntegrateInput (A := A)) : Prop :=
+  in_originId input ≠ None ∨ in_rightOriginId input ≠ None.
+
+(** [same_wire_struct decoded certified]: the two type-tagged inputs are one
+    struct on the wire (issue #131): the same id, origins and content, and
+    the same type unless the struct has an origin. The bytes of a struct
+    with an origin do not say which type it belongs to, so what a decoder
+    reports as its type is arbitrary, and the type it is certified under in
+    the history is the sender's knowledge. The wire protocol ([yjs_prot])
+    relates the two lists by this, pointwise. *)
+Definition same_wire_struct (decoded certified : TId * IntegrateInput (A := A)) : Prop :=
+  decoded.2 = certified.2 ∧ (input_has_origin decoded.2 ∨ decoded.1 = certified.1).
+
 (* ----- accepted-id no-loss layer (this branch) ---------------------------- *)
 
 (** The ids currently held in the pending buffer. *)
@@ -2147,6 +2166,60 @@ Proof.
     destruct i as [ci ki]. simpl in *. f_equal; [done | rewrite /k; lia].
 Qed.
 
+
+(** Every struct of a per-char expansion carries one code unit. *)
+Lemma expand_inputs_unit_content (inputs : list (TId * IntegrateInput (A := A)))
+    (op : TId * IntegrateInput (A := A)) :
+  op ∈ expand_inputs inputs -> length (in_content op.2) = 1%nat.
+Proof.
+  rewrite /expand_inputs list_elem_of_join. move=> [l [Hop Hl]].
+  apply list_elem_of_fmap in Hl as [x [-> Hx]].
+  move: Hop. rewrite /expand_input list_elem_of_fmap. move=> [o [-> Ho]]. simpl.
+  apply list_elem_of_lookup in Ho as [k Hk].
+  destruct (ops_from_lookup _ _ _ _ _ _ _ Hk) as (_ & _ & Hchar & _).
+  move: Hchar. rewrite /explode list_lookup_fmap.
+  destruct (in_content x.2 !! k) as [b |]; last done.
+  simpl. by move=> [= <-].
+Qed.
+
+(** [same_wire_struct] is reflexive. *)
+Lemma same_wire_struct_refl (inputs : list (TId * IntegrateInput (A := A))) :
+  Forall2 same_wire_struct inputs inputs.
+Proof. apply Forall2_same_length_lookup. split; first done. move=> i x y Hx Hy. rewrite Hx in Hy. injection Hy as <-. split; [done | by right]. Qed.
+
+(** A struct with no origin is the same wire struct only as itself. *)
+Lemma same_wire_struct_no_origin_singleton (x : TId * IntegrateInput (A := A))
+    (inputs : list (TId * IntegrateInput (A := A))) :
+  in_originId x.2 = None -> in_rightOriginId x.2 = None ->
+  Forall2 same_wire_struct [x] inputs -> inputs = [x].
+Proof.
+  move=> Hleft Hright Hsame.
+  apply Forall2_cons_inv_l in Hsame as (y & rest & [Hinput Htype] & Hrest & ->).
+  apply Forall2_nil_inv_l in Hrest as ->.
+  destruct Htype as [[Horigin | Horigin] | Htype]; [done | done |].
+  destruct x, y. simpl in *. by subst.
+Qed.
+
+(** What a batch must satisfy to be applied ([update_wf]) does not depend
+    on the types of the structs that have an origin, so it holds of a
+    decoded batch when it holds of the batch the sender certified. *)
+Lemma update_wf_same_wire_struct (decoded certified : list (TId * IntegrateInput (A := A))) :
+  Forall2 same_wire_struct decoded certified -> update_wf certified -> update_wf decoded.
+Proof.
+  move=> Hsame [Hfits Hrooted]. split.
+  - move=> x Hx. apply list_elem_of_lookup in Hx as [i Hi].
+    destruct (Forall2_lookup_l _ _ _ _ _ Hsame Hi) as (y & Hy & Heq & _).
+    rewrite Heq. exact (Hfits y (list_elem_of_lookup_2 _ _ _ Hy)).
+  - move=> x Hx. apply list_elem_of_lookup in Hx as [i Hi].
+    destruct (Forall2_lookup_l _ _ _ _ _ Hsame Hi) as (y & Hy & Heq & Htype).
+    have Hy_rooted := Hrooted y (list_elem_of_lookup_2 _ _ _ Hy).
+    move: Hy_rooted. rewrite /pending_item_rooted -Heq.
+    case_decide as Hno_origin; last done.
+    destruct Htype as [[Hleft | Hright] | Htype].
+    + by destruct Hno_origin.
+    + by destruct Hno_origin.
+    + by rewrite Htype.
+Qed.
 
 (** A wire item's per-char ops carry its char ids, so a batch's char ids are
     the ids its per-char replay inserts ([replay_ids]). *)

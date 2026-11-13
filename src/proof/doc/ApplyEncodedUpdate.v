@@ -73,22 +73,30 @@ Lemma wp_Doc__ApplyEncodedUpdate (dv s_loc : loc) (γs : store_names)
       is_applied_certs γs applied m' }}}.
 Proof.
   wp_start as "(#His_doc & #Hishist & #Hpin & #Hcodec & Hs & #Hprot)".
-  iDestruct "Hprot" as (inputs) "(%Hdec & %Hwf & #Hcerts)".
+  iDestruct "Hprot" as (inputs) "(%Hdecodes & %Hwf & #Hcerts)".
+  destruct Hdecodes as (decoded & Hdec & Hsame).
   wp_auto.
   wp_apply ("Hcodec" with "[$Hs]").
   iIntros (ok sl sldel) "[Hs Hres]".
   destruct ok; last first.
   { (* dead under the protocol: the message decodes *)
     iDestruct "Hres" as %Hnone. rewrite Hdec in Hnone. discriminate. }
-  iDestruct "Hres" as (inputs' deleted) "(%Hdec' & Hupd & Hdel)".
+  iDestruct "Hres" as (decoded' deleted) "(%Hdec' & Hupd & Hdel)".
   rewrite Hdec in Hdec'. injection Hdec' as <-.
+  (* the decoder's slice denotes the certified batch too: the two are the
+     same wire structs *)
+  iDestruct (own_update_structs_same_wire_struct _ _ _ _ Hsame with "Hupd") as "Hupd".
   wp_auto.
   wp_apply (wp_Doc__ApplySyncUpdate _ _ _ _ c _ _ _ _ inputs deleted Hwf
               with "[$His_doc $Hishist $Hpin $Hupd $Hdel $Hcerts]").
   iIntros (h applied m') "(Hupd & Hdel & #Hlb & #Haccepts & #Happlied)".
   wp_auto.
-  iApply ("HΦ" $! h inputs applied m').
-  iFrame "Hs Hlb Haccepts Happlied". done.
+  iApply ("HΦ" $! h decoded applied m').
+  iFrame "Hs Hlb Happlied". iSplit; first done.
+  (* acceptance is by id, and the same wire struct has the same id *)
+  iApply big_sepL_forall. iIntros (i x Hx).
+  destruct (Forall2_lookup_l _ _ _ _ _ Hsame Hx) as (y & Hy & Heq & _).
+  rewrite Heq. iApply (big_sepL_lookup _ _ i y Hy with "Haccepts").
 Qed.
 
 End doc_ApplyEncodedUpdate.

@@ -218,7 +218,7 @@ Proof using Type*.
     - have Hnmeq : RootId nm = RootId nm' := Htid nm' eq_refl. injection Hnmeq as <-. exact Hbnm.
     - destruct orL as [qk|]; [by rewrite HparL |].
       destruct orR as [qk|]; [by rewrite HparR |].
-      destruct (Hborrow eq_refl) as [HL | HR].
+      destruct (proj1 Hborrow eq_refl) as [HL | HR].
       + move: HwL. by destruct (in_originId input).
       + move: HwR. by destruct (in_rightOriginId input). }
   (* both origins in one slot: doc order is clock order inside a run *)
@@ -526,7 +526,7 @@ Proof using Type*.
   have Hopn : opn = Some nm.
   { destruct opn as [nm'|].
     - have Ht := Htid nm' eq_refl. by injection Ht as ->.
-    - exfalso. destruct (Hborrow eq_refl) as [Hc | Hc]; [exact (Hc HoL) | exact (Hc HoR)]. }
+    - exfalso. destruct (proj1 Hborrow eq_refl) as [Hc | Hc]; [exact (Hc HoL) | exact (Hc HoR)]. }
   subst opn.
   iDestruct (own_store_state_registry_coh with "Hruns") as %Hpreg0.
   have [Hbindtypes [Hbindinj Htypesbound]] := Hpreg0.
@@ -1092,7 +1092,7 @@ Proof using Type*.
                   no longer needs it BOUND (the grow dispatcher creates it) *)
                destruct opn as [nm'|].
                + exists nm'. exact (Htid nm' eq_refl).
-               + exfalso. destruct (Hborrow eq_refl) as [Ho | Ho]; [exact (Ho HoN) | exact (Ho HrN)].
+               + exfalso. destruct (proj1 Hborrow eq_refl) as [Ho | Ho]; [exact (Ho HoN) | exact (Ho HrN)].
              - have Hne : doc_model_get m_c targetType ≠ [].
                { apply (toItem_nonempty_of_origin input _ newItem Htoit).
                  apply not_and_l in Hor.

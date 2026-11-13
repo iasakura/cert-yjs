@@ -351,8 +351,9 @@ Proof.
     { iApply (big_sepM_mono with "Hprot").
       iIntros (k d Hk) "Hd".
       rewrite Hp.
-      iDestruct "Hd" as (inputs) "(%Hdec & %Hwfb & _)".
-      iPureIntro. eauto. }
+      iDestruct "Hd" as (inputs) "(%Hdecodes & %Hwfb & _)".
+      iPureIntro. destruct Hdecodes as (decoded & Hdec & Hsame). exists decoded. split; first exact Hdec.
+      exact (update_wf_same_wire_struct decoded inputs Hsame Hwfb). }
     iDestruct (big_sepM_pure_1 with "Hpure") as %Hall.
     iPureIntro. split; last exact Hconv.
     intros ch n d Hlk. exact (Hall (ch, n) d Hlk).
