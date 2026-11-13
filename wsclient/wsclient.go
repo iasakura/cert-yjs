@@ -11,8 +11,9 @@
 // src/y-websocket.js). It sends every local update from a document 'update'
 // handler as soon as the transaction that made it ends (:353-361), and so
 // does Insert, without the handler registry: the edit and the send are one
-// call. The provider also runs the sync handshake on connect (Step1 / Step2,
-// :254-262) and the awareness protocol; neither is here. Without the
+// call. The provider also runs the sync handshake on connect (it writes sync
+// Step1 when the socket opens, :203-208) and the awareness protocol; neither
+// is here. Without the
 // handshake a client never receives what was edited before it joined (the
 // server relays only what it applies after the join, wsrelay.Join), which
 // the closed theorem's convergence statement accounts for: it compares
