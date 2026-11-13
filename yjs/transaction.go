@@ -251,12 +251,11 @@ func (tr *Transaction) applyUpdate(structs []updateItem) {
 // which writes the transaction's insertSet from the struct store; the bytes
 // are the Encoder's (doc.go).
 //
-// The three references differ in what a transaction's update holds. Yjs
-// writes the insert set (above). yrs 0.27.2 writes every block at or past
-// the state vector the transaction began with (TransactionMut::encode_update_v1
+// The references differ in what a transaction's update holds. Yjs writes
+// the insert set (above). yrs 0.27.2 writes every block at or past the
+// state vector the transaction began with (TransactionMut::encode_update_v1
 // over store.write_blocks_from(before_state), src/transaction.rs:597-627).
-// y-octo 0.1.0 has no transaction; DocStore::encode_with_state_vector plays
-// the yrs role. The Go follows Yjs, because the insert set is the record the
+// The Go follows Yjs, because the insert set is the record the
 // transaction already keeps; for a transaction of local edits the two
 // readings give the same structs.
 //
