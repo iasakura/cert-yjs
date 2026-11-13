@@ -14,9 +14,9 @@
     - [is_room_member γ j mb]: persistent, member [j] of the room is [mb].
     - [own_Room_root r γs γh]: the root the room reports on, its handle
       and the read capability its snapshots use (held in [room_inv]).
-    - [deployment_protocols γh]: the deployment's wire and trace protocols
-      ([yjs_prot], [is_report]), the one hypothesis the server's
-      composition takes about the FFI.
+    - [deployment_protocols γh] (from deployment.v): the deployment's wire
+      and trace protocols ([yjs_prot], [is_report]), the one hypothesis the
+      server's composition takes about the FFI.
     - [room_inv] ties the ghost log to the wire: per entry the S1 receipts
       ([entry_receipts], internal: the packet decodes, every input is
       [is_accepted] by the server's store, and the server's history visibly
@@ -54,6 +54,7 @@ From New.proof.store Require Import store.
 From New.proof.doc Require Import doc.
 From New.proof.text Require Import text.
 From New.proof.report Require Import report.
+From New.proof Require Import deployment.
 From New.ghost Require Import mono_list ghost_var.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
@@ -68,8 +69,6 @@ Context {sem : go.Semantics} {package_sem : yjs.Assumptions}.
 Context {sync_pkg : sync.Assumptions}.
 Context {wsnet_pkg : wsnet.Assumptions} {wsrelay_pkg : wsrelay.Assumptions}.
 
-#[global] Instance : IsPkgInit (iProp Σ) wsnet := define_is_pkg_init True%I.
-#[global] Instance : GetIsPkgInitWf (iProp Σ) wsnet := build_get_is_pkg_init_wf.
 #[global] Instance : IsPkgInit (iProp Σ) wsrelay := define_is_pkg_init True%I.
 #[global] Instance : GetIsPkgInitWf (iProp Σ) wsrelay := build_get_is_pkg_init_wf.
 
@@ -257,13 +256,6 @@ Definition room_inv (r : loc) (γ : room_names) (γs : store_names)
     "Hsends"    ∷ ([∗ list] j ↦ mb ∈ MS, own_member_send L j mb) ∗
     "%Hcoh"     ∷ ⌜log_coh MS L⌝.
 
-(** The deployment's protocols on the FFI's global state: the wire protocol
-    is [yjs_prot] (receives convert their [ws_prot] payload into
-    certificates, sends convert them back) and the trace protocol is
-    [is_report] (what every report the room traces must satisfy). *)
-Definition deployment_protocols (γh : history_names) : Prop :=
-  (∀ d, ws_prot d = yjs_prot decode γh d) ∧ (∀ d, trace_prot d = is_report γh d).
-
 (** Room handle (persistent). Carries the global-history handle, the server
     store's client pin, and the deployment's protocols. *)
 Definition is_Room (r : loc) (γ : room_names) (γs : store_names)
@@ -271,7 +263,7 @@ Definition is_Room (r : loc) (γ : room_names) (γs : store_names)
   "#Hmu"     ∷ is_Mutex (r .[(wsrelay.Room.t), "mu"]) (room_inv r γ γs γh c) ∗
   "#Hishist" ∷ is_history (A := A) (P := P) γh ∗
   "#Hpin"    ∷ is_store_client γs c ∗
-  "%Hdeploy" ∷ ⌜deployment_protocols γh⌝.
+  "%Hdeploy" ∷ ⌜deployment_protocols decode γh⌝.
 
 #[global] Instance is_room_member_persistent γ j mb : Persistent (is_room_member γ j mb).
 Proof. apply _. Qed.
@@ -402,7 +394,7 @@ Qed.
 
 Lemma wp_NewRoom (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (f : func.t) (name : go_string) :
-  deployment_protocols γh ->
+  deployment_protocols decode γh ->
   {{{ is_pkg_init wsrelay ∗ is_Doc dv s_loc γs γh ∗
       is_history (A := A) (P := P) γh ∗ is_store_client γs c ∗
       codec_spec decode f ∗ own_read_cap γs }}}
@@ -787,7 +779,7 @@ Qed.
     (src/proof/demo/ws_server.v) boots exactly this function. *)
 Lemma wp_ListenAndServe (host client : w64) (f : func.t) (name : go_string)
     (γh : history_names) :
-  deployment_protocols γh ->
+  deployment_protocols decode γh ->
   {{{ is_pkg_init wsrelay ∗
       is_history (A := A) (P := P) γh ∗
       own_client_history γh (uint.nat client) ([] : list Ev) ∗

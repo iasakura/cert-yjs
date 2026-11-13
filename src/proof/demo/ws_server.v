@@ -35,6 +35,7 @@ From New.proof Require Import yjs_prot.
 From New.proof.store Require Import store.
 From New.proof.doc Require Import doc.
 From New.proof.report Require Import report.
+From New.proof Require Import deployment.
 From New.proof Require Import ws_relay.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
@@ -87,34 +88,6 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
 Context (decode : list u8 -> option (list Input)).
 
 (* ===== package initialization ============================================ *)
-
-Lemma wp_wsnet_initialize' get_is_pkg_init :
-  get_is_pkg_init_prop wsnet get_is_pkg_init →
-  {{{ own_initializing get_is_pkg_init }}}
-    wsnet.initialize' #()
-  {{{ RET #(); own_initializing get_is_pkg_init ∗ is_pkg_init wsnet }}}.
-Proof.
-  intros Hinit. wp_start as "Hown".
-  wp_apply (wp_package_init with "[$Hown] HΦ").
-  { destruct Hinit as (-> & ?); done. }
-  iIntros "Hown". wp_auto.
-  iEval (rewrite is_pkg_init_unfold /=). iFrame "∗#". done.
-Qed.
-
-Lemma wp_yjs_initialize' get_is_pkg_init :
-  get_is_pkg_init_prop yjs get_is_pkg_init →
-  {{{ own_initializing get_is_pkg_init }}}
-    yjs.initialize' #()
-  {{{ RET #(); own_initializing get_is_pkg_init ∗ is_pkg_init yjs }}}.
-Proof.
-  intros Hinit. wp_start as "Hown".
-  wp_apply (wp_package_init with "[$Hown] HΦ").
-  { destruct Hinit as (-> & ?); done. }
-  iIntros "Hown". wp_auto.
-  wp_apply (sync.wp_initialize' with "[$Hown]") as "(Hown & #?)".
-  { naive_solver. }
-  iEval (rewrite is_pkg_init_unfold /=). iFrame "∗#". done.
-Qed.
 
 Lemma wp_wsrelay_initialize' get_is_pkg_init :
   get_is_pkg_init_prop wsrelay get_is_pkg_init →
