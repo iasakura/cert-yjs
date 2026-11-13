@@ -118,22 +118,20 @@ Lemma wp_client_boot (host : w64) (path : go_string) (client : w64)
     (decoder encoder : func.t) (name script : go_string)
     (γh : history_names) get_is_pkg_init :
   get_is_pkg_init_prop wsclient get_is_pkg_init →
-  codec_roundtrip decode encode →
   deployment_protocols decode γh →
   ⊢ own_initializing get_is_pkg_init -∗
     is_history (A := A) (P := P) γh -∗
     own_client_history γh (uint.nat client) ([] : list Ev) -∗
-    codec_spec decode decoder -∗
-    encoder_spec encode encoder -∗
+    codec_pair_spec decode encode decoder encoder -∗
     ws_env_preserves ⊤ -∗
     WP client_boot host path client decoder encoder name script {{ _, True }}.
 Proof.
-  iIntros (Hget Hroundtrip Hdeploy) "Hown #Hhist Hhistory #Hcodec #Hencoder #Henv".
+  iIntros (Hget Hdeploy) "Hown #Hhist Hhistory #Hcodec_pair #Henv".
   rewrite /client_boot.
   wp_apply (wp_wsclient_initialize' with "[$Hown]") as "(Hown & #Hinit)";
     first exact Hget.
-  wp_apply (wp_Run decode encode host path client decoder encoder name script γh Hroundtrip Hdeploy
-             with "[$Hhist $Hhistory $Hcodec $Hencoder $Henv]").
+  wp_apply (wp_Run decode encode host path client decoder encoder name script γh Hdeploy
+             with "[$Hhist $Hhistory $Hcodec_pair $Henv]").
   done.
 Qed.
 
@@ -174,18 +172,16 @@ Lemma wpr_client_boot (host : w64) (path : go_string) (client : w64)
     (decoder encoder : func.t) (name script : go_string)
     (γh : history_names) (σ : lang.state) :
   is_init σ →
-  codec_roundtrip decode encode →
   deployment_protocols decode γh →
   ⊢ own_go_state σ.(go_state).(package_state) -∗
     is_history (A := A) (P := P) γh -∗
     own_client_history γh (uint.nat client) ([] : list Ev) -∗
-    codec_spec decode decoder -∗
-    encoder_spec encode encoder -∗
+    codec_pair_spec decode encode decoder encoder -∗
     ws_env_preserves ⊤ -∗
     wpr NotStuck ⊤ (client_boot host path client decoder encoder name script) halt
         (λ _, True%I) (λ _, True%I) (λ _ _, True%I).
 Proof.
-  iIntros (Hinit Hroundtrip Hdeploy) "Hgo #Hhist Hhistory #Hcodec #Hencoder #Henv".
+  iIntros (Hinit Hdeploy) "Hgo #Hhist Hhistory #Hcodec_pair #Henv".
   iApply fupd_wpr.
   iMod (go_init client_get_is_pkg_init _ Hinit with "Hgo") as "Hown".
   iModIntro.
@@ -193,8 +189,8 @@ Proof.
             (λ _, True%I) (λ _ _, True%I) (λ _, True%I) with "[-] []").
   - iApply wp_wpc.
     iApply (wp_client_boot _ _ _ _ _ _ _ _ client_get_is_pkg_init
-              client_get_is_pkg_init_wf Hroundtrip Hdeploy
-              with "Hown Hhist Hhistory Hcodec Hencoder Henv").
+              client_get_is_pkg_init_wf Hdeploy
+              with "Hown Hhist Hhistory Hcodec_pair Henv").
   - iModIntro.
     iIntros (hL' σ1 σ2 Hcrash) "_".
     iNext.
@@ -334,11 +330,13 @@ Proof.
       simpl in Hlctx. rewrite Hlctx0 in Hlctx. subst hLlctx.
       iModIntro.
       iExists _, _, _.
-      iApply (wpr_client_boot (hG := HeapGS _ _ HG _ _) decode encode _ _ _ _ _ _ _ γh σ0 Hpkg Hroundtrip
-                with "Hgo Hhist Hclient_history [] [] []").
+      iApply (wpr_client_boot (hG := HeapGS _ _ HG _ _) decode encode _ _ _ _ _ _ _ γh σ0 Hpkg
+                with "Hgo Hhist Hclient_history [] []").
       * split; intros d; [rewrite Hp // | rewrite Ht //].
-      * iApply (Hcodec _ _).
-      * iApply (Hencoder _ _).
+      * (* the codec values, as trusted *)
+        iSplit; first iApply (Hcodec _ _).
+        iSplit; first iApply (Hencoder _ _).
+        done.
       * iEval (simpl).
         iApply (ws_env_preserves_silent Σ (@goose_wsGS Σ HG)
                   (@iris_invGS (@goose_lang ws_op ws_model go_gctx (@ws_semantics go_gctx)) Σ
