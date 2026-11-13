@@ -9,7 +9,7 @@
       [pending_item_rooted] / [is_pending_rooted], bundled as [update_wf];
       [input_has_origin] and [same_wire_struct], two type-tagged inputs
       that are one struct on the wire (issue #131);
-      [structs_expand_to_items], every character of a batch is an item of
+      [structs_expand_to_items], the characters of a batch are exactly items of
       the document.
     - the wire-level drain: [wire_integrate] applies one ready item,
       [wire_pass] one sweep over the pending list, [wire_drain(_aux)] the fixed
@@ -1210,16 +1210,17 @@ Definition update_wf (inputs : list (TId * IntegrateInput (A := A))) : Prop :=
 Definition input_has_origin (input : IntegrateInput (A := A)) : Prop :=
   in_originId input ≠ None ∨ in_rightOriginId input ≠ None.
 
-(** [structs_expand_to_items structs holds]: every character a batch
-    carries is an item of the document: each input of the batch's per-char
-    expansion is the input of some item [item] of the root named [name], for
-    a pair [holds name item] (issue #131). [holds] says which items: the
-    ones of a store's registry with an id of a span, the ones a transaction
-    inserted, the ones one insert created. What the functions that read
-    structs back from the store promise about them. *)
+(** [structs_expand_to_items structs holds]: the characters a batch carries
+    are exactly the items [holds] names: an input is in the batch's per-char
+    expansion if and only if it is the input of an item [item] of the root
+    named [name], for a pair [holds name item] (issue #131). [holds] says
+    which items: the ones of a store's registry with an id of a span, the
+    ones a transaction inserted, the ones one insert created. What the
+    functions that read structs back from the store promise about them:
+    every such item is in the batch, and nothing else is. *)
 Definition structs_expand_to_items (structs : list (TId * IntegrateInput (A := A)))
     (holds : go_string -> YjsItem A -> Prop) : Prop :=
-  ∀ input, input ∈ expand_inputs structs ->
+  ∀ input, input ∈ expand_inputs structs <->
     ∃ (name : go_string) (item : YjsItem A),
       holds name item ∧ input = (RootId name, input_of_item item).
 
@@ -2195,6 +2196,28 @@ Proof.
   move: Hchar. rewrite /explode list_lookup_fmap.
   destruct (in_content x.2 !! k) as [b |]; last done.
   simpl. by move=> [= <-].
+Qed.
+
+(** Every code unit of a batch is the content of one struct of its per-char
+    expansion. *)
+Lemma expand_inputs_content_unit (inputs : list (TId * IntegrateInput (A := A)))
+    (input : TId * IntegrateInput (A := A)) (unit : w16) :
+  input ∈ inputs -> unit ∈ in_content input.2 ->
+  ∃ op, op ∈ expand_inputs inputs ∧ in_content op.2 = [unit].
+Proof.
+  move=> Hinput Hunit. apply list_elem_of_lookup in Hunit as [k Hk].
+  have Hlen : length (ops_of_input input.2 (explode (in_content input.2))) = length (explode (in_content input.2))
+    := ops_from_length _ _ _ _ _.
+  have Hk_lt : (k < length (ops_of_input input.2 (explode (in_content input.2))))%nat.
+  { rewrite Hlen /explode length_fmap. exact (lookup_lt_Some _ _ _ Hk). }
+  destruct (lookup_lt_is_Some_2 _ k Hk_lt) as [op Hop].
+  exists (input.1, op). split.
+  - rewrite /expand_inputs list_elem_of_join. exists (expand_input input). split.
+    + rewrite /expand_input. apply list_elem_of_fmap. exists op.
+      split; [done | exact (list_elem_of_lookup_2 _ _ _ Hop)].
+    + apply list_elem_of_fmap. by exists input.
+  - simpl. destruct (ops_from_lookup _ _ _ _ _ _ _ Hop) as (_ & _ & Hchar & _).
+    move: Hchar. rewrite /explode list_lookup_fmap Hk /=. by move=> [= <-].
 Qed.
 
 (** [same_wire_struct] is reflexive. *)

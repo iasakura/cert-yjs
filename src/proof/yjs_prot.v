@@ -48,6 +48,9 @@
       to.
     - [yjs_prot_encode]: a sender that holds the certificates of a batch's
       per-char expansion owns the protocol for the batch's encoding.
+    - [yjs_prot_encode_inserted_run]: the same for one local insert, from
+      what [wp_Text__InsertEncoded] returns (what the client's [Insert]
+      sends).
 
     No ws import here: the predicate is decode plus history certificates, so
     it sits between [store] and [doc]; the ws layer instantiates
@@ -59,6 +62,7 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core.
 From New.proof Require Import prelude.
 From New.proof Require Import history.
+From New.proof.ytype Require Import ytype.
 From New.proof.store Require Import store.
 
 Section yjs_prot.
@@ -161,6 +165,57 @@ Proof.
   have Hin := Hinputs y (list_elem_of_lookup_2 _ _ _ Hy).
   apply list_elem_of_lookup in Hin as [j Hj].
   iApply (big_sepL_lookup _ _ j y Hj with "Hcerts").
+Qed.
+
+(** The sender of one local insert: what [wp_Text__InsertEncoded] returns
+    (the inserted run, its certificates, and a batch that is character by
+    character exactly the inserted items) is the protocol for the batch's
+    encoding, when the inserted code units are free of surrogates. *)
+Lemma yjs_prot_encode_inserted_run (encode : list Input -> list u8) (γh : history_names)
+    (name : P) (L L' ins : list (YjsItem A)) (units : A) (client k0 : nat)
+    (originLeft originRight : YjsPtr A) (structs : list Input) :
+  codec_roundtrip encode ->
+  units_surrogate_free units ->
+  inserted_run L L' ins units client k0 originLeft originRight ->
+  structs_expand_to_items structs (λ root item, root = name ∧ item ∈ ins) ->
+  ([∗ list] item ∈ ins, is_op_cert γh (RootId name, OpInsert (input_of_item item))) -∗
+  yjs_prot γh (encode structs).
+Proof.
+  intros Hroundtrip Hunits (_ & Hlength & Hitems & Hbound) Hstructs.
+  (* a character of the batch is an inserted item, with its position *)
+  have Hchar : ∀ input, input ∈ expand_inputs structs ->
+      ∃ (position : nat) (item : YjsItem A) (unit : w16),
+        ins !! position = Some item ∧ units !! position = Some unit ∧
+        input = (RootId name, input_of_item item).
+  { move=> input Hinput.
+    destruct (proj1 (Hstructs input) Hinput) as (root & item & [-> Hitem] & ->).
+    apply list_elem_of_lookup in Hitem as [position Hposition].
+    destruct Hlength as [-> | Hlength]; first by rewrite lookup_nil in Hposition.
+    have [unit Hunit] : is_Some (units !! position).
+    { apply lookup_lt_is_Some. rewrite -Hlength. exact (lookup_lt_Some _ _ _ Hposition). }
+    by exists position, item, unit. }
+  have Hfree : structs_surrogate_free structs.
+  { move=> struct Hstruct unit Hunit.
+    destruct (expand_inputs_content_unit structs struct unit Hstruct Hunit) as (op & Hop & Hcontent).
+    destruct (Hchar op Hop) as (position & item & unit' & Hposition & Hunit' & ->).
+    destruct (Hitems position item unit' Hposition Hunit') as (_ & _ & Hitem_content & _).
+    move: Hcontent. rewrite /= Hitem_content. move=> [= <-].
+    exact (Hunits unit' (list_elem_of_lookup_2 _ _ _ Hunit')). }
+  have Hwf : update_wf (expand_inputs structs).
+  { split.
+    - move=> input Hinput.
+      destruct (Hchar input Hinput) as (position & item & unit & Hposition & Hunit & ->).
+      destruct (Hitems position item unit Hposition Hunit) as (_ & _ & Hitem_content & Hitem_id & _).
+      rewrite /input_fits /= Hitem_content Hitem_id /=.
+      have := lookup_lt_Some _ _ _ Hposition. lia.
+    - move=> input Hinput.
+      destruct (Hchar input Hinput) as (position & item & unit & _ & _ & ->).
+      rewrite /pending_item_rooted. case_decide; last done. by exists name. }
+  iIntros "#Hcerts".
+  iApply (yjs_prot_encode encode γh structs Hroundtrip Hfree Hwf).
+  rewrite /is_pending_certified. iApply big_sepL_forall. iIntros (k input Hk).
+  destruct (Hchar input (list_elem_of_lookup_2 _ _ _ Hk)) as (position & item & unit & Hposition & _ & ->).
+  iApply (big_sepL_lookup _ _ position item Hposition with "Hcerts").
 Qed.
 
 End yjs_prot.

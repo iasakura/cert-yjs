@@ -76,7 +76,11 @@ Definition integrate_ready (arr : list (YjsItem A)) (input : IntegrateInput (A :
     nothing was inserted: the [i]-th carries the unit [cs !! i], id
     [(client, k0 + i)] and right
     origin [originRight]; its left origin is [originLeft] for the first item and
-    the previous new item for the others (the chain of one insert). *)
+    the previous new item for the others (the chain of one insert). The new
+    ids fit a machine word, the one past the last included
+    ([k0 + length ins < 2^64]): [Text.Insert] refuses an insert whose clocks
+    would wrap, and a sender needs the bound to put the items on the wire
+    ([input_fits], [store/model]). *)
 Definition inserted_run (L L' ins : list (YjsItem A)) (cs : A) (client k0 : nat)
     (originLeft originRight : YjsPtr A) : Prop :=
   sublist L L' ∧
@@ -89,7 +93,8 @@ Definition inserted_run (L L' ins : list (YjsItem A)) (cs : A) (client k0 : nat)
        rightOrigin it = originRight ∧
        (i = 0%nat → origin it = originLeft) ∧
        (∀ (j : nat) (itj : YjsItem A),
-          i = S j → ins !! j = Some itj → origin it = itemPtr itj)).
+          i = S j → ins !! j = Some itj → origin it = itemPtr itj)) ∧
+  (Z.of_nat k0 + Z.of_nat (length ins) < 2^64)%Z.
 
 (** A ready item's same-client origin is older than it: the origin resolves
     to a document item ([toItem]) and the item is its client's newest
