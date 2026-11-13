@@ -133,4 +133,126 @@ Proof using Type*.
   iExists types_mref. iFrame "Htypesf Htypesmap".
 Qed.
 
+(** Borrow one node of the store whole ([own_item_node]): the WP below reads
+    its origin cells, which the narrower borrows of [store/heap] do not
+    expose. *)
+#[local] Lemma own_store_state_item_node_acc (s : loc) (state : store_state)
+    (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
+  ss_locs state !! parent = Some ls ->
+  ss_pool state !! parent = Some tm ->
+  ls !! k = Some lc ->
+  tm_runs tm !! k = Some r ->
+  own_store_state s 1 state -∗
+  ∃ (prev nxt : loc),
+    ⌜run_wf (run_items r)⌝ ∗
+    ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
+    own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev nxt ∗
+    (own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev nxt -∗
+     own_store_state s 1 state).
+Proof.
+  move=> Hls Hp Hlk Hrk.
+  destruct state as [client0 clock0 locs p bind pend pdel]. simpl in *.
+  iIntros "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iEval (simpl) in "Htypes".
+  iDestruct "Htypes" as "(%Hlocswf & Hpool)".
+  iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Htype Hrest]".
+  iDestruct "Htype" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
+  rewrite Hls in Hls0. injection Hls0 as <-.
+  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
+  iDestruct (own_dll_acc (DfracOwn 1) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk with "Hdll")
+    as (prev nxt) "(_ & _ & %Hrun & _ & %Hcontent_length & Hnode & Hback)".
+  iExists prev, nxt. iFrame "Hnode".
+  iSplitR; first done. iSplitR; first done.
+  iIntros "Hnode". iDestruct ("Hback" with "Hnode") as "Hdll".
+  iSplitL; last done. rewrite /own_store_fields /=.
+  iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Hpending Hpdeletes".
+  iSplitR; first done.
+  iApply big_sepM_delete; first exact Hp.
+  iFrame "Hrest". iExists ls. iSplitR; first done. iSplitL; last done.
+  iExists yt, tl. iFrame "Hparent Hdll". done.
+Qed.
+
+(** [store.updateItemOfNode]: the decoded struct of the node at slot [k] of
+    the type at [parent] denotes the wire item of that slot's run
+    ([input_of_run]), under the name the registry binds to the type. The
+    struct shares the node's origin cells and content, both read-only. *)
+Lemma wp_store__updateItemOfNode (s lc parent : loc) (state : store_state)
+    (ls : list loc) (tm : type_model) (k : nat) (r : ItemRun) :
+  ss_locs state !! parent = Some ls ->
+  ss_pool state !! parent = Some tm ->
+  ls !! k = Some lc ->
+  tm_runs tm !! k = Some r ->
+  {{{ is_pkg_init yjs ∗ own_store_state s 1 state }}}
+    s @! (go.PointerType yjs.store) @! "updateItemOfNode" #lc
+  {{{ (updateItemVal : yjs.updateItem.t) (name : go_string), RET #updateItemVal;
+      own_store_state s 1 state ∗ ⌜ss_bind state !! name = Some parent⌝ ∗
+      is_update_item updateItemVal (RootId name, input_of_run r) }}}.
+Proof using Type*.
+  move=> Hls Hp Hlk Hrk.
+  iIntros (Φ) "(#Hpkg & Hstate) HΦ".
+  iDestruct (own_store_state_registry_coh with "Hstate") as %(_ & _ & Hnamed).
+  destruct (Hnamed parent ltac:(by eexists)) as [name0 Hname0].
+  wp_method_call. wp_call. wp_call. wp_auto.
+  iDestruct (own_store_state_item_node_acc s state parent ls tm k lc r Hls Hp Hlk Hrk with "Hstate")
+    as (prev nxt) "(%Hrun & %Hcontent_length & Hnode & Hback)".
+  iDestruct "Hnode" as (itemVal origin_left origin_right)
+    "(Hval & #Horigin_left & #Horigin_right & %Hin_left & %Hin_right & %Hid & #Hcontent & %Hparent & %Hprev & %Hnext & %Hflags)".
+  have Hnonempty : (1 <= length (in_content (input_of_run r)))%nat.
+  { rewrite /= Hcontent_length. destruct Hrun as [Hrun_nonempty _].
+    destruct (run_items r); [done | simpl; lia]. }
+  iPoseProof "Horigin_left" as "Hleft". iPoseProof "Horigin_right" as "Hright".
+  wp_auto.
+  destruct origin_left as [left_id |].
+  - (* a left origin: no parent name *)
+    iDestruct "Hleft" as "[%Hleft_nonnull _]".
+    rewrite (bool_decide_eq_false_2 _ Hleft_nonnull). wp_auto.
+    iDestruct ("Hback" with "[Hval]") as "Hstate".
+    { iExists itemVal, _, _. iFrame "Hval Horigin_left Horigin_right Hcontent". done. }
+    iApply ("HΦ" $! _ name0). iFrame "Hstate". iSplitR; first done.
+    iExists (Some left_id), origin_right, None. iFrame "Horigin_left Horigin_right Hcontent".
+    iPureIntro. split_and!; try done; try exact Hnonempty.
+    split; last done. move=> _. left. by rewrite -Hin_left.
+  - iDestruct "Hleft" as %Hleft_null.
+    rewrite (bool_decide_eq_true_2 _ Hleft_null). wp_auto.
+    destruct origin_right as [right_id |].
+    + (* a right origin only: no parent name *)
+      iDestruct "Hright" as "[%Hright_nonnull _]".
+      rewrite (bool_decide_eq_false_2 _ Hright_nonnull). wp_auto.
+      iDestruct ("Hback" with "[Hval]") as "Hstate".
+      { iExists itemVal, _, _. iFrame "Hval Horigin_left Horigin_right Hcontent". done. }
+      iApply ("HΦ" $! _ name0). iFrame "Hstate". iSplitR; first done.
+      iExists None, (Some right_id), None. iFrame "Horigin_left Horigin_right Hcontent".
+      iPureIntro. split_and!; try done; try exact Hnonempty.
+      split; last done. move=> _. right. by rewrite -Hin_right.
+    + (* no origin: the struct names its root *)
+      iDestruct "Hright" as %Hright_null.
+      rewrite (bool_decide_eq_true_2 _ Hright_null). wp_auto.
+      iDestruct ("Hback" with "[Hval]") as "Hstate".
+      { iExists itemVal, _, _. iFrame "Hval Horigin_left Horigin_right Hcontent". done. }
+      rewrite Hparent.
+      wp_apply (wp_store__rootName with "[$Hpkg $Hstate]"); first (iPureIntro; by eexists).
+      iIntros (name) "[Hstate %Hname]".
+      wp_auto.
+      iDestruct (typed_pointsto_not_null with "name") as %Hname_nonnull.
+      iPersist "name".
+      iDestruct (own_store_state_item_node_acc s state parent ls tm k lc r Hls Hp Hlk Hrk with "Hstate")
+        as (prev' nxt') "(_ & _ & Hnode & Hback)".
+      iDestruct "Hnode" as (itemVal' origin_left' origin_right')
+        "(Hval & #Horigin_left' & #Horigin_right' & %Hin_left' & %Hin_right' & %Hid' & #Hcontent' & %Hparent' & %Hprev' & %Hnext' & %Hflags')".
+      wp_auto.
+      iDestruct ("Hback" with "[Hval]") as "Hstate".
+      { iExists itemVal', _, _. iFrame "Hval Horigin_left' Horigin_right' Hcontent'". done. }
+      iApply ("HΦ" $! _ name). iFrame "Hstate". iSplitR; first done.
+      iExists origin_left', origin_right', (Some name).
+      iFrame "Horigin_left' Horigin_right' Hcontent' name".
+      iPureIntro. split_and!; try done; try exact Hnonempty.
+      all: first
+        [ exact Hname_nonnull
+        | by move=> nm [= <-]
+        | split; first done;
+          move=> [Horigin | Horigin];
+          [by rewrite -Hin_left in Horigin | by rewrite -Hin_right in Horigin] ].
+Qed.
+
 End store_appendSpanStructs.
