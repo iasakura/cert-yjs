@@ -33,7 +33,7 @@ Lemma wp_newYType (name : go_string) :
     @! yjs.newYType #name
   {{{ (p : loc), RET #p; own_ytype p (DfracOwn 1) [] (MkTypeModel []) }}}.
 Proof.
-  wp_start as "_". wp_alloc p as "Hp". wp_auto.
+  wp_start as "_". wp_auto. wp_alloc p as "Hp". wp_auto.
   iApply "HΦ".
   iExists {| yjs.yType.start' := null; yjs.yType.len' := W64 0; yjs.yType.name' := name |}, null.
   iFrame "Hp". iPureIntro. split_and!; reflexivity.
