@@ -84,9 +84,9 @@ Context (encode : list Input -> list u8).
 (** Client handle (persistent). The struct is written once, by [Connect];
     beside its fields the handle carries the global-history handle, the
     document's client pin with the empty history lower bound (what a read
-    of the root for a report is certified against), the specifications of
-    the two codec values with the contract between them, and the
-    deployment's protocols. *)
+    of the root for a report is certified against), the specification of
+    the two codec values ([codec_pair_spec]), and the deployment's
+    protocols. *)
 Definition is_Client (cl : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (sc rc : chan_id) (name : go_string) : iProp Σ :=
   ∃ (client_value : wsclient.Client.t) (s_loc : loc),
@@ -98,9 +98,8 @@ Definition is_Client (cl : loc) (γs : store_names) (γh : history_names)
     "#Hishist"  ∷ is_history (A := A) (P := P) γh ∗
     "#Hpin"     ∷ is_store_client γs c ∗
     "#Hlb"      ∷ is_history_lb γh c ([] : list Ev) ∗
-    "#Hcodec"   ∷ codec_spec decode client_value.(wsclient.Client.decode') ∗
-    "#Hencoder" ∷ encoder_spec encode client_value.(wsclient.Client.encode') ∗
-    "%Hroundtrip" ∷ ⌜codec_roundtrip decode encode⌝ ∗
+    "#Hcodec_pair" ∷ codec_pair_spec decode encode client_value.(wsclient.Client.decode')
+                       client_value.(wsclient.Client.encode') ∗
     "%Hdeploy"  ∷ ⌜deployment_protocols decode γh⌝.
 
 (** The send side of the client: the send cursor of its connection, at
@@ -167,7 +166,7 @@ Lemma wp_Client__Insert (cl : loc) (γs : store_names) (γh : history_names)
 Proof.
   intros Hunits.
   wp_start as "(#Hclient & Hside & Hcontent)".
-  iPoseProof "Hclient" as "Hopen". iNamed "Hopen".
+  iPoseProof "Hclient" as "Hopen". iNamed "Hopen". iNamed "Hcodec_pair".
   destruct Hdeploy as [Hprot Htrace].
   iDestruct "Hside" as (sent) "[Hcursor Hrcap]".
   wp_auto.
@@ -203,7 +202,7 @@ Lemma wp_Client__Serve (cl : loc) (γs : store_names) (γh : history_names)
   {{{ RET #(); own_Client_receive_side γs rc }}}.
 Proof.
   wp_start as "(#Hclient & Hside & #Henv)".
-  iPoseProof "Hclient" as "Hopen". iNamed "Hopen".
+  iPoseProof "Hclient" as "Hopen". iNamed "Hopen". iNamed "Hcodec_pair".
   destruct Hdeploy as [Hprot Htrace].
   wp_auto.
   iAssert (∃ received : nat,
@@ -238,11 +237,10 @@ Qed.
     [Serve]. *)
 Lemma wp_Connect (host : w64) (path : go_string) (client : w64) (decoder encoder : func.t)
     (name : go_string) (γh : history_names) :
-  codec_roundtrip decode encode ->
   deployment_protocols decode γh ->
   {{{ is_pkg_init wsclient ∗ is_history (A := A) (P := P) γh ∗
       own_client_history γh (uint.nat client) ([] : list Ev) ∗
-      codec_spec decode decoder ∗ encoder_spec encode encoder }}}
+      codec_pair_spec decode encode decoder encoder }}}
     @! wsclient.Connect #host #path #client #decoder #encoder #name
   {{{ (err : bool) (cl : loc), RET (#err, #cl);
       if err then own_client_history γh (uint.nat client) ([] : list Ev)
@@ -250,8 +248,8 @@ Lemma wp_Connect (host : w64) (path : go_string) (client : w64) (decoder encoder
              is_Client cl γs γh (uint.nat client) sc rc name ∗
              own_Client_send_side γs sc ∗ own_Client_receive_side γs rc }}}.
 Proof.
-  intros Hroundtrip Hdeploy.
-  wp_start as "(#Hishist & Hhistory & #Hcodec & #Hencoder)".
+  intros Hdeploy.
+  wp_start as "(#Hishist & Hhistory & #Hcodec_pair)".
   wp_auto.
   wp_func_call.
   wp_apply (wp_Connect host path).
@@ -279,7 +277,7 @@ Proof.
   wp_auto.
   iApply ("HΦ" $! false cl).
   iExists γs, sc, rc. iSplitR.
-  { iExists _, s_loc. iFrame "Hfields Hconn Hdoc Htext Hishist Hpin Hlb Hcodec Hencoder". done. }
+  { iExists _, s_loc. iFrame "Hfields Hconn Hdoc Htext Hishist Hpin Hlb Hcodec_pair". done. }
   iSplitL "Hsend_cursor Hrcap_send"; iExists 0%nat; iFrame.
 Qed.
 
@@ -291,20 +289,19 @@ Qed.
     (src/proof/demo/ws_system.v) boots exactly this function. *)
 Lemma wp_Run (host : w64) (path : go_string) (client : w64) (decoder encoder : func.t)
     (name script : go_string) (γh : history_names) :
-  codec_roundtrip decode encode ->
   deployment_protocols decode γh ->
   {{{ is_pkg_init wsclient ∗ is_history (A := A) (P := P) γh ∗
       own_client_history γh (uint.nat client) ([] : list Ev) ∗
-      codec_spec decode decoder ∗ encoder_spec encode encoder ∗
+      codec_pair_spec decode encode decoder encoder ∗
       ws_env_preserves ⊤ }}}
     @! wsclient.Run #host #path #client #decoder #encoder #name #script
   {{{ RET #(); True }}}.
 Proof.
-  intros Hroundtrip Hdeploy.
-  wp_start as "(#Hhistory_inv & Hhistory & #Hdecoder_spec & #Hencoder_spec & #Henv)".
+  intros Hdeploy.
+  wp_start as "(#Hhistory_inv & Hhistory & #Hcodec_values & #Henv)".
   wp_auto.
-  wp_apply (wp_Connect host path client decoder encoder name γh Hroundtrip Hdeploy
-              with "[$Hhistory_inv $Hhistory $Hdecoder_spec $Hencoder_spec]").
+  wp_apply (wp_Connect host path client decoder encoder name γh Hdeploy
+              with "[$Hhistory_inv $Hhistory $Hcodec_values]").
   iIntros (err cl) "Hconnected".
   wp_auto.
   destruct err.
