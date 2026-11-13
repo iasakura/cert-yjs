@@ -27,6 +27,10 @@
     - [encoder_spec encode g]: the Go encoder value [g] meets the abstract
       [encode], the mirror image of [codec_spec] (issue #131). The
       deployment's [yjs.WireEncoder] is trusted to meet it.
+    - [codec_pair_spec decode encode decoder encoder]: the three together,
+      what a node that both receives and sends takes about the codec: the
+      decoder value meets [decode], the encoder value meets [encode], and
+      the two abstract halves agree ([codec_roundtrip]).
     - [units_surrogate_free units] / [structs_surrogate_free structs]: no
       code unit (of the list, of the batch) is a UTF-16 surrogate. The
       batches the two halves are required to agree on: the wire carries
@@ -223,12 +227,27 @@ Definition encoder_spec (encode : list Input -> list u8) (encoder : func.t) : iP
           own_update_structs structs_slice dq structs ∗
           bytes_slice ↦* encode structs ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) }}}).
 
+(** [codec_pair_spec encode decoder encoder]: the deployment's two codec
+    values meet the abstract codec: the decoder value meets [decode]
+    ([codec_spec]), the encoder value meets [encode] ([encoder_spec]), and
+    the two abstract halves agree ([codec_roundtrip]). What a node that both
+    receives and sends takes about the codec; a node that only receives
+    takes [codec_spec]. *)
+Definition codec_pair_spec (encode : list Input -> list u8) (decoder encoder : func.t) : iProp Σ :=
+  "#Hcodec" ∷ codec_spec decoder ∗
+  "#Hencoder" ∷ encoder_spec encode encoder ∗
+  "%Hroundtrip" ∷ ⌜codec_roundtrip decode encode⌝.
+
 (* ===== lemmas ============================================================= *)
 
 #[global] Instance codec_spec_persistent f : Persistent (codec_spec f).
 Proof. apply _. Qed.
 
 #[global] Instance encoder_spec_persistent encode encoder : Persistent (encoder_spec encode encoder).
+Proof. apply _. Qed.
+
+#[global] Instance codec_pair_spec_persistent encode decoder encoder :
+  Persistent (codec_pair_spec encode decoder encoder).
 Proof. apply _. Qed.
 
 End codec_spec.
