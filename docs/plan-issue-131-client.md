@@ -45,8 +45,10 @@ the decoding side.
   whose inputs are the transaction's inserted items as the model holds them;
   `encoder_spec encode g` is `codec_spec`'s mirror image; the two abstract
   halves are tied by the pure hypothesis `codec_roundtrip decode encode`:
-  `decode (encode inputs) = Some (expand_inputs inputs)` for every list of
-  inputs the real encoder can carry faithfully (section 4.2).
+  what `decode` reads back from `encode inputs` is made of wire structs of
+  `inputs`, for batches without surrogate code units (section 4.2). The
+  wire protocol `yjs_prot` changes with it: a decoded struct with an origin
+  is not required to carry the type it is certified under.
   The client's specs are the server's turned around: `is_Client` persistent,
   `Insert` consumes a send cursor and produces `yjs_prot` for what it sent
   (the certificates come from `wp_Text__InsertIn`), `Serve` consumes a
@@ -138,11 +140,14 @@ Out of scope, recorded with what the design does about them:
 ### 3.1 `yjs/store.go`: the store's half
 
 `store.rootName(parent *yType) string` scans `s.types` for the key bound to
-`parent` (no early exit: one match, by the registry's coherence).
-`store.updateItemOfNode(it *item) updateItem` is the decoded struct of one
-node, and `store.appendSpanStructs(structs, span)` appends the structs of
-the nodes covering one recorded span. They are store methods because they
-read the store's run lists and registry; `yType` is untouched.
+`parent` (no early exit: one match, by the registry's coherence; it ranges
+over the keys and looks each value up, because goose mistranslates a range
+that binds key and value). `store.updateItemOfNode(it, start, stop)` is the
+decoded struct of the code units `[start, stop)` of one node, and
+`store.appendSpanStructs(structs, span)` appends the structs of the nodes
+covering one recorded span, the first and the last cut to the span as Yjs's
+`writeStructs` does. They are store methods because they read the store's
+run lists and registry; `yType` is untouched.
 
 ### 3.2 `yjs/transaction.go`: `insertedStructs`
 
@@ -258,112 +263,105 @@ return type is, and gives the client one call with one spec.
 
 ## 4. Specs
 
-### 4.1 `wp_Transaction__insertedStructs` (`src/proof/transaction/`)
+### 4.1 `wp_Transaction__insertedStructs` (`src/proof/transaction/insertedStructs.v`)
+
+As verified (the first version of this section stated it per struct, which
+does not survive a multi-character node):
 
 ```
 {{{ is_pkg_init yjs ∗ own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
   tr @! (go.PointerType yjs.Transaction) @! "insertedStructs" #()
-{{{ (sl : slice.t) (structs : list Input), RET #sl;
+{{{ (structs_slice : slice.t) (structs : list Input), RET #structs_slice;
     own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
-    own_update_structs sl (DfracOwn 1) structs ∗
-    ⌜structs_ids structs = inserted⌝ ∗
-    ⌜∀ x, x ∈ structs -> ∃ name it, name ∈ changed ∧ it ∈ doc_model_get m (RootId name) ∧ x = (RootId name, input_of_item it)⌝ }}}
+    own_update_structs structs_slice (DfracOwn 1) structs ∗
+    ⌜∀ op, op ∈ expand_inputs structs ->
+       ∃ name it, it ∈ doc_model_get m (RootId name) ∧
+                  op = (RootId name, input_of_item it) ∧ item_id it ∈ inserted⌝ }}}
 ```
 
-`structs_ids` is the set of ids a struct list covers (`in_id` advanced over
-the content), the struct-level `char_ids`. The second pure conjunct is
-`own_transaction_record`'s `Hrecorded` lifted to the returned list: every
-struct is a model item of a changed root. Both are stated as pure facts about
-the model, not about the heap, following `spec-shape`.
+Per character, through `expand_inputs`: a struct may carry several
+characters, the model and the certificates are per character. The store
+half is `wp_store__appendSpanStructs` (over `own_store`), with
+`wp_store__updateItemOfNode` and `wp_store__rootName` under it.
 
-The caller (`InsertEncoded`) matches these against `wp_Text__InsertIn`'s
-output: `inserted = char_ids ins`, so each struct's id is some `it ∈ ins`'s,
-model ids are unique within a root, hence each struct is
-`(RootId name, input_of_item it)` for an `it ∈ ins`, which carries
-`is_op_cert γh (RootId name, OpInsert (input_of_item it))`. One lemma in
-`network_model.v` or `store/model.v` does the matching
-(`structs_of_inserted_run`, name to be settled when written).
+### 4.2 The wire protocol, `encoder_spec` and `codec_roundtrip` (`src/proof/yjs_prot.v`)
 
-### 4.2 `encoder_spec` and `codec_roundtrip` (`src/proof/yjs_prot.v`)
+Three things turned out differently from the first version of this section.
 
-```
-Context (encode : list Input -> list u8).
-
-Definition encoder_spec (g : func.t) : iProp Σ :=
-  □ (∀ (sl : slice.t) (dq : dfrac) (structs : list Input),
-      {{{ own_update_structs sl dq structs }}}
-        #g #sl
-      {{{ (s : slice.t), RET #s;
-          own_update_structs sl dq structs ∗
-          s ↦* encode structs ∗ own_slice_cap w8 s (DfracOwn 1) }}}).
-```
-
-The pure contract between the halves:
+**The protocol.** The bytes of a struct with an origin do not carry its
+root, so no `decode` can report the type such a struct is certified under.
+`yjs_prot` therefore relates what `decode` returns to the certified batch by
+`same_wire_struct` (equal structs, and equal types unless the struct has an
+origin), pointwise:
 
 ```
-Definition codec_roundtrip (decode : list u8 -> option (list Input)) (encode : list Input -> list u8) : Prop :=
-  ∀ structs, decode (encode structs) = Some (expand_inputs structs).
+Definition yjs_prot γh d : iProp Σ :=
+  ∃ decoded inputs,
+    ⌜decode d = Some decoded⌝ ∗ ⌜Forall2 same_wire_struct decoded inputs⌝ ∗
+    ⌜update_wf inputs⌝ ∗ is_pending_certified γh (expand_inputs inputs).
 ```
 
-`expand_inputs`, not the identity: the real decoder splits every struct into
-one-unit items (`splitStructs`, `yjs/codec.go`), and `expand_inputs` is that
-split on the model. For the client's one-unit structs the two coincide. The
-closed theorem takes `codec_roundtrip decode encode` as a hypothesis next
-to `codec_spec` and `encoder_spec`; nothing else mentions it.
+A receiver turns the decoder's slice into the certified batch with
+`own_update_structs_same_wire_struct`, which needs `is_update_item` to say
+that a decoded struct has a parent name exactly when it has no origin.
 
-Found while writing the encoder (C1): the equation above is false of the
-real codec for an arbitrary list, in three ways, so as written the closed
-theorem would assume something the deployed code does not satisfy.
-
-- The encoder reorders: clients in descending order, each client's structs
-  by clock. The equation holds as a list equation only for a list already
-  in that order.
-- A lone surrogate code unit is written as U+FFFD (issue #233) and does not
-  come back. That includes a surrogate pair typed as two inserts, each its
-  own update.
-- Structs with overlapping ids, or a struct with no origin and no parent
-  name, cannot be written.
-
-So the definition is restricted to the lists the encoder carries
-faithfully:
+**The encoder's spec** is `codec_spec`'s mirror image, as planned:
 
 ```
-Definition codec_roundtrip decode encode : Prop :=
-  ∀ structs, structs_encodable structs ->
-    decode (encode structs) = Some (expand_inputs structs).
+Definition encoder_spec encode encoder : iProp Σ :=
+  □ (∀ structs_slice dq structs,
+      {{{ own_update_structs structs_slice dq structs }}}
+        #encoder #structs_slice
+      {{{ (bytes_slice : slice.t), RET #bytes_slice;
+          own_update_structs structs_slice dq structs ∗
+          bytes_slice ↦* encode structs ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) }}}).
 ```
 
-with `structs_encodable` a pure predicate on the model list: one client,
-clocks ascending and disjoint, every origin-less struct named, no code unit
-in the surrogate range D800-DFFF. One client and no surrogates is narrower
-than what the encoder handles (it sorts several clients and carries whole
-pairs); it is what a transaction of local inserts produces and what is easy
-to state, and it can be widened without touching a proof that uses it. The
-client's `Insert` then needs its content free of surrogate code units to
-conclude that what it sent decodes, which becomes a precondition of
-`wp_Client__Insert` and a hypothesis on the scripts of the closed theorem.
+**The contract between the halves** is not
+`decode (encode structs) = Some (expand_inputs structs)`. The real encoder
+reorders (clients descending, clocks ascending), leaves out a struct that
+repeats clocks already written, and writes a lone surrogate code unit as
+U+FFFD (issue #233). The contract the real pair meets, and all a sender's
+safety needs, is an inclusion over batches with no surrogate code unit:
+
+```
+Definition codec_roundtrip encode : Prop :=
+  ∀ structs, structs_surrogate_free structs ->
+    ∃ decoded, decode (encode structs) = Some decoded ∧
+      ∀ decoded_struct, decoded_struct ∈ decoded ->
+        ∃ sent_struct, sent_struct ∈ expand_inputs structs ∧
+          same_wire_struct decoded_struct sent_struct.
+```
+
+`yjs_prot_encode` is the sender's lemma: from `codec_roundtrip`, a
+surrogate-free batch whose expansion is well formed and certified,
+`yjs_prot γh (encode structs)`. The consequence for the client: its inserts
+must be free of surrogate code units, a precondition of `wp_Client__Insert`
+and a hypothesis on the scripts of the closed theorem.
 
 ### 4.3 `wp_Text__InsertEncoded` (`src/proof/text/InsertEncoded.v`)
 
+As verified:
+
 ```
 {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗ cs ↦*{dq} units ∗
-    encoder_spec encode g }}}
-  t @! (go.PointerType yjs.Text) @! "InsertEncoded" #idx #cs #g
-{{{ (sl : slice.t) (L' ins : list (YjsItem A)) (client k0 : nat) (originLeft originRight : YjsPtr A)
-    (structs : list Input), RET #sl;
+    encoder_spec encode encoder }}}
+  t @! (go.PointerType yjs.Text) @! "InsertEncoded" #idx #cs #encoder
+{{{ (bytes_slice : slice.t) (L' ins : list (YjsItem A)) (client k0 : nat)
+    (originLeft originRight : YjsPtr A) (structs : list Input), RET #bytes_slice;
     is_Text t γs γh name L' deleted_ids ∗ cs ↦*{dq} units ∗
     ⌜inserted_run L L' ins units client k0 originLeft originRight⌝ ∗
-    sl ↦* encode structs ∗ own_slice_cap w8 sl (DfracOwn 1) ∗
-    ⌜structs = (λ it, (RootId name, input_of_item it)) <$> ins⌝ ∗
-    ([∗ list] it ∈ ins, is_op_cert γh (RootId name, OpInsert (input_of_item it))) }}}
+    ([∗ list] it ∈ ins, is_op_cert γh (RootId name, OpInsert (input_of_item it))) ∗
+    bytes_slice ↦* encode structs ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) ∗
+    ⌜∀ op, op ∈ expand_inputs structs -> ∃ it, it ∈ ins ∧ op = (RootId name, input_of_item it)⌝ }}}
 ```
 
 `wp_Text__Insert`'s postcondition with the bytes and their meaning added.
-From it the client derives `yjs_prot decode γh (encode structs)`: `decode`
-by `codec_roundtrip`, `update_wf` from `inserted_run` (one unit per item,
-clocks `k0 + i` below the store's clock, a head struct names `name`), and
-`is_pending_certified γh (expand_inputs structs)` from the certificates,
-`expand_inputs` being the identity on one-unit inputs.
+From it the client derives `yjs_prot decode γh (encode structs)` by
+`yjs_prot_encode`: the certificates of `ins` cover every character of
+`structs`, `update_wf` follows from `inserted_run` (one unit per item,
+a head item names `name`), and surrogate-freeness from the caller's
+content.
 
 ### 4.4 The client (`src/proof/ws_client.v`)
 
@@ -480,7 +478,7 @@ and `Serve` each hold one.
 |---|---|---|
 | **C0** | this document | reviewed |
 | **C1** Go | `store.rootName`, `store.appendSpanStructs`; `Transaction.insertedStructs`; `Encoder`, `WireEncoder`; `Text.InsertEncoded`; Go tests (encoder round trip through the real decoder; two documents converge through `InsertEncoded` + `ApplyUpdate`) | `./build.sh go`, `go test ./yjs/`, goose translates |
-| **C2** proofs of C1 | `wp_Transaction__insertedStructs`, `encoder_spec`, `codec_roundtrip`, `wp_Text__InsertEncoded`; `deployment_protocols` shared | `./build.sh make` |
+| **C2** proofs of C1 | the protocol change (`same_wire_struct`, `yjs_prot`, `encoder_spec`, `codec_roundtrip`), then `wp_store__appendSpanStructs`, `wp_Transaction__insertedStructs`, `wp_Text__InsertEncoded`; two pull requests | `./build.sh make` |
 | **C3** Go client | `wsclient/`: `Client`, `Connect`, `Insert`, `Serve`, `Run`; tests against `wsrelay` (two clients converge through the server by the new send path; a report per edit on the trace) | `go test ./wsclient/`, goose translates |
 | **C4** proofs of C3 | `is_Client`, `wp_Connect`, `wp_Client__Insert`, `wp_Client__Serve`, `wp_Run`, `client_boot`, `wpr_client_boot` | `./build.sh make` |
 | **C5** closed theorem | `ws_system_dist_adequate`, server + one scripted client, then the list of clients | theorem Qed, `Print Assumptions` clean under a `.vo` build |
@@ -513,8 +511,8 @@ changes no verified function: it only adds new ones (`Text` gains
    field; section 2 says what changed.)
 2. `Text.InsertEncoded` in `yjs` (section 3.5 (a)) over exporting the update
    items: recommended.
-3. The encoder seam as a value with `codec_roundtrip`, restricted to
-   `structs_encodable` lists (section 4.2), as the closed theorem's pure
+3. The encoder seam as a value with `codec_roundtrip`, an inclusion over
+   surrogate-free batches (section 4.2), as the closed theorem's pure
    hypothesis: recommended; the alternative is verifying the
    byte codec, a separate issue.
 4. Scope: inserts only, no handshake, a report after every local insert and
