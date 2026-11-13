@@ -95,7 +95,7 @@ Definition yjs_prot (γh : history_names) (d : list u8) : iProp Σ :=
 (** [structs_surrogate_free structs]: no code unit of the batch lies in the
     UTF-16 surrogate range D800-DFFF. *)
 Definition structs_surrogate_free (structs : list Input) : Prop :=
-  ∀ x unit, x ∈ structs -> unit ∈ in_content x.2 ->
+  ∀ struct unit, struct ∈ structs -> unit ∈ in_content struct.2 ->
     ¬ (0xD800 ≤ uint.Z unit ≤ 0xDFFF)%Z.
 
 (** The pure contract between the two halves of the codec, for the abstract
@@ -103,7 +103,9 @@ Definition structs_surrogate_free (structs : list Input) : Prop :=
 Definition codec_roundtrip (encode : list Input -> list u8) : Prop :=
   ∀ structs, structs_surrogate_free structs ->
     ∃ decoded, decode (encode structs) = Some decoded ∧
-      ∀ x, x ∈ decoded -> ∃ y, y ∈ expand_inputs structs ∧ same_wire_struct x y.
+      ∀ decoded_struct, decoded_struct ∈ decoded ->
+        ∃ sent_struct, sent_struct ∈ expand_inputs structs ∧
+          same_wire_struct decoded_struct sent_struct.
 
 (* ===== lemmas ============================================================= *)
 
@@ -199,20 +201,20 @@ Definition codec_spec (f : func.t) : iProp Σ :=
 (** The Go encoder value [g] meets the abstract [encode]: on any struct
     slice it returns a fresh byte slice holding the encoding of the batch the
     slice denotes, and leaves the structs as they were. *)
-Definition encoder_spec (encode : list Input -> list u8) (g : func.t) : iProp Σ :=
-  □ (∀ (sl : slice.t) (dq : dfrac) (structs : list Input),
-      {{{ own_update_structs sl dq structs }}}
-        #g #sl
-      {{{ (s : slice.t), RET #s;
-          own_update_structs sl dq structs ∗
-          s ↦* encode structs ∗ own_slice_cap w8 s (DfracOwn 1) }}}).
+Definition encoder_spec (encode : list Input -> list u8) (encoder : func.t) : iProp Σ :=
+  □ (∀ (structs_slice : slice.t) (dq : dfrac) (structs : list Input),
+      {{{ own_update_structs structs_slice dq structs }}}
+        #encoder #structs_slice
+      {{{ (bytes_slice : slice.t), RET #bytes_slice;
+          own_update_structs structs_slice dq structs ∗
+          bytes_slice ↦* encode structs ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) }}}).
 
 (* ===== lemmas ============================================================= *)
 
 #[global] Instance codec_spec_persistent f : Persistent (codec_spec f).
 Proof. apply _. Qed.
 
-#[global] Instance encoder_spec_persistent encode g : Persistent (encoder_spec encode g).
+#[global] Instance encoder_spec_persistent encode encoder : Persistent (encoder_spec encode encoder).
 Proof. apply _. Qed.
 
 End codec_spec.

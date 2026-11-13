@@ -6,7 +6,9 @@
       integrate inputs, which is how a update refines the
       per-char model.
     - what a decoded batch must satisfy: [input_fits] per struct,
-      [pending_item_rooted] / [is_pending_rooted], bundled as [update_wf].
+      [pending_item_rooted] / [is_pending_rooted], bundled as [update_wf];
+      [input_has_origin] and [same_wire_struct], two type-tagged inputs
+      that are one struct on the wire (issue #131).
     - the wire-level drain: [wire_integrate] applies one ready item,
       [wire_pass] one sweep over the pending list, [wire_drain(_aux)] the fixed
       point, [WireReplay] the resulting replay relation and [wire_ready_total]
@@ -2180,10 +2182,7 @@ Proof.
   simpl. by move=> [= <-].
 Qed.
 
-(** [same_wire_struct] is reflexive, and what a batch must satisfy to be
-    applied ([update_wf]) does not depend on the types of the structs that
-    have an origin, so it holds of a decoded batch when it holds of the
-    batch the sender certified. *)
+(** [same_wire_struct] is reflexive. *)
 Lemma same_wire_struct_refl (inputs : list (TId * IntegrateInput (A := A))) :
   Forall2 same_wire_struct inputs inputs.
 Proof. apply Forall2_same_length_lookup. split; first done. move=> i x y Hx Hy. rewrite Hx in Hy. injection Hy as <-. split; [done | by right]. Qed.
@@ -2201,6 +2200,9 @@ Proof.
   destruct x, y. simpl in *. by subst.
 Qed.
 
+(** What a batch must satisfy to be applied ([update_wf]) does not depend
+    on the types of the structs that have an origin, so it holds of a
+    decoded batch when it holds of the batch the sender certified. *)
 Lemma update_wf_same_wire_struct (decoded certified : list (TId * IntegrateInput (A := A))) :
   Forall2 same_wire_struct decoded certified -> update_wf certified -> update_wf decoded.
 Proof.
