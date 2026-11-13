@@ -119,10 +119,77 @@ func newStore(client Client) store {
 func (s *store) getOrCreateYType(name string) *yType {
 	y, ok := s.types[name]
 	if !ok {
-		y = newYType(name)
+		y = newYType()
 		s.types[name] = y
 	}
 	return y
+}
+
+// rootName is the name the root type parent is registered under, found by
+// scanning the registry for the key bound to it: Yjs v14.0.0-rc.18
+// findRootTypeKey (src/utils/ID.js:79), which Item.write calls when it writes
+// the parent of a struct that has no origin. yrs 0.27.2 and y-octo 0.1.0
+// keep the name on the type instead and read it there (Branch.name,
+// src/branch.rs:201; YType.root_name, src/doc/types/mod.rs:39). The Go
+// follows Yjs: the registry is the one place a name is kept, so the type's
+// own fields and their proofs stay as they are. A type is registered under
+// exactly one name, so the scan has one match and does not stop at it (a Go
+// map range in goose has no early exit worth its proof); for a type that is
+// not registered, which no caller passes, Yjs throws and this returns "".
+// Callers hold the storeRef's lock.
+func (s *store) rootName(parent *yType) string {
+	result := ""
+	for name, registered := range s.types {
+		if registered == parent {
+			result = name
+		}
+	}
+	return result
+}
+
+// updateItemOfNode is the decoded struct of one integrated node: the wire
+// form the node would be read from. A struct names its parent only when it
+// has no origin on either side, as all three references write it (Yjs
+// v14.0.0-rc.18 Item.write, src/structs/Item.js:455-469; yrs 0.27.2
+// Item::encode, src/block.rs:780-797; y-octo 0.1.0 Item::write,
+// src/doc/codec/item.rs:256). The struct shares the node's origin ids and
+// content slice, neither of which is written after the node is created
+// (content.go). Callers hold the storeRef's lock.
+func (s *store) updateItemOfNode(it *item) updateItem {
+	var parentName *string
+	if it.originLeftId == nil && it.originRightId == nil {
+		name := s.rootName(it.parent)
+		parentName = &name
+	}
+	return updateItem{
+		id:            it.id,
+		originLeftId:  it.originLeftId,
+		originRightId: it.originRightId,
+		parentName:    parentName,
+		content:       it.content.content,
+	}
+}
+
+// appendSpanStructs appends to structs the decoded structs of the nodes that
+// cover recorded, in clock order: the nodes of that client's run list from
+// the one that starts at the span's first clock up to the span's end (Yjs
+// v14.0.0-rc.18 writeStructs, src/utils/encoding-helpers.js:18, walks
+// findIndexSS the same way). The span must begin where a node begins and end
+// where a node ends, which holds of every span a transaction records
+// (Transaction.insertedStructs says why); Yjs writes the first node from an
+// offset and truncates the last (encoding-helpers.js:59-61), neither of
+// which is needed then. Callers hold the storeRef's lock.
+func (s *store) appendSpanStructs(structs []updateItem, recorded idSpan) []updateItem {
+	nodes := s.items[recorded.id.clientId]
+	end := recorded.id.clock + recorded.len
+	index, found := getNodeIndex(nodes, recorded.id.clock)
+	if found {
+		for index < uint64(len(nodes)) && nodes[index].id.clock < end {
+			structs = append(structs, s.updateItemOfNode(nodes[index]))
+			index = index + 1
+		}
+	}
+	return structs
 }
 
 // getNodeIndex finds the index of the node whose run covers clock, by binary

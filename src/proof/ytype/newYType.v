@@ -1,7 +1,6 @@
 (** [wp_newYType]: allocating an empty root sequence (issue #54, the
     storage behind [getOrCreateYType]'s miss branch). The fresh [yType] has
-    [start = nil], [len = 0] and the given [name]: no node addresses and no
-    runs. *)
+    [start = nil] and [len = 0]: no node addresses and no runs. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -26,16 +25,15 @@ Notation A := (list w16).
 
 (** [newYType] allocates an empty root sequence (issue #54: the storage
     backing [getOrCreateYType]'s miss branch). The fresh [yType] has
-    [start = nil] and [len = 0]: no node addresses and no runs. The [name]
-    field is set to the argument; [own_ytype] does not expose it yet. *)
-Lemma wp_newYType (name : go_string) :
+    [start = nil] and [len = 0]: no node addresses and no runs. *)
+Lemma wp_newYType :
   {{{ is_pkg_init yjs }}}
-    @! yjs.newYType #name
+    @! yjs.newYType #()
   {{{ (p : loc), RET #p; own_ytype p (DfracOwn 1) [] (MkTypeModel []) }}}.
 Proof.
-  wp_start as "_". wp_auto. wp_alloc p as "Hp". wp_auto.
+  wp_start as "_". wp_alloc p as "Hp". wp_auto.
   iApply "HΦ".
-  iExists {| yjs.yType.start' := null; yjs.yType.len' := W64 0; yjs.yType.name' := name |}, null.
+  iExists {| yjs.yType.start' := null; yjs.yType.len' := W64 0 |}, null.
   iFrame "Hp". iPureIntro. split_and!; reflexivity.
 Qed.
 

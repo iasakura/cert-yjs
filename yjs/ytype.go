@@ -23,21 +23,11 @@ type yType struct {
 	start *item
 	// len is the visible (countable, non-deleted) length.
 	len uint64
-	// name is the key the store registers this root type under (store.types),
-	// set once at creation and never written again. yrs 0.27.2 keeps it on
-	// the branch (Branch.name, src/branch.rs:201) and y-octo 0.1.0 on the type
-	// (YType.root_name, src/doc/types/mod.rs:39); Yjs v14.0.0-rc.18 keeps no
-	// name on the type and scans doc.share for the key when it writes a
-	// struct's parent (findRootTypeKey, src/utils/ID.js:79). The Go follows
-	// yrs and y-octo: Transaction.insertedStructs, the only reader, gets the
-	// name from the type it already holds instead of from the store's
-	// registry.
-	name string
 }
 
-// newYType creates an empty root sequence registered under name.
-func newYType(name string) *yType {
-	return &yType{start: nil, len: 0, name: name}
+// newYType creates an empty root sequence.
+func newYType() *yType {
+	return &yType{start: nil, len: 0}
 }
 
 // findPos walks to the visible character index and returns the doubly-linked
