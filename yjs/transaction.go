@@ -260,11 +260,11 @@ func (tr *Transaction) applyUpdate(structs []updateItem) {
 // transaction already keeps; for a transaction of local edits the two
 // readings give the same structs.
 //
-// A recorded span begins where a node begins and ends where a node ends:
-// recordInsert records whole nodes, and a later split (store.splitNode)
-// only cuts a node in two, never moving a node's first clock and never
-// joining nodes. So a node split after it was recorded is read back as its
-// parts.
+// A recorded span begins where a node begins and ends where a node ends
+// (recordInsert records whole nodes, and a later split only cuts a node in
+// two), so a node split after it was recorded is read back as its parts.
+// appendSpanStructs does not rely on that: it cuts the first and the last
+// node to the span, as Yjs does.
 func (tr *Transaction) insertedStructs() []updateItem {
 	s := tr.store
 	var structs []updateItem

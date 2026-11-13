@@ -125,6 +125,31 @@ func TestInsertedStructsSplitAfterRecord(t *testing.T) {
 	}
 }
 
+// A span that begins and ends inside a node is read back as the part of the
+// node it covers: its first unit takes the unit before it as left origin.
+func TestAppendSpanStructsInsideNode(t *testing.T) {
+	doc := NewDoc(1)
+	root := "root"
+	doc.Transact(func(tr *Transaction) {
+		tr.applyUpdate([]updateItem{{id: newId(2, 0), parentName: &root, content: []uint16{'a', 'b', 'c', 'd'}}})
+	})
+	s := &doc.store.store
+	structs := s.appendSpanStructs(nil, idSpan{id: newId(2, 1), len: 2})
+	want := []plainStruct{
+		{id: newId(2, 1), originLeft: newId(2, 0), hasLeft: true, content: []uint16{'b', 'c'}},
+	}
+	if got := plainStructs(structs); !reflect.DeepEqual(got, want) {
+		t.Fatalf("structs:\n got %+v\nwant %+v", got, want)
+	}
+	whole := s.appendSpanStructs(nil, idSpan{id: newId(2, 0), len: 4})
+	wantWhole := []plainStruct{
+		{id: newId(2, 0), parentName: "root", hasParent: true, content: []uint16{'a', 'b', 'c', 'd'}},
+	}
+	if got := plainStructs(whole); !reflect.DeepEqual(got, wantWhole) {
+		t.Fatalf("whole:\n got %+v\nwant %+v", got, wantWhole)
+	}
+}
+
 // A transaction that integrates nothing has no structs, and the encoding of
 // no structs decodes to no structs.
 func TestInsertedStructsEmpty(t *testing.T) {
