@@ -198,8 +198,11 @@ func (s *store) appendSpanStructs(structs []updateItem, recorded idSpan) []updat
 	end := first + recorded.len
 	index, found := getNodeIndex(nodes, first)
 	if found {
-		for index < uint64(len(nodes)) && nodes[index].id.clock < end {
+		for index < uint64(len(nodes)) {
 			node := nodes[index]
+			if node.id.clock >= end {
+				break
+			}
 			start := uint64(0)
 			if node.id.clock < first {
 				start = first - node.id.clock
@@ -208,7 +211,11 @@ func (s *store) appendSpanStructs(structs []updateItem, recorded idSpan) []updat
 			if end-node.id.clock < stop {
 				stop = end - node.id.clock
 			}
-			structs = append(structs, s.updateItemOfNode(node, start, stop))
+			if start < stop {
+				// (a node of the walk that holds no clock of the span
+				// contributes nothing)
+				structs = append(structs, s.updateItemOfNode(node, start, stop))
+			}
 			index = index + 1
 		}
 	}

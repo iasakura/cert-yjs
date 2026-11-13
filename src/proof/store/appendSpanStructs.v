@@ -67,12 +67,12 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
 (** [store.rootName]: the name the registry binds to a registered type. The
     registry's coherence ([pool_registry_coh]) gives every type of the pool
     exactly one name, so the scan's one match is that name. *)
-Lemma wp_store__rootName (s parent : loc) (state : store_state) :
-  {{{ is_pkg_init yjs ∗ own_store_state s 1 state ∗
+Lemma wp_store__rootName (s parent : loc) (q : Qp) (state : store_state) :
+  {{{ is_pkg_init yjs ∗ own_store_state s q state ∗
       ⌜is_Some (ss_pool state !! parent)⌝ }}}
     s @! (go.PointerType yjs.store) @! "rootName" #parent
   {{{ (name : go_string), RET #name;
-      own_store_state s 1 state ∗ ⌜ss_bind state !! name = Some parent⌝ }}}.
+      own_store_state s q state ∗ ⌜ss_bind state !! name = Some parent⌝ }}}.
 Proof using Type*.
   iIntros (Φ) "(#Hpkg & Hstate & %Hregistered) HΦ".
   destruct state as [client0 clock0 locs p bind pend pdel]. simpl in *.
@@ -86,13 +86,14 @@ Proof using Type*.
   wp_method_call. wp_call. wp_call. wp_auto.
   (* the scan keeps half of the registry map for its lookups; the range
      holds the other half until the loop ends *)
-  iEval (rewrite -(Qp.div_2 1)) in "Htypesmap".
+  iAssert (types_mref ↦${DfracOwn (q / 2 + q / 2)} bind)%I with "[Htypesmap]" as "Htypesmap";
+    first by rewrite Qp.div_2.
   iDestruct (own_map_dfrac_split with "Htypesmap") as "[Htypesmap Htypesmap_lookup]".
   (* once the type's one name has been passed, [result] holds it *)
   wp_apply (wp_map_for_range_keep (λ (keys : list go_string) (i : Z),
       ∃ (result name : go_string),
-        "s" ∷ s_ptr ↦ s ∗ "Htypesf" ∷ s.[yjs.store.t, "types"] ↦ types_mref ∗
-        "Htypesmap_lookup" ∷ types_mref ↦${DfracOwn (1/2)} bind ∗
+        "s" ∷ s_ptr ↦ s ∗ "Htypesf" ∷ s.[yjs.store.t, "types"] ↦{#q} types_mref ∗
+        "Htypesmap_lookup" ∷ types_mref ↦${DfracOwn (q/2)} bind ∗
         "parent" ∷ parent_ptr ↦ parent ∗ "result" ∷ result_ptr ↦ result ∗
         "name" ∷ name_ptr ↦ name ∗
         "%Hfound" ∷ ⌜(0 ≤ i)%Z ∧ (name0 ∈ take (Z.to_nat i) keys → result = name0)⌝)%I
@@ -121,8 +122,8 @@ Proof using Type*.
       iExists _, _. iFrame. iPureIntro. split; first lia.
       apply Hstep; last done. move=> Heq. subst key. rewrite Hname0 in Hval. by injection Hval. }
   iIntros "Hinv Htypesmap". iNamed "Hinv". destruct Hfound as [_ Hfound]. wp_auto.
-  iCombine "Htypesmap Htypesmap_lookup" as "Htypesmap".
-  iEval (rewrite -own_map_dfrac_split Qp.div_2) in "Htypesmap".
+  iDestruct (own_map_dfrac_split with "[$Htypesmap $Htypesmap_lookup]") as "Htypesmap".
+  iEval (rewrite Qp.div_2) in "Htypesmap".
   have Hresult : result = name0.
   { apply Hfound. rewrite -Hkeyslen firstn_all2; last lia.
     apply (elem_of_list_to_set (C := gset go_string)). rewrite Hkeysdom. apply elem_of_dom. by eexists. }
@@ -136,19 +137,19 @@ Qed.
 (** Borrow one node of the store whole ([own_item_node]): the WP below reads
     its origin cells, which the narrower borrows of [store/heap] do not
     expose. *)
-#[local] Lemma own_store_state_item_node_acc (s : loc) (state : store_state)
+#[local] Lemma own_store_state_item_node_acc (s : loc) (q : Qp) (state : store_state)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
   ss_locs state !! parent = Some ls ->
   ss_pool state !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
-  own_store_state s 1 state -∗
+  own_store_state s q state -∗
   ∃ (prev nxt : loc),
     ⌜run_wf (run_items r)⌝ ∗ ⌜run_per_char r⌝ ∗
     ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
-    own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev nxt ∗
-    (own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev nxt -∗
-     own_store_state s 1 state).
+    own_item_node lc (DfracOwn q) (input_of_run r) (run_deleted r) parent prev nxt ∗
+    (own_item_node lc (DfracOwn q) (input_of_run r) (run_deleted r) parent prev nxt -∗
+     own_store_state s q state).
 Proof.
   move=> Hls Hp Hlk Hrk.
   destruct state as [client0 clock0 locs p bind pend pdel]. simpl in *.
@@ -160,7 +161,7 @@ Proof.
   iDestruct "Htype" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
   rewrite Hls in Hls0. injection Hls0 as <-.
   iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
-  iDestruct (own_dll_acc (DfracOwn 1) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk with "Hdll")
+  iDestruct (own_dll_acc (DfracOwn q) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk with "Hdll")
     as (prev nxt) "(_ & _ & %Hrun & %Hper_char & %Hcontent_length & Hnode & Hback)".
   iExists prev, nxt. iFrame "Hnode".
   iSplitR; first done. iSplitR; first done. iSplitR; first done.
@@ -180,7 +181,36 @@ Qed.
   run_wf (run_items r) -> run_per_char r ->
   expand_input (tid, input_of_run r) = (λ it, (tid, input_of_item it)) <$> run_items r.
 Proof.
-Admitted.
+  move=> Hrun Hper_char.
+  have Hhead : run_items r !! 0%nat = Some (run_head_item r).
+  { rewrite /run_head_item. destruct Hrun as [Hrun_nonempty _].
+    destruct (run_items r); [done | reflexivity]. }
+  rewrite /expand_input /ops_of_input /=.
+  rewrite /run_per_char in Hper_char. rewrite -Hper_char.
+  apply list_eq => index. rewrite !list_lookup_fmap.
+  destruct (run_items r !! index) as [it |] eqn:Hit; last first.
+  { rewrite lookup_ge_None_2 //. rewrite ops_from_length length_fmap.
+    by apply lookup_ge_None. }
+  have [op Hop] : is_Some (ops_from (clientId (item_id (run_head_item r))) (clock (item_id (run_head_item r)))
+      (origin_id (origin (run_head_item r))) (origin_id (rightOrigin (run_head_item r)))
+      (content <$> run_items r) !! index).
+  { apply lookup_lt_is_Some. rewrite ops_from_length length_fmap. exact (lookup_lt_Some _ _ _ Hit). }
+  rewrite Hop /=. f_equal. f_equal.
+  destruct (ops_from_lookup _ _ _ _ _ _ _ Hop) as (Hop_id & Hop_right & Hop_content & Hop_first & Hop_later).
+  rewrite list_lookup_fmap Hit /= in Hop_content. injection Hop_content as Hop_content.
+  destruct op as [op_origin op_right op_content op_id]. simpl in *. rewrite /input_of_item. subst.
+  f_equal.
+  - destruct index as [| before_index].
+    + rewrite Hhead in Hit. injection Hit as <-. exact (Hop_first eq_refl).
+    + rewrite (Hop_later before_index eq_refl).
+      have [before_item Hbefore_item] : is_Some (run_items r !! before_index).
+      { apply lookup_lt_is_Some. apply lookup_lt_Some in Hit. lia. }
+      destruct ((proj2 Hrun) before_index before_item it Hbefore_item Hit) as (_ & Horigin & _).
+      rewrite Horigin /=.
+      by rewrite (run_wf_lookup_clock (run_items r) before_index (run_head_item r) before_item Hrun Hhead Hbefore_item).
+  - by rewrite (run_wf_lookup_rightOrigin (run_items r) index (run_head_item r) it Hrun Hhead Hit).
+  - by rewrite (run_wf_lookup_clock (run_items r) index (run_head_item r) it Hrun Hhead Hit).
+Qed.
 
 (** [store.updateItemOfNode]: the decoded struct of the part [start, stop) of
     the node at slot [k] of the type at [parent] denotes the wire item of
@@ -188,17 +218,17 @@ Admitted.
     then [split_run_left]), under the name the registry binds to the type.
     The struct shares the node's right origin cell and content, both
     read-only. *)
-Lemma wp_store__updateItemOfNode (s lc parent : loc) (state : store_state)
+Lemma wp_store__updateItemOfNode (s lc parent : loc) (q : Qp) (state : store_state)
     (ls : list loc) (tm : type_model) (k : nat) (r : ItemRun) (start stop : w64) :
   ss_locs state !! parent = Some ls ->
   ss_pool state !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
   (uint.nat start < uint.nat stop <= length (run_items r))%nat ->
-  {{{ is_pkg_init yjs ∗ own_store_state s 1 state }}}
+  {{{ is_pkg_init yjs ∗ own_store_state s q state }}}
     s @! (go.PointerType yjs.store) @! "updateItemOfNode" #lc #start #stop
   {{{ (updateItemVal : yjs.updateItem.t) (name : go_string), RET #updateItemVal;
-      own_store_state s 1 state ∗ ⌜ss_bind state !! name = Some parent⌝ ∗
+      own_store_state s q state ∗ ⌜ss_bind state !! name = Some parent⌝ ∗
       is_update_item updateItemVal
         (RootId name,
          input_of_run (split_run_left (split_run_right r (uint.nat start))
@@ -213,7 +243,7 @@ Proof using Type*.
   { apply elem_of_all_runs. exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hrk)]. }
   destruct (Hrun_invs r Hr_all) as (_ & Hfits & Hclient_fits & _).
   wp_method_call. wp_call. wp_call. wp_auto.
-  iDestruct (own_store_state_item_node_acc s state parent ls tm k lc r Hls Hp Hlk Hrk with "Hstate")
+  iDestruct (own_store_state_item_node_acc s q state parent ls tm k lc r Hls Hp Hlk Hrk with "Hstate")
     as (prev nxt) "(%Hrun & %Hper_char & %Hcontent_length & Hnode & Hback)".
   iDestruct "Hnode" as (itemVal origin_left origin_right)
     "(Hval & #Horigin_left & #Horigin_right & %Hin_left & %Hin_right & %Hid & #Hcontent & %Hparent & %Hprev & %Hnext & %Hflags)".
@@ -240,7 +270,7 @@ Proof using Type*.
   (* the left origin: the node's own at the node's first unit, the unit
      before the part otherwise *)
   wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗ ∃ (left_ptr : loc) (left_id : option yjs.id.t),
-      "it" ∷ it_ptr ↦ lc ∗ "start" ∷ start_ptr ↦ start ∗ "Hval" ∷ lc ↦ itemVal ∗
+      "it" ∷ it_ptr ↦ lc ∗ "start" ∷ start_ptr ↦ start ∗ "Hval" ∷ lc ↦{#q} itemVal ∗
       "originLeftId" ∷ originLeftId_ptr ↦ left_ptr ∗
       "Hleft_cell" ∷ (is_origin_id left_ptr left_id ∨
                       ∃ before : yjs.id.t, ⌜left_id = Some before ∧ left_ptr ≠ null⌝ ∗ left_ptr ↦ before) ∗
@@ -277,7 +307,7 @@ Proof using Type*.
   wp_bind (if: _ then _ else _)%E.
   iApply (wp_wand _ _ _ (λ v : val, ⌜v = execute_val⌝ ∗
       ∃ (name_ptr : loc) (name_opt : option go_string) (name : go_string),
-      "it" ∷ it_ptr ↦ lc ∗ "s" ∷ s_ptr ↦ s ∗ "Hstate" ∷ own_store_state s 1 state ∗
+      "it" ∷ it_ptr ↦ lc ∗ "s" ∷ s_ptr ↦ s ∗ "Hstate" ∷ own_store_state s q state ∗
       "parentName" ∷ parentName_ptr ↦ name_ptr ∗
       "Hname_cell" ∷ (⌜name_opt = None ∧ name_ptr = null⌝ ∨
                       ⌜name_opt = Some name ∧ name_ptr ≠ null⌝ ∗ name_ptr ↦ name) ∗
@@ -320,7 +350,7 @@ Proof using Type*.
   { iDestruct "Hname_cell" as "[[-> ->] | [[-> %Hnonnull] Hcell]]"; first done.
     iPersist "Hcell". iModIntro. iSplit; [done | iFrame "Hcell"]. }
   (* the struct's fields, read off the node again *)
-  iDestruct (own_store_state_item_node_acc s state parent ls tm k lc r Hls Hp Hlk Hrk with "Hstate")
+  iDestruct (own_store_state_item_node_acc s q state parent ls tm k lc r Hls Hp Hlk Hrk with "Hstate")
     as (prev' nxt') "(_ & _ & _ & Hnode & Hback)".
   iDestruct "Hnode" as (node_value node_left node_right)
     "(Hval & #Hnode_left & #Hnode_right & %Hnode_in_left & %Hnode_in_right & %Hnode_id & #Hnode_content & %Hnode_parent & %Hnode_prev & %Hnode_next & %Hnode_flags)".
