@@ -74,7 +74,11 @@ func (c *Client) report() {
 // root to the trace. It returns Send's error flag; the edit is made locally
 // either way, and an error says nothing about delivery (the model's late
 // failure). Not to be called concurrently with itself: the connection's send
-// side is the caller's.
+// side is the caller's. The content should hold no surrogate code unit: the
+// wire carries UTF-8, which has no encoding of half a surrogate pair, so the
+// update of such an insert does not carry what was inserted here (yjs/codec.go,
+// issue #233; Yjs and y-websocket have the same limit, an insert that ends
+// between the halves of a pair reaches the peers as U+FFFD).
 func (c *Client) Insert(index uint64, content []uint16) bool {
 	update := c.text.InsertEncoded(index, content, c.encode)
 	err := wsnet.Send(c.conn, update)
@@ -100,18 +104,22 @@ func (c *Client) Serve() {
 }
 
 // Run is the scripted client the closed theorem boots: connect, serve on a
-// goroutine, and type script at the end of the text one code unit at a time.
-// A real client calls Insert from its user interface instead. A script is
-// free of surrogate code units: a unit typed alone is sent alone, and the
-// wire cannot carry half of a surrogate pair (yjs/codec.go, issue #233).
+// goroutine, and type script at the end of the text one byte at a time, each
+// byte as one code unit, so that an ASCII script types its text. A real
+// client calls Insert from its user interface instead. The script is bytes
+// and not code units because a byte is never a surrogate code unit: a unit
+// typed alone is sent alone, and the wire cannot carry half of a surrogate
+// pair (yjs/codec.go, issue #233), so a script of code units would need a
+// side condition that a script of bytes does not.
 func Run(host wsnet.Address, path string, client yjs.Client,
-	decode yjs.Codec, encode yjs.Encoder, name string, script []uint16) {
+	decode yjs.Codec, encode yjs.Encoder, name string, script string) {
 	err, c := Connect(host, path, client, decode, encode, name)
 	if err {
 		return
 	}
 	go c.Serve()
-	for i := uint64(0); i < uint64(len(script)); i++ {
-		c.Insert(c.text.Len(), script[i:i+1])
+	units := []byte(script)
+	for i := 0; i < len(units); i++ {
+		c.Insert(c.text.Len(), []uint16{uint16(units[i])})
 	}
 }

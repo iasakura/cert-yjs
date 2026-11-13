@@ -105,7 +105,7 @@ func TestConcurrentInsertsConverge(t *testing.T) {
 	waitForText(t, b, "AAABBB")
 }
 
-// Two scripted clients, each typing its script one code unit at a time,
+// Two scripted clients, each typing its script one byte at a time,
 // end up with the same text, which holds both scripts in order.
 func TestScriptedClientsConverge(t *testing.T) {
 	addr := startServer(t)
@@ -116,7 +116,7 @@ func TestScriptedClientsConverge(t *testing.T) {
 	for i, script := range []string{"abc", "xyz"} {
 		go func(client yjs.Client, script string) {
 			// Run returns once the script is typed; its Serve goroutine goes on.
-			Run(addr, "/room", client, yjs.WireCodec(), yjs.WireEncoder(), "root", units(script))
+			Run(addr, "/room", client, yjs.WireCodec(), yjs.WireEncoder(), "root", script)
 			done <- struct{}{}
 		}(yjs.Client(20+i), script)
 	}
