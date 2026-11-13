@@ -78,7 +78,6 @@ Proof.
   wp_start as "Htx".
   iDestruct "Htx" as (state ds m0 deleted0) "Htx". iNamed "Htx".
   iDestruct (own_replica_history_registry_models with "Hreplica_history") as %[Hmodels _].
-  iNamed "Hstore". iNamed "Hcore".
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord". iNamed "Hchanges".
   wp_auto.
   iAssert (∃ (i : w64) (structs_slice : slice.t) (structs : list Input),
@@ -86,15 +85,15 @@ Proof.
       "structs" ∷ structs_ptr ↦ structs_slice ∗
       "Hinsertf" ∷ (tr .[(yjs.Transaction.t), "insertSet"]) ↦ insert_sl ∗
       "Hinsert" ∷ insert_sl ↦* insert_vs ∗
-      "Hstate" ∷ own_store_state s_loc 1 state ∗
+      "Hstore" ∷ own_store s_loc γs γh 1 state ds m0 deleted0 ∗
       "Hstructs" ∷ own_update_structs structs_slice (DfracOwn 1) structs ∗
       "%Hi" ∷ ⌜0 ≤ sint.Z i⌝ ∗
       "%Hstructs_model" ∷ ⌜∀ op, op ∈ expand_inputs structs ->
          ∃ (name : P) (it : YjsItem A),
            it ∈ doc_model_get m (RootId name) ∧ op = (RootId name, input_of_item it) ∧
            item_id it ∈ inserted⌝)%I
-    with "[tr s i structs Hinsertf Hinsert Hstate]" as "IH".
-  { iExists (W64 0), slice.nil, []. iFrame "tr s i structs Hinsertf Hinsert Hstate".
+    with "[tr s i structs Hinsertf Hinsert Hstore]" as "IH".
+  { iExists (W64 0), slice.nil, []. iFrame "tr s i structs Hinsertf Hinsert Hstore".
     iSplitL.
     { iExists []. iSplitL; first iApply own_slice_nil. iSplitL; first iApply own_slice_cap_nil.
       by iApply big_sepL2_nil. }
@@ -107,9 +106,7 @@ Proof.
     iApply ("HΦ" $! structs_slice structs). iFrame "Hstructs".
     iSplitL; last done.
     iExists state, ds, m0, deleted0. iSplitR; first done.
-    iSplitL "Hstate Hobservers Hseq HtypesAuth Hdelete_set_auth Hstate_agree".
-    { iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree". done. }
-    iFrame "Hreplica_history". iSplitL; last done.
+    iFrame "Hstore Hreplica_history". iSplitL; last done.
     iExists changed_locs. iFrame "Hchanged_bound".
     iSplitL; last done.
     iExists insert_sl, delete_sl, changed_mref, insert_vs, delete_vs.
@@ -128,9 +125,9 @@ Proof.
   iEval (rewrite (list_insert_id _ _ _ Hspan_lookup)) in "Hinsert".
   have Hspan_fits : span_no_overflow span.
   { exact (proj1 (Forall_forall _ _) Hinsertwf span (list_elem_of_lookup_2 _ _ _ Hspan_lookup)). }
-  wp_apply (wp_store__appendSpanStructs s_loc state structs_slice structs span Hspan_fits
-              with "[$Hstate $Hstructs]").
-  iIntros (result_slice appended) "(Hstate & Hstructs & %Happended)".
+  wp_apply (wp_store__appendSpanStructs s_loc γs γh state ds m0 deleted0 structs_slice structs span
+              Hspan_fits with "[$Hstore $Hstructs]").
+  iIntros (result_slice appended) "(Hstore & Hstructs & %Happended)".
   wp_auto.
   wp_for_post.
   iFrame. iPureIntro. split; first (clear -Hinside Hi; word).

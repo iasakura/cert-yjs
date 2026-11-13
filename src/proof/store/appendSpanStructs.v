@@ -2,9 +2,11 @@
     [store.rootName] (the name a root type is registered under, by a scan of
     the registry), [store.updateItemOfNode] (the decoded struct of one node)
     and [store.appendSpanStructs] (the structs of the nodes covering one
-    recorded span). Private to the store: the specs are stated over the
-    store's state, [own_store_state], and [Transaction.insertedStructs]
-    ([transaction/insertedStructs]) is their one caller. *)
+    recorded span). The first two are private to the store and their specs
+    are stated over the store's data fields, [own_store_state], at any
+    fraction. [appendSpanStructs] is called by [Transaction.insertedStructs]
+    ([transaction/insertedStructs]), so its spec takes and returns the store
+    whole, [own_store]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -425,12 +427,11 @@ Proof using Type*.
     rewrite -Hright_model. destruct left_id, origin_right; simpl; naive_solver.
 Qed.
 
-(** [store.appendSpanStructs]: the structs appended for a recorded span
-    denote, character by character, items of the store's runs whose ids are
-    ids of the span, each under the name of its run's root. The walk hands
-    half of the store to [updateItemOfNode] and reads the client's node list
-    through the other half. *)
-Lemma wp_store__appendSpanStructs (s : loc) (state : store_state)
+(** [store.appendSpanStructs] over the store's data fields: the stepping
+    stone of the public spec below. The walk hands half of the store to
+    [updateItemOfNode] and reads the client's node list through the other
+    half. *)
+#[local] Lemma wp_store__appendSpanStructs_state (s : loc) (state : store_state)
     (structs_slice : slice.t) (structs : list (TId * IntegrateInput (A := A)))
     (span : yjs.idSpan.t) :
   span_no_overflow span ->
@@ -715,6 +716,39 @@ Proof using Type*.
   iDestruct (own_store_state_split with "[$Hcall $Hread]") as "Hstate".
   iEval (rewrite Qp.div_2) in "Hstate".
   iApply ("HΦ" $! result_slice appended). iFrame "Hstate Hstructs". done.
+Qed.
+
+(** [store.appendSpanStructs]: the store taken and returned whole
+    ([own_store]) at an unchanged state. The structs appended for a recorded
+    span denote, character by character, items of the store's runs whose ids
+    are ids of the span, each under the name of its run's root. *)
+Lemma wp_store__appendSpanStructs (s : loc) (γs : store_names) (γh : history_names)
+    (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId)
+    (structs_slice : slice.t) (structs : list (TId * IntegrateInput (A := A)))
+    (span : yjs.idSpan.t) :
+  span_no_overflow span ->
+  {{{ is_pkg_init yjs ∗ own_store s γs γh 1 state ds m0 deleted0 ∗
+      own_update_structs structs_slice (DfracOwn 1) structs }}}
+    s @! (go.PointerType yjs.store) @! "appendSpanStructs" #structs_slice #span
+  {{{ (result_slice : slice.t) (appended : list (TId * IntegrateInput (A := A))),
+      RET #result_slice;
+      own_store s γs γh 1 state ds m0 deleted0 ∗
+      own_update_structs result_slice (DfracOwn 1) (structs ++ appended) ∗
+      ⌜∀ op, op ∈ expand_inputs appended ->
+         ∃ (name : go_string) (parent : loc) (tm : type_model) (r : ItemRun) (it : YjsItem A),
+           ss_bind state !! name = Some parent ∧ ss_pool state !! parent = Some tm ∧
+           r ∈ tm_runs tm ∧ it ∈ run_items r ∧
+           op = (RootId name, input_of_item it) ∧ item_id it ∈ span_ids span⌝ }}}.
+Proof using Type*.
+  move=> Hspan.
+  iIntros (Φ) "(#Hpkg & Hstore & Hstructs) HΦ".
+  iNamed "Hstore". iNamed "Hcore".
+  wp_apply (wp_store__appendSpanStructs_state s state structs_slice structs span Hspan
+              with "[$Hpkg $Hstate $Hstructs]").
+  iIntros (result_slice appended) "(Hstate & Hstructs & %Happended)".
+  iApply "HΦ". iFrame "Hstructs". iSplitL; last done.
+  iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
+  iPureIntro. exact Hds_tomb.
 Qed.
 
 End store_appendSpanStructs.
