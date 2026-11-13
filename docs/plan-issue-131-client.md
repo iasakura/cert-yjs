@@ -26,12 +26,12 @@ the decoding side.
 
 ## 0. TL;DR
 
-- **Go, package `yjs`.** A root type learns its name (`yType.name`, as yrs's
-  `Branch.name` and y-octo's `YType.root_name`). A transaction can hand back
-  the structs it integrated, as decoded update items read from the store
+- **Go, package `yjs`.** A transaction can hand back the structs it
+  integrated, as decoded update items read from the store
   (`Transaction.insertedStructs`, the verified-subset counterpart of Yjs
   v14's `writeStructsFromTransaction`, which writes exactly the transaction's
-  `insertSet`). The encoding half of the codec becomes a value next to the
+  `insertSet`). The name of a struct's root is found by scanning the store's
+  registry (`store.rootName`, Yjs v14's `findRootTypeKey`). The encoding half of the codec becomes a value next to the
   decoding half: `type Encoder = func(structs []updateItem) []byte`, with
   `WireEncoder()` in `codec.go` (`!goose`, trusted) as the deployment's.
 - **Go, package `wsclient`.** `Client`: a connection, a document, the root
@@ -44,8 +44,9 @@ the decoding side.
 - **Specs.** `wp_Transaction__insertedStructs` returns `own_update_structs`
   whose inputs are the transaction's inserted items as the model holds them;
   `encoder_spec encode g` is `codec_spec`'s mirror image; the two abstract
-  halves are tied by the pure hypothesis
-  `decode_encode : ∀ inputs, decode (encode inputs) = Some (expand_inputs inputs)`.
+  halves are tied by the pure hypothesis `codec_roundtrip decode encode`:
+  `decode (encode inputs) = Some (expand_inputs inputs)` for every list of
+  inputs the real encoder can carry faithfully (section 4.2).
   The client's specs are the server's turned around: `is_Client` persistent,
   `Insert` consumes a send cursor and produces `yjs_prot` for what it sent
   (the certificates come from `wp_Text__InsertIn`), `Serve` consumes a
@@ -54,7 +55,7 @@ the decoding side.
   one server node and client nodes, each a `node_init_cfg`, over an initial
   global state with no environment channels and a send relation that permits
   nothing. Hypotheses: the initial state, `codec_spec`, `encoder_spec`,
-  `decode_encode`. No `ws_env_preserves`: it is proved inside the theorem
+  `codec_roundtrip`, and scripts without surrogate code units. No `ws_env_preserves`: it is proved inside the theorem
   from the send relation. Conclusion: wire totality and `reports_converge`
   over a trace that now holds every node's reports.
 
@@ -108,11 +109,17 @@ Out of scope, recorded with what the design does about them:
   y-octo's `YType` carries `root_name: Option<String>`
   (`src/doc/types/mod.rs:39`). Yjs v14 keeps no name on the type and scans
   `doc.share` for the key when it writes a struct's parent
-  (`findRootTypeKey`, `src/utils/ID.js:79`). The Go follows yrs and y-octo:
-  `yType.name`, set by `store.getOrCreateYType`, read only by
-  `insertedStructs`. The reason over the Yjs reading is proof cost: the
-  scan would need the store's registry to be visible from the transaction
-  layer, where a field on the type is covered by the type's own predicate.
+  (`findRootTypeKey`, `src/utils/ID.js:79`). The Go follows Yjs:
+  `store.rootName` scans `store.types` for the key bound to the type. The
+  first version of this document chose the field, expecting it to be the
+  cheaper proof. It is not: `own_ytype` (`src/proof/ytype/heap.v`) hides the
+  struct value under an existential, so stating that a type's `name` field
+  is the key it is registered under means a new parameter on `own_ytype`
+  (65 uses) or on `own_type_pool` (77 uses), or a field in `type_model`
+  (219 constructions). The scan needs none of that: the store's registry
+  coherence `pool_registry_coh` (`src/proof/store/value_cells.v`) already
+  says that every registered type has exactly one name, and the functions
+  that read the registry are store methods with the whole store at hand.
 - **The wire parent.** All three write a struct's parent only when it has
   no left and no right origin (Yjs v14.0.0-rc.18 `Item.write`,
   `src/structs/Item.js:455-469`; yrs 0.27.2 `Item::encode`,
@@ -128,10 +135,14 @@ Out of scope, recorded with what the design does about them:
 
 ## 3. Go changes
 
-### 3.1 `yjs/ytype.go`, `yjs/store.go`
+### 3.1 `yjs/store.go`: the store's half
 
-`yType` gains `name string`. `newYType(name string)`; `getOrCreateYType`
-passes the key. No other reader.
+`store.rootName(parent *yType) string` scans `s.types` for the key bound to
+`parent` (no early exit: one match, by the registry's coherence).
+`store.updateItemOfNode(it *item) updateItem` is the decoded struct of one
+node, and `store.appendSpanStructs(structs, span)` appends the structs of
+the nodes covering one recorded span. They are store methods because they
+read the store's run lists and registry; `yType` is untouched.
 
 ### 3.2 `yjs/transaction.go`: `insertedStructs`
 
@@ -147,8 +158,8 @@ passes the key. No other reader.
 func (tr *Transaction) insertedStructs() []updateItem
 ```
 
-Per item: `id`, `originLeftId`, `originRightId`, `parentName` (`&parent.name`
-when both origins are nil, else nil), `content` (the item's units; the
+Per item: `id`, `originLeftId`, `originRightId`, `parentName` (a fresh cell
+holding `s.rootName(it.parent)` when both origins are nil, else nil), `content` (the item's units; the
 content slice is never written after creation, `content.go`, so the struct
 shares it). The walk uses `getNodeIndex` on `s.items[client]` and the items'
 `Len()`, as `writeStructsFromIdSet` walks `findIndexSS` from the span's
@@ -170,9 +181,10 @@ type Encoder = func(structs []updateItem) []byte
 ```
 
 `WireEncoder() Encoder` in `codec.go` (`!goose`): the v1 encoding of the
-given structs grouped by client and sorted by clock (as `EncodeUpdate` does
-per item: `encodeRun` over one item per struct) followed by an empty delete
-set. Go tests: `decodeUpdateItems(WireEncoder()(structs))` gives back the
+given structs grouped by client and sorted by clock, a clock gap written as
+a Skip struct (Yjs v14 `writeStructs`), structs that continue each other
+joined into one wire struct (so a surrogate pair typed in one insert leaves
+as one code point), followed by an empty delete set. Go tests: `decodeUpdateItems(WireEncoder()(structs))` gives back the
 structs; a two-replica test through `insertedStructs` + `WireEncoder` +
 `ApplyUpdate`.
 
@@ -272,7 +284,7 @@ model ids are unique within a root, hence each struct is
 `network_model.v` or `store/model.v` does the matching
 (`structs_of_inserted_run`, name to be settled when written).
 
-### 4.2 `encoder_spec` and `decode_encode` (`src/proof/yjs_prot.v`)
+### 4.2 `encoder_spec` and `codec_roundtrip` (`src/proof/yjs_prot.v`)
 
 ```
 Context (encode : list Input -> list u8).
@@ -298,6 +310,38 @@ one-unit items (`splitStructs`, `yjs/codec.go`), and `expand_inputs` is that
 split on the model. For the client's one-unit structs the two coincide. The
 closed theorem takes `codec_roundtrip decode encode` as a hypothesis next
 to `codec_spec` and `encoder_spec`; nothing else mentions it.
+
+Found while writing the encoder (C1): the equation above is false of the
+real codec for an arbitrary list, in three ways, so as written the closed
+theorem would assume something the deployed code does not satisfy.
+
+- The encoder reorders: clients in descending order, each client's structs
+  by clock. The equation holds as a list equation only for a list already
+  in that order.
+- A lone surrogate code unit is written as U+FFFD (issue #233) and does not
+  come back. That includes a surrogate pair typed as two inserts, each its
+  own update.
+- Structs with overlapping ids, or a struct with no origin and no parent
+  name, cannot be written.
+
+So the definition is restricted to the lists the encoder carries
+faithfully:
+
+```
+Definition codec_roundtrip decode encode : Prop :=
+  ∀ structs, structs_encodable structs ->
+    decode (encode structs) = Some (expand_inputs structs).
+```
+
+with `structs_encodable` a pure predicate on the model list: one client,
+clocks ascending and disjoint, every origin-less struct named, no code unit
+in the surrogate range D800-DFFF. One client and no surrogates is narrower
+than what the encoder handles (it sorts several clients and carries whole
+pairs); it is what a transaction of local inserts produces and what is easy
+to state, and it can be widened without touching a proof that uses it. The
+client's `Insert` then needs its content free of surrogate code units to
+conclude that what it sent decodes, which becomes a precondition of
+`wp_Client__Insert` and a hypothesis on the scripts of the closed theorem.
 
 ### 4.3 `wp_Text__InsertEncoded` (`src/proof/text/InsertEncoded.v`)
 
@@ -399,7 +443,8 @@ Nodes: `server_boot host server_client fdec name` and, per script in a list,
 state: `ws_msgs = ∅`, `ws_trace = []`, `ws_ext = ∅`, `ws_backlog = ∅`,
 `ws_env_may = λ _ _ _, False`, `ws_wf`. Hypotheses beyond the initial
 state and the RA plumbing: `codec_spec decode fdec`, `encoder_spec encode fenc`,
-`codec_roundtrip decode encode`, distinct client ids. No `coh0`, no
+`codec_roundtrip decode encode`, distinct client ids, scripts without
+surrogate code units (section 4.2). No `coh0`, no
 `ws_env_preserves`: with `ws_may = λ _ _ _, False` the obligation's first
 premise is `False`, so it is proved inside the theorem for
 `ws_env_coh := λ _, True`.
@@ -434,16 +479,15 @@ and `Serve` each hold one.
 | milestone | contents | acceptance |
 |---|---|---|
 | **C0** | this document | reviewed |
-| **C1** Go | `yType.name`; `Transaction.insertedStructs`; `Encoder`, `WireEncoder`; `Text.InsertEncoded`; Go tests (encoder round trip through the real decoder; two documents converge through `InsertEncoded` + `ApplyUpdate`) | `./build.sh go`, `go test ./yjs/`, goose translates |
+| **C1** Go | `store.rootName`, `store.appendSpanStructs`; `Transaction.insertedStructs`; `Encoder`, `WireEncoder`; `Text.InsertEncoded`; Go tests (encoder round trip through the real decoder; two documents converge through `InsertEncoded` + `ApplyUpdate`) | `./build.sh go`, `go test ./yjs/`, goose translates |
 | **C2** proofs of C1 | `wp_Transaction__insertedStructs`, `encoder_spec`, `codec_roundtrip`, `wp_Text__InsertEncoded`; `deployment_protocols` shared | `./build.sh make` |
 | **C3** Go client | `wsclient/`: `Client`, `Connect`, `Insert`, `Serve`, `Run`; tests against `wsrelay` (two clients converge through the server by the new send path; a report per edit on the trace) | `go test ./wsclient/`, goose translates |
 | **C4** proofs of C3 | `is_Client`, `wp_Connect`, `wp_Client__Insert`, `wp_Client__Serve`, `wp_Run`, `client_boot`, `wpr_client_boot` | `./build.sh make` |
 | **C5** closed theorem | `ws_system_dist_adequate`, server + one scripted client, then the list of clients | theorem Qed, `Print Assumptions` clean under a `.vo` build |
 
 C1 and C3 are Go and tests; C2 and C4 are their proofs; each is one PR. C1
-changes two verified public functions' surroundings (`getOrCreateYType`
-takes the name through `newYType`; `Text` gains `InsertEncoded`), which the
-PR reports.
+changes no verified function: it only adds new ones (`Text` gains
+`InsertEncoded`).
 
 ## 7. Risks
 
@@ -464,12 +508,14 @@ PR reports.
 
 ## 8. Decisions requested
 
-1. `yType.name` (yrs, y-octo) over a registry scan (Yjs): recommended, for
-   the proof-cost reason in section 2.
+1. A registry scan (Yjs) over `yType.name` (yrs, y-octo): recommended, for
+   the proof-cost reason in section 2. (The first version recommended the
+   field; section 2 says what changed.)
 2. `Text.InsertEncoded` in `yjs` (section 3.5 (a)) over exporting the update
    items: recommended.
-3. The encoder seam as a value with `codec_roundtrip` as the closed
-   theorem's pure hypothesis: recommended; the alternative is verifying the
+3. The encoder seam as a value with `codec_roundtrip`, restricted to
+   `structs_encodable` lists (section 4.2), as the closed theorem's pure
+   hypothesis: recommended; the alternative is verifying the
    byte codec, a separate issue.
 4. Scope: inserts only, no handshake, a report after every local insert and
    every applied update: recommended.
