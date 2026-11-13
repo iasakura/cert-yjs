@@ -139,8 +139,10 @@ func (s *store) getOrCreateYType(name string) *yType {
 // Callers hold the storeRef's lock.
 func (s *store) rootName(parent *yType) string {
 	result := ""
-	for name, registered := range s.types {
-		if registered == parent {
+	// The range binds the key only and looks the value up: goose translates
+	// a range that binds both to a body whose value parameter is misnamed.
+	for name := range s.types {
+		if s.types[name] == parent {
 			result = name
 		}
 	}
