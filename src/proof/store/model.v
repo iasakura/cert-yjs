@@ -8,7 +8,9 @@
     - what a decoded batch must satisfy: [input_fits] per struct,
       [pending_item_rooted] / [is_pending_rooted], bundled as [update_wf];
       [input_has_origin] and [same_wire_struct], two type-tagged inputs
-      that are one struct on the wire (issue #131).
+      that are one struct on the wire (issue #131);
+      [structs_expand_to_items], every character of a batch is an item of
+      the document.
     - the wire-level drain: [wire_integrate] applies one ready item,
       [wire_pass] one sweep over the pending list, [wire_drain(_aux)] the fixed
       point, [WireReplay] the resulting replay relation and [wire_ready_total]
@@ -1207,6 +1209,19 @@ Definition update_wf (inputs : list (TId * IntegrateInput (A := A))) : Prop :=
     carries the name of its root. *)
 Definition input_has_origin (input : IntegrateInput (A := A)) : Prop :=
   in_originId input ≠ None ∨ in_rightOriginId input ≠ None.
+
+(** [structs_expand_to_items structs holds]: every character a batch
+    carries is an item of the document: each input of the batch's per-char
+    expansion is the input of some item [item] of the root named [name], for
+    a pair [holds name item] (issue #131). [holds] says which items: the
+    ones of a store's registry with an id of a span, the ones a transaction
+    inserted, the ones one insert created. What the functions that read
+    structs back from the store promise about them. *)
+Definition structs_expand_to_items (structs : list (TId * IntegrateInput (A := A)))
+    (holds : go_string -> YjsItem A -> Prop) : Prop :=
+  ∀ input, input ∈ expand_inputs structs ->
+    ∃ (name : go_string) (item : YjsItem A),
+      holds name item ∧ input = (RootId name, input_of_item item).
 
 (** [same_wire_struct decoded certified]: the two type-tagged inputs are one
     struct on the wire (issue #131): the same id, origins and content, and

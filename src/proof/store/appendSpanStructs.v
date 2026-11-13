@@ -136,78 +136,6 @@ Proof using Type*.
   iExists types_mref. iFrame "Htypesf Htypesmap".
 Qed.
 
-(** Borrow one node of the pool whole ([own_item_node]), at any fraction. *)
-#[local] Lemma own_type_pool_item_node_acc (q : Qp) (locs : gmap loc (list loc)) (p : pool)
-    (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
-  locs !! parent = Some ls ->
-  p !! parent = Some tm ->
-  ls !! k = Some lc ->
-  tm_runs tm !! k = Some r ->
-  own_type_pool (DfracOwn q) locs p -∗
-  ∃ (prev nxt : loc),
-    ⌜run_wf (run_items r)⌝ ∗ ⌜run_per_char r⌝ ∗
-    ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
-    own_item_node lc (DfracOwn q) (input_of_run r) (run_deleted r) parent prev nxt ∗
-    (own_item_node lc (DfracOwn q) (input_of_run r) (run_deleted r) parent prev nxt -∗
-     own_type_pool (DfracOwn q) locs p).
-Proof.
-  move=> Hls Hp Hlk Hrk.
-  iIntros "(%Hlocswf & Hpool)".
-  iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Htype Hrest]".
-  iDestruct "Htype" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
-  rewrite Hls in Hls0. injection Hls0 as <-.
-  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
-  iDestruct (own_dll_acc (DfracOwn q) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk with "Hdll")
-    as (prev nxt) "(_ & _ & %Hrun & %Hper_char & %Hcontent_length & Hnode & Hback)".
-  iExists prev, nxt. iFrame "Hnode".
-  iSplitR; first done. iSplitR; first done. iSplitR; first done.
-  iIntros "Hnode". iDestruct ("Hback" with "Hnode") as "Hdll".
-  iSplitR; first done.
-  iApply big_sepM_delete; first exact Hp.
-  iFrame "Hrest". iExists ls. iSplitR; first done. iSplitL; last done.
-  iExists yt, tl. iFrame "Hparent Hdll". done.
-Qed.
-
-(** Borrow one node of the store whole ([own_item_node]): the WP below reads
-    its origin cells, which the narrower borrows of [store/heap] do not
-    expose. *)
-#[local] Lemma own_store_state_item_node_acc (s : loc) (q : Qp) (state : store_state)
-    (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
-  ss_locs state !! parent = Some ls ->
-  ss_pool state !! parent = Some tm ->
-  ls !! k = Some lc ->
-  tm_runs tm !! k = Some r ->
-  own_store_state s q state -∗
-  ∃ (prev nxt : loc),
-    ⌜run_wf (run_items r)⌝ ∗ ⌜run_per_char r⌝ ∗
-    ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
-    own_item_node lc (DfracOwn q) (input_of_run r) (run_deleted r) parent prev nxt ∗
-    (own_item_node lc (DfracOwn q) (input_of_run r) (run_deleted r) parent prev nxt -∗
-     own_store_state s q state).
-Proof.
-  move=> Hls Hp Hlk Hrk.
-  destruct state as [client0 clock0 locs p bind pend pdel]. simpl in *.
-  iIntros "(Hfields & %Hinvs)".
-  iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
-  iEval (simpl) in "Htypes".
-  iDestruct "Htypes" as "(%Hlocswf & Hpool)".
-  iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Htype Hrest]".
-  iDestruct "Htype" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
-  rewrite Hls in Hls0. injection Hls0 as <-.
-  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
-  iDestruct (own_dll_acc (DfracOwn q) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk with "Hdll")
-    as (prev nxt) "(_ & _ & %Hrun & %Hper_char & %Hcontent_length & Hnode & Hback)".
-  iExists prev, nxt. iFrame "Hnode".
-  iSplitR; first done. iSplitR; first done. iSplitR; first done.
-  iIntros "Hnode". iDestruct ("Hback" with "Hnode") as "Hdll".
-  iSplitL; last done. rewrite /own_store_fields /=.
-  iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Hpending Hpdeletes".
-  iSplitR; first done.
-  iApply big_sepM_delete; first exact Hp.
-  iFrame "Hrest". iExists ls. iSplitR; first done. iSplitL; last done.
-  iExists yt, tl. iFrame "Hparent Hdll". done.
-Qed.
-
 (** The wire item of a well-formed per-char run expands to its items'
     inputs: the head keeps the run's origins, every later unit has the unit
     before it as left origin and the run's right origin. *)
@@ -734,11 +662,9 @@ Lemma wp_store__appendSpanStructs (s : loc) (γs : store_names) (γh : history_n
       RET #result_slice;
       own_store s γs γh 1 state ds m0 deleted0 ∗
       own_update_structs result_slice (DfracOwn 1) (structs ++ appended) ∗
-      ⌜∀ op, op ∈ expand_inputs appended ->
-         ∃ (name : go_string) (parent : loc) (tm : type_model) (r : ItemRun) (it : YjsItem A),
-           ss_bind state !! name = Some parent ∧ ss_pool state !! parent = Some tm ∧
-           r ∈ tm_runs tm ∧ it ∈ run_items r ∧
-           op = (RootId name, input_of_item it) ∧ item_id it ∈ span_ids span⌝ }}}.
+      ⌜structs_expand_to_items appended (λ name item,
+         registry_has_item (ss_bind state) (ss_pool state) name item ∧
+         item_id item ∈ span_ids span)⌝ }}}.
 Proof using Type*.
   move=> Hspan.
   iIntros (Φ) "(#Hpkg & Hstore & Hstructs) HΦ".
@@ -746,9 +672,15 @@ Proof using Type*.
   wp_apply (wp_store__appendSpanStructs_state s state structs_slice structs span Hspan
               with "[$Hpkg $Hstate $Hstructs]").
   iIntros (result_slice appended) "(Hstate & Hstructs & %Happended)".
-  iApply "HΦ". iFrame "Hstructs". iSplitL; last done.
-  iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
-  iPureIntro. exact Hds_tomb.
+  iApply "HΦ". iFrame "Hstructs". iSplitL.
+  { iFrame "Hstate Hobservers Hclientpin Hseq HtypesAuth Hbinds Hdelete_set_auth Hstate_agree".
+    iPureIntro. exact Hds_tomb. }
+  iPureIntro. move=> input Hinput.
+  destruct (Happended input Hinput) as (name & parent & tm & r & item & Hname & Hparent & Hr & Hitem & -> & Hid).
+  exists name, item. split; last reflexivity. split; last exact Hid.
+  exists parent, tm. split_and!; [exact Hname | exact Hparent |].
+  rewrite /tm_arr /runs_flatten list_elem_of_join.
+  exists (run_items r). split; first exact Hitem. apply list_elem_of_fmap. by exists r.
 Qed.
 
 End store_appendSpanStructs.

@@ -76,8 +76,7 @@ Lemma wp_Text__InsertEncoded (t : loc) (idx : w64) (cs : slice.t) (dq : dfrac) (
       ⌜inserted_run L L' ins units client k0 originLeft originRight⌝ ∗
       ([∗ list] it ∈ ins, is_op_cert γh (RootId name, OpInsert (input_of_item it))) ∗
       bytes_slice ↦* encode structs ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) ∗
-      ⌜∀ op, op ∈ expand_inputs structs ->
-         ∃ it, it ∈ ins ∧ op = (RootId name, input_of_item it)⌝ }}}.
+      ⌜structs_expand_to_items structs (λ root item, root = name ∧ item ∈ ins)⌝ }}}.
 Proof.
   wp_start as "(#Htext & Hcs & #Hencoder)".
   iPoseProof "Htext" as (tv text_store parent deleted_items) "Hhandle". iNamed "Hhandle".
@@ -92,8 +91,7 @@ Proof.
                    ([∗ list] it ∈ ins, is_op_cert γh (RootId name, OpInsert (input_of_item it))) ∗
                    structs_ptr ↦ structs_slice ∗
                    own_update_structs structs_slice (DfracOwn 1) structs ∗
-                   ⌜∀ op, op ∈ expand_inputs structs ->
-                      ∃ it, it ∈ ins ∧ op = (RootId name, input_of_item it)⌝)%I
+                   ⌜structs_expand_to_items structs (λ root item, root = name ∧ item ∈ ins)⌝)%I
               with "[$His_store t index content structs Hcs]").
   { rewrite /closure_runs_transaction.
     iIntros (tr c h m pend deleted Ψ) "Htx HΨ".
@@ -112,7 +110,7 @@ Proof.
     iFrame "Htext' Hcerts Hcs structs Hstructs". iPureIntro. split; first exact Hrun.
     (* a struct's character has an inserted id, so it is the inserted item *)
     move=> op Hop.
-    destruct (Hstructs op Hop) as (op_name & op_item & Hop_item & -> & Hop_id).
+    destruct (Hstructs op Hop) as (op_name & op_item & [Hop_item Hop_id] & ->).
     rewrite left_id_L in Hop_id. apply elem_of_char_ids in Hop_id as (it & Hit & Hit_id).
     have Hit_model : it ∈ doc_model_get m' (RootId name).
     { rewrite (proj1 Hreplaced).
@@ -123,7 +121,7 @@ Proof.
       { apply lookup_lt_is_Some. rewrite -Hlength. exact (lookup_lt_Some _ _ _ Hposition). }
       exact (proj1 (Hitems position it unit Hposition Hunit)). }
     destruct (Hunique name op_name it op_item Hit_model Hop_item Hit_id) as [<- <-].
-    exists it. split; [exact Hit | reflexivity]. }
+    exists name, it. split; [split; [reflexivity | exact Hit] | reflexivity]. }
   iIntros "HQ". iDestruct "HQ" as (c h' m' pend' deleted') "HQ".
   iDestruct "HQ" as (L' ins k0 originLeft originRight structs_slice structs)
     "(#Htext' & Hcs & %Hrun & Hcerts & structs & Hstructs & %Hstructs)".

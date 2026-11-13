@@ -70,10 +70,8 @@ Lemma wp_Transaction__insertedStructs (tr s_loc : loc) (γs : store_names) (γh 
   {{{ (structs_slice : slice.t) (structs : list Input), RET #structs_slice;
       own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
       own_update_structs structs_slice (DfracOwn 1) structs ∗
-      ⌜∀ op, op ∈ expand_inputs structs ->
-         ∃ (name : P) (it : YjsItem A),
-           it ∈ doc_model_get m (RootId name) ∧ op = (RootId name, input_of_item it) ∧
-           item_id it ∈ inserted⌝ }}}.
+      ⌜structs_expand_to_items structs (λ name item,
+         item ∈ doc_model_get m (RootId name) ∧ item_id item ∈ inserted)⌝ }}}.
 Proof.
   wp_start as "Htx".
   iDestruct "Htx" as (state ds m0 deleted0) "Htx". iNamed "Htx".
@@ -104,7 +102,10 @@ Proof.
   { (* every span is read: hand the transaction back *)
     rewrite bool_decide_eq_false_2 //. wp_auto.
     iApply ("HΦ" $! structs_slice structs). iFrame "Hstructs".
-    iSplitL; last done.
+    iSplitL; last first.
+    { iPureIntro. move=> input Hinput.
+      destruct (Hstructs_model input Hinput) as (name & item & Hitem & -> & Hid).
+      by exists name, item. }
     iExists state, ds, m0, deleted0. iSplitR; first done.
     iFrame "Hstore Hreplica_history". iSplitL; last done.
     iExists changed_locs. iFrame "Hchanged_bound".
@@ -133,13 +134,12 @@ Proof.
   iFrame. iPureIntro. split; first (clear -Hinside Hi; word).
   move=> op. rewrite expand_inputs_app elem_of_app.
   move=> [Hold | Hnew]; first exact (Hstructs_model op Hold).
-  destruct (Happended op Hnew) as (name & parent & tm & r & it & Hname & Hparent & Hr & Hit & -> & Hid).
+  destruct (Happended op Hnew) as (name & it & [(parent & tm & Hname & Hparent & Hit) Hid] & ->).
   exists name, it. split_and!; last first.
   - rewrite Hinserted elem_of_union_list. exists (span_ids span). split; last exact Hid.
     apply list_elem_of_fmap. exists span. split; [reflexivity | exact (list_elem_of_lookup_2 _ _ _ Hspan_lookup)].
   - reflexivity.
-  - rewrite (Hmodels name parent tm Hname Hparent) /tm_arr /runs_flatten list_elem_of_join.
-    exists (run_items r). split; first exact Hit. apply list_elem_of_fmap. by exists r.
+  - by rewrite (Hmodels name parent tm Hname Hparent).
 Qed.
 
 End transaction_insertedStructs.
