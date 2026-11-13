@@ -149,45 +149,66 @@ func (s *store) rootName(parent *yType) string {
 	return result
 }
 
-// updateItemOfNode is the decoded struct of one integrated node: the wire
-// form the node would be read from. A struct names its parent only when it
-// has no origin on either side, as all three references write it (Yjs
-// v14.0.0-rc.18 Item.write, src/structs/Item.js:455-469; yrs 0.27.2
-// Item::encode, src/block.rs:780-797; y-octo 0.1.0 Item::write,
-// src/doc/codec/item.rs:256). The struct shares the node's origin ids and
-// content slice, neither of which is written after the node is created
-// (content.go). Callers hold the storeRef's lock.
-func (s *store) updateItemOfNode(it *item) updateItem {
+// updateItemOfNode is the decoded struct of the part [start, stop) of one
+// integrated node, in code units from the node's first: the wire form that
+// part would be read from (Yjs v14.0.0-rc.18 Item.write(encoder, offset,
+// offsetEnd), src/structs/Item.js:455, which writes a struct from an offset
+// and short of its end; yrs 0.27.2 Item::encode, src/block.rs:780, and y-octo
+// 0.1.0 Item::write, src/doc/codec/item.rs:256, write whole items only, and
+// slice a block before encoding it where they need a part). A part that does
+// not begin at the node's first unit has the unit before it as its left
+// origin, which is what splitting the node there would give (splitItem). A
+// struct names its parent only when it has no origin on either side, as all
+// three references write it. The struct shares the node's right origin id
+// and content, neither of which is written after the node is created
+// (content.go). The caller passes 0 <= start < stop <= it.Len() and holds
+// the storeRef's lock.
+func (s *store) updateItemOfNode(it *item, start uint64, stop uint64) updateItem {
+	originLeftId := it.originLeftId
+	if start > 0 {
+		before := newId(it.id.clientId, it.id.clock+start-1)
+		originLeftId = &before
+	}
 	var parentName *string
-	if it.originLeftId == nil && it.originRightId == nil {
+	if originLeftId == nil && it.originRightId == nil {
 		name := s.rootName(it.parent)
 		parentName = &name
 	}
 	return updateItem{
-		id:            it.id,
-		originLeftId:  it.originLeftId,
+		id:            newId(it.id.clientId, it.id.clock+start),
+		originLeftId:  originLeftId,
 		originRightId: it.originRightId,
 		parentName:    parentName,
-		content:       it.content.content,
+		content:       it.content.content[start:stop],
 	}
 }
 
-// appendSpanStructs appends to structs the decoded structs of the nodes that
-// cover recorded, in clock order: the nodes of that client's run list from
-// the one that starts at the span's first clock up to the span's end (Yjs
-// v14.0.0-rc.18 writeStructs, src/utils/encoding-helpers.js:18, walks
-// findIndexSS the same way). The span must begin where a node begins and end
-// where a node ends, which holds of every span a transaction records
-// (Transaction.insertedStructs says why); Yjs writes the first node from an
-// offset and truncates the last (encoding-helpers.js:59-61), neither of
-// which is needed then. Callers hold the storeRef's lock.
+// appendSpanStructs appends to structs the decoded structs of the ids of
+// recorded, in clock order: the nodes of that client's run list from the one
+// that covers the span's first clock up to the span's end, the first from
+// the span's first clock on and the last short of the span's end when the
+// span begins or ends inside a node (Yjs v14.0.0-rc.18 writeStructs,
+// src/utils/encoding-helpers.js:18, walks findIndexSS the same way and
+// writes the first and the last struct with an offset, :59-61). Every id of
+// a struct it appends is an id of the span. Callers hold the storeRef's
+// lock.
 func (s *store) appendSpanStructs(structs []updateItem, recorded idSpan) []updateItem {
 	nodes := s.items[recorded.id.clientId]
-	end := recorded.id.clock + recorded.len
-	index, found := getNodeIndex(nodes, recorded.id.clock)
+	first := recorded.id.clock
+	end := first + recorded.len
+	index, found := getNodeIndex(nodes, first)
 	if found {
 		for index < uint64(len(nodes)) && nodes[index].id.clock < end {
-			structs = append(structs, s.updateItemOfNode(nodes[index]))
+			node := nodes[index]
+			start := uint64(0)
+			if node.id.clock < first {
+				start = first - node.id.clock
+			}
+			stop := node.Len()
+			if end-node.id.clock < stop {
+				stop = end - node.id.clock
+			}
+			structs = append(structs, s.updateItemOfNode(node, start, stop))
 			index = index + 1
 		}
 	}

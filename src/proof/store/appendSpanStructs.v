@@ -144,7 +144,7 @@ Qed.
   tm_runs tm !! k = Some r ->
   own_store_state s 1 state -∗
   ∃ (prev nxt : loc),
-    ⌜run_wf (run_items r)⌝ ∗
+    ⌜run_wf (run_items r)⌝ ∗ ⌜run_per_char r⌝ ∗
     ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
     own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev nxt ∗
     (own_item_node lc (DfracOwn 1) (input_of_run r) (run_deleted r) parent prev nxt -∗
@@ -161,9 +161,9 @@ Proof.
   rewrite Hls in Hls0. injection Hls0 as <-.
   iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
   iDestruct (own_dll_acc (DfracOwn 1) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk with "Hdll")
-    as (prev nxt) "(_ & _ & %Hrun & _ & %Hcontent_length & Hnode & Hback)".
+    as (prev nxt) "(_ & _ & %Hrun & %Hper_char & %Hcontent_length & Hnode & Hback)".
   iExists prev, nxt. iFrame "Hnode".
-  iSplitR; first done. iSplitR; first done.
+  iSplitR; first done. iSplitR; first done. iSplitR; first done.
   iIntros "Hnode". iDestruct ("Hback" with "Hnode") as "Hdll".
   iSplitL; last done. rewrite /own_store_fields /=.
   iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Hpending Hpdeletes".
@@ -173,86 +173,194 @@ Proof.
   iExists yt, tl. iFrame "Hparent Hdll". done.
 Qed.
 
-(** [store.updateItemOfNode]: the decoded struct of the node at slot [k] of
-    the type at [parent] denotes the wire item of that slot's run
-    ([input_of_run]), under the name the registry binds to the type. The
-    struct shares the node's origin cells and content, both read-only. *)
+(** The wire item of a well-formed per-char run expands to its items'
+    inputs: the head keeps the run's origins, every later unit has the unit
+    before it as left origin and the run's right origin. *)
+#[local] Lemma expand_input_input_of_run (tid : TId) (r : ItemRun) :
+  run_wf (run_items r) -> run_per_char r ->
+  expand_input (tid, input_of_run r) = (λ it, (tid, input_of_item it)) <$> run_items r.
+Proof.
+Admitted.
+
+(** [store.updateItemOfNode]: the decoded struct of the part [start, stop) of
+    the node at slot [k] of the type at [parent] denotes the wire item of
+    that part of the slot's run (the run cut at both ends, [split_run_right]
+    then [split_run_left]), under the name the registry binds to the type.
+    The struct shares the node's right origin cell and content, both
+    read-only. *)
 Lemma wp_store__updateItemOfNode (s lc parent : loc) (state : store_state)
-    (ls : list loc) (tm : type_model) (k : nat) (r : ItemRun) :
+    (ls : list loc) (tm : type_model) (k : nat) (r : ItemRun) (start stop : w64) :
   ss_locs state !! parent = Some ls ->
   ss_pool state !! parent = Some tm ->
   ls !! k = Some lc ->
   tm_runs tm !! k = Some r ->
+  (uint.nat start < uint.nat stop <= length (run_items r))%nat ->
   {{{ is_pkg_init yjs ∗ own_store_state s 1 state }}}
-    s @! (go.PointerType yjs.store) @! "updateItemOfNode" #lc
+    s @! (go.PointerType yjs.store) @! "updateItemOfNode" #lc #start #stop
   {{{ (updateItemVal : yjs.updateItem.t) (name : go_string), RET #updateItemVal;
       own_store_state s 1 state ∗ ⌜ss_bind state !! name = Some parent⌝ ∗
-      is_update_item updateItemVal (RootId name, input_of_run r) }}}.
+      is_update_item updateItemVal
+        (RootId name,
+         input_of_run (split_run_left (split_run_right r (uint.nat start))
+                         (uint.nat stop - uint.nat start))) }}}.
 Proof using Type*.
-  move=> Hls Hp Hlk Hrk.
+  move=> Hls Hp Hlk Hrk Hpart.
   iIntros (Φ) "(#Hpkg & Hstate) HΦ".
   iDestruct (own_store_state_registry_coh with "Hstate") as %(_ & _ & Hnamed).
   destruct (Hnamed parent ltac:(by eexists)) as [name0 Hname0].
+  iDestruct (own_store_state_run_pool_invs with "Hstate") as %[Hrun_invs _].
+  have Hr_all : r ∈ all_runs (ss_pool state).
+  { apply elem_of_all_runs. exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hrk)]. }
+  destruct (Hrun_invs r Hr_all) as (_ & Hfits & Hclient_fits & _).
   wp_method_call. wp_call. wp_call. wp_auto.
   iDestruct (own_store_state_item_node_acc s state parent ls tm k lc r Hls Hp Hlk Hrk with "Hstate")
-    as (prev nxt) "(%Hrun & %Hcontent_length & Hnode & Hback)".
+    as (prev nxt) "(%Hrun & %Hper_char & %Hcontent_length & Hnode & Hback)".
   iDestruct "Hnode" as (itemVal origin_left origin_right)
     "(Hval & #Horigin_left & #Horigin_right & %Hin_left & %Hin_right & %Hid & #Hcontent & %Hparent & %Hprev & %Hnext & %Hflags)".
-  have Hnonempty : (1 <= length (in_content (input_of_run r)))%nat.
-  { rewrite /= Hcontent_length. destruct Hrun as [Hrun_nonempty _].
-    destruct (run_items r); [done | simpl; lia]. }
-  iPoseProof "Horigin_left" as "Hleft". iPoseProof "Horigin_right" as "Hright".
+  (* what the model says of the part's head; no local names for the part or
+     its offset, because [wp_if_join] substitutes every variable equation *)
+  have Hhead : run_items r !! 0%nat = Some (run_head_item r).
+  { rewrite /run_head_item. destruct Hrun as [Hrun_nonempty _].
+    destruct (run_items r); [done | reflexivity]. }
+  have Hpart_head : run_items r !! (uint.nat start) = Some (run_head_item (split_run_left (split_run_right r (uint.nat start)) (uint.nat stop - uint.nat start))).
+  { have [part_head Hlookup] : is_Some (run_items r !! (uint.nat start)) by (apply lookup_lt_is_Some; lia).
+    rewrite Hlookup. f_equal. symmetry.
+    rewrite /run_head_item /split_run_left /split_run_right /=.
+    rewrite hd_inhabitant_take; last lia. exact (hd_inhabitant_drop _ _ part_head Hlookup). }
+  have Hpart_id : item_id (run_head_item (split_run_left (split_run_right r (uint.nat start)) (uint.nat stop - uint.nat start))) = MkYjsId (run_client r) (run_clock r + (uint.nat start))
+    := run_wf_lookup_clock (run_items r) _ (run_head_item r) _ Hrun Hhead Hpart_head.
+  have Hpart_right : rightOrigin (run_head_item (split_run_left (split_run_right r (uint.nat start)) (uint.nat stop - uint.nat start))) = rightOrigin (run_head_item r)
+    := run_wf_lookup_rightOrigin (run_items r) _ (run_head_item r) _ Hrun Hhead Hpart_head.
+  have Hid_client : uint.nat itemVal.(yjs.item.id').(yjs.id.clientId') = run_client r.
+  { rewrite /run_client. move: Hid. rewrite /toYjsId /=. by move=> <-. }
+  have Hid_clock : uint.nat itemVal.(yjs.item.id').(yjs.id.clock') = run_clock r.
+  { rewrite /run_clock. move: Hid. rewrite /toYjsId /=. by move=> <-. }
+  have Hfits' : (Z.of_nat (run_clock r) + Z.of_nat (length (run_items r)) < 2^64)%Z := Hfits.
   wp_auto.
-  destruct origin_left as [left_id |].
-  - (* a left origin: no parent name *)
-    iDestruct "Hleft" as "[%Hleft_nonnull _]".
-    rewrite (bool_decide_eq_false_2 _ Hleft_nonnull). wp_auto.
-    iDestruct ("Hback" with "[Hval]") as "Hstate".
-    { iExists itemVal, _, _. iFrame "Hval Horigin_left Horigin_right Hcontent". done. }
-    iApply ("HΦ" $! _ name0). iFrame "Hstate". iSplitR; first done.
-    iExists (Some left_id), origin_right, None. iFrame "Horigin_left Horigin_right Hcontent".
-    iPureIntro. split_and!; try done; try exact Hnonempty.
-    split; last done. move=> _. left. by rewrite -Hin_left.
-  - iDestruct "Hleft" as %Hleft_null.
-    rewrite (bool_decide_eq_true_2 _ Hleft_null). wp_auto.
-    destruct origin_right as [right_id |].
-    + (* a right origin only: no parent name *)
-      iDestruct "Hright" as "[%Hright_nonnull _]".
-      rewrite (bool_decide_eq_false_2 _ Hright_nonnull). wp_auto.
+  (* the left origin: the node's own at the node's first unit, the unit
+     before the part otherwise *)
+  wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗ ∃ (left_ptr : loc) (left_id : option yjs.id.t),
+      "it" ∷ it_ptr ↦ lc ∗ "start" ∷ start_ptr ↦ start ∗ "Hval" ∷ lc ↦ itemVal ∗
+      "originLeftId" ∷ originLeftId_ptr ↦ left_ptr ∗
+      "Hleft_cell" ∷ (is_origin_id left_ptr left_id ∨
+                      ∃ before : yjs.id.t, ⌜left_id = Some before ∧ left_ptr ≠ null⌝ ∗ left_ptr ↦ before) ∗
+      "%Hleft_model" ∷ ⌜toYjsId <$> left_id = origin_id (origin (run_head_item (split_run_left (split_run_right r (uint.nat start)) (uint.nat stop - uint.nat start))))⌝)%I
+      with "[it start Hval originLeftId]".
+  { (* start > 0 *)
+    wp_apply wp_NewId.
+    iDestruct (typed_pointsto_not_null with "before") as %Hbefore_nonnull.
+    iSplitR; first done. iExists before_ptr, (Some _). iFrame "it start Hval originLeftId".
+    iSplitL "before"; first (iRight; iExists _; iFrame "before"; done).
+    iPureIntro.
+    have [before_index Hbefore_index] : ∃ n, (uint.nat start) = S n by (exists ((uint.nat start) - 1)%nat; word).
+    have [before_item Hbefore_item] : is_Some (run_items r !! before_index).
+    { apply lookup_lt_is_Some. lia. }
+    have Hpart_lookup := Hpart_head. rewrite {1}Hbefore_index in Hpart_lookup.
+    destruct ((proj2 Hrun) before_index before_item _ Hbefore_item Hpart_lookup) as (_ & Horigin & _).
+    rewrite Horigin /=.
+    rewrite (run_wf_lookup_clock (run_items r) before_index (run_head_item r) before_item Hrun Hhead Hbefore_item).
+    rewrite /toYjsId /=. f_equal. f_equal; first exact Hid_client.
+    move: Hid_clock Hfits' Hpart Hbefore_index. rewrite /run_clock. word. }
+  { (* start = 0: the node's own left origin *)
+    iSplitR; first done. iExists _, origin_left. iFrame "it start Hval originLeftId".
+    iSplitR; first (iLeft; iFrame "Horigin_left").
+    iPureIntro. have Hzero : (uint.nat start) = 0%nat by word.
+    have Hpart_lookup := Hpart_head. rewrite {1}Hzero Hhead in Hpart_lookup.
+    injection Hpart_lookup as Hsame_head. rewrite -Hsame_head. exact Hin_left. }
+  iIntros (v) "[%Hv HQ]". subst v. iNamed "HQ".
+  iAssert (|==> is_origin_id left_ptr left_id)%I with "[Hleft_cell]" as ">#Hleft".
+  { iDestruct "Hleft_cell" as "[#Hleft | (%before & [-> %Hnonnull] & Hcell)]"; first done.
+    iPersist "Hcell". iModIntro. iSplit; [done | iFrame "Hcell"]. }
+  wp_auto.
+  (* the parent name: read off the registry exactly when neither origin is
+     there; either way the node goes back into the store *)
+  wp_bind (if: _ then _ else _)%E.
+  iApply (wp_wand _ _ _ (λ v : val, ⌜v = execute_val⌝ ∗
+      ∃ (name_ptr : loc) (name_opt : option go_string) (name : go_string),
+      "it" ∷ it_ptr ↦ lc ∗ "s" ∷ s_ptr ↦ s ∗ "Hstate" ∷ own_store_state s 1 state ∗
+      "parentName" ∷ parentName_ptr ↦ name_ptr ∗
+      "Hname_cell" ∷ (⌜name_opt = None ∧ name_ptr = null⌝ ∨
+                      ⌜name_opt = Some name ∧ name_ptr ≠ null⌝ ∗ name_ptr ↦ name) ∗
+      "%Hname" ∷ ⌜ss_bind state !! name = Some parent⌝ ∗
+      "%Hname_some" ∷ ⌜∀ other, name_opt = Some other -> other = name⌝ ∗
+      "%Hname_opt" ∷ ⌜name_opt = None <-> (left_id ≠ None ∨ origin_right ≠ None)⌝)%I
+    with "[it s Hval Hback parentName]").
+  { iPoseProof "Horigin_right" as "Hright".
+    destruct left_id as [left_id_value |].
+    - iDestruct "Hleft" as "[%Hleft_nonnull _]".
+      rewrite (bool_decide_eq_false_2 _ Hleft_nonnull). wp_auto.
       iDestruct ("Hback" with "[Hval]") as "Hstate".
       { iExists itemVal, _, _. iFrame "Hval Horigin_left Horigin_right Hcontent". done. }
-      iApply ("HΦ" $! _ name0). iFrame "Hstate". iSplitR; first done.
-      iExists None, (Some right_id), None. iFrame "Horigin_left Horigin_right Hcontent".
-      iPureIntro. split_and!; try done; try exact Hnonempty.
-      split; last done. move=> _. right. by rewrite -Hin_right.
-    + (* no origin: the struct names its root *)
-      iDestruct "Hright" as %Hright_null.
-      rewrite (bool_decide_eq_true_2 _ Hright_null). wp_auto.
-      iDestruct ("Hback" with "[Hval]") as "Hstate".
-      { iExists itemVal, _, _. iFrame "Hval Horigin_left Horigin_right Hcontent". done. }
-      rewrite Hparent.
-      wp_apply (wp_store__rootName with "[$Hpkg $Hstate]"); first (iPureIntro; by eexists).
-      iIntros (name) "[Hstate %Hname]".
-      wp_auto.
-      iDestruct (typed_pointsto_not_null with "name") as %Hname_nonnull.
-      iPersist "name".
-      iDestruct (own_store_state_item_node_acc s state parent ls tm k lc r Hls Hp Hlk Hrk with "Hstate")
-        as (prev' nxt') "(_ & _ & Hnode & Hback)".
-      iDestruct "Hnode" as (itemVal' origin_left' origin_right')
-        "(Hval & #Horigin_left' & #Horigin_right' & %Hin_left' & %Hin_right' & %Hid' & #Hcontent' & %Hparent' & %Hprev' & %Hnext' & %Hflags')".
-      wp_auto.
-      iDestruct ("Hback" with "[Hval]") as "Hstate".
-      { iExists itemVal', _, _. iFrame "Hval Horigin_left' Horigin_right' Hcontent'". done. }
-      iApply ("HΦ" $! _ name). iFrame "Hstate". iSplitR; first done.
-      iExists origin_left', origin_right', (Some name).
-      iFrame "Horigin_left' Horigin_right' Hcontent' name".
-      iPureIntro. split_and!; try done; try exact Hnonempty.
-      all: first
-        [ exact Hname_nonnull
-        | by move=> nm [= <-]
-        | split; first done;
-          move=> [Horigin | Horigin];
-          [by rewrite -Hin_left in Horigin | by rewrite -Hin_right in Horigin] ].
+      iSplitR; first done. iExists null, None, name0. iFrame "it s Hstate parentName".
+      iSplitR; first (iLeft; done). iPureIntro. split; first done. split; first done. split; [by left | done].
+    - iDestruct "Hleft" as %Hleft_null.
+      rewrite (bool_decide_eq_true_2 _ Hleft_null). wp_auto.
+      destruct origin_right as [right_id |].
+      + iDestruct "Hright" as "[%Hright_nonnull _]".
+        rewrite (bool_decide_eq_false_2 _ Hright_nonnull). wp_auto.
+        iDestruct ("Hback" with "[Hval]") as "Hstate".
+        { iExists itemVal, _, _. iFrame "Hval Horigin_left Horigin_right Hcontent". done. }
+        iSplitR; first done. iExists null, None, name0. iFrame "it s Hstate parentName".
+        iSplitR; first (iLeft; done). iPureIntro. split; first done. split; first done. split; [by right | done].
+      + iDestruct "Hright" as %Hright_null.
+        rewrite (bool_decide_eq_true_2 _ Hright_null). wp_auto.
+        iDestruct ("Hback" with "[Hval]") as "Hstate".
+        { iExists itemVal, _, _. iFrame "Hval Horigin_left Horigin_right Hcontent". done. }
+        rewrite Hparent.
+        wp_apply (wp_store__rootName with "[$Hpkg $Hstate]"); first (iPureIntro; by eexists).
+        iIntros (name) "[Hstate %Hname]".
+        wp_auto.
+        iDestruct (typed_pointsto_not_null with "name") as %Hname_nonnull.
+        iSplitR; first done. iExists name_ptr, (Some name), name. iFrame "it s Hstate parentName".
+        iSplitL "name"; first (iRight; iFrame "name"; done).
+        iPureIntro. split; first done. split; first by move=> other [= <-].
+        split; first done. by move=> [? | ?]. }
+  iIntros (v) "[%Hv HQ]". subst v. iNamed "HQ".
+  iAssert (|==> is_parent_name name_ptr name_opt)%I with "[Hname_cell]" as ">#Hparent_name".
+  { iDestruct "Hname_cell" as "[[-> ->] | [[-> %Hnonnull] Hcell]]"; first done.
+    iPersist "Hcell". iModIntro. iSplit; [done | iFrame "Hcell"]. }
+  (* the struct's fields, read off the node again *)
+  iDestruct (own_store_state_item_node_acc s state parent ls tm k lc r Hls Hp Hlk Hrk with "Hstate")
+    as (prev' nxt') "(_ & _ & _ & Hnode & Hback)".
+  iDestruct "Hnode" as (node_value node_left node_right)
+    "(Hval & #Hnode_left & #Hnode_right & %Hnode_in_left & %Hnode_in_right & %Hnode_id & #Hnode_content & %Hnode_parent & %Hnode_prev & %Hnode_next & %Hnode_flags)".
+  wp_auto. wp_apply wp_NewId.
+  (* the content: the part's units, a read-only subslice of the node's *)
+  have Hpart_string : items_string (run_items (split_run_left (split_run_right r (uint.nat start)) (uint.nat stop - uint.nat start))) =
+      take (uint.nat stop - uint.nat start) (drop (uint.nat start) (items_string (run_items r))).
+  { apply items_string_explode. rewrite /= fmap_take fmap_drop.
+    rewrite /run_per_char in Hper_char. rewrite Hper_char /explode fmap_take fmap_drop //. }
+  iEval (rewrite /is_content /=) in "Hnode_content".
+  iDestruct (own_slice_len with "Hnode_content") as %[Hslice_length _].
+  iDestruct (own_slice_wf with "Hnode_content") as %Hslice_cap.
+  have Hslice_bound : 0 ≤ sint.Z start ≤ sint.Z stop ≤ sint.Z node_value.(yjs.item.content').(yjs.content.content').(slice.len).
+  { move: Hslice_length Hpart. rewrite Hcontent_length. word. }
+  rewrite decide_True; last (clear -Hslice_bound Hslice_cap; word).
+  iDestruct (own_slice_slice start stop _ DfracDiscarded _ Hslice_bound with "Hnode_content")
+    as "(_ & #Hpart_content & _)".
+  wp_auto.
+  iDestruct ("Hback" with "[Hval]") as "Hstate".
+  { iExists node_value, _, _. iFrame "Hval Hnode_left Hnode_right". iSplitR; first done.
+    iSplitR; first done. iSplitR; first done. iSplitR; first (rewrite /is_content /=; iFrame "Hnode_content"). done. }
+  iApply ("HΦ" $! _ name). iFrame "Hstate". iSplitR; first done.
+  iExists left_id, node_right, name_opt. iFrame "Hleft Hnode_right Hparent_name".
+  have Hsubslice : subslice (sint.nat start) (sint.nat stop) (items_string (run_items r)) =
+      items_string (run_items (split_run_left (split_run_right r (uint.nat start)) (uint.nat stop - uint.nat start))).
+  { rewrite Hpart_string /subslice take_drop_commute.
+    congr (drop _ (take _ _)); clear -Hslice_bound; word. }
+  iEval (rewrite Hsubslice) in "Hpart_content". iFrame "Hpart_content".
+  iPureIntro. split_and!.
+  - exact Hleft_model.
+  - rewrite /= Hpart_right. exact Hnode_in_right.
+  - rewrite /= Hpart_id /toYjsId /=.
+    move: Hnode_id Hfits' Hpart. rewrite /toYjsId /run_client /run_clock /=.
+    destruct (item_id (run_head_item r)) as [head_client head_clock]. simpl.
+    move=> [= Hclient Hclock] Hbound Hrange. f_equal; [exact Hclient | word].
+  - rewrite /= Hpart_string length_take length_drop. lia.
+  - move=> other Hother. by rewrite (Hname_some other Hother).
+  - rewrite Hname_opt /input_has_origin /= -Hleft_model Hpart_right.
+    have Hright_model : toYjsId <$> origin_right = origin_id (rightOrigin (run_head_item r)) := Hin_right.
+    rewrite -Hright_model. destruct left_id, origin_right; simpl; naive_solver.
 Qed.
 
 End store_appendSpanStructs.
