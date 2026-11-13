@@ -140,9 +140,7 @@ func (t *Text) Insert(index uint64, content []uint16) {
 // (src/utils/Transaction.js:297-301), and y-websocket v2.1.0 sends it from
 // such a handler (src/y-websocket.js:353-361); yrs 0.27.2 hands it to the
 // callbacks registered with Doc::observe_update_v1, at commit
-// (src/transaction.rs:1031); y-octo 0.1.0 has no transaction and its
-// subscribers poll the store (DocPublisher, src/doc/publisher.rs:15). No
-// handler registry is built here: the caller that makes the edit gets the
+// (src/transaction.rs:1031). No handler registry is built here: the caller that makes the edit gets the
 // bytes back and sends them. A divergence from the references, in which the
 // update reaches every handler whoever made the edit.
 //

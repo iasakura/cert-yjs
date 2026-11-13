@@ -73,7 +73,8 @@ Lemma wp_Doc__ApplyEncodedUpdate (dv s_loc : loc) (γs : store_names)
       is_applied_certs γs applied m' }}}.
 Proof.
   wp_start as "(#His_doc & #Hishist & #Hpin & #Hcodec & Hs & #Hprot)".
-  iDestruct "Hprot" as (decoded inputs) "(%Hdec & %Hsame & %Hwf & #Hcerts)".
+  iDestruct "Hprot" as (inputs) "(%Hdecodes & %Hwf & #Hcerts)".
+  destruct Hdecodes as (decoded & Hdec & Hsame).
   wp_auto.
   wp_apply ("Hcodec" with "[$Hs]").
   iIntros (ok sl sldel) "[Hs Hres]".
