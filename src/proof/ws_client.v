@@ -23,9 +23,22 @@
       store for the report.
     - [own_Client_receive_side γs rc]: the same for the goroutine that runs
       [Serve], with the receive cursor.
-    - [wp_Connect] / [wp_Client__Insert] / [wp_Client__Serve] / [wp_Run]
-      (the scripted client, which the closed-system theorem in
-      src/proof/demo/ws_system.v boots).
+    - [closure_edits_text γs γh name f Q]: the contract of the closure
+      [Client.Transact] runs: handed the root text and a fresh transaction,
+      it returns the transaction, changed as it may be, with [Q] and with
+      what it inserted free of surrogate code units
+      ([inserted_surrogate_free]). That is all an application proves to
+      have its edit sent: the certificates of what it inserted are the
+      history's, not its own.
+    - [client_app_spec app]: the contract of an application [Run] runs: with
+      a client and its send side, it runs safely.
+      [client_app_expr_spec make_app] is the same for an expression that
+      evaluates to the application, which is what a node's boot expression
+      holds.
+    - [wp_Connect] / [wp_Client__Insert] / [wp_Client__Transact] /
+      [wp_Client__Serve] / [wp_Run] (a whole client around an application,
+      which the closed-system theorem in src/proof/demo/ws_system.v boots)
+      / [wp_Typist] (an application: it types a script).
 
     The client has no lock of its own: its send side stays with the
     goroutine that calls [Insert], its receive side with [Serve], and the
@@ -38,6 +51,10 @@ From New.goose_lang.ffi.ws_ffi Require Import ws_ffi.
 From New.proof Require Import core.
 From New.proof Require Import history.
 From New.proof Require Import yjs_prot.
+From New.proof.id Require Import id.
+From New.proof.item Require Import item.
+From New.proof.ytype Require Import ytype.
+From New.proof.transaction Require Import transaction.
 From New.proof.store Require Import store.
 From New.proof.doc Require Import doc.
 From New.proof.text Require Import text.
@@ -115,6 +132,50 @@ Definition own_Client_send_side (γs : store_names) (sc : chan_id) : iProp Σ :=
 Definition own_Client_receive_side (γs : store_names) (rc : chan_id) : iProp Σ :=
   ∃ n : nat, own_recv_cursor rc n ∗ own_read_cap γs.
 
+(** [inserted_surrogate_free m inserted]: the items of the document [m]
+    whose ids are in [inserted] hold no surrogate code unit. *)
+Definition inserted_surrogate_free (m : DocModel) (inserted : gset YjsId) : Prop :=
+  ∀ (root : go_string) (item : YjsItem A),
+    item ∈ doc_model_get m (RootId root) -> item_id item ∈ inserted ->
+    units_surrogate_free (content item).
+
+(** [closure_edits_text γs γh name f Q]: the closure [f] edits the root
+    text [name] of the store [γs] inside one transaction
+    ([Client.Transact]'s argument): handed the text's handle and the fresh
+    transaction, it returns the transaction, changed as it may be, with [Q],
+    and what the transaction recorded as inserted holds no surrogate code
+    unit. A one-shot wand, as [closure_runs_transaction]: the closure runs
+    once and may carry the caller's resources into the transaction. *)
+Definition closure_edits_text (γs : store_names) (γh : history_names) (name : go_string)
+    (f : func.t) (Q : iProp Σ) : iProp Σ :=
+  ∀ (tr s_loc t : loc) (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list Input) (deleted : gset YjsId) (Ψ : val -> iProp Σ),
+    is_Text t γs γh name [] ∅ -∗
+    own_transaction tr s_loc γs γh c h m pend deleted ∅ ∅ ∅ -∗
+    (∀ (h' : list Ev) (m' : DocModel) (pend' : list Input)
+       (deleted' inserted tombstoned : gset YjsId) (changed : gset P),
+       own_transaction tr s_loc γs γh c h' m' pend' deleted' inserted tombstoned changed ∗
+       ⌜inserted_surrogate_free m' inserted⌝ ∗ Q -∗ Ψ #()) -∗
+    WP #f #tr #t {{ Ψ }}.
+
+(** [client_app_spec app]: the application [app] runs safely with any
+    client and its send side ([Run]'s argument). Persistent, as the codec
+    specifications are: a property of the function value. *)
+Definition client_app_spec (app : func.t) : iProp Σ :=
+  □ (∀ (cl : loc) (γs : store_names) (γh : history_names) (c : ClientId)
+       (sc rc : chan_id) (name : go_string),
+      {{{ is_pkg_init wsclient ∗ is_Client cl γs γh c sc rc name ∗ own_Client_send_side γs sc }}}
+        #app #cl
+      {{{ RET #(); True }}}).
+
+(** [client_app_expr_spec make_app]: the expression [make_app] evaluates to
+    an application that meets [client_app_spec]. What a boot expression
+    takes: an application is either a function value or, like [Typist], the
+    result of a call. *)
+Definition client_app_expr_spec (make_app : expr) : iProp Σ :=
+  (is_pkg_init wsclient -∗
+   WP make_app {{ v, ∃ app : func.t, ⌜v = #app⌝ ∗ client_app_spec app }})%I.
+
 #[global] Instance is_Client_persistent cl γs γh c sc rc name :
   Persistent (is_Client cl γs γh c sc rc name).
 Proof. apply _. Qed.
@@ -187,6 +248,59 @@ Proof.
   iIntros "Hrcap".
   wp_auto.
   iApply "HΦ". iFrame "Hcontent".
+  iDestruct "Hsent" as "[[_ Hcursor] | [Hcursor _]]"; iExists _; iFrame "Hcursor Hrcap".
+Qed.
+
+(** [Transact]: one local edit of any shape, sent. The closure edits inside
+    one transaction ([closure_edits_text]); what the transaction inserted
+    goes on the wire. [wp_Doc__TransactEncoded] hands back the bytes of a
+    batch that is exactly what was inserted, well formed and certified, and
+    the closure's contract says the batch holds no surrogate code unit, so
+    the bytes satisfy the wire protocol ([yjs_prot_encode]). *)
+Lemma wp_Client__Transact (cl : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (sc rc : chan_id) (name : go_string) (f : func.t) (Q : iProp Σ) :
+  {{{ is_pkg_init wsclient ∗ is_Client cl γs γh c sc rc name ∗
+      own_Client_send_side γs sc ∗ closure_edits_text γs γh name f Q }}}
+    cl @! (go.PointerType wsclient.Client) @! "Transact" #f
+  {{{ (err : bool), RET #err; own_Client_send_side γs sc ∗ Q }}}.
+Proof.
+  wp_start as "(#Hclient & Hside & Hf)".
+  iPoseProof "Hclient" as "Hopen". iNamed "Hopen". iNamed "Hcodec_pair".
+  destruct Hdeploy as [Hprot Htrace].
+  iDestruct "Hside" as (sent) "[Hcursor Hrcap]".
+  wp_auto.
+  wp_apply (wp_Doc__TransactEncoded _ s_loc γs γh _ encode _
+              (λ _ _ m' _ _ inserted, ⌜inserted_surrogate_free m' inserted⌝ ∗ Q)%I
+              with "[$Hdoc $Hishist $Hencoder Hf f text]").
+  { rewrite /closure_runs_recorded_transaction.
+    iIntros (tr c' h m pend deleted Ψ) "Htx HΨ".
+    wp_auto.
+    wp_apply ("Hf" with "Htext Htx").
+    iIntros (h' m' pend' deleted' inserted tombstoned changed) "(Htx & %Hfree & HQ)".
+    wp_auto.
+    iApply ("HΨ" $! h' m' pend' deleted' inserted tombstoned changed).
+    iFrame "Htx HQ". done. }
+  iIntros (bytes_slice c' h' m' pend' deleted' inserted structs)
+    "([%Hfree HQ] & Hbytes & Hbytes_cap & %Hstructs & %Hwf & #Hcerts)".
+  (* the batch is what was inserted, so it holds no surrogate code unit *)
+  have Hstructs_free : structs_surrogate_free structs.
+  { move=> struct Hstruct unit Hunit.
+    destruct (expand_inputs_content_unit structs struct unit Hstruct Hunit) as (op & Hop & Hcontent).
+    destruct (proj1 (Hstructs op) Hop) as (root & item & [Hitem Hid] & ->).
+    apply (Hfree root item Hitem Hid).
+    move: Hcontent. rewrite /=. move=> ->. by apply list_elem_of_singleton. }
+  iDestruct (yjs_prot_encode decode encode γh structs Hroundtrip Hstructs_free Hwf with "Hcerts")
+    as "#Hyprot".
+  wp_auto.
+  wp_func_call.
+  wp_apply (wp_Send with "[$Hconn $Hbytes $Hcursor]").
+  { rewrite Hprot. iFrame "Hyprot". }
+  iIntros (err) "(Hbytes & Hsent)".
+  wp_auto.
+  wp_apply (wp_Client__report with "[$Hclient $Hrcap]").
+  iIntros "Hrcap".
+  wp_auto.
+  iApply "HΦ". iFrame "HQ".
   iDestruct "Hsent" as "[[_ Hcursor] | [Hcursor _]]"; iExists _; iFrame "Hcursor Hrcap".
 Qed.
 
@@ -281,24 +395,23 @@ Proof.
   iSplitL "Hsend_cursor Hrcap_send"; iExists 0%nat; iFrame.
 Qed.
 
-(** [Run]: the scripted client, the client's top-level composition:
-    connect, serve on a goroutine with the receive side, and type the
-    script with the send side, one byte of the script as one code unit. A
-    byte is below the surrogate range, so every insert meets [Insert]'s
-    hypothesis and the script needs none. The closed-system theorem
-    (src/proof/demo/ws_system.v) boots exactly this function. *)
+(** [Run]: a whole client around an application: connect, serve on a
+    goroutine with the receive side, and run the application with the send
+    side. The closed-system theorem (src/proof/demo/ws_system.v) boots
+    exactly this function, for any application that meets
+    [client_app_spec]. *)
 Lemma wp_Run (host : w64) (path : go_string) (client : w64) (decoder encoder : func.t)
-    (name script : go_string) (γh : history_names) :
+    (name : go_string) (app : func.t) (γh : history_names) :
   deployment_protocols decode γh ->
   {{{ is_pkg_init wsclient ∗ is_history (A := A) (P := P) γh ∗
       own_client_history γh (uint.nat client) ([] : list Ev) ∗
       codec_pair_spec decode encode decoder encoder ∗
-      ws_env_preserves ⊤ }}}
-    @! wsclient.Run #host #path #client #decoder #encoder #name #script
+      ws_env_preserves ⊤ ∗ client_app_spec app }}}
+    @! wsclient.Run #host #path #client #decoder #encoder #name #app
   {{{ RET #(); True }}}.
 Proof.
   intros Hdeploy.
-  wp_start as "(#Hhistory_inv & Hhistory & #Hcodec_values & #Henv)".
+  wp_start as "(#Hhistory_inv & Hhistory & #Hcodec_values & #Henv & #Happ)".
   wp_auto.
   wp_apply (wp_Connect host path client decoder encoder name γh Hdeploy
               with "[$Hhistory_inv $Hhistory $Hcodec_values]").
@@ -310,9 +423,28 @@ Proof.
   wp_auto.
   wp_apply (wp_fork with "[Hreceive]").
   { wp_apply (wp_Client__Serve with "[$Hclient $Hreceive $Henv]"). iIntros "_". done. }
+  wp_apply ("Happ" with "[$Hclient $Hsend]").
+  by iApply "HΦ".
+Qed.
+
+(** [Typist]: an application for [Run]. It types its script one byte at a
+    time at the end of the text, each byte as one code unit in its own
+    transaction. A byte is below the surrogate range, so each transaction
+    meets [closure_edits_text], and the script needs no condition. *)
+Lemma wp_Typist (script : go_string) :
+  {{{ is_pkg_init wsclient }}}
+    @! wsclient.Typist #script
+  {{{ (app : func.t), RET #app; client_app_spec app }}}.
+Proof.
+  wp_start as "_".
+  iApply wp_fupd.
+  wp_auto.
+  iPersist "script".
+  iModIntro. iApply "HΦ".
+  iIntros "!>" (cl γs γh c sc rc name) "!>". iIntros (Ψ) "(#Hpkg' & #Hclient & Hsend) HΨ".
+  wp_auto.
   wp_apply wp_string_to_bytes. iIntros (units_slice) "[Hunits Hunits_cap]".
   wp_auto.
-  iPoseProof "Hclient" as "Hopen". iNamed "Hopen".
   iAssert (∃ (i : w64),
     "c" ∷ c_ptr ↦ cl ∗ "units" ∷ units_ptr ↦ units_slice ∗ "i" ∷ i_ptr ↦ i ∗
     "%Hi" ∷ ⌜0 ≤ sint.Z i⌝ ∗
@@ -322,12 +454,8 @@ Proof.
   wp_for "IH".
   iDestruct (own_slice_len with "Hunits") as %[Hunits_length Hunits_nonneg].
   destruct (decide (sint.Z i < sint.Z units_slice.(slice.len))) as [Hinside | Hpast]; last first.
-  { rewrite bool_decide_eq_false_2 //. wp_auto. by iApply "HΦ". }
+  { rewrite bool_decide_eq_false_2 //. wp_auto. by iApply "HΨ". }
   rewrite bool_decide_eq_true_2 //.
-  wp_auto.
-  iDestruct "Hsend" as (sent) "[Hcursor Hrcap]".
-  wp_apply (wp_Text__Len _ γs γh (uint.nat client) name [] ∅ [] with "[$Htext $Hpin $Hlb $Hrcap]").
-  iIntros (length_value model) "(_ & Hrcap & _)".
   wp_auto.
   rewrite decide_True; last (clear -Hinside Hi; word).
   have [unit Hunit] : is_Some (script !! sint.nat i).
@@ -344,12 +472,48 @@ Proof.
   (* a byte is below the surrogate range *)
   have Hbyte : units_surrogate_free [W16 (uint.Z unit)].
   { move=> typed /list_elem_of_singleton ->. word. }
-  wp_apply (wp_Client__Insert cl γs γh (uint.nat client) sc rc name length_value _ (DfracOwn 1) _ Hbyte
-              with "[$Hclient Hcursor Hrcap $Hliteral]").
-  { iExists sent. iFrame "Hcursor Hrcap". }
-  iIntros (err) "[Hsend Hliteral]".
+  wp_apply (wp_Client__Transact cl γs γh c sc rc name _ True%I
+              with "[$Hclient $Hsend unit Hliteral]").
+  { rewrite /closure_edits_text.
+    iIntros (tr s_loc t c' h m pend deleted Ψ') "#Htext Htx HΨ'".
+    wp_auto.
+    wp_apply (wp_Text__CodeUnitsIn with "[$Htext $Htx]").
+    iIntros (visible_slice) "(_ & Htx & Hvisible & Hvisible_cap)".
+    wp_auto.
+    wp_apply (wp_Text__InsertIn with "[$Htext $Htx $Hliteral]").
+    iIntros (L' ins h' m' k0 originLeft originRight)
+      "(#Htext' & Htx & Hliteral & %Hrun & %Hreplaced & #Hcerts)".
+    iDestruct (own_transaction_item_unique with "Htx") as %Hunique.
+    wp_auto.
+    iApply ("HΨ'" $! h' m' pend deleted (∅ ∪ char_ids ins) ∅
+              (∅ ∪ (if decide (ins = []) then ∅ else {[name]}))).
+    iFrame "Htx". iSplit; last done. iPureIntro.
+    (* an inserted item is the one item of this insert, whose unit is the byte *)
+    move=> root item Hitem Hid.
+    rewrite left_id_L in Hid. apply elem_of_char_ids in Hid as (it & Hit & Hit_id).
+    destruct Hrun as (_ & Hlength & Hitems & _).
+    apply list_elem_of_lookup in Hit as [position Hposition].
+    destruct Hlength as [-> | Hlength]; first by rewrite lookup_nil in Hposition.
+    have [typed Htyped] : is_Some ([W16 (uint.Z unit)] !! position).
+    { apply lookup_lt_is_Some. rewrite -Hlength. exact (lookup_lt_Some _ _ _ Hposition). }
+    destruct (Hitems position it typed Hposition Htyped) as (Hit_model & _ & Hcontent & _).
+    have Hit_root : it ∈ doc_model_get m' (RootId name).
+    { rewrite (proj1 Hreplaced). exact Hit_model. }
+    destruct (Hunique name root it item Hit_root Hitem Hit_id) as [_ <-].
+    rewrite Hcontent. move=> x /list_elem_of_singleton ->.
+    exact (Hbyte typed (list_elem_of_lookup_2 _ _ _ Htyped)). }
+  iIntros (err) "[Hsend _]".
   wp_auto.
   wp_for_post. iFrame. iPureIntro. clear -Hinside Hi. word.
+Qed.
+
+(** The typist as a boot expression's application. *)
+Lemma typist_app_expr_spec (script : go_string) :
+  ⊢ client_app_expr_spec ((@! wsclient.Typist) #script).
+Proof.
+  iIntros "#Hpkg".
+  wp_apply (wp_Typist script).
+  iIntros (app) "#Happ". iExists app. by iFrame "Happ".
 Qed.
 
 End proof.
