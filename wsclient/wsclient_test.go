@@ -116,7 +116,7 @@ func TestScriptedClientsConverge(t *testing.T) {
 	for i, script := range []string{"abc", "xyz"} {
 		go func(client yjs.Client, script string) {
 			// Run returns once the script is typed; its Serve goroutine goes on.
-			Run(addr, "/room", client, yjs.WireCodec(), yjs.WireEncoder(), "root", script)
+			Run(addr, "/room", client, yjs.WireCodec(), yjs.WireEncoder(), "root", Typist(script))
 			done <- struct{}{}
 		}(yjs.Client(20+i), script)
 	}

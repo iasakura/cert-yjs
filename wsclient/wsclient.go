@@ -86,6 +86,28 @@ func (c *Client) Insert(index uint64, content []uint16) bool {
 	return err
 }
 
+// Transact is one local edit of any shape: it runs f as one transaction on
+// the client's document, handing it the transaction and the root text, then
+// sends the update that carries what the transaction integrated and writes
+// the report of the root to the trace. This is the fixed half of a client:
+// whatever f edits, what it inserted is what goes on the wire (y-websocket's
+// provider does the same from the document's 'update' handler, y-websocket
+// v2.1.0 src/y-websocket.js:353-361). It returns Send's error flag, as
+// Insert does, and like Insert it is not to be called concurrently with
+// itself or with Insert. f must not lock the document again (yjs.Doc.Transact);
+// it uses the In-variants with tr. What f inserts should hold no surrogate
+// code unit, for the reason given at Insert. What f deletes is not sent
+// (yjs.Doc.TransactEncoded).
+func (c *Client) Transact(f func(tr *yjs.Transaction, text *yjs.Text)) bool {
+	text := c.text
+	update := c.doc.TransactEncoded(func(tr *yjs.Transaction) {
+		f(tr, text)
+	}, c.encode)
+	err := wsnet.Send(c.conn, update)
+	c.report()
+	return err
+}
+
 // Serve is the receive loop, until the connection is gone: apply every
 // received update through the verified total apply path and, after each one
 // that decoded, write the report of the root to the trace. It owns the
@@ -103,23 +125,35 @@ func (c *Client) Serve() {
 	}
 }
 
-// Run is the scripted client the closed theorem boots: connect, serve on a
-// goroutine, and type script at the end of the text one byte at a time, each
-// byte as one code unit, so that an ASCII script types its text. A real
-// client calls Insert from its user interface instead. The script is bytes
-// and not code units because a byte is never a surrogate code unit: a unit
-// typed alone is sent alone, and the wire cannot carry half of a surrogate
-// pair (yjs/codec.go, issue #233), so a script of code units would need a
-// side condition that a script of bytes does not.
+// Run is a whole client: connect, serve on a goroutine, and run the
+// application app with the client. Connecting and receiving are fixed; app is
+// the part that edits, through Insert and Transact, and it holds the client's
+// send side for the whole run. This is what a closed theorem boots, for any
+// app that meets the client's contract.
 func Run(host wsnet.Address, path string, client yjs.Client,
-	decode yjs.Codec, encode yjs.Encoder, name string, script string) {
+	decode yjs.Codec, encode yjs.Encoder, name string, app func(c *Client)) {
 	err, c := Connect(host, path, client, decode, encode, name)
 	if err {
 		return
 	}
 	go c.Serve()
-	units := []byte(script)
-	for i := 0; i < len(units); i++ {
-		c.Insert(c.text.Len(), []uint16{uint16(units[i])})
+	app(c)
+}
+
+// Typist is an application for Run: it types script at the end of the text
+// one byte at a time, each byte as one code unit and one transaction, so
+// that an ASCII script types its text. The script is bytes and not code
+// units because a byte is never a surrogate code unit: a unit typed alone is
+// sent alone, and the wire cannot carry half of a surrogate pair
+// (yjs/codec.go, issue #233).
+func Typist(script string) func(c *Client) {
+	return func(c *Client) {
+		units := []byte(script)
+		for i := 0; i < len(units); i++ {
+			unit := []uint16{uint16(units[i])}
+			c.Transact(func(tr *yjs.Transaction, text *yjs.Text) {
+				text.InsertIn(tr, uint64(len(text.CodeUnitsIn(tr))), unit)
+			})
+		}
 	}
 }
