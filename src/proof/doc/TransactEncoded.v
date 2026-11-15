@@ -71,7 +71,7 @@ Lemma wp_Doc__TransactEncoded (dv ref : loc) (γs : store_names) (γh : history_
          gset YjsId -> gset YjsId -> iProp Σ) :
   {{{ is_pkg_init yjs ∗ is_Doc dv ref γs γh ∗ is_history (A := A) (P := P) γh ∗
       encoder_spec encode encoder ∗
-      closure_runs_recorded_transaction (store_of_ref ref) γs γh f Q }}}
+      closure_runs_recorded_transaction γs γh f Q }}}
     dv @! (go.PointerType yjs.Doc) @! "TransactEncoded" #f #encoder
   {{{ (bytes_slice : slice.t) (c : ClientId) (h' : list Ev) (m' : DocModel)
       (pend' : list (TId * IntegrateInput (A := A))) (deleted' inserted : gset YjsId)
@@ -80,8 +80,7 @@ Lemma wp_Doc__TransactEncoded (dv ref : loc) (γs : store_names) (γh : history_
       bytes_slice ↦* encode structs ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) ∗
       ⌜structs_expand_to_items structs (λ name item,
          item ∈ doc_model_get m' (RootId name) ∧ item_id item ∈ inserted)⌝ ∗
-      ⌜update_wf (expand_inputs structs)⌝ ∗
-      is_pending_certified γh (expand_inputs structs) }}}.
+      is_update_certified γh structs }}}.
 Proof.
   wp_start as "(#His_doc & #Hishist & #Hencoder & Hf)".
   iNamed "His_doc". subst ref.
@@ -95,8 +94,7 @@ Proof.
                    own_update_structs structs_slice (DfracOwn 1) structs ∗
                    ⌜structs_expand_to_items structs (λ name item,
                       item ∈ doc_model_get m' (RootId name) ∧ item_id item ∈ inserted)⌝ ∗
-                   ⌜update_wf (expand_inputs structs)⌝ ∗
-                   is_pending_certified γh (expand_inputs structs))%I
+                   is_update_certified γh structs)%I
               with "[$His_store f structs Hf]").
   { rewrite /closure_runs_transaction.
     iIntros (tr c h m pend deleted Ψ) "Htx HΨ".
@@ -121,6 +119,7 @@ Proof.
     { move=> input Hinput.
       destruct (proj1 (Hstructs input) Hinput) as (name & item & [Hitem _] & ->).
       by exists name, item. }
+    rewrite /is_update_certified.
     iSplitR.
     { iPureIntro. split.
       - move=> input Hinput.
@@ -135,13 +134,13 @@ Proof.
     iApply ("Hcerts" $! (RootId name) item Hitem). }
   iIntros "HQ". iDestruct "HQ" as (c h' m' pend' deleted') "HQ".
   iDestruct "HQ" as (inserted structs_slice structs)
-    "(HQ & structs & Hstructs & %Hstructs & %Hwf & #Hcerts)".
+    "(HQ & structs & Hstructs & %Hstructs & #Hcertified)".
   wp_auto.
   wp_apply ("Hencoder" with "[$Hstructs]").
   iIntros (bytes_slice) "(Hstructs & Hbytes & Hbytes_cap)".
   wp_auto.
   iApply ("HΦ" $! bytes_slice c h' m' pend' deleted' inserted structs).
-  iFrame "HQ Hbytes Hbytes_cap Hcerts". done.
+  iFrame "HQ Hbytes Hbytes_cap Hcertified". done.
 Qed.
 
 End doc_TransactEncoded.
