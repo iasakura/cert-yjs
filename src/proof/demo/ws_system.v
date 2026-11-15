@@ -2,9 +2,14 @@
     verified clients (issue #131; issue #132, part 2).
 
     One node boots the verified server ([server_boot], ws_server.v) and one
-    node per client boots the scripted client ([client_boot]: initialize
-    the packages, then [wsclient.Run], which connects, serves on a
-    goroutine and types its script). The theorem pushes all of them through
+    node per client boots a whole client around an application
+    ([client_boot]: initialize the packages, evaluate the application, then
+    [wsclient.Run], which connects, serves on a goroutine and runs the
+    application). The application is any expression that evaluates to a
+    function meeting the client's contract ([client_app_expr_spec]): it
+    edits through [Client.Transact] and [Client.Insert], and what its
+    transactions insert is what the fixed half of the client sends. The
+    typist ([wsclient.Typist], [typist_app_expr_spec]) is one. The theorem pushes all of them through
     [ws_dist_adequacy_prot_fupd] with the real wire protocol
     [yjs_prot decode γh] and exports, about EVERY reachable state of EVERY
     execution, what the server's theorem exports: every message on the wire
@@ -48,26 +53,28 @@ From iris.algebra.lib Require Import dfrac_agree.
 Local Open Scope Z_scope.
 
 (** One client node of the system: the path it connects to, the client id
-    of its document, and the script it types. *)
-Record client_config := ClientConfig {
+    of its document, and its application, as the expression the node
+    evaluates to get it. *)
+Record client_config {ext : ffi_syntax} := ClientConfig {
   client_path : go_string;
   client_id : w64;
-  client_script : go_string;
+  client_app : expr;
 }.
 
-(** Initialize the packages, then run the translated scripted client
-    [wsclient.Run] (connect to [host] at [path], create the document as
-    client [client], serve on a goroutine, type [script] at the end of the
-    root text [name]). A real deployment is
+(** Initialize the packages, evaluate the application, then run the
+    translated [wsclient.Run] (connect to [host] at [path], create the
+    document as client [client], serve on a goroutine, run the application
+    with the client, on the root text [name]). A real deployment is
     [func main() { wsclient.Run(host, path, client, yjs.WireCodec(),
-    yjs.WireEncoder(), "root", script) }]. Defined outside any [heapGS]
+    yjs.WireEncoder(), "root", app) }]. Defined outside any [heapGS]
     section so a closed theorem can name it before any node exists. *)
 Definition client_boot {go_gctx : GoGlobalContext}
     {go_lctx : GoLocalContext} {go_fns : GoSemanticsFunctions}
     (host : w64) (path : go_string) (client : w64) (decoder encoder : func.t)
-    (name script : go_string) : expr :=
+    (name : go_string) (make_app : expr) : expr :=
   wsclient.initialize' #();;
-  (@! wsclient.Run) #host #path #client #decoder #encoder #name #script.
+  let: "app" := make_app in
+  (@! wsclient.Run) #host #path #client #decoder #encoder #name "app".
 
 Section boot.
 Context {Σ : gFunctors} {hG : heapGS Σ}.
@@ -115,7 +122,7 @@ Qed.
 (* ===== the boot expression =============================================== *)
 
 Lemma wp_client_boot (host : w64) (path : go_string) (client : w64)
-    (decoder encoder : func.t) (name script : go_string)
+    (decoder encoder : func.t) (name : go_string) (make_app : expr)
     (γh : history_names) get_is_pkg_init :
   get_is_pkg_init_prop wsclient get_is_pkg_init →
   deployment_protocols decode γh →
@@ -124,14 +131,20 @@ Lemma wp_client_boot (host : w64) (path : go_string) (client : w64)
     own_client_history γh (uint.nat client) ([] : list Ev) -∗
     codec_pair_spec decode encode decoder encoder -∗
     ws_env_preserves ⊤ -∗
-    WP client_boot host path client decoder encoder name script {{ _, True }}.
+    client_app_expr_spec decode encode make_app -∗
+    WP client_boot host path client decoder encoder name make_app {{ _, True }}.
 Proof.
-  iIntros (Hget Hdeploy) "Hown #Hhist Hhistory #Hcodec_pair #Henv".
+  iIntros (Hget Hdeploy) "Hown #Hhist Hhistory #Hcodec_pair #Henv Hmake_app".
   rewrite /client_boot.
   wp_apply (wp_wsclient_initialize' with "[$Hown]") as "(Hown & #Hinit)";
     first exact Hget.
-  wp_apply (wp_Run decode encode host path client decoder encoder name script γh Hdeploy
-             with "[$Hhist $Hhistory $Hcodec_pair $Henv]").
+  wp_pures.
+  wp_bind make_app.
+  iApply (wp_wand with "[Hmake_app]"); first iApply ("Hmake_app" with "Hinit").
+  iIntros (v) "(%app & -> & #Happ)".
+  wp_pures.
+  wp_apply (wp_Run decode encode host path client decoder encoder name app γh Hdeploy
+             with "[$Hhist $Hhistory $Hcodec_pair $Henv $Happ]").
   done.
 Qed.
 
@@ -169,7 +182,7 @@ Qed.
     the server's: initialize, run the boot, and after any crash come back
     up as [halt]. *)
 Lemma wpr_client_boot (host : w64) (path : go_string) (client : w64)
-    (decoder encoder : func.t) (name script : go_string)
+    (decoder encoder : func.t) (name : go_string) (make_app : expr)
     (γh : history_names) (σ : lang.state) :
   is_init σ →
   deployment_protocols decode γh →
@@ -178,10 +191,11 @@ Lemma wpr_client_boot (host : w64) (path : go_string) (client : w64)
     own_client_history γh (uint.nat client) ([] : list Ev) -∗
     codec_pair_spec decode encode decoder encoder -∗
     ws_env_preserves ⊤ -∗
-    wpr NotStuck ⊤ (client_boot host path client decoder encoder name script) halt
+    client_app_expr_spec decode encode make_app -∗
+    wpr NotStuck ⊤ (client_boot host path client decoder encoder name make_app) halt
         (λ _, True%I) (λ _, True%I) (λ _ _, True%I).
 Proof.
-  iIntros (Hinit Hdeploy) "Hgo #Hhist Hhistory #Hcodec_pair #Henv".
+  iIntros (Hinit Hdeploy) "Hgo #Hhist Hhistory #Hcodec_pair #Henv Hmake_app".
   iApply fupd_wpr.
   iMod (go_init client_get_is_pkg_init _ Hinit with "Hgo") as "Hown".
   iModIntro.
@@ -190,7 +204,7 @@ Proof.
   - iApply wp_wpc.
     iApply (wp_client_boot _ _ _ _ _ _ _ _ client_get_is_pkg_init
               client_get_is_pkg_init_wf Hdeploy
-              with "Hown Hhist Hhistory Hcodec_pair Henv").
+              with "Hown Hhist Hhistory Hcodec_pair Henv Hmake_app").
   - iModIntro.
     iIntros (hL' σ1 σ2 Hcrash) "_".
     iNext.
@@ -236,12 +250,13 @@ Local Notation Input :=
 Definition client_node (host : w64) (decoder encoder : func.t) (name : go_string)
     (σ0 : lang.state) (config : client_config) : node_init_cfg :=
   {| init_thread := client_boot (go_fns := sem.(go.sem_fn)) host config.(client_path)
-                      config.(client_id) decoder encoder name config.(client_script);
+                      config.(client_id) decoder encoder name config.(client_app);
      init_restart := halt;
      init_local_state := σ0 |}.
 
 (** The system, closed: one node boots the verified server and one node per
-    entry of [clients] boots the verified scripted client, against an empty
+    entry of [clients] boots a verified client around that entry's
+    application, against an empty
     well-formed wire and an environment that never sends. In EVERY reachable
     state of EVERY execution (crash-restarts included), EVERY message on the
     wire decodes to an honest batch (protocol totality), and the run's trace
@@ -250,8 +265,10 @@ Definition client_node (host : w64) (decoder encoder : func.t) (name : go_string
 
     Trusted, beyond the semantics: the two codec values meet their
     specifications ([codec_spec], [encoder_spec]) and the two abstract
-    halves round-trip ([codec_roundtrip]). Nothing is assumed about peers:
-    every sender is one of these nodes. The nodes' client ids are distinct,
+    halves round-trip ([codec_roundtrip]). Each application meets the
+    client's contract ([client_app_expr_spec]): a proof obligation about the
+    application's own code, not an assumption about what it sends. Nothing
+    is assumed about peers: every sender is one of these nodes. The nodes' client ids are distinct,
     as Yjs requires of replicas. *)
 Theorem ws_system_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
     `{seq_inG : !inG Σ (authR (gmapUR loc (gsetUR (YjsItem (list w16)))))}
@@ -276,6 +293,11 @@ Theorem ws_system_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
   (∀ (hG : ws_heapGS Σ) (sem' : go.Semantics),
       ⊢ encoder_spec (hG := hG) (sem := sem') encode encoder) ->
   codec_roundtrip decode encode ->
+  (∀ (hG : ws_heapGS Σ) (sem' : go.Semantics) (package_sem' : yjs.Assumptions)
+     (sync_pkg' : sync.Assumptions) (wsnet_pkg' : wsnet.Assumptions)
+     (wsclient_pkg' : wsclient.Assumptions) (config : client_config),
+      config ∈ clients ->
+      ⊢ client_app_expr_spec (hG := hG) (sem := sem') decode encode config.(client_app)) ->
   dist_adequate (CS := goose_crash_lang)
     ({| init_thread := server_boot (go_fns := sem.(go.sem_fn)) host server_client decoder name;
         init_restart := halt;
@@ -287,7 +309,7 @@ Theorem ws_system_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
           ∃ inputs, decode d = Some inputs ∧ update_wf inputs) ∧
        reports_converge g'.(global_world).(ws_trace)).
 Proof.
-  intros Hwf Hempty Htrace Hsilent Hpkg Hlctx0 Hdistinct Hcodec Hencoder Hroundtrip.
+  intros Hwf Hempty Htrace Hsilent Hpkg Hlctx0 Hdistinct Hcodec Hencoder Hroundtrip Happs.
   eapply (ws_dist_adequacy_prot_fupd Σ); [exact Hwf | exact Hempty | exact Htrace | done |].
   intros Hinv.
   iStartProof.
@@ -331,7 +353,7 @@ Proof.
       iModIntro.
       iExists _, _, _.
       iApply (wpr_client_boot (hG := HeapGS _ _ HG _ _) decode encode _ _ _ _ _ _ _ γh σ0 Hpkg
-                with "Hgo Hhist Hclient_history [] []").
+                with "Hgo Hhist Hclient_history [] [] []").
       * split; intros d; [rewrite Hp // | rewrite Ht //].
       * (* the codec values, as trusted *)
         iSplit; first iApply (Hcodec _ _).
@@ -342,6 +364,7 @@ Proof.
                   (@iris_invGS (@goose_lang ws_op ws_model go_gctx (@ws_semantics go_gctx)) Σ
                      (@goose_irisGS ws_op ws_model (@ws_semantics go_gctx) go_gctx ws_interp Σ HG))).
         intros messages channel data. rewrite Hm. apply Hsilent.
+      * iApply (Happs _ _ _ _ _ _ config (list_elem_of_lookup_2 _ _ _ Hk)).
   - (* the export: protocol totality and report convergence off the state
        interpretation, as for the server alone *)
     iIntros (g') "Hctx".
