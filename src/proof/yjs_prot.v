@@ -20,6 +20,10 @@
       batch ([own_update_structs_same_wire_struct] turns the decoder's slice
       into it), so it can apply any message it is handed with no further
       hypotheses. Persistent.
+    - [is_update_certified γh structs]: the batch [structs] is ready to be
+      sent: its per-char expansion is well formed and certified against
+      [γh]. What the protocol asks of a batch before any encoding.
+      Persistent.
     - [codec_spec decode f]: the Go decoder value [f] meets [decode]. The
       deployment's [yjs.WireCodec] is TRUSTED to meet it (the same boundary
       codec.go already is, now stated instead of implicit); a future
@@ -112,6 +116,14 @@ Definition yjs_prot (γh : history_names) (d : list u8) : iProp Σ :=
     ⌜decodes_to d inputs⌝ ∗ ⌜update_wf inputs⌝ ∗
     is_pending_certified γh (expand_inputs inputs).
 
+(** [is_update_certified γh structs]: the batch is ready to be sent: its
+    per-char expansion is well formed ([update_wf]) and every operation of
+    it is a point of the global history. The two things the protocol asks
+    of a batch, before any encoding; what a transaction can say of the
+    update it hands back ([wp_Doc__TransactEncoded]). Persistent. *)
+Definition is_update_certified (γh : history_names) (structs : list Input) : iProp Σ :=
+  ⌜update_wf (expand_inputs structs)⌝ ∗ is_pending_certified γh (expand_inputs structs).
+
 (** [units_surrogate_free units]: none of the code units lies in the UTF-16
     surrogate range D800-DFFF. *)
 Definition units_surrogate_free (units : list w16) : Prop :=
@@ -143,22 +155,20 @@ Lemma decodes_to_decoded (d : list u8) (decoded : list Input) :
   decode d = Some decoded -> decodes_to d decoded.
 Proof. move=> Hdecode. exists decoded. split; [exact Hdecode | exact (same_wire_struct_refl decoded)]. Qed.
 
-(** What a sender needs to put a batch on the wire: the batch is honest and
-    the certificates of its per-char expansion are in the history. Then its
+(** What a sender needs to put a batch on the wire: the batch is certified
+    ([is_update_certified]) and holds no surrogate code unit. Then its
     encoding satisfies the protocol. *)
 Lemma yjs_prot_encode (encode : list Input -> list u8) (γh : history_names)
     (structs : list Input) :
   codec_roundtrip encode ->
   structs_surrogate_free structs ->
-  update_wf (expand_inputs structs) ->
-  is_pending_certified γh (expand_inputs structs) -∗
+  is_update_certified γh structs -∗
   yjs_prot γh (encode structs).
 Proof.
-  move=> Hroundtrip Hfree Hwf.
+  move=> Hroundtrip Hfree. iIntros "[%Hwf #Hcerts]".
   destruct (Hroundtrip structs Hfree Hwf) as (inputs & Hdecodes & Hinputs).
   have Hone : ∀ y, y ∈ inputs -> length (in_content y.2) = 1%nat.
   { move=> y Hy. exact (expand_inputs_unit_content structs y (Hinputs y Hy)). }
-  iIntros "#Hcerts".
   iExists inputs. iSplit; first done.
   iSplit.
   { iPureIntro. destruct Hwf as [Hfits Hrooted]. split.
