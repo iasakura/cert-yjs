@@ -229,12 +229,13 @@ Definition closure_runs_transaction (s_loc : loc) (γs : store_names) (γh : his
     recorded as inserted (issue #131). The contract of a closure whose
     transaction is to be sent ([Doc.TransactEncoded]): what the caller
     knows about the inserted items, it states over the end model and this
-    set. *)
-Definition closure_runs_recorded_transaction (s_loc : loc) (γs : store_names) (γh : history_names)
+    set. The store's address is quantified inside: the closure runs
+    against whichever store the transaction is of. *)
+Definition closure_runs_recorded_transaction (γs : store_names) (γh : history_names)
     (f : func.t)
     (Q : ClientId -> list Ev -> DocModel -> list (TId * IntegrateInput (A := A)) ->
          gset YjsId -> gset YjsId -> iProp Σ) : iProp Σ :=
-  ∀ (tr : loc) (c : ClientId) (h : list Ev) (m : DocModel)
+  ∀ (tr s_loc : loc) (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) (Ψ : val -> iProp Σ),
     own_transaction tr s_loc γs γh c h m pend deleted ∅ ∅ ∅ -∗
     (∀ (h' : list Ev) (m' : DocModel) (pend' : list (TId * IntegrateInput (A := A)))
