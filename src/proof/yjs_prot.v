@@ -226,7 +226,8 @@ Proof.
       destruct (Hchar input Hinput) as (position & item & unit & _ & _ & ->).
       rewrite /pending_item_rooted. case_decide; last done. by exists name. }
   iIntros "#Hcerts".
-  iApply (yjs_prot_encode encode γh structs Hroundtrip Hfree Hwf).
+  iApply (yjs_prot_encode encode γh structs Hroundtrip Hfree).
+  iSplit; first done.
   rewrite /is_pending_certified. iApply big_sepL_forall. iIntros (k input Hk).
   destruct (Hchar input (list_elem_of_lookup_2 _ _ _ Hk)) as (position & item & unit & Hposition & _ & ->).
   iApply (big_sepL_lookup _ _ position item Hposition with "Hcerts").
