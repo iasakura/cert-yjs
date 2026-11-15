@@ -224,6 +224,25 @@ Definition closure_runs_transaction (s_loc : loc) (γs : store_names) (γh : his
        Q c h' m' pend' deleted' -∗ Ψ #()) -∗
     WP #f #tr {{ Ψ }}.
 
+(** [closure_runs_recorded_transaction s_loc γs γh f Q]: as
+    [closure_runs_transaction], with [Q] also told the ids the transaction
+    recorded as inserted (issue #131). The contract of a closure whose
+    transaction is to be sent ([Doc.TransactEncoded]): what the caller
+    knows about the inserted items, it states over the end model and this
+    set. *)
+Definition closure_runs_recorded_transaction (s_loc : loc) (γs : store_names) (γh : history_names)
+    (f : func.t)
+    (Q : ClientId -> list Ev -> DocModel -> list (TId * IntegrateInput (A := A)) ->
+         gset YjsId -> gset YjsId -> iProp Σ) : iProp Σ :=
+  ∀ (tr : loc) (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) (Ψ : val -> iProp Σ),
+    own_transaction tr s_loc γs γh c h m pend deleted ∅ ∅ ∅ -∗
+    (∀ (h' : list Ev) (m' : DocModel) (pend' : list (TId * IntegrateInput (A := A)))
+       (deleted' inserted tombstoned : gset YjsId) (changed : gset P),
+       own_transaction tr s_loc γs γh c h' m' pend' deleted' inserted tombstoned changed ∗
+       Q c h' m' pend' deleted' inserted -∗ Ψ #()) -∗
+    WP #f #tr {{ Ψ }}.
+
 (* ===== lemmas ============================================================= *)
 
 (** What a node's span records is its run: a node whose id, content length
@@ -520,6 +539,56 @@ Proof.
   destruct (pool_item_unique _ parent1 parent2 tm1 tm2 item1 item2 Hpool_invs Htm1 Hin1 Htm2 Hin2 Hid)
     as [Hparent Hitem].
   subst parent2. split; [exact (Hinjective name1 name2 parent1 Hbind1 Hbind2) | exact Hitem].
+Qed.
+
+(** The items of the transaction's public model have clocks whose successor
+    fits a machine word (the pool's [pool_item_clock_fits] through the
+    registry): each can go on the wire as a one-unit struct. *)
+Lemma own_transaction_item_clock_fits (tr s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
+  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed -∗
+  ⌜∀ (name : P) (item : YjsItem A), item ∈ doc_model_get m (RootId name) ->
+     (Z.of_nat (clock (item_id item)) + 1 < 2^64)%Z⌝.
+Proof.
+  iIntros "Htx". iDestruct "Htx" as (state ds m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct (own_replica_history_registry_models with "Hreplica_history") as %[Hmodels Hbound].
+  iNamed "Hstore". iNamed "Hcore".
+  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpool_invs.
+  iDestruct (own_store_state_registry_coh with "Hstate") as %(Hregistered & _ & _).
+  iPureIntro. move=> name item Hitem.
+  have Hnonempty : doc_model_get m (RootId name) ≠ [].
+  { move=> Hnil. rewrite Hnil in Hitem. by apply elem_of_nil in Hitem. }
+  destruct (Hbound _ Hnonempty) as (name' & parent & [= <-] & Hbind).
+  destruct (Hregistered name parent Hbind) as [tm Htm].
+  apply (pool_item_clock_fits _ parent tm item Hpool_invs Htm).
+  by rewrite -(Hmodels name parent tm Hbind Htm).
+Qed.
+
+(** Every item of the transaction's public model is certified in the
+    global history, with exactly its input ([history_model_certified], for
+    the history the transaction holds). What a sender needs of whatever a
+    transaction integrated, local inserts and applied updates alike. *)
+Lemma own_transaction_model_certified (tr s_loc : loc) (γs : store_names) (γh : history_names)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P) (E : coPset) :
+  ↑histN ⊆ E ->
+  is_history (A := A) (P := P) γh -∗
+  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ={E}=∗
+    own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+    □ (∀ (t : TId) (item : YjsItem A), ⌜item ∈ doc_model_get m t⌝ -∗
+         is_op_cert γh (t, OpInsert (input_of_item item))).
+Proof.
+  iIntros (HE) "#Hishist Htx".
+  iDestruct "Htx" as (state ds m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Hreplica_history" as (acc) "Hreplica_history". iNamed "Hreplica_history".
+  iMod (history_model_certified γh c h m E HE Hhcoh with "Hishist Hhist") as "[Hhist #Hcerts]".
+  iModIntro. iFrame "Hcerts".
+  iExists state, ds, m0, deleted0. iFrame "Hstore Hrecord". iSplitR; first done.
+  iSplitL; last done.
+  iExists acc. iFrame "Hhist Hpendcert Hacc". done.
 Qed.
 
 End transaction_heap.
