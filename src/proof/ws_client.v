@@ -273,7 +273,7 @@ Proof.
               (λ _ _ m' _ _ inserted, ⌜inserted_surrogate_free m' inserted⌝ ∗ Q)%I
               with "[$Hdoc $Hishist $Hencoder Hf f text]").
   { rewrite /closure_runs_recorded_transaction.
-    iIntros (tr c' h m pend deleted Ψ) "Htx HΨ".
+    iIntros (tr store_loc c' h m pend deleted Ψ) "Htx HΨ".
     wp_auto.
     wp_apply ("Hf" with "Htext Htx").
     iIntros (h' m' pend' deleted' inserted tombstoned changed) "(Htx & %Hfree & HQ)".
@@ -281,7 +281,7 @@ Proof.
     iApply ("HΨ" $! h' m' pend' deleted' inserted tombstoned changed).
     iFrame "Htx HQ". done. }
   iIntros (bytes_slice c' h' m' pend' deleted' inserted structs)
-    "([%Hfree HQ] & Hbytes & Hbytes_cap & %Hstructs & %Hwf & #Hcerts)".
+    "([%Hfree HQ] & Hbytes & Hbytes_cap & %Hstructs & #Hcertified)".
   (* the batch is what was inserted, so it holds no surrogate code unit *)
   have Hstructs_free : structs_surrogate_free structs.
   { move=> struct Hstruct unit Hunit.
@@ -289,7 +289,7 @@ Proof.
     destruct (proj1 (Hstructs op) Hop) as (root & item & [Hitem Hid] & ->).
     apply (Hfree root item Hitem Hid).
     move: Hcontent. rewrite /=. move=> ->. by apply list_elem_of_singleton. }
-  iDestruct (yjs_prot_encode decode encode γh structs Hroundtrip Hstructs_free Hwf with "Hcerts")
+  iDestruct (yjs_prot_encode decode encode γh structs Hroundtrip Hstructs_free with "Hcertified")
     as "#Hyprot".
   wp_auto.
   wp_func_call.
