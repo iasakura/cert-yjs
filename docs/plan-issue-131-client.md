@@ -38,9 +38,11 @@ the decoding side.
   text, the two codec values. `Connect` creates it; `Insert` is one local
   edit (insert inside a transaction, read the transaction's structs, encode,
   send, trace the root's report); `Serve` is the receive loop (apply, trace
-  the root's report). `Run` is the scripted client the closed theorem boots:
-  connect, serve on a goroutine, type a script at the end of the text, one
-  byte of the script as one code unit.
+  the root's report). `Transact` is the general edit: it runs a closure as
+  one transaction and sends what the transaction inserted
+  (`Doc.TransactEncoded`). `Run` is a whole client around an application, a
+  function of the client: connect, serve on a goroutine, run the
+  application. `Typist(script)` is the application that types a script.
 - **Specs.** The three functions that read structs back from the store say
   exactly which characters the returned batch carries
   (`structs_expand_to_items`, an equivalence): the store's items with an id
@@ -59,8 +61,9 @@ the decoding side.
   whose send relation permits nothing. Hypotheses: the initial state,
   distinct client ids, `codec_spec`, `encoder_spec`, `codec_roundtrip`. No
   `ws_env_preserves` (it is proved inside the theorem from the send
-  relation) and no condition on the scripts (a script is bytes, and a byte
-  is never a surrogate code unit). Conclusion: wire totality and
+  relation). Each client's application meets the client's contract, a
+  proof obligation about the application's code and not an assumption
+  about what it sends. Conclusion: wire totality and
   `reports_converge` over a trace that now holds every node's reports.
 
 ## 1. Scope
@@ -223,13 +226,21 @@ func (c *Client) Insert(index uint64, content []uint16) bool
 // write the report of the root to the trace.
 func (c *Client) Serve()
 
-// Run is the scripted client the closed theorem boots: connect, serve on a
-// goroutine, and type script at the end of the text one byte at a time,
-// each byte as one code unit (an ASCII script types its text). A byte is
-// never a surrogate code unit, so the script needs no side condition. A
-// real client calls Insert from its user interface instead.
+// Transact is one local edit of any shape: it runs f as one transaction
+// on the client's document, handing it the transaction and the root text,
+// then sends the update that carries what the transaction integrated and
+// writes the report of the root to the trace.
+func (c *Client) Transact(f func(tr *yjs.Transaction, text *yjs.Text)) bool
+
+// Run is a whole client: connect, serve on a goroutine, and run the
+// application app with the client. Connecting and receiving are fixed; app
+// is the part that edits, through Insert and Transact.
 func Run(host wsnet.Address, path string, client yjs.Client,
-	decode yjs.Codec, encode yjs.Encoder, name string, script string)
+	decode yjs.Codec, encode yjs.Encoder, name string, app func(c *Client))
+
+// Typist is an application for Run: it types script at the end of the text
+// one byte at a time, each byte as one code unit and one transaction.
+func Typist(script string) func(c *Client)
 ```
 
 The transaction that makes the edit also reads the structs back, through a
@@ -431,11 +442,21 @@ wp_Client__Serve:
     cl.Serve #()
   {{{ RET #(); own_Client_receive_side γs rc }}}
 
-wp_Run: codec_roundtrip decode encode -> deployment_protocols decode γh ->
+wp_Client__Transact:
+  {{{ is_Client cl γs γh c sc rc name ∗ own_Client_send_side γs sc ∗
+      closure_edits_text γs γh name f Q }}}
+    cl.Transact #f
+  {{{ err, RET #err; own_Client_send_side γs sc ∗ Q }}}
+
+wp_Run: deployment_protocols decode γh ->
   {{{ is_history γh ∗ own_client_history γh (uint.nat client) [] ∗
-      codec_spec decode decoder ∗ encoder_spec encode encoder ∗ ws_env_preserves ⊤ }}}
-    Run #host #path #client #decoder #encoder #name #script
+      codec_pair_spec decode encode decoder encoder ∗ ws_env_preserves ⊤ ∗
+      client_app_spec app }}}
+    Run #host #path #client #decoder #encoder #name #app
   {{{ RET #(); True }}}
+
+wp_Typist:
+  {{{ True }}} Typist #script {{{ app, RET #app; client_app_spec app }}}
 ```
 
 What `Insert` sent satisfies `ws_prot`, which the state interpretation
@@ -448,20 +469,43 @@ spec; in the closed theorem it is proved once from the send relation.
 which both the server and the client `Require`, together with the package
 initialization of the two packages both import.
 
+`closure_edits_text γs γh name f Q` is the contract of the closure
+`Transact` runs: handed the root text's handle and a fresh transaction, `f`
+returns the transaction, changed as it may be, with `Q`, and with what it
+inserted free of surrogate code units. That is all an application proves to
+have its edit sent. The certificates of what it inserted and the
+well-formedness of the update are not its business:
+`wp_Doc__TransactEncoded` (`src/proof/doc/TransactEncoded.v`) returns the
+bytes of a batch that is exactly what the transaction recorded as inserted,
+well formed and certified. The certificates come from the history: every
+item of the document a history replays to was inserted by a delivered op
+that carries exactly its input, a delivered op was broadcast, and the
+history invariant keeps a copy of the certificate of every broadcast op
+(`history_model_certified`). `client_app_spec app` is the contract of an
+application: with any client and its send side, it runs safely.
+
+The first version of this section had `Run` type a script, a fixed program.
+A client is a fixed half (connect, receive, send what a transaction
+inserted) around an application that edits, and the specs follow that
+split.
+
 ### 4.5 The closed theorem `ws_system_dist_adequate` (`src/proof/demo/ws_system.v`)
 
 Nodes: `server_boot host server_client decoder name` and, per entry of a
-list of `client_config` (path, client id, script),
-`client_boot host path client decoder encoder name script`
-(`wsclient.initialize'` then `wsclient.Run`). Hypotheses beyond the initial
+list of `client_config` (path, client id, and the application as the
+expression the node evaluates to get it),
+`client_boot host path client decoder encoder name make_app`
+(`wsclient.initialize'`, the application, then `wsclient.Run`). Hypotheses beyond the initial
 state and the RA plumbing: the initial world's send relation permits
 nothing (`∀ messages channel data, ¬ ws_env_may messages channel data`),
 the client ids are distinct, `codec_spec decode decoder`,
 `encoder_spec encode encoder`, `codec_roundtrip decode encode`. No `coh0`
 and no `ws_env_preserves`: with a send relation that permits nothing the
 obligation's first premise is false (`ws_env_preserves_silent`), for the
-coherence `λ _, True`. No condition on the scripts: `Run` types a script
-byte by byte, and a byte is below the surrogate range.
+coherence `λ _, True`. One more hypothesis per client: its application
+meets `client_app_expr_spec`, the contract above for an expression that
+evaluates to the application. It is a proof obligation about the
+application's code; `typist_app_expr_spec` discharges it for the typist.
 
 Conclusion, for every reachable global state: every message on the wire
 decodes to a well-formed batch, and `reports_converge ws_trace`. The trace
@@ -494,9 +538,9 @@ and `Serve` each hold one.
 | **C0** | this document | reviewed |
 | **C1** Go | `store.rootName`, `store.appendSpanStructs`; `Transaction.insertedStructs`; `Encoder`, `WireEncoder`; `Text.InsertEncoded`; Go tests (encoder round trip through the real decoder; two documents converge through `InsertEncoded` + `ApplyUpdate`) | `./build.sh go`, `go test ./yjs/`, goose translates |
 | **C2** proofs of C1 | the protocol change (`same_wire_struct`, `yjs_prot`, `encoder_spec`, `codec_roundtrip`), then `wp_store__appendSpanStructs`, `wp_Transaction__insertedStructs`, `wp_Text__InsertEncoded`; two pull requests | `./build.sh make` |
-| **C3** Go client | `wsclient/`: `Client`, `Connect`, `Insert`, `Serve`, `Run`; tests against `wsrelay` (two clients converge through the server by the new send path; a report per edit on the trace) | `go test ./wsclient/`, goose translates |
-| **C4** proofs of C3 | `is_Client`, `wp_Connect`, `wp_Client__Insert`, `wp_Client__Serve`, `wp_Run`, `client_boot`, `wpr_client_boot` | `./build.sh make` |
-| **C5** closed theorem | `ws_system_dist_adequate`, server + a list of scripted clients | theorem Qed, `Print Assumptions` clean under a `.vo` build |
+| **C3** Go client | `wsclient/`: `Client`, `Connect`, `Insert`, `Transact`, `Serve`, `Run`, `Typist` (and `Doc.TransactEncoded` in `yjs`, with its proof, before it); tests against `wsrelay` (two clients converge through the server by the new send path; a report per edit on the trace) | `go test ./wsclient/`, goose translates |
+| **C4** proofs of C3 | `is_Client`, `wp_Connect`, `wp_Client__Insert`, `wp_Client__Transact`, `wp_Client__Serve`, `wp_Run`, `wp_Typist`, `client_boot`, `wpr_client_boot` | `./build.sh make` |
+| **C5** closed theorem | `ws_system_dist_adequate`, server + a list of clients, each around any application that meets the client's contract | theorem Qed, `Print Assumptions` clean under a `.vo` build |
 
 C1 and C3 are Go and tests; C2 and C4 are their proofs; each is one PR. C1
 changes no verified function: it only adds new ones (`Text` gains
