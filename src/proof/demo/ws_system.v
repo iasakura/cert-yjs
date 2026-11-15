@@ -54,11 +54,13 @@ Local Open Scope Z_scope.
 
 (** One client node of the system: the path it connects to, the client id
     of its document, and its application, as the expression the node
-    evaluates to get it. *)
+    evaluates to get it. The expression is given for any table of Go
+    functions, since a call of a translated function ([wsclient.Typist])
+    names the table. *)
 Record client_config {ext : ffi_syntax} := ClientConfig {
   client_path : go_string;
   client_id : w64;
-  client_app : expr;
+  client_app : GoGlobalContext -> GoLocalContext -> GoSemanticsFunctions -> expr;
 }.
 
 (** Initialize the packages, evaluate the application, then run the
@@ -250,7 +252,8 @@ Local Notation Input :=
 Definition client_node (host : w64) (decoder encoder : func.t) (name : go_string)
     (σ0 : lang.state) (config : client_config) : node_init_cfg :=
   {| init_thread := client_boot (go_fns := sem.(go.sem_fn)) host config.(client_path)
-                      config.(client_id) decoder encoder name config.(client_app);
+                      config.(client_id) decoder encoder name
+                      (config.(client_app) go_gctx go_lctx sem.(go.sem_fn));
      init_restart := halt;
      init_local_state := σ0 |}.
 
@@ -293,11 +296,20 @@ Theorem ws_system_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
   (∀ (hG : ws_heapGS Σ) (sem' : go.Semantics),
       ⊢ encoder_spec (hG := hG) (sem := sem') encode encoder) ->
   codec_roundtrip decode encode ->
-  (∀ (hG : ws_heapGS Σ) (sem' : go.Semantics) (package_sem' : yjs.Assumptions)
-     (sync_pkg' : sync.Assumptions) (wsnet_pkg' : wsnet.Assumptions)
-     (wsclient_pkg' : wsclient.Assumptions) (config : client_config),
+  (∀ (hG : ws_heapGS Σ) (sem' : go.Semantics)
+     (package_sem' : @yjs.Assumptions _ hG.(goose_gctx)
+                       hG.(goose_localGS).(goose_go_local_context) sem'.(go.sem_fn))
+     (sync_pkg' : @sync.Assumptions _ hG.(goose_gctx)
+                    hG.(goose_localGS).(goose_go_local_context) sem'.(go.sem_fn))
+     (wsnet_pkg' : @wsnet.Assumptions hG.(goose_gctx)
+                     hG.(goose_localGS).(goose_go_local_context) sem'.(go.sem_fn))
+     (wsclient_pkg' : @wsclient.Assumptions hG.(goose_gctx)
+                        hG.(goose_localGS).(goose_go_local_context) sem'.(go.sem_fn))
+     (config : client_config),
       config ∈ clients ->
-      ⊢ client_app_expr_spec (hG := hG) (sem := sem') decode encode config.(client_app)) ->
+      ⊢ client_app_expr_spec (hG := hG) (sem := sem') decode encode
+          (config.(client_app) hG.(goose_gctx) hG.(goose_localGS).(goose_go_local_context)
+             sem'.(go.sem_fn))) ->
   dist_adequate (CS := goose_crash_lang)
     ({| init_thread := server_boot (go_fns := sem.(go.sem_fn)) host server_client decoder name;
         init_restart := halt;
@@ -387,6 +399,62 @@ Proof.
     iDestruct (big_sepM_pure_1 with "Hpure") as %Hall.
     iPureIntro. split; last exact Hconv.
     intros ch n d Hlk. exact (Hall (ch, n) d Hlk).
+Qed.
+
+(** The configuration of a client that types [script]: its application is
+    the call [wsclient.Typist script]. *)
+Definition typist_config (path : go_string) (client : w64) (script : go_string) : client_config :=
+  {| client_path := path;
+     client_id := client;
+     client_app := λ gctx lctx fns,
+       (#(@functions _ fns (@wsclient.Typist _ gctx) []) #script)%E |}.
+
+(** The system of a server and typists, closed: [ws_system_dist_adequate]
+    with every client's application the typist of its script. No hypothesis
+    is left about the applications ([typist_app_expr_spec] discharges it),
+    and none about the scripts. *)
+Theorem ws_typists_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
+    `{seq_inG : !inG Σ (authR (gmapUR loc (gsetUR (YjsItem (list w16)))))}
+    `{acc_inG : !inG Σ (authR (gsetUR YjsId))}
+    `{ftypes_inG : !inG Σ (dfrac_agreeR (leibnizO store_state))}
+    `{observed_inG : !ghost_varG Σ (list (YjsItem (list w16) * bool))}
+    `{observers_inG : !inG Σ (authR (gsetUR (gname * go_string)))}
+    `{observers_agree_inG : !inG Σ (dfrac_agreeR (leibnizO registered_entries))}
+    (host server_client : w64) (decoder encoder : func.t) (name : go_string)
+    (decode : list u8 -> option (list Input)) (encode : list Input -> list u8)
+    (typists : list (go_string * w64 * go_string))
+    g σ0 :
+  let clients := (λ typist, typist_config typist.1.1 typist.1.2 typist.2) <$> typists in
+  ws_wf g.(global_world) ->
+  g.(global_world).(ws_msgs) = ∅ ->
+  g.(global_world).(ws_trace) = [] ->
+  (∀ messages channel data, ¬ g.(global_world).(ws_env_may) messages channel data) ->
+  σ0.(go_state).(package_state) = ∅ ->
+  σ0.(go_state).(lang.go_lctx) = go_lctx ->
+  NoDup (uint.nat server_client :: ((λ config, uint.nat config.(client_id)) <$> clients)) ->
+  (∀ (hG : ws_heapGS Σ) (sem' : go.Semantics),
+      ⊢ codec_spec (hG := hG) (sem := sem') decode decoder) ->
+  (∀ (hG : ws_heapGS Σ) (sem' : go.Semantics),
+      ⊢ encoder_spec (hG := hG) (sem := sem') encode encoder) ->
+  codec_roundtrip decode encode ->
+  dist_adequate (CS := goose_crash_lang)
+    ({| init_thread := server_boot (go_fns := sem.(go.sem_fn)) host server_client decoder name;
+        init_restart := halt;
+        init_local_state := σ0 |}
+     :: (client_node host decoder encoder name σ0 <$> clients)) g
+    (λ g',
+       (∀ ch n d,
+          g'.(global_world).(ws_msgs) !! (ch, n) = Some d ->
+          ∃ inputs, decode d = Some inputs ∧ update_wf inputs) ∧
+       reports_converge g'.(global_world).(ws_trace)).
+Proof.
+  intros clients Hwf Hempty Htrace Hsilent Hpkg Hlctx0 Hdistinct Hcodec Hencoder Hroundtrip.
+  apply (ws_system_dist_adequate Σ host server_client decoder encoder name decode encode clients g σ0
+           Hwf Hempty Htrace Hsilent Hpkg Hlctx0 Hdistinct Hcodec Hencoder Hroundtrip).
+  intros hG sem' package_sem' sync_pkg' wsnet_pkg' wsclient_pkg' config Hconfig.
+  apply list_elem_of_fmap in Hconfig as [typist [-> _]].
+  rewrite /typist_config /=.
+  iApply (typist_app_expr_spec (hG := hG) (sem := sem') decode encode typist.2).
 Qed.
 
 End closed.
