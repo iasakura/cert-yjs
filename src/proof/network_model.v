@@ -2628,6 +2628,26 @@ Proof.
   rewrite -(delivered_ops_proj t h) elem_of_proj_ops // in Hxin.
 Qed.
 
+(** An item of the coherent document was inserted by the delivered op that
+    carries exactly its input: the item is the [toItem] resolution of that
+    op's input, which determines the input from the item. *)
+Lemma docm_mem_delivered_input h (m : DocModel) (t : TId) (x : YjsItem A) :
+  history_state_coh h m ->
+  x ∈ doc_model_get m t ->
+  (t, OpInsert (input_of_item x)) ∈ delivered_ops h.
+Proof.
+  move=> Hcoh Hx.
+  destruct (history_state_coh_proj h m t Hcoh) as (st & Hinterp & Hitems).
+  rewrite -Hitems in Hx.
+  case: (effect_list_mem_toItem (omap deliverP (proj_hist t h)) (op_init Oy) st x Hinterp Hx)
+    => [Hnil | [input [l1 [l2 [sMid [Hsplit [_ Htoit]]]]]]].
+  { move: Hnil. rewrite /= elem_of_nil //. }
+  rewrite -(toItem_input_of_item input (st_items sMid) x Htoit).
+  have Hin : OpInsert input ∈ omap deliverP (proj_hist t h).
+  { rewrite Hsplit. apply elem_of_app. right. apply elem_of_cons. by left. }
+  rewrite -(delivered_ops_proj t h) elem_of_proj_ops // in Hin.
+Qed.
+
 (** Conversely, a delivered insert's item is in the coherent document (at its
     type), so its id is integrated store-wide. *)
 Lemma delivered_docm_has h (m : DocModel) (t : TId) (input : IntegrateInput (A := A)) :

@@ -39,6 +39,30 @@ func (d *Doc) Transact(f func(tr *Transaction)) {
 	transact(d.store, f)
 }
 
+// TransactEncoded runs f as one transaction on the document, like Transact,
+// and returns the update that carries what the transaction integrated to
+// other replicas: the structs of its insert set
+// (Transaction.insertedStructs), encoded by encode. Yjs v14.0.0-rc.18 hands
+// that update to the document's 'update' handlers when the transaction ends
+// (src/utils/Transaction.js:297-301), and y-websocket v2.1.0 sends it from
+// such a handler (src/y-websocket.js:353-361); yrs 0.27.2 hands it to the
+// callbacks registered with Doc::observe_update_v1, at commit
+// (src/transaction.rs:1031). No handler registry is built here: the caller
+// that runs the transaction gets the bytes back and sends them. The update
+// carries inserts only: what f deletes is tombstoned here and is not in the
+// bytes (the Encoder writes an empty delete set).
+//
+// The structs are read inside the transaction and encoded after it, as in
+// Text.InsertEncoded.
+func (d *Doc) TransactEncoded(f func(tr *Transaction), encode Encoder) []byte {
+	var structs []updateItem
+	transact(d.store, func(tr *Transaction) {
+		f(tr)
+		structs = tr.insertedStructs()
+	})
+	return encode(structs)
+}
+
 // Codec is the decoding half of the update codec: data decodes to a batch of
 // insert structs, ok reports whether it decoded at all. The struct type is
 // unexported, so a Codec can only be built inside this package; the

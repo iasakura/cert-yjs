@@ -2198,6 +2198,23 @@ Proof.
   simpl. by move=> [= <-].
 Qed.
 
+(** An item of the pool has a clock whose successor fits a machine word:
+    its run does ([run_fits]). What lets the item go on the wire as a
+    one-unit struct ([input_fits]). *)
+Lemma pool_item_clock_fits (p : pool) (parent : loc) (tm : type_model) (item : YjsItem A) :
+  pool_invs p -> p !! parent = Some tm -> item ∈ tm_arr tm ->
+  (Z.of_nat (clock (item_id item)) + 1 < 2^64)%Z.
+Proof.
+  move=> Hinvs Hp Hitem. apply list_elem_of_lookup_1 in Hitem as [n Hn].
+  destruct (runs_flatten_lookup_run (tm_runs tm) n item Hn) as (slot & offset & r & Hslot & Hoffset & _).
+  have Hr_all : r ∈ all_runs p.
+  { apply elem_of_all_runs. exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hslot)]. }
+  destruct (proj1 Hinvs r Hr_all) as (Hwf & Hfits & _).
+  rewrite (run_wf_char_id _ _ _ Hwf Hoffset).
+  move: Hfits. rewrite /run_fits /run_clock /run_head_item /=.
+  have := lookup_lt_Some _ _ _ Hoffset. lia.
+Qed.
+
 (** Every code unit of a batch is the content of one struct of its per-char
     expansion. *)
 Lemma expand_inputs_content_unit (inputs : list (TId * IntegrateInput (A := A)))
