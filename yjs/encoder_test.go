@@ -213,24 +213,31 @@ func TestWireEncoderSurrogatePair(t *testing.T) {
 	expectWireRoundTrip(t, structs)
 }
 
-// Two replicas that send each other every edit through InsertEncoded and
+// Two replicas that send each other every edit through TransactEncoded and
 // apply what they receive through ApplyEncodedUpdate read the same text,
 // whichever order the concurrent edits arrive in.
-func TestInsertEncodedConverges(t *testing.T) {
+func TestTransactEncodedConverges(t *testing.T) {
 	docA, docB := NewDoc(1), NewDoc(2)
 	textA, textB := docA.GetOrCreateText("root"), docB.GetOrCreateText("root")
 	encode, decode := WireEncoder(), WireCodec()
+	// insert is one transaction that inserts content at index and returns
+	// the transaction's update.
+	insert := func(doc *Doc, text *Text, index uint64, content string) []byte {
+		return doc.TransactEncoded(func(tr *Transaction) {
+			text.InsertIn(tr, index, encodeContent(content))
+		}, encode)
+	}
 
-	first := textA.InsertEncoded(0, encodeContent("hello"), encode)
+	first := insert(docA, textA, 0, "hello")
 	if !docB.ApplyEncodedUpdate(decode, first) {
 		t.Fatal("B: update did not decode")
 	}
 
 	// concurrent edits at the same position, delivered crosswise.
-	fromA := textA.InsertEncoded(5, encodeContent(" from A"), encode)
-	fromB := textB.InsertEncoded(5, encodeContent(" from B"), encode)
+	fromA := insert(docA, textA, 5, " from A")
+	fromB := insert(docB, textB, 5, " from B")
 	// B's later edit arrives at A before the one it depends on.
-	laterB := textB.InsertEncoded(0, encodeContent("😀"), encode)
+	laterB := insert(docB, textB, 0, "😀")
 	for _, update := range [][]byte{laterB, fromB} {
 		if !docA.ApplyEncodedUpdate(decode, update) {
 			t.Fatal("A: update did not decode")
@@ -249,7 +256,7 @@ func TestInsertEncodedConverges(t *testing.T) {
 
 	// an insert that is refused sends the encoding of no structs, which
 	// applies as a no-op.
-	refused := textA.InsertEncoded(1000, encodeContent("x"), encode)
+	refused := insert(docA, textA, 1000, "x")
 	if !docB.ApplyEncodedUpdate(decode, refused) {
 		t.Fatal("B: the empty update did not decode")
 	}

@@ -67,7 +67,15 @@ func units(s string) []uint16 {
 	return result
 }
 
-// An edit one client makes through Insert reaches the other client through
+// insert is one transaction of c that inserts content at index; it returns
+// Transact's error flag.
+func insert(c *Client, index uint64, content string) bool {
+	return c.Transact(func(tr *yjs.Transaction, text *yjs.Text) {
+		text.InsertIn(tr, index, units(content))
+	})
+}
+
+// An edit one client makes through Transact reaches the other client through
 // the server: the update is the transaction's structs, encoded by the
 // deployment's encoder, decoded and applied twice (server, other client).
 func TestInsertReachesTheOtherClient(t *testing.T) {
@@ -77,12 +85,12 @@ func TestInsertReachesTheOtherClient(t *testing.T) {
 	// the server relays only to connections it has already joined
 	time.Sleep(200 * time.Millisecond)
 
-	if a.Insert(0, units("hello")) {
+	if insert(a, 0, "hello") {
 		t.Fatal("A could not send")
 	}
 	waitForText(t, b, "hello")
 
-	if b.Insert(5, units(" world")) {
+	if insert(b, 5, " world") {
 		t.Fatal("B could not send")
 	}
 	waitForText(t, a, "hello world")
@@ -97,7 +105,7 @@ func TestConcurrentInsertsConverge(t *testing.T) {
 	b := connect(t, addr, 3)
 	time.Sleep(200 * time.Millisecond)
 
-	if a.Insert(0, units("AAA")) || b.Insert(0, units("BBB")) {
+	if insert(a, 0, "AAA") || insert(b, 0, "BBB") {
 		t.Fatal("a client could not send")
 	}
 	// client 2 sorts before client 3 at the same origin

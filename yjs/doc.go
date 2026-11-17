@@ -52,8 +52,10 @@ func (d *Doc) Transact(f func(tr *Transaction)) {
 // carries inserts only: what f deletes is tombstoned here and is not in the
 // bytes (the Encoder writes an empty delete set).
 //
-// The structs are read inside the transaction and encoded after it, as in
-// Text.InsertEncoded.
+// The structs are read inside the transaction and encoded after it: they
+// share the nodes' origin ids and content slices, which are never written
+// once a node exists (content.go), so the encoder needs no lock. A
+// transaction that integrates nothing yields the encoding of no structs.
 func (d *Doc) TransactEncoded(f func(tr *Transaction), encode Encoder) []byte {
 	var structs []updateItem
 	transact(d.store, func(tr *Transaction) {

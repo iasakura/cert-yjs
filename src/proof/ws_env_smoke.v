@@ -326,7 +326,7 @@ Proof.
     iDestruct "Hwire" as (inputs) "(%Hdecodes & %Hwfw & Hc)".
     destruct Hdecodes as (decoded & Hd & Hsame).
     rewrite decode_encode in Hd. injection Hd as <-.
-    apply same_wire_struct_no_origin_singleton in Hsame; [| done | done]. subst inputs.
+    apply same_encoded_struct_no_origin_singleton in Hsame; [| done | done]. subst inputs.
     rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
     iApply "Hc". }
   (* deliver it, then mint *)
@@ -482,7 +482,7 @@ Proof.
     iDestruct "Hwire" as (inputs) "(%Hdecodes & %Hwfw & Hc)".
     destruct Hdecodes as (decoded & Hd & Hsame).
     rewrite decode_encode in Hd. injection Hd as <-.
-    apply same_wire_struct_no_origin_singleton in Hsame; [| done | done]. subst inputs.
+    apply same_encoded_struct_no_origin_singleton in Hsame; [| done | done]. subst inputs.
     rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
     iApply "Hc". }
   iMod (history_deliver_pending γh cl [] ∅ [(t, smoke_input clX bX)]
@@ -1089,7 +1089,7 @@ Proof.
       first exact HkX.
     destruct Hdecodes as (decoded & Hd & Hsame).
     rewrite decode_encode in Hd. injection Hd as <-.
-    apply same_wire_struct_no_origin_singleton in Hsame; [| done | done]. subst inputs.
+    apply same_encoded_struct_no_origin_singleton in Hsame; [| done | done]. subst inputs.
     rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
     iApply "Hc". }
   have Hpos : stream_pos c0 g.(ws_msgs) = length bs.
