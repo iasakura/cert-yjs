@@ -35,6 +35,14 @@ Then the three-way difference and unrequested-change reports that CLAUDE.md
   it diverges from the references, and what it touched outside its scope.
 - Every project term gets its meaning at first use: which file, predicate or
   line it is. Never "the Require order" or "the C2 relation" without context.
+- No terms of the PR's own making. A thing is called by the word the
+  references use for it (Yjs: struct, item, state vector, delete set) or
+  described in plain words. A name in the code is not such a word, even when
+  the code has it as a type, a variable or a predicate: the name may appear
+  in backticks, as the name of that thing and with what the thing is, but
+  its words are not turned into prose vocabulary. So not "wire structs"
+  because `yjs/codec.go` has a type `wireStruct`, but "structs as the update
+  format writes them".
 - Never only the delta: first the current state, in enough words for a
   reader who never saw it, then the change, then the reason.
 - Full sentences. No telegraphic noun phrases, no semicolon chains. A table
