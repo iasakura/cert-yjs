@@ -451,7 +451,7 @@ Proof.
     (* an inserted item is the one item of this insert, whose unit is the byte *)
     move=> root item Hitem Hid.
     rewrite left_id_L in Hid. apply elem_of_char_ids in Hid as (it & Hit & Hit_id).
-    destruct Hrun as (_ & Hlength & Hitems & _).
+    destruct Hrun as (_ & Hlength & Hitems).
     apply list_elem_of_lookup in Hit as [position Hposition].
     destruct Hlength as [-> | Hlength]; first by rewrite lookup_nil in Hposition.
     have [typed Htyped] : is_Some ([W16 (uint.Z unit)] !! position).
