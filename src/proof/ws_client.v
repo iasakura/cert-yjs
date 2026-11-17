@@ -1,15 +1,15 @@
 (** The verified Yjs WebSocket client (issue #131): one connection to a
     y-websocket server, one document, one root text, over the ws FFI. A
-    local edit is inserted, encoded and sent in one call ([Insert], over
-    [wp_Text__InsertEncoded]); what the connection delivers is applied
+    local edit is one transaction whose update is sent ([Transact], over
+    [wp_Doc__TransactEncoded]); what the connection delivers is applied
     through the verified total apply path ([Serve], over
     [wp_Doc__ApplyEncodedUpdate]); after every local edit and every applied
     update the client writes the report of its root to the run's trace,
     under the trace protocol [is_report], as the server does (ws_relay.v).
 
     What the client proves about itself is the wire protocol: every message
-    it sends satisfies [yjs_prot], with the certificates its own inserts
-    minted ([yjs_prot_encode_inserted_run]). That is what makes it a peer
+    it sends satisfies [yjs_prot], with the certificates the history holds
+    for what its transactions inserted ([yjs_prot_encode]). That is what makes it a peer
     the server's theorem needs no assumption about.
 
     API
@@ -18,8 +18,8 @@
       [γs], client id [c]) in the deployment whose history is [γh], and the
       root text [name] it edits and reports on. Persistent: every field is
       written once, by [Connect].
-    - [own_Client_send_side γs sc]: what the goroutine that calls [Insert]
-      holds: the connection's send cursor, and a read capability of the
+    - [own_Client_send_side γs sc]: what the goroutine that calls
+      [Transact] holds: the connection's send cursor, and a read capability of the
       store for the report.
     - [own_Client_receive_side γs rc]: the same for the goroutine that runs
       [Serve], with the receive cursor.
@@ -35,13 +35,13 @@
       [client_app_expr_spec make_app] is the same for an expression that
       evaluates to the application, which is what a node's boot expression
       holds.
-    - [wp_Connect] / [wp_Client__Insert] / [wp_Client__Transact] /
+    - [wp_Connect] / [wp_Client__Transact] /
       [wp_Client__Serve] / [wp_Run] (a whole client around an application,
       which the closed-system theorem in src/proof/demo/ws_system.v boots)
       / [wp_Typist] (an application: it types a script).
 
     The client has no lock of its own: its send side stays with the
-    goroutine that calls [Insert], its receive side with [Serve], and the
+    goroutine that calls [Transact], its receive side with [Serve], and the
     document's lock orders an apply against a local edit. *)
 From New.proof Require Import proof_prelude.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import wsclient.
@@ -122,7 +122,7 @@ Definition is_Client (cl : loc) (γs : store_names) (γh : history_names)
 (** The send side of the client: the send cursor of its connection, at
     however many messages it has sent, and one read capability of its
     store ([report] snapshots the root under the read lock). Held by the
-    goroutine that calls [Insert]. *)
+    goroutine that calls [Transact]. *)
 Definition own_Client_send_side (γs : store_names) (sc : chan_id) : iProp Σ :=
   ∃ n : nat, own_send_cursor sc n ∗ own_read_cap γs.
 
@@ -211,47 +211,7 @@ Proof.
   iApply "HΦ". iFrame "Hrcap".
 Qed.
 
-(** [Insert]: one local edit, sent. The caller holds the client's send
-    side and gets it back. The code units are free of surrogates: then the
-    update [Text.InsertEncoded] returns satisfies the wire protocol
-    ([yjs_prot_encode_inserted_run]), which is what [Send] asks of it. *)
-Lemma wp_Client__Insert (cl : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (sc rc : chan_id) (name : go_string)
-    (index : w64) (content_slice : slice.t) (dq : dfrac) (units : A) :
-  units_surrogate_free units ->
-  {{{ is_pkg_init wsclient ∗ is_Client cl γs γh c sc rc name ∗
-      own_Client_send_side γs sc ∗ content_slice ↦*{dq} units }}}
-    cl @! (go.PointerType wsclient.Client) @! "Insert" #index #content_slice
-  {{{ (err : bool), RET #err;
-      own_Client_send_side γs sc ∗ content_slice ↦*{dq} units }}}.
-Proof.
-  intros Hunits.
-  wp_start as "(#Hclient & Hside & Hcontent)".
-  iPoseProof "Hclient" as "Hopen". iNamed "Hopen". iNamed "Hcodec_pair".
-  destruct Hdeploy as [Hprot Htrace].
-  iDestruct "Hside" as (sent) "[Hcursor Hrcap]".
-  wp_auto.
-  wp_apply (wp_Text__InsertEncoded _ index content_slice dq units γs γh name [] ∅ encode
-              with "[$Htext $Hcontent $Hencoder]").
-  iIntros (bytes_slice L' ins client k0 originLeft originRight structs)
-    "(_ & Hcontent & %Hrun & #Hcerts & Hbytes & Hbytes_cap & %Hstructs)".
-  iDestruct (yjs_prot_encode_inserted_run decode encode γh name [] L' ins units client k0
-               originLeft originRight structs Hroundtrip Hunits Hrun Hstructs with "Hcerts")
-    as "#Hyprot".
-  wp_auto.
-  wp_func_call.
-  wp_apply (wp_Send with "[$Hconn $Hbytes $Hcursor]").
-  { rewrite Hprot. iFrame "Hyprot". }
-  iIntros (err) "(Hbytes & Hsent)".
-  wp_auto.
-  wp_apply (wp_Client__report with "[$Hclient $Hrcap]").
-  iIntros "Hrcap".
-  wp_auto.
-  iApply "HΦ". iFrame "Hcontent".
-  iDestruct "Hsent" as "[[_ Hcursor] | [Hcursor _]]"; iExists _; iFrame "Hcursor Hrcap".
-Qed.
-
-(** [Transact]: one local edit of any shape, sent. The closure edits inside
+(** [Transact]: one local edit, of any shape, sent. The closure edits inside
     one transaction ([closure_edits_text]); what the transaction inserted
     goes on the wire. [wp_Doc__TransactEncoded] hands back the bytes of a
     batch that is exactly what was inserted, well formed and certified, and
@@ -347,7 +307,7 @@ Qed.
 (** [Connect]: dial, then create the document as [client] and the root
     text. On a failed dial there is no client and the history element is
     handed back untouched. Otherwise the caller gets the client with its
-    two sides, to hand to the goroutines that call [Insert] and run
+    two sides, to hand to the goroutines that call [Transact] and run
     [Serve]. *)
 Lemma wp_Connect (host : w64) (path : go_string) (client : w64) (decoder encoder : func.t)
     (name : go_string) (γh : history_names) :

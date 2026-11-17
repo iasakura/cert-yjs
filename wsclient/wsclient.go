@@ -1,8 +1,8 @@
 // Package wsclient is the verified Yjs WebSocket client (issue #131): one
 // connection to a y-websocket server, one document, one root text. What the
 // connection delivers is decoded and applied through the verified total apply
-// path (yjs.Doc.ApplyEncodedUpdate); a local edit is inserted, encoded and
-// sent in one call (yjs.Text.InsertEncoded, then wsnet.Send). After every
+// path (yjs.Doc.ApplyEncodedUpdate); a local edit is one transaction whose
+// update is sent (yjs.Doc.TransactEncoded, then wsnet.Send). After every
 // local edit and every applied update the client writes the report of its
 // root to the run's trace, as the server does (wsrelay, issue #239), so that
 // a closed theorem can compare the replicas.
@@ -10,7 +10,7 @@
 // The reference client is y-websocket's WebsocketProvider (y-websocket v2.1.0
 // src/y-websocket.js). It sends every local update from a document 'update'
 // handler as soon as the transaction that made it ends (:353-361), and so
-// does Insert, without the handler registry: the edit and the send are one
+// does Transact, without the handler registry: the edit and the send are one
 // call. The provider also runs the sync handshake on connect (it writes sync
 // Step1 when the socket opens, :203-208) and the awareness protocol; neither
 // is here. Without the
@@ -20,7 +20,7 @@
 // reports that hold the same ids.
 //
 // Ownership: the connection's receive cursor belongs to the goroutine running
-// Serve and its send cursor to the goroutine calling Insert, so neither needs
+// Serve and its send cursor to the goroutine calling Transact, so neither needs
 // a lock; the document's own lock orders an apply against a local edit.
 package wsclient
 
@@ -69,35 +69,21 @@ func (c *Client) report() {
 	wsnet.Trace(yjs.EncodeReport(c.name, chars))
 }
 
-// Insert is one local edit: insert content at the visible index as one
-// transaction, send the update that carries it, and write the report of the
-// root to the trace. It returns Send's error flag; the edit is made locally
-// either way, and an error says nothing about delivery (the model's late
-// failure). Not to be called concurrently with itself: the connection's send
-// side is the caller's. The content should hold no surrogate code unit: the
-// wire carries UTF-8, which has no encoding of half a surrogate pair, so the
-// update of such an insert does not carry what was inserted here (yjs/codec.go,
-// issue #233; Yjs and y-websocket have the same limit, an insert that ends
-// between the halves of a pair reaches the peers as U+FFFD).
-func (c *Client) Insert(index uint64, content []uint16) bool {
-	update := c.text.InsertEncoded(index, content, c.encode)
-	err := wsnet.Send(c.conn, update)
-	c.report()
-	return err
-}
-
 // Transact is one local edit of any shape: it runs f as one transaction on
 // the client's document, handing it the transaction and the root text, then
 // sends the update that carries what the transaction integrated and writes
 // the report of the root to the trace. This is the fixed half of a client:
 // whatever f edits, what it inserted is what goes on the wire (y-websocket's
 // provider does the same from the document's 'update' handler, y-websocket
-// v2.1.0 src/y-websocket.js:353-361). It returns Send's error flag, as
-// Insert does, and like Insert it is not to be called concurrently with
-// itself or with Insert. f must not lock the document again (yjs.Doc.Transact);
-// it uses the In-variants with tr. What f inserts should hold no surrogate
-// code unit, for the reason given at Insert. What f deletes is not sent
-// (yjs.Doc.TransactEncoded).
+// v2.1.0 src/y-websocket.js:353-361). It returns Send's error flag; the
+// edit is made locally either way, and an error says nothing about delivery
+// (the model's late failure). Not to be called concurrently with itself: the
+// connection's send side is the caller's. f must not lock the document again
+// (yjs.Doc.Transact); it uses the In-variants with tr. What f inserts should
+// hold no surrogate code unit: the update is UTF-8, which has no encoding of
+// half a surrogate pair, so such an insert reaches the peers as U+FFFD
+// (yjs/codec.go, issue #233; Yjs and y-websocket have the same limit). What
+// f deletes is not sent (yjs.Doc.TransactEncoded).
 func (c *Client) Transact(f func(tr *yjs.Transaction, text *yjs.Text)) bool {
 	text := c.text
 	update := c.doc.TransactEncoded(func(tr *yjs.Transaction) {
@@ -127,7 +113,7 @@ func (c *Client) Serve() {
 
 // Run is a whole client: connect, serve on a goroutine, and run the
 // application app with the client. Connecting and receiving are fixed; app is
-// the part that edits, through Insert and Transact, and it holds the client's
+// the part that edits, through Transact, and it holds the client's
 // send side for the whole run. This is what a closed theorem boots, for any
 // app that meets the client's contract.
 func Run(host wsnet.Address, path string, client yjs.Client,
