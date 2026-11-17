@@ -7,7 +7,7 @@
     [wsclient.Run], which connects, serves on a goroutine and runs the
     application). The application is any expression that evaluates to a
     function meeting the client's contract ([client_app_expr_spec]): it
-    edits through [Client.Transact] and [Client.Insert], and what its
+    edits through [Client.Transact], and what its
     transactions insert is what the fixed half of the client sends. The
     typist ([wsclient.Typist], [typist_app_expr_spec]) is one. The theorem pushes all of them through
     [ws_dist_adequacy_prot_fupd] with the real wire protocol
@@ -395,7 +395,7 @@ Proof.
       iDestruct "Hd" as (inputs) "(%Hdecodes & %Hwfb & _)".
       iPureIntro. destruct Hdecodes as (decoded & Hdec & Hsame). exists decoded.
       split; first exact Hdec.
-      exact (update_wf_same_wire_struct decoded inputs Hsame Hwfb). }
+      exact (update_wf_same_encoded_struct decoded inputs Hsame Hwfb). }
     iDestruct (big_sepM_pure_1 with "Hpure") as %Hall.
     iPureIntro. split; last exact Hconv.
     intros ch n d Hlk. exact (Hall (ch, n) d Hlk).
