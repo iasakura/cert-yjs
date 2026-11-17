@@ -43,9 +43,7 @@ Then the three-way difference and unrequested-change reports that CLAUDE.md
   its words are not turned into prose vocabulary. So not "wire structs"
   because `yjs/codec.go` has a type `wireStruct`, but "structs as the update
   format writes them".
-- No habit words of the writer's. A word that neither the references nor
-  the project define is not one the reader knows, however common it feels
-  while writing ("wire" is the standing example). Say the
+- No jargon that neither the references nor the project define. Say the
   concrete thing: not "the wire protocol" but "the condition every message
   sent over the WebSocket satisfies"; not "on the wire" but "in the bytes
   of the update".
