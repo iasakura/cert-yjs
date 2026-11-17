@@ -1,21 +1,33 @@
-(** The Yjs wire protocol (issue #107, W3b): what every message on the wire
-    satisfies, and the codec specification the server is verified against.
+(** The Yjs wire protocol (issue #107, W3b; issue #131): what every message
+    sent over a connection satisfies, and the specification the decoder is
+    trusted against.
 
     API
-    - [update_wf inputs] (from [store/heap]): the pure honesty facts of a
+    - [update_wf inputs] (from [store/model]): the pure honesty facts of a
       batch (the 2^64 no-wrap seam per struct, and [is_pending_rooted]: head
       structs target a named root); they ride the wire protocol rather than
       the server's hypotheses.
+    - [decodes_to decode d inputs]: the bytes [d] decode to the batch
+      [inputs], up to what the wire does not carry: [decode d] is a batch
+      that is, struct by struct, the same encoded struct ([same_encoded_struct],
+      [store/model]) as [inputs]. The two differ only in the types of the
+      structs that have an origin: the bytes of such a struct do not say
+      which type it belongs to, so [decode] reports some type for it, and
+      [inputs] has the type the sender integrated it into.
     - [yjs_prot decode γh d]: the deployment's [ws_prot]. The bytes decode
-      (under the abstract [decode] the deployment is parameterized by) to an
-      honest batch whose per-char expansion is certified against the global
-      history [γh]; exactly the premises [wp_Doc__ApplySyncUpdate] consumes,
-      so a receiver can apply any message it is handed with no further
+      ([decodes_to]) to an honest batch whose per-char expansion is
+      certified against the global history [γh]. A receiver applies that
+      batch ([own_update_structs_same_encoded_struct] turns the decoder's slice
+      into it), so it can apply any message it is handed with no further
       hypotheses. Persistent.
-    - [codec_spec decode f]: the Go codec value [f] meets [decode]. The
+    - [codec_spec decode f]: the Go decoder value [f] meets [decode]. The
       deployment's [yjs.WireCodec] is TRUSTED to meet it (the same boundary
       codec.go already is, now stated instead of implicit); a future
       goose-translated codec discharges it.
+
+    Laws
+    - [decodes_to_decoded]: what [decode] reports is what the bytes decode
+      to.
 
     No ws import here: the predicate is decode plus history certificates, so
     it sits between [store] and [doc]; the ws layer instantiates
@@ -55,6 +67,13 @@ Context (decode : list u8 -> option (list Input)).
 
 (* ===== definitions ======================================================== *)
 
+(** [decodes_to d inputs]: the bytes [d] decode to the batch [inputs], up to
+    the types of the structs that have an origin, which the bytes do not
+    carry ([same_encoded_struct]). *)
+Definition decodes_to (d : list u8) (inputs : list Input) : Prop :=
+  ∃ decoded : list Input,
+    decode d = Some decoded ∧ Forall2 same_encoded_struct decoded inputs.
+
 (** The wire protocol: these bytes decode to an honest batch every per-char
     operation of which is a point of the global history [γh]. Per character,
     via [expand_inputs], because that is what the ghost history holds and
@@ -62,11 +81,18 @@ Context (decode : list u8 -> option (list Input)).
     must be (one message is delivered to every member of a room). *)
 Definition yjs_prot (γh : history_names) (d : list u8) : iProp Σ :=
   ∃ inputs : list Input,
-    ⌜decode d = Some inputs⌝ ∗ ⌜update_wf inputs⌝ ∗
+    ⌜decodes_to d inputs⌝ ∗ ⌜update_wf inputs⌝ ∗
     is_pending_certified γh (expand_inputs inputs).
+
+(* ===== lemmas ============================================================= *)
 
 #[global] Instance yjs_prot_persistent γh d : Persistent (yjs_prot γh d).
 Proof. apply _. Qed.
+
+(** What [decode] reports is what the bytes decode to. *)
+Lemma decodes_to_decoded (d : list u8) (decoded : list Input) :
+  decode d = Some decoded -> decodes_to d decoded.
+Proof. move=> Hdecode. exists decoded. split; [exact Hdecode | exact (same_encoded_struct_refl decoded)]. Qed.
 
 End yjs_prot.
 
@@ -87,6 +113,8 @@ Local Notation TId := (TypeId P).
 Local Notation Input := (TId * IntegrateInput (A := A))%type.
 
 Context (decode : list u8 -> option (list Input)).
+
+(* ===== definitions ======================================================== *)
 
 (** The Go codec value [f] meets the abstract [decode]: on any byte slice it
     reports exactly whether [decode] succeeds, and on success returns a
@@ -114,6 +142,8 @@ Definition codec_spec (f : func.t) : iProp Σ :=
                own_update_structs sl (DfracOwn 1) inputs ∗
                own_delete_ids sldel (DfracOwn 1) deleted
           else ⌜decode data = None⌝ }}}).
+
+(* ===== lemmas ============================================================= *)
 
 #[global] Instance codec_spec_persistent f : Persistent (codec_spec f).
 Proof. apply _. Qed.
