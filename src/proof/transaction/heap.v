@@ -509,8 +509,8 @@ Qed.
 (** One id, one item, in the transaction's public model: two items of the
     document with the same id are one item of one root (the pool's
     [pool_item_unique] through the registry). What lets a caller identify an
-    item it is handed by its id ([Text.InsertEncoded] matches the structs a
-    transaction read back against the items it inserted). *)
+    item it is handed by its id (a transaction closure matches the items
+    of the end model against the ones it inserted). *)
 Lemma own_transaction_item_unique (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))

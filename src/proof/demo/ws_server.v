@@ -353,7 +353,7 @@ Proof.
       rewrite Hp.
       iDestruct "Hd" as (inputs) "(%Hdecodes & %Hwfb & _)".
       iPureIntro. destruct Hdecodes as (decoded & Hdec & Hsame). exists decoded. split; first exact Hdec.
-      exact (update_wf_same_wire_struct decoded inputs Hsame Hwfb). }
+      exact (update_wf_same_encoded_struct decoded inputs Hsame Hwfb). }
     iDestruct (big_sepM_pure_1 with "Hpure") as %Hall.
     iPureIntro. split; last exact Hconv.
     intros ch n d Hlk. exact (Hall (ch, n) d Hlk).

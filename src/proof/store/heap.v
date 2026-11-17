@@ -418,8 +418,8 @@ Proof. rewrite /is_parent_name. by destruct opn; apply _. Qed.
     the batch-level well-formedness pins [tid] through the origins). The
     name is present exactly when the struct has no origin ([Hborrow], an
     equivalence since issue #131): that is what the wire carries, and it is
-    what lets one heap struct denote any input that is the same wire struct
-    ([own_update_structs_same_wire_struct]). *)
+    what lets one heap struct denote any input that is the same encoded struct
+    ([own_update_structs_same_encoded_struct]). *)
 Definition is_update_item (updateItemVal : yjs.updateItem.t)
     (typedInput : TId * IntegrateInput (A := A)) : iProp Σ :=
   ∃ (oleft oright : option yjs.id.t) (opn : option go_string),
@@ -1885,14 +1885,14 @@ Proof.
     iExists uivs1. by iFrame "∗#".
 Qed.
 
-(** One heap struct denotes every input that is the same wire struct: the
+(** One heap struct denotes every input that is the same encoded struct: the
     struct pins its input's type only through its parent name, which it has
-    only when the input has no origin, and [same_wire_struct] leaves the type
+    only when the input has no origin, and [same_encoded_struct] leaves the type
     free only when it has one. So the batch a decoder hands over
     ([codec_spec]) is also the batch the sender certified ([yjs_prot]). *)
-Lemma is_update_item_same_wire_struct (updateItemVal : yjs.updateItem.t)
+Lemma is_update_item_same_encoded_struct (updateItemVal : yjs.updateItem.t)
     (decoded certified : TId * IntegrateInput (A := A)) :
-  same_wire_struct decoded certified ->
+  same_encoded_struct decoded certified ->
   is_update_item updateItemVal decoded -∗ is_update_item updateItemVal certified.
 Proof.
   move=> [Hinput Htype]. iIntros "H". iNamed "H".
@@ -1902,9 +1902,9 @@ Proof.
   have Hnone := proj2 Hborrow Horigin. rewrite Hnone in Hnm. discriminate.
 Qed.
 
-Lemma own_update_structs_same_wire_struct (sl : slice.t) (dq : dfrac)
+Lemma own_update_structs_same_encoded_struct (sl : slice.t) (dq : dfrac)
     (decoded certified : list (TId * IntegrateInput (A := A))) :
-  Forall2 same_wire_struct decoded certified ->
+  Forall2 same_encoded_struct decoded certified ->
   own_update_structs sl dq decoded -∗ own_update_structs sl dq certified.
 Proof.
   move=> Hsame. iIntros "H". iNamed "H". iExists uivs. iFrame "Hsl Hcap".
@@ -1914,7 +1914,7 @@ Proof.
   iIntros (i updateItemVal y Hu Hy).
   destruct (Forall2_lookup_r _ _ _ _ _ Hsame Hy) as (x & Hx & Hxy).
   iDestruct (big_sepL2_lookup _ _ _ i _ _ Hu Hx with "Hitems") as "Hitem".
-  iApply (is_update_item_same_wire_struct _ _ _ Hxy with "Hitem").
+  iApply (is_update_item_same_encoded_struct _ _ _ Hxy with "Hitem").
 Qed.
 
 Lemma own_delete_spans_split (sl : slice.t) (q1 q2 : Qp)

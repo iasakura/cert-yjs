@@ -7,7 +7,7 @@
       per-char model.
     - what a decoded batch must satisfy: [input_fits] per struct,
       [pending_item_rooted] / [is_pending_rooted], bundled as [update_wf];
-      [input_has_origin] and [same_wire_struct], two type-tagged inputs
+      [input_has_origin] and [same_encoded_struct], two type-tagged inputs
       that are one struct on the wire (issue #131);
       [structs_expand_to_items], the characters of a batch are exactly items of
       the document.
@@ -1224,14 +1224,14 @@ Definition structs_expand_to_items (structs : list (TId * IntegrateInput (A := A
     ∃ (name : go_string) (item : YjsItem A),
       holds name item ∧ input = (RootId name, input_of_item item).
 
-(** [same_wire_struct decoded certified]: the two type-tagged inputs are one
+(** [same_encoded_struct decoded certified]: the two type-tagged inputs are one
     struct on the wire (issue #131): the same id, origins and content, and
     the same type unless the struct has an origin. The bytes of a struct
     with an origin do not say which type it belongs to, so what a decoder
     reports as its type is arbitrary, and the type it is certified under in
     the history is the sender's knowledge. The wire protocol ([yjs_prot])
     relates the two lists by this, pointwise. *)
-Definition same_wire_struct (decoded certified : TId * IntegrateInput (A := A)) : Prop :=
+Definition same_encoded_struct (decoded certified : TId * IntegrateInput (A := A)) : Prop :=
   decoded.2 = certified.2 ∧ (input_has_origin decoded.2 ∨ decoded.1 = certified.1).
 
 (* ----- accepted-id no-loss layer (this branch) ---------------------------- *)
@@ -2237,16 +2237,16 @@ Proof.
     move: Hchar. rewrite /explode list_lookup_fmap Hk /=. by move=> [= <-].
 Qed.
 
-(** [same_wire_struct] is reflexive. *)
-Lemma same_wire_struct_refl (inputs : list (TId * IntegrateInput (A := A))) :
-  Forall2 same_wire_struct inputs inputs.
+(** [same_encoded_struct] is reflexive. *)
+Lemma same_encoded_struct_refl (inputs : list (TId * IntegrateInput (A := A))) :
+  Forall2 same_encoded_struct inputs inputs.
 Proof. apply Forall2_same_length_lookup. split; first done. move=> i x y Hx Hy. rewrite Hx in Hy. injection Hy as <-. split; [done | by right]. Qed.
 
-(** A struct with no origin is the same wire struct only as itself. *)
-Lemma same_wire_struct_no_origin_singleton (x : TId * IntegrateInput (A := A))
+(** A struct with no origin is the same encoded struct only as itself. *)
+Lemma same_encoded_struct_no_origin_singleton (x : TId * IntegrateInput (A := A))
     (inputs : list (TId * IntegrateInput (A := A))) :
   in_originId x.2 = None -> in_rightOriginId x.2 = None ->
-  Forall2 same_wire_struct [x] inputs -> inputs = [x].
+  Forall2 same_encoded_struct [x] inputs -> inputs = [x].
 Proof.
   move=> Hleft Hright Hsame.
   apply Forall2_cons_inv_l in Hsame as (y & rest & [Hinput Htype] & Hrest & ->).
@@ -2258,8 +2258,8 @@ Qed.
 (** What a batch must satisfy to be applied ([update_wf]) does not depend
     on the types of the structs that have an origin, so it holds of a
     decoded batch when it holds of the batch the sender certified. *)
-Lemma update_wf_same_wire_struct (decoded certified : list (TId * IntegrateInput (A := A))) :
-  Forall2 same_wire_struct decoded certified -> update_wf certified -> update_wf decoded.
+Lemma update_wf_same_encoded_struct (decoded certified : list (TId * IntegrateInput (A := A))) :
+  Forall2 same_encoded_struct decoded certified -> update_wf certified -> update_wf decoded.
 Proof.
   move=> Hsame [Hfits Hrooted]. split.
   - move=> x Hx. apply list_elem_of_lookup in Hx as [i Hi].
