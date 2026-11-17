@@ -43,6 +43,10 @@ Then the three-way difference and unrequested-change reports that CLAUDE.md
   its words are not turned into prose vocabulary. So not "wire structs"
   because `yjs/codec.go` has a type `wireStruct`, but "structs as the update
   format writes them".
+- No jargon that neither the references nor the project define. Say the
+  concrete thing: not "the wire protocol" but "the condition every message
+  sent over the WebSocket satisfies"; not "on the wire" but "in the bytes
+  of the update".
 - Never only the delta: first the current state, in enough words for a
   reader who never saw it, then the change, then the reason.
 - Full sentences. No telegraphic noun phrases, no semicolon chains. A table
