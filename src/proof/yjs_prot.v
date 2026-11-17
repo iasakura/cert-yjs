@@ -9,7 +9,7 @@
       the server's hypotheses.
     - [decodes_to decode d inputs]: the bytes [d] decode to the batch
       [inputs], up to what the wire does not carry: [decode d] is a batch
-      that is, struct by struct, the same wire struct ([same_wire_struct],
+      that is, struct by struct, the same encoded struct ([same_encoded_struct],
       [store/model]) as [inputs]. The two differ only in the types of the
       structs that have an origin: the bytes of such a struct do not say
       which type it belongs to, so [decode] reports some type for it, and
@@ -17,7 +17,7 @@
     - [yjs_prot decode γh d]: the deployment's [ws_prot]. The bytes decode
       ([decodes_to]) to an honest batch whose per-char expansion is
       certified against the global history [γh]. A receiver applies that
-      batch ([own_update_structs_same_wire_struct] turns the decoder's slice
+      batch ([own_update_structs_same_encoded_struct] turns the decoder's slice
       into it), so it can apply any message it is handed with no further
       hypotheses. Persistent.
     - [is_update_certified γh structs]: the batch [structs] is ready to be
@@ -56,9 +56,6 @@
       to.
     - [yjs_prot_encode]: a sender that holds the certificates of a batch's
       per-char expansion owns the protocol for the batch's encoding.
-    - [yjs_prot_encode_inserted_run]: the same for one local insert, from
-      what [wp_Text__InsertEncoded] returns (what the client's [Insert]
-      sends).
 
     No ws import here: the predicate is decode plus history certificates, so
     it sits between [store] and [doc]; the ws layer instantiates
@@ -101,10 +98,10 @@ Context (decode : list u8 -> option (list Input)).
 
 (** [decodes_to d inputs]: the bytes [d] decode to the batch [inputs], up to
     the types of the structs that have an origin, which the bytes do not
-    carry ([same_wire_struct]). *)
+    carry ([same_encoded_struct]). *)
 Definition decodes_to (d : list u8) (inputs : list Input) : Prop :=
   ∃ decoded : list Input,
-    decode d = Some decoded ∧ Forall2 same_wire_struct decoded inputs.
+    decode d = Some decoded ∧ Forall2 same_encoded_struct decoded inputs.
 
 (** The wire protocol: these bytes decode to an honest batch every per-char
     operation of which is a point of the global history [γh]. Per character,
@@ -153,7 +150,7 @@ Proof. apply _. Qed.
 (** What [decode] reports is what the bytes decode to. *)
 Lemma decodes_to_decoded (d : list u8) (decoded : list Input) :
   decode d = Some decoded -> decodes_to d decoded.
-Proof. move=> Hdecode. exists decoded. split; [exact Hdecode | exact (same_wire_struct_refl decoded)]. Qed.
+Proof. move=> Hdecode. exists decoded. split; [exact Hdecode | exact (same_encoded_struct_refl decoded)]. Qed.
 
 (** What a sender needs to put a batch on the wire: the batch is certified
     ([is_update_certified]) and holds no surrogate code unit. Then its
@@ -179,58 +176,6 @@ Proof.
   have Hin := Hinputs y (list_elem_of_lookup_2 _ _ _ Hy).
   apply list_elem_of_lookup in Hin as [j Hj].
   iApply (big_sepL_lookup _ _ j y Hj with "Hcerts").
-Qed.
-
-(** The sender of one local insert: what [wp_Text__InsertEncoded] returns
-    (the inserted run, its certificates, and a batch that is character by
-    character exactly the inserted items) is the protocol for the batch's
-    encoding, when the inserted code units are free of surrogates. *)
-Lemma yjs_prot_encode_inserted_run (encode : list Input -> list u8) (γh : history_names)
-    (name : P) (L L' ins : list (YjsItem A)) (units : A) (client k0 : nat)
-    (originLeft originRight : YjsPtr A) (structs : list Input) :
-  codec_roundtrip encode ->
-  units_surrogate_free units ->
-  inserted_run L L' ins units client k0 originLeft originRight ->
-  structs_expand_to_items structs (λ root item, root = name ∧ item ∈ ins) ->
-  ([∗ list] item ∈ ins, is_op_cert γh (RootId name, OpInsert (input_of_item item))) -∗
-  yjs_prot γh (encode structs).
-Proof.
-  intros Hroundtrip Hunits (_ & Hlength & Hitems & Hbound) Hstructs.
-  (* a character of the batch is an inserted item, with its position *)
-  have Hchar : ∀ input, input ∈ expand_inputs structs ->
-      ∃ (position : nat) (item : YjsItem A) (unit : w16),
-        ins !! position = Some item ∧ units !! position = Some unit ∧
-        input = (RootId name, input_of_item item).
-  { move=> input Hinput.
-    destruct (proj1 (Hstructs input) Hinput) as (root & item & [-> Hitem] & ->).
-    apply list_elem_of_lookup in Hitem as [position Hposition].
-    destruct Hlength as [-> | Hlength]; first by rewrite lookup_nil in Hposition.
-    have [unit Hunit] : is_Some (units !! position).
-    { apply lookup_lt_is_Some. rewrite -Hlength. exact (lookup_lt_Some _ _ _ Hposition). }
-    by exists position, item, unit. }
-  have Hfree : structs_surrogate_free structs.
-  { move=> struct Hstruct unit Hunit.
-    destruct (expand_inputs_content_unit structs struct unit Hstruct Hunit) as (op & Hop & Hcontent).
-    destruct (Hchar op Hop) as (position & item & unit' & Hposition & Hunit' & ->).
-    destruct (Hitems position item unit' Hposition Hunit') as (_ & _ & Hitem_content & _).
-    move: Hcontent. rewrite /= Hitem_content. move=> [= <-].
-    exact (Hunits unit' (list_elem_of_lookup_2 _ _ _ Hunit')). }
-  have Hwf : update_wf (expand_inputs structs).
-  { split.
-    - move=> input Hinput.
-      destruct (Hchar input Hinput) as (position & item & unit & Hposition & Hunit & ->).
-      destruct (Hitems position item unit Hposition Hunit) as (_ & _ & Hitem_content & Hitem_id & _).
-      rewrite /input_fits /= Hitem_content Hitem_id /=.
-      have := lookup_lt_Some _ _ _ Hposition. lia.
-    - move=> input Hinput.
-      destruct (Hchar input Hinput) as (position & item & unit & _ & _ & ->).
-      rewrite /pending_item_rooted. case_decide; last done. by exists name. }
-  iIntros "#Hcerts".
-  iApply (yjs_prot_encode encode γh structs Hroundtrip Hfree).
-  iSplit; first done.
-  rewrite /is_pending_certified. iApply big_sepL_forall. iIntros (k input Hk).
-  destruct (Hchar input (list_elem_of_lookup_2 _ _ _ Hk)) as (position & item & unit & Hposition & _ & ->).
-  iApply (big_sepL_lookup _ _ position item Hposition with "Hcerts").
 Qed.
 
 End yjs_prot.

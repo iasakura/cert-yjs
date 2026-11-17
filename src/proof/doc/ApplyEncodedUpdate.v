@@ -84,8 +84,8 @@ Proof.
   iDestruct "Hres" as (decoded' deleted) "(%Hdec' & Hupd & Hdel)".
   rewrite Hdec in Hdec'. injection Hdec' as <-.
   (* the decoder's slice denotes the certified batch too: the two are the
-     same wire structs *)
-  iDestruct (own_update_structs_same_wire_struct _ _ _ _ Hsame with "Hupd") as "Hupd".
+     same encoded structs *)
+  iDestruct (own_update_structs_same_encoded_struct _ _ _ _ Hsame with "Hupd") as "Hupd".
   wp_auto.
   wp_apply (wp_Doc__ApplySyncUpdate _ _ _ _ c _ _ _ _ inputs deleted Hwf
               with "[$His_doc $Hishist $Hpin $Hupd $Hdel $Hcerts]").
@@ -93,7 +93,7 @@ Proof.
   wp_auto.
   iApply ("HΦ" $! h decoded applied m').
   iFrame "Hs Hlb Happlied". iSplit; first done.
-  (* acceptance is by id, and the same wire struct has the same id *)
+  (* acceptance is by id, and the same encoded struct has the same id *)
   iApply big_sepL_forall. iIntros (i x Hx).
   destruct (Forall2_lookup_l _ _ _ _ _ Hsame Hx) as (y & Hy & Heq & _).
   rewrite Heq. iApply (big_sepL_lookup _ _ i y Hy with "Haccepts").

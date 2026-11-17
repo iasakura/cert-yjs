@@ -318,9 +318,9 @@ func WireEncoder() Encoder {
 	return encodeUpdateItems
 }
 
-// wireStruct is one struct of a client's section as it is written: a Skip of
+// encodedStruct is one struct of a client's section as it is written: a Skip of
 // skip clocks when run is empty, otherwise the joined run of structs.
-type wireStruct struct {
+type encodedStruct struct {
 	skip uint64
 	run  []updateItem
 }
@@ -343,7 +343,7 @@ func encodeUpdateItems(structs []updateItem) []byte {
 		own := byClient[client]
 		sort.SliceStable(own, func(i, j int) bool { return own[i].id.clock < own[j].id.clock })
 
-		var section []wireStruct
+		var section []encodedStruct
 		next := own[0].id.clock
 		for _, st := range own {
 			n := len(section)
@@ -354,12 +354,12 @@ func encodeUpdateItems(structs []updateItem) []byte {
 				continue
 			}
 			if st.id.clock > next {
-				section = append(section, wireStruct{skip: st.id.clock - next})
-				section = append(section, wireStruct{run: []updateItem{st}})
+				section = append(section, encodedStruct{skip: st.id.clock - next})
+				section = append(section, encodedStruct{run: []updateItem{st}})
 			} else if n > 0 && len(section[n-1].run) > 0 && joinableStructs(section[n-1].run[len(section[n-1].run)-1], st) {
 				section[n-1].run = append(section[n-1].run, st)
 			} else {
-				section = append(section, wireStruct{run: []updateItem{st}})
+				section = append(section, encodedStruct{run: []updateItem{st}})
 			}
 			next = st.id.clock + uint64(len(st.content))
 		}
@@ -382,7 +382,7 @@ func encodeUpdateItems(structs []updateItem) []byte {
 	return e.buf
 }
 
-// joinableStructs reports whether next continues prev as one wire struct:
+// joinableStructs reports whether next continues prev as one struct of the encoding:
 // the next clock of the same client, its left origin prev's last id, and the
 // same right origin. These are joinable's conditions without the two that
 // need the list (adjacency, the deleted flag): splitStructs gives back

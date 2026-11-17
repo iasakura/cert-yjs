@@ -1,4 +1,4 @@
-(** Reading integrated nodes back as wire structs (issue #131):
+(** Reading integrated nodes back as the structs of an update (issue #131):
     [store.rootName] (the name a root type is registered under, by a scan of
     the registry), [store.updateItemOfNode] (the decoded struct of one node)
     and [store.appendSpanStructs] (the structs of the nodes covering one
