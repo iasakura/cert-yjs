@@ -102,6 +102,26 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
 Context (decode : list u8 -> option (list Input)).
 Context (encode : list Input -> list u8).
 
+(* ===== the contract of a boot expression ================================= *)
+
+(** [client_app_expr_spec make_app]: the expression [make_app] evaluates to
+    an application that meets the client's contract ([client_app_spec],
+    ws_client.v). What a node's boot expression holds: an application is
+    either a function value or, like [wsclient.Typist], the result of a
+    call. *)
+Definition client_app_expr_spec (make_app : expr) : iProp Σ :=
+  (is_pkg_init wsclient -∗
+   WP make_app {{ value, ∃ app : func.t, ⌜value = #app⌝ ∗ client_app_spec decode encode app }})%I.
+
+(** The typist as a boot expression's application. *)
+#[local] Lemma typist_app_expr_spec (script : go_string) :
+  ⊢ client_app_expr_spec ((@! wsclient.Typist) #script).
+Proof.
+  iIntros "#Hpkg".
+  wp_apply wp_Typist.
+  iIntros (app) "#Happ". iExists app. by iFrame "Happ".
+Qed.
+
 (* ===== package initialization ============================================ *)
 
 Lemma wp_wsclient_initialize' get_is_pkg_init :
@@ -135,7 +155,7 @@ Lemma wp_client_boot (host : w64) (path : go_string) (client : w64)
     own_client_history γh (uint.nat client) ([] : list Ev) -∗
     codec_pair_spec decode encode decoder encoder -∗
     ws_env_preserves ⊤ -∗
-    client_app_expr_spec decode encode make_app -∗
+    client_app_expr_spec make_app -∗
     WP client_boot host path client decoder encoder name make_app {{ _, True }}.
 Proof.
   iIntros (Hget Hdeploy) "Hown #Hhist Hhistory #Hcodec_pair #Henv Hmake_app".
@@ -195,7 +215,7 @@ Lemma wpr_client_boot (host : w64) (path : go_string) (client : w64)
     own_client_history γh (uint.nat client) ([] : list Ev) -∗
     codec_pair_spec decode encode decoder encoder -∗
     ws_env_preserves ⊤ -∗
-    client_app_expr_spec decode encode make_app -∗
+    client_app_expr_spec make_app -∗
     wpr NotStuck ⊤ (client_boot host path client decoder encoder name make_app) halt
         (λ _, True%I) (λ _, True%I) (λ _ _, True%I).
 Proof.
