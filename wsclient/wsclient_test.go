@@ -67,17 +67,17 @@ func units(s string) []uint16 {
 	return result
 }
 
-// insert is one transaction of c that inserts content at index; it returns
-// Transact's error flag.
-func insert(c *Client, index uint64, content string) bool {
-	return c.Transact(func(tr *yjs.Transaction, text *yjs.Text) {
+// insert is one transaction of c that inserts content at index.
+func insert(c *Client, index uint64, content string) {
+	c.Transact(func(tr *yjs.Transaction, text *yjs.Text) {
 		text.InsertIn(tr, index, units(content))
 	})
 }
 
 // An edit one client makes through Transact reaches the other client through
-// the server: the update is the transaction's structs, encoded by the
-// deployment's encoder, decoded and applied twice (server, other client).
+// the server: the update handler sends the transaction's structs, encoded by
+// the deployment's encoder, and they are decoded and applied twice (server,
+// other client).
 func TestInsertReachesTheOtherClient(t *testing.T) {
 	addr := startServer(t)
 	a := connect(t, addr, 2)
@@ -85,14 +85,10 @@ func TestInsertReachesTheOtherClient(t *testing.T) {
 	// the server relays only to connections it has already joined
 	time.Sleep(200 * time.Millisecond)
 
-	if insert(a, 0, "hello") {
-		t.Fatal("A could not send")
-	}
+	insert(a, 0, "hello")
 	waitForText(t, b, "hello")
 
-	if insert(b, 5, " world") {
-		t.Fatal("B could not send")
-	}
+	insert(b, 5, " world")
 	waitForText(t, a, "hello world")
 	waitForText(t, b, "hello world")
 }
@@ -105,9 +101,8 @@ func TestConcurrentInsertsConverge(t *testing.T) {
 	b := connect(t, addr, 3)
 	time.Sleep(200 * time.Millisecond)
 
-	if insert(a, 0, "AAA") || insert(b, 0, "BBB") {
-		t.Fatal("a client could not send")
-	}
+	insert(a, 0, "AAA")
+	insert(b, 0, "BBB")
 	// client 2 sorts before client 3 at the same origin
 	waitForText(t, a, "AAABBB")
 	waitForText(t, b, "AAABBB")
