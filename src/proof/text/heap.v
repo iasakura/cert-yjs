@@ -20,6 +20,7 @@
     - [is_Text_root] / [is_Text_root_lb] / [is_Text_delete_set_lb]: the root and
       delete-set witnesses a reader may project out of the handle, which is all
       the store layer exposes about it.
+    - [is_Text_history]: the history invariant of the handle's deployment.
 
     The [Text] handle has no model of its own: the sequence it exposes is the
     [yType] model, so its list-level theory is [ytype/model.v]. The method
@@ -173,6 +174,14 @@ Lemma is_Text_delete_set_lb (t : loc) (γs : store_names) (γh : history_names)
     (may_insert : go_string -> w16 -> Prop) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
   is_Text t γs γh may_insert name L deleted_ids -∗ is_delete_set_lb γs deleted_ids.
 Proof. iIntros "H". iNamed "H". iFrame "Hdeleted_lb". Qed.
+
+(** The history invariant of the handle's deployment, on its own: what a
+    holder of the handle hands to the document's operations that ask for it
+    ([wp_Doc__ApplyEncodedUpdate], [wp_Doc__ObserveUpdate]). *)
+Lemma is_Text_history (t : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
+  is_Text t γs γh may_insert name L deleted_ids -∗ is_history (A := A) (P := P) γh.
+Proof. iIntros "H". iNamed "H". iFrame "His_hist". Qed.
 
 (** [Text.Insert] preserves the (persistent) document handle, grows the known
     content ([L ⊑ L']), AND exposes the inserted run [ins]: one fresh item per

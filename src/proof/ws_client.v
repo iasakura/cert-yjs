@@ -123,9 +123,9 @@ Definition client_may_insert (origin : go_string) (unit : w16) : Prop :=
 (** Client handle (persistent). The fields but the lock are written once,
     by [Connect]; the lock holds the connection's send cursor, at however
     many messages were sent. Beside its fields the handle carries the
-    global-history handle, the document's client pin with the empty history
-    lower bound (what a read of the root for a report is certified
-    against), the codec's specification ([codec_pair_spec], for the decoder
+    document's client pin with the empty history lower bound (what a read
+    of the root for a report is certified against), the codec's
+    specification ([codec_pair_spec], for the decoder
     in the struct and the encoder [Connect] registered the update handler
     with), and the deployment's protocols. *)
 Definition is_Client (client_loc : loc) (γs : store_names) (γh : history_names)
@@ -141,7 +141,6 @@ Definition is_Client (client_loc : loc) (γs : store_names) (γh : history_names
     "#Hconnection"    ∷ is_Connection connection send_channel receive_channel ∗
     "#Hdoc"     ∷ is_Doc doc s_loc γs γh client_may_insert ∗
     "#Htext"    ∷ is_Text text γs γh client_may_insert name [] ∅ ∗
-    "#His_history"  ∷ is_history (A := A) (P := P) γh ∗
     "#Hpin"     ∷ is_store_client γs client_id ∗
     "#Hhistory_lb"      ∷ is_history_lb γh client_id ([] : list Ev) ∗
     "#Hcodec_pair" ∷ (∃ encoder : func.t, codec_pair_spec decode encode decoder encoder) ∗
@@ -297,6 +296,7 @@ Proof.
   iPoseProof "Hclient" as "Hopen". iNamed "Hopen".
   iDestruct "Hcodec_pair" as (encoder) "Hcodec_pair". iNamed "Hcodec_pair".
   destruct Hdeploy as [Hprot Htrace].
+  iDestruct (is_Text_history with "Htext") as "#His_history".
   wp_auto.
   iAssert (∃ received : nat,
     "Hcursor" ∷ own_recv_cursor receive_channel received ∗
@@ -377,7 +377,7 @@ Proof.
   { iNext. iExists 0%nat. iFrame "Hsend_cursor". }
   iAssert (is_Client client_loc γs γh (uint.nat client) send_channel receive_channel name) as "#Hclient".
   { iExists _, _, _, s_loc, _.
-    iFrame "conn doc text name decode Hsend_lock Hconnection Hdoc Htext His_history Hpin Hhistory_lb".
+    iFrame "conn doc text name decode Hsend_lock Hconnection Hdoc Htext Hpin Hhistory_lb".
     iSplit; last done. iExists encoder. iFrame "Hcodec_pair". }
   iNamed "Hcodec_pair".
   wp_auto.
