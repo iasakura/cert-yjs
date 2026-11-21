@@ -256,8 +256,8 @@ Proof.
   wp_apply ("Hencoder" with "[$Hstructs]").
   iIntros (bytes_slice) "(Hstructs & Hbytes & Hbytes_cap)".
   wp_auto.
-  wp_apply ("Hcallback" $! bytes_slice structs origin with "[$Hbytes $Hbytes_cap $Hcertified]").
-  { iPureIntro. exact Hunits. }
+  wp_apply ("Hcallback" $! bytes_slice structs origin with "[Hbytes Hbytes_cap]").
+  { rewrite /own_emitted_update. iFrame "Hbytes Hbytes_cap Hcertified". iPureIntro. exact Hunits. }
   wp_for_post.
   iFrame. iPureIntro. clear -Hinside Hi. word.
 Qed.

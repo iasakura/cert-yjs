@@ -75,9 +75,11 @@
       [is_update_certified γh structs] (a batch is well formed and
       certified in the global history, what the store says of the update
       it hands over); [encoder_spec encode encoder] (the Go encoder value
-      meets the abstract [encode]); [is_update_callback may_insert γh encode
-      callback] (the contract of a callback registered with
-      [Doc.ObserveUpdate]); [is_update_observer] (one registration) and
+      meets the abstract [encode]); [own_emitted_update may_insert γh
+      encode update_slice structs origin] (what an update observer is
+      called with); [is_update_callback may_insert γh encode callback] (the
+      contract of a callback registered with [Doc.ObserveUpdate]);
+      [is_update_observer] (one registration) and
       [own_store_update_observers s γs γh q] (the store's [updateObservers]
       field and its slice, part of [own_observers]).
     - [store_of_ref], the embedded store's address under a [storeRef]
@@ -1531,25 +1533,34 @@ Definition encoder_spec (encode : list (TId * IntegrateInput (A := A)) -> list u
           own_update_structs structs_slice dq structs ∗
           bytes_slice ↦* encode structs ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) }}}).
 
+(** [own_emitted_update may_insert γh encode update_slice structs origin]:
+    what an update observer is called with (issue #131), for a transaction
+    of origin [origin] on a document whose insert rule is [may_insert]: the
+    byte slice [update_slice] holds the encoding of a batch [structs], and
+    the callee owns it; the batch is well formed and every operation of it
+    has a certificate in the global history ([is_update_certified]); and
+    every code unit of the batch is one the rule allows for [origin]. *)
+Definition own_emitted_update (may_insert : go_string -> w16 -> Prop) (γh : history_names)
+    (encode : list (TId * IntegrateInput (A := A)) -> list u8) (update_slice : slice.t)
+    (structs : list (TId * IntegrateInput (A := A))) (origin : go_string) : iProp Σ :=
+  "Hupdate" ∷ update_slice ↦* encode structs ∗
+  "Hupdate_cap" ∷ own_slice_cap w8 update_slice (DfracOwn 1) ∗
+  "#Hupdate_certified" ∷ is_update_certified γh structs ∗
+  "%Hupdate_units" ∷ ⌜structs_units_allowed (may_insert origin) structs⌝.
+
 (** [is_update_callback may_insert γh encode callback]: the contract of a
     callback registered with [Doc.ObserveUpdate] and the encoder [encode],
     on a document whose insert rule is [may_insert]. The store calls it at
     the end of a transaction that integrated something, with the
-    transaction's update and origin. It is told three things about the
-    bytes: they are the encoding of a batch [structs]; the batch is well
-    formed and every operation of it has a certificate in the global
-    history ([is_update_certified]); and every code unit of the batch is
-    one the rule allows for this origin.
-    It owes nothing back. Persistent: the store keeps the callback and calls
-    it for every such transaction. The callback's own resources are not
-    here: it reaches them through a lock or an invariant of its own, as the
+    transaction's update and origin ([own_emitted_update]). It owes
+    nothing back. Persistent: the store keeps the callback and calls it for
+    every such transaction. The callback's own resources are not here: it
+    reaches them through a lock or an invariant of its own, as the
     callbacks of [Text.Observe] do. *)
 Definition is_update_callback (may_insert : go_string -> w16 -> Prop) (γh : history_names)
     (encode : list (TId * IntegrateInput (A := A)) -> list u8) (callback : func.t) : iProp Σ :=
   ∀ (update_slice : slice.t) (structs : list (TId * IntegrateInput (A := A))) (origin : go_string),
-    {{{ update_slice ↦* encode structs ∗ own_slice_cap w8 update_slice (DfracOwn 1) ∗
-        is_update_certified γh structs ∗
-        ⌜structs_units_allowed (may_insert origin) structs⌝ }}}
+    {{{ own_emitted_update may_insert γh encode update_slice structs origin }}}
       #callback #update_slice #origin
     {{{ RET #(); True }}}.
 
