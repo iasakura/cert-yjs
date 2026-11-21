@@ -65,17 +65,17 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
 
 Lemma wp_Transaction__insertedStructs (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input)
-    (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
-  {{{ is_pkg_init yjs ∗ own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
+    (deleted inserted : gset YjsId) :
+  {{{ is_pkg_init yjs ∗ own_transaction_notified tr s_loc γs γh c h m pend deleted inserted }}}
     tr @! (go.PointerType yjs.Transaction) @! "insertedStructs" #()
   {{{ (structs_slice : slice.t) (structs : list Input), RET #structs_slice;
-      own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+      own_transaction_notified tr s_loc γs γh c h m pend deleted inserted ∗
       own_update_structs structs_slice (DfracOwn 1) structs ∗
       ⌜structs_expand_to_items structs (λ name item,
          item ∈ doc_model_get m (RootId name) ∧ item_id item ∈ inserted)⌝ }}}.
 Proof.
   wp_start as "Htx".
-  iDestruct "Htx" as (state ds m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct "Htx" as (state ds insert_sl) "Htx". iNamed "Htx".
   iDestruct (own_replica_history_registry_models with "Hreplica_history") as %[Hmodels Hbound].
   iAssert (⌜pool_registry_coh (ss_bind state) (ss_pool state)⌝)%I as %Hregistry_coh.
   { iNamed "Hstore". iNamed "Hcore". iApply (own_store_state_registry_coh with "Hstate"). }
@@ -91,14 +91,14 @@ Proof.
       destruct (proj1 Hregistry_coh name parent Hbind) as [tm Htm].
       exists parent, tm. split_and!; [exact Hbind | exact Htm |].
       by rewrite -(Hmodels name parent tm Hbind Htm). }
-  iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord". iNamed "Hchanges".
+  iDestruct "Hinsert" as (insert_vs) "(Hinsert & %Hinsertwf & %Hinserted)".
   wp_auto.
   iAssert (∃ (i : w64) (structs_slice : slice.t) (structs : list Input),
       "tr" ∷ tr_ptr ↦ tr ∗ "s" ∷ s_ptr ↦ s_loc ∗ "i" ∷ i_ptr ↦ i ∗
       "structs" ∷ structs_ptr ↦ structs_slice ∗
       "Hinsertf" ∷ (tr .[(yjs.Transaction.t), "insertSet"]) ↦ insert_sl ∗
       "Hinsert" ∷ insert_sl ↦* insert_vs ∗
-      "Hstore" ∷ own_store s_loc γs γh 1 state ds m0 deleted0 ∗
+      "Hstore" ∷ own_store s_loc γs γh 1 state ds m deleted ∗
       "Hstructs" ∷ own_update_structs structs_slice (DfracOwn 1) structs ∗
       "%Hi" ∷ ⌜0 ≤ sint.Z i⌝ ∗
       "%Hstructs_model" ∷ ⌜structs_expand_to_items structs (λ name item,
@@ -124,12 +124,9 @@ Proof.
     { iPureIntro. move: Hstructs_model.
       rewrite take_ge; last (clear -Hpast Hi Hinsert_length Hinsert_nonneg; word).
       by rewrite -Hinserted. }
-    iExists state, ds, m0, deleted0. iSplitR; first done.
-    iFrame "Hstore Hreplica_history". iSplitL; last done.
-    iExists changed_locs. iFrame "Hchanged_bound".
-    iSplitL; last done.
-    iExists insert_sl, delete_sl, changed_mref, insert_vs, delete_vs.
-    iFrame "Htrstore Hinsertf Hinsert Hinsertcap Hdeletef Hdelete Hdeletecap Hchangedf Hchanged". done. }
+    iExists state, ds, insert_sl. iSplitR; first done.
+    iFrame "Hstore Hreplica_history Htrstore Hinsertf".
+    iExists insert_vs. iFrame "Hinsert". done. }
   rewrite bool_decide_eq_true_2 //.
   wp_auto.
   rewrite decide_True; last (clear -Hinside Hi; word).
@@ -144,7 +141,7 @@ Proof.
   iEval (rewrite (list_insert_id _ _ _ Hspan_lookup)) in "Hinsert".
   have Hspan_fits : span_no_overflow span.
   { exact (proj1 (Forall_forall _ _) Hinsertwf span (list_elem_of_lookup_2 _ _ _ Hspan_lookup)). }
-  wp_apply (wp_store__appendSpanStructs s_loc γs γh state ds m0 deleted0 structs_slice structs span
+  wp_apply (wp_store__appendSpanStructs s_loc γs γh state ds m deleted structs_slice structs span
               Hspan_fits with "[$Hstore $Hstructs]").
   iIntros (result_slice appended) "(Hstore & Hstructs & %Happended)".
   wp_auto.

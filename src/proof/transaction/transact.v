@@ -34,7 +34,7 @@ From New.proof Require Import tok_set.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
 From New.proof.store Require Import store.
-From New.proof.transaction Require Import model heap wp_private notify.
+From New.proof.transaction Require Import model heap wp_private notify insertedStructs notifyUpdate.
 
 Section transaction_transact.
 
@@ -94,10 +94,12 @@ Proof.
   - move=> i Hi. set_solver.
 Qed.
 
-Lemma wp_transact (ref : loc) (γs : store_names) (γh : history_names) (f : func.t)
+Lemma wp_transact (ref : loc) (γs : store_names) (γh : history_names)
+    (origin : go_string) (f : func.t)
     (Q : ClientId -> list Ev -> DocModel -> list Input -> gset YjsId -> iProp Σ) :
-  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ closure_runs_transaction (store_of_ref ref) γs γh f Q }}}
-    @! yjs.transact #ref #f
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗
+      closure_runs_transaction (store_of_ref ref) γs γh (γs.(sn_may_insert) origin) f Q }}}
+    @! yjs.transact #ref #origin #f
   {{{ RET #(); ∃ (c : ClientId) (h' : list Ev) (m' : DocModel) (pend' : list Input) (deleted' : gset YjsId),
       Q c h' m' pend' deleted' }}}.
 Proof.
@@ -107,18 +109,22 @@ Proof.
   iDestruct "Hinv" as (c h m) "Hstore".
   wp_auto.
   iDestruct "Hstore" as (state0 ds0) "(Hstore0 & Hreplica_history)".
-  wp_apply wp_newTransaction. iIntros (tr) "Hchanges".
+  wp_apply wp_newTransaction. iIntros (tr) "[Hchanges Horigin]".
   wp_auto.
   iDestruct (own_transaction_fresh with "Hchanges [$Hstore0 $Hreplica_history]") as "Htx".
   wp_apply ("Hf" with "[$Htx]").
-  iIntros (h' m' pend' deleted' inserted tombstoned changed) "[Htx HQ]".
+  iIntros (h' m' pend' deleted' inserted tombstoned changed) "(Htx & %Hallowed & HQ)".
   wp_auto.
-  wp_apply (wp_Transaction__notify with "[$Htx]"). iIntros "Hstore".
+  wp_apply (wp_Transaction__notify with "[$Htx]"). iIntros "Htx".
   wp_auto.
-  iDestruct "Hstore" as (state' ds') "(%Hface' & Hstore & Hreplica_history')".
-  destruct Hface' as [Hpend' Hdel'].
+  wp_apply (wp_Transaction__notifyUpdate with "[$Htx $Horigin]").
+  { iPureIntro. exact Hallowed. }
+  iIntros "[Htx Horigin]".
+  wp_auto.
+  iDestruct "Htx" as (state' ds' insert_sl) "Htx". iNamed "Htx".
+  destruct Hpend_tomb as [Hpend' Hdel'].
   iEval (rewrite Hdel') in "Hstore".
-  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore $Hreplica_history']").
+  wp_apply (wp_Store__wunlock with "[$His_store $Hlk $Hstore $Hreplica_history]").
   iApply "HΦ". iExists c, h', m', pend', deleted'. iFrame "HQ".
 Qed.
 

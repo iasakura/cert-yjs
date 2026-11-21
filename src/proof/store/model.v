@@ -1224,6 +1224,21 @@ Definition structs_expand_to_items (structs : list (TId * IntegrateInput (A := A
     ∃ (name : go_string) (item : YjsItem A),
       holds name item ∧ input = (RootId name, input_of_item item).
 
+(** [may_insert_anything]: the insert rule of a document that restricts
+    nothing (issue #131): a transaction of any origin may insert any code
+    unit. The rule of a document none of whose update observers needs to
+    know anything about the content it is handed. *)
+Definition may_insert_anything : go_string -> w16 -> Prop := λ _ _, True.
+
+(** [structs_units_allowed allowed structs]: every code unit of every struct
+    of the batch satisfies [allowed] (issue #131). What an update observer
+    is told of the update it is handed, for the document's insert rule at
+    the transaction's origin (the parameter [may_insert] of [is_Doc],
+    doc/heap.v). *)
+Definition structs_units_allowed (allowed : w16 -> Prop)
+    (structs : list (TId * IntegrateInput (A := A))) : Prop :=
+  ∀ struct, struct ∈ structs -> Forall allowed (in_content struct.2).
+
 (** [same_encoded_struct decoded certified]: the two type-tagged inputs are one
     struct on the wire (issue #131): the same id, origins and content, and
     the same type unless the struct has an origin. The bytes of a struct

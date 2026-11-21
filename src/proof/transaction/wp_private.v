@@ -64,13 +64,15 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
 Lemma wp_newTransaction (s_loc : loc) :
   {{{ is_pkg_init yjs }}}
     @! yjs.newTransaction #s_loc
-  {{{ (tr : loc), RET #tr; own_transaction_changes tr s_loc ∅ ∅ ∅ }}}.
+  {{{ (tr : loc), RET #tr; own_transaction_changes tr s_loc ∅ ∅ ∅ ∗
+      (tr .[(yjs.Transaction.t), "origin"]) ↦ ""%go }}}.
 Proof.
   wp_start. wp_auto.
   wp_apply wp_map_make1. iIntros (changed_mref) "Hchanged". wp_auto.
   wp_alloc tr as "Htr". wp_auto.
   iApply "HΦ".
   iStructNamed "Htr". simpl.
+  iFrame "origin".
   iExists slice.nil, slice.nil, changed_mref, [], []. iFrame "store insertSet deleteSet changed".
   rewrite gset_to_gmap_empty. iFrame "Hchanged".
   iSplitL; first iApply own_slice_nil.

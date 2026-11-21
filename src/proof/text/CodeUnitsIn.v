@@ -55,14 +55,15 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     lower bound), in a fresh slice of the caller's own. Nothing changes: the
     handle and the transaction come back as they were. *)
 Lemma wp_Text__CodeUnitsIn (t tr s_loc : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh may_insert name L deleted_ids ∗
       own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
     t @! (go.PointerType yjs.Text) @! "CodeUnitsIn" #tr
   {{{ (sl : slice.t), RET #sl;
-      is_Text t γs γh name L deleted_ids ∗
+      is_Text t γs γh may_insert name L deleted_ids ∗
       own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
       sl ↦* visible_string (type_snapshot m deleted name) ∗
       own_slice_cap w16 sl (DfracOwn 1) }}}.
@@ -104,7 +105,8 @@ Proof.
   iSplitR.
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
     iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
-    iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted]. }
+    iPureIntro. split_and!;
+    [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted | exact Hmay_insert]. }
   iAssert (own_store_data s_loc γs γh c h m pend deleted) with "[-Hobservers Hrecord]" as "Hstore".
   { iExists client, k, pdel, locs, p, bind, acc. iFrame "∗#". iPureIntro. split_and!;
       [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh

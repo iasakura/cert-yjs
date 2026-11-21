@@ -391,17 +391,14 @@ Qed.
     current one, with the current snapshot's certificate; the registry
     moves to the current state, the observers of the other roots having
     nothing new to hear. The transaction's record is consumed:
-    [transact] releases the lock right after. *)
+    [notifyUpdate] reads what is left of it ([own_transaction_notified])
+    and [transact] releases the lock after that. *)
 Lemma wp_Transaction__notify (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input)
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
   {{{ is_pkg_init yjs ∗ own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "notify" #()
-  {{{ RET #();
-      ∃ (state : store_state) (ds : gset YjsId),
-        ⌜state_pending_tombstoned state pend deleted⌝ ∗
-        own_store s_loc γs γh 1 state ds m deleted ∗
-        own_replica_history γs γh c h m state ds }}}.
+  {{{ RET #(); own_transaction_notified tr s_loc γs γh c h m pend deleted inserted }}}.
 Proof.
   wp_start as "Htx".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
@@ -410,7 +407,7 @@ Proof.
   destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hstore". iEval (rewrite -Hdeleted_state) in "Hstore".
   clear Hpend_state Hdeleted_state.
-  iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry)".
+  iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry & Hupdate_observers)".
   iDestruct "Hregistry" as (registry registered) "(Hobserversmap & Hobserversauth & Hregagree & #Hregistered_bind & Hobservers)".
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord". iNamed "Hchanges".
   iAssert (own_id_spans insert_sl (DfracOwn 1) inserted) with "[Hinsert]" as "Hinsert".
@@ -419,6 +416,7 @@ Proof.
   { iExists delete_vs. iFrame "Hdelete". done. }
   iClear "Hinsertcap Hdeletecap".
   wp_auto.
+  iRename "Htrstore" into "Hrecord_store".
   (* the walk over the changed types: after [i] of them, their observers are
      at the end state and the others still at the start state *)
   wp_apply (wp_map_for_range (λ (keys : list loc) (i : Z),
@@ -449,7 +447,7 @@ Proof.
     iSplitR. { iPureIntro. split; [rewrite /= ?take_0 ?list_to_set_nil // | lia]. }
     iApply (big_sepM2_mono with "Hobservers"). iIntros (parent cbs_sl entry Hr Hd) "H".
     first [iExact "H" | rewrite decide_False; [iExact "H" | apply not_elem_of_empty]]. }
-  iSplitR "HΦ".
+  iSplitR "HΦ Hrecord_store Hupdate_observers".
   { (* ---- one changed type ---- *)
     iModIntro. iIntros (i key v [Hkey Hval]) "HP".
     iDestruct "HP" as (done tyv) "HP". iNamed "HP". destruct Hdone as [Hdone Hi0].
@@ -609,8 +607,8 @@ Proof.
   { iExists client, k, pdel, locs, p, bind, acc. iFrame "Hstate Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree Hclientpin Hpendcert Hbinds". iPureIntro.
     split_and!; [exact Hclientc | exact Hpendroot | exact Hpendbnd | exact Hregmodel | exact Hhcoh | exact Hctr | exact Hacccoh | exact Hdeleted]. }
   iAssert (own_observers s_loc γs γh 1 m deleted)
-    with "[Hobserversf Hobserversmap Hobserversauth Hregagree Hobservers]" as "Hobservers'".
-  { iExists observers_mref. iFrame "Hobserversf".
+    with "[Hobserversf Hobserversmap Hobserversauth Hregagree Hobservers Hupdate_observers]" as "Hobservers'".
+  { iExists observers_mref. iFrame "Hobserversf Hupdate_observers".
     iExists registry, registered.
     iFrame "Hobserversmap Hobserversauth Hregagree Hregistered_bind".
     iApply (big_sepM2_mono with "Hobservers"). iIntros (parent cbs_sl entry Hr Hd) "H".
@@ -620,10 +618,10 @@ Proof.
              Hpoolinv Hregcoh Hregmodel Hrecorded Hbound (Hregbind parent entry Hd)).
     rewrite -Hdoneall. exact Hnin. }
   iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
-  iExists state', ds'.
+  iExists state', ds', insert_sl.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers'"; first iFrame "Hcore' Hobservers'".
-  iFrame "Hreplica_history'".
+  iFrame "Hreplica_history' Hrecord_store Hinsertf Hinsert".
 Qed.
 
 End transaction_notify.

@@ -230,7 +230,7 @@ Definition own_Room_root (r : loc) (γs : store_names) (γh : history_names) : i
   ∃ (t : loc) (name : go_string),
     "Htextf" ∷ (r .[(wsrelay.Room.t), "text"]) ↦ t ∗
     "Hnamef" ∷ (r .[(wsrelay.Room.t), "name"]) ↦ name ∗
-    "#Htext" ∷ is_Text t γs γh name [] ∅ ∗
+    "#Htext" ∷ is_Text t γs γh may_insert_anything name [] ∅ ∗
     "Hrcap"  ∷ own_read_cap γs.
 
 (** The room's lock body. *)
@@ -244,7 +244,7 @@ Definition room_inv (r : loc) (γ : room_names) (γs : store_names)
     "Hdocf"     ∷ (r .[(wsrelay.Room.t), "doc"]) ↦ dv ∗
     "Hdecodef"  ∷ (r .[(wsrelay.Room.t), "decode"]) ↦ f ∗
     "Hroot"     ∷ own_Room_root r γs γh ∗
-    "#Hdoc"     ∷ is_Doc dv s_loc γs γh ∗
+    "#Hdoc"     ∷ is_Doc dv s_loc γs γh may_insert_anything ∗
     "#Hcodec"   ∷ codec_spec decode f ∗
     "Hmem"      ∷ mono_list_auth_own γ.(rn_mem) 1 MS ∗
     "Hlog"      ∷ mono_list_auth_own γ.(rn_log) 1 L ∗
@@ -403,7 +403,7 @@ Qed.
 Lemma wp_NewRoom (dv s_loc : loc) (γs : store_names) (γh : history_names)
     (c : ClientId) (f : func.t) (name : go_string) :
   deployment_protocols γh ->
-  {{{ is_pkg_init wsrelay ∗ is_Doc dv s_loc γs γh ∗
+  {{{ is_pkg_init wsrelay ∗ is_Doc dv s_loc γs γh may_insert_anything ∗
       is_history (A := A) (P := P) γh ∗ is_store_client γs c ∗
       codec_spec decode f ∗ own_read_cap γs }}}
     @! wsrelay.NewRoom #dv #f #name
@@ -532,8 +532,8 @@ Proof.
   iAssert (yjs_prot decode γh data) as "#Hyprot".
   { rewrite -Hprot. iFrame "Hprotd". }
   (* apply the batch to the room's document (store lock nested inside) *)
-  wp_apply (wp_Doc__ApplyEncodedUpdate _ dv s_loc γs γh c f s dq data
-             with "[$Hdoc $Hishist $Hpin $Hcodec $Hs $Hyprot]").
+  wp_apply (wp_Doc__ApplyEncodedUpdate _ dv s_loc γs γh may_insert_anything c f s dq data ""%go
+             ltac:(done) with "[$Hdoc $Hishist $Hpin $Hcodec $Hs $Hyprot]").
   iIntros (h inputs applied m') "(Hs & %Hdec & #Hlb & #Haccepts & #Happlied)".
   wp_auto.
   (* the position halves agree: n is exactly member j's entry count *)
@@ -681,7 +681,7 @@ Proof.
       exfalso. apply lookup_lt_Some in Hj'. word. }
     iNamed "Hroot".
     wp_auto.
-    wp_apply (wp_Text__Snapshot t γs γh c name [] ∅ _ with "[$Htext $Hpin $Hlb $Hrcap]").
+    wp_apply (wp_Text__Snapshot t γs γh _ c name [] ∅ _ with "[$Htext $Hpin $Hlb $Hrcap]").
     iIntros (chars_sl model) "(_ & Hrcap & Hchars & %Hsnap & Hstate & %Hexcl)".
     wp_auto.
     wp_apply (wp_EncodeReport name chars_sl (DfracOwn 1) model with "[$Hchars]").
@@ -803,7 +803,7 @@ Proof.
   wp_apply wp_Listen.
   iIntros (l) "#Hl".
   wp_auto.
-  wp_apply (wp_NewDoc γh client with "[$Hcl]").
+  wp_apply (wp_NewDoc γh client may_insert_anything with "[$Hcl]").
   (* the read capabilities come back with the document (issue #125); one
      goes to the room, for the snapshots its reports are taken from, the
      rest are kept unused here *)

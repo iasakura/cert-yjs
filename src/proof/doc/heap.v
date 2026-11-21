@@ -1,8 +1,12 @@
 (** The [Doc], Iris layer.
 
     Definitions
-    - [is_Doc dv s_loc γs γh]: the handle is a [Doc] over the store at
-      [s_loc]. Persistent.
+    - [is_Doc dv s_loc γs γh may_insert]: the handle is a [Doc] over the
+      store at [s_loc], and [may_insert] is the document's insert rule:
+      [may_insert origin unit] says that a transaction opened with the
+      origin [origin] may insert the code unit [unit] (issue #131). The
+      rule is chosen by whoever creates the document ([wp_NewDoc]) and
+      never changes. Persistent.
 
     The pure doc-level model is [doc/model.v]; the sync entry point is
     [doc/ApplySyncUpdate.v]. *)
@@ -67,14 +71,20 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
     YTypeRef carries the store ref), [is_Text] does NOT go through [is_Doc]; this
     predicate is the Doc-level handle the [wp_NewDoc] / [wp_Doc__GetOrCreateText] specs
     are stated over (GetOrCreateText: consume [is_Doc dv s_loc γ], look up or create the
-    YType under the write lock, return [is_Text t γs γh name []]). *)
-Definition is_Doc (dv ref : loc) (γs : store_names) (γh : history_names) : iProp Σ :=
+    YType under the write lock, return [is_Text t γs γh name []]).
+    [may_insert] is the document's insert rule; the store keeps it in
+    [sn_may_insert], and the last conjunct says that the parameter is that
+    rule. *)
+Definition is_Doc (dv ref : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop) : iProp Σ :=
   ∃ (dvv : yjs.Doc.t),
     "Hdoc" ∷ dv ↦□ dvv ∗
     "%Hstore" ∷ ⌜dvv.(yjs.Doc.store') = ref⌝ ∗
-    "His_store" ∷ is_store_ref ref γs γh.
+    "His_store" ∷ is_store_ref ref γs γh ∗
+    "%Hmay_insert" ∷ ⌜γs.(sn_may_insert) = may_insert⌝.
 
-#[global] Instance is_Doc_persistent dv ref γs γh : Persistent (is_Doc dv ref γs γh).
+#[global] Instance is_Doc_persistent dv ref γs γh may_insert :
+  Persistent (is_Doc dv ref γs γh may_insert).
 Proof. apply _. Qed.
 
 End doc.

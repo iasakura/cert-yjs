@@ -344,14 +344,16 @@ func (tr *Transaction) notify() {
 // transaction that integrated nothing calls nobody. Each registration
 // encodes with its own encoder, where Yjs encodes once per event name.
 func (tr *Transaction) notifyUpdate() {
-	observers := tr.store.updateObservers
-	if len(observers) == 0 {
+	if len(tr.store.updateObservers) == 0 {
 		return
 	}
 	structs := tr.insertedStructs()
 	if len(structs) == 0 {
 		return
 	}
+	// The registrations are read here, at the emit, as Yjs's emit reads its
+	// listeners (the update is written first, then doc.emit walks them).
+	observers := tr.store.updateObservers
 	for i := 0; i < len(observers); i++ {
 		observer := observers[i]
 		observer.callback(observer.encode(structs), tr.origin)

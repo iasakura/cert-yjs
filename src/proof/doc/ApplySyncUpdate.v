@@ -95,16 +95,18 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
     buffered portion is covered only by [is_accepted] (delivered-or-buffered):
     it reaches no root's content until its dependencies arrive. *)
 Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (c : ClientId) (sl sldel : slice.t) (dq dqd : dfrac)
     (inputs : list (TId * IntegrateInput (A := A)))
-    (deleted : gset YjsId) :
+    (deleted : gset YjsId) (origin : go_string) :
   update_wf inputs ->
-  {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
+  (∀ unit : w16, may_insert origin unit) ->
+  {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh may_insert ∗ is_history (A := A) (P := P) γh ∗
       is_store_client γs c ∗
       own_update_structs sl dq inputs ∗
       own_delete_ids sldel dqd deleted ∗
       is_pending_certified γh (expand_inputs inputs) }}}
-    dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl #sldel
+    dv @! (go.PointerType yjs.Doc) @! "ApplySyncUpdate" #sl #sldel #origin
   {{{ (h : list Ev) (applied : list (TId * IntegrateInput (A := A))) (m' : DocModel), RET #();
       own_update_structs sl dq inputs ∗
       own_delete_ids sldel dqd deleted ∗
@@ -112,13 +114,13 @@ Lemma wp_Doc__ApplySyncUpdate (dv s_loc : loc) (γs : store_names) (γh : histor
       ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
       is_applied_certs γs applied m' }}}.
 Proof.
-  move=> Hwf.
+  move=> Hwf Hanything.
   wp_start as "(#His_doc & #Hishist & #Hpin & Hupd & Hdel & #Hcerts)".
   (* open the pure model: the wire records live only inside this proof *)
   iDestruct "Hdel" as (spans) "[Hspans %Hdeleted]".
   iNamed "His_doc". subst s_loc. wp_auto.
   (* the batch is one transaction: the structs, then the delete spans *)
-  wp_apply (wp_transact dvv.(yjs.Doc.store') γs γh _
+  wp_apply (wp_transact dvv.(yjs.Doc.store') γs γh origin _
               (λ c0 h' m' pend' tombs',
                  ∃ (h : list Ev) (applied : list (TId * IntegrateInput (A := A))) (m'' : DocModel),
                    ⌜c0 = c⌝ ∗
@@ -158,6 +160,10 @@ Proof.
     iApply ("HΨ" $! (h ++ (deliver_ev <$> expand_inputs applied)) m' rest tombs'
               (∅ ∪ inputs_char_ids applied) tombstoned' changed'').
     iFrame "Htx".
+    iSplitR.
+    { (* this origin may insert anything *)
+      iPureIntro. move=> root item _ _. apply Forall_forall => unit _.
+      rewrite Hmay_insert. exact (Hanything unit). }
     iExists h, applied, m'. iFrame "Hupd Hspans Hlb Haccepts Happlied". done. }
   iIntros "HQ". iDestruct "HQ" as (c0 h' m' pend' tombs') "HQ".
   iDestruct "HQ" as (h applied m'') "(-> & Hupd & Hspans & #Hlb & #Haccepts & #Happlied)".

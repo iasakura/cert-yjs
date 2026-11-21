@@ -88,6 +88,18 @@ Definition tombstone_pass (deleted tombstoned deleted' tombstoned' : gset YjsId)
   (tombstoned' ∖ tombstoned) ## deleted.
 
 
+(** [inserted_units_allowed allowed m inserted]: every code unit of every
+    item of a root type of the document [m] whose id is in [inserted]
+    satisfies [allowed] (issue #131). What the closure of a transaction
+    owes when it returns, for the ids the transaction recorded as inserted
+    ([closure_runs_transaction]); a caller instantiates [allowed] with the
+    document's insert rule at the transaction's origin. *)
+Definition inserted_units_allowed (allowed : w16 -> Prop) (m : DocModel)
+    (inserted : gset YjsId) : Prop :=
+  ∀ (name : P) (item : YjsItem A),
+    item ∈ doc_model_get m (RootId name) -> item_id item ∈ inserted ->
+    Forall allowed (content item).
+
 (* ===== lemmas ============================================================= *)
 
 (** Chars outside a set are filtered the same with that set added: what

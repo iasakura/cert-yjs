@@ -54,12 +54,12 @@ Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
-Lemma wp_NewDoc (γh : history_names) (client : w64) :
+Lemma wp_NewDoc (γh : history_names) (client : w64) (may_insert : go_string -> w16 -> Prop) :
   {{{ is_pkg_init yjs ∗
       own_client_history γh (uint.nat client) ([] : list Ev) }}}
     @! yjs.NewDoc #client
   {{{ (dv ref : loc) (γs : store_names), RET #dv;
-      is_Doc dv ref γs γh ∗ is_store_client γs (uint.nat client) ∗
+      is_Doc dv ref γs γh may_insert ∗ is_store_client γs (uint.nat client) ∗
       [∗] replicate (Z.to_nat rwmutex.actualMaxReaders) (own_read_cap γs) }}}.
 Proof.
   wp_start as "Hhist".
@@ -94,8 +94,9 @@ Proof.
   iMod (init_RWMutex (storeN .@ "rw") with "mu") as (γrw) "(#Hrw0 & Hst & Hltoks)".
   (* the ghost layer, at the real lock names *)
   iMod (store_tie_init (store_of_ref ref) γh client items_mref types_mref observers_mref _ γrw
+          may_insert
           with "client clock items [Hitemsmap] types [Htypesmap] deletedSet
-                pending pendingDeletes observers [HobserversMap] Hhist") as (γs) "Hst0".
+                pending pendingDeletes observers [HobserversMap] updateObservers Hhist") as (γs) "Hst0".
   { iFrame "Hitemsmap". }
   { iFrame "Htypesmap". }
   { iFrame "HobserversMap". }
@@ -115,6 +116,7 @@ Proof.
     iApply own_toks_replicate. iFrame "Hrtoks". }
   iExists _. iFrame "Hd".
   iSplitR; first done.
+  iSplitL; last done.
   rewrite /is_store_ref Hrw. iFrame "Hrw0 Hmax Htieinv".
 Qed.
 

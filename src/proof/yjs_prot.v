@@ -20,15 +20,12 @@
       batch ([own_update_structs_same_encoded_struct] turns the decoder's slice
       into it), so it can apply any message it is handed with no further
       hypotheses. Persistent.
-    - [is_update_certified γh structs]: the batch [structs] is ready to be
-      sent: its per-char expansion is well formed and certified against
-      [γh]. What the protocol asks of a batch before any encoding.
-      Persistent.
     - [codec_spec decode f]: the Go decoder value [f] meets [decode]. The
       deployment's [yjs.WireCodec] is TRUSTED to meet it (the same boundary
       codec.go already is, now stated instead of implicit); a future
       goose-translated codec discharges it.
-    - [encoder_spec encode g]: the Go encoder value [g] meets the abstract
+    - [encoder_spec encode g] (from [store/heap], where the update
+      observers need it): the Go encoder value [g] meets the abstract
       [encode], the mirror image of [codec_spec] (issue #131). The
       deployment's [yjs.WireEncoder] is trusted to meet it.
     - [codec_pair_spec decode encode decoder encoder]: the three together,
@@ -54,8 +51,10 @@
     Laws
     - [decodes_to_decoded]: what [decode] reports is what the bytes decode
       to.
-    - [yjs_prot_encode]: a sender that holds the certificates of a batch's
-      per-char expansion owns the protocol for the batch's encoding.
+    - [yjs_prot_encode]: the encoding of a batch that is certified
+      ([is_update_certified], [store/heap]: what an update observer is told
+      of the update it is handed) and holds no surrogate satisfies the
+      protocol.
 
     No ws import here: the predicate is decode plus history certificates, so
     it sits between [store] and [doc]; the ws layer instantiates
@@ -113,14 +112,6 @@ Definition yjs_prot (γh : history_names) (d : list u8) : iProp Σ :=
     ⌜decodes_to d inputs⌝ ∗ ⌜update_wf inputs⌝ ∗
     is_pending_certified γh (expand_inputs inputs).
 
-(** [is_update_certified γh structs]: the batch is ready to be sent: its
-    per-char expansion is well formed ([update_wf]) and every operation of
-    it is a point of the global history. The two things the protocol asks
-    of a batch, before any encoding; what a transaction can say of the
-    update it hands back ([wp_Doc__TransactEncoded]). Persistent. *)
-Definition is_update_certified (γh : history_names) (structs : list Input) : iProp Σ :=
-  ⌜update_wf (expand_inputs structs)⌝ ∗ is_pending_certified γh (expand_inputs structs).
-
 (** [units_surrogate_free units]: none of the code units lies in the UTF-16
     surrogate range D800-DFFF. *)
 Definition units_surrogate_free (units : list w16) : Prop :=
@@ -151,32 +142,6 @@ Proof. apply _. Qed.
 Lemma decodes_to_decoded (d : list u8) (decoded : list Input) :
   decode d = Some decoded -> decodes_to d decoded.
 Proof. move=> Hdecode. exists decoded. split; [exact Hdecode | exact (same_encoded_struct_refl decoded)]. Qed.
-
-(** What a sender needs to put a batch on the wire: the batch is certified
-    ([is_update_certified]) and holds no surrogate code unit. Then its
-    encoding satisfies the protocol. *)
-Lemma yjs_prot_encode (encode : list Input -> list u8) (γh : history_names)
-    (structs : list Input) :
-  codec_roundtrip encode ->
-  structs_surrogate_free structs ->
-  is_update_certified γh structs -∗
-  yjs_prot γh (encode structs).
-Proof.
-  move=> Hroundtrip Hfree. iIntros "[%Hwf #Hcerts]".
-  destruct (Hroundtrip structs Hfree Hwf) as (inputs & Hdecodes & Hinputs).
-  have Hone : ∀ y, y ∈ inputs -> length (in_content y.2) = 1%nat.
-  { move=> y Hy. exact (expand_inputs_unit_content structs y (Hinputs y Hy)). }
-  iExists inputs. iSplit; first done.
-  iSplit.
-  { iPureIntro. destruct Hwf as [Hfits Hrooted]. split.
-    - move=> y Hy. exact (Hfits y (Hinputs y Hy)).
-    - move=> y Hy. exact (Hrooted y (Hinputs y Hy)). }
-  rewrite (expand_inputs_all_singleton inputs Hone) /is_pending_certified.
-  iApply big_sepL_forall. iIntros (i y Hy).
-  have Hin := Hinputs y (list_elem_of_lookup_2 _ _ _ Hy).
-  apply list_elem_of_lookup in Hin as [j Hj].
-  iApply (big_sepL_lookup _ _ j y Hj with "Hcerts").
-Qed.
 
 End yjs_prot.
 
@@ -227,17 +192,6 @@ Definition codec_spec (f : func.t) : iProp Σ :=
                own_delete_ids sldel (DfracOwn 1) deleted
           else ⌜decode data = None⌝ }}}).
 
-(** The Go encoder value [g] meets the abstract [encode]: on any struct
-    slice it returns a fresh byte slice holding the encoding of the batch the
-    slice denotes, and leaves the structs as they were. *)
-Definition encoder_spec (encode : list Input -> list u8) (encoder : func.t) : iProp Σ :=
-  □ (∀ (structs_slice : slice.t) (dq : dfrac) (structs : list Input),
-      {{{ own_update_structs structs_slice dq structs }}}
-        #encoder #structs_slice
-      {{{ (bytes_slice : slice.t), RET #bytes_slice;
-          own_update_structs structs_slice dq structs ∗
-          bytes_slice ↦* encode structs ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) }}}).
-
 (** [codec_pair_spec encode decoder encoder]: the deployment's two codec
     values meet the abstract codec: the decoder value meets [decode]
     ([codec_spec]), the encoder value meets [encode] ([encoder_spec]), and
@@ -254,11 +208,35 @@ Definition codec_pair_spec (encode : list Input -> list u8) (decoder encoder : f
 #[global] Instance codec_spec_persistent f : Persistent (codec_spec f).
 Proof. apply _. Qed.
 
-#[global] Instance encoder_spec_persistent encode encoder : Persistent (encoder_spec encode encoder).
-Proof. apply _. Qed.
-
 #[global] Instance codec_pair_spec_persistent encode decoder encoder :
   Persistent (codec_pair_spec encode decoder encoder).
 Proof. apply _. Qed.
+
+(** What a sender needs to put a batch on the wire: the batch is certified
+    ([is_update_certified]) and holds no surrogate code unit. Then its
+    encoding satisfies the protocol. *)
+Lemma yjs_prot_encode (encode : list Input -> list u8) (γh : history_names)
+    (structs : list Input) :
+  codec_roundtrip decode encode ->
+  structs_surrogate_free structs ->
+  is_update_certified γh structs -∗
+  yjs_prot decode γh (encode structs).
+Proof.
+  move=> Hroundtrip Hfree. iIntros "[%Hwf #Hcerts]".
+  destruct (Hroundtrip structs Hfree Hwf) as (inputs & Hdecodes & Hinputs).
+  have Hone : ∀ y, y ∈ inputs -> length (in_content y.2) = 1%nat.
+  { move=> y Hy. exact (expand_inputs_unit_content structs y (Hinputs y Hy)). }
+  iExists inputs. iSplit; first done.
+  iSplit.
+  { iPureIntro. destruct Hwf as [Hfits Hrooted]. split.
+    - move=> y Hy. exact (Hfits y (Hinputs y Hy)).
+    - move=> y Hy. exact (Hrooted y (Hinputs y Hy)). }
+  rewrite (expand_inputs_all_singleton inputs Hone) /is_pending_certified.
+  iApply big_sepL_forall. iIntros (i y Hy).
+  have Hin := Hinputs y (list_elem_of_lookup_2 _ _ _ Hy).
+  apply list_elem_of_lookup in Hin as [j Hj].
+  iApply (big_sepL_lookup _ _ j y Hj with "Hcerts").
+Qed.
+
 
 End codec_spec.

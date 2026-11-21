@@ -68,16 +68,17 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     untouched; the op history grows by the run's certificates. *)
 Lemma wp_Text__InsertIn (t tr s_loc : loc) (idx : w64) (cs : slice.t) (dq : dfrac) (units : A)
     (γs : store_names)
-    (γh : history_names) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
+    (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh may_insert name L deleted_ids ∗
       own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
       cs ↦*{dq} units }}}
     t @! (go.PointerType yjs.Text) @! "InsertIn" #tr #idx #cs
   {{{ (L' ins : list (YjsItem A)) (h' : list Ev) (m' : DocModel) (k0 : nat)
       (originLeft originRight : YjsPtr A), RET #();
-      is_Text t γs γh name L' deleted_ids ∗
+      is_Text t γs γh may_insert name L' deleted_ids ∗
       own_transaction tr s_loc γs γh c h' m' pend deleted (inserted ∪ char_ids ins) tombstoned
         (changed ∪ (if decide (ins = []) then ∅ else {[name]})) ∗
       cs ↦*{dq} units ∗
@@ -166,7 +167,8 @@ Proof.
     iSplitL "Ht".
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
-        [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
+        [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)
+        | exact Hmay_insert]. }
     iSplitL "Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree".
     { iAssert (own_store_data s_loc γs γh (uint.nat client) h m pend deleted)
         with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree]" as "Hstore".
@@ -215,7 +217,8 @@ Proof.
     iSplitL "Ht".
     { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
       iFrame "Ht His_store His_hist Hbind Hfulllb Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
-        [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)]. }
+        [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvarr0)
+        | exact Hmay_insert]. }
     iSplitL "Hchanges Hobservers Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree".
     { iAssert (own_store_data s_loc γs γh (uint.nat client) h m pend deleted)
         with "[Hruns Hseq HtypesAuth Hhist Hacc Hdelete_set Hstate_agree]" as "Hstore".
@@ -1166,7 +1169,8 @@ Proof.
   iSplitL "Hfrag Ht".
   { iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
     iFrame "Ht His_store His_hist Hbind Hfrag Hdeleted_lb Hdeleted_items". iPureIntro. split_and!;
-      [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvj)]. }
+      [reflexivity | reflexivity | exact Hdeleted_known | exact (yai_sorted _ Hinvj)
+      | exact Hmay_insert]. }
   (* the transaction after the insert: the record's meaning at the grown
      model, this text now among the changed types (unless the run is empty) *)
   iSplitL "Hchanges Hstore Hobservers".

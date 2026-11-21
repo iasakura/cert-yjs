@@ -100,14 +100,15 @@ Qed.
     tombstoned, this text's name. The model, the history and the pending
     buffer are untouched. *)
 Lemma wp_Text__DeleteIn (t tr s_loc : loc) (index len : w64) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh may_insert name L deleted_ids ∗
       own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
     t @! (go.PointerType yjs.Text) @! "DeleteIn" #tr #index #len
   {{{ (dels : gset YjsId), RET #();
-      is_Text t γs γh name L (deleted_ids ∪ dels) ∗
+      is_Text t γs γh may_insert name L (deleted_ids ∪ dels) ∗
       own_transaction tr s_loc γs γh c h m pend (deleted ∪ dels) inserted (tombstoned ∪ dels)
         (changed ∪ (if decide (dels = ∅) then ∅ else {[name]})) ∗
       ⌜dels ⊆ char_ids (doc_model_get m (RootId name))⌝ }}}.
@@ -370,7 +371,7 @@ Proof.
               [etrans; [exact Hdeleted_known
                        | exact (char_ids_mono deleted_items (tm_arr ts) Hdelitems_arr)]
               | exact Hdelsarr]
-          | exact Hsorted]. }
+          | exact Hsorted | exact Hmay_insert]. }
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
       iSplitL "Hchanges Hstore Hobservers".
@@ -478,7 +479,7 @@ Proof.
               [etrans; [exact Hdeleted_known
                        | exact (char_ids_mono deleted_items (tm_arr ts) Hdelitems_arr)]
               | exact Hdelsarr]
-          | exact Hsorted]. }
+          | exact Hsorted | exact Hmay_insert]. }
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
       iSplitL "Hchanges Hstore Hobservers".

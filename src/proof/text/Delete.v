@@ -62,11 +62,12 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     never removes or reorders model items; the handle learns the tombstoned
     ids (its known-deleted set grows). *)
 Lemma wp_Text__Delete (t : loc) (index len : w64) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids }}}
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh may_insert name L deleted_ids }}}
     t @! (go.PointerType yjs.Text) @! "Delete" #index #len
   {{{ (deleted_ids' : gset YjsId), RET #();
-      is_Text t γs γh name L deleted_ids' ∗ ⌜deleted_ids ⊆ deleted_ids'⌝ }}}.
+      is_Text t γs γh may_insert name L deleted_ids' ∗ ⌜deleted_ids ⊆ deleted_ids'⌝ }}}.
 Proof.
   wp_start as "#Htext".
   iPoseProof "Htext" as (tv text_store parent deleted_items) "Hhandle". iNamed "Hhandle".
@@ -74,9 +75,9 @@ Proof.
   wp_auto.
   (* the one write, as one transaction: the closure runs [DeleteIn] on the
      transaction it is handed and reports what the handle learns *)
-  wp_apply (wp_transact tv.(yjs.Text.store') γs γh _
+  wp_apply (wp_transact tv.(yjs.Text.store') γs γh ""%go _
               (λ c h' m' pend' deleted',
-                 ∃ (dels : gset YjsId), is_Text t γs γh name L (deleted_ids ∪ dels))%I
+                 ∃ (dels : gset YjsId), is_Text t γs γh may_insert name L (deleted_ids ∪ dels))%I
               with "[$His_store t index length]").
   { rewrite /closure_runs_transaction.
     iIntros (tr c h m pend deleted Ψ) "Htx HΨ".
@@ -86,7 +87,11 @@ Proof.
     wp_auto.
     iApply ("HΨ" $! h m pend (deleted ∪ dels) ∅ (∅ ∪ dels)
               (∅ ∪ (if decide (dels = ∅) then ∅ else {[name]}))).
-    iFrame "Htx". iExists dels. iFrame "Htext'". }
+    iFrame "Htx".
+    iSplitR.
+    { (* a delete inserts nothing *)
+      iPureIntro. move=> root item _ Hid. by apply elem_of_empty in Hid. }
+    iExists dels. iFrame "Htext'". }
   iIntros "HQ". iDestruct "HQ" as (c h' m' pend' deleted') "HQ".
   iDestruct "HQ" as (dels) "#Htext'".
   wp_auto.
