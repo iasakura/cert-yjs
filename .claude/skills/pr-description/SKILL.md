@@ -30,17 +30,50 @@ Then the three-way difference and unrequested-change reports that CLAUDE.md
 
 ## Writing rules
 
-- Written for a reader who has not opened the diff. A reader of the body
-  alone knows what changed, why, what it does to specs and invariants, where
-  it diverges from the references, and what it touched outside its scope.
-- Every project term gets its meaning at first use: which file, predicate or
-  line it is. Never "the Require order" or "the C2 relation" without context.
-- Never only the delta: first the current state, in enough words for a
-  reader who never saw it, then the change, then the reason.
-- Full sentences. No telegraphic noun phrases, no semicolon chains. A table
-  is an index of the prose, not a substitute for it.
-- No plan section number, memo, chat or milestone letter as the sole
-  explanation of anything. Say the thing.
+A person reads the description, to decide what to review and whether to
+approve. Write it as technical prose for that person.
+
+- **Conclusion first, at every level.** The body opens, before `## What`,
+  with two to four sentences that say what a user of the code can do now
+  that they could not do before, and what the PR leaves out. Each section
+  opens with its conclusion, and each paragraph with the sentence the rest
+  of it supports. Background, mechanism and history come after the claim
+  they explain, and only as much as the claim needs. Check: the first
+  sentences alone, read in order, are a correct summary.
+- **Short.** Cut what the reader does not need in order to review: how each
+  helper works line by line, lemma names internal to a proof, the list of
+  test cases, the history of how the design was reached. The diff has them.
+- **Say where to look.** When the diff is large, a "Where to look" table
+  right after the summary names the few places a review should read (the
+  exported function, its spec, the trusted hypotheses) and says the rest is
+  implementation or proof.
+- **One paragraph, one point**, in a handful of short sentences. One idea
+  per sentence, at most one parenthesis, no semicolon chains.
+- **Parallel items go in a list or a table**, one per line, starting with
+  the name: the functions added, the predicates changed (before and after),
+  the hypotheses of a theorem, the differences between the references. A
+  table cell holds a phrase or one sentence, not a paragraph.
+- **Explain in words, then name.** State the idea in plain words and give
+  the identifier after it, in backticks. A sentence made of identifiers is
+  not an explanation. Every project term gets its meaning at first use.
+- **No terms of the PR's own making.** A thing is called by the word the
+  references use for it (Yjs: struct, item, state vector, delete set) or
+  described in plain words. A name in the code is not such a word, even when
+  the code has it as a type, a variable or a predicate: the name may appear
+  in backticks, as the name of that thing and with what the thing is, but
+  its words are not turned into prose vocabulary.
+- **A reader who has not opened the diff can follow it.** For each change
+  the reader learns what was there, what is there now, and why. No plan
+  section number, memo, chat or milestone letter stands in for an
+  explanation.
 - Never a per-commit changelog. Keep one body per PR and rewrite it in
   place as the branch grows.
-- Length is not a cost; missing context is.
+
+## One PR, one reviewable change
+
+A PR holds one change a reviewer can judge by itself: an exported function
+with its specification and proof, a change to an existing specification
+with the proofs it touches, or a theorem. Do not cut one change by layer
+(the Go in one PR, the definitions in the next, the proofs in a third): a PR
+of unexported helpers with no caller and no specification gives the
+reviewer nothing to decide.
