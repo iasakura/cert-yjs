@@ -78,7 +78,7 @@
       meets the abstract [encode]); [is_update_callback may_insert γh encode
       callback] (the contract of a callback registered with
       [Doc.ObserveUpdate]); [is_update_observer] (one registration) and
-      [own_update_observers s γs γh q] (the store's [updateObservers]
+      [own_store_update_observers s γs γh q] (the store's [updateObservers]
       field and its slice, part of [own_observers]).
     - [store_of_ref], the embedded store's address under a [storeRef]
       (issue #219: the lock left the store struct);
@@ -101,7 +101,7 @@
       out of it.
     - the fractions (issue #219 M4): everything under [own_store] splits at
       equal indices ([own_store_state_split] / [own_store_core_split] /
-      [own_observers_split] / [own_update_observers_split], with
+      [own_observers_split] / [own_store_update_observers_split], with
       [own_map_dfrac_split] / [_agree] and the
       slice-bundle splits underneath); [own_store_core_agree] pins a
       reader's state and delete set to the invariant's, and
@@ -391,7 +391,7 @@ Record store_names := StoreNames {
      is created. The handles [is_Doc] and [is_Text] take the rule as a
      parameter and say that it is this field, so a specification names the
      rule through its handle; only the store's own predicates, which have
-     no handle to read it from, read the field ([own_update_observers],
+     no handle to read it from, read the field ([own_store_update_observers],
      [wp_transact], [wp_Transaction__notifyUpdate]). *)
   sn_may_insert : go_string -> w16 -> Prop;
 }.
@@ -1566,11 +1566,11 @@ Definition is_update_observer (may_insert : go_string -> w16 -> Prop) (γh : his
     "#Hobserver_encoder" ∷ encoder_spec encode observer.(yjs.updateObserver.encode') ∗
     "#Hobserver_callback" ∷ is_update_callback may_insert γh encode observer.(yjs.updateObserver.callback').
 
-(** [own_update_observers s_loc γs γh q]: the store's [updateObservers]
+(** [own_store_update_observers s_loc γs γh q]: the store's [updateObservers]
     field and the slice it holds, every registration with its contract
     ([is_update_observer]) for the document's insert rule
     ([sn_may_insert]). Part of [own_observers]. *)
-Definition own_update_observers (s_loc : loc) (γs : store_names) (γh : history_names)
+Definition own_store_update_observers (s_loc : loc) (γs : store_names) (γh : history_names)
     (q : Qp) : iProp Σ :=
   ∃ (observers_slice : slice.t) (observers : list yjs.updateObserver.t),
     "Hupdate_observers_field" ∷ (s_loc .[(yjs.store.t), "updateObservers"]) ↦{#q} observers_slice ∗
@@ -1582,7 +1582,7 @@ Definition own_update_observers (s_loc : loc) (γs : store_names) (γh : history
 (** [own_observers s γs γh m0 deleted0]: the store's [observers] field and
     the map it holds, every registered observer told everything up to its
     type's snapshot at [(m0, deleted0)], and the store's update observers
-    ([own_update_observers]). The observers' half of [own_store];
+    ([own_store_update_observers]). The observers' half of [own_store];
     beside the data in the lock body at the data's state, and in
     [own_transaction] at the state the transaction started from. *)
 Definition own_observers (s_loc : loc) (γs : store_names) (γh : history_names)
@@ -1590,7 +1590,7 @@ Definition own_observers (s_loc : loc) (γs : store_names) (γh : history_names)
   ∃ (observers_mref : loc),
     "Hobserversf" ∷ (s_loc .[(yjs.store.t), "observers"]) ↦{#q} observers_mref ∗
     "Hregistry" ∷ own_observer_registry observers_mref γs γh q m0 deleted0 ∗
-    "Hupdate_observers" ∷ own_update_observers s_loc γs γh q.
+    "Hupdate_observers" ∷ own_store_update_observers s_loc γs γh q.
 
 
 #[global] Instance own_wlock_timeless γs : Timeless (own_wlock γs).
@@ -2212,12 +2212,12 @@ Proof.
     rewrite own_type_observers_split. iFrame.
 Qed.
 
-Lemma own_update_observers_split (s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_store_update_observers_split (s_loc : loc) (γs : store_names) (γh : history_names)
     (q1 q2 : Qp) :
-  own_update_observers s_loc γs γh (q1 + q2) ⊣⊢
-  own_update_observers s_loc γs γh q1 ∗ own_update_observers s_loc γs γh q2.
+  own_store_update_observers s_loc γs γh (q1 + q2) ⊣⊢
+  own_store_update_observers s_loc γs γh q1 ∗ own_store_update_observers s_loc γs γh q2.
 Proof.
-  rewrite /own_update_observers.
+  rewrite /own_store_update_observers.
   iSplit.
   - iDestruct 1 as (observers_slice observers) "(Hf & Hsl & Hcap & #Hspecs)".
     iDestruct "Hf" as "[Hf1 Hf2]". iDestruct "Hsl" as "[Hsl1 Hsl2]".
@@ -2242,7 +2242,7 @@ Proof.
   - iDestruct 1 as (observers_mref) "(Hf & Hreg & Hupdate)".
     iDestruct "Hf" as "[Hf1 Hf2]".
     rewrite own_observer_registry_split. iDestruct "Hreg" as "[Hr1 Hr2]".
-    rewrite own_update_observers_split. iDestruct "Hupdate" as "[Hu1 Hu2]".
+    rewrite own_store_update_observers_split. iDestruct "Hupdate" as "[Hu1 Hu2]".
     iSplitL "Hf1 Hr1 Hu1"; iExists observers_mref; by iFrame.
   - iDestruct 1 as "[H1 H2]".
     iDestruct "H1" as (mref1) "(Hf1 & Hr1 & Hu1)".
@@ -2250,7 +2250,7 @@ Proof.
     iCombine "Hf1 Hf2" gives %<-.
     iCombine "Hf1 Hf2" as "Hf".
     iCombine "Hr1 Hr2" as "Hr". rewrite -own_observer_registry_split.
-    iCombine "Hu1 Hu2" as "Hu". rewrite -own_update_observers_split.
+    iCombine "Hu1 Hu2" as "Hu". rewrite -own_store_update_observers_split.
     iExists mref1. by iFrame.
 Qed.
 
@@ -2270,7 +2270,7 @@ Proof.
   iDestruct "H2" as (mref2) "(Hf2 & Hr2 & Hu2)".
   iCombine "Hf1 Hf2" gives %<-.
   iCombine "Hf1 Hf2" as "Hf".
-  iCombine "Hu1 Hu2" as "Hu". rewrite -own_update_observers_split.
+  iCombine "Hu1 Hu2" as "Hu". rewrite -own_store_update_observers_split.
   iExists mref1. iFrame "Hf Hu".
   rewrite /own_observer_registry.
   iDestruct "Hr1" as (registry1 registered1) "(Hm1 & Ha1 & Hg1 & #Hbind1 & Hobs1)".

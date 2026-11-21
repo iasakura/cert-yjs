@@ -10,6 +10,10 @@
       tombstones were the current ones without those tombstoned here, which
       were live, and an inserted char is above every older char of its
       client.
+    - [transaction_inserted_item m inserted name item]: an item of a root
+      type that the transaction inserted; [inserted_units_allowed allowed m
+      inserted]: every code unit of such an item satisfies [allowed] (issue
+      #131, what a transaction's closure owes).
     - [tombstone_pass deleted tombstoned deleted' tombstoned']: what one
       delete pass does to the tombstone bookkeeping ([applyDeleteSpans]'s
       postcondition, [transaction_start_tombstone]'s hypothesis).
@@ -88,17 +92,23 @@ Definition tombstone_pass (deleted tombstoned deleted' tombstoned' : gset YjsId)
   (tombstoned' ∖ tombstoned) ## deleted.
 
 
+(** [transaction_inserted_item m inserted name item]: [item] is an item of
+    the root type [name] of the document [m] that the transaction inserted:
+    its id is one of the ids the transaction recorded as inserted
+    ([inserted]). *)
+Definition transaction_inserted_item (m : DocModel) (inserted : gset YjsId)
+    (name : P) (item : YjsItem A) : Prop :=
+  item ∈ doc_model_get m (RootId name) ∧ item_id item ∈ inserted.
+
 (** [inserted_units_allowed allowed m inserted]: every code unit of every
-    item of a root type of the document [m] whose id is in [inserted]
-    satisfies [allowed] (issue #131). What the closure of a transaction
-    owes when it returns, for the ids the transaction recorded as inserted
-    ([closure_runs_transaction]); a caller instantiates [allowed] with the
-    document's insert rule at the transaction's origin. *)
+    item the transaction inserted ([transaction_inserted_item]) satisfies
+    [allowed] (issue #131). What the closure of a transaction owes when it
+    returns ([closure_runs_transaction]); a caller instantiates [allowed]
+    with the document's insert rule at the transaction's origin. *)
 Definition inserted_units_allowed (allowed : w16 -> Prop) (m : DocModel)
     (inserted : gset YjsId) : Prop :=
   ∀ (name : P) (item : YjsItem A),
-    item ∈ doc_model_get m (RootId name) -> item_id item ∈ inserted ->
-    Forall allowed (content item).
+    transaction_inserted_item m inserted name item -> Forall allowed (content item).
 
 (* ===== lemmas ============================================================= *)
 

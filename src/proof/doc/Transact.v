@@ -63,7 +63,7 @@ Lemma wp_Doc__Transact (dv ref : loc) (γs : store_names) (γh : history_names)
     (may_insert : go_string -> w16 -> Prop) (f : func.t)
     (Q : ClientId -> list Ev -> DocModel -> list (TId * IntegrateInput (A := A)) -> gset YjsId -> iProp Σ) :
   {{{ is_pkg_init yjs ∗ is_Doc dv ref γs γh may_insert ∗
-      closure_runs_transaction (store_of_ref ref) γs γh (may_insert ""%go) f Q }}}
+      closure_runs_transaction (store_of_ref ref) γs γh ""%go (may_insert ""%go) f Q }}}
     dv @! (go.PointerType yjs.Doc) @! "Transact" #f
   {{{ RET #(); ∃ (c : ClientId) (h' : list Ev) (m' : DocModel)
         (pend' : list (TId * IntegrateInput (A := A))) (deleted' : gset YjsId),

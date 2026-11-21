@@ -293,7 +293,7 @@ func (tr *Transaction) insertedStructs() []updateItem {
 	return structs
 }
 
-// transact runs f as one transaction: lock, f, notify, notifyUpdate, unlock (Yjs transact,
+// transact runs f as one transaction: lock, f, commit, unlock (Yjs transact,
 // src/utils/Transaction.js:391-422, without the reentrant branch; yrs
 // transact_mut takes the store's write guard and commits on drop,
 // src/transact.rs:131, src/transaction.rs:488). The store's write lock is the
@@ -307,12 +307,20 @@ func (tr *Transaction) insertedStructs() []updateItem {
 // touch the document at all (Text.Observe).
 func transact(ref *storeRef, origin Origin, f func(tr *Transaction)) {
 	ref.wlock()
-	tr := newTransaction(&ref.store)
-	tr.origin = origin
+	tr := newTransaction(&ref.store, origin)
 	f(tr)
+	tr.commit()
+	ref.wunlock()
+}
+
+// commit is the end of the transaction: the observers of the changed types
+// are told (notify), then the update observers (notifyUpdate). Both
+// references do the two in one function, in this order (Yjs v14.0.0-rc.18
+// cleanupTransactions, src/utils/Transaction.js:231-236 and :297-301; yrs
+// 0.27.2 commit, src/transaction.rs:978 and :1094).
+func (tr *Transaction) commit() {
 	tr.notify()
 	tr.notifyUpdate()
-	ref.wunlock()
 }
 
 // notify is the end of the transaction, the observer half of Yjs's
@@ -360,10 +368,11 @@ func (tr *Transaction) notifyUpdate() {
 	}
 }
 
-// newTransaction is an empty transaction record (Yjs's Transaction
-// constructor, src/utils/Transaction.js:51). Only transact opens one; the
+// newTransaction is an empty transaction record with its origin (Yjs's
+// Transaction constructor takes the origin, src/utils/Transaction.js:51).
+// Only transact opens one; the
 // tests call the transaction's internals on a fresh record where a
 // transaction would have handed theirs.
-func newTransaction(s *store) *Transaction {
-	return &Transaction{store: s, insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool), origin: NoOrigin}
+func newTransaction(s *store, origin Origin) *Transaction {
+	return &Transaction{store: s, insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool), origin: origin}
 }

@@ -71,7 +71,7 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
   Forall allowed units ->
   inserted_units_allowed allowed m' (∅ ∪ char_ids ins).
 Proof.
-  move=> [_ [Hlength Hitems]] Hmodel Hunique Hunits root item Hitem Hid.
+  move=> [_ [Hlength Hitems]] Hmodel Hunique Hunits root item [Hitem Hid].
   rewrite left_id_L in Hid.
   apply elem_of_char_ids in Hid as (inserted_item & Hinserted & Hsame).
   apply list_elem_of_lookup in Hinserted as [i Hi].

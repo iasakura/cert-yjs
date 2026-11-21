@@ -759,16 +759,16 @@ Qed.
     predicate, [tombstone_pass], which is also what carries the start
     relation across it ([transaction_start_tombstone]). *)
 Lemma wp_Transaction__applyDeleteSpans (tr s_loc : loc) (γs : store_names)
-    (γh : history_names) (c : ClientId) (h : list Ev) (m : DocModel)
+    (γh : history_names) (origin : go_string) (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P)
     (sp_sl : slice.t) (dq : dfrac) (spans : list delete_span) :
   {{{ is_pkg_init yjs ∗
-      own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+      own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed ∗
       own_delete_spans sp_sl dq spans }}}
     tr @! (go.PointerType yjs.Transaction) @! "applyDeleteSpans" #sp_sl
   {{{ (deleted' tombstoned' : gset YjsId) (changed' : gset P), RET #();
-      own_transaction tr s_loc γs γh c h m pend deleted' inserted tombstoned' changed' ∗
+      own_transaction tr s_loc γs γh origin c h m pend deleted' inserted tombstoned' changed' ∗
       own_delete_spans sp_sl dq spans ∗
       ⌜tombstone_pass deleted tombstoned deleted' tombstoned'⌝ ∗ ⌜changed ⊆ changed'⌝ }}}.
 Proof using Type*.
@@ -792,7 +792,7 @@ Proof using Type*.
   iExists state', ds', m0, deleted0.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-  iFrame "Hreplica_history' Hrecord".
+  iFrame "Hreplica_history' Horigin Hrecord".
   iPureIntro.
   apply (transaction_start_tombstone m deleted deleted' inserted tombstoned tombstoned' m0 deleted0);
     [exact Hstart | exact (conj Htsub (conj Hdeq Hdfresh))].
