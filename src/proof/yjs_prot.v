@@ -32,8 +32,9 @@
       what a node that both receives and sends takes about the codec: the
       decoder value meets [decode], the encoder value meets [encode], and
       the two abstract halves agree ([codec_roundtrip]).
-    - [units_surrogate_free units] / [structs_surrogate_free structs]: no
-      code unit (of the list, of the batch) is a UTF-16 surrogate. The
+    - [unit_is_surrogate unit]: the code unit is a UTF-16 surrogate.
+      [units_surrogate_free units] / [structs_surrogate_free structs]: no
+      code unit (of the list, of the batch) is one. The
       batches the two halves are required to agree on: the wire carries
       UTF-8, which has no encoding of a lone surrogate, and the real encoder
       replaces one by U+FFFD (issue #233).
@@ -112,10 +113,14 @@ Definition yjs_prot (γh : history_names) (d : list u8) : iProp Σ :=
     ⌜decodes_to d inputs⌝ ∗ ⌜update_wf inputs⌝ ∗
     is_pending_certified γh (expand_inputs inputs).
 
-(** [units_surrogate_free units]: none of the code units lies in the UTF-16
-    surrogate range D800-DFFF. *)
+(** [unit_is_surrogate unit]: the code unit lies in the UTF-16 surrogate
+    range D800-DFFF. *)
+Definition unit_is_surrogate (unit : w16) : Prop :=
+  (0xD800 ≤ uint.Z unit ≤ 0xDFFF)%Z.
+
+(** [units_surrogate_free units]: none of the code units is a surrogate. *)
 Definition units_surrogate_free (units : list w16) : Prop :=
-  ∀ unit, unit ∈ units -> ¬ (0xD800 ≤ uint.Z unit ≤ 0xDFFF)%Z.
+  ∀ unit, unit ∈ units -> ¬ unit_is_surrogate unit.
 
 (** [structs_surrogate_free structs]: no code unit of the batch is a
     surrogate. *)
