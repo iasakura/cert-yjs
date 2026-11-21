@@ -99,16 +99,17 @@ Qed.
     transaction's record grows by exactly them and, when any char was
     tombstoned, this text's name. The model, the history and the pending
     buffer are untouched. *)
-Lemma wp_Text__DeleteIn (t tr s_loc : loc) (index len : w64) (γs : store_names) (γh : history_names)
+Lemma wp_Text__DeleteIn (t tr s_loc : loc) (index len : w64) (γs : store_names) (γh : history_names) (transaction_origin : go_string)
+    (may_insert : go_string -> w16 -> Prop)
     (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗
-      own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh may_insert name L deleted_ids ∗
+      own_transaction tr s_loc γs γh transaction_origin c h m pend deleted inserted tombstoned changed }}}
     t @! (go.PointerType yjs.Text) @! "DeleteIn" #tr #index #len
   {{{ (dels : gset YjsId), RET #();
-      is_Text t γs γh name L (deleted_ids ∪ dels) ∗
-      own_transaction tr s_loc γs γh c h m pend (deleted ∪ dels) inserted (tombstoned ∪ dels)
+      is_Text t γs γh may_insert name L (deleted_ids ∪ dels) ∗
+      own_transaction tr s_loc γs γh transaction_origin c h m pend (deleted ∪ dels) inserted (tombstoned ∪ dels)
         (changed ∪ (if decide (dels = ∅) then ∅ else {[name]})) ∗
       ⌜dels ⊆ char_ids (doc_model_get m (RootId name))⌝ }}}.
 Proof.
@@ -370,15 +371,15 @@ Proof.
               [etrans; [exact Hdeleted_known
                        | exact (char_ids_mono deleted_items (tm_arr ts) Hdelitems_arr)]
               | exact Hdelsarr]
-          | exact Hsorted]. }
+          | exact Hsorted | exact Hmay_insert]. }
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
-      iSplitL "Hchanges Hstore Hobservers".
+      iSplitL "Hchanges Hstore Hobservers Horigin".
       { iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
         iExists state', ds', m0, deleted0.
         iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
         iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-        iFrame "Hreplica_history'".
+        iFrame "Hreplica_history' Horigin".
         iSplitL; last (iPureIntro; exact Hstart').
         iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
         iFrame "Hchanges".
@@ -478,15 +479,15 @@ Proof.
               [etrans; [exact Hdeleted_known
                        | exact (char_ids_mono deleted_items (tm_arr ts) Hdelitems_arr)]
               | exact Hdelsarr]
-          | exact Hsorted]. }
+          | exact Hsorted | exact Hmay_insert]. }
       (* the transaction after the delete: the record's meaning at the same
          model, this text among the changed types once a char is tombstoned *)
-      iSplitL "Hchanges Hstore Hobservers".
+      iSplitL "Hchanges Hstore Hobservers Horigin".
       { iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
         iExists state', ds', m0, deleted0.
         iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
         iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-        iFrame "Hreplica_history'".
+        iFrame "Hreplica_history' Horigin".
         iSplitL; last (iPureIntro; exact Hstart').
         iExists (changed_locs ∪ (if decide (dels = ∅) then ∅ else {[tv.(yjs.Text.inner')]})).
         iFrame "Hchanges".
@@ -541,7 +542,7 @@ Proof.
     simpl negb. wp_auto.
     iDestruct ("Haccback" with "Haccval") as "Hruns".
     wp_for_post.
-    iFrame "Hacc Hobservers Hstate_agree".
+    iFrame "Hacc Hobservers Hstate_agree Horigin".
     iFrame "Ht His_lb HΦ". iExists (S q), rem, locsj, pj, lsj, runsj, dels.
     iFrame "Hsp Hrem Hruns Hchanges Htrp Hseq Hhist Hdelete_set HtypesAuth".
     rewrite Hnextq -Haccright. iFrame "Hcur".
@@ -640,7 +641,7 @@ Proof.
         rewrite /flip_run /leftRun /split_run_left /=.
         etrans; [exact (char_ids_take (uint.nat rem) (run_items rq)) |].
         rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
-      iFrame "Hacc Hobservers Hstate_agree".
+      iFrame "Hacc Hobservers Hstate_agree Horigin".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (uint.nat rem))),
         (<[tv.(yjs.Text.inner') := ls2]> locsj), (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), ls2, runs3,
@@ -714,7 +715,7 @@ Proof.
       have Hdelsarr' : dels ∪ char_ids (run_items rq) ⊆ char_ids (tm_arr ts).
       { apply union_least; [exact Hdelsarr |].
         rewrite -Harrj /tm_arr /=. exact (char_ids_flatten runsj q rq Hrq). }
-      iFrame "Hacc Hobservers Hstate_agree".
+      iFrame "Hacc Hobservers Hstate_agree Horigin".
       iFrame "Ht His_lb HΦ".
       iExists (S q), (w64_word_instance.(word.sub) rem (W64 (length (run_items rq)))),
         locsj, (<[tv.(yjs.Text.inner') := MkTypeModel runs3]> pj), lsj, runs3,

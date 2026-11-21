@@ -18,7 +18,7 @@ func TestApplyDeleteSpansBuffersUncovered(t *testing.T) {
 	// B hears the delete of "bc" BEFORE the inserts arrive: nothing to
 	// tombstone, so the span is buffered.
 	docB.store.wlock()
-	newTransaction(&docB.store.store).applyDeleteSpans([]deleteSpan{{client: 1, clock: 1, length: 2}})
+	newTransaction(&docB.store.store, NoOrigin).applyDeleteSpans([]deleteSpan{{client: 1, clock: 1, length: 2}})
 	buffered := len(docB.store.store.pendingDeletes)
 	docB.store.wunlock()
 	if buffered != 1 {
@@ -26,9 +26,9 @@ func TestApplyDeleteSpansBuffersUncovered(t *testing.T) {
 	}
 
 	// now the inserts arrive; the drain re-applies the buffered span.
-	docB.ApplySyncUpdate(structsOf(docA, "root"), nil)
+	docB.ApplySyncUpdate(structsOf(docA, "root"), nil, NoOrigin)
 	docB.store.wlock()
-	newTransaction(&docB.store.store).applyDeleteSpans(nil)
+	newTransaction(&docB.store.store, NoOrigin).applyDeleteSpans(nil)
 	left := len(docB.store.store.pendingDeletes)
 	docB.store.wunlock()
 
@@ -48,12 +48,12 @@ func TestApplyDeleteSpansConverges(t *testing.T) {
 
 	docB := NewDoc(2)
 	txtB := docB.GetOrCreateText("root")
-	docB.ApplySyncUpdate(structsOf(docA, "root"), nil)
+	docB.ApplySyncUpdate(structsOf(docA, "root"), nil, NoOrigin)
 
 	txtA.Delete(5, 6) // " world", clocks 5..10
 
 	docB.store.wlock()
-	newTransaction(&docB.store.store).applyDeleteSpans([]deleteSpan{{client: 1, clock: 5, length: 6}})
+	newTransaction(&docB.store.store, NoOrigin).applyDeleteSpans([]deleteSpan{{client: 1, clock: 5, length: 6}})
 	docB.store.wunlock()
 
 	if got, want := txtB.String(), txtA.String(); got != want {
@@ -71,8 +71,8 @@ func TestApplyDeleteSpansIdempotentAcrossCalls(t *testing.T) {
 
 	span := []deleteSpan{{client: 1, clock: 0, length: 2}}
 	doc.store.wlock()
-	newTransaction(&doc.store.store).applyDeleteSpans(span)
-	newTransaction(&doc.store.store).applyDeleteSpans(span)
+	newTransaction(&doc.store.store, NoOrigin).applyDeleteSpans(span)
+	newTransaction(&doc.store.store, NoOrigin).applyDeleteSpans(span)
 	doc.store.wunlock()
 
 	if got := txt.String(); got != "c" {

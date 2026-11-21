@@ -75,13 +75,14 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     the counted snapshot contains one item per delivered insert of the prefix
     targeting this root (a caller with no such knowledge passes [h0 = []]). *)
 Lemma wp_Text__Len (t : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (c : ClientId) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
     (h0 : list Ev) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh may_insert name L deleted_ids ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗ own_read_cap γs }}}
     t @! (go.PointerType yjs.Text) @! "Len" #()
   {{{ (n : w64) (model : list (YjsItem A * bool)), RET #n;
-      is_Text t γs γh name L deleted_ids ∗ own_read_cap γs ∗
+      is_Text t γs γh may_insert name L deleted_ids ∗ own_read_cap γs ∗
       ⌜n = W64 (length (visible_items model))⌝ ∗
       ⌜text_snapshot L model⌝ ∗ ⌜history_reflected h0 name model⌝ ∗
       ⌜visible_excludes deleted_ids model⌝ }}}.
@@ -147,7 +148,8 @@ Proof.
     - exact Hexcl. }
   iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
   iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
-  iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted].
+  iPureIntro. split_and!;
+    [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted | exact Hmay_insert].
 Qed.
 
 End text.

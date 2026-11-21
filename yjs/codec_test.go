@@ -7,7 +7,7 @@ import "testing"
 // when the update does not decode.
 func applyWireUpdate(t *testing.T, doc *Doc, update []byte) {
 	t.Helper()
-	if !doc.ApplyEncodedUpdate(WireCodec(), update) {
+	if !doc.ApplyEncodedUpdate(WireCodec(), update, NoOrigin) {
 		t.Fatal("ApplyEncodedUpdate reported a malformed update")
 	}
 }

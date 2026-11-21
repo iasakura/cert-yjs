@@ -59,12 +59,14 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
 Context (decode : list u8 -> option (list Input)).
 
 Lemma wp_Doc__ApplyEncodedUpdate (dv s_loc : loc) (γs : store_names)
-    (γh : history_names) (c : ClientId) (f : func.t) (s : slice.t) (dq : dfrac)
-    (data : list u8) :
-  {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh ∗
+    (γh : history_names) (may_insert : go_string -> w16 -> Prop)
+    (c : ClientId) (f : func.t) (s : slice.t) (dq : dfrac)
+    (data : list u8) (origin : go_string) :
+  (∀ unit : w16, may_insert origin unit) ->
+  {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh may_insert ∗ is_history (A := A) (P := P) γh ∗
       is_store_client γs c ∗ codec_spec decode f ∗
       s ↦*{dq} data ∗ yjs_prot decode γh data }}}
-    dv @! (go.PointerType yjs.Doc) @! "ApplyEncodedUpdate" #f #s
+    dv @! (go.PointerType yjs.Doc) @! "ApplyEncodedUpdate" #f #s #origin
   {{{ (h : list Ev) (inputs applied : list Input) (m' : gmap TId (list (YjsItem A))), RET #true;
       s ↦*{dq} data ∗
       ⌜decode data = Some inputs⌝ ∗
@@ -72,6 +74,7 @@ Lemma wp_Doc__ApplyEncodedUpdate (dv s_loc : loc) (γs : store_names)
       ([∗ list] x ∈ inputs, is_accepted γs (in_id x.2)) ∗
       is_applied_certs γs applied m' }}}.
 Proof.
+  move=> Hanything.
   wp_start as "(#His_doc & #Hishist & #Hpin & #Hcodec & Hs & #Hprot)".
   iDestruct "Hprot" as (inputs) "(%Hdecodes & %Hwf & #Hcerts)".
   destruct Hdecodes as (decoded & Hdec & Hsame).
@@ -87,7 +90,7 @@ Proof.
      same encoded structs *)
   iDestruct (own_update_structs_same_encoded_struct _ _ _ _ Hsame with "Hupd") as "Hupd".
   wp_auto.
-  wp_apply (wp_Doc__ApplySyncUpdate _ _ _ _ c _ _ _ _ inputs deleted Hwf
+  wp_apply (wp_Doc__ApplySyncUpdate _ _ _ _ may_insert c _ _ _ _ inputs deleted origin Hwf Hanything
               with "[$His_doc $Hishist $Hpin $Hupd $Hdel $Hcerts]").
   iIntros (h applied m') "(Hupd & Hdel & #Hlb & #Haccepts & #Happlied)".
   wp_auto.

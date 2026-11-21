@@ -22,7 +22,8 @@
       [own_store_state_registry_coh], the document reader also on the pool,
       [own_type_pool_arr_inv]), the node borrows
       ([own_type_pool_node_acc] / [own_store_state_node_acc], with the
-      neighbour addresses and the flag byte in the [_links] forms; a whole
+      neighbour addresses and the flag byte in the [_links] forms, and the
+      node whole at any fraction in the [_item_node_acc] forms; a whole
       type as its run view for a read, [own_store_state_ytype_acc]; the
       clock and client fields, [own_store_state_clock_acc] /
       [own_store_state_client_acc]) and
@@ -69,6 +70,18 @@
       [own_observer_registry observers_mref γs γh m deleted] (the observers
       map's contents: every observer told everything up to its type's
       snapshot at [(m, deleted)]); [tie_store] is the lock body's data part.
+    - the update observers (issue #131): [sn_may_insert], the document's
+      insert rule, a field of [store_names] that is not a ghost name;
+      [is_update_certified γh structs] (a batch is well formed and
+      certified in the global history, what the store says of the update
+      it hands over); [encoder_spec encode encoder] (the Go encoder value
+      meets the abstract [encode]); [own_emitted_update may_insert γh
+      encode update_slice structs origin] (what an update observer is
+      called with); [is_update_callback may_insert γh encode callback] (the
+      contract of a callback registered with [Doc.ObserveUpdate]);
+      [is_update_observer] (one registration) and
+      [own_store_update_observers s γs γh q] (the store's [updateObservers]
+      field and its slice, part of [own_observers]).
     - [store_of_ref], the embedded store's address under a [storeRef]
       (issue #219: the lock left the store struct);
     - the persistent witnesses [is_store_ref] (over the [storeRef]'s address),
@@ -90,7 +103,8 @@
       out of it.
     - the fractions (issue #219 M4): everything under [own_store] splits at
       equal indices ([own_store_state_split] / [own_store_core_split] /
-      [own_observers_split], with [own_map_dfrac_split] / [_agree] and the
+      [own_observers_split] / [own_store_update_observers_split], with
+      [own_map_dfrac_split] / [_agree] and the
       slice-bundle splits underneath); [own_store_core_agree] pins a
       reader's state and delete set to the invariant's, and
       [own_observers_combine] realigns the observers across told states
@@ -373,6 +387,15 @@ Record store_names := StoreNames {
   sn_delete_set : gname;     (* authR (gsetUR YjsId): the monotone delete set (plan-delete-set.md D1) *)
   sn_observers : gname;      (* authR (gsetUR (gname * P)): the registered observer tokens, by root name (issue #198 Part II) *)
   sn_observers_agree : gname; (* dfrac_agree on the observer registry's contents (reader/inv alignment, issue #219 M4) *)
+  (* Not a ghost name: the document's insert rule (issue #131).
+     [sn_may_insert origin unit] says that a transaction opened with the
+     origin [origin] may insert the code unit [unit]. Fixed when the store
+     is created. The handles [is_Doc] and [is_Text] take the rule as a
+     parameter and say that it is this field, so a specification names the
+     rule through its handle; only the store's own predicates, which have
+     no handle to read it from, read the field ([own_store_update_observers],
+     [wp_transact], [wp_Transaction__notifyUpdate]). *)
+  sn_may_insert : go_string -> w16 -> Prop;
 }.
 
 (** The root-type binding: [name] is bound to the type at [p], forever
@@ -1099,6 +1122,77 @@ Proof.
   iExists yt, tl. iFrame "Hparent Hdll". iPureIntro. exact Hlen.
 Qed.
 
+(** Borrow one node of the pool whole ([own_item_node]), at any fraction. *)
+Lemma own_type_pool_item_node_acc (q : Qp) (locs : gmap loc (list loc)) (p : pool)
+    (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
+  locs !! parent = Some ls ->
+  p !! parent = Some tm ->
+  ls !! k = Some lc ->
+  tm_runs tm !! k = Some r ->
+  own_type_pool (DfracOwn q) locs p -∗
+  ∃ (prev nxt : loc),
+    ⌜run_wf (run_items r)⌝ ∗ ⌜run_per_char r⌝ ∗
+    ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
+    own_item_node lc (DfracOwn q) (input_of_run r) (run_deleted r) parent prev nxt ∗
+    (own_item_node lc (DfracOwn q) (input_of_run r) (run_deleted r) parent prev nxt -∗
+     own_type_pool (DfracOwn q) locs p).
+Proof.
+  move=> Hls Hp Hlk Hrk.
+  iIntros "(%Hlocswf & Hpool)".
+  iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Htype Hrest]".
+  iDestruct "Htype" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
+  rewrite Hls in Hls0. injection Hls0 as <-.
+  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
+  iDestruct (own_dll_acc (DfracOwn q) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk with "Hdll")
+    as (prev nxt) "(_ & _ & %Hrun & %Hper_char & %Hcontent_length & Hnode & Hback)".
+  iExists prev, nxt. iFrame "Hnode".
+  iSplitR; first done. iSplitR; first done. iSplitR; first done.
+  iIntros "Hnode". iDestruct ("Hback" with "Hnode") as "Hdll".
+  iSplitR; first done.
+  iApply big_sepM_delete; first exact Hp.
+  iFrame "Hrest". iExists ls. iSplitR; first done. iSplitL; last done.
+  iExists yt, tl. iFrame "Hparent Hdll". done.
+Qed.
+
+(** The same out of the store's data fields: the borrow that exposes a
+    node's origin cells, which the narrower ones above do not. *)
+Lemma own_store_state_item_node_acc (s : loc) (q : Qp) (state : store_state)
+    (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
+  ss_locs state !! parent = Some ls ->
+  ss_pool state !! parent = Some tm ->
+  ls !! k = Some lc ->
+  tm_runs tm !! k = Some r ->
+  own_store_state s q state -∗
+  ∃ (prev nxt : loc),
+    ⌜run_wf (run_items r)⌝ ∗ ⌜run_per_char r⌝ ∗
+    ⌜length (items_string (run_items r)) = length (run_items r)⌝ ∗
+    own_item_node lc (DfracOwn q) (input_of_run r) (run_deleted r) parent prev nxt ∗
+    (own_item_node lc (DfracOwn q) (input_of_run r) (run_deleted r) parent prev nxt -∗
+     own_store_state s q state).
+Proof.
+  move=> Hls Hp Hlk Hrk.
+  destruct state as [client0 clock0 locs p bind pend pdel]. simpl in *.
+  iIntros "(Hfields & %Hinvs)".
+  iDestruct "Hfields" as "(Hclient & Hclock & HdeletedSet & Hitems & Hregistry & Htypes & Hpending & Hpdeletes)".
+  iEval (simpl) in "Htypes".
+  iDestruct "Htypes" as "(%Hlocswf & Hpool)".
+  iDestruct (big_sepM_delete _ _ parent _ Hp with "Hpool") as "[Htype Hrest]".
+  iDestruct "Htype" as (ls0) "(%Hls0 & Hyt & %Harrinv)".
+  rewrite Hls in Hls0. injection Hls0 as <-.
+  iDestruct "Hyt" as (yt tl) "(Hparent & Hdll & %Hlen)".
+  iDestruct (own_dll_acc (DfracOwn q) parent _ tl ls (tm_runs tm) k lc r Hlk Hrk with "Hdll")
+    as (prev nxt) "(_ & _ & %Hrun & %Hper_char & %Hcontent_length & Hnode & Hback)".
+  iExists prev, nxt. iFrame "Hnode".
+  iSplitR; first done. iSplitR; first done. iSplitR; first done.
+  iIntros "Hnode". iDestruct ("Hback" with "Hnode") as "Hdll".
+  iSplitL; last done. rewrite /own_store_fields /=.
+  iFrame "Hclient Hclock HdeletedSet Hitems Hregistry Hpending Hpdeletes".
+  iSplitR; first done.
+  iApply big_sepM_delete; first exact Hp.
+  iFrame "Hrest". iExists ls. iSplitR; first done. iSplitL; last done.
+  iExists yt, tl. iFrame "Hparent Hdll". done.
+Qed.
+
 (** [own_type_pool_node_acc_links] behind the store's lift and lower. *)
 Lemma own_store_state_node_acc_links (s : loc) (state : store_state)
     (parent : loc) (ls : list loc) (tm : type_model) (k : nat) (lc : loc) (r : ItemRun) :
@@ -1413,16 +1507,101 @@ Qed.
 
 Definition storeN : namespace := nroot .@ "yjs_store".
 
+(* ----- the update observers (issue #131) --------------------------------- *)
+
+(** [is_update_certified γh structs]: the batch is ready to be sent: its
+    per-char expansion is well formed ([update_wf]) and every operation of
+    it is a point of the global history. The two things the wire protocol
+    asks of a batch, before any encoding; what the store says of the update
+    it hands to an update observer. Persistent. *)
+Definition is_update_certified (γh : history_names)
+    (structs : list (TId * IntegrateInput (A := A))) : iProp Σ :=
+  ⌜update_wf (expand_inputs structs)⌝ ∗ is_pending_certified γh (expand_inputs structs).
+
+(** The Go encoder value [encoder] meets the abstract [encode]: on any
+    struct slice it returns a fresh byte slice holding the encoding of the
+    batch the slice denotes, and leaves the structs as they were. The
+    encoder is trusted code (yjs/codec.go, outside the verified core), so
+    this is a hypothesis of whoever registers an update observer
+    ([wp_Doc__ObserveUpdate]). *)
+Definition encoder_spec (encode : list (TId * IntegrateInput (A := A)) -> list u8)
+    (encoder : func.t) : iProp Σ :=
+  □ (∀ (structs_slice : slice.t) (dq : dfrac) (structs : list (TId * IntegrateInput (A := A))),
+      {{{ own_update_structs structs_slice dq structs }}}
+        #encoder #structs_slice
+      {{{ (bytes_slice : slice.t), RET #bytes_slice;
+          own_update_structs structs_slice dq structs ∗
+          bytes_slice ↦* encode structs ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) }}}).
+
+(** [own_emitted_update may_insert γh encode update_slice structs origin]:
+    what an update observer is called with (issue #131), for a transaction
+    of origin [origin] on a document whose insert rule is [may_insert]: the
+    byte slice [update_slice] holds the encoding of a batch [structs], and
+    the callee owns it; the batch is well formed and every operation of it
+    has a certificate in the global history ([is_update_certified]); and
+    every code unit of the batch is one the rule allows for [origin]. *)
+Definition own_emitted_update (may_insert : go_string -> w16 -> Prop) (γh : history_names)
+    (encode : list (TId * IntegrateInput (A := A)) -> list u8) (update_slice : slice.t)
+    (structs : list (TId * IntegrateInput (A := A))) (origin : go_string) : iProp Σ :=
+  "Hupdate" ∷ update_slice ↦* encode structs ∗
+  "Hupdate_cap" ∷ own_slice_cap w8 update_slice (DfracOwn 1) ∗
+  "#Hupdate_certified" ∷ is_update_certified γh structs ∗
+  "%Hupdate_units" ∷ ⌜structs_units_allowed (may_insert origin) structs⌝.
+
+(** [is_update_callback may_insert γh encode callback]: the contract of a
+    callback registered with [Doc.ObserveUpdate] and the encoder [encode],
+    on a document whose insert rule is [may_insert]. The store calls it at
+    the end of a transaction that integrated something, with the
+    transaction's update and origin ([own_emitted_update]). It owes
+    nothing back. Persistent: the store keeps the callback and calls it for
+    every such transaction. The callback's own resources are not here: it
+    reaches them through a lock or an invariant of its own, as the
+    callbacks of [Text.Observe] do. *)
+Definition is_update_callback (may_insert : go_string -> w16 -> Prop) (γh : history_names)
+    (encode : list (TId * IntegrateInput (A := A)) -> list u8) (callback : func.t) : iProp Σ :=
+  ∀ (update_slice : slice.t) (structs : list (TId * IntegrateInput (A := A))) (origin : go_string),
+    {{{ own_emitted_update may_insert γh encode update_slice structs origin }}}
+      #callback #update_slice #origin
+    {{{ RET #(); True }}}.
+
+(** [is_update_observer may_insert γh observer]: one registration of
+    [Doc.ObserveUpdate] on a document whose insert rule is [may_insert]:
+    its encoder meets some abstract [encode] ([encoder_spec]), its callback
+    meets [is_update_callback] for that [encode] and that rule, and the
+    global history's invariant, which the store needs to certify the update
+    it hands over. Persistent. *)
+Definition is_update_observer (may_insert : go_string -> w16 -> Prop) (γh : history_names)
+    (observer : yjs.updateObserver.t) : iProp Σ :=
+  ∃ (encode : list (TId * IntegrateInput (A := A)) -> list u8),
+    "#Hobserver_history" ∷ is_history (A := A) (P := P) γh ∗
+    "#Hobserver_encoder" ∷ encoder_spec encode observer.(yjs.updateObserver.encode') ∗
+    "#Hobserver_callback" ∷ is_update_callback may_insert γh encode observer.(yjs.updateObserver.callback').
+
+(** [own_store_update_observers s_loc γs γh q]: the store's [updateObservers]
+    field and the slice it holds, every registration with its contract
+    ([is_update_observer]) for the document's insert rule
+    ([sn_may_insert]). Part of [own_observers]. *)
+Definition own_store_update_observers (s_loc : loc) (γs : store_names) (γh : history_names)
+    (q : Qp) : iProp Σ :=
+  ∃ (observers_slice : slice.t) (observers : list yjs.updateObserver.t),
+    "Hupdate_observers_field" ∷ (s_loc .[(yjs.store.t), "updateObservers"]) ↦{#q} observers_slice ∗
+    "Hupdate_observers_slice" ∷ observers_slice ↦*{#q} observers ∗
+    "Hupdate_observers_cap" ∷ own_slice_cap yjs.updateObserver.t observers_slice (DfracOwn q) ∗
+    "#Hupdate_observers_specs" ∷
+      ([∗ list] observer ∈ observers, is_update_observer γs.(sn_may_insert) γh observer).
+
 (** [own_observers s γs γh m0 deleted0]: the store's [observers] field and
     the map it holds, every registered observer told everything up to its
-    type's snapshot at [(m0, deleted0)]. The observers' half of [own_store];
+    type's snapshot at [(m0, deleted0)], and the store's update observers
+    ([own_store_update_observers]). The observers' half of [own_store];
     beside the data in the lock body at the data's state, and in
     [own_transaction] at the state the transaction started from. *)
 Definition own_observers (s_loc : loc) (γs : store_names) (γh : history_names)
     (q : Qp) (m0 : DocModel) (deleted0 : gset YjsId) : iProp Σ :=
   ∃ (observers_mref : loc),
     "Hobserversf" ∷ (s_loc .[(yjs.store.t), "observers"]) ↦{#q} observers_mref ∗
-    "Hregistry" ∷ own_observer_registry observers_mref γs γh q m0 deleted0.
+    "Hregistry" ∷ own_observer_registry observers_mref γs γh q m0 deleted0 ∗
+    "Hupdate_observers" ∷ own_store_update_observers s_loc γs γh q.
 
 
 #[global] Instance own_wlock_timeless γs : Timeless (own_wlock γs).
@@ -2044,6 +2223,26 @@ Proof.
     rewrite own_type_observers_split. iFrame.
 Qed.
 
+Lemma own_store_update_observers_split (s_loc : loc) (γs : store_names) (γh : history_names)
+    (q1 q2 : Qp) :
+  own_store_update_observers s_loc γs γh (q1 + q2) ⊣⊢
+  own_store_update_observers s_loc γs γh q1 ∗ own_store_update_observers s_loc γs γh q2.
+Proof.
+  rewrite /own_store_update_observers.
+  iSplit.
+  - iDestruct 1 as (observers_slice observers) "(Hf & Hsl & Hcap & #Hspecs)".
+    iDestruct "Hf" as "[Hf1 Hf2]". iDestruct "Hsl" as "[Hsl1 Hsl2]".
+    iDestruct "Hcap" as "[Hcap1 Hcap2]".
+    iSplitL "Hf1 Hsl1 Hcap1"; iExists observers_slice, observers; by iFrame "∗#".
+  - iDestruct 1 as "[H1 H2]".
+    iDestruct "H1" as (slice1 observers1) "(Hf1 & Hsl1 & Hcap1 & #Hspecs)".
+    iDestruct "H2" as (slice2 observers2) "(Hf2 & Hsl2 & Hcap2 & _)".
+    iCombine "Hf1 Hf2" gives %<-.
+    iDestruct (own_slice_agree with "Hsl1 Hsl2") as %<-.
+    iCombine "Hf1 Hf2" as "Hf". iCombine "Hsl1 Hsl2" as "Hsl". iCombine "Hcap1 Hcap2" as "Hcap".
+    iExists slice1, observers1. iFrame "Hf Hsl Hcap Hspecs".
+Qed.
+
 Lemma own_observers_split (s_loc : loc) (γs : store_names) (γh : history_names)
     (q1 q2 : Qp) (m0 : DocModel) (deleted0 : gset YjsId) :
   own_observers s_loc γs γh (q1 + q2) m0 deleted0 ⊣⊢
@@ -2051,16 +2250,18 @@ Lemma own_observers_split (s_loc : loc) (γs : store_names) (γh : history_names
 Proof.
   rewrite /own_observers.
   iSplit.
-  - iDestruct 1 as (observers_mref) "(Hf & Hreg)".
+  - iDestruct 1 as (observers_mref) "(Hf & Hreg & Hupdate)".
     iDestruct "Hf" as "[Hf1 Hf2]".
     rewrite own_observer_registry_split. iDestruct "Hreg" as "[Hr1 Hr2]".
-    iSplitL "Hf1 Hr1"; iExists observers_mref; by iFrame.
+    rewrite own_store_update_observers_split. iDestruct "Hupdate" as "[Hu1 Hu2]".
+    iSplitL "Hf1 Hr1 Hu1"; iExists observers_mref; by iFrame.
   - iDestruct 1 as "[H1 H2]".
-    iDestruct "H1" as (mref1) "(Hf1 & Hr1)".
-    iDestruct "H2" as (mref2) "(Hf2 & Hr2)".
+    iDestruct "H1" as (mref1) "(Hf1 & Hr1 & Hu1)".
+    iDestruct "H2" as (mref2) "(Hf2 & Hr2 & Hu2)".
     iCombine "Hf1 Hf2" gives %<-.
     iCombine "Hf1 Hf2" as "Hf".
     iCombine "Hr1 Hr2" as "Hr". rewrite -own_observer_registry_split.
+    iCombine "Hu1 Hu2" as "Hu". rewrite -own_store_update_observers_split.
     iExists mref1. by iFrame.
 Qed.
 
@@ -2076,11 +2277,12 @@ Lemma own_observers_combine (s_loc : loc) (γs : store_names) (γh : history_nam
   own_observers s_loc γs γh (q1 + q2) m2 d2.
 Proof.
   iIntros "H1 H2".
-  iDestruct "H1" as (mref1) "(Hf1 & Hr1)".
-  iDestruct "H2" as (mref2) "(Hf2 & Hr2)".
+  iDestruct "H1" as (mref1) "(Hf1 & Hr1 & Hu1)".
+  iDestruct "H2" as (mref2) "(Hf2 & Hr2 & Hu2)".
   iCombine "Hf1 Hf2" gives %<-.
   iCombine "Hf1 Hf2" as "Hf".
-  iExists mref1. iFrame "Hf".
+  iCombine "Hu1 Hu2" as "Hu". rewrite -own_store_update_observers_split.
+  iExists mref1. iFrame "Hf Hu".
   rewrite /own_observer_registry.
   iDestruct "Hr1" as (registry1 registered1) "(Hm1 & Ha1 & Hg1 & #Hbind1 & Hobs1)".
   iDestruct "Hr2" as (registry2 registered2) "(Hm2 & Ha2 & Hg2 & #Hbind2 & Hobs2)".
@@ -2519,7 +2721,7 @@ Qed.
     [own_read_cap] read capabilities, one per reader slot. *)
 Lemma store_tie_init (s_loc : loc) (γh : history_names) (client : w64)
     (items_mref types_mref observers_mref : loc) (deletedSetVal : yjs.deletedSet.t)
-    (γrw : RWMutex_names) :
+    (γrw : RWMutex_names) (may_insert : go_string -> w16 -> Prop) :
   "Hclient" ∷ (s_loc .[(yjs.store.t), "client"]) ↦ client -∗
   "Hclock"  ∷ (s_loc .[(yjs.store.t), "clock"]) ↦ W64 0 -∗
   "Hitemsf" ∷ (s_loc .[(yjs.store.t), "items"]) ↦ items_mref -∗
@@ -2531,16 +2733,18 @@ Lemma store_tie_init (s_loc : loc) (γh : history_names) (client : w64)
   "Hpddelf" ∷ (s_loc .[(yjs.store.t), "pendingDeletes"]) ↦ slice.nil -∗
   "Hobserversf" ∷ (s_loc .[(yjs.store.t), "observers"]) ↦ observers_mref -∗
   "Hobserversmap" ∷ own_map observers_mref (DfracOwn 1) (∅ : gmap loc slice.t) -∗
+  "Hupdate_observersf" ∷ (s_loc .[(yjs.store.t), "updateObservers"]) ↦ slice.nil -∗
   "Hhist"   ∷ own_client_history γh (uint.nat client) ([] : list Ev) ==∗
   ∃ γs : store_names,
     "%Hrw"        ∷ ⌜γs.(sn_rw) = γrw⌝ ∗
+    "%Hmay_insert" ∷ ⌜γs.(sn_may_insert) = may_insert⌝ ∗
     "#Hmax"       ∷ own_tok_auth_dfrac γs.(sn_rmax) DfracDiscarded
                       (Z.to_nat rwmutex.actualMaxReaders) ∗
     "Hrtoks"      ∷ own_toks γs.(sn_rmax) (Z.to_nat rwmutex.actualMaxReaders) ∗
     "Htie"        ∷ tie_body s_loc γs γh (RLocked 0) ∗
     "#Hclientpin" ∷ is_store_client γs (uint.nat client).
 Proof.
-  iIntros "Hclient Hclock Hitemsf Hmap Htypesf Htypesmap HdeletedSet Hpendf Hpddelf Hobserversf Hobserversmap Hhist".
+  iIntros "Hclient Hclock Hitemsf Hmap Htypesf Htypesmap HdeletedSet Hpendf Hpddelf Hobserversf Hobserversmap Hupdate_observersf Hhist".
   set (p := ∅ : pool). set (locs := ∅ : gmap loc (list loc)).
   iMod (own_alloc (● ((λ tm, (list_to_set (tm_arr tm) : gset (YjsItem A))) <$> p) : seqUR))
     as (γseq) "Hseq".
@@ -2580,8 +2784,9 @@ Proof.
                 sn_rw := γrw; sn_rmax := γrmax; sn_rrlocked := γrrlocked;
                 sn_state_agree := γta; sn_accepted := γacc; sn_client := γcl;
                 sn_delete_set := γds; sn_observers := γobs;
-                sn_observers_agree := γoa |}).
+                sn_observers_agree := γoa; sn_may_insert := may_insert |}).
   iModIntro. iExists γs.
+  iSplitR; first done.
   iSplitR; first done.
   iFrame "Hrmax". iFrame "Hrtoks".
   iSplitL; last by iFrame "Hclpin".
@@ -2589,14 +2794,19 @@ Proof.
   iFrame "Hrrlocked Hrtoks0 Hwl".
   iExists (∅ : DocModel), (∅ : gset YjsId).
   rewrite frac_of_0.
-  iSplitR "Hobserversmap Hobsauth Hobserversf Hregagree"; last first.
+  iSplitR "Hobserversmap Hobsauth Hobserversf Hregagree Hupdate_observersf"; last first.
   { (* the observers: the field, the empty map, the empty authority, the
-       agreement at the empty registry *)
+       agreement at the empty registry; and no update observer *)
     iExists observers_mref. iFrame "Hobserversf".
-    iExists ∅, ∅. iFrame "Hobserversmap".
-    rewrite /registered_tokens map_to_list_empty /=. iFrame "Hobsauth".
-    iFrame "Hregagree".
-    iSplitR; [rewrite big_sepM_empty // | rewrite big_sepM2_empty //]. }
+    iSplitR "Hupdate_observersf".
+    { iExists ∅, ∅. iFrame "Hobserversmap".
+      rewrite /registered_tokens map_to_list_empty /=. iFrame "Hobsauth".
+      iFrame "Hregagree".
+      iSplitR; [rewrite big_sepM_empty // | rewrite big_sepM2_empty //]. }
+    iExists slice.nil, []. iFrame "Hupdate_observersf".
+    iSplitL; first iApply own_slice_nil.
+    iSplitL; first iApply own_slice_cap_nil.
+    by rewrite big_sepL_nil. }
   rewrite /tie_store.
   iExists (uint.nat client), ([] : list Ev),
     (MkStoreState client (W64 0) ∅ ∅ ∅ [] []), (∅ : gset YjsId).

@@ -24,14 +24,22 @@
       name and by address are the same types, through the type registry.
     - [own_transaction_record tr s γs m deleted inserted tombstoned changed]:
       the record with its meaning against the data's model [(m, deleted)].
-    - [own_transaction tr s γs γh c h m pend deleted inserted tombstoned
-      changed]: the transaction, over the issue #219 split: the public
+    - [own_transaction tr s γs γh origin c h m pend deleted inserted tombstoned
+      changed]: the transaction, opened with the origin [origin], over the
+      issue #219 split: the public
       [own_store] at an existential cell state (its observers at the start
       state) tied to [(pend, deleted)] by [state_pending_tombstoned], the
       holder's [own_replica_history] at the public history and model, the
       record with its meaning, and [transaction_start].
-    - [closure_runs_transaction s γs γh f Q]: what [transact] asks of its
-      closure: run the fresh transaction to an end state where [Q] holds.
+    - [closure_runs_transaction s γs γh origin allowed f Q]: what
+      [transact] asks of its closure: run the fresh transaction, opened
+      with [origin], to an end state where [Q] holds, inserting only code
+      units that are [allowed].
+    - [own_transaction_notified tr s γs γh origin c h m pend deleted
+      inserted]: the transaction after [notify], what [notifyUpdate] reads
+      (non-public).
+    - [own_transaction_origin tr origin]: the transaction's [origin] field
+      (non-public).
 
     Laws
     - [node_span_char_ids]: a node's span fits and denotes its run's chars.
@@ -44,6 +52,8 @@
     - [own_transaction_observed_agree]: inside a transaction that did not
       change a root, an observer's half of its token is at the root's
       current snapshot (what [Mirror.Check] reads off).
+    - [own_transaction_item_unique]: two items of the transaction's model
+      with one id are one item of one root.
     - [own_transaction_accept_batch] / [own_transaction_client_pin] /
       [own_transaction_history_lb]: the data-level accept-batch update,
       client-pin read and history lower bound, lifted through the sealed
@@ -51,7 +61,8 @@
 
     The WPs: [transaction/wp_private.v] (the record steps, [integrate],
     [deleteNode]), [transaction/deleteRange.v], [transaction/applyUpdate.v],
-    [transaction/notify.v], [transaction/transact.v]. *)
+    [transaction/notify.v], [transaction/insertedStructs.v],
+    [transaction/notifyUpdate.v], [transaction/transact.v]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -120,7 +131,8 @@ Definition own_id_spans (sl : slice.t) (dq : dfrac) (ids : gset YjsId) : iProp �
     "%Hspans_ids" ∷ ⌜ids = ⋃ (span_ids <$> vs)⌝.
 
 (** The transaction struct: the store it belongs to and what it recorded so
-    far, as the four fields of [Transaction]. The [changed] map holds [true]
+    far, as four of the five fields of [Transaction] (the fifth, [origin],
+    is [own_transaction_origin]). The [changed] map holds [true]
     at every recorded type (a Go set). *)
 Definition own_transaction_changes (tr s_loc : loc)
     (inserted tombstoned : gset YjsId) (changed : gset loc) : iProp Σ :=
@@ -182,9 +194,19 @@ Definition own_transaction_record (tr s_loc : loc) (γs : store_names) (m : DocM
                      ∃ (name : P) (x : YjsItem A), name ∈ changed ∧
                        x ∈ doc_model_get m (RootId name) ∧ item_id x = i⌝.
 
-(** [own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed]:
-    the transaction at [tr] of the store at [s_loc] (issue #206 T1, issue
-    #198 Part II): the store with its data at the current state
+(** [own_transaction_origin tr origin]: the [origin] field of the
+    transaction at [tr] holds [origin] (issue #131): the origin the
+    transaction was opened with ([transact]'s argument, written by
+    [newTransaction]). Non-public: one field of the struct, the part of
+    [own_transaction] that [newTransaction] returns beside the record
+    ([own_transaction_changes]). *)
+Definition own_transaction_origin (tr : loc) (origin : go_string) : iProp Σ :=
+  (tr .[(yjs.Transaction.t), "origin"]) ↦ origin.
+
+(** [own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned
+    changed]: the transaction at [tr] of the store at [s_loc], opened with
+    the origin [origin] (issue #206 T1, issue #198 Part II, issue #131):
+    the store with its data at the current state
     [(m, deleted)] and its observers still at the state [(m0, deleted0)] the
     transaction started from, the record with its meaning, and the relation
     between the two states and the record ([transaction_start]: the start
@@ -193,32 +215,62 @@ Definition own_transaction_record (tr s_loc : loc) (γs : store_names) (m : DocM
     transaction's duration; [own_transaction_fresh] opens it at a store whose
     two states coincide and [wp_Transaction__notify] closes it back to one. *)
 Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_names)
-    (c : ClientId) (h : list Ev) (m : DocModel)
+    (origin : go_string) (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) : iProp Σ :=
   ∃ (state : store_state) (ds : gset YjsId) (m0 : DocModel) (deleted0 : gset YjsId),
     "%Hpend_tomb" ∷ ⌜state_pending_tombstoned state pend deleted⌝ ∗
     "Hstore" ∷ own_store s_loc γs γh 1 state ds m0 deleted0 ∗
     "Hreplica_history" ∷ own_replica_history γs γh c h m state ds ∗
+    "Horigin" ∷ own_transaction_origin tr origin ∗
     "Hrecord" ∷ own_transaction_record tr s_loc γs m deleted inserted tombstoned changed ∗
     "%Hstart" ∷ ⌜transaction_start m deleted inserted tombstoned m0 deleted0⌝.
 
-(** [closure_runs_transaction s_loc γs γh f Q]: the closure [f] runs one
-    transaction of the store at [s_loc] ([transact]'s argument, issue
-    #206 T1): handed the fresh transaction, it returns it, changed as it
-    may be, with [Q] holding of the end state (client, history, model,
-    pending, tombstones). A one-shot wand, not a persistent triple: the
-    closure runs once and may carry the caller's resources (the locals it
-    captured) into the transaction. *)
+(** [own_transaction_notified tr s_loc γs γh origin c h m pend deleted
+    inserted]: the transaction at [tr] after the observers of its types were
+    told ([notify]): the store with its data and its observers both at the
+    current state [(m, deleted)], and the three fields of the struct that
+    [notifyUpdate] still reads, the store, the origin and the spans of what
+    the transaction inserted. The rest of the record (the delete spans, the
+    changed types) was consumed by [notify] and is left out. Non-public:
+    what [notify] hands to [notifyUpdate] inside [commit]. *)
+Definition own_transaction_notified (tr s_loc : loc) (γs : store_names) (γh : history_names)
+    (origin : go_string) (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A)))
+    (deleted inserted : gset YjsId) : iProp Σ :=
+  ∃ (state : store_state) (delete_set : gset YjsId) (insert_slice : slice.t),
+    "%Hpend_tomb" ∷ ⌜state_pending_tombstoned state pend deleted⌝ ∗
+    "Hstore" ∷ own_store s_loc γs γh 1 state delete_set m deleted ∗
+    "Hreplica_history" ∷ own_replica_history γs γh c h m state delete_set ∗
+    "Horigin" ∷ own_transaction_origin tr origin ∗
+    "Htrstore" ∷ (tr .[(yjs.Transaction.t), "store"]) ↦ s_loc ∗
+    "Hinsertf" ∷ (tr .[(yjs.Transaction.t), "insertSet"]) ↦ insert_slice ∗
+    "Hinsert" ∷ own_id_spans insert_slice (DfracOwn 1) inserted.
+
+(** [closure_runs_transaction s_loc γs γh origin allowed f Q]: the closure
+    [f] runs one transaction of the store at [s_loc], opened with the origin
+    [origin] ([transact]'s arguments, issue #206 T1): handed the fresh
+    transaction, it returns it, changed as it may be, with [Q] holding of
+    the end state (client, history, model, pending, tombstones), and with
+    every code unit the transaction inserted satisfying [allowed]
+    ([inserted_units_allowed], issue #131). The caller of
+    [Doc.TransactWith] instantiates [allowed] with the document's insert
+    rule at [origin]. The condition is owed here, once, and not at each
+    insert: the methods a closure calls inside the transaction keep their
+    specifications, and the update observers are told it of what they are
+    handed ([is_update_callback]). A one-shot wand, not a persistent
+    triple: the closure runs once and may carry the caller's resources (the
+    locals it captured) into the transaction. *)
 Definition closure_runs_transaction (s_loc : loc) (γs : store_names) (γh : history_names)
-    (f : func.t)
+    (origin : go_string) (allowed : w16 -> Prop) (f : func.t)
     (Q : ClientId -> list Ev -> DocModel -> list (TId * IntegrateInput (A := A)) -> gset YjsId -> iProp Σ) : iProp Σ :=
   ∀ (tr : loc) (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId) (Ψ : val -> iProp Σ),
-    own_transaction tr s_loc γs γh c h m pend deleted ∅ ∅ ∅ -∗
+    own_transaction tr s_loc γs γh origin c h m pend deleted ∅ ∅ ∅ -∗
     (∀ (h' : list Ev) (m' : DocModel) (pend' : list (TId * IntegrateInput (A := A)))
        (deleted' inserted tombstoned : gset YjsId) (changed : gset P),
-       own_transaction tr s_loc γs γh c h' m' pend' deleted' inserted tombstoned changed ∗
+       own_transaction tr s_loc γs γh origin c h' m' pend' deleted' inserted tombstoned changed ∗
+       ⌜inserted_units_allowed allowed m' inserted⌝ ∗
        Q c h' m' pend' deleted' -∗ Ψ #()) -∗
     WP #f #tr {{ Ψ }}.
 
@@ -350,14 +402,14 @@ Qed.
     accept-batch update and the client pin, each opening the body,
     using the [own_store_data] form of the law through the split, and
     closing the body back unchanged. *)
-Lemma own_transaction_accept_batch (tr s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_transaction_accept_batch (tr s_loc : loc) (γs : store_names) (γh : history_names) (origin : go_string)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P)
     (L : list (TId * IntegrateInput (A := A))) :
   (∀ x, x ∈ L -> in_id x.2 ∈ delivered_ids h ∪ pending_id_set pend) ->
-  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ==∗
-  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+  own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed ==∗
+  own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed ∗
   [∗ list] x ∈ L, is_accepted γs (in_id x.2).
 Proof.
   iIntros (HL) "Htx".
@@ -372,16 +424,16 @@ Proof.
   iExists state', ds', m0, deleted0.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-  iFrame "Hreplica_history' Hrecord".
+  iFrame "Hreplica_history' Horigin Hrecord".
   iPureIntro. exact Hstart.
 Qed.
 
-Lemma own_transaction_client_pin (tr s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_transaction_client_pin (tr s_loc : loc) (γs : store_names) (γh : history_names) (origin : go_string)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
-  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed -∗
-  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+  own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed -∗
+  own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed ∗
   is_store_client γs c.
 Proof.
   iIntros "Htx".
@@ -396,16 +448,16 @@ Proof.
   iExists state', ds', m0, deleted0.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-  iFrame "Hreplica_history' Hrecord".
+  iFrame "Hreplica_history' Horigin Hrecord".
   iPureIntro. exact Hstart.
 Qed.
 
-Lemma own_transaction_history_lb (tr s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_transaction_history_lb (tr s_loc : loc) (γs : store_names) (γh : history_names) (origin : go_string)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
-  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed -∗
-  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+  own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed -∗
+  own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed ∗
   is_history_lb γh c h.
 Proof.
   iIntros "Htx".
@@ -420,7 +472,7 @@ Proof.
   iExists state', ds', m0, deleted0.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-  iFrame "Hreplica_history' Hrecord".
+  iFrame "Hreplica_history' Horigin Hrecord".
   iPureIntro. exact Hstart.
 Qed.
 
@@ -428,12 +480,12 @@ Qed.
     that did not change its root: the snapshot it was last told is the
     root's current one, the record having no char of that root. What
     [Mirror.Check] reads off ([demo/observe_app]). *)
-Lemma own_transaction_observed_agree (tr s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_transaction_observed_agree (tr s_loc : loc) (γs : store_names) (γh : history_names) (origin : go_string)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P)
     (name : P) (γo : gname) (s : snapshot) :
   name ∉ changed ->
-  own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed -∗
+  own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed -∗
   is_text_observed γs name γo -∗
   own_observed γo s -∗
   ⌜s = type_snapshot m deleted name⌝.
@@ -444,7 +496,7 @@ Proof.
   iDestruct (own_store_data_build with "Hcore Hreplica_history") as "Hdata".
   destruct Hpend_tomb as [Hpend_state Hdeleted_state].
   iEval (rewrite Hpend_state) in "Hdata". iEval (rewrite -Hdeleted_state) in "Hdata".
-  iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry)".
+  iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry & Hupdate_observers)".
   iDestruct "Hregistry" as (registry registered) "(Hobserversmap & Hobserversauth & Hregagree & #Hregistered_bind & Hobservers)".
   iDestruct "Hrecord" as (changed_locs) "Hrecord". iNamed "Hrecord".
   (* the token is registered under [name], at some address *)
@@ -482,6 +534,42 @@ Proof.
   move=> Hin. apply Hnot.
   destruct (Hmarked parent Hin) as (nm & Hnm & Hnmlk).
   rewrite (proj1 (proj2 Hregcoh) nm name parent Hnmlk Hbindlk) in Hnm. exact Hnm.
+Qed.
+
+(** One id, one item, in the transaction's public model: two items of the
+    document with the same id are one item of one root (the pool's
+    [pool_item_unique] through the registry). What lets a caller identify an
+    item it is handed by its id (a transaction closure matches the items
+    of the end model against the ones it inserted). *)
+Lemma own_transaction_item_unique (tr s_loc : loc) (γs : store_names) (γh : history_names) (origin : go_string)
+    (c : ClientId) (h : list Ev) (m : DocModel)
+    (pend : list (TId * IntegrateInput (A := A)))
+    (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
+  own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed -∗
+  ⌜∀ (name1 name2 : P) (item1 item2 : YjsItem A),
+     item1 ∈ doc_model_get m (RootId name1) -> item2 ∈ doc_model_get m (RootId name2) ->
+     item_id item1 = item_id item2 -> name1 = name2 ∧ item1 = item2⌝.
+Proof.
+  iIntros "Htx". iDestruct "Htx" as (state ds m0 deleted0) "Htx". iNamed "Htx".
+  iDestruct (own_replica_history_registry_models with "Hreplica_history") as %[Hmodels Hbound].
+  iNamed "Hstore". iNamed "Hcore".
+  iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpool_invs.
+  iDestruct (own_store_state_registry_coh with "Hstate") as %(Hregistered & Hinjective & _).
+  iPureIntro. move=> name1 name2 item1 item2 Hitem1 Hitem2 Hid.
+  have Hslot : ∀ (name : P) (item : YjsItem A), item ∈ doc_model_get m (RootId name) ->
+      ∃ parent tm, ss_bind state !! name = Some parent ∧ ss_pool state !! parent = Some tm ∧
+                   item ∈ tm_arr tm.
+  { move=> name item Hitem.
+    have Hnonempty : doc_model_get m (RootId name) ≠ [] by (move=> Hnil; rewrite Hnil in Hitem; by apply elem_of_nil in Hitem).
+    destruct (Hbound _ Hnonempty) as (name' & parent & [= <-] & Hbind).
+    destruct (Hregistered name parent Hbind) as [tm Htm].
+    exists parent, tm. split_and!; [exact Hbind | exact Htm |].
+    by rewrite -(Hmodels name parent tm Hbind Htm). }
+  destruct (Hslot name1 item1 Hitem1) as (parent1 & tm1 & Hbind1 & Htm1 & Hin1).
+  destruct (Hslot name2 item2 Hitem2) as (parent2 & tm2 & Hbind2 & Htm2 & Hin2).
+  destruct (pool_item_unique _ parent1 parent2 tm1 tm2 item1 item2 Hpool_invs Htm1 Hin1 Htm2 Hin2 Hid)
+    as [Hparent Hitem].
+  subst parent2. split; [exact (Hinjective name1 name2 parent1 Hbind1 Hbind2) | exact Hitem].
 Qed.
 
 End transaction_heap.

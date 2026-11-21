@@ -14,7 +14,7 @@ func TestDeleteRangeWholeRun(t *testing.T) {
 	txt.InsertString(0, "hello")
 
 	doc.store.wlock()
-	newTransaction(&doc.store.store).deleteRange(1, 1, 3) // clocks 1..3 = "ell"
+	newTransaction(&doc.store.store, NoOrigin).deleteRange(1, 1, 3) // clocks 1..3 = "ell"
 	doc.store.wunlock()
 
 	if got := txt.String(); got != "ho" {
@@ -31,8 +31,8 @@ func TestDeleteRangeIdempotent(t *testing.T) {
 	txt.InsertString(0, "abcd")
 
 	doc.store.wlock()
-	newTransaction(&doc.store.store).deleteRange(1, 0, 2)
-	newTransaction(&doc.store.store).deleteRange(1, 0, 2) // again: no double length shrink
+	newTransaction(&doc.store.store, NoOrigin).deleteRange(1, 0, 2)
+	newTransaction(&doc.store.store, NoOrigin).deleteRange(1, 0, 2) // again: no double length shrink
 	doc.store.wunlock()
 
 	if got := txt.String(); got != "cd" {
@@ -50,9 +50,9 @@ func TestDeleteRangeSkipsUnintegrated(t *testing.T) {
 
 	doc.store.wlock()
 	// clocks 0..4 requested, only 0..1 exist: the rest is skipped, not a panic
-	newTransaction(&doc.store.store).deleteRange(1, 0, 5)
+	newTransaction(&doc.store.store, NoOrigin).deleteRange(1, 0, 5)
 	// a client with no items at all
-	newTransaction(&doc.store.store).deleteRange(7, 0, 3)
+	newTransaction(&doc.store.store, NoOrigin).deleteRange(7, 0, 3)
 	doc.store.wunlock()
 
 	if got := txt.String(); got != "" {
@@ -72,14 +72,14 @@ func TestDeleteRangeRemoteConverges(t *testing.T) {
 
 	docB := NewDoc(2)
 	txtB := docB.GetOrCreateText("root")
-	docB.ApplySyncUpdate(structsOf(docA, "root"), nil)
+	docB.ApplySyncUpdate(structsOf(docA, "root"), nil, NoOrigin)
 
 	docA.store.wlock()
-	newTransaction(&docA.store.store).deleteRange(1, 5, 6) // " world"
+	newTransaction(&docA.store.store, NoOrigin).deleteRange(1, 5, 6) // " world"
 	docA.store.wunlock()
 
 	docB.store.wlock()
-	newTransaction(&docB.store.store).deleteRange(1, 5, 6)
+	newTransaction(&docB.store.store, NoOrigin).deleteRange(1, 5, 6)
 	docB.store.wunlock()
 
 	if got, want := txtB.String(), txtA.String(); got != want {

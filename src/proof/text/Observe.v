@@ -59,9 +59,10 @@ Local Notation snapshot := (list (YjsItem A * bool)).
     (from the empty snapshot), then every transaction that changes the text
     ([store.notify]). The store's half of the token comes in at the empty
     snapshot. *)
-Lemma wp_Text__Observe (t : loc) (γs : store_names) (γh : history_names) (name : P)
+Lemma wp_Text__Observe (t : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop) (name : P)
     (L : list (YjsItem A)) (deleted_ids : gset YjsId) (cb : func.t) (γo : gname) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh may_insert name L deleted_ids ∗
       is_text_callback γs γh name cb γo ∗ own_observed γo [] }}}
     t @! (go.PointerType yjs.Text) @! "Observe" #cb
   {{{ RET #(); is_text_observed γs name γo }}}.
@@ -79,7 +80,7 @@ Proof.
   iDestruct (own_store_data_build with "Hcore Hreplica_history") as "Hstore".
   set (pend := ss_pending state0) in *.
   set (deleted := pool_tombstoned (ss_pool state0)) in *.
-  iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry)".
+  iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry & Hupdate_observers)".
   (* ---- the current text ---- *)
   iDestruct "Hstore" as (client k pdel locs p bind acc) "Hown". iNamed "Hown".
   iDestruct (ghost_map_lookup with "HtypesAuth Hbind") as %Hbindlk.
@@ -187,9 +188,9 @@ Proof.
             with "Hregagree") as "Hregagree".
     iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
     iAssert (own_observers (store_of_ref tv.(yjs.Text.store')) γs γh 1 m deleted)
-      with "[Hobserversf Hobserversmap Hobserversauth Hregagree Hobservers Hsl' Hcap' Hentry_callbacks Hobs]"
+      with "[Hobserversf Hobserversmap Hobserversauth Hregagree Hobservers Hsl' Hcap' Hentry_callbacks Hobs Hupdate_observers]"
       as "Hobservers'".
-    { iExists observers_mref. iFrame "Hobserversf".
+    { iExists observers_mref. iFrame "Hobserversf Hupdate_observers".
       iExists (<[tv.(yjs.Text.inner') := sl']> registry),
         (<[tv.(yjs.Text.inner') := (name, γos ++ [γo])]> registered).
       iFrame "Hobserversmap Hregagree".
@@ -220,9 +221,9 @@ Proof.
             with "Hregagree") as "Hregagree".
     iDestruct (own_store_data_split with "Hstore") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
     iAssert (own_observers (store_of_ref tv.(yjs.Text.store')) γs γh 1 m deleted)
-      with "[Hobserversf Hobserversmap Hobserversauth Hregagree Hobservers Hsl' Hcap' Hobs]"
+      with "[Hobserversf Hobserversmap Hobserversauth Hregagree Hobservers Hsl' Hcap' Hobs Hupdate_observers]"
       as "Hobservers'".
-    { iExists observers_mref. iFrame "Hobserversf".
+    { iExists observers_mref. iFrame "Hobserversf Hupdate_observers".
       iExists (<[tv.(yjs.Text.inner') := sl']> registry),
         (<[tv.(yjs.Text.inner') := (name, [] ++ [γo])]> registered).
       iFrame "Hobserversmap Hregagree".

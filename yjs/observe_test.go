@@ -126,7 +126,7 @@ func TestObserverRemoteUpdates(t *testing.T) {
 	app := ""
 
 	txtA.InsertString(0, "hello")
-	if !docB.ApplyEncodedUpdate(WireCodec(), docA.EncodeUpdate()) {
+	if !docB.ApplyEncodedUpdate(WireCodec(), docA.EncodeUpdate(), NoOrigin) {
 		t.Fatal("malformed update")
 	}
 	expectDelta(t, obs.Poll(), insert("hello"))
@@ -134,7 +134,7 @@ func TestObserverRemoteUpdates(t *testing.T) {
 
 	txtA.Delete(1, 3) // "ell"
 	txtB.InsertString(5, "!")
-	if !docB.ApplyEncodedUpdate(WireCodec(), docA.EncodeUpdate()) {
+	if !docB.ApplyEncodedUpdate(WireCodec(), docA.EncodeUpdate(), NoOrigin) {
 		t.Fatal("malformed update")
 	}
 	app = patch(t, app, obs.Poll(), txtB)
@@ -144,7 +144,7 @@ func TestObserverRemoteUpdates(t *testing.T) {
 	// the other direction: A observes B's insert
 	obsA := txtA.NewObserver()
 	obsA.Poll()
-	if !docA.ApplyEncodedUpdate(WireCodec(), docB.EncodeUpdate()) {
+	if !docA.ApplyEncodedUpdate(WireCodec(), docB.EncodeUpdate(), NoOrigin) {
 		t.Fatal("malformed update")
 	}
 	expectDelta(t, obsA.Poll(), retain(2), insert("!"))
@@ -197,10 +197,10 @@ func TestObserverPatchLawRandom(t *testing.T) {
 		case 2:
 			randomEdit(r, txtB)
 		case 3:
-			if !docA.ApplyEncodedUpdate(WireCodec(), docB.EncodeUpdate()) {
+			if !docA.ApplyEncodedUpdate(WireCodec(), docB.EncodeUpdate(), NoOrigin) {
 				t.Fatal("malformed update")
 			}
-			if !docB.ApplyEncodedUpdate(WireCodec(), docA.EncodeUpdate()) {
+			if !docB.ApplyEncodedUpdate(WireCodec(), docA.EncodeUpdate(), NoOrigin) {
 				t.Fatal("malformed update")
 			}
 		}
@@ -354,7 +354,7 @@ func TestObserveRemoteBatchOnce(t *testing.T) {
 	txtB := docB.GetOrCreateText("text")
 	r := &recorder{}
 	txtB.Observe(r.callback)
-	docB.ApplySyncUpdate(structs, deletes)
+	docB.ApplySyncUpdate(structs, deletes, NoOrigin)
 	if len(r.deltas) != 2 {
 		t.Fatalf("one batch reached the callback %d times, want 1", len(r.deltas)-1)
 	}
@@ -374,11 +374,11 @@ func TestObserveRemoteBatchOnce(t *testing.T) {
 	txtD := docD.GetOrCreateText("text")
 	rD := &recorder{}
 	txtD.Observe(rD.callback)
-	docD.ApplySyncUpdate(structsC[1:], nil)
+	docD.ApplySyncUpdate(structsC[1:], nil, NoOrigin)
 	if len(rD.deltas) != 1 {
 		t.Fatalf("a buffered batch reached the callback: %v", rD.deltas[1:])
 	}
-	docD.ApplySyncUpdate(structsC[:1], nil)
+	docD.ApplySyncUpdate(structsC[:1], nil, NoOrigin)
 	if len(rD.deltas) != 2 {
 		t.Fatalf("the drain reached the callback %d times, want 1", len(rD.deltas)-1)
 	}
@@ -422,7 +422,7 @@ func TestObserveOtherTextSilent(t *testing.T) {
 	if !ok {
 		t.Fatal("the encoded state did not decode")
 	}
-	docR.ApplySyncUpdate(structs, deletes)
+	docR.ApplySyncUpdate(structs, deletes, NoOrigin)
 	if len(raR.deltas) != 2 || len(rbR.deltas) != 1 {
 		t.Fatalf("remote callbacks: a %d, b %d", len(raR.deltas), len(rbR.deltas))
 	}

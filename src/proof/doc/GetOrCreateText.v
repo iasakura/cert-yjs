@@ -66,10 +66,11 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 Lemma wp_Doc__GetOrCreateText (dv s_loc : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (name : P) :
-  {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh ∗ is_history (A := A) (P := P) γh }}}
+  {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh may_insert ∗ is_history (A := A) (P := P) γh }}}
     dv @! (go.PointerType yjs.Doc) @! "GetOrCreateText" #name
-  {{{ (t : loc), RET #t; is_Text t γs γh name [] ∅ }}}.
+  {{{ (t : loc), RET #t; is_Text t γs γh may_insert name [] ∅ }}}.
 Proof.
   wp_start as "(#His_doc & #Hishist)".
   iNamed "His_doc". subst s_loc. wp_auto.
@@ -108,7 +109,7 @@ Proof.
     iSplitR; first done.
     iSplitR; first done.
     iFrame "Hlb0 Hdel0".
-    iPureIntro. split; [apply empty_subseteq | constructor].
+    iPureIntro. split_and!; [apply empty_subseteq | constructor | exact Hmay_insert].
   - (* ---- miss: a fresh empty root was registered; the model already maps
        the unbound name to [[]], so the registry coherence and the clock tie
        transport over the pool with the fresh empty type ---- *)
@@ -178,7 +179,7 @@ Proof.
     iSplitR; first done.
     iSplitR; first done.
     iFrame "Hlb0 Hdel0".
-    iPureIntro. split; [apply empty_subseteq | constructor].
+    iPureIntro. split_and!; [apply empty_subseteq | constructor | exact Hmay_insert].
 Qed.
 
 End doc_GetText.
