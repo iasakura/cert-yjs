@@ -17,9 +17,9 @@
 // server sent. The provider is given the application's document (the
 // constructor's doc, :270, kept as this.doc, :296); here Connect creates the
 // document and Doc returns it, so that one function sets up a whole client.
-// The provider also runs the sync handshake on connect (it
-// writes sync Step1 when the socket opens, :203-208) and the awareness
-// protocol; neither is here. Without the handshake a client never receives
+// The provider also runs the sync handshake on connect (it writes sync Step1
+// when the socket opens, :203-208) and the awareness protocol; neither is
+// here. Without the handshake a client never receives
 // what was edited before it joined (the server relays only what it applies
 // after the join, wsrelay.Join), which the closed theorem's convergence
 // statement accounts for: it compares reports that hold the same ids.
