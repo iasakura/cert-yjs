@@ -118,6 +118,8 @@ Proof.
   { naive_solver. }
   wp_apply (wp_wsnet_initialize' with "[$Hown]") as "(Hown & #?)".
   { naive_solver. }
+  wp_apply (sync.wp_initialize' with "[$Hown]") as "(Hown & #?)".
+  { naive_solver. }
   iEval (rewrite is_pkg_init_unfold /=). iFrame "∗#". done.
 Qed.
 
