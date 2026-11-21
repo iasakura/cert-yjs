@@ -65,8 +65,9 @@ Lemma wp_newTransaction (s_loc : loc) :
   {{{ is_pkg_init yjs }}}
     @! yjs.newTransaction #s_loc
   {{{ (tr : loc), RET #tr; own_transaction_changes tr s_loc ∅ ∅ ∅ ∗
-      (tr .[(yjs.Transaction.t), "origin"]) ↦ ""%go }}}.
+      own_transaction_origin tr ""%go }}}.
 Proof.
+  rewrite /own_transaction_origin.
   wp_start. wp_auto.
   wp_apply wp_map_make1. iIntros (changed_mref) "Hchanged". wp_auto.
   wp_alloc tr as "Htr". wp_auto.

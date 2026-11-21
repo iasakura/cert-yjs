@@ -110,6 +110,7 @@ Proof.
   wp_auto.
   iDestruct "Hstore" as (state0 ds0) "(Hstore0 & Hreplica_history)".
   wp_apply wp_newTransaction. iIntros (tr) "[Hchanges Horigin]".
+  iEval (rewrite /own_transaction_origin) in "Horigin".
   wp_auto.
   iDestruct (own_transaction_fresh with "Hchanges [$Hstore0 $Hreplica_history]") as "Htx".
   wp_apply ("Hf" with "[$Htx]").
@@ -117,8 +118,8 @@ Proof.
   wp_auto.
   wp_apply (wp_Transaction__notify with "[$Htx]"). iIntros "Htx".
   wp_auto.
-  wp_apply (wp_Transaction__notifyUpdate with "[$Htx $Horigin]").
-  { iPureIntro. exact Hallowed. }
+  wp_apply (wp_Transaction__notifyUpdate _ _ _ _ _ _ _ _ _ _ origin with "[$Htx Horigin]").
+  { iSplitL; [iExact "Horigin" | iPureIntro; exact Hallowed]. }
   iIntros "[Htx Horigin]".
   wp_auto.
   iDestruct "Htx" as (state' ds' insert_sl) "Htx". iNamed "Htx".

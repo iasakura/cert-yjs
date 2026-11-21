@@ -187,12 +187,13 @@ Lemma wp_Transaction__notifyUpdate (tr s_loc : loc) (γs : store_names) (γh : h
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input)
     (deleted inserted : gset YjsId) (origin : go_string) :
   {{{ is_pkg_init yjs ∗ own_transaction_notified tr s_loc γs γh c h m pend deleted inserted ∗
-      (tr .[(yjs.Transaction.t), "origin"]) ↦ origin ∗
+      own_transaction_origin tr origin ∗
       ⌜inserted_units_allowed (γs.(sn_may_insert) origin) m inserted⌝ }}}
     tr @! (go.PointerType yjs.Transaction) @! "notifyUpdate" #()
   {{{ RET #(); own_transaction_notified tr s_loc γs γh c h m pend deleted inserted ∗
-      (tr .[(yjs.Transaction.t), "origin"]) ↦ origin }}}.
+      own_transaction_origin tr origin }}}.
 Proof.
+  rewrite /own_transaction_origin.
   wp_start as "(Htx & Horigin & %Hallowed)".
   iDestruct (own_transaction_notified_item_clock_fits with "Htx") as %Hfits.
   (* ---- is anybody registered? ---- *)

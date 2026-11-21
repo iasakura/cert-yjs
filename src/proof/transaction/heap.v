@@ -35,6 +35,8 @@
       holds, inserting only code units that are [allowed].
     - [own_transaction_notified tr s γs γh c h m pend deleted inserted]:
       the transaction after [notify], what [notifyUpdate] reads (non-public).
+    - [own_transaction_origin tr origin]: the transaction's [origin] field
+      (non-public).
 
     Laws
     - [node_span_char_ids]: a node's span fits and denotes its run's chars.
@@ -208,6 +210,13 @@ Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_n
     "Hreplica_history" ∷ own_replica_history γs γh c h m state ds ∗
     "Hrecord" ∷ own_transaction_record tr s_loc γs m deleted inserted tombstoned changed ∗
     "%Hstart" ∷ ⌜transaction_start m deleted inserted tombstoned m0 deleted0⌝.
+
+(** [own_transaction_origin tr origin]: the [origin] field of the
+    transaction at [tr] holds [origin] (issue #131). Non-public: the field
+    is written once by [transact] and read by [notifyUpdate]; a closure
+    never sees it, so it is not part of [own_transaction]. *)
+Definition own_transaction_origin (tr : loc) (origin : go_string) : iProp Σ :=
+  (tr .[(yjs.Transaction.t), "origin"]) ↦ origin.
 
 (** [own_transaction_notified tr s_loc γs γh c h m pend deleted inserted]:
     the transaction at [tr] after the observers of its types were told
