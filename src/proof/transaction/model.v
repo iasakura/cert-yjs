@@ -13,7 +13,8 @@
     - [transaction_inserted_item m inserted name item]: an item of a root
       type that the transaction inserted; [inserted_units_allowed allowed m
       inserted]: every code unit of such an item satisfies [allowed] (issue
-      #131, what a transaction's closure owes).
+      #131, what a transaction's closure owes); [inserted_run_units_allowed]
+      gives it for what one [Text.InsertIn] inserted.
     - [tombstone_pass deleted tombstoned deleted' tombstoned']: what one
       delete pass does to the tombstone bookkeeping ([applyDeleteSpans]'s
       postcondition, [transaction_start_tombstone]'s hypothesis).
@@ -236,6 +237,36 @@ Proof.
     + apply (proj1 (elem_of_disjoint _ _) Hfresh i).
       * apply elem_of_difference. split; assumption.
       * rewrite Hdel. apply elem_of_union_l. exact Hi0.
+Qed.
+
+(** What one [Text.InsertIn] inserted is the code units it was given: an
+    item of the end model whose id is one of the run's is the run's item of
+    that id (ids are unique in the model, [own_transaction_item_unique]),
+    which carries one of the units. What a closure that inserts with
+    [InsertIn] shows to meet [inserted_units_allowed]. *)
+Lemma inserted_run_units_allowed (allowed : w16 -> Prop) (m' : DocModel) (name : P)
+    (L L' ins : list (YjsItem A)) (units : A) (client k0 : nat)
+    (originLeft originRight : YjsPtr A) :
+  inserted_run L L' ins units client k0 originLeft originRight ->
+  doc_model_get m' (RootId name) = L' ->
+  (∀ (name1 name2 : P) (item1 item2 : YjsItem A),
+     item1 ∈ doc_model_get m' (RootId name1) -> item2 ∈ doc_model_get m' (RootId name2) ->
+     item_id item1 = item_id item2 -> name1 = name2 ∧ item1 = item2) ->
+  Forall allowed units ->
+  inserted_units_allowed allowed m' (∅ ∪ char_ids ins).
+Proof.
+  move=> [_ [Hlength Hitems]] Hmodel Hunique Hunits root item [Hitem Hid].
+  rewrite left_id_L in Hid.
+  apply elem_of_char_ids in Hid as (inserted_item & Hinserted & Hsame).
+  apply list_elem_of_lookup in Hinserted as [i Hi].
+  destruct Hlength as [Hnil | Hlength]; first by rewrite Hnil in Hi.
+  have [unit Hunit] : is_Some (units !! i).
+  { apply lookup_lt_is_Some. rewrite -Hlength. exact (lookup_lt_Some _ _ _ Hi). }
+  destruct (Hitems i inserted_item unit Hi Hunit) as (Hin & _ & Hcontent & _).
+  rewrite -Hmodel in Hin.
+  destruct (Hunique root name item inserted_item Hitem Hin (eq_sym Hsame)) as [_ ->].
+  rewrite Hcontent. apply Forall_singleton.
+  exact (proj1 (Forall_forall _ _) Hunits unit (list_elem_of_lookup_2 _ _ _ Hunit)).
 Qed.
 
 End transaction_model.

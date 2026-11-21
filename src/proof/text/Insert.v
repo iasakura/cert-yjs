@@ -57,34 +57,6 @@ Local Notation Op := (TId * @YjsOperation A)%type.
 Local Notation Ev := (@Event Op).
 Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
-(** What one [InsertIn] inserted is the code units it was given: an item of
-    the end model whose id is one of the run's is the run's item of that
-    id (ids are unique in the model), which carries one of the units. *)
-#[local] Lemma inserted_run_units_allowed (allowed : w16 -> Prop) (m' : DocModel) (name : P)
-    (L L' ins : list (YjsItem A)) (units : A) (client k0 : nat)
-    (originLeft originRight : YjsPtr A) :
-  inserted_run L L' ins units client k0 originLeft originRight ->
-  doc_model_get m' (RootId name) = L' ->
-  (∀ (name1 name2 : P) (item1 item2 : YjsItem A),
-     item1 ∈ doc_model_get m' (RootId name1) -> item2 ∈ doc_model_get m' (RootId name2) ->
-     item_id item1 = item_id item2 -> name1 = name2 ∧ item1 = item2) ->
-  Forall allowed units ->
-  inserted_units_allowed allowed m' (∅ ∪ char_ids ins).
-Proof.
-  move=> [_ [Hlength Hitems]] Hmodel Hunique Hunits root item [Hitem Hid].
-  rewrite left_id_L in Hid.
-  apply elem_of_char_ids in Hid as (inserted_item & Hinserted & Hsame).
-  apply list_elem_of_lookup in Hinserted as [i Hi].
-  destruct Hlength as [Hnil | Hlength]; first by rewrite Hnil in Hi.
-  have [unit Hunit] : is_Some (units !! i).
-  { apply lookup_lt_is_Some. rewrite -Hlength. exact (lookup_lt_Some _ _ _ Hi). }
-  destruct (Hitems i inserted_item unit Hi Hunit) as (Hin & _ & Hcontent & _).
-  rewrite -Hmodel in Hin.
-  destruct (Hunique root name item inserted_item Hitem Hin (eq_sym Hsame)) as [_ ->].
-  rewrite Hcontent. apply Forall_singleton.
-  exact (proj1 (Forall_forall _ _) Hunits unit (list_elem_of_lookup_2 _ _ _ Hunit)).
-Qed.
-
 Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : slice.t) (dq : dfrac) (units : A)
     (γs : store_names) (γh : history_names)
     (may_insert : go_string -> w16 -> Prop)
