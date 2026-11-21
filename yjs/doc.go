@@ -36,7 +36,14 @@ func (d *Doc) GetOrCreateText(name string) *Text {
 // ApplySyncUpdate, CodeUnits, String or Len on the same document: deadlock, #206 item
 // 2); it uses the In-variants with tr.
 func (d *Doc) Transact(f func(tr *Transaction)) {
-	transact(d.store, true, f)
+	transact(d.store, NoOrigin, f)
+}
+
+// TransactWith is Transact with an origin for the transaction (Yjs
+// doc.transact's second argument, src/utils/Doc.js:179; yrs
+// Doc::transact_mut_with, src/transact.rs:118).
+func (d *Doc) TransactWith(origin Origin, f func(tr *Transaction)) {
+	transact(d.store, origin, f)
 }
 
 // ObserveUpdate registers callback for the updates of the document (Yjs
@@ -46,27 +53,25 @@ func (d *Doc) Transact(f func(tr *Transaction)) {
 // transaction that integrated something, callback is called once with the
 // update that carries what the transaction integrated to other replicas (the
 // structs of its insert set, Transaction.insertedStructs, encoded by encode)
-// and with the transaction's local flag: true for a transaction opened here
-// (Transact, Text.Insert, Text.Delete), false for one that applies a received
-// update (ApplySyncUpdate). A provider sends the updates of local
-// transactions and drops the others (y-websocket v2.1.0 does it by comparing
-// the transaction's origin with itself, src/y-websocket.js:353-361).
+// and with the transaction's origin (Transaction.origin). A provider gives
+// its own origin to the updates it applies and sends only the updates of
+// other origins (y-websocket v2.1.0, src/y-websocket.js:353-361).
 //
-// Three differences from the references. The handler gets the local flag
-// alone where Yjs passes (update, origin, doc, transaction) and yrs
-// (transaction, event): there is no origin yet (#206 T5), and a callback
-// must not touch the document (below), so it gets neither the document nor
-// the transaction. The encoder is an argument, for the reason given at
-// Encoder. The update carries inserts only: what the transaction deleted is
-// not in the bytes (the Encoder writes an empty delete set), and a
-// transaction that only deleted calls nobody, where Yjs emits its delete set.
+// Three differences from the references. The handler gets (update, origin)
+// where Yjs passes (update, origin, doc, transaction) and yrs (transaction,
+// event): a callback must not touch the document (below), so it gets
+// neither the document nor the transaction. The encoder is an argument, for
+// the reason given at Encoder. The update carries inserts only: what the
+// transaction deleted is not in the bytes (the Encoder writes an empty
+// delete set), and a transaction that only deleted calls nobody, where Yjs
+// emits its delete set.
 //
 // Callbacks run under the store's write lock, as the callbacks of
 // Text.Observe do and as yrs's do (the committing TransactionMut still holds
 // the store): a callback must not lock the document again (no Transact,
 // Insert, Delete, ApplySyncUpdate, Observe, ObserveUpdate, CodeUnits, Len:
 // deadlock). Not callable inside a transaction, for the same reason.
-func (d *Doc) ObserveUpdate(encode Encoder, callback func(update []byte, local bool)) {
+func (d *Doc) ObserveUpdate(encode Encoder, callback func(update []byte, origin Origin)) {
 	ref := d.store
 	ref.wlock()
 	ref.store.updateObservers = append(ref.store.updateObservers,
@@ -106,12 +111,12 @@ type Codec = func(data []byte) (ok bool, structs []updateItem, deletes []deleteS
 // its own reader and hands the Update to Doc::apply_update (:349). Past the
 // decode the Go follows all three: the structs, then the delete set, in one
 // transaction (ApplySyncUpdate; in y-octo, under one write lock).
-func (d *Doc) ApplyEncodedUpdate(decode Codec, data []byte) bool {
+func (d *Doc) ApplyEncodedUpdate(decode Codec, data []byte, origin Origin) bool {
 	ok, structs, deletes := decode(data)
 	if !ok {
 		return false
 	}
-	d.ApplySyncUpdate(structs, deletes)
+	d.ApplySyncUpdate(structs, deletes, origin)
 	return true
 }
 

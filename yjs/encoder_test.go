@@ -220,13 +220,15 @@ func TestObserveUpdateConverges(t *testing.T) {
 	docA, docB := NewDoc(1), NewDoc(2)
 	textA, textB := docA.GetOrCreateText("root"), docB.GetOrCreateText("root")
 	encode, decode := WireEncoder(), WireCodec()
-	// sent holds, per document, the updates of its local transactions, in
-	// order; remote counts the calls for transactions that applied an update.
+	// A provider's use of the observer: every update is applied with the
+	// origin "provider", and only the updates of other origins are sent.
+	// sent holds, per document, the updates to send, in order; remote counts
+	// the calls for transactions that applied an update.
 	sent := map[*Doc][][]byte{}
 	remote := 0
 	for _, doc := range []*Doc{docA, docB} {
-		doc.ObserveUpdate(encode, func(update []byte, local bool) {
-			if local {
+		doc.ObserveUpdate(encode, func(update []byte, origin Origin) {
+			if origin != "provider" {
 				sent[doc] = append(sent[doc], update)
 			} else {
 				remote++
@@ -247,7 +249,7 @@ func TestObserveUpdateConverges(t *testing.T) {
 	}
 
 	first := insert(docA, textA, 0, "hello")
-	if !docB.ApplyEncodedUpdate(decode, first) {
+	if !docB.ApplyEncodedUpdate(decode, first, "provider") {
 		t.Fatal("B: update did not decode")
 	}
 
@@ -257,11 +259,11 @@ func TestObserveUpdateConverges(t *testing.T) {
 	// B's later edit arrives at A before the one it depends on.
 	laterB := insert(docB, textB, 0, "😀")
 	for _, update := range [][]byte{laterB, fromB} {
-		if !docA.ApplyEncodedUpdate(decode, update) {
+		if !docA.ApplyEncodedUpdate(decode, update, "provider") {
 			t.Fatal("A: update did not decode")
 		}
 	}
-	if !docB.ApplyEncodedUpdate(decode, fromA) {
+	if !docB.ApplyEncodedUpdate(decode, fromA, "provider") {
 		t.Fatal("B: update did not decode")
 	}
 
@@ -273,7 +275,7 @@ func TestObserveUpdateConverges(t *testing.T) {
 	}
 
 	// four updates were applied and three of them called the receiving
-	// document's observer, with local false: B's later edit arrived at A
+	// document's observer, with the provider's origin: B's later edit arrived at A
 	// first and waited for the one before it, so its transaction integrated
 	// nothing, and the next one integrated both.
 	if remote != 3 {

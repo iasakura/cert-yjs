@@ -108,7 +108,7 @@ type store struct {
 // the encoder its updates are written with.
 type updateObserver struct {
 	encode   Encoder
-	callback func(update []byte, local bool)
+	callback func(update []byte, origin Origin)
 }
 
 // newStore creates an empty store owned by the given client, by value: the

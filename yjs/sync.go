@@ -16,8 +16,10 @@ package yjs
 // readSyncMessage's Step2/Update case). The byte decoding of the wire update
 // into []updateItem is the unverified codec (codec.go, //go:build !goose); the
 // sender-side diff (Step1) against the real store is separate follow-on work.
-func (d *Doc) ApplySyncUpdate(structs []updateItem, deletes []deleteSpan) {
-	transact(d.store, false, func(tr *Transaction) {
+// origin is the transaction's origin (Yjs applyUpdate's third argument,
+// transactionOrigin, src/utils/encoding.js:370).
+func (d *Doc) ApplySyncUpdate(structs []updateItem, deletes []deleteSpan, origin Origin) {
+	transact(d.store, origin, func(tr *Transaction) {
 		tr.applyUpdate(structs)
 		// deletes go second: a span may target a struct that just arrived in
 		// this very batch (y-octo applies the delete set after the structs).

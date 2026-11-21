@@ -105,7 +105,7 @@ func (binding *documentBinding) encodeStateAsUpdate(this js.Value, arguments []j
 func (binding *documentBinding) applyUpdate(this js.Value, arguments []js.Value) any {
 	update := make([]byte, arguments[0].Length())
 	js.CopyBytesToGo(update, arguments[0])
-	return binding.document.ApplyEncodedUpdate(yjs.WireCodec(), update)
+	return binding.document.ApplyEncodedUpdate(yjs.WireCodec(), update, yjs.NoOrigin)
 }
 
 // getText(name) returns the binding object of the root text named name.

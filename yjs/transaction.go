@@ -56,11 +56,27 @@ type Transaction struct {
 	insertSet []idSpan
 	deleteSet []idSpan
 	changed   map[*yType]bool
-	// local says whether the transaction was opened by an edit made here
-	// (true) or applies a received update (false): Yjs transaction.local
-	// (src/utils/Transaction.js:109), set by transact's third argument.
-	local bool
+	// origin is what the caller that opened the transaction gave as its
+	// origin, NoOrigin if nothing (Yjs transaction.origin,
+	// src/utils/Transaction.js:100; yrs TransactionMut::origin,
+	// src/transaction.rs:569). The update observers receive it
+	// (notifyUpdate).
+	origin Origin
 }
+
+// Origin marks who opened a transaction, so that a callback can tell the
+// transactions of one caller from the others: a provider gives its own
+// origin to the updates it applies and does not send those back. Yjs
+// v14.0.0-rc.18 takes any value and compares by identity
+// (transaction.origin, src/utils/Transaction.js:100); yrs 0.27.2 takes a
+// byte string compared by content (Origin, src/transaction.rs:1412). The Go
+// follows yrs, with Go's byte string type. NoOrigin, the empty string, is
+// Yjs's null and yrs's None; an empty origin given on purpose cannot be told
+// from none, where yrs tells Some of the empty string from None.
+type Origin = string
+
+// NoOrigin is the origin of a transaction opened without one.
+const NoOrigin Origin = ""
 
 // recordInsert records a freshly integrated node: its ids join the
 // transaction's insert set and its parent type is marked changed (Yjs
@@ -289,10 +305,10 @@ func (tr *Transaction) insertedStructs() []updateItem {
 // (Text.InsertIn / DeleteIn / CodeUnitsIn) with tr and never locks the
 // document, and the callbacks notify runs receive their delta and must not
 // touch the document at all (Text.Observe).
-func transact(ref *storeRef, local bool, f func(tr *Transaction)) {
+func transact(ref *storeRef, origin Origin, f func(tr *Transaction)) {
 	ref.wlock()
 	tr := newTransaction(&ref.store)
-	tr.local = local
+	tr.origin = origin
 	f(tr)
 	tr.notify()
 	tr.notifyUpdate()
@@ -338,7 +354,7 @@ func (tr *Transaction) notifyUpdate() {
 	}
 	for i := 0; i < len(observers); i++ {
 		observer := observers[i]
-		observer.callback(observer.encode(structs), tr.local)
+		observer.callback(observer.encode(structs), tr.origin)
 	}
 }
 
@@ -347,5 +363,5 @@ func (tr *Transaction) notifyUpdate() {
 // tests call the transaction's internals on a fresh record where a
 // transaction would have handed theirs.
 func newTransaction(s *store) *Transaction {
-	return &Transaction{store: s, insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool), local: true}
+	return &Transaction{store: s, insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool), origin: NoOrigin}
 }

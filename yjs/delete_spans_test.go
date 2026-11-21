@@ -26,7 +26,7 @@ func TestApplyDeleteSpansBuffersUncovered(t *testing.T) {
 	}
 
 	// now the inserts arrive; the drain re-applies the buffered span.
-	docB.ApplySyncUpdate(structsOf(docA, "root"), nil)
+	docB.ApplySyncUpdate(structsOf(docA, "root"), nil, NoOrigin)
 	docB.store.wlock()
 	newTransaction(&docB.store.store).applyDeleteSpans(nil)
 	left := len(docB.store.store.pendingDeletes)
@@ -48,7 +48,7 @@ func TestApplyDeleteSpansConverges(t *testing.T) {
 
 	docB := NewDoc(2)
 	txtB := docB.GetOrCreateText("root")
-	docB.ApplySyncUpdate(structsOf(docA, "root"), nil)
+	docB.ApplySyncUpdate(structsOf(docA, "root"), nil, NoOrigin)
 
 	txtA.Delete(5, 6) // " world", clocks 5..10
 
