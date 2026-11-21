@@ -67,14 +67,12 @@ func units(s string) []uint16 {
 	return result
 }
 
-// insert is one transaction of c that inserts content at index.
+// insert is one transaction of c's document that inserts content at index.
 func insert(c *Client, index uint64, content string) {
-	c.Transact(func(tr *yjs.Transaction, text *yjs.Text) {
-		text.InsertIn(tr, index, units(content))
-	})
+	c.Text().Insert(index, units(content))
 }
 
-// An edit one client makes through Transact reaches the other client through
+// An edit one client makes on its document reaches the other client through
 // the server: the update handler sends the transaction's structs, encoded by
 // the deployment's encoder, and they are decoded and applied twice (server,
 // other client).

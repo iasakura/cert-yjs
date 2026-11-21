@@ -2,13 +2,14 @@
     y-websocket server, one document, one root text, over the ws FFI. The
     client registers an update handler on its document ([Connect], over
     [wp_Doc__ObserveUpdate]) that sends the update of every transaction
-    except the client's own applies; a local edit is one transaction
-    ([Transact], over [wp_Doc__Transact]); what the connection delivers is
-    applied through the verified total apply path with the provider's
-    origin ([Serve], over [wp_Doc__ApplyEncodedUpdate]); after every local
-    edit and every applied update the client writes the report of its root
-    to the run's trace, under the trace protocol [is_report], as the server
-    does (ws_relay.v).
+    except the client's own applies; an application edits the document
+    itself, with the document's own specifications ([Client.Doc] and
+    [Client.Text] hand it [is_Doc] and [is_Text]); what the connection
+    delivers is applied through the verified total apply path with the
+    provider's origin ([Serve], over [wp_Doc__ApplyEncodedUpdate]); after
+    every applied update, and when an application asks ([Client.Report]),
+    the client writes the report of its root to the run's trace, under the
+    trace protocol [is_report], as the server does (ws_relay.v).
 
     What the client proves about itself is the wire protocol: every message
     it sends satisfies [yjs_prot]. The store tells the update handler that
@@ -29,26 +30,23 @@
       the client at [client_loc]: its connection
       (send channel [send_channel], receive channel [receive_channel]), its document (store names
       [γs], client id [client_id]) in the deployment whose history is [γh], the
-      root text [name] it edits and reports on, and the lock that holds the
+      root text [name] it reports on, and the lock that holds the
       connection's send cursor. Persistent: every field but the lock is
       written once, by [Connect].
     - [own_Client_receive_side γs receive_channel]: what the goroutine that runs [Serve]
       holds: the connection's receive cursor, and a read capability of the
-      store for the report. The goroutine that calls [Transact] holds a
+      store for the report. The goroutine that runs the application holds a
       read capability alone ([own_read_cap]).
-    - [closure_edits_text γs γh name f Q]: the contract of the closure
-      [Client.Transact] runs: handed the root text and a fresh transaction,
-      it returns the transaction, changed as it may be, with [Q] and with
-      what it inserted free of surrogate code units
-      ([inserted_units_allowed] of the document's rule). That is all an
-      application proves to have its edit sent: the certificates of what it
-      inserted are the history's, not its own.
     - [client_app_spec app]: the contract of an application [Run] runs: with
-      a client and a read capability of its store, it runs safely.
-    - [wp_Connect] / [wp_Client__Transact] /
-      [wp_Client__Serve] / [wp_Run] (a whole client around an application,
-      what a closed-system theorem boots) / [wp_Typist] (an application: it
-      types a script).
+      a client and a read capability of its store, it runs safely. An
+      application has no contract of its own for its edits: it calls the
+      document's operations, and their preconditions ask that what a
+      transaction with no origin inserts satisfies [client_may_insert],
+      that is, holds no surrogate code unit.
+    - [wp_Connect] / [wp_Client__Doc] / [wp_Client__Text] /
+      [wp_Client__Report] / [wp_Client__Serve] / [wp_Run] (a whole client
+      around an application, what a closed-system theorem boots) /
+      [wp_Typist] (an application: it types a script).
 
     The send cursor is under the client's send lock because the update
     handler runs in whichever goroutine ended a transaction, and its
@@ -150,33 +148,10 @@ Definition is_Client (client_loc : loc) (γs : store_names) (γh : history_names
     "%Hdeploy"  ∷ ⌜deployment_protocols decode γh⌝.
 
 (** The receive side of the client: the receive cursor of its connection
-    and one read capability of its store ([report] snapshots the root under
+    and one read capability of its store ([Report] snapshots the root under
     the read lock). Held by the goroutine that runs [Serve]. *)
 Definition own_Client_receive_side (γs : store_names) (receive_channel : chan_id) : iProp Σ :=
   ∃ received : nat, own_recv_cursor receive_channel received ∗ own_read_cap γs.
-
-(** [closure_edits_text γs γh name f Q]: the closure [f] edits the root
-    text [name] of the store [γs] inside one transaction
-    ([Client.Transact]'s argument): handed the text's handle and the fresh
-    transaction, it returns the transaction, changed as it may be, with [Q],
-    and what the transaction inserted satisfies the document's rule for a
-    transaction with no origin ([inserted_units_allowed] of
-    [client_may_insert]): it holds no surrogate code unit. A one-shot wand,
-    as [closure_runs_transaction]: the closure runs once and may carry the
-    caller's resources into the transaction. *)
-Definition closure_edits_text (γs : store_names) (γh : history_names) (name : go_string)
-    (f : func.t) (Q : iProp Σ) : iProp Σ :=
-  ∀ (transaction store_loc text : loc) (client_id : ClientId) (history : list Ev)
-    (model : DocModel) (pending : list Input) (deleted : gset YjsId) (Ψ : val -> iProp Σ),
-    is_Text text γs γh client_may_insert name [] ∅ -∗
-    own_transaction transaction store_loc γs γh ""%go client_id history model pending deleted
-      ∅ ∅ ∅ -∗
-    (∀ (history' : list Ev) (model' : DocModel) (pending' : list Input)
-       (deleted' inserted tombstoned : gset YjsId) (changed : gset P),
-       own_transaction transaction store_loc γs γh ""%go client_id history' model' pending' deleted'
-         inserted tombstoned changed ∗
-       ⌜inserted_units_allowed (client_may_insert ""%go) model' inserted⌝ ∗ Q -∗ Ψ #()) -∗
-    WP #f #transaction #text {{ Ψ }}.
 
 (** [client_app_spec app]: the application [app] runs safely with any
     client and a read capability of its store ([Run]'s argument).
@@ -197,14 +172,46 @@ Proof. apply _. Qed.
 
 (* ===== lemmas ============================================================= *)
 
-(** [report]: the report of the root, as a read under the store's read lock
+(** [Doc]: the client's document, under the client's insert rule. An
+    application edits it with the document's own specifications
+    ([wp_Doc__Transact], [wp_Text__Insert]), and the update handler
+    [Connect] registered sends what each transaction integrated. *)
+Lemma wp_Client__Doc (client_loc : loc) (γs : store_names) (γh : history_names)
+    (client_id : ClientId) (send_channel receive_channel : chan_id) (name : go_string) :
+  {{{ is_pkg_init wsclient ∗
+      is_Client client_loc γs γh client_id send_channel receive_channel name }}}
+    client_loc @! (go.PointerType wsclient.Client) @! "Doc" #()
+  {{{ (doc store_ref : loc), RET #doc; is_Doc doc store_ref γs γh client_may_insert }}}.
+Proof.
+  wp_start as "#Hclient".
+  iNamed "Hclient".
+  wp_auto.
+  iApply "HΦ". iFrame "Hdoc".
+Qed.
+
+(** [Text]: the root text of the client's document, the one [Report]
+    reports. *)
+Lemma wp_Client__Text (client_loc : loc) (γs : store_names) (γh : history_names)
+    (client_id : ClientId) (send_channel receive_channel : chan_id) (name : go_string) :
+  {{{ is_pkg_init wsclient ∗
+      is_Client client_loc γs γh client_id send_channel receive_channel name }}}
+    client_loc @! (go.PointerType wsclient.Client) @! "Text" #()
+  {{{ (text : loc), RET #text; is_Text text γs γh client_may_insert name [] ∅ }}}.
+Proof.
+  wp_start as "#Hclient".
+  iNamed "Hclient".
+  wp_auto.
+  iApply "HΦ". iFrame "Htext".
+Qed.
+
+(** [Report]: the report of the root, as a read under the store's read lock
     sees it, goes to the run's trace under the deployment's trace protocol
     [is_report]; the certificate is the snapshot's exact read certificate. *)
-Lemma wp_Client__report (client_loc : loc) (γs : store_names) (γh : history_names)
+Lemma wp_Client__Report (client_loc : loc) (γs : store_names) (γh : history_names)
     (client_id : ClientId) (send_channel receive_channel : chan_id) (name : go_string) :
   {{{ is_pkg_init wsclient ∗
       is_Client client_loc γs γh client_id send_channel receive_channel name ∗ own_read_cap γs }}}
-    client_loc @! (go.PointerType wsclient.Client) @! "report" #()
+    client_loc @! (go.PointerType wsclient.Client) @! "Report" #()
   {{{ RET #(); own_read_cap γs }}}.
 Proof.
   wp_start as "(#Hclient & Hrcap)".
@@ -273,39 +280,6 @@ Proof.
   by iApply "HΦ".
 Qed.
 
-(** [Transact]: one local edit, of any shape. The closure edits inside one
-    transaction ([closure_edits_text]), whose obligation is the one
-    [wp_Doc__Transact] asks. The update handler sends the update before the
-    transaction's lock is released. *)
-Lemma wp_Client__Transact (client_loc : loc) (γs : store_names) (γh : history_names)
-    (client_id : ClientId) (send_channel receive_channel : chan_id) (name : go_string) (f : func.t) (Q : iProp Σ) :
-  {{{ is_pkg_init wsclient ∗
-      is_Client client_loc γs γh client_id send_channel receive_channel name ∗
-      own_read_cap γs ∗ closure_edits_text γs γh name f Q }}}
-    client_loc @! (go.PointerType wsclient.Client) @! "Transact" #f
-  {{{ RET #(); own_read_cap γs ∗ Q }}}.
-Proof.
-  wp_start as "(#Hclient & Hrcap & Hf)".
-  iPoseProof "Hclient" as "Hopen". iNamed "Hopen".
-  wp_auto.
-  wp_apply (wp_Doc__Transact _ s_loc γs γh client_may_insert _ (λ _ _ _ _ _, Q)%I
-              with "[$Hdoc Hf f text]").
-  { rewrite /closure_runs_transaction.
-    iIntros (tr c' h m pend deleted Ψ) "Htx HΨ".
-    wp_auto.
-    wp_apply ("Hf" with "Htext Htx").
-    iIntros (h' m' pend' deleted' inserted tombstoned changed) "(Htx & %Hfree & HQ)".
-    wp_auto.
-    iApply ("HΨ" $! h' m' pend' deleted' inserted tombstoned changed).
-    iFrame "Htx HQ". iPureIntro. exact Hfree. }
-  iIntros "HQ". iDestruct "HQ" as (c' h' m' pend' deleted') "HQ".
-  wp_auto.
-  wp_apply (wp_Client__report with "[$Hclient $Hrcap]").
-  iIntros "Hrcap".
-  wp_auto.
-  iApply "HΦ". iFrame "Hrcap HQ".
-Qed.
-
 (** [Serve]: the receive loop. It holds the client's receive side for the
     whole run and returns it when the connection stops delivering. Every
     message it receives satisfies the wire protocol, and the provider's
@@ -344,7 +318,7 @@ Proof.
                with "[$Hdoc $His_history $Hpin $Hcodec $Hdata $Hyprot]").
     iIntros (h inputs applied m') "(Hdata & %Hdecoded & #Hgrown & #Haccepts & #Happlied)".
     wp_auto.
-    wp_apply (wp_Client__report with "[$Hclient $Hrcap]").
+    wp_apply (wp_Client__Report with "[$Hclient $Hrcap]").
     iIntros "Hrcap".
     wp_auto.
     wp_for_post. iFrame.
@@ -354,8 +328,8 @@ Qed.
     client's insert rule, and the root text, and register the update
     handler. On a failed dial there is no client and the history element
     is handed back untouched. Otherwise the caller gets the client, a read
-    capability of its store for the goroutine that calls [Transact], and
-    the receive side for the goroutine that runs [Serve]. *)
+    capability of its store for the goroutine that runs the application,
+    and the receive side for the goroutine that runs [Serve]. *)
 Lemma wp_Connect (host : w64) (path : go_string) (client : w64) (decoder encoder : func.t)
     (name : go_string) (γh : history_names) :
   deployment_protocols decode γh ->
@@ -454,8 +428,10 @@ Qed.
 
 (** [Typist]: an application for [Run]. It types its script one byte at a
     time at the end of the text, each byte as one code unit in its own
-    transaction. A byte is below the surrogate range, so each transaction
-    meets [closure_edits_text], and the script needs no condition. *)
+    transaction of the client's document ([wp_Doc__Transact]), and writes
+    the report after each. A byte is below the surrogate range, so each
+    transaction satisfies the document's rule, and the script needs no
+    condition. *)
 Lemma wp_Typist (script : go_string) :
   {{{ is_pkg_init wsclient }}}
     @! wsclient.Typist #script
@@ -468,6 +444,11 @@ Proof.
   iModIntro. iApply "HΦ".
   iIntros "!>" (client_loc γs γh client_id send_channel receive_channel name) "!>". iIntros (Ψ) "(#Hpkg' & #Hclient & Hsend) HΨ".
   wp_auto.
+  wp_apply (wp_Client__Doc with "[$Hclient]"). iIntros (doc store_ref) "#Hdoc".
+  wp_auto.
+  wp_apply (wp_Client__Text with "[$Hclient]"). iIntros (text) "#Htext".
+  wp_auto.
+  iPersist "doc text".
   wp_apply wp_string_to_bytes. iIntros (units_slice) "[Hunits Hunits_cap]".
   wp_auto.
   iAssert (∃ (i : w64),
@@ -497,10 +478,10 @@ Proof.
   (* a byte is below the surrogate range *)
   have Hbyte : Forall (client_may_insert ""%go) [W16 (uint.Z unit)].
   { apply Forall_singleton. right. rewrite /unit_is_surrogate. word. }
-  wp_apply (wp_Client__Transact client_loc γs γh client_id send_channel receive_channel name _ True%I
-              with "[$Hclient $Hsend unit Hliteral]").
-  { rewrite /closure_edits_text.
-    iIntros (tr s_loc t c' h m pend deleted Ψ') "#Htext Htx HΨ'".
+  wp_apply (wp_Doc__Transact _ store_ref γs γh client_may_insert _ (λ _ _ _ _ _, True)%I
+              with "[$Hdoc unit Hliteral]").
+  { rewrite /closure_runs_transaction.
+    iIntros (tr c' h m pend deleted Ψ') "Htx HΨ'".
     wp_auto.
     wp_apply (wp_Text__CodeUnitsIn with "[$Htext $Htx]").
     iIntros (visible_slice) "(_ & Htx & Hvisible & Hvisible_cap)".
@@ -516,7 +497,10 @@ Proof.
     (* what the transaction inserted is the one byte *)
     exact (inserted_run_units_allowed _ m' name [] L' ins _ c' k0 originLeft originRight
              Hrun (proj1 Hreplaced) Hunique Hbyte). }
-  iIntros "[Hsend _]".
+  iIntros "_".
+  wp_auto.
+  wp_apply (wp_Client__Report with "[$Hclient $Hsend]").
+  iIntros "Hsend".
   wp_auto.
   wp_for_post. iFrame. iPureIntro. clear -Hinside Hi. word.
 Qed.
