@@ -391,14 +391,14 @@ Qed.
     current one, with the current snapshot's certificate; the registry
     moves to the current state, the observers of the other roots having
     nothing new to hear. The transaction's record is consumed:
-    [notifyUpdate] reads what is left of it ([own_transaction_notified])
-    and [transact] releases the lock after that. *)
-Lemma wp_Transaction__notify (tr s_loc : loc) (γs : store_names) (γh : history_names)
+    [notifyUpdate] reads what is left of it ([own_transaction_notified]),
+    inside [commit]. *)
+Lemma wp_Transaction__notify (tr s_loc : loc) (γs : store_names) (γh : history_names) (origin : go_string)
     (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input)
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
-  {{{ is_pkg_init yjs ∗ own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed }}}
+  {{{ is_pkg_init yjs ∗ own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "notify" #()
-  {{{ RET #(); own_transaction_notified tr s_loc γs γh c h m pend deleted inserted }}}.
+  {{{ RET #(); own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted }}}.
 Proof.
   wp_start as "Htx".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
@@ -447,7 +447,7 @@ Proof.
     iSplitR. { iPureIntro. split; [rewrite /= ?take_0 ?list_to_set_nil // | lia]. }
     iApply (big_sepM2_mono with "Hobservers"). iIntros (parent cbs_sl entry Hr Hd) "H".
     first [iExact "H" | rewrite decide_False; [iExact "H" | apply not_elem_of_empty]]. }
-  iSplitR "HΦ Hrecord_store Hupdate_observers".
+  iSplitR "HΦ Hrecord_store Hupdate_observers Horigin".
   { (* ---- one changed type ---- *)
     iModIntro. iIntros (i key v [Hkey Hval]) "HP".
     iDestruct "HP" as (done tyv) "HP". iNamed "HP". destruct Hdone as [Hdone Hi0].
@@ -621,7 +621,7 @@ Proof.
   iExists state', ds', insert_sl.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers'"; first iFrame "Hcore' Hobservers'".
-  iFrame "Hreplica_history' Hrecord_store Hinsertf Hinsert".
+  iFrame "Hreplica_history' Horigin Hrecord_store Hinsertf Hinsert".
 Qed.
 
 End transaction_notify.

@@ -138,7 +138,7 @@ Proof.
     (* run the total certificate-based applyUpdate on the real store: no
        causal-closure obligation; the pending plus the batch drain to the
        structural fixpoint, delivering only the applied structs (per char) *)
-    wp_apply (wp_Transaction__applyUpdate tr _ sl dq γs γh c h m pend inputs tombs ∅ ∅ ∅ Hwf
+    wp_apply (wp_Transaction__applyUpdate tr _ sl dq γs γh origin c h m pend inputs tombs ∅ ∅ ∅ Hwf
                 with "[$Hishist $Htx $Hupd $Hcerts]").
     iIntros (applied rest m' changed') "(Hupd & Htx & %Hdrain & %Hvr & %Hnoloss & #Happlied & %Hcsub)".
     (* the delivery receipt: the transaction's history is now the grown one,
@@ -153,7 +153,7 @@ Proof.
     (* mint the ENFORCEABLE no-loss receipts: every input's id is accepted, hence
        (by the store invariant) forever delivered-or-buffered; a discarding
        implementation could not produce these fragments *)
-    iMod (own_transaction_accept_batch _ _ _ _ _ _ _ _ _ _ _ _ inputs
+    iMod (own_transaction_accept_batch _ _ _ _ _ _ _ _ _ _ _ _ _ inputs
             ltac:(move=> x Hx; exact (input_accounted_id _ _ _ (Hnoloss x Hx)))
             with "Htx") as "[Htx #Haccepts]".
     wp_auto.
@@ -162,7 +162,7 @@ Proof.
     iFrame "Htx".
     iSplitR.
     { (* this origin may insert anything *)
-      iPureIntro. move=> root item _ _. apply Forall_forall => unit _.
+      iPureIntro. move=> root item _. apply Forall_forall => unit _.
       rewrite Hmay_insert. exact (Hanything unit). }
     iExists h, applied, m'. iFrame "Hupd Hspans Hlb Haccepts Happlied". done. }
   iIntros "HQ". iDestruct "HQ" as (c0 h' m' pend' tombs') "HQ".

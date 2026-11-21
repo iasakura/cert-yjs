@@ -61,11 +61,11 @@ Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
-Lemma wp_newTransaction (s_loc : loc) :
+Lemma wp_newTransaction (s_loc : loc) (origin : go_string) :
   {{{ is_pkg_init yjs }}}
-    @! yjs.newTransaction #s_loc
+    @! yjs.newTransaction #s_loc #origin
   {{{ (tr : loc), RET #tr; own_transaction_changes tr s_loc ∅ ∅ ∅ ∗
-      own_transaction_origin tr ""%go }}}.
+      own_transaction_origin tr origin }}}.
 Proof.
   rewrite /own_transaction_origin.
   wp_start. wp_auto.

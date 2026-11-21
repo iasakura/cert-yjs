@@ -90,7 +90,7 @@ Proof.
     iFrame "Htx".
     iSplitR.
     { (* a delete inserts nothing *)
-      iPureIntro. move=> root item _ Hid. by apply elem_of_empty in Hid. }
+      iPureIntro. move=> root item [_ Hid]. by apply elem_of_empty in Hid. }
     iExists dels. iFrame "Htext'". }
   iIntros "HQ". iDestruct "HQ" as (c h' m' pend' deleted') "HQ".
   iDestruct "HQ" as (dels) "#Htext'".

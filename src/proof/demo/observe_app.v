@@ -287,11 +287,11 @@ Proof.
     (* the mirror's view, its snapshot tied to the transaction's at the
        lock's linearization point *)
     wp_apply (wp_Mirror__Text _ _ _ _ _ _ _
-                (λ s, own_transaction tr (store_of_ref s_loc) γs γh c h m0 pend deleted ∅ ∅ ∅ ∗
+                (λ s, own_transaction tr (store_of_ref s_loc) γs γh ""%go c h m0 pend deleted ∅ ∅ ∅ ∗
                       ⌜s = type_snapshot m0 deleted name⌝)%I
                 with "[$Hmirror Htx]").
     { iIntros (s) "Hhalf".
-      iDestruct (own_transaction_observed_agree _ _ _ _ _ _ _ _ _ _ _ _ name γo s
+      iDestruct (own_transaction_observed_agree _ _ _ _ _ _ _ _ _ _ _ _ _ name γo s
                    (not_elem_of_empty name) with "Htx Hobserved Hhalf") as %Heq.
       iFrame "Hhalf Htx". iPureIntro. exact Heq. }
     iIntros (viewsl s) "(#Hviewsl & #Hsnap_s & Htx & %Heq)". subst s.
@@ -304,7 +304,7 @@ Proof.
     wp_auto.
     iApply ("HΨ'" $! h m0 pend deleted ∅ ∅ ∅). iFrame "Htx ok".
     (* the check inserts nothing *)
-    iPureIntro. move=> root item _ Hid. by apply elem_of_empty in Hid. }
+    iPureIntro. move=> root item [_ Hid]. by apply elem_of_empty in Hid. }
   iIntros "HQ". iDestruct "HQ" as (c h' m' pend' deleted') "ok".
   wp_auto.
   iApply "HΦ". done.
