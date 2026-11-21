@@ -36,33 +36,42 @@ func (d *Doc) GetOrCreateText(name string) *Text {
 // ApplySyncUpdate, CodeUnits, String or Len on the same document: deadlock, #206 item
 // 2); it uses the In-variants with tr.
 func (d *Doc) Transact(f func(tr *Transaction)) {
-	transact(d.store, f)
+	transact(d.store, true, f)
 }
 
-// TransactEncoded runs f as one transaction on the document, like Transact,
-// and returns the update that carries what the transaction integrated to
-// other replicas: the structs of its insert set
-// (Transaction.insertedStructs), encoded by encode. Yjs v14.0.0-rc.18 hands
-// that update to the document's 'update' handlers when the transaction ends
-// (src/utils/Transaction.js:297-301), and y-websocket v2.1.0 sends it from
-// such a handler (src/y-websocket.js:353-361); yrs 0.27.2 hands it to the
-// callbacks registered with Doc::observe_update_v1, at commit
-// (src/transaction.rs:1031). No handler registry is built here: the caller
-// that runs the transaction gets the bytes back and sends them. The update
-// carries inserts only: what f deletes is tombstoned here and is not in the
-// bytes (the Encoder writes an empty delete set).
+// ObserveUpdate registers callback for the updates of the document (Yjs
+// v14.0.0-rc.18 doc.on('update', handler), emitted at
+// src/utils/Transaction.js:297-301; yrs 0.27.2 Doc::observe_update_v1, whose
+// callbacks run at commit, src/transaction.rs:1094). At the end of every
+// transaction that integrated something, callback is called once with the
+// update that carries what the transaction integrated to other replicas (the
+// structs of its insert set, Transaction.insertedStructs, encoded by encode)
+// and with the transaction's local flag: true for a transaction opened here
+// (Transact, Text.Insert, Text.Delete), false for one that applies a received
+// update (ApplySyncUpdate). A provider sends the updates of local
+// transactions and drops the others (y-websocket v2.1.0 does it by comparing
+// the transaction's origin with itself, src/y-websocket.js:353-361).
 //
-// The structs are read inside the transaction and encoded after it: they
-// share the nodes' origin ids and content slices, which are never written
-// once a node exists (content.go), so the encoder needs no lock. A
-// transaction that integrates nothing yields the encoding of no structs.
-func (d *Doc) TransactEncoded(f func(tr *Transaction), encode Encoder) []byte {
-	var structs []updateItem
-	transact(d.store, func(tr *Transaction) {
-		f(tr)
-		structs = tr.insertedStructs()
-	})
-	return encode(structs)
+// Three differences from the references. The handler gets the local flag
+// alone where Yjs passes (update, origin, doc, transaction) and yrs
+// (transaction, event): there is no origin yet (#206 T5), and a callback
+// must not touch the document (below), so it gets neither the document nor
+// the transaction. The encoder is an argument, for the reason given at
+// Encoder. The update carries inserts only: what the transaction deleted is
+// not in the bytes (the Encoder writes an empty delete set), and a
+// transaction that only deleted calls nobody, where Yjs emits its delete set.
+//
+// Callbacks run under the store's write lock, as the callbacks of
+// Text.Observe do and as yrs's do (the committing TransactionMut still holds
+// the store): a callback must not lock the document again (no Transact,
+// Insert, Delete, ApplySyncUpdate, Observe, ObserveUpdate, CodeUnits, Len:
+// deadlock). Not callable inside a transaction, for the same reason.
+func (d *Doc) ObserveUpdate(encode Encoder, callback func(update []byte, local bool)) {
+	ref := d.store
+	ref.wlock()
+	ref.store.updateObservers = append(ref.store.updateObservers,
+		updateObserver{encode: encode, callback: callback})
+	ref.wunlock()
 }
 
 // Codec is the decoding half of the update codec: data decodes to a batch of

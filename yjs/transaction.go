@@ -56,6 +56,10 @@ type Transaction struct {
 	insertSet []idSpan
 	deleteSet []idSpan
 	changed   map[*yType]bool
+	// local says whether the transaction was opened by an edit made here
+	// (true) or applies a received update (false): Yjs transaction.local
+	// (src/utils/Transaction.js:109), set by transact's third argument.
+	local bool
 }
 
 // recordInsert records a freshly integrated node: its ids join the
@@ -273,7 +277,7 @@ func (tr *Transaction) insertedStructs() []updateItem {
 	return structs
 }
 
-// transact runs f as one transaction: lock, f, notify, unlock (Yjs transact,
+// transact runs f as one transaction: lock, f, notify, notifyUpdate, unlock (Yjs transact,
 // src/utils/Transaction.js:391-422, without the reentrant branch; yrs
 // transact_mut takes the store's write guard and commits on drop,
 // src/transact.rs:131, src/transaction.rs:488). The store's write lock is the
@@ -285,11 +289,13 @@ func (tr *Transaction) insertedStructs() []updateItem {
 // (Text.InsertIn / DeleteIn / CodeUnitsIn) with tr and never locks the
 // document, and the callbacks notify runs receive their delta and must not
 // touch the document at all (Text.Observe).
-func transact(ref *storeRef, f func(tr *Transaction)) {
+func transact(ref *storeRef, local bool, f func(tr *Transaction)) {
 	ref.wlock()
 	tr := newTransaction(&ref.store)
+	tr.local = local
 	f(tr)
 	tr.notify()
+	tr.notifyUpdate()
 	ref.wunlock()
 }
 
@@ -313,10 +319,33 @@ func (tr *Transaction) notify() {
 	}
 }
 
+// notifyUpdate is the update half of the end of the transaction (Yjs
+// v14.0.0-rc.18 cleanupTransactions, src/utils/Transaction.js:297-301: after
+// the type observers, if anybody listens to 'update', write the transaction's
+// update and emit it when it has content; yrs 0.27.2 commit,
+// emit_update_v1, src/transaction.rs:1094). Nothing is read from the store when nobody
+// observes. Content here is the structs alone (Doc.ObserveUpdate): a
+// transaction that integrated nothing calls nobody. Each registration
+// encodes with its own encoder, where Yjs encodes once per event name.
+func (tr *Transaction) notifyUpdate() {
+	observers := tr.store.updateObservers
+	if len(observers) == 0 {
+		return
+	}
+	structs := tr.insertedStructs()
+	if len(structs) == 0 {
+		return
+	}
+	for i := 0; i < len(observers); i++ {
+		observer := observers[i]
+		observer.callback(observer.encode(structs), tr.local)
+	}
+}
+
 // newTransaction is an empty transaction record (Yjs's Transaction
 // constructor, src/utils/Transaction.js:51). Only transact opens one; the
 // tests call the transaction's internals on a fresh record where a
 // transaction would have handed theirs.
 func newTransaction(s *store) *Transaction {
-	return &Transaction{store: s, insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool)}
+	return &Transaction{store: s, insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool), local: true}
 }

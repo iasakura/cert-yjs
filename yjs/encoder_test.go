@@ -213,19 +213,37 @@ func TestWireEncoderSurrogatePair(t *testing.T) {
 	expectWireRoundTrip(t, structs)
 }
 
-// Two replicas that send each other every edit through TransactEncoded and
-// apply what they receive through ApplyEncodedUpdate read the same text,
-// whichever order the concurrent edits arrive in.
-func TestTransactEncodedConverges(t *testing.T) {
+// Two replicas that send each other every local update their update
+// observer receives and apply what they receive through ApplyEncodedUpdate
+// read the same text, whichever order the concurrent edits arrive in.
+func TestObserveUpdateConverges(t *testing.T) {
 	docA, docB := NewDoc(1), NewDoc(2)
 	textA, textB := docA.GetOrCreateText("root"), docB.GetOrCreateText("root")
 	encode, decode := WireEncoder(), WireCodec()
+	// sent holds, per document, the updates of its local transactions, in
+	// order; remote counts the calls for transactions that applied an update.
+	sent := map[*Doc][][]byte{}
+	remote := 0
+	for _, doc := range []*Doc{docA, docB} {
+		doc.ObserveUpdate(encode, func(update []byte, local bool) {
+			if local {
+				sent[doc] = append(sent[doc], update)
+			} else {
+				remote++
+			}
+		})
+	}
 	// insert is one transaction that inserts content at index and returns
-	// the transaction's update.
+	// the update the observer was called with, nil if it was not called.
 	insert := func(doc *Doc, text *Text, index uint64, content string) []byte {
-		return doc.TransactEncoded(func(tr *Transaction) {
+		before := len(sent[doc])
+		doc.Transact(func(tr *Transaction) {
 			text.InsertIn(tr, index, encodeContent(content))
-		}, encode)
+		})
+		if len(sent[doc]) == before {
+			return nil
+		}
+		return sent[doc][before]
 	}
 
 	first := insert(docA, textA, 0, "hello")
@@ -254,13 +272,22 @@ func TestTransactEncodedConverges(t *testing.T) {
 		t.Fatalf("text: got %q, want %q", got, want)
 	}
 
-	// an insert that is refused sends the encoding of no structs, which
-	// applies as a no-op.
-	refused := insert(docA, textA, 1000, "x")
-	if !docB.ApplyEncodedUpdate(decode, refused) {
-		t.Fatal("B: the empty update did not decode")
+	// four updates were applied and three of them called the receiving
+	// document's observer, with local false: B's later edit arrived at A
+	// first and waited for the one before it, so its transaction integrated
+	// nothing, and the next one integrated both.
+	if remote != 3 {
+		t.Fatalf("%d calls for applied updates, want 3", remote)
 	}
-	if a, b := textA.String(), textB.String(); a != b {
-		t.Fatalf("diverged after the empty update: A %q, B %q", a, b)
+
+	// a transaction that integrates nothing calls nobody: a refused insert,
+	// and a transaction that only deletes.
+	if update := insert(docA, textA, 1000, "x"); update != nil {
+		t.Fatal("A: a refused insert called the observer")
+	}
+	calls := len(sent[docA])
+	textA.Delete(0, 1)
+	if len(sent[docA]) != calls {
+		t.Fatal("A: a delete called the observer")
 	}
 }

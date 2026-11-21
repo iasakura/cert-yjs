@@ -96,6 +96,19 @@ type store struct {
 	// mu like every other field; notify walks it at the end of every
 	// transaction.
 	observers map[*yType][]func(delta []DeltaOp)
+	// updateObservers is the callbacks Doc.ObserveUpdate registered, in
+	// registration order (Yjs v14.0.0-rc.18 keeps them in the document's
+	// observable, doc._observers.get('update'); yrs 0.27.2 in the store's
+	// events, StoreEvents.update_v1_events). notifyUpdate walks it at the end
+	// of every transaction.
+	updateObservers []updateObserver
+}
+
+// updateObserver is one registration of Doc.ObserveUpdate: the callback and
+// the encoder its updates are written with.
+type updateObserver struct {
+	encode   Encoder
+	callback func(update []byte, local bool)
 }
 
 // newStore creates an empty store owned by the given client, by value: the
@@ -103,14 +116,15 @@ type store struct {
 // tests build bare, lock-free stores with it.
 func newStore(client Client) store {
 	return store{
-		client:         client,
-		clock:          0,
-		items:          make(map[Client][]*item),
-		types:          make(map[string]*yType),
-		deletedSet:     deletedSet{deletedSet: make(map[Client]orderRange)},
-		pending:        nil,
-		pendingDeletes: nil,
-		observers:      make(map[*yType][]func(delta []DeltaOp)),
+		client:          client,
+		clock:           0,
+		items:           make(map[Client][]*item),
+		types:           make(map[string]*yType),
+		deletedSet:      deletedSet{deletedSet: make(map[Client]orderRange)},
+		pending:         nil,
+		pendingDeletes:  nil,
+		observers:       make(map[*yType][]func(delta []DeltaOp)),
+		updateObservers: nil,
 	}
 }
 
