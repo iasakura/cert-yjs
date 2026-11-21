@@ -7,9 +7,10 @@
     [wsclient.Run], which connects, serves on a goroutine and runs the
     application). The application is any expression that evaluates to a
     function meeting the client's contract ([client_app_expr_spec]): it
-    edits through [Client.Transact], and what its
-    transactions insert is what the fixed half of the client sends. The
-    typist ([wsclient.Typist], [typist_app_expr_spec]) is one. The theorem pushes all of them through
+    edits the client's document itself ([Client.Doc], [Client.Text]), and
+    what its transactions insert is what the client's update handler
+    sends. The typist ([wsclient.Typist], [typist_app_expr_spec]) is one.
+    The theorem pushes all of them through
     [ws_dist_adequacy_prot_fupd] with the real wire protocol
     [yjs_prot decode γh] and exports, about EVERY reachable state of EVERY
     execution, what the server's theorem exports: every message on the wire
