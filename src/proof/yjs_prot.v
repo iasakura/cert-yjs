@@ -1,6 +1,6 @@
 (** The Yjs wire protocol (issue #107, W3b; issue #131): what every message
-    sent over a connection satisfies, and the specification the decoder is
-    trusted against.
+    on the wire satisfies, and the specifications the two halves of the codec
+    are trusted against.
 
     API
     - [update_wf inputs] (from [store/model]): the pure honesty facts of a
@@ -24,10 +24,38 @@
       deployment's [yjs.WireCodec] is TRUSTED to meet it (the same boundary
       codec.go already is, now stated instead of implicit); a future
       goose-translated codec discharges it.
+    - [encoder_spec encode g] (from [store/heap], where the update
+      observers need it): the Go encoder value [g] meets the abstract
+      [encode], the mirror image of [codec_spec] (issue #131). The
+      deployment's [yjs.WireEncoder] is trusted to meet it.
+    - [codec_pair_spec decode encode decoder encoder]: the three together,
+      what a node that both receives and sends takes about the codec: the
+      decoder value meets [decode], the encoder value meets [encode], and
+      the two abstract halves agree ([codec_roundtrip]).
+    - [unit_is_surrogate unit]: the code unit is a UTF-16 surrogate.
+      [units_surrogate_free units] / [structs_surrogate_free structs]: no
+      code unit (of the list, of the batch) is one. The
+      batches the two halves are required to agree on: the wire carries
+      UTF-8, which has no encoding of a lone surrogate, and the real encoder
+      replaces one by U+FFFD (issue #233).
+    - [codec_roundtrip decode encode]: the pure contract between the two
+      halves: the encoding of a surrogate-free batch whose characters are
+      well formed ([update_wf]: their clocks fit a machine word, which is
+      where the real decoder counts them) decodes ([decodes_to]) to
+      characters of the batch (structs of its per-char expansion). An
+      inclusion, not an equation: the real encoder reorders (clients
+      descending, clocks ascending) and writes a struct whose ids it has
+      already written only once, neither of which a receiver's safety
+      depends on, and a trusted hypothesis assumes no more than the proofs
+      use.
 
     Laws
     - [decodes_to_decoded]: what [decode] reports is what the bytes decode
       to.
+    - [yjs_prot_encode]: the encoding of a batch that is certified
+      ([is_update_certified], [store/heap]: what an update observer is told
+      of the update it is handed) and holds no surrogate satisfies the
+      protocol.
 
     No ws import here: the predicate is decode plus history certificates, so
     it sits between [store] and [doc]; the ws layer instantiates
@@ -39,6 +67,7 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core.
 From New.proof Require Import prelude.
 From New.proof Require Import history.
+From New.proof.ytype Require Import ytype.
 From New.proof.store Require Import store.
 
 Section yjs_prot.
@@ -83,6 +112,31 @@ Definition yjs_prot (γh : history_names) (d : list u8) : iProp Σ :=
   ∃ inputs : list Input,
     ⌜decodes_to d inputs⌝ ∗ ⌜update_wf inputs⌝ ∗
     is_pending_certified γh (expand_inputs inputs).
+
+(** [unit_is_surrogate unit]: the code unit lies in the UTF-16 surrogate
+    range D800-DFFF. *)
+Definition unit_is_surrogate (unit : w16) : Prop :=
+  (0xD800 ≤ uint.Z unit ≤ 0xDFFF)%Z.
+
+(** [units_surrogate_free units]: none of the code units is a surrogate. *)
+Definition units_surrogate_free (units : list w16) : Prop :=
+  ∀ unit, unit ∈ units -> ¬ unit_is_surrogate unit.
+
+(** [structs_surrogate_free structs]: no code unit of the batch is a
+    surrogate. *)
+Definition structs_surrogate_free (structs : list Input) : Prop :=
+  ∀ struct, struct ∈ structs -> units_surrogate_free (in_content struct.2).
+
+(** The pure contract between the two halves of the codec, for the abstract
+    [encode] the deployment's encoder is trusted against ([encoder_spec]):
+    the encoding of a surrogate-free batch whose characters are well formed
+    decodes to characters of the batch. Well-formedness is a premise because
+    a struct whose clocks would pass 2^64 does not come back as its
+    characters: the model counts clocks in [nat], the decoder in machine
+    words. *)
+Definition codec_roundtrip (encode : list Input -> list u8) : Prop :=
+  ∀ structs, structs_surrogate_free structs -> update_wf (expand_inputs structs) ->
+    ∃ inputs, decodes_to (encode structs) inputs ∧ inputs ⊆ expand_inputs structs.
 
 (* ===== lemmas ============================================================= *)
 
@@ -143,9 +197,51 @@ Definition codec_spec (f : func.t) : iProp Σ :=
                own_delete_ids sldel (DfracOwn 1) deleted
           else ⌜decode data = None⌝ }}}).
 
+(** [codec_pair_spec encode decoder encoder]: the deployment's two codec
+    values meet the abstract codec: the decoder value meets [decode]
+    ([codec_spec]), the encoder value meets [encode] ([encoder_spec]), and
+    the two abstract halves agree ([codec_roundtrip]). What a node that both
+    receives and sends takes about the codec; a node that only receives
+    takes [codec_spec]. *)
+Definition codec_pair_spec (encode : list Input -> list u8) (decoder encoder : func.t) : iProp Σ :=
+  "#Hcodec" ∷ codec_spec decoder ∗
+  "#Hencoder" ∷ encoder_spec encode encoder ∗
+  "%Hroundtrip" ∷ ⌜codec_roundtrip decode encode⌝.
+
 (* ===== lemmas ============================================================= *)
 
 #[global] Instance codec_spec_persistent f : Persistent (codec_spec f).
 Proof. apply _. Qed.
+
+#[global] Instance codec_pair_spec_persistent encode decoder encoder :
+  Persistent (codec_pair_spec encode decoder encoder).
+Proof. apply _. Qed.
+
+(** What a sender needs to put a batch on the wire: the batch is certified
+    ([is_update_certified]) and holds no surrogate code unit. Then its
+    encoding satisfies the protocol. *)
+Lemma yjs_prot_encode (encode : list Input -> list u8) (γh : history_names)
+    (structs : list Input) :
+  codec_roundtrip decode encode ->
+  structs_surrogate_free structs ->
+  is_update_certified γh structs -∗
+  yjs_prot decode γh (encode structs).
+Proof.
+  move=> Hroundtrip Hfree. iIntros "[%Hwf #Hcerts]".
+  destruct (Hroundtrip structs Hfree Hwf) as (inputs & Hdecodes & Hinputs).
+  have Hone : ∀ y, y ∈ inputs -> length (in_content y.2) = 1%nat.
+  { move=> y Hy. exact (expand_inputs_unit_content structs y (Hinputs y Hy)). }
+  iExists inputs. iSplit; first done.
+  iSplit.
+  { iPureIntro. destruct Hwf as [Hfits Hrooted]. split.
+    - move=> y Hy. exact (Hfits y (Hinputs y Hy)).
+    - move=> y Hy. exact (Hrooted y (Hinputs y Hy)). }
+  rewrite (expand_inputs_all_singleton inputs Hone) /is_pending_certified.
+  iApply big_sepL_forall. iIntros (i y Hy).
+  have Hin := Hinputs y (list_elem_of_lookup_2 _ _ _ Hy).
+  apply list_elem_of_lookup in Hin as [j Hj].
+  iApply (big_sepL_lookup _ _ j y Hj with "Hcerts").
+Qed.
+
 
 End codec_spec.

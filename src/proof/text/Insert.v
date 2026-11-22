@@ -59,11 +59,13 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
 
 Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : slice.t) (dq : dfrac) (units : A)
     (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗ cs ↦*{dq} units }}}
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh may_insert name L deleted_ids ∗ cs ↦*{dq} units ∗
+      ⌜Forall (may_insert ""%go) units⌝ }}}
     t @! (go.PointerType yjs.Text) @! "Insert" #idx #cs
   {{{ (L' ins : list (YjsItem A)) (client k0 : nat) (originLeft originRight : YjsPtr A), RET #();
-      is_Text t γs γh name L' deleted_ids ∗ cs ↦*{dq} units ∗
+      is_Text t γs γh may_insert name L' deleted_ids ∗ cs ↦*{dq} units ∗
       ⌜inserted_run L L' ins units client k0 originLeft originRight⌝ ∗
       (* the op certificates: one broadcast fragment per inserted item
          (issues #42/#49; the doc-level op an item denotes is
@@ -71,16 +73,16 @@ Lemma wp_Text__Insert (t : loc) (idx : w64) (cs : slice.t) (dq : dfrac) (units :
       ([∗ list] it ∈ ins,
          is_op_cert γh (RootId name, OpInsert (input_of_item it))) }}}.
 Proof.
-  wp_start as "[#Htext Hcs]".
+  wp_start as "(#Htext & Hcs & %Hunits)".
   iPoseProof "Htext" as (tv text_store parent deleted_items) "Hhandle". iNamed "Hhandle".
   subst text_store.
   wp_auto.
   (* the one write, as one transaction: the closure runs [InsertIn] on the
      transaction it is handed and reports what the handle learns *)
-  wp_apply (wp_transact tv.(yjs.Text.store') γs γh _
+  wp_apply (wp_transact tv.(yjs.Text.store') γs γh ""%go _
               (λ c h' m' pend' deleted',
                  ∃ (L' ins : list (YjsItem A)) (k0 : nat) (originLeft originRight : YjsPtr A),
-                   is_Text t γs γh name L' deleted_ids ∗ cs ↦*{dq} units ∗
+                   is_Text t γs γh may_insert name L' deleted_ids ∗ cs ↦*{dq} units ∗
                    ⌜inserted_run L L' ins units c k0 originLeft originRight⌝ ∗
                    [∗ list] it ∈ ins, is_op_cert γh (RootId name, OpInsert (input_of_item it)))%I
               with "[$His_store t index content Hcs]").
@@ -89,10 +91,16 @@ Proof.
     wp_auto.
     wp_apply (wp_Text__InsertIn with "[$Htext $Htx $Hcs]").
     iIntros (L' ins h' m' k0 originLeft originRight) "(#Htext' & Htx & Hcs & %Hrun & %Hrepl & Hcerts)".
+    iDestruct (own_transaction_item_unique with "Htx") as %Hunique.
     wp_auto.
     iApply ("HΨ" $! h' m' pend deleted (∅ ∪ char_ids ins) ∅
               (∅ ∪ (if decide (ins = []) then ∅ else {[name]}))).
     iFrame "Htx".
+    iSplitR.
+    { (* what the transaction inserted is the caller's code units *)
+      iPureIntro. rewrite Hmay_insert.
+      exact (inserted_run_units_allowed _ m' name L L' ins units c k0 originLeft originRight
+               Hrun (proj1 Hrepl) Hunique Hunits). }
     iExists L', ins, k0, originLeft, originRight. iFrame "Htext' Hcerts Hcs". iPureIntro. exact Hrun. }
   iIntros "HQ". iDestruct "HQ" as (c h' m' pend' deleted') "HQ".
   iDestruct "HQ" as (L' ins k0 originLeft originRight) "(#Htext' & Hcs & %Hrun & Hcerts)".

@@ -40,7 +40,7 @@ func itoa(n int) string {
 // deployment's codec, and fails the test when the update does not decode.
 func applyWireUpdate(t *testing.T, doc *yjs.Doc, update []byte) {
 	t.Helper()
-	if !doc.ApplyEncodedUpdate(yjs.WireCodec(), update) {
+	if !doc.ApplyEncodedUpdate(yjs.WireCodec(), update, yjs.NoOrigin) {
 		t.Fatal("ApplyEncodedUpdate reported a malformed update")
 	}
 }

@@ -554,4 +554,33 @@ Proof.
            Hwf Hpre1 Hpre2 Hcoh1 Hcoh2 Hids).
 Qed.
 
+(** Certificate recovery: every item of the document a client's history
+    replays to is certified, with exactly its input. The item was inserted
+    by a delivered op ([docm_mem_delivered_input]), a delivered op was
+    broadcast, and the invariant keeps a copy of the certificate of every
+    broadcast op. What lets a sender certify whatever a transaction
+    integrated without having kept the certificates itself. *)
+Lemma history_model_certified (γh : history_names) (c : ClientId) (h : list Ev)
+    (m : DocModel) (E : coPset) :
+  ↑histN ⊆ E ->
+  history_state_coh h m ->
+  is_history γh -∗ own_client_history γh c h ={E}=∗
+    own_client_history γh c h ∗
+    □ (∀ (t : TId) (x : YjsItem A), ⌜x ∈ doc_model_get m t⌝ -∗
+         is_op_cert γh (t, OpInsert (input_of_item x))).
+Proof.
+  iIntros (HE Hcoh) "#Hhist Hown".
+  iInv "Hhist" as ">Hinv" "Hclose". iNamed "Hinv".
+  iDestruct (hist_auth_elem_lookup with "HhistAuth Hown") as %Hc.
+  iMod ("Hclose" with "[HhistAuth HopsAuth]") as "_".
+  { iNext. iExists N, ops. iFrame "HhistAuth HopsAuth Hcerts". by iSplit. }
+  iModIntro. iFrame "Hown". iIntros "!>" (t x Hx).
+  have Hdelivered := docm_mem_delivered_input h m t x Hcoh Hx.
+  destruct (delivered_ops_broadcast_src N c h Hwf Hc _ Hdelivered) as [author Hbroadcast].
+  destruct (proj2 Hopscoh _ (ex_intro _ author Hbroadcast)) as [registered Hregistered].
+  destruct (proj1 Hopscoh _ _ Hregistered) as [Hid Hsource].
+  destruct (hwf_msg_id_unique N Hwf _ _ _ _ Hsource Hbroadcast Hid) as [_ ->].
+  iApply (big_sepM_lookup with "Hcerts"). exact Hregistered.
+Qed.
+
 End history.

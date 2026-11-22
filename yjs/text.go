@@ -127,7 +127,7 @@ func (t *Text) Observe(callback func(delta []DeltaOp)) {
 // own; yrs TextRef::insert with a transact_mut). One write, one transaction:
 // the observers of this text are notified once, at its end.
 func (t *Text) Insert(index uint64, content []uint16) {
-	transact(t.store, func(tr *Transaction) {
+	transact(t.store, NoOrigin, func(tr *Transaction) {
 		t.InsertIn(tr, index, content)
 	})
 }
@@ -209,7 +209,7 @@ func (t *Text) InsertIn(tr *Transaction, index uint64, content []uint16) {
 // TextRef::remove_range with a transact_mut). One write, one transaction: the
 // observers of this text are notified once, at its end.
 func (t *Text) Delete(index uint64, length uint64) {
-	transact(t.store, func(tr *Transaction) {
+	transact(t.store, NoOrigin, func(tr *Transaction) {
 		t.DeleteIn(tr, index, length)
 	})
 }

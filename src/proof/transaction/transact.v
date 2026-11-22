@@ -34,7 +34,7 @@ From New.proof Require Import tok_set.
 From iris.algebra Require Import auth gmap gset.
 From iris.algebra.lib Require Import dfrac_agree.
 From New.proof.store Require Import store.
-From New.proof.transaction Require Import model heap wp_private notify.
+From New.proof.transaction Require Import model heap wp_private commit.
 
 Section transaction_transact.
 
@@ -74,17 +74,17 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
     transaction on the locked store. The record has recorded nothing, so
     every clause of the record's meaning is vacuous and the start state is
     the current one ([transaction_start_fresh]). *)
-Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_names)
+Lemma own_transaction_fresh (tr s_loc : loc) (γs : store_names) (γh : history_names) (origin : go_string)
     (c : ClientId) (h : list Ev) (m : DocModel) (state : store_state) (ds : gset YjsId) :
-  own_transaction_changes tr s_loc ∅ ∅ ∅ -∗
+  own_transaction_changes tr s_loc ∅ ∅ ∅ ∗ own_transaction_origin tr origin -∗
   own_store s_loc γs γh 1 state ds m (pool_tombstoned (ss_pool state)) ∗
   own_replica_history γs γh c h m state ds -∗
-  own_transaction tr s_loc γs γh c h m (ss_pending state) (pool_tombstoned (ss_pool state)) ∅ ∅ ∅.
+  own_transaction tr s_loc γs γh origin c h m (ss_pending state) (pool_tombstoned (ss_pool state)) ∅ ∅ ∅.
 Proof.
-  iIntros "Hchanges (Hstore & Hreplica_history)".
+  iIntros "[Hchanges Horigin] (Hstore & Hreplica_history)".
   iExists state, ds, m, (pool_tombstoned (ss_pool state)).
   iSplitR; first (iPureIntro; split; reflexivity).
-  iFrame "Hstore Hreplica_history".
+  iFrame "Hstore Hreplica_history Horigin".
   iSplit; last (iPureIntro; apply transaction_start_fresh).
   iExists ∅. iFrame "Hchanges".
   iSplit; first iApply changed_types_bound_empty.
@@ -94,10 +94,12 @@ Proof.
   - move=> i Hi. set_solver.
 Qed.
 
-Lemma wp_transact (ref : loc) (γs : store_names) (γh : history_names) (f : func.t)
+Lemma wp_transact (ref : loc) (γs : store_names) (γh : history_names)
+    (origin : go_string) (f : func.t)
     (Q : ClientId -> list Ev -> DocModel -> list Input -> gset YjsId -> iProp Σ) :
-  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗ closure_runs_transaction (store_of_ref ref) γs γh f Q }}}
-    @! yjs.transact #ref #f
+  {{{ is_pkg_init yjs ∗ is_store_ref ref γs γh ∗
+      closure_runs_transaction (store_of_ref ref) γs γh origin (γs.(sn_may_insert) origin) f Q }}}
+    @! yjs.transact #ref #origin #f
   {{{ RET #(); ∃ (c : ClientId) (h' : list Ev) (m' : DocModel) (pend' : list Input) (deleted' : gset YjsId),
       Q c h' m' pend' deleted' }}}.
 Proof.
@@ -107,13 +109,15 @@ Proof.
   iDestruct "Hinv" as (c h m) "Hstore".
   wp_auto.
   iDestruct "Hstore" as (state0 ds0) "(Hstore0 & Hreplica_history)".
-  wp_apply wp_newTransaction. iIntros (tr) "Hchanges".
+  wp_apply wp_newTransaction. iIntros (tr) "Hfresh".
   wp_auto.
-  iDestruct (own_transaction_fresh with "Hchanges [$Hstore0 $Hreplica_history]") as "Htx".
+  iDestruct (own_transaction_fresh with "Hfresh [$Hstore0 $Hreplica_history]") as "Htx".
   wp_apply ("Hf" with "[$Htx]").
-  iIntros (h' m' pend' deleted' inserted tombstoned changed) "[Htx HQ]".
+  iIntros (h' m' pend' deleted' inserted tombstoned changed) "(Htx & %Hallowed & HQ)".
   wp_auto.
-  wp_apply (wp_Transaction__notify with "[$Htx]"). iIntros "Hstore".
+  wp_apply (wp_Transaction__commit with "[$Htx]").
+  { iPureIntro. exact Hallowed. }
+  iIntros "Hstore".
   wp_auto.
   iDestruct "Hstore" as (state' ds') "(%Hface' & Hstore & Hreplica_history')".
   destruct Hface' as [Hpend' Hdel'].

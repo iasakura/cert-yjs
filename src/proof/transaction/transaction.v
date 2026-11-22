@@ -3,5 +3,6 @@
     relation), the Iris layer ([heap]: the record, [own_transaction]), the
     unexported steps ([wp_private]: the record steps, [integrate],
     [deleteNode]) and one file per method proof ([deleteRange],
-    [applyUpdate], [notify], [transact]). *)
-From New.proof.transaction Require Export model heap wp_private deleteRange applyUpdate notify transact.
+    [applyUpdate], [notify], [insertedStructs], [notifyUpdate], [commit],
+    [transact]). *)
+From New.proof.transaction Require Export model heap wp_private deleteRange applyUpdate notify insertedStructs notifyUpdate commit transact.

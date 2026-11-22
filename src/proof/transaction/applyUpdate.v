@@ -2679,20 +2679,20 @@ Qed.
     body closes over [own_transaction] at the grown indexes; the start
     relation transports along the replay ([transaction_start_replay]). *)
 Lemma wp_Transaction__applyUpdate (tr s_loc : loc) (sl : slice.t) (dq : dfrac)
-    (γs : store_names) (γh : history_names)
+    (γs : store_names) (γh : history_names) (origin : go_string)
     (c : ClientId) (h : list Ev) (m : DocModel)
     (pend inputs : list (TId * IntegrateInput (A := A)))
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
   update_wf inputs ->
   {{{ is_pkg_init yjs ∗ is_history (A := A) (P := P) γh ∗
-      own_transaction tr s_loc γs γh c h m pend deleted inserted tombstoned changed ∗
+      own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed ∗
       own_update_structs sl dq inputs ∗
       is_pending_certified γh (expand_inputs inputs) }}}
     tr @! (go.PointerType yjs.Transaction) @! "applyUpdate" #sl
   {{{ (applied rest : list (TId * IntegrateInput (A := A))) (m' : DocModel) (changed' : gset P),
       RET #();
       own_update_structs sl dq inputs ∗
-      own_transaction tr s_loc γs γh c (h ++ (deliver_ev <$> expand_inputs applied)) m' rest
+      own_transaction tr s_loc γs γh origin c (h ++ (deliver_ev <$> expand_inputs applied)) m' rest
         deleted (inserted ∪ inputs_char_ids applied) tombstoned changed' ∗
       ⌜wire_drain m (pend ++ inputs) = (applied, rest, m')⌝ ∗
       ⌜ValidReplay (expand_inputs applied) m m'⌝ ∗
@@ -2721,7 +2721,7 @@ Proof using Type*.
   iExists state', ds', m0, deleted0.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers"; first iFrame "Hcore' Hobservers".
-  iFrame "Hreplica_history' Hrecord".
+  iFrame "Hreplica_history' Horigin Hrecord".
   iPureIntro.
   exact (transaction_start_replay m m' deleted inserted tombstoned m0 deleted0 applied Hvr Hstart).
 Qed.

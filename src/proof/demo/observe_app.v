@@ -87,11 +87,12 @@ Definition mirror_inv (view : loc) (γs : store_names) (γh : history_names) (na
 (** [is_Mirror m d t γs γh name γo]: a mirror of the text [t] (root [name])
     of the document [d], registered as observer [γo] of that root. *)
 Definition is_Mirror (m d t : loc) (γs : store_names) (γh : history_names) (name : P) (γo : gname) : iProp Σ :=
-  ∃ (s_loc : loc) (L : list (YjsItem A)) (deleted_ids : gset YjsId),
+  ∃ (s_loc : loc) (may_insert : go_string -> w16 -> Prop)
+    (L : list (YjsItem A)) (deleted_ids : gset YjsId),
     "#Hdocf" ∷ (m .[(observeapp.Mirror.t), "doc"]) ↦□ d ∗
     "#Htextf" ∷ (m .[(observeapp.Mirror.t), "text"]) ↦□ t ∗
-    "#His_doc" ∷ is_Doc d s_loc γs γh ∗
-    "#His_text" ∷ is_Text t γs γh name L deleted_ids ∗
+    "#His_doc" ∷ is_Doc d s_loc γs γh may_insert ∗
+    "#His_text" ∷ is_Text t γs γh may_insert name L deleted_ids ∗
     "#Hobserved" ∷ is_text_observed γs name γo ∗
     "#Hmu" ∷ is_Mutex (m .[(observeapp.Mirror.t), "mu"])
               (mirror_inv (m .[(observeapp.Mirror.t), "view"]) γs γh name γo).
@@ -102,8 +103,9 @@ Proof. rewrite /is_Mirror. apply _. Qed.
 (** The empty snapshot of a root is certified by an empty history: what the
     mirror's view is before the callback hears the current text. *)
 #[local] Lemma is_text_snapshot_nil (t : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (c : ClientId) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
-  is_Text t γs γh name L deleted_ids -∗
+  is_Text t γs γh may_insert name L deleted_ids -∗
   is_store_client γs c -∗
   is_history_lb γh c ([] : list Ev) -∗
   |==> is_text_snapshot γs γh name [].
@@ -123,8 +125,10 @@ Qed.
     token, both halves at the empty snapshot; [Observe] then tells it the
     current text and registers it. *)
 Lemma wp_NewMirror (d t s_loc : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (c : ClientId) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
-  {{{ is_pkg_init observeapp ∗ is_Doc d s_loc γs γh ∗ is_Text t γs γh name L deleted_ids ∗
+  {{{ is_pkg_init observeapp ∗ is_Doc d s_loc γs γh may_insert ∗
+      is_Text t γs γh may_insert name L deleted_ids ∗
       is_store_client γs c ∗ is_history_lb γh c ([] : list Ev) }}}
     @! observeapp.NewMirror #d #t
   {{{ (m : loc) (γo : gname), RET #m; is_Mirror m d t γs γh name γo }}}.
@@ -167,7 +171,7 @@ Proof.
   iIntros "#Hobserved".
   wp_auto.
   iModIntro. iApply ("HΦ" $! m γo).
-  iExists s_loc, L, deleted_ids. iFrame "#".
+  iExists s_loc, may_insert, L, deleted_ids. iFrame "#".
 Qed.
 
 (** [Mirror.Text] reads the view under the mirror's lock: a read-only slice
@@ -272,9 +276,9 @@ Lemma wp_Mirror__Check (m d t : loc) (γs : store_names) (γh : history_names) (
   {{{ RET #true; True }}}.
 Proof.
   wp_start as "#Hmirror".
-  iPoseProof "Hmirror" as (s_loc L deleted_ids) "Hparts". iNamed "Hparts".
+  iPoseProof "Hmirror" as (s_loc may_insert L deleted_ids) "Hparts". iNamed "Hparts".
   wp_auto.
-  wp_apply (wp_Doc__Transact _ _ _ _ _ (λ _ _ _ _ _, ok_ptr ↦ true)%I with "[$His_doc ok m]").
+  wp_apply (wp_Doc__Transact _ _ _ _ _ _ (λ _ _ _ _ _, ok_ptr ↦ true)%I with "[$His_doc ok m]").
   { rewrite /closure_runs_transaction.
     iIntros (tr c h m0 pend deleted Ψ') "Htx HΨ'".
     wp_auto.
@@ -283,11 +287,11 @@ Proof.
     (* the mirror's view, its snapshot tied to the transaction's at the
        lock's linearization point *)
     wp_apply (wp_Mirror__Text _ _ _ _ _ _ _
-                (λ s, own_transaction tr (store_of_ref s_loc) γs γh c h m0 pend deleted ∅ ∅ ∅ ∗
+                (λ s, own_transaction tr (store_of_ref s_loc) γs γh ""%go c h m0 pend deleted ∅ ∅ ∅ ∗
                       ⌜s = type_snapshot m0 deleted name⌝)%I
                 with "[$Hmirror Htx]").
     { iIntros (s) "Hhalf".
-      iDestruct (own_transaction_observed_agree _ _ _ _ _ _ _ _ _ _ _ _ name γo s
+      iDestruct (own_transaction_observed_agree _ _ _ _ _ _ _ _ _ _ _ _ _ name γo s
                    (not_elem_of_empty name) with "Htx Hobserved Hhalf") as %Heq.
       iFrame "Hhalf Htx". iPureIntro. exact Heq. }
     iIntros (viewsl s) "(#Hviewsl & #Hsnap_s & Htx & %Heq)". subst s.
@@ -298,7 +302,9 @@ Proof.
                 with "[$Htextsl $Hviewsl]"). iIntros "[Htextsl _]".
     rewrite bool_decide_eq_true_2; last reflexivity.
     wp_auto.
-    iApply ("HΨ'" $! h m0 pend deleted ∅ ∅ ∅). iFrame "Htx ok". }
+    iApply ("HΨ'" $! h m0 pend deleted ∅ ∅ ∅). iFrame "Htx ok".
+    (* the check inserts nothing *)
+    iPureIntro. move=> root item [_ Hid]. by apply elem_of_empty in Hid. }
   iIntros "HQ". iDestruct "HQ" as (c h' m' pend' deleted') "ok".
   wp_auto.
   iApply "HΦ". done.

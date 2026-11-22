@@ -18,7 +18,7 @@ func TestWireCodecCarriesDeletes(t *testing.T) {
 
 	docB := NewDoc(2)
 	txtB := docB.GetOrCreateText("root")
-	if ok := docB.ApplyEncodedUpdate(WireCodec(), update); !ok {
+	if ok := docB.ApplyEncodedUpdate(WireCodec(), update, NoOrigin); !ok {
 		t.Fatal("ApplyEncodedUpdate reported a malformed update")
 	}
 
@@ -50,11 +50,11 @@ func TestWireDeleteBeforeInsertsConverges(t *testing.T) {
 
 	// deliver the delete-carrying update to a replica that has nothing yet:
 	// its structs land, its spans land with them
-	if ok := docB.ApplyEncodedUpdate(WireCodec(), full); !ok {
+	if ok := docB.ApplyEncodedUpdate(WireCodec(), full, NoOrigin); !ok {
 		t.Fatal("ApplyEncodedUpdate reported a malformed update")
 	}
 	// a re-delivery of the earlier update must not resurrect the deleted run
-	if ok := docB.ApplyEncodedUpdate(WireCodec(), inserts); !ok {
+	if ok := docB.ApplyEncodedUpdate(WireCodec(), inserts, NoOrigin); !ok {
 		t.Fatal("ApplyEncodedUpdate reported a malformed update")
 	}
 

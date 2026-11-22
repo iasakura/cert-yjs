@@ -44,8 +44,9 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
 Local Notation P := go_string.
 
 Lemma wp_Text__NewObserver (t : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids }}}
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh may_insert name L deleted_ids }}}
     t @! (go.PointerType yjs.Text) @! "NewObserver" #()
   {{{ (obs : loc), RET #obs; own_TextObserver obs t γs γh name [] }}}.
 Proof.

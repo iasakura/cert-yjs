@@ -69,13 +69,14 @@ Local Notation DocModel := (gmap TId (list (YjsItem A))).
     sync-protocol certificate) can replay that knowledge against a concurrent
     read. *)
 Lemma wp_Text__Snapshot (t : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (c : ClientId) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
     (h0 : list Ev) :
-  {{{ is_pkg_init yjs ∗ is_Text t γs γh name L deleted_ids ∗
+  {{{ is_pkg_init yjs ∗ is_Text t γs γh may_insert name L deleted_ids ∗
       is_store_client γs c ∗ is_history_lb γh c h0 ∗ own_read_cap γs }}}
     t @! (go.PointerType yjs.Text) @! "Snapshot" #()
   {{{ (sl : slice.t) (model : list (YjsItem A * bool)), RET #sl;
-      is_Text t γs γh name L deleted_ids ∗ own_read_cap γs ∗
+      is_Text t γs γh may_insert name L deleted_ids ∗ own_read_cap γs ∗
       own_snapshot_chars sl (DfracOwn 1) model ∗
       ⌜text_snapshot L model⌝ ∗
       (∃ h : list Ev, ⌜h0 `prefix_of` h⌝ ∗ is_text_state γh c h name model) ∗
@@ -145,7 +146,8 @@ Proof.
     rewrite /is_text_state. iExists m0. iFrame "Hreplay". iPureIntro. exact Hroot. }
   iExists tv, tv.(yjs.Text.store'), tv.(yjs.Text.inner'), deleted_items.
   iFrame "Ht His_store His_hist Hbind His_lb Hdeleted_lb Hdeleted_items".
-  iPureIntro. split_and!; [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted].
+  iPureIntro. split_and!;
+    [reflexivity | reflexivity | exact Hdeleted_known | exact Hsorted | exact Hmay_insert].
 Qed.
 
 End text.

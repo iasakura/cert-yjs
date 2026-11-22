@@ -8,7 +8,9 @@
     - what a decoded batch must satisfy: [input_fits] per struct,
       [pending_item_rooted] / [is_pending_rooted], bundled as [update_wf];
       [input_has_origin] and [same_encoded_struct], two type-tagged inputs
-      that are one struct on the wire (issue #131).
+      that are one struct on the wire (issue #131);
+      [structs_expand_to_items], the characters of a batch are exactly items of
+      the document.
     - the wire-level drain: [wire_integrate] applies one ready item,
       [wire_pass] one sweep over the pending list, [wire_drain(_aux)] the fixed
       point, [WireReplay] the resulting replay relation and [wire_ready_total]
@@ -1208,6 +1210,35 @@ Definition update_wf (inputs : list (TId * IntegrateInput (A := A))) : Prop :=
 Definition input_has_origin (input : IntegrateInput (A := A)) : Prop :=
   in_originId input ≠ None ∨ in_rightOriginId input ≠ None.
 
+(** [structs_expand_to_items structs holds]: the characters a batch carries
+    are exactly the items [holds] names: an input is in the batch's per-char
+    expansion if and only if it is the input of an item [item] of the root
+    named [name], for a pair [holds name item] (issue #131). [holds] says
+    which items: the ones of a store's registry with an id of a span, the
+    ones a transaction inserted, the ones one insert created. What the
+    functions that read structs back from the store promise about them:
+    every such item is in the batch, and nothing else is. *)
+Definition structs_expand_to_items (structs : list (TId * IntegrateInput (A := A)))
+    (holds : go_string -> YjsItem A -> Prop) : Prop :=
+  ∀ input, input ∈ expand_inputs structs <->
+    ∃ (name : go_string) (item : YjsItem A),
+      holds name item ∧ input = (RootId name, input_of_item item).
+
+(** [may_insert_anything]: the insert rule of a document that restricts
+    nothing (issue #131): a transaction of any origin may insert any code
+    unit. The rule of a document none of whose update observers needs to
+    know anything about the content it is handed. *)
+Definition may_insert_anything : go_string -> w16 -> Prop := λ _ _, True.
+
+(** [structs_units_allowed allowed structs]: every code unit of every struct
+    of the batch satisfies [allowed] (issue #131). What an update observer
+    is told of the update it is handed, for the document's insert rule at
+    the transaction's origin (the parameter [may_insert] of [is_Doc],
+    doc/heap.v). *)
+Definition structs_units_allowed (allowed : w16 -> Prop)
+    (structs : list (TId * IntegrateInput (A := A))) : Prop :=
+  ∀ struct, struct ∈ structs -> Forall allowed (in_content struct.2).
+
 (** [same_encoded_struct decoded certified]: the two type-tagged inputs are one
     struct on the wire (issue #131): the same id, origins and content, and
     the same type unless the struct has an origin. The bytes of a struct
@@ -2166,6 +2197,60 @@ Proof.
     destruct i as [ci ki]. simpl in *. f_equal; [done | rewrite /k; lia].
 Qed.
 
+
+(** Every struct of a per-char expansion carries one code unit. *)
+Lemma expand_inputs_unit_content (inputs : list (TId * IntegrateInput (A := A)))
+    (op : TId * IntegrateInput (A := A)) :
+  op ∈ expand_inputs inputs -> length (in_content op.2) = 1%nat.
+Proof.
+  rewrite /expand_inputs list_elem_of_join. move=> [l [Hop Hl]].
+  apply list_elem_of_fmap in Hl as [x [-> Hx]].
+  move: Hop. rewrite /expand_input list_elem_of_fmap. move=> [o [-> Ho]]. simpl.
+  apply list_elem_of_lookup in Ho as [k Hk].
+  destruct (ops_from_lookup _ _ _ _ _ _ _ Hk) as (_ & _ & Hchar & _).
+  move: Hchar. rewrite /explode list_lookup_fmap.
+  destruct (in_content x.2 !! k) as [b |]; last done.
+  simpl. by move=> [= <-].
+Qed.
+
+(** An item of the pool has a clock whose successor fits a machine word:
+    its run does ([run_fits]). What lets the item go on the wire as a
+    one-unit struct ([input_fits]). *)
+Lemma pool_item_clock_fits (p : pool) (parent : loc) (tm : type_model) (item : YjsItem A) :
+  pool_invs p -> p !! parent = Some tm -> item ∈ tm_arr tm ->
+  (Z.of_nat (clock (item_id item)) + 1 < 2^64)%Z.
+Proof.
+  move=> Hinvs Hp Hitem. apply list_elem_of_lookup_1 in Hitem as [n Hn].
+  destruct (runs_flatten_lookup_run (tm_runs tm) n item Hn) as (slot & offset & r & Hslot & Hoffset & _).
+  have Hr_all : r ∈ all_runs p.
+  { apply elem_of_all_runs. exists parent, tm. split; [exact Hp | exact (list_elem_of_lookup_2 _ _ _ Hslot)]. }
+  destruct (proj1 Hinvs r Hr_all) as (Hwf & Hfits & _).
+  rewrite (run_wf_char_id _ _ _ Hwf Hoffset).
+  move: Hfits. rewrite /run_fits /run_clock /run_head_item /=.
+  have := lookup_lt_Some _ _ _ Hoffset. lia.
+Qed.
+
+(** Every code unit of a batch is the content of one struct of its per-char
+    expansion. *)
+Lemma expand_inputs_content_unit (inputs : list (TId * IntegrateInput (A := A)))
+    (input : TId * IntegrateInput (A := A)) (unit : w16) :
+  input ∈ inputs -> unit ∈ in_content input.2 ->
+  ∃ op, op ∈ expand_inputs inputs ∧ in_content op.2 = [unit].
+Proof.
+  move=> Hinput Hunit. apply list_elem_of_lookup in Hunit as [k Hk].
+  have Hlen : length (ops_of_input input.2 (explode (in_content input.2))) = length (explode (in_content input.2))
+    := ops_from_length _ _ _ _ _.
+  have Hk_lt : (k < length (ops_of_input input.2 (explode (in_content input.2))))%nat.
+  { rewrite Hlen /explode length_fmap. exact (lookup_lt_Some _ _ _ Hk). }
+  destruct (lookup_lt_is_Some_2 _ k Hk_lt) as [op Hop].
+  exists (input.1, op). split.
+  - rewrite /expand_inputs list_elem_of_join. exists (expand_input input). split.
+    + rewrite /expand_input. apply list_elem_of_fmap. exists op.
+      split; [done | exact (list_elem_of_lookup_2 _ _ _ Hop)].
+    + apply list_elem_of_fmap. by exists input.
+  - simpl. destruct (ops_from_lookup _ _ _ _ _ _ _ Hop) as (_ & _ & Hchar & _).
+    move: Hchar. rewrite /explode list_lookup_fmap Hk /=. by move=> [= <-].
+Qed.
 
 (** [same_encoded_struct] is reflexive. *)
 Lemma same_encoded_struct_refl (inputs : list (TId * IntegrateInput (A := A))) :

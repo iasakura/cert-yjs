@@ -56,7 +56,27 @@ type Transaction struct {
 	insertSet []idSpan
 	deleteSet []idSpan
 	changed   map[*yType]bool
+	// origin is what the caller that opened the transaction gave as its
+	// origin, NoOrigin if nothing (Yjs transaction.origin,
+	// src/utils/Transaction.js:100; yrs TransactionMut::origin,
+	// src/transaction.rs:569). The update observers receive it
+	// (notifyUpdate).
+	origin Origin
 }
+
+// Origin marks who opened a transaction, so that a callback can tell the
+// transactions of one caller from the others: a provider gives its own
+// origin to the updates it applies and does not send those back. Yjs
+// v14.0.0-rc.18 takes any value and compares by identity
+// (transaction.origin, src/utils/Transaction.js:100); yrs 0.27.2 takes a
+// byte string compared by content (Origin, src/transaction.rs:1412). The Go
+// follows yrs, with Go's byte string type. NoOrigin, the empty string, is
+// Yjs's null and yrs's None; an empty origin given on purpose cannot be told
+// from none, where yrs tells Some of the empty string from None.
+type Origin = string
+
+// NoOrigin is the origin of a transaction opened without one.
+const NoOrigin Origin = ""
 
 // recordInsert records a freshly integrated node: its ids join the
 // transaction's insert set and its parent type is marked changed (Yjs
@@ -243,7 +263,37 @@ func (tr *Transaction) applyUpdate(structs []updateItem) {
 	s.pending = pending
 }
 
-// transact runs f as one transaction: lock, f, notify, unlock (Yjs transact,
+// insertedStructs reads the structs this transaction integrated back from
+// the store as decoded update items, in insert-set order: for each span of
+// tr.insertSet, the structs of the nodes that cover it
+// (store.appendSpanStructs). It is the verified-subset counterpart of Yjs
+// v14.0.0-rc.18 writeStructsFromTransaction (src/utils/encoding-helpers.js:96),
+// which writes the transaction's insertSet from the struct store; the bytes
+// are the Encoder's (doc.go).
+//
+// The references differ in what a transaction's update holds. Yjs writes
+// the insert set (above). yrs 0.27.2 writes every block at or past the
+// state vector the transaction began with (TransactionMut::encode_update_v1
+// over store.write_blocks_from(before_state), src/transaction.rs:597-627).
+// The Go follows Yjs, because the insert set is the record the
+// transaction already keeps; for a transaction of local edits the two
+// readings give the same structs.
+//
+// A recorded span begins where a node begins and ends where a node ends
+// (recordInsert records whole nodes, and a later split only cuts a node in
+// two), so a node split after it was recorded is read back as its parts.
+// appendSpanStructs does not rely on that: it cuts the first and the last
+// node to the span, as Yjs does.
+func (tr *Transaction) insertedStructs() []updateItem {
+	s := tr.store
+	var structs []updateItem
+	for i := 0; i < len(tr.insertSet); i++ {
+		structs = s.appendSpanStructs(structs, tr.insertSet[i])
+	}
+	return structs
+}
+
+// transact runs f as one transaction: lock, f, commit, unlock (Yjs transact,
 // src/utils/Transaction.js:391-422, without the reentrant branch; yrs
 // transact_mut takes the store's write guard and commits on drop,
 // src/transact.rs:131, src/transaction.rs:488). The store's write lock is the
@@ -255,12 +305,22 @@ func (tr *Transaction) applyUpdate(structs []updateItem) {
 // (Text.InsertIn / DeleteIn / CodeUnitsIn) with tr and never locks the
 // document, and the callbacks notify runs receive their delta and must not
 // touch the document at all (Text.Observe).
-func transact(ref *storeRef, f func(tr *Transaction)) {
+func transact(ref *storeRef, origin Origin, f func(tr *Transaction)) {
 	ref.wlock()
-	tr := newTransaction(&ref.store)
+	tr := newTransaction(&ref.store, origin)
 	f(tr)
-	tr.notify()
+	tr.commit()
 	ref.wunlock()
+}
+
+// commit is the end of the transaction: the observers of the changed types
+// are told (notify), then the update observers (notifyUpdate). Both
+// references do the two in one function, in this order (Yjs v14.0.0-rc.18
+// cleanupTransactions, src/utils/Transaction.js:231-236 and :297-301; yrs
+// 0.27.2 commit, src/transaction.rs:978 and :1094).
+func (tr *Transaction) commit() {
+	tr.notify()
+	tr.notifyUpdate()
 }
 
 // notify is the end of the transaction, the observer half of Yjs's
@@ -283,10 +343,36 @@ func (tr *Transaction) notify() {
 	}
 }
 
-// newTransaction is an empty transaction record (Yjs's Transaction
-// constructor, src/utils/Transaction.js:51). Only transact opens one; the
+// notifyUpdate is the update half of the end of the transaction (Yjs
+// v14.0.0-rc.18 cleanupTransactions, src/utils/Transaction.js:297-301: after
+// the type observers, if anybody listens to 'update', write the transaction's
+// update and emit it when it has content; yrs 0.27.2 commit,
+// emit_update_v1, src/transaction.rs:1094). Nothing is read from the store when nobody
+// observes. Content here is the structs alone (Doc.ObserveUpdate): a
+// transaction that integrated nothing calls nobody. Each registration
+// encodes with its own encoder, where Yjs encodes once per event name.
+func (tr *Transaction) notifyUpdate() {
+	if len(tr.store.updateObservers) == 0 {
+		return
+	}
+	structs := tr.insertedStructs()
+	if len(structs) == 0 {
+		return
+	}
+	// The registrations are read here, at the emit, as Yjs's emit reads its
+	// listeners (the update is written first, then doc.emit walks them).
+	observers := tr.store.updateObservers
+	for i := 0; i < len(observers); i++ {
+		observer := observers[i]
+		observer.callback(observer.encode(structs), tr.origin)
+	}
+}
+
+// newTransaction is an empty transaction record with its origin (Yjs's
+// Transaction constructor takes the origin, src/utils/Transaction.js:51).
+// Only transact opens one; the
 // tests call the transaction's internals on a fresh record where a
 // transaction would have handed theirs.
-func newTransaction(s *store) *Transaction {
-	return &Transaction{store: s, insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool)}
+func newTransaction(s *store, origin Origin) *Transaction {
+	return &Transaction{store: s, insertSet: nil, deleteSet: nil, changed: make(map[*yType]bool), origin: origin}
 }

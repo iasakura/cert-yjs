@@ -172,10 +172,11 @@ Proof.
 Qed.
 
 Lemma wp_TextObserver__Poll (obs t : loc) (γs : store_names) (γh : history_names)
+    (may_insert : go_string -> w16 -> Prop)
     (c : ClientId) (name : P) (L : list (YjsItem A)) (deleted_ids : gset YjsId)
     (observed : snapshot) (h0 : list Ev) :
   {{{ is_pkg_init yjs ∗ own_TextObserver obs t γs γh name observed ∗
-      is_Text t γs γh name L deleted_ids ∗ is_store_client γs c ∗ is_history_lb γh c h0 }}}
+      is_Text t γs γh may_insert name L deleted_ids ∗ is_store_client γs c ∗ is_history_lb γh c h0 }}}
     obs @! (go.PointerType yjs.TextObserver) @! "Poll" #()
   {{{ (sl : slice.t) (current : snapshot), RET #sl;
       own_TextObserver obs t γs γh name current ∗
@@ -187,7 +188,7 @@ Proof.
   wp_start as "(Hobs & #Htext & #Hpin & #Hlb)".
   iNamed "Hobs".
   iDestruct "Htext" as (tv' s_loc' parent' deleted_items)
-    "(#Ht' & %Hstore' & %Hinner' & #His_store' & #His_hist & #Hbind' & #His_lb & #Hdeleted_lb' & #Hdeleted_items & %Hdeleted_known & %HsortedL)".
+    "(#Ht' & %Hstore' & %Hinner' & #His_store' & #His_hist & #Hbind' & #His_lb & #Hdeleted_lb' & #Hdeleted_items & %Hdeleted_known & %HsortedL & %Hmay_insert)".
   iCombine "Ht Ht'" gives %Heqtv. subst tv'.
   subst s_loc' parent'.
   wp_auto.

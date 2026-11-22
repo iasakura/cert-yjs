@@ -11,7 +11,8 @@
       address twice; [locs_aligned], its pure alignment with a run pool.
     - the registry: [pool_registry_coh] / [pool_registry_models] /
       [pool_doc_registry_coh] (a binding names a registered type, whose runs
-      spell the document model), and [pool_lookup_or_create], what
+      spell the document model), [registry_has_item] (an item of the type a
+      name is bound to), and [pool_lookup_or_create], what
       [getOrCreateYType] does to it.
     - the per-client item index: [pool_entries], the pool's (address, run)
       pairs, read by [entry_client] / [entry_clock] / [entry_clock_loc] / [entry_le]
@@ -135,6 +136,12 @@ Definition pool_registry_coh (bind : gmap P loc) (p : pool) : Prop :=
   (∀ nm q, bind !! nm = Some q -> is_Some (p !! q)) /\
   (∀ n1 n2 q, bind !! n1 = Some q -> bind !! n2 = Some q -> n1 = n2) /\
   (∀ q, is_Some (p !! q) -> ∃ nm, bind !! nm = Some q).
+
+(** [registry_has_item bind p name item]: [item] is an item of the type the
+    registry binds to [name]. *)
+Definition registry_has_item (bind : gmap P loc) (p : pool) (name : P) (item : YjsItem A) : Prop :=
+  ∃ (parent : loc) (type_model : type_model),
+    bind !! name = Some parent ∧ p !! parent = Some type_model ∧ item ∈ tm_arr type_model.
 
 Definition pool_registry_models (m : DocModel) (bind : gmap P loc) (p : pool) : Prop :=
   (∀ nm q tm, bind !! nm = Some q -> p !! q = Some tm ->

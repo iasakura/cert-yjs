@@ -86,7 +86,7 @@ func (r *Room) Join(c wsnet.Connection) {
 // idempotent per operation.
 func (r *Room) process(self wsnet.Connection, data []byte) {
 	r.mu.Lock()
-	applied := r.doc.ApplyEncodedUpdate(r.decode, data)
+	applied := r.doc.ApplyEncodedUpdate(r.decode, data, yjs.NoOrigin)
 	if applied {
 		for _, c := range r.conns {
 			if c != self {

@@ -36,7 +36,47 @@ func (d *Doc) GetOrCreateText(name string) *Text {
 // ApplySyncUpdate, CodeUnits, String or Len on the same document: deadlock, #206 item
 // 2); it uses the In-variants with tr.
 func (d *Doc) Transact(f func(tr *Transaction)) {
-	transact(d.store, f)
+	transact(d.store, NoOrigin, f)
+}
+
+// TransactWith is Transact with an origin for the transaction (Yjs
+// doc.transact's second argument, src/utils/Doc.js:179; yrs
+// Doc::transact_mut_with, src/transact.rs:118).
+func (d *Doc) TransactWith(origin Origin, f func(tr *Transaction)) {
+	transact(d.store, origin, f)
+}
+
+// ObserveUpdate registers callback for the updates of the document (Yjs
+// v14.0.0-rc.18 doc.on('update', handler), emitted at
+// src/utils/Transaction.js:297-301; yrs 0.27.2 Doc::observe_update_v1, whose
+// callbacks run at commit, src/transaction.rs:1094). At the end of every
+// transaction that integrated something, callback is called once with the
+// update that carries what the transaction integrated to other replicas (the
+// structs of its insert set, Transaction.insertedStructs, encoded by encode)
+// and with the transaction's origin (Transaction.origin). A provider gives
+// its own origin to the updates it applies and sends only the updates of
+// other origins (y-websocket v2.1.0, src/y-websocket.js:353-361).
+//
+// Three differences from the references. The handler gets (update, origin)
+// where Yjs passes (update, origin, doc, transaction) and yrs (transaction,
+// event): a callback must not touch the document (below), so it gets
+// neither the document nor the transaction. The encoder is an argument, for
+// the reason given at Encoder. The update carries inserts only: what the
+// transaction deleted is not in the bytes (the Encoder writes an empty
+// delete set), and a transaction that only deleted calls nobody, where Yjs
+// emits its delete set.
+//
+// Callbacks run under the store's write lock, as the callbacks of
+// Text.Observe do and as yrs's do (the committing TransactionMut still holds
+// the store): a callback must not lock the document again (no Transact,
+// Insert, Delete, ApplySyncUpdate, Observe, ObserveUpdate, CodeUnits, Len:
+// deadlock). Not callable inside a transaction, for the same reason.
+func (d *Doc) ObserveUpdate(encode Encoder, callback func(update []byte, origin Origin)) {
+	ref := d.store
+	ref.wlock()
+	ref.store.updateObservers = append(ref.store.updateObservers,
+		updateObserver{encode: encode, callback: callback})
+	ref.wunlock()
 }
 
 // Codec is the decoding half of the update codec: data decodes to a batch of
@@ -71,11 +111,24 @@ type Codec = func(data []byte) (ok bool, structs []updateItem, deletes []deleteS
 // its own reader and hands the Update to Doc::apply_update (:349). Past the
 // decode the Go follows all three: the structs, then the delete set, in one
 // transaction (ApplySyncUpdate; in y-octo, under one write lock).
-func (d *Doc) ApplyEncodedUpdate(decode Codec, data []byte) bool {
+func (d *Doc) ApplyEncodedUpdate(decode Codec, data []byte, origin Origin) bool {
 	ok, structs, deletes := decode(data)
 	if !ok {
 		return false
 	}
-	d.ApplySyncUpdate(structs, deletes)
+	d.ApplySyncUpdate(structs, deletes, origin)
 	return true
 }
+
+// Encoder is the encoding half of the update codec: the bytes that stand for
+// a batch of insert structs and an empty delete set. Like Codec it is a value
+// that verified code takes as a parameter, and the client's proofs assume
+// only its specification (encoder_spec, src/proof/yjs_prot.v) against the
+// abstract encode; the real encoder is trusted to meet it. The struct type is
+// unexported, so an Encoder can only be built inside this package; the
+// deployment's is WireEncoder (codec.go). In the references the encoding is
+// the library's own (Yjs v14.0.0-rc.18 writeUpdateMessageFromTransaction,
+// src/utils/encoding-helpers.js:103; yrs 0.27.2
+// TransactionMut::encode_update_v1, src/transaction.rs:597); here it is a
+// parameter for the reason Codec is one.
+type Encoder = func(structs []updateItem) []byte
