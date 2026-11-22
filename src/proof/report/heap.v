@@ -10,7 +10,7 @@
       decode to a root's name and the characters of an exact read
       certificate of that root ([is_text_state], history.v), whose ids fit
       the machine words ([item_fits]). Made to be chosen as the trace
-      protocol ([trace_prot], the ws FFI) by a deployment that traces
+      protocol ([trace_entry_protocol], the ws FFI) by a deployment that traces
       reports; the server's closed theorem does.
 
     Laws
@@ -48,9 +48,9 @@ End report_slice.
 
 Section report_heap.
 
-(* [allG] only (no [heapGS]), as [yjs_prot]: the trace protocol must be
-   nameable inside an adequacy theorem's initial fancy update, before any
-   node exists. *)
+(* [allG] only (no [heapGS]), as [is_certified_update_message]: the trace
+   protocol must be nameable inside an adequacy theorem's initial fancy update,
+   before any node exists. *)
 Context {Σ : gFunctors} `{!allG Σ}.
 
 Set Default Proof Using "Type*".

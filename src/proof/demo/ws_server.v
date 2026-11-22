@@ -3,14 +3,13 @@
     One node boots the whole verified server: initialize the packages,
     listen, create the document (the lock layer included, [wp_NewDoc]),
     create the room, and run the accept loop. The theorem pushes that
-    through [ws_dist_adequacy_prot_fupd] with the REAL wire protocol
-    [yjs_prot decode γh], whose history instance is allocated inside the
-    initial fancy update, and exports two facts about EVERY reachable
+    through [ws_dist_adequacy_protocol_fupd] with the REAL wire protocol
+    [is_certified_update_message decode γh], whose history instance is allocated
+    inside the initial fancy update, and exports two facts about EVERY reachable
     state of EVERY execution: EVERY message on the wire decodes to an honest
-    batch (protocol totality), and the run's trace, the reports the server
-    wrote after each apply, converges ([reports_converge], issue #239): any
-    two reports about the same root that hold the same ids spell the same
-    text.
+    batch (protocol totality), and the run's trace, the reports the server wrote
+    after each apply, converges ([reports_converge], issue #239): any two
+    reports about the same root that hold the same ids spell the same text.
 
     Crash-restart halts immediately ([halt]) by design: the server's
     history element lives in the store lock invariant and dies with the
@@ -19,8 +18,8 @@
 
     The environment is parametric: any peer population whose coherence
     [coh0 γh] and the initial world's send relation discharge
-    [ws_env_preserves] for [yjs_prot decode γh] (the ws_env_smoke.v peers
-    have exactly this shape). *)
+    [ws_env_preserves] for [is_certified_update_message decode γh] (the
+    ws_env_smoke.v peers have exactly this shape). *)
 From Perennial.program_logic Require Import recovery_weakestpre dist_weakestpre dist_adequacy.
 From Perennial.goose_lang Require Import adequacy crash_modality recovery_lifting dist_lifting.
 From New.proof Require Import proof_prelude.
@@ -28,10 +27,10 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import wsrelay.
 From New.proof Require Import prelude.
 From New.proof.sync_proof Require Import base mutex rwmutex.
 From New.goose_lang.ffi.ws_ffi Require Import ws_ffi.
-From New.goose_lang.ffi.ws_ffi Require Import adequacy_prot.
+From New.goose_lang.ffi.ws_ffi Require Import adequacy_protocol.
 From New.proof Require Import core.
 From New.proof Require Import history.
-From New.proof Require Import yjs_prot.
+From New.proof Require Import certified_update_message.
 From New.proof.store Require Import store.
 From New.proof.doc Require Import doc.
 From New.proof.report Require Import report.
@@ -251,7 +250,7 @@ Theorem ws_server_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
   (∀ (hG : ws_heapGS Σ) (sem' : go.Semantics),
       ⊢ codec_spec (hG := hG) (sem := sem') decode f) ->
   (∀ (W : wsGS Σ) (Hinv : invGS Σ) (γh : history_names),
-      W.(ws_prot) = yjs_prot decode γh ->
+      W.(ws_message_protocol) = is_certified_update_message decode γh ->
       W.(ws_env_coh) = coh0 γh ->
       W.(ws_may) = g.(global_world).(ws_env_may) ->
       ⊢ is_history (A := (list w16)) (P := go_string) γh -∗
@@ -267,7 +266,7 @@ Theorem ws_server_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
        reports_converge g'.(global_world).(ws_trace)).
 Proof.
   intros Hwf Hempty Htrace Hpkg Hlctx0 Hcoh0 Hcodec Henv.
-  eapply (ws_dist_adequacy_prot_fupd Σ); [exact Hwf | exact Hempty | exact Htrace | done |].
+  eapply (ws_dist_adequacy_protocol_fupd Σ); [exact Hwf | exact Hempty | exact Htrace | done |].
   intros Hinv.
   iStartProof.
   (* allocate the history, then name the protocol *)
@@ -277,7 +276,7 @@ Proof.
     first set_solver.
   iModIntro.
   (* the trace protocol: every entry the server writes is a report *)
-  iExists (yjs_prot decode γh), _, (is_report γh), _, (coh0 γh).
+  iExists (is_certified_update_message decode γh), _, (is_report γh), _, (coh0 γh).
   iSplitR; first iApply Hcoh0.
   iIntros (HG) "%Hp %Ht %Hc %Hm %Hi Hstart".
   iEval (rewrite -Hi) in "Hhist".

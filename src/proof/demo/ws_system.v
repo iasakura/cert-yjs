@@ -11,13 +11,13 @@
     what its transactions insert is what the client's update handler
     sends. The typist ([wsclient.Typist], [typist_app_expr_spec]) is one.
     The theorem pushes all of them through
-    [ws_dist_adequacy_prot_fupd] with the real wire protocol
-    [yjs_prot decode γh] and exports, about EVERY reachable state of EVERY
-    execution, what the server's theorem exports: every message on the wire
-    decodes to an honest batch, and the run's trace converges
-    ([reports_converge]). The trace now holds the reports of every node, so
-    the convergence compares replicas: any two reports, from any two nodes,
-    about the same root that hold the same ids spell the same text.
+    [ws_dist_adequacy_protocol_fupd] with the real wire protocol
+    [is_certified_update_message decode γh] and exports, about EVERY reachable
+    state of EVERY execution, what the server's theorem exports: every message
+    on the wire decodes to an honest batch, and the run's trace converges
+    ([reports_converge]). The trace now holds the reports of every node, so the
+    convergence compares replicas: any two reports, from any two nodes, about
+    the same root that hold the same ids spell the same text.
 
     What is gone, against [ws_server_dist_adequate], is the assumption about
     the peers: there is no [ws_env_preserves] hypothesis. The environment
@@ -37,10 +37,10 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import wsclient.
 From New.proof Require Import prelude.
 From New.proof.sync_proof Require Import base mutex rwmutex.
 From New.goose_lang.ffi.ws_ffi Require Import ws_ffi.
-From New.goose_lang.ffi.ws_ffi Require Import adequacy_prot.
+From New.goose_lang.ffi.ws_ffi Require Import adequacy_protocol.
 From New.proof Require Import core.
 From New.proof Require Import history.
-From New.proof Require Import yjs_prot.
+From New.proof Require Import certified_update_message.
 From New.proof.store Require Import store.
 From New.proof.doc Require Import doc.
 From New.proof.report Require Import report.
@@ -345,7 +345,7 @@ Theorem ws_system_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
        reports_converge g'.(global_world).(ws_trace)).
 Proof.
   intros Hwf Hempty Htrace Hsilent Hpkg Hlctx0 Hdistinct Hcodec Hencoder Hroundtrip Happs.
-  eapply (ws_dist_adequacy_prot_fupd Σ); [exact Hwf | exact Hempty | exact Htrace | done |].
+  eapply (ws_dist_adequacy_protocol_fupd Σ); [exact Hwf | exact Hempty | exact Htrace | done |].
   intros Hinv.
   iStartProof.
   (* allocate the history for every node's client id, then name the protocol *)
@@ -356,7 +356,7 @@ Proof.
   iDestruct "Hels" as "[Hserver_history Hclient_histories]".
   rewrite big_sepL_fmap.
   iModIntro.
-  iExists (yjs_prot decode γh), _, (is_report γh), _, (λ _, True%I).
+  iExists (is_certified_update_message decode γh), _, (is_report γh), _, (λ _, True%I).
   iSplitR; first done.
   iIntros (HG) "%Hp %Ht %Hc %Hm %Hi Hstart".
   iEval (rewrite -Hi) in "Hhist".

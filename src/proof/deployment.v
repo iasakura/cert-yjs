@@ -5,7 +5,8 @@
 
     API
     - [deployment_protocols decode γh]: the FFI's wire protocol is
-      [yjs_prot decode γh] and its trace protocol is [is_report γh].
+      [is_certified_update_message decode γh] and its trace protocol is
+      [is_report γh].
     - [wp_wsnet_initialize'] / [wp_yjs_initialize']: the initialization of
       the two packages every node imports, for the nodes' boot lemmas. *)
 From New.proof Require Import proof_prelude.
@@ -16,7 +17,7 @@ From New.proof.sync_proof Require Import base mutex rwmutex.
 From New.goose_lang.ffi.ws_ffi Require Import ws_ffi.
 From New.proof Require Import core.
 From New.proof Require Import history.
-From New.proof Require Import yjs_prot.
+From New.proof Require Import certified_update_message.
 From New.proof.report Require Import report.
 
 Section deployment.
@@ -35,17 +36,20 @@ Notation P := go_string.
 Local Notation TId := (TypeId P).
 Local Notation Input := (TId * IntegrateInput (A := A))%type.
 
-(** The abstract codec the deployment runs under (see yjs_prot.v). *)
+(** The abstract codec the deployment runs under (see
+    certified_update_message.v). *)
 Context (decode : list u8 -> option (list Input)).
 
 (* ===== definitions ======================================================== *)
 
 (** The deployment's protocols on the FFI's global state: the wire protocol
-    is [yjs_prot] (receives convert their [ws_prot] payload into
-    certificates, sends convert them back) and the trace protocol is
-    [is_report] (what every report a node traces must satisfy). *)
+    is [is_certified_update_message] (receives convert their
+    [ws_message_protocol] payload into certificates, sends convert them back)
+    and the trace protocol is [is_report] (what every report a node traces must
+    satisfy). *)
 Definition deployment_protocols (γh : history_names) : Prop :=
-  (∀ d, ws_prot d = yjs_prot decode γh d) ∧ (∀ d, trace_prot d = is_report γh d).
+  (∀ d, ws_message_protocol d = is_certified_update_message decode γh d) ∧
+  (∀ d, trace_entry_protocol d = is_report γh d).
 
 (* ===== lemmas ============================================================= *)
 

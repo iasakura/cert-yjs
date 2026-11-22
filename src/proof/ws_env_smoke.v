@@ -3,7 +3,7 @@
     [ws_env_preserves] (src/goose_lang/ffi/ws_ffi/ws_ffi.v) is the one thing
     this development assumes about a peer it does not run. An assumption nobody
     can discharge is worth nothing, so here is a peer that discharges it, with a
-    [ws_prot] that carries real certificates rather than [True].
+    [ws_message_protocol] that carries real certificates rather than [True].
 
     The peer is deliberately tiny: it may put exactly one message on the wire,
     the encoding of one insert into the empty document, and only as the first
@@ -11,10 +11,10 @@
     is that the three pieces fit together at all:
 
     - [ws_may] is inhabited: there is data the environment is permitted to send;
-    - [ws_prot] of that data is the real thing a receiver needs, one point of
-      the global history per character ([is_pending_certified] over
-      [expand_inputs]), which is exactly what
-      [wp_Transaction__applyUpdate] consumes;
+    - [ws_message_protocol] of that data is the real thing a receiver needs, one
+      point of the global history per character ([is_pending_certified] over
+      [expand_inputs]), which is exactly what [wp_Transaction__applyUpdate]
+      consumes;
     - [ws_env_preserves] holds, by the same [history_broadcast] a modeled sender
       would use at [wp_WsSendOp].
 
@@ -58,7 +58,7 @@ From New.proof Require Export history.
 From New.proof.item Require Import run_theory model.
 From New.proof.store Require Import model.
 From New.proof.store Require Import store.
-From New.proof Require Import yjs_prot.
+From New.proof Require Import certified_update_message.
 From New.goose_lang.ffi.ws_ffi Require Import ws_ffi.
 
 Section smoke.
@@ -84,17 +84,17 @@ Context (encode : list Input -> list u8).
 Context (decode : list u8 -> option (list Input)).
 Hypothesis decode_encode : forall x, decode (encode x) = Some x.
 
-(** The protocol: the deployment's [yjs_prot] at this file's codec (issue
-    #107, W3b): the bytes decode to an HONEST batch ([update_wf]: the 2^64
-    no-wrap seam and rootedness of head structs) every per-char operation of
-    which is a point of the global history [γh]. The peers below discharge
-    [ws_env_preserves] for THE protocol the verified server runs under,
-    which is what makes the server's one assumption non-vacuous. *)
-Definition smoke_prot (γh : history_names) (d : list u8) : iProp Σ :=
-  yjs_prot decode γh d.
+(** The protocol: the deployment's [is_certified_update_message] at this file's
+    codec (issue #107, W3b): the bytes decode to an HONEST batch ([update_wf]:
+    the 2^64 no-wrap seam and rootedness of head structs) every per-char
+    operation of which is a point of the global history [γh]. The peers below
+    discharge [ws_env_preserves] for THE protocol the verified server runs
+    under, which is what makes the server's one assumption non-vacuous. *)
+Definition smoke_message_protocol (γh : history_names) (d : list u8) : iProp Σ :=
+  is_certified_update_message decode γh d.
 
-#[local] Instance smoke_prot_persistent (γh : history_names) (d : list u8) :
-  Persistent (smoke_prot γh d).
+#[local] Instance smoke_message_protocol_persistent (γh : history_names) (d : list u8) :
+  Persistent (smoke_message_protocol γh d).
 Proof. apply _. Qed.
 
 (** The one operation this peer ever performs: insert [a] into the empty
@@ -143,7 +143,7 @@ Definition smoke_coh (γh : history_names) (cl : ClientId)
     are this file's business. *)
 Definition smoke_wsGS (γm γs γr : gname) (γh : history_names)
     (cl : ClientId) (nm : P) (a : w16) : wsGS Σ :=
-  WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+  WsGS Σ _ _ γm γs γr (smoke_message_protocol γh) (smoke_message_protocol_persistent γh)
        (λ _, True)%I (λ _, _)
        (smoke_coh γh cl) (smoke_may cl nm a).
 
@@ -214,7 +214,7 @@ Proof.
   - (* the wire is no longer empty, so the weaker branch is what is owed *)
     rewrite /smoke_coh bool_decide_eq_false_2; last by apply insert_non_empty.
     by iExists _.
-  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm, smoke_input cl a)].
+  - rewrite /smoke_message_protocol /is_certified_update_message. iExists [(RootId nm, smoke_input cl a)].
     iSplitR; first by iPureIntro; apply decodes_to_decoded; rewrite decode_encode.
     iSplitR; first by iPureIntro; apply smoke_input_wf.
     rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
@@ -283,7 +283,7 @@ Qed.
 
 Definition relay_wsGS (γm γs γr : gname) (γh : history_names)
     (cl clX : ClientId) (t : TId) (nm2 : P) (aX aY : w16) (k : chan_id * nat) : wsGS Σ :=
-  WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+  WsGS Σ _ _ γm γs γr (smoke_message_protocol γh) (smoke_message_protocol_persistent γh)
        (λ _, True)%I (λ _, _)
        (relay_coh γh cl k (encode [(t, smoke_input clX aX)]))
        (relay_may cl clX t nm2 aX aY k).
@@ -368,7 +368,7 @@ Proof.
       (* the peer inserts into a different type than the message it took in *)
       have := f_equal decode Hd. rewrite !decode_encode.
       move=> [=] Ht *. exact (Hnt Ht).
-  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm2, smoke_input cl aY)].
+  - rewrite /smoke_message_protocol /is_certified_update_message. iExists [(RootId nm2, smoke_input cl aY)].
     iSplitR; first by iPureIntro; apply decodes_to_decoded; rewrite decode_encode.
     iSplitR; first by iPureIntro; apply smoke_input_wf.
     rewrite expand_inputs_smoke /is_pending_certified big_sepL_singleton.
@@ -455,7 +455,7 @@ Definition anchor_may (cl clX : ClientId) (t : TId) (bX bY : w16)
 
 Definition anchor_wsGS (γm γs γr : gname) (γh : history_names)
     (cl clX : ClientId) (t : TId) (bX bY : w16) (k : chan_id * nat) : wsGS Σ :=
-  WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+  WsGS Σ _ _ γm γs γr (smoke_message_protocol γh) (smoke_message_protocol_persistent γh)
        (λ _, True)%I (λ _, _)
        (relay_coh γh cl k (encode [(t, smoke_input clX bX)]))
        (anchor_may cl clX t bX bY k).
@@ -526,7 +526,7 @@ Proof.
       (* the two differ in whether the operation has an origin at all *)
       have := f_equal decode Hd. rewrite !decode_encode.
       rewrite /anchor_input /smoke_input. move=> [=] *. by [].
-  - rewrite /smoke_prot /yjs_prot. iExists [(t, anchor_input cl clX bY)].
+  - rewrite /smoke_message_protocol /is_certified_update_message. iExists [(t, anchor_input cl clX bY)].
     iSplitR; first by iPureIntro; apply decodes_to_decoded; rewrite decode_encode.
     iSplitR; first by iPureIntro; apply anchor_input_wf.
     rewrite expand_inputs_anchor /is_pending_certified big_sepL_singleton.
@@ -871,7 +871,7 @@ Definition stream_coh (γh : history_names) (cl : ClientId) (t : TId)
 
 Definition stream_wsGS (γm γs γr : gname) (γh : history_names)
     (cl : ClientId) (nm : P) (c0 : chan_id) : wsGS Σ :=
-  WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+  WsGS Σ _ _ γm γs γr (smoke_message_protocol γh) (smoke_message_protocol_persistent γh)
        (λ _, True)%I (λ _, _)
        (stream_coh γh cl (RootId nm) c0) (stream_may cl nm c0).
 
@@ -933,7 +933,7 @@ Proof.
     iFrame "Hown". iPureIntro. split.
     + rewrite length_app /= (stream_pos_insert c0 (env_msgs g) n) // -Hlen. lia.
     + move: Hcoh2. rewrite /stream_docm insert_insert_eq //.
-  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm, stream_input cl (length bs) b)].
+  - rewrite /smoke_message_protocol /is_certified_update_message. iExists [(RootId nm, stream_input cl (length bs) b)].
     iSplitR; first by iPureIntro; apply decodes_to_decoded; rewrite decode_encode.
     iSplitR.
     { iPureIntro. apply stream_input_wf. word. }
@@ -1056,7 +1056,7 @@ Definition full_coh (γh : history_names) (cl clX : ClientId) (t t2 : TId)
 Definition full_wsGS (γm γs γr : gname) (γh : history_names)
     (cl clX : ClientId) (t : TId) (nm2 : P) (aX : w16) (kX : chan_id * nat)
     (c0 : chan_id) : wsGS Σ :=
-  WsGS Σ _ _ γm γs γr (smoke_prot γh) (smoke_prot_persistent γh)
+  WsGS Σ _ _ γm γs γr (smoke_message_protocol γh) (smoke_message_protocol_persistent γh)
        (λ _, True)%I (λ _, _)
        (full_coh γh cl clX t (RootId nm2) aX c0) (full_may cl clX t nm2 aX kX c0).
 
@@ -1127,7 +1127,7 @@ Proof.
     + rewrite length_app /= (stream_pos_insert c0 (env_msgs g) n) // -Hlen. lia.
     + rewrite decide_False; last by destruct bs.
       move: Hcoh3. rewrite /full_model insert_insert_ne // insert_insert_eq //.
-  - rewrite /smoke_prot /yjs_prot. iExists [(RootId nm2, stream_input cl (length bs) b)].
+  - rewrite /smoke_message_protocol /is_certified_update_message. iExists [(RootId nm2, stream_input cl (length bs) b)].
     iSplitR; first by iPureIntro; apply decodes_to_decoded; rewrite decode_encode.
     iSplitR.
     { iPureIntro. apply stream_input_wf. word. }

@@ -85,9 +85,9 @@ func (d *Doc) ObserveUpdate(encode Encoder, callback func(update []byte, origin 
 // deployment's is WireCodec (codec.go). The byte codec stays outside the
 // verified core (codec.go, //go:build !goose), so verified code takes it as a
 // VALUE, and the server's proofs assume only its specification (codec_spec,
-// src/proof/yjs_prot.v) against the abstract decode the wire protocol
-// [yjs_prot] is defined over; the real codec is trusted to meet it, the same
-// trust boundary codec.go already is.
+// src/proof/certified_update_message.v) against the abstract decode the wire
+// protocol [is_certified_update_message] is defined over; the real codec is
+// trusted to meet it, the same trust boundary codec.go already is.
 type Codec = func(data []byte) (ok bool, structs []updateItem, deletes []deleteSpan)
 
 // ApplyEncodedUpdate decodes one wire update with decode and applies the
@@ -123,12 +123,12 @@ func (d *Doc) ApplyEncodedUpdate(decode Codec, data []byte, origin Origin) bool 
 // Encoder is the encoding half of the update codec: the bytes that stand for
 // a batch of insert structs and an empty delete set. Like Codec it is a value
 // that verified code takes as a parameter, and the client's proofs assume
-// only its specification (encoder_spec, src/proof/yjs_prot.v) against the
-// abstract encode; the real encoder is trusted to meet it. The struct type is
-// unexported, so an Encoder can only be built inside this package; the
-// deployment's is WireEncoder (codec.go). In the references the encoding is
-// the library's own (Yjs v14.0.0-rc.18 writeUpdateMessageFromTransaction,
-// src/utils/encoding-helpers.js:103; yrs 0.27.2
-// TransactionMut::encode_update_v1, src/transaction.rs:597); here it is a
-// parameter for the reason Codec is one.
+// only its specification (encoder_spec, src/proof/certified_update_message.v)
+// against the abstract encode; the real encoder is trusted to meet it. The
+// struct type is unexported, so an Encoder can only be built inside this
+// package; the deployment's is WireEncoder (codec.go). In the references the
+// encoding is the library's own (Yjs v14.0.0-rc.18
+// writeUpdateMessageFromTransaction, src/utils/encoding-helpers.js:103; yrs
+// 0.27.2 TransactionMut::encode_update_v1, src/transaction.rs:597); here it is
+// a parameter for the reason Codec is one.
 type Encoder = func(structs []updateItem) []byte
