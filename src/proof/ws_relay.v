@@ -15,7 +15,7 @@
     - [own_Room_root r γs γh]: the root the room reports on, its handle
       and the read capability its snapshots use (held in [room_inv]).
     - [deployment_protocols γh] (from deployment.v): the deployment's wire
-      and trace protocols ([yjs_prot], [is_report]), the one hypothesis the
+      and trace protocols ([is_certified_update_message], [is_report]), the one hypothesis the
       server's composition takes about the FFI.
     - [room_inv] ties the ghost log to the wire: per entry the S1 receipts
       ([entry_receipts], internal: the packet decodes, every input is
@@ -49,7 +49,7 @@ From New.proof.sync_proof Require Import base mutex rwmutex.
 From New.goose_lang.ffi.ws_ffi Require Import ws_ffi.
 From New.proof Require Import core.
 From New.proof Require Import history.
-From New.proof Require Import yjs_prot.
+From New.proof Require Import certified_update_message.
 From New.proof.store Require Import store.
 From New.proof.doc Require Import doc.
 From New.proof.text Require Import text.
@@ -91,7 +91,7 @@ Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
-(** The abstract codec the deployment runs under (see yjs_prot.v). *)
+(** The abstract codec the deployment runs under (see certified_update_message.v). *)
 Context (decode : list u8 -> option (list Input)).
 
 (* ===== definitions ======================================================== *)
@@ -506,7 +506,7 @@ Lemma wp_Room__process (r : loc) (γ : room_names) (γs : store_names)
     (s : slice.t) (dq : dfrac) (data : list u8) :
   {{{ is_pkg_init wsrelay ∗ is_Room r γ γs γh c ∗
       is_room_member γ j mb ∗ own_processed mb n ∗
-      is_chan_msg mb.(mb_recv) n data ∗ ws_prot data ∗ s ↦*{dq} data }}}
+      is_chan_msg mb.(mb_recv) n data ∗ ws_message_protocol data ∗ s ↦*{dq} data }}}
     r @! (go.PointerType wsrelay.Room) @! "process" #(mb.(mb_conn)) #s
   {{{ RET #(); s ↦*{dq} data ∗ own_processed mb (S n) ∗
       (∃ i : nat, is_room_log_entry γ i (RelayEntry j mb.(mb_recv) n data)) }}}.
@@ -521,7 +521,7 @@ Proof.
   (* the member is in the table *)
   iDestruct (mono_list_auth_idx_lookup with "Hmem Hmidx") as %HMSj.
   (* the message's protocol, as certificates *)
-  iAssert (yjs_prot decode γh data) as "#Hyprot".
+  iAssert (is_certified_update_message decode γh data) as "#Hyprot".
   { rewrite -Hprot. iFrame "Hprotd". }
   (* apply the batch to the room's document (store lock nested inside) *)
   wp_apply (wp_Doc__ApplyEncodedUpdate _ dv s_loc γs γh may_insert_anything c f s dq data ""%go
@@ -622,7 +622,7 @@ Proof.
          element of this member's view *)
       iDestruct "Hsendi" as (sent) "Hsendi". iNamed "Hsendi".
       wp_func_call.
-      iAssert (ws_prot data) as "#Hwsd"; first by rewrite Hprot.
+      iAssert (ws_message_protocol data) as "#Hwsd"; first by rewrite Hprot.
       wp_apply (wp_Send with "[$Hs $Hsc $Hwsd]").
       { iDestruct (big_sepL_lookup _ _ (uint.nat i) mbi with "Hconninfo") as "$".
         exact Hmbi. }

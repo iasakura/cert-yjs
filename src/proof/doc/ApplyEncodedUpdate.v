@@ -2,7 +2,7 @@
     path (issue #107, W3b). Decode one wire message with the deployment's
     codec value and apply the batch through [wp_Doc__ApplySyncUpdate].
 
-    Everything the apply needs comes off the wire protocol [yjs_prot]: the
+    Everything the apply needs comes off the wire protocol [is_certified_update_message]: the
     decode fact closes the codec's failure branch (dead under the protocol),
     [update_wf] discharges the no-wrap and rootedness premises, and the
     per-char certificates feed the total drain. The caller learns the S1
@@ -15,7 +15,7 @@ From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
 From New.proof Require Import core.
 From New.proof Require Import prelude.
 From New.proof Require Import history.
-From New.proof Require Import yjs_prot.
+From New.proof Require Import certified_update_message.
 From New.proof.id Require Import id.
 From New.proof.item Require Import item.
 From New.proof.ytype Require Import ytype.
@@ -65,7 +65,7 @@ Lemma wp_Doc__ApplyEncodedUpdate (dv s_loc : loc) (γs : store_names)
   (∀ unit : w16, may_insert origin unit) ->
   {{{ is_pkg_init yjs ∗ is_Doc dv s_loc γs γh may_insert ∗ is_history (A := A) (P := P) γh ∗
       is_store_client γs c ∗ codec_spec decode f ∗
-      s ↦*{dq} data ∗ yjs_prot decode γh data }}}
+      s ↦*{dq} data ∗ is_certified_update_message decode γh data }}}
     dv @! (go.PointerType yjs.Doc) @! "ApplyEncodedUpdate" #f #s #origin
   {{{ (h : list Ev) (inputs applied : list Input) (m' : gmap TId (list (YjsItem A))), RET #true;
       s ↦*{dq} data ∗

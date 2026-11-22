@@ -33,8 +33,8 @@ Set Default Proof Using "Type*".
     received as message 0 of the peer's channel.
 
     Echoing preserves the protocol for the same reason a relay does: what goes
-    back out is what came in, so [Send]'s [ws_prot] obligation is discharged by
-    the [ws_prot] the receive handed over. *)
+    back out is what came in, so [Send]'s [ws_message_protocol] obligation is discharged by
+    the [ws_message_protocol] the receive handed over. *)
 Lemma wp_ServeEcho (l : loc) (e : ws_endpoint) :
   {{{ is_pkg_init wsecho ∗ is_Listener l e ∗ ws_env_preserves ⊤ }}}
     @! wsecho.ServeEcho #l

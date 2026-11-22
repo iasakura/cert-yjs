@@ -12,12 +12,12 @@
     trace protocol [is_report], as the server does (ws_relay.v).
 
     What the client proves about itself is the wire protocol: every message
-    it sends satisfies [yjs_prot]. The store tells the update handler that
+    it sends satisfies [is_certified_update_message]. The store tells the update handler that
     the batch it is handed is certified and allowed by the document's
     insert rule ([is_update_callback]); the client's rule
     ([client_may_insert]) says that a batch of any origin but the
     provider's holds no surrogate code unit, which is what
-    [yjs_prot_encode] asks. That is what makes the client a peer the
+    [is_certified_update_message_encode] asks. That is what makes the client a peer the
     server's theorem needs no assumption about.
 
     API
@@ -58,7 +58,7 @@ From New.proof.sync_proof Require Import base mutex rwmutex.
 From New.goose_lang.ffi.ws_ffi Require Import ws_ffi.
 From New.proof Require Import core.
 From New.proof Require Import history.
-From New.proof Require Import yjs_prot.
+From New.proof Require Import certified_update_message.
 From New.proof.id Require Import id.
 From New.proof.item Require Import item.
 From New.proof.ytype Require Import ytype.
@@ -100,7 +100,7 @@ Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
-(** The abstract codec the deployment runs under (see yjs_prot.v). *)
+(** The abstract codec the deployment runs under (see certified_update_message.v). *)
 Context (decode : list u8 -> option (list Input)).
 Context (encode : list Input -> list u8).
 
@@ -239,7 +239,7 @@ Qed.
     ([own_emitted_update], the precondition of [is_update_callback]);
     for an origin that is not the provider's the rule says the batch holds
     no surrogate code unit, so the bytes satisfy the wire protocol
-    ([yjs_prot_encode]). *)
+    ([is_certified_update_message_encode]). *)
 Lemma wp_Client__sendUpdate (client_loc : loc) (γs : store_names) (γh : history_names)
     (client_id : ClientId) (send_channel receive_channel : chan_id) (name : go_string)
     (update_slice : slice.t) (structs : list Input) (origin : go_string) :
@@ -263,7 +263,7 @@ Proof.
   { move=> struct Hstruct unit Hunit.
     destruct (proj1 (Forall_forall _ _) (Hunits struct Hstruct) unit Hunit) as [Horigin | Hnot];
       [by destruct (Hlocal Horigin) | exact Hnot]. }
-  iDestruct (yjs_prot_encode decode encode γh structs Hroundtrip Hfree with "Hcertified")
+  iDestruct (is_certified_update_message_encode decode encode γh structs Hroundtrip Hfree with "Hcertified")
     as "#Hyprot".
   wp_auto.
   wp_apply (wp_Mutex__Lock with "[$Hsend_lock]"). iIntros "[Hlocked Hcursor]".
@@ -311,7 +311,7 @@ Proof.
   - wp_auto. wp_for_post. iApply "HΦ". iExists received. iFrame.
   - iDestruct "Hreceived" as "(Hcursor & #Hmsg & #Hwire)".
     wp_auto.
-    iAssert (yjs_prot decode γh data) as "#Hyprot".
+    iAssert (is_certified_update_message decode γh data) as "#Hyprot".
     { rewrite -Hprot. iFrame "Hwire". }
     wp_apply (wp_Doc__ApplyEncodedUpdate decode _ s_loc γs γh client_may_insert client_id _ data_slice
                 (DfracOwn 1) data provider_origin ltac:(move=> unit; by left)

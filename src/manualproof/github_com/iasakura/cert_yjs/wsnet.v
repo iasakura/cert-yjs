@@ -116,7 +116,7 @@ Qed.
 Lemma wp_Send (c : loc) (sc rc : chan_id) (n : nat) (s : slice.t) (dq : dfrac)
     (data : list w8) :
   {{{ is_Connection c sc rc ∗ s ↦*{dq} data ∗ own_send_cursor sc n ∗
-      ws_prot data }}}
+      ws_message_protocol data }}}
     wsnet.Sendⁱᵐᵖˡ #c #s
   {{{ (err : bool), RET #err;
       s ↦*{dq} data ∗
@@ -149,7 +149,7 @@ Lemma wp_Receive (c : loc) (sc rc : chan_id) (n : nat) :
   {{{ (err : bool) (s : slice.t) (data : list w8), RET (#err, #s);
       s ↦* data ∗ own_slice_cap w8 s (DfracOwn 1) ∗
       (if err then own_recv_cursor rc n
-       else own_recv_cursor rc (S n) ∗ is_chan_msg rc n data ∗ ws_prot data) }}}.
+       else own_recv_cursor rc (S n) ∗ is_chan_msg rc n data ∗ ws_message_protocol data) }}}.
 Proof.
   wp_start as "(#Hc & Hcur & #Henv)".
   iEval (rewrite /is_Connection) in "Hc".
@@ -168,7 +168,7 @@ Qed.
 (** [Trace]: appends the slice's bytes to the run's trace, under the trace
     protocol; the slice is untouched. *)
 Lemma wp_Trace (s : slice.t) (dq : dfrac) (data : list w8) :
-  {{{ s ↦*{dq} data ∗ trace_prot data }}}
+  {{{ s ↦*{dq} data ∗ trace_entry_protocol data }}}
     wsnet.Traceⁱᵐᵖˡ #s
   {{{ RET #(); s ↦*{dq} data }}}.
 Proof.

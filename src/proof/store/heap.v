@@ -1996,7 +1996,7 @@ Qed.
     struct pins its input's type only through its parent name, which it has
     only when the input has no origin, and [same_encoded_struct] leaves the type
     free only when it has one. So the batch a decoder hands over
-    ([codec_spec]) is also the batch the sender certified ([yjs_prot]). *)
+    ([codec_spec]) is also the batch the sender certified ([is_certified_update_message]). *)
 Lemma is_update_item_same_encoded_struct (updateItemVal : yjs.updateItem.t)
     (decoded certified : TId * IntegrateInput (A := A)) :
   same_encoded_struct decoded certified ->

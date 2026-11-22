@@ -16,7 +16,7 @@
     wire. Composing the two peers' facts ([is_chan_msg] agreement) is how a
     receiver learns what the sender sent.
 
-    On top of that sits the protocol, [ws_prot]: what every message on the wire
+    On top of that sits the protocol, [ws_message_protocol]: what every message on the wire
     satisfies. It is part of the state interpretation rather than a user-level
     invariant, because the authority over "these are all the messages there
     are" is the [ws_msgs] ghost map's auth, which lives in the state
@@ -24,7 +24,7 @@
     what modeled code put on the wire, and a receiver would then need the
     sender's cursor to know its own message was among them, which is a fact
     about the physical state that no [fupd] can reach. Here a receiver reads
-    [ws_prot] straight off the interpretation.
+    [ws_message_protocol] straight off the interpretation.
 
     A peer we do not run is described by two things, [ws_env_may] (impl.v),
     which says what it may send, and [ws_env_preserves], which says what
@@ -60,17 +60,17 @@ Class wsGS Σ : Type := WsGS {
       that is what a receiver needs in order to conclude anything about the
       bytes it just consumed. Sending it is an obligation ([wp_WsSendOp]
       requires it), receiving it is a right ([wp_WsRecvOp] returns it). *)
-  ws_prot : list u8 -> iProp Σ;
+  ws_message_protocol : list u8 -> iProp Σ;
   (** Persistent: one message is delivered to every member of a room, and the
       state interpretation keeps its copy while a receiver takes one. *)
-  #[global] ws_prot_persistent :: forall d, Persistent (ws_prot d);
+  #[global] ws_message_protocol_persistent :: forall d, Persistent (ws_message_protocol d);
   (** The trace protocol: what every entry of the run's trace ([ws_trace],
       impl.v) satisfies. Writing an entry is an obligation ([wp_WsTraceOp]
       requires it); a closed theorem reads it off the state interpretation
-      for every entry there is. Persistent, like [ws_prot], since the
+      for every entry there is. Persistent, like [ws_message_protocol], since the
       interpretation keeps its copy. *)
-  trace_prot : list u8 -> iProp Σ;
-  #[global] trace_prot_persistent :: forall d, Persistent (trace_prot d);
+  trace_entry_protocol : list u8 -> iProp Σ;
+  #[global] trace_entry_protocol_persistent :: forall d, Persistent (trace_entry_protocol d);
   (** Environment coherence: what relates the peer we do not run to ghost
       state. Indexed by [env_msgs], the messages the environment has put on
       the wire, so that by construction nothing modeled code does can disturb
@@ -116,12 +116,12 @@ Section ws.
              without holding anything of the sender's *)
           ([∗ map] k ↦ d ∈ g.(ws_msgs), k ↪[ws_msgs_name]□ d) ∗
           (* the protocol, over every message there is. This is the global
-             invariant a relay needs: a receiver reads its message's [ws_prot]
+             invariant a relay needs: a receiver reads its message's [ws_message_protocol]
              straight out of here, with no cursor of the sender's and no index
              arithmetic, because the authority over [ws_msgs] is right here. *)
-          ([∗ map] k ↦ d ∈ g.(ws_msgs), ws_prot d) ∗
+          ([∗ map] k ↦ d ∈ g.(ws_msgs), ws_message_protocol d) ∗
           (* the trace protocol, over every entry of the run's trace *)
-          ([∗ list] d ∈ g.(ws_trace), trace_prot d) ∗
+          ([∗ list] d ∈ g.(ws_trace), trace_entry_protocol d) ∗
           (* the environment's side of the protocol: whatever ghost structure
              describes the peer we do not run, coherent with what that peer
              has put on the wire so far. [ws_env_preserves] is what moves it,
@@ -193,7 +193,7 @@ End resources.
 (** * The environment's obligation
 
     Stated over a bare [wsGS] rather than inside the lifting section, so that a
-    development can build its own [wsGS] with a real [ws_prot] and show this
+    development can build its own [wsGS] with a real [ws_message_protocol] and show this
     holds for it. That is what says the assumption is not vacuous, and it needs
     no goose and no program. [invGS] is here for the fancy update and nothing
     else. *)
@@ -226,7 +226,7 @@ Section env.
     and everything already on the wire satisfies the protocol. A peer whose
     next message depends on what it has already said reads its own position in
     its stream off the first two. The third costs the state interpretation
-    nothing, [ws_prot] being persistent, and is what makes the obligation
+    nothing, [ws_message_protocol] being persistent, and is what makes the obligation
     dischargeable at all:
     a Yjs peer's next operation is anchored at operations the server relayed
     to it, so proving it integrates means first delivering those into that
@@ -240,9 +240,9 @@ Definition ws_env_preserves (E : coPset) : iProp Σ :=
   □ (∀ (g : ws_global_state) (r : chan_id) (n : nat) (data : list u8),
        ⌜ws_may g.(ws_msgs) r data⌝ -∗ ⌜r ∈ g.(ws_ext)⌝ -∗
        ⌜ws_wf g⌝ -∗ ⌜g.(ws_msgs) !! (r, n) = None⌝ -∗
-       ([∗ map] k ↦ d ∈ g.(ws_msgs), ws_prot d) -∗
+       ([∗ map] k ↦ d ∈ g.(ws_msgs), ws_message_protocol d) -∗
        ws_env_coh (env_msgs g) ={E}=∗
-         ws_env_coh (<[ (r, n) := data ]> (env_msgs g)) ∗ ws_prot data).
+         ws_env_coh (<[ (r, n) := data ]> (env_msgs g)) ∗ ws_message_protocol data).
 
 #[global] Instance ws_env_preserves_persistent E :
   Persistent (ws_env_preserves E).
@@ -405,10 +405,10 @@ Section lifting.
       [err = false] is informative.
 
       Sending is where the protocol is an obligation: the caller shows the
-      bytes it puts on the wire satisfy [ws_prot], and the state interpretation
+      bytes it puts on the wire satisfy [ws_message_protocol], and the state interpretation
       records that for whoever receives them. *)
   Lemma wp_WsSendOp (sc rc : chan_id) (n : nat) (data : list u8) s E :
-    {{{ own_send_cursor sc n ∗ ws_prot data }}}
+    {{{ own_send_cursor sc n ∗ ws_message_protocol data }}}
       ExternalOp WsSendOp (connection sc rc, #data)%V @ s; E
     {{{ (err_early err_late : bool), RET #(err_early || err_late);
         if err_early then own_send_cursor sc n
@@ -437,7 +437,7 @@ Section lifting.
       iAssert ([∗ map] k ↦ d ∈ <[ (sc, n) := data ]> g1.(ws_msgs),
                  k ↪[ws_msgs_name]□ d)%I as "#Hmsgfacts2".
       { iApply big_sepM_insert; [done|]. iFrame "#". }
-      iAssert ([∗ map] k ↦ d ∈ <[ (sc, n) := data ]> g1.(ws_msgs), ws_prot d)%I
+      iAssert ([∗ map] k ↦ d ∈ <[ (sc, n) := data ]> g1.(ws_msgs), ws_message_protocol d)%I
         as "#Hprot2".
       { iApply big_sepM_insert; [done|]. iFrame "#". }
       iModIntro. iFrame "∗#%".
@@ -447,7 +447,7 @@ Section lifting.
   (** [Recv] consumes at the cursor. A successful receive pins WHICH message
       it was, so a receiver processes the stream in order and exactly once.
 
-      Receiving is where the protocol is a right: [ws_prot] comes out with the
+      Receiving is where the protocol is a right: [ws_message_protocol] comes out with the
       bytes, and the caller does not have to know whether the sender was
       modeled code or the environment. The two cases reach it differently.
       A message a modeled [WsSendOp] put on the wire is already recorded in the
@@ -461,7 +461,7 @@ Section lifting.
       ExternalOp WsRecvOp (connection sc rc) @ s; E
     {{{ (err : bool) (data : list u8), RET (#err, #data);
         if err then own_recv_cursor rc n
-        else own_recv_cursor rc (S n) ∗ is_chan_msg rc n data ∗ ws_prot data }}}.
+        else own_recv_cursor rc (S n) ∗ is_chan_msg rc n data ∗ ws_message_protocol data }}}.
   Proof.
     iIntros (Φ) "[Hrc #Henv] HΦ". iApply (wp_WsOp with "[-]").
     iIntros "!> * Hl Hg".
@@ -499,7 +499,7 @@ Section lifting.
       iAssert ([∗ map] k ↦ d ∈ <[ (rc, n) := data ]> g1.(ws_msgs),
                  k ↪[ws_msgs_name]□ d)%I as "#Hmsgfacts2".
       { iApply big_sepM_insert; [done|]. iFrame "#". }
-      iAssert ([∗ map] k ↦ d ∈ <[ (rc, n) := data ]> g1.(ws_msgs), ws_prot d)%I
+      iAssert ([∗ map] k ↦ d ∈ <[ (rc, n) := data ]> g1.(ws_msgs), ws_message_protocol d)%I
         as "#Hprot2".
       { iApply big_sepM_insert; [done|]. iFrame "#". }
       iModIntro. iFrame "∗#%".
@@ -508,10 +508,10 @@ Section lifting.
 
   (** [Trace] appends to the run's trace. Writing is where the trace
       protocol is an obligation: the caller shows the bytes satisfy
-      [trace_prot], and the state interpretation records that for whoever
+      [trace_entry_protocol], and the state interpretation records that for whoever
       reads the trace, which is only a closed theorem. *)
   Lemma wp_WsTraceOp (data : list u8) s E :
-    {{{ trace_prot data }}}
+    {{{ trace_entry_protocol data }}}
       ExternalOp WsTraceOp #data @ s; E
     {{{ RET #(); True }}}.
   Proof.
@@ -523,7 +523,7 @@ Section lifting.
       by (erewrite ws_env_may_step_trace; [exact Hmay | exact Hstep]).
     inv_base_step.
     rewrite (env_msgs_same g1 _) //.
-    iAssert ([∗ list] d ∈ g1.(ws_trace) ++ [data], trace_prot d)%I as "#Htrace2".
+    iAssert ([∗ list] d ∈ g1.(ws_trace) ++ [data], trace_entry_protocol d)%I as "#Htrace2".
     { rewrite big_sepL_app big_sepL_singleton. iFrame "#". }
     iModIntro. iFrame "∗#%". iApply wp_value. by iApply "HΦ".
   Qed.
@@ -538,7 +538,7 @@ From Perennial.goose_lang Require Import adequacy.
     [ffi_global_init], the hook [goose_dist_adequacy] calls, takes no input
     beyond the initial network and a [Prop], so the [wsGS] it builds can only
     carry the trivial protocol. This is the same construction with the protocol
-    handed in, which is what a deployment needs: an execution whose [ws_prot]
+    handed in, which is what a deployment needs: an execution whose [ws_message_protocol]
     is the real one. A deployment theorem uses it in place of
     [ffi_global_init]; everything else in the adequacy chain is unchanged.
 
@@ -549,17 +549,17 @@ From Perennial.goose_lang Require Import adequacy.
 Section init.
 Existing Instances ws_op ws_model ws_interp.
 
-Lemma ws_global_init_prot {go_gctx : GoGlobalContext} Σ (hPre : wsGpreS Σ)
+Lemma ws_global_init_protocol {go_gctx : GoGlobalContext} Σ (hPre : wsGpreS Σ)
     (g : ws_global_state)
-    (prot : list u8 -> iProp Σ) (Hpers : forall d, Persistent (prot d))
-    (tprot : list u8 -> iProp Σ) (Htpers : forall d, Persistent (tprot d))
+    (message_protocol : list u8 -> iProp Σ) (Hpers : forall d, Persistent (message_protocol d))
+    (entry_protocol : list u8 -> iProp Σ) (Htpers : forall d, Persistent (entry_protocol d))
     (coh : gmap (chan_id * nat) (list u8) -> iProp Σ) :
   ws_wf g ->
-  ([∗ map] k ↦ d ∈ g.(ws_msgs), prot d) -∗
-  ([∗ list] d ∈ g.(ws_trace), tprot d) -∗
+  ([∗ map] k ↦ d ∈ g.(ws_msgs), message_protocol d) -∗
+  ([∗ list] d ∈ g.(ws_trace), entry_protocol d) -∗
   coh (env_msgs g) -∗
   |==> ∃ hG : wsGS Σ,
-    ⌜hG.(ws_prot) = prot⌝ ∗ ⌜hG.(trace_prot) = tprot⌝ ∗ ⌜hG.(ws_env_coh) = coh⌝ ∗
+    ⌜hG.(ws_message_protocol) = message_protocol⌝ ∗ ⌜hG.(trace_entry_protocol) = entry_protocol⌝ ∗ ⌜hG.(ws_env_coh) = coh⌝ ∗
     ⌜hG.(ws_may) = g.(ws_env_may)⌝ ∗
     @ffi_global_ctx _ ws_interp Σ hG g ∗ @ffi_global_start _ ws_interp Σ hG g.
 Proof.
@@ -572,17 +572,17 @@ Proof.
   { iApply big_sepM_bupd. iApply (big_sepM_mono with "Hmelems").
     iIntros (k d Hk) "H". by iApply ghost_map_elem_persist. }
   iModIntro.
-  iExists (WsGS Σ _ _ γm γs γr prot Hpers tprot Htpers coh g.(ws_env_may)).
+  iExists (WsGS Σ _ _ γm γs γr message_protocol Hpers entry_protocol Htpers coh g.(ws_env_may)).
   by iFrame "∗#%".
 Qed.
 
 End init.
 
 (** The generic initializer has no input beyond the initial network, so the
-    [wsGS] it builds carries the trivial protocol: [ws_prot] holds of anything
+    [wsGS] it builds carries the trivial protocol: [ws_message_protocol] holds of anything
     and [ws_env_coh] asks nothing of the environment. That is all this hook can
     do, since [ffi_initgP] is a [Prop] and cannot carry the Iris-level protocol
-    a deployment means to run. A deployment that wants a real [ws_prot] (the
+    a deployment means to run. A deployment that wants a real [ws_message_protocol] (the
     Yjs one, say) has to build its [wsGS] in its own adequacy statement rather
     than go through [ffi_global_init]. *)
 #[global]
