@@ -15,8 +15,8 @@
     - [own_Room_root r γs γh]: the root the room reports on, its handle
       and the read capability its snapshots use (held in [room_inv]).
     - [deployment_protocols γh] (from deployment.v): the deployment's wire
-      and trace protocols ([is_certified_update_message], [is_report]), the one hypothesis the
-      server's composition takes about the FFI.
+      and trace protocols ([is_certified_update_message], [is_report]), the one
+      hypothesis the server's composition takes about the FFI.
     - [room_inv] ties the ghost log to the wire: per entry the S1 receipts
       ([entry_receipts], internal: the packet decodes, every input is
       [is_accepted] by the server's store, and the server's history visibly
@@ -91,7 +91,8 @@ Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
-(** The abstract codec the deployment runs under (see certified_update_message.v). *)
+(** The abstract codec the deployment runs under (see
+    certified_update_message.v). *)
 Context (decode : list u8 -> option (list Input)).
 
 (* ===== definitions ======================================================== *)

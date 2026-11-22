@@ -12,12 +12,12 @@
     sends. The typist ([wsclient.Typist], [typist_app_expr_spec]) is one.
     The theorem pushes all of them through
     [ws_dist_adequacy_protocol_fupd] with the real wire protocol
-    [is_certified_update_message decode γh] and exports, about EVERY reachable state of EVERY
-    execution, what the server's theorem exports: every message on the wire
-    decodes to an honest batch, and the run's trace converges
-    ([reports_converge]). The trace now holds the reports of every node, so
-    the convergence compares replicas: any two reports, from any two nodes,
-    about the same root that hold the same ids spell the same text.
+    [is_certified_update_message decode γh] and exports, about EVERY reachable
+    state of EVERY execution, what the server's theorem exports: every message
+    on the wire decodes to an honest batch, and the run's trace converges
+    ([reports_converge]). The trace now holds the reports of every node, so the
+    convergence compares replicas: any two reports, from any two nodes, about
+    the same root that hold the same ids spell the same text.
 
     What is gone, against [ws_server_dist_adequate], is the assumption about
     the peers: there is no [ws_env_preserves] hypothesis. The environment

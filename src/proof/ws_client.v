@@ -12,13 +12,13 @@
     trace protocol [is_report], as the server does (ws_relay.v).
 
     What the client proves about itself is the wire protocol: every message
-    it sends satisfies [is_certified_update_message]. The store tells the update handler that
-    the batch it is handed is certified and allowed by the document's
-    insert rule ([is_update_callback]); the client's rule
-    ([client_may_insert]) says that a batch of any origin but the
-    provider's holds no surrogate code unit, which is what
-    [is_certified_update_message_encode] asks. That is what makes the client a peer the
-    server's theorem needs no assumption about.
+    it sends satisfies [is_certified_update_message]. The store tells the update
+    handler that the batch it is handed is certified and allowed by the
+    document's insert rule ([is_update_callback]); the client's rule
+    ([client_may_insert]) says that a batch of any origin but the provider's
+    holds no surrogate code unit, which is what
+    [is_certified_update_message_encode] asks. That is what makes the client a
+    peer the server's theorem needs no assumption about.
 
     API
     - [provider_origin]: the origin the client applies received updates
@@ -100,7 +100,8 @@ Context {observed_inG : ghost_varG Σ (list (YjsItem A * bool))}.
 Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
-(** The abstract codec the deployment runs under (see certified_update_message.v). *)
+(** The abstract codec the deployment runs under (see
+    certified_update_message.v). *)
 Context (decode : list u8 -> option (list Input)).
 Context (encode : list Input -> list u8).
 

@@ -310,10 +310,11 @@ func encodeRun(e *encoder, run []*item, name map[id]string) {
 // earlier struct of the list already covers is left out (a transaction's
 // insert set has no such struct), so that whatever is given, every struct
 // WireCodec reads back is one of the given structs' units: the contract the
-// proofs assume of the pair (codec_roundtrip, src/proof/certified_update_message.v). A struct
-// with no origin must name its parent. A lone surrogate is written as U+FFFD
-// (issue #233), which WireCodec does not read back as the unit that was
-// given; the contract leaves surrogates out.
+// proofs assume of the pair (codec_roundtrip,
+// src/proof/certified_update_message.v). A struct with no origin must name its
+// parent. A lone surrogate is written as U+FFFD (issue #233), which WireCodec
+// does not read back as the unit that was given; the contract leaves surrogates
+// out.
 func WireEncoder() Encoder {
 	return encodeUpdateItems
 }

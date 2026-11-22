@@ -1181,9 +1181,9 @@ Definition input_fits (input : IntegrateInput (A := A)) : Prop :=
     registration ([is_root], the only resource-bearing conjunct) gone, this is
     a pure syntactic fact about the batch, so it is a [Prop] (carried as
     [⌜..⌝] where an [iProp] is expected) and mentions no store; the wire
-    protocol ([is_certified_update_message], issue #107) states rootedness over it directly.
-    Structs WITH an origin derive their binding from the origin's arrival at
-    integration time, so carry no obligation here. *)
+    protocol ([is_certified_update_message], issue #107) states rootedness over
+    it directly. Structs WITH an origin derive their binding from the origin's
+    arrival at integration time, so carry no obligation here. *)
 Definition pending_item_rooted
     (typedInput : TId * IntegrateInput (A := A)) : Prop :=
   if decide (in_originId typedInput.2 = None ∧ in_rightOriginId typedInput.2 = None)
@@ -1197,8 +1197,8 @@ Definition is_pending_rooted
 (** [update_wf inputs]: what a batch must satisfy to be applied: every
     struct's chars fit a word of clocks ([input_fits]) and origin-free structs
     name a root type ([is_pending_rooted]). Facts about the
-    sender's output, so the wire protocol ([is_certified_update_message]) states them and
-    [applyUpdate] / [Doc.ApplySyncUpdate] assume them. *)
+    sender's output, so the wire protocol ([is_certified_update_message]) states
+    them and [applyUpdate] / [Doc.ApplySyncUpdate] assume them. *)
 Definition update_wf (inputs : list (TId * IntegrateInput (A := A))) : Prop :=
   (∀ typedInput : TId * IntegrateInput (A := A), typedInput ∈ inputs -> input_fits typedInput.2) ∧
   is_pending_rooted inputs.
@@ -1244,8 +1244,8 @@ Definition structs_units_allowed (allowed : w16 -> Prop)
     the same type unless the struct has an origin. The bytes of a struct
     with an origin do not say which type it belongs to, so what a decoder
     reports as its type is arbitrary, and the type it is certified under in
-    the history is the sender's knowledge. The wire protocol ([is_certified_update_message])
-    relates the two lists by this, pointwise. *)
+    the history is the sender's knowledge. The wire protocol
+    ([is_certified_update_message]) relates the two lists by this, pointwise. *)
 Definition same_encoded_struct (decoded certified : TId * IntegrateInput (A := A)) : Prop :=
   decoded.2 = certified.2 ∧ (input_has_origin decoded.2 ∨ decoded.1 = certified.1).
 

@@ -2,13 +2,13 @@
     path (issue #107, W3b). Decode one wire message with the deployment's
     codec value and apply the batch through [wp_Doc__ApplySyncUpdate].
 
-    Everything the apply needs comes off the wire protocol [is_certified_update_message]: the
-    decode fact closes the codec's failure branch (dead under the protocol),
-    [update_wf] discharges the no-wrap and rootedness premises, and the
-    per-char certificates feed the total drain. The caller learns the S1
-    receipts: every decoded input is [is_accepted] by the store (forever
-    delivered-or-buffered), and the client's history visibly grew by the
-    applied portion. *)
+    Everything the apply needs comes off the wire protocol
+    [is_certified_update_message]: the decode fact closes the codec's failure
+    branch (dead under the protocol), [update_wf] discharges the no-wrap and
+    rootedness premises, and the per-char certificates feed the total drain. The
+    caller learns the S1 receipts: every decoded input is [is_accepted] by the
+    store (forever delivered-or-buffered), and the client's history visibly grew
+    by the applied portion. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.

@@ -48,9 +48,9 @@ End report_slice.
 
 Section report_heap.
 
-(* [allG] only (no [heapGS]), as [is_certified_update_message]: the trace protocol must be
-   nameable inside an adequacy theorem's initial fancy update, before any
-   node exists. *)
+(* [allG] only (no [heapGS]), as [is_certified_update_message]: the trace
+   protocol must be nameable inside an adequacy theorem's initial fancy update,
+   before any node exists. *)
 Context {Σ : gFunctors} `{!allG Σ}.
 
 Set Default Proof Using "Type*".

@@ -3,8 +3,8 @@
     [goose_dist_adequacy] builds the FFI's ghost state by calling
     [ffi_global_init], whose only inputs are the initial network and a [Prop].
     For ws that means the [wsGS] it builds can only carry the trivial
-    [ws_message_protocol], so no execution reachable through that theorem has a real
-    protocol on the wire, and a proof that some peer discharges
+    [ws_message_protocol], so no execution reachable through that theorem has a
+    real protocol on the wire, and a proof that some peer discharges
     [ws_env_preserves] is a proof about ghost state no run can have.
 
     This is [goose_dist_adequacy] with that one step replaced by
@@ -13,8 +13,8 @@
     environment coherence and send relation are the ones asked for.
 
     The initial network is required to be empty, which is what makes the two
-    resources [ws_global_init_protocol] asks for free: nothing is on the wire, so
-    nothing has to satisfy the protocol yet, and the environment has said
+    resources [ws_global_init_protocol] asks for free: nothing is on the wire,
+    so nothing has to satisfy the protocol yet, and the environment has said
     nothing. *)
 From iris.proofmode Require Import proofmode.
 From Perennial.program_logic Require Import recovery_weakestpre dist_weakestpre
@@ -30,8 +30,10 @@ Existing Instances ws_op ws_model ws_semantics ws_interp ws_interp_adequacy.
 Theorem ws_dist_adequacy_protocol {go_gctx : GoGlobalContext}
     Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ} (ebσs : list node_init_cfg)
     g φinv
-    (message_protocol : list u8 -> iProp Σ) (Hpers : forall d, Persistent (message_protocol d))
-    (entry_protocol : list u8 -> iProp Σ) (Htpers : forall d, Persistent (entry_protocol d))
+    (message_protocol : list u8 -> iProp Σ)
+    (Hpers : forall d, Persistent (message_protocol d))
+    (entry_protocol : list u8 -> iProp Σ)
+    (Htpers : forall d, Persistent (entry_protocol d))
     (coh : gmap (chan_id * nat) (list u8) -> iProp Σ) :
   ws_wf g.(global_world) ->
   g.(global_world).(ws_msgs) = ∅ ->
@@ -53,7 +55,8 @@ Proof.
   eapply (wpd_dist_adequacy_inv Σ _ _ _ _ _ _ _ (λ n, 10 * (n + 1))%nat).
   iIntros (Hinv ?) "".
   (* the one line that differs from [goose_dist_adequacy] *)
-  iMod (ws_global_init_protocol Σ _ g.(global_world) message_protocol Hpers entry_protocol Htpers coh Hwf
+  iMod (ws_global_init_protocol Σ _ g.(global_world) message_protocol Hpers
+          entry_protocol Htpers coh Hwf
           with "[] [] []") as (ffi_namesg) "(%Hp & %Ht & %Hc & %Hm & Hgw & Hgstart)".
   { rewrite Hempty. by iApply big_sepM_empty. }
   { rewrite Htrace. by iApply big_sepL_nil. }
@@ -106,14 +109,15 @@ Proof.
 Qed.
 
 (** The same theorem with the protocol CHOSEN INSIDE the initial fancy
-    update. A deployment whose [ws_message_protocol] mentions ghost state has to allocate
-    that ghost before it can even NAME its protocol: the Yjs protocol carries
-    certificates against a history instance ([is_certified_update_message decode γh]), and [γh]
-    comes out of [history_alloc]. [ws_dist_adequacy_protocol] cannot express
-    this, since it fixes [message_protocol] before any allocation can run; here the
-    caller's fupd runs first (under the run's [invGS], so invariant
-    allocation is available), picks [message_protocol] and [coh], and hands back the
-    per-run continuation. Everything else is that theorem's proof verbatim. *)
+    update. A deployment whose [ws_message_protocol] mentions ghost state has to
+    allocate that ghost before it can even NAME its protocol: the Yjs protocol
+    carries certificates against a history instance
+    ([is_certified_update_message decode γh]), and [γh] comes out of
+    [history_alloc]. [ws_dist_adequacy_protocol] cannot express this, since it
+    fixes [message_protocol] before any allocation can run; here the caller's
+    fupd runs first (under the run's [invGS], so invariant allocation is
+    available), picks [message_protocol] and [coh], and hands back the per-run
+    continuation. Everything else is that theorem's proof verbatim. *)
 (* The [coh] binder below sits inside an [iProp] context, where a different
    [EqDecision nat] instance is in scope than the one [wsGS]'s field was
    elaborated under; a top-level alias pins the intended type. *)
@@ -167,7 +171,8 @@ Proof.
   (* the caller picks the protocols, allocating whatever ghost it needs *)
   iPoseProof (Hwp Hinv) as "Hchoice".
   iMod "Hchoice" as (message_protocol Hpers entry_protocol Htpers coh) "[Hcoh Hcont]".
-  iMod (ws_global_init_protocol Σ _ g.(global_world) message_protocol Hpers entry_protocol Htpers coh Hwf
+  iMod (ws_global_init_protocol Σ _ g.(global_world) message_protocol Hpers
+          entry_protocol Htpers coh Hwf
           with "[] [] [Hcoh]") as (ffi_namesg) "(%Hp & %Ht & %Hc & %Hm & Hgw & Hgstart)".
   { rewrite Hempty. by iApply big_sepM_empty. }
   { rewrite Htrace. by iApply big_sepL_nil. }

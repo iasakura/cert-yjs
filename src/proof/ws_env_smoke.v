@@ -11,10 +11,10 @@
     is that the three pieces fit together at all:
 
     - [ws_may] is inhabited: there is data the environment is permitted to send;
-    - [ws_message_protocol] of that data is the real thing a receiver needs, one point of
-      the global history per character ([is_pending_certified] over
-      [expand_inputs]), which is exactly what
-      [wp_Transaction__applyUpdate] consumes;
+    - [ws_message_protocol] of that data is the real thing a receiver needs, one
+      point of the global history per character ([is_pending_certified] over
+      [expand_inputs]), which is exactly what [wp_Transaction__applyUpdate]
+      consumes;
     - [ws_env_preserves] holds, by the same [history_broadcast] a modeled sender
       would use at [wp_WsSendOp].
 
@@ -84,12 +84,12 @@ Context (encode : list Input -> list u8).
 Context (decode : list u8 -> option (list Input)).
 Hypothesis decode_encode : forall x, decode (encode x) = Some x.
 
-(** The protocol: the deployment's [is_certified_update_message] at this file's codec (issue
-    #107, W3b): the bytes decode to an HONEST batch ([update_wf]: the 2^64
-    no-wrap seam and rootedness of head structs) every per-char operation of
-    which is a point of the global history [γh]. The peers below discharge
-    [ws_env_preserves] for THE protocol the verified server runs under,
-    which is what makes the server's one assumption non-vacuous. *)
+(** The protocol: the deployment's [is_certified_update_message] at this file's
+    codec (issue #107, W3b): the bytes decode to an HONEST batch ([update_wf]:
+    the 2^64 no-wrap seam and rootedness of head structs) every per-char
+    operation of which is a point of the global history [γh]. The peers below
+    discharge [ws_env_preserves] for THE protocol the verified server runs
+    under, which is what makes the server's one assumption non-vacuous. *)
 Definition smoke_message_protocol (γh : history_names) (d : list u8) : iProp Σ :=
   is_certified_update_message decode γh d.
 

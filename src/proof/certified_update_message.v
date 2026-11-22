@@ -14,12 +14,12 @@
       structs that have an origin: the bytes of such a struct do not say
       which type it belongs to, so [decode] reports some type for it, and
       [inputs] has the type the sender integrated it into.
-    - [is_certified_update_message decode γh d]: the deployment's [ws_message_protocol]. The bytes decode
-      ([decodes_to]) to an honest batch whose per-char expansion is
-      certified against the global history [γh]. A receiver applies that
-      batch ([own_update_structs_same_encoded_struct] turns the decoder's slice
-      into it), so it can apply any message it is handed with no further
-      hypotheses. Persistent.
+    - [is_certified_update_message decode γh d]: the deployment's
+      [ws_message_protocol]. The bytes decode ([decodes_to]) to an honest batch
+      whose per-char expansion is certified against the global history [γh]. A
+      receiver applies that batch ([own_update_structs_same_encoded_struct]
+      turns the decoder's slice into it), so it can apply any message it is
+      handed with no further hypotheses. Persistent.
     - [codec_spec decode f]: the Go decoder value [f] meets [decode]. The
       deployment's [yjs.WireCodec] is TRUSTED to meet it (the same boundary
       codec.go already is, now stated instead of implicit); a future
@@ -52,15 +52,15 @@
     Laws
     - [decodes_to_decoded]: what [decode] reports is what the bytes decode
       to.
-    - [is_certified_update_message_encode]: the encoding of a batch that is certified
-      ([is_update_certified], [store/heap]: what an update observer is told
-      of the update it is handed) and holds no surrogate satisfies the
+    - [is_certified_update_message_encode]: the encoding of a batch that is
+      certified ([is_update_certified], [store/heap]: what an update observer is
+      told of the update it is handed) and holds no surrogate satisfies the
       protocol.
 
     No ws import here: the predicate is decode plus history certificates, so
     it sits between [store] and [doc]; the ws layer instantiates
-    [ws_message_protocol := is_certified_update_message decode γh] at the deployment seam (ws_relay.v,
-    ws_env_smoke.v, the adequacy statement). *)
+    [ws_message_protocol := is_certified_update_message decode γh] at the
+    deployment seam (ws_relay.v, ws_env_smoke.v, the adequacy statement). *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -106,9 +106,11 @@ Definition decodes_to (d : list u8) (inputs : list Input) : Prop :=
 (** The wire protocol: these bytes decode to an honest batch every per-char
     operation of which is a point of the global history [γh]. Per character,
     via [expand_inputs], because that is what the ghost history holds and
-    what [wp_Transaction__applyUpdate] consumes. Persistent, as [ws_message_protocol]
-    must be (one message is delivered to every member of a room). *)
-Definition is_certified_update_message (γh : history_names) (d : list u8) : iProp Σ :=
+    what [wp_Transaction__applyUpdate] consumes. Persistent, as
+    [ws_message_protocol] must be (one message is delivered to every member of a
+    room). *)
+Definition is_certified_update_message (γh : history_names) (d : list u8) :
+    iProp Σ :=
   ∃ inputs : list Input,
     ⌜decodes_to d inputs⌝ ∗ ⌜update_wf inputs⌝ ∗
     is_pending_certified γh (expand_inputs inputs).
@@ -140,7 +142,8 @@ Definition codec_roundtrip (encode : list Input -> list u8) : Prop :=
 
 (* ===== lemmas ============================================================= *)
 
-#[global] Instance is_certified_update_message_persistent γh d : Persistent (is_certified_update_message γh d).
+#[global] Instance is_certified_update_message_persistent γh d :
+  Persistent (is_certified_update_message γh d).
 Proof. apply _. Qed.
 
 (** What [decode] reports is what the bytes decode to. *)
@@ -183,7 +186,8 @@ Context (decode : list u8 -> option (list Input)).
     already integrated, and tombstoning is idempotent and commutative, so a
     dishonest span costs content but cannot corrupt the CRDT. Yjs has no
     Byzantine tolerance at all, and peer conformance is an assumption of the
-    whole stack ([is_certified_update_message] itself is that assumption for the struct half). *)
+    whole stack ([is_certified_update_message] itself is that assumption for the
+    struct half). *)
 Definition codec_spec (f : func.t) : iProp Σ :=
   □ (∀ (s : slice.t) (dq : dfrac) (data : list u8),
       {{{ s ↦*{dq} data }}}
@@ -220,8 +224,8 @@ Proof. apply _. Qed.
 (** What a sender needs to put a batch on the wire: the batch is certified
     ([is_update_certified]) and holds no surrogate code unit. Then its
     encoding satisfies the protocol. *)
-Lemma is_certified_update_message_encode (encode : list Input -> list u8) (γh : history_names)
-    (structs : list Input) :
+Lemma is_certified_update_message_encode (encode : list Input -> list u8)
+    (γh : history_names) (structs : list Input) :
   codec_roundtrip decode encode ->
   structs_surrogate_free structs ->
   is_update_certified γh structs -∗

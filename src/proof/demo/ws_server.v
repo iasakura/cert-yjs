@@ -4,13 +4,12 @@
     listen, create the document (the lock layer included, [wp_NewDoc]),
     create the room, and run the accept loop. The theorem pushes that
     through [ws_dist_adequacy_protocol_fupd] with the REAL wire protocol
-    [is_certified_update_message decode γh], whose history instance is allocated inside the
-    initial fancy update, and exports two facts about EVERY reachable
+    [is_certified_update_message decode γh], whose history instance is allocated
+    inside the initial fancy update, and exports two facts about EVERY reachable
     state of EVERY execution: EVERY message on the wire decodes to an honest
-    batch (protocol totality), and the run's trace, the reports the server
-    wrote after each apply, converges ([reports_converge], issue #239): any
-    two reports about the same root that hold the same ids spell the same
-    text.
+    batch (protocol totality), and the run's trace, the reports the server wrote
+    after each apply, converges ([reports_converge], issue #239): any two
+    reports about the same root that hold the same ids spell the same text.
 
     Crash-restart halts immediately ([halt]) by design: the server's
     history element lives in the store lock invariant and dies with the
@@ -19,8 +18,8 @@
 
     The environment is parametric: any peer population whose coherence
     [coh0 γh] and the initial world's send relation discharge
-    [ws_env_preserves] for [is_certified_update_message decode γh] (the ws_env_smoke.v peers
-    have exactly this shape). *)
+    [ws_env_preserves] for [is_certified_update_message decode γh] (the
+    ws_env_smoke.v peers have exactly this shape). *)
 From Perennial.program_logic Require Import recovery_weakestpre dist_weakestpre dist_adequacy.
 From Perennial.goose_lang Require Import adequacy crash_modality recovery_lifting dist_lifting.
 From New.proof Require Import proof_prelude.
