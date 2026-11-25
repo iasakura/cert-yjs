@@ -91,8 +91,7 @@ func Connect(host wsnet.Address, path string, client yjs.Client,
 // What a local transaction inserts should hold no surrogate code unit: the
 // update is UTF-8, which has no encoding of half a surrogate pair, so such an
 // insert reaches the peers as U+FFFD (yjs/codec.go, issue #233; Yjs and
-// y-websocket have the same limit). What a transaction deletes is not sent
-// (yjs.Doc.ObserveUpdate).
+// y-websocket have the same limit).
 func (c *Client) sendUpdate(update []byte, origin yjs.Origin) {
 	if origin == providerOrigin {
 		return

@@ -41,8 +41,10 @@
     - [codec_roundtrip decode encode]: the pure contract between the two
       halves: the encoding of a surrogate-free batch whose characters are
       well formed ([update_wf]: their clocks fit a machine word, which is
-      where the real decoder counts them) decodes ([decodes_to]) to
-      characters of the batch (structs of its per-char expansion). An
+      where the real decoder counts them), with any delete set, decodes
+      ([decodes_to]) to characters of the batch (structs of its per-char
+      expansion). It says nothing of the delete set that comes back: the
+      protocol asks nothing of one ([codec_spec]). An
       inclusion, not an equation: the real encoder reorders (clients
       descending, clocks ascending) and writes a struct whose ids it has
       already written only once, neither of which a receiver's safety
@@ -54,8 +56,8 @@
       to.
     - [is_certified_update_message_encode]: the encoding of a batch that is
       certified ([is_update_certified], [store/heap]: what an update observer is
-      told of the update it is handed) and holds no surrogate satisfies the
-      protocol.
+      told of the update it is handed) and holds no surrogate, with any
+      delete set, satisfies the protocol.
 
     No ws import here: the predicate is decode plus history certificates, so
     it sits between [store] and [doc]; the ws layer instantiates
@@ -131,14 +133,16 @@ Definition structs_surrogate_free (structs : list Input) : Prop :=
 
 (** The pure contract between the two halves of the codec, for the abstract
     [encode] the deployment's encoder is trusted against ([encoder_spec]):
-    the encoding of a surrogate-free batch whose characters are well formed
-    decodes to characters of the batch. Well-formedness is a premise because
-    a struct whose clocks would pass 2^64 does not come back as its
-    characters: the model counts clocks in [nat], the decoder in machine
-    words. *)
-Definition codec_roundtrip (encode : list Input -> list u8) : Prop :=
-  ∀ structs, structs_surrogate_free structs -> update_wf (expand_inputs structs) ->
-    ∃ inputs, decodes_to (encode structs) inputs ∧ inputs ⊆ expand_inputs structs.
+    the encoding of a surrogate-free batch whose characters are well formed,
+    with any delete set [deleted], decodes to characters of the batch.
+    Well-formedness is a premise because a struct whose clocks would pass
+    2^64 does not come back as its characters: the model counts clocks in
+    [nat], the decoder in machine words. The delete set is quantified and
+    otherwise absent: [decode] is the structs half of the decoder, and what
+    the bytes say of deleted ids is not constrained ([codec_spec]). *)
+Definition codec_roundtrip (encode : list Input -> gset YjsId -> list u8) : Prop :=
+  ∀ structs deleted, structs_surrogate_free structs -> update_wf (expand_inputs structs) ->
+    ∃ inputs, decodes_to (encode structs deleted) inputs ∧ inputs ⊆ expand_inputs structs.
 
 (* ===== lemmas ============================================================= *)
 
@@ -207,7 +211,8 @@ Definition codec_spec (f : func.t) : iProp Σ :=
     the two abstract halves agree ([codec_roundtrip]). What a node that both
     receives and sends takes about the codec; a node that only receives
     takes [codec_spec]. *)
-Definition codec_pair_spec (encode : list Input -> list u8) (decoder encoder : func.t) : iProp Σ :=
+Definition codec_pair_spec (encode : list Input -> gset YjsId -> list u8)
+    (decoder encoder : func.t) : iProp Σ :=
   "#Hcodec" ∷ codec_spec decoder ∗
   "#Hencoder" ∷ encoder_spec encode encoder ∗
   "%Hroundtrip" ∷ ⌜codec_roundtrip decode encode⌝.
@@ -223,16 +228,16 @@ Proof. apply _. Qed.
 
 (** What a sender needs to put a batch on the wire: the batch is certified
     ([is_update_certified]) and holds no surrogate code unit. Then its
-    encoding satisfies the protocol. *)
-Lemma is_certified_update_message_encode (encode : list Input -> list u8)
-    (γh : history_names) (structs : list Input) :
+    encoding, with any delete set, satisfies the protocol. *)
+Lemma is_certified_update_message_encode (encode : list Input -> gset YjsId -> list u8)
+    (γh : history_names) (structs : list Input) (deleted : gset YjsId) :
   codec_roundtrip decode encode ->
   structs_surrogate_free structs ->
   is_update_certified γh structs -∗
-  is_certified_update_message decode γh (encode structs).
+  is_certified_update_message decode γh (encode structs deleted).
 Proof.
   move=> Hroundtrip Hfree. iIntros "[%Hwf #Hcerts]".
-  destruct (Hroundtrip structs Hfree Hwf) as (inputs & Hdecodes & Hinputs).
+  destruct (Hroundtrip structs deleted Hfree Hwf) as (inputs & Hdecodes & Hinputs).
   have Hone : ∀ y, y ∈ inputs -> length (in_content y.2) = 1%nat.
   { move=> y Hy. exact (expand_inputs_unit_content structs y (Hinputs y Hy)). }
   iExists inputs. iSplit; first done.
