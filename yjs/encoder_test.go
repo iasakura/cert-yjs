@@ -52,7 +52,7 @@ func insertedStructsOf(doc *Doc, f func(tr *Transaction)) []updateItem {
 // given structs, and no delete span.
 func expectWireRoundTrip(t *testing.T, structs []updateItem) {
 	t.Helper()
-	ok, decoded, deletes := WireCodec()(WireEncoder()(structs))
+	ok, decoded, deletes := WireCodec()(WireEncoder()(structs, nil))
 	if !ok {
 		t.Fatal("the encoder's output does not decode")
 	}
@@ -185,7 +185,7 @@ func TestWireEncoderRepeatedStruct(t *testing.T) {
 	first := updateItem{id: newId(1, 0), parentName: &root, content: []uint16{'a', 'b'}}
 	left := newId(1, 0)
 	inside := updateItem{id: newId(1, 1), originLeftId: &left, content: []uint16{'b'}}
-	ok, decoded, _ := WireCodec()(WireEncoder()([]updateItem{first, first, inside}))
+	ok, decoded, _ := WireCodec()(WireEncoder()([]updateItem{first, first, inside}, nil))
 	if !ok {
 		t.Fatal("the encoder's output does not decode")
 	}
@@ -282,14 +282,139 @@ func TestObserveUpdateConverges(t *testing.T) {
 		t.Fatalf("%d calls for applied updates, want 3", remote)
 	}
 
-	// a transaction that integrates nothing calls nobody: a refused insert,
-	// and a transaction that only deletes.
+	// a transaction that integrates nothing and deletes nothing calls
+	// nobody: a refused insert.
 	if update := insert(docA, textA, 1000, "x"); update != nil {
 		t.Fatal("A: a refused insert called the observer")
 	}
+
+	// a transaction that only deletes calls the observer, and its update
+	// carries the delete to the other replica.
 	calls := len(sent[docA])
-	textA.Delete(0, 1)
-	if len(sent[docA]) != calls {
-		t.Fatal("A: a delete called the observer")
+	textA.Delete(0, 2)
+	if len(sent[docA]) != calls+1 {
+		t.Fatalf("A: a delete called the observer %d times, want 1", len(sent[docA])-calls)
+	}
+	deleteUpdate := sent[docA][calls]
+	if !docB.ApplyEncodedUpdate(decode, deleteUpdate, "provider") {
+		t.Fatal("B: the update of a delete did not decode")
+	}
+	if a, b := textA.String(), textB.String(); a != b || a != "hello from A from B" {
+		t.Fatalf("after the delete: A %q, B %q, want %q", a, b, "hello from A from B")
+	}
+	if remote != 4 {
+		t.Fatalf("%d calls for applied updates, want 4", remote)
+	}
+	// applying it again deletes nothing, so nobody is called.
+	if !docB.ApplyEncodedUpdate(decode, deleteUpdate, "provider") {
+		t.Fatal("B: the update of a delete did not decode the second time")
+	}
+	if remote != 4 {
+		t.Fatalf("a delete applied twice called the observer: %d calls, want 4", remote)
+	}
+}
+
+// The delete set the encoder writes comes back as spans that cover the same
+// ids: clients in descending order, each client's spans sorted by clock and
+// merged where they touch or overlap (as Yjs writes an id set).
+func TestWireEncoderDeleteSet(t *testing.T) {
+	deletes := []idSpan{
+		{id: newId(1, 7), len: 2},
+		{id: newId(2, 0), len: 1},
+		{id: newId(1, 0), len: 3},
+		{id: newId(1, 3), len: 1},
+		{id: newId(1, 8), len: 4},
+		{id: newId(2, 5), len: 0},
+	}
+	ok, decoded, spans := WireCodec()(WireEncoder()(nil, deletes))
+	if !ok {
+		t.Fatal("the encoder's output does not decode")
+	}
+	if len(decoded) != 0 {
+		t.Fatalf("decoded structs %+v, want none", decoded)
+	}
+	want := []deleteSpan{
+		{client: 2, clock: 0, length: 1},
+		{client: 1, clock: 0, length: 4},
+		{client: 1, clock: 7, length: 5},
+	}
+	if !reflect.DeepEqual(spans, want) {
+		t.Fatalf("decoded delete spans:\n got %+v\nwant %+v", spans, want)
+	}
+}
+
+// One transaction that inserts and deletes: its update carries both, and a
+// replica that applies it reads the same text.
+func TestObserveUpdateInsertAndDelete(t *testing.T) {
+	docA, docB := NewDoc(1), NewDoc(2)
+	textA, textB := docA.GetOrCreateText("root"), docB.GetOrCreateText("root")
+	encode, decode := WireEncoder(), WireCodec()
+	var updates [][]byte
+	docA.ObserveUpdate(encode, func(update []byte, origin Origin) {
+		updates = append(updates, update)
+	})
+	textA.InsertString(0, "hello world")
+	docA.Transact(func(tr *Transaction) {
+		textA.DeleteIn(tr, 5, 6)
+		textA.InsertStringIn(tr, 5, "!")
+	})
+	if len(updates) != 2 {
+		t.Fatalf("%d updates, want 2", len(updates))
+	}
+	for _, update := range updates {
+		if !docB.ApplyEncodedUpdate(decode, update, "provider") {
+			t.Fatal("B: update did not decode")
+		}
+	}
+	if a, b := textA.String(), textB.String(); a != "hello!" || b != a {
+		t.Fatalf("A %q, B %q, want %q", a, b, "hello!")
+	}
+}
+
+// The updates of transactions that delete are byte for byte what Yjs
+// 13.6.33 emits for the same edits (doc.on('update') on documents with the
+// same client ids, gc off): no struct, then the delete set, clients in
+// descending order and each client's clock ranges ascending.
+func TestObserveUpdateDeleteBytesMatchYjs(t *testing.T) {
+	observe := func(doc *Doc) *[][]byte {
+		var updates [][]byte
+		doc.ObserveUpdate(WireEncoder(), func(update []byte, origin Origin) {
+			updates = append(updates, update)
+		})
+		return &updates
+	}
+
+	doc := NewDoc(1)
+	text := doc.GetOrCreateText("root")
+	updates := observe(doc)
+	text.InsertString(0, "hello world")
+	text.Delete(5, 6)
+	doc.Transact(func(tr *Transaction) {
+		text.DeleteIn(tr, 0, 1)
+		text.DeleteIn(tr, 2, 1)
+	})
+	want := [][]byte{
+		append(append([]byte{0x01, 0x01, 0x01, 0x00, 0x04, 0x01, 0x04}, "root\x0bhello world"...), 0x00),
+		{0x00, 0x01, 0x01, 0x01, 0x05, 0x06},
+		{0x00, 0x01, 0x01, 0x02, 0x00, 0x01, 0x03, 0x01},
+	}
+	if !reflect.DeepEqual(*updates, want) {
+		t.Fatalf("updates:\n got %x\nwant %x", *updates, want)
+	}
+
+	// one delete over the items of two clients
+	first, second := NewDoc(1), NewDoc(2)
+	firstText, secondText := first.GetOrCreateText("root"), second.GetOrCreateText("root")
+	firstUpdates := observe(first)
+	firstText.InsertString(0, "ab")
+	if !second.ApplyEncodedUpdate(WireCodec(), (*firstUpdates)[0], "provider") {
+		t.Fatal("the first replica's update did not decode")
+	}
+	secondText.InsertString(2, "cd")
+	secondUpdates := observe(second)
+	secondText.Delete(1, 2)
+	wantSecond := [][]byte{{0x00, 0x02, 0x02, 0x01, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01}}
+	if !reflect.DeepEqual(*secondUpdates, wantSecond) {
+		t.Fatalf("update of a delete over two clients:\n got %x\nwant %x", *secondUpdates, wantSecond)
 	}
 }

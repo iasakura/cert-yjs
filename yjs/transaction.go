@@ -348,15 +348,23 @@ func (tr *Transaction) notify() {
 // the type observers, if anybody listens to 'update', write the transaction's
 // update and emit it when it has content; yrs 0.27.2 commit,
 // emit_update_v1, src/transaction.rs:1094). Nothing is read from the store when nobody
-// observes. Content here is the structs alone (Doc.ObserveUpdate): a
-// transaction that integrated nothing calls nobody. Each registration
-// encodes with its own encoder, where Yjs encodes once per event name.
+// observes. The update is the structs of the insert set followed by the
+// delete set, and it has content when either is not empty (Yjs v14.0.0-rc.18
+// writeUpdateMessageFromTransaction, src/utils/encoding-helpers.js:103-110;
+// yrs 0.27.2 encode_update, src/transaction.rs:625-629, writes the blocks
+// past the state vector the transaction began with instead of the insert
+// set, see insertedStructs, and emits when the delete set is not empty or
+// the state vector moved, emit_update_v1, src/store.rs:587): a transaction
+// that integrated nothing and deleted nothing calls nobody. Each
+// registration encodes with its own encoder, where Yjs encodes once per
+// event name.
 func (tr *Transaction) notifyUpdate() {
 	if len(tr.store.updateObservers) == 0 {
 		return
 	}
 	structs := tr.insertedStructs()
-	if len(structs) == 0 {
+	deletes := tr.deleteSet
+	if len(structs) == 0 && len(deletes) == 0 {
 		return
 	}
 	// The registrations are read here, at the emit, as Yjs's emit reads its
@@ -364,7 +372,7 @@ func (tr *Transaction) notifyUpdate() {
 	observers := tr.store.updateObservers
 	for i := 0; i < len(observers); i++ {
 		observer := observers[i]
-		observer.callback(observer.encode(structs), tr.origin)
+		observer.callback(observer.encode(structs, deletes), tr.origin)
 	}
 }
 

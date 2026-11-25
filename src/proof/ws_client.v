@@ -103,7 +103,7 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
 (** The abstract codec the deployment runs under (see
     certified_update_message.v). *)
 Context (decode : list u8 -> option (list Input)).
-Context (encode : list Input -> list u8).
+Context (encode : list Input -> gset YjsId -> list u8).
 
 (* ===== definitions ======================================================== *)
 
@@ -243,10 +243,10 @@ Qed.
     ([is_certified_update_message_encode]). *)
 Lemma wp_Client__sendUpdate (client_loc : loc) (γs : store_names) (γh : history_names)
     (client_id : ClientId) (send_channel receive_channel : chan_id) (name : go_string)
-    (update_slice : slice.t) (structs : list Input) (origin : go_string) :
+    (update_slice : slice.t) (structs : list Input) (deleted : gset YjsId) (origin : go_string) :
   {{{ is_pkg_init wsclient ∗
       is_Client client_loc γs γh client_id send_channel receive_channel name ∗
-      own_emitted_update client_may_insert γh encode update_slice structs origin }}}
+      own_emitted_update client_may_insert γh encode update_slice structs deleted origin }}}
     client_loc @! (go.PointerType wsclient.Client) @! "sendUpdate" #update_slice #origin
   {{{ RET #(); True }}}.
 Proof.
@@ -264,7 +264,7 @@ Proof.
   { move=> struct Hstruct unit Hunit.
     destruct (proj1 (Forall_forall _ _) (Hunits struct Hstruct) unit Hunit) as [Horigin | Hnot];
       [by destruct (Hlocal Horigin) | exact Hnot]. }
-  iDestruct (is_certified_update_message_encode decode encode γh structs Hroundtrip Hfree with "Hcertified")
+  iDestruct (is_certified_update_message_encode decode encode γh structs deleted Hroundtrip Hfree with "Hcertified")
     as "#Hyprot".
   wp_auto.
   wp_apply (wp_Mutex__Lock with "[$Hsend_lock]"). iIntros "[Hlocked Hcursor]".
@@ -387,7 +387,7 @@ Proof.
   wp_apply (wp_Doc__ObserveUpdate _ s_loc γs γh client_may_insert encode
               with "[$Hdoc $His_history $Hencoder]").
   { rewrite /is_update_callback.
-    iIntros (update_slice structs origin Φ') "!> Hemitted HΦ'".
+    iIntros (update_slice structs deleted origin Φ') "!> Hemitted HΦ'".
     wp_auto.
     wp_apply (wp_Client__sendUpdate with "[$Hclient $Hemitted]").
     by iApply "HΦ'". }

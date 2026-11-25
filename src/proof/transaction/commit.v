@@ -82,7 +82,7 @@ Proof.
   iIntros "Htx".
   wp_auto.
   iApply "HΦ".
-  iDestruct "Htx" as (state delete_set insert_slice) "Htx". iNamed "Htx".
+  iDestruct "Htx" as (state delete_set insert_slice delete_slice) "Htx". iNamed "Htx".
   iExists state, delete_set. iFrame "Hstore Hreplica_history". done.
 Qed.
 
