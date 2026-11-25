@@ -332,3 +332,38 @@ func TestValueRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// Values in a type's list, which a Yjs 13.6.33 Y.Array writes (insert of
+// [1, "x"] and the delete of the first, clientID 1): they are elements of
+// the list and count in its length, as in Yjs, but they are not text. A
+// read of the text skips them, and so do the deltas of both observers.
+func TestTextSkipsValuesInTheList(t *testing.T) {
+	doc := NewDoc(2)
+	text := doc.GetOrCreateText("root")
+	var deltas [][]DeltaOp
+	text.Observe(func(delta []DeltaOp) { deltas = append(deltas, delta) })
+	poller := text.NewObserver()
+	text.InsertString(0, "ab")
+
+	for _, update := range []string{"01010100080104726f6f74027d0177017800", "000101010001"} {
+		if !doc.ApplyEncodedUpdate(WireCodec(), unhex(t, update), "provider") {
+			t.Fatal("the update of a Y.Array did not decode")
+		}
+	}
+	if got := text.String(); got != "ab" {
+		t.Fatalf("text %q, want ab", got)
+	}
+	if text.Len() != 3 {
+		t.Fatalf("Len() = %d, want 3 (two code units and the value that is left)", text.Len())
+	}
+	// the initial call, the insert of "ab", and one empty delta per update
+	if len(deltas) != 4 || len(deltas[2]) != 0 || len(deltas[3]) != 0 {
+		t.Fatalf("deltas %v, want four with the last two empty", deltas)
+	}
+	if delta := poller.Poll(); len(delta) != 1 || delta[0].Kind != DeltaInsert || decodeContent(delta[0].Content) != "ab" {
+		t.Fatalf("Poll() = %v, want one insert of ab", delta)
+	}
+	if len(text.Snapshot()) != 2 {
+		t.Fatalf("Snapshot() has %d characters, want 2", len(text.Snapshot()))
+	}
+}
