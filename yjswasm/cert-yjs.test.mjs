@@ -275,6 +275,49 @@ test('Cert-Yjs reads a Yjs update with non-ASCII text and a surrogate pair', () 
   assert.equal(ours.getText('note').length, theirs.getText('note').length);
 });
 
+// An insert whose position has a tombstone to its right goes after the
+// tombstone, as in Yjs (yjs/ytype.go skipDeleted). Where it goes shows in the
+// order against a concurrent insert in front of that tombstone, made by a
+// replica that has not seen the delete: the concurrent insert has the
+// tombstone as its right neighbour, so it ends up to the left.
+test('an insert next to a tombstone orders against a concurrent insert as in Yjs', () => {
+  const base = new Yjs.Doc({ gc: false });
+  base.clientID = 3;
+  base.getText('note').insert(0, 'axb');
+  const baseUpdate = Yjs.encodeStateAsUpdate(base);
+
+  const concurrent = new Yjs.Doc({ gc: false });
+  concurrent.clientID = 2;
+  Yjs.applyUpdate(concurrent, baseUpdate);
+  concurrent.getText('note').insert(1, 'Y');
+  const concurrentUpdate = Yjs.encodeStateAsUpdate(concurrent);
+
+  const mergedWith = (editorUpdate) => {
+    const doc = new Yjs.Doc({ gc: false });
+    Yjs.applyUpdate(doc, editorUpdate);
+    Yjs.applyUpdate(doc, concurrentUpdate);
+    return doc.getText('note').toString();
+  };
+
+  // The same edits, delete x and insert Z where it was, by a Yjs replica and
+  // by a Cert-Yjs replica of the same client id (lower than the concurrent
+  // replica's, so that an insert in front of the tombstone would win the tie
+  // and come out as aZYb).
+  const theirs = new Yjs.Doc({ gc: false });
+  theirs.clientID = 1;
+  Yjs.applyUpdate(theirs, baseUpdate);
+  theirs.getText('note').delete(1, 1);
+  theirs.getText('note').insert(1, 'Z');
+
+  const ours = new CertYjs.Doc({ clientID: 1 });
+  CertYjs.applyUpdate(ours, baseUpdate);
+  ours.getText('note').delete(1, 1);
+  ours.getText('note').insert(1, 'Z');
+
+  assert.equal(mergedWith(Yjs.encodeStateAsUpdate(theirs)), 'aYZb');
+  assert.equal(mergedWith(CertYjs.encodeStateAsUpdate(ours)), 'aYZb');
+});
+
 test('Cert-Yjs and Yjs converge on concurrent edits', () => {
   const ours = new CertYjs.Doc({ clientID: 1 });
   const theirs = new Yjs.Doc({ gc: false });
