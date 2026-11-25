@@ -81,9 +81,17 @@ const NoOrigin Origin = ""
 // recordInsert records a freshly integrated node: its ids join the
 // transaction's insert set and its parent type is marked changed (Yjs
 // Item.integrate, src/structs/Item.js:270-274; yrs src/block.rs:1085-1090).
+// Only an element of the list marks its type: changed is what the observers
+// of a type's text are told from, and an entry of the map does not change
+// the text. The references record the key next to the type (Yjs
+// v14.0.0-rc.18 addChangedTypeToTransaction, src/utils/transaction-helpers.js:211;
+// yrs 0.27.2 TransactionMut::add_changed_type, src/transaction.rs:1314), for
+// the map events this package does not have yet.
 func (tr *Transaction) recordInsert(parent *yType, it *item) {
 	tr.insertSet = append(tr.insertSet, idSpan{id: it.id, len: it.Len()})
-	tr.changed[parent] = true
+	if it.parentSub == nil {
+		tr.changed[parent] = true
+	}
 }
 
 // recordDelete records a node this transaction tombstoned: its ids join the
@@ -91,7 +99,9 @@ func (tr *Transaction) recordInsert(parent *yType, it *item) {
 // src/structs/Item.js:366-375; yrs src/block.rs:635).
 func (tr *Transaction) recordDelete(it *item) {
 	tr.deleteSet = append(tr.deleteSet, idSpan{id: it.id, len: it.Len()})
-	tr.changed[it.parent] = true
+	if it.parentSub == nil {
+		tr.changed[it.parent] = true
+	}
 }
 
 // integrate integrates item into parent and records it (yrs
@@ -104,6 +114,20 @@ func (tr *Transaction) integrate(parent *yType, item *item) {
 	p := tr.store.Integrate(parent, item)
 	if p != nil {
 		tr.recordInsert(p, item)
+		// Of the items written under one key only the last is the key's
+		// value, and the others are deleted: an entry that went to the end
+		// replaces the one before it, and one that did not (a concurrent
+		// write that lost) is deleted itself (Yjs v14.0.0-rc.18
+		// Item.integrate, src/structs/Item.js:258-265 and :275-278; yrs
+		// 0.27.2 src/block.rs:1056-1070 and :1102-1104, with
+		// Item::needs_deletion, :848-858).
+		if item.parentSub != nil {
+			if item.right != nil {
+				tr.deleteNode(item)
+			} else if item.left != nil {
+				tr.deleteNode(item.left)
+			}
+		}
 	}
 }
 
@@ -195,8 +219,8 @@ func (tr *Transaction) applyDeleteSpans(spans []deleteSpan) {
 // (mirrors the findIntegrationLeft / integrateCore extractions).
 func (tr *Transaction) integrateDecoded(ui updateItem) {
 	s := tr.store
-	it := newItem(ui.id, ui.content, ui.originLeftId, ui.originRightId)
-	s.repair(it, ui.parentName)
+	it := newItem(ui.id, content{content: ui.content, values: ui.values}, ui.originLeftId, ui.originRightId)
+	s.repair(it, ui.parentName, ui.parentSub)
 	tr.integrate(nil, it)
 }
 

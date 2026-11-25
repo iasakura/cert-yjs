@@ -13,7 +13,7 @@ func runIntegrate(items []*item) string {
 		if it.originLeftId == nil && it.originRightId == nil {
 			parentName = &name
 		}
-		s.repair(it, parentName)
+		s.repair(it, parentName, nil)
 		newTransaction(&s, NoOrigin).integrate(nil, it)
 	}
 	return decodeContent(s.getOrCreateYType(name).Text())
@@ -31,8 +31,8 @@ func mkIdp(client, clock uint64) *id {
 // integration order converges to "AB".
 func TestConcurrentHeadInsertConverges(t *testing.T) {
 	mk := func() (*item, *item) {
-		a := newItem(mkId(1, 0), encodeContent("A"), nil, nil)
-		b := newItem(mkId(2, 0), encodeContent("B"), nil, nil)
+		a := newItem(mkId(1, 0), contentOfUnits(encodeContent("A")), nil, nil)
+		b := newItem(mkId(2, 0), contentOfUnits(encodeContent("B")), nil, nil)
 		return a, b
 	}
 
@@ -52,8 +52,8 @@ func TestConcurrentHeadInsertConverges(t *testing.T) {
 // calls, so at the raw repair + Integrate level the input is always causally
 // ordered.)
 func TestSequentialInsert(t *testing.T) {
-	h := newItem(mkId(1, 0), encodeContent("H"), nil, nil)
-	i := newItem(mkId(1, 1), encodeContent("I"), mkIdp(1, 0), nil)
+	h := newItem(mkId(1, 0), contentOfUnits(encodeContent("H")), nil, nil)
+	i := newItem(mkId(1, 1), contentOfUnits(encodeContent("I")), mkIdp(1, 0), nil)
 	if got := runIntegrate([]*item{h, i}); got != "HI" {
 		t.Fatalf("expected HI, got %q", got)
 	}
@@ -64,10 +64,10 @@ func TestSequentialInsert(t *testing.T) {
 // regardless of order.
 func TestConcurrentMiddleInsertConverges(t *testing.T) {
 	build := func(order int) string {
-		a := newItem(mkId(1, 0), encodeContent("A"), nil, nil)
-		c := newItem(mkId(1, 1), encodeContent("C"), mkIdp(1, 0), nil)
-		x := newItem(mkId(2, 0), encodeContent("X"), mkIdp(1, 0), mkIdp(1, 1))
-		y := newItem(mkId(3, 0), encodeContent("Y"), mkIdp(1, 0), mkIdp(1, 1))
+		a := newItem(mkId(1, 0), contentOfUnits(encodeContent("A")), nil, nil)
+		c := newItem(mkId(1, 1), contentOfUnits(encodeContent("C")), mkIdp(1, 0), nil)
+		x := newItem(mkId(2, 0), contentOfUnits(encodeContent("X")), mkIdp(1, 0), mkIdp(1, 1))
+		y := newItem(mkId(3, 0), contentOfUnits(encodeContent("Y")), mkIdp(1, 0), mkIdp(1, 1))
 		if order == 0 {
 			return runIntegrate([]*item{a, c, x, y})
 		}
@@ -92,7 +92,7 @@ func TestConcurrentMiddleInsertConverges(t *testing.T) {
 func TestSplitNode(t *testing.T) {
 	s := newStore(1)
 	y := s.getOrCreateYType("text")
-	it := newItem(newId(1, 0), encodeContent("abc"), nil, nil)
+	it := newItem(newId(1, 0), contentOfUnits(encodeContent("abc")), nil, nil)
 	it.parent = y
 	newTransaction(&s, NoOrigin).integrate(y, it)
 
@@ -128,7 +128,7 @@ func TestSplitNode(t *testing.T) {
 	// the right half of a tombstoned run stays deleted (y-octo drops the flag)
 	s2 := newStore(2)
 	y2 := s2.getOrCreateYType("text")
-	dead := newItem(newId(2, 0), encodeContent("xy"), nil, nil)
+	dead := newItem(newId(2, 0), contentOfUnits(encodeContent("xy")), nil, nil)
 	dead.parent = y2
 	newTransaction(&s2, NoOrigin).integrate(y2, dead)
 	dead.flags = dead.flags | itemDeleted

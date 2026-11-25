@@ -29,6 +29,21 @@ func (d *Doc) GetOrCreateText(name string) *Text {
 	return &Text{store: ref, inner: inner}
 }
 
+// GetOrCreateMap returns the root type named name as a map, creating the
+// type on first use (Yjs v13 doc.getMap; in Yjs v14.0.0-rc.18 doc.get returns
+// the one type, src/utils/Doc.js:197; yrs 0.27.2 Doc::get_or_insert_map,
+// src/doc.rs:292). A root type has a list and entries both, so the same name
+// may be given to GetOrCreateText as well: the two handles are over one
+// type, as in Yjs v14. yrs records the kind a root type was asked for first
+// (TypeRef), and Yjs v13 throws when a name is asked for as two kinds.
+func (d *Doc) GetOrCreateMap(name string) *Map {
+	ref := d.store
+	ref.wlock()
+	inner := ref.store.getOrCreateYType(name)
+	ref.wunlock()
+	return &Map{store: ref, inner: inner}
+}
+
 // Transact runs f as one transaction on the document (Yjs doc.transact,
 // src/utils/Doc.js:179; yrs Doc::transact_mut): every write inside is one
 // unit, and the observers of the types it changed are called once at its end.

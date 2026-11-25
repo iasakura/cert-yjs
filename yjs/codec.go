@@ -17,11 +17,12 @@ import (
 //                                     the delete set)
 //   - delete set                   <- codec/delete_set.rs
 //
-// Subset assumptions: the only content type is String (tag 4); parents are
-// always root types referenced by name (never Parent::id, never parent_sub).
-// Multi-unit runs in an incoming update are split into 1-unit items on decode
-// (chained left origins, shared right origin), then integrated in dependency
-// order.
+// Subset assumptions: the content types are String (tag 4) and Any (tag 8);
+// parents are always root types referenced by name (never Parent::id), with
+// the key of a map entry (parent_sub) after the name. An update with another
+// content type does not decode. Multi-unit runs in an incoming update are
+// split into 1-unit items on decode (chained left origins, shared right
+// origin), then integrated in dependency order.
 //
 // Text encoding. The document holds UTF-16 code units (content.go) and the
 // wire holds UTF-8 strings (lib0 writeVarString), so this file is where the
@@ -62,6 +63,7 @@ const (
 	infoHasLeftID     = 0x80
 	infoHasSibling    = 0xC0
 	contentTypeString = 4
+	contentTypeAny    = 8
 	nodeTagGC         = 0
 	nodeTagSkip       = 10
 )
@@ -147,14 +149,16 @@ func (d *decoder) readItemID() id {
 // ----- encode ----------------------------------------------------------------
 
 // generateDeleteSet derives the document's delete set from the items' Deleted
-// flags, walking each root sequence's item list (y-octo:
-// DocStore::generate_delete_set). The verified Delete keeps only the flags and
-// the visible length up to date; the codec regenerates this serialization cache
-// on demand, so the store's DeleteSet need not be mirrored by Delete.
+// flags, walking the store's per-client run lists, which hold every
+// integrated item, the elements of the lists and the entries of the maps
+// alike (y-octo: DocStore::generate_delete_set). The verified Delete keeps
+// only the flags and the visible length up to date; the codec regenerates
+// this serialization cache on demand, so the store's DeleteSet need not be
+// mirrored by Delete.
 func generateDeleteSet(doc *Doc) map[Client]orderRange {
 	ds := deletedSet{deletedSet: make(map[Client]orderRange)}
-	for _, y := range doc.store.store.types {
-		for cur := y.start; cur != nil; cur = cur.right {
+	for _, nodes := range doc.store.store.items {
+		for _, cur := range nodes {
 			if cur.Deleted() {
 				ds.addRange(cur.id, cur.Len())
 			}
@@ -167,21 +171,19 @@ func generateDeleteSet(doc *Doc) map[Client]orderRange {
 func (doc *Doc) EncodeUpdate() []byte {
 	e := &encoder{}
 
-	// Gather the live items from the document's sequences -- the DLLs are the
-	// source of truth (Insert no longer mirrors into the struct store). Record
-	// each item's owning root-type name (for head items' parent field) and group
-	// by client, then sort each client's run by clock.
-	name := map[id]string{}
-	byClient := map[Client][]*item{}
+	// The items are the store's per-client run lists, each sorted by clock:
+	// every integrated item is in them, the elements of the lists and the
+	// entries of the maps alike. A head item (no origins) is written with
+	// its owning root type's name, found through the registry.
+	typeName := map[*yType]string{}
 	for nm, y := range doc.store.store.types {
-		for cur := y.start; cur != nil; cur = cur.right {
-			name[cur.id] = nm
-			byClient[cur.id.clientId] = append(byClient[cur.id.clientId], cur)
-		}
+		typeName[y] = nm
 	}
-	for c := range byClient {
-		runItems := byClient[c]
-		sort.Slice(runItems, func(i, j int) bool { return runItems[i].id.clock < runItems[j].id.clock })
+	byClient := map[Client][]*item{}
+	for client, nodes := range doc.store.store.items {
+		if len(nodes) > 0 {
+			byClient[client] = nodes
+		}
 	}
 
 	clients := sortedClientsDesc(byClient)
@@ -196,7 +198,7 @@ func (doc *Doc) EncodeUpdate() []byte {
 		e.writeVarUint(client)
 		e.writeVarUint(runs[0][0].id.clock)
 		for _, run := range runs {
-			encodeRun(e, run, name)
+			encodeRun(e, run, typeName)
 		}
 	}
 
@@ -215,10 +217,10 @@ func (doc *Doc) EncodeUpdate() []byte {
 	return e.buf
 }
 
-func encodeNode(e *encoder, node node, name map[id]string) {
+func encodeNode(e *encoder, node node, typeName map[*yType]string) {
 	switch n := node.(type) {
 	case itemNode:
-		encodeRun(e, []*item{&n.item}, name)
+		encodeRun(e, []*item{&n.item}, typeName)
 	case gcNode:
 		e.writeU8(nodeTagGC)
 		e.writeVarUint(n.nodeLen.len)
@@ -239,7 +241,11 @@ func encodeNode(e *encoder, node node, name map[id]string) {
 // split run are always joinable (splitItem, store.go), and so are the items
 // of one local insert (Text.InsertIn).
 func joinable(prev *item, next *item) bool {
-	return prev.id.clientId == next.id.clientId &&
+	// Only string contents are joined here: that is what keeps a surrogate
+	// pair whole, and the references read a run of values written as
+	// several structs just as well.
+	return len(prev.content.values) == 0 && len(next.content.values) == 0 &&
+		prev.id.clientId == next.id.clientId &&
 		prev.id.clock+prev.Len() == next.id.clock &&
 		next.originLeftId != nil && *next.originLeftId == prev.LastId() &&
 		idOptEqual(prev.originRightId, next.originRightId) &&
@@ -263,34 +269,70 @@ func joinRuns(items []*item) [][]*item {
 }
 
 // encodeRun writes one struct for a joinable run of items: the head's info
-// byte, origins and parent, then the string the run's code units spell.
-func encodeRun(e *encoder, run []*item, name map[id]string) {
+// byte, origins, parent and key, then the content, the string the run's code
+// units spell or the head's values (Yjs v14.0.0-rc.18 Item.write,
+// src/structs/Item.js:455-497).
+func encodeRun(e *encoder, run []*item, typeName map[*yType]string) {
 	head := run[0]
-	info := byte(contentTypeString)
-	if head.originLeftId != nil {
-		info |= infoHasLeftID
+	var parentName *string
+	if head.originLeftId == nil && head.originRightId == nil {
+		name := typeName[head.parent]
+		parentName = &name
 	}
-	if head.originRightId != nil {
-		info |= infoHasRightID
-	}
-	e.writeU8(info)
-
-	if head.originLeftId != nil {
-		e.writeItemID(*head.originLeftId)
-	}
-	if head.originRightId != nil {
-		e.writeItemID(*head.originRightId)
-	}
-
-	// a head item (no sibling origins) carries its parent: the root type name.
-	if info&infoHasSibling == 0 {
-		e.writeVarUint(1) // 1 => Parent::String
-		e.writeVarString(name[head.id])
-	}
-
 	var units []uint16
 	for _, it := range run {
 		units = append(units, it.content.content...)
+	}
+	encodeStruct(e, head.originLeftId, head.originRightId, parentName, head.parentSub, units, head.content.values)
+}
+
+// encodeStruct writes one item struct. A struct with no origin names its
+// parent, and after it its key when it is an entry of the parent's map (a
+// non-nil parentSub); the content is values when there are any, the string
+// of units otherwise.
+func encodeStruct(e *encoder, originLeftId *id, originRightId *id, parentName *string, parentSub *string, units []uint16, values []Value) {
+	info := byte(contentTypeString)
+	if len(values) > 0 {
+		info = byte(contentTypeAny)
+	}
+	if originLeftId != nil {
+		info |= infoHasLeftID
+	}
+	if originRightId != nil {
+		info |= infoHasRightID
+	}
+	// The info byte says that the item is an entry of a map whether or not
+	// the key follows (Yjs v14.0.0-rc.18 Item.write, src/structs/Item.js:459-462;
+	// yrs 0.27.2 Item::info, src/block.rs:1551).
+	if parentSub != nil {
+		info |= infoHasParentSub
+	}
+	hasParent := info&infoHasSibling == 0
+	e.writeU8(info)
+
+	if originLeftId != nil {
+		e.writeItemID(*originLeftId)
+	}
+	if originRightId != nil {
+		e.writeItemID(*originRightId)
+	}
+
+	// a head item (no sibling origins) carries its parent: the root type
+	// name, then the key of a map entry.
+	if hasParent {
+		e.writeVarUint(1) // 1 => Parent::String
+		e.writeVarString(*parentName)
+		if parentSub != nil {
+			e.writeVarString(*parentSub)
+		}
+	}
+
+	if len(values) > 0 {
+		e.writeVarUint(uint64(len(values)))
+		for _, value := range values {
+			e.buf = append(e.buf, value...)
+		}
+		return
 	}
 	e.writeVarString(encodeWireString(units))
 }
@@ -336,7 +378,7 @@ func encodeUpdateItems(structs []updateItem, deletes []idSpan) []byte {
 
 	byClient := map[Client][]updateItem{}
 	for _, st := range structs {
-		if len(st.content) == 0 {
+		if structLen(st) == 0 {
 			// covers no clock: nothing to write.
 			continue
 		}
@@ -367,7 +409,7 @@ func encodeUpdateItems(structs []updateItem, deletes []idSpan) []byte {
 			} else {
 				section = append(section, encodedStruct{run: []updateItem{st}})
 			}
-			next = st.id.clock + uint64(len(st.content))
+			next = st.id.clock + structLen(st)
 		}
 
 		e.writeVarUint(uint64(len(section)))
@@ -427,51 +469,37 @@ func encodeDeleteSpans(e *encoder, deletes []idSpan) {
 	}
 }
 
+// structLen is the number of clocks a decoded struct covers: its code units
+// or its values.
+func structLen(st updateItem) uint64 {
+	return uint64(len(st.content)) + uint64(len(st.values))
+}
+
 // joinableStructs reports whether next continues prev as one struct of the encoding:
-// the next clock of the same client, its left origin prev's last id, and the
-// same right origin. These are joinable's conditions without the two that
-// need the list (adjacency, the deleted flag): splitStructs gives back
-// exactly these origins when it splits the joined struct, whatever the list
-// looks like.
+// two string contents, the next clock of the same client, its left origin
+// prev's last id, and the same right origin. These are joinable's conditions
+// without the two that need the list (adjacency, the deleted flag):
+// splitStructs gives back exactly these origins when it splits the joined
+// struct, whatever the list looks like.
 func joinableStructs(prev updateItem, next updateItem) bool {
-	last := newId(prev.id.clientId, prev.id.clock+uint64(len(prev.content))-1)
-	return prev.id.clientId == next.id.clientId &&
+	last := newId(prev.id.clientId, prev.id.clock+structLen(prev)-1)
+	return len(prev.values) == 0 && len(next.values) == 0 &&
+		prev.id.clientId == next.id.clientId &&
 		last.clock+1 == next.id.clock &&
 		next.originLeftId != nil && *next.originLeftId == last &&
 		idOptEqual(prev.originRightId, next.originRightId)
 }
 
 // encodeStructRun writes one struct for a joinable run of decoded structs:
-// encodeRun over structs instead of nodes, the parent name read from the
-// head struct.
+// encodeRun over structs instead of nodes, the parent name and the key read
+// from the head struct.
 func encodeStructRun(e *encoder, run []updateItem) {
 	head := run[0]
-	info := byte(contentTypeString)
-	if head.originLeftId != nil {
-		info |= infoHasLeftID
-	}
-	if head.originRightId != nil {
-		info |= infoHasRightID
-	}
-	e.writeU8(info)
-
-	if head.originLeftId != nil {
-		e.writeItemID(*head.originLeftId)
-	}
-	if head.originRightId != nil {
-		e.writeItemID(*head.originRightId)
-	}
-
-	if info&infoHasSibling == 0 {
-		e.writeVarUint(1) // 1 => Parent::String
-		e.writeVarString(*head.parentName)
-	}
-
 	var units []uint16
 	for _, st := range run {
 		units = append(units, st.content...)
 	}
-	e.writeVarString(encodeWireString(units))
+	encodeStruct(e, head.originLeftId, head.originRightId, head.parentName, head.parentSub, units, head.values)
 }
 
 func encodeOrderRange(e *encoder, r orderRange) {
@@ -510,7 +538,9 @@ type decodedStruct struct {
 	originLeftId  *id
 	originRightId *id
 	parentName    string   // set only for head structs (no origins)
+	parentSub     *string  // the key of a map entry, read next to the parent
 	content       []uint16 // the wire string's code units, one clock each
+	values        []Value  // the values of an any content, one clock each
 	isItem        bool     // false => GC / Skip (no content, not integrated)
 	length        uint64
 }
@@ -610,25 +640,43 @@ func readStruct(d *decoder, client Client, clock uint64) decodedStruct {
 			d.readItemID()
 		}
 	}
+	var parentSub *string
 	if hasNotSibling && hasParentSub {
-		d.readVarString() // parent_sub: unused in this subset
+		key := d.readVarString()
+		parentSub = &key
 	}
 
-	content := decodeWireString(d.readVarString())
+	var content []uint16
+	var values []Value
+	switch first5 {
+	case contentTypeString:
+		content = decodeWireString(d.readVarString())
+	case contentTypeAny:
+		count := d.readVarUint()
+		for i := uint64(0); i < count; i++ {
+			values = append(values, readAnyBytes(d))
+		}
+	default:
+		// a content this subset does not implement (deleted, binary, embed,
+		// format, type, doc, json): the update does not decode.
+		panic("unsupported content")
+	}
 	return decodedStruct{
 		id:            newId(client, clock),
 		originLeftId:  originLeftId,
 		originRightId: originRightId,
 		parentName:    name,
+		parentSub:     parentSub,
 		content:       content,
+		values:        values,
 		isItem:        true,
-		length:        uint64(len(content)),
+		length:        uint64(len(content)) + uint64(len(values)),
 	}
 }
 
 // splitStructs splits each item struct into 1-unit updateItems (chained left
 // origins, shared right origin), each holding a one-unit subslice of the
-// struct's code units (never written afterwards, content.go).
+// struct's code units or values (never written afterwards, content.go).
 func splitStructs(structs []decodedStruct) []updateItem {
 	var items []updateItem
 	for _, ds := range structs {
@@ -636,28 +684,36 @@ func splitStructs(structs []decodedStruct) []updateItem {
 			// GC / Skip: nothing to integrate (the DLLs hold only items).
 			continue
 		}
-		runLen := len(ds.content)
+		runLen := int(ds.length)
 		for j := 0; j < runLen; j++ {
 			subID := newId(ds.id.clientId, ds.id.clock+uint64(j))
 			var originLeftId *id
 			var parentName *string
+			var parentSub *string
 			if j == 0 {
 				originLeftId = ds.originLeftId
 				if ds.originLeftId == nil && ds.originRightId == nil {
 					nm := ds.parentName
 					parentName = &nm
+					parentSub = ds.parentSub
 				}
 			} else {
 				prev := newId(ds.id.clientId, ds.id.clock+uint64(j-1))
 				originLeftId = &prev
 			}
-			items = append(items, updateItem{
+			unit := updateItem{
 				id:            subID,
 				originLeftId:  originLeftId,
 				originRightId: ds.originRightId,
 				parentName:    parentName,
-				content:       ds.content[j : j+1],
-			})
+				parentSub:     parentSub,
+			}
+			if len(ds.values) > 0 {
+				unit.values = ds.values[j : j+1]
+			} else {
+				unit.content = ds.content[j : j+1]
+			}
+			items = append(items, unit)
 		}
 	}
 
