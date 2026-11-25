@@ -12,6 +12,8 @@
     - [find_pos]: what [yType.findPos] resolves an index to (the cursor
       into the run list, the node addresses off the address list, the offset
       inside the run before the cursor).
+    - [skip_deleted]: the cursor [skipDeleted] moves a cursor to (past the
+      tombstoned runs that follow it, and no further).
 
     Laws
     - [visible_items] / [visible_string] are append homomorphisms; one run
@@ -95,6 +97,14 @@ Definition find_pos (ls : list loc) (runs : list ItemRun)
    (0 < uint.Z off)%Z ∧ (1 <= p)%nat ∧
    (∃ r, runs !! (p - 1)%nat = Some r ∧ run_deleted r = false ∧
          (uint.nat off < length (run_items r))%nat)).
+
+(** [skip_deleted runs p p']: what [skipDeleted] moves the cursor [p] into the
+    run list to: the cursor [p'], past the tombstoned runs that follow [p]
+    and no further (the run at [p'], when there is one, is live). *)
+Definition skip_deleted (runs : list ItemRun) (p p' : nat) : Prop :=
+  (p <= p' <= length runs)%nat ∧
+  (∀ i r, (p <= i < p')%nat -> runs !! i = Some r -> run_deleted r = true) ∧
+  (∀ r, runs !! p' = Some r -> run_deleted r = false).
 
 (** Read [visible_excludes] off the tombstone bits: a char whose id the reader
     knows deleted carries the bit, so the visible filter drops it. *)

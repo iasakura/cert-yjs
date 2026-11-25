@@ -30,32 +30,26 @@ func newYType() *yType {
 	return &yType{start: nil, len: 0}
 }
 
-// findPos walks to the visible character index and returns the doubly-linked
+// findPos walks to the visible index and returns the doubly-linked
 // neighbours (left, right) straddling that position, plus the offset of the
-// position inside [left] when it does not fall on an item boundary (y-octo:
-// ListType::find_pos building an ItemPosition{left, right, offset}).
+// position inside [left] when it does not fall on an item boundary (yrs
+// 0.27.2 find_position, src/types/text.rs:734, which splits the item there
+// itself where this returns the offset; Yjs v14.0.0-rc.18 walks the retain
+// that precedes an insert or a delete the same way,
+// ItemTextListPosition.formatText, src/ytype.js:141).
 //
-// The walk advances through tombstones as well as visible items, moving [left]
-// in lockstep with [right] (so [right == left.right] on return) and spending
-// the budget only on visible (Indexable) items. When the budget lands strictly
-// inside an item's run (remaining < Len), the offset into that item is
-// recorded and the cursor still advances, so on return [left] is the item
-// containing the offset (y-octo keeps this cursor discipline so the caller's
-// normalize/split rebinds left/right around the split point). A deleted item
-// still becomes the new [left], so the returned neighbours are always adjacent
-// in the list and supply a consistent origin pair for the inserted item.
+// The walk starts at the head of the list with no left neighbour, advances
+// through tombstones as well as visible items, moving [left] in lockstep
+// with [right] (so [right == left.right] on return), spends the budget only
+// on visible (Indexable) items and stops as soon as it is spent: the
+// tombstones that follow the position are not passed (skipDeleted passes
+// them, for an insert). When the budget lands strictly inside an item's run
+// (remaining < Len), the offset into that item is recorded and the cursor
+// still advances, so on return [left] is the item containing the offset and
+// the caller's split rebinds left and right around the split point.
 func (y *yType) findPos(index uint64) (*item, *item, uint64) {
 	var left *item
 	right := y.start
-
-	// Skip leading tombstones so the cursor starts at the first visible item
-	// (y-octo: "avoid the first item being a deleted one"). [left] advances in
-	// lockstep with [right], so the returned neighbours stay adjacent in the
-	// list (right == left.right) and supply a consistent origin pair.
-	for right != nil && right.Deleted() {
-		left = right
-		right = right.right
-	}
 
 	remaining := index
 	offset := uint64(0)
@@ -75,6 +69,25 @@ func (y *yType) findPos(index uint64) (*item, *item, uint64) {
 		right = right.right
 	}
 	return left, right, offset
+}
+
+// skipDeleted moves the position (left, right), two neighbours of one list,
+// to the right past the deleted items that follow it, and returns the new
+// neighbours: an insert at a position that has tombstones to its right goes
+// after them. Both references do this before they create the item of a text
+// insert: Yjs v14.0.0-rc.18 insertContent calls minimizeAttributeChanges
+// (src/ytype.js:338 and :276), which goes right while the item to the right
+// is deleted or is a format the insert already has (this package has no
+// formats), and yrs 0.27.2 TextRef::insert has the loop inline
+// (src/types/text.rs:219-226, "skip over deleted blocks, just like Yjs
+// does"). A delete does not call it: it walks forward from the position and
+// passes the tombstones itself.
+func skipDeleted(left *item, right *item) (*item, *item) {
+	for right != nil && right.Deleted() {
+		left = right
+		right = right.right
+	}
+	return left, right
 }
 
 // Text reads the current visible text, as UTF-16 code units, by walking the

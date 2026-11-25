@@ -19,7 +19,7 @@
     for a snapshot (issue #239): the [SnapshotChar] values of its characters.
 
     The method proofs are [ytype/newYType.v], [ytype/findPos.v],
-    [ytype/Text.v] and [ytype/Snapshot.v]. *)
+    [ytype/skipDeleted.v], [ytype/Text.v] and [ytype/Snapshot.v]. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.

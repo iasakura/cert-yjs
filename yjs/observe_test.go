@@ -305,8 +305,8 @@ func TestObserveInitialAndBatched(t *testing.T) {
 	if len(r.deltas) != 2 {
 		t.Fatalf("one transaction reached the callback %d times, want 1", len(r.deltas)-1)
 	}
-	// the tombstoned 'h' sits before 'J' in the item order (an insert at
-	// visible index 0 lands after the tombstones the walk passes)
+	// the tombstoned 'h' sits before 'J' in the item order (an insert lands
+	// after the tombstones that follow its position, skipDeleted)
 	expectDelta(t, r.deltas[1], deleteN(1), insert("J"), retain(4), insert(" world"))
 	r.check(t, doc, txt, "after the batched transaction")
 	// nothing written: nothing said

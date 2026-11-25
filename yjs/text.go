@@ -168,6 +168,9 @@ func (t *Text) InsertIn(tr *Transaction, index uint64, content []uint16) {
 	if offset > 0 {
 		left, right = s.splitNode(left, offset)
 	}
+	// The run goes after the tombstones that follow the position, as in Yjs
+	// and yrs (skipDeleted, ytype.go).
+	left, right = skipDeleted(left, right)
 	client := s.client
 
 	// Every unit in this run shares the same right origin: the node that was
