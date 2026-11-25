@@ -257,16 +257,16 @@ Proof.
      address list, the run list and the cursor move; both branches rebind
      the state under the shared boundary-form names. *)
   wp_if_join (λ v : val, ⌜v = execute_val⌝ ∗
-      ∃ (locs1 : gmap loc (list loc)) (p1 : pool) (ls1 : list loc) (runs1 : list ItemRun) (p1i : nat),
+      ∃ (locs1 : gmap loc (list loc)) (p1 : pool) (ls1 : list loc) (runs1 : list ItemRun) (p1s : nat),
       "s" ∷ s_ptr ↦ s_loc ∗
       "Hruns" ∷ own_store_state s_loc 1 (MkStoreState client k locs1 p1 bind pend pdel) ∗
-      "left" ∷ left_ptr ↦ loc_at ls1 (Z.of_nat p1i - 1) ∗
-      "right" ∷ right_ptr ↦ loc_at ls1 (Z.of_nat p1i) ∗
+      "left" ∷ left_ptr ↦ loc_at ls1 (Z.of_nat p1s - 1) ∗
+      "right" ∷ right_ptr ↦ loc_at ls1 (Z.of_nat p1s) ∗
       "%Hp1" ∷ ⌜p1 !! tv.(yjs.Text.inner') = Some (MkTypeModel runs1)⌝ ∗
       "%Hl1" ∷ ⌜locs1 !! tv.(yjs.Text.inner') = Some ls1⌝ ∗
       "%Hdomp1" ∷ ⌜∀ q, q ≠ tv.(yjs.Text.inner') → p1 !! q = p0 !! q⌝ ∗
       "%Hdoml1" ∷ ⌜∀ q, q ≠ tv.(yjs.Text.inner') → locs1 !! q = locs0 !! q⌝ ∗
-      "%Hpb1" ∷ ⌜(p1i <= length runs1)%nat⌝ ∗
+      "%Hpbs" ∷ ⌜(p1s <= length runs1)%nat⌝ ∗
       "%Hlr1" ∷ ⌜pool_after_delete p0 p1⌝ ∗
       "%Htomb1" ∷ ⌜pool_tombstoned p1 = pool_tombstoned p0⌝)%I
       with "[s left right offset Hruns]".
@@ -330,6 +330,18 @@ Proof.
       | exact Hpbound | exact (pool_after_delete_refl p0) | reflexivity]. }
   iIntros (v) "[%Hv HQ]". subst v. iNamed "HQ".
   clear Hoff Hbound Hovf Hlen yt0 tl0.
+  (* the run goes after the tombstones that follow the position
+     ([skipDeleted], as Yjs and yrs do): the cursor moves from [p1s] to
+     [p1i], over tombstoned runs only *)
+  wp_auto.
+  iDestruct (own_store_state_ytype_acc s_loc 1 (MkStoreState client k locs1 p1 bind pend pdel) tv.(yjs.Text.inner') ls1 (MkTypeModel runs1) Hl1 Hp1 with "Hruns") as "[Hyt Hytback]".
+  wp_apply (wp_skipDeleted tv.(yjs.Text.inner') (DfracOwn 1) ls1 (MkTypeModel runs1) p1s with "[$Hyt]").
+  { iPureIntro. exact Hpbs. }
+  iIntros (p1i) "(Hyt & %Hskip)".
+  iDestruct ("Hytback" with "Hyt") as "Hruns".
+  have Hpb1 : (p1i <= length runs1)%nat := proj2 (proj1 Hskip).
+  clear Hskip Hpbs.
+  wp_auto.
   (* the store's readings of the normalized type *)
   have Harr1 : (tm_arr ts) = runs_flatten runs1.
   { destruct (proj1 Hlr1 tv.(yjs.Text.inner') (MkTypeModel runs1) Hp1) as (tm0 & Htm0 & Harr0).

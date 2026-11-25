@@ -65,16 +65,16 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
 
 Lemma wp_Transaction__insertedStructs (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (origin : go_string) (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input)
-    (deleted inserted : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted }}}
+    (deleted inserted tombstoned : gset YjsId) :
+  {{{ is_pkg_init yjs ∗ own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted tombstoned }}}
     tr @! (go.PointerType yjs.Transaction) @! "insertedStructs" #()
   {{{ (structs_slice : slice.t) (structs : list Input), RET #structs_slice;
-      own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted ∗
+      own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted tombstoned ∗
       own_update_structs structs_slice (DfracOwn 1) structs ∗
       ⌜structs_expand_to_items structs (transaction_inserted_item m inserted)⌝ }}}.
 Proof.
   wp_start as "Htx".
-  iDestruct "Htx" as (state ds insert_sl) "Htx". iNamed "Htx".
+  iDestruct "Htx" as (state ds insert_sl delete_sl) "Htx". iNamed "Htx".
   iDestruct (own_replica_history_registry_models with "Hreplica_history") as %[Hmodels Hbound].
   iAssert (⌜pool_registry_coh (ss_bind state) (ss_pool state)⌝)%I as %Hregistry_coh.
   { iNamed "Hstore". iNamed "Hcore". iApply (own_store_state_registry_coh with "Hstate"). }
@@ -123,8 +123,8 @@ Proof.
     { iPureIntro. move: Hstructs_model. rewrite /transaction_inserted_item.
       rewrite take_ge; last (clear -Hpast Hi Hinsert_length Hinsert_nonneg; word).
       by rewrite -Hinserted. }
-    iExists state, ds, insert_sl. iSplitR; first done.
-    iFrame "Hstore Hreplica_history Horigin Htrstore Hinsertf".
+    iExists state, ds, insert_sl, delete_sl. iSplitR; first done.
+    iFrame "Hstore Hreplica_history Horigin Htrstore Hinsertf Hdeletef Hdelete".
     iExists insert_vs. iFrame "Hinsert". done. }
   rewrite bool_decide_eq_true_2 //.
   wp_auto.

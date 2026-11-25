@@ -101,7 +101,7 @@ Context {observers_inG : inG Σ (authR (gsetUR (gname * go_string)))}.
 Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries))}.
 
 Context (decode : list u8 -> option (list Input)).
-Context (encode : list Input -> list u8).
+Context (encode : list Input -> gset YjsId -> list u8).
 
 (* ===== the contract of a boot expression ================================= *)
 
@@ -304,7 +304,7 @@ Theorem ws_system_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
     `{observers_inG : !inG Σ (authR (gsetUR (gname * go_string)))}
     `{observers_agree_inG : !inG Σ (dfrac_agreeR (leibnizO registered_entries))}
     (host server_client : w64) (decoder encoder : func.t) (name : go_string)
-    (decode : list u8 -> option (list Input)) (encode : list Input -> list u8)
+    (decode : list u8 -> option (list Input)) (encode : list Input -> gset YjsId -> list u8)
     (clients : list client_config)
     g σ0 :
   ws_wf g.(global_world) ->
@@ -444,7 +444,7 @@ Theorem ws_typists_dist_adequate Σ `{!all.allG Σ} `{hPre: !gooseGpreS Σ}
     `{observers_inG : !inG Σ (authR (gsetUR (gname * go_string)))}
     `{observers_agree_inG : !inG Σ (dfrac_agreeR (leibnizO registered_entries))}
     (host server_client : w64) (decoder encoder : func.t) (name : go_string)
-    (decode : list u8 -> option (list Input)) (encode : list Input -> list u8)
+    (decode : list u8 -> option (list Input)) (encode : list Input -> gset YjsId -> list u8)
     (typists : list (go_string * w64 * go_string))
     g σ0 :
   let clients := (λ typist, typist_config typist.1.1 typist.1.2 typist.2) <$> typists in

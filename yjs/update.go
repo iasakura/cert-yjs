@@ -17,11 +17,11 @@ package yjs
 // (sync.go).
 
 // updateItem is one decoded insert struct in the verified subset: an item carrying
-// its id, both sibling origins, its parent info and its string content, a run of
-// one or more UTF-16 code units (y-octo: codec/item.rs Item, as stored in
+// its id, both sibling origins, its parent info and its content, a run of
+// one or more UTF-16 code units or of values (y-octo: codec/item.rs Item, as stored in
 // codec/update.rs Update.structs). store.applyUpdate integrates a run as one
 // item; the byte decoder (codec.go splitStructs) still hands over one-unit
-// structs. Parent::Id / parent_sub are dropped (root types only, #43).
+// structs. Parent::Id is dropped (root types only, #43).
 type updateItem struct {
 	id            id
 	originLeftId  *id
@@ -32,10 +32,21 @@ type updateItem struct {
 	// resolved left/right neighbour (the wire format only carries a parent for
 	// structs with no sibling origins).
 	parentName *string
+	// parentSub is the map key of the struct (Yjs v14.0.0-rc.18
+	// Item.parentSub as readItem reads it, src/utils/BlockSet.js:72). A
+	// decoded struct has it only when it names its parent: the wire carries
+	// the key after the parent's name, for structs with no sibling origins,
+	// and store.repair copies the key of the resolved neighbour otherwise.
+	// A struct read back from the store (updateItemOfNode) has its node's
+	// key in every case.
+	parentSub *string
 	// content is the run's code units, decoded from the wire's UTF-8 string
-	// by the codec. The item built from this struct keeps the slice, so it is
-	// never written once the struct is made (content.go).
+	// by the codec, and values the values of an any content: exactly one of
+	// the two is not empty, as in content (content.go). The item built from
+	// this struct keeps the slices, so they are never written once the
+	// struct is made.
 	content []uint16
+	values  []Value
 }
 
 // deleteSpan is one decoded delete range: the half-open clock interval

@@ -7,17 +7,14 @@
     Definitions
     - [node_span v units]: the span a node contributes to a record (its head
       id, and the length of its content [units]).
-    - [own_id_spans sl dq ids]: the [[]idSpan] at [sl] denotes the char-id
-      set [ids] (the union of its spans' ids), every span fitting [w64]
-      (what [containsId]'s range test needs): a record's slice as
-      [textDelta] reads it.
     - [own_transaction_changes tr s inserted tombstoned changed]: the
       transaction struct at [tr]: the store [s] it belongs to and the three
       record fields, which have recorded exactly the char ids [inserted]
       (its [insertSet]), the char ids [tombstoned] (its [deleteSet]) and the
       type addresses [changed] (its [changed] map). The two span slices
-      denote their sets as [own_delete_ids] reads a [[]idSpan]: the union of
-      the spans' char ids; every recorded span fits [w64]. The receiver
+      denote their sets as [own_id_spans] ([store/heap.v]) reads a
+      [[]idSpan]: the union of the spans' char ids; every recorded span
+      fits [w64]. The receiver
       predicate of the transaction's cell-level methods ([integrate],
       [deleteNode] and the loops over them).
     - [changed_types_bound γs changed changed_locs]: the changed types by
@@ -36,8 +33,8 @@
       with [origin], to an end state where [Q] holds, inserting only code
       units that are [allowed].
     - [own_transaction_notified tr s γs γh origin c h m pend deleted
-      inserted]: the transaction after [notify], what [notifyUpdate] reads
-      (non-public).
+      inserted tombstoned]: the transaction after [notify], what
+      [notifyUpdate] reads (non-public).
     - [own_transaction_origin tr origin]: the transaction's [origin] field
       (non-public).
 
@@ -123,12 +120,6 @@ Proof. rewrite own_slice_cap_unseal /own_slice_cap_def. apply _. Qed.
     [idSpan] (what [recordInsert] / [recordDelete] append). *)
 Definition node_span (v : yjs.item.t) (units : A) : yjs.idSpan.t :=
   yjs.idSpan.mk v.(yjs.item.id') (W64 (length units)).
-
-Definition own_id_spans (sl : slice.t) (dq : dfrac) (ids : gset YjsId) : iProp Σ :=
-  ∃ (vs : list yjs.idSpan.t),
-    "Hspans" ∷ sl ↦*{dq} vs ∗
-    "%Hspans_wf" ∷ ⌜Forall span_no_overflow vs⌝ ∗
-    "%Hspans_ids" ∷ ⌜ids = ⋃ (span_ids <$> vs)⌝.
 
 (** The transaction struct: the store it belongs to and what it recorded so
     far, as four of the five fields of [Transaction] (the fifth, [origin],
@@ -227,25 +218,28 @@ Definition own_transaction (tr s_loc : loc) (γs : store_names) (γh : history_n
     "%Hstart" ∷ ⌜transaction_start m deleted inserted tombstoned m0 deleted0⌝.
 
 (** [own_transaction_notified tr s_loc γs γh origin c h m pend deleted
-    inserted]: the transaction at [tr] after the observers of its types were
-    told ([notify]): the store with its data and its observers both at the
-    current state [(m, deleted)], and the three fields of the struct that
-    [notifyUpdate] still reads, the store, the origin and the spans of what
-    the transaction inserted. The rest of the record (the delete spans, the
-    changed types) was consumed by [notify] and is left out. Non-public:
-    what [notify] hands to [notifyUpdate] inside [commit]. *)
+    inserted tombstoned]: the transaction at [tr] after the observers of its
+    types were told ([notify]): the store with its data and its observers
+    both at the current state [(m, deleted)], and the four fields of the
+    struct that [notifyUpdate] still reads, the store, the origin, and the
+    spans of what the transaction inserted and of what it deleted, the two
+    parts of its update. The rest of the record (the changed types) was
+    consumed by [notify] and is left out. Non-public: what [notify] hands
+    to [notifyUpdate] inside [commit]. *)
 Definition own_transaction_notified (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (origin : go_string) (c : ClientId) (h : list Ev) (m : DocModel)
     (pend : list (TId * IntegrateInput (A := A)))
-    (deleted inserted : gset YjsId) : iProp Σ :=
-  ∃ (state : store_state) (delete_set : gset YjsId) (insert_slice : slice.t),
+    (deleted inserted tombstoned : gset YjsId) : iProp Σ :=
+  ∃ (state : store_state) (delete_set : gset YjsId) (insert_slice delete_slice : slice.t),
     "%Hpend_tomb" ∷ ⌜state_pending_tombstoned state pend deleted⌝ ∗
     "Hstore" ∷ own_store s_loc γs γh 1 state delete_set m deleted ∗
     "Hreplica_history" ∷ own_replica_history γs γh c h m state delete_set ∗
     "Horigin" ∷ own_transaction_origin tr origin ∗
     "Htrstore" ∷ (tr .[(yjs.Transaction.t), "store"]) ↦ s_loc ∗
     "Hinsertf" ∷ (tr .[(yjs.Transaction.t), "insertSet"]) ↦ insert_slice ∗
-    "Hinsert" ∷ own_id_spans insert_slice (DfracOwn 1) inserted.
+    "Hinsert" ∷ own_id_spans insert_slice (DfracOwn 1) inserted ∗
+    "Hdeletef" ∷ (tr .[(yjs.Transaction.t), "deleteSet"]) ↦ delete_slice ∗
+    "Hdelete" ∷ own_id_spans delete_slice (DfracOwn 1) tombstoned.
 
 (** [closure_runs_transaction s_loc γs γh origin allowed f Q]: the closure
     [f] runs one transaction of the store at [s_loc], opened with the origin

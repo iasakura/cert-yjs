@@ -186,12 +186,19 @@ func (s *store) updateItemOfNode(it *item, start uint64, stop uint64) updateItem
 		name := s.rootName(it.parent)
 		parentName = &name
 	}
+	part := it.content.slice(start, stop)
 	return updateItem{
 		id:            newId(it.id.clientId, it.id.clock+start),
 		originLeftId:  originLeftId,
 		originRightId: it.originRightId,
 		parentName:    parentName,
-		content:       it.content.content[start:stop],
+		// The struct has the node's key whether or not it names its parent:
+		// the encoding marks every entry of a map as one, and writes the
+		// key itself only after the parent's name (Yjs v14.0.0-rc.18
+		// Item.write, src/structs/Item.js:459-462 and :493-495).
+		parentSub: it.parentSub,
+		content:   part.content,
+		values:    part.values,
 	}
 }
 
@@ -381,7 +388,7 @@ func splitItem(n *item, diff uint64) *item {
 	// src/doc/codec/content.rs:222). Sharing is safe because content is never
 	// written after creation (content.go); in particular nothing appends to
 	// the left half, whose capacity still reaches over the right half.
-	units := n.content.content
+	whole := n.content
 	right := &item{
 		id:            newId(n.id.clientId, n.id.clock+diff),
 		originLeftId:  &olid,
@@ -389,14 +396,21 @@ func splitItem(n *item, diff uint64) *item {
 		left:          n,
 		right:         n.right,
 		parent:        n.parent,
-		content:       content{content: units[diff:]},
+		parentSub:     n.parentSub,
+		content:       whole.slice(diff, whole.Len()),
 		flags:         n.flags,
 	}
-	n.content = content{content: units[:diff]}
+	n.content = whole.slice(0, diff)
 	if n.right != nil {
 		n.right.left = right
 	}
 	n.right = right
+	// The right half of a key's current entry is the key's current entry
+	// (Yjs v14.0.0-rc.18 splitItem, src/structs/Item.js:434-436; yrs 0.27.2
+	// Item::splice, src/block.rs:669-676).
+	if right.parentSub != nil && right.right == nil {
+		n.parent.entries[*right.parentSub] = right
+	}
 	return right
 }
 
@@ -445,10 +459,11 @@ func (s *store) splitAtAndGetRight(id id) (*item, bool) {
 //   - parentName == nil is Parent::None: borrow the parent from the resolved
 //     left (or right) neighbour.
 //
-// Parent::Id (type-as-item) is out of the verified subset (#43). parentName is
-// passed alongside the item because the decoded wire form lives on updateItem,
-// not on item (see item.parent). Callers hold the storeRef's write lock.
-func (s *store) repair(it *item, parentName *string) {
+// Parent::Id (type-as-item) is out of the verified subset (#43). parentName
+// and parentSub are passed alongside the item because the decoded wire form
+// lives on updateItem, not on item (see item.parent). Callers hold the
+// storeRef's write lock.
+func (s *store) repair(it *item, parentName *string, parentSub *string) {
 	// After the clean-end/clean-start splits the origin ids already sit on
 	// node boundaries (the left origin IS the left node's LastId, the right
 	// origin IS the right node's id), so y-octo's re-normalization
@@ -466,12 +481,23 @@ func (s *store) repair(it *item, parentName *string) {
 		}
 	}
 
+	// The key comes with the parent: off the wire next to the parent's
+	// name, or from the neighbour the parent is borrowed from (Yjs
+	// v14.0.0-rc.18 getMissing, src/utils/encoding.js:648-656). yrs 0.27.2
+	// takes a neighbour's key first and the struct's own only when no
+	// neighbour has one (src/block.rs:1003-1009). The two agree on every
+	// struct either of them writes: a struct that has an origin carries no
+	// key, and a local entry is created with its key and next to an entry
+	// of that key.
 	if parentName != nil {
 		it.parent = s.getOrCreateYType(*parentName)
+		it.parentSub = parentSub
 	} else if it.left != nil {
 		it.parent = it.left.parent
+		it.parentSub = it.left.parentSub
 	} else if it.right != nil {
 		it.parent = it.right.parent
+		it.parentSub = it.right.parentSub
 	}
 }
 
@@ -532,6 +558,12 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 		var conflict *item
 		if left != nil {
 			conflict = left.right
+		} else if it.parentSub != nil {
+			// an entry of the parent's map: the scan starts at the first
+			// item written under its key (Yjs v14.0.0-rc.18
+			// src/structs/Item.js:191-195; yrs 0.27.2
+			// Item::resolve_conflict, src/block.rs:917-931).
+			conflict = parent.entryStart(*it.parentSub)
 		} else {
 			conflict = parent.start
 		}
@@ -555,7 +587,12 @@ func findIntegrationLeft(parent *yType, it *item, left *item, right *item) *item
 func (s *store) deleteNode(it *item) bool {
 	if it.Indexable() {
 		it.flags = it.flags | itemDeleted
-		it.parent.len = it.parent.len - it.Len()
+		// an entry of the map is not counted in the list's length (Yjs
+		// v14.0.0-rc.18 Item.delete, src/structs/Item.js:370-372; yrs
+		// 0.27.2 TransactionMut::delete, src/transaction.rs:739).
+		if it.parentSub == nil {
+			it.parent.len = it.parent.len - it.Len()
+		}
 		return true
 	}
 	return false
@@ -577,7 +614,6 @@ func (s *store) deleteNode(it *item) bool {
 //     yrs 0.27.2 src/update.rs:341; y-octo 0.1.0 src/doc/store.rs:423; #207).
 //     The byte decoder hands over one-code-unit structs, so no such struct
 //     arrives today;
-//   - parent_sub is always None (root sequence), so the map branches are dropped;
 //   - the caller holds the store's write lock, so y-octo's unsafe shared-reference
 //     handling becomes plain pointer mutation;
 //   - the parent type is never deleted.
@@ -592,25 +628,40 @@ func (s *store) integrateCore(parent *yType, item *item) {
 	// Conflict resolution (the algorithmic core, extracted for verification).
 	left = findIntegrationLeft(parent, item, left, right)
 
-	// Reconnect: left <-> item <-> right.
+	// Reconnect: left <-> item <-> right. With no left, an element of the
+	// list becomes its head, and an entry of the map goes in front of the
+	// first item written under its key (Yjs v14.0.0-rc.18
+	// src/structs/Item.js:238-254; yrs 0.27.2 src/block.rs:1035-1053).
 	if left != nil {
 		right = left.right
 		left.right = item
 		item.left = left
 	} else {
-		right = parent.start
-		parent.start = item
+		if item.parentSub != nil {
+			right = parent.entryStart(*item.parentSub)
+		} else {
+			right = parent.start
+			parent.start = item
+		}
 		item.left = nil
 	}
 
 	if right != nil {
 		right.left = item
+	} else if item.parentSub != nil {
+		// the last item written under its key is the key's current entry
+		// (Yjs v14.0.0-rc.18 src/structs/Item.js:258-260; yrs 0.27.2
+		// src/block.rs:1056-1058). Transaction.integrate deletes the entry
+		// it replaces.
+		parent.entries[*item.parentSub] = item
 	}
 	item.right = right
 
-	// parent_sub is None and the parent is never deleted, so item is kept and
-	// (being countable) contributes to the parent length.
-	if item.Countable() {
+	// The parent is never deleted, so an element of the list is kept and
+	// (being countable) contributes to the parent's length; an entry of the
+	// map does not (Yjs v14.0.0-rc.18 src/structs/Item.js:267-269; yrs
+	// 0.27.2 src/block.rs:1072-1077).
+	if item.parentSub == nil && item.Countable() {
 		parent.len = parent.len + item.Len()
 	}
 }

@@ -168,6 +168,9 @@ func (t *Text) InsertIn(tr *Transaction, index uint64, content []uint16) {
 	if offset > 0 {
 		left, right = s.splitNode(left, offset)
 	}
+	// The run goes after the tombstones that follow the position, as in Yjs
+	// and yrs (skipDeleted, ytype.go).
+	left, right = skipDeleted(left, right)
 	client := s.client
 
 	// Every unit in this run shares the same right origin: the node that was
@@ -193,7 +196,8 @@ func (t *Text) InsertIn(tr *Transaction, index uint64, content []uint16) {
 		// carrying its parent (y-octo: store::create_item receives pos.left /
 		// pos.right / Some(Parent::Type)); the update path resolves the same
 		// fields with store.repair instead.
-		newit := newItem(newId(client, clk), []uint16{content[i]}, originLeftId, originRightId)
+		unit := []uint16{content[i]}
+		newit := newItem(newId(client, clk), contentOfUnits(unit), originLeftId, originRightId)
 		newit.left = left
 		newit.right = right
 		newit.parent = t.inner

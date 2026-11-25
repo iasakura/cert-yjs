@@ -145,9 +145,13 @@ func (o *TextObserver) Poll() []DeltaOp {
 		if tombstoned {
 			deleted[client] = append(deleted[client], span[uint64]{start: start, end: end})
 		}
-		// the classification against the previous token, unit by unit
+		// the classification against the previous token, unit by unit. Only
+		// code units are text: a node of values (content.go) has none, and
+		// contributes nothing to the delta, as it contributes nothing to
+		// the text a read returns (yType.Text).
 		observedEnd := o.stateVector[client]
-		for i := uint64(0); i < length; i++ {
+		units := uint64(len(cur.content.content))
+		for i := uint64(0); i < units; i++ {
 			clock := start + i
 			if clock < observedEnd {
 				// a known unit: invisible before and after when it was
@@ -192,7 +196,14 @@ func textDelta(ty *yType, insertSet []idSpan, deleteSet []idSpan) []DeltaOp {
 	var delta []DeltaOp
 	cur := ty.start
 	for cur != nil {
-		length := cur.Len()
+		// Only code units are text: a node of values (content.go) has none
+		// and contributes nothing to the delta, as it contributes nothing
+		// to the text a read returns (yType.Text). The references' text
+		// deltas carry such elements as inserts of their own kind (Yjs
+		// v14.0.0-rc.18 YEvent delta, src/utils/YEvent.js:95-123; yrs
+		// 0.27.2 Delta::Inserted over an Out, src/types/text.rs:1315-1340),
+		// which this package's DeltaOp does not have.
+		length := uint64(len(cur.content.content))
 		tombstoned := cur.Deleted()
 		for i := uint64(0); i < length; i++ {
 			charId := newId(cur.id.clientId, cur.id.clock+i)

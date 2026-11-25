@@ -2,7 +2,7 @@
     updates of the document. The caller gives the callback's contract
     ([is_update_callback]), the encoder's ([encoder_spec]) and the global
     history's invariant; from then on the store calls the callback at the
-    end of every transaction that integrated something. *)
+    end of every transaction that integrated or deleted something. *)
 From New.proof Require Import proof_prelude.
 From New.code.github_com.iasakura.cert_yjs Require Import yjs.
 From New.generatedproof.github_com.iasakura.cert_yjs Require Import yjs.
@@ -62,7 +62,7 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
     callback comes with that contract's precondition. *)
 Lemma wp_Doc__ObserveUpdate (dv ref : loc) (γs : store_names) (γh : history_names)
     (may_insert : go_string -> w16 -> Prop)
-    (encode : list (TId * IntegrateInput (A := A)) -> list u8) (encoder callback : func.t) :
+    (encode : list (TId * IntegrateInput (A := A)) -> gset YjsId -> list u8) (encoder callback : func.t) :
   {{{ is_pkg_init yjs ∗ is_Doc dv ref γs γh may_insert ∗ is_history (A := A) (P := P) γh ∗
       encoder_spec encode encoder ∗ is_update_callback may_insert γh encode callback }}}
     dv @! (go.PointerType yjs.Doc) @! "ObserveUpdate" #encoder #callback

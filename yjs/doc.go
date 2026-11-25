@@ -29,6 +29,21 @@ func (d *Doc) GetOrCreateText(name string) *Text {
 	return &Text{store: ref, inner: inner}
 }
 
+// GetOrCreateMap returns the root type named name as a map, creating the
+// type on first use (Yjs v13 doc.getMap; in Yjs v14.0.0-rc.18 doc.get returns
+// the one type, src/utils/Doc.js:197; yrs 0.27.2 Doc::get_or_insert_map,
+// src/doc.rs:292). A root type has a list and entries both, so the same name
+// may be given to GetOrCreateText as well: the two handles are over one
+// type, as in Yjs v14. yrs records the kind a root type was asked for first
+// (TypeRef), and Yjs v13 throws when a name is asked for as two kinds.
+func (d *Doc) GetOrCreateMap(name string) *Map {
+	ref := d.store
+	ref.wlock()
+	inner := ref.store.getOrCreateYType(name)
+	ref.wunlock()
+	return &Map{store: ref, inner: inner}
+}
+
 // Transact runs f as one transaction on the document (Yjs doc.transact,
 // src/utils/Doc.js:179; yrs Doc::transact_mut): every write inside is one
 // unit, and the observers of the types it changed are called once at its end.
@@ -50,21 +65,19 @@ func (d *Doc) TransactWith(origin Origin, f func(tr *Transaction)) {
 // v14.0.0-rc.18 doc.on('update', handler), emitted at
 // src/utils/Transaction.js:297-301; yrs 0.27.2 Doc::observe_update_v1, whose
 // callbacks run at commit, src/transaction.rs:1094). At the end of every
-// transaction that integrated something, callback is called once with the
-// update that carries what the transaction integrated to other replicas (the
-// structs of its insert set, Transaction.insertedStructs, encoded by encode)
-// and with the transaction's origin (Transaction.origin). A provider gives
-// its own origin to the updates it applies and sends only the updates of
-// other origins (y-websocket v2.1.0, src/y-websocket.js:353-361).
+// transaction that integrated or deleted something, callback is called once
+// with the update that carries the transaction to other replicas (the
+// structs of its insert set, Transaction.insertedStructs, and its delete
+// set, encoded by encode) and with the transaction's origin
+// (Transaction.origin). A provider gives its own origin to the updates it
+// applies and sends only the updates of other origins (y-websocket v2.1.0,
+// src/y-websocket.js:353-361).
 //
-// Three differences from the references. The handler gets (update, origin)
+// Two differences from the references. The handler gets (update, origin)
 // where Yjs passes (update, origin, doc, transaction) and yrs (transaction,
 // event): a callback must not touch the document (below), so it gets
 // neither the document nor the transaction. The encoder is an argument, for
-// the reason given at Encoder. The update carries inserts only: what the
-// transaction deleted is not in the bytes (the Encoder writes an empty
-// delete set), and a transaction that only deleted calls nobody, where Yjs
-// emits its delete set.
+// the reason given at Encoder.
 //
 // Callbacks run under the store's write lock, as the callbacks of
 // Text.Observe do and as yrs's do (the committing TransactionMut still holds
@@ -121,14 +134,19 @@ func (d *Doc) ApplyEncodedUpdate(decode Codec, data []byte, origin Origin) bool 
 }
 
 // Encoder is the encoding half of the update codec: the bytes that stand for
-// a batch of insert structs and an empty delete set. Like Codec it is a value
-// that verified code takes as a parameter, and the client's proofs assume
-// only its specification (encoder_spec, src/proof/certified_update_message.v)
-// against the abstract encode; the real encoder is trusted to meet it. The
-// struct type is unexported, so an Encoder can only be built inside this
-// package; the deployment's is WireEncoder (codec.go). In the references the
-// encoding is the library's own (Yjs v14.0.0-rc.18
-// writeUpdateMessageFromTransaction, src/utils/encoding-helpers.js:103; yrs
-// 0.27.2 TransactionMut::encode_update_v1, src/transaction.rs:597); here it is
-// a parameter for the reason Codec is one.
-type Encoder = func(structs []updateItem) []byte
+// a batch of insert structs and a delete set, the two parts of an update.
+// The delete set is given as a transaction keeps it, a list of id spans
+// (Transaction.deleteSet), which is what the references hand their encoders
+// too (Yjs v14.0.0-rc.18 writeIdSet(encoder, transaction.deleteSet),
+// src/utils/encoding-helpers.js:108; yrs 0.27.2 self.delete_set.encode,
+// src/transaction.rs:628). Like Codec it is a value that verified code takes
+// as a parameter, and the client's proofs assume only its specification
+// (encoder_spec, src/proof/store/heap.v) against the abstract encode; the
+// real encoder is trusted to meet it. The struct type is unexported, so an
+// Encoder can only be built inside this package; the deployment's is
+// WireEncoder (codec.go). In the references the encoding is the library's
+// own (Yjs v14.0.0-rc.18 writeUpdateMessageFromTransaction,
+// src/utils/encoding-helpers.js:103; yrs 0.27.2
+// TransactionMut::encode_update_v1, src/transaction.rs:597); here it is a
+// parameter for the reason Codec is one.
+type Encoder = func(structs []updateItem, deletes []idSpan) []byte
