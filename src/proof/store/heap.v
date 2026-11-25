@@ -74,10 +74,13 @@
       insert rule, a field of [store_names] that is not a ghost name;
       [is_update_certified γh structs] (a batch is well formed and
       certified in the global history, what the store says of the update
-      it hands over); [encoder_spec encode encoder] (the Go encoder value
-      meets the abstract [encode]); [own_emitted_update may_insert γh
-      encode update_slice structs origin] (what an update observer is
-      called with); [is_update_callback may_insert γh encode callback] (the
+      it hands over); [own_id_spans sl dq ids] (a slice of id spans as the
+      set of ids it denotes, the form of a transaction's insert set and
+      delete set); [encoder_spec encode encoder] (the Go encoder value
+      meets the abstract [encode], over a batch of structs and a delete
+      set); [own_emitted_update may_insert γh encode update_slice structs
+      deleted origin] (what an update observer is called with);
+      [is_update_callback may_insert γh encode callback] (the
       contract of a callback registered with [Doc.ObserveUpdate]);
       [is_update_observer] (one registration) and
       [own_store_update_observers s γs γh q] (the store's [updateObservers]
@@ -511,6 +514,18 @@ Definition own_delete_ids (sl : slice.t) (dq : dfrac) (D : gset YjsId) : iProp �
 #[global] Instance own_delete_ids_timeless sl dq D :
   Timeless (own_delete_ids sl dq D).
 Proof. rewrite /own_delete_ids. apply _. Qed.
+
+(** [own_id_spans sl dq ids]: the [[]idSpan] at [sl] denotes the char-id set
+    [ids], the union of its spans' ids, every span fitting [w64] (what
+    [containsId]'s range test needs). The form in which a transaction keeps
+    what it inserted and what it deleted ([own_transaction_changes],
+    [transaction/heap.v]), and in which an encoder is handed the delete set
+    of an update ([encoder_spec]). *)
+Definition own_id_spans (sl : slice.t) (dq : dfrac) (ids : gset YjsId) : iProp Σ :=
+  ∃ (vs : list yjs.idSpan.t),
+    "Hspans" ∷ sl ↦*{dq} vs ∗
+    "%Hspans_wf" ∷ ⌜Forall span_no_overflow vs⌝ ∗
+    "%Hspans_ids" ∷ ⌜ids = ⋃ (span_ids <$> vs)⌝.
 
 
 (** [is_root γs name]: persistent witness that the root type [name] is
@@ -1519,31 +1534,41 @@ Definition is_update_certified (γh : history_names)
   ⌜update_wf (expand_inputs structs)⌝ ∗ is_pending_certified γh (expand_inputs structs).
 
 (** The Go encoder value [encoder] meets the abstract [encode]: on any
-    struct slice it returns a fresh byte slice holding the encoding of the
-    batch the slice denotes, and leaves the structs as they were. The
-    encoder is trusted code (yjs/codec.go, outside the verified core), so
-    this is a hypothesis of whoever registers an update observer
-    ([wp_Doc__ObserveUpdate]). *)
-Definition encoder_spec (encode : list (TId * IntegrateInput (A := A)) -> list u8)
+    struct slice and any slice of id spans, the two parts of an update (its
+    structs and its delete set), it returns a fresh byte slice holding the
+    encoding of the batch and of the id set the two slices denote, and leaves
+    both as they were. The encoder is trusted code (yjs/codec.go, outside the
+    verified core), so this is a hypothesis of whoever registers an update
+    observer ([wp_Doc__ObserveUpdate]). *)
+Definition encoder_spec
+    (encode : list (TId * IntegrateInput (A := A)) -> gset YjsId -> list u8)
     (encoder : func.t) : iProp Σ :=
-  □ (∀ (structs_slice : slice.t) (dq : dfrac) (structs : list (TId * IntegrateInput (A := A))),
-      {{{ own_update_structs structs_slice dq structs }}}
-        #encoder #structs_slice
+  □ (∀ (structs_slice deletes_slice : slice.t) (dq dq_deletes : dfrac)
+       (structs : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId),
+      {{{ own_update_structs structs_slice dq structs ∗
+          own_id_spans deletes_slice dq_deletes deleted }}}
+        #encoder #structs_slice #deletes_slice
       {{{ (bytes_slice : slice.t), RET #bytes_slice;
           own_update_structs structs_slice dq structs ∗
-          bytes_slice ↦* encode structs ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) }}}).
+          own_id_spans deletes_slice dq_deletes deleted ∗
+          bytes_slice ↦* encode structs deleted ∗ own_slice_cap w8 bytes_slice (DfracOwn 1) }}}).
 
-(** [own_emitted_update may_insert γh encode update_slice structs origin]:
-    what an update observer is called with (issue #131), for a transaction
-    of origin [origin] on a document whose insert rule is [may_insert]: the
-    byte slice [update_slice] holds the encoding of a batch [structs], and
-    the callee owns it; the batch is well formed and every operation of it
-    has a certificate in the global history ([is_update_certified]); and
-    every code unit of the batch is one the rule allows for [origin]. *)
+(** [own_emitted_update may_insert γh encode update_slice structs deleted
+    origin]: what an update observer is called with (issue #131), for a
+    transaction of origin [origin] on a document whose insert rule is
+    [may_insert]: the byte slice [update_slice] holds the encoding of a
+    batch [structs] and a delete set [deleted], and the callee owns it; the
+    batch is well formed and every operation of it has a certificate in the
+    global history ([is_update_certified]); and every code unit of the batch
+    is one the rule allows for [origin]. Nothing is said of [deleted]: a
+    delete set carries no certificate, and the wire protocol asks nothing of
+    one ([codec_spec], [certified_update_message.v]). *)
 Definition own_emitted_update (may_insert : go_string -> w16 -> Prop) (γh : history_names)
-    (encode : list (TId * IntegrateInput (A := A)) -> list u8) (update_slice : slice.t)
-    (structs : list (TId * IntegrateInput (A := A))) (origin : go_string) : iProp Σ :=
-  "Hupdate" ∷ update_slice ↦* encode structs ∗
+    (encode : list (TId * IntegrateInput (A := A)) -> gset YjsId -> list u8)
+    (update_slice : slice.t)
+    (structs : list (TId * IntegrateInput (A := A))) (deleted : gset YjsId)
+    (origin : go_string) : iProp Σ :=
+  "Hupdate" ∷ update_slice ↦* encode structs deleted ∗
   "Hupdate_cap" ∷ own_slice_cap w8 update_slice (DfracOwn 1) ∗
   "#Hupdate_certified" ∷ is_update_certified γh structs ∗
   "%Hupdate_units" ∷ ⌜structs_units_allowed (may_insert origin) structs⌝.
@@ -1551,16 +1576,18 @@ Definition own_emitted_update (may_insert : go_string -> w16 -> Prop) (γh : his
 (** [is_update_callback may_insert γh encode callback]: the contract of a
     callback registered with [Doc.ObserveUpdate] and the encoder [encode],
     on a document whose insert rule is [may_insert]. The store calls it at
-    the end of a transaction that integrated something, with the
+    the end of a transaction that integrated or deleted something, with the
     transaction's update and origin ([own_emitted_update]). It owes
     nothing back. Persistent: the store keeps the callback and calls it for
     every such transaction. The callback's own resources are not here: it
     reaches them through a lock or an invariant of its own, as the
     callbacks of [Text.Observe] do. *)
 Definition is_update_callback (may_insert : go_string -> w16 -> Prop) (γh : history_names)
-    (encode : list (TId * IntegrateInput (A := A)) -> list u8) (callback : func.t) : iProp Σ :=
-  ∀ (update_slice : slice.t) (structs : list (TId * IntegrateInput (A := A))) (origin : go_string),
-    {{{ own_emitted_update may_insert γh encode update_slice structs origin }}}
+    (encode : list (TId * IntegrateInput (A := A)) -> gset YjsId -> list u8)
+    (callback : func.t) : iProp Σ :=
+  ∀ (update_slice : slice.t) (structs : list (TId * IntegrateInput (A := A)))
+    (deleted : gset YjsId) (origin : go_string),
+    {{{ own_emitted_update may_insert γh encode update_slice structs deleted origin }}}
       #callback #update_slice #origin
     {{{ RET #(); True }}}.
 
@@ -1572,7 +1599,7 @@ Definition is_update_callback (may_insert : go_string -> w16 -> Prop) (γh : his
     it hands over. Persistent. *)
 Definition is_update_observer (may_insert : go_string -> w16 -> Prop) (γh : history_names)
     (observer : yjs.updateObserver.t) : iProp Σ :=
-  ∃ (encode : list (TId * IntegrateInput (A := A)) -> list u8),
+  ∃ (encode : list (TId * IntegrateInput (A := A)) -> gset YjsId -> list u8),
     "#Hobserver_history" ∷ is_history (A := A) (P := P) γh ∗
     "#Hobserver_encoder" ∷ encoder_spec encode observer.(yjs.updateObserver.encode') ∗
     "#Hobserver_callback" ∷ is_update_callback may_insert γh encode observer.(yjs.updateObserver.callback').

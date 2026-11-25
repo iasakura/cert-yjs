@@ -398,7 +398,7 @@ Lemma wp_Transaction__notify (tr s_loc : loc) (γs : store_names) (γh : history
     (deleted inserted tombstoned : gset YjsId) (changed : gset P) :
   {{{ is_pkg_init yjs ∗ own_transaction tr s_loc γs γh origin c h m pend deleted inserted tombstoned changed }}}
     tr @! (go.PointerType yjs.Transaction) @! "notify" #()
-  {{{ RET #(); own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted }}}.
+  {{{ RET #(); own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted tombstoned }}}.
 Proof.
   wp_start as "Htx".
   iDestruct "Htx" as (state0 ds0 m0 deleted0) "Htx". iNamed "Htx".
@@ -618,10 +618,10 @@ Proof.
              Hpoolinv Hregcoh Hregmodel Hrecorded Hbound (Hregbind parent entry Hd)).
     rewrite -Hdoneall. exact Hnin. }
   iDestruct (own_store_data_split with "Hdata") as (state' ds') "(%Hface' & Hcore' & Hreplica_history')". destruct Hface' as [Hpend' Hdel'].
-  iExists state', ds', insert_sl.
+  iExists state', ds', insert_sl, delete_sl.
   iSplitR; first (iPureIntro; split; [exact Hpend' | exact Hdel']).
   iSplitL "Hcore' Hobservers'"; first iFrame "Hcore' Hobservers'".
-  iFrame "Hreplica_history' Horigin Hrecord_store Hinsertf Hinsert".
+  iFrame "Hreplica_history' Horigin Hrecord_store Hinsertf Hinsert Hdeletef Hdelete".
 Qed.
 
 End transaction_notify.

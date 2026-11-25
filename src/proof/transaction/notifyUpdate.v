@@ -1,8 +1,10 @@
-(** [Transaction.notifyUpdate] (issue #131): the update half of the end of a
-    transaction. After the observers of the types were told ([notify]),
-    every callback registered with [Doc.ObserveUpdate] is called with the
-    transaction's update, encoded by its own encoder, and the transaction's
-    origin. The store establishes the callback's precondition
+(** [Transaction.notifyUpdate] (issue #131, issue #133): the update half of
+    the end of a transaction. After the observers of the types were told
+    ([notify]), every callback registered with [Doc.ObserveUpdate] is called
+    with the transaction's update (the structs of what it inserted and the
+    ids of what it deleted), encoded by its own encoder, and the
+    transaction's origin, unless the update has neither a struct nor a
+    deleted id. The store establishes the callback's precondition
     ([is_update_callback]) from what it holds: the batch read back from the
     store is certified in the global history and its items fit machine
     words, and the closure of the transaction showed that what it inserted
@@ -69,12 +71,12 @@ Context {observers_agree_inG : inG Σ (dfrac_agreeR (leibnizO registered_entries
     the registry): each can go on the wire as a one-unit struct. *)
 #[local] Lemma own_transaction_notified_item_clock_fits (tr s_loc : loc) (γs : store_names)
     (γh : history_names) (origin : go_string) (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list Input) (deleted inserted : gset YjsId) :
-  own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted -∗
+    (pend : list Input) (deleted inserted tombstoned : gset YjsId) :
+  own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted tombstoned -∗
   ⌜∀ (name : P) (item : YjsItem A), item ∈ doc_model_get m (RootId name) ->
      (Z.of_nat (clock (item_id item)) + 1 < 2^64)%Z⌝.
 Proof.
-  iIntros "Htx". iDestruct "Htx" as (state ds insert_sl) "Htx". iNamed "Htx".
+  iIntros "Htx". iDestruct "Htx" as (state ds insert_sl delete_sl) "Htx". iNamed "Htx".
   iDestruct (own_replica_history_registry_models with "Hreplica_history") as %[Hmodels Hbound].
   iNamed "Hstore". iNamed "Hcore".
   iDestruct (own_store_state_run_pool_invs with "Hstate") as %Hpool_invs.
@@ -93,53 +95,58 @@ Qed.
     the history the transaction holds). *)
 #[local] Lemma own_transaction_notified_model_certified (tr s_loc : loc) (γs : store_names)
     (γh : history_names) (origin : go_string) (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list Input) (deleted inserted : gset YjsId) (E : coPset) :
+    (pend : list Input) (deleted inserted tombstoned : gset YjsId) (E : coPset) :
   ↑histN ⊆ E ->
   is_history (A := A) (P := P) γh -∗
-  own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted ={E}=∗
-    own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted ∗
+  own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted tombstoned ={E}=∗
+    own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted tombstoned ∗
     □ (∀ (t : TId) (item : YjsItem A), ⌜item ∈ doc_model_get m t⌝ -∗
          is_op_cert γh (t, OpInsert (input_of_item item))).
 Proof.
   iIntros (HE) "#Hishist Htx".
-  iDestruct "Htx" as (state ds insert_sl) "Htx". iNamed "Htx".
+  iDestruct "Htx" as (state ds insert_sl delete_sl) "Htx". iNamed "Htx".
   iDestruct "Hreplica_history" as (acc) "Hreplica_history". iNamed "Hreplica_history".
   iMod (history_model_certified γh c h m E HE Hhcoh with "Hishist Hhist") as "[Hhist #Hcerts]".
   iModIntro. iFrame "Hcerts".
-  iExists state, ds, insert_sl. iFrame "Hstore Horigin Htrstore Hinsertf Hinsert". iSplitR; first done.
+  iExists state, ds, insert_sl, delete_sl. iFrame "Hstore Horigin Htrstore Hinsertf Hinsert Hdeletef Hdelete". iSplitR; first done.
   iExists acc. iFrame "Hhist Hpendcert Hacc". done.
 Qed.
 
-(** Borrowing what [notifyUpdate] reads: the transaction's [store] and
-    [origin] fields, the store's [updateObservers] field and the slice it
-    holds, with the contract of every registration. *)
+(** Borrowing what [notifyUpdate] reads: the transaction's [store],
+    [origin] and [deleteSet] fields with the spans of what it deleted, the
+    store's [updateObservers] field and the slice it holds, with the
+    contract of every registration. *)
 #[local] Lemma own_transaction_notified_update_observers_acc (tr s_loc : loc) (γs : store_names)
     (γh : history_names) (origin : go_string) (c : ClientId) (h : list Ev) (m : DocModel)
-    (pend : list Input) (deleted inserted : gset YjsId) :
-  own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted -∗
-  ∃ (observers_slice : slice.t) (observers : list yjs.updateObserver.t),
+    (pend : list Input) (deleted inserted tombstoned : gset YjsId) :
+  own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted tombstoned -∗
+  ∃ (observers_slice delete_slice : slice.t) (observers : list yjs.updateObserver.t),
     (tr .[(yjs.Transaction.t), "store"]) ↦ s_loc ∗
     (tr .[(yjs.Transaction.t), "origin"]) ↦ origin ∗
+    (tr .[(yjs.Transaction.t), "deleteSet"]) ↦ delete_slice ∗
+    own_id_spans delete_slice (DfracOwn 1) tombstoned ∗
     (s_loc .[(yjs.store.t), "updateObservers"]) ↦ observers_slice ∗
     observers_slice ↦* observers ∗
     □ ([∗ list] observer ∈ observers, is_update_observer γs.(sn_may_insert) γh observer) ∗
     ((tr .[(yjs.Transaction.t), "store"]) ↦ s_loc -∗
      (tr .[(yjs.Transaction.t), "origin"]) ↦ origin -∗
+     (tr .[(yjs.Transaction.t), "deleteSet"]) ↦ delete_slice -∗
+     own_id_spans delete_slice (DfracOwn 1) tombstoned -∗
      (s_loc .[(yjs.store.t), "updateObservers"]) ↦ observers_slice -∗
      observers_slice ↦* observers -∗
-     own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted).
+     own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted tombstoned).
 Proof.
-  iIntros "Htx". iDestruct "Htx" as (state ds insert_sl) "Htx". iNamed "Htx".
+  iIntros "Htx". iDestruct "Htx" as (state ds insert_sl delete_sl) "Htx". iNamed "Htx".
   iDestruct "Hstore" as "[Hcore Hobservers]".
   iDestruct "Hobservers" as (observers_mref) "(Hobserversf & Hregistry & Hupdate_observers)".
   iDestruct "Hupdate_observers" as (observers_slice observers)
     "(Hupdate_observers_field & Hupdate_observers_slice & Hupdate_observers_cap & #Hupdate_observers_specs)".
-  iExists observers_slice, observers.
+  iExists observers_slice, delete_sl, observers.
   iEval (rewrite /own_transaction_origin) in "Horigin".
-  iFrame "Htrstore Horigin Hupdate_observers_field Hupdate_observers_slice Hupdate_observers_specs".
-  iIntros "Htrstore Horigin Hupdate_observers_field Hupdate_observers_slice".
-  iExists state, ds, insert_sl. iSplitR; first done.
-  iFrame "Hreplica_history Horigin Htrstore Hinsertf Hinsert Hcore".
+  iFrame "Htrstore Horigin Hdeletef Hdelete Hupdate_observers_field Hupdate_observers_slice Hupdate_observers_specs".
+  iIntros "Htrstore Horigin Hdeletef Hdelete Hupdate_observers_field Hupdate_observers_slice".
+  iExists state, ds, insert_sl, delete_sl. iSplitR; first done.
+  iFrame "Hreplica_history Horigin Htrstore Hinsertf Hinsert Hdeletef Hdelete Hcore".
   iExists observers_mref. iFrame "Hobserversf Hregistry".
   iExists observers_slice, observers.
   iFrame "Hupdate_observers_field Hupdate_observers_slice Hupdate_observers_cap Hupdate_observers_specs".
@@ -180,44 +187,42 @@ Proof.
   exact (proj1 (Forall_singleton _ _) Hitem_allowed).
 Qed.
 
-(** [notifyUpdate]: the transaction and its origin field come back as they
-    were. The rule premise is what [transact] received from the closure
+(** [notifyUpdate]: the transaction comes back as it was. The rule premise
+    is what [transact] received from the closure
     ([closure_runs_transaction]); the callbacks' contracts are in the store
     ([own_store_update_observers]). *)
 Lemma wp_Transaction__notifyUpdate (tr s_loc : loc) (γs : store_names) (γh : history_names)
     (origin : go_string) (c : ClientId) (h : list Ev) (m : DocModel) (pend : list Input)
-    (deleted inserted : gset YjsId) :
-  {{{ is_pkg_init yjs ∗ own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted ∗
+    (deleted inserted tombstoned : gset YjsId) :
+  {{{ is_pkg_init yjs ∗
+      own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted tombstoned ∗
       ⌜inserted_units_allowed (γs.(sn_may_insert) origin) m inserted⌝ }}}
     tr @! (go.PointerType yjs.Transaction) @! "notifyUpdate" #()
-  {{{ RET #(); own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted }}}.
+  {{{ RET #(); own_transaction_notified tr s_loc γs γh origin c h m pend deleted inserted tombstoned }}}.
 Proof.
   wp_start as "(Htx & %Hallowed)".
   iDestruct (own_transaction_notified_item_clock_fits with "Htx") as %Hfits.
   (* ---- is anybody registered? ---- *)
   iDestruct (own_transaction_notified_update_observers_acc with "Htx")
-    as (observers_slice0 observers0) "(Htrstore & Horigin & Hfield & Hslice & #Hspecs0 & Hclose)".
+    as (observers_slice0 delete_slice0 observers0)
+       "(Htrstore & Horigin & Hdeletef & Hdelete & Hfield & Hslice & #Hspecs0 & Hclose)".
   wp_auto.
   iDestruct (own_slice_len with "Hslice") as %[Hobservers0_length Hobservers0_nonneg].
   destruct (decide (observers_slice0.(slice.len) = W64 0)) as [Hnone | Hsome].
   { rewrite bool_decide_eq_true_2 //. wp_auto. iApply "HΦ".
-    iApply ("Hclose" with "Htrstore Horigin Hfield Hslice"). }
+    iApply ("Hclose" with "Htrstore Horigin Hdeletef Hdelete Hfield Hslice"). }
   rewrite bool_decide_eq_false_2 //.
   (* the first registration carries the global history's invariant *)
   have [observer0 Hobserver0] : is_Some (observers0 !! 0%nat).
   { apply lookup_lt_is_Some. clear -Hsome Hobservers0_length Hobservers0_nonneg. word. }
   iDestruct (big_sepL_lookup _ _ 0%nat observer0 Hobserver0 with "Hspecs0") as "Hobserver0".
   iDestruct "Hobserver0" as (encode0) "(#Hishist & _ & _)".
-  iDestruct ("Hclose" with "Htrstore Horigin Hfield Hslice") as "Htx".
+  iDestruct ("Hclose" with "Htrstore Horigin Hdeletef Hdelete Hfield Hslice") as "Htx".
   wp_auto.
-  (* ---- the update ---- *)
+  (* ---- the update: the structs of the insert set, and the delete set ---- *)
   wp_apply (wp_Transaction__insertedStructs with "[$Htx]").
   iIntros (structs_slice structs) "(Htx & Hstructs & %Hstructs)".
-  wp_auto.
-  destruct (decide (structs_slice.(slice.len) = W64 0)) as [Hempty | Hcontent].
-  { rewrite bool_decide_eq_true_2 //. wp_auto. iApply "HΦ". iFrame "Htx". }
-  rewrite bool_decide_eq_false_2 //.
-  iMod (own_transaction_notified_model_certified _ _ _ _ _ _ _ _ _ _ _ ⊤ with "Hishist Htx")
+  iMod (own_transaction_notified_model_certified _ _ _ _ _ _ _ _ _ _ _ _ ⊤ with "Hishist Htx")
     as "[Htx #Hcerts]"; first done.
   iAssert (is_update_certified γh structs) as "#Hcertified".
   { iSplit; first (iPureIntro; exact (inserted_structs_update_wf structs m inserted Hstructs Hfits)).
@@ -226,10 +231,29 @@ Proof.
     iApply ("Hcerts" $! (RootId name) item Hitem). }
   have Hunits : structs_units_allowed (γs.(sn_may_insert) origin) structs :=
     inserted_structs_units_allowed _ structs m inserted Hstructs Hallowed.
-  (* ---- every registration, in the slice's order ---- *)
   iDestruct (own_transaction_notified_update_observers_acc with "Htx")
-    as (observers_slice observers) "(Htrstore & Horigin & Hfield & Hslice & #Hspecs & Hclose)".
+    as (observers_slice delete_slice observers)
+       "(Htrstore & Horigin & Hdeletef & Hdelete & Hfield & Hslice & #Hspecs & Hclose)".
   wp_auto.
+  (* ---- an update of no struct and no deleted id is not emitted ---- *)
+  wp_bind (if: # (bool_decide _) then _ else # false)%E.
+  iApply (wp_wand _ _ _ (λ v : val,
+      ⌜v = # (bool_decide (structs_slice.(slice.len) = W64 0 ∧ delete_slice.(slice.len) = W64 0))⌝ ∗
+      "deletes" ∷ deletes_ptr ↦ delete_slice)%I with "[deletes]").
+  { destruct (decide (structs_slice.(slice.len) = W64 0)) as [Hno_structs | Hsome_structs].
+    - rewrite (bool_decide_eq_true_2 _ Hno_structs). wp_auto. iFrame "deletes". iPureIntro.
+      destruct (decide (delete_slice.(slice.len) = W64 0)) as [Hno_deletes | Hsome_deletes].
+      + rewrite !bool_decide_eq_true_2 //.
+      + rewrite !bool_decide_eq_false_2 //. tauto.
+    - rewrite (bool_decide_eq_false_2 _ Hsome_structs). wp_auto. iFrame "deletes". iPureIntro.
+      rewrite bool_decide_eq_false_2 //. tauto. }
+  iIntros (v) "[-> deletes]". iNamed "deletes".
+  destruct (decide (structs_slice.(slice.len) = W64 0 ∧ delete_slice.(slice.len) = W64 0)) as [Hempty | Hcontent].
+  { rewrite (bool_decide_eq_true_2 _ Hempty). wp_auto. iApply "HΦ".
+    iApply ("Hclose" with "Htrstore Horigin Hdeletef Hdelete Hfield Hslice"). }
+  rewrite (bool_decide_eq_false_2 _ Hcontent).
+  wp_auto.
+  (* ---- every registration, in the slice's order ---- *)
   iDestruct (own_slice_len with "Hslice") as %[Hobservers_length Hobservers_nonneg].
   iAssert (∃ (i : w64),
       "i" ∷ i_ptr ↦ i ∗
@@ -238,7 +262,7 @@ Proof.
   wp_for "IH".
   destruct (decide (sint.Z i < sint.Z observers_slice.(slice.len))) as [Hinside | Hpast]; last first.
   { rewrite bool_decide_eq_false_2 //. wp_auto. iApply "HΦ".
-    iApply ("Hclose" with "Htrstore Horigin Hfield Hslice"). }
+    iApply ("Hclose" with "Htrstore Horigin Hdeletef Hdelete Hfield Hslice"). }
   rewrite bool_decide_eq_true_2 //.
   wp_auto.
   rewrite decide_True; last (clear -Hinside Hi; word).
@@ -253,10 +277,10 @@ Proof.
   iEval (rewrite (list_insert_id _ _ _ Hobserver)) in "Hslice".
   iDestruct (big_sepL_lookup _ _ _ observer Hobserver with "Hspecs") as "Hobserver".
   iDestruct "Hobserver" as (encode) "(_ & #Hencoder & #Hcallback)".
-  wp_apply ("Hencoder" with "[$Hstructs]").
-  iIntros (bytes_slice) "(Hstructs & Hbytes & Hbytes_cap)".
+  wp_apply ("Hencoder" with "[$Hstructs $Hdelete]").
+  iIntros (bytes_slice) "(Hstructs & Hdelete & Hbytes & Hbytes_cap)".
   wp_auto.
-  wp_apply ("Hcallback" $! bytes_slice structs origin with "[Hbytes Hbytes_cap]").
+  wp_apply ("Hcallback" $! bytes_slice structs tombstoned origin with "[Hbytes Hbytes_cap]").
   { rewrite /own_emitted_update. iFrame "Hbytes Hbytes_cap Hcertified". iPureIntro. exact Hunits. }
   wp_for_post.
   iFrame. iPureIntro. clear -Hinside Hi. word.

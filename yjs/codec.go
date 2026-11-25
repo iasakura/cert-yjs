@@ -296,9 +296,10 @@ func encodeRun(e *encoder, run []*item, name map[id]string) {
 }
 
 // WireEncoder is the deployment's Encoder (the type is in doc.go): the v1
-// encoding of the given structs followed by an empty delete set. What
+// encoding of the given structs followed by the given delete set. What
 // WireCodec reads back from it is the given structs split into one-unit
-// items, each client's in clock order, clients in descending order.
+// items, each client's in clock order, clients in descending order, and
+// delete spans that cover the given ids.
 //
 // Per client the structs are sorted by clock and written as the wire's one
 // contiguous clock range: a gap between two structs is written as a Skip
@@ -315,6 +316,10 @@ func encodeRun(e *encoder, run []*item, name map[id]string) {
 // parent. A lone surrogate is written as U+FFFD (issue #233), which WireCodec
 // does not read back as the unit that was given; the contract leaves surrogates
 // out.
+//
+// The delete set is written as Yjs v14.0.0-rc.18 writeIdSet writes one
+// (src/utils/ids.js:720): clients in descending order, each client's spans
+// sorted by clock and merged where they touch or overlap (encodeDeleteSpans).
 func WireEncoder() Encoder {
 	return encodeUpdateItems
 }
@@ -326,7 +331,7 @@ type encodedStruct struct {
 	run  []updateItem
 }
 
-func encodeUpdateItems(structs []updateItem) []byte {
+func encodeUpdateItems(structs []updateItem, deletes []idSpan) []byte {
 	e := &encoder{}
 
 	byClient := map[Client][]updateItem{}
@@ -378,9 +383,48 @@ func encodeUpdateItems(structs []updateItem) []byte {
 		}
 	}
 
-	// the empty delete set.
-	e.writeVarUint(0)
+	encodeDeleteSpans(e, deletes)
 	return e.buf
+}
+
+// encodeDeleteSpans writes the delete set of an update from the id spans a
+// transaction recorded, in the order and form of Yjs v14.0.0-rc.18 writeIdSet
+// (src/utils/ids.js:720): the clients in descending order, and per client
+// the clock ranges sorted and merged where they touch or overlap, as Yjs's
+// IdRanges.getIds leaves them. A span of no clock is left out.
+func encodeDeleteSpans(e *encoder, deletes []idSpan) {
+	byClient := map[Client][]span[uint64]{}
+	for _, d := range deletes {
+		if d.len == 0 {
+			continue
+		}
+		byClient[d.id.clientId] = append(byClient[d.id.clientId],
+			span[uint64]{start: d.id.clock, end: d.id.clock + d.len})
+	}
+
+	clients := sortedClientsDesc(byClient)
+	e.writeVarUint(uint64(len(clients)))
+	for _, client := range clients {
+		ranges := byClient[client]
+		sort.Slice(ranges, func(i, j int) bool { return ranges[i].start < ranges[j].start })
+		var merged []span[uint64]
+		for _, r := range ranges {
+			n := len(merged)
+			if n > 0 && r.start <= merged[n-1].end {
+				if r.end > merged[n-1].end {
+					merged[n-1].end = r.end
+				}
+			} else {
+				merged = append(merged, r)
+			}
+		}
+		e.writeVarUint(client)
+		e.writeVarUint(uint64(len(merged)))
+		for _, r := range merged {
+			e.writeVarUint(r.start)
+			e.writeVarUint(r.end - r.start)
+		}
+	}
 }
 
 // joinableStructs reports whether next continues prev as one struct of the encoding:
